@@ -98,12 +98,20 @@ impl CronExpression {
     /// suitable for crontab. Returns the written slice of `buf`.
     pub(crate) fn format_numeric<'a>(&self, buf: &'a mut [u8; 512]) -> &'a [u8] {
         use std::io::Write;
-        // POSIX cron's DOM/DOW OR-vs-AND rule keys off the literal `*` token. When
-        // BOTH fields are syntactically non-`*`, a full-range value (e.g. `0-6`,
-        // `1-31`, `*/1`) must NOT collapse to `*` here or the OS scheduler diverges
-        // from next(). When only one is restricted the OR rule is inactive and
-        // collapsing is safe (and avoids launchd plist bloat).
+        // POSIX cron's DOM/DOW OR-vs-AND rule keys off the literal `*` token, and
+        // the normalized schedule must preserve whatever next() computes:
+        //
+        //  - Only one of DOM/DOW restricted: AND semantics, the `*` field matches
+        //    all, so a full range on the other field is equivalent to `*`. Collapse.
+        //  - Both restricted but at least one covers its full range: OR semantics
+        //    make it fire *every day*, i.e. identical to `* … *`. Collapse both so
+        //    the crontab/launchd backends don't emit a giant OR-split product.
+        //  - Both restricted and neither is full (a genuine "15th OR Friday"): keep
+        //    both explicit so the backends apply the OR split.
         let both_restricted = !self.days_is_wildcard && !self.weekdays_is_wildcard;
+        let fires_every_day =
+            both_restricted && (self.days == ALL_DAYS || self.weekdays == ALL_WEEKDAYS);
+        let keep_days_explicit = both_restricted && !fires_every_day;
         let written = {
             let mut w: &mut [u8] = &mut buf[..];
             let start = w.len();
@@ -111,11 +119,21 @@ impl CronExpression {
             w.write_all(b" ").expect("unreachable");
             format_bitfield(&mut w, self.hours, 0, 23, false);
             w.write_all(b" ").expect("unreachable");
-            format_bitfield(&mut w, self.days, 1, 31, both_restricted);
+            // When the job fires every day, emit `*` directly: a full DOM range
+            // OR'd against a full (or any) DOW range covers every calendar day.
+            if fires_every_day {
+                w.write_all(b"*").expect("unreachable");
+            } else {
+                format_bitfield(&mut w, self.days, 1, 31, keep_days_explicit);
+            }
             w.write_all(b" ").expect("unreachable");
             format_bitfield(&mut w, self.months, 1, 12, false);
             w.write_all(b" ").expect("unreachable");
-            format_bitfield(&mut w, self.weekdays, 0, 6, both_restricted);
+            if fires_every_day {
+                w.write_all(b"*").expect("unreachable");
+            } else {
+                format_bitfield(&mut w, self.weekdays, 0, 6, keep_days_explicit);
+            }
             start - w.len()
         };
         &buf[..written]

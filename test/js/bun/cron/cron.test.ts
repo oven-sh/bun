@@ -150,14 +150,36 @@ async function registerWithCrontabStub(schedule: string, title: string): Promise
 }
 
 describe.skipIf(!isLinux)("normalized schedule (crontab stub)", () => {
-  test("DOM/DOW both restricted keeps explicit weekday list (POSIX OR)", async () => {
-    // Baseline: parse() fires daily (the 15th OR any weekday), not only the 15th.
+  test("DOM/DOW both restricted, neither a full range: keeps explicit lists (POSIX OR)", async () => {
+    // "0 0 15 * 5" = the 15th OR every Friday. Neither field is full, so the OR is
+    // a genuine two-set match (NOT every day) — parse() lands on whichever comes
+    // first, and the stored schedule must keep both explicit so cron applies the OR.
     const from = Date.UTC(2025, 0, 1, 12, 0, 0); // Wed Jan 1
-    expect(Bun.cron.parse("0 0 15 * 0-6", from)!.getUTCDate()).toBe(2);
+    const next = Bun.cron.parse("0 0 15 * 5", from)!;
+    expect(next.getTime()).toBe(Math.min(Date.UTC(2025, 0, 3), Date.UTC(2025, 0, 15))); // Fri Jan 3
 
-    const line = await registerWithCrontabStub("0 0 15 * 0-6", "stub-dom-dow-or");
-    expect(line).toStartWith("0 0 15 * 0,1,2,3,4,5,6 ");
-    expect(line).toContain("--cron-period='0 0 15 * 0,1,2,3,4,5,6'");
+    const line = await registerWithCrontabStub("0 0 15 * 5", "stub-dom-dow-or");
+    expect(line).toStartWith("0 0 15 * 5 ");
+    expect(line).toContain("--cron-period='0 0 15 * 5'");
+  });
+
+  test("DOM/DOW both restricted but one is a full range: collapses to * (OR → daily)", async () => {
+    // "0 0 15 * 0-6": 0-6 covers every weekday, so 15th-OR-any-weekday = every day.
+    // parse() fires daily (tomorrow, not the 15th), so the normalized schedule must
+    // collapse to `* *` — otherwise launchd emits a huge OR-split Cartesian product.
+    const from = Date.UTC(2025, 0, 1, 12, 0, 0); // Wed Jan 1
+    expect(Bun.cron.parse("0 0 15 * 0-6", from)!.getUTCDate()).toBe(2); // daily → Jan 2
+
+    const onlyDow = await registerWithCrontabStub("0 0 15 * 0-6", "stub-dow-full");
+    expect(onlyDow).toStartWith("0 0 * * * ");
+
+    // "0 0 1-31 * 5": 1-31 covers every day-of-month → every-day OR Friday = daily.
+    const onlyDom = await registerWithCrontabStub("0 0 1-31 * 5", "stub-dom-full");
+    expect(onlyDom).toStartWith("0 0 * * * ");
+
+    // Both fields full → obviously daily.
+    const bothFull = await registerWithCrontabStub("0 0 1-31 * 0-6", "stub-both-full");
+    expect(bothFull).toStartWith("0 0 * * * ");
   });
 
   test("only one of DOM/DOW restricted collapses full range to * (no OR rule)", async () => {
@@ -170,16 +192,11 @@ describe.skipIf(!isLinux)("normalized schedule (crontab stub)", () => {
     expect(dom).toStartWith("0 0 * * * ");
   });
 
-  test("both DOM/DOW full explicit ranges stay explicit (OR → daily)", async () => {
-    // Both restricted and each covers its full range: parse() fires daily, and
-    // the stored schedule must keep both explicit so the OS scheduler agrees.
-    const from = Date.UTC(2025, 0, 1, 12, 0, 0);
-    expect(Bun.cron.parse("0 0 1-31 * 0-6", from)!.getUTCDate()).toBe(2);
-
-    const line = await registerWithCrontabStub("0 0 1-31 * 0-6", "stub-both-full");
-    expect(line).toContain(
-      "--cron-period='0 0 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31 * 0,1,2,3,4,5,6'",
-    );
+  test("partial ranges on both DOM/DOW stay explicit", async () => {
+    // "0 0 1-15 * 1-5" = days 1-15 OR Mon-Fri. Neither is a full range, so both
+    // must stay explicit for the OR split.
+    const line = await registerWithCrontabStub("0 0 1-15 * 1-5", "stub-partial-both");
+    expect(line).toStartWith("0 0 1,2,3,4,5,6,7,8,9,10,11,12,13,14,15 * 1,2,3,4,5 ");
   });
 
   test("minutes/hours/months still collapse full ranges to * (no OR rule applies)", async () => {
@@ -1166,21 +1183,21 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
     }
   });
 
-  test("DOM/DOW full explicit range preserves OR semantics matching Bun.cron.parse()", async () => {
-    // "0 0 15 * 0-6": 0-6 covers every weekday, but because DOM is also restricted
-    // the POSIX OR rule means the job fires daily (the 15th OR any weekday).
-    // Bun.cron.parse() agrees, so --cron-period must keep 0-6 explicit (not `*`).
+  test("DOM/DOW both restricted (neither full) produces OR-split dicts matching Bun.cron.parse()", async () => {
+    // "0 0 15 * 5": 15th OR every Friday — a genuine OR (neither field full), so
+    // launchd needs separate Day-only and Weekday-only dicts (it ANDs keys within
+    // a dict). Bun.cron.parse() agrees it is NOT every day.
     const from = Date.UTC(2025, 0, 1, 12, 0, 0); // Wed Jan 1
-    expect(Bun.cron.parse("0 0 15 * 0-6", from)!.getUTCDate()).toBe(2); // OR → daily, not the 15th
+    expect(Bun.cron.parse("0 0 15 * 5", from)!.getTime()).toBe(Date.UTC(2025, 0, 3)); // Fri Jan 3
 
     using dir = tempDir("bun-cron-test", {
       "job.ts": `export default { scheduled() {} };`,
     });
     try {
-      await Bun.cron(`${dir}/job.ts`, "0 0 15 * 0-6", "test-mac-dom-dow-or");
+      await Bun.cron(`${dir}/job.ts`, "0 0 15 * 5", "test-mac-dom-dow-or");
       const plist = await Bun.file(plistPath("test-mac-dom-dow-or")).text();
       const period = /--cron-period=([^<]+)</.exec(plist)![1];
-      expect(period).toBe("0 0 15 * 0,1,2,3,4,5,6");
+      expect(period).toBe("0 0 15 * 5");
       // OR-split: launchd ANDs keys within a dict, so Day and Weekday must live in
       // separate dicts. Verify both keys appear and no single dict contains both.
       expect(plist).toContain("<key>Day</key>");
@@ -1193,6 +1210,30 @@ describe.skipIf(!hasLaunchctl)("cron registration (macOS)", () => {
       }
     } finally {
       removeLaunchdJob("test-mac-dom-dow-or");
+    }
+  });
+
+  test("DOM/DOW both restricted but one is a full range collapses to a single daily dict", async () => {
+    // "0 0 15 * 0-6": 0-6 is every weekday, so 15th-OR-any-weekday = every day.
+    // Bun.cron.parse() fires daily, and the plist must be a single `* *` dict —
+    // NOT a 31×7 OR-split Cartesian product.
+    const from = Date.UTC(2025, 0, 1, 12, 0, 0); // Wed Jan 1
+    expect(Bun.cron.parse("0 0 15 * 0-6", from)!.getUTCDate()).toBe(2); // daily → Jan 2
+
+    using dir = tempDir("bun-cron-test", {
+      "job.ts": `export default { scheduled() {} };`,
+    });
+    try {
+      await Bun.cron(`${dir}/job.ts`, "0 0 15 * 0-6", "test-mac-dom-dow-daily");
+      const plist = await Bun.file(plistPath("test-mac-dom-dow-daily")).text();
+      const period = /--cron-period=([^<]+)</.exec(plist)![1];
+      expect(period).toBe("0 0 * * *");
+      expect(plist).not.toContain("<key>Day</key>");
+      expect(plist).not.toContain("<key>Weekday</key>");
+      const dicts = [...plist.matchAll(/<dict>[\s\S]*?<\/dict>/g)].map(m => m[0]);
+      expect(dicts.filter(d => d.includes("<key>Minute</key>")).length).toBe(1);
+    } finally {
+      removeLaunchdJob("test-mac-dom-dow-daily");
     }
   });
 

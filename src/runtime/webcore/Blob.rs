@@ -2382,11 +2382,15 @@ impl BlobExt for Blob {
                 let store_size = store.size();
                 if store_size != MAX_SIZE {
                     self.offset.set(store_size.min(offset));
+                    let available = store_size - self.offset.get();
                     // Only resolve an unknown size. A slice already has a concrete
                     // `size`; overwriting it with `store_size - offset` would widen
-                    // the view to the end of the backing store.
+                    // the view to the end of the backing store. Clamp a known size
+                    // to `available` so a bogus size can't report past the store end.
                     if self.size.get() == MAX_SIZE {
-                        self.size.set(store_size - self.offset.get());
+                        self.size.set(available);
+                    } else {
+                        self.size.set(self.size.get().min(available));
                     }
                 }
             }
@@ -2434,13 +2438,15 @@ impl BlobExt for Blob {
                 let store_size = store.size();
                 if store_size != MAX_SIZE {
                     let offset = store_size.min(offset);
+                    let available = store_size - offset;
                     // Matches `resolve_size`: a known size (e.g. a slice) is
                     // authoritative; only an unknown size falls back to the
-                    // remainder of the backing store.
+                    // remainder of the backing store. Clamp to `available` so a
+                    // bogus size can't report past the store end.
                     let size = if self.size.get() == MAX_SIZE {
-                        store_size - offset
+                        available
                     } else {
-                        self.size.get()
+                        self.size.get().min(available)
                     };
                     return (offset, size);
                 }

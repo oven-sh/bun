@@ -367,8 +367,16 @@ impl Pipe {
         Ok(JSValue::UNDEFINED)
     }
 
-    pub(crate) fn close(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
+    pub(crate) fn close(&self, g: &JSGlobalObject, f: &CallFrame) -> JsResult<JSValue> {
         self.close_internal();
+        // Node's HandleWrap.close(cb) invokes the callback after uv_close
+        // completes (next loop iteration). close_internal() closes
+        // synchronously, so schedule the callback on a microtask — the closest
+        // analogue — instead of silently dropping it.
+        let cb = f.argument(0);
+        if cb.is_callable() {
+            g.queue_microtask(cb, &[]);
+        }
         Ok(JSValue::UNDEFINED)
     }
 

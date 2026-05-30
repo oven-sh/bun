@@ -152,3 +152,39 @@ test("file stdin is an fs.ReadStream", async () => {
   });
   expect(exitCode).toBe(0);
 });
+
+// Node's HandleWrap.close(cb) fires the callback after the handle closes. The
+// Pipe declares close with length 1 (close(cb)), so a direct
+// process.binding("pipe_wrap") user passing a callback must see it invoked —
+// not silently dropped.
+test("pipe_wrap Pipe.close(cb) invokes the callback", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const { Pipe, constants } = process.binding("pipe_wrap");
+        const p = new Pipe(constants.SOCKET);
+        // fd 0 is this child's stdin pipe (spawned with stdin: "pipe").
+        p.open(0);
+        let called = false;
+        p.close(() => {
+          called = true;
+          console.log("closed-cb-fired");
+        });
+        // The callback is scheduled (microtask/next tick), not synchronous.
+        if (called) throw new Error("close callback fired synchronously");
+      `,
+    ],
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("closed-cb-fired");
+  expect(exitCode).toBe(0);
+});

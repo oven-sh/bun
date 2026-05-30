@@ -3881,10 +3881,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 // indent ≥ n+1 via s-indent (spaces only); tab separation
                 // either leaves the token at the line's natural indent (≤ n)
                 // or, when spaces preceded the tab, taints tab_after_indent.
+                // The compact branch has no properties production — an
+                // anchor/tag forces the [200] block-collection path, which
+                // requires s-l-comments (a line break) before the collection.
                 TokenData::SequenceEntry | TokenData::MappingKey
                     if self.token.line == indicator_line
                         && (self.token.indent.is_less_than_or_equal(n)
-                            || self.tab_after_indent) =>
+                            || self.tab_after_indent
+                            || value_anchor.is_some()
+                            || value_tag.is_some()) =>
                 {
                     return Err(if self.tab_after_indent {
                         ParseError::TabIndentation
@@ -5010,6 +5015,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     continue;
                 }
                 0x20 | 0x09 /* ' ' | '\t' */ => {
+                    // [162] header indicators are adjacent to `|`/`>`; once
+                    // s-separate-in-line is seen we are in [77] s-b-comment —
+                    // only an optional `#…` then b-break/EOF may follow.
                     self.inc(1);
                     self.skip_s_white();
                     if Enc::wide(self.next()) == 0x23 /* '#' */ {
@@ -5017,6 +5025,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         while !self.is_b_char_or_eof() {
                             self.inc(1);
                         }
+                    }
+                    if !self.is_b_char_or_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
                     }
                     __c = Enc::wide(self.next());
                     continue;

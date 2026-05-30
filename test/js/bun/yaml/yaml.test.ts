@@ -1921,7 +1921,7 @@ folded: >
           expect(() => YAML.parse("- &a 1\n- !!str\n  *a")).toThrow();
         });
 
-        test.todo("block-scalar header rejects whitespace before chomp/indent indicator", () => {
+        test("block-scalar header rejects whitespace before chomp/indent indicator", () => {
           // [162] c-b-block-header: no s-separate between `|`/`>` and indicators.
           expect(() => YAML.parse("| 1\n  text")).toThrow();
         });
@@ -2169,7 +2169,7 @@ folded: >
         });
 
         describe("§8.1 Block scalar styles (ch8-block-scalars)", () => {
-          test.todo("[162] chomp after s-separate is not part of header (should error)", () => {
+          test("[162] chomp after s-separate is not part of header (should error)", () => {
             expect(() => YAML.parse(`|1 +\n text\n`)).toThrow();
           });
 
@@ -2183,7 +2183,7 @@ folded: >
         });
 
         describe("§8.2 Block collection styles (ch8-block-collections)", () => {
-          test.todo("[185] anchor between `-` and compact `?` — property blocks compact-map", () => {
+          test("[185] anchor between `-` and compact `?` — property blocks compact-map", () => {
             expect(() => YAML.parse(`- &a ? b\n`)).toThrow();
           });
 

@@ -512,8 +512,10 @@ test.concurrent(
 // 'unexpected-response'. Each handler must fire exactly once — the synthetic
 // emit suppresses the EE bridge re-fire, but the DOM-style handler must still
 // receive the native error (gated on a separate "handled" flag).
-test.concurrent("ws error handlers each fire once when on('error') and addEventListener/onerror are mixed", async () => {
-  const { stdout, exitCode } = await run(/* js */ `
+test.concurrent(
+  "ws error handlers each fire once when on('error') and addEventListener/onerror are mixed",
+  async () => {
+    const { stdout, exitCode } = await run(/* js */ `
     const { createServer } = require("net");
     const { once } = require("events");
     const { WebSocket } = require("ws");
@@ -547,12 +549,11 @@ test.concurrent("ws error handlers each fire once when on('error') and addEventL
     console.log(JSON.stringify({ ael, prop }));
     process.exit(0);
   `);
-  // Both the on('error') handler and the DOM-style handler fire exactly once.
-  expect(stdout).toMatchInlineSnapshot(
-    `"{"ael":{"onCount":1,"domCount":1},"prop":{"onCount":1,"domCount":1}}"`,
-  );
-  expect(exitCode).toBe(0);
-});
+    // Both the on('error') handler and the DOM-style handler fire exactly once.
+    expect(stdout).toMatchInlineSnapshot(`"{"ael":{"onCount":1,"domCount":1},"prop":{"onCount":1,"domCount":1}}"`);
+    expect(exitCode).toBe(0);
+  },
+);
 
 // DOM dedup: registering the identical listener twice via addEventListener is
 // a no-op. Because we wrap the listener in a suppression closure, a naive

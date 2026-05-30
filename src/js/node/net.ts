@@ -773,6 +773,9 @@ function Socket(options?) {
     if (typeof onread.callback !== "function") {
       throw new TypeError("onread.callback must be a function");
     }
+    if (!$isTypedArrayView(onread.buffer) && typeof onread.buffer !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("options.onread.buffer", ["Buffer", "Uint8Array", "function"], onread.buffer);
+    }
     this[kBuffer] = true;
     this[kBufferCb] = onread.callback;
     this[kBufferGen] = typeof onread.buffer === "function" ? onread.buffer : () => onread.buffer;

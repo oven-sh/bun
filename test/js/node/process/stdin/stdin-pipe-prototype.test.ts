@@ -188,3 +188,36 @@ test("pipe_wrap Pipe.close(cb) invokes the callback", async () => {
   expect(stdout.trim()).toBe("closed-cb-fired");
   expect(exitCode).toBe(0);
 });
+
+// The Pipe handle doesn't own the fd (open() clears CLOSE_HANDLE), so closing
+// the reader must drop the poll + loop keepalive directly — reader.close() is a
+// no-op on POSIX without an fd to close. destroy()ing a reading stdin while the
+// writer holds the pipe open must still let the process exit; a regression here
+// leaves the poll registered + ref'd and hangs forever.
+test("process.stdin.destroy() while reading lets the process exit", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        // on("data") arms the reader (readStart -> poll registered + loop
+        // keepalive). destroy() must tear it back down.
+        process.stdin.on("data", () => {});
+        process.stdin.resume();
+        process.stdin.destroy();
+      `,
+    ],
+    // Parent holds the write end open (never written/ended): the child must
+    // exit on its own, proving the keepalive was released by destroy().
+    stdin: "pipe",
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toBe("");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});

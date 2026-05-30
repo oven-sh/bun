@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { cronToCalendarIntervalForTesting } from "bun:internal-for-testing";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 
@@ -1800,8 +1801,6 @@ describe("Bun.cron.parse", () => {
 // platform — the Bun.cron(...) path only reaches it on macOS (launchd), so the
 // `describe.skipIf(!hasLaunchctl)` suites above skip it on Linux/Windows CI.
 describe("calendar interval generation (launchd)", () => {
-  const { cronToCalendarIntervalForTesting } = require("bun:internal-for-testing");
-
   test("caps the total dict count at 256", () => {
     // Single-pass Cartesian product: 10 × 10 × 3 = 300 entries, over the cap.
     expect(() => cronToCalendarIntervalForTesting("0,1,2,3,4,5,6,7,8,9 0,1,2,3,4,5,6,7,8,9 1,2,3 * *")).toThrow(

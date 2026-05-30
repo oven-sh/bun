@@ -258,28 +258,38 @@ fn guess_handle_type_from_fd(fd_int: i32) -> u32 {
         return GHT_UNKNOWN;
     }
 
-    // SAFETY: `fd` refers to a socket (checked via S_ISSOCK above). `getsockname`
-    // and `getsockopt` fill `ss`/`so_type` and never read uninitialised memory we
-    // pass; we check the return code before reading the output.
     let mut ss: libc::sockaddr_storage = bun_core::ffi::zeroed();
     let mut ss_len: libc::socklen_t =
         core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
-    if unsafe { libc::getsockname(fd_int, core::ptr::from_mut(&mut ss).cast(), &mut ss_len) } != 0 {
+    // SAFETY: `fd` refers to a socket (checked via S_ISSOCK above). `getsockname`
+    // fills `ss`/`ss_len` and never reads uninitialised memory we pass; we check
+    // the return code before reading the output.
+    let rc = unsafe {
+        libc::getsockname(
+            fd_int,
+            core::ptr::from_mut(&mut ss).cast(),
+            core::ptr::from_mut(&mut ss_len),
+        )
+    };
+    if rc != 0 {
         return GHT_UNKNOWN;
     }
 
     let mut so_type: libc::c_int = 0;
     let mut so_type_len: libc::socklen_t = core::mem::size_of::<libc::c_int>() as libc::socklen_t;
-    if unsafe {
+    // SAFETY: `fd` refers to a socket. `getsockopt` fills `so_type`/`so_type_len`
+    // and never reads uninitialised memory we pass; we check the return code
+    // before reading the output.
+    let rc = unsafe {
         libc::getsockopt(
             fd_int,
             libc::SOL_SOCKET,
             libc::SO_TYPE,
             core::ptr::from_mut(&mut so_type).cast(),
-            &mut so_type_len,
+            core::ptr::from_mut(&mut so_type_len),
         )
-    } != 0
-    {
+    };
+    if rc != 0 {
         return GHT_UNKNOWN;
     }
 

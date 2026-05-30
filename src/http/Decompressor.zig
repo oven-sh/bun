@@ -28,8 +28,6 @@ pub const Decompressor = union(enum) {
                         body_out_str.allocator,
                         bun.http.default_allocator,
                         .{
-                            // gzip: MAX_WBITS | 16. zlib-wrapped deflate: 0 (inflate
-                            // reads the window from the header). Raw deflate: -MAX_WBITS.
                             .windowBits = if (encoding == Encoding.gzip)
                                 Zlib.MAX_WBITS | 16
                             else if (hasZlibHeader(buffer))
@@ -113,10 +111,6 @@ pub const Decompressor = union(enum) {
     }
 };
 
-/// Whether `buffer` starts with an RFC1950 zlib header (zlib-wrapped deflate),
-/// as opposed to raw deflate. A valid header is CMF/FLG where CMF has CM=8 in
-/// the low nibble and CINFO 0..=7 in the high nibble, and (CMF << 8 | FLG) is a
-/// multiple of 31 — covering every window from 256 B to 32 KiB.
 fn hasZlibHeader(buffer: []const u8) bool {
     return buffer.len >= 2 and
         (buffer[0] & 0x0f) == 8 and

@@ -59,15 +59,9 @@ unsafe fn seat<'a>(input: &'a [u8], out: &'a mut Vec<u8>) -> (&'static [u8], &'s
 /// an unbounded allocation.
 const MAX_DECOMPRESSED_BODY_SIZE: usize = 1024 * 1024 * 1024;
 
-/// Whether `buffer` starts with an RFC1950 zlib header (zlib-wrapped deflate),
-/// as opposed to raw deflate. A valid header is CMF/FLG where CMF has CM=8 in
-/// the low nibble and CINFO 0..=7 in the high nibble, and `(CMF << 8 | FLG)` is
-/// a multiple of 31 — covering every window from 256 B to 32 KiB.
 fn has_zlib_header(buffer: &[u8]) -> bool {
-    buffer.len() >= 2
-        && (buffer[0] & 0x0f) == 8
-        && (buffer[0] >> 4) <= 7
-        && (((buffer[0] as u16) << 8) | buffer[1] as u16).is_multiple_of(31)
+    let &[cmf, flg, ..] = buffer else { return false };
+    (cmf & 0x0f) == 8 && (cmf >> 4) <= 7 && u16::from_be_bytes([cmf, flg]).is_multiple_of(31)
 }
 
 impl Decompressor {
@@ -99,8 +93,6 @@ impl Decompressor {
                         // PORT NOTE: Zig passed `body_out_str.allocator` and
                         // `bun.http.default_allocator`; dropped per §Allocators.
                         bun_zlib::Options {
-                            // gzip: MAX_WBITS | 16. zlib-wrapped deflate: 0 (inflate
-                            // reads the window from the header). Raw deflate: -MAX_WBITS.
                             window_bits: if encoding == Encoding::Gzip {
                                 bun_zlib::MAX_WBITS | 16
                             } else if has_zlib_header(buffer) {

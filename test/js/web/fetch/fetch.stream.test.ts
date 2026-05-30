@@ -183,10 +183,7 @@ describe.concurrent("fetch() with streaming", () => {
   it.each([9, 10, 11, 12, 13, 14, 15])(
     "decodes a Content-Encoding: deflate body compressed with a %i-bit window",
     async windowBits => {
-      // RFC1950: the zlib CMF byte is CM=8 | CINFO<<4, so a window smaller than
-      // 32 KiB has CMF != 0x78 (e.g. 0x18 for windowBits=9). Bun used to detect
-      // a zlib header by testing buffer[0] == 0x78 only, so these bodies were
-      // sent through raw inflate and rejected as ZlibError.
+      // A <32 KiB window makes CMF != 0x78, which Bun used to misread as raw deflate and reject.
       const original = Buffer.alloc(17 * 1024, "abcdefghijklmnop");
       const compressed = zlib.deflateSync(original, { windowBits });
       using server = Bun.serve({

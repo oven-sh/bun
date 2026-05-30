@@ -148,8 +148,22 @@ export async function downloadWithRetry(url: string, dest: string, logPrefix: st
     // Same temp-then-rename atomicity as the network path below — an
     // interrupted copy must not leave a partial file claiming to be complete.
     const tmp = `${dest}.${process.pid}.partial`;
-    await copyFile(prefetched, tmp);
-    await rename(tmp, dest);
+    try {
+      await copyFile(prefetched, tmp);
+      await rename(tmp, dest);
+    } catch (err) {
+      // Same concurrent-rename race as the network path: with a shared
+      // dest two agents can both copy here, and on Windows the loser's
+      // rename EPERMs if AV/indexer holds the freshly-written dest open.
+      // dest is URL-hash-keyed, so a file already present is the right
+      // content. Clean up our partial and treat it as done.
+      await rm(tmp, { force: true }).catch(() => {});
+      if (existsSync(dest)) {
+        console.log(`${dest} now present (concurrent prefetch-copy won the race)`);
+        return;
+      }
+      throw err;
+    }
     return;
   }
 
@@ -251,22 +265,29 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
 }
 
 /**
- * Integrity probe: does `tar -tzf` walk the whole archive without error?
+ * Integrity probe: does `tar -tzf` walk the whole archive AND list entries?
  *
  * Used to decide whether a cached tarball is itself bad vs. extraction
  * failed for environmental reasons (disk full, staging dir unwritable).
  * Listing reads and gunzips every block but writes nothing to disk, so it
  * isolates the archive from the destination. Anything other than a clean
- * non-zero exit — spawn failure (tar not found) or signal death (OOM
- * killer) — counts as "lists cleanly": can't judge the file, so don't
- * delete a possibly-shared artifact.
+ * exit — spawn failure (tar not found) or signal death (OOM killer) —
+ * counts as "lists cleanly": can't judge the file, so don't delete a
+ * possibly-shared artifact.
+ *
+ * A structurally-valid but EMPTY archive (`tar czf - -T /dev/null`) exits 0
+ * yet lists nothing; extraction of it throws "extracted nothing" forever, so
+ * that case must count as bad — we require at least one listed entry.
  */
 export function tarballListsCleanly(tarball: string): boolean {
   // tarExe, not bare "tar": on Windows GNU tar (Git-for-Windows) parses the
   // `C:\...` path as an rsh host:path spec and exits non-zero — which would
   // look like corruption and delete a valid tarball. tarExe picks bsdtar.
-  const r = spawnSync(tarExe, ["-tzf", tarball], { stdio: "ignore" });
-  return r.error !== undefined || r.signal !== null || r.status === 0;
+  const r = spawnSync(tarExe, ["-tzf", tarball], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  // Couldn't run the probe (tar missing) or it was killed — can't judge, keep.
+  if (r.error !== undefined || r.signal !== null) return true;
+  // Ran to completion: clean only if it exited 0 AND listed ≥1 entry.
+  return r.status === 0 && (r.stdout ?? "").trim().length > 0;
 }
 
 /**

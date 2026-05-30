@@ -1879,10 +1879,13 @@ folded: >
           expect(() => YAML.parse("!!float 0x1f")).toThrow();
         });
 
-        test.todo("`\\uXXXX` surrogate pairs combine ([57] ns-esc-16-bit)", () => {
+        test("`\\uXXXX` surrogate pairs combine ([57] ns-esc-16-bit)", () => {
           // js-yaml/eemeli combine surrogate halves to the supplementary code
-          // point. Currently rejected.
-          expect(YAML.parse('"\\uD834\\uDD1E"')).toBe("�\u0084�");
+          // point.
+          expect(YAML.parse('"\\uD834\\uDD1E"')).toBe("\u{1D11E}");
+          // a high surrogate not followed by a `\u` low half still errors.
+          expect(() => YAML.parse('"\\uD834x"')).toThrow();
+          expect(() => YAML.parse('"\\uD834\\n"')).toThrow();
         });
 
         test.todo("s-separate required after tag ([97] c-ns-tag-property)", () => {
@@ -2139,7 +2142,7 @@ folded: >
             expect(YAML.parse(`"\\U0000D800"`)).toEqual("\uD800");
           });
 
-          test.todo("[112] escaped CRLF as b-non-content �\u0086� 'ab' (REAL BUG: bun gives 'a\\nb')", () => {
+          test("[112] escaped CRLF as b-non-content �\u0086� 'ab' (REAL BUG: bun gives 'a\\nb')", () => {
             expect(YAML.parse(`"a\\\r\nb"`)).toEqual("ab");
           });
 

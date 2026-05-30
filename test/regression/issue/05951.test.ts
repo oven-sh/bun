@@ -646,3 +646,51 @@ test.concurrent(
     expect(exitCode).toBe(0);
   },
 );
+
+// DOM dedup must also apply to the Node-only 'upgrade'/'unexpected-response'
+// events. These register on the EventEmitter (super.on) which doesn't dedup,
+// so addEventListener with the same handler twice would fire it twice on a
+// 101 — real ws dedups every event type.
+test.concurrent("ws addEventListener('upgrade', h) dedupes the same handler", async () => {
+  const { stdout, exitCode } = await run(/* js */ `
+    const { createServer } = require("net");
+    const { createHash } = require("crypto");
+    const { once } = require("events");
+    const { WebSocket } = require("ws");
+
+    const server = createServer(conn => {
+      let buf = "";
+      const onData = chunk => {
+        buf += chunk.toString();
+        if (buf.indexOf("\\r\\n\\r\\n") === -1) return;
+        conn.off("data", onData);
+        const key = /Sec-WebSocket-Key: (.+)\\r\\n/i.exec(buf)[1];
+        const accept = createHash("sha1")
+          .update(key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")
+          .digest("base64");
+        conn.write(
+          "HTTP/1.1 101 Switching Protocols\\r\\nUpgrade: websocket\\r\\nConnection: Upgrade\\r\\nSec-WebSocket-Accept: " +
+            accept + "\\r\\n\\r\\n",
+        );
+      };
+      conn.on("data", onData);
+    }).listen(0, "127.0.0.1");
+    await once(server, "listening");
+
+    const ws = new WebSocket("ws://127.0.0.1:" + server.address().port);
+    let count = 0;
+    const h = () => { count++; };
+    ws.addEventListener("upgrade", h);
+    ws.addEventListener("upgrade", h); // duplicate — must be a no-op
+    await once(ws, "open");
+    // removeEventListener must fully detach the single registration.
+    ws.removeEventListener("upgrade", h);
+    console.log(JSON.stringify({ count }));
+    ws.terminate();
+    server.close();
+    process.exit(0);
+  `);
+  // The handler fires exactly once despite the duplicate addEventListener.
+  expect(stdout).toMatchInlineSnapshot(`"{"count":1}"`);
+  expect(exitCode).toBe(0);
+});

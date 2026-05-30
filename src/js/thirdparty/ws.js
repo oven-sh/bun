@@ -673,6 +673,11 @@ class BunWebSocket extends EventEmitter {
     // `(response)` / `(request, response)` args.
     if (type === "upgrade" || type === "unexpected-response") {
       this.#ensureHandshakeListener();
+      // DOM dedup: `addEventListener` with the same listener is a no-op.
+      // EventEmitter.on/once don't dedup, so check the current listeners
+      // ourselves — matching real ws, which scans listeners(type) for every
+      // event type (and the 'error' branch below, which dedups too).
+      if (this.listeners(type).includes(listener)) return;
       // `addEventListener` returns undefined per the DOM spec / real ws —
       // use statement form so we don't leak EventEmitter's `this` return.
       if (options && options.once) {
@@ -694,7 +699,13 @@ class BunWebSocket extends EventEmitter {
       // doesn't also swallow this handler. Wrap in a gated closure and remember
       // it so `removeEventListener` can detach it.
       const self = this;
+      // With `{once:true}` the native EventTarget auto-removes the wrapper
+      // after it fires, so drop our dedup entry too — otherwise a later
+      // `addEventListener('error', listener)` would hit the guard above and
+      // silently no-op even though nothing is attached anymore.
+      const once = !!(options && options.once);
       const wrapper = function (event) {
+        if (once) self.#errorListenerWrappers?.delete(listener);
         if (self.#unexpectedResponseHandled) return;
         return listener.$call(this, event);
       };

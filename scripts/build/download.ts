@@ -278,16 +278,37 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
  * A structurally-valid but EMPTY archive (`tar czf - -T /dev/null`) exits 0
  * yet lists nothing; extraction of it throws "extracted nothing" forever, so
  * that case must count as bad — we require at least one listed entry.
+ *
+ * Done in two passes so the exit-code judgment can't be corrupted by a huge
+ * listing: the first discards stdout (no maxBuffer limit → tar always walks
+ * to the real exit code), the second reads only enough stdout to confirm
+ * ≥1 entry (an ENOBUFS overflow there trivially means "many entries").
  */
-export function tarballListsCleanly(tarball: string): boolean {
+function tarRun(tarball: string, capture: boolean): ReturnType<typeof spawnSync> {
   // tarExe, not bare "tar": on Windows GNU tar (Git-for-Windows) parses the
   // `C:\...` path as an rsh host:path spec and exits non-zero — which would
   // look like corruption and delete a valid tarball. tarExe picks bsdtar.
-  const r = spawnSync(tarExe, ["-tzf", tarball], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+  return spawnSync(tarExe, ["-tzf", tarball], {
+    encoding: "utf8",
+    stdio: ["ignore", capture ? "pipe" : "ignore", "ignore"],
+    ...(capture ? { maxBuffer: 64 * 1024 } : {}),
+  });
+}
+
+export function tarballListsCleanly(tarball: string): boolean {
+  // Pass 1 — exit code only. stdout discarded, so no maxBuffer cap can kill
+  // tar before it finishes; r.status is the archive's real verdict.
+  const exit = tarRun(tarball, false);
   // Couldn't run the probe (tar missing) or it was killed — can't judge, keep.
-  if (r.error !== undefined || r.signal !== null) return true;
-  // Ran to completion: clean only if it exited 0 AND listed ≥1 entry.
-  return r.status === 0 && (r.stdout ?? "").trim().length > 0;
+  if (exit.error !== undefined || exit.signal !== null) return true;
+  if (exit.status !== 0) return false; // tar saw corruption
+
+  // Pass 2 — confirm ≥1 entry. Tiny maxBuffer: any stdout (or an ENOBUFS
+  // overflow from a large listing) means the archive is non-empty; only a
+  // clean, empty listing stays "bad" (the valid-but-empty-archive case).
+  const list = tarRun(tarball, true);
+  if (list.error !== undefined) return true; // ENOBUFS ⇒ lots of entries ⇒ keep
+  return String(list.stdout ?? "").trim().length > 0;
 }
 
 /**

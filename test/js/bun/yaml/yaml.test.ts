@@ -2339,9 +2339,20 @@ folded: >
             expect(YAML.parse("[a,\n﻿b]")).toEqual(["a", "﻿b"]);
             expect(YAML.parse("a: b\n﻿c: d")).toEqual({ a: "b", "﻿c": "d" });
             expect(() => YAML.parse("- a\n﻿- b")).toThrow();
-            // But between docs it is the prefix.
+            // After `---` is content, not prefix.
+            expect(YAML.parse("---\n﻿foo")).toBe("﻿foo");
+            expect(YAML.parse("---\n﻿a: 1")).toEqual({ "﻿a": 1 });
+            expect(YAML.parse("---\n﻿- a\n- b")).toBe("﻿- a - b");
+            expect(YAML.parse("a\n...\n---\n﻿b")).toEqual(["a", "﻿b"]);
+            // Between a directive and `---` is not prefix ([202] precedes
+            // directives).
+            expect(() => YAML.parse("%YAML 1.2\n﻿---\nfoo")).toThrow();
+            // But after `...` (l-document-suffix) and at stream-start it IS
+            // the prefix.
             expect(YAML.parse("a\n...\n﻿---\nb")).toEqual(["a", "b"]);
             expect(YAML.parse("a\n...\n﻿b")).toEqual(["a", "b"]);
+            expect(YAML.parse("# c\n﻿a")).toBe("a");
+            expect(YAML.parse("...\n﻿foo")).toBe("foo");
           });
 
           test("`%YAML` major version compared numerically (leading zeros)", () => {

@@ -2890,6 +2890,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         self.anchors.clear();
         self.tag_handles.clear();
         self.secondary_handle_redefined = false;
+        // [202] l-document-prefix has been consumed (by `init()`'s BOM strip,
+        // by `parse_stream`'s leading-`...` loop, or by the previous
+        // document's `DocumentEnd` arm). Every scan() inside this document —
+        // post-directive, post-`---`, content — sees BOM as content.
+        self.at_doc_prefix = false;
 
         let mut has_yaml_directive = false;
         let mut has_primary_tag = false;
@@ -2938,10 +2943,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             // if there's directives they must end with '---'
             return Err(Self::unexpected_token());
         }
-
-        // Past l-document-prefix and `---` — a line-start BOM from here is
-        // content, not a prefix.
-        self.at_doc_prefix = false;
 
         let root = self.parse_node(ParseNodeOptions::default())?;
 

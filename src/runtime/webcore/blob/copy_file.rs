@@ -1493,6 +1493,12 @@ impl<'a> CopyFileWindows<'a> {
             }
         };
 
+        // Re-derive seekability and the clamped window from the handle we just
+        // opened, so a path that was swapped after the earlier stat can't make
+        // us issue a positioned read against a now-non-seekable source or
+        // truncate to a stale length.
+        self.prepare_source_window_from_fd(self.read_write_loop.source_fd);
+
         match self.read_write_loop_start() {
             bun_sys::Result::Err(err) => {
                 self.throw(err);
@@ -1523,19 +1529,33 @@ impl<'a> CopyFileWindows<'a> {
             bun_sys::stat(source.pathlike.path().slice_z(&mut path_buf))
         };
         if let bun_sys::Result::Ok(stat) = stat_result {
-            self.source_is_seekable = bun_sys::S::ISREG(stat.st_mode as _);
-            if self.source_is_seekable {
-                if self.size != MAX_SIZE {
-                    // Windows `uv_stat_t::st_size` is u64, matching `SizeType`.
-                    let available: SizeType = stat.st_size.saturating_sub(self.offset);
-                    self.size = self.size.min(available);
-                }
-            } else {
-                // A stream has no seekable offset or knowable length; copy it
-                // whole (read to EOF, never truncate) rather than honoring a
-                // slice window that can't be applied.
-                self.size = MAX_SIZE;
+            self.apply_source_window(&stat);
+        }
+    }
+
+    /// Re-derive the slice window from the already-opened source fd, so the
+    /// metadata the copy uses (seekability, clamped size) describes the object
+    /// actually being copied rather than whatever the pathname resolved to at
+    /// an earlier `stat()`. Used by the read/write loop once it owns the fd.
+    fn prepare_source_window_from_fd(&mut self, fd: Fd) {
+        if let bun_sys::Result::Ok(stat) = bun_sys::fstat(fd) {
+            self.apply_source_window(&stat);
+        }
+    }
+
+    fn apply_source_window(&mut self, stat: &bun_sys::Stat) {
+        self.source_is_seekable = bun_sys::S::ISREG(stat.st_mode as _);
+        if self.source_is_seekable {
+            if self.size != MAX_SIZE {
+                // Windows `uv_stat_t::st_size` is u64, matching `SizeType`.
+                let available: SizeType = stat.st_size.saturating_sub(self.offset);
+                self.size = self.size.min(available);
             }
+        } else {
+            // A stream has no seekable offset or knowable length; copy it
+            // whole (read to EOF, never truncate) rather than honoring a
+            // slice window that can't be applied.
+            self.size = MAX_SIZE;
         }
     }
 

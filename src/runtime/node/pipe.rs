@@ -291,6 +291,13 @@ impl Pipe {
                     unsafe { &mut *self.reader.as_ptr() }.read();
                 }
                 sys::Result::Err(err) => {
+                    // Roll back the READING flag + strong JSRef taken above, so
+                    // a caller that starts reading, gets an error, and neither
+                    // readStop()s nor close()s doesn't leave the wrapper
+                    // permanently GC-rooted. (The in-tree caller destroy()s on a
+                    // nonzero return, which also cleans up via close_internal.)
+                    self.update_flags(|f| f.remove(Flags::READING));
+                    self.safe_downgrade();
                     return Ok(JSValue::js_number_from_int32(to_uv_errno(&err)));
                 }
             }

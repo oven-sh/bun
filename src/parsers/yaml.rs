@@ -4243,8 +4243,18 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     // implicit flow-map key's c-ns-properties must stay on the
                     // key's line. parse_flow_explicit_key pre-scans properties
                     // before pushing FlowKey, so explicit `?` keys never reach
-                    // this arm with FlowKey set.
-                    if self.context.get() == Context::FlowKey && self.token.line != prop_line {
+                    // this arm with FlowKey set. A terminator (`}`/`]`/`,`/`:`)
+                    // means the key is the e-scalar — no separation to check.
+                    if self.context.get() == Context::FlowKey
+                        && self.token.line != prop_line
+                        && !matches!(
+                            self.token.data,
+                            TokenData::MappingEnd
+                                | TokenData::SequenceEnd
+                                | TokenData::CollectEntry
+                                | TokenData::MappingValue
+                        )
+                    {
                         return Err(ParseError::MultilineImplicitKey);
                     }
                     continue;
@@ -4258,7 +4268,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         tag,
                         ..Default::default()
                     })?;
-                    if self.context.get() == Context::FlowKey && self.token.line != prop_line {
+                    if self.context.get() == Context::FlowKey
+                        && self.token.line != prop_line
+                        && !matches!(
+                            self.token.data,
+                            TokenData::MappingEnd
+                                | TokenData::SequenceEnd
+                                | TokenData::CollectEntry
+                                | TokenData::MappingValue
+                        )
+                    {
                         return Err(ParseError::MultilineImplicitKey);
                     }
                     continue;

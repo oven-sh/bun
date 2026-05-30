@@ -2003,6 +2003,12 @@ folded: >
             expect(() => YAML.parse(`{&a\nx: 1}`)).toThrow();
             expect(() => YAML.parse(`{!!str &x\na: 1}`)).toThrow();
             expect(() => YAML.parse(`{!!str\n&x a: 1}`)).toThrow();
+            // Property + e-scalar key (terminator on next line) — no
+            // s-separate to check; the key is just the empty node.
+            expect(YAML.parse(`{!!str\n}`)).toEqual({ "": null });
+            expect(YAML.parse(`{!!str\n: x}`)).toEqual({ "": "x" });
+            expect(YAML.parse(`{&a\n: x, y: *a}`)).toEqual({ null: "x", y: null });
+            expect(YAML.parse(`{!!str\n,a}`)).toEqual({ "": null, a: null });
             // explicit `?` key uses s-separate(n,c) — newline allowed
             expect(YAML.parse(`{? !!str\na: 1}`)).toEqual({ a: 1 });
             // FLOW-IN value position uses s-separate-lines — newline allowed
@@ -2146,7 +2152,7 @@ folded: >
             expect(YAML.parse(`"\\U0000D800"`)).toEqual("\uD800");
           });
 
-          test("[112] escaped CRLF as b-non-content → 'ab' (REAL BUG: bun gives 'a\\nb')", () => {
+          test("[112] escaped CRLF as b-non-content joins as nothing", () => {
             expect(YAML.parse(`"a\\\r\nb"`)).toEqual("ab");
           });
 

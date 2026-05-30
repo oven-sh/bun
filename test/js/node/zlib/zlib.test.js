@@ -143,9 +143,9 @@ describe("zlib", () => {
     expect(got.equals(expected)).toBe(true);
   });
 
-  // The explicit { library: "libdeflate" } opt-in is single-shot; it must still
-  // decode every member of a concatenated stream (not just the first) and match
-  // the default zlib path.
+  // The explicit { library: "libdeflate" } opt-in decodes every member of a
+  // concatenated stream itself (no fallback to the zlib path), and its output
+  // must byte-match both the default path and node:zlib.
   it("Bun.gunzipSync({ library: 'libdeflate' }) decodes all members", () => {
     const a = Buffer.from("first ");
     const b = Buffer.from("second ");
@@ -154,6 +154,11 @@ describe("zlib", () => {
     const expected = Buffer.concat([a, b, c]);
 
     expect(Buffer.from(gunzipSync(multi, { library: "libdeflate" }))).toEqual(expected);
+    // The libdeflate fast path, the default zlib path, and node:zlib all agree.
+    expect(Buffer.from(gunzipSync(multi, { library: "libdeflate" }))).toEqual(zlib.gunzipSync(multi));
+    expect(Buffer.from(gunzipSync(multi, { library: "libdeflate" }))).toEqual(
+      Buffer.from(gunzipSync(multi, { library: "zlib" })),
+    );
     // Trailing zero padding is ignored, like the default path.
     const padded = Buffer.concat([zlib.gzipSync("ab"), zlib.gzipSync("cd"), Buffer.alloc(8)]);
     expect(Buffer.from(gunzipSync(padded, { library: "libdeflate" })).toString()).toBe("abcd");

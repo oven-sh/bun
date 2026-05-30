@@ -1,11 +1,10 @@
 import { Socket } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { gcTick } from "harness";
+import { bunEnv, bunExe, gcTick } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
+import { brotliCompressSync, deflateSync, gunzipSync, gzipSync, zstdCompressSync } from "node:zlib";
 import path from "path";
-import { gzipSync } from "zlib";
 
 const gzipped = path.join(import.meta.dir, "fixture.html.gz");
 const html = path.join(import.meta.dir, "fixture.html");
@@ -331,7 +330,10 @@ describe("fetch() with a concatenated multi-member gzip body", () => {
     using server = serve(small);
     const res = await fetch(server.url);
     expect(res.status).toBe(200);
-    expect(await res.text()).toBe(smallExpected);
+    const got = Buffer.from(await res.arrayBuffer());
+    expect(got.toString()).toBe(smallExpected);
+    // fetch's decoded body byte-equals node:zlib.gunzipSync of the same stream.
+    expect(got.equals(gunzipSync(small))).toBe(true);
   });
 
   it("decodes all members (large body)", async () => {
@@ -341,6 +343,7 @@ describe("fetch() with a concatenated multi-member gzip body", () => {
     const got = Buffer.from(await res.arrayBuffer());
     expect(got.length).toBe(largeExpected.length);
     expect(got.equals(largeExpected)).toBe(true);
+    expect(got.equals(gunzipSync(large))).toBe(true);
   });
 
   // A `Content-Encoding: gzip` body that is not valid gzip (here: leading 0x00)
@@ -471,5 +474,51 @@ describe("fetch() with a concatenated multi-member gzip body", () => {
     const res = await fetch(`http://${server.hostname}:${server.port}`);
     expect(res.status).toBe(200);
     expect(await res.text()).toBe(expected);
+  });
+
+  // The libdeflate fast path and the zlib slow path (BUN_FEATURE_FLAG_NO_LIBDEFLATE)
+  // must decode a multi-member body to the exact same bytes — and both must match
+  // node:zlib. A subprocess serves the stream and fetches it back, so the env flag
+  // takes effect on the HTTP thread; the two runs are diffed and compared to Node.
+  it("libdeflate and zlib paths decode a multi-member body identically", async () => {
+    const members = [Buffer.from("alpha "), Buffer.alloc(400 * 1024, "B"), Buffer.from(" omega")];
+    const body = Buffer.concat(members.map(m => gzipSync(m)));
+    const expected = gunzipSync(body); // node:zlib reference
+
+    // Fetch the concatenated gzip body back from an in-process server and print
+    // the decoded bytes as hex. Runs under whatever libdeflate setting the parent
+    // env dictates.
+    const script = `
+      const body = Buffer.from(${JSON.stringify(body.toString("base64"))}, "base64");
+      using server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(body, { headers: { "Content-Encoding": "gzip" } }),
+      });
+      const res = await fetch(server.url);
+      if (res.status !== 200) throw new Error("status " + res.status);
+      const got = Buffer.from(await res.arrayBuffer());
+      process.stdout.write(got.toString("hex"));
+    `;
+
+    async function run(env: Record<string, string>) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return Buffer.from(stdout, "hex");
+    }
+
+    const [fast, slow] = await Promise.all([run({}), run({ BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1" })]);
+    // libdeflate fast path == node:zlib
+    expect(fast.equals(expected)).toBe(true);
+    // zlib slow path == node:zlib
+    expect(slow.equals(expected)).toBe(true);
+    // and therefore the two Bun paths agree with each other
+    expect(fast.equals(slow)).toBe(true);
   });
 });

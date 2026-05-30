@@ -93,3 +93,52 @@ test("net.Socket({handle, onread}) passes user buffer to callback", async () => 
   expect(calls[0].buf).not.toBe(handleBuf);
   expect(userBuf.subarray(0, 5).toString()).toBe("hello");
 });
+
+// A stream-wrap handle (Pipe/TTY) reads into its own buffer and can deliver a
+// chunk larger than the user's onread buffer. onStreamRead must slice it into
+// buffer-sized pieces and deliver every byte, not truncate to one callback.
+test("net.Socket({handle, onread}) does not drop bytes when chunk > user buffer", async () => {
+  let onread;
+  const handle = {
+    readStart() {
+      return 0;
+    },
+    readStop() {
+      return 0;
+    },
+    close() {},
+    set onread(fn) {
+      onread = fn;
+    },
+    get onread() {
+      return onread;
+    },
+    reading: false,
+  };
+
+  const userBuf = Buffer.alloc(4);
+  const received: Buffer[] = [];
+  const socket = new Socket({
+    handle,
+    manualStart: true,
+    writable: false,
+    onread: {
+      buffer: userBuf,
+      callback(nread, buf) {
+        // Copy out — userBuf is reused across callbacks.
+        received.push(Buffer.from(buf.subarray(0, nread)));
+      },
+    },
+  });
+  socket.read(0);
+
+  // 10 bytes into a 4-byte buffer → expect slices of 4, 4, 2.
+  onread.call(handle, 10, Buffer.from("0123456789"));
+  onread.call(handle, -4095, undefined); // UV_EOF
+
+  await new Promise(resolve => socket.on("end", resolve));
+
+  expect(received.map(b => b.toString())).toEqual(["0123", "4567", "89"]);
+  expect(Buffer.concat(received).toString()).toBe("0123456789");
+  expect(socket.bytesRead).toBe(10);
+});

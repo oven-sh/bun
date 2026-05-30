@@ -2680,19 +2680,34 @@ function onStreamRead(nread, arrayBuffer) {
     self.bytesRead += nread;
     let ret;
     if (self[kBuffer]) {
-      // onread: {buffer, callback}. Node's native layer writes directly into
-      // the user buffer; copy from the handle's buffer so the callback
-      // receives the caller's buffer as documented.
-      let userBuf = self[kBufferGen]();
-      if ($isTypedArrayView(userBuf)) {
-        if (userBuf !== arrayBuffer) {
-          const n = nread < userBuf.byteLength ? nread : userBuf.byteLength;
-          userBuf.set(arrayBuffer.subarray(0, n));
+      // onread: {buffer, callback}. Node's native layer reads directly into the
+      // user buffer so nread <= buffer.byteLength. Bun's stream-wrap handle
+      // (Pipe/TTY) reads into its own scratch buffer and can deliver a chunk
+      // larger than the user buffer, so copy in user-buffer-sized slices and
+      // invoke the callback once per slice (re-fetching kBufferGen() each time,
+      // as Node does) rather than truncating and dropping the remainder.
+      let offset = 0;
+      ret = true;
+      do {
+        let userBuf = self[kBufferGen]();
+        let n;
+        if ($isTypedArrayView(userBuf)) {
+          const cap = userBuf.byteLength;
+          n = nread - offset < cap ? nread - offset : cap;
+          if (userBuf !== arrayBuffer || offset !== 0) {
+            userBuf.set(arrayBuffer.subarray(offset, offset + n));
+          }
+        } else {
+          // No typed-array buffer supplied: hand over the remaining slice.
+          userBuf = offset === 0 ? arrayBuffer : arrayBuffer.subarray(offset);
+          n = nread - offset;
         }
-      } else {
-        userBuf = arrayBuffer;
-      }
-      ret = self[kBufferCb](nread, userBuf);
+        offset += n;
+        ret = self[kBufferCb](n, userBuf);
+        // Stop if the callback asked us to pause, or we made no progress
+        // (zero-length user buffer) to avoid an infinite loop.
+        if (ret === false || n === 0) break;
+      } while (offset < nread);
     } else {
       ret = self.push(arrayBuffer);
     }

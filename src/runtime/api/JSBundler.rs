@@ -1087,7 +1087,7 @@ pub mod js_bundler {
                         &options::LOADER_API_NAMES,
                         "\"js\", \"jsx\", \"ts\", \"tsx\", \"css\", \"file\", \"json\", \"toml\", \"wasm\", \"napi\", \"base64\", \"dataurl\", \"text\", \"html\"",
                     )?);
-                    loader_names.push(prop.to_owned_slice().into_boxed_slice());
+                    loader_names.push(prop.to_owned_box());
                 }
 
                 this.loaders = Some(api::LoaderMap {

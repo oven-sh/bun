@@ -487,7 +487,7 @@ impl NetworkTask {
             }
 
             // This actually duplicates the string! So we defer deref the WTF managed one above.
-            let url_bytes = tmp.to_owned_slice().into_boxed_slice();
+            let url_bytes = tmp.to_owned_box();
 
             {
                 let joined = URL::parse(&url_bytes);

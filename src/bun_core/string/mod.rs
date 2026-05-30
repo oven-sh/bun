@@ -733,6 +733,13 @@ impl String {
         v
     }
 
+    /// Like [`to_owned_slice`] but without the trailing NUL sentinel, so
+    /// `len == capacity` on the fast path and `into_boxed_slice` is realloc-free.
+    #[inline]
+    pub fn to_owned_box(&self) -> Box<[u8]> {
+        self.to_utf8().into_vec().into_boxed_slice()
+    }
+
     pub fn eql_utf8(&self, other: &[u8]) -> bool {
         // PORT NOTE: no `as_utf8()` fast-path here — for a 16-bit ZigString,
         // `as_utf8()` would call `slice()` (which debug-asserts !is_16bit) and

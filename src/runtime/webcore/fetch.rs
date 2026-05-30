@@ -284,7 +284,7 @@ pub(crate) fn bun_fetch_preconnect(
     // `preconnect` takes a `URL<'static>` that borrows a `Box<[u8]>` href and
     // assumes ownership when `is_url_owned == true` (it reconstructs the Box
     // to free it). Hand the allocation off via `heap::alloc`.
-    let href_box: Box<[u8]> = url_str.to_owned_slice().into_boxed_slice();
+    let href_box: Box<[u8]> = url_str.to_owned_box();
     let href_raw: *mut [u8] = bun_core::heap::into_raw(href_box);
     // SAFETY: `href_raw` is a freshly-leaked Box<[u8]>; we either pass ownership
     // to `preconnect` (which frees it) or reclaim it on the early-return paths.
@@ -1326,7 +1326,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // an opaque ZST FFI handle (S008) — safe `*mut → &mut` deref.
             let headers_ref = bun_opaque::opaque_deref_mut(headers_);
             if let Some(hostname_) = headers_ref.fast_get(HTTPHeaderName::Host) {
-                hostname = Some(hostname_.to_owned_slice().into_boxed_slice());
+                hostname = Some(hostname_.to_owned_box());
             }
             if url.is_s3() {
                 if let Some(range_) = headers_ref.fast_get(HTTPHeaderName::Range) {

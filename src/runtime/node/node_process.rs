@@ -164,7 +164,7 @@ mod _impl {
 
         // PORT NOTE: `to_owned_slice` is infallible (Vec<u8>) in the Rust port, so
         // the Zig OOM-throw path is unreachable here.
-        let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
+        let new_title: Box<[u8]> = newvalue.to_owned_box();
 
         // Zig: `if (old) |slice| allocator.free(slice); Bun__Node__ProcessTitle = new_title;`
         // — assigning into the `Option<Box<[u8]>>` static drops the previous box.

@@ -522,12 +522,16 @@ class BunWebSocket extends EventEmitter {
     const mask = 1 << eventIds[event];
     const hasPersistentListener = (this.#eventId & mask) === mask;
     if (hasPersistentListener) return;
-    // Register a persistent bridge listener once. A no-op noop callback
-    // goes into the EventEmitter list via `#onOrOnce` so the `#eventId` bit
-    // gets flipped and the native forwarder is installed; subsequent
-    // `prependListener` calls will then see `hasPersistentListener` and
-    // skip this branch.
+    // Install the native forwarder once. `#onOrOnce` flips the `#eventId`
+    // bit and registers the native listener as a side effect, but it also
+    // appends the listener we pass to the EventEmitter list. We only want
+    // the side effect here (the caller, e.g. `super.prependListener`, owns
+    // the real listener), so register `noopBridgeListener` and immediately
+    // remove it — leaving the native forwarder installed and the
+    // EventEmitter list untouched. Subsequent calls see
+    // `hasPersistentListener` and skip this branch.
     this.#onOrOnce(event, noopBridgeListener, undefined);
+    super.off(event, noopBridgeListener);
   }
 
   send(data, opts, cb) {

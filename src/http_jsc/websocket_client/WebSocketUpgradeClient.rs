@@ -1197,11 +1197,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     if full.len() < target_len {
                         // SAFETY: short-lived `&mut`; ends before return. Own
                         // the accumulated bytes so subsequent reads append.
+                        // `full` is always a fresh `to_vec()` from the caller
+                        // (borrowck forced the copy upstream), so it never
+                        // aliases `me.body` — just replace.
                         let me = unsafe { &mut *this };
-                        if me.body.as_ptr() != full.as_ptr() {
-                            me.body.clear();
-                            me.body.extend_from_slice(full);
-                        }
+                        me.body.clear();
+                        me.body.extend_from_slice(full);
                         me.deferred_handshake = DeferredHandshake::WaitingForLength(target_len);
                         return;
                     }
@@ -1216,12 +1217,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 None => {
                     // No Content-Length — RFC 7230 §3.3.3: read until the
                     // peer closes. Defer to handle_end / handle_close.
-                    // SAFETY: short-lived `&mut`; ends before return.
+                    // SAFETY: short-lived `&mut`; ends before return. `full`
+                    // is a fresh `to_vec()` (never aliases `me.body`).
                     let me = unsafe { &mut *this };
-                    if me.body.as_ptr() != full.as_ptr() {
-                        me.body.clear();
-                        me.body.extend_from_slice(full);
-                    }
+                    me.body.clear();
+                    me.body.extend_from_slice(full);
                     me.deferred_handshake = DeferredHandshake::WaitingForEof;
                     return;
                 }

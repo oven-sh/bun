@@ -922,7 +922,10 @@ describe.skipIf(!nodeExe())("matches Node.js gzip decoding", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Surface stdout/stderr before the exit code so a malformed fixture gives a
+    // useful message instead of a bare JSON.parse throw.
     expect(stderr).toBe("");
+    expect(stdout, `fixture produced no JSON on stdout (stderr: ${stderr})`).not.toBe("");
     expect(exitCode).toBe(0);
     return JSON.parse(stdout);
   }

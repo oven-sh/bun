@@ -352,7 +352,7 @@ describe("fetch() with a concatenated multi-member gzip body", () => {
   // leading zero still reaches the erroring decode path.
   it("errors on an invalid gzip body instead of returning empty", async () => {
     using server = serve(Buffer.alloc(24)); // all zero bytes, not gzip
-    expect(fetch(server.url).then(r => r.text())).rejects.toThrow();
+    await expect(fetch(server.url).then(r => r.text())).rejects.toThrow();
   });
 
   // Regression: the libdeflate grow loop must double capacity, not

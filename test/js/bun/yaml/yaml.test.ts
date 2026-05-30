@@ -2092,12 +2092,16 @@ folded: >
             },
           );
 
-          test.todo("[99] secondary shorthand + e-scalar in flow, ends at `,`", () => {
-            expect(() => YAML.parse(`[!!str, a]`)).toThrow();
+          // [159]/[161] admit c-ns-properties on e-scalar; libyaml-based refs
+          // reject because their scanner expects content after a property.
+          test("[99] secondary shorthand + e-scalar in flow, ends at `,` — bun spec-correct", () => {
+            expect(YAML.parse(`[!!str, a]`)).toEqual(["", "a"]);
           });
 
-          test.todo("[99] secondary shorthand on empty explicit key+value in flow", () => {
-            expect(() => YAML.parse(`{? !!str : !!int}`)).toThrow();
+          test("[99] secondary shorthand on empty explicit key+value in flow — bun spec-correct", () => {
+            // !!int on e-scalar resolves to null per resolve_null (no canonical
+            // int form for the empty scalar).
+            expect(YAML.parse(`{? !!str : !!int}`)).toEqual({ "": null });
           });
 
           test.todo("[99],[40] `:` inside secondary suffix — refs reject unresolved (false positive)", () => {
@@ -2137,20 +2141,30 @@ folded: >
             expect(() => YAML.parse(`{: , : }`)).toThrow();
           });
 
-          test.todo("[159] tag-only entries (e-scalar with property)", () => {
-            expect(() => YAML.parse(`[!!str , !!null]`)).toThrow();
+          // [159] c-ns-flow-node ::= … | (c-ns-properties (s-separate ns-flow-content)?)
+          // — the content is optional, so a property alone is a tagged/anchored
+          // e-scalar. libyaml-based refs reject because their scanner expects
+          // content after a property; bun's parse_node post-loop resolves the
+          // tag and registers the anchor on the implicit ENull.
+          test("[159] tag-only entries (e-scalar with property) — bun spec-correct", () => {
+            expect(YAML.parse(`[!!str , !!null]`)).toEqual(["", null]);
           });
 
-          test.todo("[159] tag immediately before `]` — e-scalar, no s-separate", () => {
-            expect(() => YAML.parse(`[!!str]`)).toThrow();
+          test("[159] tag immediately before `]` — e-scalar, no s-separate — bun spec-correct", () => {
+            expect(YAML.parse(`[!!str]`)).toEqual([""]);
           });
 
-          test.todo("[159] anchor+tag on e-scalar", () => {
-            expect(() => YAML.parse(`[&a !!str]`)).toThrow();
+          test("[159] anchor+tag on e-scalar — bun spec-correct", () => {
+            expect(YAML.parse(`[&a !!str]`)).toEqual([""]);
+            // anchor is registered on the resolved e-node, so a later alias
+            // resolves to the same value.
+            expect(YAML.parse(`[&a !!str, *a]`)).toEqual(["", ""]);
+            expect(YAML.parse(`[&a , *a]`)).toEqual([null, null]);
           });
 
-          test.todo("[161] tag on e-scalar as flow-map value", () => {
-            expect(() => YAML.parse(`{a: !!str}`)).toThrow();
+          test("[161] tag on e-scalar as flow-map value — bun spec-correct", () => {
+            expect(YAML.parse(`{a: !!str}`)).toEqual({ a: "" });
+            expect(YAML.parse(`{a: !!str , b: !!null}`)).toEqual({ a: "", b: null });
           });
         });
 

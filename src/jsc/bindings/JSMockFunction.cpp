@@ -838,7 +838,11 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     }
 
     JSC::ArgList args = JSC::ArgList(callframe);
-    JSValue thisValue = callframe->thisValue();
+    // For `f()` calls where `f` resolves through a scope, JSC passes the resolved
+    // JSScope as the unconverted `this` argument and relies on the callee's ToThis to
+    // normalize it. Host functions never run ToThis, so normalize here to avoid leaking
+    // an engine-internal scope object through mockReturnThis / the contexts array.
+    JSValue thisValue = callframe->thisValue().toThis(globalObject, JSC::ECMAMode::strict());
     JSC::JSArray* argumentsArray = nullptr;
     {
         JSC::ObjectInitializationScope object(vm);

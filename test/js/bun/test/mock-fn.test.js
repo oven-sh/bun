@@ -238,6 +238,18 @@ describe("mock()", () => {
     const obj = { fn };
     expect(obj.fn()).toBe(obj);
   });
+  test("mockReturnThis on a closure-captured mock does not leak a scope object", () => {
+    // When a mock is called as a bare identifier captured by a closure, JSC passes the
+    // enclosing environment record as the unconverted `this`. mockReturnThis must not hand
+    // that engine-internal scope object back to JavaScript (reading a TDZ binding from it
+    // surfaces the empty JSValue and crashes the interpreter on a later `typeof`).
+    const fn = jest.fn().mockReturnThis();
+    const capture = () => fn;
+    expect(capture()).toBe(fn);
+    const result = fn();
+    expect(result).toBeUndefined();
+    expect(typeof result === "function").toBe(false);
+  });
   if (isBun) {
     test("jest.fn(10) return value shorthand", () => {
       expect(jest.fn(10)()).toBe(10);

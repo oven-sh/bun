@@ -131,3 +131,77 @@ test("net.Socket({handle, onread}) clamps nread to user buffer", async () => {
   expect(userBuf.toString()).toBe("0123");
   expect(socket.bytesRead).toBe(4);
 });
+
+// Without the onread option the data path pushes straight to the stream. The
+// handle may report fewer bytes than the buffer it allocated (libuv's
+// read-callback contract), so the pushed chunk must be sliced to nread —
+// otherwise trailing garbage leaks into 'data' and bytesRead disagrees.
+test("net.Socket({handle}) pushes only nread bytes of an oversized buffer", async () => {
+  let onread;
+  const handle = {
+    readStart: () => 0,
+    readStop: () => 0,
+    close() {},
+    set onread(fn) {
+      onread = fn;
+    },
+    get onread() {
+      return onread;
+    },
+    reading: false,
+  };
+
+  const socket = new Socket({ handle, manualStart: true, writable: false });
+  const chunks: Buffer[] = [];
+  socket.on("data", c => chunks.push(c));
+  socket.read(0);
+
+  // 100-byte buffer, only 5 bytes actually read.
+  const buf = Buffer.alloc(100);
+  buf.write("hello");
+  onread.call(handle, 5, buf);
+  onread.call(handle, -4095, undefined); // UV_EOF
+
+  await new Promise(resolve => socket.on("end", resolve));
+
+  const received = Buffer.concat(chunks);
+  expect(received.length).toBe(5);
+  expect(received.toString()).toBe("hello");
+  expect(socket.bytesRead).toBe(5);
+});
+
+// Node's onStreamRead refreshes the idle timer on every invocation
+// (stream[kUpdateTimer]()), so a socket actively receiving data does not fire
+// 'timeout'. The port must do the same via _unrefTimer().
+test("net.Socket({handle}) refreshes the idle timer on incoming data", async () => {
+  let onread;
+  const handle = {
+    readStart: () => 0,
+    readStop: () => 0,
+    close() {},
+    set onread(fn) {
+      onread = fn;
+    },
+    get onread() {
+      return onread;
+    },
+    reading: false,
+  };
+
+  const socket = new Socket({ handle, manualStart: true, writable: false });
+  let unrefTimerCalls = 0;
+  const original = socket._unrefTimer.bind(socket);
+  socket._unrefTimer = function () {
+    unrefTimerCalls++;
+    return original();
+  };
+
+  socket.on("data", () => {});
+  socket.read(0);
+
+  onread.call(handle, 5, Buffer.from("hello"));
+  expect(unrefTimerCalls).toBeGreaterThanOrEqual(1);
+
+  onread.call(handle, -4095, undefined); // UV_EOF
+  await new Promise(resolve => socket.on("end", resolve));
+});

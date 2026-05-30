@@ -2658,6 +2658,7 @@ function initSocketHandle(self) {
 // Node lib/internal/stream_base_commons.js onStreamRead.
 function onStreamRead(nread, arrayBuffer) {
   const self = this[owner_symbol];
+  self._unrefTimer();
   if (nread > 0) {
     let ret;
     if (self[kBuffer]) {
@@ -2679,7 +2680,10 @@ function onStreamRead(nread, arrayBuffer) {
       ret = self[kBufferCb](n, userBuf);
     } else {
       self.bytesRead += nread;
-      ret = self.push(arrayBuffer);
+      // The handle reports how many bytes it actually wrote into arrayBuffer,
+      // which may be smaller than the buffer it allocated (libuv's read-callback
+      // contract). Push exactly nread bytes, mirroring Node's stream_base_commons.
+      ret = self.push(nread < arrayBuffer.length ? arrayBuffer.subarray(0, nread) : arrayBuffer);
     }
     if (ret === false && this.reading) {
       this.reading = false;

@@ -616,12 +616,11 @@ it("should include unused resolutions in the lockfile", async () => {
   await runBunInstall(env, packageDir, { frozenLockfile: true });
 });
 
-it("requires an integrity hash when an npm package entry points at a tarball URL outside the configured registry", async () => {
+it("requires an integrity hash for an off-registry npm tarball URL at lockfileVersion 2", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
 
-  // Stand-in for a host that is not the configured registry. A correct install
-  // must never contact it for this lockfile, because the entry carries no
-  // integrity hash that would pin the tarball contents.
+  // Stand-in for a host that is not the configured registry. Parsing fails
+  // before any fetch, so this is never actually contacted.
   let offRegistryRequests = 0;
   await using offRegistry = Bun.serve({
     port: 0,
@@ -644,7 +643,7 @@ it("requires an integrity hash when an npm package entry points at a tarball URL
 
   const lockfileWithUrl = (tarballUrl: string) =>
     JSON.stringify({
-      lockfileVersion: 1,
+      lockfileVersion: 2,
       configVersion: 1,
       workspaces: {
         "": {
@@ -659,8 +658,10 @@ it("requires an integrity hash when an npm package entry points at a tarball URL
       },
     });
 
-  // The entry keeps the well-known name and version but points the tarball at
-  // a different host and provides no integrity hash.
+  // The entry keeps the well-known name and version but points the tarball at a
+  // different host and provides no integrity hash. At lockfileVersion 2 this
+  // fails closed: parsing rejects it before any fetch. (The v1 backward-compat
+  // case — parsing accepts such an entry — is covered in lockfile-version-2.test.ts.)
   await write(
     join(packageDir, "bun.lock"),
     lockfileWithUrl(`http://127.0.0.1:${offRegistry.port}/no-deps/-/no-deps-1.0.0.tgz`),
@@ -682,9 +683,10 @@ it("requires an integrity hash when an npm package entry points at a tarball URL
   expect(await exists(join(packageDir, "node_modules", "no-deps"))).toBe(false);
   expect(await exited).not.toBe(0);
 
-  // The same entry with the tarball URL under the configured registry and no
-  // integrity hash is still accepted (backward compat for lockfiles that omit
-  // the hash for registry-hosted tarballs).
+  // The same entry with the tarball URL *under* the configured registry and no
+  // integrity hash is accepted even at v2 (the off-registry gate does not apply,
+  // so `npm_url_needs_integrity` is false — registry-hosted tarballs may still
+  // omit the hash).
   await write(join(packageDir, "bun.lock"), lockfileWithUrl(`${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz`));
 
   ({ exited, stdout, stderr } = spawn({
@@ -703,4 +705,123 @@ it("requires an integrity hash when an npm package entry points at a tarball URL
     name: "no-deps",
     version: "1.0.0",
   });
+});
+
+it("escapes double quotes in npm registry tarball URLs when saving bun.lock", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "registry-url-escaping",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    }),
+  );
+
+  // A registry-controlled tarball URL containing a double quote and JSON syntax.
+  // When the lockfile is saved again, the URL must stay confined to its own
+  // string value instead of contributing top-level lockfile structure.
+  const tarballUrl = `${registry.registryUrl()}no-deps/-/no-deps-1.0.0.tgz?x=", "trustedDependencies": ["no-deps"], "y": "`;
+
+  await write(
+    join(packageDir, "bun.lock"),
+    JSON.stringify({
+      lockfileVersion: 1,
+      configVersion: 1,
+      workspaces: {
+        "": {
+          name: "registry-url-escaping",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        },
+      },
+      packages: {
+        "no-deps": ["no-deps@1.0.0", tarballUrl, {}, ""],
+      },
+    }),
+  );
+
+  let { exited, stdout, stderr } = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  let [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+  expect(out).toContain("Saved bun.lock");
+  expect(await exited).toBe(0);
+
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+
+  // The embedded quote is escaped, keeping the URL a single JSON string value.
+  expect(lockfile).toContain('?x=\\"');
+  expect(lockfile).toContain('\\"trustedDependencies\\"');
+  // No top-level key can be forged from the URL contents.
+  expect(lockfile).not.toContain('"trustedDependencies":');
+
+  // The saved lockfile still parses and is stable on a subsequent install.
+  ({ exited, stdout, stderr } = spawn({
+    cmd: [bunExe(), "install", "--lockfile-only"],
+    cwd: packageDir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  }));
+
+  [out, err] = await Promise.all([stdout.text(), stderr.text()]);
+  expect(err).toContain("Saved lockfile");
+  expect(out).toContain("Saved bun.lock");
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+  expect(await exited).toBe(0);
+});
+
+it("escapes quotes and newlines in requested version literals when writing yarn.lock", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir();
+
+  // A version range carrying a quote and a newline. The extra characters are
+  // skipped by the lenient range parser (it still resolves to 1.0.0), but the
+  // stored literal keeps them, so the yarn.lock printer must keep the whole
+  // literal inside a single quoted scalar.
+  const craftedRange = '1.0.0 "\n  resolved "http://injected.example/forged-by-yarn-printer';
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "yarn-lock-escaping",
+      dependencies: {
+        "no-deps": craftedRange,
+      },
+    }),
+  );
+
+  const { exited, stderr } = spawn({
+    cmd: [bunExe(), "install", "--yarn"],
+    cwd: packageDir,
+    env,
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+
+  const err = await stderr.text();
+  const exitCode = await exited;
+
+  expect(err).toContain("Saved yarn.lock");
+  expect(exitCode).toBe(0);
+
+  const yarnLock = await file(join(packageDir, "yarn.lock")).text();
+  const lines = yarnLock.split("\n");
+
+  // The package resolves normally and its real resolved URL points at the test registry.
+  expect(lines.some(line => /^ {2}resolved "http:\/\/localhost:\d+\//.test(line))).toBe(true);
+
+  // The literal's embedded quote is escaped, so the requested range stays inside one quoted key.
+  expect(yarnLock).toContain('\\"http://injected.example');
+
+  // No yarn.lock line is forged from the version literal's contents.
+  expect(lines.filter(line => line.trimStart().startsWith('resolved "http://injected.example'))).toEqual([]);
 });

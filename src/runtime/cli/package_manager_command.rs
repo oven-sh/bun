@@ -8,13 +8,13 @@ use bun_install::dependency::Dependency;
 use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, tree};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
-    CommandLineArguments, Subcommand, get_cache_directory, package_manager_options::LogLevel,
-    setup_global_dir,
+    CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
+    package_manager_options::LogLevel, setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, migration};
 use bun_paths::{self as Path, PathBuffer};
 use bun_resolver::fs as Fs;
-use bun_sys::{self, Dir, Fd, FdExt as _, File};
+use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::Command;
 use crate::cli::pm_pkg_command::PmPkgCommand;
@@ -370,28 +370,40 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 .has_meta_hash_changed(true, pm.lockfile.packages.len())?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"cache") {
-            let mut dir = PathBuffer::uninit();
-            let fd = get_cache_directory(pm);
-            let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
-                Ok(p) => &p[..],
-                Err(err) => {
-                    Output::pretty_errorln(format_args!(
-                        "{} getting cache directory",
-                        bun_core::Error::from(err).name(),
-                    ));
-                    Global::crash();
-                }
-            };
-
             if pm.options.positionals.len() > 1
                 && strings::eql_comptime(pm.options.positionals[1], b"rm")
             {
-                fd.close();
-
                 let mut had_err = false;
 
-                if let Err(err) = bun_sys::delete_tree_absolute(outpath) {
-                    Output::err(err, "Could not delete {s}", (bstr::BStr::new(outpath),));
+                let mut env_map = bun_dotenv::Map::init();
+                let mut process_env = bun_dotenv::Loader::init(&mut env_map);
+                process_env.load_process()?;
+                let cache_dir = fetch_cache_directory_path(&mut process_env, None);
+                let mut rm_buf = PathBuffer::uninit();
+                let rm_dir = match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
+                    Ok(d) => d,
+                    Err(err) => {
+                        Output::pretty_errorln(format_args!(
+                            "{} getting cache directory",
+                            err.name(),
+                        ));
+                        Global::crash();
+                    }
+                };
+                let rm_path = match rm_dir.get_fd_path(&mut rm_buf) {
+                    Ok(p) => &p[..],
+                    Err(err) => {
+                        Output::pretty_errorln(format_args!(
+                            "{} getting cache directory",
+                            bun_core::Error::from(err).name(),
+                        ));
+                        Global::crash();
+                    }
+                };
+                rm_dir.close();
+
+                if let Err(err) = bun_sys::delete_tree_absolute(rm_path) {
+                    Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
                     had_err = true;
                 }
                 Output::prettyln(format_args!("Cleared 'bun install' cache"));
@@ -459,6 +471,18 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Global::exit(if had_err { 1 } else { 0 });
             }
 
+            let mut dir = PathBuffer::uninit();
+            let fd = get_cache_directory(pm);
+            let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
+                Ok(p) => &p[..],
+                Err(err) => {
+                    Output::pretty_errorln(format_args!(
+                        "{} getting cache directory",
+                        bun_core::Error::from(err).name(),
+                    ));
+                    Global::crash();
+                }
+            };
             let _ = Output::writer().write_all(outpath);
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"default-trusted") {

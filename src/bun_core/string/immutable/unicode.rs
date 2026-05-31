@@ -212,10 +212,9 @@ pub fn allocate_latin1_into_utf8(latin1_: &[u8]) -> Result<Vec<u8>, AllocError> 
 // immutable.rs as `strings::{utf16_codepoint, utf16_codepoint_with_fffd,
 // UTF16Replacement}`; the parallel Utf16CodepointLen + duplicate struct/fns
 // that lived in immutable.rs are deleted in favour of this single source of
-// truth. All callers (escapeHTML.rs ×5 — reads only `.len`; visible.rs ×1;
-// unicode.rs ×4; shell_parser/parse.rs ×1; TextEncoderStreamEncoder.rs ×1)
-// resolve through the `pub use unicode_draft::{…}` re-export with no source
-// change.
+// truth. All callers (visible.rs ×1; unicode.rs ×4; shell_parser/parse.rs ×1;
+// TextEncoderStreamEncoder.rs ×1) resolve through the
+// `pub use unicode_draft::{…}` re-export with no source change.
 
 /// `strings.UTF16Replacement` (unicode.zig:569) — decoded UTF-16 codepoint
 /// with surrogate metadata.
@@ -950,6 +949,12 @@ pub fn convert_utf8_to_utf16_in_buffer_z<'a>(buf: &'a mut [u16], input: &[u8]) -
         buf[0] = 0;
         return wstr_in_buf(buf, 0);
     }
+    assert!(
+        input.len() < buf.len() || element_length_utf8_into_utf16(input) < buf.len(),
+        "convert_utf8_to_utf16_in_buffer_z: buf too small (have {} u16 for {} input bytes)",
+        buf.len(),
+        input.len(),
+    );
     let result = simdutf::convert::utf8::to::utf16::le(input, buf);
     buf[result] = 0;
     wstr_in_buf(buf, result)

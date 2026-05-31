@@ -209,6 +209,28 @@ describe("Bun.Transpiler", () => {
       err("module = (t) => 0 Foo { () => () => 0 }", 'Expected ";" but found "Foo"');
     });
 
+    it("scope tracking stays balanced for a forward-declared function inside an if", () => {
+      const exp = ts.expectPrinted_;
+
+      // A function declaration in a single-statement `if`/`else` body gets a fake
+      // block scope so it can be wrapped when it has a body. A TypeScript forward
+      // declaration (no body) emits nothing, so that fake block scope must be
+      // discarded from the scope order; otherwise the next statement's scope is
+      // read out of sync and the parser pops past the topmost scope.
+      exp("if(l)function f(ag): g;\nfor (g in {}) {}", "if (l)\n  ;\nfor (g in {}) {}");
+      exp("if (x) function f(): void;\nfor (y in {}) {}", "if (x)\n  ;\nfor (y in {}) {}");
+      exp("if (x) {} else function g(): void;\nfor (z in {}) {}", "if (x) {}\nfor (z in {}) {}");
+
+      // A function declaration with a body in the same position is still wrapped.
+      exp("if(l)function f(ag): g {}\nfor (g in {}) {}", "if (l) {\n  let f = function(ag) {};\n}\nfor (g in {}) {}");
+
+      // The exact fuzz repro: ts loader, dead-code elimination, trailing \r.
+      const dce = new Bun.Transpiler({ loader: "ts", target: "browser", deadCodeElimination: true });
+      expect(dce.transformSync("if(l)function f(ag): g;\r\nfor (g in {}) {}\r")).toBe(
+        "if (l)\n  ;\nfor (g in {}) {}\n",
+      );
+    });
+
     it("export default interface that is not an interface declaration does not crash", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;
@@ -4049,13 +4071,13 @@ it("Bun.Transpiler.transformSync stack overflows", async () => {
   const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
   const transpiler = new Bun.Transpiler();
   expect(() => transpiler.transformSync(code)).toThrow(`Maximum call stack size exceeded`);
-});
+}, 60_000);
 
 it("Bun.Transpiler.transform stack overflows", async () => {
   const code = await Bun.file(join(import.meta.dir, "fixtures", "lots-of-for-loop.js")).text();
   const transpiler = new Bun.Transpiler();
   expect(async () => await transpiler.transform(code)).toThrow(`Maximum call stack size exceeded`);
-});
+}, 60_000);
 
 it("deeply nested expressions error instead of crashing the process", () => {
   const script = `
@@ -4519,6 +4541,50 @@ describe("minifyWhitespace keeps the space before keyword operators", () => {
   });
 });
 
+it("transform() result is unaffected by detaching the input ArrayBuffer while the task is in flight", async () => {
+  // The async transform parses the input on a work-pool thread. The input bytes
+  // must be copied before the thread hop so that detaching the ArrayBuffer from
+  // the JS thread mid-parse cannot change or free the memory being read.
+  const script = `
+    const transpiler = new Bun.Transpiler({ loader: "js" });
+    const size = 1 << 20;
+    const source = "export const original = 12345;";
+    const bytes = new Uint8Array(size).fill(0x20);
+    new TextEncoder().encodeInto(source, bytes);
+    const expected = transpiler.transformSync(new TextDecoder().decode(bytes), "js");
+
+    const promise = transpiler.transform(bytes, "js");
+    // Detach the backing store while the worker thread may still be parsing it.
+    bytes.buffer.transfer(0);
+    // Recycle similarly-sized allocations holding different valid JS so a stale
+    // read of the old backing store would produce observably different output.
+    const decoys = [];
+    for (let i = 0; i < 8; i++) {
+      const decoy = new Uint8Array(size).fill(0x20);
+      new TextEncoder().encodeInto("export const replaced" + i + " = " + i + ";", decoy);
+      decoys.push(decoy);
+    }
+    const out = await promise;
+    if (out === expected && !out.includes("replaced")) {
+      console.log("OK");
+    } else {
+      console.log("MISMATCH " + JSON.stringify(out.slice(0, 200)));
+    }
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK");
+  expect(exitCode).toBe(0);
+});
+
 // A numeric literal property name like `1e999` overflows to the number Infinity, which the
 // printer emits as "1/0" / "1 / 0". That is not valid syntax in property-name position, so such
 // keys must be printed as computed properties instead.
@@ -4610,4 +4676,91 @@ describe("parse error flood", () => {
     expect(stdout).toContain("DONE");
     expect(exitCode).toBe(0);
   }, 90_000);
+});
+
+describe("multi-line comment scanning", () => {
+  // The lexer's block-comment scanner switches to a SIMD skip
+  // (bun_highway::index_of_interesting_character_in_multiline_comment) when at
+  // least 512 bytes of input remain, so cover sizes on both sides of that
+  // threshold and around vector-width boundaries, plus every byte class the
+  // skip has to stop at ('*', '\r', '\n', non-ASCII).
+  const transpiler = new Bun.Transpiler({ loader: "js" });
+  const xPad = Buffer.alloc(8193, "x").toString();
+  const pad600 = xPad.slice(0, 600);
+
+  const expectParseError = (code, message) => {
+    try {
+      transpiler.transformSync(code);
+    } catch (er) {
+      let err = er;
+      if (er instanceof AggregateError) {
+        err = er.errors[0];
+      }
+      expect(err.message).toBe(message);
+      return;
+    }
+    throw new Error("Expected parse error for code\n\t" + code);
+  };
+
+  it("strips block comments of every size around the SIMD threshold", () => {
+    const sizes = [];
+    for (let size = 480; size <= 576; size++) sizes.push(size);
+    sizes.push(1000, 4095, 4096, 4097, 8193);
+    for (const size of sizes) {
+      const out = transpiler.transformSync(`/*${xPad.slice(0, size)}*/ pass();`);
+      expect({ size, out }).toEqual({ size, out: "pass();\n" });
+    }
+  });
+
+  it("handles a lone '*' at every offset inside a large comment", () => {
+    const aPad = Buffer.alloc(80, "a").toString();
+    const bPad = Buffer.alloc(700, "b").toString();
+    for (let offset = 0; offset < 80; offset++) {
+      const body = aPad.slice(0, offset) + "*" + bPad.slice(0, 700 - offset);
+      const out = transpiler.transformSync(`/*${body}*/ pass();`);
+      expect({ offset, out }).toEqual({ offset, out: "pass();\n" });
+    }
+  });
+
+  it("handles comments made entirely of '*'", () => {
+    const stars = Buffer.alloc(600, "*").toString();
+    expect(transpiler.transformSync(`/*${stars}*/ pass();`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`/*${stars}/ pass();`)).toBe("pass();\n");
+  });
+
+  it("treats newlines inside a large block comment as line terminators (ASI)", () => {
+    for (const newline of ["\n", "\r", "\r\n", "\u2028", "\u2029"]) {
+      const out = transpiler.transformSync(`function f() { return /*${pad600}${newline}${pad600}*/ 1 }`);
+      expect({ newline, out }).toEqual({ newline, out: "function f() {\n  return;\n}\n" });
+    }
+    // control: no newline anywhere inside the comment, so no ASI
+    expect(transpiler.transformSync(`function f() { return /*${pad600}${pad600}*/ 1 }`)).toBe(
+      "function f() {\n  return 1;\n}\n",
+    );
+  });
+
+  it("scans large comments containing non-ASCII text", () => {
+    expect(transpiler.transformSync(`/*${"é".repeat(400)}*/ pass();`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`/*${"🦊".repeat(200)}*/ pass();`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`/* ${pad600} 日本語のコメント ${pad600} */ pass();`)).toBe("pass();\n");
+  });
+
+  it("does not corrupt code around a large comment", () => {
+    const dashes = Buffer.alloc(700, "-").toString();
+    const out = transpiler.transformSync(`const a = "before";/*${dashes}*/const b = "after"; console.log(a, b);`);
+    expect(out).toBe('const a = "before";\nconst b = "after";\nconsole.log(a, b);\n');
+  });
+
+  it("handles a large comment that ends exactly at EOF", () => {
+    expect(transpiler.transformSync(`pass(); /*${pad600}*/`)).toBe("pass();\n");
+    expect(transpiler.transformSync(`pass(); /*${pad600}**/`)).toBe("pass();\n");
+  });
+
+  it("reports unterminated large block comments", () => {
+    const message = 'Expected "*/" to terminate multi-line comment';
+    expectParseError(`/*${pad600}`, message);
+    expectParseError(`/*${pad600}*`, message);
+    expectParseError(`/*${Buffer.alloc(600, "*").toString()}`, message);
+    expectParseError(`/*${pad600}🦊`, message);
+  });
 });

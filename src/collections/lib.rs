@@ -176,9 +176,6 @@ pub use array_hash_map::{
 /// `.values()` / `.entry()` returns a distinct hashbrown type — re-exporting
 /// the crate is the smaller surface.)
 pub use hashbrown;
-/// Explicit-context alias; `ArrayHashMap<K, V>` already has `C = AutoContext`
-/// as a default, this just gives the three-param spelling a distinct name.
-pub type ArrayHashMapWithContext<K, V, C> = ArrayHashMap<K, V, C>;
 
 pub mod string_map;
 pub use string_map::StringMap;
@@ -345,18 +342,6 @@ impl<T, const N: usize> SmallList<T, N> {
     #[inline]
     pub fn from_list(list: Vec<T>) -> Self {
         Self(smallvec::SmallVec::from_vec(list))
-    }
-    #[inline]
-    pub fn from_list_no_deinit(list: Vec<T>) -> Self {
-        Self::from_list(list)
-    }
-    #[inline]
-    pub fn from_baby_list(list: Vec<T>) -> Self {
-        Self::from_list(list)
-    }
-    #[inline]
-    pub fn from_baby_list_no_deinit(list: Vec<T>) -> Self {
-        Self::from_list(list)
     }
 
     // ── access ─────────────────────────────────────────────────────────────

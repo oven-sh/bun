@@ -1156,6 +1156,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     ));
                 }
 
+                // Yarn v1 lockfiles legitimately contain entries without an integrity field
+                // (workspace deps, file:, codeload tarballs), so migration intentionally
+                // accepts off-registry tarball URLs without integrity instead of failing.
                 if Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz") {
                     break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                         sbuf!().append(resolved)?,

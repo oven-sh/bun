@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -831,4 +832,39 @@ it("drops multipart part Content-Type values containing control characters", asy
   expect(tabbed instanceof Blob).toBe(true);
   expect(await tabbed.text()).toBe("tabbed");
   expect(tabbed.type).toBe("text/plain;\tcharset=utf-8");
+});
+
+test("FormData.toJSON merges duplicate numeric field names into an array", async () => {
+  // Field names that parse as array indices ("0", "1", ...) are stored as indexed
+  // properties on the serialized object; appending the same numeric name more than
+  // once must merge into an array (like any other duplicate key) instead of
+  // terminating the process during serialization.
+  const script = `
+    const fd = new FormData();
+    fd.append("0", "a");
+    fd.append("0", "b");
+    fd.append("0", "c");
+    fd.append("tag", "x");
+    fd.append("tag", "y");
+    console.log(JSON.stringify(fd.toJSON()));
+
+    // Same shape arriving from an untrusted multipart request body.
+    const body =
+      '--foo\\r\\nContent-Disposition: form-data; name="0"\\r\\n\\r\\nfirst\\r\\n--foo\\r\\nContent-Disposition: form-data; name="0"\\r\\n\\r\\nsecond\\r\\n--foo--\\r\\n';
+    const parsed = await new Response(body, {
+      headers: { "Content-Type": "multipart/form-data; boundary=foo" },
+    }).formData();
+    console.log(JSON.stringify(parsed.toJSON()));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim().split("\n")).toEqual(['{"0":["a","b","c"],"tag":["x","y"]}', '{"0":["first","second"]}']);
+  expect(exitCode).toBe(0);
 });

@@ -402,14 +402,8 @@ impl Listener {
         let mut errno: c_int = 0;
         let listen_socket: *mut uws_sys::ListenSocket = match &mut connection {
             UnixOrHost::Host { host, port } => {
-                // NUL-terminate for the C `const char*` parameter. Zig used
-                // `dupeZ` + raw `.ptr`, which tolerates interior NULs (the C
-                // side just truncates at the first one). Build the `&CStr` via
-                // `from_ptr` so we match that instead of asserting via
-                // `ZStr::as_cstr()`.
                 let hostz = bun_core::ZBox::from_bytes(&host[..]);
-                // SAFETY: `hostz` is NUL-terminated and outlives `host_cstr`.
-                let host_cstr = unsafe { core::ffi::CStr::from_ptr(hostz.as_ptr()) };
+                let host_cstr = hostz.as_zstr().as_cstr();
                 let ls = this_ref.group.with_mut(|g| {
                     g.listen(
                         kind,
@@ -1077,9 +1071,12 @@ impl Listener {
                         // SAFETY: caller passes a live TLSSocket
                         let prev = unsafe { &*prev_ptr };
                         if let Some(prev_handlers) = prev.handlers.get() {
-                            // SAFETY: prev_handlers was heap-allocated; shared
-                            // reborrow is scoped to this expression.
-                            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+                            if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
+                                // SAFETY: prev_handlers was heap-allocated; shared
+                                // reborrow is scoped to this expression.
+                                && unsafe { (*prev_handlers.as_ptr()).active_connections.get() }
+                                    == 0
+                            {
                                 // SAFETY: prev_handlers was heap-allocated and unreferenced.
                                 unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                             }
@@ -1174,9 +1171,12 @@ impl Listener {
                         let prev = unsafe { &*prev_ptr };
                         debug_assert!(!prev.this_value.get().is_empty());
                         if let Some(prev_handlers) = prev.handlers.get() {
-                            // SAFETY: prev_handlers was heap-allocated; shared
-                            // reborrow is scoped to this expression.
-                            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+                            if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
+                                // SAFETY: prev_handlers was heap-allocated; shared
+                                // reborrow is scoped to this expression.
+                                && unsafe { (*prev_handlers.as_ptr()).active_connections.get() }
+                                    == 0
+                            {
                                 // SAFETY: prev_handlers was heap-allocated and unreferenced.
                                 unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                             }
@@ -1428,9 +1428,11 @@ fn connect_finish<const IS_SSL: bool>(
             // holding it. If a `data`/`close` handler synchronously re-entered
             // `connect`, `Scope::exit` (via `Handlers::mark_inactive`) frees it
             // once the in-flight callback unwinds; freeing here would be a UAF.
-            // SAFETY: prev_handlers was heap-allocated; shared reborrow is
-            // scoped to this expression.
-            if unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0 {
+            if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
+                // SAFETY: prev_handlers was heap-allocated; shared reborrow is
+                // scoped to this expression.
+                && unsafe { (*prev_handlers.as_ptr()).active_connections.get() } == 0
+            {
                 // SAFETY: prev_handlers was heap-allocated and unreferenced.
                 unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
             }

@@ -1444,7 +1444,6 @@ impl MySQLConnection {
                             statement.columns.len(),
                             header.field_count
                         );
-                        statement.cached_structure = Default::default();
                         if !statement.columns.is_empty() {
                             // Clear the slice before the fallible alloc below. If the alloc
                             // fails, MySQLStatement.deinit() would otherwise iterate and free
@@ -1463,6 +1462,8 @@ impl MySQLConnection {
                         columns.resize_with(field_count, ColumnDefinition41::default);
                         statement.columns = columns;
                         statement.columns_received = 0;
+                        statement.cached_structure = Default::default();
+                        statement.fields_flags = Default::default();
                     }
                     statement
                         .execution_flags
@@ -1472,7 +1473,15 @@ impl MySQLConnection {
                         .insert(mysql_statement::ExecutionFlags::HEADER_RECEIVED);
                     return Ok(());
                 } else if (statement.columns_received as usize) < statement.columns.len() {
-                    statement.columns[statement.columns_received as usize].decode(&mut reader)?;
+                    let changed = statement.columns[statement.columns_received as usize]
+                        .decode(&mut reader)?;
+                    if changed {
+                        statement.cached_structure = Default::default();
+                        statement.fields_flags = Default::default();
+                        statement
+                            .execution_flags
+                            .insert(mysql_statement::ExecutionFlags::NEEDS_DUPLICATE_CHECK);
+                    }
                     statement.columns_received += 1;
                 } else {
                     // A 0xFE-prefixed packet at this point is either the end-of-result

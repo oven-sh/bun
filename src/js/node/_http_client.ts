@@ -6,6 +6,7 @@ const {
   validateInteger,
   validateBoolean,
   validateString,
+  validatePort,
 } = require("internal/validators");
 
 // Internal fetch that allows body on GET/HEAD/OPTIONS for Node.js compatibility
@@ -60,6 +61,7 @@ const { OutgoingMessage } = require("node:_http_outgoing");
 const globalReportError = globalThis.reportError;
 const setTimeout = globalThis.setTimeout;
 const INVALID_PATH_REGEX = /[^\u0021-\u00ff]/;
+const INVALID_HOST_CHAR_REGEX = /[/\\?#@\t\n\r]/;
 
 const { URL } = globalThis;
 
@@ -314,7 +316,8 @@ function ClientRequest(input, options, cb) {
         return [path, `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}`];
       } else {
         let proxy: string | undefined;
-        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${path}`;
+        const pathname = path.startsWith("/") ? path : "/" + path;
+        const url = `${protocol}//${host}${this[kUseDefaultPort] ? "" : ":" + this[kPort]}${pathname}`;
         // support agent proxy url/string for http/https
         try {
           // getters can throw
@@ -525,6 +528,15 @@ function ClientRequest(input, options, cb) {
 
     if (isIP(host) || !options.lookup) {
       // Don't need to bother with lookup if it's already an IP address or no lookup function is provided.
+      if (RegExpPrototypeExec.$call(INVALID_HOST_CHAR_REGEX, host) !== null) {
+        const error = new Error(`getaddrinfo ENOTFOUND ${host}`);
+        error.name = "DNSException";
+        error.code = "ENOTFOUND";
+        error.syscall = "getaddrinfo";
+        error.hostname = host;
+        process.nextTick((self, err) => self.emit("error", err), this, error);
+        return false;
+      }
       const [url, proxy] = getURL(host);
       go(url, proxy, false);
       return true;
@@ -726,6 +738,10 @@ function ClientRequest(input, options, cb) {
 
   const defaultPort = options.defaultPort || this[kAgent].defaultPort;
   const port = (this[kPort] = options.port || defaultPort || 80);
+  if (typeof port !== "number" && typeof port !== "string") {
+    throw $ERR_INVALID_ARG_TYPE("options.port", ["number", "string"], port);
+  }
+  validatePort(port);
   this[kUseDefaultPort] = this[kPort] === defaultPort;
   const host =
     (this[kHost] =

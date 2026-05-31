@@ -116,11 +116,11 @@ pub mod whatwg {
         // to hand C++ only the leading ASCII prefix (latin1-safe).
         let first_non_ascii = strings::first_non_ascii(slice).map_or(slice.len(), |i| i as usize);
         // SAFETY: ptr/len derived from a valid slice prefix; C++ only reads.
-        let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) };
-        if len == 0 {
+        let len = unsafe { URL__originLength(slice.as_ptr(), first_non_ascii) } as usize;
+        if len == 0 || len > first_non_ascii {
             return None;
         }
-        Some(&slice[..len as usize])
+        Some(&slice[..len])
     }
 
     impl URL {
@@ -426,13 +426,11 @@ impl<'a> URL<'a> {
     }
 
     pub fn s3_path(&self) -> &'a [u8] {
-        // we need to remove protocol if exists and ignore searchParams, should be host + pathname
-        let href = if !self.protocol.is_empty() && self.href.len() > self.protocol.len() + 2 {
+        if !self.protocol.is_empty() && self.href.len() > self.protocol.len() + 2 {
             &self.href[self.protocol.len() + 2..]
         } else {
             self.href
-        };
-        &href[0..href.len() - (self.search.len() + self.hash.len())]
+        }
     }
 
     pub fn display_host(&self) -> bun_fmt::HostFormatter<'_> {

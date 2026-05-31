@@ -25,6 +25,8 @@ use bun_sys::FdDirExt;
 // TODO(port): narrow error set
 type Error = bun_core::Error;
 
+const MAX_DECOMPRESSED_TARBALL_SIZE: usize = 2 * 1024 * 1024 * 1024;
+
 pub struct ExtractTarball {
     pub name: StringOrTinyString,
     pub resolution: Resolution,
@@ -241,13 +243,29 @@ impl ExtractTarball {
         // `open_dir_at_windows_a` boundary, not here.
         let mut tmpname_buf = PathBuffer::uninit();
         let (name, basename) = self.name_and_basename();
+        let truncated_basename = &basename[0..basename.len().min(32)];
+        let tmpname_suffix: &[u8] =
+            if bun_install::dependency::is_safe_install_folder_name(truncated_basename) {
+                truncated_basename
+            } else if self.resolution.tag.is_git()
+                || self.resolution.tag == ResolutionTag::LocalTarball
+            {
+                b"package"
+            } else {
+                log.add_error_fmt(
+                    None,
+                    bun_ast::Loc::EMPTY,
+                    format_args!(
+                        "Refusing to install package with invalid name \"{}\"",
+                        bun_fmt::s(name),
+                    ),
+                );
+                return Err(bun_core::err!("InstallFailed"));
+            };
 
         let mut resolved: &'static [u8] = b"";
-        let tmpname = FileSystem::tmpname(
-            &basename[0..basename.len().min(32)],
-            &mut tmpname_buf.0,
-            bun_core::fast_random(),
-        )?;
+        let tmpname =
+            FileSystem::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
         {
             let extract_destination = match bun_sys::make_path::make_open_path(
                 tmpdir,
@@ -344,6 +362,7 @@ impl ExtractTarball {
                 zlib_pool.list.clear();
                 let mut zlib_entry =
                     Zlib::ZlibReaderArrayList::init(tgz_bytes, &mut zlib_pool.list)?;
+                zlib_entry.max_output_size = MAX_DECOMPRESSED_TARBALL_SIZE;
                 if let Err(err) = zlib_entry.read_all(true) {
                     log.add_error_fmt(
                         None,
@@ -417,11 +436,16 @@ impl ExtractTarball {
                     // meaningless in cases like this.
                     if !resolved.is_empty() {
                         // `std.fs.Dir.createFileZ(".bun-tag", .{ .truncate = true })` + write
-                        if sys::File::write_file(
+                        if sys::File::openat(
                             extract_destination.fd(),
                             ZStr::from_static(b".bun-tag\0"),
-                            resolved,
+                            sys::O::WRONLY
+                                | sys::O::CREAT
+                                | sys::O::TRUNC
+                                | if cfg!(windows) { 0 } else { sys::O::NOFOLLOW },
+                            0o664,
                         )
+                        .and_then(|f| f.write_all(resolved))
                         .is_err()
                         {
                             let _ = sys::unlinkat(
@@ -491,14 +515,27 @@ impl ExtractTarball {
             // PORT NOTE: reshaped for borrowck — Zig grabbed a raw `*TlBufs` from TLS;
             // here the entire body lives inside the thread_local borrow closure.
             let folder_name: &[u8] = match self.resolution.tag {
-                ResolutionTag::Npm => directories::cached_npm_package_folder_name_print(
-                    package_manager,
-                    &mut bufs.folder_name_buf,
-                    name,
-                    self.resolution.npm().version,
-                    None,
-                )
-                .as_bytes(),
+                ResolutionTag::Npm => {
+                    if !bun_install::dependency::is_safe_install_folder_name(name) {
+                        log.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Refusing to install package with invalid name \"{}\"",
+                                bun_fmt::s(name),
+                            ),
+                        );
+                        return Err(bun_core::err!("InstallFailed"));
+                    }
+                    directories::cached_npm_package_folder_name_print(
+                        package_manager,
+                        &mut bufs.folder_name_buf,
+                        name,
+                        self.resolution.npm().version,
+                        None,
+                    )
+                    .as_bytes()
+                }
                 ResolutionTag::Github => directories::cached_github_folder_name_print(
                     &mut bufs.folder_name_buf,
                     resolved,
@@ -812,7 +849,9 @@ impl ExtractTarball {
                 .unwrap_or(false)
             {
                 // create an index storing each version of a package installed
-                if strings::index_of_char(basename, b'/').is_none() {
+                if strings::index_of_char(basename, b'/').is_none()
+                    && bun_install::dependency::is_safe_install_folder_name(name)
+                {
                     'create_index: {
                         let dest_name: &[u8] = match self.resolution.tag {
                             ResolutionTag::Github => &folder_name[b"@GH@".len()..],

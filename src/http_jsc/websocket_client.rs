@@ -1840,8 +1840,8 @@ impl<const SSL: bool> WebSocket<SSL> {
                 ws: NonNull::new(outgoing).map(|p| unsafe { CppWebSocketRef::new(p) }),
             }));
             // Backref so `handle_data` can drain the buffered slice ahead of
-            // fresh socket data, and so `deinit()` can reclaim the box if
-            // process.exit() races ahead of the microtask drain.
+            // fresh socket data, and so `deinit()` can detach from the box if
+            // teardown races ahead of the microtask drain.
             ws_ref.initial_data_handler = NonNull::new(initial_data);
 
             // Use a higher-priority callback for the initial onData handler
@@ -2053,18 +2053,19 @@ impl<const SSL: bool> WebSocket<SSL> {
         this_ref.clear_data();
         // deflate already dropped in clear_data; this is defensive parity with Zig
         this_ref.deflate = None;
-        // The queued microtask normally owns the handler box and clears this
-        // field via `handle_without_deinit` before freeing it. Reaching
-        // `deinit()` with the field still set means the microtask never
-        // drained (process.exit() under the API lock during onopen) and JSC
-        // is being torn down — reclaim the box so LSan doesn't flag it. In
-        // normal operation the adopted-socket I/O ref keeps `ref_count > 0`
-        // until after microtasks drain, so this branch is not hit.
         if let Some(handler) = this_ref.initial_data_handler.take() {
-            // SAFETY: allocated via `heap::into_raw` in init()/init_with_tunnel();
-            // sole remaining owner — JSC's microtask queue only holds the
-            // pointer encoded as a JSValue double and will not run again.
-            drop(unsafe { bun_core::heap::take(handler.as_ptr()) });
+            // SAFETY: the handler box was allocated via `heap::into_raw` in
+            // init()/init_with_tunnel() and is normally freed by the queued
+            // microtask in `InitialDataHandler::handle`; this field still
+            // being set means that microtask has not run yet, so the box is
+            // live and the raw field write does not alias any borrow.
+            unsafe { core::ptr::addr_of_mut!((*handler.as_ptr()).adopted).write(None) };
+            if this_ref.global_this.bun_vm().is_shutting_down() {
+                // SAFETY: same allocation as above; the VM is shutting down, so
+                // the queued microtask can no longer run and this is the sole
+                // remaining owner of the box.
+                drop(unsafe { bun_core::heap::take(handler.as_ptr()) });
+            }
         }
         bun_core::scoped_log!(alloc, "destroy({}) = {:p}", Self::ALLOC_TYPE_NAME, this);
         // SAFETY: this was allocated via heap::alloc in init/init_with_tunnel

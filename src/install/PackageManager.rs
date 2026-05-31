@@ -1414,10 +1414,15 @@ pub(crate) fn allocate_package_manager() {
     let ptr =
         bun_core::heap::into_raw(Box::<PackageManager>::new_uninit()).cast::<PackageManager>();
     holder::RAW_PTR.store(ptr, core::sync::atomic::Ordering::Release);
+    #[cfg(bun_asan)]
     bun_core::add_exit_callback(deinit_caches_at_exit);
 }
 
+#[cfg(bun_asan)]
 extern "C" fn deinit_caches_at_exit() {
+    if !bun_crash_handler::cli_state::is_main_thread() {
+        return;
+    }
     if !holder::INITIALIZED.load(core::sync::atomic::Ordering::Acquire) {
         return;
     }

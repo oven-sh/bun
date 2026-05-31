@@ -232,7 +232,7 @@ impl Response {
     pub fn get_socket_data(&mut self) -> *mut c_void {
         c::uws_h3_res_get_socket_data(self)
     }
-    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress<'_>> {
+    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut port: i32 = 0;
         let mut is_ipv6: bool = false;
         let mut ip_ptr: *const u8 = ptr::null();
@@ -240,10 +240,10 @@ impl Response {
         if len == 0 {
             return None;
         }
-        // SAFETY: uws returns a pointer+len pair valid while the response is alive
+        // SAFETY: uws returns a pointer+len pair valid until the next address lookup
+        // on this thread; copied before returning.
         let ip = unsafe { bun_core::ffi::slice(ip_ptr, len) };
-        // TODO(port): SocketAddress.ip is a borrowed slice in Zig; Rust field type TBD
-        Some(SocketAddress { ip, port, is_ipv6 })
+        Some(SocketAddress::new(ip, port, is_ipv6))
     }
     pub fn force_close(&mut self) {
         c::uws_h3_res_force_close(self)

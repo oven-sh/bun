@@ -898,6 +898,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if SSL {
             if client.can_offer_h2() {
                 let cfg = SSLConfig::raw_ptr(client.tls_props.as_ref());
+                let host_header_hash = client.proxy_auth_hash();
                 for &session in &self.active_h2_sessions {
                     // Active sessions are kept alive by registry refs; `&mut`
                     // is unique here (registry is iterated read-only and
@@ -906,7 +907,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // strong-ref-held invariant as the pool/found-slot cases.
                     let s = h2_session_as_mut(NonNull::new(session)).unwrap();
                     if s.has_headroom()
-                        && s.matches(hostname, port, cfg)
+                        && s.matches(hostname, port, cfg, host_header_hash)
                         // Same guard as the pool path: a session whose TLS
                         // handshake ran with reject_unauthorized=false never
                         // validated the peer hostname, so a strict caller
@@ -924,7 +925,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     // strict caller must not coalesce onto an in-flight connect
                     // that was initiated with reject_unauthorized=false, since
                     // the resulting session won't have validated the peer.
-                    if pc.matches(hostname, port, cfg_nn)
+                    if pc.matches(hostname, port, cfg_nn, host_header_hash)
                         && (!client.flags.reject_unauthorized || pc.reject_unauthorized)
                     {
                         // client outlives the pending connect (resolved before
@@ -1058,6 +1059,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     port,
                     ssl_config: cfg,
                     reject_unauthorized: client.flags.reject_unauthorized,
+                    host_header_hash: client.proxy_auth_hash(),
                     ..Default::default()
                 });
                 // `client.pending_h2 = pc` stores a *borrowed* backref into the
@@ -1290,6 +1292,7 @@ impl<const SSL: bool> Handler<SSL> {
             }
 
             bun_core::scoped_log!(HTTPContext, "Unexpected data on socket");
+            HTTPContext::<SSL>::terminate_socket(socket);
 
             return;
         }

@@ -2021,6 +2021,12 @@ mod posix_impl {
             Ok(Fd::from_native(rc))
         }
     }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        let dir = dir.as_fd();
+        super::linux_syscall::openat2_beneath(dir, path, flags, mode)
+            .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
+    }
     pub fn close(fd: Fd) -> Maybe<()> {
         // fd.zig:266 — call close ONCE; never retry on EINTR (Linux may have already
         // released the fd, retrying would close someone else's). Only EBADF surfaces.
@@ -2862,7 +2868,30 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         {
-            fchmodat(Fd::cwd(), path, mode, libc::AT_SYMLINK_NOFOLLOW)
+            const SYS_FCHMODAT2: libc::c_long = 452;
+            loop {
+                // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
+                let rc = unsafe {
+                    libc::syscall(
+                        SYS_FCHMODAT2,
+                        Fd::cwd().native() as libc::c_long,
+                        path.as_ptr(),
+                        mode as libc::c_long,
+                        libc::AT_SYMLINK_NOFOLLOW as libc::c_long,
+                    )
+                };
+                if rc < 0 {
+                    let e = last_errno();
+                    if e == libc::EINTR {
+                        continue;
+                    }
+                    if e == libc::ENOSYS {
+                        return fchmodat(Fd::cwd(), path, mode, libc::AT_SYMLINK_NOFOLLOW);
+                    }
+                    return Err(Error::from_code_int(e, Tag::lchmod).with_path(path.as_bytes()));
+                }
+                return Ok(());
+            }
         }
     }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {

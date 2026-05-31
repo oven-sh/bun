@@ -59,9 +59,6 @@ pub struct StackFallback<const N: usize, A: Allocator = std::alloc::Global> {
     buf: UnsafeCell<[MaybeUninit<u8>; N]>,
 }
 
-/// Back-compat alias for the previous name; prefer [`StackFallback`].
-pub type BumpWithFallback<const N: usize, A> = StackFallback<N, A>;
-
 impl<const N: usize, A: Allocator> StackFallback<N, A> {
     /// Zig: `std.heap.stackFallback(N, fallback)`. `const` — `MaybeUninit<u8>:
     /// Copy`, so `[MaybeUninit::uninit(); N]` needs no inline-const;
@@ -105,13 +102,6 @@ impl<const N: usize, A: Allocator> StackFallback<N, A> {
     #[inline]
     pub fn fallback(&self) -> &A {
         &self.fallback
-    }
-
-    /// Mutably borrow the fallback allocator (e.g. to rebind a heap pointer
-    /// after the backing `MimallocArena::reset` swapped it).
-    #[inline]
-    pub fn fallback_mut(&mut self) -> &mut A {
-        &mut self.fallback
     }
 
     #[inline(always)]
@@ -401,106 +391,6 @@ unsafe impl Allocator for ArenaPtr {
         new: Layout,
     ) -> Result<NonNull<[u8]>, AllocError> {
         // SAFETY: same paths as `grow`.
-        unsafe { self.grow(ptr, old, new) }
-    }
-}
-
-// ── MimallocHeapRef ──────────────────────────────────────────────────────────
-//
-// Thin `Allocator` over a raw `*mut mi_heap_t`. Unlike [`ArenaPtr`] this
-// addresses the C-heap-resident `mi_heap_t` directly (stable across moves of
-// the `MimallocArena` wrapper struct), at the cost of bypassing
-// `MimallocArena::track_alloc`. Kept for callers that only have a heap handle.
-//
-// `heap == null` routes to global `mi_malloc`/`mi_free`, matching
-// [`crate::ast_alloc::AstAlloc`] when no AST scope is active.
-
-/// Borrowed `mi_heap_t*` as an [`Allocator`]. See section doc above.
-#[derive(Clone, Copy)]
-pub struct MimallocHeapRef {
-    heap: *mut mimalloc::Heap,
-}
-
-impl MimallocHeapRef {
-    /// Wrap a live `mi_heap_t*`. The caller guarantees `heap` outlives every
-    /// allocation made through this ref (i.e. the owning `MimallocArena` is not
-    /// `reset()`/dropped while this ref is in use).
-    #[inline]
-    pub const fn new(heap: *mut mimalloc::Heap) -> Self {
-        Self { heap }
-    }
-    /// Null heap → process-global `mi_malloc`/`mi_free`.
-    #[inline]
-    pub const fn global() -> Self {
-        Self {
-            heap: ptr::null_mut(),
-        }
-    }
-    /// The wrapped heap pointer (null when global).
-    #[inline]
-    pub fn heap(&self) -> *mut mimalloc::Heap {
-        self.heap
-    }
-    /// Rebind to a new heap (e.g. after `MimallocArena::reset` rebuilt it).
-    #[inline]
-    pub fn set_heap(&mut self, heap: *mut mimalloc::Heap) {
-        self.heap = heap;
-    }
-}
-
-// SAFETY: identical contract to `&MimallocArena` / `AstAlloc` —
-// `mi_[heap_]malloc[_aligned]` yields ≥`size` bytes aligned to `align`;
-// `mi_free` accepts any mimalloc-owned pointer regardless of origin heap;
-// `mi_[heap_]realloc_aligned` preserves the `min(old,new)` prefix and frees
-// the old block. `heap` must be null or a live `mi_heap_t*` for this ref's
-// lifetime (caller contract — see [`MimallocHeapRef::new`]).
-unsafe impl Allocator for MimallocHeapRef {
-    #[inline]
-    fn allocate(&self, layout: Layout) -> Result<NonNull<[u8]>, AllocError> {
-        let h = self.heap;
-        let p = if h.is_null() {
-            mimalloc::mi_malloc_auto_align(layout.size(), layout.align())
-        } else {
-            // SAFETY: `h` is live per the caller contract on `new`.
-            unsafe { mimalloc::mi_heap_malloc_auto_align(h, layout.size(), layout.align()) }
-        };
-        alloc_result(p, layout.size())
-    }
-
-    #[inline]
-    unsafe fn deallocate(&self, ptr: NonNull<u8>, _layout: Layout) {
-        // SAFETY: `ptr` came from `mi_[heap_]malloc*` per `allocate`/`grow`;
-        // `mi_free` is heap-agnostic and thread-safe.
-        unsafe { mimalloc::mi_free(ptr.as_ptr().cast()) }
-    }
-
-    #[inline]
-    unsafe fn grow(
-        &self,
-        ptr: NonNull<u8>,
-        _old: Layout,
-        new: Layout,
-    ) -> Result<NonNull<[u8]>, AllocError> {
-        let h = self.heap;
-        // SAFETY: see `allocate`; realloc accepts cross-heap pointers.
-        let p = unsafe {
-            if h.is_null() {
-                mimalloc::mi_realloc_aligned(ptr.as_ptr().cast(), new.size(), new.align())
-            } else {
-                mimalloc::mi_heap_realloc_aligned(h, ptr.as_ptr().cast(), new.size(), new.align())
-            }
-        };
-        alloc_result(p, new.size())
-    }
-
-    #[inline]
-    unsafe fn shrink(
-        &self,
-        ptr: NonNull<u8>,
-        old: Layout,
-        new: Layout,
-    ) -> Result<NonNull<[u8]>, AllocError> {
-        // SAFETY: same realloc path as `grow`.
         unsafe { self.grow(ptr, old, new) }
     }
 }

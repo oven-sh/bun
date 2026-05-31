@@ -3341,20 +3341,86 @@ impl Lockfile {
         resolution: &Resolution,
     ) -> bool {
         if let Some(trusted_dependencies) = &self.trusted_dependencies {
-            let hash = SemverStringBuilder::string_hash(alias) as u32;
-            // Empty value = legacy bun.lockb sentinel (no name stored);
-            // match by hash alone.
-            return match trusted_dependencies.get(&hash) {
-                Some(name) => name.is_empty() || **name == *alias,
+            let trusted_name = if resolution.tag == ResolutionTag::Npm {
+                pkg_name
+            } else {
+                alias
+            };
+            let hash = SemverStringBuilder::string_hash(trusted_name) as u32;
+            let name_is_trusted = match trusted_dependencies.get(&hash) {
+                Some(name) => !name.is_empty() && **name == *trusted_name,
                 None => false,
             };
+            if !name_is_trusted {
+                return false;
+            }
+            if resolution.tag == ResolutionTag::Npm {
+                return true;
+            }
+            return self.declared_by_root_or_workspace(alias, resolution);
         }
 
         // Only allow default trusted dependencies for npm packages. Check the
         // resolved package's real name, not the dependency alias, so an
         // `npm:`-aliased package can't inherit trust from a default-trusted
         // name.
-        resolution.tag == ResolutionTag::Npm && default_trusted_dependencies::has(pkg_name)
+        if resolution.tag != ResolutionTag::Npm || !default_trusted_dependencies::has(pkg_name) {
+            return false;
+        }
+
+        let buf = self.buffers.string_bytes.as_slice();
+        let npm = resolution.npm();
+        let url = npm.url.slice(buf);
+        if url.is_empty() {
+            return true;
+        }
+        let registry = PackageManager::get()
+            .scope_for_package_name(pkg_name)
+            .url
+            .href();
+        let Ok(canonical_url) = crate::extract_tarball::build_url_with_printer(
+            registry,
+            &strings::StringOrTinyString::init(pkg_name),
+            npm.version,
+            buf,
+            |args| -> Result<Vec<u8>, std::io::Error> {
+                let mut out: Vec<u8> = Vec::new();
+                out.write_fmt(args)?;
+                Ok(out)
+            },
+        ) else {
+            return false;
+        };
+        url == canonical_url.as_slice()
+    }
+
+    fn declared_by_root_or_workspace(&self, alias: &[u8], resolution: &Resolution) -> bool {
+        let buf = self.buffers.string_bytes.as_slice();
+        let packages = self.packages.slice();
+        let resolutions = packages.items_resolution();
+        let dependencies_lists = packages.items_dependencies();
+        for (pkg_resolution, dependencies) in resolutions.iter().zip(dependencies_lists.iter()) {
+            if pkg_resolution.tag != ResolutionTag::Workspace
+                && pkg_resolution.tag != ResolutionTag::Root
+            {
+                continue;
+            }
+            for dep_id in dependencies.begin()..dependencies.end() {
+                let dep = &self.buffers.dependencies[dep_id as usize];
+                if dep.name.slice(buf) != alias {
+                    continue;
+                }
+                let package_id = self.buffers.resolutions[dep_id as usize];
+                if package_id == invalid_package_id || package_id as usize >= resolutions.len() {
+                    continue;
+                }
+                if resolutions[package_id as usize].eql(resolution, buf, buf) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 }
 

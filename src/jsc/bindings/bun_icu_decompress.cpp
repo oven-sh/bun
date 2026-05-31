@@ -13,12 +13,20 @@
 
 #include "root.h"
 
-// The repacked libicudata.a (and the patched udata.cpp that calls this hook)
-// are produced by oven-sh/WebKit's Dockerfile / Dockerfile.musl only. On every
-// other platform ICU is unmodified, so there is nothing to decompress and the
-// weak externs below have no definer — gate the whole implementation to keep
-// non-ELF weak-symbol semantics out of the picture.
-#if OS(LINUX)
+// The repacked ICU data archive (and the patched udata.cpp that calls this
+// hook) are produced by oven-sh/WebKit's Dockerfile / Dockerfile.musl /
+// Dockerfile.windows. On macOS ICU is the unmodified system one, so there is
+// nothing to decompress and the weak externs below would have no definer —
+// gate the implementation to the platforms whose prebuilts carry compressed
+// items.
+//
+// Windows note: COFF has no true weak-undefined symbols — clang lowers each
+// declaration to a per-TU weak external with an absolute-0 default, which is
+// fine here because this is the only TU referencing the dict symbols and the
+// repacked sicudt.lib defines them anyway (an unresolved weak external only
+// becomes a problem when two TUs reference it, see the WTFTimer__* notes in
+// oven-sh/WebKit).
+#if OS(LINUX) || OS(WINDOWS)
 
 #include "MimallocWTFMalloc.h"
 

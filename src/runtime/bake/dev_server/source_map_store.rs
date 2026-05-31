@@ -280,10 +280,10 @@ impl Entry {
         .map_err(|_| EncodeSourceMapPathError::OutOfMemory)
     }
 
-    fn join_vlq(
-        &self,
+    fn join_vlq<'a>(
+        &'a self,
         kind: ChunkKind,
-        j: &mut StringJoiner,
+        j: &mut StringJoiner<'a>,
         side: Side,
     ) -> Result<(), bun_core::Error> {
         let _ = side;

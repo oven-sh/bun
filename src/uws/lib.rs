@@ -103,10 +103,9 @@ pub use bun_uws_sys::{
 // `verifyErrorToJS`) live as extension traits in the *_jsc crate per PORTING.md.
 pub use bun_uws_sys::{Opcode, SendStatus, create_bun_socket_error_t, us_bun_verify_error_t};
 
-/// Owned socket-address shape (boxed IP) used where the borrowed
-/// `bun_uws_sys::SocketAddress<'a>` would tie a lifetime to a transient
-/// `uws_res` buffer. Distinct from the sys type by design — that one is the
-/// zero-copy borrow returned from `Response::get_remote_socket_info`.
+/// Owned socket-address shape (boxed IP). Distinct from the sys type by
+/// design — that one stores the IP text inline as returned from
+/// `Response::get_remote_socket_info`.
 pub struct SocketAddress {
     pub ip: Box<[u8]>,
     pub port: i32,
@@ -952,12 +951,15 @@ pub mod ssl_wrapper {
 
         /// Handle reading data. Returns true if we can call handle_writing.
         fn handle_reading(&mut self, buffer: &mut [u8; BUFFER_SIZE]) -> bool {
+            let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
             let mut read: usize = 0;
 
             // read data from the input BIO
             loop {
                 log!("handleReading");
-                let Some(ssl) = self.ssl else { return false };
+                let Some(ssl) = Self::r(this).ssl else {
+                    return false;
+                };
 
                 let available = &mut buffer[read..];
                 // SAFETY: ssl is a live SSL*; available is a valid mutable slice.
@@ -978,34 +980,37 @@ pub mod ssl_wrapper {
                         && err != boring_sys::SSL_ERROR_WANT_WRITE
                     {
                         if err == boring_sys::SSL_ERROR_WANT_RENEGOTIATE {
-                            self.flags
+                            Self::r(this)
+                                .flags
                                 .set_handshake_state(HandshakeState::HandshakeRenegotiationPending);
                             // An over-limit renegotiation request is treated
                             // like a failed SSL_renegotiate(). The count
                             // resets each MAX_RENEGOTIATION_WINDOW, matching
                             // the C path's `us_reneg_policy`.
                             let now = std::time::Instant::now();
-                            match self.renegotiation_window_start {
+                            match Self::r(this).renegotiation_window_start {
                                 Some(start)
                                     if now.duration_since(start) < MAX_RENEGOTIATION_WINDOW => {}
                                 _ => {
-                                    self.renegotiation_window_start = Some(now);
-                                    self.renegotiation_count = 0;
+                                    Self::r(this).renegotiation_window_start = Some(now);
+                                    Self::r(this).renegotiation_count = 0;
                                 }
                             }
                             let renegotiation_allowed =
-                                self.renegotiation_count < MAX_RENEGOTIATIONS;
-                            self.renegotiation_count = self.renegotiation_count.saturating_add(1);
+                                Self::r(this).renegotiation_count < MAX_RENEGOTIATIONS;
+                            Self::r(this).renegotiation_count =
+                                Self::r(this).renegotiation_count.saturating_add(1);
                             // SAFETY: ssl is still valid.
                             let renegotiated = renegotiation_allowed
                                 && unsafe { boring_sys::SSL_renegotiate(ssl.as_ptr()) } != 0;
                             if !renegotiated {
-                                self.flags
+                                Self::r(this)
+                                    .flags
                                     .set_handshake_state(HandshakeState::HandshakeCompleted);
                                 // we failed to renegotiate
-                                let verify = self.get_verify_error();
-                                self.trigger_handshake_callback(false, verify);
-                                self.trigger_close_callback();
+                                let verify = Self::r(this).get_verify_error();
+                                Self::r(this).trigger_handshake_callback(false, verify);
+                                Self::r(this).trigger_close_callback();
                                 return false;
                             }
                             // ok, we are done here, we need to call SSL_read again
@@ -1015,12 +1020,12 @@ pub mod ssl_wrapper {
                         } else if err == boring_sys::SSL_ERROR_ZERO_RETURN {
                             // Remotely-Initiated Shutdown
                             // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
-                            self.flags.set_received_ssl_shutdown(true);
+                            Self::r(this).flags.set_received_ssl_shutdown(true);
                             // 2-step shutdown
-                            let _ = self.shutdown(false);
-                            self.handle_end_of_renegotiation();
+                            let _ = Self::r(this).shutdown(false);
+                            Self::r(this).handle_end_of_renegotiation();
                         }
-                        self.flags.set_fatal_error(
+                        Self::r(this).flags.set_fatal_error(
                             err == boring_sys::SSL_ERROR_SSL
                                 || err == boring_sys::SSL_ERROR_SYSCALL,
                         );
@@ -1028,13 +1033,14 @@ pub mod ssl_wrapper {
                         // flush the reading
                         if read > 0 {
                             log!("triggering data callback (read {})", read);
-                            self.trigger_data_callback(&buffer[0..read]);
+                            Self::r(this).trigger_data_callback(&buffer[0..read]);
                             // The data callback may have closed the connection
-                            if self.ssl.is_none() || self.flags.closed_notified() {
+                            if Self::r(this).ssl.is_none() || Self::r(this).flags.closed_notified()
+                            {
                                 return false;
                             }
                         }
-                        self.trigger_close_callback();
+                        Self::r(this).trigger_close_callback();
                         return false;
                     } else {
                         log!("wanna read/write just break");
@@ -1043,7 +1049,7 @@ pub mod ssl_wrapper {
                     }
                 }
 
-                self.handle_end_of_renegotiation();
+                Self::r(this).handle_end_of_renegotiation();
 
                 read += usize::try_from(just_read).expect("int cast");
                 if read == buffer.len() {
@@ -1052,10 +1058,10 @@ pub mod ssl_wrapper {
                         read
                     );
                     // we filled the buffer
-                    self.trigger_data_callback(&buffer[0..read]);
+                    Self::r(this).trigger_data_callback(&buffer[0..read]);
                     // The callback may have closed the connection - check before continuing
                     // Check ssl first as a proxy for whether we were deinited
-                    if self.ssl.is_none() || self.flags.closed_notified() {
+                    if Self::r(this).ssl.is_none() || Self::r(this).flags.closed_notified() {
                         return false;
                     }
                     read = 0;
@@ -1064,10 +1070,10 @@ pub mod ssl_wrapper {
             // we finished reading
             if read > 0 {
                 log!("triggering data callback (read {})", read);
-                self.trigger_data_callback(&buffer[0..read]);
+                Self::r(this).trigger_data_callback(&buffer[0..read]);
                 // The callback may have closed the connection
                 // Check ssl first as a proxy for whether we were deinited
-                if self.ssl.is_none() || self.flags.closed_notified() {
+                if Self::r(this).ssl.is_none() || Self::r(this).flags.closed_notified() {
                     return false;
                 }
             }
@@ -1121,18 +1127,20 @@ pub mod ssl_wrapper {
         }
 
         fn handle_traffic(&mut self) {
+            let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
             // always handle the handshake first
-            if self.update_handshake_state() {
+            if Self::r(this).update_handshake_state() {
                 // shared stack buffer for reading and writing
                 // PERF(port): 64KiB on-stack array — was Zig stack array; verify Rust stack-size headroom.
                 let mut buffer = [0u8; BUFFER_SIZE];
                 // drain the input BIO first
-                self.handle_writing(&mut buffer);
+                Self::r(this).handle_writing(&mut buffer);
 
                 // drain the output BIO in loop, because read can trigger writing and vice versa
-                while self.has_pending_read() && self.handle_reading(&mut buffer) {
+                while Self::r(this).has_pending_read() && Self::r(this).handle_reading(&mut buffer)
+                {
                     // read data can trigger writing so we need to handle it
-                    self.handle_writing(&mut buffer);
+                    Self::r(this).handle_writing(&mut buffer);
                 }
             }
         }

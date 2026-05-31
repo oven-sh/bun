@@ -690,6 +690,7 @@ impl Parser<'_> {
             ((char_idx * 3) + (d.count % 3)) * 2 + (d.can_open as usize)
         };
         let mut openers_bottom: [usize; 18] = [0; 18];
+        let mut prev_candidate: Vec<usize> = (0..len).map(|i| i.wrapping_sub(1)).collect();
 
         // Process potential closers from left to right
         let mut closer_idx: usize = 0;
@@ -705,24 +706,31 @@ impl Parser<'_> {
             let opener_bottom = openers_bottom[opener_bottom_key(&self.emph_delims[closer_idx])];
             let mut found_match = false;
             if closer_idx > opener_bottom {
-                let mut oi: usize = closer_idx;
-                while oi > opener_bottom {
-                    oi -= 1;
-                    if self.emph_delims[oi].emph_char != self.emph_delims[closer_idx].emph_char {
-                        continue;
-                    }
+                let mut from = closer_idx;
+                let mut oi = prev_candidate[closer_idx];
+                while oi != usize::MAX && oi >= opener_bottom {
                     if !self.emph_delims[oi].can_open
                         || self.emph_delims[oi].remaining == 0
                         || !self.emph_delims[oi].active
                     {
+                        let next = prev_candidate[oi];
+                        prev_candidate[from] = next;
+                        oi = next;
+                        continue;
+                    }
+                    if self.emph_delims[oi].emph_char != self.emph_delims[closer_idx].emph_char {
+                        from = oi;
+                        oi = prev_candidate[oi];
                         continue;
                     }
 
                     // Strikethrough: exact count match required
-                    if self.emph_delims[oi].emph_char == b'~' {
-                        if self.emph_delims[oi].count != self.emph_delims[closer_idx].count {
-                            continue;
-                        }
+                    if self.emph_delims[oi].emph_char == b'~'
+                        && self.emph_delims[oi].count != self.emph_delims[closer_idx].count
+                    {
+                        from = oi;
+                        oi = prev_candidate[oi];
+                        continue;
                     }
 
                     // Rule of three: if closer can also open OR opener can also close,
@@ -734,6 +742,8 @@ impl Parser<'_> {
                         && !self.emph_delims[oi].count.is_multiple_of(3)
                         && !self.emph_delims[closer_idx].count.is_multiple_of(3)
                     {
+                        from = oi;
+                        oi = prev_candidate[oi];
                         continue;
                     }
 
@@ -766,11 +776,12 @@ impl Parser<'_> {
                     }
 
                     // Remove all delimiters between opener and closer (CommonMark §6.4)
-                    let mut k = oi + 1;
-                    while k < closer_idx {
+                    let mut k = prev_candidate[closer_idx];
+                    while k != usize::MAX && k > oi {
                         self.emph_delims[k].active = false;
-                        k += 1;
+                        k = prev_candidate[k];
                     }
+                    prev_candidate[closer_idx] = oi;
 
                     found_match = true;
 

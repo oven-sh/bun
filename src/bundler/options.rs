@@ -110,10 +110,8 @@ pub fn validate_path(
     Box::from(out)
 }
 
-// PORT NOTE: options.zig `stringHashMapFromArrays` — use `bun_core::util::{MapLike, from_entries}`
-// or inline the construction (see definesFromTransformOptions / loadersFromTransformOptions below).
-// Note `from_entries` reserves `iter.len()`; if you need the Zig over-reserve (`keys.len + N`),
-// call `MapLike::ensure_unused_capacity(total_cap)` yourself before zipping keys/values.
+// PORT NOTE: options.zig `stringHashMapFromArrays` — inline the construction
+// (see definesFromTransformOptions / loadersFromTransformOptions below).
 
 // `AllowUnresolved` is defined canonically in
 // `bun_js_parser::options` (lower tier) because the parser is the consumer
@@ -434,8 +432,7 @@ pub trait LoaderExt: Copy {
     // import.
 
     // TODO(port): `obj: anytype` — Zig duck-typed `.get(ext) -> Option<Loader>`.
-    // Monomorphized to the only concrete map type callers pass (`LoaderHashTable`);
-    // a `MapLike` trait is overkill for one call site.
+    // Monomorphized to the only concrete map type callers pass (`LoaderHashTable`).
     fn for_file_name(filename: &[u8], obj: &LoaderHashTable) -> Option<Loader> {
         let ext = bun_paths::extension(filename);
         if ext.is_empty() || (ext.len() == 1 && ext[0] == b'.') {

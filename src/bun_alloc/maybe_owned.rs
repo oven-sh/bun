@@ -69,12 +69,6 @@ impl<A> MaybeOwned<A> {
         self._parent.as_ref()
     }
 
-    pub fn into_parent(self) -> Option<A> {
-        // Zig: `defer self.* = undefined; return self.rawParent();`
-        // Taking `self` by value consumes it; no explicit invalidation needed.
-        self._parent
-    }
-
     /// Used by smart pointer types and allocator wrappers. See `crate::borrow`.
     pub fn borrow(&self) -> MaybeOwnedBorrowed {
         // Borrowed view carries no allocator state — just the owned/borrowed bit.

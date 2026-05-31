@@ -424,29 +424,6 @@ pub const FILE_TYPE_CHAR: DWORD = 0x0002;
 pub const FILE_TYPE_PIPE: DWORD = 0x0003;
 pub const FILE_TYPE_REMOTE: DWORD = 0x8000;
 
-pub use bun_windows_sys::externs::LPDWORD;
-
-pub use bun_windows_sys::externs::GetBinaryTypeW;
-
-/// A 32-bit Windows-based application
-#[allow(dead_code)]
-pub const SCS_32BIT_BINARY: DWORD = 0;
-/// A 64-bit Windows-based application.
-#[allow(dead_code)]
-pub const SCS_64BIT_BINARY: DWORD = 6;
-/// An MS-DOS – based application
-#[allow(dead_code)]
-pub const SCS_DOS_BINARY: DWORD = 1;
-/// A 16-bit OS/2-based application
-#[allow(dead_code)]
-pub const SCS_OS216_BINARY: DWORD = 5;
-/// A PIF file that executes an MS-DOS – based application
-#[allow(dead_code)]
-pub const SCS_PIF_BINARY: DWORD = 3;
-/// A POSIX – based application
-#[allow(dead_code)]
-pub const SCS_POSIX_BINARY: DWORD = 4;
-
 pub use SetCurrentDirectoryW as SetCurrentDirectory;
 /// Each process has a single current directory made up of two parts:
 ///

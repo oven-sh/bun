@@ -129,18 +129,6 @@ impl Loader {
         matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
     }
 
-    pub fn disable_html(self) -> Loader {
-        match self {
-            Loader::Html => Loader::File,
-            other => other,
-        }
-    }
-
-    #[inline]
-    pub fn is_sqlite(self) -> bool {
-        matches!(self, Loader::Sqlite | Loader::SqliteEmbedded)
-    }
-
     pub fn should_copy_for_bundling(self) -> bool {
         matches!(
             self,
@@ -243,10 +231,6 @@ impl Loader {
         })
     }
 
-    pub fn supports_client_entry_point(self) -> bool {
-        matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
-    }
-
     #[inline]
     pub fn is_jsx(self) -> bool {
         self == Loader::Jsx || self == Loader::Tsx
@@ -273,10 +257,6 @@ impl Loader {
     #[inline]
     pub fn is_java_script_like(self) -> bool {
         self.is_javascript_like()
-    }
-    #[inline]
-    pub fn is_java_script_like_or_json(self) -> bool {
-        self.is_javascript_like_or_json()
     }
 
     pub fn is_javascript_like_or_json(self) -> bool {

@@ -1,7 +1,7 @@
 use core::fmt;
 
 use bun_core::{OwnedString, String, ZigString};
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer, StringJsc};
 
 use super::parse_args_utils::{
     OptionDefinition, OptionValueType, TokenSubtype, classify_token, find_option_by_short_name,
@@ -396,6 +396,7 @@ fn parse_option_definitions(
     global: &JSGlobalObject,
     options_obj: JSValue,
     option_definitions: &mut Vec<OptionDefinition>,
+    default_roots: &mut MarkedArgumentBuffer,
 ) -> JsResult<()> {
     validators::validate_object(global, options_obj, "options", Default::default())?;
 
@@ -495,6 +496,7 @@ fn parse_option_definitions(
                         }
                     }
                 }
+                default_roots.append(default_value);
                 option.default_value = Some(default_value);
             }
         }
@@ -906,6 +908,14 @@ impl<'a> ParseArgsState<'a> {
 
 #[bun_jsc::host_fn(export = "Bun__NodeUtil__jsParseArgs")]
 pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    MarkedArgumentBuffer::new(|default_roots| parse_args_impl(global, callframe, default_roots))
+}
+
+fn parse_args_impl(
+    global: &JSGlobalObject,
+    callframe: &CallFrame,
+    default_roots: &mut MarkedArgumentBuffer,
+) -> JsResult<JSValue> {
     // jsc.markBinding(@src()) — debug-only, dropped
     let config_value = callframe.arguments_as_array::<1>()[0];
     //
@@ -986,7 +996,7 @@ pub fn parse_args(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JS
     let mut option_defs: Vec<OptionDefinition> = Vec::new();
 
     if !config_options.is_undefined_or_null() {
-        parse_option_definitions(global, config_options, &mut option_defs)?;
+        parse_option_definitions(global, config_options, &mut option_defs, default_roots)?;
     }
 
     //

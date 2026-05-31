@@ -1713,3 +1713,91 @@ describe.skipIf(!minioCredentials)("Archive with S3", () => {
     await s3File.delete();
   });
 });
+
+describe("s3 multipart upload id validation", () => {
+  it("rejects a CreateMultipartUpload response whose upload id contains non-ASCII bytes", async () => {
+    // The whole scenario runs in a subprocess so a misbehaving runtime cannot take down the test runner.
+    const fixture = `
+        const goodUploadId = "valid-upload-id-1234567890";
+        function initiateXml(uploadIdBytes) {
+          return Buffer.concat([
+            Buffer.from("<InitiateMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><UploadId>"),
+            uploadIdBytes,
+            Buffer.from("</UploadId></InitiateMultipartUploadResult>"),
+          ]);
+        }
+        const server = Bun.serve({
+          port: 0,
+          async fetch(req) {
+            const isCreateMultipartUpload = req.method === "POST" && req.url.includes("?uploads=");
+            if (isCreateMultipartUpload) {
+              // The "malformed-id-object" key gets an upload id made entirely of bytes >= 0x80,
+              // which no real S3 server returns. Everything else gets a normal ASCII upload id.
+              const uploadId = req.url.includes("malformed-id-object")
+                ? Buffer.alloc(1024, 0xff)
+                : Buffer.from(goodUploadId);
+              return new Response(initiateXml(uploadId), {
+                status: 200,
+                headers: { "Content-Type": "text/xml" },
+              });
+            }
+            const isCompleteMultipartUpload = req.method === "POST" && req.url.includes("uploadId=");
+            if (isCompleteMultipartUpload) {
+              return new Response(
+                '<CompleteMultipartUploadResult><Bucket>my_bucket</Bucket><Key>obj</Key><ETag>"etag"</ETag></CompleteMultipartUploadResult>',
+                { status: 200, headers: { "Content-Type": "text/xml" } },
+              );
+            }
+            return new Response(undefined, { status: 200, headers: { "ETag": '"etag"' } });
+          },
+        });
+
+        const client = new Bun.S3Client({
+          accessKeyId: "test",
+          secretAccessKey: "test",
+          region: "eu-west-3",
+          bucket: "my_bucket",
+          endpoint: server.url.href,
+        });
+
+        // One part size plus 1 MiB so the writer takes the multipart path instead of a single PUT.
+        const part = Buffer.alloc(6 * 1024 * 1024, "a");
+
+        {
+          const writer = client.file("malformed-id-object").writer({ partSize: 5 * 1024 * 1024 });
+          writer.write(part);
+          try {
+            await writer.end();
+            console.log("malformed-id: resolved");
+          } catch (err) {
+            console.log("malformed-id: rejected", err?.code, "-", err?.message);
+          }
+        }
+
+        {
+          const writer = client.file("valid-id-object").writer({ partSize: 5 * 1024 * 1024 });
+          writer.write(part);
+          await writer.end();
+          console.log("valid-id: resolved");
+        }
+
+        server.stop(true);
+      `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // A server-supplied upload id containing non-ASCII bytes must surface as a normal S3 error
+    // on the writer promise instead of terminating the process.
+    expect(stdout).toContain("malformed-id: rejected UnknownError - Failed to initiate multipart upload");
+    // A well-formed upload id still completes the multipart upload in the same process.
+    expect(stdout).toContain("valid-id: resolved");
+    expect(exitCode).toBe(0);
+  }, 60_000);
+});

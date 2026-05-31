@@ -8,7 +8,7 @@ use crate::values::protocol;
 use crate::values::time::Time;
 // Bring the numeric-protocol traits into scope so their methods resolve via the
 // `CalcValue` supertrait bounds inside `impl<V: CalcValue> Calc<V>`.
-use crate::values::protocol::{IsCompatible, ToCss};
+use crate::values::protocol::{IsCompatible, ToCss, TryOpTo};
 
 use core::cmp::Ordering;
 
@@ -70,6 +70,23 @@ impl CalcUnit {
             b"tan" => Some(Self::Tan),
             _ => None,
         }
+    }
+
+    pub fn arg_parse_is_type_independent(self) -> bool {
+        matches!(
+            self,
+            Self::Sin
+                | Self::Cos
+                | Self::Tan
+                | Self::Asin
+                | Self::Acos
+                | Self::Atan
+                | Self::Atan2
+                | Self::Pow
+                | Self::Log
+                | Self::Sqrt
+                | Self::Exp
+        )
     }
 }
 
@@ -680,12 +697,15 @@ impl<V: CalcValue> Calc<V> {
                 // `Calc::parse` again, which makes deeply nested invalid
                 // arguments exponentially slow to reject.
                 let start = input.state();
-                let is_math_function = matches!(
-                    input.next(),
-                    Ok(css::Token::Function(name)) if CalcUnit::get_any_case(name).is_some()
-                );
+                let failed_unit = match input.next() {
+                    Ok(css::Token::Function(name)) => CalcUnit::get_any_case(name),
+                    _ => None,
+                };
                 input.reset(&start);
-                if is_math_function {
+                if let Some(unit) = failed_unit {
+                    if unit.arg_parse_is_type_independent() {
+                        input.note_math_fn_parse_failure();
+                    }
                     return Err(e);
                 }
             }
@@ -791,10 +811,56 @@ impl<V: CalcValue> Calc<V> {
         ctx: C,
         parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
     ) -> CssResult<Angle> {
-        // atan2 supports arguments of any <number>, <dimension>, or <percentage>, even ones that wouldn't
-        // normally be supported by V. The only requirement is that the arguments be of the same type.
-        // Try parsing with each type, and return the first one that parses successfully.
-        //
+        let angle_ident = move |c: C, ident: &[u8]| -> Option<Calc<Angle>> {
+            match parse_ident(c, ident)? {
+                Calc::Number(n) => Some(Calc::Number(n)),
+                _ => None,
+            }
+        };
+
+        let before_args = input.state();
+        let failures_before = input.math_fn_parse_failures();
+        let hit_unrecoverable =
+            |input: &css::Parser| input.math_fn_parse_failures() != failures_before;
+
+        let reconcile =
+            |input: &mut css::Parser, a: &Calc<Angle>, b: &Calc<Angle>| -> CssResult<Angle> {
+                if let (Calc::Value(av), Calc::Value(bv)) = (a, b) {
+                    if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
+                        return Ok(v);
+                    }
+                } else if let (Calc::Number(an), Calc::Number(bn)) = (a, b) {
+                    return Ok(Angle::Rad(an.atan2(*bn)));
+                }
+                Err(input.new_custom_error(css::ParserError::invalid_value))
+            };
+
+        match Calc::<Angle>::parse_sum(input, ctx, angle_ident) {
+            Ok(a) => {
+                input.expect_comma()?;
+                match Calc::<Angle>::parse_sum(input, ctx, angle_ident) {
+                    Ok(b) => {
+                        if let Ok(v) = reconcile(input, &a, &b) {
+                            return Ok(v);
+                        }
+                        return Err(input.new_custom_error(css::ParserError::invalid_value));
+                    }
+                    Err(e) => {
+                        if hit_unrecoverable(input) {
+                            return Err(e);
+                        }
+                        input.reset(&before_args);
+                    }
+                }
+            }
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+                input.reset(&before_args);
+            }
+        }
+
         // blocked_on: values/length.rs un-gate — until Length is real,
         // `atan2(10px, 5px)` (and any other length-dimension pair) falls
         // through to the CSSNumber path below and errors with `invalid_value`,
@@ -805,9 +871,6 @@ impl<V: CalcValue> Calc<V> {
             return Ok(v);
         }
         if let Ok(v) = try_parse_atan2_args::<C, Percentage>(input, ctx) {
-            return Ok(v);
-        }
-        if let Ok(v) = try_parse_atan2_args::<C, Angle>(input, ctx) {
             return Ok(v);
         }
         if let Ok(v) = try_parse_atan2_args::<C, Time>(input, ctx) {

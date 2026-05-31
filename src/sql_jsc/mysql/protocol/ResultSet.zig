@@ -132,6 +132,14 @@ pub const Row = struct {
                 };
                 cell.* = SQLDataCell{ .tag = .date, .value = .{ .date = date } };
             },
+            // NEWDECIMAL is always sent as an ASCII decimal string regardless of the
+            // column's BINARY flag / charset. Computed decimals (SUM/AVG/arithmetic/CAST)
+            // carry the BINARY flag and charset 63, so the catch-all arm's binary-charset
+            // heuristic would wrongly return them as a Buffer.
+            .MYSQL_TYPE_NEWDECIMAL => {
+                const slice = value.slice();
+                cell.* = SQLDataCell{ .tag = .string, .value = .{ .string = if (slice.len > 0) bun.String.cloneUTF8(slice).value.WTFStringImpl else null }, .free_value = 1 };
+            },
             .MYSQL_TYPE_BIT => {
                 // BIT(1) is a special case, it's a boolean
                 if (column.column_length == 1) {

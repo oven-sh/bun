@@ -19,6 +19,69 @@ pub fn from_binary(bytes: &[u8]) -> f64 {
     (double_microseconds / US_PER_MS as f64) + POSTGRES_EPOCH_DATE as f64
 }
 
+/// Decode a Postgres `timestamp` (WITHOUT TIME ZONE) text value as UTC, so the
+/// text/simple-query path agrees with the binary path (which is already UTC).
+/// Postgres emits these as `YYYY-MM-DD HH:MM:SS[.ffffff]` with no offset;
+/// without this they'd go through JS `Date.parse` and be read as local time on
+/// non-UTC hosts. Returns `None` for anything that isn't this exact shape
+/// (e.g. `infinity`, BC dates, 5+ digit years), so the caller falls back to
+/// `Date.parse`. `timestamptz` and `date` already decode correctly via
+/// `Date.parse` and must NOT be routed here.
+pub fn timestamp_text_to_ms_utc(global_object: &JSGlobalObject, bytes: &[u8]) -> Option<f64> {
+    fn parse_u(bytes: &[u8]) -> Option<i32> {
+        if bytes.is_empty() {
+            return None;
+        }
+        let mut n: i32 = 0;
+        for &c in bytes {
+            if !c.is_ascii_digit() {
+                return None;
+            }
+            n = n.checked_mul(10)?.checked_add(i32::from(c - b'0'))?;
+        }
+        Some(n)
+    }
+
+    if bytes.len() < 19
+        || bytes[4] != b'-'
+        || bytes[7] != b'-'
+        || bytes[10] != b' '
+        || bytes[13] != b':'
+        || bytes[16] != b':'
+    {
+        return None;
+    }
+    let year = parse_u(&bytes[0..4])?;
+    let month = parse_u(&bytes[5..7])?;
+    let day = parse_u(&bytes[8..10])?;
+    let hour = parse_u(&bytes[11..13])?;
+    let minute = parse_u(&bytes[14..16])?;
+    let second = parse_u(&bytes[17..19])?;
+
+    let millisecond = if bytes.len() > 19 {
+        if bytes[19] != b'.' {
+            return None;
+        }
+        let frac = &bytes[20..];
+        if frac.is_empty() || frac.len() > 6 || !frac.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        // Fractional seconds → milliseconds (JS Date is ms-precision, like the
+        // binary path's f64 truncation).
+        let mut micro = parse_u(frac)?;
+        for _ in 0..(6 - frac.len()) {
+            micro *= 10;
+        }
+        micro / 1000
+    } else {
+        0
+    };
+
+    global_object
+        .gregorian_date_time_to_ms_utc(year, month, day, hour, minute, second, millisecond)
+        .ok()
+}
+
 pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> {
     let double_value = if value.is_date() {
         value.get_unix_timestamp()

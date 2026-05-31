@@ -45,6 +45,8 @@
 #include "CloseEvent.h"
 #include "JSMessagePort.h"
 #include "JSBroadcastChannel.h"
+#include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/TopExceptionScope.h>
 
 namespace WebCore {
 
@@ -496,6 +498,30 @@ void Worker::dispatchErrorWithMessage(WTF::String message)
 
 bool Worker::dispatchErrorWithValue(Zig::GlobalObject* workerGlobalObject, JSValue value)
 {
+    // Serializing an Error materializes its stack info, which can run user JS
+    // (Error.prepareStackTrace) that may throw. Materialize it up front under
+    // exception control: if it throws, clear the exception and drop the
+    // partially-materialized stack property so the error is still delivered to
+    // the parent's 'error' event (without a stack), matching Node. This is a
+    // native entry point that never propagates exceptions, hence the
+    // TopExceptionScope.
+    if (auto* errorInstance = dynamicDowncast<JSC::ErrorInstance>(value)) {
+        auto& vm = JSC::getVM(workerGlobalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        errorInstance->materializeErrorInfoIfNeeded(vm);
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.clearExceptionExceptTermination())
+                return false;
+            JSC::VM::DeletePropertyModeScope deleteScope(vm, JSC::VM::DeletePropertyMode::IgnoreConfigurable);
+            JSC::DeletePropertySlot slot;
+            JSC::JSObject::deleteProperty(errorInstance, workerGlobalObject, vm.propertyNames->stack, slot);
+            if (scope.exception()) [[unlikely]] {
+                if (!scope.clearExceptionExceptTermination())
+                    return false;
+            }
+        }
+    }
+
     auto serialized = SerializedScriptValue::create(*workerGlobalObject, value, SerializationForStorage::No, SerializationErrorMode::NonThrowing);
     if (!serialized)
         return false;

@@ -1686,6 +1686,12 @@ private:
             }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
                 auto& vm = m_lexicalGlobalObject->vm();
+                // The descriptor reads below lazily materialize the error's stack info,
+                // which can run user JS (Error.prepareStackTrace) that may throw.
+                // Materialize once up front under exception control so a pending
+                // exception cannot leak into getOwnPropertyDescriptor().
+                errorInstance->materializeErrorInfoIfNeeded(vm);
+                RETURN_IF_EXCEPTION(scope, false);
                 auto errorTypeValue = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->name);
                 RETURN_IF_EXCEPTION(scope, false);
                 auto errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);

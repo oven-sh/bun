@@ -736,3 +736,79 @@ describe("dictionary buffer lifetime", () => {
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
   });
 });
+
+describe("one-shot _processChunk with overlapping input/output", () => {
+  // Safe JS can point `_processChunk`'s input at the same backing store as the
+  // handle's `_outBuffer` (both are ordinary Buffers). Bun, like Node, accepts
+  // this and must keep accepting it. The native binding hands the compressor
+  // raw pointer/length spans rather than forming overlapping `&[u8]`/`&mut [u8]`
+  // references, so observable behavior is unchanged. These lock that the normal
+  // separate-buffer path stays correct and the overlap path is still accepted,
+  // across all three native compressors (zlib, Brotli, Zstd).
+  function makeSeed() {
+    const seed = Buffer.alloc(1024);
+    for (let i = 0; i < seed.length; i++) seed[i] = (i * 31 + 7) & 255;
+    return seed;
+  }
+
+  const codecs = [
+    ["zstd", () => zlib.createZstdCompress({ chunkSize: 8192 }), zlib.constants.ZSTD_e_end, zlib.zstdDecompressSync],
+    [
+      "brotli",
+      () => zlib.createBrotliCompress({ chunkSize: 8192 }),
+      zlib.constants.BROTLI_OPERATION_FINISH,
+      zlib.brotliDecompressSync,
+    ],
+    ["deflate", () => zlib.createDeflate({ chunkSize: 8192 }), zlib.constants.Z_FINISH, zlib.inflateSync],
+  ];
+
+  describe.each(codecs)("%s", (_name, create, endFlush, decompress) => {
+    it("separate input/output round-trips", () => {
+      const seed = makeSeed();
+      const s = create();
+      const out = Buffer.alloc(8192);
+      s._outBuffer = out;
+      s._outOffset = 0;
+      s._chunkSize = out.length;
+      const compressed = s._processChunk(Buffer.from(seed), endFlush);
+      expect(decompress(compressed)).toEqual(seed);
+    });
+
+    it.each([0, 1])("accepts input and output aliasing the same backing store at offset %d", offset => {
+      const seed = makeSeed();
+      const backing = Buffer.alloc(8192);
+      seed.copy(backing, offset);
+      const s = create();
+      s._outBuffer = backing;
+      s._outOffset = 0;
+      s._chunkSize = backing.length;
+      const out = s._processChunk(backing.subarray(offset, offset + seed.length), endFlush);
+      expect(Buffer.isBuffer(out)).toBe(true);
+      expect(out.length).toBeGreaterThan(0);
+    });
+  });
+
+  // The async worker path (`handle.write` → `CompressionStream::write`) builds
+  // its span the same way as the sync path; passing a callback to `_processChunk`
+  // routes through it. Exercise it once with overlapping input/output.
+  it("accepts input and output aliasing through the async write path", async () => {
+    const seed = makeSeed();
+    const backing = Buffer.alloc(8192);
+    seed.copy(backing, 0);
+    const s = zlib.createDeflate({ chunkSize: 8192 });
+    s._outBuffer = backing;
+    s._outOffset = 0;
+    s._chunkSize = backing.length;
+
+    const chunks = [];
+    s.on("data", chunk => chunks.push(chunk));
+    const { promise, resolve, reject } = Promise.withResolvers();
+    s.on("error", reject);
+    s._processChunk(backing.subarray(0, seed.length), zlib.constants.Z_FINISH, resolve);
+    await promise;
+
+    const out = Buffer.concat(chunks);
+    expect(Buffer.isBuffer(out)).toBe(true);
+    expect(out.length).toBeGreaterThan(0);
+  });
+});

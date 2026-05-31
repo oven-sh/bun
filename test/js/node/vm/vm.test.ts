@@ -1057,3 +1057,123 @@ test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNa
   `);
   expect(exitCode).toBe(0);
 });
+
+describe("node:vm SourceTextModule cyclic graph linking", () => {
+  // Building a cyclic SourceTextModule graph and linking + evaluating each
+  // module from inside the linker callback (instead of linking the whole graph
+  // first and evaluating once) used to segfault: instantiate() runs JSC's
+  // whole-graph record->link(), which walks into a dependency whose own link()
+  // has not run yet (its loadedModules() is empty), dereferencing an end()
+  // iterator. Bun must instead throw a catchable ERR_VM_MODULE_LINK_FAILURE,
+  // matching Node. See https://github.com/oven-sh/bun/issues/31623.
+  test("link + evaluate inside the linker throws instead of crashing", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const ctx = vm.createContext({ globalThis });
+      const sources = {
+        a: 'import { b } from "b"; export const a = "A"; export const ab = () => b;',
+        b: 'import { a } from "a"; export const b = "B"; export const ba = () => a;',
+      };
+      const built = new Map();
+      async function ensure(id) {
+        const existing = built.get(id);
+        if (existing) return existing;
+        const m = new vm.SourceTextModule(sources[id], { context: ctx, identifier: id });
+        built.set(id, m);
+        await m.link(async spec => await ensure(spec));
+        await m.evaluate();
+        return m;
+      }
+      try {
+        const root = await ensure("a");
+        console.log("UNEXPECTED_OK " + Object.keys(root.namespace).join(","));
+      } catch (e) {
+        console.log("CAUGHT " + e.code + " " + e.message);
+      }
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("CAUGHT ERR_VM_MODULE_LINK_FAILURE request for 'b' is not in cache");
+    expect(exitCode).toBe(0);
+  });
+
+  test("a self-importing module links + evaluates without crashing", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const ctx = vm.createContext({ globalThis });
+      const sources = { self: 'import {} from "self"; export const x = 1;' };
+      const built = new Map();
+      async function ensure(id) {
+        const existing = built.get(id);
+        if (existing) return existing;
+        const m = new vm.SourceTextModule(sources[id], { context: ctx, identifier: id });
+        built.set(id, m);
+        await m.link(async spec => await ensure(spec));
+        await m.evaluate();
+        return m;
+      }
+      const root = await ensure("self");
+      console.log("OK " + Object.keys(root.namespace).join(","));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK x");
+    expect(exitCode).toBe(0);
+  });
+
+  test("the canonical link-whole-graph-then-evaluate pattern still works", async () => {
+    const fixture = `
+      const vm = require("node:vm");
+      const ctx = vm.createContext({ globalThis });
+      const sources = {
+        a: 'import { b } from "b"; export const a = "A"; export const ab = () => b;',
+        b: 'import { a } from "a"; export const b = "B"; export const ba = () => a;',
+      };
+      const built = new Map();
+      function get(id) {
+        let m = built.get(id);
+        if (m) return m;
+        m = new vm.SourceTextModule(sources[id], { context: ctx, identifier: id });
+        built.set(id, m);
+        return m;
+      }
+      const root = get("a");
+      await root.link(spec => get(spec));
+      await root.evaluate();
+      const nsA = root.namespace;
+      const nsB = built.get("b").namespace;
+      console.log("ab=" + nsA.ab() + " ba=" + nsB.ba());
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("ab=B ba=A");
+    expect(exitCode).toBe(0);
+  });
+});

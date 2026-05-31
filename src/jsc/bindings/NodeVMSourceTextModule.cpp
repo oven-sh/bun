@@ -5,6 +5,7 @@
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 
+#include "wtf/HashSet.h"
 #include "wtf/Scope.h"
 
 #include "JavaScriptCore/BuiltinNames.h"
@@ -393,6 +394,35 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
     return jsUndefined();
 }
 
+// JSC's record->link() walks the whole dependency graph via innerModuleLinking,
+// which calls JSModuleLoader::getImportedModule() for every request of every
+// reachable record and asserts the request is present in that record's
+// loadedModules() (populated by setImportedModule() during link()). When a
+// module is linked *and evaluated* from inside the linker callback of a cyclic
+// graph, instantiate() can run while a dependency is still mid-link(): its
+// loadedModules() is empty, so getImportedModule() would dereference end() —
+// an assert in debug, a segfault in release. Pre-walk the graph the same way
+// and throw a catchable ERR_VM_MODULE_LINK_FAILURE (matching Node) instead.
+static bool isModuleGraphLinked(AbstractModuleRecord* record, WTF::HashSet<AbstractModuleRecord*>& visited, String& missingSpecifier)
+{
+    if (!visited.add(record).isNewEntry)
+        return true;
+
+    for (const auto& request : record->requestedModules()) {
+        const auto& loaded = record->loadedModules();
+        auto iter = loaded.find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
+        if (iter == loaded.end()) {
+            missingSpecifier = request.m_specifier.string();
+            return false;
+        }
+        AbstractModuleRecord* dependency = iter->value.m_module.get();
+        if (dependency && !isModuleGraphLinked(dependency, visited, missingSpecifier))
+            return false;
+    }
+
+    return true;
+}
+
 JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -406,6 +436,13 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
     RETURN_IF_EXCEPTION(scope, {});
     if (nodeVmGlobalObject)
         globalObject = nodeVmGlobalObject;
+
+    WTF::HashSet<AbstractModuleRecord*> visited;
+    String missingSpecifier;
+    if (!isModuleGraphLinked(record, visited, missingSpecifier)) {
+        throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, makeString("request for '"_s, missingSpecifier, "' is not in cache"_s));
+        return {};
+    }
 
     record->link(globalObject, nullptr);
     RETURN_IF_EXCEPTION(scope, {});

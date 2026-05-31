@@ -278,6 +278,33 @@ w.on("exit", code => console.log("exit:", code, workerData[1]));`,
   });
 });
 
+test("throwing in a Worker's uncaughtException handler terminates only the worker", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+const w = new Worker(
+  "process.on('uncaughtException', () => { throw new Error('boom2'); }); throw new Error('boom1');",
+  { eval: true },
+);
+w.on("error", err => console.log("error:", err.message));
+w.on("exit", code => console.log("exit:", code));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+    stdout: "error: boom2\nexit: 1\n",
+    stderr: "",
+    signalCode: null,
+    exitCode: 0,
+  });
+});
+
 describe("execArgv option", async () => {
   // this needs to be a subprocess to ensure that the parent's execArgv is not empty
   // otherwise we could not distinguish between the worker inheriting the parent's execArgv

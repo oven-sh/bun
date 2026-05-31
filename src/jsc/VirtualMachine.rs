@@ -1419,6 +1419,12 @@ impl VirtualMachine {
 
         let hooks = runtime_hooks().expect("RuntimeHooks not installed");
         if self.is_handling_uncaught_exception {
+            if !self.is_main_thread() {
+                self.unhandled_error_counter += 1;
+                self.exit_handler.exit_code = 1;
+                (self.on_unhandled_rejection)(self, global_object, err);
+                return true;
+            }
             self.run_error_handler(err, None);
             // SAFETY: `global_object` is the live VM global; `process_exit` is
             // `bun_runtime::node::process::exit` (main-thread `noreturn`).
@@ -1447,10 +1453,10 @@ impl VirtualMachine {
         // (VirtualMachine.zig:707) covers BOTH the FFI call and the
         // `onUnhandledRejection` callback above. The flag must stay raised
         // while that callback runs so a re-entrant `uncaught_exception` from
-        // a user handler trips the recursion guard and hard-exits with code 7
+        // a user handler trips the recursion guard (main thread: hard-exit
+        // with code 7; worker: dispatch the error and request termination)
         // instead of recursing. Neither the FFI call nor the fn-pointer
-        // callback unwind past this frame (re-entry hits `process_exit` →
-        // `panic!`, which never returns), so a linear reset here matches the
+        // callback unwind past this frame, so a linear reset here matches the
         // Zig `defer` scope.
         self.is_handling_uncaught_exception = false;
         handled

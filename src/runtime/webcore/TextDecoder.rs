@@ -1,7 +1,5 @@
 use crate::webcore::EncodingLabel;
-use crate::webcore::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsResult,
-};
+use crate::webcore::jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::AllocError;
 use bun_core::{OwnedString, strings};
 use core::cell::Cell;
@@ -231,7 +229,18 @@ impl TextDecoder {
             }
 
             if let Some(ab) = arguments[0].as_array_buffer(global_this) {
-                array_buffer = ab;
+                // Snapshot SharedArrayBuffer / growable SharedArrayBuffer /
+                // resizable ArrayBuffer inputs before borrowing: another agent can
+                // mutate shared memory (or the owner can resize the backing store)
+                // while Rust holds the `&[u8]`, which is undefined behavior under
+                // Rust's shared-slice aliasing rules. The copy runs in C++, so Rust
+                // never reads the shared source through a slice. Fixed, unshared
+                // inputs keep the zero-copy borrowed path.
+                array_buffer = if ab.shared || ab.resizable {
+                    snapshot_shared_array_buffer(global_this, &ab)?
+                } else {
+                    ab
+                };
                 break 'input_slice array_buffer.slice();
             }
 
@@ -246,17 +255,6 @@ impl TextDecoder {
         } else {
             self.decode_slice::<false>(global_this, input_slice)
         }
-    }
-
-    /// DOMJIT fast path for `decode(typedArray)` called with no options object.
-    /// A no-options decode is flushing per WHATWG Encoding, matching the slow
-    /// path in `decode()` when `stream` is absent.
-    pub fn decode_without_type_checks(
-        &self,
-        global_this: &JSGlobalObject,
-        uint8array: &mut JSUint8Array,
-    ) -> JsResult<JSValue> {
-        self.decode_slice::<true>(global_this, uint8array.slice())
     }
 
     fn decode_slice<const FLUSH: bool>(
@@ -559,4 +557,32 @@ impl TextDecoder {
 
         Ok(bun_core::heap::into_raw(TextDecoder::new(decoder)))
     }
+}
+
+/// Copy a `SharedArrayBuffer`, growable `SharedArrayBuffer`, or resizable
+/// `ArrayBuffer` input into a fresh, non-shared `ArrayBuffer` so the decoder
+/// never constructs a `&[u8]` over memory another agent can mutate. The copy is
+/// performed in C++ (`Bun__createArrayBufferForCopy`), so Rust never reads the
+/// shared source bytes through a slice. The returned `ArrayBuffer` owns the
+/// copy's JS value, keeping it alive for the duration of the borrow.
+fn snapshot_shared_array_buffer(
+    global_this: &JSGlobalObject,
+    array_buffer: &jsc::ArrayBuffer,
+) -> JsResult<jsc::ArrayBuffer> {
+    let copy = bun_jsc::from_js_host_call(global_this, || unsafe {
+        Bun__createArrayBufferForCopy(global_this, array_buffer.ptr.cast(), array_buffer.byte_len)
+    })?;
+    copy.as_array_buffer(global_this).ok_or_else(|| {
+        global_this.throw_invalid_arguments(format_args!(
+            "Failed to snapshot shared ArrayBuffer for TextDecoder.decode",
+        ))
+    })
+}
+
+unsafe extern "C" {
+    fn Bun__createArrayBufferForCopy(
+        global_this: *const JSGlobalObject,
+        ptr: *const core::ffi::c_void,
+        len: usize,
+    ) -> JSValue;
 }

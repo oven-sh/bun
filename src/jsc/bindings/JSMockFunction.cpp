@@ -239,6 +239,13 @@ public:
         JSMockFunction* function = new (NotNull, JSC::allocateCell<JSMockFunction>(vm)) JSMockFunction(vm, structure, kind);
         function->finishCreation(vm);
 
+        // InternalFunction does not auto-create a `.prototype` like JSFunction does.
+        // Install a writable one with a `constructor` back-reference so mocks behave
+        // like ordinary JS functions under `new` (matches jest).
+        JSObject* prototype = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+        prototype->putDirect(vm, vm.propertyNames->constructor, function, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+        function->putDirect(vm, vm.propertyNames->prototype, prototype, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete));
+
         // Do not forget to set the original name: https://github.com/oven-sh/bun/issues/8794
         function->m_originalName.set(vm, function, globalObject->commonStrings().mockedFunctionString(globalObject));
 

@@ -120,9 +120,15 @@ describe("mock()", () => {
   test("are constructable with new", () => {
     // no implementation: `new` should produce a fresh object, like `new` on an ordinary function
     const fn = jest.fn();
+    // like an ordinary function, a mock has a writable `.prototype` with a `constructor` back-reference
+    expect(typeof fn.prototype).toBe("object");
+    expect(fn.prototype.constructor).toBe(fn);
     const instance = new fn(1, 2);
     expect(typeof instance).toBe("object");
     expect(instance).not.toBe(null);
+    // the instance inherits from the mock's prototype, so `instanceof` works without assigning one
+    expect(Object.getPrototypeOf(instance)).toBe(fn.prototype);
+    expect(instance instanceof fn).toBe(true);
     expect(fn.mock.calls).toEqual([[1, 2]]);
     expect(fn.mock.contexts[0]).toBe(instance);
     // `new` calls are recorded in mock.instances

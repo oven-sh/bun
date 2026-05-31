@@ -403,21 +403,32 @@ JSValue NodeVMSourceTextModule::link(JSGlobalObject* globalObject, JSArray* spec
 // loadedModules() is empty, so getImportedModule() would dereference end() —
 // an assert in debug, a segfault in release. Pre-walk the graph the same way
 // and throw a catchable ERR_VM_MODULE_LINK_FAILURE (matching Node) instead.
-static bool isModuleGraphLinked(AbstractModuleRecord* record, WTF::HashSet<AbstractModuleRecord*>& visited, String& missingSpecifier)
+//
+// The walk is iterative (an explicit worklist) rather than recursive: a deep
+// linear import chain has graph depth proportional to its length, and we must
+// not add an unguarded native recursion that would overflow the stack before
+// record->link()'s own isSafeToRecurse() guard throws a catchable RangeError.
+static bool isModuleGraphLinked(AbstractModuleRecord* root, String& missingSpecifier)
 {
-    if (!visited.add(record).isNewEntry)
-        return true;
+    WTF::HashSet<AbstractModuleRecord*> visited;
+    WTF::Vector<AbstractModuleRecord*, 16> worklist;
+    worklist.append(root);
 
-    for (const auto& request : record->requestedModules()) {
+    while (!worklist.isEmpty()) {
+        AbstractModuleRecord* record = worklist.takeLast();
+        if (!visited.add(record).isNewEntry)
+            continue;
+
         const auto& loaded = record->loadedModules();
-        auto iter = loaded.find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
-        if (iter == loaded.end()) {
-            missingSpecifier = request.m_specifier.string();
-            return false;
+        for (const auto& request : record->requestedModules()) {
+            auto iter = loaded.find(JSC::ModuleMapKey { request.m_specifier.impl(), request.type() });
+            if (iter == loaded.end()) {
+                missingSpecifier = request.m_specifier.string();
+                return false;
+            }
+            if (AbstractModuleRecord* dependency = iter->value.m_module.get())
+                worklist.append(dependency);
         }
-        AbstractModuleRecord* dependency = iter->value.m_module.get();
-        if (dependency && !isModuleGraphLinked(dependency, visited, missingSpecifier))
-            return false;
     }
 
     return true;
@@ -437,9 +448,8 @@ JSValue NodeVMSourceTextModule::instantiate(JSGlobalObject* globalObject)
     if (nodeVmGlobalObject)
         globalObject = nodeVmGlobalObject;
 
-    WTF::HashSet<AbstractModuleRecord*> visited;
     String missingSpecifier;
-    if (!isModuleGraphLinked(record, visited, missingSpecifier)) {
+    if (!isModuleGraphLinked(record, missingSpecifier)) {
         throwError(globalObject, scope, ErrorCode::ERR_VM_MODULE_LINK_FAILURE, makeString("request for '"_s, missingSpecifier, "' is not in cache"_s));
         return {};
     }

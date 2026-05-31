@@ -804,10 +804,11 @@ void exceptionFromString(ZigException& except, JSC::JSValue value, JSC::JSGlobal
         switch (type) {
         case JSC::SymbolType: {
             auto* symbol = asSymbol(cell);
-            if (symbol->description().isEmpty()) {
+            auto& uid = symbol->uid();
+            if (uid.isNullSymbol() || uid.isEmpty()) {
                 except.message = BunStringEmpty;
             } else {
-                except.message = Bun::toStringRef(symbol->description());
+                except.message = Bun::toStringRef(static_cast<WTF::StringImpl*>(&uid));
             }
             return;
         }

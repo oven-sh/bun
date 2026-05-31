@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, readdirSorted, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunEnv as env, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
 import { join } from "path";
 import {
@@ -584,5 +584,82 @@ test("bun list --all shows full dependency tree", async () => {
 ├── bar@0.0.2
 └── moo@moo
 `);
+  expect(exitCode).toBe(0);
+});
+
+test("bun pm cache rm resolves the cache directory from the process environment, ignoring project-local .env overrides", async () => {
+  using dir = tempDir("pm-cache-rm-project-env", {
+    "package.json": JSON.stringify({ name: "cache-rm-project-env", version: "1.0.0" }),
+    "unrelated/keep.txt": "do not delete",
+    "bun-install/install/cache/cached-package.txt": "cached artifact",
+  });
+  const dirStr = String(dir);
+  const unrelatedDir = join(dirStr, "unrelated");
+  const bunInstallDir = join(dirStr, "bun-install");
+  const realCacheDir = join(bunInstallDir, "install", "cache");
+
+  // Project-local .env points the cache directory at an unrelated directory full of data.
+  await writeFile(join(dirStr, ".env"), `BUN_INSTALL_CACHE_DIR=${unrelatedDir}\n`);
+
+  // The process environment derives the cache location from BUN_INSTALL only;
+  // BUN_INSTALL_CACHE_DIR is intentionally absent so only the project .env names one.
+  const spawnEnv: NodeJS.Dict<string> = {
+    ...env,
+    BUN_INSTALL: bunInstallDir,
+    XDG_CACHE_HOME: join(dirStr, "xdg-cache"),
+    HOME: dirStr,
+  };
+  delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "cache", "rm"],
+    cwd: dirStr,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  // The directory named only by the project-local .env must remain intact.
+  expect(await exists(join(unrelatedDir, "keep.txt"))).toBeTrue();
+  // The cache derived from the process environment (BUN_INSTALL/install/cache) is what gets cleared.
+  expect(await exists(join(realCacheDir, "cached-package.txt"))).toBeFalse();
+  expect(stdout).toInclude("Cleared 'bun install' cache");
+  expect(exitCode).toBe(0);
+});
+
+test("bun pm cache rm does not create the directory named by a project-local .env override", async () => {
+  using dir = tempDir("pm-cache-rm-no-create", {
+    "package.json": JSON.stringify({ name: "cache-rm-no-create", version: "1.0.0" }),
+    "bun-install/install/cache/cached-package.txt": "cached artifact",
+  });
+  const dirStr = String(dir);
+  const bunInstallDir = join(dirStr, "bun-install");
+  const realCacheDir = join(bunInstallDir, "install", "cache");
+  const overrideDir = join(dirStr, "env-named-cache");
+
+  await writeFile(join(dirStr, ".env"), `BUN_INSTALL_CACHE_DIR=${overrideDir}\n`);
+
+  const spawnEnv: NodeJS.Dict<string> = {
+    ...env,
+    BUN_INSTALL: bunInstallDir,
+    XDG_CACHE_HOME: join(dirStr, "xdg-cache"),
+    HOME: dirStr,
+  };
+  delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "pm", "cache", "rm"],
+    cwd: dirStr,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: spawnEnv,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(await exists(overrideDir)).toBeFalse();
+  expect(await exists(join(realCacheDir, "cached-package.txt"))).toBeFalse();
+  expect(stdout).toInclude("Cleared 'bun install' cache");
+  expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });

@@ -12,3 +12,38 @@ describe("S3Client.list() option encoding", () => {
     },
   );
 });
+
+describe("S3 object keys containing '?' or '#'", () => {
+  it("includes the full object key in the presigned URL path", () => {
+    // Keys are signed/encoded locally by presign(); no network request is made.
+    const client = new S3Client({
+      accessKeyId: "test",
+      secretAccessKey: "test",
+      bucket: "bucket",
+      region: "us-east-1",
+      endpoint: "https://s3.example.com",
+    });
+
+    // A key containing '?' must be percent-encoded into the signed path,
+    // not cut off at the '?'.
+    {
+      const presigned = client.presign("confidential-report.pdf?x=.png");
+      const url = new URL(presigned);
+      expect(url.pathname).toBe("/bucket/confidential-report.pdf%3Fx%3D.png");
+    }
+
+    // A key containing '#' after a '/' must also keep the remainder.
+    {
+      const presigned = client.presign("reports/2024#final.pdf");
+      const url = new URL(presigned);
+      expect(url.pathname).toBe("/bucket/reports/2024%23final.pdf");
+    }
+
+    // Ordinary keys keep working as before.
+    {
+      const presigned = client.presign("plain-image.png");
+      const url = new URL(presigned);
+      expect(url.pathname).toBe("/bucket/plain-image.png");
+    }
+  });
+});

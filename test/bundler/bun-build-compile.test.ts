@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isArm64, isLinux, isMacOS, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isArm64, isLinux, isMacOS, isMusl, isPosix, isWindows, tempDir } from "harness";
 import { chmodSync } from "node:fs";
 import { join } from "path";
 
@@ -464,5 +464,118 @@ if (isLinux) {
     }, 60_000);
   });
 }
+
+// Regression guard for the standalone-module-graph ELF probe on Android.
+//
+// Spec: src/standalone_graph/StandaloneModuleGraph.zig — `fromExecutable()`
+// gates the ELF `.bun` reader on `Environment.isLinux or Environment.isFreeBSD`.
+// Zig's `isLinux` (builtin.target.os.tag == .linux) is TRUE on Android, so
+// Android takes the ELF path and the trailing `comptime unreachable` is dead.
+//
+// In Rust, `target_os = "linux"` and `target_os = "android"` are distinct cfg
+// values. A naive port of the Zig gate as
+//   #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+// silently excludes Android and falls through to the catch-all
+// `unreachable!()`, so every `bun build --compile` binary panics at startup
+// on Android instead of loading its embedded module graph.
+//
+// This test only runs on an Android host. It compiles a trivial app and
+// asserts the resulting binary starts, finds its graph, and runs the entry —
+// i.e. the ELF arm was taken, not `unreachable!()`.
+if (process.platform === "android") {
+  describe("ELF section (Android)", () => {
+    test("compiled standalone binary loads its module graph on Android", async () => {
+      using dir = tempDir("build-compile-android-elf", {
+        "app.js": `console.log("android-standalone-ok");`,
+      });
+
+      const outfile = join(String(dir), "app-android");
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildStderr).not.toContain("error:");
+      expect(buildExit).toBe(0);
+
+      await using proc = Bun.spawn({
+        cmd: [outfile],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // If the Rust cfg-gate diverges from Zig's `Environment.isLinux`, the
+      // process panics with `internal error: entered unreachable code` before
+      // any user JS runs. Assert the spec behavior: graph found, entry ran.
+      expect(stderr).not.toContain("unreachable");
+      expect(stdout.trim()).toBe("android-standalone-ok");
+      expect(exitCode).toBe(0);
+    }, 60_000);
+  });
+}
+
+// A standalone compiled binary bypasses `Arguments::parse` (no `--cwd`/global
+// flags, no baked exec-argv), so `absolute_working_dir` stays unset and the
+// FIRST `getcwd` of the whole startup is the one inside `Transpiler::init`.
+// When the cwd has been deleted that `getcwd` fails with ENOENT; the bug was
+// that the per-VM init hook swallowed the error and left `vm.transpiler`
+// zeroed, so the next read (`configure_defines` → `run_env_loader`) hit a null
+// deref and the binary crashed (the segfault users saw launching a compiled
+// CLI from a directory that had been removed). It must instead exit cleanly
+// with the ENOENT message.
+//
+// POSIX-only: a process can keep a deleted directory as its cwd until the last
+// fd to it closes, whereas Windows refuses to remove a directory that is any
+// process's cwd — so the scenario is unreachable there. The cwd has to be
+// removed AFTER the process starts, which `Bun.spawn`'s `cwd` can't do, so a
+// shell wrapper `cd`s in, `rmdir`s, then execs the binary (how a user hits it).
+describe("compiled binary in a deleted cwd", () => {
+  test.if(isPosix)(
+    "exits cleanly instead of crashing",
+    async () => {
+      using dir = tempDir("build-compile-deleted-cwd", {
+        "app.js": `console.log("should-not-run");`,
+      });
+      const outfile = join(String(dir), "app");
+
+      await using build = Bun.spawn({
+        cmd: [bunExe(), "build", "--compile", join(String(dir), "app.js"), "--outfile", outfile],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExit] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+      expect(buildStderr).not.toContain("error:");
+      expect(buildExit).toBe(0);
+
+      // A fresh directory to stand in and delete — NOT `dir`, which holds the
+      // compiled binary we still need to exec.
+      using cwdDir = tempDir("build-compile-gone-cwd", {});
+      const gone = String(cwdDir);
+
+      await using proc = Bun.spawn({
+        cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${outfile}"`],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // The entry never runs (VM init aborts first), the ENOENT surfaces, and the
+      // process exits 1 — a crash would terminate via a signal, never exit 1.
+      expect(stdout).toBe("");
+      expect(stderr).toContain("ENOENT");
+      expect(exitCode).toBe(1);
+    },
+    60_000,
+  );
+});
 
 // file command test works well

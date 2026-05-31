@@ -740,9 +740,11 @@ const SQL: typeof Bun.SQL = function SQL(
         if ($isCallable(name)) {
           savepoint_callback = name as unknown as TransactionCallback;
           name = "";
+        } else if (name) {
+          name = String(name).replace(/[^a-zA-Z0-9_]/g, "_");
         }
         if (!$isCallable(savepoint_callback)) {
-          throw $ERR_INVALID_ARG_VALUE("fn", callback, "must be a function");
+          throw $ERR_INVALID_ARG_VALUE("fn", savepoint_callback, "must be a function");
         }
         // matchs the format of the savepoint name in postgres package
         const save_point_name = `s${savepoints++}${name ? `_${name}` : ""}`;

@@ -2239,6 +2239,14 @@ declare module "bun" {
      * @default "sha256"
      */
     algorithm?: CSRFAlgorithm;
+
+    /**
+     * Binds the token to the requesting principal (session ID, user ID, or
+     * equivalent). A token generated with a `sessionId` only verifies when the
+     * same `sessionId` is supplied to `verify()`. Without it, any token issued
+     * under the same secret validates for every user.
+     */
+    sessionId?: string;
   }
 
   interface CSRFVerifyOptions {
@@ -2264,6 +2272,14 @@ declare module "bun" {
      * @default 24 * 60 * 60 * 1000 (24 hours)
      */
     maxAge?: number;
+
+    /**
+     * The principal (session ID, user ID, or equivalent) the token must be
+     * bound to. A token generated with a `sessionId` only verifies when the
+     * same `sessionId` is supplied here; a token generated without one only
+     * verifies when this option is omitted.
+     */
+    sessionId?: string;
   }
 
   /**
@@ -3089,7 +3105,7 @@ declare module "bun" {
       algorithm: "argon2id" | "argon2d" | "argon2i";
 
       /**
-       * Memory cost, which defines the memory usage, given in kibibytes.
+       * Memory cost, which defines the memory usage, given in kibibytes. Minimum 8.
        */
       memoryCost?: number;
       /**
@@ -4692,6 +4708,20 @@ declare module "bun" {
      * Dump the mimalloc heap to the console
      */
     function mimallocDump(): void;
+
+    /**
+     * Accurate per-process memory footprint in bytes.
+     *
+     * Unlike `process.memoryUsage.rss()`, this excludes pages already
+     * returned to the OS that the kernel keeps mapped lazily (Darwin's
+     * `MADV_FREE_REUSABLE`), so leak tests are platform-comparable.
+     *
+     * Backed by `task_info(TASK_VM_INFO).phys_footprint` on Darwin, `Pss:`
+     * from `/proc/self/smaps_rollup` on Linux, and `PrivateUsage` on Windows.
+     * Returns `undefined` on platforms with no accurate accessor; callers
+     * should fall back: `Bun.unsafe.memoryFootprint() ?? process.memoryUsage.rss()`.
+     */
+    function memoryFootprint(): number | undefined;
   }
 
   type DigestEncoding = "utf8" | "ucs2" | "utf16le" | "latin1" | "ascii" | "base64" | "base64url" | "hex";
@@ -9390,7 +9420,7 @@ declare module "bun" {
    * Types for `bun.lock`
    */
   type BunLockFile = {
-    lockfileVersion: 0 | 1;
+    lockfileVersion: 0 | 1 | 2;
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };

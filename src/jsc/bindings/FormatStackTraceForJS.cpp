@@ -701,8 +701,20 @@ JSC_DEFINE_CUSTOM_GETTER(errorInstanceLazyStackCustomGetter, (JSGlobalObject * g
         WTF::Vector<JSC::StackFrame> emptyTrace;
         result = computeErrorInfoToJSValue(vm, emptyTrace, line, column, sourceURL, errorObject, nullptr);
     } else {
-        result = computeErrorInfoToJSValue(vm, *stackTrace, line, column, sourceURL, errorObject, nullptr);
-        stackTrace->clear();
+        auto ownedStackTrace = makeUnique<WTF::Vector<JSC::StackFrame>>(WTF::move(*stackTrace));
+        JSC::MarkedArgumentBuffer protectedFrameCells;
+        protectedFrameCells.ensureCapacity(ownedStackTrace->size() * 2);
+        for (auto& frame : *ownedStackTrace) {
+            if (auto* callee = frame.callee())
+                protectedFrameCells.append(callee);
+            if (auto* codeBlock = frame.codeBlock())
+                protectedFrameCells.append(codeBlock);
+        }
+        if (protectedFrameCells.hasOverflowed()) [[unlikely]] {
+            throwOutOfMemoryError(globalObject, scope);
+            return {};
+        }
+        result = computeErrorInfoToJSValue(vm, *ownedStackTrace, line, column, sourceURL, errorObject, nullptr);
         errorObject->setStackFrames(vm, {});
     }
     RETURN_IF_EXCEPTION(scope, {});

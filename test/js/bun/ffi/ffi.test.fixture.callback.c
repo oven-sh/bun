@@ -2,7 +2,7 @@
 #define IS_CALLBACK 1
 // This file is part of Bun!
 // You can find the original source:
-// https://github.com/oven-sh/bun/blob/main/src/runtime/ffi/FFI.h
+// https://github.com/oven-sh/bun/blob/main/src/runtime/api/FFI.h
 //
 // clang-format off
 // This file is only compatible with 64 bit CPUs
@@ -17,6 +17,11 @@
 
 #define ZIG_REPR_TYPE int64_t
 
+#ifdef _WIN32
+#define BUN_FFI_IMPORT __declspec(dllimport)
+#else
+#define BUN_FFI_IMPORT
+#endif
 
 // /* 7.18.1.1  Exact-width integer types */
 typedef unsigned char uint8_t;
@@ -36,7 +41,7 @@ typedef _Bool bool;
 #define false 0
 
 #ifndef SRC_JS_NATIVE_API_TYPES_H_
-typedef struct napi_env__ *napi_env;
+typedef struct NapiEnv *napi_env;
 typedef int64_t napi_value;
 typedef enum {
   napi_ok,
@@ -62,9 +67,9 @@ typedef enum {
   napi_detachable_arraybuffer_expected,
   napi_would_deadlock // unused
 } napi_status;
-void* NapiHandleScope__open(void* napi_env, bool detached);
-void NapiHandleScope__close(void* napi_env, void* handleScope);
-extern struct napi_env__ Bun__thisFFIModuleNapiEnv;
+BUN_FFI_IMPORT void* NapiHandleScope__open(void* napi_env, bool detached);
+BUN_FFI_IMPORT void NapiHandleScope__close(void* napi_env, void* handleScope);
+BUN_FFI_IMPORT extern struct NapiEnv Bun__thisFFIModuleNapiEnv;
 #endif
 
 
@@ -138,7 +143,7 @@ typedef void* JSContext;
 
 #ifdef IS_CALLBACK
 void* callback_ctx;
-ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
+BUN_FFI_IMPORT ZIG_REPR_TYPE FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args);
 // We wrap 
 static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args)  __attribute__((__always_inline__));
 static EncodedJSValue _FFI_Callback_call(void* ctx, size_t argCount, ZIG_REPR_TYPE* args) {
@@ -222,23 +227,26 @@ static void* JSVALUE_TO_PTR(EncodedJSValue val) {
     return 0;
 
   if (JSCELL_IS_TYPED_ARRAY(val)) {
-      return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
+    return JSVALUE_TO_TYPED_ARRAY_VECTOR(val);
   }
 
+  if (JSVALUE_IS_INT32(val)) {
+    return (void*)(uintptr_t)JSVALUE_TO_INT32(val);
+  }
+
+  // Assume the JSValue is a double
   val.asInt64 -= DoubleEncodeOffset;
-  size_t ptr = (size_t)val.asDouble;
-  return (void*)ptr;
+  return (void*)(uintptr_t)val.asDouble;
 }
 
 static EncodedJSValue PTR_TO_JSVALUE(void* ptr) {
   EncodedJSValue val;
-  if (ptr == 0)
-  {
-      val.asInt64 = TagValueNull;
-      return val;
+  if (ptr == 0) {
+    val.asInt64 = TagValueNull;
+    return val;
   }
 
-  val.asDouble = (double)(size_t)ptr;
+  val.asDouble = (double)(uintptr_t)ptr;
   val.asInt64 += DoubleEncodeOffset;
   return val;
 }
@@ -350,7 +358,7 @@ static EncodedJSValue INT64_TO_JSVALUE(void* jsGlobalObject, int64_t val) {
 }
 
 #ifndef IS_CALLBACK
-ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
+BUN_FFI_IMPORT ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
 
 #endif
 

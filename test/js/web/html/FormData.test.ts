@@ -1,4 +1,5 @@
 import { describe, expect, it, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
 describe("FormData", () => {
@@ -782,4 +783,88 @@ describe("Content-Type header propagation", () => {
       expect(res.status).toBe(200);
     });
   });
+});
+
+it("drops multipart part Content-Type values containing control characters", async () => {
+  // A part header line is only terminated by an exact \r\n, so a bare LF can
+  // survive inside a part's Content-Type value. That value becomes the
+  // resulting File's `type` and is later written verbatim into outgoing
+  // request headers, so it must never contain control bytes.
+  const body =
+    "--formboundary\r\n" +
+    "Content-Type: image/png\nX-Injected-Header: injected-value\r\n" +
+    'Content-Disposition: form-data; name="evil"; filename="evil.bin"\r\n' +
+    "\r\n" +
+    "hello\r\n" +
+    "--formboundary\r\n" +
+    "Content-Type: text/plain\r\n" +
+    'Content-Disposition: form-data; name="good"; filename="good.txt"\r\n' +
+    "\r\n" +
+    "world\r\n" +
+    "--formboundary\r\n" +
+    "Content-Type: text/plain;\tcharset=utf-8\r\n" +
+    'Content-Disposition: form-data; name="tabbed"; filename="tabbed.txt"\r\n' +
+    "\r\n" +
+    "tabbed\r\n" +
+    "--formboundary--\r\n";
+
+  const response = new Response(body, {
+    headers: { "Content-Type": "multipart/form-data; boundary=formboundary" },
+  });
+  const formData = await response.formData();
+
+  const evil = formData.get("evil") as File;
+  expect(evil instanceof Blob).toBe(true);
+  // The part body itself is preserved; only the malformed Content-Type is discarded.
+  expect(await evil.text()).toBe("hello");
+  expect(evil.type).not.toContain("\n");
+  expect(evil.type).not.toContain("\r");
+  expect(evil.type.toLowerCase()).not.toContain("x-injected-header");
+
+  // A well-formed part Content-Type is still honored.
+  const good = formData.get("good") as File;
+  expect(good instanceof Blob).toBe(true);
+  expect(await good.text()).toBe("world");
+  expect(good.type).toBe("text/plain");
+
+  // An interior HTAB is valid optional whitespace, not an injection vector.
+  const tabbed = formData.get("tabbed") as File;
+  expect(tabbed instanceof Blob).toBe(true);
+  expect(await tabbed.text()).toBe("tabbed");
+  expect(tabbed.type).toBe("text/plain;\tcharset=utf-8");
+});
+
+test("FormData.toJSON merges duplicate numeric field names into an array", async () => {
+  // Field names that parse as array indices ("0", "1", ...) are stored as indexed
+  // properties on the serialized object; appending the same numeric name more than
+  // once must merge into an array (like any other duplicate key) instead of
+  // terminating the process during serialization.
+  const script = `
+    const fd = new FormData();
+    fd.append("0", "a");
+    fd.append("0", "b");
+    fd.append("0", "c");
+    fd.append("tag", "x");
+    fd.append("tag", "y");
+    console.log(JSON.stringify(fd.toJSON()));
+
+    // Same shape arriving from an untrusted multipart request body.
+    const body =
+      '--foo\\r\\nContent-Disposition: form-data; name="0"\\r\\n\\r\\nfirst\\r\\n--foo\\r\\nContent-Disposition: form-data; name="0"\\r\\n\\r\\nsecond\\r\\n--foo--\\r\\n';
+    const parsed = await new Response(body, {
+      headers: { "Content-Type": "multipart/form-data; boundary=foo" },
+    }).formData();
+    console.log(JSON.stringify(parsed.toJSON()));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim().split("\n")).toEqual(['{"0":["a","b","c"],"tag":["x","y"]}', '{"0":["first","second"]}']);
+  expect(exitCode).toBe(0);
 });

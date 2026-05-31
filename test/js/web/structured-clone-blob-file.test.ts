@@ -1,10 +1,52 @@
 import { deserialize, serialize } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN } from "harness";
 import v8 from "node:v8";
 
 describe("structuredClone with Blob and File", () => {
   describe("Blob structured clone", () => {
+    test("slices and re-slices serialize only their own byte windows", async () => {
+      const before = "BEFORE-WINDOW-0123456789";
+      const middle = "public-window-payload";
+      const after = "AFTER-WINDOW-9876543210";
+      const parent = new Blob([before + middle + after], { type: "application/octet-stream" });
+      const slice = parent.slice(before.length, before.length + middle.length);
+
+      // The serialized payload of the slice contains the slice's bytes and
+      // nothing from the rest of the parent buffer.
+      const wire = Buffer.from(serialize(slice));
+      expect(wire.includes(middle)).toBe(true);
+      expect(wire.includes(before)).toBe(false);
+      expect(wire.includes(after)).toBe(false);
+
+      const cloned = structuredClone(slice);
+      expect(cloned.size).toBe(middle.length);
+      expect(await cloned.text()).toBe(middle);
+
+      // A slice of a slice is bounded by the innermost window.
+      const inner = slice.slice(7); // "window-payload"
+      const innerWire = Buffer.from(serialize(inner));
+      expect(innerWire.includes("window-payload")).toBe(true);
+      expect(innerWire.includes("public-")).toBe(false);
+      expect(innerWire.includes(before)).toBe(false);
+      expect(innerWire.includes(after)).toBe(false);
+
+      const innerClone = deserialize(serialize(inner));
+      expect(innerClone.size).toBe("window-payload".length);
+      expect(await innerClone.text()).toBe("window-payload");
+
+      // Serializing must not change what the live source objects read as.
+      expect(slice.size).toBe(middle.length);
+      expect(await slice.text()).toBe(middle);
+      expect(inner.size).toBe("window-payload".length);
+      expect(await inner.text()).toBe("window-payload");
+
+      // The parent blob is unaffected and still round-trips in full.
+      const parentClone = structuredClone(parent);
+      expect(parentClone.size).toBe(parent.size);
+      expect(await parentClone.text()).toBe(before + middle + after);
+    });
+
     test("empty Blob", () => {
       const blob = new Blob([]);
       const cloned = structuredClone(blob);
@@ -81,6 +123,28 @@ describe("structuredClone with Blob and File", () => {
       expect(cloned.level1.level2.level3.blob).toBeInstanceOf(Blob);
       expect(cloned.level1.level2.level3.blob.size).toBe(blob.size);
       expect(cloned.level1.level2.level3.blob.type).toBe(blob.type);
+    });
+
+    test("sliced Blob transmits only the sliced bytes", async () => {
+      const blob = new Blob(["header-PAYLOAD-trailer"]);
+      const slice = blob.slice(7, 14);
+
+      const wire = Buffer.from(serialize(slice));
+      expect(wire.includes("PAYLOAD")).toBe(true);
+      expect(wire.includes("header-")).toBe(false);
+      expect(wire.includes("-trailer")).toBe(false);
+
+      // Serializing must not mutate the live slice.
+      expect(slice.size).toBe(7);
+      expect(await slice.text()).toBe("PAYLOAD");
+
+      const cloned = structuredClone(slice);
+      expect(cloned.size).toBe(7);
+      expect(await cloned.text()).toBe("PAYLOAD");
+
+      const roundTripped = deserialize(serialize(slice));
+      expect(roundTripped.size).toBe(7);
+      expect(await roundTripped.text()).toBe("PAYLOAD");
     });
   });
 
@@ -309,12 +373,13 @@ describe("structuredClone with Blob and File", () => {
     // child process so that the pre-fix crash surfaces as an ordinary test
     // failure instead of killing the test runner.
 
-    // Locate the offset field once. Do it by serializing a sliced blob with a
-    // sentinel offset and comparing against a zero-offset payload; keeps the
-    // test robust against wire-format header changes.
+    // Locate the offset field once. Memory-backed blobs always serialize a
+    // zero offset (the payload already is the slice), so plant a sentinel
+    // offset with a sliced file-backed blob and compare against a zero-offset
+    // payload; keeps the test robust against wire-format header changes.
     const marker = 0xa5;
     const baseline = new Uint8Array(serialize(new Blob([Buffer.alloc(4, marker)])));
-    const sentinel = new Uint8Array(serialize(new Blob([Buffer.alloc(8, marker)]).slice(4)));
+    const sentinel = new Uint8Array(serialize(Bun.file(import.meta.path).slice(4)));
     let offsetFieldIndex = -1;
     for (let i = 0; i + 8 <= sentinel.length; i++) {
       if (
@@ -506,7 +571,9 @@ describe("structuredClone with Blob and File", () => {
       const rssAfter = process.memoryUsage.rss();
 
       const deltaMiB = (rssAfter - rssBefore) / 1024 / 1024;
-      expect(deltaMiB).toBeLessThan(32);
+      // ASAN's quarantine retains freed allocations (default 256 MB) so the
+      // measured window still grows under bun-asan; widen the threshold there.
+      expect(deltaMiB).toBeLessThan(isASAN ? 128 : 32);
     }, 30_000);
   });
 });

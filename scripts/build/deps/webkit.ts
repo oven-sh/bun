@@ -3,7 +3,11 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-export const WEBKIT_VERSION = "39862040be27e0b6e1d103aaa5dc6796f21a581f";
+// oven-sh/WebKit main: macOS + Windows artifacts cross-compiled on Linux,
+// -lto variants built with ThinLTO (per-module summaries for cross-language
+// importing), and the Windows ICU data table filtered + per-item zstd
+// compressed (lazily decompressed via bun_icu_decompress.cpp).
+export const WEBKIT_VERSION = "963f8758c29e965471c191668d5776a1a1b014b6";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -83,11 +87,25 @@ function prebuiltUrl(cfg: Config): string {
  * doesn't reuse a wrong-ABI extraction.
  */
 function prebuiltDestDir(cfg: Config): string {
-  const version16 = cfg.webkitVersion.slice(0, 16);
+  // For 40-hex shas, 16 chars is plenty. For autobuild-preview-* tags, the
+  // meaningful sha is at the end, so use the whole thing.
+  const v = cfg.webkitVersion;
+  const version16 = v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v.slice(0, 16);
   // Cross-compiled targets share a host (and cache dir) with native builds,
-  // so include os+arch in the key — otherwise a FreeBSD/arm64 extraction
-  // collides with a Linux/x64 one at the same WebKit version.
-  const osKey = cfg.freebsd ? "-freebsd" : cfg.abi === "android" ? "-android" : "";
+  // so include os+arch in the key — otherwise a FreeBSD/arm64, macOS/x64, or
+  // Windows-cross extraction collides with a Linux/x64 one at the same WebKit
+  // version. Windows is keyed only when cross-compiling so native Windows
+  // dev machines keep their existing cache dirs.
+  const osKey =
+    cfg.windows && cfg.host.os !== "windows"
+      ? "-windows"
+      : cfg.freebsd
+        ? "-freebsd"
+        : cfg.darwin
+          ? "-macos"
+          : cfg.abi === "android"
+            ? "-android"
+            : "";
   const archKey = cfg.arm64 ? "-arm64" : "";
   return resolve(cfg.cacheDir, `webkit-${version16}${osKey}${archKey}${prebuiltSuffix(cfg)}`);
 }
@@ -227,7 +245,16 @@ export const webkit: Dependency = {
     // (macOS: Homebrew headers + system libs; Linux: libicu-dev) — cmake
     // auto-detects.
     const optFlags: string[] = computeCpuTargetFlags(cfg);
-    if (cfg.lto) optFlags.push("-flto=full");
+    // -fno-pic: match bun's own C++ (flags.ts) so JSC/WTF const-pointer
+    // tables land in .rodata instead of .data.rel.ro. We link -no-pie, so
+    // PIC codegen here is pure overhead (GOT indirections + ~550 KB of
+    // RW-segment vtables that would otherwise be shared RO). Android stays
+    // PIC because bionic mandates PIE.
+    // -no-pie rides along in CMAKE_C_FLAGS so try_compile() probes link on
+    // PIE-default distros — without it the driver still passes -pie and the
+    // -fno-pic probe object fails R_X86_64_32S relocation, killing FindThreads.
+    if (cfg.unix && cfg.abi !== "android") optFlags.push("-fno-pic", "-fno-pie", "-no-pie");
+    if (cfg.lto) optFlags.push("-flto=thin");
     if (cfg.pgoGenerate) optFlags.push(`-fprofile-generate=${cfg.pgoGenerate}`);
     if (cfg.pgoUse) {
       optFlags.push(
@@ -294,6 +321,12 @@ export const webkit: Dependency = {
             CMAKE_FIND_ROOT_PATH_MODE_INCLUDE: "BOTH",
           }
         : {}),
+      // Match bun's -fno-pic: WebKit's CMake defaults POSITION_INDEPENDENT_CODE
+      // to ON for static-archive targets, which puts ~550 KB of vtables into
+      // .data.rel.ro. We link -no-pie so this is dead weight in the RW
+      // PT_LOAD. Android (PIE) overrides via the -fPIC in optFlags above
+      // never being suppressed there.
+      ...(cfg.abi !== "android" ? { CMAKE_POSITION_INDEPENDENT_CODE: "OFF" } : {}),
       PORT: "JSCOnly",
       ENABLE_STATIC_JSC: "ON",
       USE_THIN_ARCHIVES: "OFF",

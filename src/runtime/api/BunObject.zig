@@ -22,7 +22,7 @@ pub const BunObject = struct {
     pub const gzipSync = toJSCallback(JSZlib.gzipSync);
     pub const indexOfLine = toJSCallback(Bun.indexOfLine);
     pub const inflateSync = toJSCallback(JSZlib.inflateSync);
-    pub const jest = toJSCallback(@import("../../test_runner/jest.zig").Jest.call);
+    pub const jest = toJSCallback(@import("../test_runner/jest.zig").Jest.call);
     pub const listen = toJSCallback(host_fn.wrapStaticMethod(api.Listener, "listen", false));
     pub const mmap = toJSCallback(Bun.mmapFile);
     pub const nanoseconds = toJSCallback(Bun.nanoseconds);
@@ -1216,33 +1216,37 @@ pub fn mmapFile(globalThis: *jsc.JSGlobalObject, callframe: *jsc.CallFrame) bun.
     var map_size: ?usize = null;
 
     if (args.nextEat()) |opts| {
-        flags.TYPE = if ((try opts.getBooleanLoose(globalThis, "shared")) orelse true)
-            .SHARED
-        else
-            .PRIVATE;
+        if (opts.isObject()) {
+            flags.TYPE = if ((try opts.getBooleanLoose(globalThis, "shared")) orelse true)
+                .SHARED
+            else
+                .PRIVATE;
 
-        if (@hasField(std.c.MAP, "SYNC")) {
-            if ((try opts.getBooleanLoose(globalThis, "sync")) orelse false) {
-                flags.TYPE = .SHARED_VALIDATE;
-                flags.SYNC = true;
+            if (@hasField(std.c.MAP, "SYNC")) {
+                if ((try opts.getBooleanLoose(globalThis, "sync")) orelse false) {
+                    flags.TYPE = .SHARED_VALIDATE;
+                    flags.SYNC = true;
+                }
             }
-        }
 
-        if (try opts.get(globalThis, "size")) |value| {
-            const size_value = try value.coerceToInt64(globalThis);
-            if (size_value < 0) {
-                return globalThis.throwInvalidArguments("size must be a non-negative integer", .{});
+            if (try opts.get(globalThis, "size")) |value| {
+                const size_value = try value.coerceToInt64(globalThis);
+                if (size_value < 0) {
+                    return globalThis.throwInvalidArguments("size must be a non-negative integer", .{});
+                }
+                map_size = @intCast(size_value);
             }
-            map_size = @intCast(size_value);
-        }
 
-        if (try opts.get(globalThis, "offset")) |value| {
-            const offset_value = try value.coerceToInt64(globalThis);
-            if (offset_value < 0) {
-                return globalThis.throwInvalidArguments("offset must be a non-negative integer", .{});
+            if (try opts.get(globalThis, "offset")) |value| {
+                const offset_value = try value.coerceToInt64(globalThis);
+                if (offset_value < 0) {
+                    return globalThis.throwInvalidArguments("offset must be a non-negative integer", .{});
+                }
+                offset = @intCast(offset_value);
+                offset = std.mem.alignBackwardAnyAlign(usize, offset, std.heap.pageSize());
             }
-            offset = @intCast(offset_value);
-            offset = std.mem.alignBackwardAnyAlign(usize, offset, std.heap.pageSize());
+        } else if (!opts.isUndefinedOrNull()) {
+            return globalThis.throwInvalidArguments("Expected options to be an object", .{});
         }
     }
 
@@ -2131,7 +2135,7 @@ const Which = @import("../../which/which.zig");
 const options = @import("../../bundler/options.zig");
 const std = @import("std");
 const zlib = @import("../../zlib/zlib.zig");
-const Editor = @import("../../cli/open.zig").Editor;
+const Editor = @import("../cli/open.zig").Editor;
 const URL = @import("../../url/url.zig").URL;
 const conv = std.builtin.CallingConvention.Unspecified;
 

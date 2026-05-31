@@ -216,8 +216,8 @@ async function request(
     inputBody = $Buffer.concat(chunks);
   }
 
-  if (maxRedirections !== undefined && Number.isNaN(maxRedirections)) {
-    throw new Error("maxRedirections must be a number if defined");
+  if (maxRedirections != null && (!Number.isInteger(maxRedirections) || maxRedirections < 0)) {
+    throw new Error("maxRedirections must be a positive number");
   }
 
   if (signal && !(signal instanceof AbortSignal)) {
@@ -225,16 +225,20 @@ async function request(
     throw new Error("signal must be an instance of AbortSignal");
   }
 
-  let resp;
+  const followRedirects = maxRedirections != null && maxRedirections > 0;
+
   /** @type {Response} */
-  const { status: statusCode, headers } = (resp = await fetch(url, {
+  const resp = await fetch(url, {
     signal,
     method,
     headers: inputHeaders || kEmptyObject,
     body: inputBody,
-    redirect: maxRedirections !== undefined && maxRedirections > 0 ? "follow" : "manual",
+    redirect: followRedirects ? "follow" : "manual",
+    maxRedirects: followRedirects ? maxRedirections : undefined,
     keepalive: !reset,
-  }));
+  });
+
+  const { status: statusCode, headers } = resp;
 
   // Throw if received 4xx or 5xx response indicating HTTP error
   if (throwOnError && statusCode >= 400 && statusCode < 600) {
@@ -492,16 +496,19 @@ async function _doRequest(origin, opts) {
   }
 
   const maxRedirections = opts.maxRedirections;
+  const followRedirects = maxRedirections != null && maxRedirections > 0;
 
-  let resp;
-  const { status: statusCode, headers } = (resp = await fetch(url, {
+  const resp = await fetch(url, {
     method,
     headers: inputHeaders,
     body: inputBody,
     signal,
-    redirect: maxRedirections !== undefined && maxRedirections > 0 ? "follow" : "manual",
+    redirect: followRedirects ? "follow" : "manual",
+    maxRedirects: followRedirects ? maxRedirections : undefined,
     keepalive: !opts.reset,
-  }));
+  });
+
+  const { status: statusCode, headers } = resp;
 
   // Throw on HTTP error if requested
   if (opts.throwOnError && statusCode >= 400 && statusCode < 600) {

@@ -246,6 +246,9 @@ struct InflationStream {
 
         if (res == 0) {
             /* Fast path wins */
+            if (written > maxPayloadLength) {
+                return std::nullopt;
+            }
             return std::string_view(buf, written);
         }
 #endif

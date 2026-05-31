@@ -261,6 +261,9 @@ private:
     Vector<unsigned char> m_data;
     std::unique_ptr<ArrayBufferContentsArray> m_arrayBufferContentsArray;
     std::unique_ptr<ArrayBufferContentsArray> m_sharedBufferContentsArray;
+    // Raw `*mut BlockList` pointers whose refcount was bumped at serialize
+    // time so they outlive the wire buffer; released in the destructor.
+    Vector<void*> m_serializedBlockListRefs;
     // Vector<std::optional<ImageBitmapBacking>> m_backingStores;
 #if ENABLE(OFFSCREEN_CANVAS_IN_WORKERS)
     Vector<std::unique_ptr<DetachedOffscreenCanvas>> m_detachedOffscreenCanvases;

@@ -1,11 +1,18 @@
 import { ClassDefinition, define } from "../../codegen/class-definitions";
 
 const types = ["PostgresSQL", "MySQL"];
+const rustPaths = {
+  PostgresSQLConnection: "bun_sql_jsc::postgres::PostgresSQLConnection",
+  PostgresSQLQuery: "bun_sql_jsc::postgres::PostgresSQLQuery",
+  MySQLConnection: "bun_sql_jsc::mysql::js_my_sql_connection::JSMySQLConnection",
+  MySQLQuery: "bun_sql_jsc::mysql::js_my_sql_query::JSMySQLQuery",
+};
 const classes: ClassDefinition[] = [];
 for (const type of types) {
   classes.push(
     define({
       name: `${type}Connection`,
+      rustPath: rustPaths[`${type}Connection`],
       construct: true,
       finalize: true,
       configurable: false,
@@ -57,6 +64,7 @@ for (const type of types) {
   classes.push(
     define({
       name: `${type}Query`,
+      rustPath: rustPaths[`${type}Query`],
       construct: true,
       finalize: true,
       configurable: false,

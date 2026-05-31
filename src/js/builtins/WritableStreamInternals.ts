@@ -467,7 +467,7 @@ export function writableStreamDefaultWriterEnsureClosedPromiseRejected(writer, e
   let closedPromiseCapability = $getByIdDirectPrivate(writer, "closedPromise");
   let closedPromise = closedPromiseCapability.promise;
 
-  if (($getPromiseInternalField(closedPromise, $promiseFieldFlags) & $promiseStateMask) !== $promiseStatePending) {
+  if ($peekPromiseStatus(closedPromise) !== 0) {
     closedPromiseCapability = $newPromiseCapability(Promise);
     closedPromise = closedPromiseCapability.promise;
     $putByIdDirectPrivate(writer, "closedPromise", closedPromiseCapability);
@@ -481,7 +481,7 @@ export function writableStreamDefaultWriterEnsureReadyPromiseRejected(writer, er
   let readyPromiseCapability = $getByIdDirectPrivate(writer, "readyPromise");
   let readyPromise = readyPromiseCapability.promise;
 
-  if (($getPromiseInternalField(readyPromise, $promiseFieldFlags) & $promiseStateMask) !== $promiseStatePending) {
+  if ($peekPromiseStatus(readyPromise) !== 0) {
     readyPromiseCapability = $newPromiseCapability(Promise);
     readyPromise = readyPromiseCapability.promise;
     $putByIdDirectPrivate(writer, "readyPromise", readyPromiseCapability);

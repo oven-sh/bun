@@ -28,7 +28,7 @@
 
 #if OS(WINDOWS)
 
-extern "C" int Source__setRawModeStdin(bool raw);
+extern "C" int Source__setRawModeStdin(uv_loop_t* uv_loop, bool raw);
 
 namespace UV {
 
@@ -198,7 +198,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
 
     Zig::GlobalObject* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
 
-    return JSValue::encode(jsNumber(Source__setRawModeStdin(raw)));
+    return JSValue::encode(jsNumber(Source__setRawModeStdin(global->uvLoop(), raw)));
 #else
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);

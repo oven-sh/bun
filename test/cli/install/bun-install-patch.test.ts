@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { rmSync } from "fs";
 import { bunEnv, bunExe, normalizeBunSnapshot as normalizeBunSnapshot_, tempDirWithFiles } from "harness";
 import { join } from "path";
@@ -11,9 +11,7 @@ const normalizeBunSnapshot = (str: string) => {
   return str;
 };
 
-beforeAll(() => {
-  setDefaultTimeout(1000 * 60 * 5);
-});
+setDefaultTimeout(1000 * 60 * 5);
 
 describe("patch", async () => {
   const is_even_patch = /* patch */ `diff --git a/index.js b/index.js

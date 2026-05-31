@@ -44,6 +44,31 @@ impl Default for ArrayBuffer {
     }
 }
 
+/// A scan/hash-stable view of an [`ArrayBuffer`]'s bytes, produced by
+/// [`ArrayBuffer::stable_bytes`].
+///
+/// Ordinary fixed, unshared buffers are borrowed zero-copy. Shared (or growable
+/// shared) and resizable buffers are snapshotted into a fresh non-shared buffer,
+/// because another JS agent can mutate (or the owner can resize) the backing
+/// store while Rust holds a `&[u8]` — a data race / aliasing violation that
+/// corrupts SIMD scanners and hashers. The snapshot variant keeps the copy's JS
+/// value alive for the duration of the borrow.
+pub enum StableBytes {
+    /// Direct borrow of the original buffer's backing store (safe to scan).
+    Borrowed(ArrayBuffer),
+    /// A fresh non-shared copy of a shared/resizable buffer.
+    Snapshot(ArrayBuffer),
+}
+
+impl StableBytes {
+    #[inline]
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            StableBytes::Borrowed(ab) | StableBytes::Snapshot(ab) => ab.byte_slice(),
+        }
+    }
+}
+
 // Aliasing: `JSGlobalObject` is an opaque ZST handle on the Rust side — the
 // `&JSGlobalObject` reference covers zero bytes, and all mutation happens inside
 // C++ on memory Rust never observes. Declaring the FFI parameter as
@@ -586,6 +611,35 @@ impl ArrayBuffer {
         // SAFETY: ptr is non-null (checked above) and backed by JSC ArrayBuffer of byte_len bytes.
         // `&mut self` enforces exclusive access to this view.
         unsafe { core::slice::from_raw_parts_mut(self.ptr, self.byte_len) }
+    }
+
+    /// Returns a scan/hash-stable view of the bytes (see [`StableBytes`]).
+    ///
+    /// Fixed, unshared buffers are borrowed zero-copy. `SharedArrayBuffer`,
+    /// growable `SharedArrayBuffer`, and resizable `ArrayBuffer` inputs are
+    /// snapshotted into a fresh non-shared buffer first: another agent can write
+    /// the bytes (or the owner can resize) while Rust holds the `&[u8]`, which is
+    /// undefined behavior. The snapshot's copy runs inside C++
+    /// (`Bun__createArrayBufferForCopy`), so Rust never reads concurrently-mutable
+    /// JS memory through an ordinary slice. The backing store cannot move or be
+    /// freed during this synchronous call (shared buffers reserve their max and
+    /// grow in place; non-shared resizable buffers can only be resized by the same
+    /// agent), so the captured `byte_len` copy cannot over-read.
+    pub fn stable_bytes(&self, global: &JSGlobalObject) -> JsResult<StableBytes> {
+        if !self.is_detached() && (self.shared || self.resizable) {
+            let copy = crate::host_fn::from_js_host_call(global, || unsafe {
+                Bun__createArrayBufferForCopy(global, self.ptr.cast(), self.byte_len)
+            })?;
+            if let Some(copy_ab) = copy.as_array_buffer(global) {
+                return Ok(StableBytes::Snapshot(copy_ab));
+            }
+            // A snapshot was required but none was produced — never fall back to
+            // borrowing the original shared/resizable backing store.
+            return Err(global.throw(format_args!(
+                "Failed to snapshot shared/resizable ArrayBuffer"
+            )));
+        }
+        Ok(StableBytes::Borrowed(*self))
     }
 
     /// The equivalent of

@@ -1,9 +1,24 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { Pool, Client, Agent, stream } from "undici";
 import * as undici from "undici";
-import { Readable, Writable } from "stream";
+import { Readable, Writable, Transform } from "stream";
+import net from "node:net";
 
 import { createServer } from "../../../http-test-server";
+
+// Raw TCP server helper for connect()/upgrade() tests. Returns the bound port
+// and an async disposer so callers can use `await using` for cleanup.
+async function rawServer(onConnection: (socket: net.Socket) => void) {
+  const server = net.createServer(onConnection);
+  const { promise, resolve } = Promise.withResolvers<void>();
+  server.listen(0, "127.0.0.1", () => resolve());
+  await promise;
+  const port = (server.address() as net.AddressInfo).port;
+  return {
+    port,
+    [Symbol.asyncDispose]: () => new Promise<void>(res => server.close(() => res())),
+  };
+}
 
 describe("undici", () => {
   let serverCtl: ReturnType<typeof createServer>;
@@ -559,6 +574,166 @@ describe("undici", () => {
     });
   });
 
+  // ---- pipeline ----
+  describe("pipeline", () => {
+    it("GET: pipes the response body through unchanged", async () => {
+      const chunks: Buffer[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const duplex = undici.pipeline(`${hostUrl}/get`, { method: "GET" }, ({ statusCode, body }) => {
+        expect(statusCode).toBe(200);
+        return body;
+      });
+      duplex.on("data", c => chunks.push(c));
+      duplex.on("end", () => resolve());
+      duplex.on("error", reject);
+      duplex.end();
+      await promise;
+
+      const json = JSON.parse(Buffer.concat(chunks).toString());
+      expect(json.url).toBe(`${hostUrl}/get`);
+      expect(json.method).toBe("GET");
+    });
+
+    it("POST: writes a request body and reads the response", async () => {
+      const chunks: Buffer[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const duplex = undici.pipeline(
+        `${hostUrl}/post`,
+        { method: "POST", headers: { "content-type": "text/plain" } },
+        ({ statusCode, body }) => {
+          expect(statusCode).toBe(201);
+          return body;
+        },
+      );
+      duplex.on("data", c => chunks.push(c));
+      duplex.on("end", () => resolve());
+      duplex.on("error", reject);
+      duplex.end("hello pipeline");
+      await promise;
+
+      const json = JSON.parse(Buffer.concat(chunks).toString());
+      expect(json.data).toBe("hello pipeline");
+    });
+
+    it("applies a Transform returned by the handler", async () => {
+      const chunks: Buffer[] = [];
+      const { promise, resolve, reject } = Promise.withResolvers<void>();
+      const duplex = undici.pipeline(`${hostUrl}/get`, { method: "GET" }, ({ body }) => {
+        const upper = new Transform({
+          transform(chunk, _enc, cb) {
+            cb(null, Buffer.from(chunk.toString().toUpperCase()));
+          },
+        });
+        body.pipe(upper);
+        return upper;
+      });
+      duplex.on("data", c => chunks.push(c));
+      duplex.on("end", () => resolve());
+      duplex.on("error", reject);
+      duplex.end();
+      await promise;
+
+      const out = Buffer.concat(chunks).toString();
+      expect(out).toContain('"METHOD":"GET"');
+      expect(out).not.toContain('"method"');
+    });
+
+    it("errors when the handler does not return a stream", async () => {
+      const { promise, resolve } = Promise.withResolvers<Error>();
+      const duplex = undici.pipeline(`${hostUrl}/get`, { method: "GET" }, () => undefined as any);
+      duplex.on("error", e => resolve(e));
+      duplex.on("data", () => {});
+      duplex.end();
+      const err = await promise;
+      expect(err).toBeInstanceOf(Error);
+    });
+  });
+
+  // ---- connect (HTTP CONNECT tunnel) ----
+  describe("connect", () => {
+    it("establishes a tunnel (200) and relays bytes both ways", async () => {
+      await using server = await rawServer(socket => {
+        let buf = Buffer.alloc(0);
+        let tunneled = false;
+        socket.on("data", chunk => {
+          if (tunneled) {
+            socket.write(chunk); // echo
+            return;
+          }
+          buf = Buffer.concat([buf, chunk]);
+          if (buf.indexOf("\r\n\r\n") !== -1) {
+            tunneled = true;
+            socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          }
+        });
+      });
+
+      const { statusCode, socket } = await undici.connect(`http://127.0.0.1:${server.port}`);
+      expect(statusCode).toBe(200);
+
+      const { promise, resolve } = Promise.withResolvers<string>();
+      socket.on("data", d => resolve(d.toString()));
+      socket.write("ping");
+      expect(await promise).toBe("ping");
+      socket.destroy();
+    });
+
+    it("delivers bytes that arrive in the same packet as the CONNECT response", async () => {
+      await using server = await rawServer(socket => {
+        socket.once("data", () => {
+          // 200 head + tunnel payload in a single write
+          socket.write("HTTP/1.1 200 Connection Established\r\n\r\nhello-leftover");
+        });
+      });
+
+      const { statusCode, socket } = await undici.connect(`http://127.0.0.1:${server.port}`);
+      expect(statusCode).toBe(200);
+
+      const { promise, resolve } = Promise.withResolvers<string>();
+      socket.on("data", d => resolve(d.toString()));
+      expect(await promise).toBe("hello-leftover");
+      socket.destroy();
+    });
+  });
+
+  // ---- upgrade (HTTP Upgrade / 101) ----
+  describe("upgrade", () => {
+    it("performs a 101 upgrade and returns headers + a usable socket", async () => {
+      await using server = await rawServer(socket => {
+        let buf = Buffer.alloc(0);
+        let upgraded = false;
+        socket.on("data", chunk => {
+          if (upgraded) {
+            socket.write(chunk); // echo
+            return;
+          }
+          buf = Buffer.concat([buf, chunk]);
+          if (buf.indexOf("\r\n\r\n") !== -1) {
+            upgraded = true;
+            socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+          }
+        });
+      });
+
+      const { headers, socket } = await undici.upgrade(`http://127.0.0.1:${server.port}`, { protocol: "websocket" });
+      expect(headers.upgrade).toBe("websocket");
+
+      const { promise, resolve } = Promise.withResolvers<string>();
+      socket.on("data", d => resolve(d.toString()));
+      socket.write("hi");
+      expect(await promise).toBe("hi");
+      socket.destroy();
+    });
+
+    it("rejects when the server does not switch protocols", async () => {
+      await using server = await rawServer(socket => {
+        socket.once("data", () => socket.write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n"));
+      });
+
+      await expect(undici.upgrade(`http://127.0.0.1:${server.port}`)).rejects.toThrow();
+    });
+  });
+
   // ---- Exports ----
   describe("exports", () => {
     it("should export all expected classes and functions", () => {
@@ -572,6 +747,9 @@ describe("undici", () => {
       expect(typeof undici.Agent).toBe("function");
       expect(typeof undici.request).toBe("function");
       expect(typeof undici.stream).toBe("function");
+      expect(typeof undici.pipeline).toBe("function");
+      expect(typeof undici.connect).toBe("function");
+      expect(typeof undici.upgrade).toBe("function");
     });
   });
 });

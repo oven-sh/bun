@@ -1,6 +1,6 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
-const { Readable } = StreamModule;
+const { Readable, Duplex } = StreamModule;
 const { _ReadableFromWeb: ReadableFromWeb } = require("internal/webstreams_adapters");
 
 const ObjectCreate = Object.create;
@@ -419,14 +419,326 @@ async function stream(url, factoryOrOptions, callbackOrFactory, maybeCallback) {
 
   return doStream();
 }
-function pipeline() {
-  notImplemented();
+// pipeline(url, opts, handler) -> Duplex
+//   Writable side = request body; the handler receives the response and returns
+//   a Readable whose output becomes the Duplex's readable side. Like request()/
+//   stream(), the request body is buffered before dispatch.
+function pipeline(url, opts = {}, handler) {
+  if ($isCallable(opts)) {
+    handler = opts;
+    opts = {};
+  }
+  if (!$isCallable(handler)) {
+    throw new InvalidArgumentError("invalid handler");
+  }
+
+  const method = (opts.method || "GET").toUpperCase();
+  const reqChunks = [];
+  let srcStream = null;
+  let started = false;
+
+  const duplex = new Duplex({
+    read() {
+      if (srcStream) srcStream.resume();
+    },
+    write(chunk, encoding, cb) {
+      reqChunks.push($Buffer.isBuffer(chunk) ? chunk : $Buffer.from(chunk, encoding));
+      cb();
+    },
+    final(cb) {
+      run(reqChunks.length ? $Buffer.concat(reqChunks) : undefined).then(
+        () => cb(),
+        err => cb(err),
+      );
+    },
+    destroy(err, cb) {
+      if (srcStream && !srcStream.destroyed) srcStream.destroy(err || undefined);
+      cb(err);
+    },
+  });
+
+  async function run(reqBody) {
+    if (started) return;
+    started = true;
+
+    let effectiveUrl = typeof url === "string" ? url : url instanceof URL ? url.href : _parseOrigin(url);
+    if (opts.path) {
+      effectiveUrl = new URL(opts.path, effectiveUrl).toString();
+    }
+    if (opts.query) {
+      const parsed = new URL(effectiveUrl);
+      const params = new URLSearchParams(parsed.search);
+      for (const [key, value] of new URLSearchParams(opts.query)) params.set(key, value);
+      parsed.search = params.toString();
+      effectiveUrl = parsed.toString();
+    }
+
+    if (reqBody && (method === "GET" || method === "HEAD")) {
+      throw new Error("Body not allowed for GET or HEAD requests");
+    }
+
+    const resp = await fetch(effectiveUrl, {
+      method,
+      headers: opts.headers || kEmptyObject,
+      body: reqBody,
+      signal: opts.signal || undefined,
+      redirect: "manual",
+      keepalive: !opts.reset,
+    });
+
+    const responseHeaders = resp.headers.toJSON();
+    if (method !== "HEAD" && responseHeaders["content-encoding"]) {
+      delete responseHeaders["content-encoding"];
+      delete responseHeaders["content-length"];
+    }
+
+    if (opts.throwOnError && resp.status >= 400 && resp.status < 600) {
+      if (resp.body) await resp.body.cancel();
+      throw new Error(`Request failed with status code ${resp.status}`);
+    }
+
+    const body = resp.body ? new BodyReadable(resp) : Readable.from([]);
+    srcStream = handler({
+      statusCode: resp.status,
+      headers: responseHeaders,
+      opaque: opts.opaque,
+      body,
+      context: opts.context ?? kEmptyObject,
+    });
+
+    if (!srcStream || !$isCallable(srcStream.on)) {
+      throw new InvalidReturnValueError("expected the handler to return a stream");
+    }
+
+    srcStream.on("data", chunk => {
+      if (!duplex.push(chunk)) srcStream.pause();
+    });
+    srcStream.on("end", () => duplex.push(null));
+    srcStream.on("error", err => duplex.destroy(err));
+  }
+
+  // Body-less methods dispatch immediately; methods with a body wait for the
+  // writable side to finish so the buffered body can be sent.
+  if (method === "GET" || method === "HEAD") {
+    queueMicrotask(() => {
+      run(undefined).catch(err => duplex.destroy(err));
+    });
+  }
+
+  return duplex;
 }
-function connect() {
-  notImplemented();
+
+// Parse the TCP target for connect()/upgrade() from a string/URL/options object.
+function _parseConnectTarget(input) {
+  let origin;
+  if (typeof input === "string") origin = input;
+  else if (input instanceof URL) origin = input.href;
+  else origin = input.origin ?? input.uri ?? input.url;
+  const u = new URL(origin);
+  const tls = u.protocol === "https:" || u.protocol === "wss:";
+  return { tls, hostname: u.hostname, port: u.port ? Number(u.port) : tls ? 443 : 80, url: u };
 }
-function upgrade() {
-  notImplemented();
+
+// Open a raw TCP (or TLS) socket. Resolves once connected.
+function _openSocket({ hostname, port, tls: useTls, servername, signal }) {
+  return new Promise((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(new RequestAbortedError("Request aborted"));
+      return;
+    }
+    let socket;
+    const connectEvent = useTls ? "secureConnect" : "connect";
+    const cleanup = () => {
+      if (!socket) return;
+      socket.removeListener("error", onError);
+      socket.removeListener(connectEvent, onConnect);
+    };
+    const onError = err => {
+      cleanup();
+      reject(err);
+    };
+    const onConnect = () => {
+      cleanup();
+      resolve(socket);
+    };
+    if (useTls) {
+      socket = require("node:tls").connect({ host: hostname, port, servername: servername || hostname });
+    } else {
+      socket = require("node:net").connect({ host: hostname, port });
+    }
+    socket.once(connectEvent, onConnect);
+    socket.once("error", onError);
+    if (signal) {
+      signal.addEventListener?.("abort", () => socket.destroy(new RequestAbortedError("Request aborted")), {
+        once: true,
+      });
+    }
+  });
+}
+
+// Read and parse an HTTP/1.1 response head (status line + headers) off a raw
+// socket. Returns { statusCode, statusLine, headers, leftover } and pauses the
+// socket so the caller can take it over.
+function _readResponseHead(socket, signal) {
+  return new Promise((resolve, reject) => {
+    let buf = $Buffer.alloc(0);
+    const cleanup = () => {
+      socket.removeListener("data", onData);
+      socket.removeListener("error", onError);
+      socket.removeListener("close", onClose);
+      signal?.removeEventListener?.("abort", onAbort);
+    };
+    const onData = chunk => {
+      buf = buf.length ? $Buffer.concat([buf, chunk]) : chunk;
+      const idx = buf.indexOf("\r\n\r\n");
+      if (idx === -1) {
+        if (buf.length > 64 * 1024) {
+          cleanup();
+          reject(new HTTPParserError("Response head exceeded 64KB"));
+        }
+        return;
+      }
+      socket.pause();
+      cleanup();
+      const lines = buf.subarray(0, idx).toString("latin1").split("\r\n");
+      const leftover = buf.subarray(idx + 4);
+      const statusLine = lines[0] || "";
+      const match = /^HTTP\/\d(?:\.\d)? (\d{3})/.exec(statusLine);
+      const statusCode = match ? Number(match[1]) : 0;
+      const headers = {};
+      for (let i = 1; i < lines.length; i++) {
+        const colon = lines[i].indexOf(":");
+        if (colon === -1) continue;
+        const key = lines[i].slice(0, colon).trim().toLowerCase();
+        const value = lines[i].slice(colon + 1).trim();
+        if (headers[key] === undefined) headers[key] = value;
+        else if (Array.isArray(headers[key])) headers[key].push(value);
+        else headers[key] = [headers[key], value];
+      }
+      resolve({ statusCode, statusLine, headers, leftover });
+    };
+    const onError = err => {
+      cleanup();
+      reject(err);
+    };
+    const onClose = () => {
+      cleanup();
+      reject(new SocketError("Socket closed before the response head was received"));
+    };
+    const onAbort = () => {
+      cleanup();
+      socket.destroy();
+      reject(new RequestAbortedError("Request aborted"));
+    };
+    socket.on("data", onData);
+    socket.once("error", onError);
+    socket.once("close", onClose);
+    if (signal) {
+      if (signal.aborted) return onAbort();
+      signal.addEventListener?.("abort", onAbort, { once: true });
+    }
+  });
+}
+
+// Bun does not auto-resume an explicitly paused socket when a "data"/"readable"
+// listener is attached (Node does). Emulate that so the socket handed back by
+// connect()/upgrade() starts flowing once the consumer begins reading.
+function _resumeOnConsumer(socket) {
+  const onNewListener = event => {
+    if (event === "data" || event === "readable") {
+      socket.removeListener("newListener", onNewListener);
+      queueMicrotask(() => {
+        if (!socket.destroyed) socket.resume();
+      });
+    }
+  };
+  socket.on("newListener", onNewListener);
+}
+
+// connect(options[, callback]) -> { statusCode, headers, socket, opaque }
+//   HTTP CONNECT tunnel. `origin`/url is the TCP target; the CONNECT
+//   request-target is `opts.path` (default host:port).
+function connect(options, callback) {
+  const promise = _doConnect(options);
+  if ($isCallable(callback)) {
+    promise.then(
+      data => callback(null, data),
+      err => callback(err, null),
+    );
+    return;
+  }
+  return promise;
+}
+
+async function _doConnect(options) {
+  const target = _parseConnectTarget(options);
+  const requestTarget =
+    (typeof options === "object" && options !== null && options.path) || `${target.hostname}:${target.port}`;
+  const socket = await _openSocket({
+    hostname: target.hostname,
+    port: target.port,
+    tls: target.tls,
+    servername: target.hostname,
+    signal: options?.signal,
+  });
+
+  let head = `CONNECT ${requestTarget} HTTP/1.1\r\nHost: ${requestTarget}\r\n`;
+  const headers = options?.headers || kEmptyObject;
+  for (const key of Object.keys(headers)) head += `${key}: ${headers[key]}\r\n`;
+  head += "\r\n";
+  socket.write(head);
+
+  const { statusCode, headers: resHeaders, leftover } = await _readResponseHead(socket, options?.signal);
+  if (leftover && leftover.length) socket.unshift(leftover);
+  _resumeOnConsumer(socket);
+  return { statusCode, headers: resHeaders, socket, opaque: options?.opaque ?? kEmptyObject };
+}
+
+// upgrade(url[, options][, callback]) -> { headers, socket, opaque }
+//   HTTP Upgrade handshake (expects 101 Switching Protocols).
+function upgrade(url, options, callback) {
+  if ($isCallable(options)) {
+    callback = options;
+    options = {};
+  }
+  const promise = _doUpgrade(url, options || {});
+  if ($isCallable(callback)) {
+    promise.then(
+      data => callback(null, data),
+      err => callback(err, null),
+    );
+    return;
+  }
+  return promise;
+}
+
+async function _doUpgrade(url, options) {
+  const target = _parseConnectTarget(typeof url === "string" || url instanceof URL ? url : (options.origin ?? url));
+  const path = options.path || target.url.pathname + target.url.search || "/";
+  const method = (options.method || "GET").toUpperCase();
+  const protocol = options.protocol || "websocket";
+  const socket = await _openSocket({
+    hostname: target.hostname,
+    port: target.port,
+    tls: target.tls,
+    servername: target.hostname,
+    signal: options.signal,
+  });
+
+  let head = `${method} ${path} HTTP/1.1\r\nHost: ${target.url.host}\r\nConnection: upgrade\r\nUpgrade: ${protocol}\r\n`;
+  const headers = options.headers || kEmptyObject;
+  for (const key of Object.keys(headers)) head += `${key}: ${headers[key]}\r\n`;
+  head += "\r\n";
+  socket.write(head);
+
+  const { statusCode, headers: resHeaders, leftover } = await _readResponseHead(socket, options.signal);
+  if (statusCode !== 101) {
+    socket.destroy();
+    throw new SocketError(`Upgrade request failed with status code ${statusCode}`);
+  }
+  if (leftover && leftover.length) socket.unshift(leftover);
+  _resumeOnConsumer(socket);
+  return { headers: resHeaders, socket, opaque: options.opaque ?? kEmptyObject };
 }
 
 class MockClient {

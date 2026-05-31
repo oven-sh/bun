@@ -125,10 +125,13 @@ describe("mock()", () => {
     expect(instance).not.toBe(null);
     expect(fn.mock.calls).toEqual([[1, 2]]);
     expect(fn.mock.contexts[0]).toBe(instance);
+    // `new` calls are recorded in mock.instances
+    expect(fn.mock.instances[0]).toBe(instance);
 
     // Reflect.construct used to crash when the mock returned a non-object
     const reflected = Reflect.construct(fn, []);
     expect(typeof reflected).toBe("object");
+    expect(fn.mock.instances[1]).toBe(reflected);
 
     // implementation operating on `this`
     const withImpl = jest.fn(function (value) {
@@ -137,6 +140,7 @@ describe("mock()", () => {
     const constructed = new withImpl(42);
     expect(constructed.value).toBe(42);
     expect(withImpl.mock.contexts[0]).toBe(constructed);
+    expect(withImpl.mock.instances[0]).toBe(constructed);
 
     // implementation returning an object wins over the created `this`
     const returnsObject = jest.fn(() => ({ a: 1 }));

@@ -879,6 +879,20 @@ static JSC::EncodedJSValue jsMockFunctionCallImpl(JSGlobalObject* lexicalGlobalO
         fn->contexts.set(vm, fn, contexts);
     }
 
+    JSC::JSArray* instances = fn->instances.get();
+    if (instances) {
+        instances->push(globalObject, thisValue);
+        RETURN_IF_EXCEPTION(scope, {});
+    } else {
+        JSC::ObjectInitializationScope object(vm);
+        instances = JSC::JSArray::tryCreateUninitializedRestricted(
+            object,
+            globalObject->arrayStructureForIndexingTypeDuringAllocation(JSC::ArrayWithContiguous),
+            1);
+        instances->initializeIndex(object, 0, thisValue);
+        fn->instances.set(vm, fn, instances);
+    }
+
     auto invocationId = JSMockModule::nextInvocationId();
     JSC::JSArray* invocationCallOrder = fn->invocationCallOrder.get();
     if (invocationCallOrder) {

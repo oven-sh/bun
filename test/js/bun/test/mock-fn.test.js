@@ -794,6 +794,25 @@ describe("mock()", () => {
 
     expect(bar()()).toBe(true);
   });
+
+  it("constructing a mock returns an object and does not crash", () => {
+    // A native [[Construct]] must return an object. Previously, constructing a
+    // mock via Reflect.construct / the C++ construct path crashed because the
+    // mock returned the implementation's (possibly primitive) result.
+    const noImpl = jest.fn();
+    expect(typeof new noImpl()).toBe("object");
+    expect(typeof Reflect.construct(noImpl, [])).toBe("object");
+    expect(typeof Reflect.construct(noImpl, [], Object)).toBe("object");
+
+    const returnsPrimitive = jest.fn(() => 5);
+    expect(typeof new returnsPrimitive()).toBe("object");
+    expect(typeof Reflect.construct(returnsPrimitive, [])).toBe("object");
+
+    const instance = { tag: "instance" };
+    const returnsObject = jest.fn(() => instance);
+    expect(new returnsObject()).toBe(instance);
+    expect(Reflect.construct(returnsObject, [])).toBe(instance);
+  });
 });
 
 describe("spyOn", () => {

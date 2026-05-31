@@ -151,7 +151,7 @@ impl FileRoute {
                     body_value,
                     BodyValue::Blob(b)
                         if matches!(
-                            b.store.get().as_ref().unwrap().data,
+                            b.store().unwrap().data,
                             StoreData::File(ref f)
                                 if matches!(f.pathlike, PathOrFileDescriptor::Fd(_))
                         )
@@ -332,7 +332,7 @@ impl FileRoute {
         // doesn't span the scopeguard creation (the guard's closure may free
         // `*this_ptr` on early-return drop). // PERF(port): was zero-copy
         // slice — profile if hot.
-        let path_buf: Vec<u8> = match this.blob.store.get().as_ref().unwrap().get_path() {
+        let path_buf: Vec<u8> = match this.blob.store().unwrap().get_path() {
             Some(p) => p.to_vec(),
             None => {
                 req.set_yield(true);

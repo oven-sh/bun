@@ -198,7 +198,7 @@ impl PostgresSQLQuery {
         global_object: &JSGlobalObject,
         clean_target: bool,
     ) -> Option<JSValue> {
-        let this_value = self.this_value.get().try_get()?;
+        let this_value = self.this_value.with(|v| v.try_get())?;
         let target = js::target_get_cached(this_value)?;
         if clean_target {
             js::target_set_cached(this_value, global_object, JSValue::ZERO);
@@ -223,7 +223,7 @@ impl PostgresSQLQuery {
         // `*self` mid-body.
         let _deref = self.ref_guard();
         self.status.set(Status::Fail);
-        let Some(this_value) = self.this_value.get().try_get() else {
+        let Some(this_value) = self.this_value.with(|v| v.try_get()) else {
             return;
         };
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
@@ -257,7 +257,7 @@ impl PostgresSQLQuery {
         // R-2: see `on_write_fail` — `&self` + Cell/JsCell, ScopedRef brackets re-entry.
         let _deref = self.ref_guard();
         self.status.set(Status::Fail);
-        let Some(this_value) = self.this_value.get().try_get() else {
+        let Some(this_value) = self.this_value.with(|v| v.try_get()) else {
             return;
         };
         let _downgrade = scopeguard::guard((), |_| self.this_value.with_mut(|r| r.downgrade()));
@@ -325,7 +325,7 @@ impl PostgresSQLQuery {
         };
         js_tag.ensure_still_alive();
 
-        let Some(this_value) = self.this_value.get().try_get() else {
+        let Some(this_value) = self.this_value.with(|v| v.try_get()) else {
             return;
         };
         let _last = scopeguard::guard((), |_| {

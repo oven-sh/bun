@@ -727,7 +727,7 @@ impl StatWatcher {
         }
         this_ref.persistent.set(false);
         if cfg!(debug_assertions) {
-            if this_ref.poll_ref.get().is_active() {
+            if this_ref.poll_ref.with(|v| v.is_active()) {
                 debug_assert!(core::ptr::eq(VirtualMachine::get(), this_ref.ctx.as_ptr())); // We cannot unref() on another thread this way.
             }
         }
@@ -823,7 +823,7 @@ impl StatWatcher {
             return Ok(());
         }
 
-        let Some(js_this) = this_ref.this_value.get().try_get() else {
+        let Some(js_this) = this_ref.this_value.with(|v| v.try_get()) else {
             return Ok(());
         };
         let global_this = this_ref.global_this();
@@ -856,7 +856,7 @@ impl StatWatcher {
             return Ok(());
         }
 
-        let Some(js_this) = this_ref.this_value.get().try_get() else {
+        let Some(js_this) = this_ref.this_value.with(|v| v.try_get()) else {
             return Ok(());
         };
         let global_this = this_ref.global_this();
@@ -944,7 +944,7 @@ impl StatWatcher {
         // work-pool thread may still hold `&*watcher`). `ParentRef` Deref
         // gives that shared `&`.
         let this_ref = ParentRef::from(NonNull::new(this).expect("swap_and_call: watcher"));
-        let Some(js_this) = this_ref.this_value.get().try_get() else {
+        let Some(js_this) = this_ref.this_value.with(|v| v.try_get()) else {
             return Ok(());
         };
         let global_this = this_ref.global_this();
@@ -1152,7 +1152,9 @@ impl Arguments {
         let obj = ParentRef::from(
             NonNull::new(StatWatcher::init(&self)?).expect("create_stat_watcher: init"),
         );
-        Ok(obj.this_value.get().try_get().unwrap_or(JSValue::UNDEFINED))
+        Ok(obj
+            .this_value
+            .with(|v| v.try_get().unwrap_or(JSValue::UNDEFINED)))
     }
 }
 

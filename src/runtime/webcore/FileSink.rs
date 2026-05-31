@@ -291,7 +291,7 @@ impl Options {
 impl FileSink {
     pub fn memory_cost(&self) -> usize {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(FileSink).
-        self.writer.get().memory_cost()
+        self.writer.with(|v| v.memory_cost())
     }
 }
 
@@ -471,7 +471,7 @@ impl FileSink {
 
             // TODO: on windows done means ended (no pending data on the buffer) on unix we can still have pending data on the buffer
             // we should unify the behaviors to simplify this
-            let has_pending_data = (*this).writer.get().has_pending_data();
+            let has_pending_data = (*this).writer.with(|w| w.has_pending_data());
             // Only keep the event loop ref'd while there's a pending write in progress.
             // If there's no pending write, no need to keep the event loop ref'd.
             // `with_mut`: Windows `update_ref` is `&mut self` (posix is `&self`).
@@ -491,17 +491,17 @@ impl FileSink {
 
             // if we are not done yet and has pending data we just wait so we do not runPending twice
             if status == WriteStatus::Pending && has_pending_data {
-                if (*this).pending.get().state == streams::PendingState::Pending {
+                if (*this).pending.with(|p| p.state) == streams::PendingState::Pending {
                     (*this).pending.with_mut(|p| p.consumed = amount as u64); // @truncate
                 }
                 return;
             }
 
-            if (*this).pending.get().state == streams::PendingState::Pending {
+            if (*this).pending.with(|p| p.state) == streams::PendingState::Pending {
                 (*this).pending.with_mut(|p| p.consumed = amount as u64); // @truncate
 
                 // when "done" is true, we will never receive more data.
-                let consumed = (*this).pending.get().consumed;
+                let consumed = (*this).pending.with(|p| p.consumed);
                 if (*this).done.get() || status == WriteStatus::EndOfFile {
                     (*this)
                         .pending
@@ -539,7 +539,7 @@ impl FileSink {
         bun_core::scoped_log!(FileSink, "onError({:?})", err);
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
-            if (*this).pending.get().state == streams::PendingState::Pending {
+            if (*this).pending.with(|p| p.state) == streams::PendingState::Pending {
                 (*this)
                     .pending
                     .with_mut(|p| p.result = streams::Writable::Err(err));
@@ -592,7 +592,7 @@ impl FileSink {
             // SAFETY(JsCell): `Strong::has`/`get` are read-only on the GC root.
             if (*this).readable_stream.get_mut().has() {
                 if let Some(global) = (*this).js_global() {
-                    if let Some(stream) = (*this).readable_stream.get().get(global) {
+                    if let Some(stream) = (*this).readable_stream.with(|r| r.get(global)) {
                         stream.done(global);
                     }
                 }
@@ -771,25 +771,19 @@ impl FileSink {
                 #[cfg(unix)]
                 {
                     if self.nonblocking.get() {
-                        self.writer
-                            .get()
-                            .get_poll()
-                            .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Nonblocking);
+                        self.writer.with(|v| {
+                            v.get_poll()
+                                .unwrap()
+                                .set_flag(bun_io::FilePollFlag::Nonblocking)
+                        });
                     }
 
                     if self.is_socket.get() {
                         self.writer
-                            .get()
-                            .get_poll()
-                            .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Socket);
+                            .with(|v| v.get_poll().unwrap().set_flag(bun_io::FilePollFlag::Socket));
                     } else if self.pollable.get() {
                         self.writer
-                            .get()
-                            .get_poll()
-                            .unwrap()
-                            .set_flag(bun_io::FilePollFlag::Fifo);
+                            .with(|v| v.get_poll().unwrap().set_flag(bun_io::FilePollFlag::Fifo));
                     }
                 }
             }
@@ -912,7 +906,7 @@ impl FileSink {
     pub unsafe fn on_auto_flush(this: *mut FileSink) -> bool {
         // SAFETY: caller contract — `this` is live with write+dealloc provenance.
         unsafe {
-            if (*this).done.get() || !(*this).writer.get().has_pending_data() {
+            if (*this).done.get() || !(*this).writer.with(|w| w.has_pending_data()) {
                 (*this).update_ref(false);
                 (*this).auto_flusher.with_mut(|a| a.registered.set(false));
                 return false;
@@ -920,7 +914,7 @@ impl FileSink {
 
             let _guard = FileSinkRef::new_ref(this);
 
-            let amount_buffered = (*this).writer.get().outgoing.size();
+            let amount_buffered = (*this).writer.with(|w| w.outgoing.size());
 
             // SAFETY(JsCell): `IOWriter::flush` is pure I/O; the `on_write`
             // callback it may trigger goes via the stored `*mut FileSink` backref.
@@ -940,7 +934,7 @@ impl FileSink {
                 }
             }
 
-            let is_registered = !(*this).writer.get().has_pending_data();
+            let is_registered = !(*this).writer.with(|w| w.has_pending_data());
             (*this)
                 .auto_flusher
                 .with_mut(|a| a.registered.set(is_registered));
@@ -955,8 +949,12 @@ impl FileSink {
     pub fn flush_from_js(&self, global_this: &JSGlobalObject, wait: bool) -> sys::Result<JSValue> {
         let _ = wait;
 
-        if self.pending.get().state == streams::PendingState::Pending {
-            if let streams::WritableFuture::Promise { strong, .. } = &self.pending.get().future {
+        if self.pending.with(|v| v.state) == streams::PendingState::Pending {
+            if let streams::WritableFuture::Promise { strong, .. } =
+                // SAFETY: single-JS-thread `JsCell` read; the borrow ends at
+                // `strong.value()` and `pending` is not mutated in between.
+                &unsafe { self.pending.get() }.future
+            {
                 return sys::Result::Ok(strong.value());
             }
         }
@@ -1106,7 +1104,9 @@ impl FileSink {
                     // (b) source written to wrong addr (source still None →
                     // start never ran on THIS writer), (c) 24B overrun
                     // (js_sink_ref also non-null).
-                    let w = this.writer.get();
+                    // SAFETY: single-JS-thread `JsCell` read; the probe only
+                    // reads writer fields.
+                    let w = unsafe { this.writer.get() };
                     let src_tag: i8 = match &w.source {
                         None => -1,
                         Some(bun_io::source::Source::Pipe(_)) => 0,
@@ -1126,26 +1126,34 @@ impl FileSink {
                         this.written.get(),
                         this.ref_count.get(),
                         this.done.get(),
-                        this.pending.get().state as u8,
-                        this.signal.get().ptr,
+                        this.pending.with(|p| p.state) as u8,
+                        this.signal.with(|s| s.ptr),
                         w.parent,
                         core::ptr::eq(w.parent.cast_const(), this as *const _),
                         src_tag,
                         w.is_done,
                         w.owns_fd,
-                        this.js_sink_ref.get().handle_ptr(),
+                        this.js_sink_ref.with(|r| r.handle_ptr()),
                         this.started.get(),
                     );
                 }
             }
             probe(
                 "readable_stream.held",
-                self.readable_stream.get().held_handle_ptr(),
+                self.readable_stream.with(|r| r.held_handle_ptr()),
                 self,
             );
-            probe("js_sink_ref", self.js_sink_ref.get().handle_ptr(), self);
+            probe(
+                "js_sink_ref",
+                self.js_sink_ref.with(|r| r.handle_ptr()),
+                self,
+            );
             // pending.future is an enum; only probe when it's the Promise arm.
-            if let streams::WritableFuture::Promise { strong, .. } = &self.pending.get().future {
+            if let streams::WritableFuture::Promise { strong, .. } =
+                // SAFETY: single-JS-thread `JsCell` read; the borrow ends at
+                // `handle_ptr()` and `pending` is not mutated in between.
+                &unsafe { self.pending.get() }.future
+            {
                 probe("pending.future.Promise.strong", strong.handle_ptr(), self);
             }
         }
@@ -1300,11 +1308,11 @@ impl FileSink {
                 self_.started.get(),
                 self_.fd.get(),
                 self_.written.get(),
-                self_.pending.get().state as u8,
-                self_.writer.get().owns_fd,
-                self_.writer.get().is_done,
-                self_.writer.get().has_pending_data(),
-                self_.js_sink_ref.get().has(),
+                self_.pending.with(|p| p.state) as u8,
+                self_.writer.with(|w| w.owns_fd),
+                self_.writer.with(|w| w.is_done),
+                self_.writer.with(|w| w.has_pending_data()),
+                self_.js_sink_ref.with(|r| r.has()),
             );
             m.insert(
                 this as usize,
@@ -1345,8 +1353,11 @@ impl FileSink {
 
     pub fn end_from_js(&self, global_this: &JSGlobalObject) -> sys::Result<JSValue> {
         if self.done.get() {
-            if self.pending.get().state == streams::PendingState::Pending {
-                if let streams::WritableFuture::Promise { strong, .. } = &self.pending.get().future
+            if self.pending.with(|v| v.state) == streams::PendingState::Pending {
+                if let streams::WritableFuture::Promise { strong, .. } =
+                    // SAFETY: single-JS-thread `JsCell` read; the borrow ends at
+                    // `strong.value()` and `pending` is not mutated in between.
+                    &unsafe { self.pending.get() }.future
                 {
                     return sys::Result::Ok(strong.value());
                 }
@@ -1475,7 +1486,7 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         self.done.get()
     }
     fn pending_state_is_pending(&self) -> bool {
-        self.pending.get().state == streams::PendingState::Pending
+        self.pending.with(|v| v.state) == streams::PendingState::Pending
     }
     fn protect_js_wrapper(&mut self, global: &JSGlobalObject, this_value: JSValue) {
         Self::protect_js_wrapper(self, global, this_value)
@@ -1601,7 +1612,13 @@ impl FlushPendingTask {
 impl FileSink {
     /// Does not ref or unref.
     fn handle_resolve_stream(&self, global_this: &JSGlobalObject) {
-        if let Some(stream) = self.readable_stream.get().get(global_this).as_mut() {
+        // SAFETY: single-JS-thread `JsCell` read; the borrow ends with the
+        // `if let` scrutinee temporary and `readable_stream` is not written
+        // until after `stream.done`.
+        if let Some(stream) = unsafe { self.readable_stream.get() }
+            .get(global_this)
+            .as_mut()
+        {
             stream.done(global_this);
         }
 
@@ -1612,7 +1629,12 @@ impl FileSink {
 
     /// Does not ref or unref.
     fn handle_reject_stream(&self, global_this: &JSGlobalObject, _err: JSValue) {
-        if let Some(stream) = self.readable_stream.get().get(global_this).as_mut() {
+        // SAFETY: single-JS-thread `JsCell` read; the borrow ends with the
+        // `if let` scrutinee temporary, before `readable_stream` is reset.
+        if let Some(stream) = unsafe { self.readable_stream.get() }
+            .get(global_this)
+            .as_mut()
+        {
             stream.abort(global_this);
             self.readable_stream.set(readable_stream::Strong::default());
         }

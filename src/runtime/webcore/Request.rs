@@ -158,7 +158,7 @@ impl Request {
 impl crate::webcore::body::BodyOwnerJs for Request {
     #[inline]
     fn js_ref(&self) -> Option<JSValue> {
-        self.js_ref.get().try_get()
+        self.js_ref.with(|v| v.try_get())
     }
     #[inline]
     fn body_get_cached(this: JSValue) -> Option<JSValue> {
@@ -189,9 +189,11 @@ impl BodyMixin for Request {
         // directly (via `HeadersRef::as_ptr`) so the provenance is mutable;
         // going through `as_deref()` would derive it from a `&FetchHeaders`
         // and make the later `as_mut()` UB under Stacked Borrows.
-        self.headers.get().as_ref().map(|h| {
-            core::ptr::NonNull::new(h.as_ptr())
-                .expect("HeadersRef wraps a non-null *mut FetchHeaders")
+        self.headers.with(|v| {
+            v.as_ref().map(|h| {
+                core::ptr::NonNull::new(h.as_ptr())
+                    .expect("HeadersRef wraps a non-null *mut FetchHeaders")
+            })
         })
     }
     #[inline]
@@ -243,7 +245,7 @@ impl Request {
 
     // Returns if the request has headers already cached/set.
     pub fn has_fetch_headers(&self) -> bool {
-        self.headers.get().is_some()
+        self.headers.with(|v| v.is_some())
     }
 
     /// Sets the headers of the request. This will take ownership of the headers.
@@ -258,7 +260,7 @@ impl Request {
     /// If the headers are empty and request_context is null, it will create an empty FetchHeaders object.
     #[allow(clippy::mut_from_ref)]
     pub fn ensure_fetch_headers(&self, global_this: &JSGlobalObject) -> JsResult<&mut HeadersRef> {
-        if self.headers.get().is_some() {
+        if self.headers.with(|v| v.is_some()) {
             // headers is already set
             return Ok(self.headers_mut().as_mut().unwrap());
         }
@@ -312,7 +314,7 @@ impl Request {
 
     #[allow(clippy::mut_from_ref)]
     pub fn get_fetch_headers_unless_empty(&self) -> Option<&mut HeadersRef> {
-        if self.headers.get().is_none() {
+        if self.headers.with(|v| v.is_none()) {
             if let Some(req) = self.request_context.get_request() {
                 // we have a request context, so we can get the headers from it
                 self.headers.set(Some(HeadersRef::create_from_uws(
@@ -334,7 +336,7 @@ impl Request {
     }
 
     pub fn clone_headers(&self, global_this: &JSGlobalObject) -> JsResult<Option<HeadersRef>> {
-        if self.headers.get().is_none() {
+        if self.headers.with(|v| v.is_none()) {
             if let Some(uws_req) = self.request_context.get_request() {
                 self.headers.set(Some(HeadersRef::create_from_uws(
                     uws_req.cast::<core::ffi::c_void>(),
@@ -781,8 +783,11 @@ impl Request {
 
     pub fn get_signal(&self, global_this: &JSGlobalObject) -> JSValue {
         // Already have a C++ instance
-        if let Some(signal) = self.signal.get() {
-            return signal.to_js(global_this);
+        if let Some(value) = self
+            .signal
+            .with(|s| s.as_ref().map(|sig| sig.to_js(global_this)))
+        {
+            return value;
         }
         // Lazy create default signal
         let js_signal = AbortSignal::create(global_this);
@@ -1497,7 +1502,7 @@ impl Request {
 
         req.url.set(href);
 
-        if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.get().is_some() {
+        if matches!(req.body_value(), BodyValue::Blob(_)) && req.headers.with(|v| v.is_some()) {
             if let BodyValue::Blob(blob) = req.body_value() {
                 let ct: &[u8] = blob.content_type_slice();
                 if !ct.is_empty()
@@ -1616,9 +1621,9 @@ impl Request {
             );
         }
 
-        if let Some(signal) = self.signal.get() {
-            // `AbortSignalRef::clone` → C++ `ref()` (matches Zig `signal.ref()`).
-            req.signal.set(Some(signal.clone()));
+        // `AbortSignalRef::clone` → C++ `ref()` (matches Zig `signal.ref()`).
+        if let Some(signal) = self.signal.with(Clone::clone) {
+            req.signal.set(Some(signal));
         }
         Ok(())
     }
@@ -1724,7 +1729,9 @@ impl Request {
 
     #[inline]
     pub fn get_fetch_headers(&self) -> Option<&FetchHeaders> {
-        self.headers.get().as_deref()
+        // SAFETY: single-JS-thread `JsCell` read; callers consume the borrow
+        // before the headers slot is replaced.
+        unsafe { self.headers.get() }.as_deref()
     }
 
     /// Mutable access to the already-materialized headers (does NOT lazily

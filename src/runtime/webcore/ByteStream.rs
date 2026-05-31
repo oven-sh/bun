@@ -122,7 +122,7 @@ impl ByteStream {
     }
 
     pub(crate) fn on_start(&self) -> streams::Start {
-        if self.has_received_last_chunk.get() && self.buffer.get().is_empty() {
+        if self.has_received_last_chunk.get() && self.buffer.with(|v| v.is_empty()) {
             return streams::Start::Empty;
         }
 
@@ -183,17 +183,14 @@ impl ByteStream {
         // R-2: snapshot `pipe` (two `Option<Copy>` fields) — `on_pipe` re-enters
         // its handler, which may call back into `ByteStream` (e.g. `drain`); no
         // `JsCell` borrow may be live across that call.
-        let (pipe_ctx, pipe_fn) = {
-            let p = self.pipe.get();
-            (p.ctx, p.on_pipe)
-        };
+        let (pipe_ctx, pipe_fn) = self.pipe.with(|p| (p.ctx, p.on_pipe));
         if let Some(ctx) = pipe_ctx {
             // TODO(port): `Pipe.onPipe` signature — Zig passes `(ctx, stream, allocator)`.
             (pipe_fn.unwrap())(ctx, stream);
             return Ok(());
         }
 
-        if self.buffer_action.get().is_some() {
+        if self.buffer_action.with(|v| v.is_some()) {
             if let streams::Result::Err(err) = &stream {
                 // PORT NOTE: Zig `defer { ... }` block — runs after `action.reject`. Reordered
                 // here as explicit post-reject cleanup since `?` would skip it.
@@ -222,7 +219,9 @@ impl ByteStream {
                 // `defer { this.buffer_action = null; }` — handled by `replace(None)` below.
                 let mut action = self.buffer_action.replace(None).unwrap();
 
-                if self.buffer.get().capacity() == 0 && matches!(stream, streams::Result::Done) {
+                if self.buffer.with(|v| v.capacity()) == 0
+                    && matches!(stream, streams::Result::Done)
+                {
                     bun_output::scoped_log!(
                         ByteStream,
                         "ByteStream.onData done and action.fulfill()"
@@ -231,7 +230,7 @@ impl ByteStream {
                     let mut blob = self.to_any_blob().unwrap();
                     return action.fulfill(self.parent_const().global_this(), &mut blob);
                 }
-                if self.buffer.get().capacity() == 0 {
+                if self.buffer.with(|v| v.capacity()) == 0 {
                     if let streams::Result::OwnedAndDone(mut owned) = stream {
                         bun_output::scoped_log!(
                             ByteStream,
@@ -274,8 +273,8 @@ impl ByteStream {
 
         let chunk = stream.slice();
 
-        if self.pending.get().state == streams::PendingState::Pending {
-            debug_assert!(self.buffer.get().is_empty());
+        if self.pending.with(|v| v.state) == streams::PendingState::Pending {
+            debug_assert!(self.buffer.with(|v| v.is_empty()));
             // Re-derive the destination from the GC-rooted view instead of trusting the
             // raw pointer captured at pull time: JS can detach or transfer the backing
             // ArrayBuffer between the pull and the data arriving, leaving
@@ -283,8 +282,7 @@ impl ByteStream {
             let global = self.parent_const().global_this();
             let mut pending_view = self
                 .pending_value
-                .get()
-                .get()
+                .with(|v| v.get())
                 .and_then(|view| view.as_array_buffer(global))
                 .unwrap_or_default();
             let pending_buf = pending_view.slice_mut();
@@ -360,7 +358,7 @@ impl ByteStream {
         // was only used for `allocator.free(@constCast(base_address))`, which is the Drop of the
         // owned `stream` payload in Rust.
     ) -> Result<(), bun_alloc::AllocError> {
-        if self.buffer.get().capacity() == 0 {
+        if self.buffer.with(|v| v.capacity()) == 0 {
             match stream {
                 streams::Result::Owned(mut owned) | streams::Result::OwnedAndDone(mut owned) => {
                     // Zig: `owned.moveToListManaged(allocator)` — moves the buffer, no copy.
@@ -395,7 +393,7 @@ impl ByteStream {
                 // Zig: `allocator.free(@constCast(base_address))` — `owned: Vec<u8>` drops here.
             }
             streams::Result::Err(err) => {
-                if self.buffer_action.get().is_some() {
+                if self.buffer_action.with(|v| v.is_some()) {
                     panic!("Expected buffer action to be null");
                 }
                 self.pending
@@ -418,9 +416,9 @@ impl ByteStream {
     pub(crate) fn on_pull(&self, buffer: &mut [u8], view: JSValue) -> streams::Result {
         bun_jsc::mark_binding!();
         debug_assert!(!buffer.is_empty());
-        debug_assert!(self.buffer_action.get().is_none());
+        debug_assert!(self.buffer_action.with(|v| v.is_none()));
 
-        if !self.buffer.get().is_empty() {
+        if !self.buffer.with(|v| v.is_empty()) {
             debug_assert!(self.value().is_empty()); // == .zero
             // R-2: confine the `&mut Vec<u8>` to a `with_mut` so no `JsCell`
             // borrow escapes the copy. The result tuple drives the rest.
@@ -476,7 +474,7 @@ impl ByteStream {
     pub(crate) fn on_cancel(&self) {
         bun_jsc::mark_binding!();
         let view = self.value();
-        if self.buffer.get().capacity() > 0 {
+        if self.buffer.with(|v| v.capacity()) > 0 {
             self.buffer.with_mut(|b| {
                 b.clear();
                 b.shrink_to_fit();
@@ -507,7 +505,7 @@ impl ByteStream {
 
     pub(crate) fn memory_cost(&self) -> usize {
         // ReadableStreamSource covers @sizeOf(ByteStream)
-        self.buffer.get().capacity()
+        self.buffer.with(|v| v.capacity())
     }
 
     /// NOTE: not `impl Drop` — `ByteStream` is the `context` payload of a `.classes.ts`
@@ -520,7 +518,7 @@ impl ByteStream {
     /// `Box` provenance.
     pub(crate) fn finalize(&mut self) {
         bun_jsc::mark_binding!();
-        if self.buffer.get().capacity() > 0 {
+        if self.buffer.with(|v| v.capacity()) > 0 {
             self.buffer.with_mut(|b| {
                 b.clear();
                 b.shrink_to_fit();
@@ -556,7 +554,7 @@ impl ByteStream {
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {
-        if !self.buffer.get().is_empty() {
+        if !self.buffer.with(|v| v.is_empty()) {
             return Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
         }
         Vec::<u8>::default()
@@ -585,11 +583,13 @@ impl ByteStream {
         global_this: &JSGlobalObject,
         action: streams::BufferActionTag,
     ) -> bun_jsc::JsResult<JSValue> {
-        if self.buffer_action.get().is_some() {
+        if self.buffer_action.with(|v| v.is_some()) {
             return Err(global_this.throw(format_args!("Cannot buffer value twice")));
         }
 
-        if let streams::Result::Err(err) = &self.pending.get().result {
+        // SAFETY: single-JS-thread `JsCell` read; the `err` borrow ends at
+        // `to_js_weak` below, before the `with_mut` that releases the result.
+        if let streams::Result::Err(err) = &unsafe { self.pending.get() }.result {
             let (err_js, _) = err.to_js_weak(global_this);
             self.pending.with_mut(|p| p.result.release());
             self.done.set(true);
@@ -613,7 +613,7 @@ impl ByteStream {
         self.buffer_action
             .set(Some(BufferAction::new(action, global_this)));
 
-        Ok(self.buffer_action.get().as_ref().unwrap().value())
+        Ok(self.buffer_action.with(|v| v.as_ref().unwrap().value()))
     }
 }
 

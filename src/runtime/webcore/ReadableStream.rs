@@ -192,7 +192,9 @@ impl ReadableStream {
                 // BACKREF: see `Source::file()` — payload valid while stream alive.
                 // R-2: `lazy`/`started` are `JsCell`/`Cell`; shared borrow suffices.
                 let blobby = self.ptr.file().expect("matched File");
-                if let webcore::file_reader::Lazy::Blob(store) = blobby.lazy.get() {
+                // SAFETY: single-JS-thread `JsCell` read; the `store` borrow
+                // ends at the `clone()` below and `lazy` is not reassigned.
+                if let webcore::file_reader::Lazy::Blob(store) = unsafe { blobby.lazy.get() } {
                     // `store.clone()` carries the +1 that Zig's explicit `blob.store.?.ref()`
                     // provided after the raw-pointer copy in `initWithStore`.
                     let blob = Blob::init_with_store(store.clone(), global_this);
@@ -338,7 +340,7 @@ impl ReadableStream {
         blob: &Blob,
         recommended_chunk_size: webcore::blob::SizeType,
     ) -> JsResult<JSValue> {
-        let Some(store) = blob.store.get() else {
+        let Some(store) = blob.store() else {
             return ReadableStream::empty(global_this);
         };
         match &store.data {
@@ -411,7 +413,7 @@ impl ReadableStream {
         blob: &Blob,
         offset: usize,
     ) -> JsResult<JSValue> {
-        let Some(store) = blob.store.get() else {
+        let Some(store) = blob.store() else {
             return ReadableStream::empty(global_this);
         };
         match &store.data {

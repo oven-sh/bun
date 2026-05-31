@@ -55,16 +55,16 @@ impl Default for ParsedShellScript {
 impl ParsedShellScript {
     fn compute_estimated_size_for_gc(&self) -> usize {
         let mut size: usize = size_of::<ParsedShellScript>();
-        if let Some(args) = self.args.get() {
-            size += args.memory_cost();
-        }
-        if let Some(env) = self.export_env.get() {
-            size += env.memory_cost();
-        }
+        size += self
+            .args
+            .with(|a| a.as_ref().map_or(0, |args| args.memory_cost()));
+        size += self
+            .export_env
+            .with(|e| e.as_ref().map_or(0, |env| env.memory_cost()));
         if let Some(cwd) = self.cwd.get() {
             size += cwd.estimated_size();
         }
-        size += self.jsobjs.get().capacity() * size_of::<JSValue>();
+        size += self.jsobjs.with(|v| v.capacity()) * size_of::<JSValue>();
         size
     }
 

@@ -354,7 +354,7 @@ impl FileReader {
 
     pub fn on_start(&self) -> streams::Start {
         self.reader().set_parent(self.as_ctx_ptr().cast());
-        let was_lazy = !matches!(self.lazy.get(), Lazy::None);
+        let was_lazy = self.lazy.with(|l| !matches!(l, Lazy::None));
         let mut pollable = false;
         #[cfg(unix)]
         let mut file_type = FileType::File;
@@ -491,7 +491,7 @@ impl FileReader {
 
         if self.reader().is_done() {
             self.consume_reader_buffer();
-            if !self.buffered.get().is_empty() {
+            if !self.buffered.with(|v| v.is_empty()) {
                 return streams::Start::OwnedAndDone(Vec::<u8>::move_from_list(
                     self.buffered.replace(Vec::new()),
                 ));
@@ -580,7 +580,7 @@ impl FileReader {
             "onReadChunk() = {} ({}) - read_inside_on_pull: {}",
             buf.len(),
             read_state_tag(state),
-            <&'static str>::from(self.read_inside_on_pull.get())
+            self.read_inside_on_pull.with(|r| <&'static str>::from(r))
         );
 
         if self.done.get() {
@@ -628,7 +628,7 @@ impl FileReader {
         // and deref only at the exact use sites below.
         let reader_buffer: *mut Vec<u8> = self.reader().buffer();
 
-        if !self.read_inside_on_pull.get().is_none() {
+        if !self.read_inside_on_pull.with(|v| v.is_none()) {
             // R-2: `with_mut` projects `&mut ReadDuringJSOnPullResult` from
             // `&self`; `self.buffered` is a disjoint `JsCell` so nested access
             // inside the closure is sound.
@@ -644,7 +644,8 @@ impl FileReader {
                         // `buf` outlives the `on_pull` call that consumes this
                         // variant; holder-lifetime, encoded as `RawSlice<u8>`.
                         *riop = ReadDuringJSOnPullResult::Temporary(bun_ptr::RawSlice::new(buf));
-                    } else if has_more && !is_slice_in_vec_capacity(buf, self.buffered.get()) {
+                    } else if has_more && !self.buffered.with(|b| is_slice_in_vec_capacity(buf, b))
+                    {
                         self.buffered.with_mut(|b| b.extend_from_slice(buf));
                         *riop = ReadDuringJSOnPullResult::UseBuffered(buf.len());
                     }
@@ -657,7 +658,7 @@ impl FileReader {
                 ReadDuringJSOnPullResult::None => unreachable!(),
                 _ => panic!("Invalid state"),
             });
-        } else if self.pending.get().state == streams::PendingState::Pending {
+        } else if self.pending.with(|v| v.state) == streams::PendingState::Pending {
             // Certain readers (such as pipes) may return 0-byte reads even when
             // not at EOF. Consequently, we need to check whether the reader is
             // actually done or not.
@@ -673,13 +674,12 @@ impl FileReader {
                 let global = self.parent_global();
                 let mut pending_array_buffer = self
                     .pending_value
-                    .get()
-                    .get()
+                    .with(|v| v.get())
                     .and_then(|view| view.as_array_buffer(&global))
                     .unwrap_or_default();
                 let pending_buf = pending_array_buffer.slice_mut();
                 if buf.is_empty() {
-                    if self.buffered.get().is_empty() {
+                    if self.buffered.with(|v| v.is_empty()) {
                         self.buffered.set(Vec::new()); // clearAndFree
                         // SAFETY: see `reader_buffer` decl — tight deref, no &mut held across.
                         self.buffered.set(unsafe { mem::take(&mut *reader_buffer) }); // moveToUnmanaged
@@ -692,7 +692,9 @@ impl FileReader {
                             pending_buf[0..buffer.len()].copy_from_slice(&buffer);
                             self.pending.with_mut(|p| {
                                 p.result = streams::Result::IntoArrayAndDone(streams::IntoArray {
-                                    value: self.pending_value.get().get().unwrap_or(JSValue::ZERO),
+                                    value: self
+                                        .pending_value
+                                        .with(|v| v.get().unwrap_or(JSValue::ZERO)),
                                     len: buffer.len() as u64, // @truncate
                                 })
                             });
@@ -718,7 +720,9 @@ impl FileReader {
                     self.buffered.with_mut(|b| b.clear());
 
                     let into_array = streams::IntoArray {
-                        value: self.pending_value.get().get().unwrap_or(JSValue::ZERO),
+                        value: self
+                            .pending_value
+                            .with(|v| v.get().unwrap_or(JSValue::ZERO)),
                         len: buf.len() as u64, // @truncate
                     };
 
@@ -754,7 +758,7 @@ impl FileReader {
                     break 'pending !was_done;
                 }
 
-                if !is_slice_in_vec_capacity(buf, self.buffered.get()) {
+                if !self.buffered.with(|b| is_slice_in_vec_capacity(buf, b)) {
                     self.pending.with_mut(|p| {
                         p.result = if self.reader().is_done() {
                             streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(buf))
@@ -765,7 +769,7 @@ impl FileReader {
                     break 'pending !was_done;
                 }
 
-                debug_assert_eq!(buf.as_ptr(), self.buffered.get().as_ptr());
+                debug_assert_eq!(buf.as_ptr(), self.buffered.with(|v| v.as_ptr()));
                 let mut buffered = self.buffered.replace(Vec::new());
                 buffered.truncate(buf.len()); // shrinkRetainingCapacity
 
@@ -785,7 +789,7 @@ impl FileReader {
             self.pending.with_mut(|p| p.run());
             close_if_needed!();
             return ret;
-        } else if !is_slice_in_vec_capacity(buf, self.buffered.get()) {
+        } else if !self.buffered.with(|b| is_slice_in_vec_capacity(buf, b)) {
             self.buffered.with_mut(|b| b.extend_from_slice(buf));
             // SAFETY: see `reader_buffer` decl.
             if is_slice_in_vec_capacity(buf, unsafe { &*reader_buffer }) {
@@ -797,17 +801,17 @@ impl FileReader {
         // For pipes, we have to keep pulling or the other process will block.
         // SAFETY: see `reader_buffer` decl.
         let reader_buffer_len = unsafe { (*reader_buffer).len() };
-        let ret = !matches!(
-            self.read_inside_on_pull.get(),
-            ReadDuringJSOnPullResult::Temporary(_)
-        ) && !(self.buffered.get().len() + reader_buffer_len >= self.highwater_mark
-            && !self.reader_is_pollable());
+        let ret = !self
+            .read_inside_on_pull
+            .with(|r| matches!(r, ReadDuringJSOnPullResult::Temporary(_)))
+            && !(self.buffered.with(|v| v.len()) + reader_buffer_len >= self.highwater_mark
+                && !self.reader_is_pollable());
         close_if_needed!();
         ret
     }
 
     fn is_pulling(&self) -> bool {
-        !self.read_inside_on_pull.get().is_none()
+        !self.read_inside_on_pull.with(|v| v.is_none())
     }
 
     pub fn on_pull(&self, buffer: &'static mut [u8], array: JSValue) -> streams::Result {
@@ -923,7 +927,7 @@ impl FileReader {
                         FileReader,
                         "onPull({}) = {}",
                         buffer_len,
-                        self.buffered.get().len()
+                        self.buffered.with(|v| v.len())
                     );
                     let buffered = self.buffered.replace(Vec::new());
                     if self.reader().is_done() {
@@ -957,7 +961,7 @@ impl FileReader {
     }
 
     pub fn drain(&self) -> Vec<u8> {
-        if !self.buffered.get().is_empty() {
+        if !self.buffered.with(|v| v.is_empty()) {
             let out = Vec::<u8>::move_from_list(self.buffered.replace(Vec::new()));
             if cfg!(debug_assertions) {
                 debug_assert!(self.reader().buffer().as_ptr() != out.as_ptr());
@@ -980,7 +984,7 @@ impl FileReader {
     }
 
     fn consume_reader_buffer(&self) {
-        if self.buffered.get().capacity() == 0 {
+        if self.buffered.with(|v| v.capacity()) == 0 {
             self.buffered.set(mem::take(self.reader().buffer()));
         }
     }
@@ -989,8 +993,8 @@ impl FileReader {
         bun_core::scoped_log!(FileReader, "onReaderDone()");
         if !self.is_pulling() {
             self.consume_reader_buffer();
-            if self.pending.get().state == streams::PendingState::Pending {
-                if !self.buffered.get().is_empty() {
+            if self.pending.with(|v| v.state) == streams::PendingState::Pending {
+                if !self.buffered.with(|v| v.is_empty()) {
                     let buffered = self.buffered.replace(Vec::new());
                     self.pending.with_mut(|p| {
                         p.result =
@@ -1007,7 +1011,7 @@ impl FileReader {
         }
 
         // Only close the stream if there's no buffered data left to deliver
-        if self.buffered.get().is_empty() {
+        if self.buffered.with(|v| v.is_empty()) {
             // SAFETY: see `parent()`.
             unsafe { (*self.parent()).on_close() };
         }
@@ -1024,7 +1028,7 @@ impl FileReader {
 
     pub fn on_reader_error(&self, err: sys::Error) {
         self.consume_reader_buffer();
-        if self.buffered.get().capacity() > 0 && self.buffered.get().is_empty() {
+        if self.buffered.with(|v| v.capacity()) > 0 && self.buffered.with(|v| v.is_empty()) {
             self.buffered.set(Vec::new());
         }
 
@@ -1080,7 +1084,7 @@ impl FileReader {
 
     pub fn memory_cost(&self) -> usize {
         // ReadableStreamSource covers @sizeOf(FileReader)
-        self.reader().memory_cost() + self.buffered.get().capacity()
+        self.reader().memory_cost() + self.buffered.with(|v| v.capacity())
     }
 }
 

@@ -108,7 +108,8 @@ impl Listener {
     #[bun_jsc::host_fn(getter)]
     pub fn get_data(this: &Self, _global: &JSGlobalObject) -> JSValue {
         log!("getData()");
-        this.strong_data.get().get().unwrap_or(JSValue::UNDEFINED)
+        this.strong_data
+            .with(|v| v.get().unwrap_or(JSValue::UNDEFINED))
     }
 
     #[bun_jsc::host_fn(setter)]
@@ -137,7 +138,7 @@ impl Listener {
 
         if args.len < 1
             || (matches!(this.listener.get(), ListenerType::None)
-                && this.handlers.get().active_connections.get() == 0)
+                && this.handlers.with(|v| v.active_connections.get()) == 0)
         {
             return Err(global.throw(format_args!("Expected 1 argument")));
         }
@@ -155,7 +156,7 @@ impl Listener {
         let handlers = Handlers::from_js(
             global,
             socket_obj,
-            this.handlers.get().mode == SocketMode::Server,
+            this.handlers.with(|v| v.mode) == SocketMode::Server,
         )?;
         // Preserve the live connection count across the struct assignment. `Handlers.fromJS`
         // returns `active_connections = 0`, but existing accepted sockets each hold a +1 via
@@ -549,8 +550,8 @@ impl Listener {
         // (refcount==1); single JS thread, no other borrow exists yet.
         let s = unsafe { bun_ptr::ThisPtr::new(this_socket) };
         s.ref_();
-        if let Some(default_data) = listener.strong_data.get().get() {
-            let global = listener.handlers.get().global_object;
+        if let Some(default_data) = listener.strong_data.with(|v| v.get()) {
+            let global = listener.handlers.with(|v| v.global_object);
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
         }
         this_socket
@@ -591,9 +592,9 @@ impl Listener {
         // (refcount==1); single JS thread, no other borrow exists yet.
         let s = unsafe { bun_ptr::ThisPtr::new(this_socket) };
         s.ref_();
-        let default_data = listener.strong_data.get().get();
+        let default_data = listener.strong_data.with(|v| v.get());
         if let Some(default_data) = default_data {
-            let global = listener.handlers.get().global_object;
+            let global = listener.handlers.with(|v| v.global_object);
             NewSocket::<SSL>::data_set_cached(s.get_this_value(&global), &global, default_data);
         }
         if let Some(ctx) = socket.ext::<*mut c_void>() {
@@ -745,7 +746,7 @@ impl Listener {
 
         // PORT NOTE: Zig `defer switch (listener) {...}` — moved to end of fn body for same ordering.
 
-        if this.handlers.get().active_connections.get() == 0 {
+        if this.handlers.with(|v| v.active_connections.get()) == 0 {
             this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
             this.strong_self
                 .with_mut(|s| s.clear_without_deallocation());
@@ -824,7 +825,7 @@ impl Listener {
         // Any still-open accepted sockets hold a `&listener.handlers` pointer, so
         // we cannot free `this` while they're alive. Force-close them; their
         // onClose paths will markInactive against handlers we drop right after.
-        if this_ref.handlers.get().active_connections.get() > 0 {
+        if this_ref.handlers.with(|v| v.active_connections.get()) > 0 {
             this_ref.group.with_mut(|g| g.close_all());
         }
         bun_core::asan::unregister_root_region(
@@ -846,7 +847,7 @@ impl Listener {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_connections_count(this: &Self, _global: &JSGlobalObject) -> JSValue {
-        JSValue::js_number(this.handlers.get().active_connections.get() as f64)
+        JSValue::js_number(this.handlers.with(|v| v.active_connections.get()) as f64)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -913,7 +914,7 @@ impl Listener {
     #[bun_jsc::host_fn(method)]
     pub fn unref(this: &Self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
-        if this.handlers.get().active_connections.get() == 0 {
+        if this.handlers.with(|v| v.active_connections.get()) == 0 {
             this.strong_self
                 .with_mut(|s| s.clear_without_deallocation());
         }
@@ -1081,7 +1082,7 @@ impl Listener {
                                 unsafe { drop(bun_core::heap::take(prev_handlers.as_ptr())) };
                             }
                         }
-                        debug_assert!(!prev.this_value.get().is_empty());
+                        debug_assert!(!prev.this_value.with(|v| v.is_empty()));
                         prev.handlers.set(NonNull::new(handlers_ptr));
                         // Same ownership rationale as `connect_finish`'s prev
                         // branch — see the comment there.
@@ -1141,23 +1142,27 @@ impl Listener {
                         core::mem::replace(&mut *ssl_ctx_guard, None).map(|p| p.as_ptr());
                     // PORT NOTE: re-borrow connection from the socket field — `connection`
                     // was moved into `tls` above (single allocation in Zig, aliased read).
-                    let named_pipe_result = match tls_ref.connection.get().as_ref().unwrap() {
-                        UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
-                            global,
-                            &buf[..pipe_name_len.unwrap()],
-                            ssl_taken.take(),
-                            ctx_for_pipe,
-                            PipeSocketType::Tls(tls),
-                        ),
-                        UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
-                            global,
-                            *fd,
-                            ssl_taken.take(),
-                            ctx_for_pipe,
-                            PipeSocketType::Tls(tls),
-                        ),
-                        _ => unreachable!(),
-                    };
+                    // SAFETY: single-JS-thread `JsCell` read; the borrow ends
+                    // at the end of the `match` and `connection` is not
+                    // reassigned in any arm.
+                    let named_pipe_result =
+                        match unsafe { tls_ref.connection.get() }.as_ref().unwrap() {
+                            UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
+                                global,
+                                &buf[..pipe_name_len.unwrap()],
+                                ssl_taken.take(),
+                                ctx_for_pipe,
+                                PipeSocketType::Tls(tls),
+                            ),
+                            UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
+                                global,
+                                *fd,
+                                ssl_taken.take(),
+                                ctx_for_pipe,
+                                PipeSocketType::Tls(tls),
+                            ),
+                            _ => unreachable!(),
+                        };
                     let named_pipe = match named_pipe_result {
                         Ok(p) => p,
                         Err(_) => return Ok(promise_value),
@@ -1169,7 +1174,7 @@ impl Listener {
                     let tcp: *mut TCPSocket = if let Some(prev_ptr) = prev_maybe_tcp {
                         // SAFETY: caller passes a live TCPSocket
                         let prev = unsafe { &*prev_ptr };
-                        debug_assert!(!prev.this_value.get().is_empty());
+                        debug_assert!(!prev.this_value.with(|v| v.is_empty()));
                         if let Some(prev_handlers) = prev.handlers.get() {
                             if prev.flags.get().contains(SocketFlags::OWNS_HANDLERS)
                                 // SAFETY: prev_handlers was heap-allocated; shared
@@ -1195,8 +1200,8 @@ impl Listener {
                         // non-pipe arm below. Previously `.connection = null`
                         // dropped the duped pipe-path bytes on the floor.
                         prev.connection.set(Some(connection));
-                        debug_assert!(prev.protos.get().is_none());
-                        debug_assert!(prev.server_name.get().is_none());
+                        debug_assert!(prev.protos.with(|v| v.is_none()));
+                        debug_assert!(prev.server_name.with(|v| v.is_none()));
                         prev_ptr
                     } else {
                         TCPSocket::new(TCPSocket {
@@ -1227,23 +1232,27 @@ impl Listener {
                     );
                     tcp_ref.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
 
-                    let named_pipe_result = match tcp_ref.connection.get().as_ref().unwrap() {
-                        UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
-                            global,
-                            &buf[..pipe_name_len.unwrap()],
-                            None,
-                            None,
-                            PipeSocketType::Tcp(tcp),
-                        ),
-                        UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
-                            global,
-                            *fd,
-                            None,
-                            None,
-                            PipeSocketType::Tcp(tcp),
-                        ),
-                        _ => unreachable!(),
-                    };
+                    // SAFETY: single-JS-thread `JsCell` read; the borrow ends at
+                    // the end of the `match` and `connection` is not reassigned in
+                    // any arm.
+                    let named_pipe_result =
+                        match unsafe { tcp_ref.connection.get() }.as_ref().unwrap() {
+                            UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
+                                global,
+                                &buf[..pipe_name_len.unwrap()],
+                                None,
+                                None,
+                                PipeSocketType::Tcp(tcp),
+                            ),
+                            UnixOrHost::Fd(fd) => WindowsNamedPipeContext::open(
+                                global,
+                                *fd,
+                                None,
+                                None,
+                                PipeSocketType::Tcp(tcp),
+                            ),
+                            _ => unreachable!(),
+                        };
                     let named_pipe = match named_pipe_result {
                         Ok(p) => p,
                         Err(_) => return Ok(promise_value),
@@ -1499,7 +1508,7 @@ fn connect_finish<const IS_SSL: bool>(
     // on the fresh-allocation path where `get_this_value` already
     // `set_strong`'d.) Intentionally diverges from the Zig spec, which has
     // the same race.
-    if socket_ref.this_value.get().is_not_empty() {
+    if socket_ref.this_value.with(|v| v.is_not_empty()) {
         socket_ref.this_value.with_mut(|r| r.upgrade(global));
     }
     {

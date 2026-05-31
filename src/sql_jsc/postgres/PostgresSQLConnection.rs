@@ -323,7 +323,7 @@ impl PostgresSQLConnection {
 
         // if we dont have backpressure and if we still have data to send, return true otherwise return false and wait for onWritable
         let keep_flusher_registered = !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
-            && self.write_buffer.get().len() > 0;
+            && self.write_buffer.with(|v| v.len()) > 0;
         debug!(
             "onAutoFlush: keep_flusher_registered: {}",
             keep_flusher_registered
@@ -336,15 +336,15 @@ impl PostgresSQLConnection {
     }
 
     fn register_auto_flusher(&self) {
-        let data_to_send = self.write_buffer.get().len();
+        let data_to_send = self.write_buffer.with(|v| v.len());
         debug!(
             "registerAutoFlusher: backpressure: {} registered: {} data_to_send: {}",
             self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE),
-            self.auto_flusher.get().registered,
+            self.auto_flusher.with(|v| v.registered),
             data_to_send
         );
 
-        if !self.auto_flusher.get().registered // should not be registered
+        if !self.auto_flusher.with(|v| v.registered) // should not be registered
             && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE) // if has backpressure we need to wait for onWritable event
             && data_to_send > 0 // we need data to send
             && self.status.get() == Status::Connected
@@ -361,9 +361,9 @@ impl PostgresSQLConnection {
     fn unregister_auto_flusher(&self) {
         debug!(
             "unregisterAutoFlusher registered: {}",
-            self.auto_flusher.get().registered
+            self.auto_flusher.with(|v| v.registered)
         );
-        if self.auto_flusher.get().registered {
+        if self.auto_flusher.with(|v| v.registered) {
             AutoFlusher::unregister_deferred_microtask_with_type::<Self>(
                 self.as_ctx_ptr(),
                 self.vm(),
@@ -429,7 +429,10 @@ impl PostgresSQLConnection {
 
         // Zig: `this.socket.SocketTCP.socket.connected` — at this point we are
         // a plain TCP socket in the Connected state.
-        let Socket::SocketTcp(tcp) = self.socket.get() else {
+        // SAFETY: single-JS-thread `JsCell` read; `tcp` is consumed by the
+        // `tcp.socket` destructuring on the next line and nothing in between
+        // writes `self.socket`.
+        let Socket::SocketTcp(tcp) = (unsafe { self.socket.get() }) else {
             self.fail(
                 b"Failed to upgrade to TLS",
                 AnyPostgresError::TLSUpgradeFailed,
@@ -596,7 +599,7 @@ impl PostgresSQLConnection {
     }
 
     fn update_has_pending_activity(&self) {
-        let a: u32 = if self.requests.get().readable_length() > 0 {
+        let a: u32 = if self.requests.with(|v| v.readable_length()) > 0 {
             1
         } else {
             0
@@ -609,7 +612,7 @@ impl PostgresSQLConnection {
             // close_notify arrives, so the struct must stay alive until then.
             // The socket's onClose re-enters here (via failWithJSValue's defer)
             // with isClosed() == true, at which point GC can proceed.
-            Status::Disconnected | Status::Failed => (!self.socket.get().is_closed()) as u32,
+            Status::Disconnected | Status::Failed => (!self.socket.with(|v| v.is_closed())) as u32,
             _ => 1,
         };
         self.pending_activity_count.store(a + b, Ordering::Release);
@@ -634,7 +637,7 @@ impl PostgresSQLConnection {
                     self.update_has_pending_activity();
                     return;
                 };
-                let js_value = self.js_value.get().get();
+                let js_value = self.js_value.with(|v| v.get());
                 js_value.ensure_still_alive();
                 self.global()
                     .queue_microtask(on_connect, &[JSValue::NULL, js_value]);
@@ -670,13 +673,16 @@ impl PostgresSQLConnection {
             return;
         }
 
-        let chunk = self.write_buffer.get().remaining();
+        // SAFETY: single-JS-thread `JsCell` read; `chunk` is consumed by the
+        // socket write below, which does not touch `write_buffer` (the
+        // post-write bookkeeping goes through `with_mut` after `chunk` dies).
+        let chunk = unsafe { self.write_buffer.get() }.remaining();
         if chunk.is_empty() {
             debug!("flushData: no data to flush");
             return;
         }
 
-        let wrote = self.socket.get().write(chunk);
+        let wrote = self.socket.with(|v| v.write(chunk));
         self.update_flags(|f| {
             f.set(
                 ConnectionFlags::HAS_BACKPRESSURE,
@@ -818,7 +824,9 @@ impl PostgresSQLConnection {
             0x04, 0xD2, 0x16, 0x2F, // SSL request code
         ];
 
-        let written = self.socket.get().write(&ssl_request[offset as usize..]);
+        let written = self
+            .socket
+            .with(|v| v.write(&ssl_request[offset as usize..]));
         if written > 0 {
             self.tls_status.set(TLSStatus::MessageSent(
                 offset + u8::try_from(written).expect("int cast"),
@@ -868,11 +876,10 @@ impl PostgresSQLConnection {
                                 false
                             } else {
                                 // SAFETY: native handle of a connected TLS socket is `SSL*`.
-                                let ssl_ptr: *mut BoringSSL::c::SSL = self
-                                    .socket
-                                    .get()
-                                    .get_native_handle()
-                                    .map_or(core::ptr::null_mut(), |p| p.cast());
+                                let ssl_ptr: *mut BoringSSL::c::SSL = self.socket.with(|v| {
+                                    v.get_native_handle()
+                                        .map_or(core::ptr::null_mut(), |p| p.cast())
+                                });
                                 // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
                                 let hostname =
                                     unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
@@ -960,7 +967,7 @@ impl PostgresSQLConnection {
             .with_mut(|rb| rb.head = self.last_message_start.get());
 
         let mut done = false;
-        if self.read_buffer.get().remaining().is_empty() {
+        if self.read_buffer.with(|v| v.remaining().is_empty()) {
             let mut consumed: usize = 0;
             let mut offset: usize = 0;
             let reader = protocol::StackReader::init(data, &mut consumed, &mut offset);
@@ -1016,12 +1023,11 @@ impl PostgresSQLConnection {
                         #[cfg(debug_assertions)]
                         {
                             let lms = self.last_message_start.get();
-                            let rb = self.read_buffer.get();
+                            let (head, len) =
+                                self.read_buffer.with(|rb| (rb.head, rb.byte_list.len()));
                             debug!(
                                 "read_buffer: not empty and received short read: last_message_start: {}, head: {}, len: {}",
-                                lms,
-                                rb.head,
-                                rb.byte_list.len()
+                                lms, head, len
                             );
                         }
                     }
@@ -1033,7 +1039,7 @@ impl PostgresSQLConnection {
         // === defer block ===
         if self.status.get() == Status::Connected
             && !self.has_query_running()
-            && self.write_buffer.get().remaining().is_empty()
+            && self.write_buffer.with(|v| v.remaining().is_empty())
         {
             // Don't keep the process alive when there's nothing to do.
             self.poll_ref.with_mut(|r| r.unref(self.vm_ctx()));
@@ -1496,10 +1502,14 @@ impl PostgresSQLConnection {
         unsafe {
             (*this).disconnect();
             (*this).stop_timers();
-            for stmt_ptr in (*this).statements.get().values() {
-                // statements map owns a ref to each statement.
-                PostgresSQLStatement::deref(*stmt_ptr);
-            }
+            (*this).statements.with(|stmts| {
+                for stmt_ptr in stmts.values() {
+                    // statements map owns a ref to each statement; every
+                    // stored pointer is live, and this releases the map's ref
+                    // during teardown.
+                    PostgresSQLStatement::deref(*stmt_ptr);
+                }
+            });
             // statements/requests/write_buffer/read_buffer/backend_parameters dropped below.
             // PORT NOTE: Zig called .deinit() on each; Rust Drop handles Vec/HashMap/OffsetByteList.
 
@@ -1531,8 +1541,8 @@ impl PostgresSQLConnection {
         // black_box launder (b818e70e1c57-style) is no longer needed.
         // The connection is kept alive by the caller's `ref_and_close` ref
         // bracket for the duration of this loop, so re-entry never frees `*self`.
-        while self.requests.get().readable_length() > 0 {
-            let request_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(0);
+        while self.requests.with(|v| v.readable_length()) > 0 {
+            let request_ptr: *mut PostgresSQLQuery = self.requests.with(|v| v.peek_item(0));
             // Queue invariant: every stored pointer is non-null and live
             // (refcount ≥ 1 held by the queue). R-2: `ParentRef` yields `&T`
             // only — `PostgresSQLQuery` is Cell/JsCell-backed. Raw `*mut`
@@ -1588,11 +1598,11 @@ impl PostgresSQLConnection {
     fn ref_and_close(&self, js_reason: Option<JSValue>) {
         // refAndClose is always called when we wanna to disconnect or when we are closed
 
-        if !self.socket.get().is_closed() {
+        if !self.socket.with(|v| v.is_closed()) {
             // event loop need to be alive to close the socket
             self.poll_ref.with_mut(|r| r.ref_(self.vm_ctx()));
             // will unref on socket close
-            self.socket.get().close(uws::CloseKind::Normal);
+            self.socket.with(|v| v.close(uws::CloseKind::Normal));
         }
 
         // cleanup requests
@@ -1617,17 +1627,18 @@ impl PostgresSQLConnection {
     /// `clean_up_requests`/`advance` already use for queue items, so the
     /// dozen-plus callers in `on()` need no per-site `unsafe`.
     fn current(&self) -> Option<ParentRef<PostgresSQLQuery>> {
-        let q = self.requests.get();
-        if q.readable_length() == 0 {
-            return None;
-        }
-        // Queue invariant: every stored pointer is a live, heap-allocated
-        // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself; it
-        // cannot be freed while still enqueued — satisfies the `ParentRef`
-        // liveness contract for the duration of every caller's use.
-        Some(ParentRef::from(
-            NonNull::new(q.peek_item(0)).expect("queue item non-null"),
-        ))
+        self.requests.with(|q| {
+            if q.readable_length() == 0 {
+                return None;
+            }
+            // Queue invariant: every stored pointer is a live, heap-allocated
+            // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself; it
+            // cannot be freed while still enqueued — satisfies the `ParentRef`
+            // liveness contract for the duration of every caller's use.
+            Some(ParentRef::from(
+                NonNull::new(q.peek_item(0)).expect("queue item non-null"),
+            ))
+        })
     }
 
     /// Drop the queue-held intrusive ref on `request` and pop one entry from
@@ -1636,11 +1647,13 @@ impl PostgresSQLConnection {
     /// pair (16 callers in `clean_up_requests` / `advance`).
     #[inline]
     fn discard_request(&self, request: *mut PostgresSQLQuery) {
-        if self.requests.get().readable_length() == 0 || self.requests.get().peek_item(0) != request
+        if self
+            .requests
+            .with(|q| q.readable_length() == 0 || q.peek_item(0) != request)
         {
             return;
         }
-        // SAFETY: `request` was obtained via `self.requests.get().peek_item(_)`
+        // SAFETY: `request` was obtained via `self.requests.peek_item(_)`
         // (queue invariant: every stored pointer is a live, heap-allocated
         // `PostgresSQLQuery` with refcount ≥ 1 held by the queue itself); this
         // releases exactly that ref. May free if no other refs remain.
@@ -1670,7 +1683,7 @@ impl PostgresSQLConnection {
             && !flags.contains(ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS) // unnamed statements are not pipelinable
             && !flags.contains(ConnectionFlags::WAITING_TO_PREPARE) // cannot pipeline when waiting prepare
             && !flags.contains(ConnectionFlags::HAS_BACKPRESSURE) // dont make sense to buffer more if we have backpressure
-            && (self.write_buffer.get().len() as usize) < MAX_PIPELINE_SIZE // buffer is too big need to flush before pipeline more
+            && (self.write_buffer.with(|v| v.len()) as usize) < MAX_PIPELINE_SIZE // buffer is too big need to flush before pipeline more
     }
 }
 
@@ -1706,7 +1719,7 @@ impl Writer {
     }
 
     pub fn offset(self) -> usize {
-        self.connection.write_buffer.get().len() as usize
+        self.connection.write_buffer.with(|v| v.len()) as usize
     }
 }
 
@@ -1745,13 +1758,16 @@ pub struct Reader {
 }
 
 impl Reader {
-    // `read_buffer` is a `JsCell`; route reads through safe `get()` (the
-    // `BackRef` deref is safe under the connection-outlives-Reader invariant)
-    // and the lone mutator (`skip`) through closure-scoped `with_mut`, so the
-    // raw `get_mut` accessor is not needed.
+    // `read_buffer` is a `JsCell`; route reads through `get()` (the `BackRef`
+    // deref is safe under the connection-outlives-Reader invariant) and the
+    // lone mutator (`skip`) through closure-scoped `with_mut`, so the raw
+    // `get_mut` accessor is not needed.
     #[inline]
     fn read_buffer(&self) -> &OffsetByteList {
-        self.connection.read_buffer.get()
+        // SAFETY: single-JS-thread `JsCell` read; callers consume the borrow
+        // before the next `read_buffer.with_mut` (decode never interleaves
+        // with the `skip`/`reset` mutators).
+        unsafe { self.connection.read_buffer.get() }
     }
 
     pub(crate) fn mark_message_start(&mut self) {
@@ -1884,8 +1900,8 @@ impl PostgresSQLConnection {
         // expanded as a closure called at every return point below.
         macro_rules! defer_cleanup {
             ($self:ident) => {{
-                while $self.requests.get().readable_length() > 0 {
-                    let result_ptr = $self.requests.get().peek_item(0);
+                while $self.requests.with(|v| v.readable_length()) > 0 {
+                    let result_ptr = $self.requests.with(|v| v.peek_item(0));
                     // Queue invariant: every stored pointer is non-null and
                     // live (refcount ≥ 1 held by the queue). R-2: `ParentRef`
                     // yields `&T` only — `PostgresSQLQuery` is Cell/JsCell-backed.
@@ -1907,7 +1923,7 @@ impl PostgresSQLConnection {
             }};
         }
 
-        while self.requests.get().readable_length() > offset
+        while self.requests.with(|v| v.readable_length()) > offset
             && !self.flags.get().contains(ConnectionFlags::HAS_BACKPRESSURE)
         {
             if self.vm().is_shutting_down() {
@@ -1916,7 +1932,7 @@ impl PostgresSQLConnection {
                 return;
             }
 
-            let req_ptr: *mut PostgresSQLQuery = self.requests.get().peek_item(offset);
+            let req_ptr: *mut PostgresSQLQuery = self.requests.with(|v| v.peek_item(offset));
             // Queue invariant: every stored pointer is non-null and live
             // (refcount ≥ 1 held by the queue). R-2: `ParentRef` yields `&T`
             // only — `PostgresSQLQuery` is Cell/JsCell-backed.
@@ -1995,7 +2011,8 @@ impl PostgresSQLConnection {
                                     continue;
                                 }
                                 StatementStatus::Prepared => {
-                                    let Some(this_value) = req.this_value.get().try_get() else {
+                                    let Some(this_value) = req.this_value.with(|v| v.try_get())
+                                    else {
                                         debug_assert!(
                                             false,
                                             "query value was freed earlier than expected"
@@ -2129,7 +2146,7 @@ impl PostgresSQLConnection {
                                     let has_params = !statement.signature.fields.is_empty();
                                     // If it does not have params, we can write and execute immediately in one go
                                     if !has_params {
-                                        let Some(this_value) = req.this_value.get().try_get()
+                                        let Some(this_value) = req.this_value.with(|v| v.try_get())
                                         else {
                                             debug_assert!(
                                                 false,
@@ -2204,7 +2221,7 @@ impl PostgresSQLConnection {
                                         // server connections. Uses signature field types for encoding
                                         // (text format for unknowns); actual types will be cached from
                                         // ParameterDescription for subsequent executions.
-                                        let Some(this_value) = req.this_value.get().try_get()
+                                        let Some(this_value) = req.this_value.with(|v| v.try_get())
                                         else {
                                             debug_assert!(
                                                 false,
@@ -2382,7 +2399,7 @@ impl PostgresSQLConnection {
     }
 
     pub fn get_queries_array(&self) -> JSValue {
-        let Some(js_value) = self.js_value.get().try_get() else {
+        let Some(js_value) = self.js_value.with(|v| v.try_get()) else {
             return JSValue::UNDEFINED;
         };
         js::queries_get_cached(js_value).unwrap_or(JSValue::UNDEFINED)
@@ -2427,7 +2444,7 @@ impl PostgresSQLConnection {
                 // explicit use switch without else so if new modes are added, we don't forget to check for duplicate fields
                 match request_flags.result_mode {
                     SQLQueryResultMode::Objects => {
-                        let owner = self.js_value.get().try_get().unwrap_or(JSValue::ZERO);
+                        let owner = self.js_value.with(|v| v.try_get().unwrap_or(JSValue::ZERO));
                         let cs = statement.structure(owner, self.global());
                         structure = cs.js_value().unwrap_or(JSValue::UNDEFINED);
                         cached_structure = Some(ParentRef::new(cs));
@@ -2496,7 +2513,7 @@ impl PostgresSQLConnection {
                 };
                 decode_result?;
 
-                let Some(this_value) = request.this_value.get().try_get() else {
+                let Some(this_value) = request.this_value.with(|v| v.try_get()) else {
                     debug_assert!(false, "query value was freed earlier than expected");
                     return Err(AnyPostgresError::ExpectedRequest);
                 };
@@ -2552,7 +2569,7 @@ impl PostgresSQLConnection {
                     f.remove(ConnectionFlags::WAITING_TO_PREPARE);
                     f.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 });
-                self.socket.get().set_timeout(300);
+                self.socket.with(|v| v.set_timeout(300));
 
                 if let Some(request) = self.current() {
                     if request.status.get() == QueryStatus::PartialResponse {
@@ -2561,7 +2578,7 @@ impl PostgresSQLConnection {
                         request.on_result(
                             b"",
                             self.global(),
-                            self.js_value.get().try_get().unwrap_or(JSValue::ZERO),
+                            self.js_value.with(|v| v.try_get().unwrap_or(JSValue::ZERO)),
                             true,
                         );
                     }
@@ -2581,7 +2598,7 @@ impl PostgresSQLConnection {
                 request.on_result(
                     cmd.command_tag.slice(),
                     self.global(),
-                    self.js_value.get().try_get().unwrap_or(JSValue::ZERO),
+                    self.js_value.with(|v| v.try_get().unwrap_or(JSValue::ZERO)),
                     false,
                 );
                 self.update_ref();
@@ -2665,10 +2682,10 @@ impl PostgresSQLConnection {
 
                 match &auth {
                     protocol::Authentication::SASL => {
-                        if !matches!(
-                            self.authentication_state.get(),
-                            AuthenticationState::Sasl(_)
-                        ) {
+                        if !self
+                            .authentication_state
+                            .with(|s| matches!(s, AuthenticationState::Sasl(_)))
+                        {
                             self.authentication_state
                                 .set(AuthenticationState::Sasl(Default::default()));
                         }
@@ -2870,10 +2887,10 @@ impl PostgresSQLConnection {
                         // before AuthenticationOk is acceptable. Accepting Ok
                         // mid-exchange would let a MITM skip the
                         // server-signature verification.
-                        if matches!(
-                            self.authentication_state.get(),
-                            AuthenticationState::Sasl(_)
-                        ) {
+                        if self
+                            .authentication_state
+                            .with(|s| matches!(s, AuthenticationState::Sasl(_)))
+                        {
                             debug!("AuthenticationOk before SASL exchange completed");
                             return Err(AnyPostgresError::UnexpectedMessage);
                         }
@@ -2994,7 +3011,7 @@ impl PostgresSQLConnection {
                     self.fail_with_js_value(v);
 
                     // it shouldn't enqueue any requests while connecting
-                    debug_assert!(self.requests.get().readable_length() == 0);
+                    debug_assert!(self.requests.with(|v| v.readable_length()) == 0);
                     return Ok(());
                 }
 
@@ -3042,7 +3059,7 @@ impl PostgresSQLConnection {
                 request.on_result(
                     b"CLOSECOMPLETE",
                     self.global(),
-                    self.js_value.get().get(),
+                    self.js_value.with(|v| v.get()),
                     false,
                 );
                 self.update_ref();
@@ -3058,7 +3075,7 @@ impl PostgresSQLConnection {
             MessageType::EmptyQueryResponse => {
                 reader.eat_message(&protocol::EMPTY_QUERY_RESPONSE)?;
                 let request = self.current().ok_or(AnyPostgresError::ExpectedRequest)?;
-                request.on_result(b"", self.global(), self.js_value.get().get(), false);
+                request.on_result(b"", self.global(), self.js_value.with(|v| v.get()), false);
                 self.update_ref();
             }
             MessageType::CopyOutResponse => {
@@ -3099,7 +3116,7 @@ impl PostgresSQLConnection {
 
     pub fn consume_on_connect_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
         debug!("consumeOnConnectCallback");
-        let js_value = self.js_value.get().get();
+        let js_value = self.js_value.with(|v| v.get());
         let on_connect = js::onconnect_get_cached(js_value)?;
         debug!("consumeOnConnectCallback exists");
 
@@ -3109,7 +3126,7 @@ impl PostgresSQLConnection {
 
     pub fn consume_on_close_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
         debug!("consumeOnCloseCallback");
-        let js_value = self.js_value.get().get();
+        let js_value = self.js_value.with(|v| v.get());
         let on_close = js::onclose_get_cached(js_value)?;
         debug!("consumeOnCloseCallback exists");
         js::onclose_set_cached(js_value, global_object, JSValue::ZERO);

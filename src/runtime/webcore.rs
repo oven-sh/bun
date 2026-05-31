@@ -235,7 +235,9 @@ impl HasAutoFlusher for file_sink::FileSink {
     #[inline]
     fn auto_flusher(&self) -> &AutoFlusher {
         // R-2: `auto_flusher` is `JsCell`; `JsCell::get` yields `&T`.
-        self.auto_flusher.get()
+        // SAFETY: single-JS-thread `JsCell` read; the auto-flusher registration
+        // fields are `Cell`s, so no `&mut AutoFlusher` is ever formed.
+        unsafe { self.auto_flusher.get() }
     }
     /// # Safety
     /// See [`HasAutoFlusher::on_auto_flush`].

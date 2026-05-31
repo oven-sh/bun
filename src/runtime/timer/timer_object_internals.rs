@@ -386,7 +386,7 @@ impl TimerObjectInternals {
             return false;
         }
 
-        let Some(timer) = s.this_value.get().try_get() else {
+        let Some(timer) = s.this_value.with(|v| v.try_get()) else {
             #[cfg(debug_assertions)]
             panic!("TimerObjectInternals.runImmediateTask: this_object is null");
             #[cfg(not(debug_assertions))]
@@ -500,7 +500,7 @@ impl TimerObjectInternals {
 
         // SAFETY: `vm` is live; `global` is the per-VM JSGlobalObject pointer.
         let global_this = unsafe { (*vm).global };
-        let Some(this_object) = s.this_value.get().try_get() else {
+        let Some(this_object) = s.this_value.with(|v| v.try_get()) else {
             s.set_enable_keeping_event_loop_alive(vm, false);
             s.update_flags(|f| f.set_has_cleared_timer(true));
             s.this_value.with_mut(|r| r.downgrade());

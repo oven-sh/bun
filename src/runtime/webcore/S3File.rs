@@ -125,11 +125,8 @@ pub(crate) fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
     // errdefer: PathOrBlob impls Drop in Rust — path variant cleaned up automatically on `?`
 
     if let PathOrBlob::Blob(blob) = &path_or_blob {
-        if blob.store.get().is_none()
-            || !matches!(
-                blob.store.get().as_ref().unwrap().data,
-                blob::store::Data::S3(_)
-            )
+        if blob.store.with(|v| v.is_none())
+            || !matches!(blob.store().unwrap().data, blob::store::Data::S3(_))
         {
             return Err(
                 global.throw_invalid_arguments(format_args!("Expected a S3 or path to presign"))
@@ -161,11 +158,8 @@ pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
 
     if let PathOrBlob::Blob(blob) = &path_or_blob {
-        if blob.store.get().is_none()
-            || !matches!(
-                blob.store.get().as_ref().unwrap().data,
-                blob::store::Data::S3(_)
-            )
+        if blob.store.with(|v| v.is_none())
+            || !matches!(blob.store().unwrap().data, blob::store::Data::S3(_))
         {
             return Err(
                 global.throw_invalid_arguments(format_args!("Expected a S3 or path to delete"))
@@ -182,11 +176,11 @@ pub(crate) fn unlink(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
             }
             let options = args.next_eat();
             let blob = construct_s3_file_internal_store(global, path.path().clone(), options)?;
-            let store = blob.store.get().as_ref().unwrap();
+            let store = blob.store().unwrap();
             store.data.as_s3().unlink(store, global, options)
         }
         PathOrBlob::Blob(blob) => {
-            let store = blob.store.get().as_ref().unwrap();
+            let store = blob.store().unwrap();
             store.data.as_s3().unlink(store, global, args.next_eat())
         }
     }
@@ -202,11 +196,8 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
 
     if let PathOrBlob::Blob(blob) = &path_or_blob {
-        if blob.store.get().is_none()
-            || !matches!(
-                blob.store.get().as_ref().unwrap().data,
-                blob::store::Data::S3(_)
-            )
+        if blob.store.with(|v| v.is_none())
+            || !matches!(blob.store().unwrap().data, blob::store::Data::S3(_))
         {
             return Err(
                 global.throw_invalid_arguments(format_args!("Expected a S3 or path to upload"))
@@ -272,11 +263,8 @@ pub(crate) fn size(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
 
     if let PathOrBlob::Blob(blob) = &path_or_blob {
-        if blob.store.get().is_none()
-            || !matches!(
-                blob.store.get().as_ref().unwrap().data,
-                blob::store::Data::S3(_)
-            )
+        if blob.store.with(|v| v.is_none())
+            || !matches!(blob.store().unwrap().data, blob::store::Data::S3(_))
         {
             return Err(
                 global.throw_invalid_arguments(format_args!("Expected a S3 or path to get size"))
@@ -309,11 +297,8 @@ pub(crate) fn exists(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
 
     if let PathOrBlob::Blob(blob) = &path_or_blob {
-        if blob.store.get().is_none()
-            || !matches!(
-                blob.store.get().as_ref().unwrap().data,
-                blob::store::Data::S3(_)
-            )
+        if blob.store.with(|v| v.is_none())
+            || !matches!(blob.store().unwrap().data, blob::store::Data::S3(_))
         {
             return Err(global.throw_invalid_arguments(format_args!(
                 "Expected a S3 or path to check if it exists"
@@ -635,13 +620,13 @@ impl S3BlobStatTask {
     pub(crate) fn exists(global: &JSGlobalObject, blob: &Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
-            store: blob.store.get().as_ref().unwrap().clone(),
+            store: blob.store.with(|v| v.as_ref().unwrap().clone()),
             global: bun_ptr::BackRef::new(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };
         let promise = this_ref.promise.value();
-        let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
+        let s3_store = blob.store().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
@@ -663,13 +648,13 @@ impl S3BlobStatTask {
     pub(crate) fn stat(global: &JSGlobalObject, blob: &Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
-            store: blob.store.get().as_ref().unwrap().clone(),
+            store: blob.store.with(|v| v.as_ref().unwrap().clone()),
             global: bun_ptr::BackRef::new(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };
         let promise = this_ref.promise.value();
-        let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
+        let s3_store = blob.store().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
@@ -690,13 +675,13 @@ impl S3BlobStatTask {
     pub(crate) fn size(global: &JSGlobalObject, blob: &mut Blob) -> JsResult<JSValue> {
         let this = S3BlobStatTask::new(S3BlobStatTask {
             promise: bun_jsc::JSPromiseStrong::init(global),
-            store: blob.store.get().as_ref().unwrap().clone(),
+            store: blob.store.with(|v| v.as_ref().unwrap().clone()),
             global: bun_ptr::BackRef::new(global),
         });
         // SAFETY: `this` is a freshly leaked Box; valid for the duration of this call
         let this_ref = unsafe { &mut *this };
         let promise = this_ref.promise.value();
-        let s3_store = blob.store.get().as_ref().unwrap().data.as_s3();
+        let s3_store = blob.store().unwrap().data.as_s3();
         let credentials = s3_store.get_credentials();
         let path = s3_store.path();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
@@ -742,7 +727,7 @@ pub(crate) fn get_presign_url_from(
     let mut method: Method = Method::GET;
     let mut expires: usize = 86400; // 1 day default
 
-    let s3 = this.store.get().as_ref().unwrap().data.as_s3();
+    let s3 = this.store().unwrap().data.as_s3();
     // Zig: `.{ .credentials = s3.getCredentials().*, .request_payer = s3.request_payer }`.
     // `acl`/`storage_class`/`content_*` deliberately stay at their `None`
     // defaults here — they are only seeded from the store when extra_options
@@ -807,7 +792,7 @@ pub(crate) fn get_presign_url_from(
 }
 
 pub(crate) fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
-    let store = this.store.get().as_ref()?;
+    let store = this.store()?;
     if !matches!(store.data, blob::store::Data::S3(_)) {
         return None;
     }
@@ -876,11 +861,8 @@ pub(crate) fn stat(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<J
     let mut path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
 
     if let PathOrBlob::Blob(blob) = &path_or_blob {
-        if blob.store.get().is_none()
-            || !matches!(
-                blob.store.get().as_ref().unwrap().data,
-                blob::store::Data::S3(_)
-            )
+        if blob.store.with(|v| v.is_none())
+            || !matches!(blob.store().unwrap().data, blob::store::Data::S3(_))
         {
             return Err(
                 global.throw_invalid_arguments(format_args!("Expected a S3 or path to get size"))

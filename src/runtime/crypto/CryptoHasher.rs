@@ -131,11 +131,12 @@ impl CryptoHasher {
     ) -> Option<Box<CryptoHasher>> {
         match other_handle {
             CryptoHasher::Zig(other) => {
-                let hasher = CryptoHasher::new(CryptoHasher::Zig(JsCell::new(other.get().copy())));
+                let hasher =
+                    CryptoHasher::new(CryptoHasher::Zig(JsCell::new(other.with(|v| v.copy()))));
                 Some(hasher)
             }
             CryptoHasher::Evp(other) => {
-                let evp = match other.get().copy(boring_engine(global)) {
+                let evp = match other.with(|v| v.copy(boring_engine(global))) {
                     Ok(e) => e,
                     Err(_) => return None,
                 };
@@ -193,8 +194,8 @@ impl CryptoHasher {
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__getDigestSize", no_catch)]
     pub fn extern_digest_size(&self) -> u32 {
         match self {
-            CryptoHasher::Zig(inner) => inner.get().digest_length as u32,
-            CryptoHasher::Evp(inner) => inner.get().size() as u32,
+            CryptoHasher::Zig(inner) => inner.with(|v| v.digest_length) as u32,
+            CryptoHasher::Evp(inner) => inner.with(|v| v.size()) as u32,
             _ => 0,
         }
     }
@@ -202,10 +203,12 @@ impl CryptoHasher {
     #[bun_uws::uws_callback(export = "Bun__CryptoHasherExtern__isXof", no_catch)]
     pub fn extern_is_xof(&self) -> bool {
         match self {
-            CryptoHasher::Zig(inner) => matches!(
-                inner.get().algorithm,
-                evp::Algorithm::Shake128 | evp::Algorithm::Shake256
-            ),
+            CryptoHasher::Zig(inner) => inner.with(|v| {
+                matches!(
+                    v.algorithm,
+                    evp::Algorithm::Shake128 | evp::Algorithm::Shake256
+                )
+            }),
             _ => false,
         }
     }
@@ -314,12 +317,12 @@ impl CryptoHasher {
     #[bun_jsc::host_fn(getter)]
     pub fn get_byte_length(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(JSValue::js_number(match this {
-            CryptoHasher::Evp(inner) => inner.get().size() as f64,
-            CryptoHasher::Hmac(inner) => match inner.get() {
-                Some(hmac) => hmac.size() as f64,
+            CryptoHasher::Evp(inner) => inner.with(|v| v.size()) as f64,
+            CryptoHasher::Hmac(inner) => match inner.with(|v| v.as_deref().map(HMAC::size)) {
+                Some(size) => size as f64,
                 None => return Err(Self::throw_hmac_consumed(global)),
             },
-            CryptoHasher::Zig(inner) => inner.get().digest_length as f64,
+            CryptoHasher::Zig(inner) => inner.with(|v| v.digest_length) as f64,
         }))
     }
 
@@ -327,12 +330,14 @@ impl CryptoHasher {
     pub fn get_algorithm(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         // Zig: `@tagName(inner.algorithm)` → `AlgorithmExt::tag_cstr` (ASCII).
         let tag: &'static [u8] = match this {
-            CryptoHasher::Evp(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
-            CryptoHasher::Zig(inner) => inner.get().algorithm.tag_cstr().to_bytes(),
-            CryptoHasher::Hmac(inner) => match inner.get() {
-                Some(hmac) => hmac.algorithm.tag_cstr().to_bytes(),
-                None => return Err(Self::throw_hmac_consumed(global)),
-            },
+            CryptoHasher::Evp(inner) => inner.with(|v| v.algorithm.tag_cstr().to_bytes()),
+            CryptoHasher::Zig(inner) => inner.with(|v| v.algorithm.tag_cstr().to_bytes()),
+            CryptoHasher::Hmac(inner) => {
+                match inner.with(|v| v.as_deref().map(|h| h.algorithm.tag_cstr().to_bytes())) {
+                    Some(tag) => tag,
+                    None => return Err(Self::throw_hmac_consumed(global)),
+                }
+            }
         };
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, tag)
     }
@@ -620,7 +625,7 @@ impl CryptoHasher {
                 // R-2: check None first via shared `.get()`, then mutate via
                 // `with_mut`. No JS re-entry between the check and the write
                 // (HMAC_Update is a pure FFI call), so the `unwrap` is sound.
-                if inner.get().is_none() {
+                if inner.with(|v| v.is_none()) {
                     return Err(Self::throw_hmac_consumed(global));
                 }
                 inner.with_mut(|opt| opt.as_mut().unwrap().update(buffer.slice()));
@@ -643,13 +648,11 @@ impl CryptoHasher {
     #[bun_jsc::host_fn(method)]
     pub fn copy(this: &Self, global: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         let copied: CryptoHasher = match this {
-            CryptoHasher::Evp(inner) => CryptoHasher::Evp(Box::new(JsCell::new(
-                inner
-                    .get()
-                    .copy(boring_engine(global))
+            CryptoHasher::Evp(inner) => CryptoHasher::Evp(Box::new(JsCell::new(inner.with(|v| {
+                v.copy(boring_engine(global))
                     // bun.handleOom → unwrap (abort on OOM)
-                    .expect("OOM"),
-            ))),
+                    .expect("OOM")
+            })))),
             CryptoHasher::Hmac(inner) => 'brk: {
                 // R-2: `HMAC::copy` takes `&mut self` (writes nothing — Zig
                 // legacy signature). Project a short `&mut` via `with_mut`;
@@ -668,7 +671,7 @@ impl CryptoHasher {
                     }
                 })));
             }
-            CryptoHasher::Zig(inner) => CryptoHasher::Zig(JsCell::new(inner.get().copy())),
+            CryptoHasher::Zig(inner) => CryptoHasher::Zig(JsCell::new(inner.with(|v| v.copy()))),
         };
         Ok(copied.to_js(global))
     }

@@ -105,7 +105,8 @@ impl IPC::SendQueueOwner for SubprocessT<'static> {
         SubprocessT::handle_ipc_message(self, &msg, handle)
     }
     fn this_jsvalue(&self) -> JSValue {
-        self.this_value.get().try_get().unwrap_or(JSValue::ZERO)
+        self.this_value
+            .with(|v| v.try_get().unwrap_or(JSValue::ZERO))
     }
     fn kind(&self) -> IPC::SendQueueOwnerKind {
         IPC::SendQueueOwnerKind::Subprocess
@@ -1521,7 +1522,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         ipc_data.write_version_packet(global_this);
     }
 
-    if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
+    if subprocess.stdin.with(|s| matches!(s, Writable::Pipe(_)))
+        && promise_for_stream == JSValue::ZERO
+    {
         // PORT NOTE: Zig writes `subprocess.stdin.pipe.signal =
         // Signal.init(&subprocess.stdin)` and the callback `@fieldParentPtr`s
         // back to the `Subprocess`. In Rust the SignalHandler impl is on
@@ -1535,7 +1538,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         // `Pipe` variant; the signal's stored back-pointer remains valid for
         // the lifetime of the FileSink, which is owned by `subprocess.stdin`.
         unsafe {
-            if let Writable::Pipe(pipe) = (*subprocess_ptr).stdin.get() {
+            if let Some(pipe) = (*subprocess_ptr).stdin.with(|s| match s {
+                Writable::Pipe(pipe) => Some(*pipe),
+                _ => None,
+            }) {
                 (*pipe.as_ptr())
                     .signal
                     .set(WebCore::streams::Signal::init_with_type::<SubprocessT<'_>>(
@@ -1648,7 +1654,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    if let Writable::Buffer(buffer) = subprocess.stdin.get() {
+    // SAFETY: single-JS-thread `JsCell` read; nothing in the body
+    // re-assigns `subprocess.stdin`.
+    if let Writable::Buffer(buffer) = unsafe { subprocess.stdin.get() } {
         if let Err(err) = Writable::buffer_writer_mut(buffer).start() {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
@@ -1656,7 +1664,9 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    if let Readable::Pipe(pipe) = subprocess.stdout.get() {
+    // SAFETY: single-JS-thread `JsCell` read; nothing in the body
+    // re-assigns `subprocess.stdout`.
+    if let Readable::Pipe(pipe) = unsafe { subprocess.stdout.get() } {
         // PORT NOTE: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
@@ -1665,14 +1675,18 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             let _ = global_this.throw_value(err.to_js(global_this));
             return Err(JsError::Thrown);
         }
-        if (IS_SYNC || !lazy) && matches!(subprocess.stdout.get(), Readable::Pipe(_)) {
-            if let Readable::Pipe(pipe) = subprocess.stdout.get() {
+        if (IS_SYNC || !lazy) && subprocess.stdout.with(|s| matches!(s, Readable::Pipe(_))) {
+            // SAFETY: single-JS-thread `JsCell` read; nothing in the body
+            // re-assigns `subprocess.stdout`.
+            if let Readable::Pipe(pipe) = unsafe { subprocess.stdout.get() } {
                 Readable::pipe_reader_mut(pipe).read_all();
             }
         }
     }
 
-    if let Readable::Pipe(pipe) = subprocess.stderr.get() {
+    // SAFETY: single-JS-thread `JsCell` read; nothing in the body
+    // re-assigns `subprocess.stderr`.
+    if let Readable::Pipe(pipe) = unsafe { subprocess.stderr.get() } {
         // PORT NOTE: see stdout arm above — avoid aliased &mut.
         if let Err(err) = Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn) {
             let _ = subprocess.try_kill(subprocess.kill_signal);
@@ -1680,8 +1694,10 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             return Err(JsError::Thrown);
         }
 
-        if (IS_SYNC || !lazy) && matches!(subprocess.stderr.get(), Readable::Pipe(_)) {
-            if let Readable::Pipe(pipe) = subprocess.stderr.get() {
+        if (IS_SYNC || !lazy) && subprocess.stderr.with(|s| matches!(s, Readable::Pipe(_))) {
+            // SAFETY: single-JS-thread `JsCell` read; nothing in the body
+            // re-assigns `subprocess.stderr`.
+            if let Readable::Pipe(pipe) = unsafe { subprocess.stderr.get() } {
                 Readable::pipe_reader_mut(pipe).read_all();
             }
         }
@@ -1828,15 +1844,21 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
             let has_timespec = !absolute_timespec.eql(&Timespec::EPOCH);
 
-            if let Writable::Buffer(buffer) = subprocess.stdin.get() {
+            // SAFETY: single-JS-thread `JsCell` read; nothing in the body
+            // re-assigns `subprocess.stdin`.
+            if let Writable::Buffer(buffer) = unsafe { subprocess.stdin.get() } {
                 Writable::buffer_writer_mut(buffer).watch();
             }
 
-            if let Readable::Pipe(pipe) = subprocess.stderr.get() {
+            // SAFETY: single-JS-thread `JsCell` read; nothing in the body
+            // re-assigns `subprocess.stderr`.
+            if let Readable::Pipe(pipe) = unsafe { subprocess.stderr.get() } {
                 Readable::pipe_reader_mut(pipe).watch();
             }
 
-            if let Readable::Pipe(pipe) = subprocess.stdout.get() {
+            // SAFETY: single-JS-thread `JsCell` read; nothing in the body
+            // re-assigns `subprocess.stdout`.
+            if let Readable::Pipe(pipe) = unsafe { subprocess.stdout.get() } {
                 Readable::pipe_reader_mut(pipe).watch();
             }
 

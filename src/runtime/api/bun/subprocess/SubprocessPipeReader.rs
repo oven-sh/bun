@@ -222,13 +222,17 @@ impl PipeReader {
     }
 
     pub(crate) fn kind(&self, process: &Subprocess<'_>) -> StdioKind {
-        if let Readable::Pipe(pipe) = process.stdout.get() {
+        // SAFETY: single-JS-thread `JsCell` read; only a pointer identity
+        // check, the borrow ends within the `if`.
+        if let Readable::Pipe(pipe) = unsafe { process.stdout.get() } {
             if core::ptr::eq(pipe.data.as_ptr(), self) {
                 return StdioKind::Stdout;
             }
         }
 
-        if let Readable::Pipe(pipe) = process.stderr.get() {
+        // SAFETY: single-JS-thread `JsCell` read; only a pointer identity
+        // check, the borrow ends within the `if`.
+        if let Readable::Pipe(pipe) = unsafe { process.stderr.get() } {
             if core::ptr::eq(pipe.data.as_ptr(), self) {
                 return StdioKind::Stderr;
             }

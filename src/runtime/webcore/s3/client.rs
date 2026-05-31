@@ -786,10 +786,10 @@ pub fn upload_stream(
             // BACKREF: see `Source::bytes()` — payload live while the
             // ReadableStream JS wrapper is rooted. R-2: `pending` is `JsCell`.
             let stream = readable_stream.ptr.bytes().expect("matched Bytes");
-            if matches!(
-                stream.pending.get().result,
-                crate::webcore::streams::StreamResult::Err(_)
-            ) {
+            if stream
+                .pending
+                .with(|p| matches!(p.result, crate::webcore::streams::StreamResult::Err(_)))
+            {
                 // we got an error, fail early
                 let err = match stream.pending.with_mut(|p| {
                     core::mem::replace(&mut p.result, crate::webcore::streams::StreamResult::Done)
@@ -814,10 +814,10 @@ pub fn upload_stream(
             // BACKREF: see `Source::file()` — payload live while the
             // ReadableStream JS wrapper is rooted. R-2: `pending` is `JsCell`.
             let stream = readable_stream.ptr.file().expect("matched File");
-            if matches!(
-                stream.pending.get().result,
-                crate::webcore::streams::StreamResult::Err(_)
-            ) {
+            if stream
+                .pending
+                .with(|p| matches!(p.result, crate::webcore::streams::StreamResult::Err(_)))
+            {
                 // we got an error, fail early
                 let err = match stream.pending.with_mut(|p| {
                     core::mem::replace(&mut p.result, crate::webcore::streams::StreamResult::Done)

@@ -97,15 +97,7 @@ impl FileOpener for WriteFile {
         self.system_error = Some(e);
     }
     fn pathlike(&self) -> &PathOrFileDescriptor {
-        &self
-            .file_blob
-            .store
-            .get()
-            .as_ref()
-            .unwrap()
-            .data
-            .as_file()
-            .pathlike
+        &self.file_blob.store().unwrap().data.as_file().pathlike
     }
     fn try_mkdirp(
         &mut self,
@@ -429,13 +421,7 @@ impl WriteFile {
     pub fn is_allowed_to_close(&self) -> bool {
         self.file_blob
             .store
-            .get()
-            .as_ref()
-            .unwrap()
-            .data
-            .as_file()
-            .pathlike
-            .is_path()
+            .with(|v| v.as_ref().unwrap().data.as_file().pathlike.is_path())
     }
 
     #[cfg(not(windows))]
@@ -464,7 +450,7 @@ impl WriteFile {
         let fd = self.opened_fd;
 
         self.could_block = 'brk: {
-            if let Some(store) = self.file_blob.store.get().as_ref() {
+            if let Some(store) = self.file_blob.store() {
                 if let blob::store::Data::File(file) = &store.data {
                     if file.pathlike.is_fd() {
                         // If seekable was set, then so was mode
@@ -671,15 +657,7 @@ mod windows_impl {
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
             let mkdirp = mkdirp_if_not_exists
-                && file_blob
-                    .store
-                    .get()
-                    .as_ref()
-                    .unwrap()
-                    .data
-                    .as_file()
-                    .pathlike
-                    .is_path();
+                && file_blob.store().unwrap().data.as_file().pathlike.is_path();
             let write_file = Self::new(WriteFileWindows {
                 file_blob,
                 bytes_blob,
@@ -714,9 +692,7 @@ mod windows_impl {
 
                 match &(*write_file)
                     .file_blob
-                    .store
-                    .get()
-                    .as_ref()
+                    .store()
                     .unwrap()
                     .data
                     .as_file()
@@ -734,9 +710,7 @@ mod windows_impl {
                                 if let Some(rare) = (*vm.as_ptr()).rare_data.as_ref() {
                                     let store_ptr = (*write_file)
                                         .file_blob
-                                        .store
-                                        .get()
-                                        .as_ref()
+                                        .store()
                                         .unwrap()
                                         .as_ptr()
                                         .cast::<c_void>();
@@ -790,9 +764,7 @@ mod windows_impl {
             // SAFETY: caller contract — `this` is live; the borrow is released
             // before any path that may free `*this`.
             let path = unsafe { &(*this).file_blob }
-                .store
-                .get()
-                .as_ref()
+                .store()
                 .unwrap()
                 .data
                 .as_file()
@@ -877,9 +849,7 @@ mod windows_impl {
                 bstr::BStr::new(
                     // SAFETY: `this` is live.
                     unsafe { &(*this).file_blob }
-                        .store
-                        .get()
-                        .as_ref()
+                        .store()
                         .unwrap()
                         .data
                         .as_file()
@@ -906,9 +876,7 @@ mod windows_impl {
 
                 // SAFETY: `this` is live; borrow released before `throw` consumes `*this`.
                 let path = unsafe { &(*this).file_blob }
-                    .store
-                    .get()
-                    .as_ref()
+                    .store()
                     .unwrap()
                     .data
                     .as_file()
@@ -957,9 +925,7 @@ mod windows_impl {
             let ctx = core::ptr::from_mut(self).cast::<()>();
             let path = self
                 .file_blob
-                .store
-                .get()
-                .as_ref()
+                .store()
                 .unwrap()
                 .data
                 .as_file()
@@ -1145,16 +1111,7 @@ mod windows_impl {
         pub fn to_system_error(&self) -> Option<SystemError> {
             if let Some(err) = &self.err {
                 let mut sys_err = err.clone();
-                sys_err = match &self
-                    .file_blob
-                    .store
-                    .get()
-                    .as_ref()
-                    .unwrap()
-                    .data
-                    .as_file()
-                    .pathlike
-                {
+                sys_err = match &self.file_blob.store().unwrap().data.as_file().pathlike {
                     PathOrFileDescriptor::Path(path) => sys_err.with_path(path.slice()),
                     PathOrFileDescriptor::Fd(fd) => sys_err.with_fd(*fd),
                 };

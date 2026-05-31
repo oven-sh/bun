@@ -302,7 +302,7 @@ impl Image {
         // for ArrayBuffer inputs — pass `.zero` and assert below.
         img.source
             .set(source_from_js(global, blob_value, JSValue::ZERO)?);
-        debug_assert!(!matches!(img.source.get(), Source::JsBuffer));
+        debug_assert!(img.source.with(|s| !matches!(s, Source::JsBuffer)));
         Ok(img.to_js(global))
     }
 
@@ -320,11 +320,11 @@ impl Image {
         // counted via the cached value slot); the worker's RGBA scratch is
         // task-scoped and freed before any GC could observe it.
         mem::size_of::<Image>()
-            + match self.source.get() {
+            + self.source.with(|s| match s {
                 Source::JsBuffer | Source::Blob(_) => 0,
                 Source::Owned(b) => b.len(),
                 Source::Path(p) => p.len(),
-            }
+            })
     }
 }
 
@@ -425,7 +425,7 @@ fn source_from_js(
         // through ITS OWN `.bytes()` at terminal time, so we inherit whatever
         // that store type does (file → ReadFile, S3 → fetch, etc.) without
         // knowing about it here.
-        if blob.store.get().is_some() {
+        if blob.store.with(|v| v.is_some()) {
             return Ok(Source::Blob(Strong::create(value, global)));
         }
     }
@@ -677,7 +677,10 @@ impl Image {
     fn js_thread_bytes(&self, this_value: JSValue, global: &JSGlobalObject) -> Option<&[u8]> {
         // TODO(port): lifetime — JsBuffer arm returns a borrow into the JS heap,
         // not into `self`; may need a different return type.
-        match self.source.get() {
+        // SAFETY: single-JS-thread `JsCell` read; the returned slice is only
+        // valid until the source is replaced — same contract as the Zig
+        // original's direct union access.
+        match unsafe { self.source.get() } {
             Source::JsBuffer => js::source_js_get_cached(this_value)
                 .and_then(|v: JSValue| v.as_array_buffer(global))
                 .map(|ab| {
@@ -708,7 +711,9 @@ impl Image {
         this_value: JSValue,
         _global: &JSGlobalObject,
     ) -> Result<Input, PinError> {
-        match self.source.get() {
+        // SAFETY: single-JS-thread `JsCell` read; the borrow ends when the
+        // pinned `Input` (which copies/refs what it needs) is returned.
+        match unsafe { self.source.get() } {
             Source::JsBuffer => {
                 let Some(v) = js::source_js_get_cached(this_value) else {
                     return Err(PinError::Detached);
@@ -1080,7 +1085,7 @@ impl Image {
         kind: Kind,
         deliver: Deliver,
     ) -> JsResult<JSValue> {
-        if matches!(self.source.get(), Source::Blob(_)) {
+        if self.source.with(|s| matches!(s, Source::Blob(_))) {
             return BlobReadChain::start(self, global, this_value, kind, deliver);
         }
         let input = match self.pin_for_task(this_value, global) {
@@ -1150,7 +1155,9 @@ impl Image {
         // fall back to the `.path` source — `run()` reads it inline. fd/S3-backed
         // BunFiles would block or need network; refuse with a clear message until
         // the body path is made `.Locked`.
-        if let Source::Blob(strong) = self.source.get() {
+        // SAFETY: single-JS-thread `JsCell` read; the body only reads
+        // through `strong` and replaces `self.source` after the borrow ends.
+        if let Source::Blob(strong) = unsafe { self.source.get() } {
             const REFUSE: &str = "Image: fd/S3-backed Bun.file as a Response body — pass `await file.bytes()` or a path string";
             let blob_js = strong.get();
             let Some(blob) = blob_js.as_class_ref::<Blob>() else {
@@ -1160,7 +1167,7 @@ impl Image {
             // store would otherwise fall through to `pin_for_task`'s `.blob =>
             // unreachable`. (The Strong-held wrapper makes that nominally
             // unreachable, but this path should throw, not abort, when it isn't.)
-            if let Some(store) = blob.store.get() {
+            if let Some(store) = blob.store() {
                 if let blob_store::Data::File(file) = &store.data {
                     if let PathOrFileDescriptor::Path(path) = &file.pathlike {
                         let p = ZBox::from_bytes(path.slice());
@@ -1253,7 +1260,9 @@ impl<'a> BlobReadChain<'a> {
         // `deliver` may carry a `.write_dest` Strong; on these defensive
         // early-returns the chain is never created so its Drop can't free it.
         // (Same contract as schedule()'s detached-buffer branch.)
-        let Source::Blob(strong) = image.source.get() else {
+        // SAFETY: single-JS-thread `JsCell` read; the borrow ends at
+        // `blob_js` below and `image.source` is not replaced until after.
+        let Source::Blob(strong) = (unsafe { image.source.get() }) else {
             unreachable!()
         };
         let blob_js = strong.get();
@@ -1320,12 +1329,12 @@ impl<'a> BlobReadChain<'a> {
                 // drop the source (it would free what the worker is reading)
                 // — drop the redundant read instead and re-enter `schedule()`
                 // on the already-swapped source.
-                if matches!(image.source.get(), Source::Blob(_)) {
+                if image.source.with(|s| matches!(s, Source::Blob(_))) {
                     image.source.set(Source::Owned(bytes));
                 } else {
                     drop(bytes);
                 }
-                let Some(this_value) = image.this_ref.get().try_get() else {
+                let Some(this_value) = image.this_ref.with(|v| v.try_get()) else {
                     let _ = outer.reject(
                         global,
                         Ok(global.create_error_instance(format_args!(

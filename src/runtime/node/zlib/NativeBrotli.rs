@@ -164,7 +164,7 @@ mod _impl {
             const ENCODER_STATE_SIZE: usize = 5143; // sizeof(BrotliEncoderStateStruct)
             const DECODER_STATE_SIZE: usize = 855; // sizeof(BrotliDecoderStateStruct)
             core::mem::size_of::<Self>()
-                + match self.stream.get().mode {
+                + match self.stream.with(|v| v.mode) {
                     bun_zlib::NodeMode::BROTLI_ENCODE => ENCODER_STATE_SIZE,
                     bun_zlib::NodeMode::BROTLI_DECODE => DECODER_STATE_SIZE,
                     _ => 0,

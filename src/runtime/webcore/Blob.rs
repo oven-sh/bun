@@ -2110,7 +2110,7 @@ impl BlobExt for Blob {
             'inner: {
                 if content_type_.is_string() {
                     let zig_str = content_type_.get_zig_string(global_this)?;
-                    let slicer = zig_str.to_utf8();
+                    let slicer = zig_str.to_utf8_without_ref();
                     let slice = slicer.slice();
                     if !is_valid_blob_type(slice) {
                         break 'inner;

@@ -269,9 +269,13 @@ w.on("exit", code => console.log("exit:", code, workerData[1]));`,
     stderr: "pipe",
   });
 
-  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-  expect(stdout).toBe("error: banana\nexit: 1 200\n");
-  expect(exitCode).toBe(0);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, signalCode: proc.signalCode, exitCode }).toEqual({
+    stdout: "error: banana\nexit: 1 200\n",
+    stderr: "",
+    signalCode: null,
+    exitCode: 0,
+  });
 });
 
 describe("execArgv option", async () => {

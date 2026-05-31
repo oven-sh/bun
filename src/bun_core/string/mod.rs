@@ -1351,8 +1351,8 @@ pub enum ByteString<'a> {
 // ──────────────────────────────────────────────────────────────────────────
 impl String {
     /// Borrow a globally-allocated UTF-16 buffer (sets 16-bit + global tags).
-    /// Port of `ZigString.from16Slice`; caller must ensure the buffer was
-    /// allocated by `bun.default_allocator` since `deinit_global` will free it.
+    /// Port of `ZigString.from16Slice`; the buffer must come from
+    /// `bun.default_allocator` — JSC frees it via `BunStringView__freeGlobal`.
     #[inline]
     pub fn borrow_utf16_global(slice: &[u16]) -> Self {
         let mut out = Self::borrow_utf16(slice);

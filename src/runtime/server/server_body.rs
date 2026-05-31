@@ -2136,7 +2136,7 @@ where
         );
         data_value.ensure_still_alive();
 
-        // `ZigStringSlice` impls `Drop` — freed at scope exit.
+        // `SliceWithUnderlyingString` impls `Drop` — freed at scope exit.
         let proto_str = sec_websocket_protocol.to_slice();
         let ext_str = sec_websocket_extensions.to_slice();
 

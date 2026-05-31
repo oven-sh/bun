@@ -2044,6 +2044,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createValueNotJS(JSC::JSGlobalObje
     auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
     Vector<KeyValuePair<String, String>> pairs;
     pairs.reserveCapacity(count);
+    ASSERT(arg3->tag == BunStringTag::StringView || arg3->tag == BunStringTag::StaticStringView);
     BunStringView buf = arg3->impl.view;
     for (uint32_t i = 0; i < count; i++) {
         WTF::String name = Zig::toStringCopy(buf, arg1[i]);
@@ -2066,6 +2067,7 @@ JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0
     auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
     Vector<KeyValuePair<String, String>> pairs;
     pairs.reserveCapacity(count);
+    ASSERT(arg3->tag == BunStringTag::StringView || arg3->tag == BunStringTag::StaticStringView);
     BunStringView buf = arg3->impl.view;
     for (uint32_t i = 0; i < count; i++) {
         WTF::String name = Zig::toStringCopy(buf, arg1[i]);

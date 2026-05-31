@@ -294,7 +294,8 @@ fn get_argv(
                     format_args!(
                         "The argument 'args[{}]' must be a string without null bytes. Received \"{}\"",
                         arg_index,
-                        arg                    ),
+                        arg,
+                    ),
                 )
                 .throw());
         }

@@ -2146,7 +2146,7 @@ impl<'a> Formatter<'a> {
                             type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
                         }
 
-                        tag_name_slice = tag_name_str.to_utf8();
+                        tag_name_slice = tag_name_str.to_utf8_without_ref();
                         needs_space = true;
                     } else {
                         tag_name_slice = BunString::ascii(b"unknown").to_utf8();

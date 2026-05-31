@@ -168,6 +168,21 @@ describe("mock()", () => {
     expect(Object.getPrototypeOf(withNewTarget)).toBe(NewTarget.prototype);
   });
 
+  test("mock.instances only records `new` calls, not regular calls", () => {
+    // jest: mock.instances contains only instances created with `new`;
+    // every call's `this` is recorded in mock.contexts instead.
+    const fn = jest.fn();
+    const ctx = {};
+    fn.call(ctx);
+    fn();
+    expect(fn.mock.contexts).toEqual([ctx, undefined]);
+    expect(fn.mock.instances).toBeEmpty();
+
+    const instance = new fn();
+    expect(fn.mock.contexts).toEqual([ctx, undefined, instance]);
+    expect(fn.mock.instances).toEqual([instance]);
+  });
+
   test("mockName returns this", () => {
     const fn = jest.fn();
     expect(fn.mockName()).toBe(fn);

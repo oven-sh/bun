@@ -443,13 +443,15 @@ mod _impl {
         let fs = vm.transpiler.fs_mut();
 
         let mut buf = PathBuffer::uninit();
-        let target = to.to_owned_slice();
+        let utf8 = to.to_utf8();
+        let target = utf8.slice();
         if target.len() >= buf.len() {
             return Err(global_object.throw(format_args!("Invalid path")));
         }
-        buf[..target.len()].copy_from_slice(&target);
+        buf[..target.len()].copy_from_slice(target);
         buf[target.len()] = 0;
         let slice = bun_core::ZStr::from_buf(&buf[..], target.len());
+        drop(utf8);
 
         // Zig: `Syscall.chdir(fs.top_level_dir, slice)` — path=cwd, dest=target so the
         // resulting Node SystemError carries `path: cwd`, `dest: target` and the

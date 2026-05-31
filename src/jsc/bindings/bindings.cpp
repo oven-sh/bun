@@ -4754,7 +4754,7 @@ void JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObjec
 
     auto calculated = JSObject::calculatedClassName(obj);
     if (calculated.length() > 0) {
-        *arg2 = Bun::toString(calculated);
+        *arg2 = Bun::toStringView(calculated);
         return;
     }
 
@@ -4788,7 +4788,7 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
     if (name && name.isString()) {
         auto str = name.toWTFString(arg1);
         if (!str.isEmpty()) {
-            *arg2 = Bun::toString(str);
+            *arg2 = Bun::toStringView(str);
             return;
         }
     }
@@ -4797,18 +4797,18 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
 
         WTF::String actualName = function->name(vm);
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
-            *arg2 = Bun::toString(actualName);
+            *arg2 = Bun::toStringView(actualName);
             return;
         }
 
         actualName = function->jsExecutable()->name().string();
 
-        *arg2 = Bun::toString(actualName);
+        *arg2 = Bun::toStringView(actualName);
         return;
     }
 
     if (JSC::InternalFunction* function = dynamicDowncast<JSC::InternalFunction>(obj)) {
-        *arg2 = Bun::toString(function->name());
+        *arg2 = Bun::toStringView(function->name());
         return;
     }
 

@@ -42,7 +42,7 @@ function workspace() {
   });
 }
 
-describe.skipIf(!isDebug)("issue 31636", () => {
+describe.concurrent.skipIf(!isDebug)("issue 31636", () => {
   test("bun run --parallel --filter spawns an uncorrupted workspace script", async () => {
     using dir = workspace();
 

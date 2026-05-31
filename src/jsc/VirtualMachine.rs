@@ -1425,7 +1425,7 @@ impl VirtualMachine {
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 7) };
             panic!("Uncaught exception while handling uncaught exception");
         }
-        if self.exit_on_uncaught_exception {
+        if self.exit_on_uncaught_exception && self.is_main_thread() {
             self.run_error_handler(err, None);
             // SAFETY: see above.
             unsafe { (hooks.process_exit)(global_object.as_ptr(), 1) };

@@ -250,6 +250,30 @@ test("support worker eval that throws", async () => {
   await worker.terminate();
 });
 
+test("throwing in a Worker's beforeExit handler does not crash the process", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("worker_threads");
+const workerData = new Uint8Array(new SharedArrayBuffer(2));
+const w = new Worker(
+  "const { workerData } = require('worker_threads'); process.on('beforeExit', () => { workerData[1] = 200; throw new Error('banana'); });",
+  { eval: true, workerData },
+);
+w.on("error", err => console.log("error:", err.message));
+w.on("exit", code => console.log("exit:", code, workerData[1]));`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("error: banana\nexit: 1 200\n");
+  expect(exitCode).toBe(0);
+});
+
 describe("execArgv option", async () => {
   // this needs to be a subprocess to ensure that the parent's execArgv is not empty
   // otherwise we could not distinguish between the worker inheriting the parent's execArgv

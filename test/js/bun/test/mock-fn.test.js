@@ -174,9 +174,11 @@ describe("mock()", () => {
     expect(Object.getPrototypeOf(withNewTarget)).toBe(NewTarget.prototype);
 
     // constructing a bound mock forwards [[Construct]] to the mock and returns an object
-    const bound = jest.fn(function (value) {
-      this.value = value;
-    }).bind(null, 7);
+    const bound = jest
+      .fn(function (value) {
+        this.value = value;
+      })
+      .bind(null, 7);
     const boundInstance = new bound();
     expect(typeof boundInstance).toBe("object");
     expect(boundInstance.value).toBe(7);

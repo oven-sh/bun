@@ -174,19 +174,19 @@ describe("mock()", () => {
     expect(Object.getPrototypeOf(withNewTarget)).toBe(NewTarget.prototype);
   });
 
-  test("mock.instances only records `new` calls, not regular calls", () => {
-    // jest: mock.instances contains only instances created with `new`;
-    // every call's `this` is recorded in mock.contexts instead.
+  test("mock.instances records `this` on every call, like mock.contexts", () => {
+    // jest-mock/@vitest/spy push `this` onto both instances and contexts on
+    // every call (no new.target check), so the two arrays stay in lock-step.
     const fn = jest.fn();
     const ctx = {};
     fn.call(ctx);
     fn();
     expect(fn.mock.contexts).toEqual([ctx, undefined]);
-    expect(fn.mock.instances).toBeEmpty();
+    expect(fn.mock.instances).toEqual([ctx, undefined]);
 
     const instance = new fn();
     expect(fn.mock.contexts).toEqual([ctx, undefined, instance]);
-    expect(fn.mock.instances).toEqual([instance]);
+    expect(fn.mock.instances).toEqual([ctx, undefined, instance]);
   });
 
   test("mockName returns this", () => {

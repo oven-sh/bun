@@ -276,6 +276,14 @@ pub(crate) unsafe extern "C" fn TextEncoder__encodeInto16(
     buf_ptr: *mut u8,
     buf_len: usize,
 ) -> u64 {
+    // A detached destination view reports a zero byte length and a null
+    // `buf_ptr`. `from_raw_parts_mut` requires a non-null pointer even for a
+    // zero-length slice, so bail out before constructing it. Nothing can be
+    // written into an empty buffer; `0` packs to `{ read: 0, written: 0 }`,
+    // matching Node.
+    if buf_len == 0 {
+        return 0;
+    }
     // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
     let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid UTF-16 data
@@ -298,6 +306,14 @@ pub(crate) unsafe extern "C" fn TextEncoder__encodeInto8(
     buf_ptr: *mut u8,
     buf_len: usize,
 ) -> u64 {
+    // A detached destination view reports a zero byte length and a null
+    // `buf_ptr`. `from_raw_parts_mut` requires a non-null pointer even for a
+    // zero-length slice, so bail out before constructing it. Nothing can be
+    // written into an empty buffer; `0` packs to `{ read: 0, written: 0 }`,
+    // matching Node.
+    if buf_len == 0 {
+        return 0;
+    }
     // SAFETY: caller guarantees buf_ptr[0..buf_len] is a valid mutable buffer
     let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid Latin-1 data

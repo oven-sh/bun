@@ -616,36 +616,35 @@ pub mod fs {
                     // process-lifetime store; `namespace` is static/interned.
                     return Ok(unsafe { (*self).into_static() });
                 }
-                let mut new_path = if let Some(offset) =
-                    bun_core::strings::index_of(self.text, self.pretty)
-                {
-                    // `text` contains `pretty`; intern `text` once and re-slice.
-                    let text = FilenameStore::instance().append_slice(self.text)?;
-                    let mut p = Path::<'static>::init(text);
-                    p.pretty = &text[offset..][..self.pretty.len()];
-                    p
-                } else {
-                    // Disjoint `text`/`pretty`. Zig allocates one combined
-                    // `text\0pretty\0` buffer from the per-build arena (NOT the
-                    // process-lifetime `FilenameStore`): `pretty` here is a
-                    // freshly-relativized display path recomputed every build, so
-                    // interning it permanently would leak one copy per
-                    // `Bun.build()` call. The arena is reset per build; every path
-                    // that escapes to JS is copied into an owned buffer first.
-                    let text_len = self.text.len();
-                    let buf: &mut [u8] =
-                        alloc.alloc_slice_fill_copy(text_len + self.pretty.len() + 2, 0u8);
-                    buf[..text_len].copy_from_slice(self.text);
-                    buf[text_len + 1..text_len + 1 + self.pretty.len()]
-                        .copy_from_slice(self.pretty);
-                    // SAFETY: arena memory lives for the whole bundle pass; the
-                    // consuming `Path` (graph/import-record) never outlives it.
-                    let buf: &'static [u8] =
-                        unsafe { core::slice::from_raw_parts(buf.as_ptr(), buf.len()) };
-                    let mut p = Path::<'static>::init(&buf[..text_len]);
-                    p.pretty = &buf[text_len + 1..text_len + 1 + self.pretty.len()];
-                    p
-                };
+                let mut new_path =
+                    if let Some(offset) = bun_core::strings::index_of(self.text, self.pretty) {
+                        // `text` contains `pretty`; intern `text` once and re-slice.
+                        let text = FilenameStore::instance().append_slice(self.text)?;
+                        let mut p = Path::<'static>::init(text);
+                        p.pretty = &text[offset..][..self.pretty.len()];
+                        p
+                    } else {
+                        // Disjoint `text`/`pretty`. Zig allocates one combined
+                        // `text\0pretty\0` buffer from the per-build arena (NOT the
+                        // process-lifetime `FilenameStore`): `pretty` here is a
+                        // freshly-relativized display path recomputed every build, so
+                        // interning it permanently would leak one copy per
+                        // `Bun.build()` call. The arena is reset per build; every path
+                        // that escapes to JS is copied into an owned buffer first.
+                        let text_len = self.text.len();
+                        let buf: &mut [u8] =
+                            alloc.alloc_slice_fill_copy(text_len + self.pretty.len() + 2, 0u8);
+                        buf[..text_len].copy_from_slice(self.text);
+                        buf[text_len + 1..text_len + 1 + self.pretty.len()]
+                            .copy_from_slice(self.pretty);
+                        // SAFETY: arena memory lives for the whole bundle pass; the
+                        // consuming `Path` (graph/import-record) never outlives it.
+                        let buf: &'static [u8] =
+                            unsafe { core::slice::from_raw_parts(buf.as_ptr(), buf.len()) };
+                        let mut p = Path::<'static>::init(&buf[..text_len]);
+                        p.pretty = &buf[text_len + 1..text_len + 1 + self.pretty.len()];
+                        p
+                    };
                 new_path.namespace = dupe_namespace(self.namespace)?;
                 new_path.is_symlink = self.is_symlink;
                 new_path.is_disabled = self.is_disabled;
@@ -681,8 +680,7 @@ pub mod fs {
                 bun_paths::resolve_path::platform_to_posix_in_place::<u8>(pretty);
                 // SAFETY: arena memory lives for the whole bundle pass; the
                 // consuming `Path` never outlives it.
-                new.pretty =
-                    unsafe { core::slice::from_raw_parts(pretty.as_ptr(), pretty.len()) };
+                new.pretty = unsafe { core::slice::from_raw_parts(pretty.as_ptr(), pretty.len()) };
                 new.assert_pretty_is_valid();
                 Ok(new)
             }

@@ -240,4 +240,7 @@ jobs:
           automatic_review: true
           review_model: ${{ matrix.lane.model }}
           include_suggestions: true
+          # Don't @-mention the PR author in Droid status comments (5 lanes would
+          # otherwise ping on every review). Inline review comments are unaffected.
+          mention_trigger_user: false
           droid_args: --append-system-prompt-file .factory/lane-prompt.md

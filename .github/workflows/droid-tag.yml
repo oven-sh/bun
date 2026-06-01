@@ -116,6 +116,8 @@ jobs:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           settings: .factory/byok-settings.json
           trigger_phrase: "@droid"
+          # Don't @-mention the triggering user in status comments.
+          mention_trigger_user: false
           review_model: custom:GLM-5.1-ZAI-Coding-0
           security_model: custom:GLM-5.1-ZAI-Coding-0
           include_suggestions: true

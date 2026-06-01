@@ -788,8 +788,17 @@ impl<'a> Parser<'a> {
 
                 if let Some(elide_lines) = run_expr.get(b"elide-lines") {
                     if let Some(n) = elide_lines.as_number() {
-                        // Note: Rust `as` saturates on overflow/NaN where Zig @intFromFloat is UB
-                        self.ctx.bundler_options.elide_lines = Some(n as usize);
+                        // Reject negative, non-finite, fractional, and
+                        // out-of-range values. A bare `n as usize` would
+                        // silently truncate `0.7` to `0` (disabling elision —
+                        // the opposite of the error-message intent) and
+                        // saturate negatives to `0`. Mirror the CLI flag,
+                        // which rejects these via integer parsing.
+                        if n < 0.0 || !n.is_finite() || n.fract() != 0.0 || n > usize::MAX as f64 {
+                            self.add_error(elide_lines.loc, b"Expected a non-negative integer")?;
+                        } else {
+                            self.ctx.bundler_options.elide_lines = Some(n as usize);
+                        }
                     } else {
                         self.add_error(elide_lines.loc, b"Expected number")?;
                     }

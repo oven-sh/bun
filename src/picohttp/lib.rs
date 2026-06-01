@@ -91,23 +91,28 @@ use bun_core::strings;
 /// Zig used `name: []const u8` / `value: []const u8` and relied on Zig's slice
 /// ABI being `{ptr, len}`. Rust `&[u8]` has no guaranteed field order in
 /// `#[repr(C)]`, so we spell the fields out and expose `.name()` / `.value()`.
+///
+/// `'buf` is the lifetime of the parse buffer (or whatever storage the
+/// name/value pointers point into); `name()`/`value()` return `&'buf [u8]` so
+/// the borrow is tied to that storage rather than to the `Header` itself.
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct Header {
+pub struct Header<'buf> {
     name_ptr: *const u8,
     name_len: usize,
     value_ptr: *const u8,
     value_len: usize,
+    _buf: core::marker::PhantomData<&'buf [u8]>,
 }
 
-impl Default for Header {
+impl Default for Header<'_> {
     #[inline]
     fn default() -> Self {
         Self::ZERO
     }
 }
 
-impl Header {
+impl<'buf> Header<'buf> {
     /// All-zero sentinel — name/value are empty slices. Used by callers to
     /// initialize fixed-size header arrays before filling them.
     ///
@@ -120,32 +125,35 @@ impl Header {
         name_len: 0,
         value_ptr: core::ptr::null(),
         value_len: 0,
+        _buf: core::marker::PhantomData,
     };
 
-    /// Construct a `Header` from borrowed name/value slices. The caller is
-    /// responsible for keeping the backing storage alive for as long as the
-    /// `Header` is read (matches the Zig `[]const u8` field semantics).
+    /// Construct a `Header` borrowing `name`/`value`. The returned `Header`
+    /// cannot outlive the backing storage (matches the Zig `[]const u8` field
+    /// semantics, but compiler-checked).
     #[inline]
-    pub const fn new(name: &[u8], value: &[u8]) -> Self {
+    pub const fn new(name: &'buf [u8], value: &'buf [u8]) -> Self {
         Self {
             name_ptr: name.as_ptr(),
             name_len: name.len(),
             value_ptr: value.as_ptr(),
             value_len: value.len(),
+            _buf: core::marker::PhantomData,
         }
     }
 
     #[inline]
-    pub fn name(&self) -> &[u8] {
+    pub fn name(&self) -> &'buf [u8] {
         // picohttpparser sets `name = NULL, name_len = 0` for multiline /
         // continuation headers. `ffi::slice` tolerates the (null, 0) shape.
-        // SAFETY: ptr/len originate from picohttpparser pointing into the
-        // caller-provided buffer, or from StringBuilder::append.
+        // SAFETY: ptr/len point into the `'buf` storage this `Header` borrows
+        // (`Header::new` ties them to `'buf`; the parse functions tie the
+        // picohttpparser out-pointers to the input buffer's lifetime).
         unsafe { bun_core::ffi::slice(self.name_ptr, self.name_len) }
     }
 
     #[inline]
-    pub fn value(&self) -> &[u8] {
+    pub fn value(&self) -> &'buf [u8] {
         // Defensive: picohttpparser always points `value` into `buf` on
         // success; `ffi::slice` tolerates the (null, 0) shape.
         // SAFETY: same as name()
@@ -161,18 +169,38 @@ impl Header {
         builder.count(self.value());
     }
 
-    pub fn clone(&self, builder: &mut StringBuilder) -> Header {
+    /// Copy name/value into `builder` and return a `Header` pointing at the
+    /// copies. The returned lifetime is unbound (same contract as
+    /// [`StringBuilder::append_raw`]).
+    ///
+    /// # Safety
+    /// The returned `Header` aliases `builder`'s heap buffer; the caller must
+    /// keep the builder (or its moved-out buffer) alive and unmodified for as
+    /// long as the returned `Header` is read.
+    pub unsafe fn clone<'b>(&self, builder: &mut StringBuilder) -> Header<'b> {
         // SAFETY: returned slices alias `builder`'s heap buffer; caller of the
         // outer `clone` keeps the builder (or its moved-out buffer) alive for
         // the lifetime of the cloned `Header` (see PORT NOTE on `StringBuilder`).
         let name = unsafe { builder.append_raw(self.name()) };
         // SAFETY: same buffer-lifetime invariant as `name` above.
         let value = unsafe { builder.append_raw(self.value()) };
+        Header::new(name, value)
+    }
+
+    /// Widen the borrow to `'static` for self-referential / static-buffer
+    /// storage. Field-by-field move (no bitwise reinterpret).
+    ///
+    /// # Safety
+    /// Caller guarantees the storage `name()`/`value()` point into outlives
+    /// every read through the returned value.
+    #[inline]
+    pub unsafe fn detach_lifetime(self) -> Header<'static> {
         Header {
-            name_ptr: name.as_ptr(),
-            name_len: name.len(),
-            value_ptr: value.as_ptr(),
-            value_len: value.len(),
+            name_ptr: self.name_ptr,
+            name_len: self.name_len,
+            value_ptr: self.value_ptr,
+            value_len: self.value_len,
+            _buf: core::marker::PhantomData,
         }
     }
 
@@ -181,7 +209,7 @@ impl Header {
     }
 }
 
-impl fmt::Display for Header {
+impl fmt::Display for Header<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // NOTE: pretty_fmt! is the comptime ANSI-tag expander (`<r><cyan>` → escape
         // codes). bun_core's current impl is a passthrough TODO(port) until the
@@ -216,11 +244,13 @@ impl fmt::Display for Header {
     }
 }
 
-const _: () = assert!(core::mem::size_of::<Header>() == core::mem::size_of::<c::phr_header>());
-const _: () = assert!(core::mem::align_of::<Header>() == core::mem::align_of::<c::phr_header>());
+const _: () =
+    assert!(core::mem::size_of::<Header<'static>>() == core::mem::size_of::<c::phr_header>());
+const _: () =
+    assert!(core::mem::align_of::<Header<'static>>() == core::mem::align_of::<c::phr_header>());
 
 pub struct HeaderCurlFormatter<'a> {
-    header: &'a Header,
+    header: &'a Header<'a>,
 }
 
 impl fmt::Display for HeaderCurlFormatter<'_> {
@@ -245,7 +275,7 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
 
 #[derive(Clone, Copy, Default)]
 pub struct HeaderList<'a> {
-    pub list: &'a [Header],
+    pub list: &'a [Header<'a>],
     // TODO(port): Zig field is `[]Header` (mutable slice) but only ever read
     // through `*const List`; using `&'a [Header]` here. Revisit if a caller
     // mutates through it.
@@ -300,7 +330,7 @@ pub struct Request<'a> {
     pub method: &'a [u8],
     pub path: &'a [u8],
     pub minor_version: usize,
-    pub headers: &'a [Header],
+    pub headers: &'a [Header<'a>],
     pub bytes_read: u32,
 }
 
@@ -313,9 +343,24 @@ impl<'a> Request<'a> {
         }
     }
 
-    pub fn clone(&self, headers: &'a mut [Header], builder: &mut StringBuilder) -> Request<'a> {
+    /// Deep-copy `method`/`path`/headers into `builder` and return a `Request`
+    /// whose slices point at the copies (the header *list* itself lives in
+    /// `headers`).
+    ///
+    /// # Safety
+    /// The returned `Request`'s `method`/`path`/header contents alias
+    /// `builder`'s heap buffer; the caller must keep the builder (or its
+    /// moved-out buffer) alive and unmodified for as long as the returned
+    /// `Request` is read.
+    pub unsafe fn clone(
+        &self,
+        headers: &'a mut [Header<'a>],
+        builder: &mut StringBuilder,
+    ) -> Request<'a> {
         for (i, header) in self.headers.iter().enumerate() {
-            headers[i] = header.clone(builder);
+            // SAFETY: forwarded caller contract — `builder` outlives the
+            // returned `Request`.
+            headers[i] = unsafe { header.clone(builder) };
         }
 
         Request {
@@ -346,13 +391,22 @@ impl<'a> Request<'a> {
             // SAFETY: caller contract.
             path: unsafe { &*core::ptr::from_ref::<[u8]>(self.path) },
             minor_version: self.minor_version,
-            // SAFETY: caller contract.
-            headers: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers) },
+            // SAFETY: caller contract. `Header<'a>` and `Header<'static>` have
+            // identical layout (the lifetime only lives in `PhantomData`).
+            headers: unsafe {
+                core::slice::from_raw_parts(
+                    self.headers.as_ptr().cast::<Header<'static>>(),
+                    self.headers.len(),
+                )
+            },
             bytes_read: self.bytes_read,
         }
     }
 
-    pub fn parse(buf: &'a [u8], src: &'a mut [Header]) -> Result<Request<'a>, ParseRequestError> {
+    pub fn parse(
+        buf: &'a [u8],
+        src: &'a mut [Header<'a>],
+    ) -> Result<Request<'a>, ParseRequestError> {
         let mut method_ptr: *const u8 = core::ptr::null();
         let mut method_len: usize = 0;
         let mut path_ptr: *const u8 = core::ptr::null();
@@ -569,8 +623,15 @@ impl<'a> Response<'a> {
             // SAFETY: caller contract.
             status: unsafe { &*core::ptr::from_ref::<[u8]>(self.status) },
             headers: HeaderList {
-                // SAFETY: caller contract.
-                list: unsafe { &*core::ptr::from_ref::<[Header]>(self.headers.list) },
+                // SAFETY: caller contract. `Header<'a>` and `Header<'static>`
+                // have identical layout (the lifetime only lives in
+                // `PhantomData`).
+                list: unsafe {
+                    core::slice::from_raw_parts(
+                        self.headers.list.as_ptr().cast::<Header<'static>>(),
+                        self.headers.list.len(),
+                    )
+                },
             },
             bytes_read: self.bytes_read,
         }
@@ -584,13 +645,27 @@ impl<'a> Response<'a> {
         }
     }
 
-    pub fn clone(&self, headers: &'a mut [Header], builder: &mut StringBuilder) -> Response<'a> {
+    /// Deep-copy `status` and the header contents into `builder` and return a
+    /// `Response` whose slices point at the copies (the header *list* itself
+    /// lives in `headers`).
+    ///
+    /// # Safety
+    /// The returned `Response`'s `status`/header contents alias `builder`'s
+    /// heap buffer; the caller must keep the builder (or its moved-out buffer)
+    /// alive and unmodified for as long as the returned `Response` is read.
+    pub unsafe fn clone(
+        &self,
+        headers: &'a mut [Header<'a>],
+        builder: &mut StringBuilder,
+    ) -> Response<'a> {
         let mut that = *self;
         // SAFETY: see `Header::clone` — caller keeps `builder` alive.
         that.status = unsafe { builder.append_raw(self.status) };
 
         for (i, header) in self.headers.list.iter().enumerate() {
-            headers[i] = header.clone(builder);
+            // SAFETY: forwarded caller contract — `builder` outlives the
+            // returned `Response`.
+            headers[i] = unsafe { header.clone(builder) };
         }
 
         that.headers.list = &headers[0..self.headers.list.len()];
@@ -600,7 +675,7 @@ impl<'a> Response<'a> {
 
     pub fn parse_parts(
         buf: &'a [u8],
-        src: &'a mut [Header],
+        src: &'a mut [Header<'a>],
         offset: Option<&mut usize>,
     ) -> Result<Response<'a>, ParseResponseError> {
         let mut minor_version: c_int = 1;
@@ -652,7 +727,10 @@ impl<'a> Response<'a> {
         }
     }
 
-    pub fn parse(buf: &'a [u8], src: &'a mut [Header]) -> Result<Response<'a>, ParseResponseError> {
+    pub fn parse(
+        buf: &'a [u8],
+        src: &'a mut [Header<'a>],
+    ) -> Result<Response<'a>, ParseResponseError> {
         let mut offset: usize = 0;
         let response = Self::parse_parts(buf, src, Some(&mut offset))?;
         Ok(response)
@@ -698,11 +776,14 @@ bun_core::impl_tag_error!(ParseHeadersError);
 bun_core::named_error_set!(ParseHeadersError);
 
 pub struct Headers<'a> {
-    pub headers: &'a [Header],
+    pub headers: &'a [Header<'a>],
 }
 
 impl<'a> Headers<'a> {
-    pub fn parse(buf: &'a [u8], src: &'a mut [Header]) -> Result<Headers<'a>, ParseHeadersError> {
+    pub fn parse(
+        buf: &'a [u8],
+        src: &'a mut [Header<'a>],
+    ) -> Result<Headers<'a>, ParseHeadersError> {
         let mut num_headers: usize = src.len();
 
         // SAFETY: src is layout-compatible with phr_header (asserted above).
@@ -753,5 +834,91 @@ pub use c::phr_parse_request;
 pub use c::phr_parse_response;
 pub use c::struct_phr_chunked_decoder;
 pub use c::struct_phr_header;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn header_new_round_trips_name_and_value() {
+        let buf = b"Content-Type: text/plain".to_vec();
+        let header = Header::new(&buf[..12], &buf[14..]);
+        assert_eq!(header.name(), b"Content-Type");
+        assert_eq!(header.value(), b"text/plain");
+        assert!(!header.is_multiline());
+    }
+
+    #[test]
+    fn header_zero_is_empty() {
+        let header = Header::ZERO;
+        assert_eq!(header.name(), b"");
+        assert_eq!(header.value(), b"");
+        assert!(header.is_multiline());
+        assert_eq!(Header::default().name(), b"");
+    }
+
+    // `strings::eql_case_insensitive_ascii` calls libc `strncasecmp`, which
+    // Miri cannot interpret.
+    #[cfg(not(miri))]
+    #[test]
+    fn header_list_lookup_is_case_insensitive() {
+        let storage = [Header::new(b"Content-Type", b"text/html"), Header::ZERO];
+        let list = HeaderList { list: &storage };
+        assert_eq!(list.get(b"content-type"), Some(&b"text/html"[..]));
+        assert_eq!(list.get(b"missing"), None);
+        assert_eq!(
+            list.get_if_other_is_absent(b"content-type", b"etag"),
+            Some(&b"text/html"[..])
+        );
+        assert_eq!(list.get_if_other_is_absent(b"etag", b"content-type"), None);
+    }
+
+    #[test]
+    fn header_clone_copies_into_builder() {
+        let name = b"X-Custom".to_vec();
+        let value = b"hello world".to_vec();
+        let original = Header::new(&name, &value);
+
+        let mut builder = StringBuilder::default();
+        original.count(&mut builder);
+        builder.allocate().unwrap();
+        // SAFETY: `builder` outlives `cloned` (dropped at end of scope, after
+        // the last read of `cloned`).
+        let cloned: Header<'_> = unsafe { original.clone(&mut builder) };
+        drop((name, value));
+        assert_eq!(cloned.name(), b"X-Custom");
+        assert_eq!(cloned.value(), b"hello world");
+        drop(builder);
+    }
+
+    // NOTE: `Request::parse` / `Response::parse` / `Headers::parse` call the
+    // vendored picohttpparser C library, whose objects are only linked into
+    // the final binary by the CMake build — `cargo test` / `cargo miri test`
+    // cannot link or interpret them, so the C parse round-trip is covered by
+    // the HTTP client/server JS test suites instead. The test below mirrors
+    // the parser's output shape (a header array whose entries point into the
+    // request buffer) without the foreign call.
+    #[test]
+    fn request_headers_point_into_parse_buffer() {
+        let buf = b"GET /foo HTTP/1.1\r\nHost: example.com\r\nAccept: */*\r\n\r\n".to_vec();
+        let mut storage = [Header::ZERO; 8];
+        storage[0] = Header::new(&buf[19..23], &buf[25..36]);
+        storage[1] = Header::new(&buf[38..44], &buf[46..49]);
+        let request = Request {
+            method: &buf[0..3],
+            path: &buf[4..8],
+            minor_version: 1,
+            headers: &storage[0..2],
+            bytes_read: buf.len() as u32,
+        };
+        assert_eq!(request.method, b"GET");
+        assert_eq!(request.path, b"/foo");
+        assert_eq!(request.headers.len(), 2);
+        assert_eq!(request.headers[0].name(), b"Host");
+        assert_eq!(request.headers[0].value(), b"example.com");
+        assert_eq!(request.headers[1].name(), b"Accept");
+        assert_eq!(request.headers[1].value(), b"*/*");
+    }
+}
 
 // ported from: src/picohttp/picohttp.zig

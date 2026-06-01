@@ -27,15 +27,23 @@ macro_rules! alloc_print {
 use bun_core::fmt::hex_lower as HexLower;
 
 #[inline]
-fn pico_header_empty() -> PicoHeader {
+fn pico_header_empty() -> PicoHeader<'static> {
     PicoHeader::ZERO
 }
 
-// TODO(port): bun_picohttp::Header::new — fields are private; constructing via
-// repr(C) layout-pun until a public ctor lands. Layout is asserted in bun_picohttp.
+/// Build a header destined for `SignResult::_headers`, widening the borrow to
+/// `'static` for the self-referential storage (the values point into the
+/// sibling `Box<[u8]>` fields of the same `SignResult`, which are heap-stable
+/// across moves).
+///
+/// # Safety
+/// `name`/`value` must point into storage that outlives the `SignResult` the
+/// returned header is stored in (its own `Box<[u8]>` fields or `'static`
+/// data), and that storage must not be mutated while the header is readable.
 #[inline]
-fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader {
-    PicoHeader::new(name, value)
+unsafe fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader<'static> {
+    // SAFETY: forwarded caller contract — see `# Safety` above.
+    unsafe { PicoHeader::new(name, value).detach_lifetime() }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -879,57 +887,76 @@ impl S3Credentials {
         // bun_picohttp::Header stores raw `*const u8, len` (verified), so the heap pointers stay
         // valid across SignResult moves. SAFETY relies on the Box<[u8]> fields not being mutated
         // after the corresponding header is written.
-        result._headers[0] = pico_header_new(b"x-amz-content-sha256", aws_content_hash);
-        result._headers[1] = pico_header_new(b"x-amz-date", &result.amz_date);
-        result._headers[2] = pico_header_new(b"Host", &result.host);
-        result._headers[3] = pico_header_new(b"Authorization", &result.authorization);
+        //
+        // SAFETY (every `pico_header_new` below): the value points either at
+        // `'static` data, at a caller-owned slice that outlives the returned
+        // `SignResult` (`aws_content_hash`, `acl_value`, `storage_class_value`),
+        // or into one of `result`'s own `Box<[u8]>` fields, whose heap storage
+        // is stable across moves of `result` and lives until `result` is
+        // dropped. None of those fields are mutated after the header is written.
+        //
+        // SAFETY: see block comment above.
+        result._headers[0] = unsafe { pico_header_new(b"x-amz-content-sha256", aws_content_hash) };
+        // SAFETY: see block comment above.
+        result._headers[1] = unsafe { pico_header_new(b"x-amz-date", &result.amz_date) };
+        // SAFETY: see block comment above.
+        result._headers[2] = unsafe { pico_header_new(b"Host", &result.host) };
+        // SAFETY: see block comment above.
+        result._headers[3] = unsafe { pico_header_new(b"Authorization", &result.authorization) };
 
         if let Some(acl_value) = acl {
+            // SAFETY: see block comment above.
             result._headers[result._headers_len as usize] =
-                pico_header_new(b"x-amz-acl", acl_value);
+                unsafe { pico_header_new(b"x-amz-acl", acl_value) };
             result._headers_len += 1;
         }
 
         if let Some(token) = session_token {
             let session_token_value = Box::<[u8]>::from(token);
+            // SAFETY: see block comment above.
             result._headers[result._headers_len as usize] =
-                pico_header_new(b"x-amz-security-token", &session_token_value);
+                unsafe { pico_header_new(b"x-amz-security-token", &session_token_value) };
             result.session_token = session_token_value;
             result._headers_len += 1;
         }
         if let Some(storage_class_value) = storage_class {
+            // SAFETY: see block comment above.
             result._headers[result._headers_len as usize] =
-                pico_header_new(b"x-amz-storage-class", storage_class_value);
+                unsafe { pico_header_new(b"x-amz-storage-class", storage_class_value) };
             result._headers_len += 1;
         }
 
         if let Some(cd) = content_disposition {
             let content_disposition_value = Box::<[u8]>::from(cd);
+            // SAFETY: see block comment above.
             result._headers[result._headers_len as usize] =
-                pico_header_new(b"content-disposition", &content_disposition_value);
+                unsafe { pico_header_new(b"content-disposition", &content_disposition_value) };
             result.content_disposition = content_disposition_value;
             result._headers_len += 1;
         }
 
         if let Some(ce) = content_encoding {
             let content_encoding_value = Box::<[u8]>::from(ce);
+            // SAFETY: see block comment above.
             result._headers[result._headers_len as usize] =
-                pico_header_new(b"content-encoding", &content_encoding_value);
+                unsafe { pico_header_new(b"content-encoding", &content_encoding_value) };
             result.content_encoding = content_encoding_value;
             result._headers_len += 1;
         }
 
         if let Some(c_md5) = content_md5.as_deref() {
             let content_md5_value = Box::<[u8]>::from(c_md5);
+            // SAFETY: see block comment above.
             result._headers[result._headers_len as usize] =
-                pico_header_new(b"content-md5", &content_md5_value);
+                unsafe { pico_header_new(b"content-md5", &content_md5_value) };
             result.content_md5 = content_md5_value;
             result._headers_len += 1;
         }
 
         if request_payer {
+            // SAFETY: see block comment above.
             result._headers[result._headers_len as usize] =
-                pico_header_new(b"x-amz-request-payer", b"requester");
+                unsafe { pico_header_new(b"x-amz-request-payer", b"requester") };
             result._headers_len += 1;
         }
 
@@ -1023,24 +1050,27 @@ pub struct SignResult {
     pub acl: Option<ACL>,
     pub storage_class: Option<StorageClass>,
     pub request_payer: bool,
-    // TODO(port): self-referential — entries borrow from the Box<[u8]> fields above. PicoHeader
-    // must be a raw (ptr,len) pair; see note in sign_request.
-    pub _headers: [PicoHeader; Self::MAX_HEADERS],
+    // TODO(port): self-referential — entries borrow from the Box<[u8]> fields above
+    // (lifetime-erased to `'static`); see note in sign_request.
+    pub _headers: [PicoHeader<'static>; Self::MAX_HEADERS],
     pub _headers_len: u8,
 }
 
 impl SignResult {
     pub const MAX_HEADERS: usize = 11;
 
-    pub fn headers(&self) -> &[PicoHeader] {
+    /// The header borrows are narrowed from the stored (lifetime-erased)
+    /// `'static` to `&self` so a copied-out `Header` cannot be read after this
+    /// `SignResult` is dropped.
+    pub fn headers(&self) -> &[PicoHeader<'_>] {
         &self._headers[0..self._headers_len as usize]
     }
 
-    pub fn mix_with_header<'b>(
+    pub fn mix_with_header<'b, 'h>(
         &self,
-        headers_buffer: &'b mut [PicoHeader],
-        header: PicoHeader,
-    ) -> &'b [PicoHeader] {
+        headers_buffer: &'b mut [PicoHeader<'h>],
+        header: PicoHeader<'h>,
+    ) -> &'b [PicoHeader<'h>] {
         // copy the headers to buffer
         let len = self._headers_len as usize;
         for (i, existing_header) in self._headers[0..len].iter().enumerate() {

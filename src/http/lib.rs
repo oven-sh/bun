@@ -795,26 +795,27 @@ pub type GenHttpContext<const SSL: bool> = http_context::HTTPContext<SSL>;
 // ── header constants ────────────────────────────────────────────────────
 const HOST_HEADER_NAME: &[u8] = b"Host";
 const CONTENT_LENGTH_HEADER_NAME: &[u8] = b"Content-Length";
-const CHUNKED_ENCODED_HEADER: picohttp::Header =
+const CHUNKED_ENCODED_HEADER: picohttp::Header<'static> =
     picohttp::Header::new(b"Transfer-Encoding", b"chunked");
-const CONNECTION_HEADER: picohttp::Header = picohttp::Header::new(b"Connection", b"keep-alive");
-const ACCEPT_HEADER: picohttp::Header = picohttp::Header::new(b"Accept", b"*/*");
+const CONNECTION_HEADER: picohttp::Header<'static> =
+    picohttp::Header::new(b"Connection", b"keep-alive");
+const ACCEPT_HEADER: picohttp::Header<'static> = picohttp::Header::new(b"Accept", b"*/*");
 
 const ACCEPT_ENCODING_NO_COMPRESSION: &[u8] = b"identity";
 const ACCEPT_ENCODING_COMPRESSION: &[u8] = b"gzip, deflate, br, zstd";
-const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header =
+const ACCEPT_ENCODING_HEADER_COMPRESSION: picohttp::Header<'static> =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_COMPRESSION);
-const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header =
+const ACCEPT_ENCODING_HEADER_NO_COMPRESSION: picohttp::Header<'static> =
     picohttp::Header::new(b"Accept-Encoding", ACCEPT_ENCODING_NO_COMPRESSION);
 
-const ACCEPT_ENCODING_HEADER: picohttp::Header = if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT
-{
-    ACCEPT_ENCODING_HEADER_NO_COMPRESSION
-} else {
-    ACCEPT_ENCODING_HEADER_COMPRESSION
-};
+const ACCEPT_ENCODING_HEADER: picohttp::Header<'static> =
+    if FeatureFlags::DISABLE_COMPRESSION_IN_HTTP_CLIENT {
+        ACCEPT_ENCODING_HEADER_NO_COMPRESSION
+    } else {
+        ACCEPT_ENCODING_HEADER_COMPRESSION
+    };
 
-fn get_user_agent_header() -> picohttp::Header {
+fn get_user_agent_header() -> picohttp::Header<'static> {
     let ua = OVERRIDDEN_DEFAULT_USER_AGENT.get().copied().unwrap_or(b"");
     picohttp::Header::new(
         b"User-Agent",
@@ -853,11 +854,12 @@ static PRINT_EVERY_I: AtomicUsize = AtomicUsize::new(0);
 // we always rewrite the entire HTTP request when write() returns EAGAIN
 // so we can reuse this buffer
 const MAX_REQUEST_HEADERS: usize = 256;
-static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; MAX_REQUEST_HEADERS]> =
-    bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS]);
+static SHARED_REQUEST_HEADERS_BUF: bun_core::RacyCell<
+    [picohttp::Header<'static>; MAX_REQUEST_HEADERS],
+> = bun_core::RacyCell::new([picohttp::Header::ZERO; MAX_REQUEST_HEADERS]);
 
 // this doesn't need to be stack memory because it is immediately cloned after use
-static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header; 256]> =
+static SHARED_RESPONSE_HEADERS_BUF: bun_core::RacyCell<[picohttp::Header<'static>; 256]> =
     bun_core::RacyCell::new([picohttp::Header::ZERO; 256]);
 
 // the first packet for Transfer-Encoding: chunked
@@ -876,12 +878,13 @@ static SINGLE_PACKET_SMALL_BUFFER: bun_core::RacyCell<[u8; 16 * 1024]> =
 mod scratch {
     use super::*;
     #[inline]
-    pub(super) fn request_headers() -> &'static mut [picohttp::Header; MAX_REQUEST_HEADERS] {
+    pub(super) fn request_headers() -> &'static mut [picohttp::Header<'static>; MAX_REQUEST_HEADERS]
+    {
         // SAFETY: see module-level INVARIANT.
         unsafe { &mut *SHARED_REQUEST_HEADERS_BUF.get() }
     }
     #[inline]
-    pub(super) fn response_headers() -> &'static mut [picohttp::Header; 256] {
+    pub(super) fn response_headers() -> &'static mut [picohttp::Header<'static>; 256] {
         // SAFETY: see module-level INVARIANT.
         unsafe { &mut *SHARED_RESPONSE_HEADERS_BUF.get() }
     }
@@ -2093,7 +2096,7 @@ impl<'a> HTTPClient<'a> {
         let mut override_connection_header = false;
         let mut override_user_agent = false;
         let mut add_transfer_encoding = true;
-        let mut original_content_length: Option<&[u8]> = None;
+        let mut original_content_length: Option<&'static [u8]> = None;
 
         // Reserve slots for default headers that may be appended after user headers
         // (Connection, User-Agent, Accept, Host, Accept-Encoding, Content-Length/Transfer-Encoding).
@@ -2101,7 +2104,11 @@ impl<'a> HTTPClient<'a> {
         const MAX_USER_HEADERS: usize = MAX_REQUEST_HEADERS - MAX_DEFAULT_HEADERS;
 
         for (i, head) in header_names.iter().enumerate() {
-            let name = self.header_str(*head);
+            // SAFETY: `header_str` returns a slice into `self.header_buf`, which
+            // outlives the returned `Request` (see the SAFETY block on the
+            // `Request` literal at the end of this fn). Widened to `'static` so
+            // the `Header` can be stored in the `'static` scratch buffer.
+            let name: &'static [u8] = unsafe { bun_ptr::detach_lifetime(self.header_str(*head)) };
             // Hash it as lowercase
             let hash = hash_header_name(name);
 
@@ -2116,7 +2123,10 @@ impl<'a> HTTPClient<'a> {
             match hash {
                 h if h == hash_header_const(b"Content-Length") => {
                     // Content-Length is always consumed (never written to the buffer).
-                    original_content_length = Some(self.header_str(header_values[i]));
+                    // SAFETY: same `header_buf` widening as `name` above.
+                    original_content_length = Some(unsafe {
+                        bun_ptr::detach_lifetime(self.header_str(header_values[i]))
+                    });
                     continue;
                 }
                 h if h == hash_header_const(b"Connection") => {
@@ -2194,8 +2204,10 @@ impl<'a> HTTPClient<'a> {
                 continue;
             }
 
-            request_headers_buf[header_count] =
-                picohttp::Header::new(name, self.header_str(header_values[i]));
+            // SAFETY: same `header_buf` widening as `name` above.
+            let value: &'static [u8] =
+                unsafe { bun_ptr::detach_lifetime(self.header_str(header_values[i])) };
+            request_headers_buf[header_count] = picohttp::Header::new(name, value);
 
             header_count += 1;
         }
@@ -2216,8 +2228,11 @@ impl<'a> HTTPClient<'a> {
         }
 
         if !override_host_header {
-            request_headers_buf[header_count] =
-                picohttp::Header::new(HOST_HEADER_NAME, self.url.host);
+            // SAFETY: `url.host` borrows `self.url`, which outlives the
+            // returned `Request` (see the SAFETY block on the `Request` literal
+            // at the end of this fn).
+            let host: &'static [u8] = unsafe { bun_ptr::detach_lifetime(self.url.host) };
+            request_headers_buf[header_count] = picohttp::Header::new(HOST_HEADER_NAME, host);
             header_count += 1;
         }
 
@@ -3193,8 +3208,23 @@ impl<'a> HTTPClient<'a> {
             }
 
             let shared_resp = scratch::response_headers();
+            // SAFETY: the parsed response borrows `SHARED_RESPONSE_HEADERS_BUF`
+            // and the bytes behind `to_read` (`incoming_data` for the duration
+            // of this callback, or `response_message_buffer` which lives on
+            // `self.state`). Both outlive every *read* of the response: it is
+            // only read within this callback (`handle_response_metadata`) and
+            // by `clone_metadata()`, which deep-copies it. The early-return
+            // paths that skip `clone_metadata()` (redirect, proxy CONNECT)
+            // overwrite or clear `state.pending_response` before the next read
+            // (`Response::default()` at the top of the next parse;
+            // `ProxyTunnel` sets it to `None`). Widened to `'static` so it can
+            // be parsed into the `'static` scratch buffer and stored in
+            // `state.pending_response`. This matches the pre-existing
+            // `detach_lifetime()` that was applied to the parsed response
+            // here before `Header` carried a lifetime.
+            let parse_buf: &'static [u8] = unsafe { bun_ptr::detach_lifetime(to_read!()) };
             let response = match picohttp::Response::parse_parts(
-                to_read!(),
+                parse_buf,
                 shared_resp,
                 Some(&mut amount_read),
             ) {
@@ -3221,12 +3251,8 @@ impl<'a> HTTPClient<'a> {
             };
 
             // we save the successful parsed response
-            // SAFETY: response borrows SHARED_RESPONSE_HEADERS_BUF / response_message_buffer,
-            // both of which outlive this fn; widen to 'static for storage.
-            // Rebind `response` to the detached `'static` copy so it no longer
-            // borrows `to_read` (lets the `to_read` reassignment below pass
-            // borrowck — `RawSlice::slice` ties output to `&to_read`).
-            let response = unsafe { response.detach_lifetime() };
+            // (`response` is already `Response<'static>` — `parse_buf` and the
+            // scratch buffer were both widened to `'static` above.)
             self.state.pending_response = Some(response);
 
             let bytes_read =
@@ -3542,7 +3568,10 @@ impl<'a> HTTPClient<'a> {
             let headers_buf = bun_core::heap::release(
                 vec![picohttp::Header::ZERO; response.headers.list.len()].into_boxed_slice(),
             );
-            let cloned_response = response.clone(headers_buf, &mut builder);
+            // SAFETY: the cloned response's slices alias `builder`'s heap
+            // buffer, whose ownership is transferred to `owned_buf` below and
+            // stored alongside the response in `HTTPResponseMetadata`.
+            let cloned_response = unsafe { response.clone(headers_buf, &mut builder) };
 
             // we clean the temporary response since cloned_metadata is now the owner
             self.state.pending_response = None;

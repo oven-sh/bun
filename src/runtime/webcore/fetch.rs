@@ -1922,19 +1922,23 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         let mut header_buffer: [picohttp::Header; SignResult::MAX_HEADERS + 1] =
             [picohttp::Header::ZERO; SignResult::MAX_HEADERS + 1];
 
+        // The mixed-in `Content-Type` header borrows `content_type`, which
+        // points into the *current* `headers` value — deep-copy into the
+        // replacement `Headers` before assigning over (and thereby dropping)
+        // the old one.
         if let Some(range_) = &range {
             let new_headers = result.mix_with_header(
                 &mut header_buffer,
                 picohttp::Header::new(b"range", range_.as_bytes()),
             );
-            set_headers(&mut headers, new_headers);
+            headers = Some(Headers::from_pico_http_headers(new_headers));
         } else if let Some(ct) = content_type {
             if !ct.is_empty() {
                 let new_headers = result.mix_with_header(
                     &mut header_buffer,
                     picohttp::Header::new(b"Content-Type", ct),
                 );
-                set_headers(&mut headers, new_headers);
+                headers = Some(Headers::from_pico_http_headers(new_headers));
             } else {
                 set_headers(&mut headers, result.headers());
             }

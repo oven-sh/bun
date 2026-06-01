@@ -1424,7 +1424,9 @@ describe("block scalar oracle-split (refs disagree)", () => {
     [
       "adv/anchor-tag/null-tag-nonempty-block",
       "key: !!null |\n  not actually null\n",
-      { "key": "not actually null\n" },
+      // [10.2] explicit `!!null` whose content is not in the null regex →
+      // error (matches js-yaml; py/ru coerce to null; ee returns the string).
+      "__ERR__",
       'ee={"key":"not actually null\\n"} js="__ERR__" py={"key":null} ru={"key":null}',
     ],
     [

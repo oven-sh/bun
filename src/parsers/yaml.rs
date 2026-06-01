@@ -792,6 +792,8 @@ pub enum ParseError {
     InvalidDirective,
     #[error("UnexpectedCharacter")]
     UnexpectedCharacter,
+    #[error("NonPrintableCharacter")]
+    NonPrintableCharacter,
     #[error("TabIndentation")]
     TabIndentation,
     #[error("UnresolvedTagHandle")]
@@ -816,9 +818,29 @@ pub enum ParseError {
     StackOverflow,
     #[error("ExcessiveAliasing")]
     ExcessiveAliasing,
+    #[error("TagContentMismatch")]
+    TagContentMismatch,
 }
 
 bun_core::oom_from_alloc!(ParseError);
+
+/// [1] c-printable / [2] nb-json, ASCII range only. Tab is the only C0 char
+/// in either set; nb-json (quoted) admits DEL (`[#x20-#x10FFFF]`),
+/// c-printable does not. Multi-byte codepoints (C1/NEL/surrogates/FFFE) are
+/// not validated here — that requires UTF-8 decode.
+///
+/// 0x00 is included for completeness, though the scanners' explicit `0 =>`
+/// arms intercept it before any catch-all — those arms check `is_eof()` to
+/// distinguish a real NUL byte (`NonPrintableCharacter`) from the past-end
+/// sentinel returned by `next()`/`peek()`.
+#[inline]
+fn check_printable_ascii(c: u32, nb_json: bool) -> Result<(), ParseError> {
+    match c {
+        0x00..=0x08 | 0x0B | 0x0C | 0x0E..=0x1F => Err(ParseError::NonPrintableCharacter),
+        0x7F if !nb_json => Err(ParseError::NonPrintableCharacter),
+        _ => Ok(()),
+    }
+}
 
 bun_core::named_error_set!(ParseError);
 
@@ -1323,10 +1345,9 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
                 }
             }
             NodeTag::Int => {
-                if matches!(scalar, NodeScalar::Number(_)) {
-                    self.resolved_scalar_len = self.str_builder.len();
-                    self.scalar = Some(scalar);
-                }
+                // `resolve()` is only reached with `Number` for `.nan`/`.inf`
+                // — float-only forms. Fall through to string; parse_node's
+                // construct_scalar will reject under [10.2.1.3].
             }
             NodeTag::Float => {
                 if matches!(scalar, NodeScalar::Number(_)) {
@@ -1680,17 +1701,27 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
 
         self.resolved = true;
 
-        match self.tag {
-            NodeTag::None | NodeTag::Float | NodeTag::Int => {
-                self.resolved_scalar_len = self.str_builder.len();
-                if first_char == FirstChar::Negative {
-                    if let NodeScalar::Number(n) = &mut scalar {
-                        *n = -*n;
-                    }
+        // [10.2.1.3]/[10.2.1.4] An explicit `!!int` rejects `.`/`e`/hex-digit
+        // float forms; `!!float` rejects `0x`/`0o` radix forms. On mismatch
+        // fall through to string so parse_node's construct_scalar errors.
+        let is_radix = x || o || hex;
+        // `e` is set by the hex digit `E`/`e` too — only treat it as an
+        // exponent marker outside `0x`.
+        let has_dot_or_exp = decimal || (e && !is_radix) || first_char == FirstChar::Dot;
+        let store = match self.tag {
+            NodeTag::None => true,
+            NodeTag::Int => !has_dot_or_exp,
+            NodeTag::Float => !is_radix,
+            _ => false,
+        };
+        if store {
+            self.resolved_scalar_len = self.str_builder.len();
+            if first_char == FirstChar::Negative {
+                if let NodeScalar::Number(n) = &mut scalar {
+                    *n = -*n;
                 }
-                self.scalar = Some(scalar);
             }
-            _ => {}
+            self.scalar = Some(scalar);
         }
         Ok(())
     }
@@ -1813,20 +1844,120 @@ pub enum NodeTag {
 }
 
 impl NodeTag {
-    pub fn resolve_null(self, loc: bun_ast::Loc) -> Expr {
+    pub fn resolve_null(self, loc: bun_ast::Loc) -> Result<Expr, ParseError> {
         match self {
-            NodeTag::None
-            | NodeTag::Bool
-            | NodeTag::Int
-            | NodeTag::Float
-            | NodeTag::Null
-            | NodeTag::Verbatim(_)
-            | NodeTag::Unknown(_) => Expr::init(E::Null {}, loc),
+            NodeTag::None | NodeTag::Null | NodeTag::Verbatim(_) | NodeTag::Unknown(_) => {
+                Ok(Expr::init(E::Null {}, loc))
+            }
+
+            // [10.2] empty content matches none of the bool/int/float regexes.
+            NodeTag::Bool | NodeTag::Int | NodeTag::Float => Err(ParseError::TagContentMismatch),
 
             // non-specific tags become seq, map, or str
-            NodeTag::NonSpecific | NodeTag::Str => Expr::init(E::String::default(), loc),
+            NodeTag::NonSpecific | NodeTag::Str => Ok(Expr::init(E::String::default(), loc)),
         }
     }
+
+    /// `true` for the Core-schema scalar tags. A scalar tag on a collection
+    /// node is a kind mismatch ([10.1.1], §3.3.2).
+    pub fn is_core_scalar(self) -> bool {
+        matches!(
+            self,
+            NodeTag::Bool | NodeTag::Int | NodeTag::Float | NodeTag::Null | NodeTag::Str
+        )
+    }
+
+    /// [10.2] Construct a Core-schema scalar from explicit-tag + string
+    /// content. Called from `parse_node` when an explicit `!!bool` / `!!int`
+    /// / `!!float` / `!!null` resolved to a string (quoted scalar, or plain
+    /// scalar whose untagged resolution did not match the tag's kind). The
+    /// content must match the tag's regex; otherwise per §3.3.2 it is an
+    /// error for the tag to specify an invalid value.
+    pub fn construct_scalar(self, s: &E::String, loc: bun_ast::Loc) -> Result<Expr, ParseError> {
+        // All Core-schema scalar regexes are ASCII-only; narrow utf16 once.
+        let mut narrowed_buf;
+        let bytes: &[u8] = if s.is_utf16 {
+            let s16 = s.slice16();
+            narrowed_buf = vec![0u8; s16.len()];
+            if bun_core::strings::narrow_ascii_u16(s16, &mut narrowed_buf).is_none() {
+                return Err(ParseError::TagContentMismatch);
+            }
+            &narrowed_buf
+        } else {
+            s.slice8()
+        };
+        match self {
+            NodeTag::Null => match bytes {
+                b"" | b"~" | b"null" | b"Null" | b"NULL" => Ok(Expr::init(E::Null {}, loc)),
+                _ => Err(ParseError::TagContentMismatch),
+            },
+            NodeTag::Bool => match bytes {
+                b"true" | b"True" | b"TRUE" => Ok(Expr::init(E::Boolean { value: true }, loc)),
+                b"false" | b"False" | b"FALSE" => Ok(Expr::init(E::Boolean { value: false }, loc)),
+                _ => Err(ParseError::TagContentMismatch),
+            },
+            NodeTag::Int => core_schema_int(bytes)
+                .map(|v| Expr::init(E::Number { value: v }, loc))
+                .ok_or(ParseError::TagContentMismatch),
+            NodeTag::Float => core_schema_float(bytes)
+                .map(|v| Expr::init(E::Number { value: v }, loc))
+                .ok_or(ParseError::TagContentMismatch),
+            // Str / NonSpecific / Verbatim / Unknown / None: leave as the
+            // string the caller already has.
+            _ => unreachable!("construct_scalar only called for Bool/Int/Float/Null"),
+        }
+    }
+}
+
+/// [10.2.1.3] `[-+]? [0-9]+ | 0o [0-7]+ | 0x [0-9a-fA-F]+`
+fn core_schema_int(s: &[u8]) -> Option<f64> {
+    if let Some(hex) = s.strip_prefix(b"0x") {
+        if hex.is_empty() || !hex.iter().all(u8::is_ascii_hexdigit) {
+            return None;
+        }
+        return bun_core::fmt::parse_unsigned::<u64>(s, 0)
+            .ok()
+            .map(|v| v as f64);
+    }
+    if let Some(oct) = s.strip_prefix(b"0o") {
+        if oct.is_empty() || !oct.iter().all(|b| (b'0'..=b'7').contains(b)) {
+            return None;
+        }
+        return bun_core::fmt::parse_unsigned::<u64>(s, 0)
+            .ok()
+            .map(|v| v as f64);
+    }
+    let (sign, digits) = match s.first() {
+        Some(b'+') => (1.0, &s[1..]),
+        Some(b'-') => (-1.0, &s[1..]),
+        _ => (1.0, s),
+    };
+    if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+        return None;
+    }
+    bun_core::wtf::parse_double(digits).ok().map(|v| sign * v)
+}
+
+/// [10.2.1.4] `[-+]? ( \. [0-9]+ | [0-9]+ ( \. [0-9]* )? ) ( [eE] [-+]? [0-9]+ )?`
+///            `| [-+]? \.(inf|Inf|INF) | \.(nan|NaN|NAN)`
+fn core_schema_float(s: &[u8]) -> Option<f64> {
+    match s {
+        b".nan" | b".NaN" | b".NAN" => return Some(f64::NAN),
+        _ => {}
+    }
+    let (sign, rest) = match s.first() {
+        Some(b'+') => (1.0, &s[1..]),
+        Some(b'-') => (-1.0, &s[1..]),
+        _ => (1.0, s),
+    };
+    match rest {
+        b".inf" | b".Inf" | b".INF" => return Some(sign * f64::INFINITY),
+        _ => {}
+    }
+    if !is_core_schema_number::<Utf8>(rest, FirstChar::Other) {
+        return None;
+    }
+    bun_core::wtf::parse_double(rest).ok().map(|v| sign * v)
 }
 
 pub enum NodeScalar<Enc: Encoding> {
@@ -2241,6 +2372,7 @@ pub enum ParseResultError {
     UnexpectedToken { pos: Pos },
     UnexpectedCharacter { pos: Pos },
     TabIndentation { pos: Pos },
+    NonPrintableCharacter { pos: Pos },
     InvalidDirective { pos: Pos },
     UnresolvedTagHandle { pos: Pos },
     UnresolvedAlias { pos: Pos },
@@ -2252,6 +2384,7 @@ pub enum ParseResultError {
     MultipleYamlDirectives { pos: Pos },
     InvalidIndentation { pos: Pos },
     ExcessiveAliasing { pos: Pos },
+    TagContentMismatch { pos: Pos },
 }
 
 impl ParseResultError {
@@ -2277,6 +2410,13 @@ impl ParseResultError {
                     Some(source),
                     pos.loc(),
                     b"Tab characters cannot be used as indentation",
+                );
+            }
+            ParseResultError::NonPrintableCharacter { pos } => {
+                log.add_error(
+                    Some(source),
+                    pos.loc(),
+                    b"Non-printable character not allowed in YAML",
                 );
             }
             ParseResultError::InvalidDirective { pos } => {
@@ -2312,6 +2452,13 @@ impl ParseResultError {
             ParseResultError::ExcessiveAliasing { pos } => {
                 log.add_error(Some(source), pos.loc(), b"Excessive aliasing");
             }
+            ParseResultError::TagContentMismatch { pos } => {
+                log.add_error(
+                    Some(source),
+                    pos.loc(),
+                    b"Tagged scalar content does not match the tag's schema",
+                );
+            }
         }
         Ok(())
     }
@@ -2332,6 +2479,9 @@ impl<Enc: Encoding> ParseResult<Enc> {
             ParseError::UnexpectedEof => ParseResultError::UnexpectedEof {
                 pos: parser.token.start,
             },
+            ParseError::NonPrintableCharacter => {
+                ParseResultError::NonPrintableCharacter { pos: parser.pos }
+            }
             ParseError::TabIndentation => ParseResultError::TabIndentation {
                 pos: parser.token.start,
             },
@@ -2373,6 +2523,9 @@ impl<Enc: Encoding> ParseResult<Enc> {
                 ParseResultError::InvalidIndentation { pos: parser.pos }
             }
             ParseError::ExcessiveAliasing => ParseResultError::ExcessiveAliasing {
+                pos: parser.token.start,
+            },
+            ParseError::TagContentMismatch => ParseResultError::TagContentMismatch {
                 pos: parser.token.start,
             },
         };
@@ -2425,6 +2578,16 @@ pub struct Parser<'i, Enc: Encoding> {
     // TODO(port): Zig key type was []const enc.unit(); StringHashMap keys are &[u8].
     // For Utf16 this needs a different map type.
     pub tag_handles: StringHashMap<()>,
+    /// `%TAG !! ...` redefined the secondary handle for this document, so the
+    /// `!!int` etc. shorthands no longer denote the Core-schema tags
+    /// (`shorthand_to_tag` falls through to `Unknown`).
+    pub secondary_handle_redefined: bool,
+    /// True only between `l-document-suffix` (`...`) and the next document's
+    /// first token: scan() may strip a line-start BOM there per [211].
+    /// Stream-start BOM is handled by `init()`'s byte-0 strip; a BOM after
+    /// leading blanks/comments at stream-start stays as content (matching
+    /// js-yaml/PyYAML/ruamel). Cleared at the top of `parse_document`.
+    pub at_doc_prefix: bool,
 
     pub whitespace_buf: Vec<Whitespace<Enc>>,
 
@@ -2444,6 +2607,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     pub const MAX_ALIAS_EXPANSION: usize = 16 * 1024 * 1024;
 
     pub fn init(bump: &'i bun_alloc::Arena, input: &'i [Enc::Unit]) -> Self {
+        // Trailing NUL units are alignment padding (TypedArray inputs), not
+        // stream content. Stripping them here lets the `0 =>` scanner arms
+        // distinguish a real embedded NUL ([1] c-printable error) from EOF.
+        let mut end = input.len();
+        while end > 0 && input[end - 1] == Enc::NUL {
+            end -= 1;
+        }
+        let input = &input[..end];
         // [206] l-document-prefix ::= c-byte-order-mark? l-comment*
         let start = Pos::from(Enc::bom_len(input));
         Self {
@@ -2464,6 +2635,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             explicit_document_start_line: None,
             anchors: StringHashMap::default(),
             tag_handles: StringHashMap::default(),
+            secondary_handle_redefined: false,
+            at_doc_prefix: false,
             whitespace_buf: Vec::new(),
             stack_check: StackCheck::init(),
             merge_props_budget: MappingProps::MAX_MERGED_PROPERTIES,
@@ -2487,6 +2660,21 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     pub fn parse_stream(&mut self) -> Result<Stream<Enc>, ParseError> {
         let mut docs: Vec<Document> = Vec::new();
+
+        // [211] l-yaml-stream ::= l-document-prefix* l-any-document?
+        //   ( l-document-suffix+ l-document-prefix* l-any-document? | … )*
+        // The first `l-any-document?` is optional, so a leading `...`
+        // (l-document-suffix) does not imply a preceding null document.
+        // Consume any leading suffixes here so `parse_document` doesn't emit
+        // a spurious null root for them.
+        while matches!(self.token.data, TokenData::DocumentEnd) {
+            let document_end_line = self.token.line;
+            self.at_doc_prefix = true;
+            self.scan(ScanOptions::default())?;
+            if self.token.line == document_end_line && !matches!(self.token.data, TokenData::Eof) {
+                return Err(Self::unexpected_token());
+            }
+        }
 
         // we want one null document if eof, not zero documents.
         let mut first = true;
@@ -2552,7 +2740,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     // TODO: move most of this into `scan()`
     fn parse_directive(&mut self) -> Result<Directive, ParseError> {
-        if self.token.indent != Indent::NONE {
+        // [82] l-directive must start at column 0; s-indent is spaces only,
+        // so a leading tab is not valid separation either.
+        if self.token.indent != Indent::NONE || self.tab_after_indent {
             return Err(ParseError::InvalidDirective);
         }
 
@@ -2561,7 +2751,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.inc(4);
 
             self.try_skip_s_white()?;
+            let major = self.string_range();
             self.try_skip_ns_dec_digits()?;
+            // [86]/[87] A version-1.2 processor must reject documents with a
+            // different major version. [86] is `ns-dec-digit+` so leading
+            // zeros (`01`) are syntactically valid; compare numerically.
+            let major_digits = major.end(self.pos).slice(self.input);
+            let nz = major_digits
+                .iter()
+                .position(|&d| Enc::wide(d) != 0x30)
+                .unwrap_or_else(|| major_digits.len().saturating_sub(1));
+            if major_digits[nz..] != *Enc::literal(b"1").as_ref() {
+                return Err(ParseError::InvalidDirective);
+            }
             self.try_skip_char(Enc::ch(b'.'))?;
             self.try_skip_ns_dec_digits()?;
 
@@ -2595,6 +2797,20 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 self.try_skip_s_white()?;
                 let prefix = self.parse_directive_tag_prefix()?;
                 self.try_skip_to_new_line()?;
+                // `%TAG !! tag:yaml.org,2002:` is a no-op redeclaration; only
+                // mark redefined when the prefix actually changes so `!!int`
+                // etc. keep mapping to Core.
+                self.secondary_handle_redefined = match &prefix {
+                    DirectiveTagPrefix::Global(r) => {
+                        let s = r.slice(self.input);
+                        let default = b"tag:yaml.org,2002:";
+                        s.len() != default.len()
+                            || s.iter()
+                                .zip(default)
+                                .any(|(&a, &b)| Enc::wide(a) != b as u32)
+                    }
+                    DirectiveTagPrefix::Local(_) => true,
+                };
                 return Ok(Directive::Tag(DirectiveTag {
                     handle: DirectiveTagHandle::Secondary,
                     prefix,
@@ -2609,8 +2825,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.try_skip_s_white()?;
 
             // TODO(port): StringHashMap key type; for Utf16 needs different keying.
-            self.tag_handles
-                .put(Enc::key_bytes(handle.slice(self.input)), ())?;
+            // [89] It is an error to specify more than one TAG directive for
+            // the same handle in the same document.
+            let key = Enc::key_bytes(handle.slice(self.input));
+            if self.tag_handles.contains_key(key) {
+                return Err(ParseError::InvalidDirective);
+            }
+            self.tag_handles.put(key, ())?;
 
             let prefix = self.parse_directive_tag_prefix()?;
             self.try_skip_to_new_line()?;
@@ -2624,6 +2845,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let range = self.string_range();
         self.try_skip_ns_chars()?;
         let reserved = range.end(self.pos);
+
+        // [82] `YAML` and `TAG` are not reserved names — reaching here with
+        // either means the well-formed branch above did not match (e.g.
+        // `%TAG\n` with no arguments).
+        let name = reserved.slice(self.input);
+        if name == Enc::literal(b"YAML").as_ref() || name == Enc::literal(b"TAG").as_ref() {
+            return Err(ParseError::InvalidDirective);
+        }
 
         self.skip_s_white();
 
@@ -2663,16 +2892,46 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         // Zig: `clearRetainingCapacity()` — `HashMap::clear()` already retains capacity.
         self.anchors.clear();
         self.tag_handles.clear();
+        self.secondary_handle_redefined = false;
+        // [202] l-document-prefix has been consumed (by `init()`'s BOM strip,
+        // by `parse_stream`'s leading-`...` loop, or by the previous
+        // document's `DocumentEnd` arm). Every scan() inside this document —
+        // post-directive, post-`---`, content — sees BOM as content.
+        self.at_doc_prefix = false;
 
         let mut has_yaml_directive = false;
+        let mut has_primary_tag = false;
+        let mut has_secondary_tag = false;
 
         while matches!(self.token.data, TokenData::Directive) {
             let directive = self.parse_directive()?;
-            if matches!(directive, Directive::Yaml) {
-                if has_yaml_directive {
-                    return Err(ParseError::MultipleYamlDirectives);
+            match &directive {
+                Directive::Yaml => {
+                    if has_yaml_directive {
+                        return Err(ParseError::MultipleYamlDirectives);
+                    }
+                    has_yaml_directive = true;
                 }
-                has_yaml_directive = true;
+                // [89] It is an error to specify more than one TAG directive
+                // for the same handle in the same document. Named handles are
+                // checked against `tag_handles` in `parse_directive`; primary
+                // and secondary aren't keyed there, so track them here.
+                Directive::Tag(tag) => match tag.handle {
+                    DirectiveTagHandle::Primary => {
+                        if has_primary_tag {
+                            return Err(ParseError::InvalidDirective);
+                        }
+                        has_primary_tag = true;
+                    }
+                    DirectiveTagHandle::Secondary => {
+                        if has_secondary_tag {
+                            return Err(ParseError::InvalidDirective);
+                        }
+                        has_secondary_tag = true;
+                    }
+                    DirectiveTagHandle::Named(_) => {}
+                },
+                Directive::Reserved(_) => {}
             }
             directives.push(directive);
             self.scan(ScanOptions::default())?;
@@ -2698,6 +2957,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             TokenData::DocumentStart => {}
             TokenData::DocumentEnd => {
                 let mut document_end_line = self.token.line;
+                // The next document's [202] l-document-prefix begins after
+                // this `...`; reset per-document scan state so the next
+                // scan() (which produces that document's first token) sees
+                // BOM as a prefix and `!!` as Core, not this document's
+                // redefinition.
+                self.at_doc_prefix = true;
+                self.secondary_handle_redefined = false;
                 self.scan(ScanOptions::default())?;
 
                 // consume all bare documents
@@ -3806,6 +4072,16 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     self.token.indent.is_less_than_or_equal(n)
                 };
                 if belongs_to_parent {
+                    // [63]/[78] e-node here means the indicator's value is
+                    // empty and what follows is s-l-comments. A tab-only final
+                    // line satisfies l-comment only with a trailing b-comment;
+                    // at EOF the tab is stranded as neither s-indent nor
+                    // separation-before-content. (Tab-only *blank* lines —
+                    // tab then newline — reset tab_after_indent in newline()
+                    // and are accepted as l-comment.)
+                    if self.tab_after_indent && matches!(self.token.data, TokenData::Eof) {
+                        return Err(ParseError::TabIndentation);
+                    }
                     // The post-property re-scan baked `value_tag` into a plain
                     // scalar's resolution (`ScanOptions.tag`); if that scalar
                     // is now abandoned to the parent, rewind to its start and
@@ -3850,10 +4126,15 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 // indent ≥ n+1 via s-indent (spaces only); tab separation
                 // either leaves the token at the line's natural indent (≤ n)
                 // or, when spaces preceded the tab, taints tab_after_indent.
+                // The compact branch has no properties production — an
+                // anchor/tag forces the [200] block-collection path, which
+                // requires s-l-comments (a line break) before the collection.
                 TokenData::SequenceEntry | TokenData::MappingKey
                     if self.token.line == indicator_line
                         && (self.token.indent.is_less_than_or_equal(n)
-                            || self.tab_after_indent) =>
+                            || self.tab_after_indent
+                            || value_anchor.is_some()
+                            || value_tag.is_some()) =>
                 {
                     return Err(if self.tab_after_indent {
                         ParseError::TabIndentation
@@ -3916,7 +4197,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }) => *t,
             _ => NodeTag::None,
         };
-        let e_node = resolved_tag.resolve_null(loc);
+        let e_node = resolved_tag.resolve_null(loc)?;
         if let Some(Token {
             data: TokenData::Anchor(name),
             ..
@@ -3962,6 +4243,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
         // c-ns-properties
         let mut node_props: NodeProperties<Enc> = NodeProperties::default();
+        // [80] s-separate(n,FLOW-KEY) = s-separate-in-line: in FlowKey
+        // context, the first property's line bounds where content may appear.
+        let mut flow_key_prop_line: Option<Line> = None;
 
         if let Some(tag) = opts.scanned_tag {
             node_props.set_tag(tag)?;
@@ -3980,21 +4264,65 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 TokenData::Anchor(_anchor) => {
+                    let prop_line = *flow_key_prop_line.get_or_insert(self.token.line);
                     node_props.set_anchor(self.token.clone())?;
                     self.scan(ScanOptions {
                         tag: node_props.tag(),
                         ..Default::default()
                     })?;
+                    // [80] s-separate(n,FLOW-KEY) = s-separate-in-line — an
+                    // implicit flow-map key's c-ns-properties must stay on the
+                    // key's line. parse_flow_explicit_key pre-scans properties
+                    // before pushing FlowKey, so explicit `?` keys never reach
+                    // this arm with FlowKey set. A terminator (`}`/`]`/`,`/`:`)
+                    // means the key is the e-scalar — no separation to check.
+                    if self.context.get() == Context::FlowKey
+                        && self.token.line != prop_line
+                        && matches!(
+                            self.token.data,
+                            // Only fire on tokens that ARE the key's content.
+                            // Terminators (`}`/`]`/`,`/`:`) mean an e-node
+                            // key; a second `Tag`/`Anchor` defers the check
+                            // to the next iteration so `{&a\n!!str }` (e-node)
+                            // is accepted while `{&a\n!!str b: 1}` errors via
+                            // the first-prop line comparison.
+                            TokenData::Scalar(_)
+                                | TokenData::Alias(_)
+                                | TokenData::SequenceStart
+                                | TokenData::MappingStart
+                        )
+                    {
+                        return Err(ParseError::MultilineImplicitKey);
+                    }
                     continue;
                 }
 
                 TokenData::Tag(tag) => {
                     let tag = *tag;
+                    let prop_line = *flow_key_prop_line.get_or_insert(self.token.line);
                     node_props.set_tag(self.token.clone())?;
                     self.scan(ScanOptions {
                         tag,
                         ..Default::default()
                     })?;
+                    if self.context.get() == Context::FlowKey
+                        && self.token.line != prop_line
+                        && matches!(
+                            self.token.data,
+                            // Only fire on tokens that ARE the key's content.
+                            // Terminators (`}`/`]`/`,`/`:`) mean an e-node
+                            // key; a second `Tag`/`Anchor` defers the check
+                            // to the next iteration so `{&a\n!!str }` (e-node)
+                            // is accepted while `{&a\n!!str b: 1}` errors via
+                            // the `first_prop_line` comparison.
+                            TokenData::Scalar(_)
+                                | TokenData::Alias(_)
+                                | TokenData::SequenceStart
+                                | TokenData::MappingStart
+                        )
+                    {
+                        return Err(ParseError::MultilineImplicitKey);
+                    }
                     continue;
                 }
 
@@ -4100,11 +4428,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         {
                             break 'node seq;
                         }
-                        if self.context.get() == Context::FlowKey {
-                            break 'node seq;
-                        }
+                        // §7.4.2 Implicit keys are restricted to a single
+                        // line. Runs before the FlowKey return so a multiline
+                        // `[a,\nb]` used as a flow-map key is rejected.
                         if sequence_line != self.token.line && !opts.explicit_mapping_key {
                             return Err(ParseError::MultilineImplicitKey);
+                        }
+                        if self.context.get() == Context::FlowKey {
+                            break 'node seq;
                         }
 
                         // [192] implicit key sits at s-indent(n) (spaces only).
@@ -4192,11 +4523,11 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         {
                             break 'node map;
                         }
-                        if self.context.get() == Context::FlowKey {
-                            break 'node map;
-                        }
                         if mapping_line != self.token.line && !opts.explicit_mapping_key {
                             return Err(ParseError::MultilineImplicitKey);
+                        }
+                        if self.context.get() == Context::FlowKey {
+                            break 'node map;
                         }
 
                         // [192] implicit key sits at s-indent(n) (spaces only).
@@ -4316,7 +4647,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     } else {
                         NodeTag::None
                     };
-                    let first_key = key_tag.resolve_null(self.token.start.loc());
+                    let first_key = key_tag.resolve_null(self.token.start.loc())?;
 
                     let implicit_key_anchors = node_props.implicit_key_anchors(colon_line)?;
                     if let Some(key_anchor) = implicit_key_anchors.key_anchor {
@@ -4479,8 +4810,26 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             return Err(ParseError::MultipleTags);
         }
 
+        // [10.1/10.2] Apply the explicit tag to the produced node. The plain
+        // scalar resolver already honoured `node_props.tag()` for the matching
+        // form; here we (a) construct from the string fallback when an
+        // explicit `!!bool`/`!!int`/`!!float`/`!!null` was on a quoted scalar
+        // or on a plain scalar whose form did not match, and (b) reject a
+        // scalar tag on a collection (§3.3.2 kind mismatch).
+        let tag = node_props.tag();
         let resolved = match &node.data {
-            ast::ExprData::ENull(_) => node_props.tag().resolve_null(node.loc),
+            ast::ExprData::ENull(_) => tag.resolve_null(node.loc)?,
+            ast::ExprData::EArray(_) | ast::ExprData::EObject(_) if tag.is_core_scalar() => {
+                return Err(ParseError::TagContentMismatch);
+            }
+            ast::ExprData::EString(s)
+                if matches!(
+                    tag,
+                    NodeTag::Bool | NodeTag::Int | NodeTag::Float | NodeTag::Null
+                ) =>
+            {
+                tag.construct_scalar(s, node.loc)?
+            }
             _ => node,
         };
 
@@ -4600,6 +4949,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match __c {
                 0 => {
+                    if !parser!().is_eof() {
+                        return Err(ParseError::NonPrintableCharacter);
+                    }
                     return Ok(ctx.done());
                 }
 
@@ -4765,6 +5117,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 }
 
                 _ => {
+                    check_printable_ascii(__c, false)?;
                     let c = parser!().next();
                     if ctx.resolved || ctx.str_builder.len() != 0 {
                         let start = parser!().pos;
@@ -4945,6 +5298,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::NonPrintableCharacter);
+                    }
                     return Ok((
                         indent_indicator.unwrap_or(IndentIndicator::DEFAULT),
                         chomp.unwrap_or(Chomp::DEFAULT),
@@ -4978,6 +5334,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     continue;
                 }
                 0x20 | 0x09 /* ' ' | '\t' */ => {
+                    // [162] header indicators are adjacent to `|`/`>`; once
+                    // s-separate-in-line is seen we are in [77] s-b-comment —
+                    // only an optional `#…` then b-break/EOF may follow.
                     self.inc(1);
                     self.skip_s_white();
                     if Enc::wide(self.next()) == 0x23 /* '#' */ {
@@ -4985,6 +5344,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         while !self.is_b_char_or_eof() {
                             self.inc(1);
                         }
+                    }
+                    if !self.is_b_char_or_eof() {
+                        return Err(ParseError::UnexpectedCharacter);
                     }
                     __c = Enc::wide(self.next());
                     continue;
@@ -5087,6 +5449,7 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             }
 
             fn append(&mut self, c: Enc::Unit) -> Result<(), ParseError> {
+                check_printable_ascii(Enc::wide(c), false)?;
                 if self.text.is_empty() {
                     if !self.explicit_indent
                         && self.content_indent.is_less_than(self.max_leading_indent)
@@ -5160,6 +5523,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let __c = Enc::wide(self.next());
             match __c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::NonPrintableCharacter);
+                    }
                     // Official yaml-test-suite JEF9/02: trailing indentation
                     // at EOF without a final break counts as one trailing
                     // empty line for chomping (matches eemeli/yaml + js-yaml).
@@ -5250,7 +5616,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         let mut __c = first;
         loop {
             match __c {
-                0 => return Ok(ctx.done()?),
+                0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::NonPrintableCharacter);
+                    }
+                    return Ok(ctx.done()?);
+                }
                 0x0D => {
                     if Enc::wide(self.peek(1)) == 0x0A {
                         self.inc(1);
@@ -5399,7 +5770,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             let c = Enc::wide(self.next());
             match c {
-                0 => return Err(ParseError::UnexpectedCharacter),
+                0 => {
+                    return Err(if self.is_eof() {
+                        ParseError::UnexpectedCharacter
+                    } else {
+                        ParseError::NonPrintableCharacter
+                    });
+                }
                 0x2E /* '.' */ => {
                     if self.is_at_line_start()
                         && self.remain_starts_with(Enc::literal(b"..."))
@@ -5464,7 +5841,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                         },
                     }));
                 }
-                _ => {
+                c => {
+                    check_printable_ascii(c, true)?;
                     text.push(self.next());
                     self.inc(1);
                 }
@@ -5482,7 +5860,13 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
         loop {
             let c = Enc::wide(self.next());
             match c {
-                0 => return Err(ParseError::UnexpectedCharacter),
+                0 => {
+                    return Err(if self.is_eof() {
+                        ParseError::UnexpectedCharacter
+                    } else {
+                        ParseError::NonPrintableCharacter
+                    });
+                }
                 0x2E /* '.' */ => {
                     if self.is_at_line_start()
                         && self.remain_starts_with(Enc::literal(b"..."))
@@ -5545,7 +5929,14 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 0x5C /* '\\' */ => {
                     self.inc(1);
                     match Enc::wide(self.next()) {
-                        0x0D | 0x0A => {
+                        b @ (0x0D | 0x0A) => {
+                            // [112] s-double-escaped: `\` + b-non-content joins
+                            // as nothing. CRLF is a single b-break — step past
+                            // the CR so fold_lines doesn't count the trailing
+                            // LF as an extra empty line.
+                            if b == 0x0D && Enc::wide(self.peek(1)) == 0x0A {
+                                self.inc(1);
+                            }
                             self.newline();
                             self.inc(1);
                             let lines = self.fold_lines();
@@ -5606,7 +5997,8 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     self.inc(1);
                 }
-                _ => {
+                c => {
+                    check_printable_ascii(c, true)?;
                     text.push(self.next());
                     self.inc(1);
                 }
@@ -5627,6 +6019,36 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let num =
                 bun_core::fmt::hex_digit_value_u32(digit).ok_or(ParseError::UnexpectedCharacter)?;
             value = value * 16 + num as u32;
+        }
+
+        // [57] ns-esc-16-bit: a `\u` high surrogate immediately followed by a
+        // `\u` low surrogate combines to one supplementary code point. Peek
+        // non-destructively; only commit when the pair is well-formed.
+        if matches!(escape, Escape::LowerU)
+            && (0xD800..=0xDBFF).contains(&value)
+            && Enc::wide(self.peek(1)) == 0x5C /* '\\' */
+            && Enc::wide(self.peek(2)) == 0x75
+        /* 'u' */
+        {
+            let mut lo: u32 = 0;
+            let mut have_lo = true;
+            for i in 0..4 {
+                match bun_core::fmt::hex_digit_value_u32(Enc::wide(self.peek(3 + i))) {
+                    Some(d) => lo = lo * 16 + d as u32,
+                    None => {
+                        have_lo = false;
+                        break;
+                    }
+                }
+            }
+            if have_lo {
+                if let Some(cp) = bun_core::strings::decode_surrogate_pair(value as u16, lo as u16)
+                {
+                    // Skip `\uXXXX`; the caller's trailing inc(1) lands past it.
+                    self.inc(6);
+                    value = cp;
+                }
+            }
         }
 
         if value > 0x10_FFFF {
@@ -5794,6 +6216,12 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
     }
 
     fn shorthand_to_tag(&self, shorthand: StringRange) -> NodeTag {
+        // [10.2] The Core-schema tags are `tag:yaml.org,2002:*`, which is the
+        // *default* secondary prefix. `%TAG !! ...` overrides it; `!!int` then
+        // denotes an application tag, not the Core int (Spec Example 6.19).
+        if self.secondary_handle_redefined {
+            return NodeTag::Unknown(shorthand);
+        }
         let s = shorthand.slice(self.input);
         // TODO(port): comparing &[Enc::Unit] to ASCII literals; assumes u8-compatible.
         if eq_ascii::<Enc>(s, b"bool") {
@@ -5837,6 +6265,9 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             let c = Enc::wide(self.next());
             match c {
                 0 => {
+                    if !self.is_eof() {
+                        return Err(ParseError::NonPrintableCharacter);
+                    }
                     let start = self.pos;
                     break 'next Token::eof(self.token_init(start));
                 }
@@ -6141,6 +6572,19 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     }
                     count_indentation = false;
                     self.inc(1);
+                    continue;
+                }
+                // [202]/[211] l-document-prefix admits c-byte-order-mark
+                // before each document. Strip BOM only when between documents
+                // (`at_doc_prefix` is set after `...`). A BOM at line-start
+                // inside a node (`[a,\n﻿b]`, `a: b\n﻿c: d`) is content.
+                0xEF | 0xFEFF
+                    if self.at_doc_prefix
+                        && self.is_at_line_start()
+                        && Enc::bom_len(self.remain()) > 0 =>
+                {
+                    self.inc(Enc::bom_len(self.remain()));
+                    self.line_start_pos = self.pos;
                     continue;
                 }
                 _ => {

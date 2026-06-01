@@ -1223,8 +1223,10 @@ folded: >
         test("tag on e-node implicit key — [200]/[193] line split", () => {
           // Same line → key's tag (`!!str` e-node = "").
           expect(YAML.parse("!!str : x\n")).toEqual({ "": "x" });
-          // Prior line → collection's tag; key stays null.
-          expect(YAML.parse("!!str\n: x\n")).toEqual({ null: "x" });
+          // `!!str` on a mapping is a §3.3.2 kind mismatch; use a non-scalar
+          // tag to show the collection-tag attachment.
+          expect(YAML.parse("!!map\n: x\n")).toEqual({ null: "x" });
+          expect(() => YAML.parse("!!str\n: x\n")).toThrow();
         });
 
         test("at top level, content at indent 0 is still content (n = -1)", () => {
@@ -1313,7 +1315,7 @@ folded: >
           // re-scanned tag-neutral.
           expect(YAML.parse("a: !!str\n0xFF: c\n")).toEqual({ a: "", 255: "c" });
           expect(YAML.parse("a: !!str\n~: c\n")).toEqual({ a: "", null: "c" });
-          expect(YAML.parse("a: !!int\ntrue: c\n")).toEqual({ a: null, true: "c" });
+          expect(YAML.parse("a: !\ntrue: c\n")).toEqual({ a: "", true: "c" });
           // Content (indent > n) keeps the tag.
           expect(YAML.parse("a: !!str\n  0xFF\n")).toEqual({ a: "0xFF" });
           expect(YAML.parse("a:\n  !!str\n  0xFF\n")).toEqual({ a: "0xFF" });
@@ -1533,12 +1535,20 @@ folded: >
         test("multiline JSON-style key check ordering", () => {
           // §7.4.2 prose says implicit keys are "restricted to a single
           // line", but the official yaml-test-suite (4MUZ/*, 5MUD, 9SA2,
-          // K3WX, NJ66, UT92, VJP3/01) expects these to PARSE — the grammar
-          // ([148] s-separate spans lines) wins. js-yaml/PyYAML/ruamel reject
-          // (libyaml lookahead limit, not spec); eemeli/yaml accepts.
-          expect(YAML.parse("{[1]\n:2}\n")).toEqual({ 1: 2 });
-          expect(YAML.parse("{{k:1}\n:2}\n")).toEqual({ "[object Object]": 2 });
+          // K3WX, NJ66, UT92, VJP3/01) expects a *scalar* key with `:` on
+          // the next line to PARSE — the grammar ([148] s-separate spans
+          // lines) wins. js-yaml/PyYAML/ruamel reject (libyaml lookahead
+          // limit, not spec); eemeli/yaml accepts.
           expect(YAML.parse('{"a"\n:1}\n')).toEqual({ a: 1 });
+          // Flow-collection keys spanning lines are NOT covered by those
+          // suite cases; 3/4 refs reject and §7.4.2 applies.
+          expect(() => YAML.parse("{[a,\nb]: 1}\n")).toThrow("Multiline implicit key");
+          expect(() => YAML.parse("{[a\nb]: 1}\n")).toThrow("Multiline implicit key");
+          expect(() => YAML.parse("{[1]\n:2}\n")).toThrow("Multiline implicit key");
+          expect(() => YAML.parse("{{k:1}\n:2}\n")).toThrow("Multiline implicit key");
+          expect(() => YAML.parse("{{a:\n1}: 2}\n")).toThrow("Multiline implicit key");
+          // Explicit `?` key may span lines.
+          expect(YAML.parse("{? [a,\nb]\n: 1}\n")).toEqual({ "a,b": 1 });
           // Block context ([150] s-separate-in-line) and flow-seq pairs
           // ([151]/[150]) are still single-line.
           expect(() => YAML.parse("[1]\n:2\n")).toThrow();
@@ -1833,7 +1843,7 @@ folded: >
       // Bugs surfaced by the multi-modal bughunt (12 finder lenses × 3 rounds).
       // Each todo asserts the spec-correct result.
       describe("bughunt findings", () => {
-        test.todo("NUL byte (U+0000) is not c-printable — should error, not truncate", () => {
+        test("NUL byte (U+0000) is not c-printable — should error, not truncate", () => {
           // [1] c-printable excludes NUL. Currently NUL is the EOF sentinel, so
           // input is silently truncated. Data loss / security-adjacent.
           expect(() => YAML.parse("a: 1\x00b: 2")).toThrow();
@@ -1864,21 +1874,24 @@ folded: >
           expect(YAML.parse("%TAG !y! tag:yaml.org,2002:\n---\n!y!int 42")).toBe(42);
         });
 
-        test.todo("explicit tag on quoted scalar coerces ([10.1.1.8] resolve via tag)", () => {
+        test("explicit tag on quoted scalar coerces ([10.1.1.8] resolve via tag)", () => {
           expect(YAML.parse("!!bool 'true'")).toBe(true);
           expect(YAML.parse('!!int "42"')).toBe(42);
         });
 
-        test.todo("`!!int`/`!!float` validate their content", () => {
+        test("`!!int`/`!!float` validate their content", () => {
           // [10.2.1.2]/[10.2.1.4] — the tag's regex must match.
           expect(() => YAML.parse("!!int 1.5")).toThrow();
           expect(() => YAML.parse("!!float 0x1f")).toThrow();
         });
 
-        test.todo("`\\uXXXX` surrogate pairs combine ([57] ns-esc-16-bit)", () => {
+        test("`\\uXXXX` surrogate pairs combine ([57] ns-esc-16-bit)", () => {
           // js-yaml/eemeli combine surrogate halves to the supplementary code
-          // point. Currently rejected.
-          expect(YAML.parse('"\\uD834\\uDD1E"')).toBe("𝄞");
+          // point.
+          expect(YAML.parse('"\\uD834\\uDD1E"')).toBe("\u{1D11E}");
+          // a high surrogate not followed by a `\u` low half still errors.
+          expect(() => YAML.parse('"\\uD834x"')).toThrow();
+          expect(() => YAML.parse('"\\uD834\\n"')).toThrow();
         });
 
         test.todo("s-separate required after tag ([97] c-ns-tag-property)", () => {
@@ -1887,7 +1900,7 @@ folded: >
           expect(() => YAML.parse("!tag,x a")).toThrow();
         });
 
-        test.todo("`%YAML`/`%TAG` directive validation", () => {
+        test("`%YAML`/`%TAG` directive validation", () => {
           // [86]/[88] require arguments; [87] requires major version 1;
           // [89] forbids duplicate handle in same document.
           expect(() => YAML.parse("%YAML\n---\nfoo")).toThrow();
@@ -1917,12 +1930,485 @@ folded: >
           expect(() => YAML.parse("- &a 1\n- !!str\n  *a")).toThrow();
         });
 
-        test.todo("block-scalar header rejects whitespace before chomp/indent indicator", () => {
+        test("block-scalar header rejects whitespace before chomp/indent indicator", () => {
           // [162] c-b-block-header: no s-separate between `|`/`>` and indicators.
           expect(() => YAML.parse("| 1\n  text")).toThrow();
         });
       });
 
+      // ══════════════════════════════════════════════════════════════════
+      // YAML 1.2.2 spec-gap catalog
+      // 768 inputs across 10 spec sections, bulk-probed against eemeli/yaml,
+      // js-yaml, PyYAML, ruamel; each todo asserts ≥3/4-ref consensus.
+      // Titles flag "false positive" / "bun spec-correct" where Bun is
+      // believed right and refs are lenient or strict-on-unresolved-tag.
+      // ══════════════════════════════════════════════════════════════════
+      describe("YAML 1.2.2 spec-gap catalog", () => {
+        describe("§5 Character productions (ch5-chars)", () => {
+          const NP_ERR = "Non-printable character not allowed in YAML";
+
+          // [1] c-printable / [2] nb-json — ASCII range. C0 (except tab/LF/CR)
+          // is excluded from both; DEL (x7F) is excluded from c-printable but
+          // permitted by nb-json (so quoted scalars accept it, plain/block do not).
+          describe.each([
+            ["plain", (c: string) => `a${c}b`, false],
+            ["plain-flow", (c: string) => `[a${c}b]`, false],
+            ["block-literal", (c: string) => `|\n a${c}b\n`, false],
+            ["block-folded", (c: string) => `>\n a${c}b\n`, false],
+            ["single-quoted", (c: string) => `'a${c}b'`, true],
+            ["double-quoted", (c: string) => `"a${c}b"`, true],
+          ] as const)("in %s scalar", (_ctx, build, nbJson) => {
+            test.each(["\x01", "\x08", "\x0B", "\x0C", "\x0E", "\x1F"])("C0 %j errors", c =>
+              expect(() => YAML.parse(build(c))).toThrow(NP_ERR),
+            );
+            test("tab (x09) is the one C0 in both sets", () => {
+              expect(YAML.parse(build("\t"))).toBeDefined();
+            });
+            if (nbJson) {
+              test("DEL (x7F) is in nb-json — accepted", () => {
+                expect(() => YAML.parse(build("\x7F"))).not.toThrow();
+              });
+            } else {
+              test("DEL (x7F) is not c-printable — errors", () => {
+                expect(() => YAML.parse(build("\x7F"))).toThrow(NP_ERR);
+              });
+            }
+            test.each(["é", "中", "🎉"])("non-ASCII %s accepted", c => {
+              expect(() => YAML.parse(build(c))).not.toThrow();
+            });
+          });
+
+          // C1/NEL/FFFE are multi-byte UTF-8; validating them requires
+          // codepoint decode at the catch-all arm. ASCII-range only for now.
+          test.todo.each(["\x9F", "\x84", "\x86"])(
+            "[1] C1 control (non-NEL) in plain: NOT c-printable → error: %j",
+            input => expect(() => YAML.parse(`a${input}b`)).toThrow(),
+          );
+          test.todo("[1] U+FFFE in plain: NOT c-printable → error", () => {
+            expect(() => YAML.parse(`a\uFFFEb`)).toThrow();
+          });
+
+          // refs reject these on unresolved-tag, not syntax — likely false positives
+          test.todo.each([`!<tag:%4a> v`, `!<%41> v`, `!<a[b]c> v`])(
+            "[39] ns-uri-char in verbatim tag — refs reject as unresolved (false positive): %j",
+            input => {
+              expect(() => YAML.parse(input)).toThrow();
+            },
+          );
+        });
+
+        describe("§6.1–6.6 Basic structures (ch6-structure)", () => {
+          test.todo("[77] no space between `]` and `#` — bun spec-correct; refs lenient", () => {
+            expect(YAML.parse(`[1]#c`)).toEqual([1]);
+          });
+
+          test.todo("[77] no space between closing quote and `#` — bun spec-correct; refs lenient", () => {
+            expect(YAML.parse(`'a'#c`)).toEqual("a");
+          });
+
+          test("[80] FLOW-KEY: newline between tag and key (s-separate-in-line only)", () => {
+            expect(() => YAML.parse(`{!!str\na: 1}`)).toThrow();
+            expect(() => YAML.parse(`{&a\nx: 1}`)).toThrow();
+            expect(() => YAML.parse(`{!!str &x\na: 1}`)).toThrow();
+            expect(() => YAML.parse(`{!!str\n&x a: 1}`)).toThrow();
+            // Property + e-scalar key (terminator on next line) — no
+            // s-separate to check; the key is just the empty node.
+            expect(YAML.parse(`{!!str\n}`)).toEqual({ "": null });
+            expect(YAML.parse(`{!!str\n: x}`)).toEqual({ "": "x" });
+            expect(YAML.parse(`{&a\n: x, y: *a}`)).toEqual({ null: "x", y: null });
+            expect(YAML.parse(`{!!str\n,a}`)).toEqual({ "": null, a: null });
+            // Two properties spanning lines, then terminator (e-node key).
+            expect(YAML.parse(`{&a\n!!str }`)).toEqual({ "": null });
+            expect(YAML.parse(`{!!str\n&a }`)).toEqual({ "": null });
+            expect(YAML.parse(`{&a\n!!str ,x: 1}`)).toEqual({ "": null, x: 1 });
+            // …but two properties spanning lines then CONTENT errors.
+            expect(() => YAML.parse(`{&a\n!!str b: 1}`)).toThrow();
+            expect(() => YAML.parse(`{!!str\n&x a: 1}`)).toThrow();
+            // explicit `?` key uses s-separate(n,c) — newline allowed
+            expect(YAML.parse(`{? !!str\na: 1}`)).toEqual({ a: 1 });
+            // FLOW-IN value position uses s-separate-lines — newline allowed
+            expect(YAML.parse(`[!!str\na]`)).toEqual(["a"]);
+            expect(YAML.parse(`{a: !!str\nb}`)).toEqual({ a: "b" });
+          });
+
+          test("[63]/[78] value is tab-only line then EOF", () => {
+            expect(() => YAML.parse(`a:\n\t`)).toThrow();
+            expect(() => YAML.parse(`-\n\t`)).toThrow();
+            // tab then newline is l-comment (b-comment present) — accepted,
+            // see "tab-only blank line in block context" describe below.
+            expect(YAML.parse(`a:\n\t\n`)).toEqual({ a: null });
+          });
+        });
+
+        describe("§6.8 Directives (ch6-directives)", () => {
+          test("[82] tab-indented directive — must be at column 0", () => {
+            expect(() => YAML.parse(`\t%YAML 1.2\n---\nx`)).toThrow();
+          });
+
+          test("[87] multi-digit major >1 — must reject", () => {
+            expect(() => YAML.parse(`%YAML 11.2\n---\nx`)).toThrow();
+          });
+
+          test("[87] major version 0 — behavior unspecified", () => {
+            expect(() => YAML.parse(`%YAML 0.9\n---\nx`)).toThrow();
+          });
+
+          test.todo("[86] one %YAML per doc across stream — multi-doc (harness artifact)", () => {
+            expect(() => YAML.parse(`%YAML 1.2\n---\na\n...\n%YAML 1.2\n---\nb`)).toThrow();
+          });
+
+          test("[88] %TAG with no args → falls to reserved", () => {
+            expect(() => YAML.parse(`%TAG\n---\nx`)).toThrow();
+          });
+
+          test.todo("[88][89] primary handle + local prefix — refs reject unresolved (false positive)", () => {
+            expect(() => YAML.parse(`%TAG ! !local\n---\n!foo x`)).toThrow();
+          });
+
+          test.todo("[89] underscore NOT ns-word-char — bun spec-correct; refs lenient", () => {
+            expect(YAML.parse(`%TAG !a_b! tag:e:\n---\nx`)).toEqual("x");
+          });
+
+          test("[88] duplicate PRIMARY handle in one doc", () => {
+            expect(() => YAML.parse(`%TAG ! !a\n%TAG ! !b\n---\nx`)).toThrow();
+          });
+
+          test("[88] duplicate SECONDARY handle in one doc", () => {
+            expect(() => YAML.parse(`%TAG !! tag:a:\n%TAG !! tag:b:\n---\nx`)).toThrow();
+          });
+
+          test("[88] duplicate NAMED handle in one doc", () => {
+            expect(() => YAML.parse(`%TAG !e! tag:a:\n%TAG !e! tag:b:\n---\nx`)).toThrow();
+          });
+
+          test.todo("[88] global prefix starts with `,` — bun spec-correct; refs lenient", () => {
+            expect(YAML.parse(`%TAG !e! ,foo\n---\nx`)).toEqual("x");
+          });
+
+          test.todo("[88] global prefix starts with `[` — bun spec-correct; refs lenient", () => {
+            expect(YAML.parse(`%TAG !e! [foo\n---\nx`)).toEqual("x");
+          });
+
+          test.todo("[88] same handle in separate docs — multi-doc (harness artifact)", () => {
+            expect(() => YAML.parse(`%TAG !e! tag:a:\n---\na\n...\n%TAG !e! tag:b:\n---\nb`)).toThrow();
+          });
+
+          // yaml-test-suite XLQ9 establishes that `%` at column 0 in a plain
+          // continuation line is content, not a directive token, so refs that
+          // throw here disagree with the official suite.
+          test.todo("[82] directive after bare content (no `...` separator) — conflicts with XLQ9", () => {
+            expect(() => YAML.parse(`x\n%YAML 1.2\n---\ny`)).toThrow();
+          });
+        });
+
+        describe("§6.9 Node properties — tags & anchors (ch7-tags-anchors)", () => {
+          test.todo("[96],[40] no s-separate: secondary suffix swallows `&a` (false positive)", () => {
+            expect(() => YAML.parse(`!!str&a foo`)).toThrow();
+          });
+
+          // [98] verbatim tags — refs reject on unresolved-tag, not syntax (false positives)
+          test.todo.each([
+            `!<!foo> bar`,
+            `!<tag:ex.com,2000:a/b> bar`,
+            `!<foo[bar]> baz`,
+            `!<%54ag> foo`,
+            `[!<!foo>]`,
+            `[!<!foo>, a]`,
+            `!<!foo>\nbar`,
+            `!<!foo> [1, 2]`,
+            `!<!foo> |\n  text`,
+          ])("[98] verbatim tag — refs reject unresolved (false positive): %j", input => {
+            expect(() => YAML.parse(input)).toThrow();
+          });
+
+          test.todo("[98] verbatim is bare `!!` — spec says invalid", () => {
+            expect(() => YAML.parse(`!<!!> foo`)).toThrow();
+          });
+
+          // [99] primary-handle shorthand — refs reject on unresolved-tag (false positives)
+          test.todo.each([`!foo bar`, `!foo#bar baz`, `[!foo]`, `{!foo, a: 1}`])(
+            "[99] primary shorthand — refs reject unresolved (false positive): %j",
+            input => {
+              expect(() => YAML.parse(input)).toThrow();
+            },
+          );
+
+          // [159]/[161] admit c-ns-properties on e-scalar; libyaml-based refs
+          // reject because their scanner expects content after a property.
+          test("[99] secondary shorthand + e-scalar in flow, ends at `,` — bun spec-correct", () => {
+            expect(YAML.parse(`[!!str, a]`)).toEqual(["", "a"]);
+          });
+
+          test("[99] secondary shorthand on empty explicit key+value in flow", () => {
+            // `!!int` on empty content is [10.2.1] TagContentMismatch.
+            expect(() => YAML.parse(`{? !!str : !!int}`)).toThrow();
+          });
+
+          test.todo("[99],[40] `:` inside secondary suffix — refs reject unresolved (false positive)", () => {
+            expect(() => YAML.parse(`!!str:foo bar`)).toThrow();
+          });
+
+          // [92]/[99] named handle — refs reject on unresolved-tag (false positives)
+          test.todo.each([
+            `%TAG !e! tag:e:\n---\n!e!foo bar`,
+            `%TAG !e-1! tag:e:\n---\n!e-1!x bar`,
+            `%TAG !e! tag:e:\n---\n[!e!x]`,
+          ])("[92] named handle — refs reject unresolved (false positive): %j", input => {
+            expect(() => YAML.parse(input)).toThrow();
+          });
+
+          test.todo('[100] non-specific `!` alone, e-scalar — bun returns "" (spec-correct)', () => {
+            expect(YAML.parse(`!`)).toEqual(null);
+          });
+        });
+
+        describe("§7.3 Flow scalar styles (ch7-flow-scalars)", () => {
+          test.todo("[61] \\U lone surrogate — bun spec-correct; refs lenient", () => {
+            expect(YAML.parse(`"\\U0000D800"`)).toEqual("\uD800");
+          });
+
+          test("[112] escaped CRLF as b-non-content joins as nothing", () => {
+            expect(YAML.parse(`"a\\\r\nb"`)).toEqual("ab");
+          });
+
+          test.todo("[126] `,` is c-indicator, NOT ns-plain-first in block — must error", () => {
+            expect(() => YAML.parse(`,foo`)).toThrow();
+          });
+        });
+
+        describe("§7.4 Flow collection styles (ch7-flow-collections)", () => {
+          test.todo("[146] two empty-key entries (duplicate null key)", () => {
+            expect(() => YAML.parse(`{: , : }`)).toThrow();
+          });
+
+          // [159] c-ns-flow-node ::= … | (c-ns-properties (s-separate ns-flow-content)?)
+          // — the content is optional, so a property alone is a tagged/anchored
+          // e-scalar. libyaml-based refs reject because their scanner expects
+          // content after a property; bun's parse_node post-loop resolves the
+          // tag and registers the anchor on the implicit ENull.
+          test("[159] tag-only entries (e-scalar with property) — bun spec-correct", () => {
+            expect(YAML.parse(`[!!str , !!null]`)).toEqual(["", null]);
+          });
+
+          test("[159] tag immediately before `]` — e-scalar, no s-separate — bun spec-correct", () => {
+            expect(YAML.parse(`[!!str]`)).toEqual([""]);
+          });
+
+          test("[159] anchor+tag on e-scalar — bun spec-correct", () => {
+            expect(YAML.parse(`[&a !!str]`)).toEqual([""]);
+            // anchor is registered on the resolved e-node, so a later alias
+            // resolves to the same value.
+            expect(YAML.parse(`[&a !!str, *a]`)).toEqual(["", ""]);
+            expect(YAML.parse(`[&a , *a]`)).toEqual([null, null]);
+          });
+
+          test("[161] tag on e-scalar as flow-map value — bun spec-correct", () => {
+            expect(YAML.parse(`{a: !!str}`)).toEqual({ a: "" });
+            expect(YAML.parse(`{a: !!str , b: !!null}`)).toEqual({ a: "", b: null });
+          });
+        });
+
+        describe("§8.1 Block scalar styles (ch8-block-scalars)", () => {
+          test("[162] chomp after s-separate is not part of header (should error)", () => {
+            expect(() => YAML.parse(`|1 +\n text\n`)).toThrow();
+          });
+
+          test.todo("[170] tab as first-line indent — bun spec-correct; refs lenient", () => {
+            expect(YAML.parse(`|\n\ttext\n`)).toEqual("\ttext\n");
+          });
+
+          test.todo("[173] `---` at col 0 terminates literal — multi-doc (harness artifact)", () => {
+            expect(() => YAML.parse(`|\n text\n---\n`)).toThrow();
+          });
+        });
+
+        describe("§8.2 Block collection styles (ch8-block-collections)", () => {
+          test("[185] anchor between `-` and compact `?` — property blocks compact-map", () => {
+            expect(() => YAML.parse(`- &a ? b\n`)).toThrow();
+          });
+
+          test.todo("[192] two e-node-key entries — duplicate null key handling", () => {
+            expect(() => YAML.parse(`: a\n: b\n`)).toThrow();
+          });
+
+          test.todo("[195] compact-map with two e-node-key entries", () => {
+            expect(() => YAML.parse(`- : a\n  : b\n`)).toThrow();
+          });
+
+          test.todo("[197] `#` after closing quote (no s-white) — bun spec-correct; refs lenient", () => {
+            expect(YAML.parse(`- "a"#c\n`)).toEqual(["a"]);
+          });
+
+          test("[200] tag/content kind mismatch — !!str on a block-seq", () => {
+            expect(() => YAML.parse(`- !!str\n  - a\n`)).toThrow();
+          });
+        });
+
+        describe("§9 Document stream (ch9-documents)", () => {
+          test.todo("[203] tab before `---` — not at column 0", () => {
+            expect(() => YAML.parse(`\t---\na`)).toThrow();
+          });
+
+          test.todo("[204] `...` followed by CRLF — multi-doc (harness artifact)", () => {
+            expect(() => YAML.parse(`a\n...\r\nb`)).toThrow();
+          });
+
+          test.todo.each([`a\n... # end\nb`, `a\n...\t# end\nb`])(
+            "[205] comment on same line as `...` — multi-doc (harness artifact): %j",
+            input => {
+              expect(() => YAML.parse(input)).toThrow();
+            },
+          );
+
+          test.todo("[206] `---` at col 0 terminates folded scalar — multi-doc (harness artifact)", () => {
+            expect(() => YAML.parse(`>\n  a\n---\nb`)).toThrow();
+          });
+
+          test.todo("[209] %TAG before %YAML — refs reject unresolved !str (false positive)", () => {
+            expect(() => YAML.parse(`%TAG !e! !\n%YAML 1.2\n---\n!e!str x`)).toThrow();
+          });
+
+          // [211] l-yaml-stream multi-doc shapes — refs single-doc load API rejects
+          // multi-doc (harness artifact). Bun's multi-doc array result is likely fine.
+          test.todo.each([
+            `...\n...\n...\n`,
+            `a\n...\nb\n...\nc`,
+            `a\n...\n...\nb`,
+            `a\n...\n%YAML 1.2\n---\nb`,
+            `---\na\n...\n%YAML 1.2\n---\nb`,
+            `---\n---\n---`,
+            `a\n...\n# c1\n# c2\nb`,
+            `---\n...\n---\n...\n`,
+            `a\n---\n...\nb`,
+            `---\n...\n...\n`,
+            `a\n---\nb\n...\nc\n---\nd`,
+            `a\n...\n---`,
+          ])("[211] multi-doc stream shape — refs single-doc API (harness artifact): %j", input => {
+            expect(() => YAML.parse(input)).toThrow();
+          });
+
+          test.todo("[211] directive after bare doc WITHOUT suffix → error", () => {
+            expect(() => YAML.parse(`a\n%YAML 1.2\n---\nb`)).toThrow();
+          });
+
+          // [211] the first `l-any-document?` is optional, so a stream that
+          // opens with `...` (l-document-suffix) has no preceding null doc.
+          test.each([`...\nfoo`, `...\n---\nfoo`, `﻿...\nfoo`, `# c\n...\n# c\nfoo`])(
+            "[211] leading `...` before any doc — no spurious null doc: %j",
+            input => {
+              expect(YAML.parse(input)).toBe("foo");
+            },
+          );
+
+          test("[211]/[202] BOM as inter-doc prefix — stripped from content", () => {
+            expect(YAML.parse(`a\n...\n﻿b`)).toEqual(["a", "b"]);
+          });
+
+          test("[211]/[202] BOM + newline as inter-doc prefix — not a doc", () => {
+            expect(YAML.parse(`a\n...\n﻿\n---\nb`)).toEqual(["a", "b"]);
+          });
+
+          test("[211]/[202] BOM directly before `---` between docs", () => {
+            expect(YAML.parse(`a\n...\n﻿---\nb`)).toEqual(["a", "b"]);
+          });
+        });
+
+        describe("§10 Recommended schemas (ch10-schemas)", () => {
+          // YAML-1.1 number extensions — NOT in 1.2 core regex. Bun returns the
+          // string (spec-correct); refs return the number (1.1 holdover).
+          test.todo.each([
+            [`0b101\n`, 5],
+            [`0x_1f\n`, 31],
+            [`1_000\n`, 1000],
+          ])("[10.2.1.3] YAML-1.1 number ext — bun spec-correct (string): %j", (input, expected) => {
+            expect(YAML.parse(input)).toEqual(expected);
+          });
+
+          test.each([`!!int\n`, `!!float\n`, `!!bool\n`])(
+            "[10.2.1] explicit scalar tag with empty content — must error: %j",
+            input => {
+              expect(() => YAML.parse(input)).toThrow();
+            },
+          );
+
+          test("[10.2.1.3] !!int on exponent form — int regex has no [eE]", () => {
+            expect(() => YAML.parse(`!!int 1e5\n`)).toThrow();
+          });
+
+          test("`%TAG !! tag:yaml.org,2002:` is a no-op — `!!int` still resolves to Core", () => {
+            expect(YAML.parse("%TAG !! tag:yaml.org,2002:\n---\n!!int 42\n")).toBe(42);
+            // But a real redefinition disables Core resolution.
+            expect(YAML.parse("%TAG !! tag:example:\n---\n!!int 42\n")).toBe("42");
+          });
+
+          test("`!!int` on signed hex with `e`/`E` digits", () => {
+            // The lexer's `e` flag is set by the hex digit too — gated on
+            // `!is_radix` so `has_dot_or_exp` doesn't fire spuriously.
+            expect(YAML.parse("!!int -0xE")).toBe(-14);
+            expect(YAML.parse("!!int -0xDEAD")).toBe(-57005);
+            expect(YAML.parse("!!int +0xCAFE")).toBe(51966);
+            expect(YAML.parse("[!!int -0x1e2]")).toEqual([-482]);
+          });
+
+          test("BOM at line-start inside content is content, not l-document-prefix", () => {
+            expect(YAML.parse("[a,\n﻿b]")).toEqual(["a", "﻿b"]);
+            expect(YAML.parse("a: b\n﻿c: d")).toEqual({ a: "b", "﻿c": "d" });
+            expect(() => YAML.parse("- a\n﻿- b")).toThrow();
+            // After `---` is content, not prefix.
+            expect(YAML.parse("---\n﻿foo")).toBe("﻿foo");
+            expect(YAML.parse("---\n﻿a: 1")).toEqual({ "﻿a": 1 });
+            expect(YAML.parse("---\n﻿- a\n- b")).toBe("﻿- a - b");
+            expect(YAML.parse("a\n...\n---\n﻿b")).toEqual(["a", "﻿b"]);
+            // Between a directive and `---` is not prefix ([202] precedes
+            // directives).
+            expect(() => YAML.parse("%YAML 1.2\n﻿---\nfoo")).toThrow();
+            // After `...` (l-document-suffix) it IS the prefix.
+            expect(YAML.parse("a\n...\n﻿---\nb")).toEqual(["a", "b"]);
+            expect(YAML.parse("a\n...\n﻿b")).toEqual(["a", "b"]);
+            expect(YAML.parse("...\n﻿foo")).toBe("foo");
+            // Stream-start: only the byte-0 BOM is stripped (init); a BOM
+            // after leading blanks/comments is content (matches js-yaml,
+            // PyYAML, ruamel; eemeli strips per [211] l-document-prefix*).
+            expect(YAML.parse("\n﻿a")).toBe("﻿a");
+            expect(YAML.parse("# c\n﻿a")).toBe("﻿a");
+          });
+
+          test("`%YAML` major version compared numerically (leading zeros)", () => {
+            expect(YAML.parse("%YAML 01.2\n---\nfoo")).toBe("foo");
+            expect(YAML.parse("%YAML 001.2\n---\nfoo")).toBe("foo");
+            expect(() => YAML.parse("%YAML 10.2\n---\nfoo")).toThrow();
+            expect(() => YAML.parse("%YAML 0.9\n---\nfoo")).toThrow();
+          });
+
+          test("`secondary_handle_redefined` resets before next doc's first scan", () => {
+            expect(YAML.parse("%TAG !! tag:x:\n---\na\n...\n!!int 5")).toEqual(["a", 5]);
+          });
+
+          test.todo("hex/octal `!!int` ≥ 2⁶⁴ — diagnostic / consistency", () => {
+            // Decimal `!!int` accepts arbitrary magnitude via parse_double; hex
+            // and octal use parse_unsigned::<u64> and overflow → TagContentMismatch
+            // (misleading: content *does* match `0x [0-9a-fA-F]+`). Either parse
+            // via float (eemeli/yaml does, loses precision) or use a distinct
+            // overflow diagnostic.
+            expect(YAML.parse(`!!int 0x10000000000000000\n`)).toBe(18446744073709552000);
+          });
+
+          test.todo("[10.2.1.3] !!int on binary — bun returns string (should error or coerce)", () => {
+            expect(YAML.parse(`!!int 0b101\n`)).toEqual(5);
+          });
+
+          test("[10.1.1.3] !!null on quoted scalar — refs honor tag; bun ignores", () => {
+            expect(YAML.parse(`!!null "null"\n`)).toEqual(null);
+          });
+
+          test.each([`!!str [a, b]\n`, `!!int {a: 1}\n`, `!!null [1]\n`])(
+            "[10.1.1] scalar tag on collection — kind mismatch → error: %j",
+            input => {
+              expect(() => YAML.parse(input)).toThrow();
+            },
+          );
+        });
+      });
       describe("flow comma/separator placement", () => {
         test("JSON-adjacent does not apply in flow-map value position", () => {
           // [147] flow-map value is ns-flow-node, not ns-flow-pair; [140]
@@ -2224,16 +2710,19 @@ binary: 0b1010
 explicit_string: !!str 123
 explicit_int: !!int "456"
 explicit_float: !!float "3.14"
-explicit_bool: !!bool "yes"
-explicit_null: !!null "anything"
+explicit_bool: !!bool "true"
+explicit_null: !!null ""
 `;
       expect(YAML.parse(yaml)).toEqual({
         explicit_string: "123",
-        explicit_int: "456",
-        explicit_float: "3.14",
-        explicit_bool: "yes",
-        explicit_null: "anything",
+        explicit_int: 456,
+        explicit_float: 3.14,
+        explicit_bool: true,
+        explicit_null: null,
       });
+      // [10.2] content must match the tag's Core-schema regex
+      expect(() => YAML.parse(`!!bool "yes"`)).toThrow();
+      expect(() => YAML.parse(`!!null "anything"`)).toThrow();
     });
 
     test("handles strings that look like numbers", () => {

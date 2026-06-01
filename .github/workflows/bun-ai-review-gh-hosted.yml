@@ -213,24 +213,12 @@ jobs:
             printf '%s\n' "$LANE_FOCUS"
           } > .factory/lane-prompt.md
 
-      - name: Force GitHub token override across all action stages
-        shell: bash
-        env:
-          OVERRIDE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          set -euo pipefail
-          # The droid-action's validator stage (prepare-validator.ts) re-runs
-          # setupGitHubToken() but its step in action.yml omits
-          # OVERRIDE_GITHUB_TOKEN, so it falls back to Factory's app-token
-          # exchange and 500s on the fork (app not installed). Exporting the
-          # override via $GITHUB_ENV makes setupGitHubToken honor it in *every*
-          # stage (prepare AND validator), since composite action steps inherit
-          # job env written to $GITHUB_ENV. (github_token input below covers the
-          # prepare stage; this covers the validator gap.)
-          echo "OVERRIDE_GITHUB_TOKEN=$OVERRIDE_TOKEN" >> "$GITHUB_ENV"
-
       - name: Run review lane
-        uses: Factory-AI/droid-action@main
+        # Our hardened fork of Factory-AI/droid-action, pinned to the branch that
+        # fixes the validator-stage token bug (validator now forwards
+        # github_token instead of failing the Factory app-token exchange on the
+        # fork). Includes the settings-input/artifact hardening stack.
+        uses: EffortlessSteven/droid-action@5d70e826acd7154766e2d2784ff518ed556830e1
         env:
           GLM: ${{ secrets.GLM }}
           FIREPASS: ${{ secrets.FIREPASS }}

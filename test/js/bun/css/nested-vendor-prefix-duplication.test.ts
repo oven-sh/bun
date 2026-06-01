@@ -232,7 +232,7 @@ test("a large declaration block under a fanning-out ancestor is bounded", () => 
   // miss this (the declaration is not a rule); bounding the emitted bytes of
   // each duplicate pass catches it.
   const depth = 16;
-  const payload = `--p:${"a".repeat(64)};`;
+  const payload = `--p:${Buffer.alloc(64, "a").toString()};`;
   const level = ".a:placeholder-shown,.b:-webkit-autofill{";
   const src = (level + payload).repeat(depth) + "}".repeat(depth);
   expect(() => minifyTest(src, "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);

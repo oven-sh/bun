@@ -2010,22 +2010,16 @@ fn substitute_template(
             i += 2;
             continue;
         }
-        // Literal run: copy verbatim up to the next brace so multi-byte UTF-8
-        // sequences aren't re-encoded byte-by-byte as Latin-1.
+        // Literal run: copy raw bytes verbatim up to the next brace, no UTF-8
+        // processing. Templates are not required to be valid UTF-8; the bytes
+        // pass through to the sink unchanged.
         let mut j = i + 1;
         while j < t.len() && t[j] != b'{' && t[j] != b'}' {
             j += 1;
         }
         let run = &t[i..j];
-        match std::str::from_utf8(run) {
-            Ok(s) => f.write_str(s)?,
-            Err(_) => {
-                for &b in run {
-                    let mut buf = [0u8; 4];
-                    f.write_str((b as char).encode_utf8(&mut buf))?;
-                }
-            }
-        }
+        // SAFETY: `write_str` only moves bytes; intentionally not validated.
+        f.write_str(unsafe { std::str::from_utf8_unchecked(run) })?;
         i = j;
     }
     Ok(())

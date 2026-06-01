@@ -22,8 +22,7 @@ function base64UrlReference(bytes: Uint8Array): string {
     out += URL_SAFE_ALPHABET[(n >> 18) & 63] + URL_SAFE_ALPHABET[(n >> 12) & 63];
   } else if (remainder === 2) {
     const n = (bytes[i] << 16) | (bytes[i + 1] << 8);
-    out +=
-      URL_SAFE_ALPHABET[(n >> 18) & 63] + URL_SAFE_ALPHABET[(n >> 12) & 63] + URL_SAFE_ALPHABET[(n >> 6) & 63];
+    out += URL_SAFE_ALPHABET[(n >> 18) & 63] + URL_SAFE_ALPHABET[(n >> 12) & 63] + URL_SAFE_ALPHABET[(n >> 6) & 63];
   }
   return out;
 }

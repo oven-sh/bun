@@ -565,16 +565,26 @@ pub mod fs {
             let is_interned = |slice: &[u8]| {
                 FilenameStore::instance().exists(slice) || DirnameStore::instance().exists(slice)
             };
+            // Returning `self` unchanged widens `text`/`pretty`/`namespace` to
+            // `'static`; the caller has already proven `text`/`pretty` are
+            // interned, so assert `namespace` is too (static literal or store-
+            // interned) — a transient namespace here would dangle.
+            let return_self_static = || {
+                debug_assert!(
+                    matches!(self.namespace, b"" | b"file") || is_interned(self.namespace),
+                    "dupe_alloc: returning interned path with transient namespace",
+                );
+                // SAFETY: `text`/`pretty` point into a process-lifetime store
+                // (checked by the caller), and `namespace` is static/interned
+                // (asserted above). All three outlive the program.
+                Ok(unsafe { (*self).into_static() })
+            };
 
             if core::ptr::eq(self.text.as_ptr(), self.pretty.as_ptr())
                 && self.text.len() == self.pretty.len()
             {
                 if is_interned(self.text) {
-                    // SAFETY: `text`/`pretty` point into a process-lifetime store
-                    // (`is_interned`), and `namespace` is untouched here — it is
-                    // either a static literal or itself store-interned. All three
-                    // outlive the program.
-                    return Ok(unsafe { (*self).into_static() });
+                    return return_self_static();
                 }
                 // `Path::init` sets `pretty == text`, matching the aliased input.
                 let text = FilenameStore::instance().append_slice(self.text)?;
@@ -585,8 +595,7 @@ pub mod fs {
                 Ok(new_path)
             } else if self.pretty.is_empty() {
                 if is_interned(self.text) {
-                    // SAFETY: see the aliased-pretty branch above.
-                    return Ok(unsafe { (*self).into_static() });
+                    return return_self_static();
                 }
                 let text = FilenameStore::instance().append_slice(self.text)?;
                 let mut new_path = Path::<'static>::init(text);
@@ -600,8 +609,7 @@ pub mod fs {
             {
                 // `pretty` is a sub-slice of `text`.
                 if is_interned(self.text) {
-                    // SAFETY: see the aliased-pretty branch above.
-                    return Ok(unsafe { (*self).into_static() });
+                    return return_self_static();
                 }
                 let text = FilenameStore::instance().append_slice(self.text)?;
                 let mut new_path = Path::<'static>::init(text);
@@ -612,9 +620,7 @@ pub mod fs {
                 Ok(new_path)
             } else {
                 if is_interned(self.text) && is_interned(self.pretty) {
-                    // SAFETY: both `text` and `pretty` point into a
-                    // process-lifetime store; `namespace` is static/interned.
-                    return Ok(unsafe { (*self).into_static() });
+                    return return_self_static();
                 }
                 let mut new_path =
                     if let Some(offset) = bun_core::strings::index_of(self.text, self.pretty) {

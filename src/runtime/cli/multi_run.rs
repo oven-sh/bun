@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{self as bun, Error, Global, Output, err};
+use bun_core::{self as bun, Error, Global, Output, UnwrapOrOom, err};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::BufferedReader;
@@ -32,7 +32,12 @@ type OutputWriter = bun_core::io::Writer;
 
 /// Value type for package.json `scripts` map. Mirrors
 /// `bun_resolver::package_json::ScriptsMap` (`StringArrayHashMap<&'static [u8]>`).
+/// Its `&'static [u8]` values borrow the owning `PackageJSON.source_contents`.
 type ScriptsMap = StringArrayHashMap<&'static [u8]>;
+
+/// Owned variant of `ScriptsMap`: both keys and values are owned `Box<[u8]>`, so
+/// it can outlive the `PackageJSON` the bytes were parsed from (see `MatchedPackage`).
+type OwnedScriptsMap = StringArrayHashMap<Box<[u8]>>;
 
 struct ScriptConfig {
     label: Box<[u8]>,
@@ -638,11 +643,16 @@ struct GroupInfo {
 
 /// Add configs for a single script name (with pre/post handling).
 /// When `label_prefix` is non-null, labels become "{prefix}:{name}" (for workspace runs).
-fn add_script_configs(
+///
+/// Generic over the scripts map value type so both the single-package path
+/// (values borrow the process-lifetime DirInfo-cached package.json) and the
+/// workspace path (values are owned `Box<[u8]>` copies, see `MatchedPackage`)
+/// can share this code. The script bytes are only ever read here, never stored.
+fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     configs: &mut Vec<ScriptConfig>,
     group_infos: &mut Vec<GroupInfo>,
     raw_name: &[u8],
-    scripts_map: Option<&ScriptsMap>,
+    scripts_map: Option<&StringArrayHashMap<V>>,
     cwd: &[u8],
     path: &[u8],
     label_prefix: Option<&[u8]>,
@@ -865,10 +875,18 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         // Drop handles deinit
 
         // Phase 1: Collect matching packages (filesystem order is nondeterministic)
+        //
+        // `scripts` owns its bytes (`OwnedScriptsMap`): the `ScriptsMap` values
+        // parsed from each package.json borrow that package's `source_contents`,
+        // which is freed when the standalone `PackageJSON` drops at the end of
+        // each loop iteration below. Storing the borrowed map here would dangle
+        // (heap-use-after-free, #31636) — unlike the single-package path, whose
+        // package.json is kept alive by the process-lifetime DirInfo cache — so
+        // we deep-copy keys and values into owned storage before `pkgjson` drops.
         struct MatchedPackage {
             name: Box<[u8]>,
             dirpath: Box<[u8]>,
-            scripts: Box<ScriptsMap>,
+            scripts: OwnedScriptsMap,
             path: Box<[u8]>,
         }
         let mut matched_packages: Vec<MatchedPackage> = Vec::new();
@@ -897,9 +915,18 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 continue;
             }
 
-            let Some(pkg_scripts) = pkgjson.scripts else {
+            let Some(pkg_scripts) = &pkgjson.scripts else {
                 continue;
             };
+            // Deep-copy the scripts map while `pkgjson` (and the `source_contents`
+            // the borrowed `&'static [u8]` values point into) is still alive.
+            let mut owned_scripts = OwnedScriptsMap::with_capacity(pkg_scripts.count());
+            for (key, value) in pkg_scripts.iter() {
+                owned_scripts
+                    .put(&key[..], Box::<[u8]>::from(&value[..]))
+                    .unwrap_or_oom();
+            }
+
             let run_in_bun = ctx.debug.run_in_bun;
             let pkg_path_env = RunCommand::configure_path_for_run_with_package_json_dir(
                 ctx,
@@ -910,7 +937,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 run_in_bun,
             )?;
             let pkg_name: Box<[u8]> = if !pkgjson.name.is_empty() {
-                pkgjson.name
+                Box::<[u8]>::from(&pkgjson.name[..])
             } else {
                 // Fallback: use relative path from workspace root
                 Box::from(bun_paths::resolve_path::relative_platform::<
@@ -922,7 +949,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             matched_packages.push(MatchedPackage {
                 name: pkg_name,
                 dirpath,
-                scripts: pkg_scripts,
+                scripts: owned_scripts,
                 path: pkg_path_env.into(),
             });
         }

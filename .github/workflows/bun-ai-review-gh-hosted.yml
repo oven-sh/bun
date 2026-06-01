@@ -95,15 +95,17 @@ jobs:
               # Your specialty: argue this PR is wrong, as hard as you honestly can
 
               Assume it has a defect and go find it — you press harder on this than
-              a generalist would. One sharp objection beats five weak ones.
+              a generalist would. Surface every objection you can actually
+              substantiate, strongest first.
 
-              Aim at:
-              - the single strongest correctness objection
-              - the one missing test that would expose a real gap
-              - a concrete performance regression on the hot path (allocations, copies)
+              Look hard for:
+              - correctness objections
+              - a missing test that would expose a real gap
+              - a performance regression on the hot path (allocations, copies)
               - a portability / platform-specific break
+              - any claim stronger than the evidence supports
 
-              State exactly what would prove or refute each objection. No nitpicks.
+              For each, state exactly what would prove or refute it.
 
           - id: arch
             tag: "arch · MiniMax-M3"

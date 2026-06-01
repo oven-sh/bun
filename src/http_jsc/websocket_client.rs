@@ -983,63 +983,52 @@ impl<const SSL: bool> WebSocket<SSL> {
                 }
 
                 ReceiveState::Close => {
-                    // Validate the *declared* payload length exactly once, on
-                    // the first entry. `receive_body_remain` holds the payload
-                    // length only before `close_frame_buffering` is set; once
-                    // buffering starts it is repurposed as a bytes-copied
-                    // counter, so re-checking it here on a re-entry after a
-                    // short read would misread that counter as a length (a
-                    // header/body TCP split would otherwise spuriously
-                    // terminate or drop the status code). This mirrors the
-                    // `!ping_received` / `!pong_received` gating in the Ping and
-                    // Pong arms above. RFC6455 §5.5: a Close payload is either
-                    // empty or ≥2 bytes (the 2-byte status code), ≤125 total.
-                    if !self.close_frame_buffering {
-                        if receive_body_remain == 1 || receive_body_remain > 125 {
-                            self.terminate(ErrorCode::InvalidControlFrame);
-                            terminated = true;
-                            break;
-                        }
-                        self.ping_len = receive_body_remain as u8;
-                        receive_body_remain = 0;
-                        self.close_frame_buffering = true;
+                    if receive_body_remain == 1 || receive_body_remain > 125 {
+                        self.terminate(ErrorCode::InvalidControlFrame);
+                        terminated = true;
+                        break;
                     }
 
-                    let close_len = self.ping_len as usize;
-                    if close_len > 0 {
-                        let to_copy = data.len().min(close_len - receive_body_remain);
+                    if receive_body_remain > 0 {
+                        if !self.close_frame_buffering {
+                            self.ping_len = receive_body_remain as u8;
+                            receive_body_remain = 0;
+                            self.close_frame_buffering = true;
+                        }
+                        let to_copy = data.len().min(self.ping_len as usize - receive_body_remain);
                         self.ping_frame_bytes[6 + receive_body_remain..][..to_copy]
                             .copy_from_slice(&data[..to_copy]);
                         receive_body_remain += to_copy;
-                        if receive_body_remain < close_len {
+                        if receive_body_remain < self.ping_len as usize {
                             break;
                         }
 
                         self.close_received = true;
+                        let ping_len = self.ping_len as usize;
                         // PORT NOTE: copy close_data out to avoid borrowck conflict with &mut self below
                         let mut close_data_buf = [0u8; 125];
-                        close_data_buf[..close_len]
-                            .copy_from_slice(&self.ping_frame_bytes[6..][..close_len]);
-                        let close_data = &close_data_buf[..close_len];
-                        // close_len is always ≥2 here: 0 takes the bodyless path
-                        // below and 1 is rejected by the validation above.
-                        let received_code = u16::from_be_bytes([close_data[0], close_data[1]]);
-                        let (echo_code, dispatch_code) = received_close_codes(received_code);
-                        let mut buf: [u8; 125] = [0; 125];
-                        buf[..close_len - 2].copy_from_slice(&close_data[2..close_len]);
-                        self.send_close_with_body(
-                            echo_code,
-                            Some(dispatch_code),
-                            Some(&mut buf),
-                            close_len - 2,
-                        );
+                        close_data_buf[..ping_len]
+                            .copy_from_slice(&self.ping_frame_bytes[6..][..ping_len]);
+                        let close_data = &close_data_buf[..ping_len];
+                        if ping_len >= 2 {
+                            let received_code = u16::from_be_bytes([close_data[0], close_data[1]]);
+                            let (echo_code, dispatch_code) = received_close_codes(received_code);
+                            let mut buf: [u8; 125] = [0; 125];
+                            buf[..ping_len - 2].copy_from_slice(&close_data[2..ping_len]);
+                            self.send_close_with_body(
+                                echo_code,
+                                Some(dispatch_code),
+                                Some(&mut buf),
+                                ping_len - 2,
+                            );
+                        } else {
+                            self.send_close();
+                        }
                         self.close_frame_buffering = false;
                         terminated = true;
                         break;
                     }
 
-                    // Bodyless Close.
-                    self.close_frame_buffering = false;
                     self.close_received = true;
                     self.send_close();
                     terminated = true;
@@ -1065,7 +1054,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     pub fn send_close(&mut self) {
         // Received a bodyless Close: echo a normal-closure frame on the wire,
-        // but report 1005 ("no status received") to JS per RFC6455 §7.1.5.
+        // but report 1005 ("no status received") to JS per RFC 6455 §7.1.5.
         self.send_close_with_body(1000, Some(1005), None, 0);
     }
 
@@ -1349,10 +1338,10 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    // `code` is the status code written to the wire frame. `dispatch_code`
-    // overrides the code reported to JS (`CloseEvent.code`) when it differs
-    // from the wire code — e.g. a received bodyless close echoes 1000 but
-    // reports 1005; otherwise JS sees `code`.
+    /// `code` is the status code written to the wire frame. `dispatch_code`
+    /// overrides the code reported to JS (`CloseEvent.code`) when it differs
+    /// from the wire code — e.g. a received bodyless Close echoes 1000 but
+    /// reports 1005; when `None`, JS sees `code`.
     fn send_close_with_body(
         &mut self,
         code: u16,

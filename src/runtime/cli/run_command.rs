@@ -1645,19 +1645,12 @@ impl Run {
                     }
                     result
                 };
-                // Zig: `to_print.print(vm.global, .Log, .Log)`.
-                // SAFETY: `vals[..1]` is the single stack `to_print`; null
-                // `ctype` routes to the VM's stdout/stderr default.
-                unsafe {
-                    bun_jsc::ConsoleObject::message_with_type_and_level(
-                        ::core::ptr::null_mut(),
-                        bun_jsc::ConsoleObject::MessageType::Log,
-                        bun_jsc::ConsoleObject::MessageLevel::Log,
-                        vm.global(),
-                        &raw const to_print,
-                        1,
-                    );
-                }
+                Self::dump_eval_result(
+                    vm,
+                    to_print,
+                    ctx.runtime_options.eval.print_format,
+                    ctx.runtime_options.eval.print_indent,
+                );
             }
 
             vm.on_before_exit();
@@ -1687,6 +1680,60 @@ impl Run {
         crate::webcore::bake_response::fix_dead_code_elimination();
         bun_crash_handler::fix_dead_code_elimination();
         vm.global_exit();
+    }
+
+    fn dump_eval_result(
+        vm: &mut VirtualMachine,
+        to_print: JSValue,
+        format: bun_options_types::context::EvalPrintFormat,
+        indent: u32,
+    ) {
+        use bun_options_types::context::EvalPrintFormat;
+
+        let global = vm.global();
+        let serialized: bun_jsc::JsResult<bun_core::String> = match format {
+            EvalPrintFormat::Inspect => {
+                // SAFETY: `vals[..1]` is the single stack `to_print`; null
+                // `ctype` routes to the VM's stdout/stderr default.
+                unsafe {
+                    bun_jsc::ConsoleObject::message_with_type_and_level(
+                        ::core::ptr::null_mut(),
+                        bun_jsc::ConsoleObject::MessageType::Log,
+                        bun_jsc::ConsoleObject::MessageLevel::Log,
+                        global,
+                        &raw const to_print,
+                        1,
+                    );
+                }
+                return;
+            }
+            EvalPrintFormat::Json => {
+                let mut out = bun_core::String::EMPTY;
+                to_print
+                    .json_stringify(global, indent, &mut out)
+                    .map(|_| out)
+            }
+            EvalPrintFormat::Yaml => {
+                crate::api::YAMLObject::stringify_with_indent(global, to_print, indent)
+                    .and_then(|v| v.to_bun_string(global))
+            }
+        };
+
+        match serialized {
+            Ok(s) => {
+                let owned = bun_core::OwnedString::new(s);
+                let utf8 = owned.to_utf8();
+                let _ = Output::writer().write_all(utf8.slice());
+                if !utf8.slice().ends_with(b"\n") {
+                    let _ = Output::writer().write_all(b"\n");
+                }
+                Output::flush();
+            }
+            Err(err) => {
+                global.report_uncaught_exception_from_error(err);
+                vm.exit_handler.exit_code = 1;
+            }
+        }
     }
 }
 

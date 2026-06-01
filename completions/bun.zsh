@@ -533,6 +533,10 @@ _bun_repl_completion() {
         '(-p --print)-e[Evaluate argument as a script, then exit]:script' \
         '(-e --eval)--print[Evaluate argument as a script, print the result, then exit]:script' \
         '(-e --eval)-p[Evaluate argument as a script, print the result, then exit]:script' \
+        '--json[Evaluate argument as a script, print the result as JSON, then exit]:script' \
+        '--yaml[Evaluate argument as a script, print the result as YAML, then exit]:script' \
+        '--json-indent[Number of spaces for --json indentation. Default 2]:indent' \
+        '--yaml-indent[Number of spaces for --yaml indentation. Default 2]:indent' \
         '--preload[Import a module before other modules are loaded]:preload' \
         '-r[Import a module before other modules are loaded]:preload' \
         '--smol[Use less memory, but run garbage collection more often]' \

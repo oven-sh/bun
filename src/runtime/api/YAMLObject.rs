@@ -37,7 +37,32 @@ pub(crate) fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsRe
         )));
     }
 
-    let mut stringifier = Stringifier::init(global, space_value)?;
+    let space = Space::init(global, space_value)?;
+    stringify_with_space(global, value, space)
+}
+
+pub(crate) fn stringify_with_indent(
+    global: &JSGlobalObject,
+    value: JSValue,
+    indent: u32,
+) -> JsResult<JSValue> {
+    if value.is_undefined() || value.is_symbol() || value.is_function() {
+        return Ok(JSValue::UNDEFINED);
+    }
+    let space = if indent == 0 {
+        Space::Minified
+    } else {
+        Space::Number(indent.min(10))
+    };
+    stringify_with_space(global, value, space)
+}
+
+fn stringify_with_space(
+    global: &JSGlobalObject,
+    value: JSValue,
+    space: Space,
+) -> JsResult<JSValue> {
+    let mut stringifier = Stringifier::init(space)?;
 
     if let Err(err) = stringifier.find_anchors_and_aliases(global, value, ValueOrigin::Root) {
         return match err {
@@ -186,7 +211,7 @@ impl From<JsError> for StringifyError {
 bun_core::oom_from_alloc!(StringifyError);
 
 impl Stringifier {
-    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+    pub(crate) fn init(space: Space) -> JsResult<Stringifier> {
         let mut prop_names: StringHashMap<usize> = StringHashMap::default();
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
@@ -199,7 +224,7 @@ impl Stringifier {
             known_collections: HashMap::default(),
             array_item_counter: 0,
             prop_names,
-            space: Space::init(global, space_value)?,
+            space,
         })
     }
 

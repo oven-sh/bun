@@ -567,6 +567,16 @@ pub struct RuntimeOptions {
 pub struct Eval {
     pub script: Box<[u8]>,
     pub eval_and_print: bool,
+    pub print_format: EvalPrintFormat,
+    pub print_indent: u32,
+}
+
+#[derive(Default, Clone, Copy, PartialEq, Eq)]
+pub enum EvalPrintFormat {
+    #[default]
+    Inspect,
+    Json,
+    Yaml,
 }
 
 pub struct CpuProf {

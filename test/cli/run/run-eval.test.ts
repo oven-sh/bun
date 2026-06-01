@@ -94,6 +94,86 @@ for (const flag of ["-e", "--print"]) {
   });
 }
 
+describe.each([
+  {
+    flag: "--json",
+    indentFlag: "--json-indent",
+    pretty: '{\n  "a": 1,\n  "b": [\n    2,\n    3\n  ]\n}\n',
+    compact: '{"a":1,"b":[2,3]}\n',
+    indent4: '{\n    "a": 1,\n    "b": [\n        2,\n        3\n    ]\n}\n',
+  },
+  {
+    flag: "--yaml",
+    indentFlag: "--yaml-indent",
+    pretty: "a: 1\nb: \n  - 2\n  - 3\n",
+    compact: "{a: 1,b: [2,3]}\n",
+    indent4: "a: 1\nb: \n    - 2\n    - 3\n",
+  },
+])("bun $flag", ({ flag, indentFlag, pretty, compact, indent4 }) => {
+  const expr = "({a: 1, b: [2, 3]})";
+
+  test("default indent is 2", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), flag, expr],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe(pretty);
+    expect(exitCode).toBe(0);
+  });
+
+  test(`${indentFlag} 0`, () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), indentFlag, "0", flag, expr],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe(compact);
+    expect(exitCode).toBe(0);
+  });
+
+  test(`${indentFlag} 4`, () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), indentFlag, "4", flag, expr],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe(indent4);
+    expect(exitCode).toBe(0);
+  });
+
+  test("awaits promises", () => {
+    const { stdout, stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), flag, "Promise.resolve({a: 1, b: [2, 3]})"],
+      env: bunEnv,
+    });
+    expect(stderr.toString("utf8")).toBe("");
+    expect(stdout.toString("utf8")).toBe(pretty);
+    expect(exitCode).toBe(0);
+  });
+
+  test(`${indentFlag} rejects non-integers`, () => {
+    const { stderr, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), indentFlag, "foo", flag, "1"],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    expect(stderr.toString("utf8")).toContain("Must be an integer between 0 and 10");
+    expect(exitCode).toBe(1);
+  });
+});
+
+test("bun --json reports stringify errors and exits non-zero", () => {
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "--json", "const a = {}; a.self = a; a"],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  expect(stdout.toString("utf8")).toBe("");
+  expect(stderr.toString("utf8")).toContain("cyclic");
+  expect(exitCode).toBe(1);
+});
+
 describe("--print for cjs/esm", () => {
   test("eval result between esm imports", async () => {
     let cwd = tmpdirSync();

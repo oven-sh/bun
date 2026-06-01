@@ -60,12 +60,7 @@ describe.each(TIMEZONES)("text protocol via mock server, TZ=%s", TZ => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     // Surface mock-server / client errors, not just a JSON parse failure.
-    // (ASAN emits a harmless interposition warning.)
-    const diagnostics = stderr
-      .split(/\r?\n/)
-      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-      .join("\n");
-    expect(diagnostics).toBe("");
+    expect(stderr).toBe("");
 
     const out = JSON.parse(stdout) as { tz: string; offsetMin: number; values: Record<string, string> };
     expect(out.values).toEqual(Object.fromEntries(COLUMNS.map(col => [col.name, String(col.expected)])));

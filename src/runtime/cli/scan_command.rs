@@ -19,7 +19,7 @@ impl ScanCommand {
                         "No package.json found. 'bun pm scan' requires a lockfile to analyze dependencies.",
                         (),
                     );
-                    Output::note("Run \"bun install\" first to generate a lockfile");
+                    bun_core::note!("Run \"bun install\" first to generate a lockfile");
                     Global::exit(1);
                 }
                 return Err(e);
@@ -36,26 +36,24 @@ impl ScanCommand {
         original_cwd: &[u8],
     ) -> Result<(), bun_core::Error> {
         if manager.options.security_scanner.is_none() {
-            Output::pretty_errorln(format_args!(
-                "<r><red>error<r>: no security scanner configured"
-            ));
-            Output::pretty(format_args!(
+            bun_core::pretty_errorln!("<r><red>error<r>: no security scanner configured");
+            bun_core::pretty!(
                 "\n\
                  To use 'bun pm scan', configure a security scanner in bunfig.toml:\n  \
                  [install.security]\n  \
                  scanner = \"<cyan>package_name<r>\"\n\
                  \n\
                  Security scanners can be npm packages that export a scanner object.\n"
-            ));
+            );
             Global::exit(1);
         }
 
         // Zig: `Output.prettyError(comptime Output.prettyFmt(..., true), .{})` — the
         // comptime ANSI expansion is folded into `pretty_error`'s runtime tag rewrite.
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "<r><b>bun pm scan <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
         // PORT NOTE: reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
@@ -108,7 +106,7 @@ impl ScanCommand {
             if results.has_advisories() {
                 Global::exit(1);
             } else {
-                Output::pretty(format_args!("<green>No advisories found<r>\n"));
+                bun_core::pretty!("<green>No advisories found<r>\n");
             }
         }
 

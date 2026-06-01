@@ -3,8 +3,6 @@ use core::ffi::c_int;
 use core::ffi::c_void;
 use core::fmt;
 
-#[cfg(debug_assertions)]
-use bun_core::Output;
 // `Fd` (the packed handle struct + pure-data accessors) is canonical in
 // bun_core. This file adds the syscall-touching surface as an extension trait.
 pub use bun_core::{Fd, FdKind, FdNative, FdOptional as Optional, Stdio, fd};
@@ -208,10 +206,10 @@ impl FdExt for Fd {
         {
             if let Some(ref err) = result {
                 if err.errno == sys::E::EBADF as _ {
-                    Output::debug_warn(format_args!(
+                    bun_core::debug_warn!(
                         "close({}) = EBADF. This is an indication of a file descriptor UAF",
                         bstr::BStr::new(fd_fmt),
-                    ));
+                    );
                     bun_core::dump_current_stack_trace(
                         return_address,
                         bun_core::DumpStackTraceOptions {

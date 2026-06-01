@@ -247,10 +247,10 @@ impl UpdateInteractiveCommand {
     }
 
     pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b>bun update --interactive <r><d>v{}<r>",
             Global::package_json_version_with_sha
-        ));
+        );
         Output::flush();
 
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
@@ -556,7 +556,7 @@ impl UpdateInteractiveCommand {
 
         if outdated_packages.is_empty() {
             // No packages need updating - just exit silently
-            Output::prettyln(format_args!("<r><green>✓<r> All packages are up to date!"));
+            bun_core::prettyln!("<r><green>✓<r> All packages are up to date!");
             return Ok(());
         }
 
@@ -643,18 +643,14 @@ impl UpdateInteractiveCommand {
         let has_catalog_updates = !catalog_updates.is_empty();
 
         if !has_package_updates && !has_catalog_updates {
-            Output::prettyln(format_args!(
-                "<r><yellow>!</r> No packages selected for update"
-            ));
+            bun_core::prettyln!("<r><yellow>!</r> No packages selected for update");
             return Ok(());
         }
 
         // Actually update the selected packages
         if has_package_updates || has_catalog_updates {
             if manager.options.dry_run {
-                Output::prettyln(format_args!(
-                    "\n<r><yellow>Dry run mode: showing what would be updated<r>"
-                ));
+                bun_core::prettyln!("\n<r><yellow>Dry run mode: showing what would be updated<r>");
 
                 // In dry-run mode, just show what would be updated without modifying files
                 for update in &package_updates {
@@ -663,31 +659,29 @@ impl UpdateInteractiveCommand {
                     } else {
                         b"root"
                     };
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "→ Would update {} to {} in {} ({})",
                         BStr::new(&update.name),
                         BStr::new(&update.target_version),
                         BStr::new(workspace_display),
                         BStr::new(&update.dep_type)
-                    ));
+                    );
                 }
 
                 if has_catalog_updates {
                     let mut it = catalog_updates.iter();
                     while let Some((catalog_key, catalog_update)) = it.next() {
-                        Output::prettyln(format_args!(
+                        bun_core::prettyln!(
                             "→ Would update catalog {} to {}",
                             BStr::new(catalog_key),
                             BStr::new(&catalog_update.version)
-                        ));
+                        );
                     }
                 }
 
-                Output::prettyln(format_args!(
-                    "\n<r><yellow>Dry run complete - no changes made<r>"
-                ));
+                bun_core::prettyln!("\n<r><yellow>Dry run complete - no changes made<r>");
             } else {
-                Output::prettyln(format_args!("\n<r><cyan>Installing updates...<r>"));
+                bun_core::prettyln!("\n<r><cyan>Installing updates...<r>");
                 Output::flush();
 
                 // Update catalog definitions first if needed
@@ -1269,7 +1263,7 @@ impl UpdateInteractiveCommand {
         packages: &mut [OutdatedPackage],
     ) -> Result<Box<[bool]>, bun_core::Error> {
         if packages.is_empty() {
-            Output::prettyln(format_args!("<r><green>✓<r> All packages are up to date!"));
+            bun_core::prettyln!("<r><green>✓<r> All packages are up to date!");
             return Ok(Box::default());
         }
 
@@ -1314,7 +1308,7 @@ impl UpdateInteractiveCommand {
             Err(err) => {
                 if err == bun_core::err!("EndOfStream") {
                     Output::flush();
-                    Output::prettyln(format_args!("\n<r><red>x<r> Cancelled"));
+                    bun_core::prettyln!("\n<r><red>x<r> Cancelled");
                     Global::exit(0);
                 }
                 return Err(err);
@@ -1454,11 +1448,11 @@ impl UpdateInteractiveCommand {
                             count += 1;
                         }
                     }
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "<r><green>✓<r> Selected {} package{} to update",
                         count,
                         if count == 1 { "" } else { "s" }
-                    ));
+                    );
                 }
             }};
         }
@@ -1500,10 +1494,10 @@ impl UpdateInteractiveCommand {
                     current_size.width - b"? Select packages to update - ".len(),
                     true,
                 );
-                Output::prettyln(format_args!(
+                bun_core::prettyln!(
                     "<r><cyan>?<r> Select packages to update<d> - {}<r>",
                     BStr::new(&elipsised_help_text)
-                ));
+                );
 
                 // Calculate available space for packages (reserve space for scroll indicators if needed)
                 let needs_scrolling = state.packages.len() > state.viewport_height;
@@ -1519,11 +1513,11 @@ impl UpdateInteractiveCommand {
 
                 // Show top scroll indicator if needed
                 if show_top_indicator {
-                    Output::pretty(format_args!(
+                    bun_core::pretty!(
                         "  <d>↑ {} more package{} above<r>",
                         state.viewport_start,
                         if state.viewport_start == 1 { "" } else { "s" }
-                    ));
+                    );
                 }
 
                 // Calculate how many packages we can actually display
@@ -1562,16 +1556,13 @@ impl UpdateInteractiveCommand {
                         // Print dependency type - bold if any selected
                         Output::print(format_args!("\n  "));
                         if selected_count > 0 {
-                            Output::pretty(format_args!(
+                            bun_core::pretty!(
                                 "<r><b>{} {}<r>",
                                 BStr::new(pkg.dependency_type),
                                 selected_count
-                            ));
+                            );
                         } else {
-                            Output::pretty(format_args!(
-                                "<r>{}<r>",
-                                BStr::new(pkg.dependency_type)
-                            ));
+                            bun_core::pretty!("<r>{}<r>", BStr::new(pkg.dependency_type));
                         }
 
                         // Calculate padding to align column headers with values
@@ -1714,7 +1705,7 @@ impl UpdateInteractiveCommand {
 
                     // Cursor and checkbox
                     if is_cursor {
-                        Output::pretty(format_args!("  <r><cyan>❯<r> "));
+                        bun_core::pretty!("  <r><cyan>❯<r> ");
                     } else {
                         Output::print(format_args!("    "));
                     }
@@ -1722,11 +1713,11 @@ impl UpdateInteractiveCommand {
                     // Checkbox with appropriate color
                     if selected {
                         if checkbox_color == "red" {
-                            Output::pretty(format_args!("<r><red>{}<r> ", checkbox));
+                            bun_core::pretty!("<r><red>{}<r> ", checkbox);
                         } else if checkbox_color == "yellow" {
-                            Output::pretty(format_args!("<r><yellow>{}<r> ", checkbox));
+                            bun_core::pretty!("<r><yellow>{}<r> ", checkbox);
                         } else {
-                            Output::pretty(format_args!("<r><green>{}<r> ", checkbox));
+                            bun_core::pretty!("<r><green>{}<r> ", checkbox);
                         }
                     } else {
                         Output::print(format_args!("{} ", checkbox));
@@ -1776,23 +1767,23 @@ impl UpdateInteractiveCommand {
 
                     if selected {
                         if checkbox_color == "red" {
-                            Output::pretty(format_args!("<r><red>{}<r>", hyperlink));
+                            bun_core::pretty!("<r><red>{}<r>", hyperlink);
                         } else if checkbox_color == "yellow" {
-                            Output::pretty(format_args!("<r><yellow>{}<r>", hyperlink));
+                            bun_core::pretty!("<r><yellow>{}<r>", hyperlink);
                         } else {
-                            Output::pretty(format_args!("<r><green>{}<r>", hyperlink));
+                            bun_core::pretty!("<r><green>{}<r>", hyperlink);
                         }
                     } else {
-                        Output::pretty(format_args!("<r>{}<r>", hyperlink));
+                        bun_core::pretty!("<r>{}<r>", hyperlink);
                     }
 
                     // Print dev/peer/optional tag if applicable
                     if pkg.behavior.is_dev() {
-                        Output::pretty(format_args!("<r><d> dev<r>"));
+                        bun_core::pretty!("<r><d> dev<r>");
                     } else if pkg.behavior.is_peer() {
-                        Output::pretty(format_args!("<r><d> peer<r>"));
+                        bun_core::pretty!("<r><d> peer<r>");
                     } else if pkg.behavior.is_optional() {
-                        Output::pretty(format_args!("<r><d> optional<r>"));
+                        bun_core::pretty!("<r><d> optional<r>");
                     }
 
                     // Print padding after name (2 spaces)
@@ -1808,7 +1799,7 @@ impl UpdateInteractiveCommand {
                         state.max_current_len,
                         false,
                     );
-                    Output::pretty(format_args!("<r>{}<r>", BStr::new(&truncated_current)));
+                    bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_current));
 
                     // Print padding after current version (2 spaces)
                     let current_padding = if truncated_current.len() >= state.max_current_len {
@@ -1860,17 +1851,17 @@ impl UpdateInteractiveCommand {
                         }
                         if truncated_target.len() < pkg.update_version.len() {
                             // If truncated, use plain display instead of diffFmt to avoid confusion
-                            Output::pretty(format_args!("<r>{}<r>", BStr::new(&truncated_target)));
+                            bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_target));
                         } else {
                             // Use diffFmt for full versions
-                            Output::pretty(format_args!(
+                            bun_core::pretty!(
                                 "{}",
                                 target_full.diff_fmt(
                                     current_full,
                                     &pkg.update_version,
                                     &pkg.current_version,
                                 )
-                            ));
+                            );
                         }
                         if selected && !pkg.use_latest {
                             Output::print(format_args!("\x1B[24m")); // End underline
@@ -1880,7 +1871,7 @@ impl UpdateInteractiveCommand {
                         if selected && !pkg.use_latest {
                             Output::print(format_args!("\x1B[4m")); // Start underline
                         }
-                        Output::pretty(format_args!("<r>{}<r>", BStr::new(&truncated_target)));
+                        bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_target));
                         if selected && !pkg.use_latest {
                             Output::print(format_args!("\x1B[24m")); // End underline
                         }
@@ -1933,17 +1924,17 @@ impl UpdateInteractiveCommand {
                         }
                         if truncated_latest.len() < pkg.latest_version.len() {
                             // If truncated, use plain display instead of diffFmt to avoid confusion
-                            Output::pretty(format_args!("<r>{}<r>", BStr::new(&truncated_latest)));
+                            bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_latest));
                         } else {
                             // Use diffFmt for full versions
-                            Output::pretty(format_args!(
+                            bun_core::pretty!(
                                 "{}",
                                 latest_full.diff_fmt(
                                     current_full,
                                     &pkg.latest_version,
                                     &pkg.current_version,
                                 )
-                            ));
+                            );
                         }
                         if selected && pkg.use_latest {
                             Output::print(format_args!("\x1B[24m")); // End underline
@@ -1961,7 +1952,7 @@ impl UpdateInteractiveCommand {
                         if selected && pkg.use_latest {
                             Output::print(format_args!("\x1B[4m")); // Start underline
                         }
-                        Output::pretty(format_args!("<r>{}<r>", BStr::new(&truncated_latest)));
+                        bun_core::pretty!("<r>{}<r>", BStr::new(&truncated_latest));
                         if selected && pkg.use_latest {
                             Output::print(format_args!("\x1B[24m")); // End underline
                         }
@@ -1985,10 +1976,7 @@ impl UpdateInteractiveCommand {
                             state.max_workspace_len,
                             true,
                         );
-                        Output::pretty(format_args!(
-                            "<r><d>{}<r>",
-                            BStr::new(&truncated_workspace)
-                        ));
+                        bun_core::pretty!("<r><d>{}<r>", BStr::new(&truncated_workspace));
                     }
 
                     Output::print(format_args!("\x1B[0K\n"));
@@ -2000,7 +1988,7 @@ impl UpdateInteractiveCommand {
 
                 // Show bottom scroll indicator if needed
                 if show_bottom_indicator {
-                    Output::pretty(format_args!(
+                    bun_core::pretty!(
                         "  <d>↓ {} more package{} below<r>",
                         state.packages.len() - viewport_end,
                         if state.packages.len() - viewport_end == 1 {
@@ -2008,7 +1996,7 @@ impl UpdateInteractiveCommand {
                         } else {
                             "s"
                         }
-                    ));
+                    );
                     lines_displayed += 1;
                 }
 

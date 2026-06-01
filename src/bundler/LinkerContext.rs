@@ -4188,7 +4188,7 @@ impl<'a> LinkerContext<'a> {
 
             let Some(kind) = crate::chunk::QueryKind::from_letter(output[start]) else {
                 if cfg!(debug_assertions) {
-                    Output::debug_warn(format_args!("Invalid output piece boundary"));
+                    bun_core::debug_warn!("Invalid output piece boundary");
                 }
                 break;
             };
@@ -4201,7 +4201,7 @@ impl<'a> LinkerContext<'a> {
             for char in digits {
                 if char < b'0' || char > b'9' {
                     if cfg!(debug_assertions) {
-                        Output::debug_warn(format_args!("Invalid output piece boundary"));
+                        bun_core::debug_warn!("Invalid output piece boundary");
                     }
                     break 'outer;
                 }
@@ -4214,7 +4214,7 @@ impl<'a> LinkerContext<'a> {
                 crate::chunk::QueryKind::Asset | crate::chunk::QueryKind::Scb => {
                     if index >= self.graph.files.len() {
                         if cfg!(debug_assertions) {
-                            Output::debug_warn(format_args!("Invalid output piece boundary"));
+                            bun_core::debug_warn!("Invalid output piece boundary");
                         }
                         break;
                     }
@@ -4222,7 +4222,7 @@ impl<'a> LinkerContext<'a> {
                 crate::chunk::QueryKind::Chunk => {
                     if index >= count as usize {
                         if cfg!(debug_assertions) {
-                            Output::debug_warn(format_args!("Invalid output piece boundary"));
+                            bun_core::debug_warn!("Invalid output piece boundary");
                         }
                         break;
                     }
@@ -4231,7 +4231,7 @@ impl<'a> LinkerContext<'a> {
                     if index >= self.parse_graph().html_imports.server_source_indices.len() as usize
                     {
                         if cfg!(debug_assertions) {
-                            Output::debug_warn(format_args!("Invalid output piece boundary"));
+                            bun_core::debug_warn!("Invalid output piece boundary");
                         }
                         break;
                     }

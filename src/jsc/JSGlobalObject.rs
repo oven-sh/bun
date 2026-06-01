@@ -819,6 +819,7 @@ impl JSGlobalObject {
             // assertNoException.
             let _ = self.clear_exception_except_termination();
         }
+        #[allow(clippy::disallowed_methods)] // template built at runtime from caller args
         let pretty = Output::pretty_fmt_rt(buf.as_slice(), enabled);
         let instance = ZigString::init_utf8(&pretty).to_error_instance(self);
         if instance.is_empty() {

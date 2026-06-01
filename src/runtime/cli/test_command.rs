@@ -954,27 +954,21 @@ impl CommandLineReporter {
 
             // Print attempt count if test was retried (attempts > 1)
             if attempts > 1 {
-                let _ = write!(
+                let _ = bun_core::write_pretty!(
                     writer,
-                    "{}",
-                    Output::pretty_fmt_args(
-                        " <d>(attempt {d})<r>",
-                        Output::enable_ansi_colors_stderr(),
-                        (attempts,)
-                    ),
+                    Output::enable_ansi_colors_stderr(),
+                    " <d>(attempt {d})<r>",
+                    attempts,
                 );
             }
 
             // Print repeat count if test failed on a repeat (repeats > 1)
             if repeats > 1 {
-                let _ = write!(
+                let _ = bun_core::write_pretty!(
                     writer,
-                    "{}",
-                    Output::pretty_fmt_args(
-                        " <d>(run {d})<r>",
-                        Output::enable_ansi_colors_stderr(),
-                        (repeats,)
-                    ),
+                    Output::enable_ansi_colors_stderr(),
+                    " <d>(run {d})<r>",
+                    repeats,
                 );
             }
 
@@ -992,48 +986,54 @@ impl CommandLineReporter {
             let _ = writer.write_all(b"\n");
 
             let colors = Output::enable_ansi_colors_stderr();
-            // PERF(port): was comptime bool dispatch — profile if it shows up on a hot path.
             use bun_test::Execution::Result as R;
             match status {
                 R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {}
 
                 R::FailBecauseFailingTestPassed => {
-                    let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors));
+                    let _ = bun_core::write_pretty!(
+                        writer,
+                        colors,
+                        "  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n"
+                    );
                 }
                 R::FailBecauseTodoPassed => {
-                    let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors));
+                    let _ = bun_core::write_pretty!(
+                        writer,
+                        colors,
+                        "  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n"
+                    );
                 }
                 R::FailBecauseExpectedAssertionCount | R::FailBecauseExpectedHasAssertions => {} // printed above
                 R::FailBecauseTimeout => {
-                    let _ = write!(
+                    let _ = bun_core::write_pretty!(
                         writer,
-                        "{}",
-                        Output::pretty_fmt_args(
-                            "  <d>^<r> <red>this test timed out after {}ms.<r>\n",
-                            colors,
-                            (test_entry.timeout,)
-                        )
+                        colors,
+                        "  <d>^<r> <red>this test timed out after {d}ms.<r>\n",
+                        test_entry.timeout
                     );
                 }
                 R::FailBecauseHookTimeout => {
-                    let _ = writer.write_all(&Output::pretty_fmt_rt(
-                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n",
+                    let _ = bun_core::write_pretty!(
+                        writer,
                         colors,
-                    ));
+                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n"
+                    );
                 }
                 R::FailBecauseTimeoutWithDoneCallback => {
-                    let _ = write!(
+                    let _ = bun_core::write_pretty!(
                         writer,
-                        "{}",
-                        Output::pretty_fmt_args(
-                            "  <d>^<r> <red>this test timed out after {}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n",
-                            colors,
-                            (test_entry.timeout,)
-                        )
+                        colors,
+                        "  <d>^<r> <red>this test timed out after {d}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n",
+                        test_entry.timeout
                     );
                 }
                 R::FailBecauseHookTimeoutWithDoneCallback => {
-                    let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n", colors));
+                    let _ = bun_core::write_pretty!(
+                        writer,
+                        colors,
+                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n"
+                    );
                 }
             }
         }
@@ -1285,23 +1285,21 @@ impl CommandLineReporter {
                 );
             if dots_branch {
                 let colors = Output::enable_ansi_colors_stderr();
-                // PERF(port): was comptime bool dispatch — profile if it shows up on a hot path.
                 match basic {
                     bun_test::BasicResult::Pass => {
-                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><green>.<r>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><green>.<r>");
                     }
                     bun_test::BasicResult::Skip => {
-                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><yellow>.<d>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><yellow>.<d>");
                     }
                     bun_test::BasicResult::Todo => {
-                        let _ =
-                            writer.write_all(&Output::pretty_fmt_rt("<r><magenta>.<r>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><magenta>.<r>");
                     }
                     bun_test::BasicResult::Pending => {
-                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><d>.<r>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><d>.<r>");
                     }
                     bun_test::BasicResult::Fail => {
-                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><red>.<r>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><red>.<r>");
                     }
                 }
                 reporter_ref.unwrap().last_printed_dot.set(true);

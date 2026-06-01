@@ -589,20 +589,20 @@ pub(crate) fn is_filtered_dependency_or_workspace(
             let meta = &pkg_metas[pkg_id as usize];
             let name = lockfile.str(&pkg_names[pkg_id as usize]);
             if !meta.os.is_match(manager.options.os) && !meta.arch.is_match(manager.options.cpu) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<d>Skip installing<r> <b>{}<r> <d>- cpu & os mismatch<r>",
                     bstr::BStr::new(name)
-                ));
+                );
             } else if !meta.os.is_match(manager.options.os) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<d>Skip installing<r> <b>{}<r> <d>- os mismatch<r>",
                     bstr::BStr::new(name)
-                ));
+                );
             } else if !meta.arch.is_match(manager.options.cpu) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<d>Skip installing<r> <b>{}<r> <d>- cpu mismatch<r>",
                     bstr::BStr::new(name)
-                ));
+                );
             }
         }
         return true;

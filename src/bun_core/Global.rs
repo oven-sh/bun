@@ -175,7 +175,9 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
         if addr == 0 {
             break;
         }
-        eprintln!("    at 0x{addr:x}");
+        // Direct fd write: this can run on threads (or pre-init contexts)
+        // where the thread-local Output Source was never initialized.
+        let _ = crate::output::File::stderr().write_fmt(format_args!("    at 0x{addr:x}\n"));
     }
 }
 

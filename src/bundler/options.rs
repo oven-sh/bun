@@ -2780,24 +2780,17 @@ impl PathTemplateConst {
 
 impl core::fmt::Display for PathTemplateConst {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // PORT NOTE: Zig `format` writes raw bytes; route through a Vec then
-        // emit via `write_str` (paths are UTF-8 in practice; lossy fallback
-        // mirrors `bstr::BStr` Display semantics).
         let mut buf = Vec::<u8>::new();
         self.print(&mut buf).map_err(|_| core::fmt::Error)?;
-        f.write_str(&String::from_utf8_lossy(&buf))
+        write!(f, "{}", bstr::BStr::new(&buf))
     }
 }
 
 impl core::fmt::Display for PathTemplate {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // PORT NOTE: Zig `PathTemplate.format` writes raw path bytes via
-        // `writer.writeAll`; route through a Vec then emit via `write_str`
-        // (paths are UTF-8 in practice; lossy fallback mirrors `bstr::BStr`
-        // Display semantics). Mirrors `PathTemplateConst` Display above.
         let mut buf = Vec::<u8>::new();
         self.print(&mut buf).map_err(|_| core::fmt::Error)?;
-        f.write_str(&String::from_utf8_lossy(&buf))
+        write!(f, "{}", bstr::BStr::new(&buf))
     }
 }
 

@@ -2,7 +2,7 @@ use bun_ast::{E, Expr, expr::Data as ExprData};
 use bun_collections::HashMap;
 use bun_collections::VecExt;
 use bun_core::StackCheck;
-use bun_core::{String as BunString, ZigString};
+use bun_core::String as BunString;
 use bun_js_parser::lexer;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc, wtf};
 use bun_parsers::json5;
@@ -431,8 +431,7 @@ fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue>
     // `bun_ast::e::String` Zig-side). The JSON5 parser never builds
     // ropes, so the simple slice → JS path is sufficient.
     if str.is_utf16 {
-        let zig = ZigString::init_utf16(str.slice16());
-        let bun_s = BunString::init(zig);
+        let bun_s = BunString::borrow_utf16(str.slice16());
         bun_s.to_js(global)
     } else {
         jsc::bun_string_jsc::create_utf8_for_js(global, str.slice8())

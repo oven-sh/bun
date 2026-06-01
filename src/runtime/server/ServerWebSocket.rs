@@ -815,7 +815,7 @@ impl ServerWebSocket {
         {
             let js_string = message_value.to_js_string(global_this)?;
             let view = js_string.view(global_this);
-            let slice = view.to_slice();
+            let slice = view.to_utf8_without_ref();
 
             let ret = self.do_publish(
                 ssl,
@@ -869,7 +869,7 @@ impl ServerWebSocket {
 
         let js_string = message_value.to_js_string(global_this)?;
         let view = js_string.view(global_this);
-        let slice = view.to_slice();
+        let slice = view.to_utf8_without_ref();
 
         let ret = self.do_publish(
             ssl,
@@ -1089,7 +1089,7 @@ impl ServerWebSocket {
         {
             let js_string = message_value.to_js_string(global_this)?;
             let view = js_string.view(global_this);
-            let slice = view.to_slice();
+            let slice = view.to_utf8_without_ref();
 
             let buffer = slice.slice();
             let ret = send_status_to_js(
@@ -1132,7 +1132,7 @@ impl ServerWebSocket {
 
         let js_string = message_value.to_js_string(global_this)?;
         let view = js_string.view(global_this);
-        let slice = view.to_slice();
+        let slice = view.to_utf8_without_ref();
 
         let buffer = slice.slice();
         let ret = send_status_to_js(

@@ -40,11 +40,11 @@ impl TextEncoderStreamEncoder {
 
         let str = arguments[0].get_zig_string(global)?;
 
-        if str.is_16bit() {
-            return Ok(self.encode_utf16(global, str.utf16_slice_aligned()));
+        if str.is_utf16() {
+            return Ok(self.encode_utf16(global, str.utf16()));
         }
 
-        Ok(self.encode_latin1(global, str.slice()))
+        Ok(self.encode_latin1(global, str.latin1()))
     }
 
     fn encode_latin1(&self, global: &JSGlobalObject, input: &[u8]) -> JSValue {

@@ -4,8 +4,8 @@
 
 use bun_core::{SliceWithUnderlyingString, String, Tag, ZigStringSlice, strings};
 
-use crate::zig_string::{self, ZigString};
-use crate::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, ZigStringJsc as _};
+use crate::zig_string;
+use crate::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _};
 
 // ── extern decls ────────────────────────────────────────────────────────────
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle and `&String`/
@@ -191,7 +191,7 @@ fn slice_with_underlying_string_to_js_with_options(
                 // PORT NOTE: ownership of utf8 bytes transferred to JSC via
                 // `to_external_value`; `take_owned_raw` already cleared `utf8`
                 // and leaked the buffer (mimalloc-freed by JSC).
-                let zig = ZigString::from_bytes(
+                let zig = String::borrow_bytes(
                     // SAFETY: `take_owned_raw` returned a leaked, contiguous
                     // mimalloc-owned buffer of `len` bytes.
                     unsafe { bun_core::ffi::slice(ptr, len) },

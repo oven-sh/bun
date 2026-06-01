@@ -15,7 +15,7 @@ use core::ffi::c_void;
 
 use bun_core::Environment;
 use bun_core::Output;
-use bun_core::ZigString;
+use bun_core::String as BunString;
 
 use crate::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsError, JsResult};
 
@@ -782,8 +782,8 @@ mod private {
     // TODO(port): move to jsc_sys
     //
     // safe fn: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&`
-    // is ABI-identical to non-null `*mut`); `Option<&ZigString>` is ABI-identical
-    // to a nullable `*const ZigString` via the guaranteed null-pointer
+    // is ABI-identical to non-null `*mut`); `Option<&BunString>` is ABI-identical
+    // to a nullable `*const BunString` via the guaranteed null-pointer
     // optimization (C++ reads `nullptr` as "no name"). `data` /
     // `input_function_ptr` are opaque round-trip pointers C++ only stores into
     // the JSFunction's private slot (never dereferenced as Rust data) — same
@@ -791,7 +791,7 @@ mod private {
     unsafe extern "C" {
         pub(super) safe fn Bun__CreateFFIFunctionWithDataValue(
             global: &JSGlobalObject,
-            symbol_name: Option<&ZigString>,
+            symbol_name: Option<&BunString>,
             arg_count: u32,
             // Zig `*const JSHostFn` is a fn *pointer*; `JsHostFn` in Rust is already
             // `unsafe extern "C" fn(...)`, i.e. the pointer type.
@@ -801,7 +801,7 @@ mod private {
 
         pub(super) safe fn Bun__CreateFFIFunctionValue(
             global_object: &JSGlobalObject,
-            symbol_name: Option<&ZigString>,
+            symbol_name: Option<&BunString>,
             arg_count: u32,
             function: JsHostFn,
             add_ptr_field: bool,
@@ -819,7 +819,7 @@ mod private {
 #[track_caller]
 pub fn new_runtime_function(
     global_object: &JSGlobalObject,
-    symbol_name: Option<&ZigString>,
+    symbol_name: Option<&BunString>,
     arg_count: u32,
     function_pointer: JsHostFn,
     add_ptr_property: bool,
@@ -852,7 +852,7 @@ pub fn set_function_data(function: JSValue, value: Option<*mut c_void>) {
 #[track_caller]
 pub fn new_function_with_data(
     global_object: &JSGlobalObject,
-    symbol_name: Option<&ZigString>,
+    symbol_name: Option<&BunString>,
     arg_count: u32,
     function: JsHostFn,
     data: *mut c_void,
@@ -1021,7 +1021,7 @@ pub type InstanceMethodType<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> JsRe
 //          InstanceMethodType(Container)`
 //
 // This is the heaviest reflection in the file: it iterates `@typeInfo(Fn).params`,
-// pattern-matches each parameter TYPE (`*JSGlobalObject`, `ZigString`,
+// pattern-matches each parameter TYPE (`*JSGlobalObject`, `bun.String`,
 // `?jsc.ArrayBuffer`, `*WebCore.Response`, `?HTMLRewriter.ContentOptions`, ...) and
 // emits per-param argument-decoding + error-throwing glue, then `@call`s the target.
 // There is no value-level translation; the entire body is a type-directed code
@@ -1036,7 +1036,7 @@ pub type InstanceMethodType<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> JsRe
 //   ?Node.StringOrBuffer  -> optional of above (null/undefined -> None)
 //   ArrayBuffer           -> `arg.as_array_buffer(global)` or throw "expected TypedArray"
 //   ?ArrayBuffer          -> optional of above
-//   ZigString             -> `arg.get_zig_string(global)?` (throws on undefined/null)
+//   bun.String            -> `arg.get_zig_string(global)?` (throws on undefined/null)
 //   ?HTMLRewriter.ContentOptions -> `{ html: arg.get("html")?.to_boolean() }`
 //   *WebCore.Response     -> `arg.as::<Response>()` or throw "Expected Response object"
 //   *WebCore.Request      -> `arg.as::<Request>()` or throw "Expected Request object"

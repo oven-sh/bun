@@ -1,5 +1,5 @@
-use bun_core::ZigString;
-use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, ZigStringJsc as _};
+use bun_core::String as BunString;
+use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult, StringJsc as _};
 
 use super::nodejs_error_code::Code as ErrorCode;
 
@@ -24,7 +24,7 @@ macro_rules! create_simple_error {
                 err.put(
                     global,
                     "code",
-                    ZigString::init(<&'static str>::from($code).as_bytes()).to_js(global),
+                    BunString::ascii(<&'static str>::from($code).as_bytes()).to_js_value(global),
                 );
                 Ok(err)
             }

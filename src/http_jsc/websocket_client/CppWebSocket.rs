@@ -10,7 +10,7 @@
 
 use core::ffi::c_void;
 
-use bun_core::{String as BunString, ZigString};
+use bun_core::String as BunString;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_uws_sys::{Socket, SslCtx};
 
@@ -49,7 +49,7 @@ unsafe extern "C" {
     fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
         clone: bool,
-        text: *const ZigString,
+        text: *const BunString,
     );
     fn WebSocket__didReceiveBytes(
         websocket_context: &CppWebSocket,
@@ -88,7 +88,7 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub(crate) fn did_receive_text(&self, clone: bool, text: &ZigString) {
+    pub(crate) fn did_receive_text(&self, clone: bool, text: &BunString) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();

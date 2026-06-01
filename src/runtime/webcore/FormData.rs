@@ -3,10 +3,9 @@
 
 use bun_collections::ArrayHashMap;
 use bun_core::{self, declare_scope, err, scoped_log};
-use bun_core::{ZigString, ZigStringSlice, strings};
+use bun_core::{String as BunString, ZigStringSlice, strings};
 use bun_jsc::{
-    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult,
-    ZigStringJsc as _,
+    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, StringJsc as _,
 };
 use bun_semver::{self, SlicedString};
 use core::ffi::c_void;
@@ -51,7 +50,7 @@ impl AsyncFormDataExt for AsyncFormData {
                 );
                 promise.reject(
                     global,
-                    ZigString::init(b"FormData missing boundary").to_error_instance(global),
+                    BunString::ascii(b"FormData missing boundary").to_error_instance(global),
                 )?;
                 return Ok(());
             }
@@ -105,16 +104,16 @@ pub enum FieldEntry {
 
 #[repr(C)]
 pub struct FieldExternal {
-    pub name: ZigString,
-    pub value: ZigString,
+    pub name: BunString,
+    pub value: BunString,
     pub blob: *mut Blob,
 }
 
 impl Default for FieldExternal {
     fn default() -> Self {
         FieldExternal {
-            name: ZigString::default(),
-            value: ZigString::default(),
+            name: BunString::default(),
+            value: BunString::default(),
             blob: core::ptr::null_mut(),
         }
     }
@@ -129,7 +128,7 @@ impl FormData {
     ) -> Result<JSValue, bun_core::Error> {
         match encoding {
             Encoding::URLEncoded => {
-                let str = ZigString::from_utf8(strings::without_utf8_bom(input));
+                let str = BunString::borrow_utf8(strings::without_utf8_bom(input));
                 // C++ may throw (e.g. string too long) — `create_from_url_query`
                 // wraps the FFI in a validation scope and maps zero → JsError.
                 DOMFormData::create_from_url_query(global, &str).map_err(|_| err!("JSError"))
@@ -221,14 +220,14 @@ pub fn to_js_from_multipart_data(
         fn on_entry(wrap: &mut Self, name: bun_semver::String, field: &Field, buf: &[u8]) {
             // SAFETY: `field.value` points into `buf` (caller-owned input), valid for this call.
             let value_str: &[u8] = unsafe { &*field.value };
-            let key = ZigString::init_utf8(name.slice(buf));
+            let key = BunString::borrow_utf8(name.slice(buf));
 
             if field.is_file {
                 let filename_str = field.filename.slice(buf);
 
                 // PORT NOTE: dropped `bun.default_allocator` arg.
                 let mut blob = Blob::create(value_str, wrap.global, false);
-                let filename = ZigString::init_utf8(filename_str);
+                let filename = BunString::borrow_utf8(filename_str);
 
                 // PORT NOTE: Zig used a labeled `:brk` block returning a borrowed
                 // `[]const u8`. `MimeType.value` is now `Cow<'static,[u8]>`, so
@@ -288,7 +287,7 @@ pub fn to_js_from_multipart_data(
                 blob.detach();
                 blob.free_content_type();
             } else {
-                let value = ZigString::init_utf8(
+                let value = BunString::borrow_utf8(
                     // > Each part whose `Content-Disposition` header does not
                     // > contain a `filename` parameter must be parsed into an
                     // > entry whose value is the UTF-8 decoded without BOM

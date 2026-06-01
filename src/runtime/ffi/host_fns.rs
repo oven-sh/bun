@@ -17,7 +17,7 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::StringArrayHashMap;
-use bun_core::{self, ZigString};
+use bun_core;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPropertyIterator, JSValue, JsResult};
 
 use super::{ABIType, Function};
@@ -36,7 +36,7 @@ unsafe extern "C" {
 /// wrapper while `bun_jsc::JSValue::get_own` stays gated.
 #[inline]
 fn get_own(value: JSValue, global: &JSGlobalObject, key: &[u8]) -> JsResult<Option<JSValue>> {
-    let key_str = bun_core::String::init(ZigString::init(key));
+    let key_str = bun_core::String::ascii(key);
     // Zig spec opens a `TopExceptionScope` before the FFI call (the C++ side has a
     // ThrowScope whose dtor sets `m_needExceptionCheck`); a post-hoc `has_exception()`
     // would assert under `BUN_JSC_validateExceptionChecks=1`.

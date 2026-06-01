@@ -2,7 +2,7 @@ use core::ffi::{CStr, c_uint};
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::{String as BunString, strings};
 
 use crate::jsc::JSGlobalObject;
 
@@ -345,8 +345,8 @@ impl EVP {
         None
     }
 
-    pub fn by_name(name: &ZigString, global: &JSGlobalObject) -> Option<EVP> {
-        let name_str = name.to_slice();
+    pub fn by_name(name: &BunString, global: &JSGlobalObject) -> Option<EVP> {
+        let name_str = name.to_utf8_without_ref();
         // `RareData::boring_engine()` returns `*mut` to bun_jsc's local opaque `ENGINE`
         // stub (bun_jsc has no bun_boringssl_sys dep). Both name the same C `ENGINE`
         // struct, so cast to the real bindgen type for the FFI call.

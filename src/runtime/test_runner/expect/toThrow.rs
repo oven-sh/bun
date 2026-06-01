@@ -3,7 +3,7 @@ use super::JSValueTestExt;
 use super::FormatterTestExt;
 use bun_jsc::console_object::Formatter;
 use bun_jsc::JsClass;
-use bun_core::{strings, ZigString};
+use bun_core::{strings, String as BunString};
 
 use super::Expect;
 use super::ExpectAny;
@@ -197,7 +197,7 @@ pub(crate) fn to_throw(
             return Ok(JSValue::UNDEFINED);
         }
 
-        let mut expected_class = ZigString::EMPTY;
+        let mut expected_class = BunString::EMPTY;
         expected_value.get_class_name(global, &mut expected_class)?;
         let received_message: JSValue = result
             .fast_get(global, bun_jsc::BuiltinName::Message)?
@@ -382,8 +382,8 @@ pub(crate) fn to_throw(
 
         // error: received error not instance of received error constructor
         let mut formatter = Formatter::new(global).with_quote_strings(true);
-        let mut expected_class = ZigString::EMPTY;
-        let mut received_class = ZigString::EMPTY;
+        let mut expected_class = BunString::EMPTY;
+        let mut received_class = BunString::EMPTY;
         expected_value.get_class_name(global, &mut expected_class)?;
         result.get_class_name(global, &mut received_class)?;
         let signature: &'static str = get_signature("toThrow", "<green>expected<r>", false);
@@ -463,7 +463,7 @@ pub(crate) fn to_throw(
         );
     }
 
-    let mut expected_class = ZigString::EMPTY;
+    let mut expected_class = BunString::EMPTY;
     expected_value.get_class_name(global, &mut expected_class)?;
     this.throw(
         global,

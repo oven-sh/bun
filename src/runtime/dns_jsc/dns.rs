@@ -5040,8 +5040,8 @@ impl Resolver {
                 if record_type_str.length() == 0 {
                     break 'brk RecordType::DEFAULT;
                 }
-                // TODO(port): phf custom hasher — Zig used getWithEql with ZigString.eqlComptime
-                match RECORD_TYPE_MAP.get(record_type_str.get_zig_string(global_this).slice()) {
+                // TODO(port): phf custom hasher — Zig used getWithEql with eqlComptime
+                match RECORD_TYPE_MAP.get(record_type_str.get_zig_string(global_this).latin1()) {
                     Some(r) => *r,
                     None => {
                         return Err(global_this.throw_invalid_argument_property_value(
@@ -5600,10 +5600,9 @@ impl Resolver {
 
             // size = strlen(buf+1) + 1
             let size = ip.len() + 1;
-            // PORT NOTE: `bun_core::ZigString` lacks `with_encoding`/`to_js` (those live
-            // on `bun_jsc::zig_string::ZigString`). The formatted bytes here are pure
-            // ASCII (IP address + optional port), so `with_encoding()` would be a no-op
-            // anyway — borrow as a `bun_core::String` and hand to JS.
+            // The formatted bytes here are pure ASCII (IP address + optional port),
+            // so `with_encoding()` would be a no-op — borrow as a `bun_core::String`
+            // and hand to JS.
             use jsc::StringJsc as _;
             if port == IANA_DNS_PORT {
                 values.put_index(
@@ -5995,7 +5994,7 @@ impl Resolver {
             ));
         }
         let addr_zigstr = addr_str.get_zig_string(global_this);
-        let addr_s = addr_zigstr.slice();
+        let addr_s = addr_zigstr.latin1();
 
         let port_value = arguments.ptr[1];
         let port: u16 = port_value.to_port_number(global_this)?;

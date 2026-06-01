@@ -185,7 +185,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
             (*referenced_source_provider)->deref();
         }
         *referenced_source_provider = provider;
-        source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
+        source_lines[0] = Bun::toBorrowed(sourceString.substring(lineStart, lineEnd - lineStart));
         source_line_numbers[0] = location.line();
 
         if (lineStart > 0) {
@@ -211,7 +211,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
                 }
 
                 // We are at the beginning of the line
-                source_lines[source_line_i] = Bun::toStringView(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1));
+                source_lines[source_line_i] = Bun::toBorrowed(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1));
 
                 source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
                 source_line_i++;

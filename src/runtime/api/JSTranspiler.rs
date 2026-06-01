@@ -18,9 +18,7 @@ use bun_js_parser::parser::Runtime;
 use bun_js_parser::parser::ScanPassResult;
 use bun_js_parser::{self as JSAst};
 use bun_js_printer as JSPrinter;
-use bun_jsc::ZigStringJsc as _;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::zig_string::ZigString as JscZigString;
 use bun_jsc::{
     self as jsc, ArgumentsSlice, CallFrame, ComptimeStringMapExt, JSArrayIterator, JSGlobalObject,
     JSPromise, JSPropertyIterator, JSPropertyIteratorOptions, JSValue, JsCell, JsResult, LogJsc,
@@ -30,7 +28,7 @@ use bun_resolver::package_json::{MacroMap, PackageJSON};
 use bun_resolver::tsconfig_json::TSConfigJSON;
 // `bun_schema::api` → schema lives in `bun_options_types::schema::api`.
 use bun_collections::ArrayHashMapExt;
-use bun_core::{OwnedString, String as BunString, ZigString};
+use bun_core::{OwnedString, String as BunString};
 use bun_options_types::schema::api;
 
 // TODO(port): `pub const js = jsc.Codegen.JSTranspiler;` and the toJS/fromJS/fromJSDirect
@@ -218,11 +216,11 @@ impl Config {
                     }
 
                     // PERF(port): was appendAssumeCapacity — profile if hot.
-                    names.push(prop.to_owned_slice().into());
-                    let mut val = ZigString::init(b"");
+                    names.push(prop.to_owned_box());
+                    let mut val = BunString::ascii(b"");
                     property_value.to_zig_string(&mut val, global)?;
-                    if val.len == 0 {
-                        val = ZigString::init(b"\"\"");
+                    if val.length() == 0 {
+                        val = BunString::ascii(b"\"\"");
                     }
                     let mut buf = Vec::new();
                     write!(&mut buf, "{}", val).expect("unreachable");
@@ -245,9 +243,9 @@ impl Config {
 
                 let toplevel_type = external.js_type();
                 if toplevel_type.is_string_like() {
-                    let mut zig_str = ZigString::init(b"");
+                    let mut zig_str = BunString::ascii(b"");
                     external.to_zig_string(&mut zig_str, global)?;
-                    if zig_str.len == 0 {
+                    if zig_str.length() == 0 {
                         break 'external;
                     }
                     let mut single_external: Vec<Box<[u8]>> = Vec::with_capacity(1);
@@ -270,9 +268,9 @@ impl Config {
                             )));
                         }
 
-                        let mut zig_str = ZigString::init(b"");
+                        let mut zig_str = BunString::ascii(b"");
                         entry.to_zig_string(&mut zig_str, global)?;
-                        if zig_str.len == 0 {
+                        if zig_str.length() == 0 {
                             continue;
                         }
                         let mut buf = Vec::new();
@@ -331,7 +329,7 @@ impl Config {
                 if out.is_empty() {
                     break 'tsconfig;
                 }
-                self.tsconfig_buf = out.to_owned_slice().into();
+                self.tsconfig_buf = out.to_owned_box();
 
                 // TODO: JSC -> Ast conversion
                 // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
@@ -377,7 +375,7 @@ impl Config {
                 if out.is_empty() {
                     break 'macros;
                 }
-                self.macros_buf = out.to_owned_slice().into();
+                self.macros_buf = out.to_owned_box();
                 let source =
                     bun_ast::Source::init_path_string(b"macros.json", &self.macros_buf[..]);
                 // SAFETY: VirtualMachine::get() returns the live singleton on the JS thread.
@@ -520,7 +518,7 @@ impl Config {
                                 continue;
                             }
                             let str = value.get_zig_string(global)?;
-                            if str.len == 0 {
+                            if str.length() == 0 {
                                 continue;
                             }
                             // Spec uses `std.fmt.bufPrint` into the fixed spare capacity
@@ -1404,8 +1402,8 @@ impl JSTranspiler {
             return Err(global.throw_value(log_ref.to_js(global, "Parse error")?));
         }
 
-        let exports_label = ZigString::static_(b"exports");
-        let imports_label = ZigString::static_(b"imports");
+        let exports_label = BunString::static_(b"exports");
+        let imports_label = BunString::static_(b"imports");
         let named_imports_value = named_imports_to_js(
             global,
             parse_result.ast.import_records.as_slice(),
@@ -1628,10 +1626,7 @@ impl JSTranspiler {
 
         // TODO: benchmark if pooling this way is faster or moving is faster
         buffer_writer = printer.ctx;
-        let mut out = JscZigString::init(buffer_writer.written());
-        out.set_output_encoding();
-
-        let result = out.to_js(global);
+        let result = BunString::borrow_bytes(buffer_writer.written()).to_js_value(global);
         self.buffer_writer.set(Some(buffer_writer));
         Ok(result)
     }
@@ -1665,8 +1660,8 @@ fn named_imports_to_js(
     import_records: &[ImportRecord],
     trim_unused_imports: bool,
 ) -> JsResult<JSValue> {
-    let path_label = ZigString::static_(b"path");
-    let kind_label = ZigString::static_(b"kind");
+    let path_label = BunString::static_(b"path");
+    let kind_label = BunString::static_(b"kind");
 
     let mut count: u32 = 0;
     for record in import_records {
@@ -1692,8 +1687,8 @@ fn named_imports_to_js(
         }
 
         array.ensure_still_alive();
-        let path = JscZigString::init(record.path.text).to_js(global);
-        let kind = JscZigString::init(record.kind.label()).to_js(global);
+        let path = BunString::ascii(record.path.text).to_js_value(global);
+        let kind = BunString::ascii(record.kind.label()).to_js_value(global);
         let entry = JSValue::create_object2(global, &path_label, &kind_label, path, kind)?;
         array.put_index(global, i, entry)?;
         i += 1;

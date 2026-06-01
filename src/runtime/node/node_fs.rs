@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
 use bun_core::Environment;
-use bun_core::{PathString, String as BunString, ZStr, ZigString};
+use bun_core::{PathString, String as BunString, ZStr};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::KeepAlive;
@@ -1202,10 +1202,10 @@ mod _async_tasks {
             Ok(crate::node::types::FdJsc::to_js(*self, global))
         }
     }
-    impl FsReturn for ZigString {
+    impl FsReturn for BunString {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(bun_jsc::ZigStringJsc::to_js(self, global))
+            bun_jsc::StringJsc::transfer_to_js(self, global)
         }
     }
     impl FsReturn for StringOrBuffer {
@@ -4676,7 +4676,7 @@ pub mod ret {
     pub type Link = ();
     pub type Lstat = StatOrNotFound;
     pub type Mkdir = StringOrUndefined;
-    pub type Mkdtemp = ZigString;
+    pub type Mkdtemp = BunString;
     pub type Open = FD;
     pub type WriteFile = ();
     pub type Readv = Read;
@@ -4696,8 +4696,6 @@ pub mod ret {
         pub buffer_val: JSValue,
     }
     impl ReadPromise {
-        const FIELD_BYTES_READ: ZigString = ZigString::init_static(b"bytesRead");
-        const FIELD_BUFFER: ZigString = ZigString::init_static(b"buffer");
         pub fn to_js(&self, ctx: &JSGlobalObject) -> JsResult<JSValue> {
             let _unprotect = scopeguard::guard(self.buffer_val, |v| {
                 if !v.is_empty_or_undefined_or_null() {
@@ -4706,8 +4704,8 @@ pub mod ret {
             });
             JSValue::create_object2(
                 ctx,
-                &Self::FIELD_BYTES_READ,
-                &Self::FIELD_BUFFER,
+                &BunString::static_(b"bytesRead"),
+                &BunString::static_(b"buffer"),
                 JSValue::js_number_from_uint64(self.bytes_read.min((1u64 << 52) - 1)),
                 self.buffer_val,
             )
@@ -4720,8 +4718,6 @@ pub mod ret {
         pub buffer_val: JSValue,
     }
     impl WritePromise {
-        const FIELD_BYTES_WRITTEN: ZigString = ZigString::init_static(b"bytesWritten");
-        const FIELD_BUFFER: ZigString = ZigString::init_static(b"buffer");
         // Excited for the issue that's like "cannot read file bigger than 2 GB"
         pub fn to_js(&mut self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
             let _unprotect = scopeguard::guard(self.buffer_val, |v| {
@@ -4736,8 +4732,8 @@ pub mod ret {
             };
             JSValue::create_object2(
                 global_object,
-                &Self::FIELD_BYTES_WRITTEN,
-                &Self::FIELD_BUFFER,
+                &BunString::static_(b"bytesWritten"),
+                &BunString::static_(b"buffer"),
                 JSValue::js_number_from_uint64(self.bytes_written.min((1u64 << 52) - 1)),
                 buffer_js,
             )
@@ -6118,10 +6114,9 @@ impl NodeFS {
             // SAFETY: on success libuv populates `req.path` with a NUL-terminated
             // UTF-8 string owned by the request; `UvFsReq::drop` runs
             // `uv_fs_req_cleanup` in place after we've copied the bytes out.
-            return Ok(
-                ZigString::dupe_for_js(unsafe { bun_core::ffi::cstr(req.path) }.to_bytes())
-                    .expect("oom"),
-            );
+            return Ok(BunString::clone_utf8(
+                unsafe { bun_core::ffi::cstr(req.path) }.to_bytes(),
+            ));
         }
 
         #[cfg(not(windows))]
@@ -6133,7 +6128,7 @@ impl NodeFS {
                 // SAFETY: `rc` is non-null and points back into `prefix_buf`, which is
                 // NUL-terminated and outlives this borrow.
                 let bytes = unsafe { bun_core::ffi::cstr(rc) }.to_bytes();
-                return Ok(ZigString::dupe_for_js(bytes).expect("oom"));
+                return Ok(BunString::clone_utf8(bytes));
             }
 
             // c.getErrno(rc) returns SUCCESS if rc is -1 so we call std.c._errno() directly

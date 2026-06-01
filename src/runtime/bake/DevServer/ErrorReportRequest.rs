@@ -192,9 +192,8 @@ impl ErrorReportRequest {
         let mut top_frame_position = ZigStackFramePosition::INVALID;
         let mut region_of_interest_line: u32 = 0;
         for frame in frames.iter_mut() {
-            // PORT NOTE: Zig read `frame.source_url.value.ZigString.slice()` —
-            // every `source_url` here is `Tag::ZigString` (built via
-            // `String::init(&[u8])`), so `byte_slice()` is the equivalent view.
+            // PORT NOTE: every `source_url` here is `Tag::Borrowed` (built via
+            // `String::ascii(&[u8])`), so `byte_slice()` is the equivalent view.
             let source_url: &[u8] = frame.source_url.byte_slice();
             // The browser code strips "http://localhost:3000" when the string
             // has /_bun/client. It's done because JS can refer to `location`

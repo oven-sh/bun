@@ -1289,7 +1289,7 @@ impl UDPSocket {
         // pointers stay valid. An ArrayBuffer detached during phase 1 now
         // reports a zero-length slice rather than a dangling pointer.
         let empty: &'static [u8] = b"";
-        // Zig kept `ZigString.Slice` lifetimes in the arena; here we collect
+        // Zig kept `ZigStringSlice` lifetimes in the arena; here we collect
         // them into a Vec so the borrowed bytes live until `socket.send()`.
         let mut string_slices: Vec<ZigStringSlice> = Vec::with_capacity(len);
         for (slice_idx, val) in payload_vals.iter().enumerate() {

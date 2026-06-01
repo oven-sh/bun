@@ -1,10 +1,9 @@
 use core::cell::Cell;
 use std::io::Write as _;
 
-use crate::zig_string::ZigString;
-use crate::{
-    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _, ZigStringJsc as _,
-};
+use bun_core::String as BunString;
+
+use crate::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc as _};
 
 #[crate::JsClass] // codegen: JSBuildMessage (toJS / fromJS / fromJSDirect wired by derive)
 // R-2 (`sharedThis`): every JS-facing host-fn takes `&self`; the only field
@@ -57,12 +56,9 @@ impl BuildMessage {
         )
         .expect("infallible: in-memory write");
 
-        let mut str = ZigString::init(&text);
-        str.set_output_encoding();
-        if str.is_utf8() {
-            let out = str.to_js(global);
+        if !bun_core::strings::is_all_ascii(&text) {
             // default_allocator.free(text) → `text` drops on return.
-            return out;
+            return BunString::borrow_utf8(&text).to_js_value(global);
         }
 
         // All-ASCII path: hand the buffer to JSC as an external Latin-1 string.
@@ -72,8 +68,7 @@ impl BuildMessage {
         let ptr = bun_core::heap::into_raw(text.into_boxed_slice()).cast::<u8>();
         // SAFETY: ptr/len describe a contiguous mimalloc-owned buffer just
         // released by `heap::alloc`; it stays live until JSC frees it.
-        let mut str = ZigString::init(unsafe { bun_core::ffi::slice(ptr, len) });
-        str.set_output_encoding();
+        let str = BunString::ascii(unsafe { bun_core::ffi::slice(ptr, len) });
         str.to_external_value(global)
     }
 
@@ -147,17 +142,17 @@ impl BuildMessage {
         object.put(
             global,
             b"lineText",
-            ZigString::init(location.line_text.as_deref().unwrap_or(b"")).to_js(global),
+            BunString::ascii(location.line_text.as_deref().unwrap_or(b"")).to_js_value(global),
         );
         object.put(
             global,
             b"file",
-            ZigString::init(&location.file).to_js(global),
+            BunString::ascii(&location.file).to_js_value(global),
         );
         object.put(
             global,
             b"namespace",
-            ZigString::init(location.namespace).to_js(global),
+            BunString::ascii(location.namespace).to_js_value(global),
         );
         object.put(global, b"line", JSValue::from(location.line));
         object.put(global, b"column", JSValue::from(location.column));
@@ -193,12 +188,12 @@ impl BuildMessage {
 
     #[crate::host_fn(getter)]
     pub fn get_message(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(ZigString::init(&self.msg.data.text).to_js(global))
+        Ok(BunString::ascii(&self.msg.data.text).to_js_value(global))
     }
 
     #[crate::host_fn(getter)]
     pub fn get_level(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        Ok(ZigString::init(self.msg.kind.string()).to_js(global))
+        Ok(BunString::ascii(self.msg.kind.string()).to_js_value(global))
     }
 }
 

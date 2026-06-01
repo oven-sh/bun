@@ -2387,7 +2387,7 @@ where
             if let Some(content_length) = headers.fast_get(jsc::HTTPHeaderName::ContentLength) {
                 // Parse before renderMetadata(): doWriteHeaders() will fastRemove(.ContentLength)
                 // and deref the FetchHeaders, freeing the borrowed StringImpl.
-                let content_length_str = content_length.to_slice();
+                let content_length_str = content_length.to_utf8_without_ref();
                 let len: usize = HTTP::parse_content_length(content_length_str.slice());
                 drop(content_length_str);
 
@@ -4237,13 +4237,13 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
 
     let content_type: MimeType = 'brk: {
         if let Some(headers_) = headers {
-            if let Some(content) = headers_.fast_get(jsc::HTTPHeaderName::ContentType) {
+            if let Some(mut content) = headers_.fast_get(jsc::HTTPHeaderName::ContentType) {
                 needs_content_type = false;
 
                 let content_slice = content.to_slice();
                 // Zig: `if (content_slice.allocator.isNull()) null else allocator` —
                 // i.e. dupe only when the latin1/utf16 slice was heap-converted.
-                let dupe = matches!(content_slice, bun_core::ZigStringSlice::Owned(_));
+                let dupe = matches!(content_slice.utf8, bun_core::ZigStringSlice::Owned(_));
                 let mt = MimeType::init(
                     content_slice.slice(),
                     dupe,

@@ -57,14 +57,14 @@ pub use ::bstr::{BStr, BString, ByteSlice};
 pub use string::immutable;
 pub use string::string_joiner::StringJoiner;
 pub use string::{
-    ByteString, STRING_ALLOCATION_LIMIT, ZigStringGithubActionFormatter, cheap_prefix_normalizer,
-    escape_reg_exp, identifier, lexer, lexer_tables, parse_double, printer, quote_for_json,
-    string_joiner, write, zig_string,
-};
-pub use string::{
     HashedString, MutableString, NodeEncoding, OwnedString, OwnedStringCell, PathString,
     SliceWithUnderlyingString, SmolStr, String, StringBuilder, WTFStringImpl, WTFStringImplExt,
-    WTFStringImplStruct, ZigString, ZigStringSlice,
+    WTFStringImplStruct, ZigStringSlice,
+};
+pub use string::{
+    STRING_ALLOCATION_LIMIT, StringGithubActionFormatter, cheap_prefix_normalizer, escape_reg_exp,
+    identifier, lexer, lexer_tables, parse_double, printer, quote_for_json, string_joiner, write,
+    zig_string,
 };
 pub use string::{StringPointer, Tag, slice_to_nul, slice_to_nul_mut};
 

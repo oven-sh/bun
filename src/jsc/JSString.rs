@@ -1,7 +1,7 @@
 use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
-use bun_core::ZigString;
+use bun_core::String as BunString;
 // `ZigString.Slice` in Zig — re-exported in Rust as `bun_core::zig_string::Slice`
 // (alias for `bun_core::ZigStringSlice`).
 use bun_core::zig_string::Slice as ZigStringSlice;
@@ -26,7 +26,7 @@ unsafe extern "C" {
     safe fn JSC__JSString__toZigString(
         this: &JSString,
         global: &JSGlobalObject,
-        zig_str: &mut ZigString,
+        zig_str: &mut BunString,
     );
     safe fn JSC__JSString__eql(this: &JSString, global: &JSGlobalObject, other: &JSString) -> bool;
     fn JSC__JSString__iterator(this: &JSString, global_object: &JSGlobalObject, iter: *mut c_void);
@@ -46,7 +46,7 @@ impl JSString {
         (!p.is_null()).then(|| JSObject::opaque_ref(p))
     }
 
-    pub fn to_zig_string(&self, global: &JSGlobalObject, zig_str: &mut ZigString) {
+    pub fn to_zig_string(&self, global: &JSGlobalObject, zig_str: &mut BunString) {
         JSC__JSString__toZigString(self, global, zig_str)
     }
 
@@ -55,34 +55,32 @@ impl JSString {
         core::hint::black_box(std::ptr::from_ref::<Self>(self));
     }
 
-    pub fn get_zig_string(&self, global: &JSGlobalObject) -> ZigString {
-        let mut out = ZigString::init(b"");
+    pub fn get_zig_string(&self, global: &JSGlobalObject) -> BunString {
+        let mut out = BunString::ascii(b"");
         self.to_zig_string(global, &mut out);
         out
     }
 
     // pub const view = getZigString;
     #[inline]
-    pub fn view(&self, global: &JSGlobalObject) -> ZigString {
+    pub fn view(&self, global: &JSGlobalObject) -> BunString {
         self.get_zig_string(global)
     }
 
     /// doesn't always allocate
     pub fn to_slice(&self, global: &JSGlobalObject) -> ZigStringSlice {
-        let mut str = ZigString::init(b"");
+        let mut str = BunString::ascii(b"");
         self.to_zig_string(global, &mut str);
-        str.to_slice()
+        str.to_utf8_without_ref()
     }
 
     // Spec (JSString.zig:44-52): `str.toSliceClone(allocator)` always allocates
     // an owned UTF-8 copy so the result outlives the GC'd JSString. Returning
     // `to_slice()` here (a borrow that may alias JSC-owned memory) would hand
     // callers a use-after-free once the cell is collected.
-    // TODO(port): un-gate once `bun_core::ZigString::to_slice_clone` is
-    // ported; gated so wrong-semantics fallback cannot be called.
 
     pub fn to_slice_clone(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
-        let mut str = ZigString::init(b"");
+        let mut str = BunString::ascii(b"");
         self.to_zig_string(global, &mut str);
         Ok(str.to_slice_clone())
     }
@@ -90,13 +88,14 @@ impl JSString {
     // Spec (JSString.zig:54-62): `str.toSliceZ(allocator)` guarantees a `[:0]`
     // sentinel. `to_slice()` is not NUL-terminated; passing it to a C API that
     // expects one reads past the buffer end.
-    // TODO(port): un-gate once `bun_core::ZigString::to_slice_z` is
-    // ported; gated so wrong-semantics fallback cannot be called.
 
     pub fn to_slice_z(&self, global: &JSGlobalObject) -> ZigStringSlice {
-        let mut str = ZigString::init(b"");
+        let mut str = BunString::ascii(b"");
         self.to_zig_string(global, &mut str);
-        str.to_slice_z()
+        if str.length() == 0 {
+            return ZigStringSlice::Static(c"".as_ptr().cast::<u8>(), 0);
+        }
+        ZigStringSlice::Owned(str.to_owned_slice())
     }
 
     pub fn eql(&self, global: &JSGlobalObject, other: &JSString) -> bool {

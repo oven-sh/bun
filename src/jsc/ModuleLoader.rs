@@ -246,7 +246,7 @@ pub struct LoaderHooks {
         global: *mut JSGlobalObject,
         specifier: *const bun_core::String,
         referrer: *const bun_core::String,
-        source_code: *mut bun_core::ZigString,
+        source_code: *mut bun_core::String,
         loader: bun_options_types::schema::api::Loader,
         ret: *mut ErrorableResolvedSource,
     ) -> bool,
@@ -576,7 +576,7 @@ pub(crate) unsafe extern "C" fn Bun__transpileVirtualModule(
     global: *mut JSGlobalObject,
     specifier: *const bun_core::String,
     referrer: *const bun_core::String,
-    source_code: *mut bun_core::ZigString,
+    source_code: *mut bun_core::String,
     loader: bun_options_types::schema::api::Loader,
     ret: *mut ErrorableResolvedSource,
 ) -> bool {
@@ -627,8 +627,8 @@ pub(crate) unsafe extern "C" fn Bun__runVirtualModule(
     };
 
     match global.run_on_load_plugins(
-        bun_core::String::init(bun_core::ZigString::init(namespace)),
-        bun_core::String::init(bun_core::ZigString::init(after_namespace)),
+        bun_core::String::ascii(namespace),
+        bun_core::String::ascii(after_namespace),
         crate::BunPluginTarget::Bun,
     ) {
         // `catch return .zero` / `orelse return .zero`

@@ -19,11 +19,9 @@ use bun_jsc::{
 // `bun_jsc::virtual_machine::VirtualMachine` — import that directly so the
 // name resolves as a type at `&mut VirtualMachine` annotations and as the
 // owner of the `on_quiet_unhandled_rejection_handler_capture_value` assoc fn.
+use bun_core::String as BunString;
+use bun_jsc::StringJsc as _;
 use bun_jsc::virtual_machine::VirtualMachine;
-// `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
-// (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString;
 // PORT NOTE: there is no `bun_lolhtml` safe-wrapper crate yet — the safe
 // surface lives directly in `bun_lolhtml_sys::lol_html`. Code below references
 // both `lolhtml::Foo` (safe wrappers) and `lolhtml_sys::Foo` (raw opaque
@@ -31,7 +29,6 @@ use bun_jsc::zig_string::ZigString;
 use crate::webcore::response::HeadersRef;
 use crate::webcore::streams::{self, Signal, StreamResult, Writable};
 use crate::webcore::{self, Response};
-use bun_core::String as BunString;
 use bun_jsc::call_frame::ArgumentsSlice;
 use bun_lolhtml_sys::lol_html as lolhtml;
 use bun_lolhtml_sys::lol_html as lolhtml_sys;
@@ -68,14 +65,14 @@ type SelectorMap = Vec<*mut lolhtml::HTMLSelector>;
 // type-directed argument decoder (see host_fn.zig:493-648). The
 // `#[bun_jsc::host_fn(method)]` proc-macro that will eventually replace it
 // hasn't landed, so the per-type decode arms used by HTMLRewriter
-// (`ZigString`, `?ContentOptions`, `JSValue`) are open-coded here as small
+// (`BunString`, `?ContentOptions`, `JSValue`) are open-coded here as small
 // helpers. They mirror the Zig branches exactly: same error messages, same
 // undefined/null handling, same eat order.
 
-/// `wrapInstanceMethod` arm for `jsc.ZigString` — eat next arg, throw
+/// `wrapInstanceMethod` arm for `BunString` — eat next arg, throw
 /// "Missing argument" if absent, "Expected string" if undefined/null,
 /// otherwise `getZigString`.
-fn eat_zig_string(iter: &mut ArgumentsSlice<'_>, global: &JSGlobalObject) -> JsResult<ZigString> {
+fn eat_zig_string(iter: &mut ArgumentsSlice<'_>, global: &JSGlobalObject) -> JsResult<BunString> {
     let Some(value) = iter.next_eat() else {
         return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
     };
@@ -109,13 +106,13 @@ fn eat_content_options(
     }
 }
 
-/// Common `(content: ZigString, contentOptions: ?ContentOptions)` pair —
+/// Common `(content: BunString, contentOptions: ?ContentOptions)` pair —
 /// every `before/after/replace/append/prepend/setInnerContent` wrapper
 /// decodes exactly this shape.
 fn eat_content_args(
     global: &JSGlobalObject,
     call_frame: &CallFrame,
-) -> JsResult<(ZigString, Option<ContentOptions>)> {
+) -> JsResult<(BunString, Option<ContentOptions>)> {
     let args = call_frame.arguments_old::<2>();
     let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), args.slice());
     let content = eat_zig_string(&mut iter, global)?;
@@ -148,13 +145,13 @@ macro_rules! lol_content_ops {
             callback: fn(&mut lolhtml::$Raw, &[u8], bool) -> Result<(), lolhtml::Error>,
             this_object: JSValue,
             global_object: &JSGlobalObject,
-            content: ZigString,
+            content: BunString,
             content_options: Option<ContentOptions>,
         ) -> JSValue {
             let Some(raw) = lolhtml::$Raw::from_ptr(self.$field.get()) else {
                 return $null_ret;
             };
-            let content_slice = content.to_slice();
+            let content_slice = content.to_utf8_without_ref();
             if callback(
                 raw,
                 content_slice.slice(),
@@ -173,7 +170,7 @@ macro_rules! lol_content_ops {
                 &self,
                 call_frame: &CallFrame,
                 global_object: &JSGlobalObject,
-                content: ZigString,
+                content: BunString,
                 content_options: Option<ContentOptions>,
             ) -> JSValue {
                 self.content_handler(
@@ -186,7 +183,7 @@ macro_rules! lol_content_ops {
             }
 
             // host_fn.wrapInstanceMethod hand-expansion: decode
-            // `(content: ZigString, contentOptions: ?ContentOptions)` then
+            // `(content: BunString, contentOptions: ?ContentOptions)` then
             // forward.
             $(#[$attr])*
             pub fn $name(
@@ -252,7 +249,7 @@ impl HTMLRewriter {
     pub fn on_(
         &self,
         global: &JSGlobalObject,
-        selector_name: ZigString,
+        selector_name: BunString,
         call_frame: &CallFrame,
         listener: JSValue,
     ) -> JsResult<JSValue> {
@@ -1617,7 +1614,7 @@ fn create_lolhtml_error(global: &JSGlobalObject) -> JSValue {
     value.put(
         global,
         b"name",
-        ZigString::init(b"HTMLRewriterError").to_js(global),
+        BunString::ascii(b"HTMLRewriterError").to_js_value(global),
     );
     value
 }
@@ -1740,7 +1737,7 @@ impl DocType {
         if str.is_empty() {
             return JSValue::NULL;
         }
-        ZigString::init(str).to_js(global_object)
+        BunString::ascii(str).to_js_value(global_object)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1753,7 +1750,7 @@ impl DocType {
         if str.is_empty() {
             return JSValue::NULL;
         }
-        ZigString::init(str).to_js(global_object)
+        BunString::ascii(str).to_js_value(global_object)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1766,7 +1763,7 @@ impl DocType {
         if str.is_empty() {
             return JSValue::NULL;
         }
-        ZigString::init(str).to_js(global_object)
+        BunString::ascii(str).to_js_value(global_object)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -2044,8 +2041,8 @@ impl AttributeIterator {
 
     #[bun_jsc::host_fn(method)]
     pub fn next(&self, global_object: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        let done_label = bun_core::ZigString::init(b"done");
-        let value_label = bun_core::ZigString::init(b"value");
+        let done_label = BunString::ascii(b"done");
+        let value_label = BunString::ascii(b"value");
 
         let Some(it) = lolhtml::AttributeIterator::from_ptr(self.iterator.get()) else {
             return JSValue::create_object2(
@@ -2181,7 +2178,7 @@ impl Element {
             return Ok(JSValue::NULL);
         };
         if function.is_undefined_or_null() || !function.is_callable() {
-            return Ok(ZigString::init_utf8(b"Expected a function").to_js(global_object));
+            return Ok(BunString::borrow_utf8(b"Expected a function").to_js_value(global_object));
         }
 
         let end_tag_handler = bun_core::heap::into_raw(Box::new(EndTagHandler {
@@ -2210,12 +2207,12 @@ impl Element {
     pub fn get_attribute_(
         &self,
         global_object: &JSGlobalObject,
-        name: ZigString,
+        name: BunString,
     ) -> JsResult<JSValue> {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return Ok(JSValue::NULL);
         };
-        let slice = name.to_slice();
+        let slice = name.to_utf8_without_ref();
         let attr = el.get_attribute(slice.slice());
 
         if attr.len == 0 {
@@ -2226,11 +2223,11 @@ impl Element {
     }
 
     /// Returns a boolean indicating whether an attribute exists on the element.
-    pub fn has_attribute_(&self, global: &JSGlobalObject, name: ZigString) -> JSValue {
+    pub fn has_attribute_(&self, global: &JSGlobalObject, name: BunString) -> JSValue {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return JSValue::FALSE;
         };
-        let slice = name.to_slice();
+        let slice = name.to_utf8_without_ref();
         match el.has_attribute(slice.slice()) {
             Ok(b) => JSValue::from(b),
             Err(_) => create_lolhtml_error(global),
@@ -2242,8 +2239,8 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name_: ZigString,
-        value_: ZigString,
+        name_: BunString,
+        value_: BunString,
     ) -> JSValue {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return JSValue::UNDEFINED;
@@ -2253,8 +2250,8 @@ impl Element {
         // slice::Iter any live AttributeIterator borrows from.
         self.detach_attribute_iterators();
 
-        let name_slice = name_.to_slice();
-        let value_slice = value_.to_slice();
+        let name_slice = name_.to_utf8_without_ref();
+        let value_slice = value_.to_utf8_without_ref();
         if el
             .set_attribute(name_slice.slice(), value_slice.slice())
             .is_err()
@@ -2269,7 +2266,7 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name: ZigString,
+        name: BunString,
     ) -> JSValue {
         let Some(el) = lolhtml::Element::from_ptr(self.element.get()) else {
             return JSValue::UNDEFINED;
@@ -2279,7 +2276,7 @@ impl Element {
         // live slice::Iter's end pointer past the new end.
         self.detach_attribute_iterators();
 
-        let name_slice = name.to_slice();
+        let name_slice = name.to_utf8_without_ref();
         if el.remove_attribute(name_slice.slice()).is_err() {
             return create_lolhtml_error(global_object);
         }

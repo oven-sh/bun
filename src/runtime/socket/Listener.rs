@@ -6,11 +6,11 @@ use core::mem::size_of;
 use core::ptr::NonNull;
 
 use bun_boringssl_sys as boring_sys;
+use bun_core::String as BunString;
 use bun_io::KeepAlive;
-use bun_jsc::ZigStringJsc as _;
+use bun_jsc::StringJsc as _;
 use bun_jsc::strong::Optional as Strong;
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::zig_string::ZigString;
 use bun_jsc::{self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsClass, JsResult};
 use bun_sys::{self, Fd};
 use bun_uws as uws;
@@ -470,7 +470,7 @@ impl Listener {
                 err.put(
                     global,
                     b"address",
-                    ZigString::init_utf8(hostname_bytes).to_js(global),
+                    BunString::borrow_utf8(hostname_bytes).to_js_value(global),
                 );
                 if let Some(p) = port {
                     err.put(global, b"port", JSValue::js_number(p as f64));
@@ -479,7 +479,7 @@ impl Listener {
                     err.put(
                         global,
                         b"code",
-                        ZigString::init(<&'static str>::from(str_).as_bytes()).to_js(global),
+                        BunString::ascii(<&'static str>::from(str_).as_bytes()).to_js_value(global),
                     );
                 }
             }
@@ -854,7 +854,7 @@ impl Listener {
         let UnixOrHost::Unix(unix) = &this.connection else {
             return JSValue::UNDEFINED;
         };
-        ZigString::init(unix).with_encoding().to_js(global)
+        BunString::ascii(unix).with_encoding().to_js_value(global)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -862,7 +862,7 @@ impl Listener {
         let UnixOrHost::Host { host, .. } = &this.connection else {
             return JSValue::UNDEFINED;
         };
-        ZigString::init(host).with_encoding().to_js(global)
+        BunString::ascii(host).with_encoding().to_js_value(global)
     }
 
     #[bun_jsc::host_fn(getter)]
@@ -1395,7 +1395,7 @@ impl Listener {
             .unwrap(),
             _ => return Ok(JSValue::UNDEFINED),
         };
-        let address_js = ZigString::init(formatted).to_js(global);
+        let address_js = BunString::ascii(formatted).to_js_value(global);
         let port_js = JSValue::js_number(socket_ref.get_local_port() as f64);
 
         out.put(global, b"family", family_js);

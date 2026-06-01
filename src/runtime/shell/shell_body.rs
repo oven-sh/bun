@@ -903,7 +903,7 @@ pub fn handle_template_value(
                     return Err(global
                         .err(jsc::ErrorCode::INVALID_ARG_VALUE, format_args!(
                             "The shell argument must be a string without null bytes. Received \"{}\"",
-                            bunstr.to_zig_string()
+                            bunstr
                         ))
                         .throw());
                 }
@@ -982,7 +982,7 @@ impl<'a> ShellSrcBuilder<'a> {
                     jsc::ErrorCode::INVALID_ARG_VALUE,
                     format_args!(
                         "The shell argument must be a string without null bytes. Received \"{}\"",
-                        bunstr.to_zig_string()
+                        bunstr
                     ),
                 )
                 .throw());

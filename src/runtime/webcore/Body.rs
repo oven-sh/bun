@@ -20,9 +20,8 @@ use crate::jsc::HTTPHeaderName;
 pub use crate::webcore::InternalBlob;
 use crate::webcore::form_data::AsyncFormDataExt as _;
 use crate::webcore::sink::{self, ArrayBufferSink};
-use bun_core::{MutableString, String as BunString, ZigString};
+use bun_core::{MutableString, String as BunString};
 use bun_core::{WTFStringImpl, WTFStringImplExt as _, WTFStringImplStruct};
-use bun_jsc::ZigStringJsc as _;
 use bun_jsc::{JsCell, StringJsc as _};
 
 /// Deref the `Value::WTFStringImpl` / `AnyBlob::WTFStringImpl` payload.
@@ -1179,7 +1178,7 @@ impl Value {
                             // Zig: `defer blob.detach()` covers the `try promise.reject(...)` error path.
                             let r = promise.reject(
                                 global,
-                                ZigString::init(
+                                BunString::ascii(
                                     b"Internal error: task for FormData must not be null",
                                 )
                                 .to_error_instance(global),
@@ -1207,7 +1206,7 @@ impl Value {
                             if let Some(content_type) =
                                 fetch_headers.fast_get(HTTPHeaderName::ContentType)
                             {
-                                let content_slice = content_type.to_slice();
+                                let content_slice = content_type.to_utf8_without_ref();
                                 let mut allocated = false;
                                 let mime_type = MimeType::init(
                                     content_slice.slice(),
@@ -2193,7 +2192,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 // `FetchHeaders` is an opaque ZST FFI handle (S008) — safe deref.
                 let fetch_headers = bun_opaque::opaque_deref_mut(fetch_headers.as_ptr());
                 if let Some(content_type) = fetch_headers.fast_get(HTTPHeaderName::ContentType) {
-                    let content_slice = content_type.to_slice();
+                    let content_slice = content_type.to_utf8_without_ref();
                     let mut allocated = false;
                     let mime_type =
                         MimeType::init(content_slice.slice(), true, Some(&mut allocated));

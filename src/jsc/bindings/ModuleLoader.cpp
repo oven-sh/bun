@@ -297,11 +297,11 @@ OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::
     if (contentsValue) {
         if (contentsValue.isString()) {
             if (JSC::JSString* contentsJSString = contentsValue.toStringOrNull(globalObject)) {
-                result.value.sourceText.string = Zig::toZigString(contentsJSString, globalObject);
+                result.value.sourceText.string = Bun::toBorrowed(contentsJSString->view(globalObject));
                 result.value.sourceText.value = contentsValue;
             }
         } else if (JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(contentsValue)) {
-            result.value.sourceText.string = ZigString { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() };
+            result.value.sourceText.string = { BunStringTag::Borrowed, { .view = { reinterpret_cast<const unsigned char*>(view->vector()), view->byteLength() } } };
             result.value.sourceText.value = contentsValue;
         }
     }

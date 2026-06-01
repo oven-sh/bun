@@ -3175,11 +3175,11 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->visitAdditionalChildrenInGCThread<Visitor>(visitor);
 }
 
-extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const ZigString* timeZone)
+extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, const BunString* timeZone)
 {
     auto& vm = JSC::getVM(globalObject);
 
-    if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
+    if (WTF::setTimeZoneOverride(timeZone->toWTFString(BunString::ZeroCopy))) {
         vm.dateCache.resetIfNecessarySlow();
         return true;
     }

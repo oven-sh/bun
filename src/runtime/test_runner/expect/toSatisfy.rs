@@ -1,5 +1,5 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
-use bun_core::ZigString;
+use bun_core::String as BunString;
 
 use super::Expect;
 use super::get_signature;
@@ -38,7 +38,7 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
         Ok(r) => r,
         Err(e) => {
             let err = global.take_exception(e);
-            let fmt = ZigString::init(b"toSatisfy() predicate threw an exception");
+            let fmt = BunString::ascii(b"toSatisfy() predicate threw an exception");
             return Err(global.throw_value(global.create_aggregate_error(&[err], &fmt)?));
         }
     };

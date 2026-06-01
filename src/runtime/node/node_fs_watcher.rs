@@ -5,7 +5,7 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicU32, Ordering};
 
 use bun_core::Output;
-use bun_core::ZigString;
+use bun_core::String as BunString;
 use bun_core::strings;
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
@@ -16,8 +16,8 @@ use bun_jsc::event_loop::EventLoop;
 use bun_jsc::node::PathLike;
 use bun_jsc::{
     self as jsc, AbortSignal, AbortSignalRef, ArgumentsSlice, CallFrame, CommonAbortReason,
-    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsResult, SysErrorJsc,
-    VirtualMachineRef as VirtualMachine, ZigStringJsc as _,
+    CommonAbortReasonExt as _, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc as _,
+    SysErrorJsc, VirtualMachineRef as VirtualMachine,
 };
 use bun_paths::resolve_path::{self as Path, platform};
 use bun_sys::{self, SystemErrno};
@@ -869,7 +869,7 @@ impl FSWatcher {
                     Err(_) => return, // TODO: properly propagate exception upwards
                 };
             } else if self.encoding == Encoding::Utf8 {
-                filename = ZigString::from_utf8(file_name).to_js(&global_object);
+                filename = BunString::borrow_utf8(file_name).to_js_value(&global_object);
             } else {
                 // convert to desired encoding
                 filename = match Encoder::to_string(file_name, &global_object, self.encoding) {

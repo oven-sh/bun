@@ -664,16 +664,16 @@ macro_rules! impl_maybe_to_js_number {
 }
 impl_maybe_to_js_number!(i32, u32, f64, u64, usize);
 
-// `.pointer` (zig string) arm — `ZigString.init(..).withEncoding().toJS(..)`.
+// `.pointer` (zig string) arm — `String::ascii(..).withEncoding().toJS(..)`.
 impl MaybeToJs for &[u8] {
     fn maybe_to_js(
         self,
         global_object: &bun_jsc::JSGlobalObject,
     ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
-        use bun_jsc::ZigStringJsc as _;
-        Ok(bun_core::ZigString::init(self)
+        use bun_jsc::StringJsc as _;
+        Ok(bun_core::String::ascii(self)
             .with_encoding()
-            .to_js(global_object))
+            .to_js_value(global_object))
     }
 }
 

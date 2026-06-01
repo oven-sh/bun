@@ -1504,8 +1504,8 @@ pub trait InsertionHandler {
 /// snapshots. The Rust `EntryMap` is a `std::collections::HashMap`, which has
 /// a different layout, so we rebuild into a `zig_hash_map` keyed/hashed
 /// identically before iterating.
-struct ZigStringHashContext;
-impl bun_collections::zig_hash_map::HashContext<Box<[u8]>> for ZigStringHashContext {
+struct StringHashContext;
+impl bun_collections::zig_hash_map::HashContext<Box<[u8]>> for StringHashContext {
     #[inline]
     fn ctx_hash(key: &Box<[u8]>) -> u64 {
         // Zig: `std.hash.Wyhash.hash(0, s)` — `bun_wyhash::hash` is the final4
@@ -1568,7 +1568,7 @@ impl FrameworkRouter {
             let mut zig_order: bun_collections::zig_hash_map::HashMap<
                 Box<[u8]>,
                 *mut bun_resolver::fs::Entry,
-                ZigStringHashContext,
+                StringHashContext,
             > = Default::default();
             for (k, &v) in entries.data.iter() {
                 let _ = zig_order.put(Box::from(&**k), v);

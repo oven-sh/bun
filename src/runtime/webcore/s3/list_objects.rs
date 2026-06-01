@@ -20,7 +20,7 @@ pub struct S3ListObjectsOptions {
     pub prefix: Option<RawSlice<u8>>,
     pub start_after: Option<RawSlice<u8>>,
 
-    // TODO(port): Utf8Slice<'_> lifetime — Zig's ZigString.Slice owns or
+    // TODO(port): Utf8Slice<'_> lifetime — Zig's ZigStringSlice owns or
     // ref-holds its backing WTFStringImpl; modeled as 'static here. Pick
     // the real lifetime / collapse the dual fields.
     pub _continuation_token: Option<Utf8Slice>,

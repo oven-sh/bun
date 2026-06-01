@@ -8,7 +8,7 @@ use bun_jsc::{
     ConsoleObject, JSFunction, JSPropertyIterator, JSString,
 };
 use bun_jsc::{JsClass as _, StringJsc as _};
-use bun_core::ZigString;
+use bun_core::String as BunString;
 use bun_jsc::js_promise;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_core::strings;
@@ -729,7 +729,7 @@ impl Expect {
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();
 
-        let mut _msg: ZigString = ZigString::EMPTY;
+        let mut _msg: BunString = BunString::EMPTY;
 
         if !arguments.is_empty() {
             let value = arguments[0];
@@ -741,7 +741,7 @@ impl Expect {
 
             value.to_zig_string(&mut _msg, global_this)?;
         } else {
-            _msg = ZigString::from_bytes(b"passes by .pass() assertion");
+            _msg = BunString::borrow_bytes(b"passes by .pass() assertion");
         }
 
         this.increment_expect_call_counter();
@@ -776,7 +776,7 @@ impl Expect {
         let arguments_ = call_frame.arguments_old::<1>();
         let arguments = arguments_.slice();
 
-        let mut _msg: ZigString = ZigString::EMPTY;
+        let mut _msg: BunString = BunString::EMPTY;
 
         if !arguments.is_empty() {
             let value = arguments[0];
@@ -788,7 +788,7 @@ impl Expect {
 
             value.to_zig_string(&mut _msg, global_this)?;
         } else {
-            _msg = ZigString::from_bytes(b"fails by .fail() assertion");
+            _msg = BunString::borrow_bytes(b"fails by .fail() assertion");
         }
 
         this.increment_expect_call_counter();

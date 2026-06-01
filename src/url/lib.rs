@@ -372,7 +372,7 @@ impl<'a> URL<'a> {
         }
         // Zig: `defer href.deref()` — `to_owned_slice` is infallible so explicit
         // ordering suffices (no error path between alloc and deref).
-        let owned = href.to_owned_slice().into_boxed_slice();
+        let owned = href.to_owned_box();
         href.deref();
         Ok(OwnedURL { href: owned })
     }

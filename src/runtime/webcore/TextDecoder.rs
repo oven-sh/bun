@@ -7,10 +7,9 @@ use bun_core::{OwnedString, strings};
 use core::cell::Cell;
 use core::ptr::NonNull;
 
+use bun_core::String as BunString;
 use jsc::StringJsc as _;
-use jsc::ZigStringJsc as _;
 use jsc::text_codec::TextCodec;
-use jsc::zig_string::ZigString;
 
 use strings::{u16_is_lead, u16_is_trail};
 const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
@@ -95,7 +94,7 @@ impl TextDecoder {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_encoding(&self, global_this: &JSGlobalObject) -> JSValue {
-        ZigString::init(EncodingLabel::get_label(self.encoding)).to_js(global_this)
+        BunString::ascii(EncodingLabel::get_label(self.encoding)).to_js_value(global_this)
     }
 
     // const Vector16 = std.meta.Vector(16, u16);
@@ -271,7 +270,7 @@ impl TextDecoder {
         match self.encoding {
             EncodingLabel::LATIN1 => {
                 if strings::is_all_ascii(buffer_slice) {
-                    return Ok(ZigString::init(buffer_slice).to_js(global_this));
+                    return Ok(BunString::ascii(buffer_slice).to_js_value(global_this));
                 }
 
                 // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
@@ -371,7 +370,7 @@ impl TextDecoder {
                     // empty string instead.
                     if len == 0 {
                         drop(decoded);
-                        return Ok(ZigString::EMPTY.to_js(global_this));
+                        return Ok(BunString::EMPTY.to_js_value(global_this));
                     }
                     // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile if it shows up on a hot path.
                     let ptr = decoded.leak().as_mut_ptr();
@@ -383,7 +382,7 @@ impl TextDecoder {
                 debug_assert!(input.is_empty() || !deinit);
 
                 // Experiment: using mimalloc directly is slightly slower
-                Ok(ZigString::init(input).to_js(global_this))
+                Ok(BunString::ascii(input).to_js_value(global_this))
             }
 
             enc @ (EncodingLabel::Utf16Le | EncodingLabel::Utf16Be) => {
@@ -423,7 +422,7 @@ impl TextDecoder {
 
                 if decoded.is_empty() {
                     drop(decoded);
-                    return Ok(ZigString::EMPTY.to_js(global_this));
+                    return Ok(BunString::EMPTY.to_js_value(global_this));
                 }
 
                 // Transfer ownership of the backing allocation to JSC; freed via
@@ -449,7 +448,7 @@ impl TextDecoder {
                     None => {
                         let Some(ptr) = TextCodec::create(encoding_name) else {
                             // Fallback to empty string if codec creation fails
-                            return Ok(ZigString::init(b"").to_js(global_this));
+                            return Ok(BunString::ascii(b"").to_js_value(global_this));
                         };
                         if !self.ignore_bom {
                             // `TextCodec` is an opaque ZST FFI handle (S008);

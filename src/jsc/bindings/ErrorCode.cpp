@@ -595,12 +595,14 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
     return result.toString();
 }
 
-WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const ZigString* arg_name_string, const ZigString* expected_type_string, JSValue actual_value)
+WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const BunString* arg_name_string, const BunString* expected_type_string, JSValue actual_value)
 {
-    auto arg_name = std::span<const Latin1Character>(arg_name_string->ptr, arg_name_string->len);
+    ASSERT(arg_name_string->tag == BunStringTag::Borrowed || arg_name_string->tag == BunStringTag::Static);
+    ASSERT(expected_type_string->tag == BunStringTag::Borrowed || expected_type_string->tag == BunStringTag::Static);
+    auto arg_name = std::span<const Latin1Character>(arg_name_string->impl.view.ptr, arg_name_string->impl.view.len);
     ASSERT(WTF::charactersAreAllASCII(arg_name));
 
-    auto expected_type = std::span<const Latin1Character>(expected_type_string->ptr, expected_type_string->len);
+    auto expected_type = std::span<const Latin1Character>(expected_type_string->impl.view.ptr, expected_type_string->impl.view.len);
     ASSERT(WTF::charactersAreAllASCII(expected_type));
 
     return ERR_INVALID_ARG_TYPE(scope, globalObject, arg_name, expected_type, actual_value);

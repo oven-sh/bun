@@ -5,13 +5,13 @@
 //! `console.count`/`time`/`timeEnd`, and the C ABI shims that JavaScriptCore
 //! calls into.
 
-use crate::{ComptimeStringMapExt as _, ZigStringJsc as _};
+use crate::{ComptimeStringMapExt as _, StringJsc as _};
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
-use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
+use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_collections::HashMap;
 use bun_core::{Output, StackCheck};
 use bun_core::{OwnedString, String as BunString, strings};
@@ -1270,7 +1270,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
 
     let mut source_code_slice: Option<bun_core::ZigStringSlice> = None;
 
-    let err = ZigString::init(b"trace output").to_error_instance(global);
+    let err = BunString::ascii(b"trace output").to_error_instance(global);
     {
         let exception = holder.zig_exception();
         err.to_zig_exception(global, exception);
@@ -2401,11 +2401,11 @@ pub mod formatter {
             if js_type.is_object() && js_type != jsc::JSType::ProxyObject {
                 if let Some(typeof_symbol) = value.get_own_truthy(global_this, "$$typeof")? {
                     // React 18 and below
-                    let mut react_element_legacy = ZigString::init(b"react.element");
+                    let mut react_element_legacy = BunString::ascii(b"react.element");
                     // For React 19 - https://github.com/oven-sh/bun/issues/17223
                     let mut react_element_transitional =
-                        ZigString::init(b"react.transitional.element");
-                    let mut react_fragment = ZigString::init(b"react.fragment");
+                        BunString::ascii(b"react.transitional.element");
+                    let mut react_fragment = BunString::ascii(b"react.fragment");
 
                     if typeof_symbol.is_same_value(
                         JSValue::symbol_for(global_this, &mut react_element_legacy),
@@ -2956,7 +2956,7 @@ pub mod formatter {
         }
 
         #[inline]
-        pub fn write_string(&mut self, str: &ZigString) {
+        pub fn write_string(&mut self, str: &BunString) {
             self.print(format_args!("{str}"));
         }
 
@@ -3222,7 +3222,7 @@ pub mod formatter {
         #[inline(never)]
         fn write_property_key(
             writer: &mut WrappedWriter<'_>,
-            key: &ZigString,
+            key: &BunString,
             is_symbol: bool,
             is_private_symbol: bool,
             quote_keys: bool,
@@ -3230,21 +3230,20 @@ pub mod formatter {
         ) {
             if !is_symbol {
                 // TODO: make this one pass?
-                if (!key.is_16_bit()
-                    && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.slice())))
-                    || (key.is_16_bit()
-                        && (!quote_keys
-                            && JSLexer::is_latin1_identifier_u16(key.utf16_slice_aligned())))
+                if (!key.is_utf16()
+                    && (!quote_keys && JSLexer::is_latin1_identifier_u8(key.latin1())))
+                    || (key.is_utf16()
+                        && (!quote_keys && JSLexer::is_latin1_identifier_u16(key.utf16())))
                 {
-                    writer.add_for_new_line(key.len + 1);
+                    writer.add_for_new_line(key.length() + 1);
                     writer.print(format_args!(
                         concat!("{}", "{}", "{}"),
                         pfmt!("<r>", C),
                         key,
                         pfmt!("<d>:<r> ", C),
                     ));
-                } else if key.is_16_bit() {
-                    let mut utf16_slice = key.utf16_slice_aligned();
+                } else if key.is_utf16() {
+                    let mut utf16_slice = key.utf16();
 
                     writer.add_for_new_line(utf16_slice.len() + 2);
 
@@ -3265,21 +3264,21 @@ pub mod formatter {
 
                     writer.print(format_args!("{}", pfmt!("\"<r><d>:<r> ", C)));
                 } else {
-                    writer.add_for_new_line(key.len + 2);
+                    writer.add_for_new_line(key.length() + 2);
 
                     writer.print(format_args!(
                         "{}{}{}",
                         pfmt!("<r><green>", C),
-                        bun_core::fmt::format_json_string_latin1(key.slice()),
+                        bun_core::fmt::format_json_string_latin1(key.latin1()),
                         pfmt!("<r><d>:<r> ", C),
                     ));
                 }
             } else if cfg!(debug_assertions) && is_private_symbol {
-                writer.add_for_new_line(1 + "$:".len() + key.len);
+                writer.add_for_new_line(1 + "$:".len() + key.length());
                 writer.print(format_args!(
                     "{}{}{}{}",
                     pfmt!("<r><magenta>", C),
-                    if key.len > 0 && key.char_at(0) == u16::from(b'#') {
+                    if key.length() > 0 && key.char_at(0) == u16::from(b'#') {
                         ""
                     } else {
                         "$"
@@ -3288,7 +3287,7 @@ pub mod formatter {
                     pfmt!("<r><d>:<r> ", C),
                 ));
             } else {
-                writer.add_for_new_line(1 + "[Symbol()]:".len() + key.len);
+                writer.add_for_new_line(1 + "[Symbol()]:".len() + key.length());
                 writer.print(format_args!(
                     "{}Symbol({}){}",
                     pfmt!("<r><d>[<r><blue>", C),
@@ -3313,12 +3312,12 @@ pub mod formatter {
         fn for_each_prelude(
             ctx: &mut Self,
             global_this: &JSGlobalObject,
-            key: *mut ZigString,
+            key: *mut BunString,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
         ) -> Option<TagResult> {
-            // SAFETY: caller passes a valid `*ZigString`.
+            // SAFETY: caller passes a valid `*BunString`.
             let key = unsafe { &*key };
             if key.eql_comptime(b"constructor") {
                 return None;
@@ -3393,7 +3392,7 @@ pub mod formatter {
         pub extern "C" fn for_each(
             global_this: &JSGlobalObject,
             ctx_ptr: *mut c_void,
-            key: *mut ZigString,
+            key: *mut BunString,
             value: JSValue,
             is_symbol: bool,
             is_private_symbol: bool,
@@ -3428,13 +3427,13 @@ pub mod formatter {
     fn get_object_name(
         global_this: &JSGlobalObject,
         value: JSValue,
-    ) -> JsResult<Option<ZigString>> {
-        let mut name_str = ZigString::init(b"");
+    ) -> JsResult<Option<BunString>> {
+        let mut name_str = BunString::ascii(b"");
         value.get_class_name(global_this, &mut name_str)?;
         if !name_str.eql_comptime(b"Object") {
             return Ok(Some(name_str));
         } else if value.get_prototype(global_this).eql_value(JSValue::NULL) {
-            return Ok(Some(ZigString::static_("[Object: null prototype]")));
+            return Ok(Some(BunString::static_("[Object: null prototype]")));
         }
         Ok(None)
     }
@@ -3929,7 +3928,7 @@ pub mod formatter {
                 estimated_line_length: &mut self.estimated_line_length,
             };
             let zstr = value.get_zig_string(self.global_this)?;
-            let out_str = zstr.slice();
+            let out_str = zstr.latin1();
             writer.add_for_new_line(out_str.len());
             writer.print(format_args!(
                 "{}{}n{}",
@@ -3960,15 +3959,15 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
-                let mut number_name = ZigString::EMPTY;
+                let mut number_name = BunString::EMPTY;
                 value.get_class_name(self.global_this, &mut number_name)?;
 
-                let mut number_value = ZigString::EMPTY;
+                let mut number_value = BunString::EMPTY;
                 value.to_zig_string(&mut number_value, self.global_this)?;
 
-                if number_name.slice() != b"Number" {
+                if number_name.latin1() != b"Number" {
                     writer.add_for_new_line(
-                        number_name.len + number_value.len + "[Number ():]".len(),
+                        number_name.length() + number_value.length() + "[Number ():]".len(),
                     );
                     writer.print(format_args!(
                         "{}[Number ({}): {}]{}",
@@ -3983,7 +3982,7 @@ pub mod formatter {
                     return Ok(());
                 }
 
-                writer.add_for_new_line(number_name.len + number_value.len + 4);
+                writer.add_for_new_line(number_name.length() + number_value.length() + 4);
                 writer.print(format_args!(
                     "{}[{}: {}]{}",
                     pf!("<r><yellow>"),
@@ -4081,8 +4080,8 @@ pub mod formatter {
             let description = value.get_description(self.global_this);
             writer.add_for_new_line("Symbol".len());
 
-            if description.len > 0 {
-                writer.add_for_new_line(description.len + "()".len());
+            if description.length() > 0 {
+                writer.add_for_new_line(description.length() + "()".len());
                 writer.print(format_args!(
                     "{}Symbol({}){}",
                     pfmt!("<r><blue>", C),
@@ -4367,14 +4366,15 @@ pub mod formatter {
                 };
             }
             if value.is_cell() {
-                let mut bool_name = ZigString::EMPTY;
+                let mut bool_name = BunString::EMPTY;
                 value.get_class_name(self.global_this, &mut bool_name)?;
-                let mut bool_value = ZigString::EMPTY;
+                let mut bool_value = BunString::EMPTY;
                 value.to_zig_string(&mut bool_value, self.global_this)?;
 
-                if bool_name.slice() != b"Boolean" {
-                    writer
-                        .add_for_new_line(bool_value.len + bool_name.len + "[Boolean (): ]".len());
+                if bool_name.latin1() != b"Boolean" {
+                    writer.add_for_new_line(
+                        bool_value.length() + bool_name.length() + "[Boolean (): ]".len(),
+                    );
                     writer.print(format_args!(
                         "{}[Boolean ({}): {}]{}",
                         pf!("<r><yellow>"),
@@ -4387,7 +4387,7 @@ pub mod formatter {
                     }
                     return Ok(());
                 }
-                writer.add_for_new_line(bool_value.len + "[Boolean: ]".len());
+                writer.add_for_new_line(bool_value.length() + "[Boolean: ]".len());
                 writer.print(format_args!(
                     "{}[Boolean: {}]{}",
                     pf!("<r><yellow>"),
@@ -4775,7 +4775,7 @@ pub mod formatter {
             // object printer below.
             if let Some(hooks) = crate::virtual_machine::runtime_hooks() {
                 // Zig: `threadlocal var name_buf: [512]u8`. The hook only ever
-                // seeds a `ZigString` that `get_class_name` immediately
+                // seeds a `BunString` that `get_class_name` immediately
                 // overwrites with JSC-owned bytes, so a shared zero buffer is
                 // sufficient and keeps 512B off every recursive frame.
                 static NAME_BUF: [u8; 512] = [0; 512];
@@ -5265,7 +5265,7 @@ pub mod formatter {
             // but both arms of the `type` if/else below assign them, so deferred init
             // avoids the dead-store warning while keeping semantics identical.
             let mut needs_space: bool;
-            let mut tag_name_str = ZigString::init(b"");
+            let mut tag_name_str = BunString::ascii(b"");
 
             // PORT NOTE: Zig spelled this `ZigString.Slice` with an explicit
             // `defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit()`.
@@ -5284,17 +5284,17 @@ pub mod formatter {
                     is_tag_kind_primitive = true;
                 } else if _tag.cell.is_object() || type_value.is_callable() {
                     type_value.get_name_property(self.global_this, &mut tag_name_str)?;
-                    if tag_name_str.len == 0 {
-                        tag_name_str = ZigString::init(b"NoName");
+                    if tag_name_str.length() == 0 {
+                        tag_name_str = BunString::ascii(b"NoName");
                     }
                 } else {
                     type_value.to_zig_string(&mut tag_name_str, self.global_this)?;
                 }
 
-                tag_name_slice = tag_name_str.to_slice();
+                tag_name_slice = tag_name_str.to_utf8_without_ref();
                 needs_space = true;
             } else {
-                tag_name_slice = ZigString::init(b"unknown").to_slice();
+                tag_name_slice = BunString::ascii(b"unknown").to_utf8();
                 needs_space = true;
             }
 
@@ -5447,14 +5447,14 @@ pub mod formatter {
                                     Tag::String => {
                                         let children_string =
                                             children.get_zig_string(self.global_this)?;
-                                        if children_string.len == 0 {
+                                        if children_string.length() == 0 {
                                             break 'print_children;
                                         }
                                         if C {
                                             writer.write_all(pfmt!("<r>", true).as_bytes());
                                         }
                                         writer.write_all(b">");
-                                        if children_string.len < 128 {
+                                        if children_string.length() < 128 {
                                             writer.write_string(&children_string);
                                         } else {
                                             self.indent += 1;

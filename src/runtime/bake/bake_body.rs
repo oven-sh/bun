@@ -34,7 +34,7 @@ use super::{dev_server, framework_router};
 // FrameworkRouter` are already provided by the parent `mod.rs` (lines 349/369);
 // re-exporting here triggers E0365 because `bake_body` is a private module.
 
-/// `JSValue.getOptional(ZigString.Slice, ..)` — local shim until `bun_jsc`
+/// `JSValue.getOptional(ZigStringSlice, ..)` — local shim until `bun_jsc`
 /// grows a typed `get_optional`. Returns `None` for missing/null/undefined.
 fn get_optional_slice(
     target: JSValue,

@@ -1373,8 +1373,8 @@ impl Subprocess<'_> {
             // `bun_sys::SignalCode`.
             let sys_sig = bun_sys::SignalCode(signal as u8);
             if let Some(name) = sys_sig.name() {
-                use bun_jsc::ZigStringJsc as _;
-                return bun_jsc::zig_string::ZigString::init(name.as_bytes()).to_js(global);
+                use bun_jsc::StringJsc as _;
+                return bun_core::String::ascii(name.as_bytes()).to_js_value(global);
             } else {
                 return JSValue::js_number(signal as u32 as f64);
             }

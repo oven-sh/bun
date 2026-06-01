@@ -5,9 +5,9 @@ use core::sync::atomic::AtomicU8;
 use core::sync::atomic::Ordering;
 
 use bun_core::Error;
-use bun_core::ZigString;
+use bun_core::String as BunString;
 use bun_io::{self as io, IntrusiveIoRequest as _};
-use bun_jsc::ZigStringJsc as _;
+use bun_jsc::StringJsc as _;
 use bun_jsc::node_path::PathOrFileDescriptor;
 use bun_jsc::{self as jsc, JSGlobalObject, JSPromise, JSValue, JsTerminated, SystemError};
 use bun_sys::{self as sys, Fd};
@@ -1393,7 +1393,7 @@ impl WriteFileWaitFromLockedValueTask {
                 unsafe { drop(bun_core::heap::take(this)) };
                 promise.reject(
                     global_this,
-                    Ok(ZigString::init(b"Body was used after it was consumed")
+                    Ok(BunString::ascii(b"Body was used after it was consumed")
                         .to_error_instance(global_this)),
                 )?;
             }

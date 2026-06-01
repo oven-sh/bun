@@ -2,20 +2,17 @@ use core::fmt;
 use core::fmt::Write as _;
 use std::io::Write as _;
 
-use bun_core::ZigString;
+use bun_core::String as BunString;
 use bun_io::KeepAlive;
 use bun_jsc::{
     self as jsc, CallFrame, JSFunction, JSGlobalObject, JSValue, JsError, JsResult, WorkPoolTask,
 };
 // `bun_jsc::{AnyTask, ConcurrentTask, EventLoop}` are *modules* (re-exported from
 // `bun_event_loop`); pull the concrete types out by name.
-use bun_jsc::event_loop::EventLoop;
-// JSC-side ZigString carries `to_js` (the `bun_core::ZigString` repr-twin
-// lives in `bun_jsc::zig_string`); used for ASCII→JS conversions only.
 use bun_jsc::AnyTask::{AnyTask, JsResult as AnyTaskJsResult};
 use bun_jsc::ConcurrentTask::ConcurrentTask;
-use bun_jsc::ZigStringJsc as _;
-use bun_jsc::zig_string::ZigString as JscZigString;
+use bun_jsc::StringJsc as _;
+use bun_jsc::event_loop::EventLoop;
 use bun_jsc::{JSPromise, JSPromiseStrong};
 use bun_threading::work_pool::WorkPool;
 
@@ -78,8 +75,8 @@ impl AlgorithmValue {
 
                 let algorithm_string = algorithm_value.get_zig_string(global_object)?;
 
-                // Zig: ComptimeStringMap.getWithEql(ZigString, ZigString.eqlComptime) —
-                // ZigString may be UTF-16; compare each label via `eql_comptime`.
+                // Zig: ComptimeStringMap.getWithEql(str, eqlComptime) —
+                // the string may be UTF-16; compare each label via `eql_comptime`.
                 let Some(algo) = algorithm_from_zig_string(&algorithm_string) else {
                     return Err(global_object.throw_invalid_argument_type(
                         "hash",
@@ -204,10 +201,10 @@ impl AlgorithmValue {
     }
 }
 
-/// Zig: `Algorithm.label.getWithEql(input, ZigString.eqlComptime)`.
-/// `bun_core::ZigString` may be UTF-16 so a direct `phf` byte lookup is
+/// Zig: `Algorithm.label.getWithEql(input, eqlComptime)`.
+/// `bun_core::String` may be UTF-16 so a direct `phf` byte lookup is
 /// unsound; compare each (4-entry) label via the encoding-aware `eql_comptime`.
-fn algorithm_from_zig_string(s: &ZigString) -> Option<Algorithm> {
+fn algorithm_from_zig_string(s: &BunString) -> Option<Algorithm> {
     if s.eql_comptime(b"argon2i") {
         Some(Algorithm::Argon2i)
     } else if s.eql_comptime(b"argon2d") {
@@ -533,7 +530,7 @@ impl PasswordOp for HashOp {
         PasswordObject::hash(password, self.algorithm)
     }
     fn to_js(value: Box<[u8]>, g: &JSGlobalObject) -> JSValue {
-        JscZigString::init(&value).to_js(g)
+        BunString::ascii(&value).to_js_value(g)
         // `value` drops here — Zig: defer bun.default_allocator.free(value)
     }
 }
@@ -576,7 +573,7 @@ fn password_error_instance(err: HashError, verb: &str, g: &JSGlobalObject) -> JS
         "Password {verb} failed with error \"{}\"",
         err.name()
     ));
-    instance.put(g, b"code", JscZigString::init(&error_code).to_js(g));
+    instance.put(g, b"code", BunString::ascii(&error_code).to_js_value(g));
     instance
 }
 

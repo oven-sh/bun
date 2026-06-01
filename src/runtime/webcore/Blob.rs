@@ -16,11 +16,8 @@ use crate::webcore::jsc::{
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core as bun;
 use bun_core::Output;
-use bun_core::{
-    OwnedString, String as BunString, WTFStringImplExt as _, ZigString, ZigStringSlice, strings,
-};
+use bun_core::{OwnedString, String as BunString, WTFStringImplExt as _, ZigStringSlice, strings};
 use bun_http_types::MimeType::MimeType;
-use bun_jsc::StringJsc as _;
 use bun_sys::{self, Fd};
 
 use crate::webcore::node_types::{PathOrBlob, PathOrFileDescriptor};
@@ -910,31 +907,31 @@ impl BlobExt for Blob {
         // item coerces to the callback-pointer type at `DOMFormData__forEach`.
         extern "C" fn for_each_thunk(
             ctx_ptr: *mut c_void,
-            name_: *mut ZigString,
+            name_: *mut BunString,
             value_ptr: *mut c_void,
-            filename: *mut ZigString,
+            filename: *mut BunString,
             is_blob: u8,
         ) {
             // SAFETY: `ctx_ptr` is the `&mut FormDataContext` passed below; the
             // erased lifetime is the caller's stack frame in `from_dom_form_data`.
             let ctx = unsafe { bun_ptr::callback_ctx::<FormDataContext<'_>>(ctx_ptr) };
             let entry = if is_blob == 0 {
-                // SAFETY: when `is_blob == 0`, `value_ptr` points to a `ZigString`.
-                FormDataEntry::String(unsafe { *value_ptr.cast::<ZigString>() })
+                // SAFETY: when `is_blob == 0`, `value_ptr` points to a `BunString`.
+                FormDataEntry::String(unsafe { *value_ptr.cast::<BunString>() })
             } else {
                 FormDataEntry::File {
                     // SAFETY: `value_ptr` is the C++ `JSBlob::m_ctx` (`*mut Blob`);
                     // valid for the synchronous callback scope.
                     blob: unsafe { &mut *value_ptr.cast::<Blob>() },
                     filename: if filename.is_null() {
-                        ZigString::EMPTY
+                        BunString::EMPTY
                     } else {
-                        // SAFETY: non-null `filename` is a valid `*ZigString` for this call.
+                        // SAFETY: non-null `filename` is a valid `*BunString` for this call.
                         unsafe { *filename }
                     },
                 }
             };
-            // SAFETY: `name_` is always a valid non-null `*ZigString` for this callback.
+            // SAFETY: `name_` is always a valid non-null `*BunString` for this callback.
             ctx.on_entry(unsafe { *name_ }, entry);
         }
         unsafe extern "C" {
@@ -950,7 +947,7 @@ impl BlobExt for Blob {
                 // body localises every raw deref individually), so the callback
                 // type carries no caller-side precondition. ABI-identical to
                 // `bun_jsc`'s `ForEachFunction` alias.
-                cb: extern "C" fn(*mut c_void, *mut ZigString, *mut c_void, *mut ZigString, u8),
+                cb: extern "C" fn(*mut c_void, *mut BunString, *mut c_void, *mut BunString, u8),
             );
         }
         // C++ invokes the callback synchronously and does not retain `ctx`/`cb`
@@ -2113,7 +2110,7 @@ impl BlobExt for Blob {
             'inner: {
                 if content_type_.is_string() {
                     let zig_str = content_type_.get_zig_string(global_this)?;
-                    let slicer = zig_str.to_slice();
+                    let slicer = zig_str.to_utf8_without_ref();
                     let slice = slicer.slice();
                     if !is_valid_blob_type(slice) {
                         break 'inner;
@@ -2163,12 +2160,12 @@ impl BlobExt for Blob {
     fn get_type(&self, global_this: &JSGlobalObject) -> JSValue {
         let ct = self.content_type_slice();
         if !ct.is_empty() {
-            return JscZigString::init(ct).to_js(global_this);
+            return BunString::ascii(ct).to_js_value(global_this);
         }
         if let Some(store) = self.store.get() {
-            return JscZigString::init(&store.mime_type.value).to_js(global_this);
+            return BunString::ascii(&store.mime_type.value).to_js_value(global_this);
         }
-        JscZigString::EMPTY.to_js(global_this)
+        BunString::EMPTY.to_js_value(global_this)
     }
 
     fn get_name_string(&self) -> Option<BunString> {
@@ -2710,7 +2707,7 @@ impl BlobExt for Blob {
                 // SAFETY: temporary lifetime means raw_bytes is a leaked default-allocator buffer.
                 unsafe { drop(bun_core::heap::take(raw_bytes)) };
             }
-            return Ok(ZigString::EMPTY.to_js(global));
+            return Ok(BunString::EMPTY.to_js_value(global));
         }
 
         if bom == Some(strings::BOM::Utf16Le) {
@@ -2787,7 +2784,7 @@ impl BlobExt for Blob {
                 // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
                 // is the matching finalizer that consumes `ctx` and the buffer.
                 Ok(unsafe {
-                    ZigString::init(buf).external(
+                    BunString::ascii(buf).external(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Store::external,
@@ -2805,7 +2802,7 @@ impl BlobExt for Blob {
                 // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
                 // is the matching finalizer that consumes `ctx` and the buffer.
                 Ok(unsafe {
-                    ZigString::init(buf).external(
+                    BunString::ascii(buf).external(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Store::external,
@@ -2817,7 +2814,7 @@ impl BlobExt for Blob {
                 // SAFETY: `into_raw` hands the store's +1 ref to JSC; `Store::external`
                 // is the matching finalizer that consumes `ctx` and the buffer.
                 Ok(unsafe {
-                    ZigString::init(buf).external(
+                    BunString::ascii(buf).external(
                         global,
                         store.into_raw().cast::<c_void>(),
                         Store::external,
@@ -2835,7 +2832,7 @@ impl BlobExt for Blob {
                     unsafe { drop(bun_core::heap::take(raw_bytes)) };
                     return out.to_js(global);
                 }
-                Ok(ZigString::init(buf).to_external_value(global))
+                Ok(BunString::ascii(buf).to_external_value(global))
             }
         }
     }
@@ -2862,7 +2859,7 @@ impl BlobExt for Blob {
         // below. Mirrors Zig `@constCast(this.sharedView())`.
         let view_ptr = self.shared_view_raw();
         if view_ptr.len() == 0 {
-            return Ok(ZigString::EMPTY.to_js(global));
+            return Ok(BunString::EMPTY.to_js_value(global));
         }
         match lifetime {
             // SAFETY: `view_ptr` is the store-backed view from `shared_view_raw`;
@@ -2994,7 +2991,7 @@ impl BlobExt for Blob {
                 if LIFETIME != Lifetime::Temporary {
                     self.set_is_ascii_flag(false);
                 }
-                let result = ZigString::init_utf16(&external).to_json_object(global);
+                let result = BunString::borrow_utf16(&external).to_json_object(global);
                 drop(external);
                 return Ok(result);
             }
@@ -3004,7 +3001,7 @@ impl BlobExt for Blob {
             }
         }
 
-        Ok(ZigString::init(buf).to_json_object(global))
+        Ok(BunString::ascii(buf).to_json_object(global))
     }
 
     /// See [`to_string_with_bytes`] for why `buf` is `*mut [u8]`.
@@ -3017,7 +3014,7 @@ impl BlobExt for Blob {
         buf: *mut [u8],
     ) -> JSValue {
         let Some(encoder) = self.get_form_data_encoding() else {
-            return ZigString::init(b"Invalid encoding").to_error_instance(global);
+            return BunString::ascii(b"Invalid encoding").to_error_instance(global);
         };
 
         // PORT NOTE: `crate::webcore::form_data::Encoding` re-exports
@@ -3928,17 +3925,16 @@ use self::write_file as write_file_mod;
 use self::write_file::{WriteFilePromise, WriteFileWaitFromLockedValueTask};
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_jsc::JsClass as _;
-use bun_jsc::zig_string::ZigString as JscZigString;
 
 /// Local mirror of `jsc.DOMFormData.FormDataEntry` (`union(enum) { string, file }`).
 /// `bun_jsc::dom_form_data::FormDataEntry` carries `&Blob` (immutable) but
 /// `FormDataContext::on_entry` needs `&mut Blob` to call `resolve_size()`, so
 /// we drive the C++ `DOMFormData__forEach` directly with this mutable variant.
 pub enum FormDataEntry<'a> {
-    String(ZigString),
+    String(BunString),
     File {
         blob: &'a mut Blob,
-        filename: ZigString,
+        filename: BunString,
     },
 }
 
@@ -4024,12 +4020,12 @@ impl FormDataContext<'_> {
             joiner.push(unsafe { bun_ptr::detach_lifetime(slice.slice()) });
         } else {
             // WTF-backed slices release their pin on drop — copy rather than
-            // borrow past it. (`ZigString::to_slice` never produces these.)
+            // borrow past it. (`String::to_utf8_without_ref` never produces these.)
             joiner.push_cloned(slice.slice());
         }
     }
 
-    pub(crate) fn on_entry(&mut self, name: ZigString, entry: FormDataEntry<'_>) {
+    pub(crate) fn on_entry(&mut self, name: BunString, entry: FormDataEntry<'_>) {
         if self.failed {
             return;
         }
@@ -4044,16 +4040,16 @@ impl FormDataContext<'_> {
         joiner.push_static(b"\r\n");
 
         joiner.push_static(b"Content-Disposition: form-data; name=\"");
-        Self::push_string_slice(joiner, name.to_slice(), true);
+        Self::push_string_slice(joiner, name.to_utf8_without_ref(), true);
 
         match entry {
             FormDataEntry::String(value) => {
                 joiner.push_static(b"\"\r\n\r\n");
-                Self::push_string_slice(joiner, value.to_slice(), false);
+                Self::push_string_slice(joiner, value.to_utf8_without_ref(), false);
             }
             FormDataEntry::File { blob, filename } => {
                 joiner.push_static(b"\"; filename=\"");
-                Self::push_string_slice(joiner, filename.to_slice(), true);
+                Self::push_string_slice(joiner, filename.to_utf8_without_ref(), true);
                 joiner.push_static(b"\"\r\n");
 
                 // Borrowed from the blob, which the `DOMFormData` keeps alive
@@ -4370,7 +4366,7 @@ struct URLSearchParamsConverter {
 }
 
 impl URLSearchParamsConverter {
-    pub(crate) fn convert(&mut self, str: ZigString) {
+    pub(crate) fn convert(&mut self, str: BunString) {
         self.buf = str.to_owned_slice();
     }
 }
@@ -6325,13 +6321,12 @@ fn resolve_file_stat(store: &StoreRef) {
 pub use crate::webcore::Lifetime as BlobLifetime;
 
 // ──────────────────────────────────────────────────────────────────────────
-// `ZigString` JSC methods (`to_js`, `to_external_value`, `external`,
-// `to_json_object`, `with_encoding`) live on `bun_jsc::ZigStringJsc`;
-// `zig_string_to_external_u16` is the free-fn form re-exported from
-// `bun_jsc`. Only Blob-local extension traits remain here.
+// `BunString` JSC methods (`to_js`, `to_external_value`, `external`,
+// `to_json_object`, `with_encoding`) live on `bun_jsc::StringJsc`;
+// only Blob-local extension traits remain here.
 // ──────────────────────────────────────────────────────────────────────────
 mod zigstring_blob_ext {
-    /// Local shim for `ZigString.Slice` allocator-identity queries that the
+    /// Local shim for `ZigStringSlice` allocator-identity queries that the
     /// `bun_core::ZigStringSlice` enum collapsed away. Used by
     /// `from_js_without_defer_gc` to decide whether a converted slice was
     /// freshly heap-allocated (=> may contain non-ASCII UTF-8) or is a
@@ -6560,7 +6555,7 @@ impl Any {
 // ─── Any: JSC-integration (to_js/from_js paths) ──────────────────────────────
 // TODO(port): bun_jsc::* — Any::{to_action_value,to_promise,wrap,
 // to_json,to_string,to_array_buffer*,to_blob,to_uint8_array*} call into
-// JSValue/ZigString JSC methods and Blob JSC impls gated above.
+// JSValue/BunString JSC methods and Blob JSC impls gated above.
 
 impl Any {
     fn to_internal_blob_if_possible(&mut self) {
@@ -6732,7 +6727,7 @@ impl Any {
             Any::Blob(b) => b.to_string(global, lifetime),
             Any::InternalBlob(ib) => {
                 if ib.bytes.is_empty() {
-                    return Ok(ZigString::EMPTY.to_js(global));
+                    return Ok(BunString::EMPTY.to_js_value(global));
                 }
                 let owned = ib.to_string_owned(global)?;
                 *self = Any::Blob(Blob::default());
@@ -6892,10 +6887,10 @@ impl Any {
 // ──────────────────────────────────────────────────────────────────────────
 
 // `to_js` / `to_external_value` / `with_encoding` / `to_json_object` /
-// `external` on `bun_core::ZigString` are provided by `bun_jsc::ZigStringJsc`
+// `external` on `bun_core::String` are provided by `bun_jsc::StringJsc`
 // (imported above). The legacy `ZigStringBlobExt` name is re-exported for
 // sibling modules (`Request.rs`) that still import it under that name.
-pub(crate) use bun_jsc::ZigStringJsc as ZigStringBlobExt;
+pub(crate) use bun_jsc::StringJsc as ZigStringBlobExt;
 
 /// A single-use Blob backed by an allocation of memory.
 #[derive(Default)]
@@ -6909,7 +6904,7 @@ impl Internal {
         self.bytes.capacity()
     }
 
-    // TODO(port): bun_jsc::* — ZigString::to_external_u16/to_js_object.
+    // TODO(port): bun_jsc::* — String::to_external_u16/to_js_object.
 
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
@@ -6942,17 +6937,17 @@ impl Internal {
             let owned: *mut [u8] =
                 bun_core::heap::into_raw(self.to_owned_slice().into_boxed_slice());
             // SAFETY: `owned` is a fresh heap allocation released via `into_raw`;
-            // ZigString borrows ptr+len, then `to_external_value` adopts it.
-            let mut str = ZigString::init(unsafe { &*owned });
-            str.mark_global();
+            // BunString borrows ptr+len, then `to_external_value` adopts it.
+            let mut str = BunString::ascii(unsafe { &*owned });
+            str.0.mark_global();
             return Ok(str.to_external_value(global_this));
         }
     }
 
-    // TODO(port): bun_jsc::* — ZigString::to_json_object.
+    // TODO(port): bun_jsc::* — String::to_json_object.
 
     pub fn to_json(&mut self, global_this: &JSGlobalObject) -> JSValue {
-        let str_bytes = ZigString::init(strings::without_utf8_bom(&self.bytes)).with_encoding();
+        let str_bytes = BunString::ascii(strings::without_utf8_bom(&self.bytes)).with_encoding();
         let json = str_bytes.to_json_object(global_this);
         self.bytes = Vec::new();
         json
@@ -7048,19 +7043,19 @@ impl Inline {
         Self::internal_init(data, true)
     }
 
-    // TODO(port): bun_jsc::* — ZigString::to_js.
+    // TODO(port): bun_jsc::* — String::to_js.
 
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JSValue {
         if self.len == 0 {
-            return ZigString::EMPTY.to_js(global_this);
+            return BunString::EMPTY.to_js_value(global_this);
         }
 
-        let mut str = ZigString::init(self.slice_const());
+        let mut str = BunString::ascii(self.slice_const());
         if !strings::is_all_ascii(self.slice_const()) {
-            str.mark_utf8();
+            str.0.mark_utf8();
         }
 
-        let out = str.to_js(global_this);
+        let out = str.to_js_value(global_this);
         out.ensure_still_alive();
         self.len = 0;
         out

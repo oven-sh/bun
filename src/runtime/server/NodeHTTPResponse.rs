@@ -7,7 +7,7 @@ use bstr::BStr;
 
 use bun_collections::VecExt;
 use bun_core::scoped_log;
-use bun_core::{ZigString, ZigStringSlice};
+use bun_core::{String as BunString, ZigStringSlice};
 use bun_http::Method as HttpMethod;
 use bun_jsc::JsCell;
 use bun_ptr::AsCtxPtr;
@@ -374,8 +374,8 @@ impl NodeHTTPResponse {
     pub(crate) fn upgrade(
         &self,
         data_value: JSValue,
-        sec_websocket_protocol: ZigString,
-        sec_websocket_extensions: ZigString,
+        sec_websocket_protocol: BunString,
+        sec_websocket_extensions: BunString,
     ) -> bool {
         let upgrade_ctx = self.upgrade_context.get().context;
         if upgrade_ctx.is_null() {
@@ -413,7 +413,7 @@ impl NodeHTTPResponse {
         let upgrade_context: &UpgradeCTX = self.upgrade_context.get();
 
         let sec_websocket_protocol_value: &[u8] = 'brk: {
-            if sec_websocket_protocol.len == 0 {
+            if sec_websocket_protocol.length() == 0 {
                 if !upgrade_context.request.is_null() {
                     // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
                     let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
@@ -422,12 +422,12 @@ impl NodeHTTPResponse {
                     break 'brk &upgrade_context.sec_websocket_protocol;
                 }
             }
-            sec_websocket_protocol_str = Some(sec_websocket_protocol.to_slice());
+            sec_websocket_protocol_str = Some(sec_websocket_protocol.to_utf8());
             break 'brk sec_websocket_protocol_str.as_ref().unwrap().slice();
         };
 
         let sec_websocket_extensions_value: &[u8] = 'brk: {
-            if sec_websocket_extensions.len == 0 {
+            if sec_websocket_extensions.length() == 0 {
                 if !upgrade_context.request.is_null() {
                     // S008: `uws::Request` is an `opaque_ffi!` ZST — safe deref.
                     let request = bun_opaque::opaque_deref(upgrade_context.request.cast_const());
@@ -436,7 +436,7 @@ impl NodeHTTPResponse {
                     break 'brk &upgrade_context.sec_websocket_extensions;
                 }
             }
-            sec_websocket_extensions_str = Some(sec_websocket_extensions.to_slice());
+            sec_websocket_extensions_str = Some(sec_websocket_extensions.to_utf8());
             break 'brk sec_websocket_extensions_str.as_ref().unwrap().slice();
         };
 

@@ -95,26 +95,29 @@ impl<R> StyleRule<R> {
         } else {
             let mut first_rule = true;
             let mut remaining_prefixes = self.vendor_prefix;
-            // The rule only fans out — producing more than one copy, and
-            // re-serializing its nested rules once per copy — when its selectors
-            // carry more than one vendor prefix (e.g. a list mixing
-            // `:-webkit-autofill` with an unprefixed pseudo-class). A single
-            // prefix bit serializes the rule exactly once, just like the
-            // `is_empty()` fast path, so it must not charge the expansion
-            // budget. Gate the charge on an actual fan-out, mirroring
-            // `charge_selector_expansion`'s `selector_expansion_multiplier > 1`.
-            let fans_out = self.vendor_prefix.bits().count_ones() > 1;
+            // The output only blows up multiplicatively when a rule both fans
+            // out — its selectors carry more than one vendor prefix (e.g. a list
+            // mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a
+            // single pseudo downleveled to several prefixes) so it is serialized
+            // once per prefix — AND has nested rules, because each copy then
+            // re-serializes that nested subtree. A single-prefix rule serializes
+            // exactly once (no fan-out), and a rule with no nested rules repeats
+            // only its own prelude (flat fan-out is linear in input size);
+            // neither compounds with depth, so neither charges the budget.
+            // Mirrors `charge_selector_expansion`, whose multiplier only grows
+            // inside `minify_nested_rules` and so never charges a flat rule.
+            let compounds = self.vendor_prefix.bits().count_ones() > 1 && self.rules.v.len() > 0;
             // `inline for (css.VendorPrefix.FIELDS) |field|` — iterate the bool fields of the
             // packed struct in declared order. In Rust the bitflags type exposes the same
             // ordered single-bit table directly.
             for &prefix in VendorPrefix::FIELDS {
                 if self.vendor_prefix.contains(prefix) {
-                    // Each copy re-serializes this rule's nested rules; when
-                    // those nested rules also fan out the copies compound
-                    // multiplicatively with depth. Bound the running total so
-                    // deeply nested vendor-prefixed rules can't expand into
-                    // gigabytes of output.
-                    if fans_out {
+                    // Each copy re-serializes this rule's nested subtree; when
+                    // those nested rules also compound the copies multiply with
+                    // depth. Bound the running total so deeply nested
+                    // vendor-prefixed rules can't expand into gigabytes of
+                    // output.
+                    if compounds {
                         dest.prefix_expansions += 1;
                         if dest.prefix_expansions > MAX_PREFIX_EXPANSIONS {
                             return dest.new_error(

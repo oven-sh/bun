@@ -148,20 +148,20 @@ test("deeply nested mixed vendor-prefix rules error instead of exploding with no
   // Each level doubles the number of printed rule copies, so without a bound
   // this is ~2^depth copies of the leaf — hundreds of MB by the mid-teens.
   // The bound turns it into a thrown error.
-  expect(() => minifyTest(nestedMixedPrefix(16), "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
+  expect(() => minifyTest(nestedMixedPrefix(20), "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
 });
 
 test("the fuzzer reproduction shape errors instead of amplifying", () => {
   // The fuzzer's shape: unclosed nested rules (the CSS parser closes them at
   // EOF). 884 MB of output on the original 1.5 KB input; now a thrown error.
-  const src = ".a:placeholder-shown .x, .b:-webkit-autofill .y {\n".repeat(16) + "color: red;";
+  const src = ".a:placeholder-shown .x, .b:-webkit-autofill .y {\n".repeat(20) + "color: red;";
   expect(() => minifyTest(src, "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
 });
 
 test("nesting-capable targets also bound the mixed vendor-prefix expansion", () => {
   // Modern targets preserve nesting (no de-nesting), so the same per-prefix
   // re-serialization of the body applies and must be bounded too.
-  expect(() => minifyTest(nestedMixedPrefix(16), "", { chrome: 130 << 16 })).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
+  expect(() => minifyTest(nestedMixedPrefix(20), "", { chrome: 130 << 16 })).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
 });
 
 test("shallow mixed vendor-prefix nesting still minifies with both prefix variants", () => {
@@ -184,20 +184,22 @@ test("deeply nested single-prefix rules stay linear and do not trip the bound", 
   expect(output.length).toBeLessThan(10_000);
 });
 
-test("a large flat stylesheet of single-prefix rules does not trip the bound", () => {
-  // `get_prefix` returns a single (non-empty) prefix bit for a selector like
-  // `:not(...)`, `:where(...)`, or `::placeholder`, so such a rule enters the
-  // per-prefix loop but is serialized exactly once — no fan-out. The bound must
-  // only count rules that actually fan out (more than one prefix bit), not
-  // every single-prefix rule; otherwise a flat, non-nested bundle of such rules
-  // — linear, non-amplifying output — would falsely error once enough of them
-  // accumulate against the never-reset counter. More rules than the limit
-  // (`MAX_PREFIX_EXPANSIONS` = 65_536), each with a distinct declaration so
-  // they are not merged into one rule.
-  const count = 70_000;
+test("a large flat stylesheet of fanning-out rules does not trip the bound", () => {
+  // A rule that fans out but has no nested rules is serialized once per prefix,
+  // yet that is flat fan-out — linear in input size, bounded by the prefix
+  // count (at most 5). It cannot compound with depth, so it must not charge the
+  // expansion budget; only rules that both fan out and have nested rules do.
+  // Old targets downlevel a single `::placeholder` into four prefix variants
+  // (`-webkit-input-`, `-moz-`, `-ms-input-`, unprefixed), so 20_000 flat rules
+  // are 80_000 prefix copies — past `MAX_PREFIX_EXPANSIONS` (65_536). Distinct
+  // declarations keep the rules from being merged. This stays linear instead of
+  // throwing.
+  const oldTargets = { safari: 8 << 16, firefox: 20 << 16, chrome: 30 << 16, edge: 12 << 16 };
+  const count = 20_000;
   let src = "";
-  for (let i = 0; i < count; i++) src += `.c${i}:not(.x){--v${i}:1}`;
-  const output = minifyTest(src, "");
-  // Linear in input: one emitted rule per input rule, not a thrown error.
-  expect(output.split(":not(.x)").length - 1).toBe(count);
-}, 30_000);
+  for (let i = 0; i < count; i++) src += `input.c${i}::placeholder{--v${i}:1}`;
+  const output = minifyTest(src, "", oldTargets);
+  // Four prefix variants per input rule emitted (one unprefixed), not a throw.
+  expect(output.split("::placeholder").length - 1).toBe(count);
+  expect(output.split("::-webkit-input-placeholder").length - 1).toBe(count);
+});

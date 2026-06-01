@@ -159,16 +159,17 @@ pub struct Printer<'a> {
     /// `&` references per level cannot expand exponentially.
     pub nesting_expansions: u32,
     /// Running total of style-rule copies emitted by the per-vendor-prefix
-    /// serialization loop in `StyleRule::to_css`, counting only rules that
-    /// actually fan out (their selectors carry more than one vendor prefix).
-    /// A rule whose selector list mixes a vendor-prefixed pseudo-class (e.g.
-    /// `:-webkit-autofill`) with an unprefixed one is serialized once per
-    /// prefix, and each copy re-serializes the rule's nested rules — so nesting
-    /// such rules multiplies the output by the prefix count at every level. A
-    /// single-prefix rule is serialized exactly once and is not counted.
-    /// Accumulated across the whole stylesheet (never reset) and bounded in
-    /// `StyleRule::to_css` so a few kilobytes of deeply nested input cannot
-    /// expand into gigabytes.
+    /// serialization loop in `StyleRule::to_css`, counting only rules that both
+    /// fan out (their selectors carry more than one vendor prefix) and have
+    /// nested rules. A rule whose selector list mixes a vendor-prefixed
+    /// pseudo-class (e.g. `:-webkit-autofill`) with an unprefixed one is
+    /// serialized once per prefix, and each copy re-serializes the rule's nested
+    /// subtree — so nesting such rules multiplies the output by the prefix count
+    /// at every level. A single-prefix rule (serialized once) or a rule with no
+    /// nested rules (flat fan-out, linear in input size) cannot compound with
+    /// depth and is not counted. Accumulated across the whole stylesheet (never
+    /// reset) and bounded in `StyleRule::to_css` so a few kilobytes of deeply
+    /// nested input cannot expand into gigabytes.
     pub prefix_expansions: u32,
     pub scratchbuf: BumpVec<'a, u8>,
     pub error_kind: Option<css::PrinterError>,

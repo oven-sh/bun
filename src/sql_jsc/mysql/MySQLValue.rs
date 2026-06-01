@@ -949,6 +949,22 @@ impl Decimal {
     // }
 }
 
+// Calendar validation helpers for *decoded* wire values (`DateTime::from_text`
+// and `to_js_timestamp` reject out-of-calendar dates a permissive server can
+// send). The encode path doesn't need them — `gregorian_date` below computes
+// civil dates directly from the day count.
+fn is_leap_year(year: u16) -> bool {
+    (year.is_multiple_of(4) && !year.is_multiple_of(100)) || year.is_multiple_of(400)
+}
+
+fn days_in_month(year: u16, month: u8) -> u8 {
+    const DAYS: [u8; 12] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+    if month == 2 && is_leap_year(year) {
+        return 29;
+    }
+    DAYS[month as usize - 1]
+}
+
 struct Date {
     year: i64,
     month: u8,

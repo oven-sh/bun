@@ -1,9 +1,3 @@
-// The DATETIME encoder writes UTC y/m/d fields but the decoder currently
-// reconstructs a local-time Date, so the pre-1970 round-trip test below only
-// matches when local == UTC. Pin TZ before any imports so the runtime picks
-// it up. This can be dropped once the decoder is moved to UTC.
-process.env.TZ = "Etc/UTC";
-
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
 import { once } from "events";

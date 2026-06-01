@@ -282,4 +282,243 @@ describe("bundler", () => {
       stdout: "before\nenums evaluated\n1\n1",
     },
   });
+
+  // --- Bytecode cache ---
+
+  itBundled("importdefer/Bytecode", {
+    bytecode: true,
+    outdir: "/out",
+    files: {
+      "/entry.js": /* js */ `
+        import defer * as ns from "./dep.js";
+        console.log("before");
+        console.log(ns.value);
+        console.log(ns.value);
+      `,
+      "/dep.js": /* js */ `
+        console.log("dep evaluated");
+        export const value = 42;
+      `,
+    },
+    onAfterBundle(api) {
+      api.assertFileExists("out/entry.js.jsc");
+    },
+    run: {
+      stdout: "before\ndep evaluated\n42\n42",
+      env: {
+        BUN_JSC_verboseDiskCache: "1",
+      },
+      validate({ stderr }) {
+        // The lowered output must actually execute from the bytecode cache,
+        // not fall back to re-parsing the JavaScript.
+        expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+      },
+    },
+  });
+
+  itBundled("importdefer/BytecodeComplexSideEffects", {
+    bytecode: true,
+    outdir: "/out",
+    files: {
+      "/entry.js": /* js */ `
+        import defer * as a from "./a.js";
+        import defer * as b from "./b.js";
+        console.log("start");
+        console.log(b.tag);
+        a.bump();
+        a.bump();
+        console.log(a.count);
+        console.log(b.tag);
+      `,
+      "/a.js": /* js */ `
+        console.log("a evaluated");
+        export let count = 0;
+        export function bump() { count++; }
+      `,
+      "/b.js": /* js */ `
+        console.log("b evaluated");
+        export const tag = "b";
+      `,
+    },
+    run: {
+      // Evaluation must follow access order (b before a), each module must
+      // evaluate exactly once, and live bindings must observe mutations.
+      stdout: "start\nb evaluated\nb\na evaluated\n2\nb",
+      env: {
+        BUN_JSC_verboseDiskCache: "1",
+      },
+      validate({ stderr }) {
+        expect(stderr).toContain("[Disk Cache] Cache hit for sourceCode");
+      },
+    },
+  });
+
+  // --- Adversarial side-effect patterns ---
+
+  itBundled("importdefer/EvaluationOrderFollowsAccessOrder", {
+    files: {
+      "/entry.js": /* js */ `
+        import defer * as a from "./a.js";
+        import defer * as b from "./b.js";
+        import defer * as c from "./c.js";
+        console.log("start");
+        console.log(c.name);
+        console.log(a.name);
+        console.log(b.name);
+      `,
+      "/a.js": /* js */ `
+        console.log("a evaluated");
+        export const name = "a";
+      `,
+      "/b.js": /* js */ `
+        console.log("b evaluated");
+        export const name = "b";
+      `,
+      "/c.js": /* js */ `
+        console.log("c evaluated");
+        export const name = "c";
+      `,
+    },
+    run: {
+      // Modules evaluate in first-access order, not import declaration order.
+      stdout: "start\nc evaluated\nc\na evaluated\na\nb evaluated\nb",
+    },
+  });
+
+  itBundled("importdefer/ThrowingModuleErrorAtFirstAccess", {
+    files: {
+      "/entry.js": /* js */ `
+        import defer * as ns from "./throws.js";
+        console.log("before access");
+        try {
+          console.log(ns.value);
+        } catch (e) {
+          console.log("caught:", e.message);
+        }
+        console.log("program continues");
+      `,
+      "/throws.js": /* js */ `
+        console.log("throws.js evaluating");
+        throw new Error("boom from module evaluation");
+        export const value = 1;
+      `,
+    },
+    run: {
+      // The throw must happen at the first property access (not at import
+      // time), be catchable there, and not prevent later statements from
+      // running.
+      //
+      // Note: unlike the runtime, the bundled "__esm" wrapper does not rethrow
+      // the evaluation error on *subsequent* accesses. That deviation is
+      // shared with every other lazily-wrapped module (CJS interop, cycles)
+      // and is not asserted here.
+      stdout: "before access\nthrows.js evaluating\ncaught: boom from module evaluation\nprogram continues",
+    },
+  });
+
+  itBundled("importdefer/LiveBindings", {
+    files: {
+      "/entry.js": /* js */ `
+        import defer * as ns from "./counter.js";
+        console.log("start");
+        console.log("count:", ns.count);
+        ns.increment();
+        ns.increment();
+        console.log("count:", ns.count);
+        console.log("snapshot:", ns.snapshot);
+      `,
+      "/counter.js": /* js */ `
+        console.log("counter evaluated");
+        export let count = 0;
+        export function increment() { count++; }
+        let internal = 10;
+        internal = 20;
+        export const snapshot = internal;
+      `,
+    },
+    run: {
+      // Mutations of "export let" bindings after deferred evaluation must be
+      // observable through the namespace, and module-internal mutations that
+      // happen during evaluation must be reflected in exported values.
+      stdout: "start\ncounter evaluated\ncount: 0\ncount: 2\nsnapshot: 20",
+    },
+  });
+
+  itBundled("importdefer/SharedDependencyEvaluatedOnce", {
+    files: {
+      "/entry.js": /* js */ `
+        import { value } from "./shared.js";
+        import defer * as lazy from "./lazy.js";
+        console.log("entry sees:", value);
+        console.log("lazy tag:", lazy.tag);
+        console.log("lazy sees:", lazy.sharedValue);
+      `,
+      "/lazy.js": /* js */ `
+        import { value } from "./shared.js";
+        console.log("lazy evaluated");
+        export const tag = "lazy";
+        export const sharedValue = value;
+      `,
+      "/shared.js": /* js */ `
+        console.log("shared evaluated");
+        export const value = "shared";
+      `,
+    },
+    run: {
+      // The exact-match stdout proves "shared evaluated" prints exactly once:
+      // evaluating the deferred module later must not re-run dependencies that
+      // were already evaluated eagerly.
+      stdout: "shared evaluated\nentry sees: shared\nlazy evaluated\nlazy tag: lazy\nlazy sees: shared",
+    },
+  });
+
+  itBundled("importdefer/CyclicDependencyWithDefer", {
+    files: {
+      "/entry.js": /* js */ `
+        import { readB, nameA } from "./a.js";
+        console.log("entry start, nameA =", nameA);
+        console.log("readB() =", readB());
+      `,
+      "/a.js": /* js */ `
+        import defer * as b from "./b.js";
+        console.log("a evaluated");
+        export const nameA = "a";
+        export function readB() { return b.nameB; }
+      `,
+      "/b.js": /* js */ `
+        import { nameA } from "./a.js";
+        console.log("b evaluated, sees nameA =", nameA);
+        export const nameB = "b";
+      `,
+    },
+    run: {
+      // "a" defer-imports "b" while "b" eagerly imports "a" back. The deferred
+      // half of the cycle must stay lazy, and once it evaluates it must see
+      // the already-initialized bindings of "a".
+      stdout: "a evaluated\nentry start, nameA = a\nb evaluated, sees nameA = a\nreadB() = b",
+    },
+  });
+
+  itBundled("importdefer/AccessInsideFunctionDefersUntilCall", {
+    files: {
+      "/entry.js": /* js */ `
+        import defer * as heavy from "./heavy.js";
+        function lazyCompute(n) {
+          return heavy.compute(n);
+        }
+        console.log("module loaded");
+        console.log("result:", lazyCompute(21));
+        console.log("second:", lazyCompute(10));
+      `,
+      "/heavy.js": /* js */ `
+        console.log("heavy evaluated");
+        export function compute(n) { return n * 2; }
+      `,
+    },
+    run: {
+      // Defining a function that closes over the namespace must not trigger
+      // evaluation; only calling it does, and only the first call evaluates.
+      stdout: "module loaded\nheavy evaluated\nresult: 42\nsecond: 20",
+    },
+  });
 });

@@ -417,19 +417,23 @@ mod _impl {
             }
         }
 
-        pub fn set_flush(&mut self, flush: c_int) {
-            // The shared write path rejects anything above `MAX_FLUSH` (3) with
-            // ERR_INVALID_ARG_TYPE before it reaches us, so only the four real
-            // `BrotliEncoderOperation`s ever arrive here. The catch-all arm is
-            // defense-in-depth for that invariant: map to PROCESS (what the C
-            // encoder does with an unknown op) rather than aborting the process.
-            self.flush = match flush {
-                0 => Op::process,
-                1 => Op::flush,
-                2 => Op::finish,
-                3 => Op::emit_metadata,
-                _ => Op::process,
-            };
+        /// The four real `BrotliEncoderOperation`s are the only valid brotli
+        /// flush values. A zlib-only mode (Z_FINISH=4/Z_BLOCK=5/Z_TREES=6) has
+        /// no brotli op, so it fails the conversion and the shared write path
+        /// rejects it with ERR_INVALID_ARG_TYPE before it can reach the
+        /// encoder.
+        pub fn flush_op_from_u32(flush: u32) -> Option<Op> {
+            match flush {
+                0 => Some(Op::process),
+                1 => Some(Op::flush),
+                2 => Some(Op::finish),
+                3 => Some(Op::emit_metadata),
+                _ => None,
+            }
+        }
+
+        pub fn set_flush(&mut self, op: Op) {
+            self.flush = op;
         }
 
         pub fn do_work(&mut self) {
@@ -563,10 +567,10 @@ mod _impl {
     // `CompressionStreamImpl for NativeBrotli`, and `pub mod js { … }` (the
     // `NativeBrotliPrototype__*CachedValue` accessors).
     //
-    // MAX_FLUSH = 3: brotli only defines `BrotliEncoderOperation` 0..=3
-    // (PROCESS/FLUSH/FINISH/EMIT_METADATA). Zlib-only flush values
-    // (Z_FINISH=4/Z_BLOCK=5/Z_TREES=6) are rejected at the write boundary.
-    crate::__impl_compression_stream!(NativeBrotli, Context, "NativeBrotli", 3);
+    // FlushOp = `BrotliEncoderOperation` (PROCESS/FLUSH/FINISH/EMIT_METADATA).
+    // Zlib-only flush values (Z_FINISH=4/Z_BLOCK=5/Z_TREES=6) have no brotli op
+    // and are rejected at the write boundary by `flush_op_from_u32`.
+    crate::__impl_compression_stream!(NativeBrotli, Context, "NativeBrotli", Op);
 
     fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
         // Zig: `inline for (std.meta.fieldNames(E), std.enums.values(E)) |n, v|

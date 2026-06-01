@@ -86,8 +86,11 @@ jobs:
               Cite file:line for every covered/missed path. A missed path is a blocker.
 
           - id: opposition
-            tag: "opposition · Kimi-K2.6"
-            model: custom:Kimi-K2.6-Turbo-FirePass-2
+            # Model swapped Kimi-K2.6 (Fireworks Fire Pass) -> MiniMax M3: the Fire
+            # Pass leg stalls/times out under load (cancelled last run while the
+            # others finished). Same opposition angle, reliable model.
+            tag: "opposition · MiniMax-M3"
+            model: custom:MiniMax-M3-3
             focus: |
               # Your specialty: argue this PR is wrong, as hard as you honestly can
 

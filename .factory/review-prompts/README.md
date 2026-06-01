@@ -31,7 +31,7 @@ synthesized-JSON stage anymore — the action posts its own findings directly.
 |----|-------|--------------------|
 | ub | GLM-5.1 | memory-safety / UB at the native boundary (stale ptr/len across async hop, whole-store-vs-view snapshot, lifetime/allocator) |
 | source-route | GLM-5.1 | did the fix cover EVERY sibling path; are PR claims true |
-| opposition | Kimi K2.6 Turbo | argue the PR is wrong — one sharp objection, missing test, perf/portability |
+| opposition | MiniMax M3 | argue the PR is wrong — one sharp objection, missing test, perf/portability |
 | arch | MiniMax M3 | right fix at the right layer, smallest complete fix, no scope creep |
 | tests | GLM-5.1 | do the tests actually PROVE the fix (fail on old, pass on new) |
 

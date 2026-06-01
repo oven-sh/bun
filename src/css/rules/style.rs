@@ -227,29 +227,36 @@ impl<R> StyleRule<R> {
             Ok(())
         }
 
+        // This rule is serialized once per vendor prefix, and each pass
+        // re-serializes the nested rules. Nested style rules that carry their
+        // own vendor prefixes override `dest.vendor_prefix`, so they produce
+        // identical output in every pass; mark non-final passes so they are
+        // skipped and emitted only in the final pass. Otherwise they would be
+        // duplicated once per ancestor prefix, which grows exponentially with
+        // nesting depth. This applies whether nesting is preserved or compiled
+        // away — the prefix loop in `to_css` re-serializes the nested rules
+        // either way.
+        let saved_skip = dest.skip_prefixed_nested_rules;
+        let skip_prefixed_nested = saved_skip || !is_final_prefix_pass;
+        // Whether any nested rule is emitted in this pass; if not, don't write
+        // the separator between the declarations and the nested rules (nothing
+        // would follow it).
+        let has_nested_output = !skip_prefixed_nested
+            || self.rules.v.iter().any(|rule| {
+                !matches!(rule, CssRule::Ignored) && !rule.is_deferred_to_final_prefix_pass()
+            });
+
         // Write nested rules after the parent.
         if supports_nesting {
-            helpers_newline(self, dest, supports_nesting, len)?;
-            self.rules.to_css(dest)?;
+            if has_nested_output {
+                helpers_newline(self, dest, supports_nesting, len)?;
+            }
+            dest.skip_prefixed_nested_rules = skip_prefixed_nested;
+            let result = self.rules.to_css(dest);
+            dest.skip_prefixed_nested_rules = saved_skip;
+            result?;
             helpers_end(dest, has_declarations)?;
         } else {
-            // This rule is serialized once per vendor prefix, and each pass
-            // re-serializes the nested rules. Nested style rules that carry
-            // their own vendor prefixes override `dest.vendor_prefix`, so they
-            // produce identical output in every pass; mark non-final passes so
-            // they are skipped and emitted only in the final pass. Otherwise
-            // they would be duplicated once per ancestor prefix, which grows
-            // exponentially with nesting depth.
-            let saved_skip = dest.skip_prefixed_nested_rules;
-            let skip_prefixed_nested = saved_skip || !is_final_prefix_pass;
-            // Whether any nested rule is emitted in this pass; if not, don't
-            // write the separator between the declarations and the nested
-            // rules (nothing would follow it).
-            let has_nested_output = !skip_prefixed_nested
-                || self.rules.v.iter().any(|rule| {
-                    !matches!(rule, CssRule::Ignored) && !rule.is_deferred_to_final_prefix_pass()
-                });
-
             helpers_end(dest, has_declarations)?;
             if has_nested_output {
                 helpers_newline(self, dest, supports_nesting, len)?;

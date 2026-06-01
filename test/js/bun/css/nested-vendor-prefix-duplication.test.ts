@@ -87,6 +87,52 @@ test("pretty-printed output has no dangling separators when the rule has declara
   );
 });
 
+// The same exponential blow-up happens when nesting is *preserved* (no browser
+// targets set). The vendor prefix comes from the selector (e.g.
+// `:placeholder-shown`, `:-webkit-autofill`), independent of targets, so
+// `StyleRule::to_css` still serializes the rule once per prefix and each pass
+// re-serializes the nested rules. Before the fix the guard that defers prefixed
+// nested rules only covered the nesting-compiled-away branch, leaving this path
+// unbounded: a ~1 KB stylesheet of ~20 nested levels hung the minifier for 25s+
+// (fuzzer signature `hang:css:…serialize_dimension|…TokenList::To…`).
+//
+// Each level here carries a vendor prefix (`:-webkit-autofill` -> none +
+// `-webkit-`), so output grew ~4x per nesting level. With the fix the prefixed
+// nested rules are emitted once, in the ancestor's final pass, and output stays
+// linear.
+// The selector list from the fuzzer input: `:placeholder-shown` expands to an
+// unprefixed + a prefixed variant, so each nesting level's rule is serialized
+// twice. Each nested level carries the same prefix set, so before the fix the
+// leaf rule was duplicated once per ancestor pass (2^depth copies).
+const prefixedSelector = ".foo:placeholder-shown .bar, .foo:-webkit-autofill spective";
+
+function nestedPrefixed(depth: number, innermost: string): string {
+  return `${prefixedSelector} {\n`.repeat(depth) + innermost + "\n" + "}\n".repeat(depth);
+}
+
+test("nesting-preserved (no targets) prefixed rules stay linear in depth", () => {
+  // No third argument => no browser targets => nesting is preserved. Before the
+  // fix this was ~2^depth copies of the leaf rule (tens of MB at depth 18, hung
+  // the minifier for 25s+ at depth 20). The leaf declaration must appear once
+  // per distinct prefix variant (2) regardless of nesting depth.
+  const depth = 24;
+  const output = minifyTest(nestedPrefixed(depth, "color: red;"), "");
+  expect(output.length).toBeLessThan(10_000);
+  expect(output.split("color:red").length - 1).toBe(2);
+});
+
+test("nesting-preserved prefixed rule emits each prefix variant once", () => {
+  // Two nested levels: the leaf rule appears once per distinct ancestor prefix
+  // variant (2), not once per combination of ancestor passes (4 before the fix).
+  const output = minifyTest(nestedPrefixed(2, "color: red;"), "");
+  expect(output).toBe(
+    ".foo:placeholder-shown .bar,.foo:-webkit-autofill spective{}" +
+      ".foo:placeholder-shown .bar,.foo:autofill spective{" +
+      "& .foo:placeholder-shown .bar,& .foo:-webkit-autofill spective{color:red}" +
+      "& .foo:placeholder-shown .bar,& .foo:autofill spective{color:red}}",
+  );
+});
+
 test("bun build --target=browser does not blow up on deeply nested prefixed selectors", async () => {
   // Mirrors the fuzzer input: deeply nested `:fullscreen` blocks. The default
   // browser targets (safari 14) require the `-webkit-` prefix for

@@ -1342,12 +1342,19 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
 // (`OVERFLOW_GROUP_MAX` = 4095 blocks), the next append indexed one past the
 // fixed-capacity pointer array and panicked.
 //
-// Many modules per build reaches the cap in far fewer builds, so the broken
-// binary crashes well before this loop finishes; the fixed binary keeps the
-// store bounded and exits cleanly. Not gated to debug/ASAN — the panic
-// reproduces on release builds too.
+// Many modules per build reaches the cap in far fewer builds: with 500 modules
+// the broken binary panics roughly a third of the way through this loop, while
+// the fixed binary keeps the store bounded and exits cleanly after all 400.
+// (MODULES stays well under the ~550 where the unrelated recursive tree-shaker
+// overflows its thread stack.) Not gated to debug/ASAN — the panic reproduces
+// on release builds too.
+//
+// An explicit timeout is required (not optional): this runs hundreds of real
+// bundles, far past bun:test's 5s default. The sibling leak tests above do the
+// same. 180s matches the CI runner's own per-test ceiling.
 test("Bun.build can be called thousands of times in one process without crashing", async () => {
   const MODULES = 500;
+  const BUILDS = 400;
   const files: Record<string, string> = {};
   for (let i = 0; i < MODULES; i++) {
     files[`m${i}.js`] =
@@ -1361,7 +1368,7 @@ test("Bun.build can be called thousands of times in one process without crashing
   ).join("\n");
   files["run.ts"] = `
     const entry = process.argv[2];
-    const BUILDS = 400;
+    const BUILDS = ${BUILDS};
     for (let i = 1; i <= BUILDS; i++) {
       const res = await Bun.build({ entrypoints: [entry], minify: true, sourcemap: "external" });
       if (!res.success) throw new AggregateError(res.logs, "build failed");
@@ -1383,4 +1390,4 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
-}, 300_000);
+}, 180_000);

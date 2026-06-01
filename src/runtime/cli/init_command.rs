@@ -37,9 +37,11 @@ impl InitCommand {
     ) -> Result<Vec<u8>, Error> {
         // TODO(port): Zig returns `[:0]const u8` (NUL-terminated, length-carrying).
         // We return `Vec<u8>` here and NUL-terminate at the call sites that need it.
+        #[allow(clippy::disallowed_methods)]
+        // label is a runtime parameter that may contain <tag> markup
         Output::pretty(format_args!("{}", label));
         if !default.is_empty() {
-            Output::pretty(format_args!("<d>({}):<r> ", bstr::BStr::new(default)));
+            bun_core::pretty!("<d>({}):<r> ", bstr::BStr::new(default));
         }
 
         Output::flush();
@@ -85,10 +87,10 @@ impl InitCommand {
             .collect();
 
         // Print the question prompt
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><cyan>?<r> {}<d> - Press return to submit.<r>",
             bstr::BStr::new(label),
-        ));
+        );
 
         if colors {
             Output::print(format_args!("\x1b[?25l")); // hide cursor
@@ -122,11 +124,11 @@ impl InitCommand {
                 Output::clear_to_end();
                 if $reprint {
                     // Print final selection
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "<r><green>✓<r> {}<d>:<r> {}<r>",
                         bstr::BStr::new(label),
                         &choices[$sel.to_index()],
-                    ));
+                    );
                 }
             }};
         }
@@ -143,9 +145,9 @@ impl InitCommand {
             for (i, option) in choices.iter().enumerate() {
                 if i == selected.to_index() {
                     if colors {
-                        Output::pretty(format_args!("<r><cyan>❯<r>   "));
+                        bun_core::pretty!("<r><cyan>❯<r>   ");
                     } else {
-                        Output::pretty(format_args!("<r><cyan>><r>   "));
+                        bun_core::pretty!("<r><cyan>><r>   ");
                     }
                     if colors {
                         Output::print(format_args!("\x1B[4m{}\x1B[24m\x1B[0K\n", option));
@@ -276,7 +278,7 @@ impl InitCommand {
             Err(e) if e == bun_core::err!("EndOfStream") => {
                 Output::flush();
                 // Add an "x" cancelled
-                Output::prettyln(format_args!("\n<r><red>x<r> Cancelled"));
+                bun_core::prettyln!("\n<r><red>x<r> Cancelled");
                 Global::exit(0);
             }
             Err(e) => return Err(e),
@@ -376,11 +378,11 @@ impl InitCommand {
         if let Some(ifdir) = initialize_in_folder {
             // TODO(port): std.fs.cwd().makePath → bun_sys::make_path / bun.makePath
             if let Err(err) = bun_sys::Dir::cwd().make_path(ifdir) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "Failed to create directory {}: {}",
                     bstr::BStr::new(ifdir),
                     err.name(),
-                ));
+                );
                 Global::exit(1);
             }
             let mut ifdir_z = ifdir.to_vec();
@@ -388,11 +390,11 @@ impl InitCommand {
             // SAFETY: ifdir_z[len-1] == 0 written above.
             let ifdir_zstr = ZStr::from_slice_with_nul(&ifdir_z[..]);
             if let Err(err) = bun_sys::chdir(ifdir_zstr) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "Failed to change directory to {}: {}",
                     bstr::BStr::new(ifdir),
                     bstr::BStr::new(err.name()),
-                ));
+                );
                 Global::exit(1);
             }
         }
@@ -579,7 +581,7 @@ impl InitCommand {
 
         if !auto_yes {
             if !did_load_package_json {
-                Output::pretty(format_args!("\n"));
+                bun_core::pretty!("\n");
 
                 let selected = Self::radio::<ProjectTemplateChoice>(b"Select a project template")?;
                 match selected {
@@ -616,7 +618,7 @@ impl InitCommand {
                 Output::print(format_args!("\n"));
                 Output::flush();
             } else {
-                Output::note("package.json already exists, configuring existing project");
+                bun_core::note!("package.json already exists, configuring existing project");
                 template = Template::Blank;
             }
         }
@@ -828,29 +830,29 @@ impl InitCommand {
                 },
             );
             if let Err(err) = print_result {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
                     err.name(),
-                ));
+                );
                 package_json_file = None;
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
             if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
-                ));
+                );
                 package_json_file = None;
                 break 'write_package_json;
             }
             if let Err(err) =
                 bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast"))
             {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
-                ));
+                );
                 package_json_file = None;
                 break 'write_package_json;
             }
@@ -868,7 +870,7 @@ impl InitCommand {
                 }
 
                 if package_json_file.is_some() && !did_load_package_json {
-                    Output::prettyln(format_args!(" + <r><d>package.json<r>"));
+                    bun_core::prettyln!(" + <r><d>package.json<r>");
                     Output::flush();
                 }
 
@@ -930,25 +932,25 @@ impl InitCommand {
                 }
 
                 if !fields.entry_point.is_empty() && !did_load_package_json {
-                    Output::pretty(format_args!("\nTo get started, run:\n\n    "));
+                    bun_core::pretty!("\nTo get started, run:\n\n    ");
 
                     if strings::index_of_any(&fields.entry_point, b" \"'").is_some() {
-                        Output::pretty(format_args!(
+                        bun_core::pretty!(
                             "<cyan>bun run {}<r>\n\n",
                             bun_fmt::format_json_string_latin1(&fields.entry_point),
-                        ));
+                        );
                     } else {
-                        Output::pretty(format_args!(
+                        bun_core::pretty!(
                             "<cyan>bun run {}<r>\n\n",
                             bstr::BStr::new(&fields.entry_point),
-                        ));
+                        );
                     }
                 }
 
                 Output::flush();
 
                 if exists_z(b"package.json") && need_run_bun_install {
-                    Output::prettyln(format_args!(""));
+                    bun_core::prettyln!("");
                     // Zig: std.process.Child .{stderr,stdin,stdout}=.Inherit → spawnAndWait
                     let self_exe = bun::self_exe_path()?;
                     let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
@@ -1039,10 +1041,7 @@ impl Assets {
 
         file.write_all(contents)?;
 
-        Output::prettyln(format_args!(
-            " + <r><d>{}<r>",
-            bstr::BStr::new(filename.as_bytes()),
-        ));
+        bun_core::prettyln!(" + <r><d>{}<r>", bstr::BStr::new(filename.as_bytes()));
         Output::flush();
         Ok(())
     }
@@ -1081,11 +1080,11 @@ impl Assets {
         } else {
             file.write_all(asset)?;
         }
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             " + <r><d>{}{}<r>",
             bstr::BStr::new(filename),
             message_suffix,
-        ));
+        );
         Output::flush();
         Ok(())
     }
@@ -1115,11 +1114,11 @@ impl Assets {
             file.write_all(contents)?;
         }
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             " + <r><d>{}{}<r>",
             bstr::BStr::new(filename),
             message_suffix,
-        ));
+        );
         Output::flush();
         Ok(())
     }
@@ -1589,11 +1588,11 @@ impl Template {
                         if bun_sys::symlinkat(target_zstr, Fd::cwd(), dest_zstr).is_err() {
                             break 'symlink_cursor_rule;
                         }
-                        Output::prettyln(format_args!(
+                        bun_core::prettyln!(
                             " + <r><d>{} -\\> {}<r>",
                             bstr::BStr::new(template_file.path),
                             bstr::BStr::new(asset_path),
-                        ));
+                        );
                         Output::flush();
                     }
                 }
@@ -1729,10 +1728,10 @@ impl Template {
             };
             if let Err(err) = result {
                 if err == bun_core::err!("EEXIST") {
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         " ○ <r><yellow>{}<r> (already exists, skipping)",
                         bstr::BStr::new(path),
-                    ));
+                    );
                     Output::flush();
                 } else {
                     Output::err(
@@ -1745,7 +1744,7 @@ impl Template {
             }
         }
 
-        Output::pretty(format_args!("\n"));
+        bun_core::pretty!("\n");
         Output::flush();
 
         // Zig: std.process.Child stdin=.Ignore stdout/stderr=.Inherit → spawnAndWait
@@ -1754,7 +1753,7 @@ impl Template {
         let self_exe = bun::self_exe_path()?;
         let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "\n\
              ✨ New project configured!\n\
              \n\
@@ -1771,7 +1770,7 @@ impl Template {
              \x20   <green><b>bun start<r>\n\
              \n\
              <blue>Happy bunning! 🐇<r>\n",
-        ));
+        );
 
         Output::flush();
         Ok(())

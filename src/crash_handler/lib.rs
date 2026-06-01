@@ -1496,7 +1496,7 @@ mod draft {
             );
         } else if err == bun_core::err!("MissingPackageJSON") {
             err_generic!("Bun could not find a package.json file to install from");
-            Output::note("Run \"bun init\" to initialize a project");
+            bun_core::note!("Run \"bun init\" to initialize a project");
         } else {
             // PORT NOTE: Zig picked the format string at comptime; the macros need
             // `:literal`, so branch on the const and call separately.
@@ -3012,7 +3012,7 @@ mod draft {
             if IS_ROOT {
                 // SAFETY: read-only access
                 if VERBOSE_ERROR_TRACE.load(Ordering::Relaxed) {
-                    Output::note("Release build will not have this trace by default:");
+                    bun_core::note!("Release build will not have this trace by default:");
                 }
             } else {
                 bun_core::pretty_errorln!(

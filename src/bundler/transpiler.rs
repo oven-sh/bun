@@ -2846,20 +2846,20 @@ impl<'a> Transpiler<'a> {
             ) {
                 Ok(r) => r,
                 Err(err) => {
-                    bun_core::Output::pretty_error(format_args!(
+                    bun_core::pretty_error!(
                         "Error resolving \"{}\": {}\n",
                         bstr::BStr::new(entry),
                         err.name(),
-                    ));
+                    );
                     continue;
                 }
             };
 
             if result.path_const().is_none() {
-                bun_core::Output::pretty_error(format_args!(
+                bun_core::pretty_error!(
                     "\"{}\" is disabled due to \"browser\" field in package.json.\n",
                     bstr::BStr::new(entry),
-                ));
+                );
                 continue;
             }
 
@@ -2932,10 +2932,11 @@ impl<'a> Transpiler<'a> {
         if bun_core::FeatureFlags::TRACING
             && self.options.log().level.at_least(bun_ast::Level::Info)
         {
-            bun_core::Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><d>\n---Tracing---\nResolve time:      {}\nParsing time:      {}\n---Tracing--\n\n<r>",
-                self.resolver.elapsed, self.elapsed,
-            ));
+                self.resolver.elapsed,
+                self.elapsed,
+            );
         }
 
         let outbase: Box<[u8]> = self.result.outbase.clone();

@@ -133,11 +133,11 @@ pub(crate) unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
     let filename = unsafe { bun_core::ffi::cstr(filename) };
     // SAFETY: caller contract guarantees valid NUL-terminated strings.
     let error_msg = unsafe { bun_core::ffi::cstr(error_msg) };
-    bun_core::Output::warn(format_args!(
+    bun_core::warn!(
         "ignoring extra certs from {}, load failed: {}",
         bstr::BStr::new(filename.to_bytes()),
         bstr::BStr::new(error_msg.to_bytes()),
-    ));
+    );
 }
 
 pub use bun_uws_sys::LIBUS_SOCKET_DESCRIPTOR;

@@ -265,8 +265,6 @@ impl FdZero for ::bun_sys::Fd {
 
 use self::bun_paths as ResolvePath;
 use ::bun_ast::import_record as ast;
-#[cfg(debug_assertions)]
-use ::bun_core::Output;
 use ::bun_core::{FeatureFlags, Generation};
 use bun_ast::Msg;
 use bun_collections::BoundedArray;
@@ -1164,11 +1162,11 @@ impl<'a> Resolver<'a> {
 
         #[cfg(debug_assertions)]
         if bun_core::debug_flags::has_resolve_breakpoint(import_path) {
-            bun_core::Output::debug(format_args!(
+            bun_core::debug!(
                 "Resolving <green>{}<r> from <blue>{}<r>",
                 bstr::BStr::new(import_path),
                 bstr::BStr::new(source_dir),
-            ));
+            );
             // @breakpoint() — no Rust equiv; left as TODO(port)
         }
 
@@ -5476,11 +5474,11 @@ impl<'a> Resolver<'a> {
             Ok(None) => dec_ret!(MatchStatus::NotFound),
             Err(_err) => {
                 #[cfg(debug_assertions)]
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "err: {} reading {}",
                     bstr::BStr::new(_err.name()),
                     bstr::BStr::new(path)
-                ));
+                );
                 dec_ret!(MatchStatus::NotFound);
             }
         };

@@ -1584,11 +1584,11 @@ impl<'a> PackageInstaller<'a> {
                             // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
                             // This caused bugs. We can't assert on it because they could come from old lockfiles
                             if npm.url.is_empty() {
-                                Output::debug_warn(format_args!(
+                                bun_core::debug_warn!(
                                     "package {}@{} missing tarball_url",
                                     bstr::BStr::new(pkg_name.slice(string_buf!())),
                                     resolution.fmt(string_buf!(), PathSep::Posix),
-                                ));
+                                );
                             }
                         }
 
@@ -1909,12 +1909,12 @@ impl<'a> PackageInstaller<'a> {
                                 );
                                 if count > 0 {
                                     if log_level.is_verbose() {
-                                        Output::pretty_error(format_args!(
+                                        bun_core::pretty_error!(
                                             "Blocked {} scripts for: {}@{}\n",
                                             count,
                                             bstr::BStr::new(alias.slice(string_buf!())),
                                             resolution.fmt(string_buf!(), PathSep::Posix),
-                                        ));
+                                        );
                                     }
                                     let entry = self
                                         .summary

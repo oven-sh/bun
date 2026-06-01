@@ -697,11 +697,6 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         )));
     }
 
-    if !args[0].is_string() {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "Bun.cron() expects a string path as the first argument"
-        )));
-    }
     if !args[1].is_string() {
         return Err(global.throw_invalid_arguments(format_args!(
             "Bun.cron() expects a string schedule as the second argument"
@@ -713,7 +708,79 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         )));
     }
 
-    let path_str = bun_core::OwnedString::new(args[0].to_bun_string(global)?);
+    // The path may be a plain string, a `file://` string, or a `URL` object.
+    // URL objects and `file://` strings go through the same validation as
+    // `node:fs` PathLike so both forms behave identically.
+    let path_str = {
+        use jsc::dom_url::FromUrlStringError;
+        let resolved: Result<bun_core::String, FromUrlStringError> = if let Some(domurl) =
+            jsc::DOMURL::cast(args[0])
+        {
+            domurl.file_system_path().map_err(|e| match e {
+                jsc::dom_url::ToFileSystemPathError::NotFileUrl => FromUrlStringError::NotFileUrl,
+                jsc::dom_url::ToFileSystemPathError::InvalidPath => FromUrlStringError::InvalidPath,
+                jsc::dom_url::ToFileSystemPathError::InvalidHost => FromUrlStringError::InvalidHost,
+            })
+        } else if !args[0].is_string() {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "Bun.cron() expects a string or file URL path as the first argument"
+            )));
+        } else {
+            let raw = args[0].to_bun_string(global)?;
+            if raw.has_prefix_comptime(b"file://") {
+                let result = jsc::DOMURL::file_system_path_from_url_string(raw);
+                raw.deref();
+                result
+            } else {
+                Ok(raw)
+            }
+        };
+        let str = match resolved {
+            Ok(s) => s,
+            Err(FromUrlStringError::NotFileUrl) => {
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::INVALID_URL_SCHEME,
+                        format_args!("Bun.cron() path URL must use the file: scheme"),
+                    )
+                    .throw());
+            }
+            Err(FromUrlStringError::InvalidPath) => {
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::INVALID_FILE_URL_PATH,
+                        format_args!("Bun.cron() path URL must be a valid file: path"),
+                    )
+                    .throw());
+            }
+            Err(FromUrlStringError::InvalidHost) => {
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::INVALID_FILE_URL_HOST,
+                        format_args!("Bun.cron() path URL host must be \"localhost\" or empty"),
+                    )
+                    .throw());
+            }
+            Err(FromUrlStringError::InvalidUrl) => {
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::INVALID_URL,
+                        format_args!("Bun.cron() received an invalid file: URL"),
+                    )
+                    .throw());
+            }
+        };
+        if str.is_empty() {
+            str.deref();
+            return Err(global
+                .err(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!("Bun.cron() path must not be empty"),
+                )
+                .throw());
+        }
+        bun_core::OwnedString::new(str)
+    };
     let schedule_str = bun_core::OwnedString::new(args[1].to_bun_string(global)?);
     let title_str = bun_core::OwnedString::new(args[2].to_bun_string(global)?);
 

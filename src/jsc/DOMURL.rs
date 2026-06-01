@@ -16,6 +16,10 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     safe fn WebCore__DOMURL__cast_(value: JSValue, vm: &VM) -> *mut DOMURL;
     safe fn WebCore__DOMURL__fileSystemPath(this: &DOMURL, error_code: &mut c_int) -> bstr::String;
+    safe fn URL__fileSystemPathFromURLString(
+        input: &mut bstr::String,
+        error_code: &mut c_int,
+    ) -> bstr::String;
     // These two are referenced via `bun.cpp.*` in the Zig source.
     safe fn WebCore__DOMURL__href_(this: &DOMURL, out: &mut ZigString);
     safe fn WebCore__DOMURL__pathname_(this: &DOMURL, out: &mut ZigString);
@@ -32,6 +36,22 @@ pub enum ToFileSystemPathError {
 }
 
 bun_core::named_error_set!(ToFileSystemPathError);
+
+/// Superset of [`ToFileSystemPathError`] that also covers a string which does
+/// not parse as a URL at all (`file://...` prefix but malformed syntax).
+#[derive(Debug, Copy, Clone, Eq, PartialEq, thiserror::Error, strum::IntoStaticStr)]
+pub enum FromUrlStringError {
+    #[error("NotFileUrl")]
+    NotFileUrl,
+    #[error("InvalidPath")]
+    InvalidPath,
+    #[error("InvalidHost")]
+    InvalidHost,
+    #[error("InvalidUrl")]
+    InvalidUrl,
+}
+
+bun_core::named_error_set!(FromUrlStringError);
 
 impl DOMURL {
     pub fn cast_<'a>(value: JSValue, vm: &'a VM) -> Option<&'a mut DOMURL> {
@@ -67,6 +87,28 @@ impl DOMURL {
             1 => return Err(ToFileSystemPathError::InvalidHost),
             2 => return Err(ToFileSystemPathError::InvalidPath),
             3 => return Err(ToFileSystemPathError::NotFileUrl),
+            _ => {}
+        }
+        debug_assert!(path.tag() != bun_core::Tag::Dead);
+        Ok(path)
+    }
+
+    /// Same validation as [`file_system_path`](Self::file_system_path), but for
+    /// a URL string rather than a [`DOMURL`] object — so `"file://..."` string
+    /// inputs and `URL` object inputs can be handled identically by callers.
+    /// Returns [`FromUrlStringError::InvalidUrl`] if the input does not parse as
+    /// a URL at all.
+    pub fn file_system_path_from_url_string(
+        str: bstr::String,
+    ) -> Result<bstr::String, FromUrlStringError> {
+        let mut input = str;
+        let mut error_code: c_int = 0;
+        let path = URL__fileSystemPathFromURLString(&mut input, &mut error_code);
+        match error_code {
+            1 => return Err(FromUrlStringError::InvalidHost),
+            2 => return Err(FromUrlStringError::InvalidPath),
+            3 => return Err(FromUrlStringError::NotFileUrl),
+            4 => return Err(FromUrlStringError::InvalidUrl),
             _ => {}
         }
         debug_assert!(path.tag() != bun_core::Tag::Dead);

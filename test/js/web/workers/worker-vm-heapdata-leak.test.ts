@@ -9,14 +9,12 @@ import { bunEnv, bunExe } from "harness";
 // backing memory and the object is reachable at exit, so neither RSS nor LSAN
 // reliably surfaces it — the deterministic signal is the live-instance count,
 // which grew by one per `new Worker()` + `terminate()` cycle before the fix.
-test(
-  "terminated workers do not leak their JSHeapData",
-  async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `
+test("terminated workers do not leak their JSHeapData", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
         const { jsHeapDataLiveCount } = require("bun:internal-for-testing");
         const url =
           "data:text/javascript," +
@@ -64,17 +62,15 @@ test(
         }
         console.log("PASS leaked=" + leaked);
       `,
-      ],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
 
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toBe("");
-    expect(stdout).toContain("PASS");
-    expect(exitCode).toBe(0);
-  },
-  120_000,
-);
+  expect(stderr).toBe("");
+  expect(stdout).toContain("PASS");
+  expect(exitCode).toBe(0);
+}, 120_000);

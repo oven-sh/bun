@@ -316,9 +316,12 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         let flush: u32 = jsv_to_u32(arguments[0]);
         if flush > T::MAX_FLUSH {
+            // Node throws ERR_INVALID_ARG_TYPE (a TypeError) for an
+            // out-of-range flush, so match the code — but with a message that
+            // actually names the flush argument.
             return Err(global_this
                 .err(
-                    ErrorCode::INVALID_ARG_VALUE,
+                    ErrorCode::INVALID_ARG_TYPE,
                     format_args!("Invalid flush value"),
                 )
                 .throw());
@@ -597,9 +600,12 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         let flush: u32 = jsv_to_u32(arguments[0]);
         if flush > T::MAX_FLUSH {
+            // Node throws ERR_INVALID_ARG_TYPE (a TypeError) for an
+            // out-of-range flush, so match the code — but with a message that
+            // actually names the flush argument.
             return Err(global_this
                 .err(
-                    ErrorCode::INVALID_ARG_VALUE,
+                    ErrorCode::INVALID_ARG_TYPE,
                     format_args!("Invalid flush value"),
                 )
                 .throw());

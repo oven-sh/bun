@@ -333,13 +333,14 @@ describe("zlib.brotli", () => {
   // Passing a zlib-only flush constant (Z_FINISH=4, Z_BLOCK=5) to .flush() used
   // to abort the whole process — the shared write path validated against the
   // zlib flush range (0..=6) and brotli's set_flush trapped on anything above 3.
-  // They are now rejected at the write boundary with ERR_INVALID_ARG_VALUE,
-  // surfaced as a stream 'error' event and an errored flush callback. (Node
-  // silently accepts these and hangs forever instead — nodejs/node#63701.)
+  // They are now rejected at the write boundary with an ERR_INVALID_ARG_TYPE
+  // TypeError (the code Node throws for an out-of-range flush), surfaced as a
+  // stream 'error' event and an errored flush callback. (Node silently accepts
+  // these particular values and hangs forever instead — nodejs/node#63701.)
   describe.each([
     ["Z_FINISH", zlib.constants.Z_FINISH],
     ["Z_BLOCK", zlib.constants.Z_BLOCK],
-  ])("brotli flush(%s) is rejected with ERR_INVALID_ARG_VALUE", (_, kind) => {
+  ])("brotli flush(%s) is rejected with ERR_INVALID_ARG_TYPE", (_, kind) => {
     // Run in a subprocess: a regression here either aborts the process (panic)
     // or never settles the stream (hang) — both must show up as a failed or
     // timed-out subprocess instead of a pass (or a dead test runner).
@@ -352,9 +353,12 @@ describe("zlib.brotli", () => {
             const z = require("zlib");
             const s = z.createBrotliCompress();
             let cbErr = null, evtErr = null;
+            function report(err) {
+              return { code: err.code, isTypeError: err instanceof TypeError };
+            }
             function check() {
               if (cbErr && evtErr) {
-                console.log(JSON.stringify({ flushCb: cbErr.code, errorEvent: evtErr.code }));
+                console.log(JSON.stringify({ flushCb: report(cbErr), errorEvent: report(evtErr) }));
                 process.exit(0);
               }
             }
@@ -370,7 +374,10 @@ describe("zlib.brotli", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
       expect(stderrLines).toEqual([]);
-      expect(JSON.parse(stdout)).toEqual({ flushCb: "ERR_INVALID_ARG_VALUE", errorEvent: "ERR_INVALID_ARG_VALUE" });
+      expect(JSON.parse(stdout)).toEqual({
+        flushCb: { code: "ERR_INVALID_ARG_TYPE", isTypeError: true },
+        errorEvent: { code: "ERR_INVALID_ARG_TYPE", isTypeError: true },
+      });
       expect(exitCode).toBe(0);
     });
 
@@ -384,9 +391,12 @@ describe("zlib.brotli", () => {
             const z = require("zlib");
             const s = z.createBrotliDecompress();
             let cbErr = null, evtErr = null;
+            function report(err) {
+              return { code: err.code, isTypeError: err instanceof TypeError };
+            }
             function check() {
               if (cbErr && evtErr) {
-                console.log(JSON.stringify({ flushCb: cbErr.code, errorEvent: evtErr.code }));
+                console.log(JSON.stringify({ flushCb: report(cbErr), errorEvent: report(evtErr) }));
                 process.exit(0);
               }
             }
@@ -403,7 +413,10 @@ describe("zlib.brotli", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
       expect(stderrLines).toEqual([]);
-      expect(JSON.parse(stdout)).toEqual({ flushCb: "ERR_INVALID_ARG_VALUE", errorEvent: "ERR_INVALID_ARG_VALUE" });
+      expect(JSON.parse(stdout)).toEqual({
+        flushCb: { code: "ERR_INVALID_ARG_TYPE", isTypeError: true },
+        errorEvent: { code: "ERR_INVALID_ARG_TYPE", isTypeError: true },
+      });
       expect(exitCode).toBe(0);
     });
   });

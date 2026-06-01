@@ -419,7 +419,7 @@ mod _impl {
 
         pub fn set_flush(&mut self, flush: c_int) {
             // The shared write path rejects anything above `MAX_FLUSH` (3) with
-            // ERR_INVALID_ARG_VALUE before it reaches us, so only the four real
+            // ERR_INVALID_ARG_TYPE before it reaches us, so only the four real
             // `BrotliEncoderOperation`s ever arrive here. The catch-all arm is
             // defense-in-depth for that invariant: map to PROCESS (what the C
             // encoder does with an unknown op) rather than aborting the process.

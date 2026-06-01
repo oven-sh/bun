@@ -1329,3 +1329,58 @@ test.skip("Bun.build NumberRenamer does not leak intermediate NumberScope.name_c
   expect(growth).toBeLessThan(48 * 1024 * 1024);
   expect(exitCode).toBe(0);
 }, 120_000);
+
+// Regression: repeated in-process `Bun.build()` calls panicked with
+// `index out of bounds: the len is 4095 but the index is 4095` (SIGTRAP) after
+// a couple thousand builds. `Path.dupeAlloc` interns every module path into the
+// process-lifetime `FilenameStore`. The Rust port had dropped two things the
+// Zig original does: (1) the `isSliceInBuffer` short-circuit that returns an
+// already-interned path unchanged, and (2) routing the disjoint `text`/`pretty`
+// case (a freshly-relativized display path, recomputed every build) into the
+// per-build arena instead of the store. Without them, each build re-appended
+// every path, and once the store's overflow blocks filled
+// (`OVERFLOW_GROUP_MAX` = 4095 blocks), the next append indexed one past the
+// fixed-capacity pointer array and panicked.
+//
+// Many modules per build reaches the cap in far fewer builds, so the broken
+// binary crashes well before this loop finishes; the fixed binary keeps the
+// store bounded and exits cleanly. Not gated to debug/ASAN — the panic
+// reproduces on release builds too.
+test("Bun.build can be called thousands of times in one process without crashing", async () => {
+  const MODULES = 500;
+  const files: Record<string, string> = {};
+  for (let i = 0; i < MODULES; i++) {
+    files[`m${i}.js`] =
+      `import { f${(i + 1) % MODULES} } from "./m${(i + 1) % MODULES}.js";\n` +
+      `export const v${i} = ${i};\n` +
+      `export function f${i}() { return v${i}; }\n`;
+  }
+  files["entry.js"] = Array.from(
+    { length: MODULES },
+    (_, i) => `import { f${i} } from "./m${i}.js"; console.log(f${i}());`,
+  ).join("\n");
+  files["run.ts"] = `
+    const entry = process.argv[2];
+    const BUILDS = 400;
+    for (let i = 1; i <= BUILDS; i++) {
+      const res = await Bun.build({ entrypoints: [entry], minify: true, sourcemap: "external" });
+      if (!res.success) throw new AggregateError(res.logs, "build failed");
+      for (const o of res.outputs) await o.arrayBuffer();
+    }
+    console.log("OK " + BUILDS);
+  `;
+  const dir = tempDirWithFiles("bun-build-filename-store-overflow", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), join(dir, "run.ts"), join(dir, "entry.js")],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // A crash surfaces as a non-zero (signal) exit and a panic on stderr; assert
+  // the run completed cleanly instead.
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("OK 400");
+  expect(exitCode).toBe(0);
+}, 300_000);

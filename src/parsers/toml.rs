@@ -357,12 +357,6 @@ impl<'a> TOML<'a> {
                 self.lexer.next()?;
                 Ok(result)
             }
-            T::t_identifier => {
-                let str = E::String::init(self.lexer.identifier);
-
-                self.lexer.next()?;
-                Ok(self.e(str, loc))
-            }
             T::t_numeric_literal => {
                 let value = self.lexer.number;
                 self.lexer.next()?;

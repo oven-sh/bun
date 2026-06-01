@@ -1,6 +1,6 @@
-use bun_core::String as BunString;
-use bun_js_printer as js_printer;
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, LogJsc, StringJsc};
+use bun_ast::ToJSError;
+use bun_js_parser_jsc::ExprJsc;
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsError, JsResult, LogJsc};
 use bun_parsers::toml::TOML;
 
 pub(crate) fn create(global: &JSGlobalObject) -> JSValue {
@@ -26,33 +26,26 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
                 }
             };
 
+            // PORT NOTE(#31252): `Lexer::expect` logs errors but recovers (calls `next()`),
+            // so the parser can return `Ok` with a partial AST. Surface any logged errors
+            // before handing the AST to JS.
             if log.has_errors() {
                 return Err(global.throw_value(log.to_js(global, "Failed to parse toml")?));
             }
 
-            // for now...
-            let buffer_writer = js_printer::BufferWriter::init();
-            let mut writer = js_printer::BufferPrinter::init(buffer_writer);
-            // PORT NOTE: Zig passed `*js_printer.BufferPrinter` as a comptime type param; dropped per (comptime X: type, arg: X) rule
-            if js_printer::print_json(
-                &mut writer,
-                parse_result,
-                source,
-                js_printer::PrintJsonOptions {
-                    indent: Default::default(),
-                    mangled_props: None,
-                    ..Default::default()
-                },
-            )
-            .is_err()
-            {
-                return Err(global.throw_value(log.to_js(global, "Failed to print toml")?));
+            // PORT NOTE: Zig TOMLObject.parse did a `print_json` → `JSONParse` round-trip
+            // to get the parsed Expr into JS. That pipeline can't round-trip `Infinity` /
+            // `NaN` (strict JSON forbids them), and it's wasteful — JSONC already switched
+            // to `ExprJsc::to_js`, which is a direct AST → JSValue walk. Mirror that here.
+            match parse_result.to_js(global) {
+                Ok(v) => Ok(v),
+                Err(ToJSError::OutOfMemory) => Err(JsError::OutOfMemory),
+                Err(ToJSError::JSError) => Err(JsError::Thrown),
+                Err(ToJSError::JSTerminated) => Err(JsError::Terminated),
+                // TOML parsing produces only literals (objects, arrays, strings,
+                // numbers, booleans) — never identifiers or macros.
+                Err(_) => unreachable!(),
             }
-
-            let slice = writer.ctx.buffer.slice();
-            let mut out = BunString::borrow_utf8(slice);
-
-            out.to_js_by_parse_json(global)
         },
     )
 }

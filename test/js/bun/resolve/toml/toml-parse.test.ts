@@ -87,3 +87,73 @@ test("Bun.TOML.parse rejects array values without comma separators (#31252)", ()
   // Trailing comma is legal TOML.
   expect(Bun.TOML.parse("a = [1, 2,]")).toEqual({ a: [1, 2] });
 });
+
+// https://github.com/oven-sh/bun/issues/31251
+// `parse_value_inner` used to accept `t_identifier` at value position and emit it as
+// an `E.String`. The lexer's identifier class is deliberately broad so bare keys like
+// `foo-bar` work, which meant `a = @`, `a = foo`, `a = $` all silently parsed as
+// strings instead of being syntax errors. Per the TOML spec, the right-hand side
+// of `key = value` must be a quoted string, number, boolean, datetime, array, or
+// inline table — anything else is invalid.
+test("Bun.TOML.parse rejects bare identifiers at value position (#31251)", () => {
+  expect(() => Bun.TOML.parse("a = @")).toThrow();
+  expect(() => Bun.TOML.parse("a = foo")).toThrow();
+  expect(() => Bun.TOML.parse("a = @foo")).toThrow();
+  expect(() => Bun.TOML.parse("a = $")).toThrow();
+  expect(() => Bun.TOML.parse("a = _bar")).toThrow();
+  // inside an inline table
+  expect(() => Bun.TOML.parse("a = { x = foo }")).toThrow();
+  // inside an array
+  expect(() => Bun.TOML.parse("a = [foo]")).toThrow();
+});
+
+// `true`/`false` are kept as booleans — they have their own tokens and never
+// reach the identifier arm.
+test("Bun.TOML.parse still accepts true/false booleans at value position (#31251)", () => {
+  expect(Bun.TOML.parse("a = true\nb = false")).toEqual({ a: true, b: false });
+});
+
+// Bare keys with the same alphabet as the old value-position identifier arm must
+// still work — the fix is value-only.
+test("Bun.TOML.parse still accepts bare keys built from @/$/_/letters/digits/-/: (#31251)", () => {
+  expect(Bun.TOML.parse('@foo = "ok"')).toEqual({ "@foo": "ok" });
+  expect(Bun.TOML.parse('$bar = "ok"')).toEqual({ $bar: "ok" });
+  expect(Bun.TOML.parse('foo-bar = "ok"')).toEqual({ "foo-bar": "ok" });
+});
+
+// Per TOML 1.0.0 §Float, `inf`, `+inf`, `-inf`, `nan`, `+nan`, `-nan` are valid
+// floats. Before this fix:
+//  - `a = inf` / `a = nan` silently parsed as the strings `"inf"` / `"nan"`
+//    (they fell into `parse_value_inner`'s `t_identifier` arm).
+//  - `a = +inf` / `a = -inf` / `a = ±nan` produced `0` (the `t_plus` / `t_minus`
+//    arms read `self.lexer.number` before `expect(t_numeric_literal)`, which
+//    fails on an identifier — the 0 was whatever `number` was last set to).
+// The lexer now promotes bare `inf` / `nan` to `t_numeric_literal` with
+// `f64::INFINITY` / `f64::NAN`, which also feeds the `t_plus` / `t_minus` arms.
+// Requires the TOMLObject JSValue pipeline to bypass the `print_json → JSONParse`
+// round-trip (strict JSON has no `Infinity` / `NaN`); that's done in the same
+// patch.
+test("Bun.TOML.parse accepts inf and nan as float values (#31251)", () => {
+  expect(Bun.TOML.parse("a = inf").a).toBe(Infinity);
+  expect(Bun.TOML.parse("a = +inf").a).toBe(Infinity);
+  expect(Bun.TOML.parse("a = -inf").a).toBe(-Infinity);
+  expect(Bun.TOML.parse("a = nan").a).toBeNaN();
+  expect(Bun.TOML.parse("a = +nan").a).toBeNaN();
+  expect(Bun.TOML.parse("a = -nan").a).toBeNaN();
+});
+
+// Bare keys spelled exactly `inf` / `nan` must keep working. The lexer now emits
+// `t_numeric_literal`, and `parse_key_segment`'s numeric-literal arm uses the raw
+// source text (`self.lexer.raw()`) as the key string, preserving the spelling.
+test("Bun.TOML.parse still accepts bare keys named inf and nan (#31251)", () => {
+  expect(Bun.TOML.parse('inf = "ok"')).toEqual({ inf: "ok" });
+  expect(Bun.TOML.parse('nan = "ok"')).toEqual({ nan: "ok" });
+});
+
+// Identifiers that merely contain `inf` / `nan` (`infinity`, `nan1`, `inf-foo`)
+// still fall through to `t_identifier` and are rejected at value position.
+test("Bun.TOML.parse rejects inf-like/nan-like identifiers at value position (#31251)", () => {
+  expect(() => Bun.TOML.parse("a = infinity")).toThrow();
+  expect(() => Bun.TOML.parse("a = nan1")).toThrow();
+  expect(() => Bun.TOML.parse("a = inf-foo")).toThrow();
+});

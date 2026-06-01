@@ -1,0 +1,399 @@
+name: Bun AI Review Swarm
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+concurrency:
+  group: bun-ai-review-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: read
+      actions: read
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          filter: blob:none
+          persist-credentials: false
+
+      - name: Set up Droid CLI
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl -fsSL https://app.factory.ai/cli | sh
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Configure BYOK models
+        shell: bash
+        env:
+          GLM: ${{ secrets.GLM }}
+          FIREPASS: ${{ secrets.FIREPASS }}
+          MINIMAX: ${{ secrets.MINIMAX }}
+        run: |
+          set -euo pipefail
+
+          test -n "${GLM:-}" || { echo "::error::Missing GLM secret"; exit 1; }
+          test -n "${FIREPASS:-}" || { echo "::error::Missing FIREPASS secret"; exit 1; }
+          test -n "${MINIMAX:-}" || { echo "::error::Missing MINIMAX secret"; exit 1; }
+
+          echo "::add-mask::$GLM"
+          echo "::add-mask::$FIREPASS"
+          echo "::add-mask::$MINIMAX"
+
+          mkdir -p "$HOME/.factory"
+
+          cat > "$HOME/.factory/settings.json" <<'JSON'
+          {
+            "customModels": [
+              {
+                "displayName": "GLM-5.1-ZAI-Coding",
+                "model": "glm-5.1",
+                "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+                "apiKey": "${GLM}",
+                "provider": "generic-chat-completion-api",
+                "maxOutputTokens": 131072
+              },
+              {
+                "displayName": "GLM-4.7-ZAI-Coding",
+                "model": "glm-4.7",
+                "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+                "apiKey": "${GLM}",
+                "provider": "generic-chat-completion-api",
+                "maxOutputTokens": 131072
+              },
+              {
+                "displayName": "Kimi-K2.6-Turbo-FirePass",
+                "model": "accounts/fireworks/routers/kimi-k2p6-turbo",
+                "baseUrl": "https://api.fireworks.ai/inference",
+                "apiKey": "${FIREPASS}",
+                "provider": "anthropic",
+                "maxOutputTokens": 64000
+              },
+              {
+                "displayName": "MiniMax-M3",
+                "model": "MiniMax-M3",
+                "baseUrl": "https://api.minimax.io/anthropic",
+                "apiKey": "${MINIMAX}",
+                "provider": "anthropic",
+                "maxOutputTokens": 64000
+              }
+            ]
+          }
+          JSON
+
+      - name: Build review context once
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p review-input review-output synthesized
+
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            PR="${{ github.event.pull_request.number }}"
+
+            gh pr diff "$PR" --patch > review-input/pr.diff
+            gh pr diff "$PR" --name-only > review-input/changed-files.txt
+            gh pr view "$PR" \
+              --json title,body,baseRefName,headRefName,commits \
+              > review-input/pr.json
+          else
+            git diff --find-renames HEAD~1...HEAD > review-input/pr.diff || true
+            git diff --name-only HEAD~1...HEAD > review-input/changed-files.txt || true
+            echo "{}" > review-input/pr.json
+          fi
+
+          {
+            echo "# Changed file context"
+            while IFS= read -r file; do
+              if [ -f "$file" ]; then
+                echo
+                echo "===== $file ====="
+                sed -n '1,360p' "$file"
+              fi
+            done < review-input/changed-files.txt
+          } > review-input/changed-file-context.md
+
+          {
+            echo "# PR metadata"
+            cat review-input/pr.json
+            echo
+            echo "# Changed files"
+            cat review-input/changed-files.txt
+            echo
+            echo "# Changed file context"
+            cat review-input/changed-file-context.md
+            echo
+            echo "# Diff"
+            cat review-input/pr.diff
+          } > review-input/context.md
+
+          # Shared review posture (system prompt). droid exec does not auto-load
+          # .factory/, so fetch the SKILL from fork main and append it to every call.
+          gh api "repos/$GITHUB_REPOSITORY/contents/.factory/skills/review-guidelines/SKILL.md?ref=main" \
+            --jq '.content' 2>/dev/null | base64 -d > review-input/review-guidelines.md || true
+          test -s review-input/review-guidelines.md || echo "# Bun fork UB review guidelines (unavailable)" > review-input/review-guidelines.md
+
+      - name: Run review lanes concurrently
+        shell: bash
+        env:
+          FACTORY_API_KEY: ${{ secrets.DROID }}
+          GLM: ${{ secrets.GLM }}
+          FIREPASS: ${{ secrets.FIREPASS }}
+          MINIMAX: ${{ secrets.MINIMAX }}
+        run: |
+          set -euo pipefail
+
+          unset ANTHROPIC_AUTH_TOKEN
+          unset ANTHROPIC_BASE_URL
+          unset OPENAI_API_KEY
+          unset OPENAI_BASE_URL
+
+          cat > review-input/lanes.json <<'JSON'
+          [
+            {
+              "id": "glm51-ub",
+              "model": "custom:GLM-5.1-ZAI-Coding-0",
+              "focus": "UB, stale pointer/length, worker handoff, JS-backed memory, allocator/lifetime/refcount mistakes"
+            },
+            {
+              "id": "glm51-tests",
+              "model": "custom:GLM-5.1-ZAI-Coding-0",
+              "focus": "red/green proof, ASAN evidence, deterministic repros, tests that fail on unpatched main"
+            },
+            {
+              "id": "glm47-source-route",
+              "model": "custom:GLM-4.7-ZAI-Coding-1",
+              "focus": "source-route verification, sibling paths, exact public API to native path"
+            },
+            {
+              "id": "glm47-compat",
+              "model": "custom:GLM-4.7-ZAI-Coding-1",
+              "focus": "Node/Web API compatibility, callback timing, error shape, public observable behavior"
+            },
+            {
+              "id": "glm47-claims",
+              "model": "custom:GLM-4.7-ZAI-Coding-1",
+              "focus": "claim verification, overclaim/underclaim detection, PR body truthfulness"
+            },
+            {
+              "id": "kimi-opposition",
+              "model": "custom:Kimi-K2.6-Turbo-FirePass-2",
+              "focus": "oppositional review: strongest argument this PR is wrong"
+            },
+            {
+              "id": "minimax-architecture",
+              "model": "custom:MiniMax-M3-3",
+              "focus": "architecture boundary, helper placement, missed sibling paths"
+            },
+            {
+              "id": "minimax-tests",
+              "model": "custom:MiniMax-M3-3",
+              "focus": "test design, flakes, stress vs normal CI, public API proof"
+            },
+            {
+              "id": "minimax-simplicity",
+              "model": "custom:MiniMax-M3-3",
+              "focus": "smallest complete fix, no scope creep, no unrelated cleanup"
+            }
+          ]
+          JSON
+
+          run_lane() {
+            local lane_json="$1"
+            local id model focus
+
+            id="$(jq -r '.id' <<< "$lane_json")"
+            model="$(jq -r '.model' <<< "$lane_json")"
+            focus="$(jq -r '.focus' <<< "$lane_json")"
+
+            {
+              cat <<PROMPT
+          You are reviewing a Bun fork PR.
+
+          Mode:
+          - Read-only review.
+          - Do not edit files.
+          - Do not invent issues.
+          - Do not praise.
+          - Report only actionable findings.
+          - Prefer line-local findings when possible.
+          - Low-confidence thoughts go in the artifact only.
+
+          Lane: ${id}
+          Focus: ${focus}
+
+          For each finding, include:
+          - severity: blocker / high / medium / low
+          - file and line/range if possible
+          - concrete failure mode
+          - why current tests miss it
+          - smallest complete fix
+          - confidence
+          - what would prove this wrong
+
+          If no real findings, say "No actionable findings."
+          PROMPT
+
+              echo
+              cat review-input/context.md
+            } | timeout 600 droid exec \
+              --auto medium \
+              --append-system-prompt-file review-input/review-guidelines.md \
+              --model "$model" \
+              "Review this PR according to the lane focus. Output markdown only. Do not write, edit, commit, push, or post anything; produce the review text only." \
+              > "review-output/${id}.md" \
+              || echo "_(lane ${id}: timed out or errored; partial output above, if any)_" >> "review-output/${id}.md"
+          }
+
+          export -f run_lane
+
+          pids=()
+          while IFS= read -r lane; do
+            run_lane "$lane" &
+            pids+=("$!")
+          done < <(jq -c '.[]' review-input/lanes.json)
+
+          failed=0
+          for pid in "${pids[@]}"; do
+            if ! wait "$pid"; then
+              failed=1
+            fi
+          done
+
+          if [ "$failed" -ne 0 ]; then
+            echo "::warning::One or more review lanes failed; synthesis will continue with available outputs."
+          fi
+
+      - name: Build internal ledger
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          {
+            echo "# Internal review ledger"
+            echo
+            for file in review-output/*.md; do
+              echo
+              echo "===== ${file} ====="
+              cat "$file"
+            done
+          } > synthesized/internal-ledger.md
+
+      - name: Verify findings (adversarial critic)
+        shell: bash
+        env:
+          FACTORY_API_KEY: ${{ secrets.DROID }}
+          FIREPASS: ${{ secrets.FIREPASS }}
+        run: |
+          set -euo pipefail
+
+          unset ANTHROPIC_AUTH_TOKEN
+          unset ANTHROPIC_BASE_URL
+          unset OPENAI_API_KEY
+          unset OPENAI_BASE_URL
+
+          {
+            echo "# PR diff and context"
+            echo
+            cat review-input/context.md
+            echo
+            echo "# Candidate findings from independent reviewers"
+            echo
+            cat synthesized/internal-ledger.md
+          } | timeout 600 droid exec \
+            --auto medium \
+            --append-system-prompt-file review-input/review-guidelines.md \
+            --model custom:Kimi-K2.6-Turbo-FirePass-2 \
+            "You are an adversarial verifier for a Bun fork PR. Above is the PR diff and context, then candidate findings from several independent reviewers. For EACH distinct finding, try hard to REFUTE it against the actual diff and repo. Output markdown, one entry per distinct finding: a one-line restatement, then a verdict CONFIRMED / REFUTED / UNCERTAIN with file:line if known, then one sentence of why. Default to REFUTED when you cannot confirm the problem from the actual code. Deduplicate aggressively. The goal is to eliminate false positives before a maintainer sees them; be strict and concrete." \
+            > synthesized/verified.md \
+            || cp synthesized/internal-ledger.md synthesized/verified.md
+
+      - name: Synthesize review
+        shell: bash
+        env:
+          FACTORY_API_KEY: ${{ secrets.DROID }}
+          GLM: ${{ secrets.GLM }}
+          FIREPASS: ${{ secrets.FIREPASS }}
+          MINIMAX: ${{ secrets.MINIMAX }}
+        run: |
+          set -euo pipefail
+
+          unset ANTHROPIC_AUTH_TOKEN
+          unset ANTHROPIC_BASE_URL
+          unset OPENAI_API_KEY
+          unset OPENAI_BASE_URL
+
+          cat synthesized/verified.md | timeout 600 droid exec \
+            --auto medium \
+            --append-system-prompt-file review-input/review-guidelines.md \
+            --model custom:MiniMax-M3-3 \
+            "Synthesize these adversarially-verified Bun PR review findings into ONE structured review. Each candidate carries a critic verdict (CONFIRMED / REFUTED / UNCERTAIN) — use it to GRADE confidence, not as a hard filter. Report CONFIRMED items as high-confidence findings; include UNCERTAIN ones at lower confidence flagged for a human check; briefly note REFUTED items as considered-and-dismissed with the reason, so a maintainer can override if the critic was wrong. The critic can be wrong; differentiate by confidence rather than blindly dropping.
+
+            Output ONLY a single JSON object, no markdown fences and no prose around it, with this shape:
+            {
+              \"summary\": \"<concise maintainer-quality markdown: blockers, high-confidence issues, test gaps, UB/safety verification, perf/simplicity, PR-body/claim accuracy, false positives>\",
+              \"recommendation\": \"proceed | revise | block\",
+              \"findings\": [
+                { \"path\": \"<repo-relative path exactly as in the diff>\", \"line\": <integer new-file line number that appears in the diff>, \"severity\": \"blocker|high|medium|low\", \"confidence\": \"high|medium|low\", \"title\": \"<short>\", \"body\": \"<failure mode, why current tests miss it, smallest complete fix>\" }
+              ]
+            }
+
+            Rules:
+            - Deduplicate aggressively across lanes; keep only actionable findings.
+            - Give a finding a path and line ONLY when you can tie it to a specific changed line in the diff; otherwise omit path and line and it will be summarized, not posted inline.
+            - Mark false positives and disagreements in summary, not as findings.
+            - Do not mention model names. Do not praise. Do not overclaim." \
+            > synthesized/review.json \
+            || echo '{"summary":"_Synthesis timed out or errored; see the per-lane artifacts._","recommendation":"","findings":[]}' > synthesized/review.json
+
+      - name: Add job summary
+        shell: bash
+        run: |
+          {
+            echo "## Bun AI Review Swarm"
+            echo
+            rec="$(jq -r '.recommendation // empty' synthesized/review.json 2>/dev/null || true)"
+            [ -n "$rec" ] && echo "**Recommendation: $rec**" && echo
+            jq -r '.summary // "(no summary)"' synthesized/review.json 2>/dev/null || cat synthesized/review.json
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Post synthesized review on PR
+        if: github.event_name == 'pull_request'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          BASE_REF: ${{ github.event.pull_request.base.ref }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$REPO/contents/.github/scripts/post-swarm-review.py?ref=$BASE_REF" \
+            --jq '.content' | base64 -d > /tmp/post-swarm-review.py
+          python3 /tmp/post-swarm-review.py
+
+      - name: Upload review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-ai-review
+          path: |
+            review-output/
+            synthesized/
+          retention-days: 3

@@ -3413,12 +3413,17 @@ impl BlobExt for Blob {
                 | jsc::JSType::BigInt64Array
                 | jsc::JSType::BigUint64Array
                 | jsc::JSType::DataView => {
-                    return Blob::try_create(
-                        top_value.as_array_buffer(global).unwrap().byte_slice(),
-                        global,
-                        false,
-                    )
-                    .map_err(Into::into);
+                    let array_buffer = top_value.as_array_buffer(global).unwrap();
+                    // Shared/resizable JS backing stores are not stable enough for a
+                    // Rust `&[u8]`. Snapshot before Blob materialization; fixed
+                    // unshared inputs keep the borrowed path.
+                    let stable = if array_buffer.shared || array_buffer.resizable {
+                        array_buffer.copy_to_unshared(global)?
+                    } else {
+                        array_buffer
+                    };
+                    return Blob::try_create(stable.byte_slice(), global, false)
+                        .map_err(Into::into);
                 }
 
                 jsc::JSType::DOMWrapper => {
@@ -3611,7 +3616,13 @@ impl BlobExt for Blob {
                                 | jsc::JSType::DataView => {
                                     could_have_non_ascii = true;
                                     let buf = item.as_array_buffer(global).unwrap();
-                                    if parts_can_run_js {
+                                    if buf.shared || buf.resizable {
+                                        // Shared/resizable backing stores are not stable
+                                        // enough for a Rust `&[u8]`; copy before
+                                        // reading the bytes into the joiner.
+                                        let snapshot = buf.copy_to_unshared(global)?;
+                                        joiner.push_cloned(snapshot.byte_slice());
+                                    } else if parts_can_run_js {
                                         // A later part may run user JS that detaches
                                         // or resizes this buffer before `done()`.
                                         joiner.push_cloned(buf.byte_slice());

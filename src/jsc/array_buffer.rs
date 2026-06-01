@@ -328,6 +328,29 @@ impl ArrayBuffer {
         }
     }
 
+    /// Copy this buffer's bytes into a fresh, non-shared `ArrayBuffer` via a C++
+    /// memcpy, without ever forming a Rust `&[u8]` over the (possibly shared or
+    /// resizable) source. Use to snapshot `SharedArrayBuffer` / resizable input
+    /// before borrowing it as `&[u8]`, where another agent could resize or mutate
+    /// the backing store under the borrow. The returned `ArrayBuffer` owns the copy.
+    pub fn copy_to_unshared(&self, global: &JSGlobalObject) -> JsResult<ArrayBuffer> {
+        crate::mark_binding!();
+        // SAFETY: FFI — same `Bun__createArrayBufferForCopy` entry point and ABI
+        // already used by `ArrayBuffer::create`/`create_empty`. `global` is a live
+        // opaque ZST handle (coerces to *const). `ptr`/`byte_len` describe `self`'s
+        // current live ArrayBuffer backing supplied by the caller; the C++ side
+        // copies those bytes immediately into a fresh, non-shared `ArrayBuffer` and
+        // does not retain `ptr`. A null `ptr` is only ever passed for `byte_len == 0`
+        // (the same empty-buffer convention as `create_empty`). No borrowed view into
+        // the source backing is formed or returned on this path.
+        let copy = crate::host_fn::from_js_host_call(global, || unsafe {
+            Bun__createArrayBufferForCopy(global, self.ptr.cast(), self.byte_len)
+        })?;
+        copy.as_array_buffer(global).ok_or_else(|| {
+            global.throw_invalid_arguments(format_args!("Failed to copy ArrayBuffer"))
+        })
+    }
+
     pub fn create_empty<const KIND: JSType>(global: &JSGlobalObject) -> JsResult<JSValue> {
         crate::mark_binding!();
         match KIND {

@@ -758,6 +758,47 @@ it.skipIf(isWindows)(
   60_000,
 );
 
+it.skipIf(isWindows)(
+  "emits 'close' and lets server.close() complete when a paused socket's peer ends",
+  async () => {
+    // A paused (or never-read) server socket never consumes the EOF its peer's
+    // FIN pushes, so autoDestroy never runs: the socket lingers as a zombie,
+    // 'close' never fires, and server.close() hangs because _connections never
+    // decrements. Same root cause as the backpressure case, different stuck half.
+    const udsPath = join(tmpdirSync(), `hup-paused-${randomUUID()}.sock`);
+
+    const { promise: serverSocketClosed, resolve: onServerSocketClose } = Promise.withResolvers<void>();
+    const { promise: paused, resolve: onPaused } = Promise.withResolvers<void>();
+
+    const server = createServer(socket => {
+      socket.on("error", () => {});
+      socket.on("close", () => onServerSocketClose());
+      socket.on("data", () => {
+        socket.pause(); // stop reading — the peer's FIN/EOF will never be consumed
+        onPaused();
+      });
+    });
+
+    try {
+      await new Promise<void>(resolve => server.listen(udsPath, () => resolve()));
+
+      const client = connect(udsPath, () => client.write("hello"));
+      client.on("error", () => {});
+
+      await paused;
+      client.end(); // peer FIN arrives while the server socket is paused
+
+      // The server socket must transition to closed...
+      await serverSocketClosed;
+      // ...and server.close() must complete rather than hang on a zombie.
+      await new Promise<void>((resolve, reject) => server.close(err => (err ? reject(err) : resolve())));
+    } finally {
+      server.close();
+    }
+  },
+  30_000,
+);
+
 it("should trigger error when aborted even if connection failed #13126", async () => {
   const signal = AbortSignal.timeout(100);
   const socket = createConnection({

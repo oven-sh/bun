@@ -88,22 +88,28 @@ function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
 // The native layer reported the connection closed (peer FIN/RST or error).
-// `detachSocket` has already nulled `_handle`, so the fd is gone and any data
-// still queued on the writable side can never be flushed. The socket is built
-// with `autoDestroy: true`, but autoDestroy only runs `_destroy` (which emits
-// `'close'`) once both halves of the Duplex finish — so when the writable half
-// is stuck behind that unflushable backpressure it waits forever and `'close'`
-// never fires (the process hangs, spinning on the half-closed fd).
+// The socket is built with `autoDestroy: true`, but autoDestroy only runs
+// `_destroy` (which emits `'close'`) once *both* halves of the Duplex finish.
+// That never happens when the fd is gone but a half is stuck: a paused/unpiped
+// readable never consumes the queued EOF, and a writable holding backpressure
+// can never flush it to the dead peer. The socket then lingers as a zombie
+// (`_handle` null, `destroyed` false) — `'close'` never fires, `server._connections`
+// never decrements so `server.close()` hangs, and a peer that keeps the fd
+// hot spins the loop.
 //
-// Force the teardown in exactly that case: an error, or data still buffered on
-// the writable side. When the writable side already drained (`writableLength`
-// is 0 and there's no error) the normal `push(null)` → autoDestroy path emits
-// `'end'` then `'close'` on its own, so leave it alone — destroying here would
-// race the pending `'end'`.
+// Force the teardown. On an error (e.g. a peer RST) destroy synchronously with
+// the error so it surfaces as `'error'` + `'close'(hadError=true)` — matching
+// Node, which skips `'end'` on a reset — instead of the error being swallowed.
+// With no error, defer via `nextTick` so a cleanly-ending socket emits its
+// pending `'end'` first (and has usually auto-destroyed by then, making this a
+// no-op); the deferred destroy is what rescues a paused/unpiped readable whose
+// EOF would otherwise never be consumed.
 function destroyAfterClose(self, err) {
   if (self.destroyed) return;
-  if (err || self.writableLength > 0) {
-    self.destroy(err || undefined);
+  if (err) {
+    self.destroy(err);
+  } else {
+    process.nextTick(destroyNT, self);
   }
 }
 function detachSocket(self) {
@@ -1172,7 +1178,9 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     callback(err);
   } else {
     callback(err);
-    process.nextTick(emitCloseNT, this, false);
+    // `'close'` reports `hadError` — true when we're tearing down because of a
+    // transmission error (e.g. a peer RST surfaced on a backpressured socket).
+    process.nextTick(emitCloseNT, this, !!err);
   }
 
   if (this.server) {

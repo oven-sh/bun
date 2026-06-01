@@ -36,7 +36,7 @@ test("terminated workers do not leak their JSHeapData", async () => {
           let prev = -1;
           for (let i = 0; i < 50; i++) {
             Bun.gc(true);
-            await new Promise(r => setTimeout(r, 0));
+            await Bun.sleep(0);
             const now = jsHeapDataLiveCount();
             if (now === prev) return now;
             prev = now;

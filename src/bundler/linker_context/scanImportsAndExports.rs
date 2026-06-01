@@ -334,12 +334,6 @@ pub fn scan_imports_and_exports(
                     }
 
                     let other_id = record_source_index.get() as usize;
-                    if other_id >= col_ref!(exports_kind).len() {
-                        col!(import_records_list)[id].as_mut_slice()[record_index]
-                            .flags
-                            .remove(ImportRecordFlags::PHASE_DEFER);
-                        continue;
-                    }
 
                     // Anything other than a property access on the namespace
                     // keeps a use of the namespace symbol, which means the
@@ -358,12 +352,13 @@ pub fn scan_imports_and_exports(
                         }
                     }
 
-                    let other_flags = col_ref!(flags)[other_id];
-                    let supports_lazy_evaluation = !col_ref!(ast_flags_list)[other_id]
-                        .contains(AstFlags::HAS_LAZY_EXPORT)
+                    // The bounds check must stay first: the rest of the chain
+                    // indexes the per-file columns with `other_id`.
+                    let supports_lazy_evaluation = other_id < col_ref!(exports_kind).len()
+                        && !col_ref!(ast_flags_list)[other_id].contains(AstFlags::HAS_LAZY_EXPORT)
                         && col_ref!(wrapper_refs)[other_id].is_valid()
-                        && (other_flags.wrap == WrapKind::Esm
-                            || (other_flags.wrap == WrapKind::None
+                        && (col_ref!(flags)[other_id].wrap == WrapKind::Esm
+                            || (col_ref!(flags)[other_id].wrap == WrapKind::None
                                 && matches!(
                                     col_ref!(exports_kind)[other_id],
                                     ExportsKind::Esm | ExportsKind::EsmWithDynamicFallback
@@ -371,7 +366,7 @@ pub fn scan_imports_and_exports(
 
                     let fallback_reason: Option<&str> = if !supports_lazy_evaluation {
                         Some("it is only supported for ECMAScript modules when bundling")
-                    } else if other_flags.is_async_or_has_async_dependency {
+                    } else if col_ref!(flags)[other_id].is_async_or_has_async_dependency {
                         Some("the deferred module or one of its dependencies uses top-level await")
                     } else if namespace_is_captured {
                         Some(
@@ -400,7 +395,7 @@ pub fn scan_imports_and_exports(
                     // Wrap the target in a lazy `__esm` closure so its evaluation
                     // can be deferred until the first property access on the
                     // namespace.
-                    if other_flags.wrap == WrapKind::None {
+                    if col_ref!(flags)[other_id].wrap == WrapKind::None {
                         col!(flags)[other_id].wrap = WrapKind::Esm;
                     }
                 }
@@ -602,6 +597,11 @@ pub fn scan_imports_and_exports(
         // lowering decision after step 1): map every import item generated from
         // a property access on the deferred namespace to the target's `__esm`
         // wrapper so the printer can trigger evaluation on first access.
+        //
+        // Keeping the wrapper alive through tree shaking (and importing it
+        // across chunks when splitting) does not need extra work here: step 6
+        // makes every part that imports a wrapped file depend on that file's
+        // wrapper symbol.
         if output_format != Format::InternalBakeDev {
             for source_index_ in &reachable {
                 let id = source_index_.get() as usize;
@@ -632,32 +632,11 @@ pub fn scan_imports_and_exports(
                     let wrapper_ref = col_ref!(wrapper_refs)[other_id];
                     debug_assert!(col_ref!(flags)[other_id].wrap == WrapKind::Esm);
 
-                    let mut deferred_items: Vec<(Ref, Vec<u32>)> = Vec::new();
                     for (item_ref, named_import) in col_ref!(named_imports)[id].iter() {
                         if named_import.import_record_index as usize == record_index
                             && !named_import.alias_is_star
                         {
-                            deferred_items.push((
-                                *item_ref,
-                                named_import.local_parts_with_uses.slice().to_vec(),
-                            ));
-                        }
-                    }
-
-                    for (item_ref, parts_with_uses) in deferred_items {
-                        this.deferred_import_inits.put(item_ref, wrapper_ref)?;
-
-                        // Make every part that touches the namespace depend on the
-                        // wrapper so `init_foo` stays in the bundle (and is imported
-                        // across chunks) even though the eager call was removed.
-                        for part_index in parts_with_uses {
-                            this.graph.generate_symbol_import_and_use(
-                                id as u32,
-                                part_index,
-                                wrapper_ref,
-                                1,
-                                Index::source(other_id as u32),
-                            )?;
+                            this.deferred_import_inits.put(*item_ref, wrapper_ref)?;
                         }
                     }
                 }

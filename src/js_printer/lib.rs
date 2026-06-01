@@ -3776,7 +3776,9 @@ pub mod __gated_printer {
                                 self.print(b"(");
                                 self.print_symbol(init_ref);
                                 self.print_whitespacer(ws!(b"(), "));
-                                self.print_inlined_enum(inlined, &e.name, level);
+                                // Already inside explicit parens, so don't let the
+                                // outer level force redundant parenthesization.
+                                self.print_inlined_enum(inlined, &e.name, Level::Lowest);
                                 self.print(b")");
                             } else {
                                 self.print_inlined_enum(inlined, &e.name, level);
@@ -3841,7 +3843,10 @@ pub mod __gated_printer {
                                         self.print(b"(");
                                         self.print_symbol(init_ref);
                                         self.print_whitespacer(ws!(b"(), "));
-                                        self.print_inlined_enum(value, str.slice8(), level);
+                                        // Already inside explicit parens, so don't let
+                                        // the outer level force redundant
+                                        // parenthesization.
+                                        self.print_inlined_enum(value, str.slice8(), Level::Lowest);
                                         self.print(b")");
                                     } else {
                                         self.print_inlined_enum(value, str.slice8(), level);
@@ -4345,7 +4350,16 @@ pub mod __gated_printer {
                     let symbol = BackRef::<Symbol>::new(self.symbols().get_const(ref_).unwrap());
 
                     if symbol.import_item_status == js_ast::ImportItemStatus::Missing {
-                        self.print_undefined(expr.loc, level);
+                        // Inside the deferred `(init_foo(), …)` parens the outer
+                        // level no longer applies.
+                        self.print_undefined(
+                            expr.loc,
+                            if deferred_init_ref.is_some() {
+                                Level::Lowest
+                            } else {
+                                level
+                            },
+                        );
                         did_print = true;
                     } else if let Some(namespace) = &symbol.namespace_alias {
                         if (namespace.import_record_index as usize) < self.import_records.len() {

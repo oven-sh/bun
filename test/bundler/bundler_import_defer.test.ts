@@ -262,16 +262,24 @@ describe("bundler", () => {
         import defer * as ns from "./enums.ts";
         console.log("before");
         console.log(ns.Color.Red);
+        console.log(-ns.Color.Neg);
       `,
       "/enums.ts": /* ts */ `
         console.log("enums evaluated");
         export enum Color {
           Red = 1,
+          Neg = -1,
         }
       `,
     },
+    onAfterBundle(api) {
+      // The inlined enum value sits inside the explicit "(init_enums(), ...)"
+      // parens, so it must not be parenthesized again:
+      // "(init_enums(), -1)", not "(init_enums(), (-1))".
+      expect(api.readFile("out.js")).not.toContain("(-1)");
+    },
     run: {
-      stdout: "before\nenums evaluated\n1",
+      stdout: "before\nenums evaluated\n1\n1",
     },
   });
 });

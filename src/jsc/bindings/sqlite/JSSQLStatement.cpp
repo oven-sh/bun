@@ -720,6 +720,9 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
     // JSFinalObject::maxInlineCapacity (62) get out-of-line offsets backed by a
     // per-row Butterfly allocation in constructResultObject.
     static constexpr int maxCachedStructureColumnCount = 512;
+    static_assert(maxCachedStructureColumnCount <= JSC::Structure::s_maxTransitionLengthForNonEvalPutById,
+        "a transition chain longer than the PutById limit would be converted to a dictionary structure, "
+        "which cannot be safely shared across row objects");
     if (count <= maxCachedStructureColumnCount) {
         // see https://github.com/oven-sh/bun/issues/987
         // also see https://github.com/oven-sh/bun/issues/1646
@@ -766,14 +769,15 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             columnNames->data()->propertyNameVector().reverse();
             for (const auto& propertyName : *columnNames) {
                 // Use the PutById transition context so that structures with more than
-                // s_maxTransitionLength (64) properties are not converted to dictionary
+                // s_maxTransitionLength properties are not converted to dictionary
                 // structures (which cannot be safely shared across row objects). PutById
-                // raises the threshold to s_maxTransitionLengthForNonEvalPutById (512).
+                // raises the threshold to s_maxTransitionLengthForNonEvalPutById.
                 if (Structure* existing = Structure::addPropertyTransitionToExistingStructure(structure, propertyName, 0, offset))
                     structure = existing;
                 else
                     structure = Structure::addNewPropertyTransition(vm, structure, propertyName, 0, offset, JSC::PutPropertySlot::PutById);
             }
+            ASSERT_WITH_MESSAGE(!structure->isDictionary(), "cached row Structure must not be a dictionary structure (it is shared across row objects)");
             castedThis->_structure.set(vm, castedThis, structure);
 
             // We are done.

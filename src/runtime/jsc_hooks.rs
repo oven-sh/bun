@@ -3198,6 +3198,96 @@ fn transpile_source_code_inner(
                     }));
                 }
             }
+
+            // TC39 source phase import (`import source x from "./a.wasm"` /
+            // `import.source("./a.wasm")`), lowered by the printer onto the
+            // `type: "webassembly"` import attribute: produce a synthetic
+            // module whose default export is the compiled
+            // `WebAssembly.Module`.
+            // SAFETY: per fn contract — `extra` is live for the call.
+            if unsafe { (*extra).is_source_phase_import } {
+                if global_object.is_null() {
+                    return Err(bun_core::err!("NotSupported"));
+                }
+
+                // The wasm bytes: a virtual source when present (e.g. a
+                // `blob:` URL), otherwise the file on disk.
+                let owned_bytes: Vec<u8>;
+                let bytes: &[u8] = match args.virtual_source {
+                    Some(source) => &source.contents,
+                    None => {
+                        match bun_sys::File::openat(
+                            bun_sys::Fd::cwd(),
+                            path.text,
+                            bun_sys::O::RDONLY,
+                            0,
+                        )
+                        .and_then(|file| file.read_to_end())
+                        {
+                            Ok(contents) => {
+                                owned_bytes = contents;
+                                &owned_bytes
+                            }
+                            Err(err) => {
+                                // SAFETY: per fn contract — `args.log` is the
+                                // unique per-fetch `Log`.
+                                let _ = unsafe { &mut *args.log }.add_error_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "{} reading module source {}",
+                                        bstr::BStr::new(err.name()),
+                                        bun_core::fmt::format_json_string_latin1(path.text),
+                                    ),
+                                );
+                                return Err(bun_core::err!("ParseError"));
+                            }
+                        }
+                    }
+                };
+
+                // Only WebAssembly modules have a source representation
+                // (`HostGetModuleSourceName`); reject anything else with a
+                // clearer error than the CompileError the wasm parser would
+                // produce.
+                if !bytes.starts_with(&[0x00, 0x61, 0x73, 0x6d]) {
+                    // SAFETY: see above.
+                    let _ = unsafe { &mut *args.log }.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Source phase import of {} failed: only WebAssembly modules have a \
+                             module source",
+                            bun_core::fmt::format_json_string_latin1(path.text),
+                        ),
+                    );
+                    return Err(bun_core::err!("ParseError"));
+                }
+
+                // SAFETY: null-checked above; `global_object` is the live
+                // per-thread `JSGlobalObject`, and `bytes` is a live slice
+                // for the duration of the FFI call.
+                let module = unsafe {
+                    bun_jsc::cpp::Bun__createJSWebAssemblyModuleFromBytes(
+                        &*global_object,
+                        bytes.as_ptr(),
+                        bytes.len(),
+                    )
+                }
+                // Exception (e.g. `WebAssembly.CompileError`) is pending on
+                // the global; `transpile_file` re-throws it.
+                .map_err(|_| bun_core::err!("JSError"))?;
+
+                use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
+                return Ok(OwnedResolvedSource::from(ResolvedSource {
+                    jsvalue_for_export: module,
+                    specifier: input_specifier.dupe_ref(),
+                    source_url: create_if_different(input_specifier, path.text),
+                    tag: ResolvedSourceTag::ExportDefaultObject,
+                    ..Default::default()
+                }));
+            }
+
             // Recurse as `.file`.
             // SAFETY: per fn contract — `extra` is live for the call.
             unsafe {
@@ -3822,6 +3912,8 @@ struct LoaderResult<'a> {
     specifier: &'a [u8],
     /// Always `None` for non-JS-like loaders (not needed there).
     package_json: Option<&'a bun_resolver::package_json::PackageJSON>,
+    /// See [`TranspileExtra::is_source_phase_import`].
+    is_source_phase_import: bool,
 }
 
 /// `options.getLoaderAndVirtualSource` — high-tier body.
@@ -3933,8 +4025,16 @@ unsafe fn get_loader_and_virtual_source<'a>(
     if query == b"?raw" {
         loader = Some(Loader::Text);
     }
+    let mut is_source_phase_import = false;
     if let Some(attr_str) = type_attribute_str {
-        if let Some(attr_loader) = Loader::from_string(attr_str) {
+        if attr_str == b"webassembly" {
+            // `ScriptFetchParameters::Type::WebAssembly` — the printer's
+            // lowering for TC39 source phase imports (`import source` /
+            // `import.source()`). Force the wasm loader so the request
+            // reaches the module-source path regardless of extension.
+            loader = Some(Loader::Wasm);
+            is_source_phase_import = true;
+        } else if let Some(attr_loader) = Loader::from_string(attr_str) {
             loader = Some(attr_loader);
         }
     }
@@ -3963,6 +4063,7 @@ unsafe fn get_loader_and_virtual_source<'a>(
         is_main,
         specifier,
         package_json,
+        is_source_phase_import,
     })
 }
 
@@ -4350,6 +4451,7 @@ unsafe fn transpile_file(
         } else {
             ptr::null_mut()
         },
+        is_source_phase_import: lr.is_source_phase_import,
     };
     let args = TranspileArgs {
         specifier: lr.specifier,
@@ -4521,6 +4623,7 @@ unsafe fn transpile_virtual_module(
         module_type: ModuleType::Unknown,
         source_code_printer: printer_ptr,
         promise_ptr: ptr::null_mut(), // null forbids async resolution
+        is_source_phase_import: false,
     };
     let args = TranspileArgs {
         specifier,

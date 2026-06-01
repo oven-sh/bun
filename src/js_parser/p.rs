@@ -241,6 +241,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     pub has_top_level_return: bool,
     pub latest_return_had_semicolon: bool,
     pub has_import_meta: bool,
+    /// True once a static `import source ...` statement was parsed — gates
+    /// the per-statement duplicate-specifier scan in
+    /// `process_import_statement` so files without source phase imports pay
+    /// a single bool check.
+    pub has_source_phase_import_stmt: bool,
     pub has_es_module_syntax: bool,
     pub top_level_await_keyword: bun_ast::Range,
     pub fn_or_arrow_data_parse: FnOrArrowDataParse,
@@ -1099,6 +1104,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.import_records.items_mut()[import_record_index as usize].loader = Some(loader);
             }
 
+            self.import_records.items_mut()[import_record_index as usize].phase =
+                state.import_phase;
+
             self.import_records.items_mut()[import_record_index as usize]
                 .flags
                 .set(
@@ -1114,6 +1122,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     expr: arg,
                     import_record_index,
                     options: state.import_options,
+                    phase: state.import_phase,
                 },
                 state.loc,
             );
@@ -1137,6 +1146,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 expr: arg,
                 options: state.import_options,
                 import_record_index: u32::MAX,
+                phase: state.import_phase,
             },
             state.loc,
         )
@@ -2071,7 +2081,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_single_line: true,
                 default_name: None,
                 star_name_loc: None,
-                phase_defer: false,
+                phase: bun_ast::ImportPhase::Evaluation,
             },
             bun_ast::Loc::default(),
         );
@@ -2207,7 +2217,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_single_line: true,
                 default_name: None,
                 star_name_loc: None,
-                phase_defer: false,
+                phase: bun_ast::ImportPhase::Evaluation,
             },
             bun_ast::Loc::default(),
         );
@@ -2368,7 +2378,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     is_single_line: false,
                     default_name: None,
                     star_name_loc: None,
-                    phase_defer: false,
+                    phase: bun_ast::ImportPhase::Evaluation,
                 },
                 bun_ast::Loc::EMPTY,
             )
@@ -4069,17 +4079,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             None
         };
 
-        // `import defer` grammatically admits only `* as ns` — no default
-        // binding, no named clause. The parser guarantees this by
+        // `import defer` grammatically admits only `* as ns` (no default
+        // binding, no named clause) and `import source` only a default
+        // binding (no star, no named clause). The parser guarantees this by
         // construction; assert it here so any future S::Import producer
-        // that sets `phase_defer` without upholding the shape is caught
+        // that sets a phase without upholding the shape is caught
         // immediately rather than surfacing as odd printer output.
-        debug_assert!(
-            !stmt.phase_defer
-                || (stmt.star_name_loc.is_some()
+        debug_assert!(match stmt.phase {
+            bun_ast::ImportPhase::Evaluation => true,
+            bun_ast::ImportPhase::Defer =>
+                stmt.star_name_loc.is_some()
                     && stmt.default_name.is_none()
-                    && stmt.items.is_empty())
-        );
+                    && stmt.items.is_empty(),
+            bun_ast::ImportPhase::Source =>
+                stmt.default_name.is_some()
+                    && stmt.star_name_loc.is_none()
+                    && stmt.items.is_empty(),
+        });
 
         stmt.import_record_index = self.add_import_record(ImportKind::Stmt, path.loc, path.text);
         self.import_records.items_mut()[stmt.import_record_index as usize]
@@ -4088,9 +4104,48 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 bun_ast::ImportRecordFlags::WAS_ORIGINALLY_BARE_IMPORT,
                 was_originally_bare_import,
             );
-        self.import_records.items_mut()[stmt.import_record_index as usize]
-            .flags
-            .set(bun_ast::ImportRecordFlags::PHASE_DEFER, stmt.phase_defer);
+        self.import_records.items_mut()[stmt.import_record_index as usize].phase = stmt.phase;
+
+        // JSC dedups a module record's requested modules by
+        // (specifier, ModulePhase) — ignoring import attributes — and the
+        // source phase is lowered onto an Evaluation-phase request with
+        // WebAssembly fetch parameters. A single file therefore cannot
+        // request both the module source and the evaluated module of the
+        // same specifier: whichever statement came first would win and the
+        // other binding would silently receive the wrong value. Surface the
+        // conflict as a parse error instead. (Imports from *different* files
+        // are unaffected — the module map keys on the fetch-parameter type.)
+        if stmt.phase == bun_ast::ImportPhase::Source {
+            self.has_source_phase_import_stmt = true;
+        }
+        if self.has_source_phase_import_stmt {
+            use bun_ast::ImportPhase;
+            let new_index = stmt.import_record_index as usize;
+            let records = self.import_records.items();
+            let new_record = &records[new_index];
+            let conflict = records[..new_index].iter().any(|record| {
+                record.kind == ImportKind::Stmt
+                    && matches!(
+                        (record.phase, new_record.phase),
+                        (ImportPhase::Source, ImportPhase::Evaluation)
+                            | (ImportPhase::Evaluation, ImportPhase::Source)
+                    )
+                    && record.path.text == new_record.path.text
+            });
+            if conflict {
+                let range = new_record.range;
+                self.log().add_range_error_fmt(
+                    Some(self.source),
+                    range,
+                    format_args!(
+                        "Cannot import {} at both source phase and evaluation phase in the same \
+                         file",
+                        bun_core::fmt::format_json_string_latin1(path.text),
+                    ),
+                );
+                return Err(bun_core::err!("SyntaxError"));
+            }
+        }
 
         if let Some(star) = stmt.star_name_loc {
             let name = self.load_name_from_ref(stmt.namespace_ref);
@@ -5111,6 +5166,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             module_id: 0,
             original_path: b"",
             flags: bun_ast::ImportRecordFlags::empty(),
+            phase: bun_ast::ImportPhase::Evaluation,
         });
         u32::try_from(index).expect("int cast")
     }
@@ -9147,6 +9203,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             has_top_level_return: false,
             latest_return_had_semicolon: false,
             has_import_meta: false,
+            has_source_phase_import_stmt: false,
             has_es_module_syntax: false,
             top_level_await_keyword: bun_ast::Range::NONE,
             fn_or_arrow_data_parse,

@@ -1835,6 +1835,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 import_options: e_.options,
                 loc: e_.expr.loc,
                 import_loader: e_.import_record_loader(),
+                import_phase: e_.phase,
                 ..Default::default()
             };
 

@@ -179,6 +179,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             module_id: 0,
             original_path: b"",
             flags: Default::default(),
+            phase: Default::default(),
         });
         Ok(u32::try_from(index).expect("int cast"))
     }

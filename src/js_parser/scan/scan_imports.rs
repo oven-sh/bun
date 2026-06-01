@@ -166,8 +166,15 @@ impl<'a> ImportScanner<'a> {
                                 is_unused_in_typescript = false;
                             }
 
-                            // Remove the symbol if it's never used outside a dead code region
-                            if symbol.use_count_estimate == 0 {
+                            // Remove the symbol if it's never used outside a dead code region.
+                            //
+                            // Never strip the default binding from an `import source`
+                            // statement: the grammar requires exactly one binding, so
+                            // dropping it would force the printer to emit a bare
+                            // side-effect import and lose the source phase entirely.
+                            if symbol.use_count_estimate == 0
+                                && st.phase != bun_ast::ImportPhase::Source
+                            {
                                 st.default_name = None;
                             }
                         }
@@ -193,7 +200,9 @@ impl<'a> ImportScanner<'a> {
                             // defer. Keeping the binding preserves the intended
                             // semantics (the module is linked but never evaluated,
                             // since nothing touches `ns` at runtime).
-                            if symbol.use_count_estimate == 0 && !st.phase_defer {
+                            if symbol.use_count_estimate == 0
+                                && st.phase != bun_ast::ImportPhase::Defer
+                            {
                                 // Make sure we don't remove this if it was used for a property
                                 // access while bundling
                                 let mut has_any = false;
@@ -306,7 +315,7 @@ impl<'a> ImportScanner<'a> {
                     // (see the matching guard above): converting it to a
                     // clause import would lose the defer phase entirely.
                     let convert_star_to_clause = !p.options.bundle
-                        && !st.phase_defer
+                        && st.phase != bun_ast::ImportPhase::Defer
                         && (p.symbols[namespace_ref.inner_index() as usize].use_count_estimate
                             == 0);
 

@@ -921,6 +921,7 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
             module_id: 0,
             original_path: b"",
             flags: Default::default(),
+            phase: Default::default(),
         });
     }
 
@@ -2993,6 +2994,7 @@ mod stylesheet_impl {
                             module_id: 0,
                             original_path: b"",
                             flags: Default::default(),
+                            phase: Default::default(),
                         });
                         // Move the rule out via `mem::replace` (no `Clone`
                         // bound needed) and push that.
@@ -3510,6 +3512,7 @@ impl<'a> Parser<'a> {
                 module_id: 0,
                 original_path: b"",
                 flags: Default::default(),
+                phase: Default::default(),
             });
             Ok(idx)
         } else {

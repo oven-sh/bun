@@ -45,7 +45,7 @@ use js_ast::Ref;
 mod lexer {
     pub(crate) use bun_ast::lexer_tables::*;
 }
-use bun_ast::ImportRecordFlags;
+use bun_ast::{ImportPhase, ImportRecordFlags};
 
 use bun_sourcemap as SourceMap;
 
@@ -2970,6 +2970,33 @@ pub mod __gated_printer {
 
             self.print_space_before_identifier();
 
+            // External import.source() — no CommonJS interop applies to a
+            // module source request.
+            if record.phase == ImportPhase::Source
+                && module_type != bundle_opts::Format::InternalBakeDev
+            {
+                if IS_BUN_PLATFORM {
+                    // Same lowering as static `import source`: request the
+                    // WebAssembly module-source module-map entry, then unwrap
+                    // its default export so the promise resolves with the
+                    // `WebAssembly.Module` itself. (The parser rejects a
+                    // second argument for `import.source`, so
+                    // `import_options` is missing.)
+                    self.print(b"import(");
+                    self.print_import_record_path(record);
+                    self.print(b",{with:{type:\"webassembly\"}})");
+                    self.print(b".then((m)=>m.default)");
+                } else {
+                    self.print(b"import.source(");
+                    self.print_import_record_path(record);
+                    self.print(b")");
+                }
+                if wrap {
+                    self.print(b")");
+                }
+                return;
+            }
+
             // Wrap with __toESM if importing a CommonJS module
             let wrap_with_to_esm = record.flags.contains(ImportRecordFlags::WRAP_WITH_TO_ESM);
 
@@ -3635,24 +3662,41 @@ pub mod __gated_printer {
                             self.print(b"(");
                         }
 
+                        let is_bake_dev =
+                            self.options.module_type == bundle_opts::Format::InternalBakeDev;
                         self.print_space_before_identifier();
                         self.add_source_mapping(expr.loc);
-                        if self.options.module_type == bundle_opts::Format::InternalBakeDev {
+                        if is_bake_dev {
                             self.print_symbol(self.options.hmr_ref);
                             self.print(b".dynamicImport(");
+                        } else if e.phase == ImportPhase::Source && !IS_BUN_PLATFORM {
+                            // Bun lowers `import.source()` below; other
+                            // targets get the real syntax.
+                            self.print(b"import.source(");
                         } else {
                             self.print(b"import(");
                         }
                         // TODO: leading_interior_comments
                         self.print_expr(e.expr, Level::Comma, ExprFlag::none());
 
-                        if !e.options.is_missing() {
-                            self.print_whitespacer(ws!(b", "));
-                            self.print_expr(e.options, Level::Comma, ExprFlagSet::empty());
-                        }
+                        if e.phase == ImportPhase::Source && IS_BUN_PLATFORM && !is_bake_dev {
+                            // Same lowering as static `import source`: request
+                            // the WebAssembly module-source module-map entry,
+                            // then unwrap its default export so the promise
+                            // resolves with the `WebAssembly.Module` itself.
+                            // (The parser rejects a second argument for
+                            // `import.source`, so `e.options` is missing.)
+                            self.print(b",{with:{type:\"webassembly\"}})");
+                            self.print(b".then((m)=>m.default)");
+                        } else {
+                            if !e.options.is_missing() {
+                                self.print_whitespacer(ws!(b", "));
+                                self.print_expr(e.options, Level::Comma, ExprFlagSet::empty());
+                            }
 
-                        // TODO: leading_interior_comments
-                        self.print(b")");
+                            // TODO: leading_interior_comments
+                            self.print(b")");
+                        }
                         if wrap {
                             self.print(b")");
                         }
@@ -6087,18 +6131,35 @@ pub mod __gated_printer {
 
                     self.print(b"import");
 
-                    // `import defer` grammatically requires `* as ns`; if a
-                    // later pass stripped the star binding (or disabled it on
-                    // the record) the statement can no longer be printed as a
-                    // phase import, so drop the `defer` token rather than emit
-                    // `import defer"./x";`. scan_imports preserves the binding
-                    // for `phase_defer` imports, so this is belt-and-suspenders.
-                    let phase_defer = record.flags.contains(ImportRecordFlags::PHASE_DEFER)
-                        && record
-                            .flags
-                            .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR);
-                    if phase_defer {
-                        self.print(b" defer");
+                    // `import defer` grammatically requires `* as ns` and
+                    // `import source` a default binding; if a later pass
+                    // stripped the binding (or disabled it on the record) the
+                    // statement can no longer be printed as a phase import,
+                    // so drop the phase rather than emit `import defer"./x";`.
+                    // scan_imports preserves the bindings for phase imports,
+                    // so this is belt-and-suspenders.
+                    let phase = match record.phase {
+                        ImportPhase::Defer
+                            if !record
+                                .flags
+                                .contains(ImportRecordFlags::CONTAINS_IMPORT_STAR) =>
+                        {
+                            ImportPhase::Evaluation
+                        }
+                        ImportPhase::Source if s.default_name.is_none() => {
+                            ImportPhase::Evaluation
+                        }
+                        phase => phase,
+                    };
+                    match phase {
+                        ImportPhase::Defer => self.print(b" defer"),
+                        // On the Bun platform the source phase is lowered
+                        // onto import attributes instead (`with { type:
+                        // "webassembly" }`, printed below) because JSC's
+                        // parser has no source phase support; other targets
+                        // get the real syntax.
+                        ImportPhase::Source if !IS_BUN_PLATFORM => self.print(b" source"),
+                        _ => {}
                     }
 
                     let mut item_count: usize = 0;
@@ -6177,7 +6238,17 @@ pub mod __gated_printer {
 
                     // backwards compatibility: previously, we always stripped type
                     if IS_BUN_PLATFORM {
-                        if let Some(loader) = record.loader {
+                        if phase == ImportPhase::Source {
+                            // The source phase lowering: a plain default
+                            // import of the module-source module. JSC maps
+                            // `type: "webassembly"` to
+                            // `ScriptFetchParameters::Type::WebAssembly`,
+                            // which keys a separate module-map entry and
+                            // tells Bun's module loader to produce the
+                            // compiled `WebAssembly.Module` instead of the
+                            // file-loader default export.
+                            self.print_whitespacer(ws!(b" with { type: \"webassembly\" }"));
+                        } else if let Some(loader) = record.loader {
                             use bun_ast::Loader;
                             match loader {
                                 Loader::Jsx => {
@@ -6255,7 +6326,13 @@ pub mod __gated_printer {
                             let irp_id = mi.str(import_record_path);
                             use analyze_transpiled_module::FetchParameters as FP;
                             let fetch_parameters: FP = if IS_BUN_PLATFORM {
-                                if let Some(loader) = record.loader {
+                                if phase == ImportPhase::Source {
+                                    // Matches the printed `with { type:
+                                    // "webassembly" }` attribute so the
+                                    // ModuleInfo fast path requests the same
+                                    // module-map entry JSC's parser would.
+                                    FP::Webassembly
+                                } else if let Some(loader) = record.loader {
                                     use bun_ast::Loader;
                                     match loader {
                                         Loader::Json => FP::Json,
@@ -6287,12 +6364,16 @@ pub mod __gated_printer {
                             } else {
                                 FP::None
                             };
-                            let phase = if phase_defer {
+                            // JSC's `AbstractModuleRecord::ModulePhase` only
+                            // has Evaluation and Defer; the source phase is
+                            // lowered to an Evaluation-phase import of the
+                            // WebAssembly module-source entry (see above).
+                            let module_phase = if phase == ImportPhase::Defer {
                                 analyze_transpiled_module::ModulePhase::Defer
                             } else {
                                 analyze_transpiled_module::ModulePhase::Evaluation
                             };
-                            mi.request_module_with_phase(irp_id, fetch_parameters, phase);
+                            mi.request_module_with_phase(irp_id, fetch_parameters, module_phase);
                             irp_id
                         };
 
@@ -6324,7 +6405,7 @@ pub mod __gated_printer {
                             let mi = self.module_info().expect("infallible: module_info enabled");
                             let local_name_id = mi.str(local_name);
                             mi.add_var(local_name_id, analyze_transpiled_module::VarKind::Lexical);
-                            if phase_defer {
+                            if phase == ImportPhase::Defer {
                                 mi.add_import_info_namespace_defer(irp_id, local_name_id);
                             } else {
                                 mi.add_import_info_namespace(irp_id, local_name_id);

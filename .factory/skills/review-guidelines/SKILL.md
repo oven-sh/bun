@@ -90,6 +90,37 @@ Use precise language:
 - "red proof"
 - "green proof"
 
+## No approval language — a zero-finding review still needs an audit trail
+
+Approval language is a failure mode. Do NOT output, as a standalone conclusion:
+
+- LGTM / looks good / looks correct
+- clean / clean fix / solid / well-targeted
+- no issues found / no actionable findings / nothing to flag
+
+A zero-finding review is NOT an approval. If you do not find a blocker or
+actionable issue, you must still prove you performed the review by reporting
+what you checked, which objections you tried and why they failed, and what
+residual risk remains. Use this form:
+
+```
+No blocking finding after checking:
+- <specific invariant / path / test / claim you checked>
+- <specific invariant / path / test / claim you checked>
+- <specific invariant / path / test / claim you checked>
+
+Best failed objection:
+- <the strongest concern you considered>
+- why it did not hold
+
+Residual risk:
+- <what a human should still verify>
+```
+
+A good no-finding result reads like a failed-attack log ("here is what I tried
+to break, here is what survived, here is what still worries me"), never like a
+rubber stamp. The checklist items must be specific to your lane's specialty.
+
 ## Operating rule
 
 The swarm does not decide truth. It produces candidate objections. For every

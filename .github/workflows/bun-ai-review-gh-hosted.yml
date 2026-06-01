@@ -65,6 +65,13 @@ jobs:
               For the top finding give: exact failure interleaving, the line, and the
               smallest correct fix. Rank every finding blocker/high/med/low.
 
+              If nothing blocks, do NOT approve. Report "No blocking UB finding
+              after checking:" listing the async worker handoff, stale
+              pointer/length after RAB resize/detach/transfer, active-view-region
+              vs whole-store, pin/unpin + protect/unprotect balance, and
+              allocator/lifetime/refcount paths — plus your best failed objection
+              and residual risk.
+
           - id: source-route
             tag: "source-route · GLM-5.1"
             model: custom:GLM-5.1-ZAI-Coding-0
@@ -84,6 +91,12 @@ jobs:
                 "matches Node" without checking Node, "safe" that ignores a sibling
 
               Cite file:line for every covered/missed path. A missed path is a blocker.
+
+              If nothing blocks, do NOT approve. Report "No blocking source-route
+              finding after checking:" listing the changed helper's callers,
+              sibling async StringOrBuffer paths, encoding-variant paths, and each
+              PR claim vs the actual code route — plus your best failed objection
+              and residual risk.
 
           - id: opposition
             # Model swapped Kimi-K2.6 (Fireworks Fire Pass) -> MiniMax M3: the Fire
@@ -107,6 +120,12 @@ jobs:
 
               For each, state exactly what would prove or refute it.
 
+              You should almost never produce "no issue" without showing your
+              attacks. If nothing blocks, do NOT approve. Report "No blocking
+              opposition finding after attempting:" the strongest correctness,
+              missing-test, performance, portability, and overclaim objections —
+              plus, for each, why it did not hold, and the residual risk.
+
           - id: arch
             tag: "arch · MiniMax-M3"
             model: custom:MiniMax-M3-3
@@ -118,6 +137,12 @@ jobs:
               - helper shape, duplication, a pattern that will rot on the next caller
               - scope creep: unrelated cleanup / speculative refactor / second concern
               - if a finding would broaden the PR, say block-now vs park-as-follow-up
+
+              If nothing blocks, do NOT approve. Report "No blocking architecture
+              finding after checking:" the fix boundary, helper shape vs
+              duplicated-bug risk, whether it broadens the PR, whether a smaller
+              complete fix exists, and whether the perf/memory cost is justified —
+              plus your best failed objection and residual risk.
 
           - id: tests
             tag: "tests · GLM-5.1"
@@ -136,6 +161,13 @@ jobs:
               - does it exercise the public API and the active view region, not an
                 implementation detail?
               - flaky timing, hardcoded ports, network/global-fs deps, tool-missing skips
+
+              If nothing blocks, do NOT approve. Report "No blocking test-proof
+              finding after checking:" whether the test fails on unpatched main,
+              whether it proves the actual regression, whether resize/fill/timing
+              could make it pass accidentally, whether assertions cover the
+              dangerous post-submit mutation, and whether it is cheap enough for
+              normal CI — plus your best failed objection and residual risk.
 
     steps:
       - name: Checkout PR head

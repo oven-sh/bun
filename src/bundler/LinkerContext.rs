@@ -2961,14 +2961,6 @@ use bun_ast::{DependencyList, ImportItemStatus, PartSymbolUseMap};
 // below resolve unchanged.
 pub use crate::bundle_v2::{ImportTrackerIterator, ImportTrackerStatus};
 
-/// Field-wise eq for `ImportTracker`.
-#[inline]
-fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
-    a.source_index.get() == b.source_index.get()
-        && a.import_ref == b.import_ref
-        && a.name_loc.start == b.name_loc.start
-}
-
 impl<'a> LinkerContext<'a> {
     /// Looks up the symbol `Ref` for a named export of the runtime module.
     #[inline]
@@ -3498,6 +3490,13 @@ impl<'a> LinkerContext<'a> {
         let mut ambiguous_results: Vec<MatchImport> = Vec::new();
         let mut result: MatchImport = MatchImport::default();
 
+        // The vast majority of import chains have one or two elements, so a
+        // linear scan is the fastest way to check for cycles. Deep re-export
+        // chains would make repeated scans quadratic, so once the chain
+        // reaches this size the scan is replaced with a hash-set lookup.
+        const CYCLE_SCAN_THRESHOLD: usize = 8;
+        let mut cycle_set: HashMap<ImportTracker, ()> = HashMap::new();
+
         'loop_: loop {
             // Make sure we avoid infinite loops trying to resolve cycles:
             //
@@ -3506,16 +3505,24 @@ impl<'a> LinkerContext<'a> {
             //   export {b as c} from './foo.js'
             //   export {c as a} from './foo.js'
             //
-            // This uses a O(n^2) array scan instead of a O(n) map because the vast
-            // majority of cases have one or two elements
-            for prev_tracker in &self.cycle_detector[cycle_detector_top..] {
-                if import_tracker_eq(&tracker, prev_tracker) {
-                    result = MatchImport {
-                        kind: MatchImportKind::Cycle,
-                        ..Default::default()
-                    };
-                    break 'loop_;
+            let cycle_slice = &self.cycle_detector[cycle_detector_top..];
+            let found_cycle = if cycle_slice.len() < CYCLE_SCAN_THRESHOLD {
+                cycle_slice.contains(&tracker)
+            } else {
+                if cycle_set.is_empty() {
+                    cycle_set.reserve(cycle_slice.len() + 1);
+                    for prev_tracker in cycle_slice {
+                        cycle_set.insert(*prev_tracker, ());
+                    }
                 }
+                cycle_set.contains(&tracker)
+            };
+            if found_cycle {
+                result = MatchImport {
+                    kind: MatchImportKind::Cycle,
+                    ..Default::default()
+                };
+                break 'loop_;
             }
 
             if tracker.source_index.is_invalid() {
@@ -3525,6 +3532,9 @@ impl<'a> LinkerContext<'a> {
 
             let prev_source_index = tracker.source_index.get();
             self.cycle_detector.push(tracker);
+            if !cycle_set.is_empty() {
+                cycle_set.insert(tracker, ());
+            }
 
             // Resolve the import by one step
             let advanced = self.advance_import_tracker(&tracker);

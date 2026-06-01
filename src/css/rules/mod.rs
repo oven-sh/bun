@@ -560,6 +560,11 @@ impl<R> CssRuleList<R> {
 
         let mut style_rules = StyleRuleKeyMap::default();
         let mut rules: Vec<CssRule<R>> = Vec::new();
+        // `true` when `rules.last()` is a style rule with declarations merged
+        // into it that have not yet been re-minified. `merge_style_rules`
+        // defers that re-minify so a run of same-selector merges costs O(n)
+        // instead of O(n²); this flag is settled before the block is observed.
+        let mut pending_flush = false;
 
         for rule in self.v.iter_mut() {
             // NOTE Anytime you push `rule` into `rules`, set `moved_rule = true`
@@ -644,6 +649,7 @@ impl<R> CssRuleList<R> {
                                 &mut style_rules,
                                 context,
                                 parent_is_unused,
+                                &mut pending_flush,
                             )?;
                             break 'arm;
                         }
@@ -681,6 +687,17 @@ impl<R> CssRuleList<R> {
                     _ => {}
                 }
 
+                // A non-style rule is about to replace `rules.last()`; settle
+                // any deferred merge into the current last style rule first so
+                // its declarations are minified before it is frozen behind the
+                // barrier.
+                if pending_flush {
+                    if let Some(CssRule::Style(last)) = rules.last_mut() {
+                        flush_merged_declarations(last, context);
+                    }
+                    pending_flush = false;
+                }
+
                 rules.push(core::mem::replace(rule, CssRule::Ignored));
                 moved_rule = true;
 
@@ -696,6 +713,14 @@ impl<R> CssRuleList<R> {
                 // PERF: leave the source slot as `Ignored` so any borrowed
                 // sub-allocations can be reclaimed by the arena reset.
                 *rule = CssRule::Ignored;
+            }
+        }
+
+        // Settle any deferred merge into the final style rule so the output
+        // sees the minified declaration block.
+        if pending_flush {
+            if let Some(CssRule::Style(last)) = rules.last_mut() {
+                flush_merged_declarations(last, context);
             }
         }
 
@@ -725,6 +750,10 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     style_rules: &mut StyleRuleKeyMap,
     context: &mut MinifyContext<'_, '_>,
     parent_is_unused: bool,
+    // `true` when `rules.last()` has declarations merged into it that have not
+    // yet been re-minified (see `merge_style_rules`). Flushed before the block
+    // is read (selector-grouping merge, dedup, output) and between merge runs.
+    pending_flush: &mut bool,
 ) -> Result<(), MinifyErr> {
     use css::SmallList;
     use css::selector::{self, Component, Selector, SelectorList};
@@ -783,16 +812,39 @@ fn minify_style_arm<R: for<'b> css::generics::DeepClone<'b>>(
     // Attempt to merge the new rule with the last rule we added.
     let mut merged = false;
     if let Some(CssRule::Style(last_style_rule)) = rules.last_mut()
-        && merge_style_rules(sty, last_style_rule, context)
+        && merge_style_rules(sty, last_style_rule, context, pending_flush)
     {
         // If that was successful, then the last rule has been updated to include the
         // selectors/declarations of the new rule. This might mean that we can merge it
         // with the previous rule, so continue trying while we have style rules available.
+        //
+        // The backward merge below drains `rules.last()`'s declarations into the
+        // previous rule and compares them, so settle any deferred merge into
+        // `rules.last()` first. This only runs when there is a previous rule to
+        // merge into (`rules.len() >= 2`), so a run of same-selector rules that
+        // all collapse into a single rule never reaches it and stays O(n).
+        if rules.len() >= 2 && *pending_flush {
+            if let Some(CssRule::Style(last)) = rules.last_mut() {
+                flush_merged_declarations(last, context);
+            }
+            *pending_flush = false;
+        }
         while rules.len() >= 2 {
+            // Settle any deferred merge into `rules.last()` before it is read or
+            // drained as the merge source below. This loop is bounded by the
+            // number of distinct adjacent same-selector groups (never the N-way
+            // same-selector collapse, which is handled above), so flushing here
+            // does not reintroduce quadratic behavior.
+            if *pending_flush {
+                if let Some(CssRule::Style(last)) = rules.last_mut() {
+                    flush_merged_declarations(last, context);
+                }
+                *pending_flush = false;
+            }
             let len = rules.len();
             let (a, b) = rules.split_at_mut(len - 1);
             if let (CssRule::Style(prev), CssRule::Style(last)) = (&mut a[len - 2], &mut b[0])
-                && merge_style_rules(last, prev, context)
+                && merge_style_rules(last, prev, context, pending_flush)
             {
                 rules.pop();
                 continue;
@@ -986,12 +1038,35 @@ impl StyleRuleKeyMap {
 
 // ─── merge_style_rules ─────────────────────────────────────────────────────
 
+/// Re-minify a style rule's declaration block after declarations were merged
+/// into it. Appending one already-minified block onto another and minifying the
+/// result is a left fold, so re-minifying after *every* pairwise merge is
+/// redundant when a run of rules merges into the same target — it re-walks the
+/// whole (growing) block each time, which is O(n²) in the length of the run.
+/// `merge_style_rules` therefore defers this to the end of a merge run; callers
+/// flush it via [`flush_merged_declarations`] once, before the block is read.
+fn flush_merged_declarations<R>(rule: &mut style::StyleRule<R>, context: &mut MinifyContext<'_, '_>) {
+    rule.declarations.minify(
+        dc::decl_handler_static(&mut *context.handler),
+        dc::decl_handler_static(&mut *context.important_handler),
+        &mut context.handler_context,
+    );
+}
+
 /// Merge `sty` into `last_style_rule` if their selectors/declarations allow.
 /// Returns `true` if merged (caller should drop `sty`).
+///
+/// When the declaration-merge branch fires, the merged declarations are *not*
+/// re-minified here; `*pending_flush` is set to `true` so the caller minifies
+/// `last_style_rule` exactly once after the run of merges into it finishes (see
+/// [`flush_merged_declarations`]). Before the selector-grouping branch reads
+/// `last_style_rule`'s declarations, any deferred merge is flushed so the
+/// comparison sees the settled, minified block.
 pub(crate) fn merge_style_rules<R>(
     sty: &mut style::StyleRule<R>,
     last_style_rule: &mut style::StyleRule<R>,
     context: &mut MinifyContext<'_, '_>,
+    pending_flush: &mut bool,
 ) -> bool {
     use css::VendorPrefix;
     // Merge declarations if the selectors are equivalent, and both are compatible with all targets.
@@ -1011,13 +1086,21 @@ pub(crate) fn merge_style_rules<R>(
             .declarations
             .important_declarations
             .extend(sty.declarations.important_declarations.drain(..));
-        last_style_rule.declarations.minify(
-            dc::decl_handler_static(&mut *context.handler),
-            dc::decl_handler_static(&mut *context.important_handler),
-            &mut context.handler_context,
-        );
+        // Defer the re-minify: appends are associative, so a run of these
+        // merges into the same target only needs to be minified once. The
+        // caller flushes `*pending_flush` before the block is observed.
+        *pending_flush = true;
         return true;
-    } else if sty.declarations.eql(&last_style_rule.declarations)
+    }
+
+    // The selector-grouping branch below compares `last_style_rule`'s
+    // declarations, so settle any deferred merge into it first.
+    if *pending_flush {
+        flush_merged_declarations(last_style_rule, context);
+        *pending_flush = false;
+    }
+
+    if sty.declarations.eql(&last_style_rule.declarations)
         && sty.rules.v.is_empty()
         && last_style_rule.rules.v.is_empty()
     {

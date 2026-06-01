@@ -78,11 +78,11 @@ Shm s_shm;
 
 // LIBUS_SOCKET_DESCRIPTOR is SOCKET on Windows, int on POSIX. us_socket_
 // from_fd takes one; its failure-path close needs the matching close.
-// Bun__Chrome__ensure returns -1 on Windows (no socketpair) so the branch
-// is unreachable there, but the compiler needs the decl to type-check.
-#if OS(WINDOWS)
-static inline void closefd(LIBUS_SOCKET_DESCRIPTOR s) { closesocket(s); }
-#else
+// The POSIX pipe path adopts fds[0] into usockets via us_socket_from_fd;
+// the Windows path doesn't use usockets at all (Zig owns both pipe ends
+// and drives I/O via Bun__Chrome__writeWindows / Bun__Chrome__onData),
+// so this helper is POSIX-only.
+#if !OS(WINDOWS)
 static inline void closefd(LIBUS_SOCKET_DESCRIPTOR fd) { ::close(fd); }
 #endif
 
@@ -91,12 +91,21 @@ namespace CDP {
 
 using namespace JSC;
 
-// From ChromeProcess.zig. Returns the parent's socketpair fd (bidirectional).
-// path overrides auto-detection; extraArgv (count entries, each NUL-
-// terminated) appends after core flags. All pointers nullable.
+// From ChromeProcess.zig. POSIX: returns the parent's socketpair fd
+// (bidirectional) — C++ adopts it into usockets. Windows: returns 0 on
+// success (Zig owns the pipes; see Bun__Chrome__writeWindows /
+// Bun__Chrome__onData), -1 on failure. path overrides auto-detection;
+// extraArgv (count entries, each NUL-terminated) appends after core flags.
+// All pointers nullable.
 extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
     const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
     bool stdoutInherit, bool stderrInherit);
+
+// Windows: enqueue an async uv_write on the command pipe. The buffer is
+// copied immediately — caller can free its `data` buffer after this
+// returns. Returns 0 on success, -1 if the pipe has been closed or the
+// write request couldn't be allocated. No-op/always-fail on POSIX.
+extern "C" int32_t Bun__Chrome__writeWindows(const char* data, size_t len);
 extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
@@ -287,6 +296,9 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     if (m_dead) {
         m_dead = false;
         m_readSock = nullptr;
+#if OS(WINDOWS)
+        m_windowsActive = false;
+#endif
         m_rx.clear();
         m_txQueue.clear();
     }
@@ -305,22 +317,34 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
         argvC.append(s.utf8());
         argvPtrs.append(argvC.last().data());
     }
-    int32_t fd = Bun__Chrome__ensure(zig,
+    int32_t rc = Bun__Chrome__ensure(zig,
         dir.length() ? dir.data() : nullptr,
         pathC.length() ? pathC.data() : nullptr,
         argvPtrs.isEmpty() ? nullptr : argvPtrs.span().data(),
         static_cast<uint32_t>(argvPtrs.size()),
         stdoutInherit, stderrInherit);
-    if (fd < 0) {
+    if (rc < 0) {
         m_dead = true;
         return false;
     }
-    // Socketpair — same fd for read + write. Chrome's end is dup'd to its
-    // fd 3 and fd 4; read(3)+write(4) both hit our socketpair peer. usockets'
-    // bsd_recv calls recv() which needs a real socket (pipe fds broke here
-    // with ENOTSOCK silently misread as EOF).
     m_global = zig;
 
+#if OS(WINDOWS)
+    // Zig owns both parent-side pipe ends (uv_pipe_t handles, non-SOCKET)
+    // and drives I/O itself. Bun__Chrome__onData calls back into onData()
+    // when Chrome writes; writeRaw() calls Bun__Chrome__writeWindows to
+    // send. No usockets adoption — us_socket_from_fd is a no-op on
+    // Windows (LIBUS_USE_LIBUV). m_readSock stays null; we use
+    // m_windowsActive as the "alive" marker instead.
+    (void)rc; // 0 on success
+    m_windowsActive = true;
+    return true;
+#else
+    // POSIX: socketpair — same fd for read + write. Chrome's end is dup'd
+    // to its fd 3 and fd 4; read(3)+write(4) both hit our socketpair peer.
+    // usockets' bsd_recv calls recv() which needs a real socket (pipe fds
+    // broke here with ENOTSOCK silently misread as EOF).
+    int32_t fd = rc;
     if (!s_cdpGroup.loop) {
         us_socket_group_init(&s_cdpGroup, uws_get_loop(), &s_cdpVTable, nullptr);
     }
@@ -336,6 +360,7 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
         return false;
     }
     return true;
+#endif
 }
 
 void Transport::send(uint32_t cdpId, Command&& cmd)
@@ -498,10 +523,29 @@ bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl
 // last_write_failed on partial so the dispatch loop keeps WRITABLE polling
 // armed and re-fires onWritable. Direct ::write() bypassed that flag and
 // stopped the poll after the first fire, hanging large frames.
+//
+// Windows: usockets doesn't own the fd (Zig does). Route the write
+// through Bun__Chrome__writeWindows which copies the bytes into a
+// heap-owned uv_write_t and queues an async uv_write on the command
+// pipe. libuv handles partial-write bookkeeping internally — no
+// m_txQueue / onWritable dance needed.
 void Transport::writeRaw(const char* data, size_t len)
 {
-    if (m_dead || !m_readSock) return;
+    if (m_dead) return;
 
+#if OS(WINDOWS)
+    if (!m_windowsActive) return;
+    if (Bun__Chrome__writeWindows(data, len) < 0) {
+        // Write failed synchronously — pipe closed (Chrome died between
+        // the last read and this write) or OOM on the uv_write_t /
+        // buffer copy. sendChromeOp already stashed a promise in
+        // m_pending before we got here, so marking dead isn't enough;
+        // the read-error path might never arrive (e.g. allocation
+        // failure doesn't imply Chrome died). Reject everything now.
+        rejectAllAndMarkDead("Chrome pipe write failed"_s);
+    }
+#else
+    if (!m_readSock) return;
     if (m_txQueue.isEmpty()) {
         int w = us_socket_write(m_readSock, data, static_cast<int>(len));
         if (w == static_cast<int>(len)) return;
@@ -513,10 +557,12 @@ void Transport::writeRaw(const char* data, size_t len)
         m_txQueue.append(std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(data), len));
     }
+#endif
 }
 
 void Transport::onWritable()
 {
+#if !OS(WINDOWS)
     while (!m_txQueue.isEmpty()) {
         int w = us_socket_write(m_readSock,
             reinterpret_cast<const char*>(m_txQueue.span().data()),
@@ -524,6 +570,7 @@ void Transport::onWritable()
         if (w == 0) return; // EAGAIN — last_write_failed set, next fire retries
         m_txQueue.removeAt(0, static_cast<size_t>(w));
     }
+#endif
 }
 
 void Transport::onData(const char* data, int length)
@@ -1268,6 +1315,13 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     // synchronously; the m_dead guard above short-circuits that reentrant
     // call so the caller's `reason` survives.
     if (auto* s = std::exchange(m_readSock, nullptr)) us_socket_close(s, 0, nullptr);
+#if OS(WINDOWS)
+    // No socket to close — Zig owns the pipes and tears them down in its
+    // onProcessExit handler once Chrome exits. Just drop the active flag
+    // so writeRaw() stops accepting new sends; any in-flight uv_write on
+    // a half-closed pipe silently fails its callback and frees itself.
+    m_windowsActive = false;
+#endif
     // WebSocket mode: drop our ref. The WS's native onClose calls us
     // (wsOnClose → rejectAllAndMarkDead); that path nulls m_ws after
     // this returns. If WE'RE initiating (closeAll), close() kicks off the
@@ -1745,6 +1799,16 @@ extern "C" void Bun__Chrome__died(int32_t signo)
     t.rejectAllAndMarkDead(signo
             ? makeString("Chrome killed by signal "_s, signo)
             : "Chrome exited"_s);
+}
+
+// Called from ChromeProcess.zig's libuv read callback on Windows. The
+// buffer is Zig-owned and only valid for the duration of this call;
+// Transport::onData copies what it needs into m_rx before returning.
+// On POSIX, Chrome's data arrives via usockets → cdpOnData → onData
+// and this entry point is never called.
+extern "C" void Bun__Chrome__onData(const char* data, size_t len)
+{
+    CDP::transport().onData(data, static_cast<int>(len));
 }
 
 } // namespace Bun

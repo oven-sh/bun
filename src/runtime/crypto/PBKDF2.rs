@@ -93,7 +93,7 @@ impl PBKDF2 {
 
         let keylen_num = arg3.as_number();
 
-        if keylen_num.is_infinite() || keylen_num.is_nan() {
+        if keylen_num.is_infinite() || keylen_num.is_nan() || keylen_num.trunc() != keylen_num {
             return Err(global_this.throw_range_error(
                 keylen_num,
                 bun_jsc::RangeErrorOptions {

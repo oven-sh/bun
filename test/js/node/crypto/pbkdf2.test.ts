@@ -133,3 +133,40 @@ describe("invalid inputs", () => {
     );
   });
 });
+
+// https://github.com/oven-sh/bun/issues/31657
+// A non-integer keylen must throw ERR_OUT_OF_RANGE ("must be an integer"),
+// matching Node's validateInt32(keylen, 'keylen', 0), instead of being
+// silently truncated to an integer.
+describe("fractional keylen throws", () => {
+  for (const input of [1.5, 1.9, 2.5, 0.5, 1e-10, 2147483648.5]) {
+    test(`${input}`, () => {
+      const cb = jest.fn(() => {
+        expect.unreachable();
+      });
+
+      let thrown: Error & { code?: string };
+      try {
+        crypto.pbkdf2Sync("password", "salt", 1000, input, "sha256");
+        expect.unreachable();
+      } catch (e) {
+        thrown = e as Error & { code?: string };
+      }
+      expect(thrown.code).toBe("ERR_OUT_OF_RANGE");
+      expect(thrown.message).toBe(
+        `The value of "keylen" is out of range. It must be an integer. Received ${input}`,
+      );
+
+      // The async path routes through the same validation and must throw synchronously.
+      expect(() => crypto.pbkdf2("password", "salt", 1000, input, "sha256", cb)).toThrow(
+        `The value of "keylen" is out of range. It must be an integer. Received ${input}`,
+      );
+      expect(cb).not.toHaveBeenCalled();
+    });
+  }
+
+  test("integer keylen still succeeds", () => {
+    expect(crypto.pbkdf2Sync("password", "salt", 1, 32, "sha256").length).toBe(32);
+    expect(crypto.pbkdf2Sync("password", "salt", 1, 0, "sha256").length).toBe(0);
+  });
+});

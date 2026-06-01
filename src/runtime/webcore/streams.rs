@@ -118,10 +118,12 @@ impl Start {
         if let Some(chunk_size) = value.get(global_this, b"chunkSize")? {
             if chunk_size.is_number() {
                 // Zig: `@as(Blob.SizeType, @intCast(@truncate(@as(i52, chunkSize.toInt64()))))`
-                // — `@truncate` to i52 then `@intCast` to u32. Low-32-bit wrap matches that
-                // for the in-range values JS can produce; revisit if exact i52 sign-extension
-                // semantics matter.
-                return Ok(Start::ChunkSize(chunk_size.to_int64() as BlobSizeType));
+                // — `(x << 12) >> 12` is `@as(i52, @truncate(x))`: keep low 52 bits,
+                // sign-extend bit 51, so out-of-range values wrap instead of reaching
+                // the allocator as a multi-PB reserve.
+                return Ok(Start::ChunkSize(
+                    ((chunk_size.to_int64() << 12) >> 12) as BlobSizeType,
+                ));
             }
         }
 
@@ -199,7 +201,9 @@ impl Start {
                     if chunk_size_val.is_number() {
                         empty = false;
                         // Zig: `@intCast(@max(0, @as(i51, @truncate(toInt64()))))`
-                        chunk_size = 0i64.max(chunk_size_val.to_int64()) as BlobSizeType;
+                        // — `(x << 13) >> 13` is `@as(i51, @truncate(x))`.
+                        chunk_size =
+                            0i64.max((chunk_size_val.to_int64() << 13) >> 13) as BlobSizeType;
                     }
                 }
 
@@ -219,7 +223,9 @@ impl Start {
                 {
                     if chunk_size_val.is_number() {
                         // Zig: `@intCast(@max(0, @as(i51, @truncate(toInt64()))))`
-                        chunk_size = 0i64.max(chunk_size_val.to_int64()) as BlobSizeType;
+                        // — `(x << 13) >> 13` is `@as(i51, @truncate(x))`.
+                        chunk_size =
+                            0i64.max((chunk_size_val.to_int64() << 13) >> 13) as BlobSizeType;
                     }
                 }
 
@@ -285,7 +291,9 @@ impl Start {
                     if chunk_size_val.is_number() {
                         empty = false;
                         // Zig: `@intCast(@max(256, @as(i51, @truncate(toInt64()))))`
-                        chunk_size = 256i64.max(chunk_size_val.to_int64()) as BlobSizeType;
+                        // — `(x << 13) >> 13` is `@as(i51, @truncate(x))`.
+                        chunk_size =
+                            256i64.max((chunk_size_val.to_int64() << 13) >> 13) as BlobSizeType;
                     }
                 }
 
@@ -1539,8 +1547,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
 
         self.buffer.clear_retaining_capacity();
-        self.buffer
-            .ensure_total_capacity_precise(self.high_water_mark as usize);
+        let need = (self.high_water_mark as usize).saturating_sub(self.buffer.len());
+        if self.buffer.try_reserve_exact(need).is_err() {
+            return bun_sys::Result::Err(SysError::oom());
+        }
 
         self.done = false;
         self.signal.start();

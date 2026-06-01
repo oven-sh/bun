@@ -333,4 +333,18 @@ describe("Ed25519", () => {
       expect(privateKey.algorithm!.namedCurve).toBe(undefined);
     });
   });
+
+  describe("exportKey", () => {
+    // https://wicg.github.io/webcrypto-secure-curves/#ed25519-operations
+    it("sets jwk.alg to 'Ed25519' on both public and private", async () => {
+      const { publicKey, privateKey } = (await crypto.subtle.generateKey("Ed25519", true, [
+        "sign",
+        "verify",
+      ])) as CryptoKeyPair;
+      const pubJwk = await crypto.subtle.exportKey("jwk", publicKey);
+      const privJwk = await crypto.subtle.exportKey("jwk", privateKey);
+      expect(pubJwk.alg).toBe("Ed25519");
+      expect(privJwk.alg).toBe("Ed25519");
+    });
+  });
 });

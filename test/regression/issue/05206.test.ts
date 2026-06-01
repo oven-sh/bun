@@ -23,13 +23,16 @@ test("bun build --no-bundle --outdir writes transpiled files", async () => {
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("failed to write file");
-  expect(exitCode).toBe(0);
 
   const aOut = await Bun.file(join(String(dir), "out", "a.js")).text();
   const bOut = await Bun.file(join(String(dir), "out", "b.js")).text();
   expect(aOut).toContain("console.log");
   expect(aOut).toContain("hello world!");
   expect(bOut).toContain("foo bar baz");
+
+  // Surface stderr on failure, then assert the exit code last.
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 test("bun build --no-bundle --outdir . transpiles in place", async () => {
@@ -48,8 +51,11 @@ test("bun build --no-bundle --outdir . transpiles in place", async () => {
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
   expect(stderr).not.toContain("failed to write file");
-  expect(exitCode).toBe(0);
 
   const out = await Bun.file(join(String(dir), "a.js")).text();
   expect(out).toContain("export const x = 1");
+
+  // Surface stderr on failure, then assert the exit code last.
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

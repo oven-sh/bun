@@ -1,6 +1,6 @@
 use std::io::Write as _;
 
-use bun_core::{Global, OrWriteFailed as _, Output};
+use bun_core::{Global, OrWriteFailed as _};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dot_env;
 use bun_paths::{self, MAX_PATH_BYTES, PathBuffer};
@@ -496,11 +496,11 @@ impl EditorContext {
         if let Err(err) = Self::_open_in_editor(self.path, editor_, blob, id, tmpdir, line, column)
         {
             if editor_ != Editor::Other {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "Error {} opening in {}",
                     err.name(),
                     <&'static str>::from(editor_),
-                ));
+                );
             }
             self.editor = Some(Editor::None);
         }

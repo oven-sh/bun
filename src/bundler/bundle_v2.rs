@@ -3936,7 +3936,7 @@ pub mod bv2_impl {
                     ) {
                         Ok(m) => Some(m),
                         Err(err) => {
-                            Output::warn(format_args!("Failed to generate metafile: {}", err));
+                            bun_core::warn!("Failed to generate metafile: {}", err);
                             None
                         }
                     }
@@ -5016,7 +5016,7 @@ pub mod bv2_impl {
                 ) {
                     Ok(m) => Some(m),
                     Err(err) => {
-                        Output::warn(format_args!("Failed to generate metafile: {}", err.name()));
+                        bun_core::warn!("Failed to generate metafile: {}", err.name());
                         None
                     }
                 }
@@ -5030,10 +5030,7 @@ pub mod bv2_impl {
                     match crate::linker_context::metafile_builder::generate_markdown(mf) {
                         Ok(m) => Some(m),
                         Err(err) => {
-                            Output::warn(format_args!(
-                                "Failed to generate metafile markdown: {}",
-                                err
-                            ));
+                            bun_core::warn!("Failed to generate metafile markdown: {}", err);
                             None
                         }
                     }
@@ -5105,11 +5102,11 @@ pub mod bv2_impl {
             match bun_sys::File::write_file(bun_core::Fd::cwd(), joined_z, content) {
                 Ok(()) => {}
                 Err(err) => {
-                    Output::warn(format_args!(
+                    bun_core::warn!(
                         "Failed to write metafile to '{}': {}",
                         bstr::BStr::new(file_path),
                         err
-                    ));
+                    );
                 }
             }
         }

@@ -76,12 +76,12 @@ impl LifecycleScriptTimeLog {
             };
 
             // extra \n will print a blank line after this one
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "{}'s {} script took {}\n\n",
                 BStr::new(&longest.package_name),
                 lockfile::Scripts::NAMES[longest.script_id as usize],
                 bun_fmt::fmt_duration_one_decimal(longest.duration),
-            ));
+            );
             Output::flush();
         }
         // self.list dropped here (was `log.list.deinit(allocator)`)
@@ -339,17 +339,17 @@ impl PackageManager {
             let package_name: &[u8] = &longest_running.package_name;
 
             if !(package_name.len() > 1 && package_name[package_name.len() - 1] == b's') {
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "{}'s postinstall cost you {}\n",
                     BStr::new(package_name),
                     bun_fmt::fmt_duration_one_decimal(time_running),
-                ));
+                );
             } else {
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "{}' postinstall cost you {}\n",
                     BStr::new(package_name),
                     bun_fmt::fmt_duration_one_decimal(time_running),
-                ));
+                );
             }
             Output::flush();
         }

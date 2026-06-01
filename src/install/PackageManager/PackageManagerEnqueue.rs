@@ -545,10 +545,10 @@ pub fn enqueue_dependency_to_root(
 
                         if verbose_install() && manager.pending_task_count() > 0 {
                             if PackageManager::has_enough_time_passed_between_waiting_messages() {
-                                Output::pretty_errorln(format_args!(
+                                bun_core::pretty_errorln!(
                                     "<d>[PackageManager]<r> waiting for {} tasks\n",
                                     manager.pending_task_count()
-                                ));
+                                );
                             }
                         }
                     }
@@ -926,7 +926,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             if verbose_install() {
                                 let label = this.lockfile.str(&version.literal);
 
-                                Output::pretty_errorln(format_args!(
+                                bun_core::pretty_errorln!(
                                     "   -> \"{}\": \"{}\" -> {}@{}",
                                     bstr::BStr::new(this.lockfile.str(&result.package.name)),
                                     bstr::BStr::new(label),
@@ -935,7 +935,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         this.lockfile.buffers.string_bytes.as_slice(),
                                         bun_fmt::PathSep::Auto
                                     ),
-                                ));
+                                );
                             }
                             // Resolve dependencies first
                             if result.package.dependencies.len > 0 {
@@ -1157,10 +1157,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 }
 
                                 if verbose_install() {
-                                    Output::pretty_errorln(format_args!(
+                                    bun_core::pretty_errorln!(
                                         "Enqueue package manifest for download: {}",
                                         bstr::BStr::new(&name_str)
-                                    ));
+                                    );
                                 }
 
                                 // `get_network_task` touches only the
@@ -1442,7 +1442,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     if verbose_install() {
                         let label = this.lockfile.str(&version.literal);
 
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "   -> \"{}\": \"{}\" -> {}@{}",
                             bstr::BStr::new(this.lockfile.str(&result.package.name)),
                             bstr::BStr::new(label),
@@ -1451,7 +1451,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 this.lockfile.buffers.string_bytes.as_slice(),
                                 bun_fmt::PathSep::Auto
                             ),
-                        ));
+                        );
                     }
                     // We shouldn't see any dependencies
                     if result.package.dependencies.len > 0 {
@@ -2468,26 +2468,26 @@ fn get_or_put_resolved_package(
                                 dependency::version::Tag::DistTag => {
                                     // SAFETY: `version.tag == DistTag`.
                                     let tag_str = this.lockfile.str(&version.dist_tag().tag);
-                                    Output::pretty_errorln(format_args!(
+                                    bun_core::pretty_errorln!(
                                         "<d>[minimum-release-age]<r> <b>{}@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
                                         bstr::BStr::new(package_name),
                                         bstr::BStr::new(tag_str),
                                         result.version.fmt(manifest_buf),
                                         newest.fmt(manifest_buf),
                                         min_age_seconds,
-                                    ));
+                                    );
                                 }
                                 dependency::version::Tag::Npm => {
                                     // SAFETY: `version.tag == Npm`.
                                     let version_str = &version.npm().version.fmt(manifest_buf);
-                                    Output::pretty_errorln(format_args!(
+                                    bun_core::pretty_errorln!(
                                         "<d>[minimum-release-age]<r> <b>{}<r>@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
                                         bstr::BStr::new(package_name),
                                         version_str,
                                         result.version.fmt(manifest_buf),
                                         newest.fmt(manifest_buf),
                                         min_age_seconds,
-                                    ));
+                                    );
                                 }
                                 _ => unreachable!(),
                             }

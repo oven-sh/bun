@@ -179,10 +179,10 @@ pub(crate) fn filter<'a>(
         Ok(b) => b,
         Err(err) => {
             // Fall back to running every test rather than aborting the run.
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "--changed: failed to build module graph ({}); running all tests",
                 err.name()
-            ));
+            );
             Output::flush();
             let total = test_files.len();
             return Ok(Result {

@@ -1161,12 +1161,12 @@ impl TarballStream {
             }
 
             if PackageManager::verbose_install() {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "[{}] Streamed {} tarball → {} entries<r>",
                     bstr::BStr::new(name),
                     bun_fmt::size(self.bytes_received, Default::default()),
                     self.entry_count,
-                ));
+                );
                 Output::flush();
             }
 

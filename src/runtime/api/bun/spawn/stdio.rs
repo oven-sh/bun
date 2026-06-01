@@ -1,6 +1,4 @@
 use bun_collections::VecExt;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use bun_core::Output;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsResult};
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
@@ -168,16 +166,16 @@ impl Stdio {
                             continue;
                         }
 
-                        Output::debug_warn(format_args!(
+                        bun_core::debug_warn!(
                             "Failed to write to memfd: {}",
                             <&'static str>::from(err.get_errno()),
-                        ));
+                        );
                         fd.close();
                         return false;
                     }
                     Ok(result) => {
                         if result == 0 {
-                            Output::debug_warn(format_args!("Failed to write to memfd: EOF"));
+                            bun_core::debug_warn!("Failed to write to memfd: EOF");
                             fd.close();
                             return false;
                         }

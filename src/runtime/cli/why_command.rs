@@ -270,13 +270,14 @@ impl<'a> GlobPattern<'a> {
 
 impl WhyCommand {
     pub(crate) fn print_usage() {
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             concat!("<r><b>bun why<r> <d>v", "{}", "<r>"),
             Global::package_json_version_with_sha
-        ));
+        );
 
         // PORT NOTE: Zig multiline literal preserved verbatim.
-        let usage_text = "Explain why a package is installed\n\
+        bun_core::pretty!(
+            "Explain why a package is installed\n\
 \n\
 <b>Arguments:<r>\n\
   <blue>\\<package\\><r>     <d>The package name to explain (supports glob patterns like '@org/*')<r>\n\
@@ -289,8 +290,8 @@ impl WhyCommand {
   <d>$<r> <b><green>bun why<r> <blue>react<r>\n\
   <d>$<r> <b><green>bun why<r> <blue>\"@types/*\"<r> <cyan>--depth<r> <blue>2<r>\n\
   <d>$<r> <b><green>bun why<r> <blue>\"*-lodash\"<r> <cyan>--top<r>\n\
-";
-        Output::pretty(format_args!("{usage_text}"));
+"
+        );
         Output::flush();
     }
 
@@ -474,26 +475,26 @@ impl WhyCommand {
         }
 
         if target_versions.is_empty() {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<r><red>error<r>: No packages matching '{}' found in lockfile",
                 BStr::new(package_pattern)
-            ));
+            );
             Global::exit(1);
         }
 
         for target_version in &target_versions {
             let target_name = pkg_names[target_version.pkg_id as usize].slice(string_bytes);
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<b>{}@{}<r>",
                 BStr::new(target_name),
                 BStr::new(&target_version.version)
-            ));
+            );
 
             if let Some(dependents) = all_dependents.get(&target_version.pkg_id) {
                 if dependents.is_empty() {
-                    Output::prettyln(format_args!("<d>  └─ No dependents found<r>"));
+                    bun_core::prettyln!("<d>  └─ No dependents found<r>");
                 } else if MAX_DEPTH.load(AtomicOrdering::Relaxed) == 0 {
-                    Output::prettyln(format_args!("<d>  └─ (deeper dependencies hidden)<r>"));
+                    bun_core::prettyln!("<d>  └─ (deeper dependencies hidden)<r>");
                 } else {
                     let _ctx_data = TreeContext::init(&all_dependents);
                     // PORT NOTE: reshaped for borrowck — Zig sorted via mutable
@@ -529,10 +530,10 @@ impl WhyCommand {
                     ctx_data.clear_path_tracker();
                 }
             } else {
-                Output::prettyln(format_args!("<d>  └─ No dependents found<r>"));
+                bun_core::prettyln!("<d>  └─ No dependents found<r>");
             }
 
-            Output::prettyln(format_args!(""));
+            bun_core::prettyln!("");
             Output::flush();
         }
 
@@ -544,35 +545,32 @@ impl WhyCommand {
 }
 
 fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
-    Output::pretty(format_args!("<d>{}<r>", BStr::new(prefix)));
+    bun_core::pretty!("<d>{}<r>", BStr::new(prefix));
 
     match package.dep_type {
-        DependencyType::Dev => Output::pretty(format_args!("<magenta>dev<r> ")),
-        DependencyType::Peer => Output::pretty(format_args!("<yellow>peer<r> ")),
-        DependencyType::Optional => Output::pretty(format_args!("<cyan>optional<r> ")),
-        DependencyType::OptionalPeer => Output::pretty(format_args!("<cyan>optional peer<r> ")),
+        DependencyType::Dev => bun_core::pretty!("<magenta>dev<r> "),
+        DependencyType::Peer => bun_core::pretty!("<yellow>peer<r> "),
+        DependencyType::Optional => bun_core::pretty!("<cyan>optional<r> "),
+        DependencyType::OptionalPeer => bun_core::pretty!("<cyan>optional peer<r> "),
         _ => {}
     }
 
     if package.workspace {
-        Output::pretty(format_args!("<blue>{}<r>", BStr::new(&package.name)));
+        bun_core::pretty!("<blue>{}<r>", BStr::new(&package.name));
         if !package.version.is_empty() {
-            Output::pretty(format_args!("<d><blue>@workspace<r>"));
+            bun_core::pretty!("<d><blue>@workspace<r>");
         }
     } else {
-        Output::pretty(format_args!("{}", BStr::new(&package.name)));
+        bun_core::pretty!("{}", BStr::new(&package.name));
         if !package.version.is_empty() {
-            Output::pretty(format_args!("<d>@{}<r>", BStr::new(&package.version)));
+            bun_core::pretty!("<d>@{}<r>", BStr::new(&package.version));
         }
     }
 
     if !package.spec.is_empty() {
-        Output::prettyln(format_args!(
-            " <d>(requires {})<r>",
-            BStr::new(&package.spec)
-        ));
+        bun_core::prettyln!(" <d>(requires {})<r>", BStr::new(&package.spec));
     } else {
-        Output::prettyln(format_args!(""));
+        bun_core::prettyln!("");
     }
 }
 
@@ -603,10 +601,7 @@ fn print_dependency_tree(
     parent_is_workspace: bool,
 ) {
     if ctx.path_tracker.get(&current_pkg_id).is_some() {
-        Output::prettyln(format_args!(
-            "<d>{}└─ <yellow>*circular<r>",
-            BStr::new(prefix)
-        ));
+        bun_core::prettyln!("<d>{}└─ <yellow>*circular<r>", BStr::new(prefix));
         return;
     }
 
@@ -626,10 +621,7 @@ fn print_dependency_tree(
             }
 
             if depth >= MAX_DEPTH.load(AtomicOrdering::Relaxed) {
-                Output::prettyln(format_args!(
-                    "<d>{}└─ (deeper dependencies hidden)<r>",
-                    BStr::new(prefix)
-                ));
+                bun_core::prettyln!("<d>{}└─ (deeper dependencies hidden)<r>", BStr::new(prefix));
                 ctx.path_tracker.remove(&current_pkg_id);
                 return;
             }
@@ -666,7 +658,7 @@ fn print_dependency_tree(
             );
 
             if print_break_line {
-                Output::prettyln(format_args!("<d>{}<r>", BStr::new(prefix)));
+                bun_core::prettyln!("<d>{}<r>", BStr::new(prefix));
             }
         }
     }

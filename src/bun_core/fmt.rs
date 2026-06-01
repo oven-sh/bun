@@ -190,26 +190,26 @@ impl<'a, const L: usize, const R: usize, const C: bool> Table<'a, L, R, C> {
     ) {
         for (i, &column_inside_length) in self.column_inside_lengths.iter().enumerate() {
             if i == 0 {
-                Output::pretty(format_args!("{}", left_edge_separator));
+                crate::pretty!("{}", left_edge_separator);
             } else {
-                Output::pretty(format_args!("{}", column_separator));
+                crate::pretty!("{}", column_separator);
             }
 
             for _ in 0..(L + column_inside_length + R) {
-                Output::pretty(format_args!("{}", Self::SYMBOLS.horizontal_edge()));
+                crate::pretty!("{}", Self::SYMBOLS.horizontal_edge());
             }
 
             if i == self.column_inside_lengths.len() - 1 {
-                Output::pretty(format_args!("{}\n", right_edge_separator));
+                crate::pretty!("{}\n", right_edge_separator);
             }
         }
     }
 
     pub fn print_column_names(&self) {
         for (i, &column_inside_length) in self.column_inside_lengths.iter().enumerate() {
-            Output::pretty(format_args!("{}", Self::SYMBOLS.vertical_edge()));
+            crate::pretty!("{}", Self::SYMBOLS.vertical_edge());
             for _ in 0..L {
-                Output::pretty(format_args!(" "));
+                crate::pretty!(" ");
             }
             // TODO(port): Zig spliced `column_color` into the comptime format string
             // ("<b><" ++ column_color ++ ">{s}<r>"). Replicate via Output::pretty's
@@ -220,10 +220,10 @@ impl<'a, const L: usize, const R: usize, const C: bool> Table<'a, L, R, C> {
                 bstr::BStr::new(self.column_names[i]),
             ));
             for _ in self.column_names[i].len()..(column_inside_length + R) {
-                Output::pretty(format_args!(" "));
+                crate::pretty!(" ");
             }
             if i == self.column_inside_lengths.len() - 1 {
-                Output::pretty(format_args!("{}\n", Self::SYMBOLS.vertical_edge()));
+                crate::pretty!("{}\n", Self::SYMBOLS.vertical_edge());
             }
         }
     }

@@ -175,9 +175,10 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
         if addr == 0 {
             break;
         }
-        crate::pretty_errorln!("    at 0x{:x}", addr);
+        // Direct fd write: this can run on threads (or pre-init contexts)
+        // where the thread-local Output Source was never initialized.
+        let _ = crate::output::File::stderr().write_fmt(format_args!("    at 0x{addr:x}\n"));
     }
-    crate::output::flush();
 }
 
 /// Capture and dump the current call stack. Dispatches to

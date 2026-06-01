@@ -984,12 +984,13 @@ impl<'a> Loader<'a> {
 }
 
 /// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`:
-/// `File::read_to_end` (fstat-presized) with the recoverable-errno filter.
-/// The two callers differ in their open path, open-error handling, and the
-/// memo slot they write — those stay in the callers (see env_loader.zig
-/// :784 vs :874). Only the byte-identical read tail is factored here.
+/// `fstat`-based empty/non-regular-file guard, then `File::read_to_end`
+/// (fstat-presized) with the recoverable-errno filter. The two callers differ
+/// in their open path, open-error handling, and the memo slot they write —
+/// those stay in the callers (see env_loader.zig :818 vs :891). Only the
+/// byte-identical read tail is factored here.
 enum ReadEnvFile {
-    /// Zero-length — caller marks the slot and returns.
+    /// Zero-length or non-regular file — caller marks the slot and returns.
     Empty,
     /// Recoverable read errno (ENOMEM/EPIPE/EACCES/EISDIR) — caller prints
     /// (unless `quiet`), marks the slot, and returns.
@@ -999,6 +1000,22 @@ enum ReadEnvFile {
 }
 
 fn read_env_file_contents(file: &bun_sys::File) -> Result<ReadEnvFile, bun_core::Error> {
+    // Skip empty and non-regular files before reading (env_loader.zig :829-:834).
+    // `File::stat` routes through `bun_sys::fstat` — a plain `fstat(2)` — so this
+    // keeps working on kernels without `statx(2)` support (pre-4.11, e.g. RHEL 7),
+    // unlike Zig's `std.fs.File.stat()`. Without the kind guard, reading something
+    // like a FIFO passed via `--env-file` fails with `ESPIPE` (pread on a pipe)
+    // and aborts startup instead of being ignored.
+    #[cfg(not(windows))]
+    {
+        let stat = file.stat()?;
+        if stat.st_size <= 0
+            || bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) != bun_sys::FileKind::File
+        {
+            return Ok(ReadEnvFile::Empty);
+        }
+    }
+
     match file.read_to_end() {
         Ok(buf) if buf.is_empty() => Ok(ReadEnvFile::Empty),
         Ok(buf) => Ok(ReadEnvFile::Bytes(buf)),

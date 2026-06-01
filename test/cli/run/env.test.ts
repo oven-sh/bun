@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, test } from "bun:test";
 import fs from "fs";
 import { bunEnv, bunExe, bunRun, bunRunAsScript, bunTest, isLinux, isWindows, tempDirWithFiles } from "harness";
+import { mkfifo } from "mkfifo";
 import path from "path";
 
 function bunRunWithoutTrim(file: string, env?: Record<string, string>) {
@@ -344,7 +345,7 @@ test(".env with 50000 entries", () => {
   });
   const { stdout } = bunRun(`${dir}/index.ts`);
   expect(stdout).toBe("OK");
-});
+}, 60_000); // takes >10s in debug/ASAN builds
 
 test(".env space edgecase (issue #411)", () => {
   const dir = tempDirWithFiles("dotenv-issue-411", {
@@ -575,6 +576,31 @@ describe("--env-file", () => {
   test("should ignore a file that doesn't exist", () => {
     const res = bunRun(["--env-file=.env.nonexisting"]);
     expect(res.stdout).toBe("");
+  });
+
+  test.skipIf(isWindows)("should ignore a file that is not a regular file", () => {
+    // A FIFO passed via --env-file must be skipped like a missing file, not
+    // treated as fatal. The loader has to check the file kind with fstat()
+    // before reading: reading a pipe with pread(2) fails with ESPIPE, which
+    // previously aborted startup with exit code 1 and no output.
+    const fifoPath = path.join(dir, ".env.fifo");
+    mkfifo(fifoPath);
+    // Keep a read+write handle open so the loader's read-only open doesn't block.
+    const fd = fs.openSync(fifoPath, "r+");
+    try {
+      const result = Bun.spawnSync([bunExe(), `--env-file=${fifoPath}`, "-e", "console.log('hello')"], {
+        cwd: dir,
+        env: {
+          ...bunEnv,
+          NODE_ENV: undefined,
+        },
+      });
+      expect(result.stderr.toString("utf8")).toBe("");
+      expect(result.stdout.toString("utf8")).toBe("hello\n");
+      expect(result.exitCode).toBe(0);
+    } finally {
+      fs.closeSync(fd);
+    }
   });
 });
 

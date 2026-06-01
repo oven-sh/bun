@@ -43,6 +43,11 @@
 
 #include "BunProcess.h"
 
+#include <JavaScriptCore/JSWebAssemblyCompileError.h>
+#include <JavaScriptCore/JSWebAssemblyModule.h>
+#include <JavaScriptCore/WasmCapabilities.h>
+#include <JavaScriptCore/WasmModule.h>
+
 namespace Bun {
 using namespace JSC;
 using namespace Zig;
@@ -1205,6 +1210,36 @@ JSValue fetchESMSourceCodeAsync(
 {
     return fetchESMSourceCode<true>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
 }
+}
+
+// Synchronously compile WebAssembly bytes into a `WebAssembly.Module` — the
+// module source object a TC39 source phase import (`import source` /
+// `import.source()`) evaluates to. Called from the Rust module loader's
+// `.wasm` source-phase path; equivalent to `new WebAssembly.Module(bytes)`
+// without the copy into a JS ArrayBuffer first.
+extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__createJSWebAssemblyModuleFromBytes(Zig::GlobalObject* globalObject, const uint8_t* bytes, size_t length)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (!JSC::Wasm::isSupported()) [[unlikely]] {
+        JSC::throwTypeError(globalObject, scope, "WebAssembly is not supported in this environment"_s);
+        return {};
+    }
+
+    WTF::Vector<uint8_t> buffer;
+    if (!buffer.tryAppend(std::span { bytes, length })) [[unlikely]] {
+        JSC::throwOutOfMemoryError(globalObject, scope);
+        return {};
+    }
+
+    auto result = JSC::Wasm::Module::validateSync(vm, WTF::move(buffer));
+    if (!result.has_value()) [[unlikely]] {
+        throwException(globalObject, scope, JSC::createJSWebAssemblyCompileError(globalObject, vm, result.error()));
+        return {};
+    }
+
+    RELEASE_AND_RETURN(scope, JSC::JSValue::encode(JSC::JSWebAssemblyModule::create(vm, globalObject->webAssemblyModuleStructure(), WTF::move(result.value()))));
 }
 
 using namespace Bun;

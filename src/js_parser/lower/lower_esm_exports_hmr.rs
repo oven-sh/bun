@@ -498,7 +498,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                 items,
                 namespace_ref,
                 star_name_loc,
-                phase_defer: false,
+                phase: bun_ast::ImportPhase::Evaluation,
             },
             loc,
         ));

@@ -164,6 +164,12 @@ pub struct TranspileExtra {
     /// `?*?*jsc.JSInternalPromise` — out-param for the async-module path.
     /// Null forbids async resolution.
     pub promise_ptr: *mut *mut JSInternalPromise,
+    /// True when the fetch carries the `type: "webassembly"` import
+    /// attribute — the lowering for TC39 source phase imports
+    /// (`import source` / `import.source()`). The `.wasm` loader then
+    /// produces a synthetic module whose default export is the compiled
+    /// `WebAssembly.Module` instead of the file-loader path string.
+    pub is_source_phase_import: bool,
 }
 
 /// Result of `LoaderHooks::fetch_builtin_module` — tri-state because

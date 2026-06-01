@@ -172,6 +172,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                             source_index: AstIndex::default(),
                             original_path: b"",
                             flags: ImportRecordFlags::default(),
+                            phase: Default::default(),
                         });
 
                         // Handling a chain of nested conditions is complicated. We can't
@@ -302,6 +303,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         source_index: AstIndex::default(),
                         original_path: b"",
                         flags: ImportRecordFlags::default(),
+                        phase: Default::default(),
                     });
 
                     css_chunk.asts[i] = BundlerStyleSheet {

@@ -33,6 +33,10 @@ pub struct ImportRecord {
     /// Pack all boolean flags into 2 bytes to reduce padding overhead.
     /// Previously 15 separate bool fields caused ~14-16 bytes of padding waste.
     pub flags: Flags,
+
+    /// TC39 import phase of this record (`import defer ...` /
+    /// `import source ...` / `import.source(...)`).
+    pub phase: ImportPhase,
 }
 
 bitflags::bitflags! {
@@ -96,11 +100,28 @@ bitflags::bitflags! {
         const WRAP_WITH_TO_ESM = 1 << 13;
         const WRAP_WITH_TO_COMMONJS = 1 << 14;
 
-        /// "import defer * as ns from 'path'" — defer evaluation of the
-        /// imported module until a property on the namespace object is
-        /// accessed. Requires `CONTAINS_IMPORT_STAR`.
-        const PHASE_DEFER = 1 << 15;
+        // bit 15 (_padding: u1) intentionally unused
     }
+}
+
+/// Import phase of a record — which representation of the requested module
+/// the import binds (TC39 "import phases").
+#[repr(u8)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
+pub enum ImportPhase {
+    /// `import x from 'path'` / `import('path')` — the evaluated module.
+    #[default]
+    Evaluation = 0,
+    /// `import defer * as ns from 'path'` — the module is fetched and linked
+    /// eagerly but only evaluated when a property on the namespace object is
+    /// accessed. Requires `CONTAINS_IMPORT_STAR`.
+    /// https://tc39.es/proposal-defer-import-eval/
+    Defer = 1,
+    /// `import source x from 'path'` / `import.source('path')` — the compiled
+    /// module source (a `WebAssembly.Module`); the module is never
+    /// instantiated or evaluated.
+    /// https://tc39.es/proposal-source-phase-imports/
+    Source = 2,
 }
 
 pub type List<'a> = bun_alloc::ArenaVec<'a, ImportRecord>;

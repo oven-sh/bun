@@ -539,8 +539,39 @@ function _parseConnectTarget(input) {
   return { tls, hostname: u.hostname, port: u.port ? Number(u.port) : tls ? 443 : 80, url: u };
 }
 
+// TLS options consumers may pass on connect()/upgrade() options, either at the
+// top level or nested under `connect` (undici's connector convention). Forwarded
+// verbatim to node:tls.connect so things like rejectUnauthorized/ca/cert work.
+const TLS_OPTION_KEYS = [
+  "ca",
+  "cert",
+  "key",
+  "pfx",
+  "passphrase",
+  "rejectUnauthorized",
+  "servername",
+  "ALPNProtocols",
+  "ciphers",
+  "minVersion",
+  "maxVersion",
+  "secureContext",
+  "checkServerIdentity",
+  "session",
+  "requestOCSP",
+];
+function _tlsOptionsFrom(options) {
+  if (!options || typeof options !== "object") return kEmptyObject;
+  const out = {};
+  const nested = options.connect;
+  if (nested && typeof nested === "object") {
+    for (const key of TLS_OPTION_KEYS) if (nested[key] !== undefined) out[key] = nested[key];
+  }
+  for (const key of TLS_OPTION_KEYS) if (options[key] !== undefined) out[key] = options[key];
+  return out;
+}
+
 // Open a raw TCP (or TLS) socket. Resolves once connected.
-function _openSocket({ hostname, port, tls: useTls, servername, signal }) {
+function _openSocket({ hostname, port, tls: useTls, servername, signal, tlsOptions }) {
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(new RequestAbortedError("Request aborted"));
@@ -562,7 +593,12 @@ function _openSocket({ hostname, port, tls: useTls, servername, signal }) {
       resolve(socket);
     };
     if (useTls) {
-      socket = require("node:tls").connect({ host: hostname, port, servername: servername || hostname });
+      socket = require("node:tls").connect({
+        host: hostname,
+        port,
+        servername: servername || hostname,
+        ...(tlsOptions || kEmptyObject),
+      });
     } else {
       socket = require("node:net").connect({ host: hostname, port });
     }
@@ -655,11 +691,15 @@ function _resumeOnConsumer(socket) {
   socket.on("newListener", onNewListener);
 }
 
-// connect(options[, callback]) -> { statusCode, headers, socket, opaque }
-//   HTTP CONNECT tunnel. `origin`/url is the TCP target; the CONNECT
-//   request-target is `opts.path` (default host:port).
-function connect(options, callback) {
-  const promise = _doConnect(options);
+// connect(url[, options][, callback]) -> { statusCode, headers, socket, opaque }
+//   HTTP CONNECT tunnel. `url` (or options.origin) is the TCP target; the
+//   CONNECT request-target is `options.path` (default host:port).
+function connect(url, options, callback) {
+  if ($isCallable(options)) {
+    callback = options;
+    options = undefined;
+  }
+  const promise = _doConnect(url, options);
   if ($isCallable(callback)) {
     promise.then(
       data => callback(null, data),
@@ -670,28 +710,33 @@ function connect(options, callback) {
   return promise;
 }
 
-async function _doConnect(options) {
-  const target = _parseConnectTarget(options);
-  const requestTarget =
-    (typeof options === "object" && options !== null && options.path) || `${target.hostname}:${target.port}`;
+async function _doConnect(url, options) {
+  // Also accept the single-object form: connect({ origin, path, ...tlsOptions }).
+  if (options === undefined && typeof url === "object" && url !== null && !(url instanceof URL)) {
+    options = url;
+  }
+  options = options || kEmptyObject;
+  const target = _parseConnectTarget(url);
+  const requestTarget = options.path || `${target.hostname}:${target.port}`;
   const socket = await _openSocket({
     hostname: target.hostname,
     port: target.port,
     tls: target.tls,
     servername: target.hostname,
-    signal: options?.signal,
+    signal: options.signal,
+    tlsOptions: _tlsOptionsFrom(options),
   });
 
   let head = `CONNECT ${requestTarget} HTTP/1.1\r\nHost: ${requestTarget}\r\n`;
-  const headers = options?.headers || kEmptyObject;
+  const headers = options.headers || kEmptyObject;
   for (const key of Object.keys(headers)) head += `${key}: ${headers[key]}\r\n`;
   head += "\r\n";
   socket.write(head);
 
-  const { statusCode, headers: resHeaders, leftover } = await _readResponseHead(socket, options?.signal);
+  const { statusCode, headers: resHeaders, leftover } = await _readResponseHead(socket, options.signal);
   if (leftover && leftover.length) socket.unshift(leftover);
   _resumeOnConsumer(socket);
-  return { statusCode, headers: resHeaders, socket, opaque: options?.opaque ?? kEmptyObject };
+  return { statusCode, headers: resHeaders, socket, opaque: options.opaque ?? kEmptyObject };
 }
 
 // upgrade(url[, options][, callback]) -> { headers, socket, opaque }
@@ -723,6 +768,7 @@ async function _doUpgrade(url, options) {
     tls: target.tls,
     servername: target.hostname,
     signal: options.signal,
+    tlsOptions: _tlsOptionsFrom(options),
   });
 
   let head = `${method} ${path} HTTP/1.1\r\nHost: ${target.url.host}\r\nConnection: upgrade\r\nUpgrade: ${protocol}\r\n`;

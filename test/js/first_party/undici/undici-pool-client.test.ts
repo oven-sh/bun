@@ -3,13 +3,28 @@ import { Pool, Client, Agent, stream } from "undici";
 import * as undici from "undici";
 import { Readable, Writable, Transform } from "stream";
 import net from "node:net";
+import tls from "node:tls";
 
 import { createServer } from "../../../http-test-server";
+import { tls as serverTls } from "harness";
 
 // Raw TCP server helper for connect()/upgrade() tests. Returns the bound port
 // and an async disposer so callers can use `await using` for cleanup.
 async function rawServer(onConnection: (socket: net.Socket) => void) {
   const server = net.createServer(onConnection);
+  const { promise, resolve } = Promise.withResolvers<void>();
+  server.listen(0, "127.0.0.1", () => resolve());
+  await promise;
+  const port = (server.address() as net.AddressInfo).port;
+  return {
+    port,
+    [Symbol.asyncDispose]: () => new Promise<void>(res => server.close(() => res())),
+  };
+}
+
+// Raw TLS server variant for the connect()/upgrade() TLS path.
+async function rawTlsServer(onConnection: (socket: tls.TLSSocket) => void) {
+  const server = tls.createServer({ cert: serverTls.cert, key: serverTls.key }, onConnection);
   const { promise, resolve } = Promise.withResolvers<void>();
   server.listen(0, "127.0.0.1", () => resolve());
   await promise;
@@ -694,6 +709,47 @@ describe("undici", () => {
       expect(await promise).toBe("hello-leftover");
       socket.destroy();
     });
+
+    it("establishes a tunnel over TLS (forwards ca + servername, verification on)", async () => {
+      await using server = await rawTlsServer(socket => {
+        let buf = Buffer.alloc(0);
+        let tunneled = false;
+        socket.on("data", chunk => {
+          if (tunneled) {
+            socket.write(chunk); // echo
+            return;
+          }
+          buf = Buffer.concat([buf, chunk]);
+          if (buf.indexOf("\r\n\r\n") !== -1) {
+            tunneled = true;
+            socket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          }
+        });
+      });
+
+      // TCP to 127.0.0.1, but validate against the cert's "localhost" SAN using
+      // the cert as its own CA. Verification stays ON.
+      const { statusCode, socket } = await undici.connect(`https://127.0.0.1:${server.port}`, {
+        ca: serverTls.cert,
+        servername: "localhost",
+      });
+      expect(statusCode).toBe(200);
+
+      const { promise, resolve } = Promise.withResolvers<string>();
+      socket.on("data", d => resolve(d.toString()));
+      socket.write("tls-ping");
+      expect(await promise).toBe("tls-ping");
+      socket.destroy();
+    });
+
+    it("rejects a self-signed TLS cert by default (validation on)", async () => {
+      await using server = await rawTlsServer(socket => {
+        socket.once("data", () => socket.write("HTTP/1.1 200 Connection Established\r\n\r\n"));
+      });
+
+      // No rejectUnauthorized:false -> TLS validation runs and fails the handshake.
+      await expect(undici.connect(`https://127.0.0.1:${server.port}`)).rejects.toThrow();
+    });
   });
 
   // ---- upgrade (HTTP Upgrade / 101) ----
@@ -731,6 +787,37 @@ describe("undici", () => {
       });
 
       await expect(undici.upgrade(`http://127.0.0.1:${server.port}`)).rejects.toThrow();
+    });
+
+    it("performs a 101 upgrade over TLS (forwards ca + servername)", async () => {
+      await using server = await rawTlsServer(socket => {
+        let buf = Buffer.alloc(0);
+        let upgraded = false;
+        socket.on("data", chunk => {
+          if (upgraded) {
+            socket.write(chunk); // echo
+            return;
+          }
+          buf = Buffer.concat([buf, chunk]);
+          if (buf.indexOf("\r\n\r\n") !== -1) {
+            upgraded = true;
+            socket.write("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+          }
+        });
+      });
+
+      const { headers, socket } = await undici.upgrade(`https://127.0.0.1:${server.port}`, {
+        protocol: "websocket",
+        ca: serverTls.cert,
+        servername: "localhost",
+      });
+      expect(headers.upgrade).toBe("websocket");
+
+      const { promise, resolve } = Promise.withResolvers<string>();
+      socket.on("data", d => resolve(d.toString()));
+      socket.write("tls-hi");
+      expect(await promise).toBe("tls-hi");
+      socket.destroy();
     });
   });
 

@@ -861,20 +861,33 @@ impl<V: CalcValue> Calc<V> {
             }
         }
 
-        // blocked_on: values/length.rs un-gate — until Length is real,
-        // `atan2(10px, 5px)` (and any other length-dimension pair) falls
-        // through to the CSSNumber path below and errors with `invalid_value`,
-        // diverging from Zig (`Angle::Rad(atan2(10,5))`). Tracked as a known
-        // incompleteness; no behaviour stub is added because a partial
-        // dimension matcher would mis-reduce mixed-unit lengths.
-        if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
-            return Ok(v);
-        }
-        if let Ok(v) = try_parse_atan2_args::<C, Percentage>(input, ctx) {
-            return Ok(v);
-        }
-        if let Ok(v) = try_parse_atan2_args::<C, Time>(input, ctx) {
-            return Ok(v);
+        // The length/time/percentage parses below re-descend the entire
+        // argument subtree, which — because `atan2()` arguments may contain
+        // nested `atan2()`/`min()`/… — is exponential in the nesting depth. The
+        // `hit_unrecoverable` tripwire above skips them when a nested
+        // `<angle>`/`<number>`-only function already failed, but a non-function
+        // reduction failure (e.g. a `min()` of unitless numbers that can't fold
+        // to an angle) slips past it. These dimension-typed parses can only
+        // differ from the `<angle>`/`<number>` parse at a real dimension or
+        // percentage leaf, so when the arguments contain none they can only
+        // fail again: fall straight through to the `<number>` parse rather than
+        // re-descending the subtree three more times.
+        if input.arguments_contain_dimension_token() {
+            // blocked_on: values/length.rs un-gate — until Length is real,
+            // `atan2(10px, 5px)` (and any other length-dimension pair) falls
+            // through to the CSSNumber path below and errors with `invalid_value`,
+            // diverging from Zig (`Angle::Rad(atan2(10,5))`). Tracked as a known
+            // incompleteness; no behaviour stub is added because a partial
+            // dimension matcher would mis-reduce mixed-unit lengths.
+            if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
+                return Ok(v);
+            }
+            if let Ok(v) = try_parse_atan2_args::<C, Percentage>(input, ctx) {
+                return Ok(v);
+            }
+            if let Ok(v) = try_parse_atan2_args::<C, Time>(input, ctx) {
+                return Ok(v);
+            }
         }
 
         let parse_ident_fn = move |c: C, ident: &[u8]| -> Option<Calc<CSSNumber>> {

@@ -3755,6 +3755,46 @@ impl<'a> Parser<'a> {
         self.input.math_fn_parse_failures += 1;
     }
 
+    /// Scan the tokens remaining in the current block — descending into nested
+    /// blocks — for a `<dimension>` (`1px`, `1s`, …) or `<percentage>` (`50%`)
+    /// token, without consuming any input (the parser state is restored before
+    /// returning).
+    ///
+    /// `Calc::parse_atan2` uses this to decide whether re-parsing its arguments
+    /// under the length/time/percentage value types could possibly succeed.
+    /// Those types only differ from the `<angle>`/`<number>` parse at a real
+    /// dimension/percentage leaf, so when none is present the re-parses can
+    /// only fail again — and since `atan2()` arguments may nest, re-descending
+    /// them is exponential in the nesting depth.
+    pub fn arguments_contain_dimension_token(&mut self) -> bool {
+        let start = self.state();
+        // Read raw tokens (the `Parser` layer would otherwise skip over nested
+        // blocks via `at_start_of`). `stop_before` is not consulted here; we
+        // track the enclosing block ourselves and stop when it closes.
+        let mut depth: u32 = 0;
+        let found = loop {
+            let token = match self.input.tokenizer.next() {
+                Ok(t) => t,
+                Err(()) => break false,
+            };
+            match token {
+                Token::Dimension(_) | Token::Percentage { .. } => break true,
+                Token::Function(_) | Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
+                    depth += 1;
+                }
+                Token::CloseParen | Token::CloseSquare | Token::CloseCurly => {
+                    if depth == 0 {
+                        break false;
+                    }
+                    depth -= 1;
+                }
+                _ => {}
+            }
+        };
+        self.reset(&start);
+        found
+    }
+
     pub fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }

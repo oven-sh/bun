@@ -134,10 +134,6 @@ describe("invalid inputs", () => {
   });
 });
 
-// https://github.com/oven-sh/bun/issues/31657
-// A non-integer keylen must throw ERR_OUT_OF_RANGE ("must be an integer"),
-// matching Node's validateInt32(keylen, 'keylen', 0), instead of being
-// silently truncated to an integer.
 describe("fractional keylen throws", () => {
   for (const input of [1.5, 1.9, 2.5, 0.5, 1e-10, 2147483648.5]) {
     test(`${input}`, () => {

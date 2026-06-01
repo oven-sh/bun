@@ -142,6 +142,21 @@ new!(pub NODE_CHANNEL_FD: string, "NODE_CHANNEL_FD", {});
 // child's CLI entrypoint checks this before anything else and hands off to
 // C++ Bun__WebView__hostMain. Never returns — no JSC, no VM.
 new!(pub BUN_INTERNAL_WEBVIEW_HOST: string, "BUN_INTERNAL_WEBVIEW_HOST", {});
+// Test-only (debug builds only; call sites are gated on `cfg(debug_assertions)`).
+// These three widen the otherwise-microsecond race between the file-watcher
+// thread and process exit so the `hot-reload-exit-race` regression test can
+// trigger it deterministically:
+//  - `..._BUSTDIRCACHE_DELAY_MS`: make `VirtualMachine::bust_dir_cache` sleep
+//    this many ms while holding the watcher mutex, so the main thread can race
+//    ahead and free the resolver BSSMap singleton.
+//  - `..._GLOBALEXIT_FAST_PATH_TO_TRANSPILER_DEINIT`: cut `global_exit`
+//    straight to `destroy()` (frees the BSSMap), skipping the worker/socket
+//    drains, so the free happens while the watcher is still sleeping.
+//  - `..._GLOBALEXIT_LINGER_MS`: linger in `Global::exit` after the teardown so
+//    the watcher's delayed `bust_dir_cache` lands on the freed memory.
+new!(pub BUN_INTERNAL_WATCHER_BUSTDIRCACHE_DELAY_MS: unsigned, "BUN_INTERNAL_WATCHER_BUSTDIRCACHE_DELAY_MS", { deser: { error_handling: NotSet } });
+new!(pub BUN_INTERNAL_GLOBALEXIT_FAST_PATH_TO_TRANSPILER_DEINIT: boolean, "BUN_INTERNAL_GLOBALEXIT_FAST_PATH_TO_TRANSPILER_DEINIT", { default: false });
+new!(pub BUN_INTERNAL_GLOBALEXIT_LINGER_MS: unsigned, "BUN_INTERNAL_GLOBALEXIT_LINGER_MS", { deser: { error_handling: NotSet } });
 new!(pub NODE_PRESERVE_SYMLINKS_MAIN: boolean, "NODE_PRESERVE_SYMLINKS_MAIN", { default: false });
 new!(pub NODE_USE_SYSTEM_CA: boolean, "NODE_USE_SYSTEM_CA", { default: false });
 new!(pub npm_lifecycle_event: string, "npm_lifecycle_event", {});

@@ -1510,6 +1510,24 @@ impl VirtualMachine {
         // self.event_loop().tick();
 
         if self.should_destruct_main_thread_on_exit() {
+            // File-watcher threads dispatch through the process-global resolver
+            // BSSMap singletons (dir_cache, etc.) that `destroy()` →
+            // `transpiler.deinit()` below frees. Stop them first, under each
+            // watcher's own mutex, so any in-flight `bust_dir_cache` completes
+            // before we start freeing. `Global::exit` is a no-op re-stop on the
+            // non-destruct path; `stop_all_for_exit` is idempotent.
+            bun_watcher::stop_all_for_exit();
+            // Test-only (debug builds): skip the worker/socket/JSC drains and
+            // jump straight to `destroy()` (frees the BSSMap singletons) so the
+            // `hot-reload-exit-race` regression test frees them while a watcher
+            // thread's `bust_dir_cache` is still sleeping in its delay hook.
+            #[cfg(debug_assertions)]
+            if bun_core::env_var::BUN_INTERNAL_GLOBALEXIT_FAST_PATH_TO_TRANSPILER_DEINIT.get()
+                == Some(true)
+            {
+                self.destroy();
+                bun_core::Global::exit(u32::from(self.exit_handler.exit_code));
+            }
             if let Some(t) = self.event_loop_mut().forever_timer.take() {
                 // SAFETY: `t` is the live usockets timer created in
                 // `EventLoop::auto_tick`; `close::<true>()` (fallthrough)
@@ -6509,6 +6527,17 @@ impl VirtualMachine {
 
     /// To satisfy the interface from NewHotReloader().
     pub fn bust_dir_cache(&mut self, path: &[u8]) -> bool {
+        // Test-only (debug builds): sleep here, on the watcher thread, while it
+        // holds the watcher mutex, so the main thread's `global_exit` can race
+        // ahead and free the resolver BSSMap singleton this call is about to
+        // touch. Widens the otherwise-microsecond watcher-vs-exit race for the
+        // `hot-reload-exit-race` regression test.
+        #[cfg(debug_assertions)]
+        if let Some(ms) = bun_core::env_var::BUN_INTERNAL_WATCHER_BUSTDIRCACHE_DELAY_MS.get() {
+            if ms != 0 {
+                std::thread::sleep(std::time::Duration::from_millis(ms));
+            }
+        }
         self.transpiler.resolver.bust_dir_cache(path)
     }
 }

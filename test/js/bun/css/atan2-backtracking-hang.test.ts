@@ -77,50 +77,58 @@ const cases: [css: string, expected: string | null][] = [
   ["hsl(atan2(min(1,2) + 3 + 4, min(5,6) + 7 + 8) 50% 50%)", null],
 ];
 
-test.concurrent("deeply nested atan2() color values parse in linear time instead of hanging", async () => {
-  const script = `
+test.concurrent(
+  "deeply nested atan2() color values parse in linear time instead of hanging",
+  async () => {
+    const script = `
     const inputs = ${JSON.stringify(cases.map(([css]) => css))};
     console.log(JSON.stringify(inputs.map(css => Bun.color(css, "css"))));
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 20_000,
-    killSignal: "SIGKILL",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toEqual(cases.map(([, expected]) => expected));
-  expect(exitCode).toBe(0);
-}, 30_000);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(cases.map(([, expected]) => expected));
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);
 
-test.concurrent("the exact fuzzer-minimized nested-math input parses instead of hanging", async () => {
-  // 2,016 bytes of `hsl(sin(sin(sin(-Infinity + … atan2(… *min(9 *09,75 …`
-  // with int-boundary numbers; hung Tokenizer::next_impl for 25s+ before the fix.
-  const blob =
-    "H4sIAAAAAAACA8soztEozsyDY13PvLTMvMySSi5tLl1DCxMTM3MTEwNzY3MDS1NTQzND0wEUTyxJzDPSAIrRVjlcDAy0coGhYsmlZWCpY24KozTpYE5BfrnGYHPTqDkDac6oMaPGDH1jSDfHKi2zqLhENz9Nt6SyIBWHqYMvv0pRwxxNZKiEyiUGAgDmlnNY4AcAAA==";
-  const script = `
+test.concurrent(
+  "the exact fuzzer-minimized nested-math input parses instead of hanging",
+  async () => {
+    // 2,016 bytes of `hsl(sin(sin(sin(-Infinity + … atan2(… *min(9 *09,75 …`
+    // with int-boundary numbers; hung Tokenizer::next_impl for 25s+ before the fix.
+    const blob =
+      "H4sIAAAAAAACA8soztEozsyDY13PvLTMvMySSi5tLl1DCxMTM3MTEwNzY3MDS1NTQzND0wEUTyxJzDPSAIrRVjlcDAy0coGhYsmlZWCpY24KozTpYE5BfrnGYHPTqDkDac6oMaPGDH1jSDfHKi2zqLhENz9Nt6SyIBWHqYMvv0pRwxxNZKiEyiUGAgDmlnNY4AcAAA==";
+    const script = `
     const input = Buffer.from(Bun.gunzipSync(Buffer.from(${JSON.stringify(blob)}, "base64"))).toString("latin1");
     console.log(JSON.stringify(Bun.color(input, "rgba")));
   `;
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", script],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-    timeout: 20_000,
-    killSignal: "SIGKILL",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 20_000,
+      killSignal: "SIGKILL",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
-  expect(JSON.parse(stdout)).toBeNull();
-  expect(exitCode).toBe(0);
-}, 30_000);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toBeNull();
+    expect(exitCode).toBe(0);
+  },
+  30_000,
+);

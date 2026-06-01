@@ -28,7 +28,7 @@ jobs:
     name: review (${{ matrix.lane.tag }})
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 30
 
     permissions:
       contents: read
@@ -239,7 +239,7 @@ jobs:
         # fixes the validator-stage token bug (validator now forwards
         # github_token instead of failing the Factory app-token exchange on the
         # fork). Includes the settings-input/artifact hardening stack.
-        uses: EffortlessSteven/droid-action@1ab935389e25293b09b8fcd6707387bafaa51c66
+        uses: EffortlessSteven/droid-action@e1b7d598ff1eccee505e1cc9699186190a958a14
         env:
           GLM: ${{ secrets.GLM }}
           FIREPASS: ${{ secrets.FIREPASS }}

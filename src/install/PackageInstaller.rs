@@ -742,20 +742,26 @@ impl<'a> PackageInstaller<'a> {
                     None,
                 ) {
                     if log_level != Options::LogLevel::Silent {
-                        // PORT NOTE: zig used `comptime Output.prettyFmt(fmt, enable_ansi_colors)`
-                        // — `Progress::log` takes a single `Arguments` so format inline.
                         if log_level.show_progress() {
-                            self.progress_mut().log(format_args!(
-                                "{}",
-                                Output::pretty_fmt_rt(
-                                    format_args!(
-                                        "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n",
-                                        bstr::BStr::new(&name),
-                                        err.name(),
+                            if Output::enable_ansi_colors_stderr() {
+                                self.progress_mut().log(format_args!(
+                                    bun_core::pretty_fmt!(
+                                        "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n",
+                                        true
                                     ),
-                                    Output::enable_ansi_colors_stderr(),
-                                ),
-                            ));
+                                    bstr::BStr::new(&name),
+                                    err.name(),
+                                ));
+                            } else {
+                                self.progress_mut().log(format_args!(
+                                    bun_core::pretty_fmt!(
+                                        "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n",
+                                        false
+                                    ),
+                                    bstr::BStr::new(&name),
+                                    err.name(),
+                                ));
+                            }
                         } else {
                             Output::pretty_errorln(format_args!(
                                 "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n",
@@ -867,20 +873,26 @@ impl<'a> PackageInstaller<'a> {
                 None,
             ) {
                 if log_level != Options::LogLevel::Silent {
-                    // PORT NOTE: zig used `comptime Output.prettyFmt(fmt, enable_ansi_colors)`
-                    // — `Progress::log` takes a single `Arguments` so format inline.
                     if log_level.show_progress() {
-                        self.progress_mut().log(format_args!(
-                            "{}",
-                            Output::pretty_fmt_rt(
-                                format_args!(
-                                    "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n",
-                                    bstr::BStr::new(&package_name),
-                                    err.name(),
+                        if Output::enable_ansi_colors_stderr() {
+                            self.progress_mut().log(format_args!(
+                                bun_core::pretty_fmt!(
+                                    "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n",
+                                    true
                                 ),
-                                Output::enable_ansi_colors_stderr(),
-                            ),
-                        ));
+                                bstr::BStr::new(&package_name),
+                                err.name(),
+                            ));
+                        } else {
+                            self.progress_mut().log(format_args!(
+                                bun_core::pretty_fmt!(
+                                    "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n",
+                                    false
+                                ),
+                                bstr::BStr::new(&package_name),
+                                err.name(),
+                            ));
+                        }
                     } else {
                         Output::pretty_errorln(format_args!(
                             "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n",
@@ -2235,17 +2247,25 @@ impl<'a> PackageInstaller<'a> {
             Err(err) => {
                 if log_level != Options::LogLevel::Silent {
                     if log_level.show_progress() {
-                        self.progress_mut().log(format_args!(
-                            "{}",
-                            Output::pretty_fmt_rt(
-                                format_args!(
-                                    "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{}<r>: {}\n",
-                                    bstr::BStr::new(folder_name),
-                                    err.name(),
+                        if Output::enable_ansi_colors_stderr() {
+                            self.progress_mut().log(format_args!(
+                                bun_core::pretty_fmt!(
+                                    "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{s}<r>: {s}\n",
+                                    true
                                 ),
-                                Output::enable_ansi_colors_stderr(),
-                            ),
-                        ));
+                                bstr::BStr::new(folder_name),
+                                err.name(),
+                            ));
+                        } else {
+                            self.progress_mut().log(format_args!(
+                                bun_core::pretty_fmt!(
+                                    "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{s}<r>: {s}\n",
+                                    false
+                                ),
+                                bstr::BStr::new(folder_name),
+                                err.name(),
+                            ));
+                        }
                     } else {
                         Output::pretty_errorln(format_args!(
                             "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{}<r>: {}\n",

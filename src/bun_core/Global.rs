@@ -175,8 +175,9 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
         if addr == 0 {
             break;
         }
-        eprintln!("    at 0x{addr:x}");
+        crate::pretty_errorln!("    at 0x{:x}", addr);
     }
+    crate::output::flush();
 }
 
 /// Capture and dump the current call stack. Dispatches to

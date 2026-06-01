@@ -2010,11 +2010,23 @@ fn substitute_template(
             i += 2;
             continue;
         }
-        // SAFETY: template is ASCII/ANSI bytes; emit byte-at-a-time as Latin-1.
-        let mut buf = [0u8; 4];
-        let c = b as char;
-        f.write_str(c.encode_utf8(&mut buf))?;
-        i += 1;
+        // Literal run: copy verbatim up to the next brace so multi-byte UTF-8
+        // sequences aren't re-encoded byte-by-byte as Latin-1.
+        let mut j = i + 1;
+        while j < t.len() && t[j] != b'{' && t[j] != b'}' {
+            j += 1;
+        }
+        let run = &t[i..j];
+        match std::str::from_utf8(run) {
+            Ok(s) => f.write_str(s)?,
+            Err(_) => {
+                for &b in run {
+                    let mut buf = [0u8; 4];
+                    f.write_str((b as char).encode_utf8(&mut buf))?;
+                }
+            }
+        }
+        i = j;
     }
     Ok(())
 }
@@ -3064,6 +3076,20 @@ mod pretty_fmt_tests {
             pretty_fmt!(concat!("<r><d>[", stringify!(http), "]<r> "), true),
             "\x1b[0m\x1b[2m[http]\x1b[0m ",
         );
+    }
+
+    #[test]
+    fn pretty_fmt_args_preserves_multibyte_utf8() {
+        let s = format!(
+            "{}",
+            super::pretty_fmt_args("<r><cyan>↑<r> {s} →<r> {s}\n", false, ("a", "b"))
+        );
+        assert_eq!(s, "↑ a → b\n");
+        let s = format!(
+            "{}",
+            super::pretty_fmt_args("<cyan>↑<r> {s} →<r>", true, ("a",))
+        );
+        assert_eq!(s, "\x1b[36m↑\x1b[0m a →\x1b[0m");
     }
 
     #[test]

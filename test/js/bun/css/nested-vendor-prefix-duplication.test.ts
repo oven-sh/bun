@@ -183,3 +183,21 @@ test("deeply nested single-prefix rules stay linear and do not trip the bound", 
   expect(output).toContain("color:red");
   expect(output.length).toBeLessThan(10_000);
 });
+
+test("a large flat stylesheet of single-prefix rules does not trip the bound", () => {
+  // `get_prefix` returns a single (non-empty) prefix bit for a selector like
+  // `:not(...)`, `:where(...)`, or `::placeholder`, so such a rule enters the
+  // per-prefix loop but is serialized exactly once — no fan-out. The bound must
+  // only count rules that actually fan out (more than one prefix bit), not
+  // every single-prefix rule; otherwise a flat, non-nested bundle of such rules
+  // — linear, non-amplifying output — would falsely error once enough of them
+  // accumulate against the never-reset counter. More rules than the limit
+  // (`MAX_PREFIX_EXPANSIONS` = 65_536), each with a distinct declaration so
+  // they are not merged into one rule.
+  const count = 70_000;
+  let src = "";
+  for (let i = 0; i < count; i++) src += `.c${i}:not(.x){--v${i}:1}`;
+  const output = minifyTest(src, "");
+  // Linear in input: one emitted rule per input rule, not a thrown error.
+  expect(output.split(":not(.x)").length - 1).toBe(count);
+}, 30_000);

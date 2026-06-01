@@ -95,22 +95,33 @@ impl<R> StyleRule<R> {
         } else {
             let mut first_rule = true;
             let mut remaining_prefixes = self.vendor_prefix;
+            // The rule only fans out — producing more than one copy, and
+            // re-serializing its nested rules once per copy — when its selectors
+            // carry more than one vendor prefix (e.g. a list mixing
+            // `:-webkit-autofill` with an unprefixed pseudo-class). A single
+            // prefix bit serializes the rule exactly once, just like the
+            // `is_empty()` fast path, so it must not charge the expansion
+            // budget. Gate the charge on an actual fan-out, mirroring
+            // `charge_selector_expansion`'s `selector_expansion_multiplier > 1`.
+            let fans_out = self.vendor_prefix.bits().count_ones() > 1;
             // `inline for (css.VendorPrefix.FIELDS) |field|` — iterate the bool fields of the
             // packed struct in declared order. In Rust the bitflags type exposes the same
             // ordered single-bit table directly.
             for &prefix in VendorPrefix::FIELDS {
                 if self.vendor_prefix.contains(prefix) {
-                    // Each pass re-serializes this rule's nested rules; when
-                    // those nested rules also carry multiple prefixes the copies
-                    // compound multiplicatively with depth. Bound the running
-                    // total so deeply nested vendor-prefixed rules can't expand
-                    // into gigabytes of output.
-                    dest.prefix_expansions += 1;
-                    if dest.prefix_expansions > MAX_PREFIX_EXPANSIONS {
-                        return dest.new_error(
-                            css::error::PrinterErrorKind::maximum_vendor_prefix_expansion,
-                            None,
-                        );
+                    // Each copy re-serializes this rule's nested rules; when
+                    // those nested rules also fan out the copies compound
+                    // multiplicatively with depth. Bound the running total so
+                    // deeply nested vendor-prefixed rules can't expand into
+                    // gigabytes of output.
+                    if fans_out {
+                        dest.prefix_expansions += 1;
+                        if dest.prefix_expansions > MAX_PREFIX_EXPANSIONS {
+                            return dest.new_error(
+                                css::error::PrinterErrorKind::maximum_vendor_prefix_expansion,
+                                None,
+                            );
+                        }
                     }
                     remaining_prefixes.remove(prefix);
                     if !first_rule {

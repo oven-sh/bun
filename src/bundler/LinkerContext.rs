@@ -452,12 +452,19 @@ impl<'a> LinkerContext<'a> {
         self.graph.arena()
     }
 
+    /// `arena` must be the arena owned by the thread making this call — on
+    /// worker threads (chunk post-processing) that is `worker.arena()`, NOT
+    /// `self.arena()` (the bundle-thread graph arena). `generic_path_with_pretty_initialized`
+    /// allocates the duped display path from it, and `MimallocArena` asserts
+    /// single-thread ownership, so passing the wrong arena is a cross-thread
+    /// allocation (debug panic / release heap corruption).
     pub fn path_with_pretty_initialized(
         &mut self,
         path: &bun_paths::fs::Path<'static>,
+        arena: &Bump,
     ) -> Result<bun_paths::fs::Path<'static>, BunError> {
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, self.arena())
+        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, arena)
     }
 
     pub fn should_include_part(&self, source_index: crate::IndexInt, part: &Part) -> bool {
@@ -1778,7 +1785,7 @@ pub(crate) fn crash_guard_for_part_range(
 // and un-gate together with `LinkerGraph.rs`.
 
 impl<'a> LinkerContext<'a> {
-    pub fn generate_isolated_hash(&mut self, chunk: &Chunk) -> u64 {
+    pub fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &Bump) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
 
         let mut hasher = ContentHasher::default();
@@ -1799,7 +1806,7 @@ impl<'a> LinkerContext<'a> {
                         // independent (relative paths and the "/" path separator)
                         if source.path.text.as_ptr() == source.path.pretty.as_ptr() {
                             source.path = self
-                                .path_with_pretty_initialized(&source.path)
+                                .path_with_pretty_initialized(&source.path, arena)
                                 .expect("OOM");
                         }
                         // PORT NOTE: `Path::assert_pretty_is_valid` lives on the

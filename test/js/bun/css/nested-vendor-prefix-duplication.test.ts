@@ -216,7 +216,10 @@ test("leaf rules nested under a fanning-out ancestor are bounded", () => {
   // are counted; the bound turns it into a thrown error.
   const K = 1;
   const depth = 15;
-  const leaves = Array.from({ length: K }, (_, i) => `.x${i}:placeholder-shown,.y${i}:-webkit-autofill{--v${i}:1}`).join("");
+  const leaves = Array.from(
+    { length: K },
+    (_, i) => `.x${i}:placeholder-shown,.y${i}:-webkit-autofill{--v${i}:1}`,
+  ).join("");
   const level = ".a:placeholder-shown,.b:-webkit-autofill{";
   const src = (level + leaves).repeat(depth) + "}".repeat(depth);
   expect(() => minifyTest(src, "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);

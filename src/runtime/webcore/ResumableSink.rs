@@ -126,6 +126,33 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         // Dereferenced as `&mut` because impls mutate (detachSink, deref, etc.).
         unsafe { (*ctx).write_request_data(bytes) }
     }
+
+    /// Push `bytes` to the context, fold the backpressure result into `status`,
+    /// and return the JS-visible "wants more" boolean (`false` while paused, and
+    /// `false` once the context will take no more data).
+    #[inline]
+    fn dispatch_write(&mut self, bytes: &[u8]) -> JSValue {
+        scoped_log!(ResumableSink, "jsWrite {}", bytes.len());
+        match Self::on_write(self.context, bytes) {
+            ResumableSinkBackpressure::Backpressure => {
+                scoped_log!(ResumableSink, "paused");
+                self.status = Status::Paused;
+            }
+            ResumableSinkBackpressure::Done => {
+                // The context will take no more data (e.g. an aborted FetchTasklet
+                // or a dropped stream buffer). Report `false` so JS stops pushing
+                // chunks. Status is left as-is: `Status::Done` is the onEnd-fired
+                // terminal state set by `js_end`/`cancel`, and forcing it here
+                // would make a later `.end()` a no-op via `is_detached()` and skip
+                // `on_end`.
+                return JSValue::from(false);
+            }
+            ResumableSinkBackpressure::WantMore => {
+                self.status = Status::Started;
+            }
+        }
+        JSValue::from(self.status != Status::Paused)
+    }
     #[inline]
     fn on_end(ctx: *mut Context, err: Option<JSValue>) {
         // SAFETY: see on_write.
@@ -320,26 +347,35 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         }
 
         let buffer = args[0];
+
+        // Shared or resizable JS backing stores are not stable enough to form a
+        // Rust `&[u8]`: another agent can mutate (or the owner resize) the bytes
+        // while the sink reads them. Snapshot into owned bytes (the copy runs in
+        // C++) before Rust forms a slice, then consume the owned payload
+        // synchronously. Fixed unshared input keeps the borrowed `StringOrBuffer`
+        // fast path. Mirrors `JSSink::js_write` — `ResumableSink` backs the S3
+        // upload writer, which routes through here rather than `JSSink`.
+        if let Some(array_buffer) = buffer.as_array_buffer(global_this) {
+            if (array_buffer.shared || array_buffer.resizable)
+                && !array_buffer.is_detached()
+                && array_buffer.byte_len > 0
+            {
+                buffer.ensure_still_alive();
+                let owned = crate::webcore::sink::snapshot_shared_array_buffer_bytes(
+                    global_this,
+                    &array_buffer,
+                )?;
+                return Ok(this.dispatch_write(&owned));
+            }
+        }
+
         let Some(sb) = StringOrBuffer::from_js(global_this, buffer)? else {
             return Err(global_this.throw_invalid_arguments(format_args!(
                 "ResumableSink.write requires a string or buffer"
             )));
         };
 
-        let bytes = sb.slice();
-        scoped_log!(ResumableSink, "jsWrite {}", bytes.len());
-        match Self::on_write(this.context, bytes) {
-            ResumableSinkBackpressure::Backpressure => {
-                scoped_log!(ResumableSink, "paused");
-                this.status = Status::Paused;
-            }
-            ResumableSinkBackpressure::Done => {}
-            ResumableSinkBackpressure::WantMore => {
-                this.status = Status::Started;
-            }
-        }
-
-        Ok(JSValue::from(this.status != Status::Paused))
+        Ok(this.dispatch_write(sb.slice()))
     }
 
     #[bun_jsc::host_fn(method)]

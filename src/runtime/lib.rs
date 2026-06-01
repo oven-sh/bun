@@ -25,6 +25,7 @@ pub mod webcore;
 
 pub mod bake;
 pub mod cli;
+pub mod gpu;
 pub mod shell;
 // Port of src/bun.js.zig — `Run::boot` / `Run::boot_standalone`. Mounted here
 // (not as a separate crate) because every dependency it has is already a dep of

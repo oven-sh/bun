@@ -2018,7 +2018,11 @@ fn substitute_template(
             j += 1;
         }
         let run = &t[i..j];
-        // SAFETY: `write_str` only moves bytes; intentionally not validated.
+        // SAFETY: not actually guaranteed — templates may contain non-UTF-8
+        // bytes and we deliberately pass them through unvalidated, accepting
+        // the technically-invalid `&str`. Every sink below this Display impl
+        // forwards `write_str` bytes untouched, so the bytes reach the fd
+        // verbatim; do not add a UTF-8-inspecting sink to this path.
         f.write_str(unsafe { std::str::from_utf8_unchecked(run) })?;
         i = j;
     }

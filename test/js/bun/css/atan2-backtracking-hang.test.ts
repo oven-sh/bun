@@ -12,14 +12,14 @@ function nestedAtan2Chain(depth: number): string {
 // tripwire: each atan2() argument is a *sum* whose leading term is a
 // `min()`/product of unitless numbers (which can't fold to an <angle>), so the
 // <angle> parse fails at that reduction — before it ever reaches the nested
-// atan2() that would bump the tripwire. The length/time/percentage re-parses
-// then re-descended the whole subtree, 4-5x per level. (bun-fuzz)
+// atan2() that would bump the tripwire. The length/percentage/time re-parses
+// then re-descended the whole subtree, 4-5x per level. The fix re-checks the
+// tripwire counter between those re-parses, so the first one to descend into
+// the failing nested atan2() is also the last. (bun-fuzz)
 //
-// `leaf` is the innermost argument. A dimension leaf (e.g. `atan2(1px)`) is the
-// one-token mutation that must stay linear: the dimension-token gate skips the
-// sub-blocks of nested type-independent functions, so a `1px` buried inside the
-// nested atan2() chain must not re-open the length/percentage/time re-parses at
-// every enclosing level.
+// `leaf` is the innermost argument. A dimension leaf (e.g. `atan2(1px)`) must
+// stay linear too: it makes the innermost atan2() fail without any folding
+// shortcut, exercising the same one-descent-per-level bound.
 function minAtan2Chain(depth: number, leaf: string = "atan2(73709551615)"): string {
   let inner = leaf;
   for (let i = 0; i < depth; i++) {
@@ -55,26 +55,27 @@ const cases: [css: string, expected: string | null][] = [
   ["hsl(atan2(max(1,2,3), min(4,5,6)) 50% 50%)", null],
   // Same chain with a dimension at the innermost leaf: a single `1px`/`1%`/`1s`
   // buried inside the nested atan2() must not re-open the dimension re-parses
-  // at every level (the one-token mutation that regressed the first fix).
+  // at every enclosing level.
   [minAtan2Chain(40, "atan2(1px)"), null],
   [minAtan2Chain(80, "atan2(1px)"), null],
   [minAtan2Chain(40, "atan2(1%)"), null],
   [minAtan2Chain(40, "atan2(1s)"), null],
-  // behavior preservation for the min()/max() argument shapes the fix gates:
-  // a dimension leaf is still reachable via the length re-parse.
+  // behavior preservation for the min()/max() argument shapes: a dimension
+  // leaf is still reachable via the length re-parse.
   ["hsl(atan2(min(1px,2px), 3px) 50% 50%)", "#bf6740"],
   ["hsl(atan2(min(1,2), max(3,4)) 50% 50%)", null],
   ["hsl(atan2(min(1deg,2deg), 3deg) 50% 50%)", "#bf6740"],
-  // dimensions buried only inside nested type-dependent functions (calc/clamp/
-  // hypot) must still be found so these keep folding via the length re-parse.
+  // dimensions buried inside nested type-dependent functions (calc/clamp/
+  // hypot) keep folding via the length re-parse.
   ["hsl(atan2(calc(1px + 1px), calc(2px)) 50% 50%)", "#bf9f40"],
   ["hsl(atan2(2px, calc(1px + 1px)) 50% 50%)", "#bf9f40"],
   ["hsl(atan2(hypot(3px,4px), 5px) 50% 50%)", "#bf9f40"],
   ["hsl(atan2(clamp(1px, 2px, 3px), 4px) 50% 50%)", null],
-  // Unitless arguments that can't fold to an <angle>: the gate now skips the
-  // Percentage retry whose NaN fallback (`Percentage::from_calc` → NaN) used to
-  // yield a garbage `Angle::Rad(NaN)` color. Clean rejection is more correct.
-  ["hsl(atan2(min(1,2) + 3 + 4, min(5,6) + 7 + 8) 50% 50%)", null],
+  // Unitless sums that can't fold to an <angle> still reach the Percentage
+  // retry (no nested angle/number-only function fails, so the counter never
+  // bumps), whose NaN fallback (`Percentage::from_calc` → NaN) resolves to an
+  // `Angle::Rad(NaN)` color — unchanged from before the fix.
+  ["hsl(atan2(min(1,2) + 3 + 4, min(5,6) + 7 + 8) 50% 50%)", "#bf4040"],
 ];
 
 test.concurrent(

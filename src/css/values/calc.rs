@@ -861,66 +861,51 @@ impl<V: CalcValue> Calc<V> {
             }
         }
 
-        // The length/time/percentage parses below re-descend the entire
+        // The length/percentage/time parses below re-descend the entire
         // argument subtree, which — because `atan2()` arguments may contain
-        // nested `atan2()`/`min()`/… — is exponential in the nesting depth. The
-        // `hit_unrecoverable` tripwire above skips them when a nested
-        // `<angle>`/`<number>`-only function already failed, but a non-function
-        // reduction failure (e.g. a `min()` of unitless numbers that can't fold
-        // to an angle) slips past it. Every one of these retries can only differ
-        // from the `<angle>`/`<number>` parse at a real dimension/percentage
-        // leaf, so when the arguments contain none they can only fail again:
-        // fall straight through to the `<number>` parse rather than
-        // re-descending the subtree three more times.
+        // nested `atan2()`/`min()`/… — is exponential in the nesting depth if
+        // left unchecked. The `hit_unrecoverable` arms above cut the re-parses
+        // off when the `<angle>`/`<number>` attempt itself descended into a
+        // nested `<angle>`/`<number>`-only function that failed, but a
+        // reduction failure (e.g. a `min()` of unitless numbers that can't
+        // fold to an angle) fails *before* ever reaching a nested function, so
+        // the re-parses still run.
         //
-        // The *way* each retry fails without a dimension leaf differs, though:
-        //   - `Time` / the `CSSNumber` fallback: `from_calc` rejects any
-        //     non-`Value` node, so the reduction itself errors.
-        //   - `Length`: `from_calc` is permissive (wraps anything in
-        //     `Length::Calc`), so the reduction succeeds, but `try_op_to`
-        //     requires a concrete `LengthValue` leaf on both operands and
-        //     returns `None` for a wrapped calc node → error. (This
-        //     permissiveness is what let the Length retry descend into the
-        //     nested subtree before the gate was added.)
-        //   - `Percentage`: `from_calc` maps any non-`Value` node to
-        //     `Percentage(NaN)` and its `try_op_to` is unconditional, so on
-        //     unitless arguments the percentage retry would previously return
-        //     `Ok(Angle::Rad(NaN))` — a garbage angle that resolves to a
-        //     meaningless color. Gating it out turns that into a clean
-        //     rejection (the function is left unparsed), which is more correct.
+        // Re-check the failure counter after each one. A nested
+        // `<angle>`/`<number>`-only function parses identically under every
+        // value type — its only type-dependence is `V::try_from_angle` on the
+        // result, which is `None` for all of Length/Percentage/Time/CSSNumber
+        // — so once one has failed during an attempt, every remaining attempt
+        // must fail at that same function. Skipping them bounds the work to
+        // one descent of the argument subtree per nesting level.
         //
-        // The scan skips the sub-block of any nested type-independent math
-        // function (`sin()`/`atan2()`/…): those resolve to an `<angle>`/
-        // `<number>` regardless of `V`, so a dimension buried inside one never
-        // makes *this* `atan2()`'s own arguments dimensional. Descending into
-        // it would let a single deep `1px` re-open the gate at every enclosing
-        // level and revive the exponential blowup.
-        let has_dimension = input.block_contains_dimension_token(|name| {
-            CalcUnit::get_any_case(name).is_some_and(CalcUnit::arg_parse_is_type_independent)
-        });
-        if has_dimension {
-            // blocked_on: values/length.rs un-gate — until Length is real,
-            // `atan2(10px, 5px)` (and any other length-dimension pair) falls
-            // through to the CSSNumber path below and errors with `invalid_value`,
-            // diverging from Zig (`Angle::Rad(atan2(10,5))`). Tracked as a known
-            // incompleteness; no behaviour stub is added because a partial
-            // dimension matcher would mis-reduce mixed-unit lengths.
-            //
-            // Re-check `hit_unrecoverable` between attempts: if one of them
-            // descended into a nested `<angle>`/`<number>`-only function that
-            // failed, the remaining value types (which build the same tree) can
-            // only fail the same way, so stop rather than re-descend.
-            if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
-                return Ok(v);
-            }
-            if !hit_unrecoverable(input) {
-                if let Ok(v) = try_parse_atan2_args::<C, Percentage>(input, ctx) {
-                    return Ok(v);
+        // blocked_on: values/length.rs un-gate — until Length is real,
+        // `atan2(10px, 5px)` (and any other length-dimension pair) falls
+        // through to the CSSNumber path below and errors with `invalid_value`,
+        // diverging from Zig (`Angle::Rad(atan2(10,5))`). Tracked as a known
+        // incompleteness; no behaviour stub is added because a partial
+        // dimension matcher would mis-reduce mixed-unit lengths.
+        match try_parse_atan2_args::<C, Length>(input, ctx) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
                 }
-                if !hit_unrecoverable(input) {
-                    if let Ok(v) = try_parse_atan2_args::<C, Time>(input, ctx) {
-                        return Ok(v);
-                    }
+            }
+        }
+        match try_parse_atan2_args::<C, Percentage>(input, ctx) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
+                }
+            }
+        }
+        match try_parse_atan2_args::<C, Time>(input, ctx) {
+            Ok(v) => return Ok(v),
+            Err(e) => {
+                if hit_unrecoverable(input) {
+                    return Err(e);
                 }
             }
         }

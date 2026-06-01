@@ -115,6 +115,13 @@ test("Bun.file().arrayBuffer() errors include async stack frames", async () => {
   expect(caught.stack).toContain("at async caller");
 });
 
+test("Bun.file() rejects remote URL strings with a helpful error", () => {
+  const message = "Bun.file() does not support HTTP URLs. Use fetch() instead.";
+
+  expect(() => Bun.file("https://example.com/image.png")).toThrow(message);
+  expect(() => Bun.file("http://example.com/image.png")).toThrow(message);
+});
+
 test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async () => {
   // When a file starts with EF BB BF, the BOM is stripped before parsing and
   // the temporary read buffer is freed. Previously the *post-strip* slice was

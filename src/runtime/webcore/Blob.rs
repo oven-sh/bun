@@ -5787,11 +5787,17 @@ pub fn construct_bun_file(
     };
 
     if let PathOrFileDescriptor::Path(ref p) = path {
-        if p.slice().starts_with(b"s3://") {
+        let path_slice = p.slice();
+        if path_slice.starts_with(b"s3://") {
             // PORT NOTE (layering): `webcore::node_types::PathLike` re-exports
             // `crate::node::types::PathLike`, so no conversion is needed —
             // clone the path (Zig consumed it; the Rust `path` drops at scope exit).
             return S3File::construct_internal_js(global_object, p.clone(), options);
+        }
+        if is_http_url_path(path_slice) {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "Bun.file() does not support HTTP URLs. Use fetch() instead."
+            )));
         }
     }
     // PORT NOTE: Zig `defer path.deinitAndUnprotect()` — sync path took no
@@ -5837,6 +5843,14 @@ pub fn construct_bun_file(
     // SAFETY: ptr was just produced by heap::alloc in Blob::new. Explicit
     // `&mut *` forces inherent `Blob::to_js(&mut self)` over `JsClass::to_js(self)`.
     Ok(unsafe { BlobExt::to_js(&*ptr, global_object) })
+}
+
+fn is_http_url_path(path: &[u8]) -> bool {
+    path.get(.."http://".len())
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"http://"))
+        || path
+            .get(.."https://".len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(b"https://"))
 }
 
 // `find_or_create_file_from_path`: canonical impl lives later in this file

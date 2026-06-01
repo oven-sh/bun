@@ -27,16 +27,17 @@ synthesized-JSON stage anymore — the action posts its own findings directly.
 
 ## Lanes (bun-ai-review-gh-hosted.yml)
 
-| id | model | focus |
-|----|-------|-------|
-| glm51-ub | GLM-5.1 | UB, stale pointer/length, worker handoff, lifetime/allocator |
-| glm51-source-route | GLM-5.1 | source-route verification, sibling paths, claim discipline |
-| kimi-opposition | Kimi K2.6 Turbo | strongest argument the PR is wrong, perf |
-| minimax-architecture | MiniMax M3 | boundary placement, smallest complete fix |
-| glm51-tests | GLM-5.1 | red/green proof, flakes, public-API coverage |
+| id | model | single-angle focus |
+|----|-------|--------------------|
+| ub | GLM-5.1 | memory-safety / UB at the native boundary (stale ptr/len across async hop, whole-store-vs-view snapshot, lifetime/allocator) |
+| source-route | GLM-5.1 | did the fix cover EVERY sibling path; are PR claims true |
+| opposition | Kimi K2.6 Turbo | argue the PR is wrong — one sharp objection, missing test, perf/portability |
+| arch | MiniMax M3 | right fix at the right layer, smallest complete fix, no scope creep |
+| tests | GLM-5.1 | do the tests actually PROVE the fix (fail on old, pass on new) |
 
-Lane focuses are defined inline in the workflow's `matrix.lane` block, so there
-is a single source of truth and no drift between a prompt file and the lane that
-runs it.
+Lane focuses are defined inline in the workflow's `matrix.lane` block (one source
+of truth). Each lane is **single-angle** — its prompt forbids reviewing outside
+its focus — and every comment it posts is prefixed `[<id> · <model>]` for
+attribution (until droid-action PR #9 posts lane+model natively).
 
 [droid-action]: https://github.com/Factory-AI/droid-action

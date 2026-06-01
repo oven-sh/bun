@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   review:
-    name: review (${{ matrix.lane.id }})
+    name: review (${{ matrix.lane.tag }})
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -42,86 +42,92 @@ jobs:
       max-parallel: 5
       matrix:
         lane:
-          - id: glm51-ub
+          - id: ub
+            tag: "ub · GLM-5.1"
             model: custom:GLM-5.1-ZAI-Coding-0
             focus: |
-              # Lane focus: undefined behaviour and the native boundary
+              # Your one job: memory-safety / undefined behaviour at the native boundary
 
-              This is the hardest lane. Prioritise correctness bugs that safe JS
-              can trigger in native code:
+              You review NOTHING else. Find the highest-severity way safe JS can
+              corrupt memory or trigger UB in native code, and lead with it.
 
-              - stale pointer/length after ArrayBuffer resize, detach, transfer, or GC
-              - async worker handoff of JS-backed memory
-              - JavaScriptCore protect/unprotect lifetime errors, leaked protected values
-              - Rust/Zig/C++ FFI layout, aliasing, ownership, mutability mistakes
+              Hunt, in priority order:
+              - a pointer/length captured before an async hop, then used after the
+                backing ArrayBuffer could resize / detach / transfer / be GC'd
+              - a snapshot/copy that takes the WHOLE backing store instead of the
+                active view region (byteOffset/byteLength), or whose byte/encoding
+                semantics differ from the live read
+              - JSC protect/unprotect lifetime errors; leaked or double-unprotected values
               - allocator ownership mismatch, use-after-free, double free
-              - integer truncation, signed/unsigned conversion, overflow
-              - copying the whole backing store instead of the active view region
+              - integer truncation / signed-unsigned / overflow on a size or offset
 
-              Report only actionable findings, line-local where possible.
+              For the top finding give: exact failure interleaving, the line, and the
+              smallest correct fix. Rank every finding blocker/high/med/low.
 
-          - id: glm51-source-route
+          - id: source-route
+            tag: "source-route · GLM-5.1"
             model: custom:GLM-5.1-ZAI-Coding-0
             focus: |
-              # Lane focus: source-route verification and claim discipline
+              # Your one job: did the fix cover EVERY affected path, and are the claims true?
 
-              Treat every PR claim as something to verify against the actual code:
+              The dominant risk in this class of fix is "patched one caller, missed
+              the siblings." Be exhaustive about call sites.
 
-              - trace the exact public API to its native implementation
-              - find sibling code paths the patch missed
-              - Node/Web API compatibility: callback timing, error shape, observable behaviour
-              - PR-body overclaims/underclaims, missing caveats
-              - "fixes UB" where only a behavioural mismatch is proven
-              - "matches Node" without checking Node, "safe" that ignores siblings
+              Do exactly this:
+              - identify the helper/behaviour the patch changed
+              - enumerate EVERY caller / sibling path that shares the same hazard
+                (other async StringOrBuffer consumers, other crypto entry points, etc.)
+              - for each, state: covered by this patch? has a test? still vulnerable?
+              - check each PR-body claim against the code: "fixes UB" vs only-behavioural,
+                "matches Node" without checking Node, "safe" that ignores a sibling
 
-              Disprove or confirm each claim concretely; cite file:line.
+              Cite file:line for every covered/missed path. A missed path is a blocker.
 
-          - id: kimi-opposition
+          - id: opposition
+            tag: "opposition · Kimi-K2.6"
             model: custom:Kimi-K2.6-Turbo-FirePass-2
             focus: |
-              # Lane focus: opposition and performance
+              # Your one job: argue this PR is wrong, as hard as you honestly can
 
-              Take the strongest reasonable position against this PR:
+              Assume it has a defect and go find it. One sharp objection beats five
+              weak ones.
 
-              - the sharpest correctness objection
-              - the smallest missing test
-              - likely performance regression (allocations, hot-path cost)
-              - likely portability problem
-              - the reason the PR is broader than it needs to be
+              Aim at:
+              - the single strongest correctness objection
+              - the one missing test that would expose a real gap
+              - a concrete performance regression on the hot path (allocations, copies)
+              - a portability / platform-specific break
 
-              If a concern is speculative, state exactly what would prove or
-              refute it.
+              State exactly what would prove or refute each objection. No nitpicks.
 
-          - id: minimax-architecture
+          - id: arch
+            tag: "arch · MiniMax-M3"
             model: custom:MiniMax-M3-3
             focus: |
-              # Lane focus: architecture and the smallest complete fix
+              # Your one job: is this the right fix, at the right layer, and no bigger than needed?
 
-              Judge where and how the fix lands:
+              Judge shape, not bugs:
+              - is the fix at the correct boundary, or should it live one layer up/down?
+              - helper shape, duplication, a pattern that will rot on the next caller
+              - scope creep: unrelated cleanup / speculative refactor / second concern
+              - if a finding would broaden the PR, say block-now vs park-as-follow-up
 
-              - is the fix at the right boundary?
-              - helper shape, duplication risk, missed sibling call paths
-              - is this the smallest complete fix, or is there scope creep /
-                unrelated cleanup / speculative refactor?
-              - one issue, one reason to exist
-
-              If a finding would broaden the PR, say whether it should block or be
-              parked as a follow-up.
-
-          - id: glm51-tests
+          - id: tests
+            tag: "tests · GLM-5.1"
             model: custom:GLM-5.1-ZAI-Coding-0
             focus: |
-              # Lane focus: test proof quality
+              # Your one job: do the tests actually PROVE the fix?
 
-              Demand real red/green evidence:
+              The highest-value catch here is a test that passes on BOTH old and new
+              code — it proves nothing.
 
-              - does the test fail on unpatched main and pass on the patch?
-              - does it prove the actual regression via public APIs?
-              - flaky timing windows, hardcoded ports, network/global-fs deps
-              - tests that pass on both old and new code
-              - tests that silently skip when a tool is missing
-              - assertions on irrelevant stderr emptiness
-              - stress/ASAN-only cost dressed up as normal CI
+              For each added/changed test:
+              - would it FAIL on unpatched main and PASS on the patch? If not, say so loudly.
+              - does it assert the real post-condition (e.g. the resize actually took
+                effect) or could it pass on a silent no-op?
+              - does it exercise the public API and the active view region, not an
+                implementation detail?
+              - flaky timing, hardcoded ports, network/global-fs deps, tool-missing skips
 
     steps:
       - name: Checkout PR head
@@ -198,11 +204,15 @@ jobs:
         shell: bash
         env:
           LANE_FOCUS: ${{ matrix.lane.focus }}
+          LANE_TAG: ${{ matrix.lane.tag }}
         run: |
           set -euo pipefail
 
-          # Shared Bun-fork UB posture (the action will not auto-load it) followed
-          # by this lane's focus. Appended to the review system prompt verbatim.
+          # Shared Bun-fork UB posture (the action will not auto-load it), this
+          # lane's single-angle focus, and an attribution rule. Appended to the
+          # review system prompt verbatim. The tag prefix makes every comment
+          # traceable to its lane+model until the action posts that natively
+          # (droid-action PR #9).
           {
             if [ -f .factory/skills/review-guidelines/SKILL.md ]; then
               cat .factory/skills/review-guidelines/SKILL.md
@@ -211,6 +221,9 @@ jobs:
             fi
             echo
             printf '%s\n' "$LANE_FOCUS"
+            echo
+            echo "## Attribution (required)"
+            echo "Begin EVERY review comment you post (inline and summary) with the literal prefix \`[${LANE_TAG}]\` so the reader can tell which lane and model produced it. Do not review outside this lane's focus; if you find an issue in another lane's territory, skip it."
           } > .factory/lane-prompt.md
 
       - name: Run review lane

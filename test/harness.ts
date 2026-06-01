@@ -890,12 +890,31 @@ export function dockerExe(): string | null {
   return which("docker") || which("podman") || null;
 }
 
+// CI agents where container-backed tests are expected to run. If Docker is
+// missing or its daemon isn't running on one of these, we fail loudly instead
+// of silently skipping (see `requireDockerInCI` below). Linux arm64 is
+// excluded on purpose — Docker tests don't currently work there (see below).
+function dockerIsRequiredInCI(): boolean {
+  if (!isCI) return false;
+  if (isLinux && process.arch === "arm64") return false;
+  return isLinux || isMacOS;
+}
+
+function requireDockerInCI(reason: string): void {
+  if (dockerIsRequiredInCI()) {
+    throw new Error(
+      `A functional \`docker\` is required in CI for container-backed tests, but ${reason}. ` +
+        `Install Docker and make sure its daemon is running on this CI agent, ` +
+        `or these tests will be silently skipped. ` +
+        `(platform=${process.platform} arch=${process.arch})`,
+    );
+  }
+}
+
 export function isDockerEnabled(): boolean {
   const dockerCLI = dockerExe();
   if (!dockerCLI) {
-    if (isCI && isLinux) {
-      throw new Error("A functional `docker` is required in CI for some tests.");
-    }
+    requireDockerInCI("no `docker` (or `podman`) executable was found on PATH");
     return false;
   }
 
@@ -906,11 +925,13 @@ export function isDockerEnabled(): boolean {
 
   try {
     const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
-    return info.toString().indexOf("Server Version:") !== -1;
-  } catch {
-    if (isCI && isLinux) {
-      throw new Error("A functional `docker` is required in CI for some tests.");
+    if (info.toString().indexOf("Server Version:") !== -1) {
+      return true;
     }
+    requireDockerInCI("`docker info` did not report a running daemon (`Server Version:`)");
+    return false;
+  } catch {
+    requireDockerInCI("`docker info` failed, so the daemon is not reachable");
     return false;
   }
 }

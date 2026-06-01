@@ -32,7 +32,8 @@ concurrency:
 jobs:
   review:
     name: review (${{ matrix.lane.tag }})
-    if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
+    # No draft skip: draft PRs here are near-final and get the full six-lane pass
+    # on `opened`. The `ready_for_review` flip then triggers a second pass.
     runs-on: ubuntu-latest
     timeout-minutes: 40
 

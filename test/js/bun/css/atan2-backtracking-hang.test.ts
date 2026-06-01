@@ -77,7 +77,7 @@ const cases: [css: string, expected: string | null][] = [
   ["hsl(atan2(min(1,2) + 3 + 4, min(5,6) + 7 + 8) 50% 50%)", null],
 ];
 
-test("deeply nested atan2() color values parse in linear time instead of hanging", async () => {
+test.concurrent("deeply nested atan2() color values parse in linear time instead of hanging", async () => {
   const script = `
     const inputs = ${JSON.stringify(cases.map(([css]) => css))};
     console.log(JSON.stringify(inputs.map(css => Bun.color(css, "css"))));
@@ -99,7 +99,7 @@ test("deeply nested atan2() color values parse in linear time instead of hanging
   expect(exitCode).toBe(0);
 }, 30_000);
 
-test("the exact fuzzer-minimized nested-math input parses instead of hanging", async () => {
+test.concurrent("the exact fuzzer-minimized nested-math input parses instead of hanging", async () => {
   // 2,016 bytes of `hsl(sin(sin(sin(-Infinity + … atan2(… *min(9 *09,75 …`
   // with int-boundary numbers; hung Tokenizer::next_impl for 25s+ before the fix.
   const blob =

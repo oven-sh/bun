@@ -87,6 +87,25 @@ function endNT(socket, callback, err) {
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
+// The native layer reported the connection closed (peer FIN/RST or error).
+// `detachSocket` has already nulled `_handle`, so the fd is gone and any data
+// still queued on the writable side can never be flushed. The socket is built
+// with `autoDestroy: true`, but autoDestroy only runs `_destroy` (which emits
+// `'close'`) once both halves of the Duplex finish — so when the writable half
+// is stuck behind that unflushable backpressure it waits forever and `'close'`
+// never fires (the process hangs, spinning on the half-closed fd).
+//
+// Force the teardown in exactly that case: an error, or data still buffered on
+// the writable side. When the writable side already drained (`writableLength`
+// is 0 and there's no error) the normal `push(null)` → autoDestroy path emits
+// `'end'` then `'close'` on its own, so leave it alone — destroying here would
+// race the pending `'end'`.
+function destroyAfterClose(self, err) {
+  if (self.destroyed) return;
+  if (err || self.writableLength > 0) {
+    self.destroy(err || undefined);
+  }
+}
 function detachSocket(self) {
   if (!self) self = this;
   self._handle = null;
@@ -151,6 +170,7 @@ const SocketHandlers: SocketHandler = {
     detachSocket(self);
     SocketEmitEndNT(self, err);
     self.data = null;
+    destroyAfterClose(self, err);
   },
   data(socket, buffer) {
     const { data: self } = socket;
@@ -323,6 +343,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         SocketEmitEndNT(data, err);
         data.data = null;
         socket[owner_symbol] = null;
+        destroyAfterClose(data, err);
       }
     }
   },
@@ -544,11 +565,11 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (err) $debug(err);
     if (self[kclosed]) return;
     self[kclosed] = true;
-    // TODO: should we be doing something with err?
     self[kended] = true;
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
     self.read(0);
+    destroyAfterClose(self, err);
   },
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");

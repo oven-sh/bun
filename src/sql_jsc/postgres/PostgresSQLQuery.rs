@@ -652,6 +652,7 @@ impl PostgresSQLQuery {
                     Ok(v) => v,
                     Err(err) => {
                         drop(signature);
+                        release_query_ref();
                         return Err(
                             global_object.throw_error(err.into(), "failed to allocate statement")
                         );
@@ -838,6 +839,7 @@ impl PostgresSQLQuery {
             .with_mut(|q| q.write_item(this_ptr))
             .is_err()
         {
+            release_query_ref();
             return Err(global_object.throw_out_of_memory());
         }
         this.this_value.with_mut(|r| r.upgrade(global_object));

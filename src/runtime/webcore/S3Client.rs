@@ -182,7 +182,7 @@ where
 
         if let Some(acl_value) = acl {
             formatter.write_indent(writer)?;
-            writer.write_str(pfmt!("<r>acl<d>:<r> ", ENABLE_ANSI_COLORS))?;
+            writer.write_str(pfmt!("<r>acl<d>:<r> \"", ENABLE_ANSI_COLORS))?;
             bun_core::write_pretty!(
                 writer,
                 ENABLE_ANSI_COLORS,

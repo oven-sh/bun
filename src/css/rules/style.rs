@@ -73,6 +73,21 @@ impl<R> StyleRule<R> {
 }
 
 // ─── to_css ───────────────────────────────────────────────────────────────
+
+/// Maximum number of style-rule copies the per-vendor-prefix serialization
+/// loop may emit across a whole stylesheet.
+///
+/// When a style rule's selector list mixes a vendor-prefixed pseudo-class
+/// (e.g. `:-webkit-autofill`) with an unprefixed one, `get_prefix` sets more
+/// than one prefix bit and `StyleRule::to_css` serializes the rule once per
+/// bit. Each pass re-serializes the rule's nested rules, so nesting such rules
+/// repeats the inner subtree once per prefix at every level — the output grows
+/// by (prefix count)^depth. Real stylesheets need only a handful of prefix
+/// copies; anything past this limit is a runaway expansion, so bail out with an
+/// error instead of allocating gigabytes. Matches `MAX_NESTING_EXPANSIONS`
+/// (`selectors/selector.rs`) and `MAX_SELECTOR_EXPANSION` (`rules/mod.rs`).
+const MAX_PREFIX_EXPANSIONS: u32 = 65_536;
+
 impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
@@ -85,6 +100,18 @@ impl<R> StyleRule<R> {
             // ordered single-bit table directly.
             for &prefix in VendorPrefix::FIELDS {
                 if self.vendor_prefix.contains(prefix) {
+                    // Each pass re-serializes this rule's nested rules; when
+                    // those nested rules also carry multiple prefixes the copies
+                    // compound multiplicatively with depth. Bound the running
+                    // total so deeply nested vendor-prefixed rules can't expand
+                    // into gigabytes of output.
+                    dest.prefix_expansions += 1;
+                    if dest.prefix_expansions > MAX_PREFIX_EXPANSIONS {
+                        return dest.new_error(
+                            css::error::PrinterErrorKind::maximum_vendor_prefix_expansion,
+                            None,
+                        );
+                    }
                     remaining_prefixes.remove(prefix);
                     if !first_rule {
                         if !dest.minify {

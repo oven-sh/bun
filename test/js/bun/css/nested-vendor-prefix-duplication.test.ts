@@ -119,3 +119,67 @@ test("bun build --target=browser does not blow up on deeply nested prefixed sele
   expect(output).toContain(Array(depth).fill(":-webkit-full-screen").join(" "));
   expect(output).toContain(Array(depth).fill(":fullscreen").join(" "));
 });
+
+// Regression for a CSS-minifier output bomb found by fuzzing: a ~1.5 KB input
+// minified to ~884 MB (≈577,000× amplification), a DoS vector.
+//
+// When a rule's selector list mixes a vendor-prefixed pseudo-class
+// (`:-webkit-autofill`) with an unprefixed one (`:placeholder-shown`),
+// `get_prefix` sets two prefix bits and `StyleRule::to_css` serializes the
+// whole rule once per bit. Each pass re-serializes the rule's nested rules, so
+// nesting such rules repeats the inner subtree once per prefix at every level
+// — (prefix count)^depth. The earlier fix (PR #31270) deduplicated this only
+// when nesting was compiled away for browser targets; with no targets (or
+// nesting-capable targets) nesting is preserved, `&` is printed literally, and
+// every ancestor prefix pass genuinely needs its own copy of the body, so the
+// output cannot be collapsed. The minifier now bounds the total number of
+// per-prefix rule copies and errors out instead of allocating gigabytes.
+
+const VENDOR_PREFIX_LIMIT_ERROR = "Maximum vendor-prefix expansion exceeded";
+
+// `depth` nested copies of a rule whose selector list mixes a prefixed pseudo
+// (`:-webkit-autofill`, prefix bit) with an unprefixed one
+// (`:placeholder-shown`, NONE bit), innermost holding `color: red`.
+function nestedMixedPrefix(depth: number): string {
+  return ".a:placeholder-shown .x, .b:-webkit-autofill .y {\n".repeat(depth) + "color: red;\n" + "}\n".repeat(depth);
+}
+
+test("deeply nested mixed vendor-prefix rules error instead of exploding with no targets", () => {
+  // Each level doubles the number of printed rule copies, so without a bound
+  // this is ~2^depth copies of the leaf — hundreds of MB by the mid-teens.
+  // The bound turns it into a thrown error.
+  expect(() => minifyTest(nestedMixedPrefix(16), "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
+});
+
+test("the fuzzer reproduction shape errors instead of amplifying", () => {
+  // The fuzzer's shape: unclosed nested rules (the CSS parser closes them at
+  // EOF). 884 MB of output on the original 1.5 KB input; now a thrown error.
+  const src = ".a:placeholder-shown .x, .b:-webkit-autofill .y {\n".repeat(16) + "color: red;";
+  expect(() => minifyTest(src, "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
+});
+
+test("nesting-capable targets also bound the mixed vendor-prefix expansion", () => {
+  // Modern targets preserve nesting (no de-nesting), so the same per-prefix
+  // re-serialization of the body applies and must be bounded too.
+  expect(() => minifyTest(nestedMixedPrefix(16), "", { chrome: 130 << 16 })).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
+});
+
+test("shallow mixed vendor-prefix nesting still minifies with both prefix variants", () => {
+  // Below the limit, the rule is still emitted once per prefix variant — the
+  // expansion is correct and necessary, just bounded.
+  const output = minifyTest(nestedMixedPrefix(2), "");
+  expect(output).toContain(":-webkit-autofill");
+  expect(output).toContain(":autofill");
+  expect(output).toContain("color:red");
+  expect(output.length).toBeLessThan(10_000);
+});
+
+test("deeply nested single-prefix rules stay linear and do not trip the bound", () => {
+  // A single selector with one vendor prefix (no mixing with an unprefixed
+  // selector) sets one prefix bit, so the rule is serialized once per level —
+  // linear, not multiplicative. This must not hit the bound.
+  const src = ".b:-webkit-autofill .y {\n".repeat(40) + "color: red;\n" + "}\n".repeat(40);
+  const output = minifyTest(src, "");
+  expect(output).toContain("color:red");
+  expect(output.length).toBeLessThan(10_000);
+});

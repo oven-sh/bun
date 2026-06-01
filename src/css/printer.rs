@@ -158,6 +158,15 @@ pub struct Printer<'a> {
     /// `serialize::serialize_nesting` so deeply nested rules with multiple
     /// `&` references per level cannot expand exponentially.
     pub nesting_expansions: u32,
+    /// Running total of style-rule copies emitted by the per-vendor-prefix
+    /// serialization loop in `StyleRule::to_css`. A style rule whose selector
+    /// list mixes a vendor-prefixed pseudo-class (e.g. `:-webkit-autofill`)
+    /// with an unprefixed one is serialized once per prefix, and each pass
+    /// re-serializes the rule's nested rules — so nesting such rules multiplies
+    /// the output by the prefix count at every level. Accumulated across the
+    /// whole stylesheet (never reset) and bounded in `StyleRule::to_css` so a
+    /// few kilobytes of deeply nested input cannot expand into gigabytes.
+    pub prefix_expansions: u32,
     pub scratchbuf: BumpVec<'a, u8>,
     pub error_kind: Option<css::PrinterError>,
     pub import_info: Option<ImportInfo<'a>>,
@@ -326,6 +335,7 @@ impl<'a> Printer<'a> {
             css_module: None,
             ctx: None,
             nesting_expansions: 0,
+            prefix_expansions: 0,
             error_kind: None,
         }
     }

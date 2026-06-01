@@ -1393,6 +1393,52 @@ describe("wide rows (more columns than JSFinalObject inline capacity)", () => {
     db.close();
   });
 
+  it("preserves index-like column names in SQL order on both sides of the boundary", () => {
+    // Column names that parse as array indices ("0", "2") have always been
+    // stored as named string properties in the row Structure — never routed
+    // to indexed storage. These pins assert that behavior is the same for
+    // narrow (cached inline Structure) and wide (out-of-line) rows. Note the
+    // pre-existing quirk shared with released versions: such properties are
+    // visible to enumeration/serialization but plain `row["0"]` access
+    // canonicalizes to an array-index lookup and returns undefined.
+    const db = new Database(":memory:");
+
+    const narrow = db.query(`SELECT 1 AS "2", 2 AS name, 3 AS "0"`).get();
+    expect(Object.keys(narrow)).toEqual(["2", "name", "0"]);
+    expect(JSON.parse(JSON.stringify(narrow))).toEqual({ "2": 1, "name": 2, "0": 3 });
+
+    const cols = Array.from({ length: 70 }, (_, i) => `${100 + i} AS "c${i}"`);
+    cols[5] = `1005 AS "2"`;
+    cols[65] = `1065 AS "0"`; // index-like name at an out-of-line offset
+    const wide = db.query(`SELECT ${cols.join(", ")}`).get();
+    const keys = Object.keys(wide);
+    expect(keys).toHaveLength(70);
+    expect(keys[5]).toBe("2");
+    expect(keys[65]).toBe("0");
+    const parsed = JSON.parse(JSON.stringify(wide));
+    expect(parsed["2"]).toBe(1005);
+    expect(parsed["0"]).toBe(1065);
+    expect(wide.c69).toBe(169);
+    db.close();
+  });
+
+  it("supports indexed expandos on wide rows (butterfly reallocation)", () => {
+    // Putting an array-indexed property on a row whose Structure has
+    // out-of-line capacity forces JSC to reallocate the butterfly around the
+    // zero-capacity indexing header; the out-of-line named slots must survive.
+    const db = new Database(":memory:");
+    const cols = Array.from({ length: 70 }, (_, i) => `${100 + i} AS c${i}`).join(", ");
+    const row = db.query(`SELECT ${cols}`).get();
+    row[5] = "indexed-expando";
+    row.named = "named-expando";
+    Bun.gc(true);
+    expect(row[5]).toBe("indexed-expando");
+    expect(row.named).toBe("named-expando");
+    expect(row.c0).toBe(100);
+    expect(row.c69).toBe(169);
+    db.close();
+  });
+
   it("does not leak expando properties between rows and survives GC", () => {
     const db = new Database(":memory:");
     const ncols = 80;

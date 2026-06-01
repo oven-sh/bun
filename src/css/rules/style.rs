@@ -74,45 +74,27 @@ impl<R> StyleRule<R> {
 
 // ─── to_css ───────────────────────────────────────────────────────────────
 
-/// Maximum number of duplicate style-rule copies the per-vendor-prefix
-/// serialization may emit across a whole stylesheet.
+/// Maximum number of bytes the per-vendor-prefix serialization may emit from
+/// duplicate passes across a whole stylesheet.
 ///
 /// When a style rule's selector list carries more than one vendor prefix (e.g.
 /// a list mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a
 /// single pseudo downleveled to several prefixes), `StyleRule::to_css`
 /// serializes the rule once per prefix, and every pass after the first
-/// re-serializes the rule's whole nested subtree. Nesting such rules therefore
-/// repeats the inner rules once per prefix at every level — the output grows by
-/// (prefix count)^depth. `prefix_fanout_depth` tracks when we are inside such a
-/// repeated pass, and every rule emitted there (leaf or not) counts against
-/// this limit, so the bound is proportional to the actual duplicated output
-/// rather than to any single rule's shape. Real stylesheets need only a handful
-/// of copies; anything past this limit is a runaway expansion, so bail out with
-/// an error instead of allocating gigabytes. Matches `MAX_NESTING_EXPANSIONS`
+/// re-serializes the rule's whole body — declarations, nested rules, and
+/// everything under them. Nesting such rules repeats that body once per prefix
+/// at every level, so the output grows by (prefix count)^depth. The bytes
+/// emitted by each duplicate pass are measured and bounded, so a few kilobytes
+/// of deeply nested input cannot expand into gigabytes — whatever the
+/// duplicated payload is (nested rules, a large declaration block, etc.). Real
+/// stylesheets repeat only a little output across prefixes; anything past this
+/// limit is a runaway expansion, so bail out with an error instead of
+/// allocating gigabytes. Complements `MAX_NESTING_EXPANSIONS`
 /// (`selectors/selector.rs`) and `MAX_SELECTOR_EXPANSION` (`rules/mod.rs`).
-const MAX_PREFIX_EXPANSIONS: u32 = 65_536;
+const MAX_PREFIX_EXPANSION_BYTES: usize = 64 << 20;
 
 impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // When an enclosing rule fans out across vendor prefixes, every pass
-        // after its first re-serializes this whole subtree, so this rule is a
-        // duplicate copy produced by that fan-out. Count it against the
-        // expansion budget — this is what makes the bound proportional to the
-        // actual (prefix count)^depth output rather than to any single rule's
-        // shape, so deeply nested fan-out (even with leaf-only inner rules)
-        // cannot amplify a few kilobytes into gigabytes. Rules emitted outside
-        // any fan-out pass (a flat stylesheet, or the original first pass) do
-        // not charge, so linear output never trips the limit.
-        if dest.prefix_fanout_depth > 0 {
-            dest.prefix_expansions += 1;
-            if dest.prefix_expansions > MAX_PREFIX_EXPANSIONS {
-                return dest.new_error(
-                    css::error::PrinterErrorKind::maximum_vendor_prefix_expansion,
-                    None,
-                );
-            }
-        }
-
         if self.vendor_prefix.is_empty() {
             self.to_css_base(dest, true)?;
         } else {
@@ -135,18 +117,31 @@ impl<R> StyleRule<R> {
                     dest.vendor_prefix = prefix;
                     let (line, col) = (dest.line, dest.col);
                     // The first prefix pass is the original; every later pass
-                    // re-serializes the same nested subtree, so mark those
-                    // passes as fan-out so each nested rule they emit charges
-                    // the budget.
+                    // re-serializes the same body (declarations + nested rules),
+                    // so its output is a duplicate produced by the fan-out.
+                    // Measure how much it emits and charge it against the
+                    // expansion-byte budget so nesting fanning-out rules can't
+                    // expand a few kilobytes into gigabytes. The first pass and
+                    // any flat/single-prefix output are not duplicates and do
+                    // not charge, so linear output never trips the limit.
                     let is_duplicate_pass = emitted_first_pass;
+                    let bytes_before = if is_duplicate_pass {
+                        dest.bytes_written()
+                    } else {
+                        0
+                    };
+                    self.to_css_base(dest, remaining_prefixes.is_empty())?;
                     if is_duplicate_pass {
-                        dest.prefix_fanout_depth += 1;
+                        let emitted = dest.bytes_written().saturating_sub(bytes_before);
+                        dest.prefix_expansion_bytes =
+                            dest.prefix_expansion_bytes.saturating_add(emitted);
+                        if dest.prefix_expansion_bytes > MAX_PREFIX_EXPANSION_BYTES {
+                            return dest.new_error(
+                                css::error::PrinterErrorKind::maximum_vendor_prefix_expansion,
+                                None,
+                            );
+                        }
                     }
-                    let result = self.to_css_base(dest, remaining_prefixes.is_empty());
-                    if is_duplicate_pass {
-                        dest.prefix_fanout_depth -= 1;
-                    }
-                    result?;
                     // A non-final pass emits nothing when the rule has no
                     // declarations of its own and all of its nested rules are
                     // deferred to the final pass; don't write a separator

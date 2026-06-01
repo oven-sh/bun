@@ -158,25 +158,21 @@ pub struct Printer<'a> {
     /// `serialize::serialize_nesting` so deeply nested rules with multiple
     /// `&` references per level cannot expand exponentially.
     pub nesting_expansions: u32,
-    /// Running total of duplicate style-rule copies emitted because an ancestor
-    /// (or the rule itself) fans out across vendor prefixes. A rule whose
-    /// selector list carries more than one vendor prefix (e.g. a list mixing
-    /// `:-webkit-autofill` with an unprefixed pseudo-class, or a single pseudo
-    /// downleveled to several prefixes) is serialized once per prefix, and every
-    /// pass after the first re-serializes the rule's whole nested subtree — so
-    /// nesting such rules repeats the inner rules once per prefix at every
-    /// level, growing the output by (prefix count)^depth. Every rule emitted
-    /// inside such a repeated pass (leaf or not) is counted here via
-    /// `prefix_fanout_depth`; a flat rule or a single-prefix rule emits no extra
-    /// copies and is not counted. Accumulated across the whole stylesheet (never
-    /// reset) and bounded in `StyleRule::to_css` so a few kilobytes of deeply
-    /// nested input cannot expand into gigabytes.
-    pub prefix_expansions: u32,
-    /// How many enclosing style rules are currently re-serializing their nested
-    /// subtree for a vendor-prefix pass after their first (i.e. emitting a
-    /// duplicate copy). While greater than zero, each style rule serialized is a
-    /// duplicate produced by fan-out and charges `prefix_expansions`.
-    pub prefix_fanout_depth: u32,
+    /// Running total of bytes emitted by duplicate vendor-prefix passes. A rule
+    /// whose selector list carries more than one vendor prefix (e.g. a list
+    /// mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a single
+    /// pseudo downleveled to several prefixes) is serialized once per prefix,
+    /// and every pass after the first re-serializes the rule's whole body —
+    /// declarations, nested rules, and everything under them. Nesting such
+    /// rules repeats that body once per prefix at every level, so the output
+    /// grows by (prefix count)^depth. The bytes written by each such duplicate
+    /// pass are measured and accumulated here (across the whole stylesheet,
+    /// never reset) and bounded in `StyleRule::to_css`, so a few kilobytes of
+    /// deeply nested input cannot expand into gigabytes — regardless of whether
+    /// the duplicated payload is nested rules or a large declaration block. The
+    /// original (first) pass of each rule and any flat/single-prefix output emit
+    /// nothing here.
+    pub prefix_expansion_bytes: usize,
     pub scratchbuf: BumpVec<'a, u8>,
     pub error_kind: Option<css::PrinterError>,
     pub import_info: Option<ImportInfo<'a>>,
@@ -230,6 +226,14 @@ impl<'a> Printer<'a> {
     #[inline]
     fn get_written_amt(writer: &dyn Write) -> usize {
         writer.written_len()
+    }
+
+    /// Total number of bytes written to the destination so far. Used to measure
+    /// how much output a duplicate vendor-prefix pass emits (see
+    /// `prefix_expansion_bytes`).
+    #[inline]
+    pub(crate) fn bytes_written(&self) -> usize {
+        Self::get_written_amt(self.dest)
     }
 
     /// Returns the current source filename that is being printed.
@@ -345,8 +349,7 @@ impl<'a> Printer<'a> {
             css_module: None,
             ctx: None,
             nesting_expansions: 0,
-            prefix_expansions: 0,
-            prefix_fanout_depth: 0,
+            prefix_expansion_bytes: 0,
             error_kind: None,
         }
     }

@@ -205,15 +205,13 @@ test("a large flat stylesheet of fanning-out rules does not trip the bound", () 
 });
 
 test("leaf rules nested under a fanning-out ancestor are bounded", () => {
-  // The amplification is driven by the nested subtree re-serialized once per
-  // ancestor prefix, so it must be bounded by the *total* rules emitted under a
-  // fan-out — not by whether each rule fans out on its own. Each nesting level
-  // is a two-prefix rule holding K plain leaf siblings plus one recursive
+  // The amplification is driven by the whole nested body re-serialized once per
+  // ancestor prefix, so it must be bounded by the *output* emitted under a
+  // fan-out — not by whether each nested rule fans out on its own. Each nesting
+  // level is a two-prefix rule holding K plain leaf siblings plus one recursive
   // child; the leaves never fan out themselves but are duplicated
-  // (prefix count)^depth times. Depth 15 is chosen so the fanning-out levels
-  // alone stay just under the limit — only counting the duplicated leaves
-  // catches it. A ~1.4 KB input expands past 9 MB here unless the leaf copies
-  // are counted; the bound turns it into a thrown error.
+  // (prefix count)^depth times. A ~1.4 KB input expands past 9 MB here unless
+  // those duplicated leaves count against the bound; it becomes a thrown error.
   const K = 1;
   const depth = 15;
   const leaves = Array.from(
@@ -222,5 +220,20 @@ test("leaf rules nested under a fanning-out ancestor are bounded", () => {
   ).join("");
   const level = ".a:placeholder-shown,.b:-webkit-autofill{";
   const src = (level + leaves).repeat(depth) + "}".repeat(depth);
+  expect(() => minifyTest(src, "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
+});
+
+test("a large declaration block under a fanning-out ancestor is bounded", () => {
+  // The duplicated payload need not be nested rules: a fan-out pass also
+  // re-serializes the rule's own declarations. Each nesting level is a
+  // two-prefix rule whose body is one large custom-property declaration plus a
+  // recursive child, so the declaration bytes are duplicated (prefix count)^depth
+  // times — ~1.8 KB of input emits tens of MB. Counting only nested rules would
+  // miss this (the declaration is not a rule); bounding the emitted bytes of
+  // each duplicate pass catches it.
+  const depth = 16;
+  const payload = `--p:${"a".repeat(64)};`;
+  const level = ".a:placeholder-shown,.b:-webkit-autofill{";
+  const src = (level + payload).repeat(depth) + "}".repeat(depth);
   expect(() => minifyTest(src, "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
 });

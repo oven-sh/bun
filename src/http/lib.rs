@@ -4413,16 +4413,23 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"Content-Encoding") => {
                     if !self.flags.disable_decompression {
-                        if header.value() == b"gzip" {
+                        // RFC 9110 §8.4.1: content codings are case-insensitive.
+                        // `x-gzip` is a registered deprecated alias of `gzip`.
+                        let value = header.value();
+                        if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
+                            || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
+                        {
                             self.state.encoding = Encoding::Gzip;
                             self.state.content_encoding_i = header_i as u8;
-                        } else if header.value() == b"deflate" {
+                        } else if strings::eql_case_insensitive_ascii_check_length(
+                            value, b"deflate",
+                        ) {
                             self.state.encoding = Encoding::Deflate;
                             self.state.content_encoding_i = header_i as u8;
-                        } else if header.value() == b"br" {
+                        } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
                             self.state.encoding = Encoding::Brotli;
                             self.state.content_encoding_i = header_i as u8;
-                        } else if header.value() == b"zstd" {
+                        } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
                             self.state.encoding = Encoding::Zstd;
                             self.state.content_encoding_i = header_i as u8;
                         }
@@ -4438,25 +4445,29 @@ impl<'a> HTTPClient<'a> {
                     {
                         continue;
                     }
-                    if header.value() == b"gzip" {
+                    // RFC 9112 §7: transfer-coding names are case-insensitive.
+                    let value = header.value();
+                    if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
+                        || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
+                    {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Gzip;
                         }
-                    } else if header.value() == b"deflate" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"deflate") {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Deflate;
                         }
-                    } else if header.value() == b"br" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Brotli;
                         }
-                    } else if header.value() == b"zstd" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Zstd;
                         }
-                    } else if header.value() == b"identity" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"identity") {
                         self.state.transfer_encoding = Encoding::Identity;
-                    } else if header.value() == b"chunked" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"chunked") {
                         self.state.transfer_encoding = Encoding::Chunked;
                     } else {
                         return Err(err!(UnsupportedTransferEncoding));

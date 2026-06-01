@@ -29,6 +29,11 @@
 
 pub mod stub_event_loop;
 
+// Typed owning wrapper for libuv handles (Windows-only, like the raw
+// `bun_libuv_sys` bindings it wraps).
+#[cfg(windows)]
+pub mod uv_handle;
+
 #[cfg(windows)]
 pub mod windows_event_loop;
 

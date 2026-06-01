@@ -11,6 +11,7 @@ pub mod mutex;
 pub mod reset_event;
 #[path = "RwLock.rs"]
 pub mod rwlock;
+pub mod scheduled_task;
 #[path = "Semaphore.rs"]
 pub mod semaphore;
 #[path = "ThreadPool.rs"]
@@ -35,6 +36,7 @@ pub use guarded::{Guarded, GuardedBy, GuardedLock};
 pub use mutex::{Mutex, MutexGuard};
 pub use reset_event::ResetEvent;
 pub use rwlock::{RwLock, RwLockReadGuard, RwLockWriteGuard};
+pub use scheduled_task::{ScheduledContext, ScheduledTask};
 pub use semaphore::Semaphore;
 /// `parking_lot::Once` parity. Bun has no custom `Once` (Zig also uses
 /// `std.once` directly), and `std::sync::Once` has no poisoning concern, so

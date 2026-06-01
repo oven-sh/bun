@@ -158,19 +158,25 @@ pub struct Printer<'a> {
     /// `serialize::serialize_nesting` so deeply nested rules with multiple
     /// `&` references per level cannot expand exponentially.
     pub nesting_expansions: u32,
-    /// Running total of style-rule copies emitted by the per-vendor-prefix
-    /// serialization loop in `StyleRule::to_css`, counting only rules that both
-    /// fan out (their selectors carry more than one vendor prefix) and have
-    /// nested rules. A rule whose selector list mixes a vendor-prefixed
-    /// pseudo-class (e.g. `:-webkit-autofill`) with an unprefixed one is
-    /// serialized once per prefix, and each copy re-serializes the rule's nested
-    /// subtree — so nesting such rules multiplies the output by the prefix count
-    /// at every level. A single-prefix rule (serialized once) or a rule with no
-    /// nested rules (flat fan-out, linear in input size) cannot compound with
-    /// depth and is not counted. Accumulated across the whole stylesheet (never
+    /// Running total of duplicate style-rule copies emitted because an ancestor
+    /// (or the rule itself) fans out across vendor prefixes. A rule whose
+    /// selector list carries more than one vendor prefix (e.g. a list mixing
+    /// `:-webkit-autofill` with an unprefixed pseudo-class, or a single pseudo
+    /// downleveled to several prefixes) is serialized once per prefix, and every
+    /// pass after the first re-serializes the rule's whole nested subtree — so
+    /// nesting such rules repeats the inner rules once per prefix at every
+    /// level, growing the output by (prefix count)^depth. Every rule emitted
+    /// inside such a repeated pass (leaf or not) is counted here via
+    /// `prefix_fanout_depth`; a flat rule or a single-prefix rule emits no extra
+    /// copies and is not counted. Accumulated across the whole stylesheet (never
     /// reset) and bounded in `StyleRule::to_css` so a few kilobytes of deeply
     /// nested input cannot expand into gigabytes.
     pub prefix_expansions: u32,
+    /// How many enclosing style rules are currently re-serializing their nested
+    /// subtree for a vendor-prefix pass after their first (i.e. emitting a
+    /// duplicate copy). While greater than zero, each style rule serialized is a
+    /// duplicate produced by fan-out and charges `prefix_expansions`.
+    pub prefix_fanout_depth: u32,
     pub scratchbuf: BumpVec<'a, u8>,
     pub error_kind: Option<css::PrinterError>,
     pub import_info: Option<ImportInfo<'a>>,
@@ -340,6 +346,7 @@ impl<'a> Printer<'a> {
             ctx: None,
             nesting_expansions: 0,
             prefix_expansions: 0,
+            prefix_fanout_depth: 0,
             error_kind: None,
         }
     }

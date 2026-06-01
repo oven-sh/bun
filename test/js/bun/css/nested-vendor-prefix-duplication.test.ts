@@ -185,11 +185,11 @@ test("deeply nested single-prefix rules stay linear and do not trip the bound", 
 });
 
 test("a large flat stylesheet of fanning-out rules does not trip the bound", () => {
-  // A rule that fans out but has no nested rules is serialized once per prefix,
-  // yet that is flat fan-out — linear in input size, bounded by the prefix
-  // count (at most 5). It cannot compound with depth, so it must not charge the
-  // expansion budget; only rules that both fan out and have nested rules do.
-  // Old targets downlevel a single `::placeholder` into four prefix variants
+  // A fanning-out rule with no nested rules is serialized once per prefix, but
+  // that is flat fan-out — linear in input size and bounded by the prefix count
+  // (at most 5). Only rules re-serialized inside a *nested* fan-out pass charge
+  // the budget, so these flat rules must not, however many there are. Old
+  // targets downlevel a single `::placeholder` into four prefix variants
   // (`-webkit-input-`, `-moz-`, `-ms-input-`, unprefixed), so 20_000 flat rules
   // are 80_000 prefix copies — past `MAX_PREFIX_EXPANSIONS` (65_536). Distinct
   // declarations keep the rules from being merged. This stays linear instead of
@@ -202,4 +202,22 @@ test("a large flat stylesheet of fanning-out rules does not trip the bound", () 
   // Four prefix variants per input rule emitted (one unprefixed), not a throw.
   expect(output.split("::placeholder").length - 1).toBe(count);
   expect(output.split("::-webkit-input-placeholder").length - 1).toBe(count);
+});
+
+test("leaf rules nested under a fanning-out ancestor are bounded", () => {
+  // The amplification is driven by the nested subtree re-serialized once per
+  // ancestor prefix, so it must be bounded by the *total* rules emitted under a
+  // fan-out — not by whether each rule fans out on its own. Each nesting level
+  // is a two-prefix rule holding K plain leaf siblings plus one recursive
+  // child; the leaves never fan out themselves but are duplicated
+  // (prefix count)^depth times. Depth 15 is chosen so the fanning-out levels
+  // alone stay just under the limit — only counting the duplicated leaves
+  // catches it. A ~1.4 KB input expands past 9 MB here unless the leaf copies
+  // are counted; the bound turns it into a thrown error.
+  const K = 1;
+  const depth = 15;
+  const leaves = Array.from({ length: K }, (_, i) => `.x${i}:placeholder-shown,.y${i}:-webkit-autofill{--v${i}:1}`).join("");
+  const level = ".a:placeholder-shown,.b:-webkit-autofill{";
+  const src = (level + leaves).repeat(depth) + "}".repeat(depth);
+  expect(() => minifyTest(src, "")).toThrow(VENDOR_PREFIX_LIMIT_ERROR);
 });

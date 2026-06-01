@@ -74,58 +74,56 @@ impl<R> StyleRule<R> {
 
 // ─── to_css ───────────────────────────────────────────────────────────────
 
-/// Maximum number of style-rule copies the per-vendor-prefix serialization
-/// loop may emit across a whole stylesheet.
+/// Maximum number of duplicate style-rule copies the per-vendor-prefix
+/// serialization may emit across a whole stylesheet.
 ///
-/// When a style rule's selector list mixes a vendor-prefixed pseudo-class
-/// (e.g. `:-webkit-autofill`) with an unprefixed one, `get_prefix` sets more
-/// than one prefix bit and `StyleRule::to_css` serializes the rule once per
-/// bit. Each pass re-serializes the rule's nested rules, so nesting such rules
-/// repeats the inner subtree once per prefix at every level — the output grows
-/// by (prefix count)^depth. Real stylesheets need only a handful of prefix
-/// copies; anything past this limit is a runaway expansion, so bail out with an
-/// error instead of allocating gigabytes. Matches `MAX_NESTING_EXPANSIONS`
+/// When a style rule's selector list carries more than one vendor prefix (e.g.
+/// a list mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a
+/// single pseudo downleveled to several prefixes), `StyleRule::to_css`
+/// serializes the rule once per prefix, and every pass after the first
+/// re-serializes the rule's whole nested subtree. Nesting such rules therefore
+/// repeats the inner rules once per prefix at every level — the output grows by
+/// (prefix count)^depth. `prefix_fanout_depth` tracks when we are inside such a
+/// repeated pass, and every rule emitted there (leaf or not) counts against
+/// this limit, so the bound is proportional to the actual duplicated output
+/// rather than to any single rule's shape. Real stylesheets need only a handful
+/// of copies; anything past this limit is a runaway expansion, so bail out with
+/// an error instead of allocating gigabytes. Matches `MAX_NESTING_EXPANSIONS`
 /// (`selectors/selector.rs`) and `MAX_SELECTOR_EXPANSION` (`rules/mod.rs`).
 const MAX_PREFIX_EXPANSIONS: u32 = 65_536;
 
 impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
+        // When an enclosing rule fans out across vendor prefixes, every pass
+        // after its first re-serializes this whole subtree, so this rule is a
+        // duplicate copy produced by that fan-out. Count it against the
+        // expansion budget — this is what makes the bound proportional to the
+        // actual (prefix count)^depth output rather than to any single rule's
+        // shape, so deeply nested fan-out (even with leaf-only inner rules)
+        // cannot amplify a few kilobytes into gigabytes. Rules emitted outside
+        // any fan-out pass (a flat stylesheet, or the original first pass) do
+        // not charge, so linear output never trips the limit.
+        if dest.prefix_fanout_depth > 0 {
+            dest.prefix_expansions += 1;
+            if dest.prefix_expansions > MAX_PREFIX_EXPANSIONS {
+                return dest.new_error(
+                    css::error::PrinterErrorKind::maximum_vendor_prefix_expansion,
+                    None,
+                );
+            }
+        }
+
         if self.vendor_prefix.is_empty() {
             self.to_css_base(dest, true)?;
         } else {
             let mut first_rule = true;
+            let mut emitted_first_pass = false;
             let mut remaining_prefixes = self.vendor_prefix;
-            // The output only blows up multiplicatively when a rule both fans
-            // out — its selectors carry more than one vendor prefix (e.g. a list
-            // mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a
-            // single pseudo downleveled to several prefixes) so it is serialized
-            // once per prefix — AND has nested rules, because each copy then
-            // re-serializes that nested subtree. A single-prefix rule serializes
-            // exactly once (no fan-out), and a rule with no nested rules repeats
-            // only its own prelude (flat fan-out is linear in input size);
-            // neither compounds with depth, so neither charges the budget.
-            // Mirrors `charge_selector_expansion`, whose multiplier only grows
-            // inside `minify_nested_rules` and so never charges a flat rule.
-            let compounds = self.vendor_prefix.bits().count_ones() > 1 && self.rules.v.len() > 0;
             // `inline for (css.VendorPrefix.FIELDS) |field|` — iterate the bool fields of the
             // packed struct in declared order. In Rust the bitflags type exposes the same
             // ordered single-bit table directly.
             for &prefix in VendorPrefix::FIELDS {
                 if self.vendor_prefix.contains(prefix) {
-                    // Each copy re-serializes this rule's nested subtree; when
-                    // those nested rules also compound the copies multiply with
-                    // depth. Bound the running total so deeply nested
-                    // vendor-prefixed rules can't expand into gigabytes of
-                    // output.
-                    if compounds {
-                        dest.prefix_expansions += 1;
-                        if dest.prefix_expansions > MAX_PREFIX_EXPANSIONS {
-                            return dest.new_error(
-                                css::error::PrinterErrorKind::maximum_vendor_prefix_expansion,
-                                None,
-                            );
-                        }
-                    }
                     remaining_prefixes.remove(prefix);
                     if !first_rule {
                         if !dest.minify {
@@ -136,13 +134,26 @@ impl<R> StyleRule<R> {
 
                     dest.vendor_prefix = prefix;
                     let (line, col) = (dest.line, dest.col);
-                    self.to_css_base(dest, remaining_prefixes.is_empty())?;
+                    // The first prefix pass is the original; every later pass
+                    // re-serializes the same nested subtree, so mark those
+                    // passes as fan-out so each nested rule they emit charges
+                    // the budget.
+                    let is_duplicate_pass = emitted_first_pass;
+                    if is_duplicate_pass {
+                        dest.prefix_fanout_depth += 1;
+                    }
+                    let result = self.to_css_base(dest, remaining_prefixes.is_empty());
+                    if is_duplicate_pass {
+                        dest.prefix_fanout_depth -= 1;
+                    }
+                    result?;
                     // A non-final pass emits nothing when the rule has no
                     // declarations of its own and all of its nested rules are
                     // deferred to the final pass; don't write a separator
                     // after such a pass.
                     if dest.line != line || dest.col != col {
                         first_rule = false;
+                        emitted_first_pass = true;
                     }
                 }
             }

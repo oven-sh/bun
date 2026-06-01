@@ -70,7 +70,11 @@ test("terminated workers do not leak their JSHeapData", async () => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toBe("");
+  // ASAN builds emit a one-time "WARNING: ASAN interferes ..." line to stderr
+  // (via std::call_once in ZigGlobalObject.cpp) that BUN_DEBUG_QUIET_LOGS does
+  // not suppress; filter it before asserting stderr is otherwise clean.
+  const stderrLines = stderr.split("\n").filter(line => !line.startsWith("WARNING: ASAN interferes"));
+  expect(stderrLines.join("\n")).toBe("");
   expect(stdout).toContain("PASS");
   expect(exitCode).toBe(0);
 }, 120_000);

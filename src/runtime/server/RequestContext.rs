@@ -2909,8 +2909,7 @@ where
                             return;
                         }
                         // toBlobIfPossible will typically convert .Blob streams, or .File streams into a Blob object, but cannot always.
-                        readable_stream::Source::Blob(_)
-                        | readable_stream::Source::File(_) => {
+                        readable_stream::Source::Blob(_) | readable_stream::Source::File(_) => {
                             // `value.to_blob_if_possible()` above can no longer
                             // see the stream once check_body_stream_ref has
                             // migrated it into the JS-side cached slot, so
@@ -2932,8 +2931,7 @@ where
                             return;
                         }
                         // These are the common scenario:
-                        readable_stream::Source::JavaScript
-                        | readable_stream::Source::Direct => {
+                        readable_stream::Source::JavaScript | readable_stream::Source::Direct => {
                             if let Some(resp) = this.resp {
                                 let mut pair = StreamPair { stream, this };
                                 resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
@@ -2962,9 +2960,8 @@ where
                             // we can avoid streaming it and just send it all at once.
                             if byte_stream.has_received_last_chunk.get() {
                                 let mut byte_list = byte_stream.drain();
-                                this.blob = AnyBlob::from_array_list(
-                                    byte_list.move_to_list_managed(),
-                                );
+                                this.blob =
+                                    AnyBlob::from_array_list(byte_list.move_to_list_managed());
                                 this.response_body_readable_stream_ref.deinit();
                                 this.do_render_blob();
                                 return;

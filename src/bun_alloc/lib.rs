@@ -1569,8 +1569,7 @@ impl String {
     }
     #[inline]
     pub fn is_globally_allocated(&self) -> bool {
-        matches!(self.tag, Tag::Borrowed | Tag::Static)
-            && self.view().is_globally_allocated()
+        matches!(self.tag, Tag::Borrowed | Tag::Static) && self.view().is_globally_allocated()
     }
     /// 8-bit byte view (latin1 or utf8). Caller must ensure `is_8bit()`.
     #[inline]
@@ -1588,9 +1587,7 @@ impl String {
         match self.tag {
             Tag::WTFStringImpl => self.wtf_impl().utf16_slice(),
             // SAFETY: tag selects the active union field.
-            Tag::Borrowed | Tag::Static => {
-                unsafe { &self.value.view }.utf16_slice_aligned()
-            }
+            Tag::Borrowed | Tag::Static => unsafe { &self.value.view }.utf16_slice_aligned(),
             _ => &[],
         }
     }

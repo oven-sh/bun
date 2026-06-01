@@ -642,10 +642,7 @@ impl String {
     /// Borrowed-tag → borrowed-or-owned UTF-8 (port of `ZigString.toSlice`).
     #[inline]
     fn view_to_utf8_slice(&self) -> ZigStringSlice {
-        debug_assert!(matches!(
-            self.tag(),
-            Tag::Borrowed | Tag::Static
-        ));
+        debug_assert!(matches!(self.tag(), Tag::Borrowed | Tag::Static));
         let len = self.length();
         if len == 0 {
             return ZigStringSlice::EMPTY;
@@ -967,10 +964,7 @@ impl String {
     /// variant).
     #[inline]
     pub fn utf8(&self) -> &[u8] {
-        debug_assert!(matches!(
-            self.tag(),
-            Tag::Borrowed | Tag::Static
-        ));
+        debug_assert!(matches!(self.tag(), Tag::Borrowed | Tag::Static));
         debug_assert!(self.can_be_utf8());
         self.latin1()
     }

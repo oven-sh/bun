@@ -42,6 +42,44 @@ function assertRoundTrip(stdout: string, stderr: string, TZ: string) {
   expect(stdout).toMatch(TZ === "Etc/UTC" ? /offsetMin=0\b/ : /offsetMin=-?[1-9]/);
 }
 
+// Text-protocol decode against a mock MySQL server — runs everywhere (no
+// Docker / live server needed). The mock sends wall-clock DATE/DATETIME text
+// (`2024-06-15 12:34:56`, zero dates, impossible calendar dates) and the
+// decoded epoch-ms must match the UTC interpretation of those components in
+// every process timezone.
+import { COLUMNS } from "./sql-mysql-datetime-text-mock-fixture.ts";
+
+describe.each(TIMEZONES)("text protocol via mock server, TZ=%s", TZ => {
+  test("DATE/DATETIME text decodes as UTC", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "sql-mysql-datetime-text-mock-fixture.ts")],
+      env: { ...bunEnv, TZ },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    // Surface mock-server / client errors, not just a JSON parse failure.
+    // (ASAN emits a harmless interposition warning.)
+    const diagnostics = stderr
+      .split(/\r?\n/)
+      .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+      .join("\n");
+    expect(diagnostics).toBe("");
+
+    const out = JSON.parse(stdout) as { tz: string; offsetMin: number; values: Record<string, string> };
+    expect(out.values).toEqual(Object.fromEntries(COLUMNS.map(col => [col.name, String(col.expected)])));
+    // The child must actually have adopted the injected timezone — otherwise
+    // the non-UTC runs degenerate into the UTC case and prove nothing.
+    if (TZ === "Etc/UTC") {
+      expect(out.offsetMin).toBe(0);
+    } else {
+      expect(out.offsetMin).not.toBe(0);
+    }
+    expect(exitCode).toBe(0);
+  });
+});
+
 if (isDockerEnabled()) {
   // CI: run against the docker-compose MySQL service.
   describeWithContainer("mysql", { image: "mysql_plain" }, container => {

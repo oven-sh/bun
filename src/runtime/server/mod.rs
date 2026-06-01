@@ -1489,7 +1489,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.config
             .websocket
             .as_ref()
-            .map_or(0, |ws| ws.handler.active_connections as u32)
+            .map_or(0, |ws| ws.handler.active_connections.get() as u32)
     }
 
     pub fn has_active_web_sockets(&self) -> bool {

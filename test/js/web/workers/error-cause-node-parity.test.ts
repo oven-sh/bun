@@ -3,8 +3,8 @@
 // `cause` identically in both runtimes. Byte-exact serialization is NOT a goal
 // (Bun uses WebKit's SerializedScriptValue format, Node uses V8's serializer);
 // what must match is the observable result of cloning/round-tripping.
-import { test } from "node:test";
 import assert from "node:assert/strict";
+import { test } from "node:test";
 import v8 from "node:v8";
 
 test("structuredClone preserves a string cause", () => {

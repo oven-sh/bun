@@ -2542,56 +2542,31 @@ describe("bundler", () => {
     },
   });
   // The import cycle detector switches from a linear scan to a hash set once a
-  // re-export chain grows past 8 trackers. These tests use chains deep enough
+  // re-export chain grows past 32 trackers. These tests use chains deep enough
   // to take the hash-set path (the shallow path is covered by
   // default/ExportInfiniteCycle1 in esbuild/default.test.ts).
   itBundled("edgecase/DeepExportInfiniteCycle", {
     files: {
-      "/entry.js": /* js */ `
-        export {a as b} from './entry'
-        export {b as c} from './entry'
-        export {c as d} from './entry'
-        export {d as e} from './entry'
-        export {e as f} from './entry'
-        export {f as g} from './entry'
-        export {g as h} from './entry'
-        export {h as i} from './entry'
-        export {i as j} from './entry'
-        export {j as k} from './entry'
-        export {k as a} from './entry'
-      `,
+      "/entry.js": Array.from({ length: 40 }, (_, i) => `export {v${i} as v${(i + 1) % 40}} from './entry'`).join(
+        "\n",
+      ),
     },
     bundleErrors: {
-      "/entry.js": [
-        `Detected cycle while resolving import "a"`,
-        `Detected cycle while resolving import "b"`,
-        `Detected cycle while resolving import "c"`,
-        `Detected cycle while resolving import "d"`,
-        `Detected cycle while resolving import "e"`,
-        `Detected cycle while resolving import "f"`,
-        `Detected cycle while resolving import "g"`,
-        `Detected cycle while resolving import "h"`,
-        `Detected cycle while resolving import "i"`,
-        `Detected cycle while resolving import "j"`,
-        `Detected cycle while resolving import "k"`,
-      ],
+      "/entry.js": Array.from({ length: 40 }, (_, i) => `Detected cycle while resolving import "v${i}"`),
     },
   });
   itBundled("edgecase/DeepReExportChainNoCycle", {
     files: {
       "/entry.js": /* js */ `
-        import { x } from './a.js';
+        import { x } from './f0.js';
         console.log(x);
       `,
-      "/a.js": `export { x } from './b.js';`,
-      "/b.js": `export { x } from './c.js';`,
-      "/c.js": `export { x } from './d.js';`,
-      "/d.js": `export { x } from './e.js';`,
-      "/e.js": `export { x } from './f.js';`,
-      "/f.js": `export { x } from './g.js';`,
-      "/g.js": `export { x } from './h.js';`,
-      "/h.js": `export { x } from './i.js';`,
-      "/i.js": `export const x = 42;`,
+      ...Object.fromEntries(
+        Array.from({ length: 40 }, (_, i) => [
+          `/f${i}.js`,
+          i === 39 ? `export const x = 42;` : `export { x } from './f${i + 1}.js';`,
+        ]),
+      ),
     },
     run: {
       stdout: "42",

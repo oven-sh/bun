@@ -3494,7 +3494,10 @@ impl<'a> LinkerContext<'a> {
         // linear scan is the fastest way to check for cycles. Deep re-export
         // chains would make repeated scans quadratic, so once the chain
         // reaches this size the scan is replaced with a hash-set lookup.
-        const CYCLE_SCAN_THRESHOLD: usize = 8;
+        // Below it, scanning an array of small Copy structs is cheaper than
+        // hashing, so the threshold only needs to be small enough to keep the
+        // quadratic term negligible.
+        const CYCLE_SCAN_THRESHOLD: usize = 32;
         let mut cycle_set: HashMap<ImportTracker, ()> = HashMap::new();
 
         'loop_: loop {

@@ -35,53 +35,53 @@ import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 // parent-directory auto-watch in `append_file_maybe_lock`), so writing sibling
 // files in it fires the `.directory` branch of `on_file_update` →
 // `bust_dir_cache` — no extra hook needed to reach the crash site.
-test.skipIf(!isASAN)("--hot exits cleanly while watcher is dispatching bust_dir_cache", async () => {
-  using dir = tempDir("hot-exit-race", {
-    "script.ts":
-      `import { writeFileSync } from "node:fs";\n` +
-      `console.log("READY");\n` +
-      // Keep directory events flowing at the watcher throughout, so when the
-      // exit fires the watcher is almost certainly sleeping inside
-      // bust_dir_cache's delay hook. Writes land in the entrypoint's own
-      // (watched) directory.
-      `setInterval(() => { try { writeFileSync("./x" + ((Math.random() * 16) | 0), "x"); } catch {} }, 1);\n` +
-      `setTimeout(() => process.exit(0), 300);\n` +
-      `setInterval(() => {}, 10_000);\n`,
-  });
+test.skipIf(!isASAN)(
+  "--hot exits cleanly while watcher is dispatching bust_dir_cache",
+  async () => {
+    using dir = tempDir("hot-exit-race", {
+      "script.ts":
+        `import { writeFileSync } from "node:fs";\n` +
+        `console.log("READY");\n` +
+        // Keep directory events flowing at the watcher throughout, so when the
+        // exit fires the watcher is almost certainly sleeping inside
+        // bust_dir_cache's delay hook. Writes land in the entrypoint's own
+        // (watched) directory.
+        `setInterval(() => { try { writeFileSync("./x" + ((Math.random() * 16) | 0), "x"); } catch {} }, 1);\n` +
+        `setTimeout(() => process.exit(0), 300);\n` +
+        `setInterval(() => {}, 10_000);\n`,
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "--hot", "run", "script.ts"],
-    cwd: String(dir),
-    env: {
-      ...bunEnv,
-      BUN_DESTRUCT_VM_ON_EXIT: "1",
-      BUN_INTERNAL_WATCHER_BUSTDIRCACHE_DELAY_MS: "50",
-      BUN_INTERNAL_GLOBALEXIT_FAST_PATH_TO_TRANSPILER_DEINIT: "1",
-      BUN_INTERNAL_GLOBALEXIT_LINGER_MS: "200",
-    },
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--hot", "run", "script.ts"],
+      cwd: String(dir),
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        BUN_INTERNAL_WATCHER_BUSTDIRCACHE_DELAY_MS: "50",
+        BUN_INTERNAL_GLOBALEXIT_FAST_PATH_TO_TRANSPILER_DEINIT: "1",
+        BUN_INTERNAL_GLOBALEXIT_LINGER_MS: "200",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  // The script prints READY, churns the watched directory for ~300ms, then
-  // exits. Collect everything and wait for exit — without the fix the File
-  // Watcher thread aborts (SIGABRT) mid-bust_dir_cache, so `exited` resolves
-  // with the signal and stderr carries the AddressSanitizer report.
-  const [stdout, stderr, exitCode] = await Promise.all([
-    proc.stdout.text(),
-    proc.stderr.text(),
-    proc.exited,
-  ]);
+    // The script prints READY, churns the watched directory for ~300ms, then
+    // exits. Collect everything and wait for exit — without the fix the File
+    // Watcher thread aborts (SIGABRT) mid-bust_dir_cache, so `exited` resolves
+    // with the signal and stderr carries the AddressSanitizer report.
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  if (exitCode !== 0 || proc.signalCode !== null) {
-    console.error(`exitCode=${exitCode}, signal=${proc.signalCode}, stderr:\n${stderr}`);
-  }
-  expect(stdout).toContain("READY");
-  expect(stderr).not.toContain("AddressSanitizer");
-  expect(stderr).not.toContain("use-after-poison");
-  expect(proc.signalCode).not.toBe("SIGABRT");
-  expect(exitCode).toBe(0);
-}, 20_000);
+    if (exitCode !== 0 || proc.signalCode !== null) {
+      console.error(`exitCode=${exitCode}, signal=${proc.signalCode}, stderr:\n${stderr}`);
+    }
+    expect(stdout).toContain("READY");
+    expect(stderr).not.toContain("AddressSanitizer");
+    expect(stderr).not.toContain("use-after-poison");
+    expect(proc.signalCode).not.toBe("SIGABRT");
+    expect(exitCode).toBe(0);
+  },
+  20_000,
+);
 // ^ explicit timeout: when the fix is absent the child reports the
 // use-after-free on the File Watcher thread but the crashed thread keeps the
 // stderr pipe's write end open, so the parent's `stderr` read only EOFs once

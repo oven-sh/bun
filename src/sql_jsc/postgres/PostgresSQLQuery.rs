@@ -774,6 +774,11 @@ impl PostgresSQLQuery {
                     if let Err(err) = writer.write(&protocol::SYNC) {
                         remove_statements_entry();
                         drop(signature);
+                        // PORT NOTE: the Zig original omitted this on the Sync
+                        // failure path (alone among the write-error branches),
+                        // leaking the speculative ref. Release it like the
+                        // `write_query` branch above does.
+                        release_query_ref();
                         return Err(throw_write_error(b"failed to flush", err));
                     }
                     connection.update_flags(|f| {

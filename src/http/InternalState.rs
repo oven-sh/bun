@@ -141,7 +141,8 @@ impl Default for InternalState<'_> {
 /// `Err(())` — with `out` truncated back to its entry length — when a member
 /// fails to decode (bad data / oversized output); the caller then runs the
 /// zlib slow path, which surfaces the proper error. The caller should reserve
-/// the first member's estimated size up front; the loop grows as needed.
+/// a hint up front (e.g. the last member's ISIZE trailer — the only cheaply
+/// readable estimate); the loop grows as each member needs.
 fn decompress_gzip_members(
     decompressor: &mut bun_libdeflate_sys::libdeflate::Decompressor,
     input: &[u8],

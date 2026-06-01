@@ -1,0 +1,116 @@
+name: Droid Tag
+
+# On-demand Droid commands for the fork: `@droid review`, `@droid security`,
+# `@droid fill`. Distinct from the always-on multi-model swarm
+# (bun-ai-review-gh-hosted.yml) — this is the single-shot, human-triggered path.
+#
+# Security review lives here only (not on every PR) to keep per-PR noise down:
+# run it deliberately with `@droid security` when a change warrants it.
+
+on:
+  issue_comment:
+    types: [created]
+  pull_request_review_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+
+jobs:
+  droid:
+    if: |
+      (github.event_name == 'issue_comment' && contains(github.event.comment.body, '@droid')) ||
+      (github.event_name == 'pull_request_review_comment' && contains(github.event.comment.body, '@droid')) ||
+      (github.event_name == 'pull_request_review' && contains(github.event.review.body, '@droid'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+      id-token: write
+      actions: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Build BYOK model config
+        shell: bash
+        env:
+          GLM: ${{ secrets.GLM }}
+          FIREPASS: ${{ secrets.FIREPASS }}
+          MINIMAX: ${{ secrets.MINIMAX }}
+        run: |
+          set -euo pipefail
+
+          test -n "${GLM:-}" || { echo "::error::Missing GLM secret"; exit 1; }
+          test -n "${FIREPASS:-}" || { echo "::error::Missing FIREPASS secret"; exit 1; }
+          test -n "${MINIMAX:-}" || { echo "::error::Missing MINIMAX secret"; exit 1; }
+
+          # apiKey values stay as ${ENV} refs; the droid CLI expands them at read
+          # time so secrets never land on disk.
+          mkdir -p .factory
+          cat > .factory/byok-settings.json <<'JSON'
+          {
+            "customModels": [
+              {
+                "displayName": "GLM-5.1-ZAI-Coding",
+                "model": "glm-5.1",
+                "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+                "apiKey": "${GLM}",
+                "provider": "generic-chat-completion-api",
+                "maxOutputTokens": 131072
+              },
+              {
+                "displayName": "GLM-4.7-ZAI-Coding",
+                "model": "glm-4.7",
+                "baseUrl": "https://api.z.ai/api/coding/paas/v4",
+                "apiKey": "${GLM}",
+                "provider": "generic-chat-completion-api",
+                "maxOutputTokens": 131072
+              },
+              {
+                "displayName": "Kimi-K2.6-Turbo-FirePass",
+                "model": "accounts/fireworks/routers/kimi-k2p6-turbo",
+                "baseUrl": "https://api.fireworks.ai/inference",
+                "apiKey": "${FIREPASS}",
+                "provider": "anthropic",
+                "maxOutputTokens": 64000
+              },
+              {
+                "displayName": "MiniMax-M3",
+                "model": "MiniMax-M3",
+                "baseUrl": "https://api.minimax.io/anthropic",
+                "apiKey": "${MINIMAX}",
+                "provider": "anthropic",
+                "maxOutputTokens": 64000
+              }
+            ]
+          }
+          JSON
+
+          mkdir -p "$HOME/.factory"
+          cp .factory/byok-settings.json "$HOME/.factory/settings.json"
+
+      - name: Run Droid
+        uses: Factory-AI/droid-action@main
+        env:
+          GLM: ${{ secrets.GLM }}
+          FIREPASS: ${{ secrets.FIREPASS }}
+          MINIMAX: ${{ secrets.MINIMAX }}
+          ANTHROPIC_API_KEY: ""
+          ANTHROPIC_AUTH_TOKEN: ""
+          ANTHROPIC_BASE_URL: ""
+          OPENAI_API_KEY: ""
+          OPENAI_BASE_URL: ""
+        with:
+          factory_api_key: ${{ secrets.DROID }}
+          settings: .factory/byok-settings.json
+          trigger_phrase: "@droid"
+          review_model: custom:GLM-5.1-ZAI-Coding-0
+          security_model: custom:GLM-5.1-ZAI-Coding-0
+          include_suggestions: true

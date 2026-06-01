@@ -87,28 +87,24 @@ function endNT(socket, callback, err) {
 function emitCloseNT(self, hasError) {
   self.emit("close", hasError);
 }
-// The native layer reported the connection closed (peer FIN/RST or error).
-// The socket is built with `autoDestroy: true`, but autoDestroy only runs
-// `_destroy` (which emits `'close'`) once *both* halves of the Duplex finish.
-// That never happens when the fd is gone but a half is stuck: a paused/unpiped
-// readable never consumes the queued EOF, and a writable holding backpressure
-// can never flush it to the dead peer. The socket then lingers as a zombie
-// (`_handle` null, `destroyed` false) — `'close'` never fires, `server._connections`
-// never decrements so `server.close()` hangs, and a peer that keeps the fd
-// hot spins the loop.
+// The native layer reported the connection closed. The socket is built with
+// `autoDestroy: true`, but autoDestroy only runs `_destroy` (which emits
+// `'close'`) once *both* halves of the Duplex finish. That never happens when
+// the fd is gone but a half is stuck: a paused/unpiped readable never consumes
+// the queued EOF, and a writable holding backpressure can never flush it to the
+// dead peer. The socket then lingers as a zombie (`destroyed` false) — `'close'`
+// never fires, `server._connections` never decrements so `server.close()`
+// hangs, and a peer that keeps the fd hot spins the loop.
 //
-// Force the teardown. On an error (e.g. a peer RST) destroy synchronously with
-// the error so it surfaces as `'error'` + `'close'(hadError=true)` — matching
-// Node, which skips `'end'` on a reset — instead of the error being swallowed.
-// With no error, defer via `nextTick` so a cleanly-ending socket emits its
-// pending `'end'` first (and has usually auto-destroyed by then, making this a
-// no-op); the deferred destroy is what rescues a paused/unpiped readable whose
-// EOF would otherwise never be consumed.
-function destroyAfterClose(self, err) {
-  if (self.destroyed) return;
-  if (err) {
-    self.destroy(err);
-  } else {
+// Force the teardown with `destroy()`, deferred to a `nextTick` so a
+// cleanly-ending socket still emits its pending `'end'` first (and has usually
+// auto-destroyed by then, making this a no-op). Deliberately pass no error: the
+// native `error` handler already surfaces real read errors, and the passive
+// peer close that lands here is benign (a post-response RST, a keep-alive idle
+// close). Forcing an `'error'` from it would turn every such close fatal and
+// break HTTP/fetch/WebSocket/h2 callers that tolerate it.
+function destroyAfterClose(self) {
+  if (!self.destroyed) {
     process.nextTick(destroyNT, self);
   }
 }
@@ -176,7 +172,7 @@ const SocketHandlers: SocketHandler = {
     detachSocket(self);
     SocketEmitEndNT(self, err);
     self.data = null;
-    destroyAfterClose(self, err);
+    destroyAfterClose(self);
   },
   data(socket, buffer) {
     const { data: self } = socket;
@@ -349,7 +345,7 @@ const ServerHandlers: SocketHandler<NetSocket> = {
         SocketEmitEndNT(data, err);
         data.data = null;
         socket[owner_symbol] = null;
-        destroyAfterClose(data, err);
+        destroyAfterClose(data);
       }
     }
   },
@@ -575,7 +571,7 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
     if (!self.allowHalfOpen) self.write = writeAfterFIN;
     self.push(null);
     self.read(0);
-    destroyAfterClose(self, err);
+    destroyAfterClose(self);
   },
   handshake(socket, success, verifyError) {
     $debug("Bun.Socket handshake");
@@ -1178,9 +1174,7 @@ Socket.prototype._destroy = function _destroy(err, callback) {
     callback(err);
   } else {
     callback(err);
-    // `'close'` reports `hadError` — true when we're tearing down because of a
-    // transmission error (e.g. a peer RST surfaced on a backpressured socket).
-    process.nextTick(emitCloseNT, this, !!err);
+    process.nextTick(emitCloseNT, this, false);
   }
 
   if (this.server) {

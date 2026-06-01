@@ -12758,6 +12758,55 @@ test("rejects Postgres connection options containing null bytes", async () => {
   await ok.close();
 });
 
+// Native createInstance argument validation (src/sql_jsc/shared/
+// connection_args.rs / query_args.rs) — the username/password/database and
+// tls checks the JS layer delegates to the driver. Every error here is thrown
+// by the native parser before any socket is created, so no server needs to be
+// listening: the address below is never dialed.
+describe("shared createInstance validation (no server)", () => {
+  const base = { adapter: "postgres", hostname: "127.0.0.1", port: 1, max: 1 } as const;
+
+  // Credentials are written into the NUL-delimited Postgres StartupMessage as
+  // `key\0value\0`; a NUL byte inside one would inject extra parameters, so
+  // the native parser must refuse it before connecting.
+  test.concurrent.each(["username", "password", "database"] as const)(
+    "rejects %s containing null bytes",
+    async field => {
+      await using sql = new SQL({ ...base, username: "u", [field]: "a\0b" });
+      // `Query` is a lazy thenable, so collect the rejection explicitly.
+      const err: any = await sql`select 1`.then(
+        () => null,
+        e => e,
+      );
+      expect(err?.message).toBe(`${field} must not contain null bytes`);
+    },
+  );
+
+  test.concurrent("rejects tls that is neither a boolean nor an object", async () => {
+    // A truthy non-boolean/non-object upgrades sslMode to `require` in JS and
+    // reaches the native parser as-is.
+    await using sql = new SQL({ ...base, username: "u", tls: 1 as any });
+    const err: any = await sql`select 1`.then(
+      () => null,
+      e => e,
+    );
+    expect(err?.message).toBe("tls must be a boolean or an object");
+  });
+
+  test.concurrent("rejects simple queries with parameters", async () => {
+    await using sql = new SQL({ ...base, username: "u" });
+    // Query-handle creation fails before the pool ever connects.
+    const err: any = await sql
+      .unsafe("select $1", [1])
+      .simple()
+      .then(
+        () => null,
+        e => e,
+      );
+    expect(err?.message).toBe("simple query cannot have parameters");
+  });
+});
+
 // A Postgres server controls two independent column counts: the
 // RowDescription's field list (which sizes the per-row cell buffer and the
 // cached row Structure) and each DataRow's own column count. When a DataRow

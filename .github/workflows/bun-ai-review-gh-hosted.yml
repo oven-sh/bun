@@ -176,27 +176,30 @@ jobs:
               normal CI — plus your best failed objection and residual risk.
 
           - id: security
-            # Security review (STRIDE) instead of code review — runs ONLY when the
-            # PR touches crypto (gated by the "Detect crypto changes" step below).
+            # STRIDE/OWASP security review instead of code review (runs on every
+            # reviewed PR — the work here is overwhelmingly UB/native, which is a
+            # security surface).
             tag: "security · MiniMax-M3"
             model: custom:MiniMax-M3-3
             security: true
             focus: |
-              # Your specialty: security review of crypto-touching changes
+              # Your specialty: security review (STRIDE / OWASP) of this change
 
-              You go deeper than a generalist on the ways a crypto change can be
-              unsafe. Beyond STRIDE/OWASP, prioritise for this codebase:
-              - key/secret/IV/nonce material: lifetime, zeroing, accidental logging,
-                copying into JS-visible buffers
-              - RNG quality and misuse; predictable/reused nonces
-              - non-constant-time comparison of secrets / MACs / tags
-              - the UB/native-boundary angle for crypto inputs: a captured
-                pointer/length used after the backing ArrayBuffer resizes/detaches,
-                or a snapshot that takes the whole backing store vs the active view
-              - parameter validation (key sizes, tag lengths, salt/iteration bounds)
-                and error paths that leak partial state
+              Most changes here are native/UB work, so weight the memory-safety
+              security angle heavily alongside classic STRIDE:
+              - memory corruption reachable from untrusted JS input — treat the UB
+                as an exploit primitive: OOB read/write, use-after-free, type
+                confusion at the native boundary, integer overflow on sizes/offsets
+              - input validation gaps on lengths, offsets, counts, encodings
+              - information disclosure: uninitialized memory, over-read returning
+                adjacent bytes, secrets/keys/IVs leaking into JS-visible buffers or logs
+              - tampering / state confusion across async or worker boundaries
+              - denial of service: unbounded allocation or recursion, quadratic
+                paths on attacker-controlled input
+              - crypto specifics when present: RNG misuse, non-constant-time
+                comparison of secrets/MACs, key/nonce lifetime and zeroing
 
-              For each, state the concrete exploit/leak path and the smallest fix.
+              For each, give the concrete exploit/leak path and the smallest fix.
 
     steps:
       - name: Checkout PR head
@@ -295,36 +298,11 @@ jobs:
             echo "Begin EVERY review comment you post (inline and summary) with the literal prefix \`[${LANE_TAG}]\` so the reader can tell which lane and model produced it. Your focus above is your specialty — the thing you must not miss; go deeper on it than a generalist would. If you also notice a serious defect outside that focus, still report it — never stay silent about a real problem."
           } > .factory/lane-prompt.md
 
-      - name: Detect crypto changes (security lane gate)
-        id: detect
-        if: matrix.lane.security == true
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-        run: |
-          set -euo pipefail
-          # The security lane runs only when the PR touches crypto. No PR number
-          # (workflow_dispatch) => run it. Heuristic: changed paths matching
-          # crypto-ish names (src/runtime/crypto, node:crypto, webcrypto, crypto
-          # tests, BoringSSL bindings, ciphers).
-          if [ -z "${PR_NUMBER:-}" ]; then
-            echo "crypto=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-          files="$(gh pr diff "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --name-only 2>/dev/null || true)"
-          if printf '%s\n' "$files" | grep -iqE 'crypto|boringssl|webcrypto|cipher'; then
-            echo "crypto=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "crypto=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: Run review lane
         # Our hardened fork of Factory-AI/droid-action (consolidated dev): validator
         # token fix, settings/artifact hardening, model-attribution completion line.
         # Code lanes run automatic_review; the security lane runs
-        # automatic_security_review and only when crypto changed (see if: below).
-        if: matrix.lane.security != true || steps.detect.outputs.crypto == 'true'
+        # automatic_security_review. All lanes run on every reviewed PR.
         uses: EffortlessSteven/droid-action@36ef632f86ef849de0be62477bc811627d2f7a9c
         env:
           GLM: ${{ secrets.GLM }}

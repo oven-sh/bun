@@ -452,6 +452,8 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
         stderr: sync::SyncStdio::Inherit,
         stdout: sync::SyncStdio::Inherit,
         stdin: sync::SyncStdio::Inherit,
+        #[cfg(unix)]
+        forward_signals: false,
         #[cfg(windows)]
         windows: crate::api::bun::process::WindowsOptions {
             loop_: bun_jsc::EventLoopHandle::init_mini(bun_event_loop::MiniEventLoop::init_global(

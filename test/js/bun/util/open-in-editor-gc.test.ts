@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, tempDir } from "harness";
-import { existsSync, symlinkSync } from "node:fs";
+import { chmodSync, existsSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
 // On Linux, JSC uses SIGPWR to suspend/resume threads for GC and the libpas
@@ -52,4 +52,76 @@ test.skipIf(!isLinux)("Bun.openInEditor does not break GC signal handling", asyn
   });
 
   await Promise.all(runs);
+});
+
+test.skipIf(!isLinux)("Bun.openInEditor does not steal process signal handlers", async () => {
+  const sleep = ["/usr/bin/sleep", "/bin/sleep"].find(p => existsSync(p));
+  expect(sleep).toBeDefined();
+
+  using dir = tempDir("open-in-editor-signal", {});
+  const editor = join(String(dir), "fake-editor");
+  const ready = join(String(dir), "ready");
+  const shellQuote = (path: string) => `'${path.replaceAll("'", "'\\''")}'`;
+  const sleepPath = sleep!;
+  await Bun.write(
+    editor,
+    `#!/bin/sh
+${shellQuote(sleepPath)} 0.1
+printf ready > ${shellQuote(ready)}
+exec ${shellQuote(sleepPath)} 0.3
+`,
+  );
+  chmodSync(editor, 0o755);
+
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const editor = process.argv[2];
+        const ready = process.argv[3];
+        let got = false;
+
+        process.on("SIGUSR2", () => {
+          got = true;
+        });
+
+        Bun.openInEditor("0.3", { editor });
+
+        for (let i = 0; i < 100 && !(await Bun.file(ready).exists()); i++) {
+          await Bun.sleep(10);
+        }
+
+        if (!(await Bun.file(ready).exists())) {
+          console.error("editor did not start");
+          process.exit(1);
+        }
+
+        process.kill(process.pid, "SIGUSR2");
+
+        for (let i = 0; i < 100 && !got; i++) {
+          await Bun.sleep(10);
+        }
+
+        if (!got) {
+          console.error("SIGUSR2 handler was not called");
+          process.exit(1);
+        }
+
+        console.log("ok");
+      `,
+      editor,
+      ready,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ok");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
 });

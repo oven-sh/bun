@@ -377,7 +377,7 @@ pub struct DevServer {
     /// The Plugin API is missing a way to attach filesystem watchers (addWatchFile)
     /// This special case makes `bun-plugin-tailwind` work, which is a requirement
     /// to ship initial incremental bundling support for HTML files.
-    pub has_tailwind_plugin_hack: Option<ArrayHashMap<Box<[u8]>, ()>>,
+    pub has_tailwind_plugin_hack: Option<bun_collections::StringArrayHashMap<()>>,
 
     // These values are handles to the functions in `hmr-runtime-server.ts`.
     // For type definitions, see `./bake.private.d.ts`
@@ -4171,11 +4171,9 @@ pub(super) fn finalize_bundle(
 
         if let Some(map) = &mut dev.has_tailwind_plugin_hack {
             if looks_like_tailwind {
-                // PORT NOTE: `get_or_put` consumes the key by value; on miss the key
-                // already lives in the map so the explicit `*key_ptr =` is redundant.
-                let _ = map.get_or_put(Box::from(key))?;
+                let _ = map.get_or_put(key)?;
             } else {
-                let _ = map.swap_remove(&Box::<[u8]>::from(key));
+                let _ = map.swap_remove(key);
             }
         }
 

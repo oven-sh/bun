@@ -36,8 +36,11 @@ synthesized-JSON stage anymore — the action posts its own findings directly.
 | tests | GLM-5.1 | do the tests actually PROVE the fix (fail on old, pass on new) |
 
 Lane focuses are defined inline in the workflow's `matrix.lane` block (one source
-of truth). Each lane is **single-angle** — its prompt forbids reviewing outside
-its focus — and every comment it posts is prefixed `[<id> · <model>]` for
-attribution (until droid-action PR #9 posts lane+model natively).
+of truth). Each lane is focused by **positive priming** — "this is your
+specialty, go deeper here than a generalist" — so the angles are reliably
+covered, but a lane that spots a serious defect outside its specialty still
+reports it (we never tell a reviewer to suppress a real finding). Every comment
+is prefixed `[<id> · <model>]` for attribution (until droid-action PR #9 posts
+lane+model natively).
 
 [droid-action]: https://github.com/Factory-AI/droid-action

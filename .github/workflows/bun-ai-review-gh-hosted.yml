@@ -46,10 +46,11 @@ jobs:
             tag: "ub · GLM-5.1"
             model: custom:GLM-5.1-ZAI-Coding-0
             focus: |
-              # Your one job: memory-safety / undefined behaviour at the native boundary
+              # Your specialty: memory-safety / undefined behaviour at the native boundary
 
-              You review NOTHING else. Find the highest-severity way safe JS can
-              corrupt memory or trigger UB in native code, and lead with it.
+              This is where you go deeper than a generalist. Lead with the
+              highest-severity way safe JS can corrupt memory or trigger UB in
+              native code.
 
               Hunt, in priority order:
               - a pointer/length captured before an async hop, then used after the
@@ -68,10 +69,11 @@ jobs:
             tag: "source-route · GLM-5.1"
             model: custom:GLM-5.1-ZAI-Coding-0
             focus: |
-              # Your one job: did the fix cover EVERY affected path, and are the claims true?
+              # Your specialty: did the fix cover EVERY affected path, and are the claims true?
 
-              The dominant risk in this class of fix is "patched one caller, missed
-              the siblings." Be exhaustive about call sites.
+              You go deeper than a generalist on call-site coverage. The dominant
+              risk in this class of fix is "patched one caller, missed the
+              siblings." Be exhaustive about call sites.
 
               Do exactly this:
               - identify the helper/behaviour the patch changed
@@ -87,10 +89,10 @@ jobs:
             tag: "opposition · Kimi-K2.6"
             model: custom:Kimi-K2.6-Turbo-FirePass-2
             focus: |
-              # Your one job: argue this PR is wrong, as hard as you honestly can
+              # Your specialty: argue this PR is wrong, as hard as you honestly can
 
-              Assume it has a defect and go find it. One sharp objection beats five
-              weak ones.
+              Assume it has a defect and go find it — you press harder on this than
+              a generalist would. One sharp objection beats five weak ones.
 
               Aim at:
               - the single strongest correctness objection
@@ -104,9 +106,9 @@ jobs:
             tag: "arch · MiniMax-M3"
             model: custom:MiniMax-M3-3
             focus: |
-              # Your one job: is this the right fix, at the right layer, and no bigger than needed?
+              # Your specialty: is this the right fix, at the right layer, and no bigger than needed?
 
-              Judge shape, not bugs:
+              You go deeper than a generalist on the shape of the change:
               - is the fix at the correct boundary, or should it live one layer up/down?
               - helper shape, duplication, a pattern that will rot on the next caller
               - scope creep: unrelated cleanup / speculative refactor / second concern
@@ -116,10 +118,11 @@ jobs:
             tag: "tests · GLM-5.1"
             model: custom:GLM-5.1-ZAI-Coding-0
             focus: |
-              # Your one job: do the tests actually PROVE the fix?
+              # Your specialty: do the tests actually PROVE the fix?
 
-              The highest-value catch here is a test that passes on BOTH old and new
-              code — it proves nothing.
+              You go deeper than a generalist on test rigour. The highest-value
+              catch here is a test that passes on BOTH old and new code — it proves
+              nothing.
 
               For each added/changed test:
               - would it FAIL on unpatched main and PASS on the patch? If not, say so loudly.
@@ -223,7 +226,7 @@ jobs:
             printf '%s\n' "$LANE_FOCUS"
             echo
             echo "## Attribution (required)"
-            echo "Begin EVERY review comment you post (inline and summary) with the literal prefix \`[${LANE_TAG}]\` so the reader can tell which lane and model produced it. Do not review outside this lane's focus; if you find an issue in another lane's territory, skip it."
+            echo "Begin EVERY review comment you post (inline and summary) with the literal prefix \`[${LANE_TAG}]\` so the reader can tell which lane and model produced it. Your focus above is your specialty — the thing you must not miss; go deeper on it than a generalist would. If you also notice a serious defect outside that focus, still report it — never stay silent about a real problem."
           } > .factory/lane-prompt.md
 
       - name: Run review lane

@@ -2547,9 +2547,7 @@ describe("bundler", () => {
   // default/ExportInfiniteCycle1 in esbuild/default.test.ts).
   itBundled("edgecase/DeepExportInfiniteCycle", {
     files: {
-      "/entry.js": Array.from({ length: 40 }, (_, i) => `export {v${i} as v${(i + 1) % 40}} from './entry'`).join(
-        "\n",
-      ),
+      "/entry.js": Array.from({ length: 40 }, (_, i) => `export {v${i} as v${(i + 1) % 40}} from './entry'`).join("\n"),
     },
     bundleErrors: {
       "/entry.js": Array.from({ length: 40 }, (_, i) => `Detected cycle while resolving import "v${i}"`),

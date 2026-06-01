@@ -1180,22 +1180,20 @@ impl TranspilerJob {
         }
 
         let source_code = 'brk: {
-            let written = source_code_printer.ctx.get_written();
-
             // The `Jsc` vtable bridge `put()` does not write
             // `cache.output_code` (only the `r#impl == None` fallback does,
             // and `r#impl` is `Some(Jsc)` here), so it is always `None`.
             debug_assert!(cache.output_code.is_none());
-            let result = String::clone_latin1(written);
 
-            // SAFETY: leaf scalar field read on `*vm`; see `vm` PORT NOTE above.
-            if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {
-                // printer.ctx.buffer.deinit() → Drop
-                let writer = BufferWriter::init();
-                *source_code_printer = BufferPrinter::init(writer);
-                source_code_printer.ctx.append_null_byte = false;
-            }
-            // else: writeback guard already restored `printer` into the thread-local.
+            // Move the pooled printer buffer into a WTF::ExternalStringImpl
+            // instead of copying it. `get_written()` spans the whole backing
+            // `Vec`, so taking `buffer.list` hands JSC the exact bytes with a
+            // global-allocator finalizer (zero copy; ASCII output is valid
+            // Latin-1). The thread-local printer is left with a fresh empty
+            // buffer — the same end state the old >2MB/smol reset produced,
+            // applied unconditionally so it never retains a large buffer.
+            let written = core::mem::take(&mut source_code_printer.ctx.buffer.list);
+            let result = String::create_external_globally_allocated_latin1(written);
 
             // In a benchmarking loading @babel/standalone 100 times:
             //

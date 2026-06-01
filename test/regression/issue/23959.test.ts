@@ -29,7 +29,7 @@ test("bun build respects NODE_ENV=production for automatic JSX runtime (#23959)"
   expect(stdout).not.toContain("jsxDEV");
 
   // Surface stderr on failure, then assert the exit code last.
-  if (result.exitCode !== 0) console.error(stderr);
+  if (result.exitCode !== 0) expect(stderr).toBe("");
   expect(result.exitCode).toBe(0);
 });
 
@@ -54,8 +54,8 @@ test("bun build keeps the development JSX runtime by default (#23959)", () => {
   const stderr = result.stderr.toString();
 
   expect(stdout).toContain("react/jsx-dev-runtime");
-  expect(stdout).not.toContain('"react/jsx-runtime"');
+  expect(stdout).not.toContain("react/jsx-runtime");
 
-  if (result.exitCode !== 0) console.error(stderr);
+  if (result.exitCode !== 0) expect(stderr).toBe("");
   expect(result.exitCode).toBe(0);
 });

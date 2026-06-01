@@ -3,6 +3,7 @@ use core::mem::{ManuallyDrop, MaybeUninit};
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, StrongOptional};
 use crate::shared::sql_data_cell::Flags as DataCellFlags;
 use bun_collections::StringHashMap;
+use bun_core::UnwrapOrOom;
 use bun_sql::shared::ColumnIdentifier;
 
 /// Shared body of `{Postgres,MySQL}SQLStatement::check_for_duplicate_fields()`.
@@ -31,7 +32,7 @@ where
                 // before mutating `*name_or_index`.
                 let found_existing = seen_fields
                     .get_or_put(name.slice())
-                    .expect("OOM")
+                    .unwrap_or_oom()
                     .found_existing;
                 if found_existing {
                     *name_or_index = ColumnIdentifier::Duplicate;

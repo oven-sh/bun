@@ -94,10 +94,10 @@ pub(crate) fn verify_tls_server(
     if servername.is_null() {
         return false;
     }
-    // SAFETY: the native handle of a connected TLS socket is `SSL*`, live for the
-    // duration of the handshake callback.
     let ssl_ptr: *mut bun_boringssl_sys::SSL =
         native_handle.map_or(core::ptr::null_mut(), |p| p.cast());
+    // SAFETY: the native handle of a connected TLS socket is `SSL*`, live for the
+    // duration of the handshake callback.
     let Some(ssl) = (unsafe { ssl_ptr.as_mut() }) else {
         return false;
     };

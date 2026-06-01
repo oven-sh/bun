@@ -1339,12 +1339,6 @@ impl core::fmt::Display for StringGithubActionFormatter<'_> {
     }
 }
 
-/// [`String::as_`] — encoding-dispatched borrow.
-pub enum ByteString<'a> {
-    Latin1(&'a [u8]),
-    Utf16(&'a [u16]),
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // View-level helpers — formerly free methods on the `ZigString` newtype.
 // All operate through `String`; the underlying StringView payload is private.

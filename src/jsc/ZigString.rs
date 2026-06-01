@@ -7,7 +7,6 @@ use core::ffi::c_void;
 use crate::{JSGlobalObject, JSValue};
 use bun_core::String as BunString;
 
-pub use bun_core::ByteString;
 pub use bun_core::StringGithubActionFormatter as GithubActionFormatter;
 /// `ZigString.Slice` re-export for `crate::zig_string::Slice` callers.
 pub use bun_core::ZigStringSlice as Slice;

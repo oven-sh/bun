@@ -571,72 +571,26 @@ impl DateTime {
     /// malformed input, so the caller surfaces `Invalid Date` — matching what
     /// the previous `Date.parse` path produced for those.
     pub fn from_text(text: &[u8]) -> Option<DateTime> {
-        fn parse_u(bytes: &[u8]) -> Option<u32> {
-            if bytes.is_empty() {
-                return None;
-            }
-            let mut n: u32 = 0;
-            for &c in bytes {
-                if !c.is_ascii_digit() {
-                    return None;
-                }
-                n = n.checked_mul(10)?.checked_add(u32::from(c - b'0'))?;
-            }
-            Some(n)
-        }
-
-        if text.len() < 10 || text[4] != b'-' || text[7] != b'-' {
-            return None;
-        }
-        let year = u16::try_from(parse_u(&text[0..4])?).ok()?;
-        let month = u8::try_from(parse_u(&text[5..7])?).ok()?;
-        let day = u8::try_from(parse_u(&text[8..10])?).ok()?;
-        if month < 1 || month > 12 || day < 1 || day > days_in_month(year, month) {
-            return None;
-        }
-
-        let mut result = DateTime {
-            year,
-            month,
-            day,
-            ..Default::default()
-        };
-        if text.len() == 10 {
-            return Some(result);
-        }
-
-        // Either "YYYY-MM-DD HH:MM:SS" or the ISO "YYYY-MM-DDTHH:MM:SS".
-        if text.len() < 19
-            || (text[10] != b' ' && text[10] != b'T')
-            || text[13] != b':'
-            || text[16] != b':'
+        let parsed = crate::shared::datetime_text::parse_mysql(text)?;
+        if parsed.month < 1
+            || parsed.month > 12
+            || parsed.day < 1
+            || parsed.day > days_in_month(parsed.year, parsed.month)
+            || parsed.hour > 23
+            || parsed.minute > 59
+            || parsed.second > 59
         {
             return None;
         }
-        result.hour = u8::try_from(parse_u(&text[11..13])?).ok()?;
-        result.minute = u8::try_from(parse_u(&text[14..16])?).ok()?;
-        result.second = u8::try_from(parse_u(&text[17..19])?).ok()?;
-        if result.hour > 23 || result.minute > 59 || result.second > 59 {
-            return None;
-        }
-
-        if text.len() == 19 {
-            return Some(result);
-        }
-        if text[19] != b'.' {
-            return None;
-        }
-        // Fractional seconds: up to 6 digits, right-padded to microseconds.
-        let frac = &text[20..];
-        if frac.is_empty() || frac.len() > 6 {
-            return None;
-        }
-        let mut micro = parse_u(frac)?;
-        for _ in 0..(6 - frac.len()) {
-            micro *= 10;
-        }
-        result.microsecond = micro;
-        Some(result)
+        Some(DateTime {
+            year: parsed.year,
+            month: parsed.month,
+            day: parsed.day,
+            hour: parsed.hour,
+            minute: parsed.minute,
+            second: parsed.second,
+            microsecond: parsed.microsecond,
+        })
     }
 
     pub fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {

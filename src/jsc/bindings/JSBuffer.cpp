@@ -673,7 +673,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
                 RELEASE_AND_RETURN(scope, JSC::JSValue::encode(uint8Array));
             }
 
-            BunString str = Bun::toStringView(view);
+            BunString str = Bun::toBorrowed(view);
 
             if (!Bun__Buffer_fill(&str, startPtr, end - start, encoding)) [[unlikely]] {
                 return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "value"_s, value);

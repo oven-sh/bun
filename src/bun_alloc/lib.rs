@@ -1029,14 +1029,14 @@ pub mod wtf {
 pub enum Tag {
     Dead = 0,
     WTFStringImpl = 1,
-    StringView = 2,
-    StaticStringView = 3,
+    Borrowed = 2,
+    Static = 3,
     Empty = 4,
 }
 
-// `StringView` pointer-tag scheme (ZigString.zig:629) — single source of truth.
+// `BorrowedBytes` pointer-tag scheme (ZigString.zig:629) — single source of truth.
 // Flag bits live in the POINTER's high byte; untagging truncates to 53 bits.
-// (Bit 60 was the now-removed static bit, superseded by `Tag::StaticStringView`.)
+// (Bit 60 was the now-removed static bit, superseded by `Tag::Static`.)
 const SV_UTF8_BIT: usize = 1usize << 61;
 const SV_GLOBAL_BIT: usize = 1usize << 62;
 const SV_16BIT_BIT: usize = 1usize << 63;
@@ -1047,33 +1047,33 @@ const SV_UNTAG_MASK: usize = (1usize << 53) - 1;
 /// `{ ptr: [*]const u8, len: usize }`.
 ///
 /// Private to this crate: it is the payload of [`String`]'s
-/// `Tag::StringView` / `Tag::StaticStringView` variants. All callers go through
+/// `Tag::Borrowed` / `Tag::Static` variants. All callers go through
 /// [`String`] (`BunString` in C++).
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct StringView {
+struct BorrowedBytes {
     /// Tagged pointer — never dereference directly; use `untagged()`.
     _unsafe_ptr_do_not_use: *const u8,
     len: usize,
 }
 
-impl StringView {
-    const EMPTY: StringView = StringView {
+impl BorrowedBytes {
+    const EMPTY: BorrowedBytes = BorrowedBytes {
         _unsafe_ptr_do_not_use: b"".as_ptr(),
         len: 0,
     };
 
     #[inline]
-    const fn init(slice: &[u8]) -> StringView {
-        StringView {
+    const fn init(slice: &[u8]) -> BorrowedBytes {
+        BorrowedBytes {
             _unsafe_ptr_do_not_use: slice.as_ptr(),
             len: slice.len(),
         }
     }
 
     #[inline]
-    fn init_utf16(items: &[u16]) -> StringView {
-        let mut out = StringView {
+    fn init_utf16(items: &[u16]) -> BorrowedBytes {
+        let mut out = BorrowedBytes {
             _unsafe_ptr_do_not_use: items.as_ptr().cast(),
             len: items.len(),
         };
@@ -1130,7 +1130,7 @@ impl StringView {
             return &[];
         }
         // ZigString.zig:637 — only panics when `len > 0 and is16Bit()`.
-        debug_assert!(!self.is_16bit(), "StringView::slice() on UTF-16 string");
+        debug_assert!(!self.is_16bit(), "BorrowedBytes::slice() on UTF-16 string");
         // SAFETY: constructor stored a valid ptr/len; flag bits stripped. Zig
         // caps at u32::MAX (ZigString.zig:642).
         unsafe {
@@ -1351,11 +1351,11 @@ impl WTFStringImplStruct {
         unsafe { Bun__WTFStringImpl__hasPrefix(self, text.as_ptr(), text.len()) }
     }
     #[inline]
-    fn to_string_view(&self) -> StringView {
+    fn to_string_view(&self) -> BorrowedBytes {
         if self.is_8bit() {
-            StringView::init(self.latin1_slice())
+            BorrowedBytes::init(self.latin1_slice())
         } else {
-            StringView::init_utf16(self.utf16_slice())
+            BorrowedBytes::init_utf16(self.utf16_slice())
         }
     }
 }
@@ -1436,9 +1436,9 @@ pub mod StringImplAllocator {
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub union StringImpl {
-    view: StringView,
+    view: BorrowedBytes,
     wtf_string_impl: WTFStringImpl,
-    // .StaticStringView aliases .view; .Dead/.Empty are zero-width.
+    // .Static aliases .view; .Dead/.Empty are zero-width.
 }
 
 /// Port of `bun.String` (a.k.a. `BunString` in C++).
@@ -1465,13 +1465,13 @@ impl String {
     pub const EMPTY: String = String {
         tag: Tag::Empty,
         value: StringImpl {
-            view: StringView::EMPTY,
+            view: BorrowedBytes::EMPTY,
         },
     };
     pub const DEAD: String = String {
         tag: Tag::Dead,
         value: StringImpl {
-            view: StringView::EMPTY,
+            view: BorrowedBytes::EMPTY,
         },
     };
 
@@ -1480,9 +1480,9 @@ impl String {
         self.tag
     }
 
-    // -- StringView-tag constructors -----------------------------------------
+    // -- BorrowedBytes-tag constructors -----------------------------------------
     #[inline]
-    const fn wrap(tag: Tag, view: StringView) -> String {
+    const fn wrap(tag: Tag, view: BorrowedBytes) -> String {
         String {
             tag,
             value: StringImpl { view },
@@ -1491,24 +1491,24 @@ impl String {
     /// Borrow `slice` (latin1/ascii). Caller keeps `slice` alive.
     #[inline]
     pub const fn borrowed(slice: &[u8]) -> String {
-        Self::wrap(Tag::StringView, StringView::init(slice))
+        Self::wrap(Tag::Borrowed, BorrowedBytes::init(slice))
     }
     /// Borrow a `'static` slice; never freed.
     #[inline]
     pub const fn borrowed_static(slice: &'static [u8]) -> String {
-        Self::wrap(Tag::StaticStringView, StringView::init(slice))
+        Self::wrap(Tag::Static, BorrowedBytes::init(slice))
     }
     /// Borrow `slice` and tag as UTF-8.
     #[inline]
     pub fn borrowed_utf8(slice: &[u8]) -> String {
-        let mut v = StringView::init(slice);
+        let mut v = BorrowedBytes::init(slice);
         v.mark_utf8();
-        Self::wrap(Tag::StringView, v)
+        Self::wrap(Tag::Borrowed, v)
     }
     /// Borrow `slice` (UTF-16 code units).
     #[inline]
     pub fn borrowed_utf16(slice: &[u16]) -> String {
-        Self::wrap(Tag::StringView, StringView::init_utf16(slice))
+        Self::wrap(Tag::Borrowed, BorrowedBytes::init_utf16(slice))
     }
     /// Wrap a non-null `WTF::StringImpl*`. Does not bump the refcount.
     #[inline]
@@ -1547,29 +1547,29 @@ impl String {
 
     /// Project to a borrowed view regardless of backing.
     #[inline]
-    fn view(&self) -> StringView {
+    fn view(&self) -> BorrowedBytes {
         match self.tag {
-            Tag::StaticStringView | Tag::StringView => {
-                // SAFETY: `tag` is `StringView`/`StaticStringView` ⇒ `view`
+            Tag::Static | Tag::Borrowed => {
+                // SAFETY: `tag` is `BorrowedBytes`/`Static` ⇒ `view`
                 // is the active union field.
                 unsafe { self.value.view }
             }
             Tag::WTFStringImpl => self.wtf_impl().to_string_view(),
-            _ => StringView::EMPTY,
+            _ => BorrowedBytes::EMPTY,
         }
     }
     #[inline]
     pub fn untag_view_ptr(ptr: *const u8) -> *const u8 {
-        StringView::untagged(ptr)
+        BorrowedBytes::untagged(ptr)
     }
 
     #[inline]
     pub fn is_utf8(&self) -> bool {
-        matches!(self.tag, Tag::StringView | Tag::StaticStringView) && self.view().is_utf8()
+        matches!(self.tag, Tag::Borrowed | Tag::Static) && self.view().is_utf8()
     }
     #[inline]
     pub fn is_globally_allocated(&self) -> bool {
-        matches!(self.tag, Tag::StringView | Tag::StaticStringView)
+        matches!(self.tag, Tag::Borrowed | Tag::Static)
             && self.view().is_globally_allocated()
     }
     /// 8-bit byte view (latin1 or utf8). Caller must ensure `is_8bit()`.
@@ -1578,7 +1578,7 @@ impl String {
         match self.tag {
             Tag::WTFStringImpl => self.wtf_impl().latin1_slice(),
             // SAFETY: tag selects the active union field.
-            Tag::StringView | Tag::StaticStringView => unsafe { &self.value.view }.slice(),
+            Tag::Borrowed | Tag::Static => unsafe { &self.value.view }.slice(),
             _ => &[],
         }
     }
@@ -1588,7 +1588,7 @@ impl String {
         match self.tag {
             Tag::WTFStringImpl => self.wtf_impl().utf16_slice(),
             // SAFETY: tag selects the active union field.
-            Tag::StringView | Tag::StaticStringView => {
+            Tag::Borrowed | Tag::Static => {
                 unsafe { &self.value.view }.utf16_slice_aligned()
             }
             _ => &[],
@@ -1599,7 +1599,7 @@ impl String {
     pub fn raw_byte_slice(&self) -> &[u8] {
         match self.tag {
             Tag::WTFStringImpl => self.wtf_impl().byte_slice(),
-            Tag::StringView | Tag::StaticStringView => {
+            Tag::Borrowed | Tag::Static => {
                 // SAFETY: tag selects the active union field.
                 let v = unsafe { &self.value.view };
                 if v.is_16bit() {
@@ -1614,22 +1614,22 @@ impl String {
         }
     }
 
-    // -- mutators (StringView arm only) --------------------------------------
+    // -- mutators (BorrowedBytes arm only) --------------------------------------
     #[inline]
     pub fn mark_utf8(&mut self) {
-        debug_assert!(matches!(self.tag, Tag::StringView | Tag::StaticStringView));
+        debug_assert!(matches!(self.tag, Tag::Borrowed | Tag::Static));
         // SAFETY: tag asserted; mutates flag bits in the active union field.
         unsafe { self.value.view.mark_utf8() }
     }
     #[inline]
     pub fn mark_utf16(&mut self) {
-        debug_assert!(matches!(self.tag, Tag::StringView | Tag::StaticStringView));
+        debug_assert!(matches!(self.tag, Tag::Borrowed | Tag::Static));
         // SAFETY: tag asserted; mutates flag bits in the active union field.
         unsafe { self.value.view.mark_utf16() }
     }
     #[inline]
     pub fn mark_global(&mut self) {
-        debug_assert!(matches!(self.tag, Tag::StringView | Tag::StaticStringView));
+        debug_assert!(matches!(self.tag, Tag::Borrowed | Tag::Static));
         // SAFETY: tag asserted; mutates flag bits in the active union field.
         unsafe { self.value.view.mark_global() }
     }
@@ -1651,8 +1651,8 @@ impl String {
     pub fn is_8bit(&self) -> bool {
         match self.tag {
             Tag::WTFStringImpl => self.wtf_impl().is_8bit(),
-            Tag::StaticStringView | Tag::StringView => {
-                // SAFETY: `tag` is `StringView`/`StaticStringView` ⇒ `view`
+            Tag::Static | Tag::Borrowed => {
+                // SAFETY: `tag` is `BorrowedBytes`/`Static` ⇒ `view`
                 // is the active union field.
                 unsafe { !self.value.view.is_16bit() }
             }
@@ -1683,7 +1683,7 @@ impl String {
 
 impl core::fmt::Display for String {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Port of `StringView.format`: utf8 → write bytes; utf16 → transcode;
+        // Port of `BorrowedBytes.format`: utf8 → write bytes; utf16 → transcode;
         // latin1 → widen each byte to a Unicode scalar.
         // PERF(port): was `bun.fmt.formatUTF16Type` / `formatLatin1` (SIMD).
         let zs = self.view();

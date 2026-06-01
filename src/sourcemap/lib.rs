@@ -611,7 +611,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
             'try_inline: {
                 let source = provider.get_source_slice();
                 // defer source.deref() → Drop on bun_core::String
-                debug_assert!(source.tag() == bun_core::Tag::StringView);
+                debug_assert!(source.tag() == bun_core::Tag::Borrowed);
 
                 let maybe_found_url = if source.is_8bit() {
                     find_source_mapping_url_u8(source.latin1())

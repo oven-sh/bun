@@ -72,12 +72,12 @@ String DOMFormData::toURLEncodedString()
 extern "C" void DOMFormData__forEach(DOMFormData* form, void* context, void (*callback)(void* context, BunString*, void*, BunString*, uint8_t))
 {
     for (auto& item : form->items()) {
-        auto name = Bun::toStringView(item.name);
+        auto name = Bun::toBorrowed(item.name);
         if (auto value = std::get_if<String>(&item.data)) {
-            auto value_ = Bun::toStringView(*value);
+            auto value_ = Bun::toBorrowed(*value);
             callback(context, &name, &value_, nullptr, 0);
         } else if (auto value = std::get_if<RefPtr<Blob>>(&item.data)) {
-            auto filename = Bun::toStringView(value->get()->fileName());
+            auto filename = Bun::toBorrowed(value->get()->fileName());
             callback(context, &name, value->get()->impl(), &filename, 1);
         }
     }

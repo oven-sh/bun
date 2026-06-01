@@ -2044,8 +2044,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createValueNotJS(JSC::JSGlobalObje
     auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
     Vector<KeyValuePair<String, String>> pairs;
     pairs.reserveCapacity(count);
-    ASSERT(arg3->tag == BunStringTag::StringView || arg3->tag == BunStringTag::StaticStringView);
-    BunStringView buf = arg3->impl.view;
+    ASSERT(arg3->tag == BunStringTag::Borrowed || arg3->tag == BunStringTag::Static);
+    BunBorrowedBytes buf = arg3->impl.view;
     for (uint32_t i = 0; i < count; i++) {
         WTF::String name = Zig::toStringCopy(buf, arg1[i]);
         WTF::String value = Zig::toStringCopy(buf, arg2[i]);
@@ -2067,8 +2067,8 @@ JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0
     auto throwScope = DECLARE_THROW_SCOPE(arg0->vm());
     Vector<KeyValuePair<String, String>> pairs;
     pairs.reserveCapacity(count);
-    ASSERT(arg3->tag == BunStringTag::StringView || arg3->tag == BunStringTag::StaticStringView);
-    BunStringView buf = arg3->impl.view;
+    ASSERT(arg3->tag == BunStringTag::Borrowed || arg3->tag == BunStringTag::Static);
+    BunBorrowedBytes buf = arg3->impl.view;
     for (uint32_t i = 0; i < count; i++) {
         WTF::String name = Zig::toStringCopy(buf, arg1[i]);
         WTF::String value = Zig::toStringCopy(buf, arg2[i]);
@@ -2092,7 +2092,7 @@ void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const BunString
     if (result.hasException())
         WebCore::propagateException(*global, throwScope, result.releaseException());
     else
-        *arg2 = Bun::toStringView(result.releaseReturnValue());
+        *arg2 = Bun::toBorrowed(result.releaseReturnValue());
 }
 bool WebCore__FetchHeaders__has(WebCore::FetchHeaders* headers, const BunString* arg1, JSC::JSGlobalObject* global)
 {
@@ -2129,7 +2129,7 @@ void WebCore__FetchHeaders__fastGet_(WebCore::FetchHeaders* headers, unsigned ch
         return;
     }
 
-    *arg2 = Bun::toStringView(str);
+    *arg2 = Bun::toBorrowed(str);
 }
 
 WebCore::DOMURL* WebCore__DOMURL__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* vm)
@@ -2146,7 +2146,7 @@ WebCore::DOMURL* WebCore__DOMURL__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* v
 {
     const WTF::URL& href = domURL->href();
     const WTF::StringView& pathname = href.path();
-    *arg1 = Bun::toStringView(pathname);
+    *arg1 = Bun::toBorrowed(pathname);
 }
 
 BunString WebCore__DOMURL__fileSystemPath(WebCore::DOMURL* arg0, int* errorCode)
@@ -2754,7 +2754,7 @@ bool JSC__JSFunction__getSourceCode(JSC::EncodedJSValue JSValue0, BunString* out
     if (JSC::JSFunction* func = dynamicDowncast<JSC::JSFunction>(value)) {
         auto* sourceCode = func->sourceCode();
         if (sourceCode != nullptr) { // native functions have no source code
-            *outSourceCode = Bun::toStringView(sourceCode->view());
+            *outSourceCode = Bun::toBorrowed(sourceCode->view());
             return true;
         }
         return false;
@@ -3497,8 +3497,8 @@ JSC::EncodedJSValue ZigString__toAtomicValue(const BunString* arg0, JSC::JSGloba
         return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
     }
 
-    ASSERT(arg0->tag == BunStringTag::StringView || arg0->tag == BunStringTag::StaticStringView);
-    BunStringView view = arg0->impl.view;
+    ASSERT(arg0->tag == BunStringTag::Borrowed || arg0->tag == BunStringTag::Static);
+    BunBorrowedBytes view = arg0->impl.view;
     if (isTaggedUTF16Ptr(view.ptr)) {
         if (auto impl = WTF::AtomStringImpl::lookUp(std::span { reinterpret_cast<const char16_t*>(untag(view.ptr)), view.len })) {
             return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(WTF::move(impl))));
@@ -3514,7 +3514,7 @@ JSC::EncodedJSValue ZigString__toAtomicValue(const BunString* arg0, JSC::JSGloba
 
 JSC::EncodedJSValue ZigString__to16BitValue(const BunString* arg0, JSC::JSGlobalObject* arg1)
 {
-    ASSERT(arg0->tag == BunStringTag::StringView || arg0->tag == BunStringTag::StaticStringView);
+    ASSERT(arg0->tag == BunStringTag::Borrowed || arg0->tag == BunStringTag::Static);
     auto str = WTF::String::fromUTF8(std::span { arg0->impl.view.ptr, arg0->impl.view.len });
     return JSC::JSValue::encode(JSC::jsString(arg1->vm(), str));
 }
@@ -3533,8 +3533,8 @@ JSC::EncodedJSValue ZigString__toExternalU16(const uint16_t* arg0, size_t len, J
 // This must be a globally allocated string
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue ZigString__toExternalValue(const BunString* arg0, JSC::JSGlobalObject* arg1)
 {
-    ASSERT(arg0->tag == BunStringTag::StringView || arg0->tag == BunStringTag::StaticStringView);
-    BunStringView str = arg0->impl.view;
+    ASSERT(arg0->tag == BunStringTag::Borrowed || arg0->tag == BunStringTag::Static);
+    BunBorrowedBytes str = arg0->impl.view;
     if (str.len == 0) {
         return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
     }
@@ -3581,8 +3581,8 @@ void JSC__JSValue__toZigString(JSC::EncodedJSValue JSValue0, BunString* arg1, JS
 
 JSC::EncodedJSValue ZigString__external(const BunString* arg0, JSC::JSGlobalObject* arg1, void* arg2, void (*ArgFn3)(void* arg0, void* arg1, size_t arg2))
 {
-    ASSERT(arg0->tag == BunStringTag::StringView || arg0->tag == BunStringTag::StaticStringView);
-    BunStringView str = arg0->impl.view;
+    ASSERT(arg0->tag == BunStringTag::Borrowed || arg0->tag == BunStringTag::Static);
+    BunBorrowedBytes str = arg0->impl.view;
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::jsString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, arg2, ArgFn3))));
     } else {
@@ -3592,8 +3592,8 @@ JSC::EncodedJSValue ZigString__external(const BunString* arg0, JSC::JSGlobalObje
 
 JSC::EncodedJSValue ZigString__toExternalValueWithCallback(const BunString* arg0, JSC::JSGlobalObject* arg1, void (*ArgFn2)(void* arg2, void* arg0, size_t arg1))
 {
-    ASSERT(arg0->tag == BunStringTag::StringView || arg0->tag == BunStringTag::StaticStringView);
-    BunStringView str = arg0->impl.view;
+    ASSERT(arg0->tag == BunStringTag::Borrowed || arg0->tag == BunStringTag::Static);
+    BunBorrowedBytes str = arg0->impl.view;
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::jsOwnedString(arg1->vm(), WTF::String(ExternalStringImpl::create({ reinterpret_cast<const char16_t*>(Zig::untag(str.ptr)), str.len }, nullptr, ArgFn2))));
     } else {
@@ -4754,11 +4754,11 @@ void JSC__JSValue__getClassName(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObjec
 
     auto calculated = JSObject::calculatedClassName(obj);
     if (calculated.length() > 0) {
-        *arg2 = Bun::toStringView(calculated);
+        *arg2 = Bun::toBorrowed(calculated);
         return;
     }
 
-    *arg2 = Bun::toStringView(view);
+    *arg2 = Bun::toBorrowed(view);
 }
 
 bool JSC__JSValue__getClassInfoName(JSValue value, const uint8_t** outPtr, size_t* outLen)
@@ -4788,7 +4788,7 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
     if (name && name.isString()) {
         auto str = name.toWTFString(arg1);
         if (!str.isEmpty()) {
-            *arg2 = Bun::toStringView(str);
+            *arg2 = Bun::toBorrowed(str);
             return;
         }
     }
@@ -4797,18 +4797,18 @@ void JSC__JSValue__getNameProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalOb
 
         WTF::String actualName = function->name(vm);
         if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
-            *arg2 = Bun::toStringView(actualName);
+            *arg2 = Bun::toBorrowed(actualName);
             return;
         }
 
         actualName = function->jsExecutable()->name().string();
 
-        *arg2 = Bun::toStringView(actualName);
+        *arg2 = Bun::toBorrowed(actualName);
         return;
     }
 
     if (JSC::InternalFunction* function = dynamicDowncast<JSC::InternalFunction>(obj)) {
-        *arg2 = Bun::toStringView(function->name());
+        *arg2 = Bun::toBorrowed(function->name());
         return;
     }
 

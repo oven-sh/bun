@@ -406,7 +406,7 @@ int SourceProvider::readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
 
 extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
 {
-    return Bun::toStringView(provider->source());
+    return Bun::toBorrowed(provider->source());
 }
 
 }; // namespace Zig

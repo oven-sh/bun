@@ -1,5 +1,5 @@
 //! Legacy `jsc::zig_string` namespace. The borrowed-view type is now a private
-//! `StringView` payload of `bun_core::String`; everything goes through
+//! `BorrowedBytes` payload of `bun_core::String`; everything goes through
 //! `bun_core::String` (= `BunString` on the C++ side).
 
 use core::ffi::c_void;

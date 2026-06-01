@@ -73,7 +73,7 @@ static void free_global_string(void* str, void* ptr, unsigned len)
 }
 
 // Switching to AtomString doesn't yield a perf benefit because we're recreating it each time.
-static const WTF::String toString(BunStringView str)
+static const WTF::String toString(BunBorrowedBytes str)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return WTF::String();
@@ -118,7 +118,7 @@ static const WTF::String toString(BunStringView str)
               { reinterpret_cast<const char16_t*>(untag(str.ptr)), str.len }));
 }
 
-static WTF::AtomString toAtomString(BunStringView str)
+static WTF::AtomString toAtomString(BunBorrowedBytes str)
 {
 
     if (!isTaggedUTF16Ptr(str.ptr)) {
@@ -128,7 +128,7 @@ static WTF::AtomString toAtomString(BunStringView str)
     }
 }
 
-static const WTF::String toString(BunStringView str, StringPointer ptr)
+static const WTF::String toString(BunBorrowedBytes str, StringPointer ptr)
 {
     if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
         return WTF::String();
@@ -156,7 +156,7 @@ static const WTF::String toString(BunStringView str, StringPointer ptr)
               { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
-static const WTF::String toStringCopy(BunStringView str, StringPointer ptr)
+static const WTF::String toStringCopy(BunBorrowedBytes str, StringPointer ptr)
 {
     if (str.len == 0 || str.ptr == nullptr || ptr.len == 0) {
         return WTF::String();
@@ -184,7 +184,7 @@ static const WTF::String toStringCopy(BunStringView str, StringPointer ptr)
               std::span { &reinterpret_cast<const char16_t*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
-static const WTF::String toStringCopy(BunStringView str)
+static const WTF::String toStringCopy(BunBorrowedBytes str)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return WTF::String();
@@ -219,7 +219,7 @@ static const WTF::String toStringCopy(BunStringView str)
     }
 }
 
-static void appendToBuilder(BunStringView str, WTF::StringBuilder& builder)
+static void appendToBuilder(BunBorrowedBytes str, WTF::StringBuilder& builder)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return;
@@ -245,22 +245,22 @@ static void appendToBuilder(BunStringView str, WTF::StringBuilder& builder)
     builder.append({ untag(str.ptr), str.len });
 }
 
-static WTF::String toStringNotConst(BunStringView str) { return toString(str); }
+static WTF::String toStringNotConst(BunBorrowedBytes str) { return toString(str); }
 
-static const JSC::JSString* toJSString(BunStringView str, JSC::JSGlobalObject* global)
+static const JSC::JSString* toJSString(BunBorrowedBytes str, JSC::JSGlobalObject* global)
 {
     return JSC::jsOwnedString(global->vm(), toString(str));
 }
 
-static JSC::JSString* toJSStringGC(BunStringView str, JSC::JSGlobalObject* global)
+static JSC::JSString* toJSStringGC(BunBorrowedBytes str, JSC::JSGlobalObject* global)
 {
     return JSC::jsString(global->vm(), toStringCopy(str));
 }
 
-static const BunStringView ZigStringEmpty = BunStringView { (unsigned char*)"", 0 };
+static const BunBorrowedBytes ZigStringEmpty = BunBorrowedBytes { (unsigned char*)"", 0 };
 static const unsigned char __dot_char = '.';
-static const BunStringView ZigStringCwd = BunStringView { &__dot_char, 1 };
-static const BunString BunStringCwd = BunString { BunStringTag::StaticStringView, ZigStringCwd };
+static const BunBorrowedBytes ZigStringCwd = BunBorrowedBytes { &__dot_char, 1 };
+static const BunString BunStringCwd = BunString { BunStringTag::Static, ZigStringCwd };
 static const BunString BunStringEmpty = BunString { BunStringTag::Empty, nullptr };
 
 static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
@@ -268,50 +268,50 @@ static const unsigned char* taggedUTF16Ptr(const char16_t* ptr)
     return reinterpret_cast<const unsigned char*>(reinterpret_cast<uintptr_t>(ptr) | (static_cast<uint64_t>(1) << 63));
 }
 
-static BunStringView toZigString(WTF::String* str)
+static BunBorrowedBytes toZigString(WTF::String* str)
 {
     return str->isEmpty()
         ? ZigStringEmpty
-        : BunStringView { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
+        : BunBorrowedBytes { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
               str->length() };
 }
 
-static BunStringView toZigString(WTF::StringImpl& str)
+static BunBorrowedBytes toZigString(WTF::StringImpl& str)
 {
     return str.isEmpty()
         ? ZigStringEmpty
-        : BunStringView { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
+        : BunBorrowedBytes { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 
 // Overload for `StringImpl*` so callers like `toZigString(string.impl())` resolve here
 // instead of implicitly constructing a temporary `WTF::StringView` (which, in debug builds
 // with CHECK_STRINGVIEW_LIFETIME, takes a lock and heap-allocates an UnderlyingString entry).
-static BunStringView toZigString(const WTF::StringImpl* str)
+static BunBorrowedBytes toZigString(const WTF::StringImpl* str)
 {
     return (!str || str->isEmpty())
         ? ZigStringEmpty
-        : BunStringView { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
+        : BunBorrowedBytes { str->is8Bit() ? str->span8().data() : taggedUTF16Ptr(str->span16().data()),
               str->length() };
 }
 
-static BunStringView toZigString(WTF::StringView& str)
+static BunBorrowedBytes toZigString(WTF::StringView& str)
 {
     return str.isEmpty()
         ? ZigStringEmpty
-        : BunStringView { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
+        : BunBorrowedBytes { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 
-static BunStringView toZigString(const WTF::StringView& str)
+static BunBorrowedBytes toZigString(const WTF::StringView& str)
 {
     return str.isEmpty()
         ? ZigStringEmpty
-        : BunStringView { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
+        : BunBorrowedBytes { str.is8Bit() ? str.span8().data() : taggedUTF16Ptr(str.span16().data()),
               str.length() };
 }
 
-static BunStringView toZigString(JSC::JSString& str, JSC::JSGlobalObject* global)
+static BunBorrowedBytes toZigString(JSC::JSString& str, JSC::JSGlobalObject* global)
 {
     if (str.isSubstring()) {
         return toZigString(str.view(global));
@@ -320,7 +320,7 @@ static BunStringView toZigString(JSC::JSString& str, JSC::JSGlobalObject* global
     return toZigString(str.value(global));
 }
 
-static BunStringView toZigString(JSC::JSString* str, JSC::JSGlobalObject* global)
+static BunBorrowedBytes toZigString(JSC::JSString* str, JSC::JSGlobalObject* global)
 {
     if (str->isSubstring()) {
         return toZigString(str->view(global));
@@ -328,17 +328,17 @@ static BunStringView toZigString(JSC::JSString* str, JSC::JSGlobalObject* global
     return toZigString(str->value(global));
 }
 
-static BunStringView toZigString(JSC::Identifier& str, JSC::JSGlobalObject* global)
+static BunBorrowedBytes toZigString(JSC::Identifier& str, JSC::JSGlobalObject* global)
 {
     return toZigString(str.string());
 }
 
-static BunStringView toZigString(JSC::Identifier* str, JSC::JSGlobalObject* global)
+static BunBorrowedBytes toZigString(JSC::Identifier* str, JSC::JSGlobalObject* global)
 {
     return toZigString(str->string());
 }
 
-static WTF::StringView toStringView(BunStringView str)
+static WTF::StringView toStringView(BunBorrowedBytes str)
 {
     return WTF::StringView(std::span { untag(str.ptr), str.len });
 }
@@ -349,7 +349,7 @@ static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlob
         JSC::Exception::create(global->vm(), JSC::JSValue::decode(err.value)));
 }
 
-static BunStringView toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
+static BunBorrowedBytes toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
 {
     auto scope = DECLARE_THROW_SCOPE(global->vm());
     auto* str = val.toString(global);
@@ -370,7 +370,7 @@ static BunStringView toZigString(JSC::JSValue val, JSC::JSGlobalObject* global)
     return toZigString(view);
 }
 
-static const WTF::String toStringStatic(BunStringView str)
+static const WTF::String toStringStatic(BunBorrowedBytes str)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return WTF::String();
@@ -429,7 +429,7 @@ static JSC::JSValue getRangeErrorInstance(const BunString* str, JSC::JSGlobalObj
     return result;
 }
 
-static const JSC::Identifier toIdentifier(BunStringView str, JSC::JSGlobalObject* global)
+static const JSC::Identifier toIdentifier(BunBorrowedBytes str, JSC::JSGlobalObject* global)
 {
     if (str.len == 0 || str.ptr == nullptr) {
         return global->vm().propertyNames->emptyIdentifier;

@@ -16,15 +16,15 @@ namespace WTF {
 class String;
 }
 
-typedef struct BunStringView {
+typedef struct BunBorrowedBytes {
     const unsigned char* ptr;
     size_t len;
-} BunStringView;
+} BunBorrowedBytes;
 
 #ifndef __cplusplus
 typedef uint8_t BunStringTag;
 typedef union BunStringImpl {
-    BunStringView view;
+    BunBorrowedBytes view;
     void* wtf;
 } BunStringImpl;
 
@@ -35,15 +35,15 @@ class String;
 }
 
 typedef union BunStringImpl {
-    BunStringView view;
+    BunBorrowedBytes view;
     WTF::StringImpl* wtf;
 } BunStringImpl;
 
 enum class BunStringTag : uint8_t {
     Dead = 0,
     WTFStringImpl = 1,
-    StringView = 2,
-    StaticStringView = 3,
+    Borrowed = 2,
+    Static = 3,
     Empty = 4,
 };
 
@@ -338,7 +338,7 @@ BunString toStringRef(WTF::StringImpl* wtfString);
 
 // This creates a detached string view, which cannot be ref/unref.
 // Be very careful using this, and ensure the memory owner does not get destroyed.
-BunString toStringView(WTF::StringView view);
+BunString toBorrowed(WTF::StringView view);
 }
 
 typedef struct {

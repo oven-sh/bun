@@ -188,11 +188,11 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
         return JSC::jsString(globalObject->vm(), String(bunString.impl.wtf));
     }
 
-    if (bunString.tag == BunStringTag::StaticStringView) {
+    if (bunString.tag == BunStringTag::Static) {
         return JSC::jsString(globalObject->vm(), Zig::toStringStatic(bunString.impl.view));
     }
 
-    if (bunString.tag == BunStringTag::StringView) {
+    if (bunString.tag == BunStringTag::Borrowed) {
         return Zig::toJSStringGC(bunString.impl.view, globalObject);
     }
 
@@ -304,10 +304,10 @@ BunString toStringRef(WTF::StringImpl* wtfString)
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
 }
 
-BunString toStringView(StringView view)
+BunString toBorrowed(StringView view)
 {
     return {
-        BunStringTag::StringView,
+        BunStringTag::Borrowed,
         { .view = toZigString(view) }
     };
 }
@@ -548,14 +548,14 @@ extern "C" JSC::EncodedJSValue BunString__createArray(
 extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toWTFString(BunString* bunString)
 {
     WTF::String str;
-    if (bunString->tag == BunStringTag::StringView) {
+    if (bunString->tag == BunStringTag::Borrowed) {
         if (Zig::isTaggedExternalPtr(bunString->impl.view.ptr)) {
             str = Zig::toString(bunString->impl.view);
         } else {
             str = Zig::toStringCopy(bunString->impl.view);
         }
 
-    } else if (bunString->tag == BunStringTag::StaticStringView) {
+    } else if (bunString->tag == BunStringTag::Static) {
         str = Zig::toStringStatic(bunString->impl.view);
     } else {
         return;
@@ -775,13 +775,13 @@ size_t BunString::utf8ByteLength(const WTF::String& str)
 
 WTF::String BunString::toWTFString() const
 {
-    if (this->tag == BunStringTag::StringView) {
+    if (this->tag == BunStringTag::Borrowed) {
         if (Zig::isTaggedExternalPtr(this->impl.view.ptr)) {
             return Zig::toString(this->impl.view);
         } else {
             return Zig::toStringCopy(this->impl.view);
         }
-    } else if (this->tag == BunStringTag::StaticStringView) {
+    } else if (this->tag == BunStringTag::Static) {
         return Zig::toStringCopy(this->impl.view);
     } else if (this->tag == BunStringTag::WTFStringImpl) {
         return WTF::String(this->impl.wtf);
@@ -797,7 +797,7 @@ void BunString::appendToBuilder(WTF::StringBuilder& builder) const
         return;
     }
 
-    if (this->tag == BunStringTag::StringView || this->tag == BunStringTag::StaticStringView) {
+    if (this->tag == BunStringTag::Borrowed || this->tag == BunStringTag::Static) {
         Zig::appendToBuilder(this->impl.view, builder);
         return;
     }
@@ -807,13 +807,13 @@ void BunString::appendToBuilder(WTF::StringBuilder& builder) const
 
 WTF::String BunString::toWTFString(ZeroCopyTag) const
 {
-    if (this->tag == BunStringTag::StringView) {
+    if (this->tag == BunStringTag::Borrowed) {
         if (Zig::isTaggedUTF8Ptr(this->impl.view.ptr)) {
             return Zig::toStringCopy(this->impl.view);
         } else {
             return Zig::toString(this->impl.view);
         }
-    } else if (this->tag == BunStringTag::StaticStringView) {
+    } else if (this->tag == BunStringTag::Static) {
         return Zig::toStringStatic(this->impl.view);
     } else if (this->tag == BunStringTag::WTFStringImpl) {
         ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
@@ -836,7 +836,7 @@ WTF::String BunString::toWTFString(NonNullTag) const
 
 WTF::String BunString::transferToWTFString()
 {
-    if (this->tag == BunStringTag::StringView) {
+    if (this->tag == BunStringTag::Borrowed) {
         if (Zig::isTaggedUTF8Ptr(this->impl.view.ptr)) {
             auto str = Zig::toStringCopy(this->impl.view);
             *this = Zig::BunStringEmpty;
@@ -846,7 +846,7 @@ WTF::String BunString::transferToWTFString()
             *this = Zig::BunStringEmpty;
             return str;
         }
-    } else if (this->tag == BunStringTag::StaticStringView) {
+    } else if (this->tag == BunStringTag::Static) {
         auto str = Zig::toStringStatic(this->impl.view);
         *this = Zig::BunStringEmpty;
         return str;
@@ -968,8 +968,8 @@ bool BunString::isEmpty() const
     switch (this->tag) {
     case BunStringTag::WTFStringImpl:
         return impl.wtf->isEmpty();
-    case BunStringTag::StringView:
-    case BunStringTag::StaticStringView:
+    case BunStringTag::Borrowed:
+    case BunStringTag::Static:
         return impl.view.len == 0;
     default:
         return true;

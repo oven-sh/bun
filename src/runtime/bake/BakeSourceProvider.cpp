@@ -21,7 +21,7 @@ namespace Bake {
   
 extern "C" BunString BakeSourceProvider__getSourceSlice(SourceProvider* provider)
 {
-    return Bun::toStringView(provider->source());
+    return Bun::toBorrowed(provider->source());
 }
 
 extern "C" JSC::EncodedJSValue BakeLoadInitialServerCode(JSC::JSGlobalObject* global, BunString source, bool separateSSRGraph) {

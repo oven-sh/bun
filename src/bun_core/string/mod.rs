@@ -3,7 +3,7 @@
 //!
 //! `String` is the FFI-compatible 5-variant tagged union shared with C++
 //! (`BunString` in `src/jsc/bindings/BunString.cpp`). The borrowed-slice
-//! variant is now an internal `StringView` payload of `String` — callers go
+//! variant is now an internal `BorrowedBytes` payload of `String` — callers go
 //! through `String` exclusively. `ZigStringSlice` is the owned-or-borrowed
 //! UTF-8 byte slice that replaces Zig's allocator-vtable trick.
 //!
@@ -51,11 +51,11 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 pub use wtf::{WTFStringImpl, WTFStringImplExt, WTFStringImplStruct};
 
 // ──────────────────────────────────────────────────────────────────────────
-// `bun.String` — 5-variant tagged WTFString-or-StringView. extern layout
+// `bun.String` — 5-variant tagged WTFString-or-BorrowedBytes. extern layout
 // must match Zig `extern struct { tag: Tag, value: StringImpl }` (= C++
 // `BunString` in BunString.cpp), 24 bytes on 64-bit.
 // ──────────────────────────────────────────────────────────────────────────
-// Canonical layout (and the private `StringView` payload) lives in `bun_alloc`.
+// Canonical layout (and the private `BorrowedBytes` payload) lives in `bun_alloc`.
 // `String` is a `#[repr(transparent)]` newtype over `bun_alloc::String` so the
 // FFI layout has ONE source of truth while this crate retains its inherent
 // impl block (toJS/toUTF8/WTF refcounting).
@@ -639,12 +639,12 @@ impl String {
         }
     }
 
-    /// StringView-tag → borrowed-or-owned UTF-8 (port of `ZigString.toSlice`).
+    /// Borrowed-tag → borrowed-or-owned UTF-8 (port of `ZigString.toSlice`).
     #[inline]
     fn view_to_utf8_slice(&self) -> ZigStringSlice {
         debug_assert!(matches!(
             self.tag(),
-            Tag::StringView | Tag::StaticStringView
+            Tag::Borrowed | Tag::Static
         ));
         let len = self.length();
         if len == 0 {
@@ -671,16 +671,16 @@ impl String {
     pub fn to_utf8(&self) -> ZigStringSlice {
         match self.tag() {
             Tag::WTFStringImpl => self.as_wtf().to_utf8(),
-            Tag::StringView => self.view_to_utf8_slice(),
-            Tag::StaticStringView => ZigStringSlice::from_utf8_never_free(self.latin1()),
+            Tag::Borrowed => self.view_to_utf8_slice(),
+            Tag::Static => ZigStringSlice::from_utf8_never_free(self.latin1()),
             _ => ZigStringSlice::EMPTY,
         }
     }
     pub fn to_utf8_without_ref(&self) -> ZigStringSlice {
         match self.tag() {
             Tag::WTFStringImpl => self.as_wtf().to_utf8_without_ref(),
-            Tag::StringView => self.view_to_utf8_slice(),
-            Tag::StaticStringView => ZigStringSlice::from_utf8_never_free(self.latin1()),
+            Tag::Borrowed => self.view_to_utf8_slice(),
+            Tag::Static => ZigStringSlice::from_utf8_never_free(self.latin1()),
             _ => ZigStringSlice::EMPTY,
         }
     }
@@ -700,8 +700,8 @@ impl String {
     pub fn to_utf8_borrowed(&self) -> ZigStringSlice {
         match self.tag() {
             Tag::WTFStringImpl => self.as_wtf().to_utf8_borrowed(),
-            Tag::StringView => self.view_to_utf8_slice(),
-            Tag::StaticStringView => ZigStringSlice::from_utf8_never_free(self.latin1()),
+            Tag::Borrowed => self.view_to_utf8_slice(),
+            Tag::Static => ZigStringSlice::from_utf8_never_free(self.latin1()),
             _ => ZigStringSlice::EMPTY,
         }
     }
@@ -913,7 +913,7 @@ impl String {
     /// whose pointer is tagged as globally-allocated (mimalloc heap).
     #[inline]
     pub fn is_global(&self) -> bool {
-        self.tag() == Tag::StringView && self.0.is_globally_allocated()
+        self.tag() == Tag::Borrowed && self.0.is_globally_allocated()
     }
 
     /// `bun.String.createIfDifferent` (string.zig:117) — if `other` already
@@ -969,7 +969,7 @@ impl String {
     pub fn utf8(&self) -> &[u8] {
         debug_assert!(matches!(
             self.tag(),
-            Tag::StringView | Tag::StaticStringView
+            Tag::Borrowed | Tag::Static
         ));
         debug_assert!(self.can_be_utf8());
         self.latin1()
@@ -992,7 +992,7 @@ impl String {
     /// `(utf8_bytes, is_all_ascii)`. `false` means at least one non-ASCII byte.
     pub fn to_owned_slice_returning_all_ascii(&self) -> (Vec<u8>, bool) {
         match self.tag() {
-            Tag::StringView | Tag::StaticStringView => {
+            Tag::Borrowed | Tag::Static => {
                 let bytes = self.view_to_utf8_slice().into_vec();
                 let ascii = strings::is_all_ascii(&bytes);
                 (bytes, ascii)
@@ -1122,8 +1122,8 @@ impl String {
     /// bytes (not character count). `0` for static/empty/dead.
     pub fn estimated_size(&self) -> usize {
         match self.tag() {
-            Tag::Dead | Tag::Empty | Tag::StaticStringView => 0,
-            Tag::StringView => self.length(),
+            Tag::Dead | Tag::Empty | Tag::Static => 0,
+            Tag::Borrowed => self.length(),
             Tag::WTFStringImpl => self.as_wtf().byte_length(),
         }
     }
@@ -1145,7 +1145,7 @@ impl From<&[u8]> for String {
 }
 impl<const N: usize> From<&'static [u8; N]> for String {
     /// `*const [N:0]u8` arm — Zig string literal (string.zig:340-350): empty
-    /// → `Tag::Empty`, otherwise `String.static(value)` → `Tag::StaticStringView`.
+    /// → `Tag::Empty`, otherwise `String.static(value)` → `Tag::Static`.
     /// Restricted to `&'static` so the static-tag invariant holds.
     #[inline]
     fn from(s: &'static [u8; N]) -> Self {
@@ -1341,7 +1341,7 @@ impl core::fmt::Display for StringGithubActionFormatter<'_> {
 
 // ──────────────────────────────────────────────────────────────────────────
 // View-level helpers — formerly free methods on the `ZigString` newtype.
-// All operate through `String`; the underlying StringView payload is private.
+// All operate through `String`; the underlying BorrowedBytes payload is private.
 // ──────────────────────────────────────────────────────────────────────────
 impl String {
     /// Borrow a globally-allocated UTF-16 buffer (sets 16-bit + global tags).

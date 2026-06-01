@@ -597,8 +597,8 @@ WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* gl
 
 WTF::String ERR_INVALID_ARG_TYPE(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, const BunString* arg_name_string, const BunString* expected_type_string, JSValue actual_value)
 {
-    ASSERT(arg_name_string->tag == BunStringTag::StringView || arg_name_string->tag == BunStringTag::StaticStringView);
-    ASSERT(expected_type_string->tag == BunStringTag::StringView || expected_type_string->tag == BunStringTag::StaticStringView);
+    ASSERT(arg_name_string->tag == BunStringTag::Borrowed || arg_name_string->tag == BunStringTag::Static);
+    ASSERT(expected_type_string->tag == BunStringTag::Borrowed || expected_type_string->tag == BunStringTag::Static);
     auto arg_name = std::span<const Latin1Character>(arg_name_string->impl.view.ptr, arg_name_string->impl.view.len);
     ASSERT(WTF::charactersAreAllASCII(arg_name));
 

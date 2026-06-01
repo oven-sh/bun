@@ -549,7 +549,7 @@ ExceptionOr<void> WebSocket::connect(const String& url, const Vector<String>& pr
 
     // Materialize host/path as WTF::String so the BunString wrappers hold a
     // stable WTFStringImpl backing (preserving 8-bit vs UTF-16 encoding).
-    // BunStringView wrappers over non-ASCII Latin1/UTF-16 data lose the encoding
+    // BunBorrowedBytes wrappers over non-ASCII Latin1/UTF-16 data lose the encoding
     // tag and corrupt the HTTP upgrade request build in Zig.
     String hostString = m_url.host().toString();
     auto resource = resourceName(m_url);

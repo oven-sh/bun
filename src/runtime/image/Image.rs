@@ -428,8 +428,13 @@ impl Image {
         // for the `.js_buffer` path, which a Blob never produces. The only
         // reason `source_from_js` takes `this_value` at all is to set that slot
         // for ArrayBuffer inputs — pass `.zero` and assert below.
-        img.source
-            .set(source_from_js(global, blob_value, JSValue::ZERO, None, img.max_pixels)?);
+        img.source.set(source_from_js(
+            global,
+            blob_value,
+            JSValue::ZERO,
+            None,
+            img.max_pixels,
+        )?);
         debug_assert!(!matches!(img.source.get(), Source::JsBuffer));
         Ok(img.to_js(global))
     }
@@ -481,8 +486,13 @@ fn from_input_js(
     // duplicated source bytes are handled by `Box` Drop on `?`.
     apply_options(&mut img, global, options)?;
     let raw = raw_from_options(global, options)?;
-    img.source
-        .set(source_from_js(global, input, this_value, raw, img.max_pixels)?);
+    img.source.set(source_from_js(
+        global,
+        input,
+        this_value,
+        raw,
+        img.max_pixels,
+    )?);
     // Raw dims are constructor-known — let `.width`/`.height` answer
     // immediately, the way they would after the first awaited terminal.
     if let Source::Raw { width, height, .. } = img.source.get() {
@@ -542,9 +552,9 @@ fn raw_from_options(global: &JSGlobalObject, opt: JSValue) -> JsResult<Option<Ra
             v.as_number() as u8
         }
         _ => {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "Image: raw.channels must be 3 or 4",
-            )));
+            return Err(
+                global.throw_invalid_arguments(format_args!("Image: raw.channels must be 3 or 4",))
+            );
         }
     };
     Ok(Some(RawOptions {
@@ -731,12 +741,14 @@ fn composite_input_from_js(
         // Reuse the constructor's path / data:-URL handling. The string arms
         // never touch `this_value` (only ArrayBuffer inputs cache into the
         // wrapper's sourceJS slot), so ZERO is safe here.
-        return Ok(match source_from_js(global, value, JSValue::ZERO, None, max_pixels)? {
-            Source::Owned(b) => CompositeInput::Owned(b),
-            Source::Path(p) => CompositeInput::Path(p),
-            // A string input only ever resolves to bytes or a path.
-            Source::JsBuffer | Source::Blob(_) | Source::Raw { .. } => unreachable!(),
-        });
+        return Ok(
+            match source_from_js(global, value, JSValue::ZERO, None, max_pixels)? {
+                Source::Owned(b) => CompositeInput::Owned(b),
+                Source::Path(p) => CompositeInput::Path(p),
+                // A string input only ever resolves to bytes or a path.
+                Source::JsBuffer | Source::Blob(_) | Source::Raw { .. } => unreachable!(),
+            },
+        );
     }
     if let Some(ab) = value.as_array_buffer(global) {
         // Copied on the JS thread right now, so resizable/shared buffers are
@@ -1738,10 +1750,9 @@ impl Image {
                 "{}",
                 bstr::BStr::new(error_message(e).as_bytes())
             ))),
-            TaskResult::ErrWithCode { msg, .. } => Err(global.throw(format_args!(
-                "{}",
-                bstr::BStr::new(msg.as_bytes())
-            ))),
+            TaskResult::ErrWithCode { msg, .. } => {
+                Err(global.throw(format_args!("{}", bstr::BStr::new(msg.as_bytes()))))
+            }
             // Preserve errno/path/syscall instead of flattening to DecodeFailed.
             TaskResult::IoErr(e) => Err(global.throw_value(e.to_js(global))),
             // `kind` above is always `Kind::Encode` — `run()` can't produce these.

@@ -430,15 +430,18 @@ describe("composite over-blend kernel", () => {
     [1, false],
     [255, true],
     [128, true],
-  ] as const)("kernel matches the exact fixed-point reference (opacity %d/255, premultiplied: %s)", async (op255, premul) => {
-    const ov = makeOverlay(premul);
-    // Negative offsets clip on two edges; the overlay also overhangs nothing
-    // on the right, leaving untouched base columns to verify as identity.
-    const got = await runKernel(makeBase(), ov, -3, -2, op255, premul);
-    const want = makeBase();
-    refOver(want, BW, BH, ov, OW, OH, -3, -2, op255, premul);
-    expect(Buffer.compare(Buffer.from(got), Buffer.from(want))).toBe(0);
-  });
+  ] as const)(
+    "kernel matches the exact fixed-point reference (opacity %d/255, premultiplied: %s)",
+    async (op255, premul) => {
+      const ov = makeOverlay(premul);
+      // Negative offsets clip on two edges; the overlay also overhangs nothing
+      // on the right, leaving untouched base columns to verify as identity.
+      const got = await runKernel(makeBase(), ov, -3, -2, op255, premul);
+      const want = makeBase();
+      refOver(want, BW, BH, ov, OW, OH, -3, -2, op255, premul);
+      expect(Buffer.compare(Buffer.from(got), Buffer.from(want))).toBe(0);
+    },
+  );
 
   test("hostile premultiplied input (colour > alpha) clamps identically in both paths", async () => {
     // All-partial alphas with full-bright colours: every unpremultiply wants

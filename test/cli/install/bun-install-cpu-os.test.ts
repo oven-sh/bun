@@ -605,3 +605,126 @@ describe("bun install --cpu and --os flags", () => {
     expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "dep-arm64", "dep-ppc64"]);
   });
 });
+
+describe("bun install --libc flag", () => {
+  it("should filter dependencies by libc", async () => {
+    const urls: string[] = [];
+    setHandler(
+      dummyRegistry(urls, {
+        "1.0.0": {
+          libc: ["glibc"],
+        },
+        "2.0.0": {
+          libc: ["musl"],
+        },
+        // No libc field: unconstrained, installs on any libc.
+        "3.0.0": {},
+      }),
+    );
+
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "test-libc-filter",
+        version: "1.0.0",
+        optionalDependencies: {
+          "dep-glibc": "1.0.0",
+          "dep-musl": "2.0.0",
+          "dep-universal": "3.0.0",
+        },
+      }),
+    );
+
+    // Install with glibc - should install glibc + universal, skip musl
+    const { exited } = spawn({
+      cmd: [bunExe(), "install", "--libc", "glibc"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "dep-glibc", "dep-universal"]);
+
+    // Install with musl - should install musl + universal, skip glibc
+    await rm(join(package_dir, "node_modules"), { recursive: true, force: true });
+    await rm(join(package_dir, "bun.lockb"), { force: true });
+    await rm(join(package_dir, "bun.lock"), { force: true });
+
+    const { exited: exited2 } = spawn({
+      cmd: [bunExe(), "install", "--libc", "musl"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await exited2).toBe(0);
+    expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "dep-musl", "dep-universal"]);
+  });
+
+  it("should filter by libc combined with os and cpu", async () => {
+    // Mirrors a multi-variant native package: identical os/cpu, differing libc.
+    // A glibc target must not pull the musl-only variant.
+    const urls: string[] = [];
+    setHandler(
+      dummyRegistry(urls, {
+        "1.0.0": {
+          cpu: ["x64"],
+          os: ["linux"],
+          libc: ["glibc"],
+        },
+        "2.0.0": {
+          cpu: ["x64"],
+          os: ["linux"],
+          libc: ["musl"],
+        },
+      }),
+    );
+
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "test-libc-os-cpu",
+        version: "1.0.0",
+        optionalDependencies: {
+          "dep-linux-x64-glibc": "1.0.0",
+          "dep-linux-x64-musl": "2.0.0",
+        },
+      }),
+    );
+
+    const { exited } = spawn({
+      cmd: [bunExe(), "install", "--os", "linux", "--cpu", "x64", "--libc", "glibc"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await exited).toBe(0);
+    expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "dep-linux-x64-glibc"]);
+  });
+
+  it("should error on invalid libc", async () => {
+    await writeFile(
+      join(package_dir, "package.json"),
+      JSON.stringify({
+        name: "test-invalid-libc",
+        version: "1.0.0",
+        dependencies: {},
+      }),
+    );
+
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "--libc", "invalid-libc"],
+      cwd: package_dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(await exited).toBe(1);
+    const stderrText = await stderr.text();
+    expect(stderrText).toContain("Invalid libc");
+    expect(stderrText).toContain("invalid-libc");
+  });
+});

@@ -136,7 +136,7 @@ impl PackageManager {
             PreinstallState::Unknown => {
                 // Do not automatically start downloading packages which are disabled
                 // i.e. don't download all of esbuild's versions or SWCs
-                if pkg.is_disabled(self.options.cpu, self.options.os) {
+                if pkg.is_disabled(self.options.cpu, self.options.os, self.options.libc) {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
                     return PreinstallState::Done;
                 }

@@ -126,6 +126,9 @@ const SHARED_PARAMS: &[ParamType] = &[
     clap::param!(
         "--os <STR>...                         Override operating system for optional dependencies (e.g., linux, darwin, * for all)"
     ),
+    clap::param!(
+        "--libc <STR>...                       Override libc for optional dependencies (e.g., glibc, musl, * for all)"
+    ),
     clap::param!("-h, --help                            Print this help menu"),
 ];
 
@@ -440,9 +443,10 @@ pub struct CommandLineArguments {
     pub audit_level: Option<AuditLevel>,
     pub audit_ignore_list: &'static [&'static [u8]],
 
-    // CPU and OS overrides for optional dependencies
+    // CPU, OS, and libc overrides for optional dependencies
     pub cpu: Npm::Architecture,
     pub os: Npm::OperatingSystem,
+    pub libc: Npm::Libc,
 }
 
 impl Default for CommandLineArguments {
@@ -526,6 +530,7 @@ impl Default for CommandLineArguments {
 
             cpu: Npm::Architecture::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
+            libc: Npm::Libc::CURRENT,
         }
     }
 }
@@ -1308,6 +1313,33 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
                 }
             }
             cli.os = os_negatable.combine();
+        }
+
+        // Parse multiple --libc flags and combine them using Negatable
+        let libc_values = args.options(b"--libc");
+        if !libc_values.is_empty() {
+            let mut libc_negatable = Npm::Libc::NONE.negatable();
+            for libc_str in libc_values {
+                // apply() already handles "any" as wildcard and negation with !
+                libc_negatable.apply(libc_str);
+
+                // Support * as an alias for "any"
+                if *libc_str == *b"*" {
+                    libc_negatable.had_wildcard = true;
+                    libc_negatable.had_unrecognized_values = false;
+                } else if libc_negatable.had_unrecognized_values
+                    && *libc_str != *b"any"
+                    && *libc_str != *b"none"
+                {
+                    // Only error for truly unrecognized values (not "any" or "none")
+                    Output::err_generic(
+                        "Invalid libc: '{}'. Valid values are: *, any, glibc, musl. Use !name to negate.",
+                        (bstr::BStr::new(libc_str),),
+                    );
+                    Global::crash();
+                }
+            }
+            cli.libc = libc_negatable.combine();
         }
 
         if matches!(subcommand, Subcommand::Add | Subcommand::Install) {

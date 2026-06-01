@@ -141,9 +141,10 @@ mod _impl {
                 validators::validate_int32(global, arguments.ptr[2], "memLevel", None, None)?;
             let strategy =
                 validators::validate_int32(global, arguments.ptr[3], "strategy", None, None)?;
-            // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
             // `flush_write_result` writes two u32s through this pointer, so the
-            // caller-supplied array must hold at least 2 elements.
+            // caller-supplied array must hold at least 2 elements. The backing
+            // store is pinned and rooted (GC-visited `writeState` slot) below,
+            // so the cached pointer can't dangle.
             let write_result_value = arguments.ptr[4];
             let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
                 return Err(global.throw_invalid_argument_type_value(
@@ -168,7 +169,6 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_result = write_result_slice.as_mut_ptr();
             let write_callback =
                 validators::validate_function(global, "writeCallback", arguments.ptr[5])?;
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
@@ -191,7 +191,20 @@ mod _impl {
                 Some(dictionary_buf.byte_slice())
             };
 
-            self.write_result.set(Some(write_result));
+            // Pin the `_writeState` backing store so `transfer()` can't free it
+            // under the raw pointer cached below (written through on every
+            // async-write completion by `flush_write_result`). Pinning a small
+            // FastTypedArray relocates its storage, so read the pointer *after*.
+            // The GC-visited `writeState` slot (zlib.classes.ts `values:`) keeps
+            // the view alive for the wrapper's lifetime — the pin only blocks
+            // detach, not collection — so the cached pointer can never dangle.
+            let Some(mut write_result_buf) = write_result_value.as_pinned_arraybuffer(global)
+            else {
+                return Err(global.throw_out_of_memory());
+            };
+            js::write_state_set_cached(this_value, global, write_result_value);
+            self.write_result
+                .set(Some(write_result_buf.as_u32().as_mut_ptr()));
             js::write_callback_set_cached(
                 this_value,
                 global,

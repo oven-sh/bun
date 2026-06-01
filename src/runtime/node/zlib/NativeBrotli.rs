@@ -86,7 +86,7 @@ mod _impl {
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
         /// Points into a JS `Uint32Array` (`this._writeState`). Kept alive because
-        /// the JS object is tied to the native handle as `_handle[owner_symbol]`.
+        /// `init()` stores the view in the wrapper's GC-visited `writeState` slot.
         pub write_result: Cell<Option<*mut u32>>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         // TODO(port): Strong on m_ctx self-ref → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
@@ -188,11 +188,10 @@ mod _impl {
                     .throw());
             }
 
-            // this does not get gc'd because it is stored in the JS object's
-            // `this._writeState`. and the JS object is tied to the native handle
-            // as `_handle[owner_symbol]`.
             // `flush_write_result` writes two u32s through this pointer, so the
-            // caller-supplied array must hold at least 2 elements.
+            // caller-supplied array must hold at least 2 elements. The backing
+            // store is pinned and rooted (GC-visited `writeState` slot) below,
+            // so the cached pointer can't dangle.
             let write_result_value = arguments.ptr[1];
             let Some(mut write_result_buf) = write_result_value.as_array_buffer(global_this) else {
                 return Err(global_this.throw_invalid_argument_type_value(
@@ -217,7 +216,6 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_result = write_result_slice.as_mut_ptr();
             let write_callback =
                 validators::validate_function(global_this, "writeCallback", arguments.ptr[2])?;
 
@@ -240,7 +238,20 @@ mod _impl {
                 ));
             }
 
-            self.write_result.set(Some(write_result));
+            // Pin the `_writeState` backing store so `transfer()` can't free it
+            // under the raw pointer cached below (written through on every
+            // async-write completion by `flush_write_result`). Pinning a small
+            // FastTypedArray relocates its storage, so read the pointer *after*.
+            // The GC-visited `writeState` slot (zlib.classes.ts `values:`) keeps
+            // the view alive for the wrapper's lifetime — the pin only blocks
+            // detach, not collection — so the cached pointer can never dangle.
+            let Some(mut write_result_buf) = write_result_value.as_pinned_arraybuffer(global_this)
+            else {
+                return Err(global_this.throw_out_of_memory());
+            };
+            js::write_state_set_cached(this_value, global_this, write_result_value);
+            self.write_result
+                .set(Some(write_result_buf.as_u32().as_mut_ptr()));
 
             js::write_callback_set_cached(
                 this_value,

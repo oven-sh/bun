@@ -1,7 +1,64 @@
 use core::mem::{ManuallyDrop, MaybeUninit};
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSObject, JSValue, StrongOptional};
+use crate::shared::sql_data_cell::Flags as DataCellFlags;
+use bun_collections::StringHashMap;
 use bun_sql::shared::ColumnIdentifier;
+
+/// Shared body of `{Postgres,MySQL}SQLStatement::check_for_duplicate_fields()`.
+///
+/// Scans the columns backwards, retagging repeated names/indices as
+/// [`ColumnIdentifier::Duplicate`], and returns the accumulated data-cell
+/// flags. Run this before [`CachedStructure::build_from_columns`] so the
+/// `Duplicate` tags it skips are present.
+pub fn mark_duplicate_columns<'a, I>(columns: I) -> DataCellFlags
+where
+    I: DoubleEndedIterator<Item = &'a mut ColumnIdentifier> + ExactSizeIterator,
+{
+    let mut seen_numbers: Vec<u32> = Vec::new();
+    // TODO(port): Zig `getOrPut` keys on the borrowed `name.slice()`;
+    // StringHashMap clones to an owned `Box<[u8]>` key. Fine for a transient
+    // dedup set; revisit if profiling flags it.
+    let mut seen_fields: StringHashMap<()> = StringHashMap::default();
+    seen_fields.reserve(columns.len());
+
+    let mut flags = DataCellFlags::default();
+    // iterate backwards
+    for name_or_index in columns.rev() {
+        match &*name_or_index {
+            ColumnIdentifier::Name(name) => {
+                // PORT NOTE: reshaped for borrowck — compute `found_existing`
+                // before mutating `*name_or_index`.
+                let found_existing = seen_fields
+                    .get_or_put(name.slice())
+                    .expect("OOM")
+                    .found_existing;
+                if found_existing {
+                    *name_or_index = ColumnIdentifier::Duplicate;
+                    flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
+                }
+
+                flags.insert(DataCellFlags::HAS_NAMED_COLUMNS);
+            }
+            ColumnIdentifier::Index(index) => {
+                let index = *index;
+                if seen_numbers.contains(&index) {
+                    *name_or_index = ColumnIdentifier::Duplicate;
+                    flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
+                } else {
+                    seen_numbers.push(index);
+                }
+
+                flags.insert(DataCellFlags::HAS_INDEXED_COLUMNS);
+            }
+            ColumnIdentifier::Duplicate => {
+                flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
+            }
+        }
+    }
+
+    flags
+}
 
 #[derive(Default)]
 pub struct CachedStructure {

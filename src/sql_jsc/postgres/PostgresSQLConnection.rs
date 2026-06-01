@@ -7,8 +7,8 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::jsc::EventLoopTimer;
 use crate::jsc::webcore::AutoFlusher;
 use crate::jsc::{
-    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue,
-    JsResult, VirtualMachine, VirtualMachineSqlExt as _,
+    self as jsc, CallFrame, HasAutoFlush, JSGlobalObject, JSValue, JsResult, VirtualMachine,
+    VirtualMachineSqlExt as _,
 };
 use bun_boringssl as BoringSSL;
 use bun_collections::{HashMap, OffsetByteList, StringMap};
@@ -31,6 +31,7 @@ use crate::postgres::postgres_sql_query::{self, Status as QueryStatus};
 use crate::postgres::postgres_sql_statement::{Error as StatementError, Status as StatementStatus};
 use crate::postgres::sasl::SASLStatus;
 use crate::shared::CachedStructure as PostgresCachedStructure;
+use crate::shared::connection_args;
 use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::PostgresErrorOptions;
 use bun_sql::postgres::PostgresProtocol as protocol;
@@ -185,7 +186,7 @@ impl PostgresSQLConnection {
 
     /// Read-modify-write the packed `Cell<ConnectionFlags>` through `&self`.
     #[inline]
-    fn update_flags(&self, f: impl FnOnce(&mut ConnectionFlags)) {
+    pub(crate) fn update_flags(&self, f: impl FnOnce(&mut ConnectionFlags)) {
         let mut v = self.flags.get();
         f(&mut v);
         self.flags.set(v);
@@ -429,73 +430,37 @@ impl PostgresSQLConnection {
 
         // Zig: `this.socket.SocketTCP.socket.connected` — at this point we are
         // a plain TCP socket in the Connected state.
-        let Socket::SocketTcp(tcp) = self.socket.get() else {
+        let raw = match self.socket.get() {
+            Socket::SocketTcp(tcp) => tcp.socket.get(),
+            _ => None,
+        };
+        // Zig: `ext(?*PostgresSQLConnection).* = this`.
+        let adopted = raw.is_some_and(|raw| {
+            // SAFETY: `raw` is a live connected `us_socket_t*`; `secure` is set
+            // to a live `SSL_CTX*` before `setup_tls` is reached (Zig:
+            // `this.secure.?`); `server_name` is a NUL-terminated C string
+            // owned by `tls_config` for the connection lifetime.
+            unsafe {
+                jsc::adopt_socket_tls(
+                    raw,
+                    tls_group,
+                    bun_uws::SocketKind::PostgresTls,
+                    &mut *self
+                        .secure
+                        .expect("secure SSL_CTX must be set before setupTLS"),
+                    &self.tls_config,
+                    self.as_ctx_ptr(),
+                    |s| self.socket.set(s),
+                )
+            }
+        });
+        if !adopted {
             self.fail(
                 b"Failed to upgrade to TLS",
                 AnyPostgresError::TLSUpgradeFailed,
             );
             return;
-        };
-        let uws::InternalSocket::Connected(raw) = tcp.socket else {
-            self.fail(
-                b"Failed to upgrade to TLS",
-                AnyPostgresError::TLSUpgradeFailed,
-            );
-            return;
-        };
-
-        // SAFETY: `secure` is set to a live `SSL_CTX*` before `setup_tls` is
-        // reached (Zig: `this.secure.?`).
-        let ssl_ctx = unsafe {
-            &mut *self
-                .secure
-                .expect("secure SSL_CTX must be set before setupTLS")
-        };
-        let server_name = self.tls_config.server_name();
-        let sni = if server_name.is_null() {
-            None
-        } else {
-            // SAFETY: `server_name` is a NUL-terminated C string owned by
-            // `tls_config` for the connection lifetime.
-            Some(unsafe { bun_core::ffi::cstr(server_name) })
-        };
-        // Zig: `@sizeOf(?*PostgresSQLConnection)` — `?*T` is an 8-byte null-niche
-        // optional. The Rust layout-equivalent is `Option<NonNull<T>>`; using
-        // `Option<*mut T>` here would request 16 bytes (separate discriminant)
-        // and desync with the trampoline reader (uws_handlers.rs) which reads
-        // the slot as `Option<NonNull<_>>`.
-        let ext_size =
-            core::mem::size_of::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() as i32;
-
-        // SAFETY: `raw` is a live connected `us_socket_t*`; adopt_tls may
-        // realloc and return a different ptr.
-        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-            tls_group,
-            bun_uws::SocketKind::PostgresTls,
-            ssl_ctx,
-            sni,
-            ext_size,
-            ext_size,
-        ) else {
-            self.fail(
-                b"Failed to upgrade to TLS",
-                AnyPostgresError::TLSUpgradeFailed,
-            );
-            return;
-        };
-        let new_socket = new_socket.as_ptr();
-        // SAFETY: `new_socket` is a live us_socket_t freshly returned by
-        // `adopt_tls`; ext slot is sized for `Option<NonNull<PostgresSQLConnection>>`
-        // above. One `&mut` reborrow drives both safe inherent methods
-        // (`ext` / `start_tls_handshake`). Zig: `ext(?*PostgresSQLConnection).* = this`.
-        let sock = unsafe { &mut *new_socket };
-        *sock.ext::<Option<core::ptr::NonNull<PostgresSQLConnection>>>() =
-            core::ptr::NonNull::new(self.as_ctx_ptr());
-        self.socket.set(Socket::SocketTls(uws::SocketTLS {
-            socket: uws::InternalSocket::Connected(new_socket),
-        }));
-        // ext is now repointed; safe to kick the handshake (any dispatch lands here).
-        sock.start_tls_handshake();
+        }
         self.start();
     }
 
@@ -847,57 +812,20 @@ impl PostgresSQLConnection {
 
     pub fn on_handshake(&self, success: i32, ssl_error: uws::us_bun_verify_error_t) {
         debug!("onHandshake: {} {}", success, ssl_error.error_no);
-        let handshake_success = success == 1;
-        if handshake_success {
-            if self.tls_config.reject_unauthorized() != 0 {
-                // only reject the connection if reject_unauthorized == true
-                match self.ssl_mode {
-                    // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
-                    SSLMode::VerifyCa | SSLMode::VerifyFull => {
-                        if ssl_error.error_no != 0 {
-                            let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else {
-                                return;
-                            };
-                            self.fail_with_js_value(v);
-                            return;
-                        }
-
-                        if self.ssl_mode == SSLMode::VerifyFull {
-                            let servername = self.tls_config.server_name();
-                            let ok = if servername.is_null() {
-                                false
-                            } else {
-                                // SAFETY: native handle of a connected TLS socket is `SSL*`.
-                                let ssl_ptr: *mut BoringSSL::c::SSL = self
-                                    .socket
-                                    .get()
-                                    .get_native_handle()
-                                    .map_or(core::ptr::null_mut(), |p| p.cast());
-                                // SAFETY: `servername` is a NUL-terminated C string owned by `tls_config`.
-                                let hostname =
-                                    unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                                // SAFETY: `ssl_ptr` is the live SSL* of a connected TLS socket.
-                                !ssl_ptr.is_null()
-                                    && BoringSSL::check_server_identity(
-                                        unsafe { &mut *ssl_ptr },
-                                        hostname,
-                                    )
-                            };
-                            if !ok {
-                                let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else {
-                                    return;
-                                };
-                                self.fail_with_js_value(v);
-                            }
-                        }
-                    }
-                    // require is the same as prefer
-                    SSLMode::Require | SSLMode::Prefer | SSLMode::Disable => {}
-                }
-            }
-        } else {
-            // if we are here is because server rejected us, and the error_no is the cause of this
-            // no matter if reject_unauthorized is false because we are disconnected by the server
+        // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
+        // only reject the connection if reject_unauthorized == true (require is the same as prefer);
+        // but if `success != 1` the server rejected us no matter what reject_unauthorized says.
+        let verify = self.tls_config.reject_unauthorized() != 0
+            && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull);
+        let ok = success == 1
+            && (!verify
+                || connection_args::verify_tls_server(
+                    self.ssl_mode == SSLMode::VerifyFull,
+                    &self.tls_config,
+                    self.socket.get().get_native_handle(),
+                    ssl_error.error_no,
+                ));
+        if !ok {
             let Ok(v) = verify_error_to_js(&ssl_error, self.global()) else {
                 return;
             };
@@ -1084,79 +1012,15 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     // is the canonical safe escape hatch (one audited unsafe in bun_jsc) for
     // `&mut self` helpers like `ssl_ctx_cache()` / `postgres_socket_group()`.
     let vm = global_object.bun_vm().as_mut();
-    let arguments = callframe.arguments();
-    let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
-    let port = arguments[1].coerce::<i32>(global_object)?;
-
-    let username_str = bun_core::OwnedString::new(arguments[2].to_bun_string(global_object)?);
-    let password_str = bun_core::OwnedString::new(arguments[3].to_bun_string(global_object)?);
-    let database_str = bun_core::OwnedString::new(arguments[4].to_bun_string(global_object)?);
-    let ssl_mode: SSLMode = match arguments[5].to_int32() {
-        0 => SSLMode::Disable,
-        1 => SSLMode::Prefer,
-        2 => SSLMode::Require,
-        3 => SSLMode::VerifyCa,
-        4 => SSLMode::VerifyFull,
-        _ => SSLMode::Disable,
+    // Args 0..=14 (hostname/port/credentials/sslMode/tls/options/path/
+    // callbacks/timeouts) are decoded by the shared helper, which also builds
+    // the TLS `SSL_CTX` and returns it inside the `args.tls` errdefer guard.
+    // Ownership of `(secure, tls_config)` passes into `ptr.*` once allocated —
+    // `into_inner` recovers them just before the Box is built so the
+    // connect-fail path's `ptr.deinit()` is the sole cleanup.
+    let Some(args) = connection_args::parse::<SSLMode>(vm, global_object, callframe)? else {
+        return Ok(JSValue::ZERO);
     };
-
-    let tls_object = arguments[6];
-
-    let mut tls_config: jsc::api::ServerConfig::SSLConfig = Default::default();
-    let mut secure: Option<*mut uws::SslCtx> = None;
-    if ssl_mode != SSLMode::Disable {
-        tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
-            Default::default()
-        } else if tls_object.is_object() {
-            match jsc::api::ServerConfig::SSLConfig::from_js(&mut *vm, global_object, tls_object) {
-                Ok(opt) => opt.unwrap_or_default(),
-                Err(_) => return Ok(JSValue::ZERO),
-            }
-        } else {
-            return Err(global_object
-                .throw_invalid_arguments(format_args!("tls must be a boolean or an object")));
-        };
-
-        if global_object.has_exception() {
-            drop(tls_config);
-            return Ok(JSValue::ZERO);
-        }
-
-        // We always request the cert so we can verify it and also we manually
-        // abort the connection if the hostname doesn't match. Built here (not
-        // at STARTTLS time) so cert/CA errors throw synchronously. Goes
-        // through the per-VM weak `SSLContextCache` so every connection in the
-        // pool — and every reconnect — shares one `SSL_CTX*` per distinct
-        // config instead of building a fresh one per `PostgresSQLConnection`.
-        let mut err: uws::create_bun_socket_error_t = uws::create_bun_socket_error_t::none;
-        secure = vm
-            .ssl_ctx_cache()
-            .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);
-        if secure.is_none() {
-            drop(tls_config);
-            // TODO(port): Zig `err.toJS(globalObject)` — `to_js` lives as an extension
-            // in the runtime _jsc crate and isn't reachable from sql_jsc; throw the
-            // static message instead.
-            return Err(global_object.throw(format_args!(
-                "{}",
-                bun_core::fmt::s(err.message().unwrap_or(b"Failed to create SSL context"))
-            )));
-        }
-    }
-    // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
-    // below. Ownership passes into `ptr.*` once allocated — `into_inner`
-    // recovers them just before the Box is built so the connect-fail path's
-    // `ptr.deinit()` is the sole cleanup.
-    // PORT NOTE: guard owns `(secure, tls_config)` by value. Do NOT
-    // `drop_in_place` a stack local that Rust would also auto-drop on unwind —
-    // that double-frees. The closure's `_tls_config` is dropped exactly once by
-    // normal scope-exit drop here.
-    let errdefer_guard = scopeguard::guard((secure, tls_config), |(secure, _tls_config)| {
-        if let Some(s) = secure {
-            // SAFETY: SSL_CTX_free is safe to call on a valid SSL_CTX*.
-            unsafe { BoringSSL::c::SSL_CTX_free(s) };
-        }
-    });
 
     // PORT NOTE: `StringBuilder::append` takes `&mut self` and returns a borrow
     // of the backing buffer, so successive appends can't keep their `&[u8]`
@@ -1170,78 +1034,33 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let options: bun_ptr::RawSlice<u8>;
     let path: bun_ptr::RawSlice<u8>;
 
-    let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
-
-    let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
-
     let options_buf: Box<[u8]> = 'brk: {
         let mut b = bun_core::StringBuilder::default();
-        b.cap += username_str.utf8_byte_length()
+        b.cap += args.username.slice().len()
             + 1
-            + password_str.utf8_byte_length()
+            + args.password.slice().len()
             + 1
-            + database_str.utf8_byte_length()
+            + args.database.slice().len()
             + 1
-            + options_str.utf8_byte_length()
+            + args.options.slice().len()
             + 1
-            + path_str.utf8_byte_length()
+            + args.path.slice().len()
             + 1;
 
         let _ = b.allocate();
-        let u = username_str.to_utf8_without_ref();
-        username = bun_ptr::RawSlice::new(b.append(u.slice()));
-        drop(u);
-
-        let p = password_str.to_utf8_without_ref();
-        password = bun_ptr::RawSlice::new(b.append(p.slice()));
-        drop(p);
-
-        let d = database_str.to_utf8_without_ref();
-        database = bun_ptr::RawSlice::new(b.append(d.slice()));
-        drop(d);
-
-        let o = options_str.to_utf8_without_ref();
-        options = bun_ptr::RawSlice::new(b.append(o.slice()));
-        drop(o);
-
-        let _path = path_str.to_utf8_without_ref();
-        path = bun_ptr::RawSlice::new(b.append(_path.slice()));
-        drop(_path);
+        username = bun_ptr::RawSlice::new(b.append(args.username.slice()));
+        password = bun_ptr::RawSlice::new(b.append(args.password.slice()));
+        database = bun_ptr::RawSlice::new(b.append(args.database.slice()));
+        options = bun_ptr::RawSlice::new(b.append(args.options.slice()));
+        path = bun_ptr::RawSlice::new(b.append(args.path.slice()));
 
         break 'brk b.move_to_slice();
     };
 
-    // Reject null bytes in connection parameters to prevent Postgres startup
-    // message parameter injection (null bytes act as field terminators in the
-    // wire protocol's key\0value\0 format).
-    for (entry, name) in [
-        (username, &b"username"[..]),
-        (password, b"password"),
-        (database, b"database"),
-        (path, b"path"),
-    ] {
-        let entry = entry.slice();
-        if !entry.is_empty() && entry.contains(&0) {
-            drop(options_buf);
-            // tls_config / secure released by the errdefer above.
-            // TODO(port): Zig used `entry[1] ++ " must not contain null bytes"` (comptime concat).
-            return global_object.throw_invalid_arguments_fmt(format_args!(
-                "{} must not contain null bytes",
-                bstr::BStr::new(name)
-            ));
-        }
-    }
-
-    let on_connect = arguments[9];
-    let on_close = arguments[10];
-    let idle_timeout = arguments[11].to_int32();
-    let connection_timeout = arguments[12].to_int32();
-    let max_lifetime = arguments[13].to_int32();
-    let use_unnamed_prepared_statements = arguments[14].as_boolean();
-
+    let ssl_mode = args.ssl_mode;
     // Ownership transferred into `ptr`; disarm the errdefer and recover the
     // moved `secure`/`tls_config` for the struct literal below.
-    let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(errdefer_guard);
+    let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(args.tls);
 
     let ptr: *mut PostgresSQLConnection =
         bun_core::heap::into_raw(Box::new(PostgresSQLConnection {
@@ -1284,9 +1103,9 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 TLSStatus::None
             }),
             ssl_mode,
-            idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
-            connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
-            flags: Cell::new(if use_unnamed_prepared_statements {
+            idle_timeout_interval_ms: u32::try_from(args.idle_timeout).expect("int cast"),
+            connection_timeout_ms: u32::try_from(args.connection_timeout).expect("int cast"),
+            flags: Cell::new(if args.use_unnamed_prepared_statements {
                 ConnectionFlags::USE_UNNAMED_PREPARED_STATEMENTS
             } else {
                 ConnectionFlags::empty()
@@ -1294,7 +1113,7 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
             timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::PostgresSQLConnectionTimeout,
             )),
-            max_lifetime_interval_ms: u32::try_from(max_lifetime).expect("int cast"),
+            max_lifetime_interval_ms: u32::try_from(args.max_lifetime).expect("int cast"),
             max_lifetime_timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::PostgresSQLConnectionMaxLifetime,
             )),
@@ -1307,8 +1126,6 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
 
     {
-        let hostname = hostname_str.to_utf8();
-
         // Postgres always opens plain TCP first (SSLRequest happens in-band),
         // so even `ssl_mode != .disable` lands in the TCP group; `setupTLS()`
         // adopts into `postgres_tls_group` after the server's `S`.
@@ -1328,8 +1145,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
                 group,
                 uws::SocketKind::Postgres,
                 None,
-                hostname.slice(),
-                port,
+                args.hostname.to_utf8().slice(),
+                args.port,
                 ptr,
                 false,
             )
@@ -1353,8 +1170,8 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
     let js_value = js::to_js(ptr, global_object);
     js_value.ensure_still_alive();
     this.js_value.set(crate::jsc::JsRef::init_weak(js_value));
-    js::onconnect_set_cached(js_value, global_object, on_connect);
-    js::onclose_set_cached(js_value, global_object, on_close);
+    js::onconnect_set_cached(js_value, global_object, args.on_connect);
+    js::onclose_set_cached(js_value, global_object, args.on_close);
     /* TODO(port): bun_core::analytics::Features::POSTGRES_CONNECTIONS counter */
     Ok(js_value)
 }
@@ -1684,13 +1501,18 @@ pub struct Writer {
     pub connection: BackRef<PostgresSQLConnection>,
 }
 
-impl Writer {
-    // `write_buffer` is a `JsCell`; route mutation through the safe
-    // closure-scoped `with_mut` and reads through `get()` so the backref
-    // deref stays inside `BackRef`'s safe `Deref` — no raw `get_mut`
-    // escape hatch needed.
+// `write_buffer` is a `JsCell`; route mutation through the safe
+// closure-scoped `with_mut` and reads through `get()` so the backref
+// deref stays inside `BackRef`'s safe `Deref` — no raw `get_mut`
+// escape hatch needed.
+impl protocol::WriterContext for Writer {
+    #[inline]
+    fn offset(self) -> usize {
+        self.connection.write_buffer.get().len() as usize
+    }
 
-    pub fn write(&mut self, data: &[u8]) -> Result<(), AnyPostgresError> {
+    #[inline]
+    fn write(self, data: &[u8]) -> Result<(), AnyPostgresError> {
         self.connection
             .write_buffer
             .with_mut(|b| b.write(data))
@@ -1698,30 +1520,12 @@ impl Writer {
         Ok(())
     }
 
-    pub fn pwrite(&mut self, data: &[u8], index: usize) -> Result<(), AnyPostgresError> {
+    #[inline]
+    fn pwrite(self, data: &[u8], index: usize) -> Result<(), AnyPostgresError> {
         self.connection.write_buffer.with_mut(|b| {
             b.byte_list.slice_mut()[index..][..data.len()].copy_from_slice(data);
         });
         Ok(())
-    }
-
-    pub fn offset(self) -> usize {
-        self.connection.write_buffer.get().len() as usize
-    }
-}
-
-impl protocol::WriterContext for Writer {
-    #[inline]
-    fn offset(self) -> usize {
-        Writer::offset(self)
-    }
-    #[inline]
-    fn write(mut self, bytes: &[u8]) -> Result<(), AnyPostgresError> {
-        Writer::write(&mut self, bytes)
-    }
-    #[inline]
-    fn pwrite(mut self, bytes: &[u8], i: usize) -> Result<(), AnyPostgresError> {
-        Writer::pwrite(&mut self, bytes, i)
     }
 }
 
@@ -1754,31 +1558,38 @@ impl Reader {
         self.connection.read_buffer.get()
     }
 
-    pub(crate) fn mark_message_start(&mut self) {
+    fn ensure_capacity(self, count: usize) -> bool {
+        let buf = self.read_buffer();
+        (buf.head as usize) + count <= buf.byte_list.len()
+    }
+}
+
+impl protocol::ReaderContext for Reader {
+    #[inline]
+    fn mark_message_start(&mut self) {
         let head = self.read_buffer().head;
         self.connection.last_message_start.set(head);
     }
 
-    pub(crate) fn ensure_length(self, count: usize) -> bool {
-        self.ensure_capacity(count)
-    }
-
-    pub(crate) fn peek(&self) -> &[u8] {
+    #[inline]
+    fn peek(&self) -> &[u8] {
         self.read_buffer().remaining()
     }
 
-    pub(crate) fn skip(&mut self, count: usize) {
+    #[inline]
+    fn skip(&mut self, count: usize) {
         self.connection.read_buffer.with_mut(|buf| {
             buf.head = (buf.head + (count as u32)).min(buf.byte_list.len() as u32);
         });
     }
 
-    pub(crate) fn ensure_capacity(self, count: usize) -> bool {
-        let buf = self.read_buffer();
-        (buf.head as usize) + count <= buf.byte_list.len()
+    #[inline]
+    fn ensure_length(&mut self, count: usize) -> bool {
+        self.ensure_capacity(count)
     }
 
-    pub(crate) fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
+    #[inline]
+    fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
         let remaining = self.read_buffer().remaining();
         if remaining.len() < count {
             return Err(AnyPostgresError::ShortRead);
@@ -1787,48 +1598,22 @@ impl Reader {
         // PORT NOTE: reshaped for borrowck — capture as `RawSlice` before calling
         // skip(); the read_buffer backing storage is not reallocated by skip().
         let slice = bun_ptr::RawSlice::new(&remaining[..count]);
-        self.skip(count);
+        protocol::ReaderContext::skip(self, count);
         Ok(Data::Temporary(slice))
     }
 
-    pub(crate) fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
+    #[inline]
+    fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
         let remain = self.read_buffer().remaining();
 
         if let Some(zero) = strings::index_of_char(remain, 0) {
             // `RawSlice` backref into read_buffer (not reallocated by skip()).
             let slice = bun_ptr::RawSlice::new(&remain[..zero as usize]);
-            self.skip(zero as usize + 1);
+            protocol::ReaderContext::skip(self, zero as usize + 1);
             return Ok(Data::Temporary(slice));
         }
 
         Err(AnyPostgresError::ShortRead)
-    }
-}
-
-impl protocol::ReaderContext for Reader {
-    #[inline]
-    fn mark_message_start(&mut self) {
-        Reader::mark_message_start(self)
-    }
-    #[inline]
-    fn peek(&self) -> &[u8] {
-        Reader::peek(self)
-    }
-    #[inline]
-    fn skip(&mut self, count: usize) {
-        Reader::skip(self, count)
-    }
-    #[inline]
-    fn ensure_length(&mut self, count: usize) -> bool {
-        Reader::ensure_length(*self, count)
-    }
-    #[inline]
-    fn read(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
-        Reader::read(self, count)
-    }
-    #[inline]
-    fn read_z(&mut self) -> Result<Data, AnyPostgresError> {
-        Reader::read_z(self)
     }
 }
 
@@ -1874,6 +1659,57 @@ impl PostgresSQLConnection {
         {
             self.advance();
             self.flush_data();
+        }
+    }
+
+    /// Report a failed protocol write on `req`: forward a pending JS exception
+    /// if one exists, otherwise (optionally) mark the statement as failed and
+    /// reject the query with the write error.
+    ///
+    /// `statement` is a raw pointer rather than `&mut` so that no protected
+    /// `&mut` borrow spans the JS-re-entrant `on_write_fail` call below —
+    /// re-entrant JS may reach the same cached statement via `statement_mut()`.
+    fn report_write_failure(
+        &self,
+        req: &PostgresSQLQuery,
+        err: AnyPostgresError,
+        statement: Option<*mut PostgresSQLStatement>,
+    ) {
+        if let Some(err_) = self.global().try_take_exception() {
+            req.on_js_error(err_, self.global());
+        } else {
+            if let Some(statement) = statement {
+                // SAFETY: callers derive the pointer from `req.statement_mut()`,
+                // whose pointee is kept alive by the intrusive ref `req` holds.
+                // The `&mut` formed here ends before `on_write_fail` re-enters JS.
+                let statement = unsafe { &mut *statement };
+                statement.status = StatementStatus::Failed;
+                statement.error_response = Some(StatementError::PostgresError(err));
+            }
+            req.on_write_fail(err, self.global(), self.get_queries_array());
+        }
+    }
+
+    /// Remove a finished/failed request from the queue head, or — when it is
+    /// not at the head (`offset > 0`) — mark it failed so `advance`'s deferred
+    /// cleanup pass discards it later. `bump` advances `offset` past the
+    /// deferred entry.
+    #[inline]
+    fn discard_or_defer(
+        &self,
+        req_ptr: *mut PostgresSQLQuery,
+        req: &PostgresSQLQuery,
+        offset: &mut usize,
+        bump: bool,
+    ) {
+        if *offset == 0 {
+            self.discard_request(req_ptr);
+        } else {
+            // deinit later
+            req.status.set(QueryStatus::Fail);
+            if bump {
+                *offset += 1;
+            }
         }
     }
 
@@ -1949,17 +1785,8 @@ impl PostgresSQLConnection {
                         if let Err(err) =
                             PostgresRequest::execute_query(query_str.slice(), self.writer())
                         {
-                            if let Some(err_) = self.global().try_take_exception() {
-                                req.on_js_error(err_, self.global());
-                            } else {
-                                req.on_write_fail(err, self.global(), self.get_queries_array());
-                            }
-                            if offset == 0 {
-                                self.discard_request(req_ptr);
-                            } else {
-                                // deinit later
-                                req.status.set(QueryStatus::Fail);
-                            }
+                            self.report_write_failure(&req, err, None);
+                            self.discard_or_defer(req_ptr, &req, &mut offset, false);
                             debug!("executeQuery failed: {}", err);
                             continue;
                         }
@@ -1985,13 +1812,7 @@ impl PostgresSQLConnection {
                                         };
                                         req.on_js_error(ev, self.global());
                                     }
-                                    if offset == 0 {
-                                        self.discard_request(req_ptr);
-                                    } else {
-                                        // deinit later
-                                        req.status.set(QueryStatus::Fail);
-                                        offset += 1;
-                                    }
+                                    self.discard_or_defer(req_ptr, &req, &mut offset, true);
                                     continue;
                                 }
                                 StatementStatus::Prepared => {
@@ -2000,13 +1821,7 @@ impl PostgresSQLConnection {
                                             false,
                                             "query value was freed earlier than expected"
                                         );
-                                        if offset == 0 {
-                                            self.discard_request(req_ptr);
-                                        } else {
-                                            // deinit later
-                                            req.status.set(QueryStatus::Fail);
-                                            offset += 1;
-                                        }
+                                        self.discard_or_defer(req_ptr, &req, &mut offset, true);
                                         continue;
                                     };
                                     let binding_value =
@@ -2040,22 +1855,8 @@ impl PostgresSQLConnection {
                                                 self.writer(),
                                             )
                                         {
-                                            if let Some(err_) = self.global().try_take_exception() {
-                                                req.on_js_error(err_, self.global());
-                                            } else {
-                                                req.on_write_fail(
-                                                    err,
-                                                    self.global(),
-                                                    self.get_queries_array(),
-                                                );
-                                            }
-                                            if offset == 0 {
-                                                self.discard_request(req_ptr);
-                                            } else {
-                                                // deinit later
-                                                req.status.set(QueryStatus::Fail);
-                                                offset += 1;
-                                            }
+                                            self.report_write_failure(&req, err, None);
+                                            self.discard_or_defer(req_ptr, &req, &mut offset, true);
                                             debug!(
                                                 "parse, bind and execute failed: {}",
                                                 <&'static str>::from(err)
@@ -2072,22 +1873,8 @@ impl PostgresSQLConnection {
                                             columns_value,
                                             self.writer(),
                                         ) {
-                                            if let Some(err_) = self.global().try_take_exception() {
-                                                req.on_js_error(err_, self.global());
-                                            } else {
-                                                req.on_write_fail(
-                                                    err,
-                                                    self.global(),
-                                                    self.get_queries_array(),
-                                                );
-                                            }
-                                            if offset == 0 {
-                                                self.discard_request(req_ptr);
-                                            } else {
-                                                // deinit later
-                                                req.status.set(QueryStatus::Fail);
-                                                offset += 1;
-                                            }
+                                            self.report_write_failure(&req, err, None);
+                                            self.discard_or_defer(req_ptr, &req, &mut offset, true);
                                             debug!("bind and execute failed: {}", err);
                                             continue;
                                         }
@@ -2135,13 +1922,7 @@ impl PostgresSQLConnection {
                                                 false,
                                                 "query value was freed earlier than expected"
                                             );
-                                            if offset == 0 {
-                                                self.discard_request(req_ptr);
-                                            } else {
-                                                // deinit later
-                                                req.status.set(QueryStatus::Fail);
-                                                offset += 1;
-                                            }
+                                            self.discard_or_defer(req_ptr, &req, &mut offset, true);
                                             continue;
                                         };
                                         // prepareAndQueryWithSignature will write + bind + execute, it will change to running after binding is complete
@@ -2159,24 +1940,17 @@ impl PostgresSQLConnection {
                                                 &mut statement.signature,
                                             )
                                         {
-                                            if let Some(err_) = self.global().try_take_exception() {
-                                                req.on_js_error(err_, self.global());
-                                            } else {
-                                                statement.status = StatementStatus::Failed;
-                                                statement.error_response =
-                                                    Some(StatementError::PostgresError(err));
-                                                req.on_write_fail(
-                                                    err,
-                                                    self.global(),
-                                                    self.get_queries_array(),
-                                                );
-                                            }
-                                            if offset == 0 {
-                                                self.discard_request(req_ptr);
-                                            } else {
-                                                // deinit later
-                                                req.status.set(QueryStatus::Fail);
-                                            }
+                                            self.report_write_failure(
+                                                &req,
+                                                err,
+                                                Some(&raw mut *statement),
+                                            );
+                                            self.discard_or_defer(
+                                                req_ptr,
+                                                &req,
+                                                &mut offset,
+                                                false,
+                                            );
                                             debug!(
                                                 "prepareAndQueryWithSignature failed: {}",
                                                 <&'static str>::from(err)
@@ -2233,18 +2007,11 @@ impl PostgresSQLConnection {
                                                 self.writer(),
                                             )
                                         {
-                                            if let Some(err_) = self.global().try_take_exception() {
-                                                req.on_js_error(err_, self.global());
-                                            } else {
-                                                statement.status = StatementStatus::Failed;
-                                                statement.error_response =
-                                                    Some(StatementError::PostgresError(err));
-                                                req.on_write_fail(
-                                                    err,
-                                                    self.global(),
-                                                    self.get_queries_array(),
-                                                );
-                                            }
+                                            self.report_write_failure(
+                                                &req,
+                                                err,
+                                                Some(&raw mut *statement),
+                                            );
                                             debug_assert!(offset == 0);
                                             self.discard_request(req_ptr);
                                             debug!(
@@ -2279,36 +2046,22 @@ impl PostgresSQLConnection {
                                         &statement.signature.fields,
                                         connection_writer,
                                     ) {
-                                        if let Some(err_) = self.global().try_take_exception() {
-                                            req.on_js_error(err_, self.global());
-                                        } else {
-                                            statement.error_response =
-                                                Some(StatementError::PostgresError(err));
-                                            statement.status = StatementStatus::Failed;
-                                            req.on_write_fail(
-                                                err,
-                                                self.global(),
-                                                self.get_queries_array(),
-                                            );
-                                        }
+                                        self.report_write_failure(
+                                            &req,
+                                            err,
+                                            Some(&raw mut *statement),
+                                        );
                                         debug_assert!(offset == 0);
                                         self.discard_request(req_ptr);
                                         debug!("write query failed: {}", <&'static str>::from(err));
                                         continue;
                                     }
                                     if let Err(err) = connection_writer.write(&protocol::SYNC) {
-                                        if let Some(err_) = self.global().try_take_exception() {
-                                            req.on_js_error(err_, self.global());
-                                        } else {
-                                            statement.error_response =
-                                                Some(StatementError::PostgresError(err));
-                                            statement.status = StatementStatus::Failed;
-                                            req.on_write_fail(
-                                                err,
-                                                self.global(),
-                                                self.get_queries_array(),
-                                            );
-                                        }
+                                        self.report_write_failure(
+                                            &req,
+                                            err,
+                                            Some(&raw mut *statement),
+                                        );
                                         debug_assert!(offset == 0);
                                         self.discard_request(req_ptr);
                                         debug!(
@@ -2358,13 +2111,7 @@ impl PostgresSQLConnection {
                     continue;
                 }
                 QueryStatus::Success => {
-                    if offset > 0 {
-                        // deinit later
-                        req.status.set(QueryStatus::Fail);
-                        offset += 1;
-                        continue;
-                    }
-                    self.discard_request(req_ptr);
+                    self.discard_or_defer(req_ptr, &req, &mut offset, true);
                     continue;
                 }
                 QueryStatus::Fail => {

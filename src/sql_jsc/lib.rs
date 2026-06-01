@@ -23,10 +23,14 @@ pub mod shared {
     #[path = "CachedStructure.rs"]
     pub mod cached_structure;
 
+    pub mod connection_args;
+
     pub mod datetime_text;
 
     #[path = "ObjectIterator.rs"]
     pub mod object_iterator;
+
+    pub mod query_args;
 
     #[path = "QueryBindingIterator.rs"]
     pub mod query_binding_iterator;

@@ -3,8 +3,8 @@ use core::ptr::NonNull;
 
 use crate::jsc::codegen::{js_mysql_connection, js_mysql_query as js};
 use crate::jsc::{
-    self as jsc, CallFrame, JSGlobalObject, JSGlobalObjectSqlExt as _, JSValue, JsRef, JsResult,
-    VirtualMachine, VirtualMachineSqlExt as _,
+    self as jsc, CallFrame, JSGlobalObject, JSValue, JsRef, JsResult, VirtualMachine,
+    VirtualMachineSqlExt as _,
 };
 use bun_jsc::JsCell;
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
@@ -16,6 +16,7 @@ use bun_sql::shared::sql_query_result_mode::SQLQueryResultMode;
 use super::js_mysql_connection::MySQLConnection;
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use crate::postgres::command_tag_jsc::CommandTagJsc as _;
+use crate::shared::query_args;
 // PORT NOTE: `my_sql_query` exports both the `MySQLQuery` *struct* and a
 // `declare_scope!`-generated `MySQLQuery` *static* (ScopedLogger). Importing
 // the name once pulls in both namespaces, so the `debug!` macro below resolves
@@ -96,56 +97,19 @@ impl JSMySQLQuery {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        let mut args = jsc::call_frame::ArgumentsSlice::init(global_this.sql_vm(), arguments);
-        // defer args.deinit() — handled by Drop
-        let Some(query) = args.next_eat() else {
-            return Err(global_this.throw(format_args!("query must be a string")));
-        };
-        let Some(values) = args.next_eat() else {
-            return Err(global_this.throw(format_args!("values must be an array")));
-        };
-
-        if !query.is_string() {
-            return Err(global_this.throw(format_args!("query must be a string")));
-        }
-
-        if values.js_type() != jsc::JSType::Array {
-            return Err(global_this.throw(format_args!("values must be an array")));
-        }
-
-        let pending_value: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
-        let columns: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
-        let js_bigint: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
-        let js_simple: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
-
-        let bigint = js_bigint.is_boolean() && js_bigint.as_boolean();
-        let simple = js_simple.is_boolean() && js_simple.as_boolean();
-        if simple {
-            if values.get_length(global_this)? > 0 {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("simple query cannot have parameters")));
-            }
-            if query.get_length(global_this)? >= i32::MAX as u64 {
-                return Err(global_this.throw_invalid_arguments(format_args!("query is too long")));
-            }
-        }
-        if !pending_value.js_type().is_array_like() {
-            return Err(global_this.throw_invalid_argument_type("query", "pendingValue", "Array"));
-        }
+        let args = query_args::parse(global_this, callframe)?;
 
         let this_ptr = bun_core::heap::into_raw(Box::new(Self {
             this_value: JsCell::new(JsRef::empty()),
             ref_count: Cell::new(1),
-            // Stored with full write provenance for later `&mut *p` at use sites.
-            vm: BackRef::from(
-                NonNull::new(global_this.sql_vm_ptr()).expect("sql_vm_ptr() is non-null"),
-            ),
+            // JS-thread VM singleton with full write provenance (provenance
+            // comes from the thread-local `*mut` inside `as_mut`).
+            vm: BackRef::new_mut(global_this.bun_vm().as_mut()),
             global_object: BackRef::new(global_this),
             query: JsCell::new(MySQLQuery::init(
-                query.to_bun_string(global_this)?,
-                bigint,
-                simple,
+                args.query.to_bun_string(global_this)?,
+                args.bigint,
+                args.simple,
             )),
         }));
         // `heap::into_raw` is `Box::into_raw` — never null. Uniquely owned here
@@ -157,10 +121,10 @@ impl JSMySQLQuery {
         this_value.ensure_still_alive();
         this.this_value.with_mut(|v| v.set_weak(this_value));
 
-        this.set_binding(values);
-        this.set_pending_value(pending_value);
-        if !columns.is_undefined() {
-            this.set_columns(columns);
+        this.set_binding(args.values);
+        this.set_pending_value(args.pending_value);
+        if !args.columns.is_undefined() {
+            this.set_columns(args.columns);
         }
 
         Ok(this_value)
@@ -198,7 +162,7 @@ impl JSMySQLQuery {
             if !global_object.has_exception() {
                 return Err(global_object.throw_value(mysql_error_to_js(
                     global_object,
-                    "failed to execute query",
+                    b"failed to execute query",
                     err,
                 )));
             }
@@ -358,7 +322,7 @@ impl JSMySQLQuery {
         if let Some(err_) = self.global_object().try_take_exception() {
             self.reject_with_js_value(queries_array, err_);
         } else {
-            let instance = mysql_error_to_js(self.global_object(), "Failed to bind query", err);
+            let instance = mysql_error_to_js(self.global_object(), b"Failed to bind query", err);
             instance.ensure_still_alive();
             self.reject_with_js_value(queries_array, instance);
         }
@@ -391,7 +355,7 @@ impl JSMySQLQuery {
         if js_error.is_empty() {
             js_error = mysql_error_to_js(
                 self.global_object(),
-                "Query failed",
+                b"Query failed",
                 AnyMySQLError::Error::UnknownError,
             );
         }
@@ -471,7 +435,7 @@ impl JSMySQLQuery {
                 // Rust we throw for side-effect and map to the enum variant.
                 let _ = global_object.throw_value(mysql_error_to_js(
                     global_object,
-                    "failed to execute query",
+                    b"failed to execute query",
                     err,
                 ));
             }
@@ -523,83 +487,57 @@ impl JSMySQLQuery {
         self.query.with_mut(|q| q.mark_as_prepared());
     }
 
+    /// `this_value` if the VM is not shutting down and the JS wrapper ref
+    /// still resolves; `None` otherwise.
+    #[inline]
+    fn live_this_value(&self) -> Option<JSValue> {
+        if self.vm().is_shutting_down() {
+            return None;
+        }
+        self.this_value.get().try_get()
+    }
+
     #[inline]
     pub fn set_pending_value(&self, result: JSValue) {
-        if self.vm().is_shutting_down() {
-            return;
-        }
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.live_this_value() {
             js::pending_value_set_cached(value, self.global_object(), result);
         }
     }
     #[inline]
     pub fn get_pending_value(&self) -> Option<JSValue> {
-        if self.vm().is_shutting_down() {
-            return None;
-        }
-        if let Some(value) = self.this_value.get().try_get() {
-            return js::pending_value_get_cached(value);
-        }
-        None
+        js::pending_value_get_cached(self.live_this_value()?)
     }
 
     #[inline]
     fn set_target(&self, result: JSValue) {
-        if self.vm().is_shutting_down() {
-            return;
-        }
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.live_this_value() {
             js::target_set_cached(value, self.global_object(), result);
         }
     }
     #[inline]
     fn get_target(&self) -> Option<JSValue> {
-        if self.vm().is_shutting_down() {
-            return None;
-        }
-        if let Some(value) = self.this_value.get().try_get() {
-            return js::target_get_cached(value);
-        }
-        None
+        js::target_get_cached(self.live_this_value()?)
     }
 
     #[inline]
     fn set_columns(&self, result: JSValue) {
-        if self.vm().is_shutting_down() {
-            return;
-        }
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.live_this_value() {
             js::columns_set_cached(value, self.global_object(), result);
         }
     }
     #[inline]
     fn get_columns(&self) -> Option<JSValue> {
-        if self.vm().is_shutting_down() {
-            return None;
-        }
-        if let Some(value) = self.this_value.get().try_get() {
-            return js::columns_get_cached(value);
-        }
-        None
+        js::columns_get_cached(self.live_this_value()?)
     }
     #[inline]
     fn set_binding(&self, result: JSValue) {
-        if self.vm().is_shutting_down() {
-            return;
-        }
-        if let Some(value) = self.this_value.get().try_get() {
+        if let Some(value) = self.live_this_value() {
             js::binding_set_cached(value, self.global_object(), result);
         }
     }
     #[inline]
     fn get_binding(&self) -> Option<JSValue> {
-        if self.vm().is_shutting_down() {
-            return None;
-        }
-        if let Some(value) = self.this_value.get().try_get() {
-            return js::binding_get_cached(value);
-        }
-        None
+        js::binding_get_cached(self.live_this_value()?)
     }
 
     // Helpers for stored back-references.

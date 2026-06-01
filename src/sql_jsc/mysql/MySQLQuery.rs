@@ -40,66 +40,14 @@ pub struct MySQLQuery {
 }
 
 /// Zig: `packed struct(u8) { bigint, simple, pipelined: bool, result_mode: SQLQueryResultMode, _padding: u3 }`
-/// Not all fields are `bool`, so per PORTING.md this is a transparent `u8` with shift accessors.
-#[repr(transparent)]
-#[derive(Copy, Clone, Default)]
-struct Flags(u8);
-
-impl Flags {
-    const BIGINT: u8 = 1 << 0;
-    const SIMPLE: u8 = 1 << 1;
-    const PIPELINED: u8 = 1 << 2;
-    const RESULT_MODE_SHIFT: u8 = 3;
-    const RESULT_MODE_MASK: u8 = 0b11 << Self::RESULT_MODE_SHIFT; // SQLQueryResultMode is 2 bits (3 bool + 2 + 3 pad = 8)
-
-    #[inline]
-    fn bigint(self) -> bool {
-        self.0 & Self::BIGINT != 0
-    }
-    #[inline]
-    fn simple(self) -> bool {
-        self.0 & Self::SIMPLE != 0
-    }
-    #[inline]
-    fn pipelined(self) -> bool {
-        self.0 & Self::PIPELINED != 0
-    }
-    #[inline]
-    fn set_pipelined(&mut self, v: bool) {
-        if v {
-            self.0 |= Self::PIPELINED;
-        } else {
-            self.0 &= !Self::PIPELINED;
-        }
-    }
-    #[inline]
-    fn result_mode(self) -> SQLQueryResultMode {
-        // result_mode bits were written from a valid SQLQueryResultMode
-        // discriminant (`set_result_mode`); the unreachable 4th bit-state
-        // traps (matches Zig's safety-checked `@enumFromInt`).
-        match (self.0 & Self::RESULT_MODE_MASK) >> Self::RESULT_MODE_SHIFT {
-            0 => SQLQueryResultMode::Objects,
-            1 => SQLQueryResultMode::Values,
-            2 => SQLQueryResultMode::Raw,
-            n => unreachable!("invalid SQLQueryResultMode {n}"),
-        }
-    }
-    #[inline]
-    fn set_result_mode(&mut self, m: SQLQueryResultMode) {
-        self.0 = (self.0 & !Self::RESULT_MODE_MASK) | ((m as u8) << Self::RESULT_MODE_SHIFT);
-    }
-    #[inline]
-    fn new(bigint: bool, simple: bool) -> Self {
-        let mut f = 0u8;
-        if bigint {
-            f |= Self::BIGINT;
-        }
-        if simple {
-            f |= Self::SIMPLE;
-        }
-        // result_mode default = .objects (assumed discriminant 0)
-        Self(f)
-    }
+/// Ported as a plain struct (like `PostgresSQLQuery::Flags`) — the packing is not
+/// load-bearing on the Rust side.
+#[derive(Copy, Clone)]
+struct Flags {
+    bigint: bool,
+    simple: bool,
+    pipelined: bool,
+    result_mode: SQLQueryResultMode,
 }
 
 impl MySQLQuery {
@@ -415,13 +363,13 @@ impl MySQLQuery {
                         if !global_object.has_exception() {
                             let _ = global_object.throw_value(mysql_error_to_js(
                                 global_object,
-                                Some(b"failed to bind and execute query"),
+                                b"failed to bind and execute query",
                                 err,
                             ));
                         }
                         return Err(bun_core::err!("JSError"));
                     }
-                    self.flags.set_pipelined(true);
+                    self.flags.pipelined = true;
                 }
             }
             my_sql_statement::Status::Parsing => {
@@ -459,7 +407,12 @@ impl MySQLQuery {
             statement: core::ptr::null_mut(),
             query,
             status: Status::Pending,
-            flags: Flags::new(bigint, simple),
+            flags: Flags {
+                bigint,
+                simple,
+                pipelined: false,
+                result_mode: SQLQueryResultMode::Objects,
+            },
         }
     }
 
@@ -471,7 +424,7 @@ impl MySQLQuery {
         binding_value: JSValue,
     ) -> Result<(), bun_core::Error> {
         // TODO(port): narrow error set
-        if self.flags.simple() {
+        if self.flags.simple {
             debug!("runSimpleQuery");
             return self.run_simple_query(connection);
         }
@@ -494,7 +447,7 @@ impl MySQLQuery {
 
     #[inline]
     pub fn set_result_mode(&mut self, result_mode: SQLQueryResultMode) {
-        self.flags.set_result_mode(result_mode);
+        self.flags.result_mode = result_mode;
     }
 
     #[inline]
@@ -563,22 +516,22 @@ impl MySQLQuery {
 
     #[inline]
     pub fn is_pipelined(&self) -> bool {
-        self.flags.pipelined()
+        self.flags.pipelined
     }
 
     #[inline]
     pub fn is_simple(&self) -> bool {
-        self.flags.simple()
+        self.flags.simple
     }
 
     #[inline]
     pub fn is_bigint_supported(&self) -> bool {
-        self.flags.bigint()
+        self.flags.bigint
     }
 
     #[inline]
     pub fn get_result_mode(&self) -> SQLQueryResultMode {
-        self.flags.result_mode()
+        self.flags.result_mode
     }
 
     #[inline]

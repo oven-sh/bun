@@ -26,64 +26,12 @@ impl IntoAnyMySQLError for bun_core::Error {
     }
 }
 
-/// Zig `?[]const u8`. Callers pass either a bare byte-ish value (`&str`,
-/// `&[u8]`, `&[u8; N]`, `&Vec<u8>`) or the same wrapped in `Option<_>`, so
-/// this trait — rather than `AsRef<[u8]>` directly — lets one signature
-/// accept both shapes without touching every callsite.
-pub(crate) trait MaybeBytes {
-    fn as_maybe_bytes(&self) -> Option<&[u8]>;
-}
-impl MaybeBytes for str {
-    #[inline]
-    fn as_maybe_bytes(&self) -> Option<&[u8]> {
-        Some(self.as_bytes())
-    }
-}
-impl MaybeBytes for [u8] {
-    #[inline]
-    fn as_maybe_bytes(&self) -> Option<&[u8]> {
-        Some(self)
-    }
-}
-impl<const N: usize> MaybeBytes for [u8; N] {
-    #[inline]
-    fn as_maybe_bytes(&self) -> Option<&[u8]> {
-        Some(self.as_slice())
-    }
-}
-impl MaybeBytes for Vec<u8> {
-    #[inline]
-    fn as_maybe_bytes(&self) -> Option<&[u8]> {
-        Some(self.as_slice())
-    }
-}
-impl MaybeBytes for String {
-    #[inline]
-    fn as_maybe_bytes(&self) -> Option<&[u8]> {
-        Some(self.as_bytes())
-    }
-}
-impl<T: MaybeBytes + ?Sized> MaybeBytes for &T {
-    #[inline]
-    fn as_maybe_bytes(&self) -> Option<&[u8]> {
-        (**self).as_maybe_bytes()
-    }
-}
-impl<T: MaybeBytes> MaybeBytes for Option<T> {
-    #[inline]
-    fn as_maybe_bytes(&self) -> Option<&[u8]> {
-        self.as_ref().and_then(|b| b.as_maybe_bytes())
-    }
-}
-
 pub(crate) fn mysql_error_to_js(
     global_object: &JSGlobalObject,
-    // Zig: `?[]const u8` — `message orelse @errorName(err)`.
-    message: impl MaybeBytes,
+    message: &[u8],
     err: impl IntoAnyMySQLError,
 ) -> JSValue {
     let name = err.mysql_error_name();
-    let msg: &[u8] = message.as_maybe_bytes().unwrap_or(name.as_bytes());
 
     let code: &'static [u8] = match name {
         "ConnectionClosed" => b"ERR_MYSQL_CONNECTION_CLOSED",
@@ -134,7 +82,7 @@ pub(crate) fn mysql_error_to_js(
 
     create_mysql_error(
         global_object,
-        msg,
+        message,
         &MySQLErrorOptions {
             code,
             errno: None,

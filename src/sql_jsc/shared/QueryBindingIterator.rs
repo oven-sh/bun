@@ -54,19 +54,6 @@ impl<'a> QueryBindingIterator<'a> {
             }
         }
     }
-
-    pub fn reset(&mut self) {
-        match self {
-            Self::Array(iter) => {
-                iter.i = 0;
-            }
-            Self::Objects(iter) => {
-                iter.cell_i = 0;
-                iter.row_i = 0;
-                iter.current_row = JSValue::ZERO;
-            }
-        }
-    }
 }
 
 // ported from: src/sql_jsc/shared/QueryBindingIterator.zig

@@ -17,6 +17,7 @@ use super::error_jsc::postgres_error_to_js;
 use super::postgres_request as PostgresRequest;
 use super::postgres_sql_connection;
 use super::postgres_sql_statement::Status as StatementStatus;
+use crate::shared::query_args;
 use bun_sql::postgres::CommandTag;
 use bun_sql::postgres::PostgresProtocol as protocol;
 use bun_sql::postgres::any_postgres_error::AnyPostgresError;
@@ -386,44 +387,7 @@ impl PostgresSQLQuery {
     // comptime { @export(&jsc.toJSHostFn(call), .{ .name = "PostgresSQLQuery__createInstance" }); }
     // TODO(port): proc-macro emits the PostgresSQLQuery__createInstance export; verify codegen name.
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-        let arguments = callframe.arguments();
-        let mut args =
-            crate::jsc::call_frame::ArgumentsSlice::init(global_this.bun_vm(), arguments);
-        // ArgumentsSlice has Drop.
-        let Some(query) = args.next_eat() else {
-            return Err(global_this.throw(format_args!("query must be a string")));
-        };
-        let Some(values) = args.next_eat() else {
-            return Err(global_this.throw(format_args!("values must be an array")));
-        };
-
-        if !query.is_string() {
-            return Err(global_this.throw(format_args!("query must be a string")));
-        }
-
-        if values.js_type() != crate::jsc::JSType::Array {
-            return Err(global_this.throw(format_args!("values must be an array")));
-        }
-
-        let pending_value: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
-        let columns: JSValue = args.next_eat().unwrap_or(JSValue::UNDEFINED);
-        let js_bigint: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
-        let js_simple: JSValue = args.next_eat().unwrap_or(JSValue::FALSE);
-
-        let bigint = js_bigint.is_boolean() && js_bigint.as_boolean();
-        let simple = js_simple.is_boolean() && js_simple.as_boolean();
-        if simple {
-            if values.get_length(global_this)? > 0 {
-                return Err(global_this
-                    .throw_invalid_arguments(format_args!("simple query cannot have parameters")));
-            }
-            if query.get_length(global_this)? >= i32::MAX as u64 {
-                return Err(global_this.throw_invalid_arguments(format_args!("query is too long")));
-            }
-        }
-        if !pending_value.js_type().is_array_like() {
-            return Err(global_this.throw_invalid_argument_type("query", "pendingValue", "Array"));
-        }
+        let args = query_args::parse(global_this, callframe)?;
 
         let ptr = bun_core::heap::into_raw(Box::new(PostgresSQLQuery::default()));
 
@@ -438,28 +402,22 @@ impl PostgresSQLQuery {
         // `default()`-initialised by `Box::new` above, so just overwrite the
         // three non-default fields in place.
         unsafe {
-            (*ptr).query = query.to_bun_string(global_this)?;
+            (*ptr).query = args.query.to_bun_string(global_this)?;
             (*ptr).this_value.set(JsRef::init_weak(this_value));
             (*ptr).flags.set(Flags {
-                bigint,
-                simple,
+                bigint: args.bigint,
+                simple: args.simple,
                 ..Default::default()
             });
         }
 
-        js::binding_set_cached(this_value, global_this, values);
-        js::pending_value_set_cached(this_value, global_this, pending_value);
-        if !columns.is_undefined() {
-            js::columns_set_cached(this_value, global_this, columns);
+        js::binding_set_cached(this_value, global_this, args.values);
+        js::pending_value_set_cached(this_value, global_this, args.pending_value);
+        if !args.columns.is_undefined() {
+            js::columns_set_cached(this_value, global_this, args.columns);
         }
 
         Ok(this_value)
-    }
-
-    pub fn push(&self, global_this: &JSGlobalObject, value: JSValue) {
-        // TODO(port): Zig source references `this.pending_value` which is not a field on this
-        // struct — likely dead/broken code in the original. Preserved as a no-op.
-        let _ = (global_this, value);
     }
 
     pub fn do_done(
@@ -564,6 +522,28 @@ impl PostgresSQLQuery {
         let writer = connection.writer();
         // We need a strong reference to the query so that it doesn't get GC'd
         this.ref_();
+
+        // Shared cleanup for the write-failure paths below: release the statement
+        // ref this query holds (may free a sole-owner statement) and undo the
+        // speculative `this.ref_()` just taken.
+        let release_query_ref = || {
+            this.release_statement();
+            // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
+            unsafe { Self::deref(this_ptr) };
+        };
+        // Shared error tail: throw `err` as a postgres error unless an exception
+        // is already pending.
+        let throw_write_error = |msg: &[u8], err: AnyPostgresError| -> JsError {
+            if !global_object.has_exception() {
+                return global_object.throw_value(postgres_error_to_js(
+                    global_object,
+                    Some(msg),
+                    err,
+                ));
+            }
+            JsError::Thrown
+        };
+
         if this.flags.get().simple {
             bun_core::scoped_log!(Postgres, "executeQuery");
 
@@ -583,26 +563,10 @@ impl PostgresSQLQuery {
             let can_execute = !connection.has_query_running();
             if can_execute {
                 if let Err(err) = PostgresRequest::execute_query(query_str.slice(), writer) {
-                    // fail to run do cleanup — sole owner just created above
-                    // (rc=1); `release_statement` decrements → 0 frees.
-                    this.release_statement();
-                    // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                    unsafe { Self::deref(this_ptr) };
-
-                    if !global_object.has_exception() {
-                        return Err(global_object.throw_value(postgres_error_to_js(
-                            global_object,
-                            Some(b"failed to execute query"),
-                            err,
-                        )));
-                    }
-                    return Err(JsError::Thrown);
+                    release_query_ref();
+                    return Err(throw_write_error(b"failed to execute query", err));
                 }
-                {
-                    let mut f = connection.flags.get();
-                    f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
-                    connection.flags.set(f);
-                }
+                connection.update_flags(|f| f.set(ConnectionFlags::IS_READY_FOR_QUERY, false));
                 connection
                     .nonpipelinable_requests
                     .set(connection.nonpipelinable_requests.get() + 1);
@@ -615,12 +579,7 @@ impl PostgresSQLQuery {
                 .with_mut(|q| q.write_item(this_ptr))
                 .is_err()
             {
-                // fail to run do cleanup — sole owner just created above
-                // (rc=1); `release_statement` decrements → 0 frees.
-                this.release_statement();
-                // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                unsafe { Self::deref(this_ptr) };
-
+                release_query_ref();
                 return Err(global_object.throw_out_of_memory());
             }
 
@@ -733,27 +692,15 @@ impl PostgresSQLQuery {
                                     columns_value,
                                     writer,
                                 ) {
-                                    // fail to run do cleanup — drop the ref we took above.
-                                    this.release_statement();
-                                    // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                                    unsafe { Self::deref(this_ptr) };
-
-                                    if !global_object.has_exception() {
-                                        return Err(global_object.throw_value(
-                                            postgres_error_to_js(
-                                                global_object,
-                                                Some(b"failed to bind and execute query"),
-                                                err,
-                                            ),
-                                        ));
-                                    }
-                                    return Err(JsError::Thrown);
+                                    release_query_ref();
+                                    return Err(throw_write_error(
+                                        b"failed to bind and execute query",
+                                        err,
+                                    ));
                                 }
-                                {
-                                    let mut f = connection.flags.get();
-                                    f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
-                                    connection.flags.set(f);
-                                }
+                                connection.update_flags(|f| {
+                                    f.set(ConnectionFlags::IS_READY_FOR_QUERY, false)
+                                });
                                 this.status.set(Status::Binding);
                                 this.update_flags(|f| f.pipelined = true);
                                 connection
@@ -769,6 +716,16 @@ impl PostgresSQLQuery {
                     break 'enqueue;
                 }
             }
+            // Shared cleanup for the write-failure paths below: remove the
+            // speculative statements-map entry (present only when using named
+            // prepared statements).
+            let remove_statements_entry = || {
+                if connection_entry_value.is_some() {
+                    let _ = connection
+                        .statements
+                        .with_mut(|m| m.remove(&signature_hash));
+                }
+            };
             let can_execute = !connection.has_query_running();
 
             if can_execute {
@@ -783,30 +740,15 @@ impl PostgresSQLQuery {
                         writer,
                         &mut signature,
                     ) {
-                        if connection_entry_value.is_some() {
-                            let _ = connection
-                                .statements
-                                .with_mut(|m| m.remove(&signature_hash));
-                        }
+                        remove_statements_entry();
                         drop(signature);
-                        this.release_statement();
-                        // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                        unsafe { Self::deref(this_ptr) };
-                        if !global_object.has_exception() {
-                            return Err(global_object.throw_value(postgres_error_to_js(
-                                global_object,
-                                Some(b"failed to prepare and query"),
-                                err,
-                            )));
-                        }
-                        return Err(JsError::Thrown);
+                        release_query_ref();
+                        return Err(throw_write_error(b"failed to prepare and query", err));
                     }
-                    {
-                        let mut f = connection.flags.get();
+                    connection.update_flags(|f| {
                         f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
                         f.set(ConnectionFlags::WAITING_TO_PREPARE, true);
-                        connection.flags.set(f);
-                    }
+                    });
                     this.status.set(Status::Binding);
                     did_write = true;
                 } else if !connection
@@ -824,46 +766,20 @@ impl PostgresSQLQuery {
                         &signature.fields,
                         writer,
                     ) {
-                        if connection_entry_value.is_some() {
-                            let _ = connection
-                                .statements
-                                .with_mut(|m| m.remove(&signature_hash));
-                        }
+                        remove_statements_entry();
                         drop(signature);
-                        this.release_statement();
-                        // SAFETY: undoes the speculative `this.ref_()` above; count was ≥2, never frees here.
-                        unsafe { Self::deref(this_ptr) };
-                        if !global_object.has_exception() {
-                            return Err(global_object.throw_value(postgres_error_to_js(
-                                global_object,
-                                Some(b"failed to write query"),
-                                err,
-                            )));
-                        }
-                        return Err(JsError::Thrown);
+                        release_query_ref();
+                        return Err(throw_write_error(b"failed to write query", err));
                     }
                     if let Err(err) = writer.write(&protocol::SYNC) {
-                        if connection_entry_value.is_some() {
-                            let _ = connection
-                                .statements
-                                .with_mut(|m| m.remove(&signature_hash));
-                        }
+                        remove_statements_entry();
                         drop(signature);
-                        if !global_object.has_exception() {
-                            return Err(global_object.throw_value(postgres_error_to_js(
-                                global_object,
-                                Some(b"failed to flush"),
-                                err,
-                            )));
-                        }
-                        return Err(JsError::Thrown);
+                        return Err(throw_write_error(b"failed to flush", err));
                     }
-                    {
-                        let mut f = connection.flags.get();
+                    connection.update_flags(|f| {
                         f.set(ConnectionFlags::IS_READY_FOR_QUERY, false);
                         f.set(ConnectionFlags::WAITING_TO_PREPARE, true);
-                        connection.flags.set(f);
-                    }
+                    });
                     did_write = true;
                 }
                 // Unnamed prepared statements with params: skip writeQuery+Sync here.

@@ -38,6 +38,7 @@ use crate::mysql::js_mysql_connection::JSMySQLConnection;
 use crate::mysql::js_mysql_query::JSMySQLQuery;
 use crate::mysql::my_sql_request_queue::MySQLRequestQueue;
 use crate::mysql::my_sql_statement::{self as mysql_statement, MySQLStatement, Param};
+use crate::shared::connection_args;
 
 pub use bun_sql::mysql::protocol::error_packet::ErrorPacket;
 // Zig: `pub const Status = ConnectionState;` — re-export so callers can write
@@ -322,10 +323,11 @@ impl MySQLConnection {
 
     pub fn upgrade_to_tls(&mut self) -> Result<(), FlushQueueError> {
         // Only adopt if we're currently a plain TCP socket.
-        let Socket::SocketTcp(tcp) = &self.socket else {
-            return Ok(());
+        let raw = match &self.socket {
+            Socket::SocketTcp(tcp) => tcp.socket.get(),
+            _ => None,
         };
-        let uws::InternalSocket::Connected(raw) = tcp.socket else {
+        let Some(raw) = raw else {
             return Ok(());
         };
 
@@ -335,56 +337,28 @@ impl MySQLConnection {
             .as_mut()
             .mysql_socket_group::<true>();
 
-        // SAFETY: `secure` is set to a live `SSL_CTX*` before TLS upgrade is
-        // requested (Zig: `this.#secure.?`).
-        let ssl_ctx = unsafe {
-            &mut *self
-                .secure
-                .expect("secure SSL_CTX must be set before upgradeToTLS")
-        };
-        let server_name = self.tls_config.server_name();
-        let sni = if server_name.is_null() {
-            None
-        } else {
-            // SAFETY: `server_name` is a NUL-terminated C string owned by
-            // `tls_config` for the connection lifetime.
-            Some(unsafe { bun_core::ffi::cstr(server_name) })
-        };
-        // Zig: `@sizeOf(?*JSMySQLConnection)` — `?*T` is an 8-byte null-niche
-        // optional. The Rust layout-equivalent is `Option<NonNull<T>>`; using
-        // `Option<*mut T>` here would request 16 bytes (separate discriminant)
-        // and desync with the trampoline reader (uws_handlers.rs) which reads
-        // the slot as `Option<NonNull<_>>`.
-        let ext_size = core::mem::size_of::<Option<core::ptr::NonNull<JSMySQLConnection>>>() as i32;
-
-        // SAFETY: `raw` is a live connected `us_socket_t*`; adopt_tls may
-        // realloc and return a different ptr.
-        let Some(new_socket) = (unsafe { &mut *raw }).adopt_tls(
-            tls_group,
-            bun_uws::SocketKind::MysqlTls,
-            ssl_ctx,
-            sni,
-            ext_size,
-            ext_size,
-        ) else {
-            return Err(FlushQueueError::AuthenticationFailed);
-        };
-
-        let js_connection = self.get_js_connection();
-        let new_socket = new_socket.as_ptr();
-        // SAFETY: `new_socket` is a live us_socket_t freshly returned by
-        // `adopt_tls`; ext storage was sized for
-        // `Option<NonNull<JSMySQLConnection>>` above. One `&mut` reborrow
-        // drives both safe inherent methods (`ext` / `start_tls_handshake`).
         // Zig: `ext(?*JSMySQLConnection).* = this.getJSConnection()`.
-        let sock = unsafe { &mut *new_socket };
-        *sock.ext::<Option<core::ptr::NonNull<JSMySQLConnection>>>() =
-            core::ptr::NonNull::new(js_connection);
-        self.socket = Socket::SocketTls(uws::SocketTLS {
-            socket: uws::InternalSocket::Connected(new_socket),
-        });
-        // ext is now repointed; safe to kick the handshake (any dispatch lands here).
-        sock.start_tls_handshake();
+        let js_connection = self.get_js_connection();
+        // SAFETY: `raw` is a live connected `us_socket_t*`; `secure` is set to
+        // a live `SSL_CTX*` before TLS upgrade is requested (Zig:
+        // `this.#secure.?`); `server_name` is a NUL-terminated C string owned
+        // by `tls_config` for the connection lifetime.
+        let adopted = unsafe {
+            crate::jsc::adopt_socket_tls(
+                raw,
+                tls_group,
+                bun_uws::SocketKind::MysqlTls,
+                &mut *self
+                    .secure
+                    .expect("secure SSL_CTX must be set before upgradeToTLS"),
+                &self.tls_config,
+                js_connection,
+                |s| self.socket = s,
+            )
+        };
+        if !adopted {
+            return Err(FlushQueueError::AuthenticationFailed);
+        }
         Ok(())
     }
 
@@ -422,50 +396,20 @@ impl MySQLConnection {
         self.sequence_id = self.sequence_id.wrapping_add(1);
         if handshake_success {
             self.tls_status = TLSStatus::SslOk;
-            if self.tls_config.reject_unauthorized() != 0 {
-                // follow the same rules as postgres
-                // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
-                // only reject the connection if reject_unauthorized == true
-                match self.ssl_mode {
-                    SSLMode::VerifyCa | SSLMode::VerifyFull => {
-                        if ssl_error.error_no != 0 {
-                            self.tls_status = TLSStatus::SslFailed;
-                            return Ok(false);
-                        }
-
-                        // VerifyFull additionally requires the certificate identity to
-                        // match the intended host. Absence of a configured server name is
-                        // not a license to skip the check — fail closed.
-                        if self.ssl_mode == SSLMode::VerifyFull {
-                            let servername = self.tls_config.server_name();
-                            if servername.is_null() {
-                                self.tls_status = TLSStatus::SslFailed;
-                                return Ok(false);
-                            }
-                            // SAFETY: native handle of a connected TLS socket is `SSL*`.
-                            let ssl_ptr: *mut bun_boringssl_sys::SSL = self
-                                .socket
-                                .get_native_handle()
-                                .map(|h| h.cast())
-                                .unwrap_or(core::ptr::null_mut());
-                            // SAFETY: `server_name` is a NUL-terminated C string owned by
-                            // `tls_config` for the connection lifetime.
-                            let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
-                            if ssl_ptr.is_null()
-                                || !bun_boringssl::check_server_identity(
-                                    // SAFETY: `ssl_ptr` is non-null (checked by the short-circuit above) and live (handshake just succeeded).
-                                    unsafe { &mut *ssl_ptr },
-                                    hostname,
-                                )
-                            {
-                                self.tls_status = TLSStatus::SslFailed;
-                                return Ok(false);
-                            }
-                        }
-                    }
-                    // require is the same as prefer
-                    SSLMode::Require | SSLMode::Prefer | SSLMode::Disable => {}
-                }
+            // follow the same rules as postgres
+            // https://github.com/porsager/postgres/blob/6ec85a432b17661ccacbdf7f765c651e88969d36/src/connection.js#L272-L279
+            // only reject the connection if reject_unauthorized == true (require is the same as prefer)
+            if self.tls_config.reject_unauthorized() != 0
+                && matches!(self.ssl_mode, SSLMode::VerifyCa | SSLMode::VerifyFull)
+                && !connection_args::verify_tls_server(
+                    self.ssl_mode == SSLMode::VerifyFull,
+                    &self.tls_config,
+                    self.socket.get_native_handle(),
+                    ssl_error.error_no,
+                )
+            {
+                self.tls_status = TLSStatus::SslFailed;
+                return Ok(false);
             }
             self.send_handshake_response()?;
             return Ok(true);

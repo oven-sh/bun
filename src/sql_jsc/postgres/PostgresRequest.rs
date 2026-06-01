@@ -285,11 +285,29 @@ pub fn write_query<Context: WriterContext>(
     Ok(())
 }
 
+/// Writes the Execute + Flush + Sync tail shared by every prepared-statement
+/// query path.
+#[inline]
+fn execute_flush_sync<Context: WriterContext>(
+    name: &[u8],
+    mut writer: protocol::NewWriter<Context>,
+) -> Result<(), AnyPostgresError> {
+    let exec = protocol::Execute {
+        p: protocol::PortalOrPreparedStatement::PreparedStatement(name),
+        ..Default::default()
+    };
+    exec.write_internal(&mut writer)?;
+
+    writer.write(&protocol::FLUSH)?;
+    writer.write(&protocol::SYNC)?;
+    Ok(())
+}
+
 pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
     global: &JSGlobalObject,
     query: &[u8],
     array_value: JSValue,
-    mut writer: protocol::NewWriter<Context>,
+    writer: protocol::NewWriter<Context>,
     signature: &mut Signature,
 ) -> Result<(), AnyPostgresError> {
     write_query(
@@ -308,17 +326,7 @@ pub(crate) fn prepare_and_query_with_signature<Context: WriterContext>(
         &[],
         writer,
     )?;
-    let exec = protocol::Execute {
-        p: protocol::PortalOrPreparedStatement::PreparedStatement(
-            &signature.prepared_statement_name,
-        ),
-        ..Default::default()
-    };
-    exec.write_internal(&mut writer)?;
-
-    writer.write(&protocol::FLUSH)?;
-    writer.write(&protocol::SYNC)?;
-    Ok(())
+    execute_flush_sync(&signature.prepared_statement_name, writer)
 }
 
 pub(crate) fn bind_and_execute<Context: WriterContext>(
@@ -326,7 +334,7 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
     statement: &PostgresSQLStatement,
     array_value: JSValue,
     columns_value: JSValue,
-    mut writer: protocol::NewWriter<Context>,
+    writer: protocol::NewWriter<Context>,
 ) -> Result<(), AnyPostgresError> {
     write_bind(
         &statement.signature.prepared_statement_name,
@@ -338,17 +346,7 @@ pub(crate) fn bind_and_execute<Context: WriterContext>(
         &statement.fields,
         writer,
     )?;
-    let exec = protocol::Execute {
-        p: protocol::PortalOrPreparedStatement::PreparedStatement(
-            &statement.signature.prepared_statement_name,
-        ),
-        ..Default::default()
-    };
-    exec.write_internal(&mut writer)?;
-
-    writer.write(&protocol::FLUSH)?;
-    writer.write(&protocol::SYNC)?;
-    Ok(())
+    execute_flush_sync(&statement.signature.prepared_statement_name, writer)
 }
 
 /// Atomically sends Parse + [Describe] + Bind + Execute + Flush + Sync as a single message batch.
@@ -367,8 +365,10 @@ pub fn parse_and_bind_and_execute<Context: WriterContext>(
 ) -> Result<(), AnyPostgresError> {
     let name = &statement.signature.prepared_statement_name;
 
-    // Parse
-    {
+    if include_describe {
+        // Parse + Describe (needed on first execution to learn parameter/result types for caching)
+        write_query(query, name, &statement.signature.fields, writer)?;
+    } else {
         let q = protocol::Parse {
             name,
             params: &statement.signature.fields,
@@ -376,15 +376,6 @@ pub fn parse_and_bind_and_execute<Context: WriterContext>(
         };
         q.write_internal(&mut writer)?;
         bun_core::scoped_log!(Postgres, "Parse: {}", bun_fmt::quote(query));
-    }
-
-    // Describe (needed on first execution to learn parameter/result types for caching)
-    if include_describe {
-        let d = protocol::Describe {
-            p: protocol::PortalOrPreparedStatement::PreparedStatement(name),
-        };
-        d.write_internal(writer)?;
-        bun_core::scoped_log!(Postgres, "Describe: {}", bun_fmt::quote(name));
     }
 
     // Bind — use server-provided types if available (binary format), otherwise
@@ -408,16 +399,7 @@ pub fn parse_and_bind_and_execute<Context: WriterContext>(
         writer,
     )?;
 
-    // Execute
-    let exec = protocol::Execute {
-        p: protocol::PortalOrPreparedStatement::PreparedStatement(name),
-        ..Default::default()
-    };
-    exec.write_internal(&mut writer)?;
-
-    writer.write(&protocol::FLUSH)?;
-    writer.write(&protocol::SYNC)?;
-    Ok(())
+    execute_flush_sync(name, writer)
 }
 
 pub(crate) fn execute_query<Context: WriterContext>(

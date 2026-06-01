@@ -4,12 +4,11 @@ use core::ffi::c_void;
 use crate::jsc::{
     CallFrame, EventLoopSqlExt as _, EventLoopTimer, EventLoopTimerState, EventLoopTimerTag,
     GlobalRef, HasAutoFlush, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, KeepAlive,
-    VirtualMachine, VirtualMachineSqlExt as _, api::server_config::SSLConfig,
-    codegen::js_mysql_connection as js, webcore::AutoFlusher,
+    VirtualMachine, VirtualMachineSqlExt as _, codegen::js_mysql_connection as js,
+    webcore::AutoFlusher,
 };
 use crate::shared::CachedStructure;
-use bun_boringssl_sys as boringssl;
-use bun_core::strings;
+use crate::shared::connection_args;
 use bun_core::{TimespecMockMode, timespec};
 use bun_ptr::{AsCtxPtr, BackRef, ParentRef};
 use bun_sql::mysql::MySQLQueryResult;
@@ -472,120 +471,37 @@ impl JSMySQLConnection {
         // SAFETY: JS-thread only; short-lived `&mut` to the singleton VM via raw ptr,
         // no other live borrow in this scope.
         let vm = global_object.bun_vm().as_mut();
-        let arguments = callframe.arguments();
-        let hostname_str = bun_core::OwnedString::new(arguments[0].to_bun_string(global_object)?);
-        let port = arguments[1].coerce::<i32>(global_object)?;
-
-        let username_str = bun_core::OwnedString::new(arguments[2].to_bun_string(global_object)?);
-        let password_str = bun_core::OwnedString::new(arguments[3].to_bun_string(global_object)?);
-        let database_str = bun_core::OwnedString::new(arguments[4].to_bun_string(global_object)?);
-        // TODO: update this to match MySQL.
-        let ssl_mode: SSLMode = match arguments[5].to_int32() {
-            0 => SSLMode::Disable,
-            1 => SSLMode::Prefer,
-            2 => SSLMode::Require,
-            3 => SSLMode::VerifyCa,
-            4 => SSLMode::VerifyFull,
-            _ => SSLMode::Disable,
+        // Args 0..=14 (hostname/port/credentials/sslMode/tls/options/path/
+        // callbacks/timeouts) are decoded by the shared helper, which also
+        // builds the TLS `SSL_CTX` and returns it inside the `args.tls`
+        // errdefer guard. Ownership passes to `MySQLConnection.init` once
+        // `Box::new` succeeds — `into_inner` disarms the guard at that point so
+        // the connect-fail path (which `deref()`s the connection) doesn't
+        // double-free.
+        let Some(args) = connection_args::parse::<SSLMode>(vm, global_object, callframe)? else {
+            return Ok(JSValue::ZERO);
         };
-
-        let tls_object = arguments[6];
-
-        let mut tls_config: SSLConfig = SSLConfig::default();
-        let mut secure: Option<*mut uws::SslCtx> = None;
-        if ssl_mode != SSLMode::Disable {
-            tls_config = if tls_object.is_boolean() && tls_object.to_boolean() {
-                SSLConfig::default()
-            } else if tls_object.is_object() {
-                match SSLConfig::from_js(&mut *vm, global_object, tls_object) {
-                    Ok(Some(c)) => c,
-                    Ok(None) => SSLConfig::default(),
-                    Err(_) => return Ok(JSValue::ZERO),
-                }
-            } else {
-                return Err(global_object
-                    .throw_invalid_arguments(format_args!("tls must be a boolean or an object")));
-            };
-
-            if global_object.has_exception() {
-                drop(tls_config);
-                return Ok(JSValue::ZERO);
-            }
-
-            // We always request the cert so we can verify it and also we manually
-            // abort the connection if the hostname doesn't match. Built here so
-            // CA/cert errors throw synchronously, applied later by upgradeToTLS.
-            // Goes through the per-VM weak `SSLContextCache` so every pooled
-            // connection / reconnect shares one `SSL_CTX*` per distinct config.
-            let mut err = uws::create_bun_socket_error_t::none;
-            secure = vm
-                .ssl_ctx_cache()
-                .get_or_create_opts(&tls_config.as_usockets_for_client_verification(), &mut err);
-            if secure.is_none() {
-                drop(tls_config);
-                return Err(
-                    global_object.throw_value(crate::jsc::create_bun_socket_error_to_js(
-                        err,
-                        global_object,
-                    )),
-                );
-            }
-        }
-        // Covers `try arguments[7/8].toBunString()` and the null-byte rejection
-        // below. Ownership passes to `MySQLConnection.init` once `Box::new`
-        // succeeds — we null the locals at that point so the connect-fail path
-        // (which `deref()`s the connection) doesn't double-free.
-        let tls_guard = scopeguard::guard((secure, tls_config), |(s, cfg)| {
-            if let Some(s) = s {
-                // SAFETY: secure was created by ssl_ctx_cache; we own one ref until transferred.
-                unsafe { boringssl::SSL_CTX_free(s) };
-            }
-            drop(cfg);
-        });
-
-        let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
-        let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
+        // MySQL-only argument; `args.use_unnamed_prepared_statements` is
+        // intentionally unused (MySQL doesn't support unnamed prepared
+        // statements).
+        let allow_public_key_retrieval = callframe.argument(15).to_boolean();
 
         // PORT NOTE: Zig packed all five strings into one `StringBuilder`-owned
         // arena and handed `[]const u8` slices into it to `MySQLConnection.init`.
         // The Rust `init` takes `Box<[u8]>` per field (each separately owned),
-        // so we just copy each string into its own allocation. `options_buf`
+        // so each string moves (or copies) into its own allocation. `options_buf`
         // (the original arena handle, kept only so `cleanup()` could free it)
         // becomes an empty box.
-        let username: Box<[u8]> = Box::from(username_str.to_utf8_without_ref().slice());
-        let password: Box<[u8]> = Box::from(password_str.to_utf8_without_ref().slice());
-        let database: Box<[u8]> = Box::from(database_str.to_utf8_without_ref().slice());
-        let options: Box<[u8]> = Box::from(options_str.to_utf8_without_ref().slice());
-        let path: Box<[u8]> = Box::from(path_str.to_utf8_without_ref().slice());
+        let username: Box<[u8]> = args.username.into_boxed_bytes();
+        let password: Box<[u8]> = args.password.into_boxed_bytes();
+        let database: Box<[u8]> = args.database.into_boxed_bytes();
+        let options: Box<[u8]> = args.options.into_boxed_bytes();
+        let path: Box<[u8]> = args.path.into_boxed_bytes();
         let options_buf: Box<[u8]> = Box::default();
-
-        // Reject null bytes in connection parameters to prevent protocol injection
-        // (null bytes act as field terminators in the MySQL wire protocol).
-        for (slice, msg) in [
-            (&username[..], "username must not contain null bytes"),
-            (&password[..], "password must not contain null bytes"),
-            (&database[..], "database must not contain null bytes"),
-            (&path[..], "path must not contain null bytes"),
-        ] {
-            if !slice.is_empty() && strings::index_of_char(slice, 0).is_some() {
-                // tls_config / secure released by the guard above.
-                return Err(global_object.throw_invalid_arguments(format_args!("{msg}")));
-            }
-        }
-
-        let on_connect = arguments[9];
-        let on_close = arguments[10];
-        let idle_timeout = arguments[11].to_int32();
-        let connection_timeout = arguments[12].to_int32();
-        let max_lifetime = arguments[13].to_int32();
-        let use_unnamed_prepared_statements = arguments[14].as_boolean();
-        // MySQL doesn't support unnamed prepared statements
-        let _ = use_unnamed_prepared_statements;
-        let allow_public_key_retrieval = callframe.argument(15).to_boolean();
 
         // Ownership transferred into `ptr.connection`; disarm the errdefer so the
         // connect-fail `ptr.deref()` is the sole cleanup path from here on.
-        let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(tls_guard);
+        let (secure, tls_config) = scopeguard::ScopeGuard::into_inner(args.tls);
 
         let ptr: *mut JSMySQLConnection = bun_core::heap::into_raw(Box::new(JSMySQLConnection {
             ref_count: Cell::new(1),
@@ -601,13 +517,13 @@ impl JSMySQLConnection {
                 options_buf,
                 tls_config,
                 secure,
-                ssl_mode,
+                args.ssl_mode,
                 allow_public_key_retrieval,
             )),
             auto_flusher: JsCell::new(AutoFlusher::default()),
-            idle_timeout_interval_ms: u32::try_from(idle_timeout).expect("int cast"),
-            connection_timeout_ms: u32::try_from(connection_timeout).expect("int cast"),
-            max_lifetime_interval_ms: u32::try_from(max_lifetime).expect("int cast"),
+            idle_timeout_interval_ms: u32::try_from(args.idle_timeout).expect("int cast"),
+            connection_timeout_ms: u32::try_from(args.connection_timeout).expect("int cast"),
+            max_lifetime_interval_ms: u32::try_from(args.max_lifetime).expect("int cast"),
             timer: JsCell::new(EventLoopTimer::init_paused(
                 EventLoopTimerTag::MySQLConnectionTimeout,
             )),
@@ -622,7 +538,7 @@ impl JSMySQLConnection {
         let this = ParentRef::from(core::ptr::NonNull::new(ptr).expect("heap::into_raw non-null"));
 
         {
-            let hostname = hostname_str.to_utf8();
+            let hostname = args.hostname.to_utf8();
 
             // MySQL always opens plain TCP first; STARTTLS adopts into the TLS
             // group after the SSLRequest exchange.
@@ -642,7 +558,7 @@ impl JSMySQLConnection {
                     uws::DispatchKind::Mysql,
                     None,
                     hostname.slice(),
-                    port,
+                    args.port,
                     ptr,
                     false,
                 )
@@ -668,8 +584,8 @@ impl JSMySQLConnection {
         js_value.ensure_still_alive();
         this.js_value
             .with_mut(|r| r.set_strong(js_value, global_object));
-        js::onconnect_set_cached(js_value, global_object, on_connect);
-        js::onclose_set_cached(js_value, global_object, on_close);
+        js::onconnect_set_cached(js_value, global_object, args.on_connect);
+        js::onclose_set_cached(js_value, global_object, args.on_close);
 
         Ok(js_value)
     }
@@ -713,34 +629,28 @@ impl JSMySQLConnection {
         Ok(JSValue::UNDEFINED)
     }
 
-    fn consume_on_connect_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
+    /// `js_value` if the VM is not shutting down and the JS wrapper ref
+    /// still resolves; `None` otherwise.
+    #[inline]
+    fn live_js_value(&self) -> Option<JSValue> {
         if self.vm().is_shutting_down() {
             return None;
         }
-        if let Some(value) = self.js_value.get().try_get() {
-            return js::onconnect_take_cached(value, global_object);
-        }
-        None
+        self.js_value.get().try_get()
+    }
+
+    fn consume_on_connect_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
+        js::onconnect_take_cached(self.live_js_value()?, global_object)
     }
 
     fn consume_on_close_callback(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
-        if self.vm().is_shutting_down() {
-            return None;
-        }
-        if let Some(value) = self.js_value.get().try_get() {
-            return js::onclose_take_cached(value, global_object);
-        }
-        None
+        js::onclose_take_cached(self.live_js_value()?, global_object)
     }
 
     pub fn get_queries_array(&self) -> JSValue {
-        if self.vm().is_shutting_down() {
-            return JSValue::UNDEFINED;
-        }
-        if let Some(value) = self.js_value.get().try_get() {
-            return js::queries_get_cached(value).unwrap_or(JSValue::UNDEFINED);
-        }
-        JSValue::UNDEFINED
+        self.live_js_value()
+            .and_then(js::queries_get_cached)
+            .unwrap_or(JSValue::UNDEFINED)
     }
 
     #[inline]

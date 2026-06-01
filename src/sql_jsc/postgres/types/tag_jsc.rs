@@ -3,9 +3,7 @@
 //! conversion paths live here.
 
 use crate::jsc::{JSGlobalObject, JSType, JSValue, JsResult};
-use bun_sql::postgres::AnyPostgresError;
 use bun_sql::postgres::types::tag::Tag;
-use bun_sql::shared::Data;
 
 // `comptime T: Tag` → const generic per PORTING.md. `Tag` in the Rust port is a
 // `#[repr(transparent)] struct Tag(Short)` with associated consts (non-exhaustive
@@ -21,24 +19,6 @@ pub(crate) fn to_js_typed_array_type(t: Tag) -> Result<JSType, bun_core::Error> 
         // Tag::float8_array => Ok(JSType::Float64Array),
         _ => Err(bun_core::err!("UnsupportedArrayType")),
     }
-}
-
-/// rest may `unreachable!()` (mirroring Zig's per-monomorphization compile
-/// error becoming a runtime impossibility once the `tag` is fixed).
-pub trait TagToJs: Sized {
-    /// `.numeric | .float4 | .float8 | .int4` arms → `JSValue.jsNumber(value)`.
-    fn as_js_number(self) -> f64;
-    /// `.int8` arm → `JSValue.fromInt64NoTruncate(global, value)`.
-    fn as_i64(self) -> i64;
-    /// `.bool` arm → `bool.toJS(global, value)`.
-    fn as_bool(self) -> bool;
-    /// `.json | .jsonb | .bytea` arms → `json.toJS` / `bytea.toJS`, both of
-    /// which take owned `Data` in the Rust port.
-    fn into_data(self) -> Data;
-    /// `.timestamp | .timestamptz` arm → `date.toJS(global, value)`.
-    fn date_to_js(self, global: &JSGlobalObject) -> JSValue;
-    /// `else` arm → `string.toJS(global, value)`.
-    fn string_to_js(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError>;
 }
 
 pub fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Tag> {

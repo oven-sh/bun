@@ -1,12 +1,12 @@
 //! `bun_jsc` re-export façade for the SQL bindings.
 //!
 //! All core handle types (`JSValue`, `JSGlobalObject`, `CallFrame`, `JsError`,
-//! `JsResult`, `JSObject`, `JSCell`, `JSType`, [`VirtualMachine`],
+//! `JsResult`, `JSObject`, `JSType`, [`VirtualMachine`],
 //! [`EventLoop`], [`KeepAlive`], …) are **re-exported from `bun_jsc` /
 //! `bun_io`** so the `#[bun_jsc::JsClass]` / `#[bun_jsc::host_fn]` proc-macros
 //! see identical types. SQL-specific helpers that `bun_jsc` doesn't expose at
-//! this tier are provided as extension traits ([`JSGlobalObjectSqlExt`],
-//! [`VirtualMachineSqlExt`], [`EventLoopSqlExt`]).
+//! this tier are provided as extension traits ([`VirtualMachineSqlExt`],
+//! [`EventLoopSqlExt`]).
 //!
 //! [`RareData`] here is the **per-VM SQL state** (`mysql_context` /
 //! `postgresql_context`) that `bun_runtime::jsc_hooks::RuntimeState` owns by
@@ -27,10 +27,9 @@ use core::ptr::NonNull;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::{
-    ArrayBuffer, CallFrame, CoerceTo, ErrorBuilder, ErrorCode, ExternColumnIdentifier,
-    ExternColumnIdentifierValue, GlobalRef, JSArrayIterator, JSCell, JSGlobalObject, JSObject,
-    JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
-    StrongOptional, ThrowFmtArgs, ZigStringJsc, bun_string_jsc, host_fn,
+    ArrayBuffer, CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef,
+    JSArrayIterator, JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef, JsResult,
+    MarkedArgumentBuffer, StringJsc, StrongOptional, bun_string_jsc, host_fn,
 };
 
 /// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the
@@ -143,49 +142,6 @@ pub(crate) fn create_bun_socket_error_to_js(
         E::invalid_ciphers => global
             .err(ErrorCode::BORINGSSL, format_args!("Invalid ciphers"))
             .to_js(),
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// JSGlobalObject — SQL-specific extension surface.
-// ──────────────────────────────────────────────────────────────────────────
-
-/// SQL-side helpers on `JSGlobalObject` not provided by `bun_jsc` (or where
-/// the SQL bindings need a slightly different signature).
-pub(crate) trait JSGlobalObjectSqlExt {
-    fn err_out_of_range<'a>(&'a self, args: core::fmt::Arguments<'a>) -> ErrorBuilder<'a>;
-    fn throw_invalid_arguments_fmt(&self, args: core::fmt::Arguments<'_>) -> JsResult<JSValue>;
-    /// `globalObject.bunVM()` — `bun_jsc::JSGlobalObject::bun_vm()` returns
-    /// `&mut VirtualMachine`; this `&`-receiver form is for SQL callsites that
-    /// only need shared access.
-    fn sql_vm(&self) -> &VirtualMachine;
-    fn sql_vm_ptr(&self) -> *mut VirtualMachine;
-
-    // PORT NOTE: `validate_integer_range` / `validate_big_int_range` /
-    // `gregorian_date_time_to_ms` were duplicated here while gated in
-    // `bun_jsc`; all three are now inherent on `bun_jsc::JSGlobalObject`, so
-    // the trait copies are removed (inherent methods always win in
-    // resolution, so the trait versions were dead code anyway).
-}
-
-impl JSGlobalObjectSqlExt for JSGlobalObject {
-    #[inline]
-    fn err_out_of_range<'a>(&'a self, args: core::fmt::Arguments<'a>) -> ErrorBuilder<'a> {
-        self.err(ErrorCode::OUT_OF_RANGE, args)
-    }
-    #[inline]
-    fn throw_invalid_arguments_fmt(&self, args: core::fmt::Arguments<'_>) -> JsResult<JSValue> {
-        Err(self.throw(args))
-    }
-    #[inline]
-    fn sql_vm(&self) -> &VirtualMachine {
-        // `JSGlobalObject::bun_vm` is the canonical safe accessor (single
-        // audited deref in bun_jsc); the VM is a process-lifetime singleton.
-        self.bun_vm()
-    }
-    #[inline]
-    fn sql_vm_ptr(&self) -> *mut VirtualMachine {
-        JSC__JSGlobalObject__bunVM(self).cast::<VirtualMachine>()
     }
 }
 
@@ -678,24 +634,13 @@ pub(crate) struct JSFunction {
 /// (`extern "sysv64"` on win-x64, `extern "C"` elsewhere). Re-exported from
 /// `bun_jsc` so the cfg-split lives in one place.
 pub use bun_jsc::host_fn::JsHostFn as JSHostFn;
-pub type JSHostFnZig = fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>;
 
 pub(crate) trait IntoJSHostFn<Marker>: Sized {
     fn into_js_host_fn(self) -> JSHostFn;
 }
 #[doc(hidden)]
-pub(crate) struct HostFnRaw;
-#[doc(hidden)]
 pub(crate) struct HostFnResult;
-#[doc(hidden)]
-pub(crate) struct HostFnPlain;
 
-impl IntoJSHostFn<HostFnRaw> for JSHostFn {
-    #[inline]
-    fn into_js_host_fn(self) -> JSHostFn {
-        self
-    }
-}
 // `jsc_host_abi!` can't express a generic `where` clause, so cfg-split the
 // thunk body manually (sysv64 on win-x64, C elsewhere — matches `JSHostFn`).
 // The where-clause is bracketed to avoid `tt`-muncher ambiguity against `{`.
@@ -737,32 +682,6 @@ where
                     Err(JsError::OutOfMemory) => { let _ = global.throw_out_of_memory(); JSValue::ZERO }
                     Err(_) => JSValue::ZERO,
                 }
-            }
-        }
-        thunk::<F>
-    }
-}
-impl<F> IntoJSHostFn<HostFnPlain> for F
-where
-    F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static,
-{
-    fn into_js_host_fn(self) -> JSHostFn {
-        debug_assert_eq!(
-            core::mem::size_of::<F>(),
-            0,
-            "IntoJSHostFn: expected fn item (ZST)"
-        );
-        let _ = self;
-        sql_jsc_host_thunk! {
-            thunk<F>(g: *mut JSGlobalObject, c: *mut CallFrame) -> JSValue
-            where [F: Fn(&JSGlobalObject, &CallFrame) -> JSValue + Copy + 'static]
-            {
-                let f: F = bun_core::ffi::conjure_zst::<F>();
-                // JSC passes live non-null pointers; both outlive the host-fn
-                // call (the `ParentRef` invariant). Safe `Deref` recovers `&T`.
-                let global = bun_ptr::ParentRef::from(NonNull::new(g).expect("JSC host fn: global non-null"));
-                let frame = bun_ptr::ParentRef::from(NonNull::new(c).expect("JSC host fn: callframe non-null"));
-                f(&global, &frame)
             }
         }
         thunk::<F>
@@ -828,8 +747,7 @@ macro_rules! put_host_functions {
 }
 
 impl JSFunction {
-    /// Accepts either a raw [`JSHostFn`] (C-ABI) or a safe Rust
-    /// `fn(&JSGlobalObject, &CallFrame) -> JSValue` / `-> JsResult<JSValue>`
+    /// Accepts a safe Rust `fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>`
     /// via [`IntoJSHostFn`] (Zig: `jsc.toJSHostFn(fn)`).
     pub(crate) fn create<M, F: IntoJSHostFn<M>>(
         global: &JSGlobalObject,
@@ -849,40 +767,6 @@ impl JSFunction {
             opts.intrinsic,
             opts.constructor,
         )
-    }
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// CallFrame helpers — `bun_jsc::ArgumentsSlice` exists; this local variant
-// keeps the `&VirtualMachine` (local view) signature the SQL callsites use.
-// ──────────────────────────────────────────────────────────────────────────
-
-pub mod call_frame {
-    use super::*;
-    /// `Node.ArgumentsSlice` — cursor over a `&[JSValue]` (CallFrame.zig:289).
-    pub(crate) struct ArgumentsSlice<'a> {
-        remaining: &'a [JSValue],
-        _vm: *const c_void,
-    }
-    impl<'a> ArgumentsSlice<'a> {
-        /// Generic over the VM handle so it accepts both the local
-        /// [`VirtualMachine`] and `bun_jsc`'s (callers pass `global.bun_vm()`,
-        /// which returns a raw `*mut VirtualMachineRef`). The VM is not
-        /// dereferenced — it's only carried for API parity with the Zig
-        /// `Node.ArgumentsSlice` shape — so it's accepted by-value and dropped.
-        pub(crate) fn init<V>(_vm: V, slice: &'a [JSValue]) -> Self {
-            Self {
-                remaining: slice,
-                _vm: core::ptr::null(),
-            }
-        }
-        /// Zig `nextEat` (CallFrame.zig) — return the head **and** advance.
-        #[inline]
-        pub(crate) fn next_eat(&mut self) -> Option<JSValue> {
-            let (first, rest) = self.remaining.split_first()?;
-            self.remaining = rest;
-            Some(*first)
-        }
     }
 }
 
@@ -910,21 +794,56 @@ impl SslCtxCache {
     }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// extern "C" — **C++** JSC bindings (src/jsc/bindings/bindings.cpp) used by
-// the extension traits above. No Rust-defined symbols are declared here; all
-// `bun_runtime` cross-calls go through [`SqlRuntimeHooks`] so the compiler
-// type-checks both sides at the registration site.
-// ──────────────────────────────────────────────────────────────────────────
-unsafe extern "C" {
-    // JSValue — by-value `JSValue` (encoded NaN-boxed u64) + scalar args; the
-    // C++ side reads no caller memory and upholds no invariants the caller must
-    // discharge, so these are `safe fn`.
+/// Shared tail of Postgres `setupTLS` / MySQL `upgradeToTLS`: adopt a
+/// connected plain-TCP socket into `tls_group` as `kind`, attach an `SSL*`
+/// from `ssl_ctx` (SNI from `tls_config.server_name()`), point the new
+/// socket's ext slot at `ext_ptr`, hand the resulting TLS socket to
+/// `install_socket`, then kick the TLS handshake. Returns `false` if adoption
+/// failed (the caller maps that to its own error path).
+///
+/// The ext slot is `Option<NonNull<T>>` — the Rust layout-equivalent of Zig's
+/// 8-byte null-niche `?*T`. Using `Option<*mut T>` would request 16 bytes
+/// (separate discriminant) and desync with the trampoline reader
+/// (`uws_handlers.rs`), which reads the slot as `Option<NonNull<_>>`.
+///
+/// # Safety
+/// - `raw` must be a live, connected `us_socket_t*`; adoption invalidates it
+///   (the C side may realloc and return a different pointer).
+/// - `tls_config.server_name()` must be null or a NUL-terminated C string that
+///   outlives the handshake.
+pub(crate) unsafe fn adopt_socket_tls<T>(
+    raw: *mut bun_uws::us_socket_t,
+    tls_group: &mut bun_uws::SocketGroup,
+    kind: bun_uws::SocketKind,
+    ssl_ctx: &mut bun_uws::SslCtx,
+    tls_config: &api::server_config::SSLConfig,
+    ext_ptr: *mut T,
+    install_socket: impl FnOnce(bun_uws::AnySocket),
+) -> bool {
+    let server_name = tls_config.server_name();
+    // SAFETY: caller contract — `server_name` is null or NUL-terminated.
+    let sni = (!server_name.is_null()).then(|| unsafe { bun_core::ffi::cstr(server_name) });
+    let ext_size = core::mem::size_of::<Option<NonNull<T>>>() as i32;
 
-    // JSGlobalObject — `&JSGlobalObject` is ABI-identical to a non-null
-    // `*const JSGlobalObject`; the reference type discharges the validity
-    // precondition, so `safe fn`. Returned pointer is opaque (caller derefs
-    // under its own SAFETY obligation).
-    safe fn JSC__JSGlobalObject__bunVM(this: &JSGlobalObject) -> *mut c_void;
-
+    // SAFETY: `raw` is a live connected `us_socket_t*` (caller contract);
+    // adopt_tls may realloc and return a different ptr.
+    let Some(new_socket) =
+        (unsafe { &mut *raw }).adopt_tls(tls_group, kind, ssl_ctx, sni, ext_size, ext_size)
+    else {
+        return false;
+    };
+    let new_socket = new_socket.as_ptr();
+    // SAFETY: `new_socket` is a live us_socket_t freshly returned by
+    // `adopt_tls`; its ext slot is sized for `Option<NonNull<T>>` above. One
+    // `&mut` reborrow drives both safe inherent methods (`ext` /
+    // `start_tls_handshake`).
+    let sock = unsafe { &mut *new_socket };
+    *sock.ext::<Option<NonNull<T>>>() = NonNull::new(ext_ptr);
+    install_socket(bun_uws::AnySocket::SocketTls(bun_uws::SocketTLS {
+        socket: bun_uws::InternalSocket::Connected(new_socket),
+    }));
+    // ext is repointed and the owner's socket field swapped; safe to kick the
+    // handshake (any dispatch lands in the new owner).
+    sock.start_tls_handshake();
+    true
 }

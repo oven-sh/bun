@@ -258,7 +258,8 @@ forms across CI runs, allowlist both.
 
 ## Deliberately ignored (not reported even if found)
 
-See `src/main.rs:94-135` and `src/aarch64.rs`:
+See `NEHALEM_ALLOWED` and `is_harmless_on_nehalem` in `src/main.rs`, and
+`src/aarch64.rs`:
 
 - **TZCNT** (x64) — decodes as REP BSF on pre-BMI1; LLVM preloads dest with
   operand-width so the `src==0` case matches. (LZCNT is NOT ignored —
@@ -268,6 +269,9 @@ See `src/main.rs:94-135` and `src/aarch64.rs`:
 - **ENDBR64 (CET_IBT), RDSSP/INCSSP (CET_SS hint-space subset)** (x64) —
   NOP-encoded on pre-CET by design. The rest of CET_SS (WRSSD/RSTORSSP/
   SETSSBSY etc.) IS flagged — dedicated opcode slots that #UD on pre-CET.
+- **CLDEMOTE** (x64) — reserved hint-NOP space (`0F 1C /0`), NOP on CPUs
+  that don't enumerate it; newer Windows UCRTs emit it unguarded in `str*`
+  routines (observed: `strpbrk`).
 - **PACIASP/AUTIASP/BTI** (aarch64) — HINT-space, architecturally NOP on
   pre-PAC CPUs. (`LDRAA`/`LDRAB` are _not_ HINT-space and _are_ reported.)
 - **3DNow!, SMM, Cyrix, VIA** (x64) — no toolchain targeting x86-64 emits

@@ -156,6 +156,8 @@ pub enum SubtreeError {
     OutOfMemory,
     #[error("DependencyLoop")]
     DependencyLoop,
+    #[error("CorruptLockfile")]
+    CorruptLockfile,
 }
 
 bun_core::oom_from_alloc!(SubtreeError);
@@ -1015,20 +1017,26 @@ impl Tree {
                 .get(builder.list.items_dependencies()[self_id as usize].as_slice());
             (s.as_ptr(), s.len())
         };
-        // Keep the comparand in a register; `deps.get_unchecked` may alias `dependency`.
         let target_name_hash = dependency.name_hash;
         for i in 0..this_deps_len {
             // SAFETY: `i < this_deps_len` and `builder.list` is not mutated until after this loop
             // (see invariant above), so `this_deps_ptr[0..this_deps_len)` remains valid.
             let dep_id: DependencyID = unsafe { *this_deps_ptr.add(i) };
-            // SAFETY: `dep_id` was produced by the same lockfile that produced `deps`;
-            // Zig release builds have no bounds check here.
-            let dep = unsafe { deps.get_unchecked(dep_id as usize) };
+            // `dep_id` is deserialized from lockfile bytes (`Buffers::read_array<DependencyID>`)
+            // and so is attacker-controlled in the hostile-lockfile threat model. A `dep_id`
+            // outside `0..deps.len()` used to produce an out-of-bounds read through
+            // `get_unchecked` (Bucket 4/15 UB; audit witness EXP-007). Do not silently
+            // skip it: malformed lockfile graph data must fail closed.
+            let Some(dep) = deps.get(dep_id as usize) else {
+                return Err(SubtreeError::CorruptLockfile);
+            };
             if dep.name_hash != target_name_hash {
                 continue;
             }
 
-            let res_id = builder.resolutions[dep_id as usize];
+            let Some(&res_id) = builder.resolutions.get(dep_id as usize) else {
+                return Err(SubtreeError::CorruptLockfile);
+            };
 
             if res_id == invalid_package_id && package_id == invalid_package_id {
                 debug_assert!(dep.behavior.is_optional_peer());
@@ -1122,20 +1130,17 @@ impl Tree {
 
         // this dependency was not found in this tree, try hoisting or placing in the next parent
         if this.parent != INVALID_ID && this.id != hoist_root_id {
-            let id = match Tree::hoist_dependency::<false, METHOD>(
+            // `hoist_dependency::<false, _>` can return `Err(SubtreeError::CorruptLockfile)`
+            // on attacker-controlled lockfile bytes (an out-of-range `dep_id`); propagate
+            // it so corrupt input fails closed instead of reaching UB on a stale
+            // `unreachable_unchecked` invariant.
+            let id = Tree::hoist_dependency::<false, METHOD>(
                 this.parent,
                 hoist_root_id,
                 package_id,
                 input_dep_id,
                 builder,
-            ) {
-                Ok(id) => id,
-                // SAFETY: `hoist_dependency::<false, _>` never returns `Err` —
-                // the only `Err(SubtreeError::DependencyLoop)` site above is
-                // gated on `AS_DEFINED`. Avoids faulting panic-format pages on
-                // the per-dependency recursion.
-                Err(_) => unsafe { core::hint::unreachable_unchecked() },
-            };
+            )?;
             if !AS_DEFINED || !matches!(id, HoistDependencyResult::DependencyLoop) {
                 return Ok(id); // 1 or 2
             }

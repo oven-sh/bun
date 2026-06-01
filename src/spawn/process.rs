@@ -111,7 +111,7 @@ pub(crate) fn call_exit_handler(
     rusage: &Rusage,
 ) {
     let Some(h) = h else { return };
-    if h.owner.is_null() {
+    if h.owner_is_null() {
         return;
     }
     h.on_process_exit(process, status, rusage);

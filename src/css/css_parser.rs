@@ -3755,18 +3755,25 @@ impl<'a> Parser<'a> {
         self.input.math_fn_parse_failures += 1;
     }
 
-    /// Scan the tokens remaining in the current block — descending into nested
-    /// blocks — for a `<dimension>` (`1px`, `1s`, …) or `<percentage>` (`50%`)
-    /// token, without consuming any input (the parser state is restored before
-    /// returning).
+    /// Scan the tokens remaining in the current block for a `<dimension>`
+    /// (`1px`, `1s`, …) or `<percentage>` (`50%`) token, without consuming any
+    /// input (the parser state is restored before returning).
+    ///
+    /// The scan descends into nested blocks, except that a `Token::Function`
+    /// whose name satisfies `skip_fn` has its entire block skipped rather than
+    /// descended into.
     ///
     /// `Calc::parse_atan2` uses this to decide whether re-parsing its arguments
     /// under the length/time/percentage value types could possibly succeed.
     /// Those types only differ from the `<angle>`/`<number>` parse at a real
     /// dimension/percentage leaf, so when none is present the re-parses can
     /// only fail again — and since `atan2()` arguments may nest, re-descending
-    /// them is exponential in the nesting depth.
-    pub fn arguments_contain_dimension_token(&mut self) -> bool {
+    /// them is exponential in the nesting depth. A dimension inside a nested
+    /// *type-independent* math function (`sin()`, `atan2()`, …) resolves to an
+    /// `<angle>`/`<number>` and never makes the enclosing arguments
+    /// dimensional, so `skip_fn` lets the caller exclude those sub-blocks —
+    /// otherwise one deep `1px` would re-open the gate at every level.
+    pub fn block_contains_dimension_token(&mut self, skip_fn: impl Fn(&[u8]) -> bool) -> bool {
         let start = self.state();
         // Read raw tokens (the `Parser` layer would otherwise skip over nested
         // blocks via `at_start_of`). `stop_before` is not consulted here; we
@@ -3779,6 +3786,19 @@ impl<'a> Parser<'a> {
             };
             match token {
                 Token::Dimension(_) | Token::Percentage { .. } => break true,
+                Token::Function(name) if skip_fn(name) => {
+                    // Skip the whole function block without inspecting its
+                    // contents. `consume_until_end_of_block` tracks its own
+                    // nesting and stops after the matching close paren, leaving
+                    // us at the same depth we were at before the function token.
+                    if !consume_until_end_of_block(
+                        BlockType::Parenthesis,
+                        &mut self.input.tokenizer,
+                    ) {
+                        // Unclosed at EOF — nothing left to scan.
+                        break false;
+                    }
+                }
                 Token::Function(_) | Token::OpenParen | Token::OpenSquare | Token::OpenCurly => {
                     depth += 1;
                 }

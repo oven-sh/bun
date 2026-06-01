@@ -872,21 +872,40 @@ impl<V: CalcValue> Calc<V> {
         // percentage leaf, so when the arguments contain none they can only
         // fail again: fall straight through to the `<number>` parse rather than
         // re-descending the subtree three more times.
-        if input.arguments_contain_dimension_token() {
+        //
+        // The scan skips the sub-block of any nested type-independent math
+        // function (`sin()`/`atan2()`/…): those resolve to an `<angle>`/
+        // `<number>` regardless of `V`, so a dimension buried inside one never
+        // makes *this* `atan2()`'s own arguments dimensional. Descending into
+        // it would let a single deep `1px` re-open the gate at every enclosing
+        // level and revive the exponential blowup.
+        let has_dimension = input.block_contains_dimension_token(|name| {
+            CalcUnit::get_any_case(name).is_some_and(CalcUnit::arg_parse_is_type_independent)
+        });
+        if has_dimension {
             // blocked_on: values/length.rs un-gate — until Length is real,
             // `atan2(10px, 5px)` (and any other length-dimension pair) falls
             // through to the CSSNumber path below and errors with `invalid_value`,
             // diverging from Zig (`Angle::Rad(atan2(10,5))`). Tracked as a known
             // incompleteness; no behaviour stub is added because a partial
             // dimension matcher would mis-reduce mixed-unit lengths.
+            //
+            // Re-check `hit_unrecoverable` between attempts: if one of them
+            // descended into a nested `<angle>`/`<number>`-only function that
+            // failed, the remaining value types (which build the same tree) can
+            // only fail the same way, so stop rather than re-descend.
             if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
                 return Ok(v);
             }
-            if let Ok(v) = try_parse_atan2_args::<C, Percentage>(input, ctx) {
-                return Ok(v);
-            }
-            if let Ok(v) = try_parse_atan2_args::<C, Time>(input, ctx) {
-                return Ok(v);
+            if !hit_unrecoverable(input) {
+                if let Ok(v) = try_parse_atan2_args::<C, Percentage>(input, ctx) {
+                    return Ok(v);
+                }
+                if !hit_unrecoverable(input) {
+                    if let Ok(v) = try_parse_atan2_args::<C, Time>(input, ctx) {
+                        return Ok(v);
+                    }
+                }
             }
         }
 

@@ -153,9 +153,7 @@ describe("fractional keylen throws", () => {
         thrown = e as Error & { code?: string };
       }
       expect(thrown.code).toBe("ERR_OUT_OF_RANGE");
-      expect(thrown.message).toBe(
-        `The value of "keylen" is out of range. It must be an integer. Received ${input}`,
-      );
+      expect(thrown.message).toBe(`The value of "keylen" is out of range. It must be an integer. Received ${input}`);
 
       // The async path routes through the same validation and must throw synchronously.
       expect(() => crypto.pbkdf2("password", "salt", 1000, input, "sha256", cb)).toThrow(

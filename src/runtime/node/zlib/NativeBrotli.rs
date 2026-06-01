@@ -418,13 +418,11 @@ mod _impl {
         }
 
         pub fn set_flush(&mut self, flush: c_int) {
-            // The shared write path validates `flush` against the *zlib* range
-            // (0..=6), not the brotli range (0..=3), so Z_FINISH(4)/Z_BLOCK(5)
-            // can reach us. Zig's `@enumFromInt` and Node's `static_cast` both
-            // pass the raw int through to BrotliEncoderCompressStream, which
-            // for an unknown op encodes with is_last=false/force_flush=false —
-            // i.e. PROCESS semantics. Map out-of-range to PROCESS to preserve
-            // that behavior instead of aborting. (The decoder ignores `flush`.)
+            // The shared write path rejects anything above `MAX_FLUSH` (3) with
+            // ERR_INVALID_ARG_VALUE before it reaches us, so only the four real
+            // `BrotliEncoderOperation`s ever arrive here. The catch-all arm is
+            // defense-in-depth for that invariant: map to PROCESS (what the C
+            // encoder does with an unknown op) rather than aborting the process.
             self.flush = match flush {
                 0 => Op::process,
                 1 => Op::flush,
@@ -564,7 +562,11 @@ mod _impl {
     // Stamps `impl CompressionContext for Context`, `impl Taskable`/
     // `CompressionStreamImpl for NativeBrotli`, and `pub mod js { … }` (the
     // `NativeBrotliPrototype__*CachedValue` accessors).
-    crate::__impl_compression_stream!(NativeBrotli, Context, "NativeBrotli");
+    //
+    // MAX_FLUSH = 3: brotli only defines `BrotliEncoderOperation` 0..=3
+    // (PROCESS/FLUSH/FINISH/EMIT_METADATA). Zlib-only flush values
+    // (Z_FINISH=4/Z_BLOCK=5/Z_TREES=6) are rejected at the write boundary.
+    crate::__impl_compression_stream!(NativeBrotli, Context, "NativeBrotli", 3);
 
     fn code_for_error(err: c::BrotliDecoderErrorCode2) -> *const core::ffi::c_char {
         // Zig: `inline for (std.meta.fieldNames(E), std.enums.values(E)) |n, v|

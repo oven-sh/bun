@@ -82,14 +82,6 @@ fn jsv_to_u32(v: JSValue) -> u32 {
     v.as_number() as u32
 }
 
-/// Local `std.meta.intToEnum(FlushValue, n)` shim — `bun_zlib::FlushValue` has
-/// no `TryFrom<u32>` impl upstream.
-#[inline]
-fn flush_value_is_valid(n: u32) -> bool {
-    // FlushValue is `#[repr(C)]` with discriminants 0..=6.
-    n <= 6
-}
-
 impl CountedKeepAlive {
     pub(crate) fn ref_(&mut self, _vm: &VirtualMachine) {
         if self.ref_count == 0 {
@@ -219,6 +211,13 @@ pub(crate) trait CompressionContext {
 pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     type Stream: CompressionContext;
 
+    /// Largest accepted `flush` value for this codec. zlib/gzip and zstd take
+    /// the full zlib flush range (0..=6); brotli only the four
+    /// `BrotliEncoderOperation` values (0..=3), so a zlib-only mode like
+    /// Z_FINISH or Z_BLOCK is rejected at the write boundary instead of
+    /// reaching the encoder (where it would spin — see nodejs/node#63701).
+    const MAX_FLUSH: u32;
+
     // Field accessors (interior-mutability cells; all `&self`).
     /// JSC_BORROW backref — the global outlives this m_ctx payload.
     /// Implementations store a `BackRef<JSGlobalObject>`; the single unsafe
@@ -316,7 +315,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
         let flush: u32 = jsv_to_u32(arguments[0]);
-        if !flush_value_is_valid(flush) {
+        if flush > T::MAX_FLUSH {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
@@ -597,7 +596,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
                 .throw());
         }
         let flush: u32 = jsv_to_u32(arguments[0]);
-        if !flush_value_is_valid(flush) {
+        if flush > T::MAX_FLUSH {
             return Err(global_this
                 .err(
                     ErrorCode::INVALID_ARG_VALUE,
@@ -988,10 +987,13 @@ pub(crate) fn native_zstd(global: &JSGlobalObject) -> JSValue {
 /// emits a `pub mod js { … }` with the cached-property accessors
 /// (`writeCallback` / `errorCallback` / `dictionary`) wired to the
 /// `${TypeName}Prototype__${prop}{Get,Set}CachedValue` extern symbols.
+///
+/// `$max_flush` is the codec's [`CompressionStreamImpl::MAX_FLUSH`] — the
+/// largest `.flush(kind)` value the shared write path accepts for it.
 #[macro_export]
 #[doc(hidden)]
 macro_rules! __impl_compression_stream {
-    ($native:ident, $ctx:ty, $type_name:literal) => {
+    ($native:ident, $ctx:ty, $type_name:literal, $max_flush:expr) => {
         // Tag for the event-loop dispatcher (bun_runtime::dispatch::run_task).
         impl ::bun_event_loop::Taskable for $native {
             const TAG: ::bun_event_loop::TaskTag = ::bun_event_loop::task_tag::$native;
@@ -1016,6 +1018,7 @@ macro_rules! __impl_compression_stream {
 
         impl $crate::node::node_zlib_binding::CompressionStreamImpl for $native {
             type Stream = $ctx;
+            const MAX_FLUSH: u32 = $max_flush;
 
             #[inline] fn global_this(&self) -> &::bun_jsc::JSGlobalObject { self.global_this.get() }
             #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }

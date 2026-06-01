@@ -536,7 +536,9 @@ mod _impl {
     // `CompressionStream::<NativeZstd>::*` (write/writeSync/reset/close/
     // emit_error/…) can reach this struct's fields the way the Zig comptime mixin
     // did via duck-typed `this.field` access.
-    crate::__impl_compression_stream!(NativeZstd, Context, "NativeZstd");
+    // MAX_FLUSH = 6: keep the full zlib flush range zstd has always accepted
+    // at the write boundary so its behavior is unchanged.
+    crate::__impl_compression_stream!(NativeZstd, Context, "NativeZstd", 6);
     crate::__compression_stream_mixin_reexports!(NativeZstd);
 } // mod _impl
 

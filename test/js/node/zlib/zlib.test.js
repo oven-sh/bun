@@ -329,17 +329,21 @@ describe("zlib.brotli", () => {
     }
   });
 
-  // .flush() with a *zlib* flush constant (Z_FINISH=4, Z_BLOCK=5) on a brotli
-  // stream used to abort the process — the shared write path validates against
-  // the zlib flush range (0..=6) but the brotli set_flush only mapped 0..=3.
-  // Out-of-range values are now coerced to BROTLI_OPERATION_PROCESS, matching
-  // Node and earlier Bun.
+  // Brotli streams only define the BROTLI_OPERATION_* flush values (0..=3).
+  // Passing a zlib-only flush constant (Z_FINISH=4, Z_BLOCK=5) to .flush() used
+  // to abort the whole process — the shared write path validated against the
+  // zlib flush range (0..=6) and brotli's set_flush trapped on anything above 3.
+  // They are now rejected at the write boundary with ERR_INVALID_ARG_VALUE,
+  // surfaced as a stream 'error' event and an errored flush callback. (Node
+  // silently accepts these and hangs forever instead — nodejs/node#63701.)
   describe.each([
     ["Z_FINISH", zlib.constants.Z_FINISH],
     ["Z_BLOCK", zlib.constants.Z_BLOCK],
-  ])("flush(%s) does not abort the process", (_, kind) => {
+  ])("brotli flush(%s) is rejected with ERR_INVALID_ARG_VALUE", (_, kind) => {
+    // Run in a subprocess: a regression here either aborts the process (panic)
+    // or never settles the stream (hang) — both must show up as a failed or
+    // timed-out subprocess instead of a pass (or a dead test runner).
     it("createBrotliCompress", async () => {
-      const input = Buffer.alloc(128, 0x61);
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -347,27 +351,31 @@ describe("zlib.brotli", () => {
           `
             const z = require("zlib");
             const s = z.createBrotliCompress();
-            const chunks = [];
-            s.on("data", c => chunks.push(c));
-            s.on("end", () => process.stdout.write(Buffer.concat(chunks)));
+            let cbErr = null, evtErr = null;
+            function check() {
+              if (cbErr && evtErr) {
+                console.log(JSON.stringify({ flushCb: cbErr.code, errorEvent: evtErr.code }));
+                process.exit(0);
+              }
+            }
+            s.on("error", err => { evtErr = err; check(); });
             s.write(Buffer.alloc(128, 0x61));
-            s.flush(${kind}, () => s.end());
+            s.flush(${kind}, err => { cbErr = err; check(); });
           `,
         ],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
       expect(stderrLines).toEqual([]);
-      expect(zlib.brotliDecompressSync(stdout).equals(input)).toBe(true);
+      expect(JSON.parse(stdout)).toEqual({ flushCb: "ERR_INVALID_ARG_VALUE", errorEvent: "ERR_INVALID_ARG_VALUE" });
       expect(exitCode).toBe(0);
     });
 
     it("createBrotliDecompress", async () => {
-      const input = Buffer.alloc(128, 0x62);
-      const compressed = zlib.brotliCompressSync(input);
+      const compressed = zlib.brotliCompressSync(Buffer.alloc(128, 0x62));
       await using proc = Bun.spawn({
         cmd: [
           bunExe(),
@@ -375,23 +383,67 @@ describe("zlib.brotli", () => {
           `
             const z = require("zlib");
             const s = z.createBrotliDecompress();
-            const chunks = [];
-            s.on("data", c => chunks.push(c));
-            s.on("end", () => process.stdout.write(Buffer.concat(chunks)));
+            let cbErr = null, evtErr = null;
+            function check() {
+              if (cbErr && evtErr) {
+                console.log(JSON.stringify({ flushCb: cbErr.code, errorEvent: evtErr.code }));
+                process.exit(0);
+              }
+            }
+            s.on("error", err => { evtErr = err; check(); });
+            s.on("data", () => {});
             s.write(Buffer.from(${JSON.stringify([...compressed])}));
-            s.flush(${kind}, () => s.end());
+            s.flush(${kind}, err => { cbErr = err; check(); });
           `,
         ],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.bytes(), proc.stderr.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
       expect(stderrLines).toEqual([]);
-      expect(Buffer.from(stdout).equals(input)).toBe(true);
+      expect(JSON.parse(stdout)).toEqual({ flushCb: "ERR_INVALID_ARG_VALUE", errorEvent: "ERR_INVALID_ARG_VALUE" });
       expect(exitCode).toBe(0);
     });
+  });
+
+  // Valid brotli flush values are unaffected by the narrowed validation.
+  it.each([
+    ["implicit BROTLI_OPERATION_FLUSH", undefined],
+    ["BROTLI_OPERATION_FLUSH", zlib.constants.BROTLI_OPERATION_FLUSH],
+  ])("brotli flush(%s) still works and round-trips", async (_, kind) => {
+    const input = Buffer.alloc(128, 0x61);
+    const s = zlib.createBrotliCompress();
+    const chunks = [];
+    const { promise, resolve, reject } = Promise.withResolvers();
+    s.on("data", c => chunks.push(c));
+    s.on("end", resolve);
+    s.on("error", reject);
+    s.write(input);
+    if (kind === undefined) {
+      s.flush(() => s.end());
+    } else {
+      s.flush(kind, () => s.end());
+    }
+    await promise;
+    expect(zlib.brotliDecompressSync(Buffer.concat(chunks)).equals(input)).toBe(true);
+  });
+
+  // zlib streams still accept the full zlib flush range (Z_FINISH=4 included) —
+  // the narrowed validation is brotli-only.
+  it("deflate flush(Z_FINISH) still works and round-trips", async () => {
+    const input = Buffer.alloc(128, 0x63);
+    const s = zlib.createDeflate();
+    const chunks = [];
+    const { promise, resolve, reject } = Promise.withResolvers();
+    s.on("data", c => chunks.push(c));
+    s.on("end", resolve);
+    s.on("error", reject);
+    s.write(input);
+    s.flush(zlib.constants.Z_FINISH, () => s.end());
+    await promise;
+    expect(zlib.inflateSync(Buffer.concat(chunks)).equals(input)).toBe(true);
   });
 });
 

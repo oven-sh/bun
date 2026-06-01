@@ -134,9 +134,8 @@ impl<R> StyleRule<R> {
         let saved_skip = dest.skip_prefixed_nested_rules;
         let skip_prefixed_nested = saved_skip || !is_final_prefix_pass;
         // Whether any nested rule is emitted in this pass; if not, don't write
-        // the separator between the declarations and the nested rules, or the
-        // wrapper block when there are no own declarations either (nothing
-        // would go inside it). `Ignored` rules never emit; prefixed rules are
+        // the separator between the declarations and the nested rules (nothing
+        // would follow it). `Ignored` rules never emit; prefixed rules are
         // deferred to the final pass, so they only emit when
         // `skip_prefixed_nested` is false.
         let has_nested_output = self.rules.v.iter().any(|rule| {
@@ -144,18 +143,7 @@ impl<R> StyleRule<R> {
                 && (!skip_prefixed_nested || !rule.is_deferred_to_final_prefix_pass())
         });
 
-        // With nesting preserved the nested rules are written inside this
-        // rule's block, so a non-final prefix pass that emits neither its own
-        // declarations nor any nested rule would otherwise print an empty
-        // `selector{}`. Suppress the wrapper in that case (matching how an
-        // entirely empty rule is dropped). The nesting-compiled-away branch
-        // writes nested rules after the block, so its `has_declarations` is
-        // unchanged.
-        let has_declarations = if supports_nesting {
-            len > 0 || has_nested_output || self.rules.v.len() == 0
-        } else {
-            len > 0 || self.rules.v.len() == 0
-        };
+        let has_declarations = supports_nesting || len > 0 || self.rules.v.len() == 0;
 
         if has_declarations {
             //   #[cfg(feature = "sourcemap")]

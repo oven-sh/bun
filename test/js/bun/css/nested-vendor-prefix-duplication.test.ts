@@ -120,15 +120,41 @@ test("nesting-preserved (no targets) prefixed rules stay linear in depth", () =>
 test("nesting-preserved prefixed rule emits each prefix variant once", () => {
   // Two nested levels: the leaf rule appears once per distinct ancestor prefix
   // variant (2), not once per combination of ancestor passes (4 before the fix).
-  // The non-final (`-webkit-autofill`) pass of the outer rule has no own
-  // declarations and its only nested rule is deferred to the final pass, so it
-  // emits nothing — no empty `selector{}` wrapper.
+  // The non-final (`-webkit-`) pass of the outer rule has no declarations of its
+  // own (its prefixed nested rule is deferred to the final pass), so it emits an
+  // empty `selector{}` — a minor cosmetic artifact, but valid CSS. Suppressing
+  // it would require skipping the rule's prelude, which drops the `&` nesting
+  // context the deferred child relies on and reintroduces the blow-up, so the
+  // empty block is kept intentionally.
   const output = minifyTest(nestedPrefixed(2, "color: red;"), "");
   expect(output).toBe(
-    ".foo:placeholder-shown .bar,.foo:autofill spective{" +
+    ".foo:placeholder-shown .bar,.foo:-webkit-autofill spective{}" +
+      ".foo:placeholder-shown .bar,.foo:autofill spective{" +
       "& .foo:placeholder-shown .bar,& .foo:-webkit-autofill spective{color:red}" +
       "& .foo:placeholder-shown .bar,& .foo:autofill spective{color:red}}",
   );
+});
+
+test("nesting-preserved blow-up stays bounded with unprefixed intermediate rules", () => {
+  // A nested chain that alternates a prefixed selector list with an unprefixed
+  // intermediate (`.wrapper`). The unprefixed rule is not deferred, so it is
+  // re-serialized in every ancestor prefix pass, but the prefixed rules inside
+  // it still collapse to two variants per level rather than multiplying across
+  // ancestor passes. The leaf declaration must appear a bounded number of times
+  // regardless of depth — without the deferral this grows exponentially.
+  const leaf = ".a:placeholder-shown, .a:-webkit-autofill";
+  const build = (depth: number) => {
+    let css = "";
+    for (let i = 0; i < depth; i++) css += `${i % 2 === 0 ? leaf : ".wrapper"} {\n`;
+    return css + "color: red;\n" + "}\n".repeat(depth);
+  };
+  const shallow = minifyTest(build(4), "");
+  const deep = minifyTest(build(20), "");
+  const shallowReds = shallow.split("color:red").length - 1;
+  const deepReds = deep.split("color:red").length - 1;
+  // Bounded: the leaf-declaration count does not grow with nesting depth.
+  expect(deepReds).toBe(shallowReds);
+  expect(deep.length).toBeLessThan(10_000);
 });
 
 test("bun build --target=browser does not blow up on deeply nested prefixed selectors", async () => {

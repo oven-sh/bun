@@ -16,31 +16,44 @@ use core::marker::{PhantomData, PhantomPinned};
 use crate::thunk;
 use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
-use bun_core::Fd;
+use bun_core::{BoundedArray, Fd};
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
-/// Remote socket address as returned by uWS. `ip` borrows uWS-owned memory
-/// valid for the lifetime of the response/connection that produced it.
+/// Remote socket address as returned by uWS. The IP text is copied into
+/// inline storage at construction.
 ///
 /// Canonical definition moved down from `bun_uws`
 /// (Zig: `uws.SocketAddress = struct { ip: []const u8, port: i32, is_ipv6: bool }`).
 /// Higher tiers (`bun_uws`, `bun_runtime`) re-export this as
 /// `pub use bun_uws_sys::SocketAddress;`.
-pub struct SocketAddress<'a> {
-    pub ip: &'a [u8],
+pub struct SocketAddress {
+    ip: BoundedArray<u8, 64>,
     pub port: i32,
     pub is_ipv6: bool,
 }
 
-impl SocketAddress<'_> {
+impl SocketAddress {
+    pub(crate) fn new(ip: &[u8], port: i32, is_ipv6: bool) -> SocketAddress {
+        let ip = &ip[..ip.len().min(64)];
+        SocketAddress {
+            ip: BoundedArray::from_slice(ip).expect("clamped to capacity"),
+            port,
+            is_ipv6,
+        }
+    }
+
+    pub fn ip(&self) -> &[u8] {
+        self.ip.as_slice()
+    }
+
     pub fn is_loopback(&self) -> bool {
+        let ip = self.ip();
         // IPv4 loopback addresses
-        if self.ip.starts_with(b"127.") {
+        if ip.starts_with(b"127.") {
             return true;
         }
         // IPv6 loopback addresses
-        if self.ip.starts_with(b"::ffff:127.") || self.ip == b"::1" || self.ip == b"0:0:0:0:0:0:0:1"
-        {
+        if ip.starts_with(b"::ffff:127.") || ip == b"::1" || ip == b"0:0:0:0:0:0:0:1" {
             return true;
         }
         false
@@ -315,7 +328,7 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress<'_>> {
+    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
         let mut ip_ptr: *const u8 = core::ptr::null();
         let mut port: i32 = 0;
         let mut is_ipv6: bool = false;
@@ -325,14 +338,13 @@ impl<const SSL: bool> Response<SSL> {
         let ip_len =
             c::uws_res_get_remote_address_info(self.as_raw(), &mut ip_ptr, &mut port, &mut is_ipv6);
         if ip_len > 0 {
-            // SocketAddress is defined locally (moved down from bun_uws); `ip`
-            // borrows uWS-owned memory valid while the response lives.
-            Some(SocketAddress {
-                // SAFETY: uws populated ip_ptr/ip_len with bytes valid while the response lives.
-                ip: unsafe { bun_core::ffi::slice(ip_ptr, ip_len) },
+            Some(SocketAddress::new(
+                // SAFETY: uws populated ip_ptr/ip_len with bytes valid until the next
+                // address lookup on this thread; copied before returning.
+                unsafe { bun_core::ffi::slice(ip_ptr, ip_len) },
                 port,
                 is_ipv6,
-            })
+            ))
         } else {
             None
         }
@@ -713,7 +725,7 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.get_socket_data())
     }
 
-    pub fn get_remote_socket_info(self) -> Option<SocketAddress<'static>> {
+    pub fn get_remote_socket_info(self) -> Option<SocketAddress> {
         any_dispatch!(self, |r| r.get_remote_socket_info())
     }
 

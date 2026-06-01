@@ -459,12 +459,19 @@ impl<R> SupportsRule<R> {
         &mut self,
         context: &mut MinifyContext,
         parent_is_unused: bool,
-    ) -> core::result::Result<(), MinifyErr> {
-        let _ = self;
-        let _ = context;
-        let _ = parent_is_unused;
-        // TODO: Implement this
-        Ok(())
+    ) -> core::result::Result<(), MinifyErr>
+    where
+        R: for<'b> crate::generics::DeepClone<'b>,
+    {
+        // The condition-merge/dedup port is still pending, but the nested rules
+        // must be minified so compiling nesting away for the targets stays
+        // bounded by `MAX_SELECTOR_EXPANSION`. `@supports` preserves the `&`
+        // resolution context at print time (`to_css` below recurses into
+        // `self.rules` without clearing `dest.ctx`), so style rules nested
+        // behind it multiply against the enclosing nesting levels exactly like
+        // plain nested rules — leaving them unvisited here lets the printer
+        // expand them exponentially.
+        self.rules.minify(context, parent_is_unused)
     }
 }
 

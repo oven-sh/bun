@@ -131,7 +131,10 @@ impl MachoFile {
                                     found_bun = true;
                                     original_fileoff = sect.offset as u64;
                                     let original_vmaddr = sect.addr;
-                                    original_data_end = command.fileoff + command.filesize;
+                                    original_data_end = command
+                                        .fileoff
+                                        .checked_add(command.filesize)
+                                        .ok_or(MachoError::OffsetOverflow)?;
                                     original_segsize = command.filesize;
                                     self.segment = command;
                                     self.section = sect;
@@ -207,6 +210,15 @@ impl MachoFile {
         let mut sig_size: usize = 0;
 
         let prev_len = self.data.len();
+        let original_bun_end = usize::try_from(original_fileoff)
+            .ok()
+            .and_then(|off| off.checked_add(usize::try_from(original_segsize).ok()?))
+            .ok_or(MachoError::OffsetOverflow)?;
+        let original_data_end =
+            usize::try_from(original_data_end).map_err(|_| MachoError::OffsetOverflow)?;
+        if original_bun_end > prev_len || original_data_end > original_bun_end {
+            return Err(MachoError::OffsetOutOfRange);
+        }
         // SAFETY: we just reserved `size_diff` bytes; new_len <= capacity. The newly-exposed bytes
         // are written below before being read (memmove + memset cover the whole range).
         unsafe {
@@ -217,19 +229,17 @@ impl MachoFile {
         // Binary is:
         // [header][...data before __BUN][__BUN][...data after __BUN]
         // We need to shift [...data after __BUN] forward by size_diff bytes.
-        // SAFETY: source and destination overlap; ptr::copy (memmove) handles this. Ranges are
-        // within self.data per the offset arithmetic above.
+        // SAFETY: source and destination overlap; ptr::copy (memmove) handles this.
+        // `original_bun_end <= prev_len` and `original_data_end <= original_bun_end` were
+        // checked above, so the source range stays within the previously-initialized bytes
+        // and the destination range stays within the new length `prev_len + size_diff`.
         unsafe {
             let after_bun_dst = self
                 .data
                 .as_mut_ptr()
-                .add((original_data_end as usize) + usize::try_from(size_diff).expect("int cast"));
-            let prev_after_bun_src = self
-                .data
-                .as_ptr()
-                .add(original_fileoff as usize + original_segsize as usize);
-            let prev_after_bun_len =
-                prev_len - (original_fileoff as usize + original_segsize as usize);
+                .add(original_data_end + usize::try_from(size_diff).expect("int cast"));
+            let prev_after_bun_src = self.data.as_ptr().add(original_bun_end);
+            let prev_after_bun_len = prev_len - original_bun_end;
             core::ptr::copy(prev_after_bun_src, after_bun_dst, prev_after_bun_len);
         }
 

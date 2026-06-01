@@ -130,20 +130,6 @@ pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
     Ok(map)
 }
 
-impl MimeType {
-    pub fn can_open_in_editor(&self) -> bool {
-        if self.category == Category::Text || self.category.is_code() {
-            return true;
-        }
-
-        if self.category == Category::Image {
-            return self.value.as_ref() == b"image/svg+xml";
-        }
-
-        false
-    }
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug, strum::IntoStaticStr)]
 #[strum(serialize_all = "lowercase")]
 pub enum Category {
@@ -303,13 +289,6 @@ impl Category {
         }
 
         Category::Other
-    }
-
-    pub fn is_code(self) -> bool {
-        matches!(
-            self,
-            Category::Wasm | Category::Json | Category::Css | Category::Html | Category::Javascript
-        )
     }
 
     pub fn is_text_like(self) -> bool {

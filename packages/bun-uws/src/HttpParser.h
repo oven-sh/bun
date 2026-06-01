@@ -321,6 +321,27 @@ namespace uWS
             return headers->value;
         }
 
+        std::string_view getUrlForRouting()
+        {
+            std::string_view url = getUrl();
+            if (url.length() && url[0] != '/') {
+                size_t schemeLength = 0;
+                if (url.length() >= 7 && strncasecmp(url.data(), "http://", 7) == 0) {
+                    schemeLength = 7;
+                } else if (url.length() >= 8 && strncasecmp(url.data(), "https://", 8) == 0) {
+                    schemeLength = 8;
+                }
+                if (schemeLength) {
+                    size_t pathStart = url.find('/', schemeLength);
+                    if (pathStart == std::string_view::npos) {
+                        return "/";
+                    }
+                    return url.substr(pathStart);
+                }
+            }
+            return url;
+        }
+
         /* Hack: this should be getMethod */
         std::string_view getCaseSensitiveMethod()
         {

@@ -156,7 +156,7 @@ Windows binaries (both x64 and arm64) can also be built on a Linux host. The bui
 
 ```bash
 cargo install xwin # or download a release binary
-xwin --accept-license --arch x86_64,aarch64 --include-atl splat \
+xwin --accept-license --arch x86_64,aarch64 --sdk-version 10.0.26100 --crt-version 14.44.17.14 --include-atl splat \
   --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs \
   --output /opt/winsysroot
 # clang-cl/lld-link look up SDK paths as "Include"/"Lib"; the splat writes

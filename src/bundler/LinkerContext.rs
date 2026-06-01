@@ -430,15 +430,14 @@ impl<'a> LinkerContext<'a> {
 
 // Local re-exports for the tree-shaking impl below. `EntryPoint::Kind`
 // and `SideEffects` live in sibling modules; code here used to reference them
-// via Zig-style nested paths. The real `EntryPoint` lives in
-// `ungate_support::entry_point`; re-export so `EntryPoint::Kind` here is the
-// *same type* `items_entry_point_kind()` returns (was a duplicate enum before).
+// via Zig-style nested paths. Re-export so `EntryPoint::Kind` here is the
+// *same type* `items_entry_point_kind()` returns.
 #[allow(non_snake_case)]
 pub mod EntryPoint {
-    pub use crate::ungate_support::entry_point::Kind;
+    pub use crate::entry_point::Kind;
 }
 use crate::bundled_ast::Flags as AstFlags;
-use crate::ungate_support::generic_path_with_pretty_initialized;
+use crate::generic_path_with_pretty_initialized;
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
 
 // TODO(port): method bodies depend on `LinkerGraph` SoA accessors
@@ -794,8 +793,7 @@ impl<'a> LinkerContext<'a> {
             let parse_graph: *mut Graph<'a> = self.parse_graph;
             let import_records_list: *const [bun_ast::import_record::List<'a>] =
                 self.graph.ast.items_import_records();
-            let flags: *mut [crate::ungate_support::js_meta::Flags] =
-                self.graph.meta.items_flags_mut();
+            let flags: *mut [crate::js_meta::Flags] = self.graph.meta.items_flags_mut();
             let css_asts: *const [crate::bundled_ast::CssCol] = self.graph.ast.items_css();
             let files_len = self.graph.files.len();
             // SAFETY: see block comment above — `parse_graph` backref disjoint
@@ -1907,7 +1905,7 @@ impl<'a> LinkerContext<'a> {
         tla_checks: &mut [TlaCheck],
         input_files: &[Source],
         import_records: &[ImportRecord],
-        meta_flags: &mut [crate::ungate_support::js_meta::Flags],
+        meta_flags: &mut [crate::js_meta::Flags],
         ast_import_records: &[bun_ast::import_record::List<'a>],
     ) -> Result<TlaCheck, AllocError> {
         // PORT NOTE: reshaped for borrowck — Zig held &mut tla_checks[source_index] across recursive
@@ -2199,7 +2197,7 @@ impl<'a> LinkerContext<'a> {
         writer: &mut js_printer::BufferWriter,
         out_stmts: &mut [Stmt],
         ast: &JSAst<'_>,
-        flags: crate::ungate_support::js_meta::Flags,
+        flags: crate::js_meta::Flags,
         to_esm_ref: Ref,
         to_commonjs_ref: Ref,
         runtime_require_ref: Option<Ref>,
@@ -3016,10 +3014,7 @@ use bun_ast::{DependencyList, ImportItemStatus, PartSymbolUseMap};
 // below resolve unchanged.
 pub use crate::bundle_v2::{ImportTrackerIterator, ImportTrackerStatus};
 
-/// Field-wise eq for `ImportTracker` — `crate::ImportTracker` (the
-/// `ungate_support` flavour) intentionally does not derive `PartialEq` so the
-/// cycle-detector loop spells the comparison explicitly (matches Zig's
-/// `eql(ImportTracker)` shape).
+/// Field-wise eq for `ImportTracker`, matching Zig's `eql(ImportTracker)` shape.
 #[inline]
 fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
     a.source_index.get() == b.source_index.get()
@@ -4149,7 +4144,7 @@ impl<'a> LinkerContext<'a> {
     pub fn break_output_into_pieces(
         &self,
         _alloc: *const Bump,
-        j: &mut StringJoiner,
+        j: &mut StringJoiner<'static>,
         count: u32,
     ) -> Result<crate::chunk::IntermediateOutput, BunError> {
         let _trace = bun::perf::trace("Bundler.breakOutputIntoPieces");

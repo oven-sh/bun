@@ -211,6 +211,7 @@ pub struct Flags {
     /// Set after the first H3 retry so a stale-session/GOAWAY race retries
     /// once on a fresh connection but never loops.
     pub h3_retried: bool,
+    pub is_node_http_client: bool,
 }
 
 impl Default for Flags {
@@ -233,6 +234,7 @@ impl Default for Flags {
             force_http1: false,
             force_http3: false,
             h3_retried: false,
+            is_node_http_client: false,
         }
     }
 }
@@ -768,7 +770,7 @@ use core::ffi::c_uint;
 
 use bstr::BStr;
 use bun_boringssl as boringssl;
-use bun_collections::ArrayHashMap;
+use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output, err};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, immutable as strings};
@@ -2260,7 +2262,10 @@ impl<'a> HTTPClient<'a> {
                     picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
                 header_count += 1;
             }
-        } else if let Some(content_length) = original_content_length {
+        } else if let Some(content_length) = original_content_length
+            && (self.flags.is_node_http_client
+                || matches!(bun_core::parse_unsigned::<usize>(content_length, 10), Ok(0)))
+        {
             request_headers_buf[header_count] =
                 picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
             header_count += 1;
@@ -3183,7 +3188,7 @@ impl<'a> HTTPClient<'a> {
             // if less than 16 it will always be a ShortRead
             if to_read!().len() < 16 {
                 bun_core::scoped_log!(fetch, "handleShortRead");
-                self.handle_short_read::<IS_SSL>(incoming_data, socket, needs_move);
+                self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                 return;
             }
 
@@ -3206,7 +3211,7 @@ impl<'a> HTTPClient<'a> {
                         self.close_and_fail::<IS_SSL>(err!(ResponseHeadersTooLarge), socket);
                         return;
                     }
-                    self.handle_short_read::<IS_SSL>(incoming_data, socket, needs_move);
+                    self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                     return;
                 }
                 Err(e) => {
@@ -3248,6 +3253,13 @@ impl<'a> HTTPClient<'a> {
                 bun_core::scoped_log!(fetch, "information headers");
 
                 self.state.pending_response = None;
+                if !needs_move {
+                    let remaining = to_read!().len();
+                    let buffer = &mut self.state.response_message_buffer.list;
+                    let consumed = buffer.len().saturating_sub(remaining);
+                    buffer.drain_front(consumed);
+                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
+                }
                 if to_read!().is_empty() {
                     // we only received 1XX responses, we wanna wait for the next status code
                     return;
@@ -4045,6 +4057,11 @@ impl<'a> HTTPClient<'a> {
     ) -> Result<bool, bun_core::Error> {
         debug_assert!(self.state.transfer_encoding == Encoding::Identity);
         let content_length = self.state.content_length;
+        if let Some(len) = content_length
+            && incoming_data.len() > len.saturating_sub(self.state.total_body_received)
+        {
+            self.state.flags.allow_keepalive = false;
+        }
         // is it exactly as much as we need?
         if is_only_buffer
             && let Some(len) = content_length
@@ -4396,16 +4413,23 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"Content-Encoding") => {
                     if !self.flags.disable_decompression {
-                        if header.value() == b"gzip" {
+                        // RFC 9110 §8.4.1: content codings are case-insensitive.
+                        // `x-gzip` is a registered deprecated alias of `gzip`.
+                        let value = header.value();
+                        if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
+                            || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
+                        {
                             self.state.encoding = Encoding::Gzip;
                             self.state.content_encoding_i = header_i as u8;
-                        } else if header.value() == b"deflate" {
+                        } else if strings::eql_case_insensitive_ascii_check_length(
+                            value, b"deflate",
+                        ) {
                             self.state.encoding = Encoding::Deflate;
                             self.state.content_encoding_i = header_i as u8;
-                        } else if header.value() == b"br" {
+                        } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
                             self.state.encoding = Encoding::Brotli;
                             self.state.content_encoding_i = header_i as u8;
-                        } else if header.value() == b"zstd" {
+                        } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
                             self.state.encoding = Encoding::Zstd;
                             self.state.content_encoding_i = header_i as u8;
                         }
@@ -4421,25 +4445,29 @@ impl<'a> HTTPClient<'a> {
                     {
                         continue;
                     }
-                    if header.value() == b"gzip" {
+                    // RFC 9112 §7: transfer-coding names are case-insensitive.
+                    let value = header.value();
+                    if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
+                        || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
+                    {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Gzip;
                         }
-                    } else if header.value() == b"deflate" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"deflate") {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Deflate;
                         }
-                    } else if header.value() == b"br" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Brotli;
                         }
-                    } else if header.value() == b"zstd" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Zstd;
                         }
-                    } else if header.value() == b"identity" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"identity") {
                         self.state.transfer_encoding = Encoding::Identity;
-                    } else if header.value() == b"chunked" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"chunked") {
                         self.state.transfer_encoding = Encoding::Chunked;
                     } else {
                         return Err(err!(UnsupportedTransferEncoding));

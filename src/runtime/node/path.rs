@@ -1211,7 +1211,7 @@ pub(crate) fn format_js_t<T: PathCharCwd>(
         }) + (if base_len > 0 {
             base_len
         } else {
-            path_object.name.len() + path_object.ext.len()
+            path_object.name.len() + path_object.ext.len() + 1
         }))
         .max(path_size::<T>());
     let mut scratch = PathScratch::<T>::new(pool, buf_len);

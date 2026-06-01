@@ -340,12 +340,11 @@ impl ResponseLike for bun_uws::AnyResponse {
         *self
     }
     fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
-        // `bun_uws_sys::SocketAddress<'static>` borrows the socket's IP buffer;
-        // re-box into the owned `bun_uws::SocketAddress` shape this trait uses.
+        // Re-box into the owned `bun_uws::SocketAddress` shape this trait uses.
         (*self)
             .get_remote_socket_info()
             .map(|a| bun_uws::SocketAddress {
-                ip: a.ip.to_vec().into_boxed_slice(),
+                ip: a.ip().to_vec().into_boxed_slice(),
                 port: a.port,
                 is_ipv6: a.is_ipv6,
             })

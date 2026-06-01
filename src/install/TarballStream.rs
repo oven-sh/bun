@@ -665,19 +665,20 @@ impl TarballStream {
         // Tag::Extract` for streaming tarballs).
         let tarball = &self.extract_task.request_extract().tarball;
         let (_, basename) = tarball.name_and_basename();
-        if !tarball.resolution.tag.is_git()
-            && tarball.resolution.tag != ResolutionTag::LocalTarball
-            && !crate::dependency::is_safe_install_folder_name(&basename[0..basename.len().min(32)])
-        {
-            self.invalid_name = true;
-            return Err(bun_core::err!("InstallFailed"));
-        }
+        let truncated_basename = &basename[0..basename.len().min(32)];
+        let tmpname_suffix: &[u8] =
+            if crate::dependency::is_safe_install_folder_name(truncated_basename) {
+                truncated_basename
+            } else if tarball.resolution.tag.is_git()
+                || tarball.resolution.tag == ResolutionTag::LocalTarball
+            {
+                b"package"
+            } else {
+                self.invalid_name = true;
+                return Err(bun_core::err!("InstallFailed"));
+            };
         let mut buf = PathBuffer::uninit();
-        let tmpname = FileSystem::tmpname(
-            &basename[0..basename.len().min(32)],
-            &mut buf[..],
-            bun_core::fast_random(),
-        )?;
+        let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
         // allocator.dupeZ → owned NUL-terminated copy.
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
 

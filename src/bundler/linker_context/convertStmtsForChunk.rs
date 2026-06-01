@@ -9,10 +9,10 @@ use bun_collections::VecExt;
 use bun_core::FeatureFlags;
 
 use crate::EntryPoint;
+use crate::WrapKind;
 use crate::chunk::Chunk;
 use crate::linker_context_mod::{LinkerContext, LinkerOptionsMode, StmtList, StmtListWhich};
 use crate::options::Format;
-use crate::ungate_support::WrapKind;
 
 /// Code we ultimately include in the bundle is potentially wrapped
 ///

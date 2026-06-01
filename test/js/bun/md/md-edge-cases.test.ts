@@ -985,3 +985,140 @@ describe("pathological emphasis inputs", () => {
     expect(Markdown.html("*a **b** c*\n")).toBe("<p><em>a <strong>b</strong> c</em></p>\n");
   }, 90_000);
 });
+
+// ============================================================================
+// Pathological inputs: reference-definition floods. Every `[label]` reference
+// used to do a linear scan over the whole ref-definition list (one
+// normalized-label allocation plus a byte compare per stored definition), so a
+// document with ~100k definitions and ~120k references cost O(refs x defs) —
+// minutes of CPU for a ~3 MB document. Lookups now go through the label index;
+// the child process is killed after 30s so a regression fails fast instead of
+// hanging the test runner.
+// ============================================================================
+
+describe("pathological reference definition inputs", () => {
+  test("documents with many reference definitions and references render in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const pad = n => String(n).padStart(6, "0");
+        const NDEFS = 100000;
+        const NREFS = 120000;
+        const lines = [];
+        for (let i = 0; i < NDEFS; i++) lines.push("[r" + pad(i) + "]: /x" + i);
+        lines.push("");
+        for (let i = 0; i < NREFS; i++) {
+          // 6-digit labels starting at 500000 are never defined, so every lookup misses.
+          lines.push("[r" + pad(500000 + i) + "]");
+          lines.push("");
+        }
+        lines.push("first [r" + pad(0) + "] last [r" + pad(NDEFS - 1) + "] missing [r-none]");
+        const html = Bun.markdown.html(lines.join("\\n"));
+        if (!html.includes('<a href="/x0">r000000</a>')) throw new Error("first definition did not resolve: " + JSON.stringify(html.slice(-300)));
+        if (!html.includes('<a href="/x99999">r099999</a>')) throw new Error("last definition did not resolve");
+        if (!html.includes("[r500000]")) throw new Error("undefined reference should stay literal text");
+        if (!html.includes("[r-none]")) throw new Error("undefined reference should stay literal text");
+        console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+
+    // Reference resolution semantics are unchanged for ordinary documents.
+    const resolved = Markdown.html("[a]: /url\n\n[a] and [text][a] and [missing]\n");
+    expect(resolved).toContain('<a href="/url">a</a>');
+    expect(resolved).toContain('<a href="/url">text</a>');
+    expect(resolved).toContain("[missing]");
+  }, 90_000);
+});
+
+// ============================================================================
+// Pathological inputs: table delimiter rows declaring huge column counts. The
+// column count taken from the delimiter row used to be unbounded, and every
+// body row is padded to that count, so a delimiter row declaring N columns
+// followed by M bare `|` body rows emitted N*M empty cells — gigabytes of HTML
+// from a ~100 KB document. The count is now capped at 128 columns (md4c
+// parity); wider delimiter rows are not tables at all, keeping output linear
+// in input size.
+// ============================================================================
+
+describe("pathological table inputs", () => {
+  test("table delimiter rows declaring more than 128 columns are not parsed as tables", () => {
+    const cols = 1000;
+    const rows = 2000;
+    const input = "|" + "h|".repeat(cols) + "\n" + "|" + "-|".repeat(cols) + "\n" + "|\n".repeat(rows);
+    const out = Markdown.html(input);
+    expect(out).not.toContain("<table>");
+    expect(out).toContain("|h|h|");
+    // Without the cap this emitted ~cols*rows empty cells (tens of MB of HTML);
+    // the non-table rendering stays proportional to the ~26 KB input.
+    expect(out.length).toBeLessThan(1_000_000);
+
+    // The cap matches md4c: 128 columns still renders as a table...
+    const table = (n: number) =>
+      "|" + "h|".repeat(n) + "\n" + "|" + "-|".repeat(n) + "\n" + "|" + "d|".repeat(n) + "\n";
+    const ok = Markdown.html(table(128));
+    expect(ok).toContain("<table>");
+    expect(ok).toContain("<td>");
+    // ...and one more column does not.
+    expect(Markdown.html(table(129))).not.toContain("<table>");
+  }, 30_000);
+});
+
+// ============================================================================
+// Pathological inputs: unclosed scheme autolink openers. Every `<scheme:`
+// candidate used to scan forward looking for the closing `>` and only stopped
+// at `>`, whitespace, or end of content, so a paragraph of repeated `<ab:`
+// units cost O(n^2) — minutes of CPU for a ~1 MB document. The scan now also
+// stops at the next `<`, keeping inline parsing linear; the child process is
+// killed after 30s so a regression fails fast instead of hanging the test
+// runner.
+// ============================================================================
+
+describe("pathological autolink opener inputs", () => {
+  test("unclosed scheme autolink openers render in linear time", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const fill = (n, unit) => Buffer.alloc(n * unit.length, unit).toString();
+        const flood = "x " + fill(300000, "<ab:");
+        const html = Bun.markdown.html(flood);
+        if (!html.includes("&lt;ab:&lt;ab:")) throw new Error("expected escaped autolink openers: " + JSON.stringify(html.slice(0, 120)));
+        if (html.length < flood.length) throw new Error("unexpected output length " + html.length);
+        // A real autolink in front of the flood is still recognized.
+        const mixed = Bun.markdown.html("see <https://example.com/x> then " + fill(50000, "<ab:"));
+        if (!mixed.includes('<a href="https://example.com/x">https://example.com/x</a>')) {
+          throw new Error("real autolink did not render: " + JSON.stringify(mixed.slice(0, 200)));
+        }
+        console.log("DONE");
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 30_000,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain("DONE");
+    expect(exitCode).toBe(0);
+
+    // Ordinary autolinks are unaffected.
+    expect(Markdown.html("<https://example.com/a>\n")).toContain(
+      '<a href="https://example.com/a">https://example.com/a</a>',
+    );
+  }, 90_000);
+});

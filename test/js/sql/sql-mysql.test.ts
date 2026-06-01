@@ -6,6 +6,7 @@ process.env.TZ = "Etc/UTC";
 
 import { SQL, randomUUIDv7 } from "bun";
 import { beforeAll, describe, expect, mock, test } from "bun:test";
+import { once } from "events";
 import { bunEnv, bunRun, describeWithContainer, isDockerEnabled, tempDirWithFiles } from "harness";
 import net from "net";
 import path from "path";
@@ -15,6 +16,52 @@ const dir = tempDirWithFiles("sql-test", {
 });
 function rel(filename: string) {
   return path.join(dir, filename);
+}
+
+// Assertions for the NEWDECIMAL decoder against a real server, used by the
+// docker-backed suite below. (The non-docker mock-server suite at the end of
+// this file drives a single canned column, so it asserts inline instead.)
+//
+// MySQL reports computed/aggregate NEWDECIMAL columns (SUM/AVG/CAST/arithmetic/
+// ROUND/literals, and SUM of an INT column) with the BINARY flag and charset
+// 63. The binary-charset heuristic used for STRING/BLOB types wrongly returned
+// these as Buffers; NEWDECIMAL is always ASCII decimal text.
+async function assertComputedDecimalsAreStrings(sql: SQL) {
+  const t = "dec_" + randomUUIDv7("hex").replaceAll("-", "");
+  await sql`CREATE TEMPORARY TABLE ${sql(t)} (id INT, balance DECIMAL(12,2), qty INT)`;
+  await sql`INSERT INTO ${sql(t)} VALUES (1, 100.50, 3), (2, 250.25, 4)`;
+
+  // Aggregate decimals, plus a decimal literal and SUM of an INT column (which
+  // MySQL also returns as NEWDECIMAL). Kept separate from the per-row
+  // expressions below so the query has no non-aggregated columns and stays
+  // valid under ONLY_FULL_GROUP_BY (the MySQL 8+ default).
+  const aggExpected = { total: "350.75", avg_bal: "175.375000", sum_int: "7", lit: "1.23" };
+  // Binary protocol (prepared statement).
+  const [aggRow] = await sql`
+    SELECT SUM(balance) AS total, AVG(balance) AS avg_bal, SUM(qty) AS sum_int, 1.23 AS lit
+    FROM ${sql(t)}`;
+  expect(aggRow).toEqual(aggExpected);
+  // Text protocol (`.simple()`) must decode the same way.
+  const [aggSimple] = await sql`
+    SELECT SUM(balance) AS total, AVG(balance) AS avg_bal, SUM(qty) AS sum_int, 1.23 AS lit
+    FROM ${sql(t)}`.simple();
+  expect(aggSimple).toEqual(aggExpected);
+
+  // Per-row computed decimals: CAST, arithmetic, ROUND, and a plain stored
+  // column. A single row is selected so the result is deterministic.
+  const rowExpected = { casted: "100.5000", mul2: "201.00", rounded: "100.5", plain: "100.50" };
+  const [row] = await sql`
+    SELECT CAST(balance AS DECIMAL(20,4)) AS casted, balance*2 AS mul2, ROUND(balance,1) AS rounded, balance AS plain
+    FROM ${sql(t)} WHERE id = ${1}`;
+  expect(row).toEqual(rowExpected);
+  const [simpleRow] = await sql`
+    SELECT CAST(balance AS DECIMAL(20,4)) AS casted, balance*2 AS mul2, ROUND(balance,1) AS rounded, balance AS plain
+    FROM ${sql(t)} WHERE id = 1`.simple();
+  expect(simpleRow).toEqual(rowExpected);
+
+  // `.raw()` must still return raw bytes.
+  const [rawRow] = await sql`SELECT SUM(balance) AS total FROM ${sql(t)}`.raw();
+  expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from("350.75")));
 }
 if (isDockerEnabled()) {
   const images = [
@@ -207,6 +254,11 @@ if (isDockerEnabled()) {
           const [simpleRow] = await sql`SELECT id, yr, followup, control, yr_last FROM ${sql(t)} WHERE id = 1`.simple();
           expect(simpleRow).toEqual({ id: 1, yr: 2024, followup: 12345, control: 42, yr_last: 2001 });
         });
+        test("computed DECIMAL columns return strings, not Buffers", async () => {
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+          await assertComputedDecimalsAreStrings(sql);
+        });
         describe("should work with more than the max inline capacity", () => {
           for (let size of [50, 60, 62, 64, 70, 100]) {
             for (let duplicated of [true, false]) {
@@ -360,6 +412,43 @@ if (isDockerEnabled()) {
 
           expect().pass();
         }, 10_000);
+
+        test("rebuilds row object shape when a reused statement's result columns change", async () => {
+          // Result-set column metadata is re-read from the wire on every execution
+          // of a cached prepared statement. When the column count stays the same
+          // but the names change (e.g. ALTER TABLE between executions of the same
+          // query text), the cached row-object structure must be rebuilt so values
+          // are written under the current column names and never past the end of
+          // the previously-shaped object.
+          await using db = new SQL({ ...getOptions(), max: 1, idleTimeout: 5 });
+          using sql = await db.reserve();
+
+          // Same column count, different names across two executions of the same query text.
+          const t = "rs_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(t)} (a INT, b INT)`;
+          await sql`INSERT INTO ${sql(t)} VALUES (1, 2)`;
+          const first = await sql`SELECT * FROM ${sql(t)}`;
+          expect(first[0]).toEqual({ a: 1, b: 2 });
+          await sql`ALTER TABLE ${sql(t)} CHANGE a c INT, CHANGE b d INT`;
+          const second = await sql`SELECT * FROM ${sql(t)}`;
+          expect(second[0]).toEqual({ c: 1, d: 2 });
+
+          // Duplicate column names collapse into a single property on the first
+          // execution; once a rename makes them distinct, the same cached
+          // statement must produce every property of the new column list.
+          const ta = "rsa_" + randomUUIDv7("hex").replaceAll("-", "");
+          const tb = "rsb_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(ta)} (x INT, y INT)`;
+          await sql`CREATE TEMPORARY TABLE ${sql(tb)} (x INT, y INT)`;
+          await sql`INSERT INTO ${sql(ta)} VALUES (1, 2)`;
+          await sql`INSERT INTO ${sql(tb)} VALUES (3, 4)`;
+          const dupFirst = await sql`SELECT * FROM ${sql(ta)} CROSS JOIN ${sql(tb)}`;
+          // Last one wins for duplicate names, so only x and y exist.
+          expect(Object.keys(dupFirst[0]).sort()).toEqual(["x", "y"]);
+          await sql`ALTER TABLE ${sql(tb)} CHANGE x z INT, CHANGE y w INT`;
+          const dupSecond = await sql`SELECT * FROM ${sql(ta)} CROSS JOIN ${sql(tb)}`;
+          expect(dupSecond[0]).toEqual({ x: 1, y: 2, z: 3, w: 4 });
+        });
 
         test("Handles numeric column names", async () => {
           // deliberately out of order
@@ -1173,3 +1262,191 @@ if (isDockerEnabled()) {
     );
   }
 }
+
+// The docker-backed suite above only runs where a docker daemon is available.
+// The NEWDECIMAL decode path does not need a real server to exercise, though:
+// the bug is a misclassification driven entirely by the column's wire metadata
+// (NEWDECIMAL + BINARY flag + charset 63). A minimal mock MySQL server can reply
+// with exactly that column so the decoder is exercised offline, with no docker
+// and no external database. This runs everywhere.
+describe("NEWDECIMAL decodes as a string (mock server, no docker)", () => {
+  const MYSQL_TYPE_NEWDECIMAL = 0xf6;
+  const BINARY_FLAG = 1 << 7; // ColumnFlags::BINARY
+  const BINARY_CHARSET = 63; // the "binary" pseudo-charset
+  // The exact wire metadata MySQL attaches to a computed/aggregate DECIMAL
+  // (SUM/AVG/CAST/arithmetic/ROUND/literal). Without the NEWDECIMAL special-case
+  // in the decoder, `BINARY_FLAG && charset == 63` routes this to a Buffer.
+  const DECIMAL_VALUE = "350.75";
+
+  function u16le(n: number): Buffer {
+    return Buffer.from([n & 0xff, (n >> 8) & 0xff]);
+  }
+  function u24le(n: number): Buffer {
+    return Buffer.from([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff]);
+  }
+  function u32le(n: number): Buffer {
+    return Buffer.from([n & 0xff, (n >> 8) & 0xff, (n >> 16) & 0xff, (n >>> 24) & 0xff]);
+  }
+  function packet(seq: number, payload: Buffer): Buffer {
+    return Buffer.concat([u24le(payload.length), Buffer.from([seq]), payload]);
+  }
+  function lenenc(n: number): Buffer {
+    if (n < 0xfb) return Buffer.from([n]);
+    if (n < 0xffff) return Buffer.concat([Buffer.from([0xfc]), u16le(n)]);
+    throw new Error("lenenc: not needed for this test");
+  }
+  function lenencStr(s: string): Buffer {
+    const buf = Buffer.from(s, "utf-8");
+    return Buffer.concat([lenenc(buf.length), buf]);
+  }
+
+  const CLIENT_PROTOCOL_41 = 1 << 9;
+  const CLIENT_SECURE_CONNECTION = 1 << 15;
+  const CLIENT_PLUGIN_AUTH = 1 << 19;
+  const CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 1 << 21;
+  const CLIENT_DEPRECATE_EOF = 1 << 24;
+  const SERVER_CAPS =
+    CLIENT_PROTOCOL_41 |
+    CLIENT_SECURE_CONNECTION |
+    CLIENT_PLUGIN_AUTH |
+    CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA |
+    CLIENT_DEPRECATE_EOF;
+
+  function handshakeV10(): Buffer {
+    const authData1 = Buffer.alloc(8, 0x61);
+    const authData2 = Buffer.alloc(13, 0x62);
+    authData2[12] = 0;
+    return packet(
+      0,
+      Buffer.concat([
+        Buffer.from([10]),
+        Buffer.from("mock-5.7.0\0"),
+        u32le(1),
+        authData1,
+        Buffer.from([0]),
+        u16le(SERVER_CAPS & 0xffff),
+        Buffer.from([0x2d]),
+        u16le(0x0002),
+        u16le((SERVER_CAPS >>> 16) & 0xffff),
+        Buffer.from([21]),
+        Buffer.alloc(10, 0),
+        authData2,
+        Buffer.from("mysql_native_password\0"),
+      ]),
+    );
+  }
+  function okPacket(seq: number, header = 0x00): Buffer {
+    return packet(seq, Buffer.from([header, 0x00, 0x00, 0x02, 0x00, 0x00, 0x00]));
+  }
+  // NEWDECIMAL column carrying the BINARY flag and the binary charset — the
+  // metadata computed decimals arrive with.
+  function decimalColumn(): Buffer {
+    return Buffer.concat([
+      lenencStr("def"),
+      lenencStr(""),
+      lenencStr("t"),
+      lenencStr("t"),
+      lenencStr("total"),
+      lenencStr("total"),
+      Buffer.from([0x0c]),
+      u16le(BINARY_CHARSET),
+      u32le(1024),
+      Buffer.from([MYSQL_TYPE_NEWDECIMAL]),
+      u16le(BINARY_FLAG),
+      Buffer.from([2]), // decimals
+      Buffer.from([0, 0]),
+    ]);
+  }
+  function stmtPrepareOK(startSeq: number, stmtId: number): Buffer {
+    let seq = startSeq;
+    return Buffer.concat([
+      packet(
+        seq++,
+        Buffer.concat([Buffer.from([0x00]), u32le(stmtId), u16le(1), u16le(0), Buffer.from([0x00]), u16le(0)]),
+      ),
+      packet(seq++, decimalColumn()),
+    ]);
+  }
+  // Binary result row: 0x00 header, 1-byte NULL bitmap (nothing null), then the
+  // value as a length-encoded string (how NEWDECIMAL is framed on the wire).
+  function binaryResultSet(startSeq: number): Buffer {
+    let seq = startSeq;
+    return Buffer.concat([
+      packet(seq++, Buffer.from([1])),
+      packet(seq++, decimalColumn()),
+      packet(seq++, Buffer.concat([Buffer.from([0x00]), Buffer.from([0x00]), lenencStr(DECIMAL_VALUE)])),
+      okPacket(seq++, 0xfe),
+    ]);
+  }
+  // Text result row: the value is a single length-encoded string.
+  function textResultSet(startSeq: number): Buffer {
+    let seq = startSeq;
+    return Buffer.concat([
+      packet(seq++, Buffer.from([1])),
+      packet(seq++, decimalColumn()),
+      packet(seq++, lenencStr(DECIMAL_VALUE)),
+      okPacket(seq++, 0xfe),
+    ]);
+  }
+
+  function startMockServer(): net.Server {
+    const server = net.createServer(socket => {
+      let buffered = Buffer.alloc(0);
+      let authed = false;
+      let stmtId = 0;
+      socket.write(handshakeV10());
+      socket.on("data", chunk => {
+        buffered = Buffer.concat([buffered, chunk]);
+        while (buffered.length >= 4) {
+          const len = buffered[0] | (buffered[1] << 8) | (buffered[2] << 16);
+          if (buffered.length < 4 + len) break;
+          const seq = buffered[3];
+          const payload = buffered.subarray(4, 4 + len);
+          buffered = buffered.subarray(4 + len);
+          if (!authed) {
+            authed = true;
+            socket.write(okPacket(seq + 1));
+            continue;
+          }
+          const cmd = payload[0];
+          if (cmd === 0x16 /* COM_STMT_PREPARE */) {
+            socket.write(stmtPrepareOK(seq + 1, ++stmtId));
+          } else if (cmd === 0x17 /* COM_STMT_EXECUTE */) {
+            socket.write(binaryResultSet(seq + 1));
+          } else if (cmd === 0x03 /* COM_QUERY */) {
+            socket.write(textResultSet(seq + 1));
+          } else if (cmd === 0x19 /* COM_STMT_CLOSE */) {
+            // no response expected
+          } else {
+            socket.end();
+          }
+        }
+      });
+    });
+    server.listen(0, "127.0.0.1");
+    return server;
+  }
+
+  test("computed DECIMAL columns return strings, not Buffers", async () => {
+    const server = startMockServer();
+    await once(server, "listening");
+    const { port } = server.address() as net.AddressInfo;
+    try {
+      await using sql = new SQL({ url: `mysql://root@127.0.0.1:${port}/db`, max: 1 });
+
+      // Binary protocol (prepared statement).
+      const [row] = await sql`SELECT SUM(balance) AS total FROM t`;
+      expect(row).toEqual({ total: DECIMAL_VALUE });
+
+      // Text protocol (`.simple()`) must decode the same way.
+      const [simpleRow] = await sql`SELECT SUM(balance) AS total FROM t`.simple();
+      expect(simpleRow).toEqual({ total: DECIMAL_VALUE });
+
+      // `.raw()` must still return the raw bytes.
+      const [rawRow] = await sql`SELECT SUM(balance) AS total FROM t`.raw();
+      expect(rawRow[0]).toEqual(new Uint8Array(Buffer.from(DECIMAL_VALUE)));
+    } finally {
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+});

@@ -319,7 +319,7 @@ private:
 
             /* Route the method and URL */
             selectedRouter->getUserData() = {(HttpResponse<SSL> *) s, httpRequest};
-            if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrl())) {
+            if (!selectedRouter->route(httpRequest->getCaseSensitiveMethod(), httpRequest->getUrlForRouting())) {
                 /* We have to force close this socket as we have no handler for it */
                 us_socket_close((us_socket_t *) s, 0, nullptr);
                 return nullptr;

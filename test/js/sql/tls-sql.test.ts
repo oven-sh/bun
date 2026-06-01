@@ -348,3 +348,75 @@ test("postgres client refuses protocol messages received in place of the SSLRequ
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
 });
+
+// Uses a minimal mock PostgreSQL server, so it runs without Docker.
+test("postgres client aborts the connection when the server declines TLS that was explicitly requested", async () => {
+  // `tls: true` (or any tls object) is an explicit request for an encrypted
+  // connection. When the server answers the 8-byte SSLRequest with 'N'
+  // ("SSL not available"), the client must abort the connection instead of
+  // silently continuing the protocol in plaintext, which would put the
+  // startup message and the password on the unencrypted socket.
+  const password = "hunter2-must-not-appear-on-the-wire";
+  const sslRequest = [0x00, 0x00, 0x00, 0x08, 0x04, 0xd2, 0x16, 0x2f];
+  // AuthenticationCleartextPassword: 'R', int32 length 8, int32 auth type 3.
+  const cleartextPasswordRequest = Buffer.from([0x52, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x03]);
+
+  for (const tls of [true, { rejectUnauthorized: false }] as const) {
+    let preTlsClientBytes = Buffer.alloc(0);
+    let declinedTls = false;
+    const plaintextAfterDecline: Buffer[] = [];
+    const clientContinuedInPlaintext = Promise.withResolvers<void>();
+    const sockets = new Set<import("node:net").Socket>();
+
+    const server = net.createServer(socket => {
+      sockets.add(socket);
+      socket.on("error", () => {});
+      socket.on("data", data => {
+        if (!declinedTls) {
+          preTlsClientBytes = Buffer.concat([preTlsClientBytes, data]);
+          if (preTlsClientBytes.length < 8) return;
+          declinedTls = true;
+          // The legitimate "SSL not available" answer to an SSLRequest.
+          socket.write(Buffer.from("N"));
+          return;
+        }
+        // Anything received from here on is the client continuing the protocol
+        // on the unencrypted socket (startup message, password, ...).
+        plaintextAfterDecline.push(Buffer.from(data));
+        clientContinuedInPlaintext.resolve();
+        // A downgraded client would answer this with the cleartext password.
+        socket.write(cleartextPasswordRequest);
+      });
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as import("node:net").AddressInfo;
+
+    try {
+      await using sql = new SQL({
+        url: `postgres://postgres:${password}@127.0.0.1:${port}/bun_sql_test`,
+        adapter: "postgres",
+        max: 1,
+        tls,
+      });
+      const outcome = await Promise.race([
+        sql`select 1`.then(
+          () => ({ kind: "connected" }),
+          e => ({ kind: "rejected", code: e?.code ?? String(e) }),
+        ),
+        clientContinuedInPlaintext.promise.then(() => ({ kind: "continued in plaintext" })),
+      ]);
+
+      // The only plaintext bytes the client may ever send are the SSLRequest itself.
+      expect(Array.from(preTlsClientBytes)).toEqual(sslRequest);
+      // After the server declines TLS, nothing further -- least of all the
+      // password -- may be written to the unencrypted socket.
+      expect(Buffer.concat(plaintextAfterDecline).toString("latin1")).not.toContain(password);
+      expect(plaintextAfterDecline.length).toBe(0);
+      // The connection must fail cleanly instead of downgrading to plaintext.
+      expect(outcome).toEqual({ kind: "rejected", code: "ERR_POSTGRES_TLS_NOT_AVAILABLE" });
+    } finally {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  }
+});

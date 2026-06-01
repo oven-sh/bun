@@ -3745,6 +3745,16 @@ impl<'a> Parser<'a> {
         parse_nested_block(self, parsefn)
     }
 
+    #[inline]
+    pub fn math_fn_parse_failures(&self) -> u64 {
+        self.input.math_fn_parse_failures
+    }
+
+    #[inline]
+    pub fn note_math_fn_parse_failure(&mut self) {
+        self.input.math_fn_parse_failures += 1;
+    }
+
     pub fn is_exhausted(&mut self) -> bool {
         self.expect_exhausted().is_ok()
     }
@@ -4288,6 +4298,7 @@ pub struct ParserInput<'a> {
     /// instead of re-scanning (and re-recursing through) the truncated
     /// suffix once per backtracking alternative per nesting level.
     unclosed_block_at_eof: Option<UnclosedBlockAtEof>,
+    math_fn_parse_failures: u64,
 }
 
 /// See `ParserInput::unclosed_block_at_eof`.
@@ -4315,6 +4326,7 @@ impl<'a> ParserInput<'a> {
             cached_token: None,
             nesting_depth: 0,
             unclosed_block_at_eof: None,
+            math_fn_parse_failures: 0,
         }
     }
 }

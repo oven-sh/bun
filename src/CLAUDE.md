@@ -185,7 +185,7 @@ let mime = mime_type::by_extension(b"html");            // MimeType
 let mime = mime_type::by_extension_no_default(b"xyz");  // Option<MimeType>
 
 mime.category   // Category::Javascript | Css | Html | Json | Image | Text | Wasm | ...
-mime.category.is_code()
+mime.category.is_text_like()
 ```
 
 Common constants: `JAVASCRIPT`, `JSON`, `HTML`, `CSS`, `TEXT`, `WASM`, `ICO`, `OTHER`.

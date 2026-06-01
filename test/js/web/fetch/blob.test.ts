@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 import type { BlobOptions } from "node:buffer";
 import type { BinaryLike } from "node:crypto";
@@ -101,6 +101,15 @@ test("new Blob", () => {
   blob = new Blob(["Bun", "Foo"], { type: "\u1234" });
   expect(blob.size).toBe(6);
   expect(blob.type).toBe("");
+});
+
+test("new Blob stringifies non-Blob object parts in order", async () => {
+  const url = new URL("https://example.com/path");
+  expect(await new Blob([url]).text()).toBe("https://example.com/path");
+  expect(await new Blob(["a", url, "b"]).text()).toBe("ahttps://example.com/pathb");
+  expect(await new Blob(["a", {}, "b"]).text()).toBe("a[object Object]b");
+  expect(await new Blob(["a", {}, "b", { toString: () => "X" }]).text()).toBe("a[object Object]bX");
+  expect(await new Blob(["a", ["x", "y"], "b"]).text()).toBe("ax,yb");
 });
 
 test("blob: can be fetched", async () => {
@@ -506,4 +515,44 @@ test("Blob.slice at an odd byte offset decodes UTF-16LE (BOM) content with text(
 
   expect(stdout.trim()).toBe(JSON.stringify({ oddText: "hi", oddJson: 42, alignedText: "hi" }));
   expect(exitCode).toBe(0);
+});
+
+// structuredClone/postMessage of sliced Blobs and Files is covered by
+// test/js/web/structured-clone-blob-file.test.ts. These tests focus on the
+// consumer paths that go through resolve_size()/resolved_size() rather than
+// serialization — streaming a slice and using one as an HTTP body.
+describe("slice bounds are respected when streaming and serving", () => {
+  test("Blob.slice(start, end).stream()", async () => {
+    const s = new Blob(["0123456789"]).slice(3, 7);
+    expect(await new Response(s.stream()).text()).toBe("3456");
+    // Streaming must not mutate the slice either.
+    expect(s.size).toBe(4);
+    expect(await s.text()).toBe("3456");
+  });
+
+  test("Response(slice).body reader", async () => {
+    const res = new Response(new Blob(["0123456789"]).slice(3, 7));
+    const reader = res.body!.getReader();
+    const chunks: Uint8Array[] = [];
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+    }
+    expect(Buffer.concat(chunks).toString()).toBe("3456");
+  });
+
+  test("content-length of a sliced Blob response body", async () => {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new Blob(["0123456789"]).slice(3, 7)),
+    });
+
+    const head = await fetch(`http://localhost:${server.port}/`, { method: "HEAD" });
+    expect(head.headers.get("content-length")).toBe("4");
+
+    const get = await fetch(`http://localhost:${server.port}/`);
+    expect(get.headers.get("content-length")).toBe("4");
+    expect(await get.text()).toBe("3456");
+  });
 });

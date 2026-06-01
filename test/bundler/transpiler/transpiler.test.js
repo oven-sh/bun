@@ -209,6 +209,28 @@ describe("Bun.Transpiler", () => {
       err("module = (t) => 0 Foo { () => () => 0 }", 'Expected ";" but found "Foo"');
     });
 
+    it("scope tracking stays balanced for a forward-declared function inside an if", () => {
+      const exp = ts.expectPrinted_;
+
+      // A function declaration in a single-statement `if`/`else` body gets a fake
+      // block scope so it can be wrapped when it has a body. A TypeScript forward
+      // declaration (no body) emits nothing, so that fake block scope must be
+      // discarded from the scope order; otherwise the next statement's scope is
+      // read out of sync and the parser pops past the topmost scope.
+      exp("if(l)function f(ag): g;\nfor (g in {}) {}", "if (l)\n  ;\nfor (g in {}) {}");
+      exp("if (x) function f(): void;\nfor (y in {}) {}", "if (x)\n  ;\nfor (y in {}) {}");
+      exp("if (x) {} else function g(): void;\nfor (z in {}) {}", "if (x) {}\nfor (z in {}) {}");
+
+      // A function declaration with a body in the same position is still wrapped.
+      exp("if(l)function f(ag): g {}\nfor (g in {}) {}", "if (l) {\n  let f = function(ag) {};\n}\nfor (g in {}) {}");
+
+      // The exact fuzz repro: ts loader, dead-code elimination, trailing \r.
+      const dce = new Bun.Transpiler({ loader: "ts", target: "browser", deadCodeElimination: true });
+      expect(dce.transformSync("if(l)function f(ag): g;\r\nfor (g in {}) {}\r")).toBe(
+        "if (l)\n  ;\nfor (g in {}) {}\n",
+      );
+    });
+
     it("export default interface that is not an interface declaration does not crash", () => {
       const exp = ts.expectPrinted_;
       const err = ts.expectParseError;

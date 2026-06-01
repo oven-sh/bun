@@ -7294,7 +7294,7 @@ pub mod bv2_impl {
         }
     }
 
-    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    #[derive(Clone, Copy, Default, PartialEq, Eq, Hash)]
     pub struct ImportTracker {
         pub source_index: Index,
         pub name_loc: bun_ast::Loc,

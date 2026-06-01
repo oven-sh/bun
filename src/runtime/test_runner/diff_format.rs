@@ -53,6 +53,10 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 &mut received_buf,
                 fmt_options,
             ); // TODO:
+            // Pretty-printing runs user JS and may leave a pending exception
+            // (e.g. a stack overflow). This is a best-effort diff, so clear it;
+            // otherwise the next JS call observes the stale exception and asserts.
+            let _ = global_this.clear_exception_except_termination();
 
             let _ = JestPrettyFormat::format(
                 MessageLevel::Debug,
@@ -62,6 +66,7 @@ impl<'a> fmt::Display for DiffFormatter<'a> {
                 &mut expected_buf,
                 fmt_options,
             ); // TODO:
+            let _ = global_this.clear_exception_except_termination();
         }
 
         let mut received_slice: &[u8] = received_buf.as_slice();

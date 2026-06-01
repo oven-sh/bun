@@ -14,20 +14,10 @@
 #endif
 
 extern "C" void BunString__toThreadSafe(BunString* str);
-extern "C" int64_t Bun__JSHeapData__liveCount();
 
 namespace Bun {
 
 using namespace JSC;
-
-// Number of live per-VM `WebCore::JSHeapData` objects. Each VM (including every
-// worker) creates one; a terminated worker must free it. A leak here grows this
-// count without bound across `new Worker()` + `terminate()` cycles, so a
-// regression test asserts the count returns to its pre-worker value.
-JSC_DEFINE_HOST_FUNCTION(jsFunction_jsHeapDataLiveCount, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-    return JSValue::encode(jsNumber(static_cast<double>(Bun__JSHeapData__liveCount())));
-}
 
 // Exercises WebCore::lowercaseHeaderName — the Highway-SIMD-backed header-name
 // lowercasing used by the Headers iterator — directly from JS so a test can

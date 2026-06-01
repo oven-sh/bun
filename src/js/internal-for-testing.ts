@@ -265,12 +265,6 @@ export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunc
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
-export const jsHeapDataLiveCount: () => number = $newCppFunction(
-  "InternalForTesting.cpp",
-  "jsFunction_jsHeapDataLiveCount",
-  0,
-);
-
 export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_BunString_toThreadSafeRefCountDelta",

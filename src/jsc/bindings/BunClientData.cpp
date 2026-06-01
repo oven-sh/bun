@@ -3,9 +3,6 @@
 #include "BunClientData.h"
 #include "WebCoreJSBuiltins.h"
 
-#include <atomic>
-#include <cstdint>
-
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include <JavaScriptCore/FastMallocAlignedMemoryAllocator.h>
@@ -36,19 +33,6 @@ using namespace JSC;
 
 RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider();
 
-// Number of live `JSHeapData` instances. One is created per VM (the non-global
-// GC path). Exposed to tests via `bun:internal-for-testing` so a regression
-// test can assert a terminated worker's `JSHeapData` is actually freed rather
-// than leaked. Release builds reuse the freed backing memory, so neither RSS
-// nor LSAN reliably surface the leak — a live-instance count is the
-// deterministic signal.
-static std::atomic<int64_t> s_jsHeapDataLiveCount { 0 };
-
-extern "C" int64_t Bun__JSHeapData__liveCount()
-{
-    return s_jsHeapDataLiveCount.load(std::memory_order_relaxed);
-}
-
 JSHeapData::JSHeapData(Heap& heap)
     : m_heapCellTypeForJSWorkerGlobalScope(JSC::IsoHeapCellType::Args<Zig::GlobalObject>())
     , m_heapCellTypeForNodeVMGlobalObject(JSC::IsoHeapCellType::Args<Bun::NodeVMGlobalObject>())
@@ -61,13 +45,9 @@ JSHeapData::JSHeapData(Heap& heap)
     , m_subspaces(makeUnique<ExtendedDOMIsoSubspaces>())
 
 {
-    s_jsHeapDataLiveCount.fetch_add(1, std::memory_order_relaxed);
 }
 
-JSHeapData::~JSHeapData()
-{
-    s_jsHeapDataLiveCount.fetch_sub(1, std::memory_order_relaxed);
-}
+JSHeapData::~JSHeapData() = default;
 
 #define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
 

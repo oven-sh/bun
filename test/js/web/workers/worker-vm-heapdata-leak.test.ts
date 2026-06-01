@@ -1,21 +1,36 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows } from "harness";
 
 // Each VM (including every worker) allocates a WebCore::JSHeapData on creation
-// via JSHeapData::ensureHeapData (the default !useGlobalGC path). It is owned by
-// a raw JSVMClientData::m_heapData pointer that ~JSVMClientData used to leave
-// dangling, so every terminated worker leaked its JSHeapData plus the three
-// FastMalloc-backed IsoSubspaces it embeds. Release builds reuse the freed
-// backing memory and the object is reachable at exit, so neither RSS nor LSAN
-// reliably surfaces it — the deterministic signal is the live-instance count,
-// which grew by one per `new Worker()` + `terminate()` cycle before the fix.
-test("terminated workers do not leak their JSHeapData", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        const { jsHeapDataLiveCount } = require("bun:internal-for-testing");
+// via JSHeapData::ensureHeapData (the default !useGlobalGC path). It is owned
+// by JSVMClientData::m_heapData, which used to be a raw pointer that
+// ~JSVMClientData never freed, so every terminated worker leaked its JSHeapData
+// plus the FastMalloc-backed IsoSubspaces it embeds — RSS growth proportional
+// to the number of `new Worker()` + `terminate()` cycles (~4 KB/worker in
+// release, ~25 KB/worker under ASAN).
+//
+// ASAN/debug builds are slower and have larger per-allocation overhead, so the
+// batch is smaller and the threshold wider there. Measured on Linux x64 with
+// the leak present vs fixed (3 runs each):
+//   debug+ASAN, 200 workers: leaky 5.3–6.8 MB vs fixed −1.2–1.9 MB
+//   release,    500 workers: leaky 1.8–2.0 MB vs fixed −0.2–0.7 MB
+const slow = isDebug || isASAN;
+const BATCH = slow ? 200 : 500;
+const LIMIT_MB = slow ? 3.5 : 1.3;
+
+// Skipped on Windows: RSS there does not drop after worker threads exit (the
+// per-thread mimalloc arenas stay committed), so allocator residue swamps the
+// per-worker leak. The fix is platform-agnostic C++; Linux/macOS coverage is
+// sufficient.
+test.skipIf(isWindows)(
+  "terminated workers do not leak their per-VM heap data (RSS stays bounded)",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "--smol",
+        "-e",
+        `
         const url =
           "data:text/javascript," +
           encodeURIComponent('self.onmessage = () => {}; self.postMessage("ready");');
@@ -30,51 +45,48 @@ test("terminated workers do not leak their JSHeapData", async () => {
           await new Promise(r => w.addEventListener("close", r, { once: true }));
         }
 
-        // Worker teardown (WebWorker__destroy -> ~VM -> ~JSHeapData) runs on the
-        // parent after the close task, so let the count settle after a batch.
-        async function settle() {
-          let prev = -1;
-          for (let i = 0; i < 50; i++) {
-            Bun.gc(true);
-            await Bun.sleep(0);
-            const now = jsHeapDataLiveCount();
-            if (now === prev) return now;
-            prev = now;
-          }
-          return jsHeapDataLiveCount();
-        }
+        // Warm up: establish the allocator/JIT high-water mark so the measured
+        // batch only sees steady-state growth.
+        for (let i = 0; i < 30; i++) await runWorker();
+        Bun.gc(true);
+        Bun.gc(true);
+        const rssBefore = process.memoryUsage.rss();
 
-        // Warm up, then capture the settled baseline.
-        for (let i = 0; i < 8; i++) await runWorker();
-        const before = await settle();
+        for (let i = 0; i < ${BATCH}; i++) await runWorker();
+        Bun.gc(true);
+        Bun.gc(true);
+        const rssAfter = process.memoryUsage.rss();
 
-        const BATCH = 50;
-        for (let i = 0; i < BATCH; i++) await runWorker();
-        const after = await settle();
-
-        const leaked = after - before;
-        // Before the fix: one leaked JSHeapData per worker (leaked === BATCH).
-        // After the fix: the count returns to the baseline (leaked === 0). Allow
-        // a tiny slack for any unrelated VM that a later tick might spin up.
-        if (leaked > 2) {
-          console.error("LEAK: " + leaked + " JSHeapData objects leaked across " + BATCH + " worker cycles");
+        const deltaMB = (rssAfter - rssBefore) / 1024 / 1024;
+        if (deltaMB > ${LIMIT_MB}) {
+          console.error(
+            "LEAK: RSS grew " + deltaMB.toFixed(1) + " MB over ${BATCH} worker create/terminate cycles",
+          );
           process.exit(1);
         }
-        console.log("PASS leaked=" + leaked);
+        console.log("PASS delta=" + deltaMB.toFixed(1) + "MB");
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
+      ],
+      env: {
+        ...bunEnv,
+        // ASAN's quarantine retains freed allocations (hundreds of KB of RSS
+        // noise per worker) which would bury the leak signal; disable it so
+        // freed memory is released promptly. No effect on non-ASAN builds.
+        ASAN_OPTIONS: "quarantine_size_mb=0:thread_local_quarantine_size_kb=0:detect_leaks=0",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  // ASAN builds emit a one-time "WARNING: ASAN interferes ..." line to stderr
-  // (via std::call_once in ZigGlobalObject.cpp) that BUN_DEBUG_QUIET_LOGS does
-  // not suppress; filter it before asserting stderr is otherwise clean.
-  const stderrLines = stderr.split("\n").filter(line => !line.startsWith("WARNING: ASAN interferes"));
-  expect(stderrLines.join("\n")).toBe("");
-  expect(stdout).toContain("PASS");
-  expect(exitCode).toBe(0);
-}, 120_000);
+    // ASAN builds emit a one-time "WARNING: ASAN interferes ..." line to stderr
+    // (via std::call_once in ZigGlobalObject.cpp) that BUN_DEBUG_QUIET_LOGS does
+    // not suppress; filter it before asserting stderr is otherwise clean.
+    const stderrLines = stderr.split("\n").filter(line => !line.startsWith("WARNING: ASAN interferes"));
+    expect(stderrLines.join("\n")).toBe("");
+    expect(stdout).toContain("PASS");
+    expect(exitCode).toBe(0);
+  },
+  240_000,
+);

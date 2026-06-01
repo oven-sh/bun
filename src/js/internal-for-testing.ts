@@ -263,6 +263,8 @@ export const structuredCloneAdvanced: (
 
 export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
 
+export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
+
 export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_BunString_toThreadSafeRefCountDelta",

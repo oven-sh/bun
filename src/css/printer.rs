@@ -170,8 +170,10 @@ pub struct Printer<'a> {
     /// never reset) and bounded in `StyleRule::to_css`, so a few kilobytes of
     /// deeply nested input cannot expand into gigabytes — regardless of whether
     /// the duplicated payload is nested rules or a large declaration block. The
-    /// original (first) pass of each rule and any flat/single-prefix output emit
-    /// nothing here.
+    /// original (first) pass of each rule, and any single-prefix output (which
+    /// has no passes after the first), emit nothing here. A flat multi-prefix
+    /// rule's later passes do count, but without nesting to compound them that
+    /// stays linear in the input.
     pub prefix_expansion_bytes: usize,
     pub scratchbuf: BumpVec<'a, u8>,
     pub error_kind: Option<css::PrinterError>,

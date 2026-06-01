@@ -121,9 +121,10 @@ impl<R> StyleRule<R> {
                     // so its output is a duplicate produced by the fan-out.
                     // Measure how much it emits and charge it against the
                     // expansion-byte budget so nesting fanning-out rules can't
-                    // expand a few kilobytes into gigabytes. The first pass and
-                    // any flat/single-prefix output are not duplicates and do
-                    // not charge, so linear output never trips the limit.
+                    // expand a few kilobytes into gigabytes. The first pass
+                    // (and a single-prefix rule, which has no later pass) does
+                    // not charge; a flat multi-prefix rule's later passes do,
+                    // but without nesting to compound them that stays linear.
                     let is_duplicate_pass = emitted_first_pass;
                     let bytes_before = if is_duplicate_pass {
                         dest.bytes_written()

@@ -136,11 +136,13 @@ impl<R> StyleRule<R> {
         // Whether any nested rule is emitted in this pass; if not, don't write
         // the separator between the declarations and the nested rules, or the
         // wrapper block when there are no own declarations either (nothing
-        // would go inside it).
-        let has_nested_output = !skip_prefixed_nested
-            || self.rules.v.iter().any(|rule| {
-                !matches!(rule, CssRule::Ignored) && !rule.is_deferred_to_final_prefix_pass()
-            });
+        // would go inside it). `Ignored` rules never emit; prefixed rules are
+        // deferred to the final pass, so they only emit when
+        // `skip_prefixed_nested` is false.
+        let has_nested_output = self.rules.v.iter().any(|rule| {
+            !matches!(rule, CssRule::Ignored)
+                && (!skip_prefixed_nested || !rule.is_deferred_to_final_prefix_pass())
+        });
 
         // With nesting preserved the nested rules are written inside this
         // rule's block, so a non-final prefix pass that emits neither its own

@@ -132,8 +132,9 @@ test("bun build --target=browser does not blow up on deeply nested prefixed sele
 // when nesting was compiled away for browser targets; with no targets (or
 // nesting-capable targets) nesting is preserved, `&` is printed literally, and
 // every ancestor prefix pass genuinely needs its own copy of the body, so the
-// output cannot be collapsed. The minifier now bounds the total number of
-// per-prefix rule copies and errors out instead of allocating gigabytes.
+// output cannot be collapsed. The minifier now bounds the total bytes emitted
+// by those duplicate prefix passes and errors out instead of allocating
+// gigabytes.
 
 const VENDOR_PREFIX_LIMIT_ERROR = "Maximum vendor-prefix expansion exceeded";
 
@@ -185,15 +186,16 @@ test("deeply nested single-prefix rules stay linear and do not trip the bound", 
 });
 
 test("a large flat stylesheet of fanning-out rules does not trip the bound", () => {
-  // A fanning-out rule with no nested rules is serialized once per prefix, but
-  // that is flat fan-out — linear in input size and bounded by the prefix count
-  // (at most 5). Only rules re-serialized inside a *nested* fan-out pass charge
-  // the budget, so these flat rules must not, however many there are. Old
-  // targets downlevel a single `::placeholder` into four prefix variants
-  // (`-webkit-input-`, `-moz-`, `-ms-input-`, unprefixed), so 20_000 flat rules
-  // are 80_000 prefix copies — past `MAX_PREFIX_EXPANSIONS` (65_536). Distinct
-  // declarations keep the rules from being merged. This stays linear instead of
-  // throwing.
+  // A fanning-out rule with no nested rules re-serializes only its own prelude
+  // and declarations on each prefix pass — flat fan-out, linear in input size
+  // and bounded by the prefix count (at most 5). Its duplicate passes do charge
+  // the byte budget, but only a few dozen bytes per rule, so the total stays
+  // far under the cap without nesting to compound it. Old targets downlevel a
+  // single `::placeholder` into four prefix variants (`-webkit-input-`,
+  // `-moz-`, `-ms-input-`, unprefixed); 20_000 such rules charge ~3 duplicate
+  // passes of a tiny declaration each (a few MB total), well under the 64 MB
+  // byte limit. Distinct declarations keep the rules from being merged. This
+  // stays linear instead of throwing.
   const oldTargets = { safari: 8 << 16, firefox: 20 << 16, chrome: 30 << 16, edge: 12 << 16 };
   const count = 20_000;
   let src = "";

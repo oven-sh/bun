@@ -237,10 +237,10 @@ pub enum PrinterErrorKind {
     /// Substituting parent selectors for `&` while compiling CSS nesting for
     /// the configured targets exceeded the expansion limit.
     maximum_nesting_expansion,
-    /// Serializing a style rule once per vendor prefix re-serializes its nested
-    /// rules in every pass, so nesting vendor-prefixed multi-selector rules
-    /// expands the output multiplicatively with depth. The total number of
-    /// such rule copies exceeded the expansion limit.
+    /// Serializing a style rule once per vendor prefix re-serializes its whole
+    /// body in every pass, so nesting vendor-prefixed multi-selector rules
+    /// expands the output multiplicatively with depth. The total bytes emitted
+    /// by those duplicate passes exceeded the expansion limit.
     maximum_vendor_prefix_expansion,
     no_import_records,
 }

@@ -736,3 +736,84 @@ describe.concurrent("string body consumption does not leak", () => {
     });
   }
 });
+
+describe("Response wrapping a Bun.file() stream", () => {
+  // Position-dependent content so slice windows are verifiable. 1 MiB:
+  // on unfixed builds, consuming a Response wrapping a sliced stream of a
+  // file this large never resolves (the test then fails by timeout).
+  const SIZE = 1024 * 1024;
+  function makeFile(dir: string) {
+    const bytes = new Uint8Array(SIZE);
+    for (let i = 0; i < SIZE; i++) bytes[i] = (i * 7) & 0xff;
+    const path = `${dir}/body-file-stream.bin`;
+    require("fs").writeFileSync(path, bytes);
+    return { path, bytes };
+  }
+
+  test(".bytes() returns a Uint8Array with the full contents", async () => {
+    const { tempDirWithFiles } = require("harness");
+    const dir = tempDirWithFiles("body-file-stream", {});
+    const { path, bytes } = makeFile(dir);
+
+    const result = await new Response(file(path).stream()).bytes();
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(result.byteLength).toBe(SIZE);
+    expect(Buffer.compare(result, bytes)).toBe(0);
+  });
+
+  test(".bytes() on a sliced file stream resolves with exactly the slice", async () => {
+    const { tempDirWithFiles } = require("harness");
+    const dir = tempDirWithFiles("body-file-stream-slice", {});
+    const { path, bytes } = makeFile(dir);
+
+    const start = 100;
+    const end = 1124;
+    const result = await new Response(file(path).slice(start, end).stream()).bytes();
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(result.byteLength).toBe(end - start);
+    expect(Buffer.compare(result, bytes.subarray(start, end))).toBe(0);
+  });
+
+  test(".text() and .arrayBuffer() on a sliced file stream resolve", async () => {
+    const { tempDirWithFiles } = require("harness");
+    const dir = tempDirWithFiles("body-file-stream-text", {});
+    const path = `${dir}/text.txt`;
+    require("fs").writeFileSync(path, "0123456789".repeat(100));
+
+    const text = await new Response(file(path).slice(10, 30).stream()).text();
+    expect(text).toBe("01234567890123456789");
+
+    const ab = await new Response(file(path).slice(10, 30).stream()).arrayBuffer();
+    expect(ab.byteLength).toBe(20);
+  });
+
+  test("a disturbed file stream still throws at Response construction", async () => {
+    const { tempDirWithFiles } = require("harness");
+    const dir = tempDirWithFiles("body-file-stream-read", {});
+    const { path } = makeFile(dir);
+
+    const stream = file(path).stream();
+    const reader = stream.getReader();
+    const first = await reader.read();
+    expect(first.done).toBe(false);
+    reader.releaseLock();
+
+    expect(() => new Response(stream)).toThrow("ReadableStream has already been used");
+  });
+
+  test("a file stream with a held reader keeps rejecting consumption", async () => {
+    const { tempDirWithFiles } = require("harness");
+    const dir = tempDirWithFiles("body-file-stream-locked", {});
+    const { path } = makeFile(dir);
+
+    const response = new Response(file(path).stream());
+    const reader = response.body!.getReader();
+    expect(response.body!.locked).toBe(true);
+    // the held reader must keep observing the stream; bytes() must not
+    // short-circuit to the blob path
+    expect(async () => {
+      await response.bytes();
+    }).toThrow();
+    reader.releaseLock();
+  });
+});

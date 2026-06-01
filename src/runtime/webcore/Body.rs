@@ -1778,6 +1778,51 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
     }
 
+    /// Try to convert a still-unread blob/file-backed body stream back into a
+    /// Blob body value so consumers take the native blob paths (sendfile,
+    /// buffered reads) instead of the per-chunk JS streaming loop.
+    ///
+    /// `Value::to_blob_if_possible` can only consult the native
+    /// `Locked.readable` slot, but `check_body_stream_ref` migrates the stream
+    /// into the JS-side cache right after construction, leaving that slot
+    /// empty — so for `new Response(file.stream())` the conversion silently
+    /// never fires. Callers resolve the stream from either slot (via
+    /// `get_body_readable_stream`) and pass it in. Returns true when the body
+    /// value was replaced with the blob.
+    fn try_blob_from_resolved_stream(
+        &self,
+        global_object: &JSGlobalObject,
+        stream: &mut ReadableStream,
+    ) -> bool {
+        {
+            let Value::Locked(locked) = self.get_body_value() else {
+                return false;
+            };
+            // Someone is already consuming or waiting on this body.
+            if locked.promise.is_some()
+                || locked.on_receive_value.is_some()
+                || !locked.action.is_none()
+            {
+                return false;
+            }
+        }
+        // A reader the user holds must keep observing the stream; consumption
+        // must keep rejecting like the streaming path does.
+        if stream.is_locked(global_object) {
+            return false;
+        }
+        let Some(blob) = stream.to_any_blob(global_object) else {
+            return false;
+        };
+        self.detach_readable_stream(global_object);
+        *self.get_body_value() = match blob {
+            AnyBlob::Blob(b) => Value::Blob(b),
+            AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
+            AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
+        };
+        true
+    }
+
     /// Zig: `checkBodyStreamRef`. Migrate any `Locked.readable` strong ref
     /// into the GC-traced `js.gc.stream` slot to break the cycle (the JS
     /// wrapper owns the stream; native side must not hold it strongly).
@@ -1839,13 +1884,14 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream(global_object) {
+            if let Some(mut readable) = self.get_body_readable_stream(global_object) {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let value = self.get_body_value();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetText, Some(readable));
+                if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
+                    if let Value::Locked(locked) = self.get_body_value() {
+                        return locked.set_promise(global_object, Action::GetText, Some(readable));
+                    }
                 }
             }
             let value = self.get_body_value();
@@ -1909,14 +1955,16 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream(global_object) {
+            if let Some(mut readable) = self.get_body_readable_stream(global_object) {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetJSON, Some(readable));
+                if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
+                    if let Value::Locked(locked) = self.get_body_value() {
+                        return locked.set_promise(global_object, Action::GetJSON, Some(readable));
+                    }
                 }
             }
             let value = self.get_body_value();
@@ -1956,18 +2004,20 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream(global_object) {
+            if let Some(mut readable) = self.get_body_readable_stream(global_object) {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(
-                        global_object,
-                        Action::GetArrayBuffer,
-                        Some(readable),
-                    );
+                if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
+                    if let Value::Locked(locked) = self.get_body_value() {
+                        return locked.set_promise(
+                            global_object,
+                            Action::GetArrayBuffer,
+                            Some(readable),
+                        );
+                    }
                 }
             }
             let value = self.get_body_value();
@@ -2008,14 +2058,16 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream(global_object) {
+            if let Some(mut readable) = self.get_body_readable_stream(global_object) {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
                 let value = self.get_body_value();
                 value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBytes, Some(readable));
+                if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
+                    if let Value::Locked(locked) = self.get_body_value() {
+                        return locked.set_promise(global_object, Action::GetBytes, Some(readable));
+                    }
                 }
             }
             let value = self.get_body_value();
@@ -2149,7 +2201,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         }
 
         if matches!(value, Value::Locked(_)) {
-            if let Some(readable) = self.get_body_readable_stream(global_object) {
+            if let Some(mut readable) = self.get_body_readable_stream(global_object) {
                 let value = self.get_body_value();
                 let Value::Locked(locked) = value else {
                     unreachable!()
@@ -2161,8 +2213,10 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                     return Ok(handle_body_already_used(global_object));
                 }
                 value.to_blob_if_possible();
-                if let Value::Locked(locked) = value {
-                    return locked.set_promise(global_object, Action::GetBlob, Some(readable));
+                if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
+                    if let Value::Locked(locked) = self.get_body_value() {
+                        return locked.set_promise(global_object, Action::GetBlob, Some(readable));
+                    }
                 }
             }
             let value = self.get_body_value();

@@ -196,6 +196,15 @@ impl ReadableStream {
                     // `store.clone()` carries the +1 that Zig's explicit `blob.store.?.ref()`
                     // provided after the raw-pointer copy in `initWithStore`.
                     let blob = Blob::init_with_store(store.clone(), global_this);
+                    // Restore the slice window the FileReader carries (the inverse
+                    // of `from_blob_copy_ref`); `init_with_store` spans the whole
+                    // store, which would serve the entire file for a sliced blob.
+                    if let Some(offset) = blobby.start_offset {
+                        blob.offset.set(offset as webcore::blob::SizeType);
+                    }
+                    if let Some(max_size) = blobby.max_size {
+                        blob.size.set(max_size as webcore::blob::SizeType);
+                    }
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started.get());
                     self.done(global_this);

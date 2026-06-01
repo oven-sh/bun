@@ -2910,9 +2910,29 @@ where
                         }
                         // toBlobIfPossible will typically convert .Blob streams, or .File streams into a Blob object, but cannot always.
                         readable_stream::Source::Blob(_)
-                        | readable_stream::Source::File(_)
+                        | readable_stream::Source::File(_) => {
+                            // `value.to_blob_if_possible()` above can no longer
+                            // see the stream once check_body_stream_ref has
+                            // migrated it into the JS-side cached slot, so
+                            // unread blob/file-backed Response streams land
+                            // here. Convert now so file streams take the
+                            // sendfile/native blob path instead of the
+                            // per-chunk JS streaming loop.
+                            let mut stream = stream;
+                            if let Some(blob) = stream.to_any_blob(global_this) {
+                                this.response_body_readable_stream_ref.deinit();
+                                this.blob = blob;
+                                this.render_with_blob_from_body_value();
+                                return;
+                            }
+                            if let Some(resp) = this.resp {
+                                let mut pair = StreamPair { stream, this };
+                                resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);
+                            }
+                            return;
+                        }
                         // These are the common scenario:
-                        | readable_stream::Source::JavaScript
+                        readable_stream::Source::JavaScript
                         | readable_stream::Source::Direct => {
                             if let Some(resp) = this.resp {
                                 let mut pair = StreamPair { stream, this };

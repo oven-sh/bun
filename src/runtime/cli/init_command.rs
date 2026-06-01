@@ -78,6 +78,8 @@ impl InitCommand {
         let choices: Vec<Output::PrettyBuf> = (0..C::COUNT)
             .map(|i| {
                 let e = C::from_index(i);
+                #[allow(clippy::disallowed_methods)]
+                // template selected at runtime per enum variant
                 Output::pretty_fmt_rt(e.fmt(), colors)
             })
             .collect();

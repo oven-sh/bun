@@ -12,6 +12,11 @@ disallowed-methods = [
   { path = "std::env::var_os", reason = "use bun_core::env_var" },
   { path = "std::thread::spawn", reason = "use bun_threading::spawn_named or ThreadPool" },
   { path = "std::mem::zeroed", reason = "use MaybeUninit; zeroed is UB for most Bun types" },
+  { path = "bun_core::output::pretty_fmt_rt", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },
+  { path = "bun_core::output::pretty_fmt_args", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },
+  { path = "bun_core::output::pretty_fmt_runtime", reason = "const format strings must use pretty_fmt!/write_pretty! (compile-time rewrite); the runtime walk is only for templates built at runtime — allow with justification" },
+  { path = "alloc::string::String::from_utf8", reason = "keep data as bytes; for display use bstr::BStr, for JS-visible strings use bun_core::String::clone_utf8" },
+  { path = "alloc::string::String::from_utf8_lossy", reason = "silently corrupts non-UTF-8 bytes and allocates; keep data as bytes (bstr::BStr for Display)" },
 ]
 
 disallowed-types = [

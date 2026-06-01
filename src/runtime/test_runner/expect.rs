@@ -389,6 +389,7 @@ impl Expect {
         value.ensure_still_alive();
 
         // PERF(port): was comptime bool dispatch — profile if hot.
+        #[allow(clippy::disallowed_methods)] // template is a runtime parameter (Zig comptime param)
         let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, Output::enable_ansi_colors_stderr());
         Self::process_promise(
             self.custom_label.clone(),

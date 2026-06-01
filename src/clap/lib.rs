@@ -453,6 +453,7 @@ fn get_help_simple(param: &Param<Help>) -> &'static [u8] {
 /// lazily at runtime is the better trade for binary size.)
 #[cold]
 #[inline(never)]
+#[allow(clippy::disallowed_methods)] // template is a runtime help-string parameter
 fn pretty_help_desc(param: &Param<Help>) -> std::borrow::Cow<'static, [u8]> {
     if Output::enable_ansi_colors_stdout() {
         std::borrow::Cow::Owned(bun_core::output::pretty_fmt_runtime(param.id.msg, true))

@@ -117,7 +117,8 @@ test("install does not abort on an unresolved optional dependency with an empty 
   expect(stderr).not.toContain('Invalid dependency name ""');
   // The requested package must still be installed.
   expect(await Bun.file(join(String(dir), "node_modules", "top", "package.json")).exists()).toBe(true);
-  expect(exitCode).toBe(0);
   // Sanity check that we actually exercised the empty-name resolution path.
   expect(emptyNameManifestRequested).toBe(true);
+  // Assert the exit code last for a more useful message if a behavioral check fails.
+  expect(exitCode).toBe(0);
 });

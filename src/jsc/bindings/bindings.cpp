@@ -2092,7 +2092,7 @@ void WebCore__FetchHeaders__get_(WebCore::FetchHeaders* headers, const BunString
     if (result.hasException())
         WebCore::propagateException(*global, throwScope, result.releaseException());
     else
-        *arg2 = Bun::toString(result.releaseReturnValue());
+        *arg2 = Bun::toStringView(result.releaseReturnValue());
 }
 bool WebCore__FetchHeaders__has(WebCore::FetchHeaders* headers, const BunString* arg1, JSC::JSGlobalObject* global)
 {
@@ -2129,7 +2129,7 @@ void WebCore__FetchHeaders__fastGet_(WebCore::FetchHeaders* headers, unsigned ch
         return;
     }
 
-    *arg2 = Bun::toString(str);
+    *arg2 = Bun::toStringView(str);
 }
 
 WebCore::DOMURL* WebCore__DOMURL__cast_(JSC::EncodedJSValue JSValue0, JSC::VM* vm)

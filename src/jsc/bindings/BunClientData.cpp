@@ -3,6 +3,9 @@
 #include "BunClientData.h"
 #include "WebCoreJSBuiltins.h"
 
+#include <atomic>
+#include <cstdint>
+
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
 #include <JavaScriptCore/FastMallocAlignedMemoryAllocator.h>
@@ -33,6 +36,19 @@ using namespace JSC;
 
 RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider();
 
+// Number of live `JSHeapData` instances. One is created per VM (the non-global
+// GC path). Exposed to tests via `bun:internal-for-testing` so a regression
+// test can assert a terminated worker's `JSHeapData` is actually freed rather
+// than leaked. Release builds reuse the freed backing memory, so neither RSS
+// nor LSAN reliably surface the leak — a live-instance count is the
+// deterministic signal.
+static std::atomic<int64_t> s_jsHeapDataLiveCount { 0 };
+
+extern "C" int64_t Bun__JSHeapData__liveCount()
+{
+    return s_jsHeapDataLiveCount.load(std::memory_order_relaxed);
+}
+
 JSHeapData::JSHeapData(Heap& heap)
     : m_heapCellTypeForJSWorkerGlobalScope(JSC::IsoHeapCellType::Args<Zig::GlobalObject>())
     , m_heapCellTypeForNodeVMGlobalObject(JSC::IsoHeapCellType::Args<Bun::NodeVMGlobalObject>())
@@ -45,9 +61,13 @@ JSHeapData::JSHeapData(Heap& heap)
     , m_subspaces(makeUnique<ExtendedDOMIsoSubspaces>())
 
 {
+    s_jsHeapDataLiveCount.fetch_add(1, std::memory_order_relaxed);
 }
 
-JSHeapData::~JSHeapData() = default;
+JSHeapData::~JSHeapData()
+{
+    s_jsHeapDataLiveCount.fetch_sub(1, std::memory_order_relaxed);
+}
 
 #define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
 
@@ -87,6 +107,21 @@ JSVMClientData::~JSVMClientData()
     m_clients.clear();
 
     m_normalWorld = nullptr;
+
+    // `m_heapData` is a raw, owning pointer. On the default (`!useGlobalGC`)
+    // path `ensureHeapData` allocates a fresh `JSHeapData` per VM, so it must
+    // be freed here or it leaks on every VM teardown — which, since only worker
+    // VMs are destroyed, manifests as unbounded WKFastMalloc growth across
+    // repeated `new Worker()` + `terminate()` cycles (the embedded IsoSubspaces
+    // each own a FastMalloc-backed allocator). When `useGlobalGC` is enabled the
+    // pointer aliases a process-wide `static` singleton shared by every VM, so
+    // it must NOT be deleted. `~VM` runs `delete clientData` only after
+    // `heap.lastChanceToFinalize()`, and `heap` outlives this destructor, so the
+    // IsoSubspaces are safe to tear down here.
+    if (!JSC::Options::useGlobalGC()) {
+        delete m_heapData;
+    }
+    m_heapData = nullptr;
 }
 void JSVMClientData::create(VM* vm, void* bunVM)
 {

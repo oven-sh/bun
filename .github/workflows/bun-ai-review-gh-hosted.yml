@@ -25,6 +25,7 @@ concurrency:
 
 jobs:
   review:
+    name: review (${{ matrix.lane.id }})
     if: github.event_name != 'pull_request' || github.event.pull_request.draft == false
     runs-on: ubuntu-latest
     timeout-minutes: 45
@@ -226,6 +227,11 @@ jobs:
           OPENAI_BASE_URL: ""
         with:
           factory_api_key: ${{ secrets.DROID }}
+          # Use the default workflow token so the action skips Factory's GitHub
+          # App token exchange (the app is not installed on the fork). This token
+          # has pull-requests: write from the job permissions, enough to post
+          # review comments.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           settings: .factory/byok-settings.json
           automatic_review: true
           review_model: ${{ matrix.lane.model }}

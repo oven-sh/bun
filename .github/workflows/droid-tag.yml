@@ -109,6 +109,9 @@ jobs:
           OPENAI_BASE_URL: ""
         with:
           factory_api_key: ${{ secrets.DROID }}
+          # Skip Factory's GitHub App token exchange (app not installed on the
+          # fork); use the default workflow token instead.
+          github_token: ${{ secrets.GITHUB_TOKEN }}
           settings: .factory/byok-settings.json
           trigger_phrase: "@droid"
           review_model: custom:GLM-5.1-ZAI-Coding-0

@@ -354,7 +354,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
 
                 return Ok(()); // do not emit a statement here
             }
-            js_ast::StmtData::SExportFrom(st) => {
+            js_ast::StmtData::SExportFrom(mut st) => {
                 let deduped = self.deduplicated_import(
                     p,
                     st.import_record_index,
@@ -364,7 +364,7 @@ impl<'a> ConvertESMExportsForHmr<'a> {
                     None,
                     stmt.loc,
                 )?;
-                for item in st.items.slice_mut().iter_mut() {
+                for item in unsafe { st.items.slice_mut() }.iter_mut() {
                     let ref_ = item.name.ref_.expect("infallible: ref bound");
                     let symbol = &mut p.symbols[ref_.inner_index() as usize];
                     // Always set the namespace alias using the deduplicated import

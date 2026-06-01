@@ -483,18 +483,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_expr(t, kind);
                 }
                 // SAFETY: arena-owned slice; unique access via `&mut e`.
-                for part in e.parts_mut().iter_mut() {
+                for part in unsafe { e.parts_mut() }.iter_mut() {
                     self.rewrite_expr(&mut part.value, kind);
                 }
             }
             js_ast::ExprData::EArrow(e) => {
-                let stmts = e.body.stmts.slice_mut();
+                // SAFETY: `e` is reached through exclusive `&mut Expr`; the body slice is
+                // rewritten immediately and no copied StoreSlice handle is retained.
+                let stmts = unsafe { e.body.stmts.slice_mut() };
                 self.rewrite_stmts(stmts, kind);
             }
             js_ast::ExprData::EFunction(e) => match kind {
                 RewriteKind::ReplaceThis { .. } => {}
                 RewriteKind::ReplaceRef { .. } => {
-                    let stmts = e.func.body.stmts.slice_mut();
+                    // SAFETY: `e` is reached through exclusive `&mut Expr`; the body slice is
+                    // rewritten immediately and no copied StoreSlice handle is retained.
+                    let stmts = unsafe { e.func.body.stmts.slice_mut() };
                     if !stmts.is_empty() {
                         self.rewrite_stmts(stmts, kind);
                     }
@@ -545,7 +549,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::StmtData::SBlock(data) => {
-                    let stmts = data.stmts.slice_mut();
+                    // SAFETY: `data` is reached through exclusive statement traversal; the
+                    // block slice is rewritten immediately and does not escape.
+                    let stmts = unsafe { data.stmts.slice_mut() };
                     self.rewrite_stmts(stmts, kind);
                 }
                 js_ast::StmtData::SFor(data) => {
@@ -598,24 +604,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut t = data.test_;
                     self.rewrite_expr(&mut t, kind);
                     data.test_ = t;
-                    let cases = data.cases.slice_mut();
+                    // SAFETY: `data` is exclusively borrowed while rewriting this switch.
+                    let cases = unsafe { data.cases.slice_mut() };
                     for case in cases.iter_mut() {
                         if let Some(v) = &mut case.value {
                             self.rewrite_expr(v, kind);
                         }
-                        let body = case.body.slice_mut();
+                        // SAFETY: each `case` comes from the unique `cases` mutable slice.
+                        let body = unsafe { case.body.slice_mut() };
                         self.rewrite_stmts(body, kind);
                     }
                 }
                 js_ast::StmtData::STry(data) => {
-                    let body = data.body.slice_mut();
+                    // SAFETY: `data` is reached through exclusive statement traversal; each
+                    // child slice is rewritten before the next borrow is taken.
+                    let body = unsafe { data.body.slice_mut() };
                     self.rewrite_stmts(body, kind);
                     if let Some(c) = &mut data.catch_ {
-                        let cb = c.body.slice_mut();
+                        // SAFETY: `c` is uniquely borrowed from `data.catch_`.
+                        let cb = unsafe { c.body.slice_mut() };
                         self.rewrite_stmts(cb, kind);
                     }
                     if let Some(f) = &mut data.finally {
-                        let fb = f.stmts.slice_mut();
+                        // SAFETY: `f` is uniquely borrowed from `data.finally`.
+                        let fb = unsafe { f.stmts.slice_mut() };
                         self.rewrite_stmts(fb, kind);
                     }
                 }
@@ -835,16 +847,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.rewrite_private_accesses_in_expr(t, map);
                 }
                 // SAFETY: see `rewrite_expr` ETemplate.
-                for part in e.parts_mut().iter_mut() {
+                for part in unsafe { e.parts_mut() }.iter_mut() {
                     self.rewrite_private_accesses_in_expr(&mut part.value, map);
                 }
             }
             js_ast::ExprData::EFunction(e) => {
-                let stmts = e.func.body.stmts.slice_mut();
+                // SAFETY: `e` is reached through exclusive `&mut Expr`; the body slice is
+                // rewritten immediately and no copied StoreSlice handle is retained.
+                let stmts = unsafe { e.func.body.stmts.slice_mut() };
                 self.rewrite_private_accesses_in_stmts(stmts, map);
             }
             js_ast::ExprData::EArrow(e) => {
-                let stmts = e.body.stmts.slice_mut();
+                // SAFETY: `e` is reached through exclusive `&mut Expr`; the body slice is
+                // rewritten immediately and no copied StoreSlice handle is retained.
+                let stmts = unsafe { e.body.stmts.slice_mut() };
                 self.rewrite_private_accesses_in_stmts(stmts, map);
             }
             _ => {}
@@ -884,7 +900,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
                 js_ast::StmtData::SBlock(data) => {
-                    let stmts = data.stmts.slice_mut();
+                    // SAFETY: `data` is reached through exclusive statement traversal; the
+                    // block slice is rewritten immediately and does not escape.
+                    let stmts = unsafe { data.stmts.slice_mut() };
                     self.rewrite_private_accesses_in_stmts(stmts, map);
                 }
                 js_ast::StmtData::SFor(data) => {
@@ -937,24 +955,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let mut t = data.test_;
                     self.rewrite_private_accesses_in_expr(&mut t, map);
                     data.test_ = t;
-                    let cases = data.cases.slice_mut();
+                    // SAFETY: `data` is exclusively borrowed while rewriting this switch.
+                    let cases = unsafe { data.cases.slice_mut() };
                     for case in cases.iter_mut() {
                         if let Some(v) = &mut case.value {
                             self.rewrite_private_accesses_in_expr(v, map);
                         }
-                        let body = case.body.slice_mut();
+                        // SAFETY: each `case` comes from the unique `cases` mutable slice.
+                        let body = unsafe { case.body.slice_mut() };
                         self.rewrite_private_accesses_in_stmts(body, map);
                     }
                 }
                 js_ast::StmtData::STry(data) => {
-                    let body = data.body.slice_mut();
+                    // SAFETY: `data` is reached through exclusive statement traversal; each
+                    // child slice is rewritten before the next borrow is taken.
+                    let body = unsafe { data.body.slice_mut() };
                     self.rewrite_private_accesses_in_stmts(body, map);
                     if let Some(c) = &mut data.catch_ {
-                        let cb = c.body.slice_mut();
+                        // SAFETY: `c` is uniquely borrowed from `data.catch_`.
+                        let cb = unsafe { c.body.slice_mut() };
                         self.rewrite_private_accesses_in_stmts(cb, map);
                     }
                     if let Some(f) = &mut data.finally {
-                        let fb = f.stmts.slice_mut();
+                        // SAFETY: `f` is uniquely borrowed from `data.finally`.
+                        let fb = unsafe { f.stmts.slice_mut() };
                         self.rewrite_private_accesses_in_stmts(fb, map);
                     }
                 }
@@ -1144,7 +1168,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut pre_eval_stmts = BumpVec::<Stmt>::new_in(bump);
         let mut computed_key_counter: usize = 0;
 
-        let props_slice: &mut [Property] = class.properties.slice_mut();
+        // SAFETY: `class` is exclusively owned by this lowering routine. This mutable
+        // properties slice is consumed by the loop and is not retained afterward.
+        let props_slice: &mut [Property] = unsafe { class.properties.slice_mut() };
         for (prop_idx, prop) in props_slice.iter_mut().enumerate() {
             if prop.kind == PropertyKind::ClassStaticBlock {
                 continue;
@@ -1339,7 +1365,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        let props_slice2: &mut [Property] = class.properties.slice_mut();
+        // SAFETY: all prior `class.properties` borrows are finished before this second
+        // mutable pass, and the resulting slice is consumed by the loop below.
+        let props_slice2: &mut [Property] = unsafe { class.properties.slice_mut() };
         for (prop_idx, prop) in props_slice2.iter_mut().enumerate() {
             if prop.ts_decorators.len_u32() == 0 {
                 // ── Non-decorated property ──

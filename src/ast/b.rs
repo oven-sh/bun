@@ -106,7 +106,7 @@ impl Array {
     }
     #[inline]
     pub fn items_mut(&mut self) -> &mut [ArrayBinding] {
-        self.items.slice_mut()
+        unsafe { self.items.slice_mut() }
     }
 }
 impl Object {
@@ -116,7 +116,7 @@ impl Object {
     }
     #[inline]
     pub fn properties_mut(&mut self) -> &mut [Property] {
-        self.properties.slice_mut()
+        unsafe { self.properties.slice_mut() }
     }
 }
 

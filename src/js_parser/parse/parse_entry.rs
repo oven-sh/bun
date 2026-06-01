@@ -1450,8 +1450,8 @@ impl<'a> Parser<'a> {
                     // Snapshot the StoreSlice (Copy) so the `&mut` borrow over the
                     // arena slice doesn't conflict with the `part.stmts = …` rewrite
                     // below.
-                    let part_stmts_ss = part.stmts;
-                    let part_stmts: &mut [Stmt] = part_stmts_ss.slice_mut();
+                    let mut part_stmts_ss = part.stmts;
+                    let part_stmts: &mut [Stmt] = unsafe { part_stmts_ss.slice_mut() };
                     if part_stmts.len() > 1 {
                         break;
                     }
@@ -1489,7 +1489,7 @@ impl<'a> Parser<'a> {
                                         let stmt_loc = stmt.loc;
                                         part.stmts = {
                                             let mut new_stmts = BumpVec::<Stmt>::with_capacity_in(
-                                                part.stmts.len() + 1,
+                                                part_stmts.len() + 1,
                                                 p.arena,
                                             );
                                             // PERF(port): was appendSliceAssumeCapacity

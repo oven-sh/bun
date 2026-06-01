@@ -1873,8 +1873,17 @@ impl Template {
     }
 
     #[inline]
-    pub fn parts_mut(&mut self) -> &mut [TemplatePart] {
-        self.parts.slice_mut()
+    /// Re-borrow template parts mutably.
+    ///
+    /// # Safety
+    ///
+    /// No shared or mutable references derived from `self.parts` may be live,
+    /// including references derived from copied `StoreSlice<TemplatePart>`
+    /// handles. `Template::parts` is public for the existing AST construction
+    /// paths, so the caller must uphold the same no-alias contract as
+    /// `StoreSlice::slice_mut`.
+    pub unsafe fn parts_mut(&mut self) -> &mut [TemplatePart] {
+        unsafe { self.parts.slice_mut() }
     }
 }
 

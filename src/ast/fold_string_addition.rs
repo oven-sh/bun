@@ -254,7 +254,7 @@ pub fn fold_string_addition(
                                         matches!(r.data, Data::EInlinedEnum(_)),
                                     ));
                                     // Zig wrote `left.parts[i].tail = ...` in place.
-                                    left.parts_mut()[i].tail = new_tail;
+                                    (unsafe { left.parts_mut() })[i].tail = new_tail;
                                     return Some(lhs);
                                 }
                             } else if left.head.is_utf8() {
@@ -280,7 +280,7 @@ pub fn fold_string_addition(
                                         right.head.cooked(),
                                         matches!(r.data, Data::EInlinedEnum(_)),
                                     ));
-                                    left.parts_mut()[i].tail = new_tail;
+                                    (unsafe { left.parts_mut() })[i].tail = new_tail;
 
                                     let new_parts = if right.parts().is_empty() {
                                         left.parts

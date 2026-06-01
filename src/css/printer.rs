@@ -134,11 +134,11 @@ pub struct Printer<'a> {
     pub targets: Targets,
     pub vendor_prefix: css::VendorPrefix,
     /// True while nested rules are being re-serialized for a non-final vendor
-    /// prefix pass of an ancestor style rule (when nesting is compiled away).
-    /// Nested style rules that carry their own vendor prefixes override
-    /// `vendor_prefix`, so their output is identical in every ancestor pass;
-    /// they are skipped while this is set and emitted once in the final pass,
-    /// keeping the output linear in nesting depth instead of exponential.
+    /// prefix pass of an ancestor style rule (whether nesting is preserved or
+    /// compiled away). Nested style rules that carry their own vendor prefixes
+    /// override `vendor_prefix`, so their output is identical in every ancestor
+    /// pass; they are skipped while this is set and emitted once in the final
+    /// pass, keeping the output linear in nesting depth instead of exponential.
     pub skip_prefixed_nested_rules: bool,
     pub in_calc: bool,
     pub css_module: Option<css::CssModule<'a>>,

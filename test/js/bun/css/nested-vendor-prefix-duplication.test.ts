@@ -96,14 +96,10 @@ test("pretty-printed output has no dangling separators when the rule has declara
 // unbounded: a ~1 KB stylesheet of ~20 nested levels hung the minifier for 25s+
 // (fuzzer signature `hang:css:…serialize_dimension|…TokenList::To…`).
 //
-// Each level here carries a vendor prefix (`:-webkit-autofill` -> none +
-// `-webkit-`), so output grew ~4x per nesting level. With the fix the prefixed
-// nested rules are emitted once, in the ancestor's final pass, and output stays
-// linear.
-// The selector list from the fuzzer input: `:placeholder-shown` expands to an
-// unprefixed + a prefixed variant, so each nesting level's rule is serialized
-// twice. Each nested level carries the same prefix set, so before the fix the
-// leaf rule was duplicated once per ancestor pass (2^depth copies).
+// The selector list `:placeholder-shown`/`:-webkit-autofill` expands to an
+// unprefixed + a prefixed variant, so each nesting level is serialized twice and
+// output grew ~4x per level. With the fix the prefixed nested rules are emitted
+// once, in the ancestor's final pass, and output stays linear.
 const prefixedSelector = ".foo:placeholder-shown .bar, .foo:-webkit-autofill spective";
 
 function nestedPrefixed(depth: number, innermost: string): string {
@@ -124,10 +120,12 @@ test("nesting-preserved (no targets) prefixed rules stay linear in depth", () =>
 test("nesting-preserved prefixed rule emits each prefix variant once", () => {
   // Two nested levels: the leaf rule appears once per distinct ancestor prefix
   // variant (2), not once per combination of ancestor passes (4 before the fix).
+  // The non-final (`-webkit-autofill`) pass of the outer rule has no own
+  // declarations and its only nested rule is deferred to the final pass, so it
+  // emits nothing — no empty `selector{}` wrapper.
   const output = minifyTest(nestedPrefixed(2, "color: red;"), "");
   expect(output).toBe(
-    ".foo:placeholder-shown .bar,.foo:-webkit-autofill spective{}" +
-      ".foo:placeholder-shown .bar,.foo:autofill spective{" +
+    ".foo:placeholder-shown .bar,.foo:autofill spective{" +
       "& .foo:placeholder-shown .bar,& .foo:-webkit-autofill spective{color:red}" +
       "& .foo:placeholder-shown .bar,& .foo:autofill spective{color:red}}",
   );

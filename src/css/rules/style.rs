@@ -121,7 +121,39 @@ impl<R> StyleRule<R> {
 
         let len =
             self.declarations.declarations.len() + self.declarations.important_declarations.len();
-        let has_declarations = supports_nesting || len > 0 || self.rules.v.len() == 0;
+
+        // This rule is serialized once per vendor prefix, and each pass
+        // re-serializes the nested rules. Nested style rules that carry their
+        // own vendor prefixes override `dest.vendor_prefix`, so they produce
+        // identical output in every pass; mark non-final passes so they are
+        // skipped and emitted only in the final pass. Otherwise they would be
+        // duplicated once per ancestor prefix, which grows exponentially with
+        // nesting depth. This applies whether nesting is preserved or compiled
+        // away — the prefix loop in `to_css` re-serializes the nested rules
+        // either way.
+        let saved_skip = dest.skip_prefixed_nested_rules;
+        let skip_prefixed_nested = saved_skip || !is_final_prefix_pass;
+        // Whether any nested rule is emitted in this pass; if not, don't write
+        // the separator between the declarations and the nested rules, or the
+        // wrapper block when there are no own declarations either (nothing
+        // would go inside it).
+        let has_nested_output = !skip_prefixed_nested
+            || self.rules.v.iter().any(|rule| {
+                !matches!(rule, CssRule::Ignored) && !rule.is_deferred_to_final_prefix_pass()
+            });
+
+        // With nesting preserved the nested rules are written inside this
+        // rule's block, so a non-final prefix pass that emits neither its own
+        // declarations nor any nested rule would otherwise print an empty
+        // `selector{}`. Suppress the wrapper in that case (matching how an
+        // entirely empty rule is dropped). The nesting-compiled-away branch
+        // writes nested rules after the block, so its `has_declarations` is
+        // unchanged.
+        let has_declarations = if supports_nesting {
+            len > 0 || has_nested_output || self.rules.v.len() == 0
+        } else {
+            len > 0 || self.rules.v.len() == 0
+        };
 
         if has_declarations {
             //   #[cfg(feature = "sourcemap")]
@@ -192,7 +224,13 @@ impl<R> StyleRule<R> {
 
                     dest.newline()?;
                     decl.to_css(dest, important)?;
-                    if i != len - 1 || !dest.minify || (supports_nesting && self.rules.v.len() > 0)
+                    // Keep the trailing `;` before nested rules, but only when a
+                    // nested rule is actually emitted in this pass — otherwise
+                    // (all nested rules deferred to the final pass) nothing
+                    // follows and the `;` is redundant.
+                    if i != len - 1
+                        || !dest.minify
+                        || (supports_nesting && self.rules.v.len() > 0 && has_nested_output)
                     {
                         dest.write_char(b';')?;
                     }
@@ -226,25 +264,6 @@ impl<R> StyleRule<R> {
             }
             Ok(())
         }
-
-        // This rule is serialized once per vendor prefix, and each pass
-        // re-serializes the nested rules. Nested style rules that carry their
-        // own vendor prefixes override `dest.vendor_prefix`, so they produce
-        // identical output in every pass; mark non-final passes so they are
-        // skipped and emitted only in the final pass. Otherwise they would be
-        // duplicated once per ancestor prefix, which grows exponentially with
-        // nesting depth. This applies whether nesting is preserved or compiled
-        // away — the prefix loop in `to_css` re-serializes the nested rules
-        // either way.
-        let saved_skip = dest.skip_prefixed_nested_rules;
-        let skip_prefixed_nested = saved_skip || !is_final_prefix_pass;
-        // Whether any nested rule is emitted in this pass; if not, don't write
-        // the separator between the declarations and the nested rules (nothing
-        // would follow it).
-        let has_nested_output = !skip_prefixed_nested
-            || self.rules.v.iter().any(|rule| {
-                !matches!(rule, CssRule::Ignored) && !rule.is_deferred_to_final_prefix_pass()
-            });
 
         // Write nested rules after the parent.
         if supports_nesting {

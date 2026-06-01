@@ -778,6 +778,41 @@ describe("ES Decorators", () => {
       expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
     });
 
+    test("double-call private chains in decorated static field initializers stay linear", () => {
+      // Fuzzer-minimized variant: each `.#method()()` link re-lowers the whole
+      // receiver, so duplicating it doubles the printed output per link
+      // (~30 links allocated multiple GB before aborting).
+      const chain = ".#method()()".repeat(20);
+      const source = `class C {
+        @decorator() static s = new C()${chain.slice(0, -2)};
+        #method() { return 1e999; }
+      }`;
+
+      const transpiler = new Bun.Transpiler({ loader: "ts", target: "bun", deadCodeElimination: true });
+      const output = transpiler.transformSync(source);
+
+      // Exponential duplication produced ~64 MB for 20 links; the
+      // single-evaluation lowering stays in the kilobytes.
+      expect(output.length).toBeLessThan(50_000);
+      // The lowered output must still be valid syntax.
+      expect(() => new Bun.Transpiler({ loader: "js" }).transformSync(output)).not.toThrow();
+    });
+
+    test("calling the result of a private method call evaluates each link once", async () => {
+      const { stdout, stderr, exitCode } = await runDecorator(`
+        function dec(value, ctx) { return value; }
+        let evals = 0;
+        class C {
+          @dec static s = new C().#method()().#method()().#method()();
+          #method() { evals++; const self = this; return () => self; }
+        }
+        console.log(C.s instanceof C, evals);
+      `);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("true 3\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("private method call receiver is evaluated exactly once", async () => {
       const { stdout, stderr, exitCode } = await runDecorator(`
         function dec(value, ctx) { return value; }

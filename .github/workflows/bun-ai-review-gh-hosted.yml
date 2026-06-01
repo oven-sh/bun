@@ -31,7 +31,7 @@ concurrency:
 
 jobs:
   review:
-    name: review (${{ matrix.lane.tag }})
+    name: review (${{ matrix.lane.id }})
     # No draft skip: draft PRs here are near-final and get the full six-lane pass
     # on `opened`. The `ready_for_review` flip then triggers a second pass.
     runs-on: ubuntu-latest
@@ -50,7 +50,6 @@ jobs:
       matrix:
         lane:
           - id: ub
-            tag: "ub · GLM-5.1"
             model: custom:GLM-5.1-ZAI-Coding-0
             focus: |
               # Your specialty: memory-safety / undefined behaviour at the native boundary
@@ -80,7 +79,6 @@ jobs:
               and residual risk.
 
           - id: source-route
-            tag: "source-route · GLM-5.1"
             model: custom:GLM-5.1-ZAI-Coding-0
             focus: |
               # Your specialty: did the fix cover EVERY affected path, and are the claims true?
@@ -109,7 +107,6 @@ jobs:
             # Model swapped Kimi-K2.6 (Fireworks Fire Pass) -> MiniMax M3: the Fire
             # Pass leg stalls/times out under load (cancelled last run while the
             # others finished). Same opposition angle, reliable model.
-            tag: "opposition · MiniMax-M3"
             model: custom:MiniMax-M3-3
             focus: |
               # Your specialty: argue this PR is wrong, as hard as you honestly can
@@ -134,7 +131,6 @@ jobs:
               plus, for each, why it did not hold, and the residual risk.
 
           - id: arch
-            tag: "arch · MiniMax-M3"
             model: custom:MiniMax-M3-3
             focus: |
               # Your specialty: is this the right fix, at the right layer, and no bigger than needed?
@@ -152,7 +148,6 @@ jobs:
               plus your best failed objection and residual risk.
 
           - id: tests
-            tag: "tests · GLM-5.1"
             model: custom:GLM-5.1-ZAI-Coding-0
             focus: |
               # Your specialty: do the tests actually PROVE the fix?
@@ -180,7 +175,6 @@ jobs:
             # STRIDE/OWASP security review instead of code review (runs on every
             # reviewed PR — the work here is overwhelmingly UB/native, which is a
             # security surface).
-            tag: "security · MiniMax-M3"
             model: custom:MiniMax-M3-3
             security: true
             focus: |
@@ -277,15 +271,15 @@ jobs:
         shell: bash
         env:
           LANE_FOCUS: ${{ matrix.lane.focus }}
-          LANE_TAG: ${{ matrix.lane.tag }}
+          LANE_ID: ${{ matrix.lane.id }}
         run: |
           set -euo pipefail
 
           # Shared Bun-fork UB posture (the action will not auto-load it), this
           # lane's single-angle focus, and an attribution rule. Appended to the
-          # review system prompt verbatim. The tag prefix makes every comment
-          # traceable to its lane+model until the action posts that natively
-          # (droid-action PR #9).
+          # review system prompt verbatim. The lane prefix makes every comment
+          # traceable to its review role; the model is shown separately in the
+          # completion comment.
           {
             if [ -f .factory/skills/review-guidelines/SKILL.md ]; then
               cat .factory/skills/review-guidelines/SKILL.md
@@ -296,7 +290,7 @@ jobs:
             printf '%s\n' "$LANE_FOCUS"
             echo
             echo "## Attribution (required)"
-            echo "Begin EVERY review comment you post (inline and summary) with the literal prefix \`[${LANE_TAG}]\` so the reader can tell which lane and model produced it. Your focus above is your specialty — the thing you must not miss; go deeper on it than a generalist would. If you also notice a serious defect outside that focus, still report it — never stay silent about a real problem."
+            echo "Begin EVERY review comment you post (inline and summary) with the literal prefix \`[${LANE_ID}]\` (the review lane, e.g. [security]) so the reader can tell which lane produced it. Your focus above is your specialty — the thing you must not miss; go deeper on it than a generalist would. If you also notice a serious defect outside that focus, still report it — never stay silent about a real problem."
           } > .factory/lane-prompt.md
 
       - name: Run review lane
@@ -328,10 +322,11 @@ jobs:
           automatic_security_review: ${{ matrix.lane.security == true }}
           review_model: ${{ matrix.lane.model }}
           security_model: ${{ matrix.lane.model }}
-          # Completion comment shows the lane (which already carries the model,
-          # e.g. "ub · GLM-5.1"); suppress the separate Model line for us.
-          review_label: ${{ matrix.lane.tag }}
-          completion_show_model: false
+          # Completion comment shows lane (review role) and model as separate
+          # lines: "Lane: security" + "Model: MiniMax-M3". Lane is the job, model
+          # is the engine — don't fuse them.
+          review_label: ${{ matrix.lane.id }}
+          completion_show_model: true
           include_suggestions: true
           # Don't @-mention the PR author in Droid status comments.
           mention_trigger_user: false

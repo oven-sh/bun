@@ -40,8 +40,10 @@ Lane focuses are defined inline in the workflow's `matrix.lane` block (one sourc
 of truth). Each lane is focused by **positive priming** — "this is your
 specialty, go deeper here than a generalist" — so the angles are reliably
 covered, but a lane that spots a serious defect outside its specialty still
-reports it (we never tell a reviewer to suppress a real finding). Every comment
-is prefixed `[<id> · <model>]` for attribution (until droid-action PR #9 posts
-lane+model natively).
+reports it (we never tell a reviewer to suppress a real finding). Each inline
+comment is prefixed with the lane id only — `[ub]`, `[security]`, etc. (the
+review role; the model is the engine, not the lane). The completion comment
+shows lane and model as separate lines (`Lane:` + `Model:`) via the action's
+`review_label` + `completion_show_model` inputs.
 
 [droid-action]: https://github.com/Factory-AI/droid-action

@@ -17,9 +17,9 @@ where
     I: DoubleEndedIterator<Item = &'a mut ColumnIdentifier> + ExactSizeIterator,
 {
     let mut seen_numbers: Vec<u32> = Vec::new();
-    // TODO(port): Zig `getOrPut` keys on the borrowed `name.slice()`;
+    // PERF(port): Zig `getOrPut` keyed on the borrowed `name.slice()`;
     // StringHashMap clones to an owned `Box<[u8]>` key. Fine for a transient
-    // dedup set; revisit if profiling flags it.
+    // dedup set — profile if it shows up on a hot path.
     let mut seen_fields: StringHashMap<()> = StringHashMap::default();
     seen_fields.reserve(columns.len());
 

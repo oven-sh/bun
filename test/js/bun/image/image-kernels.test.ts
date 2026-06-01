@@ -305,3 +305,162 @@ describe("Floyd–Steinberg dither", () => {
     }
   });
 });
+
+describe("composite over-blend kernel", () => {
+  // Reference implementation of the kernel's exact 255-denominator
+  // fixed-point Porter-Duff `over` (image_composite.cpp) in plain JS Number
+  // arithmetic. Every intermediate is an integer below 2^53, so doubles
+  // represent it exactly and Math.floor reproduces the integer divisions
+  // bit-for-bit. The kernel splits into a SIMD path (opaque base pixel) and
+  // a scalar path (everything else); this reference is path-agnostic, so
+  // sweeping base alphas across both paths proves they agree with each
+  // other AND with the spec.
+  function refOver(
+    base: Uint8Array,
+    bw: number,
+    bh: number,
+    ov: Uint8Array,
+    ow: number,
+    oh: number,
+    left: number,
+    top: number,
+    op: number, // 0..=255
+    premul: boolean,
+  ): void {
+    const D2 = 65025;
+    if (op === 0) return;
+    const x0 = Math.max(left, 0);
+    const y0 = Math.max(top, 0);
+    const x1 = Math.min(left + ow, bw);
+    const y1 = Math.min(top + oh, bh);
+    for (let y = y0; y < y1; y++) {
+      for (let x = x0; x < x1; x++) {
+        const si = ((y - top) * ow + (x - left)) * 4;
+        const di = (y * bw + x) * 4;
+        const sa = ov[si + 3];
+        const n_as = sa * op;
+        const cmul = premul ? op * 255 : sa * op;
+        const n_psr = ov[si] * cmul;
+        const n_psg = ov[si + 1] * cmul;
+        const n_psb = ov[si + 2] * cmul;
+        if ((n_as | n_psr | n_psg | n_psb) === 0) continue;
+        const da = base[di + 3];
+        const inv = D2 - n_as;
+        const n_ar = n_as * 255 + da * inv;
+        const blend1 = (n_ps: number, d: number) => {
+          const n_pr = n_ps * 255 + d * da * inv;
+          if (n_ar === 0) return 0;
+          return Math.min(Math.floor((n_pr + Math.floor(n_ar / 2)) / n_ar), 255);
+        };
+        base[di] = blend1(n_psr, base[di]);
+        base[di + 1] = blend1(n_psg, base[di + 1]);
+        base[di + 2] = blend1(n_psb, base[di + 2]);
+        base[di + 3] = Math.floor((n_ar + 32512) / D2);
+      }
+    }
+  }
+
+  // 67 wide (odd, prime) exercises the row tail; the alpha layout exercises
+  // the SIMD↔scalar seam: rows 0–7 fully opaque (SIMD path), rows 8–15 a
+  // mixed alpha pattern that sprinkles 255s between partials so the kernel
+  // flips between paths mid-row.
+  const BW = 67;
+  const BH = 16;
+  function makeBase(): Uint8Array {
+    const px = new Uint8Array(BW * BH * 4);
+    for (let y = 0; y < BH; y++) {
+      for (let x = 0; x < BW; x++) {
+        const i = (y * BW + x) * 4;
+        px[i] = (x * 3) & 255;
+        px[i + 1] = (y * 17 + 11) & 255;
+        px[i + 2] = (x ^ (y * 29)) & 255;
+        px[i + 3] = y < 8 ? 255 : (x * 4 + y) & 255;
+      }
+    }
+    return px;
+  }
+  // Overlay alphas sweep the full 0..255 range (including exact 0 and 255
+  // runs at the start of rows) with varied colours; for the premultiplied
+  // sweep the colours are clamped to ≤ alpha so the input is well-formed,
+  // and a dedicated case covers hostile colour > alpha.
+  const OW = 61;
+  const OH = 12;
+  function makeOverlay(premulWellFormed: boolean): Uint8Array {
+    const px = new Uint8Array(OW * OH * 4);
+    for (let y = 0; y < OH; y++) {
+      for (let x = 0; x < OW; x++) {
+        const i = (y * OW + x) * 4;
+        const a = x < 4 ? (x % 2 ? 255 : 0) : (x * 5 + y * 23) & 255;
+        let r = (x * 7) & 255;
+        let g = (y * 31 + 5) & 255;
+        let b = (x * 13 + y * 3) & 255;
+        if (premulWellFormed) {
+          r = Math.min(r, a);
+          g = Math.min(g, a);
+          b = Math.min(b, a);
+        }
+        px[i] = r;
+        px[i + 1] = g;
+        px[i + 2] = b;
+        px[i + 3] = a;
+      }
+    }
+    return px;
+  }
+
+  async function runKernel(
+    base: Uint8Array,
+    ov: Uint8Array,
+    left: number,
+    top: number,
+    op255: number,
+    premultiplied: boolean,
+  ): Promise<Uint8Array> {
+    const overlay = new Bun.Image(ov, { raw: { width: OW, height: OH, channels: 4 } });
+    const out = await new Bun.Image(base, { raw: { width: BW, height: BH, channels: 4 } })
+      .composite([{ image: overlay, left, top, opacity: op255 / 255, premultiplied }])
+      .pixels();
+    return out.data;
+  }
+
+  test.each([
+    [255, false],
+    [254, false],
+    [128, false],
+    [1, false],
+    [255, true],
+    [128, true],
+  ] as const)("kernel matches the exact fixed-point reference (opacity %d/255, premultiplied: %s)", async (op255, premul) => {
+    const ov = makeOverlay(premul);
+    // Negative offsets clip on two edges; the overlay also overhangs nothing
+    // on the right, leaving untouched base columns to verify as identity.
+    const got = await runKernel(makeBase(), ov, -3, -2, op255, premul);
+    const want = makeBase();
+    refOver(want, BW, BH, ov, OW, OH, -3, -2, op255, premul);
+    expect(Buffer.compare(Buffer.from(got), Buffer.from(want))).toBe(0);
+  });
+
+  test("hostile premultiplied input (colour > alpha) clamps identically in both paths", async () => {
+    // All-partial alphas with full-bright colours: every unpremultiply wants
+    // to exceed 255 and must clamp — on the opaque-base SIMD rows AND the
+    // mixed scalar rows.
+    const ov = new Uint8Array(OW * OH * 4);
+    for (let i = 0; i < OW * OH; i++) {
+      ov[i * 4] = 255;
+      ov[i * 4 + 1] = 200;
+      ov[i * 4 + 2] = 255;
+      ov[i * 4 + 3] = (i * 11) & 127; // 0..127, never 255
+    }
+    const got = await runKernel(makeBase(), ov, 0, 0, 255, true);
+    const want = makeBase();
+    refOver(want, BW, BH, ov, OW, OH, 0, 0, 255, true);
+    expect(Buffer.compare(Buffer.from(got), Buffer.from(want))).toBe(0);
+  });
+
+  test("kernel output is identical across repeat runs (deterministic dispatch)", async () => {
+    const ov = makeOverlay(false);
+    const a = await runKernel(makeBase(), ov, 5, 3, 200, false);
+    const b = await runKernel(makeBase(), ov, 5, 3, 200, false);
+    expect(Buffer.compare(Buffer.from(a), Buffer.from(b))).toBe(0);
+  });
+});

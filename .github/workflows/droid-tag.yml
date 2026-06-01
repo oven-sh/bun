@@ -96,6 +96,18 @@ jobs:
           mkdir -p "$HOME/.factory"
           cp .factory/byok-settings.json "$HOME/.factory/settings.json"
 
+      - name: Force GitHub token override across all action stages
+        shell: bash
+        env:
+          OVERRIDE_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          # See bun-ai-review-gh-hosted.yml: the action's validator stage omits
+          # OVERRIDE_GITHUB_TOKEN and would 500 on the fork's missing Factory
+          # app install. Exporting it to $GITHUB_ENV forces every stage to use
+          # the workflow token instead of the app-token exchange.
+          echo "OVERRIDE_GITHUB_TOKEN=$OVERRIDE_TOKEN" >> "$GITHUB_ENV"
+
       - name: Run Droid
         uses: Factory-AI/droid-action@main
         env:

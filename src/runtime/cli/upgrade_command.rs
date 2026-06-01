@@ -613,7 +613,7 @@ impl UpgradeCommand {
 
             if version.name().is_none() {
                 bun_core::pretty_errorln!(
-                    "<r><red>error:<r> Bun versions are currently unavailable (the latest version name didn't match the expeccted format)"
+                    "<r><red>error:<r> Bun versions are currently unavailable (the latest version name didn't match the expected format)"
                 );
                 Global::exit(1);
             }

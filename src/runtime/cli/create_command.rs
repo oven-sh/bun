@@ -513,9 +513,7 @@ impl CreateCommand {
                                     "<r>  <blue>{}<r>",
                                     bstr::BStr::new(&path[0..path.len().max(1) - 1]),
                                 );
-                                #[allow(clippy::disallowed_methods)]
-                                // payload is a runtime const &str, not a literal
-                                Output::pretty_errorln(bun_paths::SEP_STR);
+                                pretty_errorln!("{}", bun_paths::SEP_STR);
                             } else {
                                 pretty_errorln!("<r>  {}", bstr::BStr::new(path));
                             }

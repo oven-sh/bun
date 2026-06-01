@@ -867,11 +867,19 @@ impl<V: CalcValue> Calc<V> {
         // `hit_unrecoverable` tripwire above skips them when a nested
         // `<angle>`/`<number>`-only function already failed, but a non-function
         // reduction failure (e.g. a `min()` of unitless numbers that can't fold
-        // to an angle) slips past it. These dimension-typed parses can only
-        // differ from the `<angle>`/`<number>` parse at a real dimension or
-        // percentage leaf, so when the arguments contain none they can only
+        // to an angle) slips past it. For `Length`/`Time` (and the `CSSNumber`
+        // fallback) these parses can only differ from the `<angle>`/`<number>`
+        // parse at a real dimension leaf — their `from_calc` rejects any
+        // non-`Value` node — so when the arguments contain none they can only
         // fail again: fall straight through to the `<number>` parse rather than
         // re-descending the subtree three more times.
+        //
+        // `Percentage` is the one exception: `Percentage::from_calc` maps any
+        // non-`Value` node to `Percentage(NaN)`, so on unitless arguments that
+        // failed the `<angle>` parse the percentage retry would previously
+        // return `Ok(Angle::Rad(NaN))` — a garbage angle that resolves to a
+        // meaningless color. Gating it out turns that into a clean rejection
+        // (the function is left unparsed), which is the more correct result.
         //
         // The scan skips the sub-block of any nested type-independent math
         // function (`sin()`/`atan2()`/…): those resolve to an `<angle>`/

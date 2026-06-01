@@ -71,6 +71,10 @@ const cases: [css: string, expected: string | null][] = [
   ["hsl(atan2(2px, calc(1px + 1px)) 50% 50%)", "#bf9f40"],
   ["hsl(atan2(hypot(3px,4px), 5px) 50% 50%)", "#bf9f40"],
   ["hsl(atan2(clamp(1px, 2px, 3px), 4px) 50% 50%)", null],
+  // Unitless arguments that can't fold to an <angle>: the gate now skips the
+  // Percentage retry whose NaN fallback (`Percentage::from_calc` → NaN) used to
+  // yield a garbage `Angle::Rad(NaN)` color. Clean rejection is more correct.
+  ["hsl(atan2(min(1,2) + 3 + 4, min(5,6) + 7 + 8) 50% 50%)", null],
 ];
 
 test("deeply nested atan2() color values parse in linear time instead of hanging", async () => {

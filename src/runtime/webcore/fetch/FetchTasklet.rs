@@ -703,16 +703,14 @@ impl FetchTasklet {
             if let Some(bytes) = readable.ptr.bytes() {
                 bytes.size_hint.set(self.get_size_hint());
                 // body can be marked as used but we still need to pipe the data
+                let chunk = core::mem::take(&mut self.scheduled_response_buffer.list);
+                buffer_reset.set(false);
                 if self.result.has_more {
-                    let chunk = self.scheduled_response_buffer.list.as_slice();
-                    bytes.on_data(Self::temporary_chunk(chunk, false))?;
+                    bytes.on_data(StreamResult::Owned(chunk))?;
                 } else {
                     self.clear_stream_cancel_handler();
                     let prev = core::mem::take(&mut self.readable_stream_ref);
-                    buffer_reset.set(false);
-
-                    let chunk = self.scheduled_response_buffer.list.as_slice();
-                    bytes.on_data(Self::temporary_chunk(chunk, true))?;
+                    bytes.on_data(StreamResult::OwnedAndDone(chunk))?;
                     drop(prev);
                 }
                 return Ok(());
@@ -729,14 +727,14 @@ impl FetchTasklet {
                     "onBodyReceived CurrentResponse BodyReadableStream"
                 );
                 if let Some(bytes) = readable.ptr.bytes() {
-                    let chunk = self.scheduled_response_buffer.list.as_slice();
-
+                    let chunk = core::mem::take(&mut self.scheduled_response_buffer.list);
+                    buffer_reset.set(false);
                     if self.result.has_more {
-                        bytes.on_data(Self::temporary_chunk(chunk, false))?;
+                        bytes.on_data(StreamResult::Owned(chunk))?;
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(&global_this);
-                        bytes.on_data(Self::temporary_chunk(chunk, true))?;
+                        bytes.on_data(StreamResult::OwnedAndDone(chunk))?;
                     }
 
                     return Ok(());

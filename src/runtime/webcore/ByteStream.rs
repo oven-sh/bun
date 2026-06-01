@@ -389,10 +389,14 @@ impl ByteStream {
                 self.buffer
                     .with_mut(|b| b.extend_from_slice(&temp.slice()[offset..]));
             }
-            streams::Result::OwnedAndDone(owned) | streams::Result::Owned(owned) => {
-                self.buffer
-                    .with_mut(|b| b.extend_from_slice(&owned.slice()[offset..]));
-                // Zig: `allocator.free(@constCast(base_address))` — `owned: Vec<u8>` drops here.
+            streams::Result::OwnedAndDone(mut owned) | streams::Result::Owned(mut owned) => {
+                if self.buffer.get().is_empty() {
+                    self.buffer.set(owned.move_to_list_managed());
+                    self.offset.set(self.offset.get() + offset);
+                } else {
+                    self.buffer
+                        .with_mut(|b| b.extend_from_slice(&owned.slice()[offset..]));
+                }
             }
             streams::Result::Err(err) => {
                 if self.buffer_action.get().is_some() {

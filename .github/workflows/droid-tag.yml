@@ -99,7 +99,7 @@ jobs:
       - name: Run Droid
         # Hardened fork pinned to the validator-token fix (see
         # bun-ai-review-gh-hosted.yml).
-        uses: EffortlessSteven/droid-action@89b4da428572b53acf65123ec48f726504cae110
+        uses: EffortlessSteven/droid-action@36ef632f86ef849de0be62477bc811627d2f7a9c
         env:
           GLM: ${{ secrets.GLM }}
           FIREPASS: ${{ secrets.FIREPASS }}

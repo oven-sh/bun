@@ -810,7 +810,9 @@ impl Tree {
             // don't treat it as unsafe — match the lockfile parser and isolated
             // installer (`bun.lock.rs`, `isolated_install.rs`) which guard
             // `!name.is_empty()` here rather than failing the whole install.
-            let dependency_name = dependency.name.slice(lockfile.buffers.string_bytes.as_slice());
+            let dependency_name = dependency
+                .name
+                .slice(lockfile.buffers.string_bytes.as_slice());
             if !dependency_name.is_empty()
                 && !crate::dependency::is_safe_install_folder_name(dependency_name)
             {

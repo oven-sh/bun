@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv as env, bunExe, tempDir } from "harness";
+import { bunExe, bunEnv as env, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { join } from "path";

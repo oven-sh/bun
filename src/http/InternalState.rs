@@ -277,9 +277,12 @@ impl<'a> InternalState<'a> {
 
                 // gzip stores the size of the uncompressed data in the last 4 bytes of the stream
                 // But it's only valid if the stream is less than 4.7 GB, since it's 4 bytes.
-                // If we know that the stream is going to be larger than our
-                // pre-allocated buffer, then let's dynamically allocate the exact
-                // size.
+                // When the trailer gives us a plausible size, decompress straight
+                // into the caller's buffer instead of going through the shared
+                // scratch buffer and copying the whole body a second time. A lying
+                // trailer is harmless: the reservation is capped at 32 MB, and an
+                // undersized reservation makes decompress_to_vec fail with
+                // InsufficientSpace, which falls through to the streaming slow path.
                 if self.encoding == Encoding::Gzip
                     && buffer.len() > 16
                     && buffer.len() < 1024 * 1024 * 1024
@@ -290,9 +293,7 @@ impl<'a> InternalState<'a> {
                             .expect("infallible: size matches"),
                     );
                     // Since this is arbtirary input from the internet, let's set an upper bound of 32 MB for the allocation size.
-                    if (estimated_size as usize) > deflater.shared_buffer.len()
-                        && estimated_size < 32 * 1024 * 1024
-                    {
+                    if estimated_size > 0 && estimated_size < 32 * 1024 * 1024 {
                         body_out_str.list.reserve_exact(
                             (estimated_size as usize).saturating_sub(body_out_str.list.len()),
                         );

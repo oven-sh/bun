@@ -293,3 +293,45 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   server.stop();
   done();
 });
+
+describe("gzip response edge cases", () => {
+  // Behavior pins for the libdeflate fast path and its fallbacks: honest
+  // streams decode byte-exactly; integrity violations (which both libdeflate
+  // and zlib verify) reject with ZlibError regardless of which decode path
+  // ran. The corrupted-trailer cases also exercise the
+  // exact-size-reservation branch falling through to the streaming path.
+  const payload = Buffer.alloc(300 * 1024);
+  for (let i = 0; i < payload.length; i++) payload[i] = (i * 13) & 0xff;
+
+  function corrupt(data: Buffer, offsetFromEnd: number) {
+    const gz = Buffer.from(Bun.gzipSync(data));
+    gz[gz.length - offsetFromEnd] ^= 0xff;
+    return gz;
+  }
+
+  const cases: Record<string, { body: Uint8Array; expected: Buffer | "error" }> = {
+    "honest-large": { body: Bun.gzipSync(payload), expected: payload },
+    "honest-small": { body: Bun.gzipSync(Buffer.from("hello gzip world")), expected: Buffer.from("hello gzip world") },
+    "empty": { body: Bun.gzipSync(Buffer.alloc(0)), expected: Buffer.alloc(0) },
+    "isize-corrupt": { body: corrupt(payload, 1), expected: "error" },
+    "crc-corrupt": { body: corrupt(payload, 8), expected: "error" },
+    "truncated": { body: Buffer.from(Bun.gzipSync(payload)).subarray(0, 1000), expected: "error" },
+  };
+
+  for (const [name, c] of Object.entries(cases)) {
+    it(`decodes or rejects: ${name}`, async () => {
+      using server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(c.body, { headers: { "Content-Encoding": "gzip" } }),
+      });
+      if (c.expected === "error") {
+        expect(async () => {
+          await (await fetch(server.url)).arrayBuffer();
+        }).toThrow();
+      } else {
+        const got = Buffer.from(await (await fetch(server.url)).arrayBuffer());
+        expect(Buffer.compare(got, c.expected)).toBe(0);
+      }
+    });
+  }
+});

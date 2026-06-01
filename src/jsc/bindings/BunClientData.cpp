@@ -99,6 +99,20 @@ JSHeapData* JSHeapData::ensureHeapData(Heap& heap)
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
 
+// Frees a per-VM `JSHeapData`; leaves the `useGlobalGC` singleton alone (it is
+// shared by every VM and lives for the process lifetime). This runs as part of
+// `~JSVMClientData` member teardown — after the client `IsoSubspace` members,
+// whose `~LocalAllocator` dereferences a `BlockDirectory` inside this object
+// (see the member-ordering note in the header). `~VM` invokes `~JSVMClientData`
+// only after `heap.lastChanceToFinalize()`, with `heap` (a `VM` member)
+// outliving the destructor, so tearing the server `IsoSubspace`s down here is
+// safe.
+void JSVMClientData::JSHeapDataDeleter::operator()(JSHeapData* heapData) const
+{
+    if (!JSC::Options::useGlobalGC())
+        delete heapData;
+}
+
 JSVMClientData::~JSVMClientData()
 {
     m_clients.forEach([](auto& client) {
@@ -107,21 +121,6 @@ JSVMClientData::~JSVMClientData()
     m_clients.clear();
 
     m_normalWorld = nullptr;
-
-    // `m_heapData` is a raw, owning pointer. On the default (`!useGlobalGC`)
-    // path `ensureHeapData` allocates a fresh `JSHeapData` per VM, so it must
-    // be freed here or it leaks on every VM teardown — which, since only worker
-    // VMs are destroyed, manifests as unbounded WKFastMalloc growth across
-    // repeated `new Worker()` + `terminate()` cycles (the embedded IsoSubspaces
-    // each own a FastMalloc-backed allocator). When `useGlobalGC` is enabled the
-    // pointer aliases a process-wide `static` singleton shared by every VM, so
-    // it must NOT be deleted. `~VM` runs `delete clientData` only after
-    // `heap.lastChanceToFinalize()`, and `heap` outlives this destructor, so the
-    // IsoSubspaces are safe to tear down here.
-    if (!JSC::Options::useGlobalGC()) {
-        delete m_heapData;
-    }
-    m_heapData = nullptr;
 }
 void JSVMClientData::create(VM* vm, void* bunVM)
 {

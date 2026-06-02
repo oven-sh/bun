@@ -472,30 +472,16 @@ export const globalFlags: Flag[] = [
     // WebKit macos -lto prebuilts and rustc's -Clinker-plugin-lto bitcode are
     // both ThinLTO-summaried, so this makes the whole link one uniform
     // ThinLTO graph with cross-module importing across C++/Rust/JSC
-    // boundaries. Darwin only for now — see the -flto=full entry below.
+    // boundaries.
+    //
+    // Linux: was on -flto=full because the ThinLTO backend pipeline
+    // miscompiled JSC (DFG-tier bug, repro `bun -e 'require("axobject-query")'`)
+    // — root-caused to int32 UB in parseInt's result handling, fixed in
+    // oven-sh/WebKit#246, which also switches the linux -lto prebuilts back
+    // to ThinLTO. This branch tests that configuration end to end.
     flag: "-flto=thin",
-    when: c => c.darwin && c.lto,
+    when: c => c.unix && c.lto,
     desc: "Thin link-time optimization",
-  },
-  {
-    // Linux stays on full LTO: the LLVM 22 ThinLTO backend pipeline
-    // (rust-lld) miscompiles JavaScriptCore on linux at every opt level
-    // above --lto-O0 — a JIT-tier correctness bug plus several bundler hangs
-    // in the test suite, on both x64 and aarch64, with cross-module
-    // importing disabled, ICF ruled out, and WPD ruled out. The same
-    // bitcode through ld64.lld on darwin is fine. Full LTO uses a different
-    // (regular-LTO) pass pipeline over one merged module and has shipped
-    // green for months. Cost: the link is serial (~14 min vs ~1.5 min).
-    // Rust<->C++ cross-language inlining still happens: the Rust side emits
-    // one fat, summary-less bitcode module (CARGO_PROFILE_RELEASE_LTO=fat
-    // under -Clinker-plugin-lto — see rust.ts) that joins the same
-    // regular-LTO partition as the C++, so nothing goes through the
-    // miscompiling ThinLTO backends. Revisit ThinLTO once the bad pass is
-    // isolated — the repro is `bun -e 'require("axobject-query")'` failing
-    // in the DFG tier.
-    flag: "-flto=full",
-    when: c => c.unix && !c.darwin && c.lto,
-    desc: "Full link-time optimization (linux: ThinLTO miscompiles JSC, see comment)",
   },
   {
     // Windows (cross) uses ThinLTO like darwin: clang-cl accepts -flto=thin
@@ -535,10 +521,11 @@ export const globalFlags: Flag[] = [
     // WebKit macos/windows -lto prebuilts, so this is the configuration that
     // can't drift. Windows: -fwhole-program-vtables is never passed there
     // (see above) so 0 is already the default — kept explicit so the
-    // ThinLTO graph can't drift if that ever changes. Not linux: full LTO
-    // (no per-module summaries, so the flag is meaningless there).
+    // ThinLTO graph can't drift if that ever changes. Linux: now ThinLTO
+    // too (oven-sh/WebKit#246 builds the linux -lto prebuilts with
+    // -fno-split-lto-unit, so every module must agree on 0).
     flag: "-fno-split-lto-unit",
-    when: c => (c.darwin || c.windows) && c.lto,
+    when: c => c.lto,
     desc: "Index-based WPD: keep type metadata in the ThinLTO summaries, no regular-LTO half",
   },
 
@@ -859,21 +846,21 @@ export const linkerFlags: Flag[] = [
     // only fires for classes explicitly annotated [[clang::lto_visibility]],
     // i.e. never. A static executable that only dlopens C-ABI addons (NAPI)
     // satisfies the whole-program assumption. ld64.lld has no named option
-    // for this; -mllvm reaches the underlying cl::opt directly. Darwin only:
-    // linux is on full LTO where this was never enabled.
+    // for this; -mllvm reaches the underlying cl::opt directly.
     flag: ["-Wl,-mllvm,-whole-program-visibility"],
     when: c => c.darwin && c.lto,
     desc: "Enable index-based whole-program devirtualization at link time",
   },
   {
-    flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
-    when: c => c.darwin && c.lto,
-    desc: "LTO at link time (matches compile-side -flto=thin)",
+    // ELF lld has the named spelling for the same visibility upgrade.
+    flag: ["-Wl,--lto-whole-program-visibility"],
+    when: c => c.unix && !c.darwin && c.lto,
+    desc: "Enable index-based whole-program devirtualization at link time (ELF)",
   },
   {
-    flag: ["-flto=full", "-fwhole-program-vtables", "-fforce-emit-vtables"],
-    when: c => c.unix && !c.darwin && c.lto,
-    desc: "LTO at link time (matches compile-side -flto=full)",
+    flag: ["-flto=thin", "-fwhole-program-vtables", "-fforce-emit-vtables"],
+    when: c => c.unix && c.lto,
+    desc: "LTO at link time (matches compile-side -flto=thin)",
   },
   {
     // Without -O at link time, clang's driver defaults LTO codegen to -O2.

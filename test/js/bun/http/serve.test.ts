@@ -2446,14 +2446,31 @@ describe("Response wrapping a Bun.file() stream", () => {
 
   it("HEAD reports the same Content-Length as GET for a file-stream response", async () => {
     const { path } = makeStreamFile();
+    const start = 100;
+    const end = 1124;
     using server = Bun.serve({
       port: 0,
-      fetch: () => new Response(file(path).stream()),
+      fetch: req => {
+        switch (new URL(req.url).pathname) {
+          case "/slice-stream":
+            return new Response(file(path).slice(start, end).stream());
+          case "/slice-blob":
+            return new Response(file(path).slice(start, end));
+          default:
+            return new Response(file(path).stream());
+        }
+      },
     });
 
     const head = await fetch(server.url, { method: "HEAD" });
     expect(head.headers.get("content-length")).toBe(String(STREAM_FILE_SIZE));
     expect(head.headers.get("transfer-encoding")).toBeNull();
+
+    // resolve_size must not widen a slice back to the end of the file
+    const sliceStream = await fetch(new URL("/slice-stream", server.url), { method: "HEAD" });
+    expect(sliceStream.headers.get("content-length")).toBe(String(end - start));
+    const sliceBlob = await fetch(new URL("/slice-blob", server.url), { method: "HEAD" });
+    expect(sliceBlob.headers.get("content-length")).toBe(String(end - start));
   });
 
   it("aborting requests mid-transfer doesn't break the server", async () => {

@@ -2405,7 +2405,17 @@ impl BlobExt for Blob {
                     let store_size = file.max_size;
                     let offset = self.offset.get();
                     self.offset.set(store_size.min(offset));
-                    self.size.set(store_size.saturating_sub(offset));
+                    let available = store_size.saturating_sub(self.offset.get());
+                    // Matches the Bytes arm: only resolve an unknown size. A
+                    // slice already has a concrete `size`; overwriting it with
+                    // `store_size - offset` would widen the view to the end of
+                    // the file. Clamp a known size to `available` so it can't
+                    // report past EOF.
+                    if self.size.get() == MAX_SIZE {
+                        self.size.set(available);
+                    } else {
+                        self.size.set(self.size.get().min(available));
+                    }
                     return;
                 }
 
@@ -2460,8 +2470,17 @@ impl BlobExt for Blob {
                 let file = store.data_mut().as_file();
                 if file.seekable.is_some() && file.max_size != MAX_SIZE {
                     let store_size = file.max_size;
-                    let offset = self.offset.get();
-                    return (store_size.min(offset), store_size.saturating_sub(offset));
+                    let offset = store_size.min(self.offset.get());
+                    let available = store_size.saturating_sub(offset);
+                    // Matches `resolve_size`: a known size (a slice) is
+                    // authoritative; only an unknown size falls back to the
+                    // remainder of the file, clamped so it can't pass EOF.
+                    let size = if self.size.get() == MAX_SIZE {
+                        available
+                    } else {
+                        self.size.get().min(available)
+                    };
+                    return (offset, size);
                 }
                 if file.seekable == Some(false) {
                     return (self.offset.get(), self.size.get());

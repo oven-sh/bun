@@ -874,6 +874,54 @@ describe("cleanup hooks", () => {
     });
   });
 
+  describe("napi_get_typedarray_info / napi_get_dataview_info", () => {
+    it("reports the view's real byteOffset so that arraybuffer-base + byte_offset == data", async () => {
+      // `Float16Array` is only unflagged in Node >= 24. Pass whether the Node we
+      // compare against has it, so both runtimes take the same branch.
+      const nodeHasFloat16 = spawnSync({
+        cmd: ["node", "-e", "process.stdout.write(String(typeof Float16Array === 'function'))"],
+        env: bunEnv,
+      });
+      const float16 = nodeHasFloat16.stdout.toString().trim() === "true";
+
+      const output = await checkSameOutput("test_napi_typedarray_dataview_byte_offset", [float16]);
+      expect(output).toContain("PASS: typedarray byte_offset=0");
+      expect(output).toContain("PASS: typedarray byte_offset=4");
+      expect(output).toContain("PASS: typedarray byte_offset=8");
+      expect(output).toContain("PASS: dataview byte_offset=0");
+      expect(output).toContain("PASS: dataview byte_offset=4");
+      expect(output).toContain("PASS: dataview byte_offset=8");
+      // A JS-allocated (fast-mode) typed array: reading its backing ArrayBuffer
+      // must not leave `data` pointing at stale/relocated storage.
+      expect(output).toContain("PASS: typedarray byte_offset=0 data[0]=11 length=4");
+      // Mismatched view subtypes are rejected with napi_invalid_arg, like Node.
+      expect(output).toContain("PASS: get_dataview_info(typedarray)");
+      expect(output).toContain("PASS: get_typedarray_info(dataview, type=NULL)");
+      // A Float16Array has no napi_typedarray_type value. With type=NULL it still
+      // succeeds with length/data/byte_offset (matches Node). Skipped when the
+      // comparison Node predates unflagged Float16Array.
+      if (float16) {
+        expect(output).toContain("PASS: get_typedarray_info(float16, type=NULL)");
+      } else {
+        expect(output).toContain("SKIP: get_typedarray_info(float16)");
+      }
+      // Requesting only `data` must return a stable pointer even after the backing
+      // ArrayBuffer is later materialized (matches Node).
+      expect(output).toContain("PASS: get_typedarray_info(data-only)");
+      expect(output).not.toContain("FAIL");
+    });
+
+    // Bun-only (intentionally diverges from Node): requesting the `type` of a
+    // Float16Array fails with napi_invalid_arg because N-API has no
+    // napi_typedarray_type value for it. Node instead returns napi_ok and leaves
+    // the out-param uninitialized.
+    it("rejects a Float16Array with napi_invalid_arg when type is requested", async () => {
+      const output = await runOn(bunExe(), "test_napi_float16_typedarray_type_rejected", []);
+      expect(output).toContain("PASS: get_typedarray_info(float16, type=&out) status=1 type=127");
+      expect(output).not.toContain("FAIL");
+    });
+  });
+
   describe("napi_typeof", () => {
     it("should handle empty/invalid values", async () => {
       const output = await checkSameOutput("test_napi_typeof_empty_value", []);

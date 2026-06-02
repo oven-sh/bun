@@ -1794,6 +1794,145 @@ extern "C" napi_status napi_create_typedarray(
     NAPI_RETURN_SUCCESS(env);
 }
 
+// Inverse of getTypedArrayTypeFromNAPI: maps a JSC typed-array cell type to the
+// napi enum. Returns false when there is no corresponding `napi_typedarray_type`
+// — i.e. for `Float16Array` (a typed array, but N-API has no value for it), for
+// DataView, and for any non-typed-array type.
+static bool getNAPITypeFromJSType(JSC::JSType type, napi_typedarray_type* result)
+{
+    switch (type) {
+    case JSC::JSType::Int8ArrayType:
+        *result = napi_int8_array;
+        return true;
+    case JSC::JSType::Uint8ArrayType:
+        *result = napi_uint8_array;
+        return true;
+    case JSC::JSType::Uint8ClampedArrayType:
+        *result = napi_uint8_clamped_array;
+        return true;
+    case JSC::JSType::Int16ArrayType:
+        *result = napi_int16_array;
+        return true;
+    case JSC::JSType::Uint16ArrayType:
+        *result = napi_uint16_array;
+        return true;
+    case JSC::JSType::Int32ArrayType:
+        *result = napi_int32_array;
+        return true;
+    case JSC::JSType::Uint32ArrayType:
+        *result = napi_uint32_array;
+        return true;
+    case JSC::JSType::Float32ArrayType:
+        *result = napi_float32_array;
+        return true;
+    case JSC::JSType::Float64ArrayType:
+        *result = napi_float64_array;
+        return true;
+    case JSC::JSType::BigInt64ArrayType:
+        *result = napi_bigint64_array;
+        return true;
+    case JSC::JSType::BigUint64ArrayType:
+        *result = napi_biguint64_array;
+        return true;
+    default:
+        return false;
+    }
+}
+
+extern "C" napi_status napi_get_typedarray_info(
+    napi_env env,
+    napi_value typedarray,
+    napi_typedarray_type* type,
+    size_t* length,
+    void** data,
+    napi_value* arraybuffer,
+    size_t* byte_offset)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_CHECK_ARG(env, typedarray);
+    Zig::GlobalObject* globalObject = toJS(env);
+
+    JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(toJS(typedarray));
+    NAPI_RETURN_EARLY_IF_FALSE(env, view, napi_invalid_arg);
+
+    // Reject a DataView unconditionally (Node gates on `value->IsTypedArray()` before reading
+    // any field, so this must run even when `type == nullptr`). `isTypedArrayType` is true for
+    // every typed-array kind and false for `DataViewType`.
+    NAPI_RETURN_EARLY_IF_FALSE(env, JSC::isTypedArrayType(view->type()), napi_invalid_arg);
+
+    // Materialize the backing ArrayBuffer *before* reading `vector()` whenever `data` or
+    // `arraybuffer` is requested (Node does the same). For a `FastTypedArray` (GC-managed
+    // storage, no ArrayBuffer yet) `possiblySharedBuffer()` copies the bytes into a
+    // malloc-backed buffer and repoints `m_vector`; reading `vector()` first would leave
+    // `data` pointing at storage that a later `.buffer` access orphans (dangling), and
+    // breaks `arraybuffer + byte_offset == data`.
+    JSC::JSArrayBuffer* jsBuffer = (arraybuffer || data) ? view->possiblySharedJSBuffer(globalObject) : nullptr;
+
+    if (type) {
+        // `Float16Array` is a typed array but has no `napi_typedarray_type` value (the enum
+        // stops at `napi_biguint64_array`). If the caller asked for the type we can't report
+        // one, so fail with `napi_invalid_arg` instead of returning success with `*type`
+        // uninitialized. Callers that don't request the type (`type == nullptr`) still succeed.
+        NAPI_RETURN_EARLY_IF_FALSE(env, getNAPITypeFromJSType(view->type(), type), napi_invalid_arg);
+    }
+    if (length) {
+        *length = view->length();
+    }
+    if (data) {
+        *data = view->vector();
+    }
+    if (arraybuffer) {
+        *arraybuffer = toNapi(jsBuffer, globalObject);
+    }
+    if (byte_offset) {
+        // `data` is `view->vector()`, which already has the offset folded in. The N-API
+        // contract is that `arraybuffer` (the base) plus `byte_offset` reconstructs `data`,
+        // so report the view's real byteOffset here — not 0.
+        *byte_offset = view->byteOffset();
+    }
+    NAPI_RETURN_SUCCESS(env);
+}
+
+extern "C" napi_status napi_get_dataview_info(
+    napi_env env,
+    napi_value dataview,
+    size_t* bytelength,
+    void** data,
+    napi_value* arraybuffer,
+    size_t* byte_offset)
+{
+    NAPI_PREAMBLE(env);
+    NAPI_CHECK_ENV_NOT_IN_GC(env);
+    NAPI_CHECK_ARG(env, dataview);
+    Zig::GlobalObject* globalObject = toJS(env);
+
+    JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(toJS(dataview));
+    NAPI_RETURN_EARLY_IF_FALSE(env, view, napi_object_expected);
+    // Node checks `IsDataView()` — reject a typed array passed here.
+    NAPI_RETURN_EARLY_IF_FALSE(env, view->type() == JSC::DataViewType, napi_invalid_arg);
+
+    // A DataView is always ArrayBuffer-backed (never a FastTypedArray), so the ordering
+    // below doesn't matter for correctness — but keep it symmetric with
+    // napi_get_typedarray_info: materialize before reading `vector()`.
+    JSC::JSArrayBuffer* jsBuffer = (arraybuffer || data) ? view->possiblySharedJSBuffer(globalObject) : nullptr;
+
+    if (bytelength) {
+        *bytelength = view->byteLength();
+    }
+    if (data) {
+        *data = view->vector();
+    }
+    if (arraybuffer) {
+        *arraybuffer = toNapi(jsBuffer, globalObject);
+    }
+    if (byte_offset) {
+        // See napi_get_typedarray_info: report the view's real byteOffset, not 0.
+        *byte_offset = view->byteOffset();
+    }
+    NAPI_RETURN_SUCCESS(env);
+}
+
 namespace Zig {
 
 extern "C" napi_status napi_get_all_property_names(

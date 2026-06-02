@@ -2351,6 +2351,213 @@ static napi_value test_napi_create_tsfn_async_context_frame(const Napi::Callback
   return env.Undefined();
 }
 
+// napi_get_typedarray_info / napi_get_dataview_info must report the view's real
+// byteOffset (not 0), so that arraybuffer-base + byte_offset == data.
+static void check_view_byte_offset(napi_env env, const char *kind,
+                                   napi_value view, size_t expected_offset,
+                                   uint8_t expected_first_byte) {
+  size_t length = 0;
+  uint8_t *data = nullptr;
+  napi_value arraybuffer;
+  size_t byte_offset = 0xdeadbeef;
+  napi_status status;
+  if (std::strcmp(kind, "typedarray") == 0) {
+    napi_typedarray_type type;
+    status = napi_get_typedarray_info(env, view, &type, &length, (void **)&data,
+                                      &arraybuffer, &byte_offset);
+  } else {
+    status = napi_get_dataview_info(env, view, &length, (void **)&data,
+                                    &arraybuffer, &byte_offset);
+  }
+  if (status != napi_ok) {
+    printf("FAIL: %s napi_get_*_info status=%d\n", kind, status);
+    return;
+  }
+
+  uint8_t *ab_base = nullptr;
+  size_t ab_len = 0;
+  status = napi_get_arraybuffer_info(env, arraybuffer, (void **)&ab_base,
+                                     &ab_len);
+  if (status != napi_ok) {
+    printf("FAIL: %s napi_get_arraybuffer_info status=%d\n", kind, status);
+    return;
+  }
+
+  if (byte_offset != expected_offset) {
+    printf("FAIL: %s byte_offset=%zu (expected %zu)\n", kind, byte_offset,
+           expected_offset);
+    return;
+  }
+  if (ab_base + byte_offset != data) {
+    printf("FAIL: %s arraybuffer-base + byte_offset != data\n", kind);
+    return;
+  }
+  if (data[0] != expected_first_byte ||
+      ab_base[byte_offset] != expected_first_byte) {
+    printf("FAIL: %s reconstruction reads wrong byte (got %u/%u, expected %u)\n",
+           kind, data[0], ab_base[byte_offset], expected_first_byte);
+    return;
+  }
+  printf("PASS: %s byte_offset=%zu data[0]=%u length=%zu\n", kind, byte_offset,
+         data[0], length);
+}
+
+static napi_value
+test_napi_typedarray_dataview_byte_offset(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  uint8_t *bytes;
+  napi_value ab;
+  NODE_API_CALL(env, napi_create_arraybuffer(env, 16, (void **)&bytes, &ab));
+  for (int i = 0; i < 16; i++)
+    bytes[i] = (uint8_t)(i + 1);
+
+  size_t offsets[] = {0, 4, 8};
+  for (size_t off : offsets) {
+    napi_value ta;
+    NODE_API_CALL(env, napi_create_typedarray(env, napi_uint8_array, 16 - off,
+                                              ab, off, &ta));
+    check_view_byte_offset(env, "typedarray", ta, off, (uint8_t)(off + 1));
+
+    napi_value dv;
+    NODE_API_CALL(env, napi_create_dataview(env, 16 - off, ab, off, &dv));
+    check_view_byte_offset(env, "dataview", dv, off, (uint8_t)(off + 1));
+  }
+
+  // A typed array allocated JS-side (not from an ArrayBuffer) starts in
+  // "fast" mode with GC-managed storage and no backing ArrayBuffer. Reading
+  // its backing ArrayBuffer materializes a (possibly relocated) copy, so
+  // `napi_get_typedarray_info` must report `data`/`arraybuffer` consistently:
+  // `arraybuffer-base + byte_offset == data` must still hold.
+  napi_value script, fast_ta;
+  NODE_API_CALL(env,
+                napi_create_string_utf8(
+                    env, "new Uint8Array([11, 22, 33, 44])", NAPI_AUTO_LENGTH,
+                    &script));
+  NODE_API_CALL(env, napi_run_script(env, script, &fast_ta));
+  check_view_byte_offset(env, "typedarray", fast_ta, 0, 11);
+
+  // Node rejects a mismatched view subtype: a typed array passed to
+  // napi_get_dataview_info, and (even with type==NULL) a DataView passed to
+  // napi_get_typedarray_info both return napi_invalid_arg.
+  napi_value ta0, dv0;
+  NODE_API_CALL(env,
+                napi_create_typedarray(env, napi_uint8_array, 16, ab, 0, &ta0));
+  NODE_API_CALL(env, napi_create_dataview(env, 16, ab, 0, &dv0));
+
+  size_t dummy_len = 0;
+  void *dummy_data = nullptr;
+  napi_value dummy_ab;
+  size_t dummy_off = 0;
+  napi_status s;
+
+  s = napi_get_dataview_info(env, ta0, &dummy_len, &dummy_data, &dummy_ab,
+                             &dummy_off);
+  printf("%s: get_dataview_info(typedarray) status=%d\n",
+         s == napi_invalid_arg ? "PASS" : "FAIL", s);
+
+  // type==NULL must still reject a DataView.
+  s = napi_get_typedarray_info(env, dv0, nullptr, &dummy_len, &dummy_data,
+                               &dummy_ab, &dummy_off);
+  printf("%s: get_typedarray_info(dataview, type=NULL) status=%d\n",
+         s == napi_invalid_arg ? "PASS" : "FAIL", s);
+
+  // A Float16Array is a typed array, but N-API has no `napi_typedarray_type`
+  // for it. Node still returns napi_ok (filling length/data/byte_offset) when
+  // `type==NULL` — only the `type` out-param has no value to report.
+  // `Float16Array` is only unflagged in Node >= 24; `info[1]` says whether the
+  // comparison runtime (Node) has it, so both runtimes take the same branch and
+  // `checkSameOutput` stays stable across Node versions.
+  bool float16_supported =
+      info.Length() > 1 && info[1].As<Napi::Boolean>().Value();
+  if (!float16_supported) {
+    printf("SKIP: get_typedarray_info(float16) — Float16Array unavailable\n");
+  } else {
+    napi_value f16_script, f16;
+    NODE_API_CALL(env, napi_create_string_utf8(env,
+                                               "new Float16Array([1, 2, 3, 4])",
+                                               NAPI_AUTO_LENGTH, &f16_script));
+    NODE_API_CALL(env, napi_run_script(env, f16_script, &f16));
+
+    // type==NULL: a Float16Array still returns napi_ok with length/data/offset.
+    // (The type!=NULL case is covered by test_napi_float16_typedarray_type_rejected,
+    // Bun-only: Bun reports napi_invalid_arg since N-API has no Float16 enum value,
+    // while Node returns napi_ok with `*type` left uninitialized.)
+    size_t f16_len = 0;
+    void *f16_data = nullptr;
+    size_t f16_off = 0xdead;
+    s = napi_get_typedarray_info(env, f16, nullptr, &f16_len, &f16_data,
+                                 nullptr, &f16_off);
+    printf("%s: get_typedarray_info(float16, type=NULL) status=%d length=%zu "
+           "byte_offset=%zu\n",
+           (s == napi_ok && f16_len == 4 && f16_data != nullptr && f16_off == 0)
+               ? "PASS"
+               : "FAIL",
+           s, f16_len, f16_off);
+  }
+
+  // Requesting only `data` (arraybuffer==NULL) on a fast-mode typed array must
+  // still return a stable pointer: materializing the backing ArrayBuffer
+  // afterwards (a second call, or a JS `.buffer` access) must not move the
+  // storage out from under the pointer we already handed back. Verify the
+  // `data` from the first call equals the backing ArrayBuffer base from a
+  // second call.
+  napi_value only_data_script, only_data_ta;
+  NODE_API_CALL(env, napi_create_string_utf8(env, "new Uint8Array([5, 6, 7, 8])",
+                                             NAPI_AUTO_LENGTH,
+                                             &only_data_script));
+  NODE_API_CALL(env, napi_run_script(env, only_data_script, &only_data_ta));
+  uint8_t *first_data = nullptr;
+  NODE_API_CALL(env, napi_get_typedarray_info(env, only_data_ta, nullptr,
+                                              nullptr, (void **)&first_data,
+                                              nullptr, nullptr));
+  napi_value materialized_ab;
+  NODE_API_CALL(env, napi_get_typedarray_info(env, only_data_ta, nullptr,
+                                              nullptr, nullptr,
+                                              &materialized_ab, nullptr));
+  uint8_t *ab_base = nullptr;
+  size_t ab_len = 0;
+  NODE_API_CALL(env, napi_get_arraybuffer_info(env, materialized_ab,
+                                               (void **)&ab_base, &ab_len));
+  printf("%s: get_typedarray_info(data-only) first_data==arraybuffer-base "
+         "first[0]=%u\n",
+         (first_data != nullptr && first_data == ab_base && first_data[0] == 5)
+             ? "PASS"
+             : "FAIL",
+         first_data ? first_data[0] : 0);
+
+  return env.Undefined();
+}
+
+// Bun-only (not compared against Node): N-API has no `napi_typedarray_type`
+// value for Float16Array, so requesting the type fails with napi_invalid_arg
+// rather than returning napi_ok with `*type` left uninitialized. (Node returns
+// napi_ok and leaves the out-param unwritten.)
+static napi_value
+test_napi_float16_typedarray_type_rejected(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  napi_value f16_script, f16;
+  NODE_API_CALL(env, napi_create_string_utf8(env,
+                                             "new Float16Array([1, 2, 3, 4])",
+                                             NAPI_AUTO_LENGTH, &f16_script));
+  NODE_API_CALL(env, napi_run_script(env, f16_script, &f16));
+
+  napi_typedarray_type type = (napi_typedarray_type)0x7f;
+  size_t length = 0;
+  void *data = nullptr;
+  size_t byte_offset = 0;
+  napi_status s = napi_get_typedarray_info(env, f16, &type, &length, &data,
+                                           nullptr, &byte_offset);
+  printf("%s: get_typedarray_info(float16, type=&out) status=%d type=%d\n",
+         (s == napi_invalid_arg && type == (napi_typedarray_type)0x7f)
+             ? "PASS"
+             : "FAIL",
+         s, (int)type);
+
+  return env.Undefined();
+}
+
 void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_issue_7685);
   REGISTER_FUNCTION(env, exports, test_issue_11949);
@@ -2383,6 +2590,8 @@ void register_standalone_tests(Napi::Env env, Napi::Object exports) {
   REGISTER_FUNCTION(env, exports, test_napi_freeze_seal_indexed);
   REGISTER_FUNCTION(env, exports, test_napi_create_external_buffer_empty);
   REGISTER_FUNCTION(env, exports, test_napi_empty_buffer_info);
+  REGISTER_FUNCTION(env, exports, test_napi_typedarray_dataview_byte_offset);
+  REGISTER_FUNCTION(env, exports, test_napi_float16_typedarray_type_rejected);
   REGISTER_FUNCTION(env, exports, napi_get_typeof);
   REGISTER_FUNCTION(env, exports, test_external_buffer_data_lifetime);
   REGISTER_FUNCTION(env, exports, test_external_arraybuffer_finalizer);

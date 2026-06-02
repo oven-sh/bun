@@ -1168,9 +1168,9 @@ impl Image {
                     unsafe { &*std::ptr::from_ref::<[u8]>(ab.byte_slice()) }
                 }),
             Source::Owned(b) => Some(b.as_slice()),
-            // Raw bytes have no header to probe — `do_metadata` (this fn's
-            // only caller) answers raw sources from the descriptor before
-            // calling here.
+            // Raw bytes have no header to probe — callers (`do_metadata`,
+            // the composite-overlay path) answer raw sources from the
+            // constructor descriptor before calling here.
             Source::Raw { .. } => None,
             Source::Path(_) | Source::Blob(_) => None,
         }
@@ -1750,8 +1750,8 @@ impl Image {
                 "{}",
                 bstr::BStr::new(error_message(e).as_bytes())
             ))),
-            TaskResult::ErrWithCode { msg, .. } => {
-                Err(global.throw(format_args!("{}", bstr::BStr::new(msg.as_bytes()))))
+            TaskResult::ErrWithCode { code, msg } => {
+                Err(global.throw_value(error_with_code(global, code, msg)))
             }
             // Preserve errno/path/syscall instead of flattening to DecodeFailed.
             TaskResult::IoErr(e) => Err(global.throw_value(e.to_js(global))),
@@ -2625,9 +2625,22 @@ impl<'a> PipelineTask<'a> {
                         }
                         CompositeInput::Raw { .. } => unreachable!(),
                     };
-                    decoded_overlay =
+                    let mut dec =
                         codecs::decode(bytes, self.max_pixels, codecs::DecodeHint::default())
                             .map_err(TaskResult::Err)?;
+                    // Overlays follow the pipeline's EXIF policy, same as the
+                    // base at the top of `run()` — a portrait-shot JPEG
+                    // watermark blends upright when `autoOrient` (default) is
+                    // on, and the oversized rule below sees the upright dims.
+                    if self.auto_orient
+                        && codecs::Format::sniff(bytes) == Some(codecs::Format::Jpeg)
+                    {
+                        let orient = exif::read_jpeg(bytes);
+                        if orient != exif::Orientation::Normal {
+                            apply_orientation(&mut dec, orient).map_err(TaskResult::Err)?;
+                        }
+                    }
+                    decoded_overlay = dec;
                     (
                         &decoded_overlay.rgba,
                         decoded_overlay.width,

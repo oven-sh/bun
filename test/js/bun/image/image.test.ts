@@ -1771,6 +1771,27 @@ describe("composite()", () => {
     expect([...rgbaAt(data, 4, 0, 0)]).toEqual(GREEN);
   });
 
+  test("oversized overlay error carries .code on both the async terminal and the sync Response path", async () => {
+    const make = () => new Bun.Image(solidPng(2, 2, BLACK)).composite([{ image: solidPng(3, 3, GREEN) }]);
+    // async terminal rejection
+    await expect(make().png().bytes()).rejects.toMatchObject({
+      code: "ERR_IMAGE_COMPOSITE_OVERSIZED",
+      message: expect.stringMatching(/same dimensions or smaller/),
+    });
+    // `new Response(image)` encodes synchronously on the JS thread — the same
+    // error, including `.code`, must surface there too.
+    let caught: any = null;
+    try {
+      new Response(make());
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toMatchObject({
+      code: "ERR_IMAGE_COMPOSITE_OVERSIZED",
+      message: expect.stringMatching(/same dimensions or smaller/),
+    });
+  });
+
   // ── layer list semantics ──────────────────────────────────────────────────
 
   test("repeat .composite() replaces the layer set (sharp semantics) and is chainable", async () => {
@@ -1828,6 +1849,38 @@ describe("composite()", () => {
     await Bun.write(p, solidPng(2, 2, GREEN));
     ({ data } = await compositePixels(base, [{ image: p }]));
     expect([...rgbaAt(data, 2, 0, 0)]).toEqual(GREEN);
+  });
+
+  test("JPEG overlay EXIF orientation follows the base's autoOrient", async () => {
+    // 4×2 black JPEG with a spliced APP1 Orientation=6 (90° CW) — the same
+    // splice as the metadata EXIF test. Upright it is 2 wide × 4 tall.
+    const jpg = await new Bun.Image(solidPng(4, 2, BLACK)).jpeg({ quality: 95 }).bytes();
+    // prettier-ignore
+    const tiff = new Uint8Array([
+      0x4d, 0x4d, 0x00, 0x2a, 0x00, 0x00, 0x00, 0x08, // header
+      0x00, 0x01,                                     // 1 entry
+      0x01, 0x12, 0x00, 0x03, 0x00, 0x00, 0x00, 0x01, 0x00, 0x06, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00,                         // next IFD = 0
+    ]);
+    const exif = Buffer.concat([Buffer.from("Exif\0\0"), tiff]);
+    const seglen = exif.length + 2;
+    const app1 = Buffer.concat([Buffer.from([0xff, 0xe1, seglen >> 8, seglen & 255]), exif]);
+    const withExif = Buffer.concat([jpg.subarray(0, 2), app1, jpg.subarray(2)]);
+
+    const base = solidPng(6, 6, [255, 255, 255, 255]);
+    // autoOrient (default): blends upright — dark inside the 2×4 rect only.
+    const on = await compositePixels(base, [{ image: withExif, top: 0, left: 0 }]);
+    expect(rgbaAt(on.data, 6, 1, 3)[0]).toBeLessThan(80); // inside upright rect
+    expect(rgbaAt(on.data, 6, 3, 1)[0]).toBeGreaterThan(200); // outside it
+    // autoOrient: false on the base: stored orientation (4 wide × 2 tall).
+    const off = decodePngRaw(
+      await new Bun.Image(base, { autoOrient: false })
+        .composite([{ image: withExif, top: 0, left: 0 }])
+        .png()
+        .bytes(),
+    );
+    expect(rgbaAt(off.data, 6, 3, 1)[0]).toBeLessThan(80);
+    expect(rgbaAt(off.data, 6, 1, 3)[0]).toBeGreaterThan(200);
   });
 
   // ── raw-pixel-sourced Image overlays ─────────────────────────────────────

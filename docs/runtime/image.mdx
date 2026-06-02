@@ -155,6 +155,7 @@ Rules and behavior:
 - Repeat `composite()` calls **replace** the layer set rather than appending, matching sharp.
 - Overlay bytes are copied when `composite()` is called, so it's safe to mutate or reuse a passed buffer afterwards.
 - Each overlay decode is subject to the same `maxPixels` guard as the base image.
+- JPEG overlays follow the base `Image`'s `autoOrient` setting (default `true`): EXIF orientation is applied to the overlay before placement and the oversized rule, so a portrait-shot photo blends upright. Construct the base with `autoOrient: false` to blend overlays in their stored orientation.
 - Blending happens in premultiplied-alpha space and always uses a deterministic portable integer kernel — regardless of `Bun.Image.backend`, blended output is byte-identical across Linux, macOS, and Windows.
 
 ### Deviations from sharp

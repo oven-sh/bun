@@ -194,7 +194,14 @@ test.skipIf(isWindows)("dev server reports route syntax errors without crashing"
   proc.kill();
   const stderr = await proc.stderr.text();
   await proc.exited;
-  expect(stderr).toContain('"routes/[bad.tsx" is not a valid route');
-  expect(stderr).toContain('Missing "]" to match this route parameter');
+  // The caret/underline must line up with the offending "[" — column
+  // 8 for the `error: "` prefix plus 7 for `routes/`.
+  expect(stderr).toContain(
+    'error: "routes/[bad.tsx" is not a valid route\n' +
+      " ".repeat(8 + 7) +
+      "-------\n" +
+      " ".repeat(8 + 7) +
+      'Missing "]" to match this route parameter',
+  );
   expect(stderr).toContain("Pattern cannot have more than 64 param");
 });

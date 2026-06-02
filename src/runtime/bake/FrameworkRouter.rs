@@ -1642,13 +1642,25 @@ impl FrameworkRouter {
                                 .parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
                         let parsed = match parse_result {
                             Err(_) => {
-                                // Saturating: error paths that never called
-                                // `log.fail()` (e.g. OOM) leave `cursor_at` at
-                                // the `u32::MAX` sentinel; keep it there instead
-                                // of wrapping to a bogus position.
-                                log.cursor_at = log.cursor_at.saturating_add(
-                                    u32::try_from(abs_root_len - root_len).expect("int cast"),
-                                );
+                                // Rebase the cursor from `rel_path` coordinates
+                                // (where `parse` recorded it) onto
+                                // `full_rel_path` (what `print` receives).
+                                // `rel_path` starts one byte before the
+                                // `full_rel_path` suffix it mirrors — the
+                                // leading '/' — so the offset is one less than
+                                // the root-length delta. Error paths that never
+                                // called `log.fail()` (e.g. OOM) leave the
+                                // `u32::MAX` sentinel; keep it pinned there so
+                                // `print` clamps to the end of the path.
+                                if log.cursor_at != u32::MAX {
+                                    log.cursor_at = log
+                                        .cursor_at
+                                        .saturating_add(
+                                            u32::try_from(abs_root_len - root_len)
+                                                .expect("int cast"),
+                                        )
+                                        .saturating_sub(1);
+                                }
                                 ctx.on_router_syntax_error(full_rel_path, log)?;
                                 arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                                 continue 'outer;

@@ -407,7 +407,7 @@ struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t 
  * SCM_RIGHTS) as a listen socket, rather than creating+binding a new one.
  * The fd must already be a socket in the LISTEN state. On failure returns 0
  * and writes an errno into *error: ENOTSOCK if the fd is not a socket,
- * EINVAL if it is a socket but not listening. */
+ * EINVAL if it is a socket but (verifiably) not listening. */
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         LIBUS_SOCKET_DESCRIPTOR fd, int options, int socket_ext_size, int *error) {
@@ -421,19 +421,29 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
         return 0;
     }
 
-    /* Only an already-listening socket can be adopted. getsockopt(SO_ACCEPTCONN)
-     * fails with ENOTSOCK on a non-socket fd (e.g. stdin), and reports 0 for a
-     * socket that is not listening. Matches Node's EINVAL/ENOTSOCK behavior. */
-    int accepting = 0;
-    socklen_t optlen = sizeof(accepting);
-    if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, (void *) &accepting, &optlen) != 0) {
+    /* The fd must at least be a socket. getsockopt(SO_TYPE) fails with ENOTSOCK
+     * on a non-socket fd (e.g. stdin) and EBADF on a closed one, on both Linux
+     * and macOS — this is what rejects `listen({ fd: 0 })`. */
+    int socktype = 0;
+    socklen_t typelen = sizeof(socktype);
+    if (getsockopt(fd, SOL_SOCKET, SO_TYPE, (void *) &socktype, &typelen) != 0) {
         *error = errno ? errno : ENOTSOCK;
         return 0;
     }
-    if (!accepting) {
+
+    /* Reject a socket that is not listening. SO_ACCEPTCONN is reliable on Linux
+     * but NOT on macOS/BSD — there it can report 0 for a genuinely-listening fd
+     * that was inherited/duplicated (e.g. over SCM_RIGHTS), so only treat a 0 as
+     * fatal where the query is trustworthy. A non-listening socket on macOS
+     * surfaces EINVAL from accept() instead, which Node's contract allows. */
+#if defined(SO_ACCEPTCONN) && !defined(__APPLE__)
+    int accepting = 0;
+    socklen_t optlen = sizeof(accepting);
+    if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, (void *) &accepting, &optlen) == 0 && !accepting) {
         *error = EINVAL;
         return 0;
     }
+#endif
 
     /* The fd arrives from another process; normalize the flags we rely on. */
     apple_no_sigpipe(fd);

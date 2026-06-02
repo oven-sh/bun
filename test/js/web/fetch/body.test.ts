@@ -1,6 +1,7 @@
 import { file, spawn, version } from "bun";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, exampleSite } from "harness";
+import { bunEnv, bunExe, exampleSite, tempDirWithFiles } from "harness";
+import { join } from "node:path";
 
 const exampleServer = exampleSite("http");
 
@@ -742,18 +743,15 @@ describe("Response wrapping a Bun.file() stream", () => {
   // on unfixed builds, consuming a Response wrapping a sliced stream of a
   // file this large never resolves (the test then fails by timeout).
   const SIZE = 1024 * 1024;
-  function makeFile(dir: string) {
+  function makeFile(prefix: string) {
     const bytes = new Uint8Array(SIZE);
     for (let i = 0; i < SIZE; i++) bytes[i] = (i * 7) & 0xff;
-    const path = `${dir}/body-file-stream.bin`;
-    require("fs").writeFileSync(path, bytes);
-    return { path, bytes };
+    const dir = tempDirWithFiles(prefix, { "body-file-stream.bin": Buffer.from(bytes) });
+    return { path: join(dir, "body-file-stream.bin"), bytes };
   }
 
   test(".bytes() returns a Uint8Array with the full contents", async () => {
-    const { tempDirWithFiles } = require("harness");
-    const dir = tempDirWithFiles("body-file-stream", {});
-    const { path, bytes } = makeFile(dir);
+    const { path, bytes } = makeFile("body-file-stream");
 
     const result = await new Response(file(path).stream()).bytes();
     expect(result).toBeInstanceOf(Uint8Array);
@@ -762,9 +760,7 @@ describe("Response wrapping a Bun.file() stream", () => {
   });
 
   test(".bytes() on a sliced file stream resolves with exactly the slice", async () => {
-    const { tempDirWithFiles } = require("harness");
-    const dir = tempDirWithFiles("body-file-stream-slice", {});
-    const { path, bytes } = makeFile(dir);
+    const { path, bytes } = makeFile("body-file-stream-slice");
 
     const start = 100;
     const end = 1124;
@@ -775,10 +771,8 @@ describe("Response wrapping a Bun.file() stream", () => {
   });
 
   test(".text() and .arrayBuffer() on a sliced file stream resolve", async () => {
-    const { tempDirWithFiles } = require("harness");
-    const dir = tempDirWithFiles("body-file-stream-text", {});
-    const path = `${dir}/text.txt`;
-    require("fs").writeFileSync(path, "0123456789".repeat(100));
+    const dir = tempDirWithFiles("body-file-stream-text", { "text.txt": "0123456789".repeat(100) });
+    const path = join(dir, "text.txt");
 
     const text = await new Response(file(path).slice(10, 30).stream()).text();
     expect(text).toBe("01234567890123456789");
@@ -788,9 +782,7 @@ describe("Response wrapping a Bun.file() stream", () => {
   });
 
   test("a disturbed file stream still throws at Response construction", async () => {
-    const { tempDirWithFiles } = require("harness");
-    const dir = tempDirWithFiles("body-file-stream-read", {});
-    const { path } = makeFile(dir);
+    const { path } = makeFile("body-file-stream-read");
 
     const stream = file(path).stream();
     const reader = stream.getReader();
@@ -802,9 +794,7 @@ describe("Response wrapping a Bun.file() stream", () => {
   });
 
   test("a file stream with a held reader keeps rejecting consumption", async () => {
-    const { tempDirWithFiles } = require("harness");
-    const dir = tempDirWithFiles("body-file-stream-locked", {});
-    const { path } = makeFile(dir);
+    const { path } = makeFile("body-file-stream-locked");
 
     const response = new Response(file(path).stream());
     const reader = response.body!.getReader();
@@ -815,5 +805,34 @@ describe("Response wrapping a Bun.file() stream", () => {
       await response.bytes();
     }).toThrow();
     reader.releaseLock();
+  });
+
+  test("response.body.cancel() still works and marks the body used", async () => {
+    const { path } = makeFile("body-file-stream-cancel");
+
+    const response = new Response(file(path).stream());
+    await response.body!.cancel();
+    expect(response.bodyUsed).toBe(true);
+    expect(response.body!.locked).toBe(false);
+    expect(async () => {
+      await response.bytes();
+    }).toThrow("Body already used");
+  });
+
+  test("a previously exposed .body behaves like a consumed body after .bytes()", async () => {
+    const { path, bytes } = makeFile("body-file-stream-exposed");
+
+    const response = new Response(file(path).stream());
+    const body = response.body!;
+    const result = await response.bytes();
+    expect(result).toBeInstanceOf(Uint8Array);
+    expect(Buffer.compare(result, bytes)).toBe(0);
+    expect(response.bodyUsed).toBe(true);
+    // matches the long-standing behavior of `new Response(Bun.file(path))`
+    // with `.body` observed: after consumption the exposed stream is
+    // released and fully drained, so a fresh read reports done
+    expect(body.locked).toBe(false);
+    const read = await body.getReader().read();
+    expect(read.done).toBe(true);
   });
 });

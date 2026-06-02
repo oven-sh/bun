@@ -11,6 +11,7 @@ import {
   isIPv6,
   isPosix,
   tempDir,
+  tempDirWithFiles,
   tls,
   tmpdirSync,
 } from "harness";
@@ -2405,10 +2406,8 @@ describe("Response wrapping a Bun.file() stream", () => {
   function makeStreamFile() {
     const bytes = new Uint8Array(STREAM_FILE_SIZE);
     for (let i = 0; i < STREAM_FILE_SIZE; i++) bytes[i] = (i * 7) & 0xff;
-    const dir = tmpdirSync();
-    const path = join(dir, "serve-file-stream.bin");
-    writeFileSync(path, bytes);
-    return { path, bytes };
+    const dir = tempDirWithFiles("serve-file-stream", { "serve-file-stream.bin": Buffer.from(bytes) });
+    return { path: join(dir, "serve-file-stream.bin"), bytes };
   }
 
   it("serves with Content-Length via the native blob path", async () => {
@@ -2443,6 +2442,63 @@ describe("Response wrapping a Bun.file() stream", () => {
     expect(body.byteLength).toBe(end - start);
     expect(Buffer.compare(body, bytes.subarray(start, end))).toBe(0);
     expect(res.headers.get("content-length")).toBe(String(end - start));
+  });
+
+  it("aborting requests mid-transfer doesn't break the server", async () => {
+    const { path } = makeStreamFile();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(file(path).stream()),
+    });
+
+    // race aborts against the native file-stream response, mirroring the
+    // "should be able to abort a sendfile response and streams" test above
+    async function doRequest() {
+      try {
+        const controller = new AbortController();
+        const res = await fetch(server.url, { signal: controller.signal });
+        res.body
+          ?.getReader()
+          .read()
+          .catch(() => {});
+        controller.abort();
+      } catch {}
+    }
+    const batchSize = 20;
+    const batch: Promise<void>[] = [];
+    for (let i = 0; i < 100; i++) {
+      batch.push(doRequest());
+      if (batch.length === batchSize) {
+        await Promise.all(batch);
+        batch.length = 0;
+      }
+    }
+    await Promise.all(batch);
+
+    // the server still serves complete responses afterwards
+    const res = await fetch(server.url);
+    const body = await res.bytes();
+    expect(body.byteLength).toBe(STREAM_FILE_SIZE);
+  });
+
+  it("the client canceling the response stream mid-transfer doesn't break the server", async () => {
+    const { path, bytes } = makeStreamFile();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(file(path).stream()),
+    });
+
+    {
+      const res = await fetch(server.url);
+      const reader = res.body!.getReader();
+      const first = await reader.read();
+      expect(first.done).toBe(false);
+      await reader.cancel();
+    }
+
+    const res = await fetch(server.url);
+    const body = await res.bytes();
+    expect(Buffer.compare(body, bytes)).toBe(0);
   });
 
   it("a stream being read by user JS keeps the streaming error semantics", async () => {

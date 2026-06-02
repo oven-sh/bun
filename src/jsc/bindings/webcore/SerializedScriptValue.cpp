@@ -1690,8 +1690,10 @@ private:
                 // which can run user JS (Error.prepareStackTrace) that may throw.
                 // Materialize once up front under exception control so a pending
                 // exception cannot leak into getOwnPropertyDescriptor().
-                errorInstance->materializeErrorInfoIfNeeded(vm);
-                RETURN_IF_EXCEPTION(scope, false);
+                if (!errorInstance->hasMaterializedErrorInfo()) {
+                    errorInstance->materializeErrorInfoIfNeeded(vm);
+                    RETURN_IF_EXCEPTION(scope, false);
+                }
                 auto errorTypeValue = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->name);
                 RETURN_IF_EXCEPTION(scope, false);
                 auto errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);

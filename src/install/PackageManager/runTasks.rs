@@ -1808,7 +1808,10 @@ pub fn generate_network_task_for_tarball<'a>(
     let patch = patch_name_and_version_hash.and_then(|h| {
         Some((
             h,
-            this.lockfile.patched_dependencies.get(&h)?.patchfile_hash()?,
+            this.lockfile
+                .patched_dependencies
+                .get(&h)?
+                .patchfile_hash()?,
         ))
     });
     let apply_patch_task = if let Some((h, patch_hash)) = patch {

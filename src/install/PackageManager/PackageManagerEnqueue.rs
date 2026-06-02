@@ -1742,7 +1742,10 @@ fn enqueue_git_clone(
     let patch = patch_name_and_version_hash.and_then(|h| {
         Some((
             h,
-            this.lockfile.patched_dependencies.get(&h)?.patchfile_hash()?,
+            this.lockfile
+                .patched_dependencies
+                .get(&h)?
+                .patchfile_hash()?,
         ))
     });
     let value = Task::Task {
@@ -1819,7 +1822,10 @@ pub fn enqueue_git_checkout(
     let patch = patch_name_and_version_hash.and_then(|h| {
         Some((
             h,
-            this.lockfile.patched_dependencies.get(&h)?.patchfile_hash()?,
+            this.lockfile
+                .patched_dependencies
+                .get(&h)?
+                .patchfile_hash()?,
         ))
     });
     // SAFETY: `this` is a live `&mut PackageManager`.

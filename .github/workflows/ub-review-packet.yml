@@ -59,9 +59,7 @@ jobs:
 
       - name: Build UB review packet
         id: ub-review
-        # Pinned to the current post-v0 review-body/metrics/observation cleanup.
-        # Move to v0.1 after the next ub-review release is cut.
-        uses: EffortlessMetrics/ub-review@04b78422457093d400b522c4615266cdaa067500
+        uses: EffortlessMetrics/ub-review@v0.1
         with:
           preset: bun-ub
           profile: gh-runner

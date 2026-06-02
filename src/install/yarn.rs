@@ -537,20 +537,6 @@ impl<'a> YarnLock<'a> {
         Ok(())
     }
 
-    fn find_entry_by_spec(&self, spec: &[u8]) -> Option<&Entry<'a>> {
-        // PORT NOTE: Zig returns `?*Entry` (mutable ptr) but every caller only
-        // reads `.workspace` / `.specs`, so `&self` suffices and avoids the
-        // borrowck conflict with the outer `entries.iter()` loops.
-        for entry in self.entries.iter() {
-            for entry_spec in entry.specs.iter() {
-                if *entry_spec == spec {
-                    return Some(entry);
-                }
-            }
-        }
-        None
-    }
-
     fn consolidate_and_append_entry(&mut self, new_entry: Entry<'a>) -> Result<(), Error> {
         if new_entry.specs.is_empty() {
             return Ok(());
@@ -587,81 +573,6 @@ enum DependencyType {
     Development,
     Optional,
     Peer,
-}
-
-fn process_deps(
-    deps: &StringHashMap<&[u8]>,
-    dep_type: DependencyType,
-    yarn_lock_: &YarnLock<'_>,
-    string_buf_: &mut Semver::string::Buf,
-    deps_buf: &mut [Dependency],
-    res_buf: &mut [PackageID],
-    log: &mut bun_ast::Log,
-    manager: &mut PackageManager,
-    yarn_entry_to_package_id: &[PackageID],
-) -> Result<usize, Error> {
-    // TODO(port): narrow error set
-    // PORT NOTE: returns count instead of slice to avoid borrowck conflict with caller's bufs
-    let mut count: usize = 0;
-    // PERF(port): was stack-fallback alloc (1024 bytes) — profile if it shows up on a hot path
-
-    for (dep_name_key, dep_version_ref) in deps.iter() {
-        let dep_name: &[u8] = dep_name_key.as_ref();
-        let dep_version: &[u8] = *dep_version_ref;
-        let mut dep_spec = Vec::new();
-        write!(
-            &mut dep_spec,
-            "{}@{}",
-            bstr::BStr::new(dep_name),
-            bstr::BStr::new(dep_version)
-        )
-        .expect("unreachable");
-
-        if let Some(dep_entry) = yarn_lock_.find_entry_by_spec(&dep_spec) {
-            let dep_entry_workspace = dep_entry.workspace;
-            let dep_name_hash = string_hash(dep_name);
-            let dep_name_str = string_buf_.append_with_hash(dep_name, dep_name_hash)?;
-
-            let parsed_version = if Entry::is_npm_alias(dep_version) {
-                let alias_info = Entry::parse_npm_alias(dep_version);
-                alias_info.version
-            } else {
-                dep_version
-            };
-
-            let dep = Dependency {
-                name: dep_name_str,
-                name_hash: dep_name_hash,
-                version: Dependency::parse(
-                    dep_name_str,
-                    Some(dep_name_hash),
-                    parsed_version,
-                    &SlicedString::init(parsed_version, parsed_version),
-                    Some(&mut *log),
-                    Some(&mut *manager),
-                )
-                .unwrap_or_default(),
-                behavior: behavior_for(dep_type, dep_entry_workspace),
-            };
-            let mut found_package_id: Option<PackageID> = None;
-            'outer: for (yarn_idx, entry_) in yarn_lock_.entries.iter().enumerate() {
-                for entry_spec in entry_.specs.iter() {
-                    if *entry_spec == dep_spec.as_slice() {
-                        found_package_id = Some(yarn_entry_to_package_id[yarn_idx]);
-                        break 'outer;
-                    }
-                }
-            }
-
-            if let Some(pkg_id) = found_package_id {
-                // SAFETY: `deps_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
-                unsafe { core::ptr::write(deps_buf.as_mut_ptr().add(count), dep) };
-                res_buf[count] = pkg_id;
-                count += 1;
-            }
-        }
-    }
-    Ok(count)
 }
 
 struct RootDep {
@@ -906,19 +817,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             this.packages.set(0, root_package);
         }
     }
-
-    // SAFETY: capacity reserved above to num_deps; Zig writes into items.ptr[0..num_deps]
-    // beyond len. We mirror with raw pointers and set len at the end.
-    let dependencies_base_ptr = this.buffers.dependencies.as_mut_ptr();
-    let resolutions_base_ptr = this.buffers.resolutions.as_mut_ptr();
-    let mut dependencies_buf: &mut [Dependency] = unsafe {
-        // SAFETY: capacity >= num_deps reserved above
-        bun_core::ffi::slice_mut(dependencies_base_ptr, num_deps as usize)
-    };
-    let mut resolutions_buf: &mut [PackageID] = unsafe {
-        // SAFETY: capacity >= num_deps reserved above
-        bun_core::ffi::slice_mut(resolutions_base_ptr, num_deps as usize)
-    };
 
     let mut yarn_entry_to_package_id: Vec<PackageID> = vec![0; yarn_lock.entries.len()];
 
@@ -1231,182 +1129,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         })?;
     }
 
-    // PORT NOTE: Zig holds two `items(.field)` slices simultaneously; the
-    // derive's `&mut self` accessors can't alias, so we re-borrow per write
-    // below via `this.packages.items_*_mut()[idx] = …` instead of caching.
-
-    let mut actual_root_dep_count: u32 = 0;
-
-    if !root_dependencies.is_empty() {
-        for dep in root_dependencies.iter() {
-            let mut dep_spec = Vec::new();
-            write!(
-                &mut dep_spec,
-                "{}@{}",
-                bstr::BStr::new(&dep.name),
-                bstr::BStr::new(&dep.version)
-            )
-            .expect("unreachable");
-
-            let mut found_idx: Option<usize> = None;
-            for (idx, entry) in yarn_lock.entries.iter().enumerate() {
-                for spec in entry.specs.iter() {
-                    if *spec == dep_spec.as_slice() {
-                        found_idx = Some(idx);
-                        break;
-                    }
-                }
-                if found_idx.is_some() {
-                    break;
-                }
-            }
-
-            if let Some(idx) = found_idx {
-                let name_hash = string_hash(&dep.name);
-                let dep_name_string = sbuf!().append_with_hash(&dep.name, name_hash)?;
-                let version_string = sbuf!().append(&dep.version)?;
-
-                // SAFETY: `dependencies_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
-                unsafe {
-                    core::ptr::write(
-                        dependencies_buf
-                            .as_mut_ptr()
-                            .add(actual_root_dep_count as usize),
-                        Dependency {
-                            name: dep_name_string,
-                            name_hash,
-                            version: Dependency::parse(
-                                dep_name_string,
-                                Some(name_hash),
-                                version_string.slice(this.buffers.string_bytes.as_slice()),
-                                &version_string.sliced(this.buffers.string_bytes.as_slice()),
-                                Some(&mut *log),
-                                Some(&mut *manager),
-                            )
-                            .unwrap_or_default(),
-                            behavior: behavior_for(dep.dep_type, false),
-                        },
-                    );
-                }
-
-                resolutions_buf[actual_root_dep_count as usize] = yarn_entry_to_package_id[idx];
-                actual_root_dep_count += 1;
-            }
-        }
-    }
-
-    this.packages.items_dependencies_mut()[0] =
-        lockfile::DependencySlice::new(0, actual_root_dep_count);
-    this.packages.items_resolutions_mut()[0] =
-        lockfile::DependencyIDSlice::new(0, actual_root_dep_count);
-
-    dependencies_buf = &mut dependencies_buf[actual_root_dep_count as usize..];
-    resolutions_buf = &mut resolutions_buf[actual_root_dep_count as usize..];
-
-    for yarn_idx in 0..yarn_lock.entries.len() {
-        let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
-            continue;
-        }
-
-        let dependencies_start = dependencies_buf.as_mut_ptr();
-        let resolutions_start = resolutions_buf.as_mut_ptr();
-
-        // PORT NOTE: reshaped for borrowck — iterate by index and re-borrow
-        // `yarn_lock.entries[yarn_idx]` for each map so the shared borrow of
-        // `yarn_lock` passed into `process_deps` doesn't overlap an iterator.
-        if let Some(deps) = yarn_lock.entries[yarn_idx].dependencies.as_ref() {
-            let processed = process_deps(
-                deps,
-                DependencyType::Production,
-                &yarn_lock,
-                &mut sbuf!(),
-                dependencies_buf,
-                resolutions_buf,
-                &mut *log,
-                &mut *manager,
-                &yarn_entry_to_package_id,
-            )?;
-            dependencies_buf = &mut dependencies_buf[processed..];
-            resolutions_buf = &mut resolutions_buf[processed..];
-        }
-
-        if let Some(deps) = yarn_lock.entries[yarn_idx].optional_dependencies.as_ref() {
-            let processed = process_deps(
-                deps,
-                DependencyType::Optional,
-                &yarn_lock,
-                &mut sbuf!(),
-                dependencies_buf,
-                resolutions_buf,
-                &mut *log,
-                &mut *manager,
-                &yarn_entry_to_package_id,
-            )?;
-            dependencies_buf = &mut dependencies_buf[processed..];
-            resolutions_buf = &mut resolutions_buf[processed..];
-        }
-
-        if let Some(deps) = yarn_lock.entries[yarn_idx].peer_dependencies.as_ref() {
-            let processed = process_deps(
-                deps,
-                DependencyType::Peer,
-                &yarn_lock,
-                &mut sbuf!(),
-                dependencies_buf,
-                resolutions_buf,
-                &mut *log,
-                &mut *manager,
-                &yarn_entry_to_package_id,
-            )?;
-            dependencies_buf = &mut dependencies_buf[processed..];
-            resolutions_buf = &mut resolutions_buf[processed..];
-        }
-
-        if let Some(deps) = yarn_lock.entries[yarn_idx].dev_dependencies.as_ref() {
-            let processed = process_deps(
-                deps,
-                DependencyType::Development,
-                &yarn_lock,
-                &mut sbuf!(),
-                dependencies_buf,
-                resolutions_buf,
-                &mut *log,
-                &mut *manager,
-                &yarn_entry_to_package_id,
-            )?;
-            dependencies_buf = &mut dependencies_buf[processed..];
-            resolutions_buf = &mut resolutions_buf[processed..];
-        }
-
-        // dependencies_start/dependencies_buf.as_ptr() are within the same allocation
-        let deps_len = (dependencies_buf.as_mut_ptr() as usize) - (dependencies_start as usize);
-        let deps_off = (dependencies_start as usize) - (dependencies_base_ptr as usize);
-        this.packages.items_dependencies_mut()[package_id as usize] =
-            lockfile::DependencySlice::new(
-                u32::try_from(deps_off / core::mem::size_of::<Dependency>()).expect("int cast"),
-                u32::try_from(deps_len / core::mem::size_of::<Dependency>()).expect("int cast"),
-            );
-        let res_off = (resolutions_start as usize) - (resolutions_base_ptr as usize);
-        let res_len = (resolutions_buf.as_mut_ptr() as usize) - (resolutions_start as usize);
-        this.packages.items_resolutions_mut()[package_id as usize] =
-            lockfile::DependencyIDSlice::new(
-                u32::try_from(res_off / core::mem::size_of::<PackageID>()).expect("int cast"),
-                u32::try_from(res_len / core::mem::size_of::<PackageID>()).expect("int cast"),
-            );
-    }
-
-    let final_deps_len = ((dependencies_buf.as_mut_ptr() as usize)
-        - (dependencies_base_ptr as usize))
-        / core::mem::size_of::<Dependency>();
-    unsafe {
-        // SAFETY: all elements in 0..final_deps_len initialized above; capacity >= num_deps
-        this.buffers.dependencies.set_len(final_deps_len);
-        this.buffers.resolutions.set_len(final_deps_len);
-    }
-
     this.buffers.hoisted_dependencies.reserve(
-        (this.buffers.dependencies.len() * 2)
+        (num_deps as usize)
+            .saturating_mul(2)
             .saturating_sub(this.buffers.hoisted_dependencies.len()),
     );
 
@@ -1443,8 +1168,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 )
                 .expect("unreachable");
 
-                // PORT NOTE: reshaped for borrowck — find_entry_by_spec via index search
-                // instead of returning &mut to avoid overlapping borrow with the loop below.
+                // PORT NOTE: reshaped for borrowck — use an index search
+                // instead of returning an entry reference that would overlap the loop below.
                 let dep_entry_specs: Option<Vec<&[u8]>> = {
                     let mut found: Option<Vec<&[u8]>> = None;
                     for e in yarn_lock.entries.iter() {

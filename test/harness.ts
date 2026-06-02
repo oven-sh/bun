@@ -923,24 +923,31 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 
+  // `dockerExe()` accepts podman as well as docker, and the two report
+  // readiness differently: docker needs a running daemon (surfaced as a
+  // `Server Version:` line in `docker info`), whereas podman is daemonless, so
+  // a successful `podman info` is itself the readiness signal.
+  const isPodman = /(^|\/)podman(\.exe)?$/i.test(dockerCLI);
+  const cliName = isPodman ? "podman" : "docker";
+
   // Keep `infoOutput` outside the try: a throw from `requireDockerInCI` for the
   // "exited 0 but no Server Version" case must not be swallowed by the catch
-  // (which would re-throw with the wrong "daemon not reachable" reason).
+  // (which would re-throw with the wrong "not reachable" reason).
   // Use spawnSync with an argument array (not execSync with a shell string) to
   // match the rest of this file and avoid any shell interpretation of the path.
   let infoOutput: string;
   try {
     const result = Bun.spawnSync({ cmd: [dockerCLI, "info"], stdout: "pipe", stderr: "inherit" });
     if (!result.success) {
-      throw new Error("`docker info` exited non-zero");
+      throw new Error(`\`${cliName} info\` exited non-zero`);
     }
     infoOutput = result.stdout.toString();
   } catch {
-    requireDockerInCI("`docker info` failed, so the daemon is not reachable");
+    requireDockerInCI(`\`${cliName} info\` failed, so the container runtime is not reachable`);
     return false;
   }
 
-  if (infoOutput.indexOf("Server Version:") !== -1) {
+  if (isPodman || infoOutput.indexOf("Server Version:") !== -1) {
     return true;
   }
   requireDockerInCI("`docker info` did not report a running daemon (`Server Version:`)");

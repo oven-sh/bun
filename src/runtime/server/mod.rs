@@ -309,6 +309,14 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
     fn drop(&mut self) {
         // The remaining owned fields (config, base_url, h3_alt_svc, dev_server,
         // user_routes, all_closed_promise, on_clienterror) drop automatically.
+        //
+        // ...except `dev_server`, which must be leaked instead of dropped when
+        // an async bundle is still in flight on the shared WorkPool (its
+        // ParseTasks borrow the transpilers stored inline in the box — see
+        // `DevServer::drop_or_leak`).
+        if let Some(dev) = self.dev_server.take() {
+            crate::bake::DevServer::DevServer::drop_or_leak(dev);
+        }
         if let Some(p) = self.plugins.take() {
             // SAFETY: `plugins` carries the `heap::alloc` provenance from
             // `ServePlugins::init`; this releases the server's counted ref.
@@ -1680,7 +1688,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app).clear_routes();
                 }
-                drop(dev); // dev.deinit()
+                // dev.deinit(); leaks instead if a bundle is still in flight
+                // (its WorkPool tasks borrow the box — see `drop_or_leak`).
+                crate::bake::DevServer::DevServer::drop_or_leak(dev);
             }
 
             // Only free the memory if the JS reference has been freed too.

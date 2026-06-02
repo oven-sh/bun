@@ -1187,10 +1187,13 @@ impl Drop for DevServer {
         // codegen (e.g. `generate_react_refresh_import_hmr`). Leak it.
         // `VirtualMachine::pending_async_bundles` intentionally stays nonzero
         // so a worker-thread teardown leaks the VM too (`WebWorker::shutdown`).
-        if let Some(bundle) = self.current_bundle.take() {
+        let bundle_in_flight = if let Some(bundle) = self.current_bundle.take() {
             debug_log!("deinit with an in-flight bundle; leaking it");
             let _ = ::core::mem::ManuallyDrop::new(bundle);
-        }
+            true
+        } else {
+            false
+        };
 
         {
             let mut r = self.next_bundle.requests.first;
@@ -1234,12 +1237,21 @@ impl Drop for DevServer {
             .server_components
             .as_ref()
             .is_some_and(|sc| sc.separate_ssr_graph);
-        // SAFETY: each transpiler is initialized exactly once in `init()`.
-        unsafe {
-            self.server_transpiler.assume_init_drop();
-            self.client_transpiler.assume_init_drop();
-            if separate_ssr_graph {
-                self.ssr_transpiler.assume_init_drop();
+        // A leaked in-flight `bv2` holds `&mut` borrows of these inline
+        // transpilers (see `CurrentBundle::bv2`), and straggler ParseTasks
+        // read them (`ctx.transpiler().options`, worker transpiler clones) —
+        // don't run their destructors out from under those tasks. This only
+        // preserves the transpilers' heap-side state; keeping the *inline
+        // storage* alive requires the owner to leak the whole `Box<DevServer>`
+        // (`DevServer::drop_or_leak`), which every drop site goes through.
+        if !bundle_in_flight {
+            // SAFETY: each transpiler is initialized exactly once in `init()`.
+            unsafe {
+                self.server_transpiler.assume_init_drop();
+                self.client_transpiler.assume_init_drop();
+                if separate_ssr_graph {
+                    self.ssr_transpiler.assume_init_drop();
+                }
             }
         }
 
@@ -1268,6 +1280,33 @@ impl Drop for DevServer {
 }
 
 impl DevServer {
+    /// `true` while an async bundle is running on the shared `WorkPool`. Its
+    /// ParseTasks borrow the transpilers stored inline in this box (see
+    /// `CurrentBundle::bv2`), so the `Box<DevServer>` must not be freed while
+    /// this holds.
+    #[inline]
+    pub fn has_in_flight_bundle(&self) -> bool {
+        self.current_bundle.is_some()
+    }
+
+    /// Drop `dev`, or — when an async bundle is still in flight — leak the
+    /// whole box. The bundle's ParseTasks on the shared `WorkPool` hold
+    /// `&mut` borrows of the transpilers stored *inline* in the `DevServer`
+    /// allocation (`CurrentBundle::bv2` doc) plus the watcher and the
+    /// `dev_server` handle; they can be neither cancelled nor waited for, so
+    /// freeing the box would dangle all of them (same UAF class as freeing
+    /// the bundle heap). Normally unreachable: `start_async_bundle` refs the
+    /// server (`on_pending_request`) for every bundle, which gates
+    /// `deinit_if_we_can` — this is the backstop for forced teardowns.
+    pub fn drop_or_leak(dev: Box<DevServer>) {
+        if dev.has_in_flight_bundle() {
+            debug_log!("leaking the DevServer: a bundle is still in flight");
+            let _ = Box::leak(dev);
+        } else {
+            drop(dev);
+        }
+    }
+
     /// Everything is `Box`/`Vec` on the global mimalloc, so this just
     /// returns the default `StdAllocator`. Kept for the few call sites
     /// that still want a `StdAllocator` handle.

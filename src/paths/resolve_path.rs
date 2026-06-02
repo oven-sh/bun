@@ -2293,6 +2293,12 @@ impl PosixToWinNormalizer {
                         let cwd = bun_core::getcwd(buf)?;
                         windows_filesystem_root(cwd.as_bytes()).len()
                     };
+                    // The cwd root (arbitrarily long for UNC cwds) plus the
+                    // path must fit `buf`; such a combination can't exist on
+                    // NT anyway, so error out instead of writing past it.
+                    if sr_len + maybe_posix_path.len() - 1 > buf.len() {
+                        return Err(bun_core::err!("NameTooLong"));
+                    }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     let res = &buf[0..sr_len + maybe_posix_path.len() - 1];
@@ -2329,6 +2335,13 @@ impl PosixToWinNormalizer {
                         let cwd = bun_core::getcwd(buf)?;
                         windows_filesystem_root(cwd.as_bytes()).len()
                     };
+                    // The cwd root (arbitrarily long for UNC cwds) plus the
+                    // path and its NUL must fit `buf`; such a combination
+                    // can't exist on NT anyway, so error out instead of
+                    // writing past it.
+                    if sr_len + maybe_posix_path.len() > buf.len() {
+                        return Err(bun_core::err!("NameTooLong"));
+                    }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     buf[sr_len + maybe_posix_path.len() - 1] = 0;
@@ -2349,6 +2362,9 @@ impl PosixToWinNormalizer {
             );
         }
 
+        if maybe_posix_path.len() + 1 > buf.len() {
+            return Err(bun_core::err!("NameTooLong"));
+        }
         buf[..maybe_posix_path.len()].copy_from_slice(maybe_posix_path);
         buf[maybe_posix_path.len()] = 0;
         // SAFETY: NUL at buf[maybe_posix_path.len()]

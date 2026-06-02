@@ -1066,15 +1066,15 @@ impl PathLikeExt for PathLike {
 
         #[cfg(windows)]
         {
-            // The copies below append a 4-byte `\\?\` prefix (drive
-            // letters) or the cwd's filesystem root (missing-drive-letter
-            // paths — arbitrarily long for UNC cwds), plus a NUL — none of
-            // them bounds-checked, so paths near MAX_PATH_BYTES used to
-            // write past `buf`. Only take the fast path for paths that can
-            // exist on NT at all (≤ ~32757 UTF-16 units, far below any of
-            // those overflow windows); anything longer falls through to the
-            // plain copy at the bottom, which fits without the prefix (or
-            // takes the too-long fallback) and fails at the syscall.
+            // Only take the fast path for paths that can exist on NT at
+            // all (≤ ~32757 UTF-16 units). That bounds the `\\?\`-prefixed
+            // copy below in bytes too (≤ 3×32757 + 5 < MAX_PATH_BYTES);
+            // the cwd-join branch of `resolve_cwd_with_external_buf_z`
+            // prepends the cwd's filesystem root — arbitrarily long for UNC
+            // cwds — and bounds-checks internally, surfacing NameTooLong.
+            // Anything over-long falls through to the plain copy at the
+            // bottom, which fits without the prefix (or takes the too-long
+            // fallback) and fails at the syscall.
             if bun_paths::is_absolute(sliced) && strings::fits_in_wide_path_buffer(sliced) {
                 if sliced.len() > 2
                     && bun_paths::is_drive_letter(sliced[0])
@@ -1096,8 +1096,21 @@ impl PathLikeExt for PathLike {
                     // SAFETY: buf[4+n] == 0 written above.
                     return ZStr::from_buf(&buf[..], 4 + n);
                 }
-                return bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced)
-                    .unwrap_or_else(|_| panic!("Error while resolving path."));
+                // PORT NOTE: reshaped for borrowck — capture the length so
+                // the `Ok` borrow ends at the match, then re-derive.
+                let resolved_len = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced) {
+                    Ok(res) => Some(res.len()),
+                    // The cwd root + path don't fit `buf` (UNC cwds can push
+                    // a near-MAX_PATH_BYTES path over); fall through to the
+                    // plain copy / too-long handling below.
+                    Err(e) if e == bun_core::err!("NameTooLong") => None,
+                    Err(_) => panic!("Error while resolving path."),
+                };
+                if let Some(len) = resolved_len {
+                    // SAFETY: `resolve_cwd_with_external_buf_z` wrote the NUL
+                    // at `buf[len]`.
+                    return ZStr::from_buf(&buf[..], len);
+                }
             }
         }
 
@@ -1197,11 +1210,16 @@ impl PathLikeExt for PathLike {
             if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
                 // `buf` is the scratch for cwd-resolution; `b` is the pooled
                 // scratch for normalisation; final wide path lands back in `buf`.
-                let resolve =
-                    bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(
-                        buf, s,
-                    )
-                    .unwrap_or_else(|_| panic!("Error while resolving path."));
+                let resolve = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(
+                    buf, s,
+                ) {
+                    Ok(r) => r,
+                    // The cwd root + path don't fit the resolution buffer
+                    // (UNC cwds can push a near-MAX_PATH_BYTES path over) —
+                    // such a path can't exist on NT.
+                    Err(e) if e == bun_core::err!("NameTooLong") => return Err(NameTooLong),
+                    Err(_) => panic!("Error while resolving path."),
+                };
                 let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
                     resolve,
                     &mut b[..],

@@ -1066,17 +1066,16 @@ impl PathLikeExt for PathLike {
 
         #[cfg(windows)]
         {
-            // The copies below append up to a 4-byte `\\?\` prefix (drive
-            // letters), a cwd drive root (missing-drive-letter paths), and a
-            // NUL — none of them bounds-checked. For the last few byte
-            // lengths below MAX_PATH_BYTES they used to write past `buf`;
-            // fall through to the plain copy at the bottom instead, which
-            // fits without the prefix (or, at exactly MAX_PATH_BYTES, takes
-            // the too-long fallback) and leaves the over-long path to fail
-            // at the syscall.
-            if bun_paths::is_absolute(sliced)
-                && sliced.len() + bun_sys::windows::LONG_PATH_PREFIX_U8.len() < buf.len()
-            {
+            // The copies below append a 4-byte `\\?\` prefix (drive
+            // letters) or the cwd's filesystem root (missing-drive-letter
+            // paths — arbitrarily long for UNC cwds), plus a NUL — none of
+            // them bounds-checked, so paths near MAX_PATH_BYTES used to
+            // write past `buf`. Only take the fast path for paths that can
+            // exist on NT at all (≤ ~32757 UTF-16 units, far below any of
+            // those overflow windows); anything longer falls through to the
+            // plain copy at the bottom, which fits without the prefix (or
+            // takes the too-long fallback) and fails at the syscall.
+            if bun_paths::is_absolute(sliced) && strings::fits_in_wide_path_buffer(sliced) {
                 if sliced.len() > 2
                     && bun_paths::is_drive_letter(sliced[0])
                     && sliced[1] == b':'

@@ -1127,6 +1127,38 @@ it("Bun.file().stream() read text from large file", async () => {
   }
 });
 
+// https://github.com/oven-sh/bun/issues/31675
+it("Bun.file().slice(start, end).stream() buffered consumption resolves on a large file", async () => {
+  // 1 MiB: large enough that the read loop fills the shared read buffer
+  // before EOF, so the slice window is exhausted mid-read instead of at EOF.
+  const size = 1024 * 1024;
+  const data = Buffer.alloc(size);
+  for (let i = 0; i < size; i++) data[i] = i % 251;
+  const tmpfile = join(realpathSync(tmpdirSync()), "bun-streams-slice-test.bin");
+  writeFileSync(tmpfile, data);
+  try {
+    // window inside the first read chunk
+    const small = Buffer.from(await Bun.file(tmpfile).slice(100, 1124).stream().bytes());
+    expect(small.equals(data.subarray(100, 1124))).toBe(true);
+
+    // window spanning multiple read chunks
+    const spanStart = 1000;
+    const spanEnd = spanStart + 600 * 1024;
+    const chunks = [];
+    for await (const chunk of Bun.file(tmpfile).slice(spanStart, spanEnd).stream()) {
+      chunks.push(chunk);
+    }
+    const spanned = Buffer.concat(chunks);
+    expect(spanned.equals(data.subarray(spanStart, spanEnd))).toBe(true);
+
+    // empty window
+    const empty = await Bun.file(tmpfile).slice(500, 500).stream().bytes();
+    expect(empty.byteLength).toBe(0);
+  } finally {
+    unlinkSync(tmpfile);
+  }
+});
+
 it("fs.createReadStream(filename) should be able to break inside async loop", async () => {
   for (let i = 0; i < 10; i++) {
     const fileStream = createReadStream(join(import.meta.dir, "..", "fetch", "fixture.png"));

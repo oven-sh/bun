@@ -670,6 +670,12 @@ impl PosixBufferedReader {
                                     ReadState::Progress
                                 },
                             );
+                            // The callback may finish the reader (e.g. a
+                            // `max_size` window closing it mid-drain); `fd`
+                            // is stale then, so stop reading it.
+                            if parent.is_done() {
+                                return;
+                            }
                         } else {
                             parent
                                 ._buffer
@@ -876,15 +882,18 @@ impl PosixBufferedReader {
                                 // far more often; once HUP is set the kernel
                                 // returns the remaining bytes then 0, so
                                 // draining to `bytes_read == 0` is bounded.
-                                if !parent.vtable.on_read_chunk(
+                                let keep_reading = parent.vtable.on_read_chunk(
                                     &event_loop.pipe_read_buffer_mut()[..head_start],
                                     if received_hup {
                                         ReadState::Eof
                                     } else {
                                         ReadState::Progress
                                     },
-                                ) && !received_hup
-                                {
+                                );
+                                // The callback may finish the reader (e.g. a
+                                // `max_size` window closing it mid-drain);
+                                // `fd` is stale then, so stop even on HUP.
+                                if parent.is_done() || (!keep_reading && !received_hup) {
                                     return;
                                 }
                                 head_start = 0;
@@ -922,15 +931,17 @@ impl PosixBufferedReader {
                 }
 
                 if head_start > 0 {
-                    if !parent.vtable.on_read_chunk(
+                    let keep_reading = parent.vtable.on_read_chunk(
                         &event_loop.pipe_read_buffer_mut()[..head_start],
                         if received_hup {
                             ReadState::Eof
                         } else {
                             ReadState::Progress
                         },
-                    ) && !received_hup
-                    {
+                    );
+                    // See the matching check above: the callback may finish
+                    // the reader, after which `fd` must not be read again.
+                    if parent.is_done() || (!keep_reading && !received_hup) {
                         return;
                     }
                 }

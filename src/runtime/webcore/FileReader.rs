@@ -603,6 +603,12 @@ impl FileReader {
             if let Some(max_size) = self.max_size {
                 let total_readed = self.total_readed.get();
                 if total_readed >= max_size {
+                    // The window was already exhausted; drop the excess bytes
+                    // and tear the reader down so a pending read resolves as
+                    // done instead of waiting forever.
+                    if !self.reader().is_done() {
+                        self.reader().close();
+                    }
                     return false;
                 }
                 let len = (max_size - total_readed).min(buf.len());
@@ -611,7 +617,12 @@ impl FileReader {
                 }
                 self.total_readed.set(total_readed + len);
 
-                if buf.is_empty() {
+                // Reaching `max_size` is this stream's EOF even though the
+                // underlying file may have more bytes: deliver the (possibly
+                // truncated) chunk as the final one and close the reader.
+                // Nothing re-arms a read on a regular file, so failing to
+                // close here leaves draining consumers pending forever.
+                if total_readed + len >= max_size {
                     close = true;
                     has_more = false;
                 }
@@ -709,7 +720,9 @@ impl FileReader {
                     break 'pending false;
                 }
 
-                let was_done = self.reader().is_done();
+                // A `close` scheduled by the `max_size` window above is this
+                // stream's EOF: deliver the final chunk as done.
+                let was_done = self.reader().is_done() || close;
 
                 if pending_buf.len() >= buf.len() {
                     pending_buf[0..buf.len()].copy_from_slice(buf);
@@ -734,7 +747,7 @@ impl FileReader {
 
                 // SAFETY: see `reader_buffer` decl — tight deref.
                 if is_slice_in_vec_capacity(buf, unsafe { &*reader_buffer }) {
-                    if self.reader().is_done() {
+                    if was_done {
                         // SAFETY: see `reader_buffer` decl.
                         debug_assert_eq!(buf.as_ptr(), unsafe { (*reader_buffer).as_ptr() });
                         // SAFETY: see `reader_buffer` decl — tight deref, no `&mut` held across.
@@ -756,7 +769,7 @@ impl FileReader {
 
                 if !is_slice_in_vec_capacity(buf, self.buffered.get()) {
                     self.pending.with_mut(|p| {
-                        p.result = if self.reader().is_done() {
+                        p.result = if was_done {
                             streams::Result::TemporaryAndDone(bun_ptr::RawSlice::new(buf))
                         } else {
                             streams::Result::Temporary(bun_ptr::RawSlice::new(buf))
@@ -770,7 +783,7 @@ impl FileReader {
                 buffered.truncate(buf.len()); // shrinkRetainingCapacity
 
                 self.pending.with_mut(|p| {
-                    p.result = if self.reader().is_done() {
+                    p.result = if was_done {
                         streams::Result::OwnedAndDone(Vec::<u8>::move_from_list(buffered))
                     } else {
                         streams::Result::Owned(Vec::<u8>::move_from_list(buffered))
@@ -797,11 +810,13 @@ impl FileReader {
         // For pipes, we have to keep pulling or the other process will block.
         // SAFETY: see `reader_buffer` decl.
         let reader_buffer_len = unsafe { (*reader_buffer).len() };
-        let ret = !matches!(
-            self.read_inside_on_pull.get(),
-            ReadDuringJSOnPullResult::Temporary(_)
-        ) && !(self.buffered.get().len() + reader_buffer_len >= self.highwater_mark
-            && !self.reader_is_pollable());
+        let ret = !close
+            && !matches!(
+                self.read_inside_on_pull.get(),
+                ReadDuringJSOnPullResult::Temporary(_)
+            )
+            && !(self.buffered.get().len() + reader_buffer_len >= self.highwater_mark
+                && !self.reader_is_pollable());
         close_if_needed!();
         ret
     }

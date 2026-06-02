@@ -107,6 +107,10 @@ unsafe extern "C" {
         possible_readable_stream: JSValue,
         global_object: &JSGlobalObject,
     ) -> bool;
+    safe fn ReadableStream__getStoredError(
+        possible_readable_stream: JSValue,
+        global_object: &JSGlobalObject,
+    ) -> JSValue;
     safe fn ReadableStream__empty(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__used(global: &JSGlobalObject) -> JSValue;
     safe fn ReadableStream__errored(global: &JSGlobalObject, reason: JSValue) -> JSValue;
@@ -269,6 +273,14 @@ impl ReadableStream {
     /// A pure `dynamicDowncast<JSReadableStream>` type test: no tagging, no conversion.
     pub fn is_readable_stream(value: JSValue) -> bool {
         ReadableStream__is(value)
+    }
+
+    /// When the stream's state is errored, returns its `storedError`
+    /// (`undefined` when the stream errored without a stored value). Returns
+    /// `None` for every other state.
+    pub fn stored_error(&self, global_object: &JSGlobalObject) -> Option<JSValue> {
+        let err = ReadableStream__getStoredError(self.value, global_object);
+        if err.is_empty() { None } else { Some(err) }
     }
 
     pub fn from_js(

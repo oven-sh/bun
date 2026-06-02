@@ -136,6 +136,7 @@ test("TextDecoder - ISO-8859-2 encoding", () => {
   const decoder = new TextDecoder("iso-8859-2");
   expect(decoder.encoding).toBe("iso-8859-2");
   expect(new TextDecoder("latin2").encoding).toBe("iso-8859-2");
+  expect(new TextDecoder("iso88592").encoding).toBe("iso-8859-2");
   expect(decoder.decode(new Uint8Array([0xbf, 0xcf, 0xdf]))).toBe(cp(0x017c, 0x010e, 0x00df));
 });
 
@@ -143,6 +144,7 @@ test("TextDecoder - ISO-8859-4 encoding", () => {
   const decoder = new TextDecoder("iso-8859-4");
   expect(decoder.encoding).toBe("iso-8859-4");
   expect(new TextDecoder("latin4").encoding).toBe("iso-8859-4");
+  expect(new TextDecoder("iso88594").encoding).toBe("iso-8859-4");
   expect(decoder.decode(new Uint8Array([0xbf, 0xcf, 0xdf]))).toBe(cp(0x014b, 0x012a, 0x00df));
 });
 
@@ -150,6 +152,7 @@ test("TextDecoder - ISO-8859-5 encoding", () => {
   const decoder = new TextDecoder("iso-8859-5");
   expect(decoder.encoding).toBe("iso-8859-5");
   expect(new TextDecoder("cyrillic").encoding).toBe("iso-8859-5");
+  expect(new TextDecoder("iso88595").encoding).toBe("iso-8859-5");
   expect(decoder.decode(new Uint8Array([0xbf, 0xcf, 0xdf]))).toBe(cp(0x041f, 0x042f, 0x043f));
 });
 

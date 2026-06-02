@@ -220,6 +220,7 @@ static STRING_MAP: phf::Map<&'static [u8], EncodingLabel> = phf::phf_map! {
     // ISO-8859-2 aliases
     b"iso-8859-2" => EncodingLabel::Iso8859_2,
     b"iso8859-2" => EncodingLabel::Iso8859_2,
+    b"iso88592" => EncodingLabel::Iso8859_2,
     b"iso_8859-2" => EncodingLabel::Iso8859_2,
     b"iso_8859-2:1987" => EncodingLabel::Iso8859_2,
     b"iso-ir-101" => EncodingLabel::Iso8859_2,
@@ -230,6 +231,7 @@ static STRING_MAP: phf::Map<&'static [u8], EncodingLabel> = phf::phf_map! {
     // ISO-8859-4 aliases
     b"iso-8859-4" => EncodingLabel::Iso8859_4,
     b"iso8859-4" => EncodingLabel::Iso8859_4,
+    b"iso88594" => EncodingLabel::Iso8859_4,
     b"iso_8859-4" => EncodingLabel::Iso8859_4,
     b"iso_8859-4:1988" => EncodingLabel::Iso8859_4,
     b"iso-ir-110" => EncodingLabel::Iso8859_4,
@@ -240,6 +242,7 @@ static STRING_MAP: phf::Map<&'static [u8], EncodingLabel> = phf::phf_map! {
     // ISO-8859-5 aliases
     b"iso-8859-5" => EncodingLabel::Iso8859_5,
     b"iso8859-5" => EncodingLabel::Iso8859_5,
+    b"iso88595" => EncodingLabel::Iso8859_5,
     b"iso_8859-5" => EncodingLabel::Iso8859_5,
     b"iso_8859-5:1988" => EncodingLabel::Iso8859_5,
     b"iso-ir-144" => EncodingLabel::Iso8859_5,

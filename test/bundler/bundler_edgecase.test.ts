@@ -2570,6 +2570,45 @@ describe("bundler", () => {
       stdout: "42",
     },
   });
+  // Many imports resolving through the same re-export chain from different
+  // entry distances: later resolutions reuse the memoized walk of the first,
+  // including its accumulated re-export dependency list.
+  itBundled("edgecase/SharedReExportChainManyImporters", {
+    files: {
+      "/entry.js": /* js */ `
+        import { a, b } from './f0.js';
+        import { a as midA } from './f20.js';
+        import { b as midB } from './f35.js';
+        console.log(a + b + midA + midB);
+      `,
+      ...Object.fromEntries(
+        Array.from({ length: 40 }, (_, i) => [
+          `/f${i}.js`,
+          i === 39 ? `export const a = 1; export const b = 2;` : `export { a, b } from './f${i + 1}.js';`,
+        ]),
+      ),
+    },
+    run: {
+      stdout: "6",
+    },
+  });
+  // An import chain that feeds into (but is not part of) an export cycle must
+  // still be reported as a cycle, including when the cycle was already
+  // detected while resolving an earlier import.
+  itBundled("edgecase/ReExportChainIntoCycle", {
+    files: {
+      "/entry.js": [
+        ...Array.from({ length: 40 }, (_, i) => `export {v${i} as v${(i + 1) % 40}} from './entry'`),
+        `export {v0 as leadIn} from './entry'`,
+      ].join("\n"),
+    },
+    bundleErrors: {
+      "/entry.js": [
+        ...Array.from({ length: 40 }, (_, i) => `Detected cycle while resolving import "v${i}"`),
+        `Detected cycle while resolving import "v0"`,
+      ],
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

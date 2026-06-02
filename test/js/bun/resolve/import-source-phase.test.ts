@@ -259,6 +259,44 @@ describe.concurrent("import source (source phase imports)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a completely unreferenced binding keeps the source phase in JavaScript", async () => {
+    // JavaScript imports always execute; even with zero references to the
+    // binding the module source is still requested, so an invalid file
+    // fails to load.
+    const { stdout, stderr, exitCode } = await run({
+      "main.js": `
+        import source mod from "./fake.wasm";
+        console.log("main");
+      `,
+      "fake.wasm": `not wasm at all`,
+    });
+    expect(stdout).not.toContain("main");
+    expect(stderr).toContain("only WebAssembly modules have a module source");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("a completely unreferenced binding is elided in TypeScript, like tsc", async () => {
+    // TypeScript treats an import whose bindings have no syntactic
+    // references as type-only and elides the whole statement — the same
+    // behavior tsc and esbuild apply to plain imports, and the same
+    // behavior Bun applies to `import defer`. The wasm is never fetched,
+    // so even an invalid file loads fine. `verbatimModuleSyntax` preserves
+    // such imports.
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "main.ts": `
+          import source mod from "./fake.wasm";
+          console.log("main");
+        `,
+        "fake.wasm": `not wasm at all`,
+      },
+      "main.ts",
+    );
+    expect(stderr).toBe("");
+    expect(stdout.split("\n").filter(Boolean)).toEqual(["main"]);
+    expect(exitCode).toBe(0);
+  });
+
   describe("errors", () => {
     test("source phase import of a JavaScript module is an error", async () => {
       const { stdout, stderr, exitCode } = await run({

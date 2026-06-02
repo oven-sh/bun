@@ -172,6 +172,15 @@ impl<'a> ImportScanner<'a> {
                             // statement: the grammar requires exactly one binding, so
                             // dropping it would force the printer to emit a bare
                             // side-effect import and lose the source phase entirely.
+                            //
+                            // Note the scope of this guard: it protects bindings whose
+                            // only references sit in dead code (`use_count_estimate == 0`
+                            // but `ts_use_counts != 0`). A source phase import with *no*
+                            // syntactic reference at all in a TypeScript file is still
+                            // removed wholesale by the `is_unused_in_typescript` check
+                            // below — the same elision tsc/esbuild apply and the same
+                            // behavior as `import defer`; `verbatimModuleSyntax`
+                            // (`preserve_unused_imports_ts`) keeps it.
                             if symbol.use_count_estimate == 0
                                 && st.phase != bun_ast::ImportPhase::Source
                             {

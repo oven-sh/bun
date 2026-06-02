@@ -403,6 +403,39 @@ struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t 
     return ls;
 }
 
+/* Adopt an already-listening file descriptor (e.g. received over IPC via
+ * SCM_RIGHTS) as a listen socket, rather than creating+binding a new one.
+ * The fd must already be bound and in the LISTEN state. */
+struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
+        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
+        LIBUS_SOCKET_DESCRIPTOR fd, int options, int socket_ext_size) {
+#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
+    (void) group; (void) kind; (void) ssl_ctx; (void) fd; (void) options; (void) socket_ext_size;
+    return 0;
+#else
+    if (fd == LIBUS_SOCKET_ERROR) {
+        return 0;
+    }
+
+    /* The fd arrives from another process; normalize the flags we rely on. */
+    apple_no_sigpipe(fd);
+    bsd_set_nonblocking(fd);
+
+    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
+    us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
+    us_poll_start(p, group->loop, LIBUS_SOCKET_READABLE);
+
+    struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
+    us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
+
+    if (options & LIBUS_LISTEN_DEFER_ACCEPT) {
+        ls->deferred_accept = bsd_set_defer_accept(fd);
+    }
+
+    return ls;
+#endif
+}
+
 void us_listen_socket_close(struct us_listen_socket_t *ls) {
     struct us_socket_t *s = &ls->s;
     if (!us_socket_is_closed(s)) {

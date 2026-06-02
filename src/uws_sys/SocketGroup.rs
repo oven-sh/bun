@@ -213,6 +213,29 @@ impl SocketGroup {
         }
     }
 
+    /// Adopt an already-listening fd (received over IPC via SCM_RIGHTS) as a
+    /// listen socket, rather than creating+binding a new one.
+    pub fn listen_fd(
+        &mut self,
+        kind: SocketKind,
+        ssl_ctx: Option<*mut SslCtx>,
+        fd: LIBUS_SOCKET_DESCRIPTOR,
+        options: c_int,
+        socket_ext_size: c_int,
+    ) -> *mut ListenSocket {
+        // SAFETY: forwarding to C; `fd` is an owned, already-listening descriptor.
+        unsafe {
+            us_socket_group_listen_fd(
+                self,
+                kind as u8,
+                ssl_ctx.unwrap_or(ptr::null_mut()),
+                fd,
+                options,
+                socket_ext_size,
+            )
+        }
+    }
+
     pub fn connect(
         &mut self,
         kind: SocketKind,
@@ -342,6 +365,14 @@ unsafe extern "C" {
         options: c_int,
         socket_ext_size: c_int,
         err: *mut c_int,
+    ) -> *mut ListenSocket;
+    fn us_socket_group_listen_fd(
+        group: *mut SocketGroup,
+        kind: u8,
+        ssl_ctx: *mut SslCtx,
+        fd: LIBUS_SOCKET_DESCRIPTOR,
+        options: c_int,
+        socket_ext_size: c_int,
     ) -> *mut ListenSocket;
     /// Returns `us_socket_t*` (fast path) OR `us_connecting_socket_t*` (slow
     /// path), discriminated by `*is_connecting`. The public `connect()` method

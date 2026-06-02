@@ -54,6 +54,10 @@ export function initializeTransformStream(this) {
       transformerDict["flush"] = transformer["flush"];
       if (typeof transformerDict["flush"] !== "function") $throwTypeError("transformer.flush should be a function");
     }
+    if ("cancel" in transformer) {
+      transformerDict["cancel"] = transformer["cancel"];
+      if (typeof transformerDict["cancel"] !== "function") $throwTypeError("transformer.cancel should be a function");
+    }
 
     if ("readableType" in transformer) throw new RangeError("TransformStream transformer has a readableType");
     if ("writableType" in transformer) throw new RangeError("TransformStream transformer has a writableType");

@@ -6211,14 +6211,18 @@ impl FileSinkPipe {
         if let Some(err) = err {
             // SAFETY: `sink` is the live +1 held by this pipe.
             let _ = unsafe { (*self.sink).end(None) };
-            // TODO: properly propagate exception upwards (same discipline as
-            // s3::client's native-context settlements).
+            // `reject` only errs on VM termination; nothing to settle then.
             let _ = self.promise.reject(global, Ok(err));
             // SAFETY: sole owner; nothing touches `this` after destroy.
             unsafe { Self::destroy(this) };
             return;
         }
 
+        // Resolve with 0 on success — parity with the JSSink path this
+        // replaces, which discards the builtin's result and resolves with 0
+        // for every ReadableStream source (see the `Fulfilled` arm and
+        // `on_file_stream_resolve_request_stream` in
+        // `pipe_readable_stream_to_blob`).
         // SAFETY: `sink` is the live +1 held by this pipe.
         match unsafe { (*self.sink).end_from_js(global) } {
             bun_sys::Result::Ok(value) => {
@@ -6236,20 +6240,14 @@ impl FileSinkPipe {
                             return;
                         }
                         jsc::js_promise::Status::Fulfilled => {
-                            // SAFETY: `sink` live until destroy below.
-                            let written = unsafe { (*self.sink).written.get() };
-                            let _ = self
-                                .promise
-                                .resolve(global, JSValue::js_number(written as f64));
+                            let _ = self.promise.resolve(global, JSValue::js_number(0.0));
                         }
                         jsc::js_promise::Status::Rejected => {
                             let _ = self.promise.reject(global, Ok(promise.result(global.vm())));
                         }
                     }
                 } else {
-                    // Synchronous completion: `end_from_js` returned the
-                    // written count directly.
-                    let _ = self.promise.resolve(global, value);
+                    let _ = self.promise.resolve(global, JSValue::js_number(0.0));
                 }
             }
             bun_sys::Result::Err(err) => {
@@ -6308,13 +6306,13 @@ pub fn on_file_sink_pipe_resolve(
     // SAFETY: trailing arg is the `*mut FileSinkPipe` boxed through `then()`
     // in `FileSinkPipe::finish`; we are the sole consumer.
     let this = args.ptr[args.len - 1].as_number() as usize as *mut FileSinkPipe;
-    // SAFETY: `this` and its sink are live until destroy below.
-    let written = unsafe { (*(*this).sink).written.get() };
+    // Resolve with 0 — parity with the synchronous arms of
+    // `FileSinkPipe::finish` and with the JSSink path this replaces.
     // SAFETY: `this` is live until destroy below.
     let result = unsafe {
         (*this)
             .promise
-            .resolve(global_this, JSValue::js_number(written as f64))
+            .resolve(global_this, JSValue::js_number(0.0))
     };
     // SAFETY: sole owner.
     unsafe { FileSinkPipe::destroy(this) };

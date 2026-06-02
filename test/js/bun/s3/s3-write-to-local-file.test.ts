@@ -1,6 +1,6 @@
 import { S3Client } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -30,7 +30,9 @@ describe("Bun.write(Bun.file(path), s3file)", () => {
     using dir = tempDir("s3-write-local", {});
     const dest = join(String(dir), "download.bin");
 
-    await Bun.write(Bun.file(dest), makeClient(server.url.origin).file("some-key"));
+    // resolves with 0 for ReadableStream-backed sources (including S3), on
+    // every platform — parity with the JS streaming loop
+    expect(await Bun.write(Bun.file(dest), makeClient(server.url.origin).file("some-key"))).toBe(0);
 
     const got = await Bun.file(dest).bytes();
     expect(got.byteLength).toBe(SIZE);
@@ -40,18 +42,84 @@ describe("Bun.write(Bun.file(path), s3file)", () => {
   it("rejects when the object stream dies mid-body", async () => {
     const raw = net.createServer(socket => {
       socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${SIZE}\r\n\r\n`);
-      socket.write(Buffer.alloc(SIZE / 2, 0x42));
-      setTimeout(() => socket.destroy(), 50);
+      // destroy as soon as the first half has been flushed to the socket
+      socket.write(Buffer.alloc(SIZE / 2, 0x42), () => socket.destroy());
     });
     await new Promise<void>(resolve => raw.listen(0, () => resolve()));
     const port = (raw.address() as net.AddressInfo).port;
     using dir = tempDir("s3-write-local-err", {});
     const dest = join(String(dir), "partial.bin");
 
-    expect(async () => {
-      await Bun.write(Bun.file(dest), makeClient(`http://127.0.0.1:${port}`).file("k"));
-    }).toThrow();
+    try {
+      await expect(Bun.write(Bun.file(dest), makeClient(`http://127.0.0.1:${port}`).file("k"))).rejects.toThrow();
+    } finally {
+      raw.close();
+    }
+  });
 
-    raw.close();
+  // Regression test for the `endFromJS`-returns-a-pending-Promise arm: the
+  // final flush settles through host functions attached with JSValue.then(),
+  // which must be registered in GlobalObject::promiseHandlerID — an
+  // unregistered handler is a RELEASE_ASSERT (the process aborts with no
+  // output). On Windows every FileSink write is an async libuv request, so
+  // the plain to-disk test above covers it there; on POSIX a regular-file
+  // flush completes synchronously, so force the pending arm with a pipe
+  // destination instead. (Skipped on Windows: an fd-1 destination takes the
+  // synchronous stdout path there, which would block the child's event loop.)
+  it.skipIf(isWindows)("settles when the final flush is still pending at stream end", async () => {
+    const childScript = `
+      const client = new Bun.S3Client({
+        endpoint: process.env.S3_ENDPOINT,
+        bucket: "test-bucket",
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "us-east-1",
+      });
+      // fd 1 is a pipe (~64KB) that the parent is not draining yet, so the
+      // FileSink still has most of the body buffered when the last network
+      // chunk arrives.
+      const n = await Bun.write(Bun.file(1), client.file("big.bin"));
+      if (n !== 0) {
+        console.error("unexpected resolve value: " + n);
+        process.exit(1);
+      }
+    `;
+
+    const { promise: bodySent, resolve: bodySentResolve } = Promise.withResolvers<void>();
+    let responded = false;
+    const raw = net.createServer(socket => {
+      socket.on("data", () => {
+        if (responded) return;
+        responded = true;
+        socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${SIZE}\r\n\r\n`);
+        // the write callback fires once the whole payload has been flushed
+        // into the socket, i.e. the child has consumed (nearly) all of it
+        socket.write(payload, () => socket.end(() => bodySentResolve()));
+      });
+    });
+    await new Promise<void>(resolve => raw.listen(0, () => resolve()));
+    const port = (raw.address() as net.AddressInfo).port;
+
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", childScript],
+        env: { ...bunEnv, S3_ENDPOINT: `http://127.0.0.1:${port}` },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+
+      // Hold off draining the child's stdout until the entire body (plus EOF)
+      // has left the server, guaranteeing the child's FileSink still has
+      // buffered data when it processes the final chunk → endFromJS returns a
+      // pending Promise.
+      await bodySent;
+
+      let got = 0;
+      for await (const chunk of proc.stdout) got += chunk.length;
+      expect(got).toBe(SIZE);
+      expect(await proc.exited).toBe(0);
+    } finally {
+      raw.close();
+    }
   });
 });

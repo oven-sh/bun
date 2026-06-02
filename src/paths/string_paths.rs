@@ -324,11 +324,18 @@ pub fn to_w_dir_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
 ///
 /// UTF-8 → UTF-16 never expands the unit count, so the byte count fitting
 /// already proves the fit; the exact (O(n) SIMD) count is only computed for
-/// longer inputs.
+/// longer inputs. The byte length is bounded as well: a fitting *valid* path
+/// takes at most 3 bytes per unit, while for invalid bytes the exact-length
+/// estimate undercounts (stray continuation bytes count zero units but become
+/// one U+FFFD each in the WTF-8 fallback) — without the byte cap, arbitrary-
+/// length garbage input would pass and overflow the u8-space path copies this
+/// check also guards.
 pub fn fits_in_wide_path_buffer(utf8: &[u8]) -> bool {
     const OVERHEAD: usize = windows::NT_UNC_OBJECT_PREFIX.len() + 2;
-    utf8.len() + OVERHEAD <= crate::PATH_MAX_WIDE
-        || strings::element_length_utf8_into_utf16(utf8) + OVERHEAD <= crate::PATH_MAX_WIDE
+    const MAX_UNITS: usize = crate::PATH_MAX_WIDE - OVERHEAD;
+    utf8.len() <= MAX_UNITS
+        || (utf8.len() <= 3 * MAX_UNITS
+            && strings::element_length_utf8_into_utf16(utf8) <= MAX_UNITS)
 }
 
 pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
@@ -709,6 +716,15 @@ mod tests {
         assert!(fits_in_wide_path_buffer(&cjk));
         let cjk_long: Vec<u8> = "世".repeat(32758).into_bytes();
         assert!(!fits_in_wide_path_buffer(&cjk_long));
+        // The largest fitting valid path in bytes: 32757 3-byte units.
+        let cjk_max: Vec<u8> = "世".repeat(32757).into_bytes(); // 98271 B
+        assert!(fits_in_wide_path_buffer(&cjk_max));
+
+        // Invalid bytes: the exact-length estimate counts stray continuation
+        // bytes as zero units, so the byte cap is what must reject
+        // arbitrary-length garbage (it can't name anything on disk anyway).
+        assert!(!fits_in_wide_path_buffer(&vec![0x80u8; 98300]));
+        assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32757]));
     }
 }
 

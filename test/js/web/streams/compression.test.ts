@@ -249,3 +249,41 @@ describe("CompressionStream and DecompressionStream", () => {
     });
   });
 });
+
+describe("CompressionStream write/read ordering", () => {
+  // The implementation buffers up to a chunk of output on the readable side:
+  // awaiting writes before any reader attaches must not deadlock. (A strictly
+  // spec-default TransformStream — readable highWaterMark 0 — would stall
+  // here; this pins Bun's long-standing buffered behavior.)
+  test("awaiting writes before reading does not deadlock", async () => {
+    const cs = new CompressionStream("gzip");
+    const writer = cs.writable.getWriter();
+    await writer.write(new TextEncoder().encode("hello"));
+    await writer.write(new TextEncoder().encode("world"));
+    await writer.close();
+
+    const chunks: Uint8Array[] = [];
+    for await (const chunk of cs.readable as unknown as AsyncIterable<Uint8Array>) chunks.push(chunk);
+    const ds = new DecompressionStream("gzip");
+    const w2 = ds.writable.getWriter();
+    await w2.write(Buffer.concat(chunks));
+    await w2.close();
+    const out: Uint8Array[] = [];
+    for await (const chunk of ds.readable as unknown as AsyncIterable<Uint8Array>) out.push(chunk);
+    expect(Buffer.concat(out).toString()).toBe("helloworld");
+  });
+
+  test("corrupt input rejects with Z_DATA_ERROR", async () => {
+    const ds = new DecompressionStream("gzip");
+    const writer = ds.writable.getWriter();
+    writer.write(new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8])).catch(() => {});
+    writer.close().catch(() => {});
+    try {
+      for await (const _ of ds.readable as unknown as AsyncIterable<Uint8Array>) {
+      }
+      expect.unreachable();
+    } catch (e) {
+      expect((e as { code?: string }).code).toBe("Z_DATA_ERROR");
+    }
+  });
+});

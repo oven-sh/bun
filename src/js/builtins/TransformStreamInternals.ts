@@ -347,3 +347,106 @@ export function transformStreamDefaultSourcePullAlgorithm(stream) {
 
   return $getByIdDirectPrivate(stream, "backpressureChangePromise").promise;
 }
+
+export function createCompressionTransform(engine) {
+  const { Buffer } = require("node:buffer");
+
+  const handle = engine._handle;
+  const state = engine._writeState;
+  const chunkSize = engine._chunkSize;
+  let outBuffer = Buffer.allocUnsafe(chunkSize);
+  let outOffset = 0;
+  let closed = false;
+  // The native handle reports errors by synchronously destroying the engine
+  // (zlibOnError); the 'error' emit itself is deferred. Swallow the deferred
+  // emit — drive() below surfaces the error synchronously via engine.errored.
+  engine.on("error", () => {});
+
+  function close() {
+    if (!closed) {
+      closed = true;
+      engine.close();
+    }
+  }
+
+  // The processChunkSync loop from node:zlib, reshaped to enqueue output
+  // views incrementally and keep the handle open across calls.
+  function drive(chunk, flushFlag, controller) {
+    if (typeof chunk === "string") chunk = Buffer.from(chunk);
+    else if (ArrayBuffer.isView(chunk)) chunk = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    else throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk);
+
+    let availInBefore = chunk.byteLength;
+    let availOutBefore = chunkSize - outOffset;
+    let inOff = 0;
+
+    while (true) {
+      handle.writeSync(
+        flushFlag,
+        chunk, // in
+        inOff, // in_off
+        availInBefore, // in_len
+        outBuffer, // out
+        outOffset, // out_off
+        availOutBefore, // out_len
+      );
+      {
+        // Synchronous error check (the equivalent of processChunkSync's
+        // kError check): a failed writeSync destroys the engine without
+        // advancing the stream state, so continuing would loop forever.
+        const error = engine.errored;
+        if (error != null) {
+          close();
+          throw error;
+        }
+      }
+
+      const availOutAfter = state[0];
+      const availInAfter = state[1];
+
+      const have = availOutBefore - availOutAfter;
+      if (have > 0) {
+        // A plain Uint8Array view over the just-written output region.
+        // Regions are never rewritten: the cursor only advances, and a fresh
+        // buffer is allocated once this one is exhausted.
+        controller.enqueue(new Uint8Array(outBuffer.buffer, outBuffer.byteOffset + outOffset, have));
+        outOffset += have;
+      }
+
+      if (availOutAfter === 0 || outOffset >= chunkSize) {
+        availOutBefore = chunkSize;
+        outOffset = 0;
+        outBuffer = Buffer.allocUnsafe(chunkSize);
+      }
+
+      if (availOutAfter === 0) {
+        // Output buffer was exhausted before the input was consumed —
+        // reprocess the remainder.
+        inOff += availInBefore - availInAfter;
+        availInBefore = availInAfter;
+      } else {
+        break;
+      }
+    }
+  }
+
+  return new TransformStream(
+    {
+      transform(chunk, controller) {
+        drive(chunk, engine._defaultFlushFlag, controller);
+      },
+      flush(controller) {
+        drive(Buffer.alloc(0), engine._finishFlushFlag, controller);
+        close();
+      },
+    },
+    undefined,
+    // The readable side buffers up to one chunkSize of output before
+    // signalling backpressure. With the default strategy (highWaterMark 0,
+    // initial backpressure set), the first write would stall until a reader
+    // attaches — the Node-adapter implementation this replaces resolved
+    // writes immediately while buffering, and code in the wild awaits
+    // writes before reading.
+    { highWaterMark: chunkSize, size: chunk => chunk.byteLength },
+  );
+}

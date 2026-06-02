@@ -6,7 +6,7 @@ use core::sync::atomic::{AtomicBool, Ordering};
 use bun_ast::ExportsKind;
 use bun_ast::Source;
 use bun_core::{FeatureFlags, env_var};
-use bun_core::{PathString, String as BunString, ZStr};
+use bun_core::{String as BunString, ZStr};
 use bun_js_parser::ParserOptions;
 use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
@@ -263,7 +263,7 @@ impl Entry {
 
     pub fn save(
         destination_dir: Fd,
-        destination_path: PathString,
+        destination_path: &ZStr,
         input_byte_length: u64,
         input_hash: u64,
         features_hash: u64,
@@ -277,7 +277,7 @@ impl Entry {
         // atomically write to a tmpfile and then move it to the final destination
         let mut tmpname_buf = PathBuffer::uninit();
         let tmpfilename = FileSystem::tmpname(
-            paths::extension(destination_path.slice()),
+            paths::extension(destination_path.as_bytes()),
             &mut tmpname_buf[..],
             input_hash,
         )?;
@@ -420,7 +420,7 @@ impl Entry {
         // Zig: `@ptrCast(std.fs.path.basename(...))` — basename of a NUL-terminated
         // path is itself NUL-terminated (it's a suffix), so we can hand it to
         // `Tmpfile::finish` as a `&ZStr` without copying.
-        let dest_slice = destination_path.slice();
+        let dest_slice = destination_path.as_bytes();
         let base = paths::basename(dest_slice);
         // SAFETY: `base` is a suffix of `destination_path`, which the caller
         // built via `get_cache_file_path` and is NUL-terminated at `dest_slice.len()`.
@@ -800,7 +800,7 @@ impl RuntimeTranspilerCache {
         let cache_file_path = Self::get_cache_file_path(&mut cache_file_path_buf, input_hash)?;
         debug_assert!(!cache_file_path.is_empty());
         Self::from_file_with_cache_file_path(
-            PathString::init(cache_file_path.as_bytes()),
+            cache_file_path,
             input_hash,
             feature_hash,
             input_stat_size,
@@ -808,18 +808,18 @@ impl RuntimeTranspilerCache {
     }
 
     pub fn from_file_with_cache_file_path(
-        cache_file_path: PathString,
+        cache_file_path: &ZStr,
         input_hash: u64,
         feature_hash: u64,
         input_stat_size: u64,
     ) -> Result<Entry, bun_core::Error> {
         let mut metadata_bytes_buf = [0u8; Metadata::SIZE * 2];
-        let cache_fd = sys::open(cache_file_path.slice_assume_z(), sys::O::RDONLY, 0)?;
+        let cache_fd = sys::open(cache_file_path, sys::O::RDONLY, 0)?;
         let file = sys::File::from_fd(cache_fd);
         // Zig: `errdefer { _ = bun.sys.unlink(...) }` — on any error, delete the
         // cache file.
         let unlink_guard = scopeguard::guard(cache_file_path, |p| {
-            let _ = sys::unlink(p.slice_assume_z());
+            let _ = sys::unlink(p);
         });
         let metadata_bytes = file.pread_all(&mut metadata_bytes_buf, 0)?;
         #[cfg(windows)]
@@ -921,7 +921,7 @@ impl RuntimeTranspilerCache {
 
         Entry::save(
             cache_dir_fd,
-            PathString::init(cache_file_path.as_bytes()),
+            cache_file_path,
             input_byte_length,
             input_hash,
             features_hash,

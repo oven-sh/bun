@@ -4,7 +4,7 @@
 
 use core::ptr::NonNull;
 
-use bun_core::{self as bstring, PathString, strings};
+use bun_core::{self as bstring, strings};
 use bun_http::MimeType;
 use bun_jsc::JSGlobalObject;
 
@@ -80,7 +80,7 @@ impl FileJsc for File {
                 // `Bytes::Drop` and `jsdom_file_construct_` both require
                 // `stored_name` to be heap-owned (or empty); a borrowed
                 // `'static` slice would be invalid-freed there.
-                bytes.stored_name = PathString::init_owned(self.name.to_vec());
+                bytes.stored_name = self.name.to_vec().into_boxed_slice();
             }
 
             // The pretty name goes here:

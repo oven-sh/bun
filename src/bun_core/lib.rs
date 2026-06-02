@@ -62,7 +62,7 @@ pub use string::{
     string_joiner, write, zig_string,
 };
 pub use string::{
-    HashedString, MutableString, NodeEncoding, OwnedString, OwnedStringCell, PathString,
+    HashedString, MutableString, NodeEncoding, OwnedString, OwnedStringCell,
     SliceWithUnderlyingString, SmolStr, String, StringBuilder, WTFStringImpl, WTFStringImplExt,
     WTFStringImplStruct, ZigString, ZigStringSlice,
 };

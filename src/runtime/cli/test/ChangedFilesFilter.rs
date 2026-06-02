@@ -20,8 +20,8 @@ use bun_ast::Index;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
+use bun_core::strings;
 use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
-use bun_core::{PathString, strings};
 #[cfg(not(windows))]
 use bun_core::{ZBox, ZStr, getenv_z};
 #[cfg(not(windows))]
@@ -32,6 +32,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use bun_paths::SEP;
 use bun_paths::{self, PathBuffer, platform, resolve_path};
+use bun_ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
 use bun_sys as sys;
@@ -46,7 +47,7 @@ use crate::api::bun_process::sync as spawn_sync;
 pub struct Result<'a> {
     /// The filtered list of test files. Slice of the original `test_files`
     /// allocation, owned by the caller.
-    pub test_files: &'a mut [PathString],
+    pub test_files: &'a mut [Interned],
     /// Number of files git reported as changed.
     pub changed_count: usize,
     /// Number of test files before filtering.
@@ -66,7 +67,7 @@ pub struct Result<'a> {
 pub(crate) fn filter<'a>(
     ctx: &Command::Context,
     vm: &mut VirtualMachine,
-    test_files: &'a mut [PathString],
+    test_files: &'a mut [Interned],
     changed_since: &[u8],
 ) -> core::result::Result<Result<'a>, bun_core::Error> {
     let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
@@ -120,8 +121,8 @@ pub(crate) fn filter<'a>(
         });
     }
 
-    // Convert PathString list to []const []const u8 for the bundler.
-    let entry_points: Vec<&[u8]> = test_files.iter().map(|p| p.slice()).collect();
+    // Convert the interned-path list to []const []const u8 for the bundler.
+    let entry_points: Vec<&[u8]> = test_files.iter().map(|p| p.as_bytes()).collect();
 
     // Build a dedicated transpiler for scanning. We do not reuse the VM's
     // transpiler because BundleV2.init takes ownership of the allocator and
@@ -255,7 +256,7 @@ pub(crate) fn filter<'a>(
     let mut slot_to_source: Vec<Option<u32>> = vec![None; test_files.len()];
     debug_assert_eq!(test_files.len(), slot_to_source.len());
     for (tf, out) in test_files.iter().zip(slot_to_source.iter_mut()) {
-        *out = path_to_index.get(tf.slice()).copied();
+        *out = path_to_index.get(tf.as_bytes()).copied();
     }
 
     // BFS backward from every changed file that participates in the graph.
@@ -294,7 +295,7 @@ pub(crate) fn filter<'a>(
     for i in 0..total {
         let tf = test_files[i];
         let maybe_source = slot_to_source[i];
-        let keep = changed_files.contains(tf.slice())
+        let keep = changed_files.contains(tf.as_bytes())
             || maybe_source.is_some_and(|src| affected.is_set(src as usize));
 
         if keep {

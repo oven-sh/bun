@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import assert from "node:assert";
 // import child from "node:child_process";
 import path from "node:path";
@@ -109,6 +109,43 @@ describe("path.resolve", () => {
     expect(path.win32.resolve("//server/share", "C:relative")).toBe(path.win32.resolve("C:relative"));
     expect(path.win32.resolve("//server/share", "C:")).toBe(path.win32.resolve("C:"));
     expect(path.win32.resolve("//a/b", "//c/d", "C:foo")).toBe(path.win32.resolve("C:foo"));
+  });
+
+  // On a non-Windows host there is no per-drive cwd, so Node falls back to
+  // process.cwd() and (since a POSIX cwd never has a backslash at index 2)
+  // keeps it as the resolved tail under the requested drive.
+  test.skipIf(isWindows)("win32 drive-relative input on a non-Windows host preserves the drive letter", () => {
+    // Node: `${drive}\` + cwd-with-forward-slashes-normalized + `\` + tail
+    const cwdTail = process.cwd().slice(1).replaceAll("/", "\\");
+    expect(path.win32.resolve("C:foo")).toBe(`C:\\${cwdTail}\\foo`);
+    expect(path.win32.resolve("c:bar/baz")).toBe(`c:\\${cwdTail}\\bar\\baz`);
+    expect(path.win32.resolve("D:")).toBe(`D:\\${cwdTail}`);
+    expect(path.win32.toNamespacedPath("C:foo")).toBe(`\\\\?\\C:\\${cwdTail}\\foo`);
+  });
+
+  test.skipIf(isWindows)("win32 drive-relative input does not panic when cwd is /", async () => {
+    // Spawn with cwd "/" so the POSIX cwd is shorter than 3 bytes — this
+    // previously panicked indexing path[2] in the drive-mismatch check.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const p = require("path");
+         console.log(JSON.stringify([
+           p.win32.resolve("C:foo"),
+           p.win32.resolve("c:bar/baz"),
+           p.win32.toNamespacedPath("C:foo"),
+         ]));`,
+      ],
+      env: bunEnv,
+      cwd: "/",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim())).toEqual(["C:\\foo", "c:\\bar\\baz", "\\\\?\\C:\\foo"]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 
   test("undefined argument are ignored if absolute path comes first (reverse loop through args)", () => {

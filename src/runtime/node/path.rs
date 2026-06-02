@@ -3097,8 +3097,14 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                 path_len = ep_len;
             } else {
                 // cwd is limited to MAX_PATH_BYTES.
-                cwd_len = get_cwd_t(&mut tmp_buf[..])?.len();
-                path_ptr = tmp_buf.as_ptr();
+                // Write the cwd *after* tmp_buf[0..resolved_device_len] so the
+                // resolved device survives: the drive-mismatch check below and
+                // the final assembly both read it from tmp_buf. On a non-Windows
+                // host the cwd is a POSIX path, so overwriting from index 0
+                // replaced the device with the cwd's first bytes (and panicked
+                // when the cwd was shorter than 3 bytes, e.g. "/").
+                cwd_len = get_cwd_t(&mut tmp_buf[resolved_device_len..])?.len();
+                path_ptr = tmp_buf[resolved_device_len..].as_ptr();
                 path_len = cwd_len;
                 // We must set envPath here so that it doesn't hit the null check just below.
                 env_path_len = Some(cwd_len);
@@ -3112,8 +3118,12 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
             //     (StringPrototypeToLowerCase(StringPrototypeSlice(path, 0, 2)) !==
             //     StringPrototypeToLowerCase(resolvedDevice) &&
             //     StringPrototypeCharCodeAt(path, 2) === CHAR_BACKWARD_SLASH)) {
+            //
+            // `path_len > 2` mirrors JS `charCodeAt(2)` returning NaN for short
+            // strings (NaN !== CHAR_BACKWARD_SLASH).
             if env_path_len.is_none()
-                || (path!()[2] == T::from_u8(CHAR_BACKWARD_SLASH)
+                || (path_len > 2
+                    && path!()[2] == T::from_u8(CHAR_BACKWARD_SLASH)
                     && !eql_ignore_case_t(&path!()[0..2], &tmp_buf[0..resolved_device_len]))
             {
                 // Translated from the following JS code:

@@ -386,6 +386,17 @@ pub struct NewBuilder<'a, T: SourceMapFormatCtx> {
     /// (`Option<Box<InputSourceMap>>`).
     pub input_source_map: Option<&'a crate::InputSourceMap>,
 
+    /// Last *intermediate-file* line emitted (before any `input_source_map`
+    /// remap), kept only to seed `find_line_with_hint`. When chaining is
+    /// active, `prev_state.original_line` holds the remapped *authored* line,
+    /// which is the wrong coordinate space for the intermediate's
+    /// line-offset table — using it as the hint would fail the O(1) fast
+    /// path on every token and fall through to binary search. This field
+    /// keeps the hint in the intermediate's space. `0` when no chaining is
+    /// active (then `prev_state.original_line` is already the intermediate
+    /// line, but reading this costs nothing).
+    pub prev_intermediate_line: i32,
+
     // This is a workaround for a bug in the popular "source-map" library:
     // https://github.com/mozilla/source-map/issues/261. The library will
     // sometimes return null when querying a source map unless every line
@@ -418,6 +429,7 @@ impl<T: SourceMapFormatCtx + Default> Default for NewBuilder<'_, T> {
             line_offset_table_byte_offset_list: RawSlice::EMPTY,
             line_offset_table_first_non_ascii: RawSlice::EMPTY,
             input_source_map: None,
+            prev_intermediate_line: 0,
             line_starts_with_mapping: false,
             cover_lines_without_mappings: false,
             approximate_input_line_count: 0,
@@ -687,14 +699,16 @@ impl NewBuilder<'_, VLQSourceMap> {
         let byte_offsets = self.line_offset_table_byte_offset_list.slice();
 
         // The printer emits mappings in (mostly) source order, so the previous
-        // call's `original_line` is the right answer or one/two lines before
-        // it >95% of the time. Seed `find_line_with_hint` with it; the
-        // fallback is the same binary search as before.
-        let original_line = LineOffsetTable::find_line_with_hint(
-            byte_offsets,
-            loc,
-            self.prev_state.original_line as u32,
-        );
+        // call's *intermediate* line is the right answer or one/two lines
+        // before it >95% of the time. Seed `find_line_with_hint` with it; the
+        // fallback is the same binary search as before. Hint from
+        // `prev_intermediate_line` (not `prev_state.original_line`) because the
+        // latter holds the remapped *authored* line when `input_source_map` is
+        // active — wrong coordinate space for this (intermediate) table, which
+        // would poison the fast path. Without chaining the two are equal.
+        let original_line =
+            LineOffsetTable::find_line_with_hint(byte_offsets, loc, self.prev_intermediate_line as u32);
+        self.prev_intermediate_line = original_line.max(0);
         let idx = original_line.max(0) as usize;
 
         // PERF: read the three columns directly instead of `list.get(idx)`.

@@ -452,7 +452,9 @@ impl Watcher {
         // the `VirtualMachine::global_exit` path (which calls `stop_all_for_exit`
         // before `Global::exit` sets `IS_EXITING`); `is_exiting()` covers a plain
         // `Global::exit`. Mirrors the Zig spec's `isExiting` guard.
-        if STOPPING_FOR_EXIT.load(std::sync::atomic::Ordering::Acquire) || bun_core::Global::is_exiting() {
+        if STOPPING_FOR_EXIT.load(std::sync::atomic::Ordering::Acquire)
+            || bun_core::Global::is_exiting()
+        {
             return Ok(());
         }
 

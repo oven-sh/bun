@@ -426,7 +426,13 @@ impl Drop for MultiPartUpload {
         for (ptr, allocated) in self.ready_parts.drain(..) {
             // SAFETY: each entry was produced by finish_current_part from a
             // Vec with the captured capacity; sole owner here.
-            unsafe { drop(Vec::from_raw_parts(ptr.cast::<u8>().cast_mut(), allocated, allocated)) };
+            unsafe {
+                drop(Vec::from_raw_parts(
+                    ptr.cast::<u8>().cast_mut(),
+                    allocated,
+                    allocated,
+                ))
+            };
         }
         // bun.destroy(this) — handled by deref_() via heap::take
     }

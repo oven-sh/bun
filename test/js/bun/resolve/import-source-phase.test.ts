@@ -136,12 +136,30 @@ describe.concurrent("import source (source phase imports)", () => {
   // would silently get the wrong value. Bun reports the conflict instead,
   // in either order, for imports as well as `export ... from` re-exports.
   test.each([
-    ["import source then import", `import source mod from "./add.wasm";\nimport path from "./add.wasm";\nconsole.log(mod, path);`],
-    ["import then import source", `import path from "./add.wasm";\nimport source mod from "./add.wasm";\nconsole.log(mod, path);`],
-    ["import source then export from", `import source mod from "./add.wasm";\nexport { default as path } from "./add.wasm";\nconsole.log(mod);`],
-    ["export from then import source", `export { default as path } from "./add.wasm";\nimport source mod from "./add.wasm";\nconsole.log(mod);`],
-    ["import source then export star", `import source mod from "./add.wasm";\nexport * from "./add.wasm";\nconsole.log(mod);`],
-    ["export star then import source", `export * from "./add.wasm";\nimport source mod from "./add.wasm";\nconsole.log(mod);`],
+    [
+      "import source then import",
+      `import source mod from "./add.wasm";\nimport path from "./add.wasm";\nconsole.log(mod, path);`,
+    ],
+    [
+      "import then import source",
+      `import path from "./add.wasm";\nimport source mod from "./add.wasm";\nconsole.log(mod, path);`,
+    ],
+    [
+      "import source then export from",
+      `import source mod from "./add.wasm";\nexport { default as path } from "./add.wasm";\nconsole.log(mod);`,
+    ],
+    [
+      "export from then import source",
+      `export { default as path } from "./add.wasm";\nimport source mod from "./add.wasm";\nconsole.log(mod);`,
+    ],
+    [
+      "import source then export star",
+      `import source mod from "./add.wasm";\nexport * from "./add.wasm";\nconsole.log(mod);`,
+    ],
+    [
+      "export star then import source",
+      `export * from "./add.wasm";\nimport source mod from "./add.wasm";\nconsole.log(mod);`,
+    ],
   ])("source and evaluation phase of one specifier in the same file is a parse error (%s)", async (_label, code) => {
     const { stderr, exitCode } = await run({
       "main.js": code,

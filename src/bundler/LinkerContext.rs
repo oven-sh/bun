@@ -176,6 +176,9 @@ pub struct LinkerContext<'a> {
     /// that emitted no diagnostics — are recorded, so replaying a hit is
     /// observationally identical to re-walking the chain.
     pub(crate) import_memo: HashMap<(u32, Ref), MemoizedMatchImport>,
+    /// One buffer per memoized walk, holding the `re_exports` dependencies it
+    /// accumulated; `MemoizedMatchImport.deps_index` points in here.
+    pub(crate) import_memo_re_exports: Vec<bun_alloc::AstVec<Dependency>>,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     pub cjs_runtime_ref: Ref,
@@ -232,6 +235,7 @@ impl<'a> Default for LinkerContext<'a> {
             resolver: None,
             cycle_detector: Vec::new(),
             import_memo: HashMap::new(),
+            import_memo_re_exports: Vec::new(),
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
@@ -527,6 +531,7 @@ impl<'a> LinkerContext<'a> {
         });
         self.cycle_detector = Vec::new();
         self.import_memo = HashMap::new();
+        self.import_memo_re_exports = Vec::new();
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.
@@ -1612,9 +1617,18 @@ pub struct MatchImport {
 pub(crate) struct MemoizedMatchImport {
     result: MatchImport,
     /// The `re_exports` dependencies accumulated from this tracker to the end
-    /// of the chain — exactly what a fresh walk starting here would produce.
-    /// Empty for `Cycle` results (callers discard dependencies for cycles).
-    re_exports: bun_alloc::AstVec<Dependency>,
+    /// of the chain — exactly what a fresh walk starting here would produce —
+    /// are `import_memo_re_exports[deps_index][deps_start..]`. The buffer is
+    /// recorded once per walk and shared by all of that walk's memo entries,
+    /// so the memo stays linear in the number of trackers walked.
+    /// `NO_DEPS` means the suffix is empty (always the case for `Cycle`
+    /// results, whose dependencies the callers discard).
+    deps_index: u32,
+    deps_start: u32,
+}
+
+impl MemoizedMatchImport {
+    const NO_DEPS: u32 = u32::MAX;
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -3586,7 +3600,10 @@ impl<'a> LinkerContext<'a> {
                     .import_memo
                     .get(&(tracker.source_index.get(), tracker.import_ref))
             {
-                re_exports.extend_from_slice(memo.re_exports.slice());
+                if memo.deps_index != MemoizedMatchImport::NO_DEPS {
+                    let deps = &self.import_memo_re_exports[memo.deps_index as usize];
+                    re_exports.extend_from_slice(&deps.slice()[memo.deps_start as usize..]);
+                }
                 result = memo.result.clone();
                 memoizable = true;
                 break 'loop_;
@@ -3608,7 +3625,8 @@ impl<'a> LinkerContext<'a> {
             // `advanced.import_data` borrows
             // `graph.meta[..].resolved_exports[..].potentially_ambiguous_export_star_refs`;
             // that storage is never reallocated while this loop runs (only
-            // `cycle_detector`, `log`, and `graph.symbols` are mutated below).
+            // `cycle_detector`, `log`, `graph.symbols`, and — via the
+            // recursive call below — `import_memo` are mutated).
             let potentially_ambiguous_export_star_refs: &[crate::ImportData] =
                 advanced.import_data.get();
             saw_ambiguity |= !potentially_ambiguous_export_star_refs.is_empty();
@@ -3899,13 +3917,18 @@ impl<'a> LinkerContext<'a> {
         // `Found` arm, which overwrites `result` unconditionally, so the final
         // `result` does not depend on where the walk started.
         if memoizable && !saw_ambiguity && !visited.is_empty() {
-            let keep_deps = result.kind != MatchImportKind::Cycle;
+            // Store the dependency suffix once for the whole walk; each entry
+            // points at its own offset into it.
+            let base = visited[0].1;
+            let suffix: &[Dependency] = &re_exports.slice()[base..];
+            let deps_index = if result.kind != MatchImportKind::Cycle && !suffix.is_empty() {
+                self.import_memo_re_exports
+                    .push(bun_alloc::AstAlloc::vec_from_slice(suffix));
+                (self.import_memo_re_exports.len() - 1) as u32
+            } else {
+                MemoizedMatchImport::NO_DEPS
+            };
             for &(visited_tracker, deps_start) in &visited {
-                let deps = if keep_deps {
-                    bun_alloc::AstAlloc::vec_from_slice(&re_exports.slice()[deps_start..])
-                } else {
-                    bun_alloc::AstAlloc::vec()
-                };
                 self.import_memo.insert(
                     (
                         visited_tracker.source_index.get(),
@@ -3913,7 +3936,8 @@ impl<'a> LinkerContext<'a> {
                     ),
                     MemoizedMatchImport {
                         result: result.clone(),
-                        re_exports: deps,
+                        deps_index,
+                        deps_start: (deps_start - base) as u32,
                     },
                 );
             }

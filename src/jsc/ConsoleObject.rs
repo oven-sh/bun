@@ -592,14 +592,44 @@ fn message_with_type_and_level_(
         }
     }
 
+    // `console.assert(false, ...args)` prepends an "Assertion failed" marker
+    // before formatting, matching Node's `Console.prototype.assert`
+    // (lib/internal/console/constructor.js):
+    //   - if the first arg is a string, it becomes `Assertion failed: <str>`
+    //     and is still used as the printf-style format string for the rest;
+    //   - otherwise `Assertion failed` is unshifted as a new first arg
+    //     (space separator, no colon).
+    // The empty-args case is handled by the early return above.
+    let mut assert_args: Vec<JSValue> = Vec::new();
+    // Keeps the freshly-minted prefix string rooted across `format2`, which
+    // can re-enter JSC (a heap `Vec<JSValue>` is invisible to the conservative
+    // stack scan, unlike the caller-owned `vals`).
+    let mut _prefix_guard: Option<jsc::ProtectedJSValue> = None;
+    if message_type == MessageType::Assert && print_length > 0 {
+        use crate::StringJsc as _;
+        let first = vals_slice[0];
+        if first.is_string_literal() {
+            let mut prefixed = b"Assertion failed: ".to_vec();
+            prefixed.extend_from_slice(&BunString::from_js(first, global)?.to_utf8_bytes());
+            let prefixed = BunString::clone_utf8(&prefixed).to_js(global)?;
+            _prefix_guard = Some(prefixed.protected());
+            assert_args.push(prefixed);
+            assert_args.extend_from_slice(&vals_slice[1..print_length]);
+        } else {
+            let marker = BunString::static_(b"Assertion failed").to_js(global)?;
+            _prefix_guard = Some(marker.protected());
+            assert_args.push(marker);
+            assert_args.extend_from_slice(&vals_slice[..print_length]);
+        }
+    }
+    let format_args: &[JSValue] = if assert_args.is_empty() {
+        &vals_slice[..print_length]
+    } else {
+        &assert_args
+    };
+
     if print_length > 0 {
-        format2(
-            level,
-            global,
-            &vals_slice[..print_length],
-            writer,
-            print_options,
-        )?;
+        format2(level, global, format_args, writer, print_options)?;
     } else if message_type == MessageType::Log {
         // SAFETY: see [`vm_console`]. `writer` (above) is dead in this arm —
         // the only later uses are in the mutually-exclusive `Trace` block, and

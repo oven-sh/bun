@@ -584,7 +584,15 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
 
     assert(expression, ...args) {
       if (!expression) {
-        args[0] = `Assertion failed${args.length === 0 ? "" : `: ${args[0]}`}`;
+        // Match Node's Console.prototype.assert: a string first arg becomes
+        // "Assertion failed: <str>" (and is still the printf format string);
+        // anything else gets a bare "Assertion failed" unshifted before it
+        // (space separator, no colon).
+        if (args.length && typeof args[0] === "string") {
+          args[0] = `Assertion failed: ${args[0]}`;
+        } else {
+          args.unshift("Assertion failed");
+        }
         // The arguments will be formatted in warn() again
         this.warn.$apply(this, args);
       }

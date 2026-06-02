@@ -577,15 +577,13 @@ describe("DiffieHellman", () => {
   });
 
   it("createDiffieHellman throws on invalid prime size", () => {
-    let caught;
-    try {
-      crypto.createDiffieHellman(2);
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(TypeError);
-    expect(caught.code).toBe("ERR_INVALID_ARG_VALUE");
-    expect(caught.message).toBe("Invalid DH parameters");
+    expect(() => crypto.createDiffieHellman(2)).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_VALUE",
+        message: "Invalid DH parameters",
+      })
+    );
   });
 
   it("createDiffieHellman throws when generator is non-numeric with numeric prime", () => {

@@ -40,11 +40,13 @@ const cases: [css: string, expected: string | null][] = [
   ["hsl(atan2(min(1px,2px), 3px) 50% 50%)", "#bf6740"],
   ["hsl(atan2(min(1,2), max(3,4)) 50% 50%)", null],
   ["hsl(atan2(min(1deg,2deg), 3deg) 50% 50%)", "#bf6740"],
-  // dimensions buried inside nested type-dependent functions (calc/clamp/
-  // hypot) keep folding via the length re-parse.
+  // dimensions buried inside nested type-dependent functions (calc/hypot)
+  // keep folding via the length re-parse.
   ["hsl(atan2(calc(1px + 1px), calc(2px)) 50% 50%)", "#bf9f40"],
   ["hsl(atan2(2px, calc(1px + 1px)) 50% 50%)", "#bf9f40"],
   ["hsl(atan2(hypot(3px,4px), 5px) 50% 50%)", "#bf9f40"],
+  // clamp() reduces to a Calc::Function (a Min of the max/center args), not a
+  // Calc::Value, so atan2 can't reconcile it — pinned for behavior preservation.
   ["hsl(atan2(clamp(1px, 2px, 3px), 4px) 50% 50%)", null],
   // Unitless sums that can't fold to an <angle> still reach the Percentage
   // retry (no nested angle/number-only function fails, so the counter never

@@ -1499,6 +1499,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_core",
+ "bun_simdutf_sys",
  "bytemuck",
  "const_format",
  "enum-map",

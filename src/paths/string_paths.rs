@@ -508,15 +508,7 @@ pub fn basename<T: Ch>(input: &[T]) -> &[T] {
 mod tests {
     use super::*;
 
-    /// ABI twin of `bun_simdutf_sys::SIMDUTFResult` (`#[repr(C)] { status:
-    /// i32, count: usize }`); `bun_paths` doesn't depend on that crate and
-    /// the linker only matches symbol name + layout.
-    #[repr(C)]
-    struct StubResult {
-        /// 0 = SUCCESS; any other value is an error status.
-        status: i32,
-        count: usize,
-    }
+    use bun_simdutf_sys::simdutf::{SIMDUTFResult, Status};
 
     /// Scalar `simdutf::convert::utf8::to::utf16::with_errors::le`: writes
     /// the UTF-16LE form of the valid prefix to `utf16_output` and returns
@@ -530,7 +522,7 @@ mod tests {
         buf: *const u8,
         len: usize,
         utf16_output: *mut u16,
-    ) -> StubResult {
+    ) -> SIMDUTFResult {
         // SAFETY: test stub; callers pass a valid (ptr, len) input pair.
         let input = unsafe { core::slice::from_raw_parts(buf, len) };
         let mut written = 0usize;
@@ -550,10 +542,10 @@ mod tests {
                     | (u32::from(input[i + 1] & 0x3F) << 6)
                     | u32::from(input[i + 2] & 0x3F);
                 if (0xD800..=0xDFFF).contains(&cp) {
-                    return StubResult {
-                        status: 4,
+                    return SIMDUTFResult {
+                        status: Status::SURROGATE,
                         count: i,
-                    }; // SURROGATE
+                    };
                 }
                 (cp, 3)
             } else if (0xF0..0xF5).contains(&b) && cont(1) && cont(2) && cont(3) {
@@ -565,10 +557,10 @@ mod tests {
                     4,
                 )
             } else {
-                return StubResult {
-                    status: 2,
+                return SIMDUTFResult {
+                    status: Status::TOO_SHORT,
                     count: i,
-                }; // TOO_SHORT
+                };
             };
             // SAFETY: test stub mirroring simdutf — the caller guarantees
             // capacity for the full conversion before calling (that is the
@@ -588,8 +580,8 @@ mod tests {
             }
             i += adv;
         }
-        StubResult {
-            status: 0,
+        SIMDUTFResult {
+            status: Status::SUCCESS,
             count: written,
         }
     }

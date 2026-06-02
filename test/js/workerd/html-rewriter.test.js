@@ -165,6 +165,19 @@ describe("HTMLRewriter", () => {
     expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
   });
 
+  it("(from file stream) supports element handlers", async () => {
+    var rewriter = new HTMLRewriter();
+    rewriter.on("div", {
+      element(element) {
+        element.setInnerContent("<blink>it worked!</blink>", { html: true });
+      },
+    });
+    const filePath = join(tmpdirSync(), "html-rewriter-stream.txt.js");
+    await Bun.write(filePath, "<div>hello</div>");
+    var output = rewriter.transform(new Response(Bun.file(filePath).stream()));
+    expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
+  });
+
   it("supports attribute iterator", async () => {
     var rewriter = new HTMLRewriter();
     var expected = [

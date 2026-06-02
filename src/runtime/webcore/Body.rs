@@ -2573,9 +2573,27 @@ impl<'a> ValueBufferer<'a> {
                 webcore::readable_stream::Source::Invalid => {
                     return Err(bun_core::err!("InvalidStream"));
                 }
-                // toBlobIfPossible should've caught this
                 webcore::readable_stream::Source::Blob(_)
-                | webcore::readable_stream::Source::File(_) => unreachable!(),
+                | webcore::readable_stream::Source::File(_) => {
+                    // `run`'s `to_blob_if_possible` only consults the native
+                    // `Locked.readable` slot, so blob/file-backed streams that
+                    // `check_body_stream_ref` migrated into the JS-side cache
+                    // land here. Convert them now and re-dispatch through the
+                    // Blob arm (buffered bytes / async file read).
+                    let mut stream = stream;
+                    if let Some(blob) = stream.to_any_blob(self.global) {
+                        *value = match blob {
+                            AnyBlob::Blob(b) => Value::Blob(b),
+                            AnyBlob::InternalBlob(b) => Value::InternalBlob(b),
+                            AnyBlob::WTFStringImpl(s) => Value::WTFStringImpl(s),
+                        };
+                        // the stream's source is consumed and detached; no
+                        // reason to keep the JS wrapper rooted
+                        let _ = core::mem::take(&mut self.readable_stream_ref);
+                        return self.run(value, None);
+                    }
+                    return Err(bun_core::err!("UnsupportedStreamType"));
+                }
                 webcore::readable_stream::Source::JavaScript
                 | webcore::readable_stream::Source::Direct => {
                     // this is broken right now

@@ -208,6 +208,13 @@ impl ReadableStream {
                     // it should be lazy, file shouldn't have opened yet.
                     debug_assert!(!blobby.started.get());
                     self.done(global_this);
+                    // The FileReader keeps its lazy store (the blob above only
+                    // clones it), so without this a captured stream reference
+                    // could be wrapped into a new Response and re-read the
+                    // file from disk. Mark the JS stream disturbed and drop
+                    // its native ptr — the exact state the JS streaming path
+                    // used to leave a consumed file stream in.
+                    self.force_detach(global_this);
                     return Some(webcore::blob::Any::Blob(blob));
                 }
             }

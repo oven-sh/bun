@@ -827,12 +827,21 @@ describe("Response wrapping a Bun.file() stream", () => {
     const result = await response.bytes();
     expect(result).toBeInstanceOf(Uint8Array);
     expect(Buffer.compare(result, bytes)).toBe(0);
+    // the exposed stream ends up in the same state the streaming path left
+    // it in: consumed and unusable
     expect(response.bodyUsed).toBe(true);
-    // matches the long-standing behavior of `new Response(Bun.file(path))`
-    // with `.body` observed: after consumption the exposed stream is
-    // released and fully drained, so a fresh read reports done
-    expect(body.locked).toBe(false);
-    const read = await body.getReader().read();
-    expect(read.done).toBe(true);
+    expect(body.locked).toBe(true);
+    expect(() => body.getReader()).toThrow("ReadableStream is locked");
+    expect(() => new Response(body)).toThrow("ReadableStream has already been used");
+  });
+
+  test("a consumed file stream can't be wrapped into a new Response", async () => {
+    const { path } = makeFile("body-file-stream-rewrap");
+
+    const stream = file(path).stream();
+    const first = await new Response(stream).bytes();
+    expect(first.byteLength).toBe(SIZE);
+    // the stream was consumed; wrapping it again must not re-read the file
+    expect(() => new Response(stream)).toThrow("ReadableStream has already been used");
   });
 });

@@ -175,9 +175,10 @@ export function parseHandle(target, serialized, fd) {
   const emit = $newZigFunction("ipc.zig", "emitHandleIPCMessage", 3);
   const net = require("node:net");
   // const dgram = require("node:dgram");
-  // Node's NODE_HANDLE envelope carries the user payload under `msg`; tolerate
-  // the legacy `message` key in case of a mismatched peer.
-  const userMessage = serialized.msg ?? serialized.message;
+  // Node's NODE_HANDLE envelope carries the user payload under `msg`. Read it
+  // directly (not via `??`) so a `null` message is delivered as `null`, matching
+  // Node, rather than being coerced to `undefined`.
+  const userMessage = serialized.msg;
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();

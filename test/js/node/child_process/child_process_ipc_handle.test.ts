@@ -136,6 +136,7 @@ process.on('message', (m, server) => {
 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
+  expect(stderr).toBe("");
   expect(stdout).toContain("RESPONSE:Hello from node child");
   expect(exitCode).toBe(0);
 });

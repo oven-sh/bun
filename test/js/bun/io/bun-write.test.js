@@ -799,6 +799,22 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array(4096).fill(7));
     });
 
+    it("writes a direct ReadableStream with a synchronous pull", async () => {
+      using dir = tempDir("bun-write-direct-sync-stream", {});
+      const filePath = join(String(dir), "out.bin");
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write(new Uint8Array(4096).fill(8));
+          controller.close();
+        },
+      });
+
+      const written = await Bun.write(filePath, stream);
+      expect(written).toBe(4096);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array(4096).fill(8));
+    });
+
     it("works through Bun.file().write()", async () => {
       using dir = tempDir("bun-file-write-stream", {});
       const filePath = join(String(dir), "out.txt");

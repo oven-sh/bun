@@ -4753,11 +4753,13 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
             }
         }
 
+        let name = crate::result::system_errno_name(errno).unwrap_or("EUNKNOWN");
+        let detail = crate::result::coreutils_error_map::get(errno).unwrap_or("unknown error");
         if may_return {
-            crate::output::pretty_errorln(format_args!(
-                "error: Failed to reload process: errno {}",
-                errno
-            ));
+            crate::output::err_generic(
+                "Failed to reload process: {} ({}) while executing \"{}\"",
+                (name, detail, bstr::BStr::new(attempted)),
+            );
             return;
         }
         // The executable can legitimately be gone or unrunnable by the time a
@@ -4769,19 +4771,13 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
             errno,
             libc::ENOENT | libc::ENOTDIR | libc::EACCES | libc::ETXTBSY | libc::ENOEXEC
         ) {
-            let name = crate::result::system_errno_name(errno).unwrap_or("EUNKNOWN");
-            let detail = crate::result::coreutils_error_map::get(errno).unwrap_or("unknown error");
             crate::output::err_generic(
                 "Failed to reload process: {} ({}) while executing \"{}\". The executable may have been deleted or replaced while Bun was running.",
                 (name, detail, bstr::BStr::new(attempted)),
             );
             crate::Global::exit(1);
         }
-        let errno_name = crate::result::system_errno_name(errno).unwrap_or("EUNKNOWN");
-        panic!(
-            "Unexpected error while reloading: errno {} {}",
-            errno, errno_name
-        );
+        panic!("Unexpected error while reloading: errno {} {}", errno, name);
     }
 
     #[cfg(not(any(unix, windows)))]

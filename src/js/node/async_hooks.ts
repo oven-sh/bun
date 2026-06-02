@@ -33,6 +33,14 @@ function newAsyncId() {
   return nextAsyncId++;
 }
 
+// The execution/trigger async id of the current scope. At the top level Node
+// reports executionAsyncId() === 1 (root) and triggerAsyncId() === 0.
+// AsyncResource.prototype.runInAsyncScope swaps these to the resource's ids for
+// the duration of the callback, keeping the invariant that inside a scope
+// `executionAsyncId() === resource.asyncId()`.
+let currentExecutionAsyncId = 1;
+let currentTriggerAsyncId = 0;
+
 // Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
   // undefined is OK
@@ -278,8 +286,9 @@ class AsyncResource {
         throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
       }
     } else {
-      // Node defaults this to the current executionAsyncId(), which is 1 at the top level.
-      triggerAsyncId = 1;
+      // Node defaults this to the current executionAsyncId() (1 at the top
+      // level, or the enclosing resource's id inside a runInAsyncScope).
+      triggerAsyncId = currentExecutionAsyncId;
     }
     if (hasEnabledCreateHook && type.length === 0) {
       throw $ERR_ASYNC_TYPE(type);
@@ -314,11 +323,17 @@ class AsyncResource {
 
   runInAsyncScope(fn, thisArg, ...args) {
     var prev = get();
+    const prevExecutionAsyncId = currentExecutionAsyncId;
+    const prevTriggerAsyncId = currentTriggerAsyncId;
     set(this.#snapshot);
+    currentExecutionAsyncId = this.#asyncId;
+    currentTriggerAsyncId = this.#triggerAsyncId;
     try {
       return fn.$apply(thisArg, args);
     } finally {
       set(prev);
+      currentExecutionAsyncId = prevExecutionAsyncId;
+      currentTriggerAsyncId = prevTriggerAsyncId;
     }
   }
 
@@ -403,15 +418,15 @@ function createHook(hook) {
 }
 
 const executionAsyncIdNotImpl = createWarning(
-  "async_hooks.executionAsyncId/triggerAsyncId are not implemented in Bun. It will return 0 every time.",
+  "async_hooks.executionAsyncId/triggerAsyncId are only partially implemented in Bun. They track AsyncResource.runInAsyncScope but not other async resources.",
 );
 function executionAsyncId() {
   executionAsyncIdNotImpl();
-  return 0;
+  return currentExecutionAsyncId;
 }
 
 function triggerAsyncId() {
-  return 0;
+  return currentTriggerAsyncId;
 }
 
 const executionAsyncResourceWarning = createWarning(

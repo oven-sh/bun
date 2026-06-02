@@ -123,3 +123,32 @@ test("AsyncResource.prototype.emitDestroy returns the resource", () => {
   // Repeated calls keep returning the resource.
   expect(a.emitDestroy()).toBe(a);
 });
+
+test("runInAsyncScope makes executionAsyncId()/triggerAsyncId() match the resource", () => {
+  const async_hooks = require("async_hooks");
+  const a = new AsyncResource("foobar");
+
+  // At the top level Node reports executionAsyncId() === 1 (root).
+  const outerExecutionId = async_hooks.executionAsyncId();
+  expect(outerExecutionId).toBe(1);
+
+  a.runInAsyncScope(() => {
+    // Inside the scope, the free functions report the resource's (non-zero) ids.
+    expect(async_hooks.executionAsyncId()).toBeGreaterThan(1);
+    expect(async_hooks.executionAsyncId()).toBe(a.asyncId());
+    expect(async_hooks.triggerAsyncId()).toBe(a.triggerAsyncId());
+
+    // A resource created inside the scope inherits the current executionAsyncId()
+    // as its triggerAsyncId, and nesting restores correctly on exit.
+    const b = new AsyncResource("bar");
+    expect(b.triggerAsyncId()).toBe(a.asyncId());
+    b.runInAsyncScope(() => {
+      expect(async_hooks.executionAsyncId()).toBe(b.asyncId());
+      expect(async_hooks.triggerAsyncId()).toBe(b.triggerAsyncId());
+    });
+    expect(async_hooks.executionAsyncId()).toBe(a.asyncId());
+  });
+
+  // Restored to the outer value once the scope exits.
+  expect(async_hooks.executionAsyncId()).toBe(outerExecutionId);
+});

@@ -454,7 +454,14 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
             // The length is re-read every iteration: releasing the lock around
             // `process_watch_event_batch` lets `on_file_update` evict entries
-            // and compact the watchlist.
+            // and compact the watchlist. Known trade-off: that compaction is
+            // `swap_remove`-based, so a mid-batch flush can move a not-yet-
+            // scanned tail entry into a slot behind `item_idx`, skipping it
+            // for the *current* OS event (requires 128+ matches for one event
+            // plus a concurrent eviction below the cursor). Rescanning from 0
+            // instead would risk duplicate notifications; a missed coalesced
+            // event is the safer failure mode, and the next event for that
+            // path re-delivers.
             let mut item_idx: usize = 0;
             while item_idx < this.watchlist.items_file_path().len() {
                 // reshaped for borrowck — `rel` is computed in a scoped

@@ -4531,7 +4531,9 @@ fn mkdirp_parent_of(dest_path: &[u8]) -> MkdirpParentResult {
     };
     let mut node_fs = crate::node::fs::NodeFS::default();
     match node_fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-        path: crate::node::PathLike::String(bun_core::PathString::init(dirname)),
+        path: crate::node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+            dirname, false,
+        )),
         recursive: true,
         always_return_none: true,
         ..Default::default()

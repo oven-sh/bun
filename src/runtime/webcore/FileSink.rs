@@ -1210,12 +1210,13 @@ impl FileSink {
 
     /// Count the bytes the writer accepted from a single `write*` call into
     /// `received_bytes`. `Wrote`/`Pending` buffer whatever was not written
-    /// immediately, so the whole chunk was accepted; `Done` is terminal and
-    /// only `amt` bytes were taken.
+    /// immediately, so the whole chunk was accepted. `Done` means the writer
+    /// stopped accepting; its amount comes from draining the *combined*
+    /// outgoing buffer (which may include already-counted bytes from earlier
+    /// chunks), so credit nothing — in practice it is always `Done(0)` here.
     fn count_received(&self, rc: &WriteResult, chunk_len: usize) {
         let accepted = match *rc {
-            WriteResult::Err(_) => 0,
-            WriteResult::Done(amt) => amt,
+            WriteResult::Err(_) | WriteResult::Done(_) => 0,
             WriteResult::Wrote(_) | WriteResult::Pending(_) => chunk_len,
         };
         self.received_bytes

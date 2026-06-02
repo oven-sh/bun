@@ -3961,6 +3961,57 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Only assert above; do not actually pop.
     }
 
+    /// JSC dedups a module record's requested modules by
+    /// (specifier, ModulePhase) — ignoring import attributes — and the
+    /// source phase is lowered onto an Evaluation-phase request with
+    /// WebAssembly fetch parameters. A single file therefore cannot request
+    /// both the module source and the evaluated module of the same
+    /// specifier: whichever statement came first would win and the other
+    /// binding would silently receive the wrong value. Surface the conflict
+    /// as a parse error instead. (Imports from *different* files are
+    /// unaffected — the module map keys on the fetch-parameter type.)
+    ///
+    /// Called for every statement-kind record — `import` declarations and
+    /// `export ... from` — right after it is appended; gated on
+    /// `has_source_phase_import_stmt` so files without source phase imports
+    /// pay a single bool check per statement.
+    pub fn check_source_phase_conflict(
+        &mut self,
+        new_record_index: u32,
+    ) -> Result<(), bun_core::Error> {
+        if !self.has_source_phase_import_stmt {
+            return Ok(());
+        }
+        use bun_ast::ImportPhase;
+        let new_index = new_record_index as usize;
+        let (conflict, range, path_text) = {
+            let records = self.import_records.items();
+            let new_record = &records[new_index];
+            let conflict = records[..new_index].iter().any(|record| {
+                record.kind == ImportKind::Stmt
+                    && matches!(
+                        (record.phase, new_record.phase),
+                        (ImportPhase::Source, ImportPhase::Evaluation)
+                            | (ImportPhase::Evaluation, ImportPhase::Source)
+                    )
+                    && record.path.text == new_record.path.text
+            });
+            (conflict, new_record.range, new_record.path.text)
+        };
+        if conflict {
+            self.log().add_range_error_fmt(
+                Some(self.source),
+                range,
+                format_args!(
+                    "Cannot import {} at both source phase and evaluation phase in the same file",
+                    bun_core::fmt::format_json_string_latin1(path_text),
+                ),
+            );
+            return Err(bun_core::err!("SyntaxError"));
+        }
+        Ok(())
+    }
+
     // blocked_on: S::Import field set; crate::parser::MacroRefData; ParsedPath fields; ImportItemForNamespaceMap API
     pub fn process_import_statement(
         &mut self,
@@ -4102,46 +4153,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         self.import_records.items_mut()[stmt.import_record_index as usize].phase = stmt.phase;
 
-        // JSC dedups a module record's requested modules by
-        // (specifier, ModulePhase) — ignoring import attributes — and the
-        // source phase is lowered onto an Evaluation-phase request with
-        // WebAssembly fetch parameters. A single file therefore cannot
-        // request both the module source and the evaluated module of the
-        // same specifier: whichever statement came first would win and the
-        // other binding would silently receive the wrong value. Surface the
-        // conflict as a parse error instead. (Imports from *different* files
-        // are unaffected — the module map keys on the fetch-parameter type.)
         if stmt.phase == bun_ast::ImportPhase::Source {
             self.has_source_phase_import_stmt = true;
         }
-        if self.has_source_phase_import_stmt {
-            use bun_ast::ImportPhase;
-            let new_index = stmt.import_record_index as usize;
-            let records = self.import_records.items();
-            let new_record = &records[new_index];
-            let conflict = records[..new_index].iter().any(|record| {
-                record.kind == ImportKind::Stmt
-                    && matches!(
-                        (record.phase, new_record.phase),
-                        (ImportPhase::Source, ImportPhase::Evaluation)
-                            | (ImportPhase::Evaluation, ImportPhase::Source)
-                    )
-                    && record.path.text == new_record.path.text
-            });
-            if conflict {
-                let range = new_record.range;
-                self.log().add_range_error_fmt(
-                    Some(self.source),
-                    range,
-                    format_args!(
-                        "Cannot import {} at both source phase and evaluation phase in the same \
-                         file",
-                        bun_core::fmt::format_json_string_latin1(path.text),
-                    ),
-                );
-                return Err(bun_core::err!("SyntaxError"));
-            }
-        }
+        self.check_source_phase_conflict(stmt.import_record_index)?;
 
         if let Some(star) = stmt.star_name_loc {
             let name = self.load_name_from_ref(stmt.namespace_ref);

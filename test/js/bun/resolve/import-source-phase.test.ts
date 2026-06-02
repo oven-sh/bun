@@ -130,22 +130,25 @@ describe.concurrent("import source (source phase imports)", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("static source and evaluation phase of one specifier in the same file is a parse error", async () => {
-    // JSC dedups a module's requested modules by (specifier, phase) and
-    // ignores import attributes, which the source phase lowering rides on —
-    // whichever static import came first would win and the other binding
-    // would silently get the wrong value. Bun reports the conflict instead.
-    for (const order of [
-      `import source mod from "./add.wasm";\nimport path from "./add.wasm";\nconsole.log(mod, path);`,
-      `import path from "./add.wasm";\nimport source mod from "./add.wasm";\nconsole.log(mod, path);`,
-    ]) {
-      const { stderr, exitCode } = await run({
-        "main.js": order,
-        "add.wasm": ADD_WASM,
-      });
-      expect(stderr).toContain("at both source phase and evaluation phase");
-      expect(exitCode).not.toBe(0);
-    }
+  // JSC dedups a module's requested modules by (specifier, phase) and
+  // ignores import attributes, which the source phase lowering rides on —
+  // whichever static statement came first would win and the other binding
+  // would silently get the wrong value. Bun reports the conflict instead,
+  // in either order, for imports as well as `export ... from` re-exports.
+  test.each([
+    ["import source then import", `import source mod from "./add.wasm";\nimport path from "./add.wasm";\nconsole.log(mod, path);`],
+    ["import then import source", `import path from "./add.wasm";\nimport source mod from "./add.wasm";\nconsole.log(mod, path);`],
+    ["import source then export from", `import source mod from "./add.wasm";\nexport { default as path } from "./add.wasm";\nconsole.log(mod);`],
+    ["export from then import source", `export { default as path } from "./add.wasm";\nimport source mod from "./add.wasm";\nconsole.log(mod);`],
+    ["import source then export star", `import source mod from "./add.wasm";\nexport * from "./add.wasm";\nconsole.log(mod);`],
+    ["export star then import source", `export * from "./add.wasm";\nimport source mod from "./add.wasm";\nconsole.log(mod);`],
+  ])("source and evaluation phase of one specifier in the same file is a parse error (%s)", async (_label, code) => {
+    const { stderr, exitCode } = await run({
+      "main.js": code,
+      "add.wasm": ADD_WASM,
+    });
+    expect(stderr).toContain("at both source phase and evaluation phase");
+    expect(exitCode).not.toBe(0);
   });
 
   test("import.source() with a non-literal specifier", async () => {

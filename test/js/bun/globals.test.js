@@ -191,8 +191,8 @@ it("globals are deletable", () => {
 });
 
 it("self is not defined on the main thread (matches Node.js)", () => {
-  // `self` is a WindowOrWorkerGlobalScope member. Node.js only exposes it in
-  // Worker threads, never on the main thread, and isomorphic libraries sniff
+  // `self` is a WindowOrWorkerGlobalScope member. Node.js never defines it, and
+  // the main thread is neither a Window nor a Worker. Isomorphic libraries sniff
   // `typeof self === "object"` to detect a browser/worker. Match Node here.
   expect("self" in globalThis).toBe(false);
   expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toBeUndefined();

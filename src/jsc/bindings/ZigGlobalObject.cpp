@@ -3000,12 +3000,16 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Public Properties -----
 
-    // `self` is a member of WindowOrWorkerGlobalScope. Node.js only exposes it
-    // in Worker threads, never on the main thread, and isomorphic libraries use
-    // `typeof self === "object"` to sniff a browser/worker environment. Defining
-    // it on the main thread makes those libraries take the browser code path.
-    // Match Node: expose `self` everywhere except the main thread.
-    if (!scriptExecutionContext()->isMainThread()) {
+    // `self` is a member of WindowOrWorkerGlobalScope — the Web spec defines it
+    // in Windows and Workers. Node.js never defines it (not on the main thread
+    // nor in worker_threads). Isomorphic libraries use `typeof self === "object"`
+    // to sniff a browser/worker environment, so defining it on the main thread
+    // (which is neither a Window nor a Worker) makes them take the browser code
+    // path. Expose `self` only off the main thread: Workers keep it for Web
+    // Worker spec compatibility, the main thread matches Node by not having it.
+    // `WTF::isMainThread()` checks the actual thread, so globals derived on the
+    // main thread (e.g. a ShadowRealm) also don't get `self`.
+    if (!WTF::isMainThread()) {
         // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
         putDirectAccessor(
             this,

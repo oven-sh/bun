@@ -1,6 +1,8 @@
 import { spawn } from "bun";
 import { expect, it, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isMacOS, isWindows, withoutAggressiveGC } from "harness";
+// Aliased so it doesn't shadow the global Web `Worker` asserted in the "exists" test.
+import { Worker as NodeWorker } from "node:worker_threads";
 
 test("exists", () => {
   expect(typeof URL !== "undefined").toBe(true);
@@ -309,19 +311,20 @@ test("confirm (no) windows newline", async () => {
 });
 
 test("self is not defined on the main thread (matches Node.js)", () => {
-  // Node.js only exposes `self` in Worker threads, not on the main thread.
-  // Isomorphic libraries sniff `typeof self === "object"` to detect a
-  // browser/worker environment; defining it on the main thread makes them
-  // take the browser code path instead of the Node fallback.
-  // See https://github.com/oven-sh/bun/issues/31713
+  // `self` is a WindowOrWorkerGlobalScope member. Node.js never defines it, and
+  // the main thread is neither a Window nor a Worker. Isomorphic libraries sniff
+  // `typeof self === "object"` to detect a browser/worker environment; defining
+  // it on the main thread makes them take the browser code path instead of the
+  // Node fallback. See https://github.com/oven-sh/bun/issues/31713
   expect("self" in globalThis).toBe(false);
   expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toBeUndefined();
   expect(typeof self).toBe("undefined");
 });
 
-test("self is defined inside a Worker (matches Node.js and the Web spec)", async () => {
-  const { Worker } = await import("node:worker_threads");
-  const worker = new Worker(
+test("self is defined inside a Worker (Web Worker spec)", async () => {
+  // Per the Web spec, `self` is defined in WorkerGlobalScope. Bun keeps it in
+  // workers (Node does not define it there, but browsers do).
+  const worker = new NodeWorker(
     `
       const { parentPort } = require("node:worker_threads");
       parentPort.postMessage({

@@ -26,6 +26,12 @@ server.listen(0, '127.0.0.1', () => {
   child.on('message', m => {
     if (typeof m === 'object' && m.error) return finish(false, m.error);
     if (m !== 'ready') return;
+    // The fd is duplicated to the child (SCM_RIGHTS), so both processes would
+    // otherwise race on accept(). The child has already called
+    // server.listen({ fd }) before sending 'ready', so closing our copy now
+    // leaves only the child's fd accepting — deterministically the child
+    // answers the connection.
+    server.close();
     const client = connect(port, '127.0.0.1');
     client.setEncoding('utf8');
     let data = '';

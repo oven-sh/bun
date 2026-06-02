@@ -432,15 +432,39 @@ impl Listener {
                     &mut errno,
                 )
             }),
-            UnixOrHost::Fd(fd) => this_ref.group.with_mut(|g| {
-                g.listen_fd(
-                    kind,
-                    secure_ctx_ptr,
-                    fd.native() as uws::LIBUS_SOCKET_DESCRIPTOR,
-                    socket_flags,
-                    size_of::<*mut c_void>() as c_int,
-                )
-            }),
+            UnixOrHost::Fd(fd) => {
+                // Adopting a listening fd relies on `us_socket_group_listen_fd`,
+                // which is POSIX-only (it returns null under libuv/Windows).
+                // Keep the structured error there instead of falling through to
+                // the generic "Failed to listen" path, which would lose the
+                // code/syscall/fd fields.
+                #[cfg(windows)]
+                {
+                    let err = jsc::SystemError {
+                        errno: bun_sys::SystemErrno::EINVAL as c_int,
+                        code: bun_core::String::static_("EINVAL"),
+                        message: bun_core::String::static_(
+                            "Bun does not support listening on a file descriptor.",
+                        ),
+                        syscall: bun_core::String::static_("listen"),
+                        fd: fd.uv(),
+                        path: bun_core::String::empty(),
+                        hostname: bun_core::String::empty(),
+                        dest: bun_core::String::empty(),
+                    };
+                    return Err(global.throw_value(err.to_error_instance(global)));
+                }
+                #[cfg(not(windows))]
+                this_ref.group.with_mut(|g| {
+                    g.listen_fd(
+                        kind,
+                        secure_ctx_ptr,
+                        fd.native() as uws::LIBUS_SOCKET_DESCRIPTOR,
+                        socket_flags,
+                        size_of::<*mut c_void>() as c_int,
+                    )
+                })
+            }
         };
         if listen_socket.is_null() {
             // PORT NOTE: reshaped for borrowck — extract hostname bytes for error formatting

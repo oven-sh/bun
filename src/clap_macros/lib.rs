@@ -133,6 +133,7 @@ fn trim(s: &[u8]) -> &[u8] {
     &s[..e]
 }
 
+#[allow(clippy::disallowed_methods)] // proc-macro: compile-time input
 fn to_string(s: &[u8]) -> String {
     String::from_utf8(s.to_vec()).expect("param strings must be UTF-8")
 }

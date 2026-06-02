@@ -348,9 +348,17 @@ impl<W: fmt::Write> Write for FmtAdapter<'_, W> {
         // Fast path: valid UTF-8 (overwhelmingly the case for our printers).
         let r = match bun_core::str_utf8(buf) {
             Some(s) => self.inner.write_str(s),
-            // PERF(port): lossy alloc only on invalid UTF-8; Zig had no
-            // text/bytes split so this branch is the price of bridging.
-            None => self.inner.write_str(&String::from_utf8_lossy(buf)),
+            // Invalid UTF-8 cannot enter a `fmt::Write` sink losslessly;
+            // replacement chars are the price of bridging (same output as
+            // from_utf8_lossy, without the allocation).
+            None => buf.utf8_chunks().try_for_each(|chunk| {
+                self.inner.write_str(chunk.valid())?;
+                if chunk.invalid().is_empty() {
+                    Ok(())
+                } else {
+                    self.inner.write_str("\u{FFFD}")
+                }
+            }),
         };
         r.map_err(|_| bun_core::err!("FmtError"))
     }

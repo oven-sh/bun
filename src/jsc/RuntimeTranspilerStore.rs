@@ -69,7 +69,7 @@ pub(crate) fn dump_source(vm: NonNull<VirtualMachine>, specifier: &[u8], printer
 
 pub(crate) fn dump_source_string(vm: NonNull<VirtualMachine>, specifier: &[u8], written: &[u8]) {
     if let Err(e) = dump_source_string_failiable(vm, specifier, written) {
-        bun_core::output::debug_warn(format_args!("Failed to dump source string: {}", e.name()));
+        bun_core::debug_warn!("Failed to dump source string: {}", e.name());
     }
 }
 
@@ -129,10 +129,10 @@ pub(crate) fn dump_source_string_failiable(
         let base = bun_paths::basename(specifier);
         let base_z = bun_paths::resolve_path::z(base, &mut path_buf);
         if let Err(e) = File::write_file(parent.fd, base_z, written) {
-            bun_core::output::debug_warn(format_args!(
+            bun_core::debug_warn!(
                 "Failed to dump source string: writeFile {}",
                 bun_core::Error::from(e).name()
-            ));
+            );
             return Ok(());
         }
 

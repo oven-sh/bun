@@ -337,9 +337,7 @@ impl PosixBufferedReader {
                     .read_to_end_with_array_list(&mut self._buffer, sys::SizeHint::UnknownSize);
                 self.handle.close(None, None::<fn(*mut c_void)>);
                 if let Err(err) = result {
-                    // TODO(port): bun_core::debug_warn — macro form is
-                    // broken (concat! into $fmt:literal); use the fn for now.
-                    bun_core::output::debug_warn(format_args!("error reading from memfd\n{}", err));
+                    bun_core::debug_warn!("error reading from memfd\n{}", err);
                     return self.buffer();
                 }
             }
@@ -902,7 +900,7 @@ impl PosixBufferedReader {
                         sys::Result::Err(err) => {
                             if err.is_retry() {
                                 if file_type == FileType::File {
-                                    bun_core::output::debug_warn(
+                                    bun_core::debug_warn!(
                                         "Received EAGAIN while reading from a file. This is a bug.",
                                     );
                                 } else {
@@ -985,7 +983,7 @@ impl PosixBufferedReader {
                 sys::Result::Err(err) => {
                     if err.is_retry() {
                         if file_type == FileType::File {
-                            bun_core::output::debug_warn(
+                            bun_core::debug_warn!(
                                 "Received EAGAIN while reading from a file. This is a bug.",
                             );
                         } else {
@@ -1052,7 +1050,7 @@ impl PosixBufferedReader {
 
                     if err.is_retry() {
                         if file_type == FileType::File {
-                            bun_core::output::debug_warn(
+                            bun_core::debug_warn!(
                                 "Received EAGAIN while reading from a file. This is a bug.",
                             );
                         } else {

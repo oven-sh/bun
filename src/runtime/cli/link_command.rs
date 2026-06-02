@@ -42,10 +42,10 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
     // `defer ctx.allocator.free(original_cwd)` — `original_cwd: Box<[u8]>` drops at scope exit.
 
     if manager.options.should_print_command_name() {
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b>bun link <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
     }
 
@@ -90,19 +90,19 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
             let name = lockfile.str(&package.name);
             if name.is_empty() {
                 if manager.options.log_level != LogLevel::Silent {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error:<r> package.json missing \"name\" <d>in \"{}\"<r>",
                         BStr::new(package_json_source.path.text),
-                    ));
+                    );
                 }
                 Global::crash();
             } else if !strings::is_npm_package_name(name) {
                 if manager.options.log_level != LogLevel::Silent {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error:<r> invalid package.json name \"{}\" <d>in \"{}\"<r>",
                         BStr::new(name),
                         BStr::new(package_json_source.path.text),
-                    ));
+                    );
                 }
                 Global::crash();
             }
@@ -135,10 +135,10 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                 Ok(d) => break 'brk d,
                 Err(e) => {
                     if manager.options.log_level != LogLevel::Silent {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create node_modules in global dir due to error {}",
                             e.name(),
-                        ));
+                        );
                     }
                     Global::crash();
                 }
@@ -156,10 +156,10 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                     if let Err(e) = node_modules.make_dir(&name[..i as usize]) {
                         if e != err!(PathAlreadyExists) {
                             if manager.options.log_level != LogLevel::Silent {
-                                Output::pretty_errorln(format_args!(
+                                bun_core::pretty_errorln!(
                                     "<r><red>error:<r> failed to create scope in global dir due to error {}",
                                     e.name(),
-                                ));
+                                );
                             }
                             Global::crash();
                         }
@@ -187,10 +187,10 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                     bun_sys::windows::libuv::UV_FS_SYMLINK_JUNCTION,
                 ) {
                     Err(e) => {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create junction to node_modules in global dir due to error {}",
                             e,
-                        ));
+                        );
                         Global::crash();
                     }
                     Ok(()) => {}
@@ -206,10 +206,10 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
                     true,
                 ) {
                     if manager.options.log_level != LogLevel::Silent {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create symlink to node_modules in global dir due to error {}",
                             e.name(),
-                        ));
+                        );
                     }
                     Global::crash();
                 }
@@ -271,10 +271,10 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
 
             if let Some(e) = bin_linker.err {
                 if manager.options.log_level != LogLevel::Silent {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error:<r> failed to link bin due to error {}",
                         e.name(),
-                    ));
+                    );
                 }
                 Global::crash();
             }
@@ -285,15 +285,20 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
         // Done
         if manager.options.log_level != LogLevel::Silent {
             let name = BStr::new(name);
-            Output::prettyln(format_args!(
-                "<r><green>Success!<r> Registered \"{name}\"\n\
+            bun_core::prettyln!(
+                "<r><green>Success!<r> Registered \"{}\"\n\
                  \n\
-                 To use {name} in a project, run:\n  \
-                 <cyan>bun link {name}<r>\n\
+                 To use {} in a project, run:\n  \
+                 <cyan>bun link {}<r>\n\
                  \n\
                  Or add it in dependencies in your package.json file:\n  \
-                 <cyan>\"{name}\": \"link:{name}\"<r>\n",
-            ));
+                 <cyan>\"{}\": \"link:{}\"<r>\n",
+                name,
+                name,
+                name,
+                name,
+                name,
+            );
         }
 
         Output::flush();

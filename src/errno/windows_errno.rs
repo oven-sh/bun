@@ -745,7 +745,7 @@ impl SystemErrno {
             return Some(mapped);
         }
         if cfg!(debug_assertions) {
-            bun_core::Output::debug_warn(format_args!("Unknown error code: {}\n", code));
+            bun_core::debug_warn!("Unknown error code: {}\n", code);
         }
         None
     }

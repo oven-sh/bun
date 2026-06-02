@@ -7,11 +7,11 @@ use core::ffi::c_char;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_core::PathString;
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
+use bun_ptr::Interned;
 use bun_resolver::fs::{FileSystem, RealFS};
 use bun_sys::{Fd, FdDirExt, FdExt};
 
@@ -75,7 +75,7 @@ impl Drop for WorkerTmpdir {
 pub fn run_as_coordinator(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
-    files: &[PathString],
+    files: &[Interned],
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
 ) -> Result<bool, bun_core::Error> {
@@ -167,9 +167,9 @@ pub fn run_as_coordinator(
     // Each worker owns a contiguous chunk; co-located files share imports, so
     // this keeps each worker's isolation SourceProvider cache hot. --randomize
     // explicitly opts out of locality (the caller already shuffled).
-    let mut sorted: Vec<PathString> = files.to_vec();
+    let mut sorted: Vec<Interned> = files.to_vec();
     if !ctx.test_options.randomize {
-        sorted.sort_by(|a, b| bun_core::order(a.slice(), b.slice()));
+        sorted.sort_by(|a, b| bun_core::order(a.as_bytes(), b.as_bytes()));
     }
 
     let mut workers: Vec<Worker> = Vec::with_capacity(k as usize);
@@ -575,7 +575,7 @@ impl<'a> WorkerLoop<'a> {
         // SAFETY: vm pointer is valid for the worker's lifetime.
         let vm = unsafe { &mut *self.vm };
         if !self.cmds.channel.adopt(vm, Fd::from_uv(3)) {
-            Output::pretty_errorln("<red>error<r>: test worker failed to adopt IPC fd");
+            bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
         }
         // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread

@@ -1195,6 +1195,9 @@ impl Lockfile {
         new.trusted_dependencies = old_trusted_dependencies;
         new.scripts = old_scripts;
         new.meta_hash = old.meta_hash;
+        // Carry the on-disk format version over from the lockfile we loaded so a
+        // re-save preserves it (a fresh `new` defaults to the current version).
+        new.text_lockfile_version = old.text_lockfile_version;
 
         if old.patched_dependencies.count() > 0 {
             clean_migrate_patched_dependencies_cold(old, &mut new)?;
@@ -1280,13 +1283,13 @@ fn clean_verbose_timer_start() -> Result<Timer, BunError> {
 #[cold]
 #[inline(never)]
 fn clean_verbose_report_cold(old: &Lockfile, new: &Lockfile, timer: Option<&Timer>) {
-    Output::pretty_errorln(format_args!(
+    bun_core::pretty_errorln!(
         "Clean lockfile: {} packages -> {} packages in {}\n",
         old.packages.len(),
         new.packages.len(),
         // SAFETY: only entered when `log_level.is_verbose()`, which set `timer = Some(..)`.
         bun_core::fmt::fmt_duration_one_decimal(timer.unwrap().read()),
-    ));
+    );
 }
 
 #[cold]
@@ -1752,22 +1755,22 @@ impl<'a> Printer<'a> {
         match load_from_disk {
             crate::lockfile::LoadResult::Err(cause) => {
                 match cause.step {
-                    crate::lockfile::LoadStep::OpenFile => Output::pretty_errorln(format_args!(
+                    crate::lockfile::LoadStep::OpenFile => bun_core::pretty_errorln!(
                         "<r><red>error<r> opening lockfile:<r> {}.",
                         cause.value.name()
-                    )),
-                    crate::lockfile::LoadStep::ParseFile => Output::pretty_errorln(format_args!(
+                    ),
+                    crate::lockfile::LoadStep::ParseFile => bun_core::pretty_errorln!(
                         "<r><red>error<r> parsing lockfile:<r> {}",
                         cause.value.name()
-                    )),
-                    crate::lockfile::LoadStep::ReadFile => Output::pretty_errorln(format_args!(
+                    ),
+                    crate::lockfile::LoadStep::ReadFile => bun_core::pretty_errorln!(
                         "<r><red>error<r> reading lockfile:<r> {}",
                         cause.value.name()
-                    )),
-                    crate::lockfile::LoadStep::Migrating => Output::pretty_errorln(format_args!(
+                    ),
+                    crate::lockfile::LoadStep::Migrating => bun_core::pretty_errorln!(
                         "<r><red>error<r> while migrating lockfile:<r> {}",
                         cause.value.name()
-                    )),
+                    ),
                 }
                 if log.errors > 0 {
                     // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
@@ -1778,12 +1781,12 @@ impl<'a> Printer<'a> {
                 Global::crash();
             }
             crate::lockfile::LoadResult::NotFound => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>lockfile not found:<r> {}",
                     bun_core::fmt::QuotedFormatter {
                         text: lockfile_path.as_bytes()
                     },
-                ));
+                );
                 Global::crash();
             }
             crate::lockfile::LoadResult::Ok(_) => {}
@@ -1920,10 +1923,10 @@ impl Lockfile {
         let save_format = load_result.save_format(options);
         if cfg!(debug_assertions) {
             if let Err(e) = self.verify_data() {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error:<r> failed to verify lockfile: {}",
                     e.name()
-                ));
+                );
                 Global::crash();
             }
             // Zig: `bun.assert(FileSystem.instance_loaded);`

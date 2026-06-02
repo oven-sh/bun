@@ -72,7 +72,7 @@ impl ReplCommand {
         // Validate DNS result order (InitOptions doesn't carry it yet — see TODO below).
         let _dns_order = DnsOrder::from_string(&ctx.runtime_options.dns_result_order)
             .unwrap_or_else(|| {
-                Output::pretty_errorln("<r><red>error<r><d>:<r> Invalid DNS result order.");
+                bun_core::pretty_errorln!("<r><red>error<r><d>:<r> Invalid DNS result order.");
                 Global::exit(1);
             });
 
@@ -252,8 +252,7 @@ impl<'a, 'r> ReplRunner<'a, 'r> {
         } else {
             // Interactive: run the REPL loop
             if let Err(err) = this.repl.run_with_vm(Some(VirtualMachine::get())) {
-                // TODO(port): Output.prettyErrorln color-tag formatting macro
-                Output::pretty_errorln(format_args!("<r><red>REPL error: {}<r>", err.name()));
+                bun_core::pretty_errorln!("<r><red>REPL error: {}<r>", err.name());
             }
         }
 

@@ -503,6 +503,19 @@ impl FileSink {
                 return;
             }
 
+            // The post-`end()` drain has completed: no write is outstanding and
+            // no buffered data remains, so the destination offset is final.
+            // Trim path-opened sinks now, before the `writer.end()`/`close()`
+            // calls below release the fd (no-op unless `truncate_on_end` is
+            // still set — the synchronous flush arms in `end`/`end_from_js`
+            // already handled the non-pending case).
+            if (*this).done.get()
+                && !has_pending_data
+                && matches!(status, WriteStatus::Drained | WriteStatus::EndOfFile)
+            {
+                (*this).truncate_to_end_offset();
+            }
+
             if (*this).pending.get().state == streams::PendingState::Pending {
                 (*this).pending.with_mut(|p| p.consumed = amount as u64); // @truncate
 
@@ -1256,16 +1269,24 @@ impl FileSink {
     /// the final size is still exactly the total bytes written. `lseek`
     /// failing (pipe/tty/socket) skips the truncate, matching how `O_TRUNC`
     /// is ignored for those file types.
+    ///
+    /// Only call this when no write is outstanding: synchronously after
+    /// `flush()` returned `Done`/`Wrote`, or from the `on_write` completion
+    /// callback once the post-`end()` drain finishes. On Windows the in-flight
+    /// `uv_fs_write` runs on the libuv thread pool, so truncating while it is
+    /// pending would race it and could discard its bytes.
+    ///
+    /// The fd comes from the writer (its current source), not `self.fd`:
+    /// `setup()` never updates `self.fd`, so a sink re-started via
+    /// `start({path})` would otherwise hit a stale — possibly user-owned —
+    /// descriptor.
     fn truncate_to_end_offset(&self) {
         if !self.truncate_on_end.get() {
             return;
         }
         self.truncate_on_end.set(false);
 
-        #[cfg(not(windows))]
         let fd = self.writer.get().get_fd();
-        #[cfg(windows)]
-        let fd = self.fd.get();
         if fd == Fd::INVALID {
             return;
         }
@@ -1296,7 +1317,8 @@ impl FileSink {
             }
             WriteResult::Pending(written) => {
                 self.written.set(self.written.get() + written as usize); // @truncate
-                self.truncate_to_end_offset();
+                // A write is still outstanding — `on_write` truncates once the
+                // drain completes (see `truncate_to_end_offset`).
                 if !self.must_be_kept_alive_until_eof.get() {
                     self.must_be_kept_alive_until_eof.set(true);
                     self.ref_();
@@ -1415,7 +1437,8 @@ impl FileSink {
             WriteResult::Pending(pending_written) => {
                 self.written
                     .set(self.written.get() + pending_written as usize); // @truncate
-                self.truncate_to_end_offset();
+                // A write is still outstanding — `on_write` truncates once the
+                // drain completes (see `truncate_to_end_offset`).
                 if !self.must_be_kept_alive_until_eof.get() {
                     self.must_be_kept_alive_until_eof.set(true);
                     self.ref_();

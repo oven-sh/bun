@@ -171,6 +171,19 @@ import fs from "node:fs";
 import path from "node:path";
 import util from "node:util";
 
+// https://github.com/oven-sh/bun/issues/25968
+// https://github.com/oven-sh/bun/issues/31682
+it("truncates an existing larger file when opened by path", async () => {
+  const target = path.join(tmpdirSync(), "truncate.txt");
+  fs.writeFileSync(target, Buffer.alloc(1024, "e"));
+
+  const writer = Bun.file(target).writer();
+  writer.write("short");
+  await writer.end();
+
+  expect(await Bun.file(target).text()).toBe("short");
+});
+
 it("end doesn't close when backed by a file descriptor", async () => {
   using _ = fileDescriptorLeakChecker();
   const x = tmpdirSync();

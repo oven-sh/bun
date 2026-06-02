@@ -1,30 +1,16 @@
 import { RedisClient, type SpawnOptions } from "bun";
 import { afterAll, beforeAll, expect } from "bun:test";
-import { bunEnv, dockerExe, isCI, randomPort, tempDirWithFiles } from "harness";
+import { bunEnv, isCI, isDockerEnabled, randomPort, tempDirWithFiles } from "harness";
 import path from "path";
 
 import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
 
-const dockerCLI = dockerExe() as string;
-export const isEnabled =
-  !!dockerCLI &&
-  (() => {
-    try {
-      const info = Bun.spawnSync({
-        cmd: [dockerCLI, "info"],
-        stdout: "pipe",
-        stderr: "inherit",
-        env: bunEnv,
-        timeout: 5_000,
-      });
-      if (info.exitCode !== 0) return false;
-      if (info.signalCode) return false;
-      return info.stdout.toString().indexOf("Server Version:") !== -1;
-    } catch (error) {
-      return false;
-    }
-  })();
+// Route through the shared harness chokepoint so Docker availability is
+// decided in one place. In CI on a platform where Docker is expected, this
+// throws instead of returning false — so the Redis/Valkey suite fails loudly
+// rather than silently skipping when the daemon isn't running.
+export const isEnabled = isDockerEnabled();
 
 /**
  * Test utilities for Valkey/Redis tests

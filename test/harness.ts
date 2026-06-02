@@ -923,17 +923,22 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 
+  // Keep `info` outside the try: a throw from `requireDockerInCI` for the
+  // "exited 0 but no Server Version" case must not be swallowed by the catch
+  // (which would re-throw with the wrong "daemon not reachable" reason).
+  let info: Buffer;
   try {
-    const info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
-    if (info.toString().indexOf("Server Version:") !== -1) {
-      return true;
-    }
-    requireDockerInCI("`docker info` did not report a running daemon (`Server Version:`)");
-    return false;
+    info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
   } catch {
     requireDockerInCI("`docker info` failed, so the daemon is not reachable");
     return false;
   }
+
+  if (info.toString().indexOf("Server Version:") !== -1) {
+    return true;
+  }
+  requireDockerInCI("`docker info` did not report a running daemon (`Server Version:`)");
+  return false;
 }
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
   let deadline = Date.now() + Math.max(1, timeout);

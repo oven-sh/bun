@@ -3598,8 +3598,10 @@ impl<'a> LinkerContext<'a> {
             // `graph.meta[..].resolved_exports[..].potentially_ambiguous_export_star_refs`;
             // that storage is never reallocated while this loop runs (only
             // `cycle_detector`, `log`, `graph.symbols`, and — via the
-            // recursive call below — `import_memo` and
-            // `import_memo_re_exports` are mutated).
+            // recursive call below — `meta.imports_to_bind` are mutated;
+            // `imports_to_bind` is a separate SoA column from
+            // `resolved_exports`, and putting into its per-file map never
+            // reallocates the column array the borrow points through).
             let potentially_ambiguous_export_star_refs: &[crate::ImportData] =
                 advanced.import_data.get();
             saw_ambiguity |= !potentially_ambiguous_export_star_refs.is_empty();

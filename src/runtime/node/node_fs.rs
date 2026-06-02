@@ -10,7 +10,7 @@ use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use crate::api::bun::process::event_loop_handle_to_ctx;
 use crate::webcore;
 use bun_core::Environment;
-use bun_core::{PathString, String as BunString, ZStr, ZigString};
+use bun_core::{String as BunString, ZStr, ZigString};
 use bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::KeepAlive;
@@ -435,8 +435,7 @@ fn err_from_static(name: &'static str) -> bun_core::Error {
 const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
 const PREALLOCATE_LENGTH: usize = 2048 * 1024;
 
-/// `PathString.PathInt` — Zig packed-struct field width. `bun_core::PathString`
-/// stores it as `u32` on the Rust side (see `PathString.rs` POINTER_BITS).
+/// Zig `PathString.PathInt` — path-length field width; `u32` on the Rust side.
 type PathInt = u32;
 
 /// `Syscall.mkdirOSPath` / `Syscall.openatOSPath` — on POSIX `OSPathSliceZ` is
@@ -615,7 +614,9 @@ mod _async_tasks {
                 // SAFETY: caller keeps `path` alive until completion
                 let path = unsafe { &*this.path };
                 let result = node_fs.mkdir_recursive(&args::Mkdir {
-                    path: PathLike::String(PathString::init(path)),
+                    path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                        path, false,
+                    )),
                     recursive: true,
                     ..Default::default()
                 });
@@ -2231,8 +2232,9 @@ mod _async_tasks {
         /// All the subtasks will use this fd to open files
         pub root_fd: FD,
 
-        /// This isued when joining the file paths for error messages
-        pub root_path: PathString,
+        /// This is used when joining the file paths for error messages.
+        /// Heap-owned, NUL-terminated (`[path.., 0]`); freed on drop.
+        pub root_path: Box<[u8]>,
 
         pub pending_err: Option<sys::Error>,
         pub pending_err_mutex: bun_threading::Mutex,
@@ -2294,7 +2296,8 @@ mod _async_tasks {
 
     pub(super) struct ReaddirSubtask {
         pub readdir_task: bun_ptr::ParentRef<AsyncReaddirRecursiveTask>,
-        pub basename: PathString,
+        /// Heap-owned, NUL-terminated (`[basename.., 0]`); freed on drop.
+        pub basename: Box<[u8]>,
         pub task: WorkPoolTask,
     }
 
@@ -2310,33 +2313,17 @@ mod _async_tasks {
                 basename,
                 task: _,
             } = *self;
-            // basename was allocated as `Box<[u8]>` of len+1 (NUL included) in
-            // enqueue(); reconstruct that exact layout for drop on scope exit.
-            let basename = scopeguard::guard(basename, |basename| {
-                let z = basename.slice_assume_z();
-                let len_with_nul = z.len() + 1;
-                let ptr = z.as_bytes().as_ptr().cast_mut();
-                // SAFETY: paired with the `Box::leak(owned.into_boxed_slice())` in
-                // `AsyncReaddirRecursiveTask::enqueue`; same (ptr, len) layout,
-                // reconstructed exactly once. Build the `*mut [u8]` fat pointer
-                // safely — no need to materialize an intermediate `&mut` reference.
-                unsafe {
-                    drop(Box::<[u8]>::from_raw(core::ptr::slice_from_raw_parts_mut(
-                        ptr,
-                        len_with_nul,
-                    )));
-                }
-            });
+            // `basename` is a NUL-terminated `Box<[u8]>` (`[bytes.., 0]`) from
+            // `enqueue()`; it frees on scope exit.
+            // SAFETY: `enqueue()` built `basename` with a trailing NUL at
+            // `[len]`, so `ZStr::from_buf` is valid.
+            let basename_z = ZStr::from_buf(&basename, basename.len() - 1);
             let mut buf = PathBuffer::uninit();
             // SAFETY: readdir_task (ParentRef) outlives subtask via subtask_count
             // refcount. `from_raw_mut` was used at enqueue, so write provenance is
             // present; this work-pool callback is the sole holder of `&mut` to the
             // parent's per-result fields (it pushes to a lock-free queue).
-            unsafe { readdir_task.assume_mut() }.perform_work(
-                basename.slice_assume_z(),
-                &mut buf,
-                false,
-            );
+            unsafe { readdir_task.assume_mut() }.perform_work(basename_z, &mut buf, false);
         }
     }
 
@@ -2359,22 +2346,9 @@ mod _async_tasks {
         }
 
         /// `bun.default_allocator.free(this.root_path.slice())` — paired with the
-        /// `dupeZ` in `create()`. Idempotent (`PathString::EMPTY` after first call).
+        /// `dupeZ` in `create()`. Idempotent (empty `Box` after first call).
         fn free_root_path(&mut self) {
-            let rp = core::mem::replace(&mut self.root_path, PathString::EMPTY);
-            let bytes = rp.slice();
-            if bytes.is_empty() {
-                return;
-            }
-            // SAFETY: `bytes.as_ptr()` is the start of a `Box<[u8]>` allocation of
-            // `bytes.len() + 1` (NUL) made in `create()`; reconstructed exactly once.
-            // Build the `*mut [u8]` fat pointer safely — no intermediate `&mut` ref.
-            unsafe {
-                drop(Box::<[u8]>::from_raw(core::ptr::slice_from_raw_parts_mut(
-                    bytes.as_ptr().cast_mut(),
-                    bytes.len() + 1,
-                )));
-            }
+            drop(core::mem::take(&mut self.root_path));
         }
 
         pub fn enqueue(&mut self, basename: &ZStr) {
@@ -2385,12 +2359,9 @@ mod _async_tasks {
             let mut owned = Vec::with_capacity(basename.len() + 1);
             owned.extend_from_slice(basename.as_bytes());
             owned.push(0);
-            let owned: Box<[u8]> = owned.into_boxed_slice();
-            let len = owned.len() - 1; // exclude NUL
-            // Leak the boxed `[bytes.., 0]` allocation; the Box<[u8]> backing is
-            // reconstructed and freed in `ReaddirSubtask::run_owned`.
-            let leaked: &'static mut [u8] = Box::leak(owned);
-            let basename_ps = PathString::init(&leaked[..len]);
+            // NUL-terminated `[bytes.., 0]`; moved into the subtask and freed
+            // when `ReaddirSubtask` drops.
+            let basename_owned: Box<[u8]> = owned.into_boxed_slice();
             // Spec (node_fs.zig:1061) `bun.assert(subtask_count.fetchAdd(1, .monotonic) > 0)`
             // — the fetch_add is load-bearing (refcounts the in-flight subtask). It
             // MUST run in release builds; only the `> 0` invariant check is debug-only.
@@ -2403,7 +2374,7 @@ mod _async_tasks {
                 readdir_task: unsafe {
                     bun_ptr::ParentRef::from_raw_mut(core::ptr::from_mut(self))
                 },
-                basename: basename_ps,
+                basename: basename_owned,
                 task: WorkPoolTask::default(),
             });
         }
@@ -2419,7 +2390,7 @@ mod _async_tasks {
                 ret::ReaddirTag::Buffers => ResultListEntryValue::Buffers(Vec::new()),
             };
             // Zig: `bun.default_allocator.dupeZ(u8, args.path.slice())`. The
-            // subtasks call `root_path.slice_assume_z()` from the work pool after
+            // subtasks read `root_path` (NUL-terminated) from the work pool after
             // `args.to_thread_safe()` may have rehomed the original slice, so we
             // must own a NUL-terminated copy. Freed in `finish_concurrently()` or
             // `destroy()` via `free_root_path()`.
@@ -2428,11 +2399,8 @@ mod _async_tasks {
                 let mut owned = Vec::with_capacity(src.len() + 1);
                 owned.extend_from_slice(src);
                 owned.push(0);
-                let len = src.len();
-                // Leak the boxed `[bytes.., 0]` allocation; reconstructed and freed
-                // in `free_root_path()`.
-                let leaked: &'static mut [u8] = Box::leak(owned.into_boxed_slice());
-                PathString::init(&leaked[..len])
+                // NUL-terminated `[bytes.., 0]`; freed on drop / `free_root_path()`.
+                owned.into_boxed_slice()
             };
             let mut task = Self::new(AsyncReaddirRecursiveTask {
                 promise: JSPromiseStrong::init(global_object),
@@ -2527,8 +2495,17 @@ mod _async_tasks {
             // SAFETY: task points to Self.task
             let this = unsafe { &mut *Self::from_task_ptr(task) };
             let mut buf = PathBuffer::uninit();
-            let root_path = this.root_path;
-            this.perform_work(root_path.slice_assume_z(), &mut buf, true);
+            // `root_path` backing is fixed for the task's lifetime and only
+            // `perform_work`'s callee reads it (it mutates other fields), so
+            // detach the field borrow to satisfy borrowck (mirrors the
+            // `perform_work` body's own `args_ptr` erase, and line ~6623).
+            let root_path_z = {
+                // SAFETY: `root_path` is a NUL-terminated `Box<[u8]>` set in
+                // `create()` and not reallocated for the task's lifetime.
+                let bytes: &'static [u8] = unsafe { bun_ptr::detach_lifetime(&this.root_path[..]) };
+                ZStr::from_buf(bytes, bytes.len() - 1)
+            };
+            this.perform_work(root_path_z, &mut buf, true);
         }
 
         pub fn write_results<T: IntoResultListEntry>(&mut self, result: &mut Vec<T>) {
@@ -4533,7 +4510,7 @@ pub mod args {
             ThreadSafe::adopt(self)
         }
         // Zig `deinit()` was gated on `flags.deinit_paths`; in Rust the
-        // `PathLike::String` arm's `Drop` is a no-op for borrowed `PathString`
+        // `PathLike::String` arm's `Drop` is a no-op for borrowed `CowSlice`
         // payloads (the only `deinit_paths: false` caller — shell `cp`), so the
         // flag is vestigial and the explicit hook is gone.
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Cp> {
@@ -6532,7 +6509,7 @@ impl NodeFS {
             // On filesystems that return DT_UNKNOWN (e.g. FUSE, bind mounts),
             // fall back to lstat to determine the real file kind.
             let kind = if T::IS_DIRENT && current.kind == sys::FileKind::Unknown {
-                match sys::lstatat(fd, current.name.slice_assume_z()) {
+                match sys::lstatat(fd, current.name_assume_z()) {
                     Ok(st) => sys::kind_from_mode(st.st_mode as Mode),
                     Err(_) => current.kind,
                 }
@@ -6617,10 +6594,14 @@ impl NodeFS {
         // PORT NOTE: `root_path` is never mutated for the lifetime of the task, but
         // borrowck can't see that across `async_task.enqueue(&mut self, …)`. Detach
         // the slice via raw-pointer round-trip — same bytes Zig's `[]const u8` saw.
-        // SAFETY: `async_task.root_path`'s backing storage is fixed at `create()` and
-        // outlives every `enqueue` call below.
-        let root_basename: &[u8] =
-            unsafe { bun_ptr::detach_lifetime(async_task.root_path.slice()) };
+        let root_basename: &[u8] = {
+            // `root_path` is NUL-terminated (`[path.., 0]`); the basename
+            // excludes the trailing NUL.
+            let path = &async_task.root_path;
+            // SAFETY: `async_task.root_path`'s backing storage is fixed at
+            // `create()` and outlives every `enqueue` call below.
+            unsafe { bun_ptr::detach_lifetime(&path[..path.len() - 1]) }
+        };
         #[cfg(not(windows))]
         let flags = sys::O::DIRECTORY | sys::O::RDONLY;
         let atfd = if is_root {
@@ -6720,7 +6701,7 @@ impl NodeFS {
                 .as_bytes()
             };
             // SAFETY: both branches yield NUL-terminated storage — `utf8_name` is a
-            // `PathString` slice over the iterator's NUL-terminated dirent name, and
+            // slice over the iterator's NUL-terminated dirent name, and
             // `join_z_buf` writes a sentinel.
             let name_to_copy_z =
                 unsafe { ZStr::from_raw(name_to_copy.as_ptr(), name_to_copy.len()) };
@@ -6749,7 +6730,7 @@ impl NodeFS {
                     sys::FileKind::Unknown => {
                         if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
                         // Lazy stat to determine the actual kind (lstatat to not follow symlinks)
-                        match sys::lstatat(fd, current.name.slice_assume_z()) {
+                        match sys::lstatat(fd, current.name_assume_z()) {
                             Ok(st) => {
                                 let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                 effective_kind = real_kind;
@@ -6934,7 +6915,7 @@ impl NodeFS {
                         // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
                         sys::FileKind::Unknown => {
                             if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
-                            match sys::lstatat(fd, current.name.slice_assume_z()) {
+                            match sys::lstatat(fd, current.name_assume_z()) {
                                 Ok(st) => {
                                     let real_kind = sys::kind_from_mode(st.st_mode as Mode);
                                     effective_kind = real_kind;
@@ -9203,7 +9184,10 @@ impl NodeFS {
                         len -= 1;
                     }
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {
-                        path: PathLike::String(PathString::init(&bytes[..len])),
+                        path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                            &bytes[..len],
+                            false,
+                        )),
                         recursive: true,
                         ..Default::default()
                     });
@@ -9701,7 +9685,9 @@ pub unsafe extern "C" fn Bun__mkdirp(global_this: &JSGlobalObject, path: *const 
         unsafe { &mut *global_this.bun_vm().as_mut().node_fs().cast::<NodeFS>() };
     node_fs
         .mkdir_recursive(&args::Mkdir {
-            path: PathLike::String(PathString::init(path_bytes)),
+            path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                path_bytes, false,
+            )),
             recursive: true,
             ..Default::default()
         })

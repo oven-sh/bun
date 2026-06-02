@@ -789,7 +789,7 @@ impl MatchedRoute {
         // SAFETY: self-referential lifetime erasure — `RouterMatch<'_>` borrows two
         // backing stores —
         //   (a) `name`/`file_path`/`basename`/`path` slice the resolver's DirnameStore
-        //       (process-lifetime arena, see `bun_router::PathString::slice`), so are
+        //       (process-lifetime arena — `bun_router` paths are `Interned`), so are
         //       genuinely `'static`;
         //   (b) `pathname`/`query_string` and the param `value`s slice `pathname_backing`,
         //       which we move into the same heap-stable Box below. The Box is never moved

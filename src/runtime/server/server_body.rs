@@ -1246,8 +1246,8 @@ fn on_timeout_for_idle_warn() {
     if !did_send_idletimeout_warning_once().swap(true, core::sync::atomic::Ordering::Relaxed)
         && !crate::cli::Command::get().debug.silent
     {
-        Output::pretty_errorln(
-            "<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure.",
+        bun_core::pretty_errorln!(
+            "<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure."
         );
         Output::flush();
     }

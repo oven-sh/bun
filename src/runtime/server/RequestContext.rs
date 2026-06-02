@@ -1069,6 +1069,7 @@ where
         });
 
         // TODO(port): `if (comptime fmt.len > 0)` — fmt::Arguments has no const len; always print.
+        #[allow(clippy::disallowed_methods)] // fmt is a caller-provided Arguments parameter
         Output::pretty_errorln(fmt);
         Output::flush();
 

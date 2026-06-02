@@ -79,6 +79,8 @@ impl PmPkgCommand {
     }
 
     fn print_help() {
+        #[allow(clippy::disallowed_methods)]
+        // help-text const contains <tag> markup that must be tag-walked
         Output::prettyln(format_args!(
             "{}",
             const_format::concatcp!(
@@ -109,6 +111,8 @@ impl PmPkgCommand {
 
 <b>More info<r>: <magenta>https://bun.com/docs/cli/pm#pkg<r>
 "#;
+        #[allow(clippy::disallowed_methods)]
+        // help-text const contains <tag> markup and literal JSON braces
         Output::pretty(format_args!("{}", HELP_TEXT));
         Output::flush();
     }
@@ -418,10 +422,7 @@ impl PmPkgCommand {
                         >(pkg_dir, &mut buf, &[bin_path]);
 
                         if !bun_sys::exists_z(full_path) {
-                            Output::warn(format_args!(
-                                "No bin file found at {}",
-                                bstr::BStr::new(bin_path)
-                            ));
+                            bun_core::warn!("No bin file found at {}", bstr::BStr::new(bin_path));
                         }
                     }
                 }

@@ -264,16 +264,13 @@ pub(crate) fn view(
             versions_to_display =
                 &versions_to_display[..versions_to_display.len().min(max_versions_to_display)];
             if !versions_to_display.is_empty() {
-                Output::pretty_errorln("\nRecent versions:<r>");
+                bun_core::pretty_errorln!("\nRecent versions:<r>");
                 for v in versions_to_display {
-                    Output::pretty_errorln(format_args!(
-                        "<d>-<r> {}",
-                        v.fmt(&parsed_manifest.string_buf)
-                    ));
+                    bun_core::pretty_errorln!("<d>-<r> {}", v.fmt(&parsed_manifest.string_buf));
                 }
 
                 if start_index > 0 {
-                    Output::pretty_errorln(format_args!("  <d>... and {} more<r>", start_index));
+                    bun_core::pretty_errorln!("  <d>... and {} more<r>", start_index);
                 }
             }
         }

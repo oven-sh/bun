@@ -57,10 +57,10 @@ impl<'a> FilterType<'a> {
 
 impl OutdatedCommand {
     pub(crate) fn exec(ctx: Command::Context) -> Result<(), bun_core::Error> {
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b>bun outdated <r><d>v{}<r>",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
         let cli = CommandLineArguments::parse(Subcommand::Outdated)?;
@@ -771,104 +771,100 @@ impl OutdatedCommand {
                         ""
                     };
 
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
-                    Output::pretty(format_args!(
-                        "{}<d>{}<r>",
-                        BStr::new(package_name),
-                        behavior_str
-                    ));
+                    bun_core::pretty!("{}<d>{}<r>", BStr::new(package_name), behavior_str);
                     for _ in package_name.len() + behavior_str.len()
                         ..package_column_inside_length + COLUMN_RIGHT_PAD
                     {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                 }
 
                 {
                     // current version
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     version_buf.clear();
                     write!(version_buf, "{}", current_version.fmt(string_buf))
                         .expect("OOM writing version");
-                    Output::pretty(format_args!("{}", version_buf));
+                    bun_core::pretty!("{}", version_buf);
                     for _ in version_buf.len()..current_column_inside_length + COLUMN_RIGHT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     version_buf.clear();
                 }
 
                 {
                     // update version
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     let update_filtered = update.latest_is_filtered();
                     if let Some(uv) = update.unwrap() {
                         write!(version_buf, "{}", uv.version.fmt(&manifest.string_buf))
                             .expect("OOM writing version");
-                        Output::pretty(format_args!(
+                        bun_core::pretty!(
                             "{}",
                             uv.version
                                 .diff_fmt(current_version, &manifest.string_buf, string_buf)
-                        ));
+                        );
                     } else {
                         write!(version_buf, "{}", current_version.fmt(string_buf))
                             .expect("OOM writing version");
-                        Output::pretty(format_args!("<d>{}<r>", version_buf));
+                        bun_core::pretty!("<d>{}<r>", version_buf);
                     }
                     let mut update_version_len = version_buf.len();
                     if update_filtered {
-                        Output::pretty(format_args!(" <blue>*<r>"));
+                        bun_core::pretty!(" <blue>*<r>");
                         update_version_len += " *".len();
                     }
                     for _ in update_version_len..update_column_inside_length + COLUMN_RIGHT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     version_buf.clear();
                 }
 
                 {
                     // latest version
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     let latest_filtered = latest.latest_is_filtered();
                     if let Some(lv) = latest.unwrap() {
                         write!(version_buf, "{}", lv.version.fmt(&manifest.string_buf))
                             .expect("OOM writing version");
-                        Output::pretty(format_args!(
+                        bun_core::pretty!(
                             "{}",
                             lv.version
                                 .diff_fmt(current_version, &manifest.string_buf, string_buf)
-                        ));
+                        );
                     } else {
                         write!(version_buf, "{}", current_version.fmt(string_buf))
                             .expect("OOM writing version");
-                        Output::pretty(format_args!("<d>{}<r>", version_buf));
+                        bun_core::pretty!("<d>{}<r>", version_buf);
                     }
                     let mut latest_version_len = version_buf.len();
                     if latest_filtered {
-                        Output::pretty(format_args!(" <blue>*<r>"));
+                        bun_core::pretty!(" <blue>*<r>");
                         latest_version_len += " *".len();
                     }
                     for _ in latest_version_len..latest_column_inside_length + COLUMN_RIGHT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                     version_buf.clear();
                 }
 
                 if show_workspace_column {
-                    Output::pretty(format_args!("{}", symbols.vertical_edge()));
+                    bun_core::pretty!("{}", symbols.vertical_edge());
                     for _ in 0..COLUMN_LEFT_PAD {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
 
                     let workspace_name: &[u8] = if let Some(names) = &item.grouped_workspace_names {
@@ -877,24 +873,24 @@ impl OutdatedCommand {
                         manager.lockfile.packages.items_name()[item.workspace_pkg_id as usize]
                             .slice(string_buf)
                     };
-                    Output::pretty(format_args!("{}", BStr::new(workspace_name)));
+                    bun_core::pretty!("{}", BStr::new(workspace_name));
 
                     for _ in workspace_name.len()..workspace_column_inside_length + COLUMN_RIGHT_PAD
                     {
-                        Output::pretty(format_args!(" "));
+                        bun_core::pretty!(" ");
                     }
                 }
 
-                Output::pretty(format_args!("{}\n", symbols.vertical_edge()));
+                bun_core::pretty!("{}\n", symbols.vertical_edge());
             }
         }
 
         table.print_bottom_line_separator();
 
         if has_filtered_versions {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<d><b>Note:<r> <d>The <r><blue>*<r><d> indicates that version isn't true latest due to minimum release age<r>"
-            ));
+            );
         }
 
         Ok(())

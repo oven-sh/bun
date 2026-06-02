@@ -423,11 +423,9 @@ const ServerHandlers: SocketHandler<NetSocket> = {
           self.destroy(verifyError);
           return;
         }
-      } else {
+      } else if (self._requestCert) {
         self.authorized = true;
       }
-    } else {
-      self.authorized = true;
     }
     const connectionListener = server[bunSocketServerOptions]?.connectionListener;
     if (typeof connectionListener === "function") {

@@ -43,10 +43,10 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
     // `defer ctx.allocator.free(original_cwd)` — `_original_cwd: Box<[u8]>` drops at scope exit.
 
     if manager.options.should_print_command_name() {
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b>bun unlink <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
     }
 
@@ -91,19 +91,19 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             let name = lockfile.str(&package.name);
             if name.is_empty() {
                 if manager.options.log_level != LogLevel::Silent {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error:<r> package.json missing \"name\" <d>in \"{}\"<r>",
                         BStr::new(package_json_source.path.text),
-                    ));
+                    );
                 }
                 Global::crash();
             } else if !strings::is_npm_package_name(name) {
                 if manager.options.log_level != LogLevel::Silent {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error:<r> invalid package.json name \"{}\" <d>in \"{}\"<r>",
                         BStr::new(name),
                         BStr::new(package_json_source.path.text),
-                    ));
+                    );
                 }
                 Global::crash();
             }
@@ -121,18 +121,18 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         )) {
             Ok(stat) => {
                 if !sys::S::ISLNK(stat.st_mode as _) {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><green>success:<r> package \"{}\" is not globally linked, so there's nothing to do.",
                         BStr::new(name),
-                    ));
+                    );
                     Global::exit(0);
                 }
             }
             Err(_) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><green>success:<r> package \"{}\" is not globally linked, so there's nothing to do.",
                     BStr::new(name),
-                ));
+                );
                 Global::exit(0);
             }
         }
@@ -159,10 +159,10 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
                 Ok(d) => break 'brk d,
                 Err(e) => {
                     if manager.options.log_level != LogLevel::Silent {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> failed to create node_modules in global dir due to error {}",
                             e.name(),
-                        ));
+                        );
                     }
                     Global::crash();
                 }
@@ -223,23 +223,21 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         // delete it if it exists
         if let Err(e) = node_modules.delete_tree(name) {
             if manager.options.log_level != LogLevel::Silent {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error:<r> failed to unlink package in global dir due to error {}",
                     e.name(),
-                ));
+                );
             }
             Global::crash();
         }
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><green>success:<r> unlinked package \"{}\"",
             BStr::new(name),
-        ));
+        );
         Global::exit(0);
     } else {
-        Output::prettyln(format_args!(
-            "<r><red>error:<r> bun unlink {{packageName}} not implemented yet",
-        ));
+        bun_core::prettyln!("<r><red>error:<r> bun unlink {{packageName}} not implemented yet");
         Global::crash();
     }
 }

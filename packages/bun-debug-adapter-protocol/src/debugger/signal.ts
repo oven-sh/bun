@@ -132,7 +132,11 @@ export class TCPSocketSignal extends EventEmitter {
     });
 
     this.#ready = new Promise((resolve, reject) => {
-      this.#server.listen(this.#port, () => {
+      this.#server.listen(this.#port, "127.0.0.1", () => {
+        const address = this.#server.address();
+        if (address && typeof address === "object") {
+          this.#port = address.port;
+        }
         this.emit("Signal.listening");
         resolve();
       });

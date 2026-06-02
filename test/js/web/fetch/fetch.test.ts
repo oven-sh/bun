@@ -7,6 +7,7 @@ import {
   exampleSite,
   exampleHtml as fixture,
   gc,
+  isASAN,
   isBroken,
   isFlaky,
   isMacOS,
@@ -2641,5 +2642,191 @@ it("fetch() with a fixed-size body drops a caller-supplied Transfer-Encoding hea
     expect(headerLines.filter(line => line.startsWith("content-length:"))).toEqual([`content-length: ${bodyLength}`]);
     // The body is the raw bytes described by Content-Length, with no chunk framing added.
     expect(bodyParts.join("\r\n\r\n")).toBe(body);
+  }
+});
+
+it("fetch() does not forward a caller-supplied Content-Length on a request without a body", async () => {
+  // The Content-Length emitted on the wire must always describe the body fetch() is
+  // actually about to send. A Content-Length copied from an inbound request (e.g. by a
+  // gateway forwarding headers wholesale) on a request with no body would make the
+  // upstream wait for body bytes that never arrive and read the start of the next
+  // request on a kept-alive connection as that body.
+  const requests: string[] = [];
+  await using server = net.createServer(socket => {
+    let raw = "";
+    socket.on("data", data => {
+      raw += data.toString("latin1");
+      const headerEnd = raw.indexOf("\r\n\r\n");
+      if (headerEnd === -1) return;
+      const head = raw.slice(0, headerEnd);
+      const method = head.split(" ")[0];
+      if (method !== "GET") {
+        // wait for the declared body before replying
+        const contentLength = Number(/^content-length:\s*(\d+)\s*$/im.exec(head)?.[1] ?? 0);
+        if (raw.length < headerEnd + 4 + contentLength) return;
+      }
+      requests.push(raw);
+      raw = "";
+      socket.end("HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nOK");
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  // GET request with no body: a caller-supplied Content-Length must not reach the wire.
+  const bodyless = await fetch(`http://localhost:${port}/`, {
+    headers: { "Content-Length": "52", "X-Custom": "still-forwarded" },
+  });
+  expect(await bodyless.text()).toBe("OK");
+
+  // POST request with a real body: the emitted Content-Length is computed from the
+  // body, not taken from the caller-supplied header.
+  const withBody = await fetch(`http://localhost:${port}/`, {
+    method: "POST",
+    headers: { "Content-Length": "999" },
+    body: "hi",
+  });
+  expect(await withBody.text()).toBe("OK");
+
+  expect(requests).toHaveLength(2);
+  const headerLinesOf = (request: string) =>
+    request
+      .split("\r\n\r\n")[0]
+      .split("\r\n")
+      .slice(1)
+      .map(line => line.toLowerCase());
+
+  const bodylessHeaders = headerLinesOf(requests[0]);
+  // No Content-Length at all on the bodyless request: the bogus value is dropped.
+  expect(bodylessHeaders.filter(line => line.startsWith("content-length:"))).toEqual([]);
+  // Other caller-supplied headers are still forwarded.
+  expect(bodylessHeaders).toContain("x-custom: still-forwarded");
+
+  const withBodyHeaders = headerLinesOf(requests[1]);
+  expect(withBodyHeaders.filter(line => line.startsWith("content-length:"))).toEqual(["content-length: 2"]);
+});
+
+it("releases interim 1xx response bytes as they are parsed while waiting for the final response", async () => {
+  // A misbehaving origin can stream an arbitrarily long sequence of interim (1xx)
+  // responses before the final status line. Bytes belonging to interim responses that
+  // have already been parsed must be released from the header accumulation buffer as
+  // they are consumed, instead of being retained (and re-parsed) for the lifetime of
+  // the request. The flood below totals ~48 MB of interim responses, so process RSS
+  // must not grow by anywhere near that amount while the request is still waiting for
+  // its final status line, and the final response must still be delivered normally.
+  const informational = "HTTP/1.1 103 Early Hints\r\nx-filler: " + "a".repeat(1024) + "\r\n\r\n";
+  const responseLength = informational.length;
+  const writeSize = 256 * 1024 - 13; // never a multiple of responseLength, so writes end mid-response
+  const pattern = Buffer.from(informational.repeat(Math.ceil(writeSize / responseLength) + 2), "latin1");
+  const floodBytes = 48 * 1024 * 1024;
+
+  let floodedBytes = 0;
+  const { promise: floodDone, resolve: floodDoneResolve } = Promise.withResolvers<void>();
+  const sockets: net.Socket[] = [];
+  const server = net.createServer(socket => {
+    sockets.push(socket);
+    socket.once("data", () => {
+      const writeMore = () => {
+        while (floodedBytes < floodBytes) {
+          const offset = floodedBytes % responseLength;
+          const slice = pattern.subarray(offset, offset + writeSize);
+          floodedBytes += slice.length;
+          if (!socket.write(slice)) {
+            socket.once("drain", writeMore);
+            return;
+          }
+        }
+        floodDoneResolve();
+      };
+      writeMore();
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    Bun.gc(true);
+    const rssBefore = process.memoryUsage.rss();
+    const responsePromise = fetch(`http://localhost:${port}/`);
+    await floodDone;
+    Bun.gc(true);
+    const rssDuringFlood = process.memoryUsage.rss();
+
+    // Complete the partially written interim response, then send the real response.
+    const socket = sockets[0];
+    const tail = floodedBytes % responseLength;
+    if (tail !== 0) socket.write(pattern.subarray(tail, responseLength));
+    socket.end("HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 4\r\nConnection: close\r\n\r\ndone");
+
+    // The final response after the interim responses is still delivered normally.
+    const response = await responsePromise;
+    expect(await response.text()).toBe("done");
+
+    // Only a small parse tail may be retained while the interim responses stream in;
+    // the ~48 MB of already-consumed 1xx bytes must not accumulate in the process.
+    const deltaMB = (rssDuringFlood - rssBefore) / 1024 / 1024;
+    expect(deltaMB).toBeLessThan(isASAN ? 48 : 16);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
+  }
+}, 60_000);
+
+it("does not reuse a keep-alive connection whose response carried more bytes than its Content-Length", async () => {
+  // Surplus bytes past the declared Content-Length mean the connection's framing can
+  // no longer be trusted: anything still buffered on (or later delivered to) that
+  // socket would be parsed as the response to whichever request next reuses it from
+  // the keep-alive pool. The mis-framed response itself is still delivered (truncated
+  // to its declared length), but the connection must be closed instead of pooled.
+  let connections = 0;
+  const sockets: net.Socket[] = [];
+  const server = net.createServer(socket => {
+    connections++;
+    sockets.push(socket);
+    let buffered = "";
+    socket.on("data", data => {
+      buffered += data.toString("latin1");
+      while (true) {
+        const headerEnd = buffered.indexOf("\r\n\r\n");
+        if (headerEnd === -1) break;
+        const head = buffered.slice(0, headerEnd);
+        buffered = buffered.slice(headerEnd + 4);
+        const path = head.split("\r\n")[0].split(" ")[1];
+        if (path === "/overshoot") {
+          // Declares 5 body bytes but sends those 5 plus a complete pipelined
+          // "injected" response that the declared framing never accounted for.
+          socket.write(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 5\r\nConnection: keep-alive\r\n\r\nhello" +
+              "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 8\r\n\r\ninjected",
+          );
+        } else {
+          socket.write(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\nContent-Length: 6\r\nConnection: keep-alive\r\n\r\nlegit!",
+          );
+        }
+      }
+    });
+  });
+  await once(server.listen(0, "localhost"), "listening");
+  const { port } = server.address() as AddressInfo;
+
+  try {
+    // The mis-framed response is still delivered, truncated to its declared length.
+    const first = await fetch(`http://localhost:${port}/overshoot`);
+    expect(await first.text()).toBe("hello");
+
+    // The follow-up request must go out on a fresh connection, so it can never be
+    // answered by the leftover "injected" bytes on the desynchronized socket.
+    const second = await fetch(`http://localhost:${port}/after`);
+    expect(await second.text()).toBe("legit!");
+    expect(connections).toBe(2);
+
+    // A correctly framed keep-alive response is still pooled and reused.
+    const third = await fetch(`http://localhost:${port}/again`);
+    expect(await third.text()).toBe("legit!");
+    expect(connections).toBe(2);
+  } finally {
+    for (const socket of sockets) socket.destroy();
+    server.close();
   }
 });

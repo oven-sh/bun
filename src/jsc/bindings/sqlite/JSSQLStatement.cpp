@@ -45,6 +45,7 @@
 #include "wtf/BitVector.h"
 #include "wtf/FastBitVector.h"
 #include "wtf/Vector.h"
+#include <wtf/Lock.h>
 #include <atomic>
 #include "wtf/LazyRef.h"
 #include "wtf/text/StringToIntegerConversion.h"
@@ -237,6 +238,7 @@ public:
 };
 
 static SQLiteSingleton* _instance = nullptr;
+static WTF::Lock databasesLock;
 
 static Vector<VersionSqlite3*>& databases()
 {
@@ -250,11 +252,30 @@ static Vector<VersionSqlite3*>& databases()
     return _instance->databases;
 }
 
+static size_t registerDatabase(VersionSqlite3* versionDB)
+{
+    WTF::Locker locker { databasesLock };
+    auto& dbs = databases();
+    size_t index = dbs.size();
+    dbs.append(versionDB);
+    return index;
+}
+
+static VersionSqlite3* databaseForHandle(int32_t handle)
+{
+    WTF::Locker locker { databasesLock };
+    auto& dbs = databases();
+    if (handle < 0 || static_cast<size_t>(handle) >= dbs.size())
+        return nullptr;
+    return dbs[static_cast<size_t>(handle)];
+}
+
 extern "C" void Bun__closeAllSQLiteDatabasesForTermination()
 {
     if (!_instance) {
         return;
     }
+    WTF::Locker locker { databasesLock };
     auto& dbs = _instance->databases;
 
     for (auto& db : dbs) {
@@ -308,7 +329,9 @@ static JSValue createSQLiteError(JSC::JSGlobalObject* globalObject, sqlite3* db)
     int byteOffset = sqlite3_error_offset(db);
 
     const char* msg = sqlite3_errmsg(db);
-    WTF::String str = WTF::String::fromUTF8(msg);
+    // Error messages can echo identifiers/values from the query, which SQLite does
+    // not validate as UTF-8, so decode leniently to avoid dropping the message.
+    WTF::String str = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(msg), strlen(msg) });
     JSC::JSObject* object = JSC::createError(globalObject, str);
     auto& builtinNames = WebCore::builtinNames(vm);
     object->putDirect(vm, vm.propertyNames->name, jsString(vm, String("SQLiteError"_s)), JSC::PropertyAttribute::DontEnum | 0);
@@ -574,7 +597,7 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt
         }
 
         if (len < 64) {
-            return jsString(vm, WTF::String::fromUTF8({ text, len }));
+            return jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ text, len }));
         }
 
         auto encoded = Bun__encoding__toStringUTF8(text, len, globalObject);
@@ -721,7 +744,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
             // We can't have two properties with the same name, so we use validColumns to track this.
             auto preCount = columnNames->size();
             columnNames->add(
-                Identifier::fromString(vm, WTF::String::fromUTF8({ name, len })));
+                Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len })));
             auto curCount = columnNames->size();
 
             if (preCount != curCount) {
@@ -774,7 +797,7 @@ static void initializeColumnNames(JSC::JSGlobalObject* lexicalGlobalObject, JSSQ
         if (len == 0)
             break;
 
-        const auto key = Identifier::fromString(vm, WTF::String::fromUTF8({ name, len }));
+        const auto key = Identifier::fromString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), len }));
 
         JSC::JSValue primitive = JSC::jsUndefined();
         auto decl = sqlite3_column_decltype(stmt, i);
@@ -1277,8 +1300,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementDeserialize, (JSC::JSGlobalObject * lexic
         return {};
     }
 
-    auto count = databases().size();
-    databases().append(new VersionSqlite3(db));
+    auto count = registerDatabase(new VersionSqlite3(db));
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(count)));
 }
 
@@ -1295,12 +1317,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
     }
 
     int32_t dbIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    if (dbIndex < 0 || dbIndex >= databases().size()) [[unlikely]] {
+    VersionSqlite3* versionDB = databaseForHandle(dbIndex);
+    if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
 
-    sqlite3* db = databases()[dbIndex]->db;
+    sqlite3* db = versionDB->db;
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
         return {};
@@ -1336,7 +1359,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     }
 
     int32_t dbIndex = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    if (dbIndex < 0 || dbIndex >= databases().size()) [[unlikely]] {
+    VersionSqlite3* versionDB = databaseForHandle(dbIndex);
+    if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
@@ -1350,7 +1374,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
     auto extensionString = extension.toWTFString(lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    sqlite3* db = databases()[dbIndex]->db;
+    sqlite3* db = versionDB->db;
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Can't do this on a closed database"_s));
         return {};
@@ -1404,11 +1428,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
     }
 
     int32_t handle = callFrame->argument(0).toInt32(lexicalGlobalObject);
-    if (handle < 0 || handle >= databases().size()) [[unlikely]] {
+    VersionSqlite3* versionDB = databaseForHandle(handle);
+    if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
-    sqlite3* db = databases()[handle]->db;
+    sqlite3* db = versionDB->db;
 
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
@@ -1553,12 +1578,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalOb
 
     int32_t handle = dbNumber.toInt32(lexicalGlobalObject);
 
-    if (handle < 0 || handle >= databases().size()) [[unlikely]] {
+    VersionSqlite3* versionDB = databaseForHandle(handle);
+    if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
 
-    sqlite3* db = databases()[handle]->db;
+    sqlite3* db = versionDB->db;
 
     if (!db) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
@@ -1592,12 +1618,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     }
 
     int32_t handle = dbNumber.toInt32(lexicalGlobalObject);
-    if (handle < 0 || handle >= databases().size()) [[unlikely]] {
+    VersionSqlite3* versionDB = databaseForHandle(handle);
+    if (!versionDB) [[unlikely]] {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
 
-    sqlite3* db = databases()[handle]->db;
+    sqlite3* db = versionDB->db;
     if (!db) {
         throwException(lexicalGlobalObject, scope, createRangeError(lexicalGlobalObject, "Cannot use a closed database"_s));
         return {};
@@ -1641,7 +1668,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     int64_t memoryChange = sqlite_malloc_amount - currentMemoryUsage;
 
     JSSQLStatement* sqlStatement = JSSQLStatement::create(
-        static_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle], memoryChange);
+        static_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, versionDB, memoryChange);
 
     if (internalFlagsValue.isInt32()) {
         const int32_t internalFlags = internalFlagsValue.asInt32();
@@ -1733,12 +1760,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     if (status != SQLITE_OK) {
         // TODO: log a warning here that defensive mode is unsupported.
     }
-    auto index = databases().size();
-
-    databases().append(new VersionSqlite3(db));
+    auto* versionDB = new VersionSqlite3(db);
+    auto index = registerDatabase(versionDB);
     if (finalizationTarget.isObject()) {
-        vm.heap.addFinalizer(finalizationTarget.getObject(), [index](JSC::JSCell* ptr) -> void {
-            databases()[index]->release();
+        vm.heap.addFinalizer(finalizationTarget.getObject(), [versionDB](JSC::JSCell* ptr) -> void {
+            versionDB->release();
         });
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(index)));
@@ -1772,14 +1798,15 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
 
     int dbIndex = dbNumber.toInt32(lexicalGlobalObject);
 
-    if (dbIndex < 0 || dbIndex >= databases().size()) {
+    VersionSqlite3* versionDB = databaseForHandle(dbIndex);
+    if (!versionDB) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
 
     bool shouldThrowOnError = (throwOnError.isEmpty() || throwOnError.isUndefined()) ? false : throwOnError.toBoolean(lexicalGlobalObject);
 
-    sqlite3* db = databases()[dbIndex]->db;
+    sqlite3* db = versionDB->db;
     // no-op if already closed
     if (!db) {
         return JSValue::encode(jsUndefined());
@@ -1792,7 +1819,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return {};
     }
 
-    databases()[dbIndex]->db = nullptr;
+    versionDB->db = nullptr;
     return JSValue::encode(jsUndefined());
 }
 
@@ -1826,12 +1853,13 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
     int dbIndex = dbNumber.toInt32(lexicalGlobalObject);
     int op = opNumber.toInt32(lexicalGlobalObject);
 
-    if (dbIndex < 0 || dbIndex >= databases().size()) {
+    VersionSqlite3* versionDB = databaseForHandle(dbIndex);
+    if (!versionDB) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
         return {};
     }
 
-    sqlite3* db = databases()[dbIndex]->db;
+    sqlite3* db = versionDB->db;
     // no-op if already closed
     if (!db) {
         return JSValue::encode(jsUndefined());
@@ -2559,7 +2587,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementToStringFunction, (JSC::JSGlobalObject * 
         RELEASE_AND_RETURN(scope, JSValue::encode(jsEmptyString(vm)));
     }
     size_t length = strlen(string);
-    auto* jsString = JSC::jsString(vm, WTF::String::fromUTF8({ string, length }));
+    auto* jsString = JSC::jsString(vm, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(string), length }));
     sqlite3_free(string);
     RELEASE_AND_RETURN(scope, JSValue::encode(jsString));
 }
@@ -2729,8 +2757,12 @@ JSC_DEFINE_CUSTOM_GETTER(jsSqlStatementGetColumnDeclaredTypes, (JSGlobalObject *
         JSC::JSValue typeValue;
 
         if (declType != nullptr) {
-            String typeStr = String::fromUTF8(declType);
-            typeValue = JSC::jsNontrivialString(vm, typeStr);
+            // Declared types come from the schema, which SQLite does not validate as
+            // UTF-8, so decode leniently (invalid -> U+FFFD) like column names. Use
+            // jsString rather than jsNontrivialString because a single-character
+            // declared type (e.g. CREATE TABLE t (a "X")) is valid.
+            String typeStr = WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(declType), strlen(declType) });
+            typeValue = JSC::jsString(vm, typeStr);
             RETURN_IF_EXCEPTION(scope, {});
         } else {
             // If no declared type (e.g., for expressions or results of functions)

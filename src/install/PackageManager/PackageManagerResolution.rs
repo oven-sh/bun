@@ -227,10 +227,10 @@ impl PackageManager {
             match self.get_installed_versions_from_disk_cache(&mut tags_buf, package_name) {
                 Ok(v) => v,
                 Err(err) => {
-                    Output::debug(format_args!(
+                    bun_core::debug!(
                         "error getting installed versions from disk cache: {}",
                         err.name()
-                    ));
+                    );
                     return None;
                 }
             };
@@ -260,10 +260,7 @@ impl PackageManager {
                 ) {
                     Ok(p) => p,
                     Err(err) => {
-                        Output::debug(format_args!(
-                            "error getting path for cached npm path: {}",
-                            err.name()
-                        ));
+                        bun_core::debug!("error getting path for cached npm path: {}", err.name());
                         return None;
                     }
                 };
@@ -295,10 +292,10 @@ impl PackageManager {
                         return Some(id);
                     }
                     folder_resolver::FolderResolution::Err(err) => {
-                        Output::debug(format_args!(
+                        bun_core::debug!(
                             "error getting or putting folder resolution: {}",
                             err.name()
-                        ));
+                        );
                         return None;
                     }
                 }

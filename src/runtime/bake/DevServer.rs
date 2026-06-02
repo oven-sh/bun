@@ -508,10 +508,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         match sys::Dir::cwd().make_open_path(dir, Default::default()) {
             Ok(d) => Some(d),
             Err(err) => {
-                Output::warn(format_args!(
-                    "Could not open directory for dumping sources: {}",
-                    err
-                ));
+                bun_core::warn!("Could not open directory for dumping sources: {}", err);
                 None
             }
         }
@@ -1696,7 +1693,7 @@ impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
     fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
         bun_uws_sys::response::Response::<SSL>::get_remote_socket_info(self).map(|a| {
             bun_uws::SocketAddress {
-                ip: a.ip.to_vec().into_boxed_slice(),
+                ip: a.ip().to_vec().into_boxed_slice(),
                 port: a.port,
                 is_ipv6: a.is_ipv6,
             }
@@ -3432,7 +3429,7 @@ impl DevServer {
         // Theoretically, it shouldn't be possible for errors to leak into dev.log
         if self.log.has_errors() && !self.log.msgs.is_empty() {
             if cfg!(debug_assertions) {
-                Output::debug_warn("dev.log should not be written into when using DevServer");
+                bun_core::debug_warn!("dev.log should not be written into when using DevServer");
             }
             let _ = self.log.print(std::ptr::from_mut(Output::error_writer()));
         }
@@ -3954,7 +3951,7 @@ pub(super) fn finalize_bundle(
         let current_bundle = unsafe { &mut *current_bundle_ptr_defer };
         if !current_bundle.requests.first.is_null() {
             // cannot be an assertion because in the case of OOM, the request list was not drained.
-            Output::debug(
+            bun_core::debug!(
                 "current_bundle.requests.first != null. this leaves pending requests without an error page!",
             );
         }
@@ -4809,10 +4806,7 @@ pub(super) fn finalize_bundle(
 
             dev.bundles_since_last_error += 1;
             if dev.bundles_since_last_error > 1 {
-                Output::pretty_error(format_args!(
-                    "<cyan>[x{}]<r> ",
-                    dev.bundles_since_last_error
-                ));
+                bun_core::pretty_error!("<cyan>[x{}]<r> ", dev.bundles_since_last_error);
             }
         } else {
             dev.bundles_since_last_error = 0;
@@ -4821,7 +4815,7 @@ pub(super) fn finalize_bundle(
 
         let ms_elapsed = u64::try_from(current_bundle!().timer.elapsed().as_millis()).unwrap();
 
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "<green>{} in {}ms<r>",
             if current_bundle!().had_reload_event {
                 "Reloaded"
@@ -4829,7 +4823,7 @@ pub(super) fn finalize_bundle(
                 "Bundled page"
             },
             ms_elapsed,
-        ));
+        );
 
         // Intentionally creating a new scope here so we can limit the lifetime
         // of the `relative_path_buf`
@@ -4895,13 +4889,13 @@ pub(super) fn finalize_bundle(
 
             let total_count = bv2.graph.entry_points.len();
             if let Some(name) = file_name {
-                Output::pretty_error(format_args!("<d>:<r> {}", bstr::BStr::new(name)));
+                bun_core::pretty_error!("<d>:<r> {}", bstr::BStr::new(name));
                 if total_count > 1 {
-                    Output::pretty_error(format_args!(" <d>+ {} more<r>", total_count - 1));
+                    bun_core::pretty_error!(" <d>+ {} more<r>", total_count - 1);
                 }
             }
         }
-        Output::pretty_error("\n");
+        bun_core::pretty_error!("\n");
         Output::flush();
 
         // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
@@ -5590,14 +5584,14 @@ impl DevServer {
         if !bun_output::scope_is_visible!(DevServer) {
             return;
         }
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "<d>DevServer tracked {}, process: {}<r>",
             bun_core::fmt::size(self.memory_cost(), Default::default()),
             bun_core::fmt::size(
                 sys::self_process_memory_usage().unwrap_or(0),
                 Default::default()
             ),
-        ));
+        );
     }
 }
 
@@ -5728,7 +5722,7 @@ pub fn dump_bundle_for_chunk(
         code,
         wrap,
     ) {
-        Output::warn(format_args!("Could not dump bundle: {}", err));
+        bun_core::warn!("Could not dump bundle: {}", err);
     }
 }
 
@@ -6211,7 +6205,7 @@ impl DevServer {
         } else {
             Output::err(err, "failed to watch files for hot-reloading", ());
         }
-        Output::warn(
+        bun_core::warn!(
             "The development server is still running, but hot-reloading is disabled until a restart.",
         );
         // TODO: attempt to automatically restart the watcher thread, perhaps wait for next request.
@@ -6298,16 +6292,16 @@ impl DevServer {
                 framework_router::FileKind::Layout => "layout",
             },),
         );
-        Output::pretty_errorln(format_args!("  - <blue>{}<r>", bstr::BStr::new(rel_path)));
+        bun_core::pretty_errorln!("  - <blue>{}<r>", bstr::BStr::new(rel_path));
         let mut buf = paths::path_buffer_pool::get();
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "  - <blue>{}<r>",
             bstr::BStr::new(self.relative_path(
                 &mut *buf,
                 &self.server_graph.bundled_files.keys()
                     [from_opaque_file_id::<{ bake::Side::Server }>(other_id).get() as usize]
             ))
-        ));
+        );
         Output::flush();
         Ok(())
     }
@@ -6432,10 +6426,7 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
     let file = match sys::File::create(sys::Fd::cwd(), filepath, true) {
         Ok(f) => f,
         Err(err) => {
-            Output::warn(format_args!(
-                "Could not open file for dumping incremental graph: {}",
-                err
-            ));
+            bun_core::warn!("Could not open file for dumping incremental graph: {}", err);
             return Ok(());
         }
     };
@@ -6463,10 +6454,10 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
     file.write_all(b"\"), c => c.charCodeAt(0));\n")?;
     file.write_all(end)?;
 
-    Output::note(format_args!(
+    bun_core::note!(
         "Dumped incremental bundler graph to {}",
         bun_core::fmt::quote(filepath)
-    ));
+    );
     Ok(())
 }
 

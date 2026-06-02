@@ -696,7 +696,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const darwinCross = darwin && host.os !== "darwin";
   // Windows target on a non-Windows host (clang-cl + lld-link + xwin
   // sysroot). See the cross block further down.
-  const windowsCross = windows && host.os !== "windows";
 
   // Platform file conventions — MSVC style on Windows, Unix everywhere else.
   const exeSuffix = windows ? ".exe" : "";
@@ -748,20 +747,25 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // -baseline WebKit prebuilt has no -lto variant).
   const baseline = partial.baseline ?? false;
 
-  // LTO: default on for CI release non-asan non-assertions builds on Linux,
-  // on darwin cross-compiles, and on windows x64 cross-compiles. The -lto
-  // WebKit prebuilts for macOS and Windows only exist for the cross
-  // toolchain (Apple's ld / MSVC link.exe on the native lanes were never set
-  // up to consume bitcode archives), so the native darwin and windows lanes
-  // stay non-LTO.
-  const ltoDefault =
-    release && (linux || darwinCross || (windowsCross && x64 && !baseline)) && ci && !assertions && !asan;
+  // LTO: default on for CI release non-asan non-assertions builds on Linux
+  // and on darwin cross-compiles. Windows is NOT in the default even though
+  // the windows x64 cross toolchain fully supports ThinLTO + cross-language
+  // LTO (and `--lto=on` still builds that way): LLVM's ThinLTO backend
+  // pipeline miscompiles JSC on x86-64 at -O1 and above — JS-visible
+  // corruption in the bundler tests, the same family as the linux x86-64
+  // ThinLTO miscompile that keeps linux on full LTO — and the regular-LTO
+  // route for COFF (full-LTO WebKit windows artifacts + a COFF rust summary
+  // fix-up) hasn't been built yet. Re-enable the default once one of those
+  // lands. The -lto WebKit prebuilts only exist for the cross toolchain, so
+  // native windows/darwin lanes are non-LTO regardless.
+  const ltoDefault = release && (linux || darwinCross) && ci && !assertions && !asan;
   let lto = partial.lto ?? ltoDefault;
   // ASAN and LTO don't mix — ASAN wins (silently, no warn — config is explicit).
   // Android: no LTO prebuilt WebKit exists; force off so the right tarball is fetched.
   // Windows arm64 / baseline: same — oven-sh/WebKit ships no
   // bun-webkit-windows-arm64-lto (LLVM's CodeView emitter aborts on ARM64
-  // NEON tuple registers during LTO codegen) and no -baseline-lto variant.
+  // NEON tuple registers during LTO codegen), and the pinned WEBKIT_VERSION
+  // predates the -baseline-lto variant.
   if ((asan && lto) || abi === "android" || (windows && (arm64 || baseline))) {
     lto = false;
   }
@@ -991,7 +995,8 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
           hint:
             "Set WINDOWS_SYSROOT or pass --winsysroot=<path>. Create one with xwin (https://github.com/Jake-Shadle/xwin):\n" +
             "  cargo install xwin  (or download a release binary)\n" +
-            "  xwin --accept-license --arch x86_64,aarch64 --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot",
+            // Keep the pinned versions in sync with WINDOWS_SDK_VERSION / MSVC_CRT_VERSION in winsysroot.ts.
+            "  xwin --accept-license --arch x86_64,aarch64 --sdk-version 10.0.26100 --crt-version 14.44.17.14 --include-atl splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot",
         });
       }
     }

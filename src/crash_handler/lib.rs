@@ -930,15 +930,10 @@ mod draft {
                             // SAFETY: name was set from a valid NUL-terminated C string
                             let native_plugin_name =
                                 unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-                            let fmt = "\nBun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nThis indicates either a bug in the native plugin or in Bun.\n";
                             if write!(
                                 writer,
-                                "{}",
-                                Output::pretty_fmt_args(
-                                    fmt,
-                                    true,
-                                    format_args!("{}", bstr::BStr::new(native_plugin_name))
-                                )
+                                bun_core::pretty_fmt!("\nBun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nThis indicates either a bug in the native plugin or in Bun.\n", true),
+                                bstr::BStr::new(native_plugin_name)
                             )
                             .is_err()
                             {
@@ -954,15 +949,10 @@ mod draft {
                                     unsafe { bun_core::ffi::cstr(p) }.to_bytes()
                                 })
                                 .unwrap_or(b"<unknown>");
-                            let fmt = "Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n";
                             if write!(
                                 writer,
-                                "{}",
-                                Output::pretty_fmt_args(
-                                    fmt,
-                                    true,
-                                    format_args!("{}", bstr::BStr::new(name))
-                                )
+                                bun_core::pretty_fmt!("Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n", true),
+                                bstr::BStr::new(name)
                             )
                             .is_err()
                             {
@@ -1178,11 +1168,10 @@ mod draft {
                                 // SAFETY: name was set from a valid NUL-terminated C string
                                 let native_plugin_name =
                                     unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-                                if write!(writer, "{}", Output::pretty_fmt_args(
+                                if write!(writer, bun_core::pretty_fmt!(
                                 "Bun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
                                 true,
-                                format_args!("{}", bstr::BStr::new(native_plugin_name)),
-                            )).is_err() { abort(); }
+                            ), bstr::BStr::new(native_plugin_name)).is_err() { abort(); }
                             } else if UNSUPPORTED_UV_FUNCTION.with(|c| c.get()).is_some() {
                                 // TODO(port): bun_analytics::Features::unsupported_uv_function
                                 let name: &[u8] = UNSUPPORTED_UV_FUNCTION
@@ -1192,15 +1181,10 @@ mod draft {
                                         unsafe { bun_core::ffi::cstr(p) }.to_bytes()
                                     })
                                     .unwrap_or(b"<unknown>");
-                                let fmt = "Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n";
                                 if write!(
                                     writer,
-                                    "{}",
-                                    Output::pretty_fmt_args(
-                                        fmt,
-                                        true,
-                                        format_args!("{}", bstr::BStr::new(name))
-                                    )
+                                    bun_core::pretty_fmt!("Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n", true),
+                                    bstr::BStr::new(name)
                                 )
                                 .is_err()
                                 {
@@ -1289,11 +1273,10 @@ mod draft {
                     // attempt to prevent a double panic
                     bun_core::set_auto_reload_on_crash(false);
 
-                    // TODO(port): pretty_fmt! color tags — runtime rewrite via pretty_fmt_args
-                    Output::pretty_errorln(format_args!(
-                        "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{}<r><d>] ---<r>",
+                    bun_core::pretty_errorln!(
+                        "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{d}<r><d>] ---<r>",
                         bun_core::time::milli_timestamp().max(0),
-                    ));
+                    );
                     Output::flush();
 
                     // TODO(port): comptime assert void == @TypeOf(bun.reloadProcess(...))
@@ -1513,7 +1496,7 @@ mod draft {
             );
         } else if err == bun_core::err!("MissingPackageJSON") {
             err_generic!("Bun could not find a package.json file to install from");
-            Output::note("Run \"bun init\" to initialize a project");
+            bun_core::note!("Run \"bun init\" to initialize a project");
         } else {
             // PORT NOTE: Zig picked the format string at comptime; the macros need
             // `:literal`, so branch on the const and call separately.
@@ -3029,7 +3012,7 @@ mod draft {
             if IS_ROOT {
                 // SAFETY: read-only access
                 if VERBOSE_ERROR_TRACE.load(Ordering::Relaxed) {
-                    Output::note("Release build will not have this trace by default:");
+                    bun_core::note!("Release build will not have this trace by default:");
                 }
             } else {
                 bun_core::pretty_errorln!(

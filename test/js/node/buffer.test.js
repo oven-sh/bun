@@ -2256,6 +2256,110 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(b.lastIndexOf("b", [])).toBe(-1);
       });
 
+      it("lastIndexOf(value, encoding) defaults to searching from the end", () => {
+        // When the second argument is an encoding string (no byteOffset), the
+        // search must start from the end of the buffer, matching Node.js.
+        const b = Buffer.from("ello hello hello");
+        expect(b.lastIndexOf("hello", "utf8")).toBe(11);
+        expect(b.lastIndexOf("hello", "latin1")).toBe(11);
+        expect(b.lastIndexOf("hello", "binary")).toBe(11);
+
+        const b16 = Buffer.from("ello hello hello", "utf16le");
+        expect(b16.lastIndexOf("hello", "utf16le")).toBe(22);
+        expect(b16.lastIndexOf("hello", "ucs2")).toBe(22);
+
+        const bhex = Buffer.from("aabbccaabbcc", "hex");
+        expect(bhex.lastIndexOf("aabb", "hex")).toBe(3);
+
+        const bb64 = Buffer.from("Zm9vYmFyZm9v", "base64");
+        expect(bb64.lastIndexOf("Zm9v", "base64")).toBe(6);
+
+        // Forward indexOf with the same overload must remain 0-based.
+        expect(b.indexOf("hello", "utf8")).toBe(5);
+        expect(b.includes("hello", "utf8")).toBe(true);
+
+        // Explicit byteOffset still works.
+        expect(b.lastIndexOf("hello", 8, "utf8")).toBe(5);
+      });
+
+      it("indexOf(value, encoding) is unchanged by the lastIndexOf fix", () => {
+        // The lastIndexOf fix routes the encoding-as-2nd-arg case through the
+        // direction-aware default. For forward indexOf/includes that default is
+        // 0, so these must keep returning the FIRST match from offset 0. The
+        // buffer repeats "hello" so a regression that searched from the end
+        // would return 12 instead of 0.
+        const b = Buffer.from("hello world hello");
+        expect(b.indexOf("hello", "utf8")).toBe(0);
+        expect(b.indexOf("hello", "latin1")).toBe(0);
+        expect(b.indexOf("hello", "binary")).toBe(0);
+        expect(b.indexOf("hello", "ascii")).toBe(0);
+        expect(b.includes("hello", "utf8")).toBe(true);
+        expect(b.indexOf("zzz", "utf8")).toBe(-1);
+        expect(b.indexOf("o", "utf8")).toBe(4);
+
+        const b16 = Buffer.from("hello world hello", "utf16le");
+        expect(b16.indexOf("hello", "utf16le")).toBe(0);
+        expect(b16.indexOf("hello", "ucs2")).toBe(0);
+        expect(b16.includes("hello", "utf16le")).toBe(true);
+
+        const bhex = Buffer.from("aabbccaabbcc", "hex");
+        expect(bhex.indexOf("aabb", "hex")).toBe(0);
+        expect(bhex.includes("aabb", "hex")).toBe(true);
+
+        const bb64 = Buffer.from("Zm9vYmFyZm9v", "base64");
+        expect(bb64.indexOf("Zm9v", "base64")).toBe(0);
+        expect(bb64.includes("Zm9v", "base64")).toBe(true);
+
+        // A 3-arg indexOf(value, byteOffset, encoding) still skips forward.
+        expect(b.indexOf("hello", 1, "utf8")).toBe(12);
+
+        // A non-string 2nd arg is a byteOffset, not an encoding: these go
+        // through the other branch and must also be unchanged.
+        const abc = Buffer.from("abcdef");
+        expect(abc.indexOf("b", undefined)).toBe(1);
+        expect(abc.indexOf("b", null)).toBe(1);
+        expect(abc.indexOf("b", {})).toBe(1);
+        expect(abc.indexOf("b", [])).toBe(1);
+      });
+
+      it("indexOf/lastIndexOf with an explicit byteOffset are unchanged by the fix", () => {
+        // When a numeric byteOffset is supplied (with or without a trailing
+        // encoding), both methods take the non-string branch that the fix does
+        // NOT touch. The needle repeats ("hello" at 0 and 12, "o" at 4/7/16) so
+        // the offset genuinely selects which occurrence is returned.
+        const b = Buffer.from("hello world hello");
+
+        // indexOf(value, byteOffset): searches forward from the offset.
+        expect(b.indexOf("hello", 0)).toBe(0);
+        expect(b.indexOf("hello", 1)).toBe(12);
+        expect(b.indexOf("hello", 12)).toBe(12);
+        expect(b.indexOf("hello", 13)).toBe(-1);
+        expect(b.indexOf("hello", -5)).toBe(12); // negative counts from the end
+        expect(b.indexOf("o", 5)).toBe(7);
+        expect(b.indexOf("o", 8)).toBe(16);
+
+        // indexOf(value, byteOffset, encoding): same, with an explicit encoding.
+        expect(b.indexOf("hello", 1, "utf8")).toBe(12);
+        expect(b.indexOf("hello", 0, "latin1")).toBe(0);
+
+        // lastIndexOf(value, byteOffset): searches backward from the offset.
+        expect(b.lastIndexOf("hello", -1)).toBe(12);
+        expect(b.lastIndexOf("hello", 11)).toBe(0);
+        expect(b.lastIndexOf("hello", 12)).toBe(12);
+        expect(b.lastIndexOf("hello", 0)).toBe(0);
+        expect(b.lastIndexOf("o", 6)).toBe(4);
+        expect(b.lastIndexOf("o", 100)).toBe(16); // past the end is clamped
+
+        // lastIndexOf(value, byteOffset, encoding): same, with an encoding.
+        expect(b.lastIndexOf("hello", 11, "utf8")).toBe(0);
+        expect(b.lastIndexOf("hello", 16, "utf8")).toBe(12);
+
+        // utf16le: the byteOffset is in bytes ("hello" starts at byte 0 and 24).
+        const b16 = Buffer.from("hello world hello", "utf16le");
+        expect(b16.indexOf("hello", 2, "ucs2")).toBe(24);
+        expect(b16.lastIndexOf("hello", 22, "ucs2")).toBe(0);
+      });
+
       for (let fn of [Buffer.prototype.slice, Buffer.prototype.subarray]) {
         it(`Buffer.${fn.name}`, () => {
           const buf = new Buffer("buffer");

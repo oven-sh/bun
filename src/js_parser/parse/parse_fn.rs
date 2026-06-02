@@ -81,7 +81,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         if has_if_scope {
             if_stmt_scope_index = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
         }
-        let _ = if_stmt_scope_index;
 
         let scope_index: usize =
             p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionArgs, p.lexer.loc())?;
@@ -118,9 +117,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             {
                 p.pop_and_discard_scope(scope_index);
 
-                // Balance the fake block scope introduced above
+                // Discard the fake block scope introduced above. A forward declaration
+                // emits nothing (`S::TypeScript`), so the block must be removed from
+                // `scopes_in_order` too — a plain `pop_scope()` only updates
+                // `current_scope` and would leave the block orphaned in the scope order,
+                // desyncing the visit pass (scope mismatch / pop past the topmost scope).
                 if has_if_scope {
-                    p.pop_scope();
+                    p.pop_and_discard_scope(if_stmt_scope_index);
                 }
 
                 if opts.is_typescript_declare && opts.is_namespace_scope && opts.is_export {

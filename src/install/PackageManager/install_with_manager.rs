@@ -742,11 +742,11 @@ pub fn install_with_manager(
             }
 
             if log_level != Options::LogLevel::Silent {
-                Output::pretty_errorln(
-                    "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen",
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> lockfile had changes, but lockfile is frozen"
                 );
-                Output::note(
-                    "try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile",
+                bun_core::note!(
+                    "try re-running without <d>--frozen-lockfile<r> and commit the updated lockfile"
                 );
             }
             Global::crash();
@@ -981,10 +981,10 @@ impl<const CHECK_PEERS: bool, const ONLY_PRE_PATCH: bool>
 
         if PackageManager::verbose_install() && pending_tasks > 0 {
             if PackageManager::has_enough_time_passed_between_waiting_messages() {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<d>[PackageManager]<r> waiting for {} tasks\n",
                     pending_tasks,
-                ));
+                );
             }
         }
 
@@ -1071,7 +1071,7 @@ fn print_install_summary(
             let count = this.lockfile.packages.len() as PackageID;
             if count != install_summary.skipped {
                 if !this.options.enable.only_missing() {
-                    Output::pretty(format_args!(
+                    bun_core::pretty!(
                         "Checked <green>{} install{}<r> across {} package{} <d>(no changes)<r> ",
                         install_summary.skipped,
                         if install_summary.skipped == 1 {
@@ -1081,14 +1081,14 @@ fn print_install_summary(
                         },
                         count,
                         if count == 1 { "" } else { "s" },
-                    ));
+                    );
                     // TODO(port): Output::pretty multi-arg formatting
                     Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
                 }
                 printed_timestamp = true;
                 print_blocked_packages_info(install_summary, this.options.global);
             } else {
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "<r><green>Done<r>! Checked {} package{}<r> <d>(no changes)<r> ",
                     install_summary.skipped,
                     if install_summary.skipped == 1 {
@@ -1096,7 +1096,7 @@ fn print_install_summary(
                     } else {
                         "s"
                     },
-                ));
+                );
                 // TODO(port): Output::pretty multi-arg formatting
                 Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
                 printed_timestamp = true;
@@ -1188,17 +1188,17 @@ fn print_summary_installed(
     let pkgs_installed = install_summary
         .success
         .max(this.update_requests.len() as u32);
-    Output::pretty(format_args!(
+    bun_core::pretty!(
         "<green>{}<r> package{}<r> installed ",
         pkgs_installed,
         if pkgs_installed == 1 { "" } else { "s" },
-    ));
+    );
     // TODO(port): Output::pretty multi-arg formatting
     Output::print_start_end_stdout(start_time, nano_timestamp());
     print_blocked_packages_info(install_summary, this.options.global);
 
     if this.summary.remove > 0 {
-        Output::pretty(format_args!("Removed: <cyan>{}<r>\n", this.summary.remove));
+        bun_core::pretty!("Removed: <cyan>{}<r>\n", this.summary.remove);
     }
 }
 
@@ -1211,18 +1211,15 @@ fn print_summary_removed(
 ) {
     if this.subcommand == Subcommand::Remove {
         for request in &this.update_requests {
-            Output::prettyln(format_args!(
-                "<r><red>-<r> {}",
-                bstr::BStr::new(request.name)
-            ));
+            bun_core::prettyln!("<r><red>-<r> {}", bstr::BStr::new(request.name));
         }
     }
 
-    Output::pretty(format_args!(
+    bun_core::pretty!(
         "<r><b>{}<r> package{} removed ",
         this.summary.remove,
         if this.summary.remove == 1 { "" } else { "s" },
-    ));
+    );
     // TODO(port): Output::pretty multi-arg formatting
     Output::print_start_end_stdout(start_time, nano_timestamp());
     print_blocked_packages_info(install_summary, this.options.global);
@@ -1231,11 +1228,11 @@ fn print_summary_removed(
 #[cold]
 #[inline(never)]
 fn print_summary_failed(install_summary: &PackageInstallSummary) {
-    Output::prettyln(format_args!(
+    bun_core::prettyln!(
         "<r>Failed to install <red><b>{}<r> package{}\n",
         install_summary.fail,
         if install_summary.fail == 1 { "" } else { "s" },
-    ));
+    );
     // TODO(port): Output::pretty multi-arg formatting
     Output::flush();
 }
@@ -1244,7 +1241,7 @@ fn print_summary_failed(install_summary: &PackageInstallSummary) {
 #[inline(never)]
 fn print_summary_timing_fallback(start_time: i128) {
     Output::print_start_end_stdout(start_time, nano_timestamp());
-    Output::prettyln(format_args!("<d> done<r>"));
+    bun_core::prettyln!("<d> done<r>");
 }
 
 #[cold]
@@ -1264,15 +1261,15 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
     }
 
     if packages_count > 0 {
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "\n\n<d>Blocked {} postinstall{}. Run `bun pm {}untrusted` for details.<r>\n",
             scripts_count,
             if scripts_count > 1 { "s" } else { "" },
             if global { "-g " } else { "" },
-        ));
+        );
         // TODO(port): Output::pretty multi-arg formatting
     } else {
-        Output::pretty(format_args!("<r>\n"));
+        bun_core::pretty!("<r>\n");
     }
 }
 
@@ -1433,7 +1430,7 @@ fn report_lockfile_load_error(
 
         if !manager.options.enable.fail_early() {
             Output::print_errorln("");
-            Output::warn("Ignoring lockfile");
+            bun_core::warn!("Ignoring lockfile");
         }
 
         if manager.log_mut().errors > 0 {
@@ -1527,8 +1524,8 @@ fn create_new_lockfile_and_enqueue(
         && !matches!(load_result, lockfile::LoadResult::NotFound)
     {
         if log_level != Options::LogLevel::Silent {
-            Output::pretty_errorln(
-                "<r><red>error<r>: lockfile had changes, but lockfile is frozen",
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: lockfile had changes, but lockfile is frozen"
             );
         }
         Global::crash();
@@ -1627,7 +1624,7 @@ fn resolve_pending_tasks(
     if log_level.show_progress() {
         manager.start_progress_bar();
     } else if log_level != Options::LogLevel::Silent {
-        Output::pretty_errorln("Resolving dependencies");
+        bun_core::pretty_errorln!("Resolving dependencies");
         Output::flush();
     }
 
@@ -1657,10 +1654,10 @@ fn resolve_pending_tasks(
     if log_level.show_progress() {
         manager.end_progress_bar();
     } else if log_level != Options::LogLevel::Silent {
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "Resolved, downloaded and extracted [{}]",
             manager.total_tasks,
-        ));
+        );
         Output::flush();
     }
     Ok(())
@@ -1729,9 +1726,9 @@ fn run_security_scanner(manager: &mut PackageManager, ctx: Command::Context, ori
             security_scanner::print_security_advisories(manager, &results);
 
             if results.has_fatal_advisories() {
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "<red>Installation aborted due to fatal security advisories<r>\n"
-                ));
+                );
                 Global::exit(1);
             } else if results.has_warnings() {
                 if !security_scanner::prompt_for_warnings() {
@@ -1775,7 +1772,7 @@ fn save_lockfile_only(
     if manager.options.do_.summary() {
         // TODO(dylan-conway): packages aren't installed but we can still print
         // added/removed/updated direct dependencies.
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "\nSaved <green>{}<r> ({} package{}) ",
             match save_format {
                 lockfile::Format::Text => "bun.lock",
@@ -1787,10 +1784,10 @@ fn save_lockfile_only(
             } else {
                 "s"
             },
-        ));
+        );
         // TODO(port): Output::pretty multi-arg formatting — Zig used positional `{s} {d} {s}`
         Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
-        Output::pretty(format_args!("\n"));
+        bun_core::pretty!("\n");
     }
     Output::flush();
     Ok(())
@@ -1813,7 +1810,7 @@ fn write_yarn_lock_with_progress(
         manager.progress.refresh();
         node_started = true;
     } else if log_level != Options::LogLevel::Silent {
-        Output::pretty_errorln("Saved yarn.lock");
+        bun_core::pretty_errorln!("Saved yarn.lock");
         Output::flush();
     }
 

@@ -482,3 +482,48 @@ it("should support --recursive flag", async () => {
   // Should recognize the flag (either process workspaces or show error about missing lockfile)
   expect(out + err).toMatch(/bun update|missing lockfile|nothing to update/);
 });
+
+it("should print UTF-8 arrows correctly with colors enabled", async () => {
+  const urls: string[] = [];
+  const registry = {
+    "0.0.3": {},
+    "0.0.5": {},
+    latest: "0.0.3",
+  };
+  setHandler(dummyRegistry(urls, registry));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        baz: "0.0.3",
+      },
+    }),
+  );
+  let { exited, stderr: stderr1 } = spawn({
+    cmd: [bunExe(), "install", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+  const err1 = await new Response(stderr1).text();
+  expect(err1).not.toContain("error:");
+  expect(await exited).toBe(0);
+
+  registry.latest = "0.0.5";
+  setHandler(dummyRegistry(urls, registry));
+  const { stdout, exited: exited2 } = spawn({
+    cmd: [bunExe(), "update", "--latest", "--linker=hoisted"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "ignore",
+    env: { ...env, FORCE_COLOR: "1" },
+  });
+  const out = await new Response(stdout).text();
+  expect(out).toContain("↑");
+  expect(out).toContain("→");
+  // double-encoded UTF-8 (each byte of the arrow re-encoded as Latin-1)
+  expect(out).not.toContain("â");
+  expect(await exited2).toBe(0);
+});

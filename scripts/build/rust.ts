@@ -91,8 +91,8 @@ function cargoProfile(cfg: Config): { name: string; subdir: string } {
  *     is present* — the staticlib itself needs no SDK, but the bun_shim_impl
  *     PE that emitRust() also builds links against kernel32/ntdll import
  *     libs via lld-link + /winsysroot (see config.ts `winsysroot`). The
- *     shared CI rust box doesn't carry the splat yet, so CI still runs these
- *     on a Windows agent.
+ *     shared CI rust box doesn't carry a splat, so CI runs these on the
+ *     amazonlinux fleet instead, where configure fetches one per build.
  *
  * Unlike zig (which bundled its own libc/SDK for every target), cargo
  * delegates to a system C toolchain for any `cc`/`bindgen`/link step, so
@@ -104,7 +104,8 @@ export function rustCanCrossFromLinux(cfg: Config): boolean {
   if (cfg.freebsd) return true;
   if (cfg.darwin) return true;
   // windows: possible with a winsysroot (see above), but the shared rust
-  // box isn't provisioned with one — windows rust-only still runs natively.
+  // box isn't provisioned with one — CI routes windows rust-only to the
+  // amazonlinux fleet (which fetches a splat at configure time) instead.
   return false;
 }
 

@@ -321,10 +321,10 @@ impl UpgradeCommand {
                         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         Global::exit(1);
                     } else {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "Error parsing releases from GitHub: <r><red>{}<r>",
                             err.name()
-                        ));
+                        );
                         Global::exit(1);
                     }
                 }
@@ -357,10 +357,10 @@ impl UpgradeCommand {
                 progress.expect("infallible: progress active").end();
                 refresher.expect("infallible: progress active").refresh();
 
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "JSON error - expected an object but received {:?}",
                     core::mem::discriminant(&expr.data)
-                ));
+                );
                 Global::exit(1);
             }
 
@@ -378,12 +378,12 @@ impl UpgradeCommand {
                 progress.expect("infallible: progress active").end();
                 refresher.expect("infallible: progress active").refresh();
 
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "JSON Error parsing releases from GitHub: <r><red>tag_name<r> is missing?\n{}",
                     // Zig spec prints `metadata_body.list.items` here; `version.buf`
                     // is still empty at this point so using it loses the payload.
                     bstr::BStr::new(metadata_body.list.as_slice())
-                ));
+                );
                 Global::exit(1);
             }
 
@@ -407,10 +407,7 @@ impl UpgradeCommand {
                         continue;
                     };
                     if cfg!(debug_assertions) {
-                        Output::prettyln(format_args!(
-                            "Content-type: {}",
-                            bstr::BStr::new(content_type_)
-                        ));
+                        bun_core::prettyln!("Content-type: {}", bstr::BStr::new(content_type_));
                         Output::flush();
                     }
 
@@ -427,11 +424,11 @@ impl UpgradeCommand {
                             } else {
                                 Version::PROFILE_ZIP_FILENAME
                             };
-                            Output::prettyln(format_args!(
+                            bun_core::prettyln!(
                                 "Comparing {} vs {}",
                                 bstr::BStr::new(name),
                                 filename
-                            ));
+                            );
                             Output::flush();
                         }
 
@@ -450,10 +447,7 @@ impl UpgradeCommand {
                             None => break 'get_asset,
                         };
                         if cfg!(debug_assertions) {
-                            Output::prettyln(format_args!(
-                                "Found Zip {}",
-                                bstr::BStr::new(&*version.zip_url)
-                            ));
+                            bun_core::prettyln!("Found Zip {}", bstr::BStr::new(&*version.zip_url));
                             Output::flush();
                         }
 
@@ -473,11 +467,11 @@ impl UpgradeCommand {
             progress.expect("infallible: progress active").end();
             refresher.expect("infallible: progress active").refresh();
             if let Some(name) = version.name() {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "Bun v{} is out, but not for this platform ({}) yet.",
                     bstr::BStr::new(&name),
                     Version::TRIPLET
-                ));
+                );
             }
 
             Global::exit(0);
@@ -528,24 +522,24 @@ impl UpgradeCommand {
         if args.len() > 2 {
             for arg in args.iter().skip(2) {
                 if !strings::contains(arg, b"--") {
-                    Output::pretty_error(format_args!(
+                    bun_core::pretty_error!(
                         "<r><red>error<r><d>:<r> This command updates Bun itself, and does not take package names.\n<blue>note<r><d>:<r> Use `bun update"
-                    ));
+                    );
                     for arg_err in args.iter().skip(2) {
-                        Output::pretty_error(format_args!(" {}", bstr::BStr::new(arg_err)));
+                        bun_core::pretty_error!(" {}", bstr::BStr::new(arg_err));
                     }
-                    Output::pretty_errorln(format_args!("` instead."));
+                    bun_core::pretty_errorln!("` instead.");
                     Global::exit(1);
                 }
             }
         }
 
         if let Err(err) = Self::_exec(ctx) {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r>Bun upgrade failed with error: <red><b>{}<r>\n\n<cyan>Please upgrade manually<r>:\n  <b>{}<r>\n\n",
                 err.name(),
                 Self::MANUAL_UPGRADE_COMMAND
-            ));
+            );
             Global::exit(1);
         }
         Ok(())
@@ -609,33 +603,33 @@ impl UpgradeCommand {
 
             if !Environment::IS_CANARY {
                 if version.name().is_some() && version.is_current() {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><green>Congrats!<r> You're already on the latest version of Bun <d>(which is v{})<r>",
                         bstr::BStr::new(&version.name().unwrap())
-                    ));
+                    );
                     Global::exit(0);
                 }
             }
 
             if version.name().is_none() {
-                Output::pretty_errorln(format_args!(
-                    "<r><red>error:<r> Bun versions are currently unavailable (the latest version name didn't match the expeccted format)"
-                ));
+                bun_core::pretty_errorln!(
+                    "<r><red>error:<r> Bun versions are currently unavailable (the latest version name didn't match the expected format)"
+                );
                 Global::exit(1);
             }
 
             if !Environment::IS_CANARY {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><b>Bun <cyan>v{}<r> is out<r>! You're on <blue>v{}<r>\n",
                     bstr::BStr::new(&version.name().unwrap()),
                     Global::package_json_version
-                ));
+                );
             } else {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><b>Downgrading from Bun <blue>{}-canary<r> to Bun <cyan>v{}<r><r>\n",
                     Global::package_json_version,
                     bstr::BStr::new(&version.name().unwrap())
-                ));
+                );
             }
             Output::flush();
 
@@ -694,10 +688,10 @@ impl UpgradeCommand {
             match response.status_code {
                 404 => {
                     if use_canary {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> Canary builds are not available for this platform yet\n\n   Release: <cyan>https://github.com/oven-sh/bun/releases/tag/canary<r>\n  Filename: <b>{}<r>\n",
                             Version::ZIP_FILENAME
-                        ));
+                        );
                         Global::exit(1);
                     }
 
@@ -718,9 +712,9 @@ impl UpgradeCommand {
             unsafe { (*refresher).refresh() };
 
             if bytes.is_empty() {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error:<r> Failed to download the latest version of Bun. Received empty content"
-                ));
+                );
                 Global::exit(1);
             }
 
@@ -805,10 +799,10 @@ impl UpgradeCommand {
             ) {
                 Ok(f) => f,
                 Err(err) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error:<r> Failed to open temp file {}",
                         bstr::BStr::new(err.name())
-                    ));
+                    );
                     Global::exit(1);
                 }
             };
@@ -816,10 +810,10 @@ impl UpgradeCommand {
             {
                 if let Err(err) = zip_file.write_all(bytes) {
                     let _ = sys::unlinkat(&save_dir, tmpname);
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error:<r> Failed to write to temp file {}",
                         bstr::BStr::new(err.name())
-                    ));
+                    );
                     Global::exit(1);
                 }
                 let _ = zip_file.close();
@@ -840,9 +834,9 @@ impl UpgradeCommand {
                         b"unzip",
                     ) else {
                         let _ = sys::unlinkat(&save_dir, tmpname);
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> Failed to locate \"unzip\" in PATH. bun upgrade needs \"unzip\" to work."
-                        ));
+                        );
                         Global::exit(1);
                     };
 
@@ -870,18 +864,18 @@ impl UpgradeCommand {
                         Ok(Ok(r)) => r,
                         Ok(Err(err)) => {
                             let _ = sys::unlinkat(&save_dir, tmpname);
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<r><red>error:<r> Failed to spawn unzip due to {}.",
                                 bstr::BStr::new(err.name())
-                            ));
+                            );
                             Global::exit(1);
                         }
                         Err(err) => {
                             let _ = sys::unlinkat(&save_dir, tmpname);
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<r><red>error:<r> Failed to spawn unzip due to {}.",
                                 err.name()
-                            ));
+                            );
                             Global::exit(1);
                         }
                     };
@@ -889,18 +883,15 @@ impl UpgradeCommand {
                     match unzip_result.status {
                         Status::Exited(e) if e.code == 0 => {}
                         Status::Exited(e) => {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<r><red>Unzip failed<r> (exit code: {})",
                                 e.code
-                            ));
+                            );
                             let _ = sys::unlinkat(&save_dir, tmpname);
                             Global::exit(1);
                         }
                         other => {
-                            Output::pretty_errorln(format_args!(
-                                "<r><red>Unzip failed<r> ({})",
-                                other
-                            ));
+                            bun_core::pretty_errorln!("<r><red>Unzip failed<r> ({})", other);
                             let _ = sys::unlinkat(&save_dir, tmpname);
                             Global::exit(1);
                         }
@@ -944,10 +935,10 @@ impl UpgradeCommand {
                                     ],
                                 );
                             if !sys::exists(hardcoded_system_powershell.as_bytes()) {
-                                Output::pretty_errorln(format_args!(
+                                bun_core::pretty_errorln!(
                                     "<r><red>error:<r> Failed to unzip {} due to PowerShell not being installed.",
                                     bstr::BStr::new(tmpname.as_bytes())
-                                ));
+                                );
                                 Global::exit(1);
                             }
                             hardcoded_system_powershell
@@ -977,20 +968,20 @@ impl UpgradeCommand {
                     let spawn_res = match spawn_res {
                         Ok(r) => r,
                         Err(err) => {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<r><red>error:<r> Failed to spawn Expand-Archive on {} due to error {}",
                                 bstr::BStr::new(tmpname.as_bytes()),
                                 err.name()
-                            ));
+                            );
                             Global::exit(1);
                         }
                     };
                     if let Err(err) = spawn_res {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> Failed to run Expand-Archive on {} due to error {}",
                             bstr::BStr::new(tmpname.as_bytes()),
                             bstr::BStr::new(err.name())
-                        ));
+                        );
                         Global::exit(1);
                     }
                 }
@@ -1047,17 +1038,17 @@ impl UpgradeCommand {
                             // In these cases, prebuilt binaries from GitHub will never work without
                             // extra patching, so we will print a message deferring them to their system
                             // package manager.
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<r><red>error<r><d>:<r> 'bun upgrade' is unsupported on systems without ld\n\nYou are likely on an immutable system such as NixOS, where dynamic\nlibraries are stored in a global cache.\n\nPlease use your system's package manager to properly upgrade bun.\n"
-                            ));
+                            );
                             Global::exit(1);
                         }
                     }
 
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> Failed to verify Bun (code: {})<r>",
                         bstr::BStr::new(err_name)
-                    ));
+                    );
                     Global::exit(1);
                 };
 
@@ -1068,10 +1059,10 @@ impl UpgradeCommand {
                         Status::Signaled(sig) => 128 + u32::from(*sig),
                         _ => 1,
                     };
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> failed to verify Bun<r> (exit code: {})",
                         exit_code
-                    ));
+                    );
                     Global::exit(1);
                 }
 
@@ -1092,11 +1083,11 @@ impl UpgradeCommand {
                     if trimmed != version_name.as_slice() {
                         let _ = save_dir_.delete_tree(&version_name);
 
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: The downloaded version of Bun (<red>{}<r>) doesn't match the expected version (<b>{}<r>)<r>. Cancelled upgrade",
                             bstr::BStr::new(&version_string[..version_string.len().min(512)]),
                             bstr::BStr::new(&version_name)
-                        ));
+                        );
                         Global::exit(1);
                     }
                 }
@@ -1158,10 +1149,10 @@ impl UpgradeCommand {
                 Ok(d) => d,
                 Err(err) => {
                     let _ = save_dir_.delete_tree(&version_name);
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error:<r> Failed to open Bun's install directory {}",
                         bstr::BStr::new(err.name())
-                    ));
+                    );
                     Global::exit(1);
                 }
             };
@@ -1181,11 +1172,11 @@ impl UpgradeCommand {
                     Ok(s) => s,
                     Err(err) => {
                         let _ = save_dir_.delete_tree(&version_name);
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> {} while trying to stat target {} ",
                             bstr::BStr::new(err.name()),
                             bstr::BStr::new(target_filename.as_bytes())
-                        ));
+                        );
                         Global::exit(1);
                     }
                 };
@@ -1194,11 +1185,11 @@ impl UpgradeCommand {
                     Ok(s) => s,
                     Err(err) => {
                         let _ = save_dir_.delete_tree(&version_name);
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> {} while trying to stat source {}",
                             bstr::BStr::new(err.name()),
                             bstr::BStr::new(exe)
-                        ));
+                        );
                         Global::exit(1);
                     }
                 };
@@ -1218,10 +1209,10 @@ impl UpgradeCommand {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);
-                                Output::pretty_errorln(format_args!(
+                                bun_core::pretty_errorln!(
                                     "<r><red>error:<r> Failed to read target bun {}",
                                     bstr::BStr::new(err.name())
-                                ));
+                                );
                                 Global::exit(1);
                             }
                         },
@@ -1236,10 +1227,10 @@ impl UpgradeCommand {
                             Ok(n) => &input_buf[..n],
                             Err(err) => {
                                 let _ = save_dir_.delete_tree(&version_name);
-                                Output::pretty_errorln(format_args!(
+                                bun_core::pretty_errorln!(
                                     "<r><red>error:<r> Failed to read source bun {}",
                                     bstr::BStr::new(err.name())
-                                ));
+                                );
                                 Global::exit(1);
                             }
                         },
@@ -1247,9 +1238,9 @@ impl UpgradeCommand {
 
                     if target_hash == source_hash {
                         let _ = save_dir_.delete_tree(&version_name);
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><green>Congrats!<r> You're already on the latest <b>canary<r><green> build of Bun\n\nTo downgrade to the latest stable release, run <b><cyan>bun upgrade --stable<r>\n"
-                        ));
+                        );
                         Global::exit(0);
                     }
                 }
@@ -1285,10 +1276,10 @@ impl UpgradeCommand {
                         outdated_filename.as_deref().unwrap(),
                     ) {
                         let _ = save_dir_.delete_tree(&version_name);
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> Failed to rename current executable {}",
                             bstr::BStr::new(err.name())
-                        ));
+                        );
                         Global::exit(1);
                     }
                     // SAFETY: restore NUL via `buf_ptr` (see aliasing note above).
@@ -1368,22 +1359,22 @@ impl UpgradeCommand {
             Output::print_start_end(ctx.start_time, bun_core::time::nano_timestamp());
 
             if use_canary {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r> Upgraded.\n\n<b><green>Welcome to Bun's latest canary build!<r>\n\nReport any bugs:\n\n    https://github.com/oven-sh/bun/issues\n\nChangelog:\n\n    https://github.com/oven-sh/bun/compare/{}...{}\n",
                     Environment::GIT_SHA_SHORT,
                     bstr::BStr::new(&*version.tag)
-                ));
+                );
             } else {
                 let bun_v = const_format::concatcp!("bun-v", Global::package_json_version);
 
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r> Upgraded.\n\n<b><green>Welcome to Bun v{}!<r>\n\nWhat's new in Bun v{}:\n\n    <cyan>https://bun.com/blog/release-notes/{}<r>\n\nReport any bugs:\n\n    https://github.com/oven-sh/bun/issues\n\nCommit log:\n\n    https://github.com/oven-sh/bun/compare/{}...{}\n",
                     bstr::BStr::new(&version_name),
                     bstr::BStr::new(&version_name),
                     bstr::BStr::new(&*version.tag),
                     bun_v,
                     bstr::BStr::new(&*version.tag)
-                ));
+                );
             }
 
             Output::flush();

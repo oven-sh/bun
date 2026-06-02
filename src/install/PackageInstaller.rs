@@ -642,11 +642,11 @@ impl<'a> PackageInstaller<'a> {
                 {
                     can_retry_without_native_binlink_optimization = false;
                     if PackageManager::verbose_install() {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
                             bstr::BStr::new(package_name_.slice()),
                             bstr::BStr::new(target_package_name.slice()),
-                        ));
+                        );
                     }
                     target_package_name = package_name_;
                     continue;
@@ -742,26 +742,32 @@ impl<'a> PackageInstaller<'a> {
                     None,
                 ) {
                     if log_level != Options::LogLevel::Silent {
-                        // PORT NOTE: zig used `comptime Output.prettyFmt(fmt, enable_ansi_colors)`
-                        // — `Progress::log` takes a single `Arguments` so format inline.
                         if log_level.show_progress() {
-                            self.progress_mut().log(format_args!(
-                                "{}",
-                                Output::pretty_fmt_rt(
-                                    format_args!(
-                                        "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n",
-                                        bstr::BStr::new(&name),
-                                        err.name(),
+                            if Output::enable_ansi_colors_stderr() {
+                                self.progress_mut().log(format_args!(
+                                    bun_core::pretty_fmt!(
+                                        "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n",
+                                        true
                                     ),
-                                    Output::enable_ansi_colors_stderr(),
-                                ),
-                            ));
+                                    bstr::BStr::new(&name),
+                                    err.name(),
+                                ));
+                            } else {
+                                self.progress_mut().log(format_args!(
+                                    bun_core::pretty_fmt!(
+                                        "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n",
+                                        false
+                                    ),
+                                    bstr::BStr::new(&name),
+                                    err.name(),
+                                ));
+                            }
                         } else {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n",
                                 bstr::BStr::new(&name),
                                 err.name(),
-                            ));
+                            );
                         }
                     }
 
@@ -867,26 +873,32 @@ impl<'a> PackageInstaller<'a> {
                 None,
             ) {
                 if log_level != Options::LogLevel::Silent {
-                    // PORT NOTE: zig used `comptime Output.prettyFmt(fmt, enable_ansi_colors)`
-                    // — `Progress::log` takes a single `Arguments` so format inline.
                     if log_level.show_progress() {
-                        self.progress_mut().log(format_args!(
-                            "{}",
-                            Output::pretty_fmt_rt(
-                                format_args!(
-                                    "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n",
-                                    bstr::BStr::new(&package_name),
-                                    err.name(),
+                        if Output::enable_ansi_colors_stderr() {
+                            self.progress_mut().log(format_args!(
+                                bun_core::pretty_fmt!(
+                                    "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n",
+                                    true
                                 ),
-                                Output::enable_ansi_colors_stderr(),
-                            ),
-                        ));
+                                bstr::BStr::new(&package_name),
+                                err.name(),
+                            ));
+                        } else {
+                            self.progress_mut().log(format_args!(
+                                bun_core::pretty_fmt!(
+                                    "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{s}<r>: {s}\n",
+                                    false
+                                ),
+                                bstr::BStr::new(&package_name),
+                                err.name(),
+                            ));
+                        }
                     } else {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "\n<r><red>error:<r> failed to spawn life-cycle scripts for <b>{}<r>: {}\n",
                             bstr::BStr::new(&package_name),
                             err.name(),
-                        ));
+                        );
                     }
                 }
 
@@ -1190,10 +1202,10 @@ impl<'a> PackageInstaller<'a> {
         // rename, and create operations. Refuse anything that could escape it.
         if !alias_is_safe_install_target(alias.slice(string_buf!())) {
             if log_level != Options::LogLevel::Silent {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: refusing to install dependency with unsafe name <b>{}<r>",
                     bstr::BStr::new(alias.slice(string_buf!())),
-                ));
+                );
             }
             self.summary.fail += 1;
             self.increment_tree_install_count(
@@ -1386,11 +1398,11 @@ impl<'a> PackageInstaller<'a> {
                         || bin::bin_target_escapes_package_dir(folder)
                     {
                         if log_level != Options::LogLevel::Silent {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<r><red>error<r>: refusing to install dependency <b>{}<r> with unsafe folder path \"{}\"",
                                 bstr::BStr::new(pkg_name.slice(string_buf!())),
                                 bstr::BStr::new(folder),
-                            ));
+                            );
                         }
                         self.summary.fail += 1;
                         self.increment_tree_install_count(
@@ -1572,11 +1584,11 @@ impl<'a> PackageInstaller<'a> {
                             // Very old versions of Bun didn't store the tarball url when it didn't seem necessary
                             // This caused bugs. We can't assert on it because they could come from old lockfiles
                             if npm.url.is_empty() {
-                                Output::debug_warn(format_args!(
+                                bun_core::debug_warn!(
                                     "package {}@{} missing tarball_url",
                                     bstr::BStr::new(pkg_name.slice(string_buf!())),
                                     resolution.fmt(string_buf!(), PathSep::Posix),
-                                ));
+                                );
                             }
                         }
 
@@ -1834,10 +1846,10 @@ impl<'a> PackageInstaller<'a> {
                                 )
                             {
                                 if PackageManager::verbose_install() {
-                                    Output::pretty_errorln(format_args!(
+                                    bun_core::pretty_errorln!(
                                         "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
                                         bstr::BStr::new(pkg_name.slice(string_buf!())),
-                                    ));
+                                    );
                                 }
                                 break 'enqueue_lifecycle_scripts;
                             }
@@ -1897,12 +1909,12 @@ impl<'a> PackageInstaller<'a> {
                                 );
                                 if count > 0 {
                                     if log_level.is_verbose() {
-                                        Output::pretty_error(format_args!(
+                                        bun_core::pretty_error!(
                                             "Blocked {} scripts for: {}@{}\n",
                                             count,
                                             bstr::BStr::new(alias.slice(string_buf!())),
                                             resolution.fmt(string_buf!(), PathSep::Posix),
-                                        ));
+                                        );
                                     }
                                     let entry = self
                                         .summary
@@ -1942,11 +1954,11 @@ impl<'a> PackageInstaller<'a> {
                     );
 
                     if cause.err == bun_core::err!("DanglingSymlink") {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: <b>{}<r> \"link:{}\" not found (try running 'bun link' in the intended package's folder)<r>",
                             cause.err.name(),
                             bstr::BStr::new(self.names[package_id as usize].slice(string_buf!())),
-                        ));
+                        );
                         self.summary.fail += 1;
                     } else if cause.err == bun_core::err!("AccessDenied") {
                         // there are two states this can happen
@@ -2144,10 +2156,10 @@ impl<'a> PackageInstaller<'a> {
                         )
                     {
                         if PackageManager::verbose_install() {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<d>[Lifecycle Scripts]<r> ignoring {} lifecycle scripts",
                                 bstr::BStr::new(pkg_name.slice(string_buf!())),
-                            ));
+                            );
                         }
                         break 'enqueue_lifecycle_scripts;
                     }
@@ -2235,23 +2247,31 @@ impl<'a> PackageInstaller<'a> {
             Err(err) => {
                 if log_level != Options::LogLevel::Silent {
                     if log_level.show_progress() {
-                        self.progress_mut().log(format_args!(
-                            "{}",
-                            Output::pretty_fmt_rt(
-                                format_args!(
-                                    "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{}<r>: {}\n",
-                                    bstr::BStr::new(folder_name),
-                                    err.name(),
+                        if Output::enable_ansi_colors_stderr() {
+                            self.progress_mut().log(format_args!(
+                                bun_core::pretty_fmt!(
+                                    "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{s}<r>: {s}\n",
+                                    true
                                 ),
-                                Output::enable_ansi_colors_stderr(),
-                            ),
-                        ));
+                                bstr::BStr::new(folder_name),
+                                err.name(),
+                            ));
+                        } else {
+                            self.progress_mut().log(format_args!(
+                                bun_core::pretty_fmt!(
+                                    "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{s}<r>: {s}\n",
+                                    false
+                                ),
+                                bstr::BStr::new(folder_name),
+                                err.name(),
+                            ));
+                        }
                     } else {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "\n<r><red>error:<r> failed to enqueue lifecycle scripts for <b>{}<r>: {}\n",
                             bstr::BStr::new(folder_name),
                             err.name(),
-                        ));
+                        );
                     }
                 }
 

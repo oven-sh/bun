@@ -299,15 +299,6 @@ impl strings::Appender for FilenameStoreAppender {
     }
 }
 
-#[derive(strum::IntoStaticStr, Debug)]
-pub enum FileSystemError {
-    ENOENT,
-    EACCESS,
-    INVALID_NAME,
-    ENOTDIR,
-}
-// TODO(port): impl From<FileSystemError> for bun_core::Error
-
 // PORTING.md §Global mutable state: highest-fd watermark, written from
 // resolver pool / bundler / router and read from the file-limit check below.
 // `AtomicCell` (not `RacyCell`) because those callers run on different
@@ -1449,11 +1440,6 @@ impl RealFS {
     }
 }
 
-#[derive(strum::IntoStaticStr, Debug)]
-pub enum ModKeyError {
-    Unusable,
-}
-
 #[derive(Default, Clone, Copy)]
 pub struct ModKey {
     pub inode: u64, // TODO(port): std.fs.File.INode equivalent
@@ -1467,8 +1453,6 @@ thread_local! {
 }
 
 impl ModKey {
-    pub const SAFETY_GAP: i32 = 3;
-
     pub fn hash_name(&self, basename: &[u8]) -> Result<&'static [u8], bun_core::Error> {
         // TODO(port): returns slice into threadlocal buffer; lifetime is unsound — should take a caller-supplied buffer
         let hex_int = self.hash();
@@ -2316,77 +2300,6 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
 }
 
 impl RealFS {
-    pub fn kind_from_absolute(
-        &mut self,
-        absolute_path: &ZStr,
-        existing_fd: Fd,
-        store_fd: bool,
-    ) -> Result<EntryCache, bun_core::Error> {
-        let mut outpath = PathBuffer::uninit();
-
-        let stat = bun_sys::lstat(absolute_path)?;
-        let mut kind_ = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
-        let is_symlink = kind_ == bun_sys::FileKind::SymLink;
-        let mut cache = EntryCache {
-            kind: EntryKind::File,
-            symlink: PathString::EMPTY,
-            fd: Fd::INVALID,
-        };
-        let mut symlink: &[u8] = b"";
-
-        if is_symlink {
-            // TODO(port): existing_fd != 0 — Zig compared FD to integer 0; using is_valid()
-            let file: Fd = if existing_fd.is_valid() {
-                existing_fd
-            } else if store_fd {
-                bun_sys::open_file_absolute_z(absolute_path, bun_sys::OpenFlags::READ_ONLY)?
-                    .into_raw()
-            } else {
-                // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
-                // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                bun_sys::open(absolute_path, flags, 0)?
-            };
-            FileSystem::set_max_fd(file.native());
-
-            // PORT NOTE: Zig `defer { if (...) file.close() else cache.fd = file }` runs on
-            // BOTH success and error paths — use scopeguard so close-or-store happens even if
-            // stat()/get_fd_path() return early with `?`.
-            let need_to_close_files = self.need_to_close_files();
-            let cache_ptr: *mut EntryCache = &raw mut cache;
-            let _guard = scopeguard::guard(file, move |file| {
-                if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
-                    let _ = bun_sys::close(file);
-                } else if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                    // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                    unsafe { (*cache_ptr).fd = file };
-                }
-            });
-
-            let stat_ = bun_sys::fstat(*_guard)?;
-
-            symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
-
-            kind_ = bun_sys::kind_from_mode(stat_.st_mode as bun_sys::Mode);
-        }
-
-        debug_assert!(kind_ != bun_sys::FileKind::SymLink);
-
-        if kind_ == bun_sys::FileKind::Directory {
-            cache.kind = EntryKind::Dir;
-        } else {
-            cache.kind = EntryKind::File;
-        }
-        if !symlink.is_empty() {
-            cache.symlink = PathString::init(FilenameStore::instance().append(symlink)?);
-        }
-
-        Ok(cache)
-    }
-
     pub fn kind(
         &mut self,
         dir_: &[u8],

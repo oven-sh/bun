@@ -8,13 +8,13 @@ use bun_install::dependency::Dependency;
 use bun_install::lockfile::{LoadResult, Lockfile, package::PackageColumns as _, tree};
 use bun_install::npm as Npm;
 use bun_install::package_manager_real::{
-    CommandLineArguments, Subcommand, get_cache_directory, package_manager_options::LogLevel,
-    setup_global_dir,
+    CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
+    package_manager_options::LogLevel, setup_global_dir,
 };
 use bun_install::{DependencyID, PackageID, PackageManager, migration};
 use bun_paths::{self as Path, PathBuffer};
 use bun_resolver::fs as Fs;
-use bun_sys::{self, Dir, Fd, FdExt as _, File};
+use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::Command;
 use crate::cli::pm_pkg_command::PmPkgCommand;
@@ -184,7 +184,10 @@ impl PackageManagerCommand {
 \n\
 Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
 
+        #[allow(clippy::disallowed_methods)]
+        // help-text consts contain <tag> markup that must be tag-walked
         Output::pretty(format_args!("{}", INTRO_TEXT));
+        #[allow(clippy::disallowed_methods)]
         Output::pretty(format_args!("{}", OUTRO_TEXT));
         Output::flush();
     }
@@ -219,7 +222,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                             Output::err_generic("No package.json was found", ());
                         }
                     }
-                    Output::note("Run \"bun init\" to initialize a project");
+                    bun_core::note!("Run \"bun init\" to initialize a project");
                     Global::exit(1);
                 }
                 return Err(err);
@@ -304,9 +307,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 top_level_dir,
                 pm.options.bin_path.as_bytes(),
             );
-            Output::prettyln(format_args!("{}", bstr::BStr::new(output_path)));
+            bun_core::prettyln!("{}", bstr::BStr::new(output_path));
             if Output::stdout_descriptor_type() == Output::OutputStreamDescriptor::Terminal {
-                Output::prettyln(format_args!("\n"));
+                bun_core::prettyln!("\n");
             }
 
             if pm.options.global {
@@ -324,7 +327,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                                 }
                             }
 
-                            Output::pretty_errorln("\n<r><yellow>warn<r>: not in $PATH\n");
+                            bun_core::pretty_errorln!("\n<r><yellow>warn<r>: not in $PATH\n");
                         }
                     }
                 }
@@ -370,31 +373,40 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 .has_meta_hash_changed(true, pm.lockfile.packages.len())?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"cache") {
-            let mut dir = PathBuffer::uninit();
-            let fd = get_cache_directory(pm);
-            let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
-                Ok(p) => &p[..],
-                Err(err) => {
-                    Output::pretty_errorln(format_args!(
-                        "{} getting cache directory",
-                        bun_core::Error::from(err).name(),
-                    ));
-                    Global::crash();
-                }
-            };
-
             if pm.options.positionals.len() > 1
                 && strings::eql_comptime(pm.options.positionals[1], b"rm")
             {
-                fd.close();
-
                 let mut had_err = false;
 
-                if let Err(err) = bun_sys::delete_tree_absolute(outpath) {
-                    Output::err(err, "Could not delete {s}", (bstr::BStr::new(outpath),));
+                let mut env_map = bun_dotenv::Map::init();
+                let mut process_env = bun_dotenv::Loader::init(&mut env_map);
+                process_env.load_process()?;
+                let cache_dir = fetch_cache_directory_path(&mut process_env, None);
+                let mut rm_buf = PathBuffer::uninit();
+                let rm_dir = match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
+                    Ok(d) => d,
+                    Err(err) => {
+                        bun_core::pretty_errorln!("{} getting cache directory", err.name());
+                        Global::crash();
+                    }
+                };
+                let rm_path = match rm_dir.get_fd_path(&mut rm_buf) {
+                    Ok(p) => &p[..],
+                    Err(err) => {
+                        bun_core::pretty_errorln!(
+                            "{} getting cache directory",
+                            bun_core::Error::from(err).name(),
+                        );
+                        Global::crash();
+                    }
+                };
+                rm_dir.close();
+
+                if let Err(err) = bun_sys::delete_tree_absolute(rm_path) {
+                    Output::err(err, "Could not delete {s}", (bstr::BStr::new(rm_path),));
                     had_err = true;
                 }
-                Output::prettyln(format_args!("Cleared 'bun install' cache"));
+                bun_core::prettyln!("Cleared 'bun install' cache");
 
                 'bunx: {
                     let tmp = Fs::RealFS::platform_temp_dir();
@@ -453,12 +465,24 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         }
                     }
 
-                    Output::prettyln(format_args!("Cleared {} cached 'bunx' packages", deleted));
+                    bun_core::prettyln!("Cleared {} cached 'bunx' packages", deleted);
                 }
 
                 Global::exit(if had_err { 1 } else { 0 });
             }
 
+            let mut dir = PathBuffer::uninit();
+            let fd = get_cache_directory(pm);
+            let outpath = match bun_sys::get_fd_path(fd, &mut dir) {
+                Ok(p) => &p[..],
+                Err(err) => {
+                    bun_core::pretty_errorln!(
+                        "{} getting cache directory",
+                        bun_core::Error::from(err).name(),
+                    );
+                    Global::crash();
+                }
+            };
             let _ = Output::writer().write_all(outpath);
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"default-trusted") {
@@ -528,7 +552,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
                     Ok(len) => &cwd_buf[..len],
                     Err(_) => {
-                        Output::pretty_errorln(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: Could not get current working directory",
                         );
                         Global::exit(1);
@@ -572,17 +596,17 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto);
 
                     if index < sorted_dependencies.len() - 1 {
-                        Output::prettyln(format_args!(
+                        bun_core::prettyln!(
                             "<d>├──<r> {}<r><d>@{}<r>\n",
                             bstr::BStr::new(name),
                             resolution,
-                        ));
+                        );
                     } else {
-                        Output::prettyln(format_args!(
+                        bun_core::prettyln!(
                             "<d>└──<r> {}<r><d>@{}<r>\n",
                             bstr::BStr::new(name),
                             resolution,
-                        ));
+                        );
                     }
                 }
             }
@@ -591,14 +615,14 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"migrate") {
             if !pm.options.enable.force_save_lockfile() {
                 if bun_sys::exists_z(bun_core::zstr!("bun.lock")) {
-                    Output::pretty_errorln(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: bun.lock already exists\nrun with --force to overwrite",
                     );
                     Global::exit(1);
                 }
 
                 if bun_sys::exists_z(bun_core::zstr!("bun.lockb")) {
-                    Output::pretty_errorln(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: bun.lockb already exists\nrun with --force to overwrite",
                     );
                     Global::exit(1);
@@ -627,7 +651,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 )
             };
             if matches!(load_lockfile, LoadResult::NotFound) {
-                Output::pretty_errorln("<r><red>error<r>: could not find any other lockfile");
+                bun_core::pretty_errorln!("<r><red>error<r>: could not find any other lockfile");
                 Global::exit(1);
             }
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
@@ -666,10 +690,10 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         Self::print_help();
 
         if !subcommand.is_empty() {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "\n<red>error<r>: \"{}\" unknown command\n",
                 bstr::BStr::new(subcommand),
-            ));
+            );
             Output::flush();
 
             Global::exit(1);
@@ -695,14 +719,14 @@ fn print_node_modules_folder_structure(
         for i in 0..depth {
             if i == depth - 1 {
                 if more_packages[i] {
-                    Output::pretty(format_args!("<d>├──<r>"));
+                    bun_core::pretty!("<d>├──<r>");
                 } else {
-                    Output::pretty(format_args!("<d>└──<r>"));
+                    bun_core::pretty!("<d>└──<r>");
                 }
             } else if more_packages[i] {
-                Output::pretty(format_args!("<d>│<r>   "));
+                bun_core::pretty!("<d>│<r>   ");
             } else {
-                Output::pretty(format_args!("    "));
+                bun_core::pretty!("    ");
             }
         }
 
@@ -711,7 +735,7 @@ fn print_node_modules_folder_structure(
             let mut path: &[u8] = directory.relative_path.as_bytes();
 
             if depth != 0 {
-                Output::pretty(format_args!(" "));
+                bun_core::pretty!(" ");
                 for _ in 0..depth {
                     if let Some(j) = strings::index_of(path, b"node_modules") {
                         path = &path[j + b"node_modules".len() + 1..];
@@ -726,24 +750,24 @@ fn print_node_modules_folder_structure(
                 ),
             );
             if let Some(j) = strings::index_of(path, b"node_modules") {
-                Output::prettyln(format_args!(
+                bun_core::prettyln!(
                     "{}<d>@{}<r>",
                     bstr::BStr::new(&path[0..j - 1]),
                     bstr::BStr::new(directory_version),
-                ));
+                );
             } else {
-                Output::prettyln(format_args!(
+                bun_core::prettyln!(
                     "{}<d>@{}<r>",
                     bstr::BStr::new(path),
                     bstr::BStr::new(directory_version),
-                ));
+                );
             }
         } else {
             let mut cwd_buf = PathBuffer::uninit();
             let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
                 Ok(len) => &cwd_buf[..len],
                 Err(_) => {
-                    Output::pretty_errorln(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: Could not get current working directory",
                     );
                     Global::exit(1);
@@ -832,16 +856,16 @@ fn print_node_modules_folder_structure(
 
         for i in 0..depth {
             if more_packages[i] {
-                Output::pretty(format_args!("<d>│<r>   "));
+                bun_core::pretty!("<d>│<r>   ");
             } else {
-                Output::pretty(format_args!("    "));
+                bun_core::pretty!("    ");
             }
         }
 
         if more_packages[depth] {
-            Output::pretty(format_args!("<d>├──<r> "));
+            bun_core::pretty!("<d>├──<r> ");
         } else {
-            Output::pretty(format_args!("<d>└──<r> "));
+            bun_core::pretty!("<d>└──<r> ");
         }
 
         let mut resolution_buf = [0u8; 512];
@@ -852,11 +876,11 @@ fn print_node_modules_folder_structure(
                 resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto)
             ),
         );
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "{}<d>@{}<r>",
             bstr::BStr::new(package_name),
             bstr::BStr::new(package_version),
-        ));
+        );
     }
 
     Ok(())

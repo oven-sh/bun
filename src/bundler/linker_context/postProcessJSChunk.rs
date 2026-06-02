@@ -1,3 +1,4 @@
+use crate::DeclInfoKind;
 use crate::LinkerContext;
 use crate::analyze_transpiled_module::{self, ModuleInfo};
 use crate::bundle_v2::bake_types::{HmrRuntimeSide, get_hmr_runtime};
@@ -5,7 +6,6 @@ use crate::linker_context_mod::{GenerateChunkCtx, LinkerOptionsMode};
 use crate::mal_prelude::*;
 use crate::options;
 use crate::options_impl::TargetExt as _;
-use crate::ungate_support::DeclInfoKind;
 use crate::{
     Chunk, CompileResult, CompileResultForSourceMap, Index, RefImportData, ResolvedExports,
     ThreadPool,
@@ -857,7 +857,7 @@ pub fn post_process_js_chunk(
 
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk);
+    chunk.isolated_hash = c.generate_isolated_hash(chunk, worker_arena);
     chunk
         .flags
         .set(crate::chunk::Flags::IS_EXECUTABLE, is_executable);

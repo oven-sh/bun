@@ -1,6 +1,9 @@
 import { Socket } from "bun";
-import { beforeAll, expect, it } from "bun:test";
+import { beforeAll, describe, expect, it } from "bun:test";
 import { gcTick } from "harness";
+import { once } from "node:events";
+import { createServer } from "node:http";
+import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
 import path from "path";
 
 const gzipped = path.join(import.meta.dir, "fixture.html.gz");
@@ -118,6 +121,74 @@ it("fetch() with a gzip response works (one chunk, streamed, with a delay)", asy
   const res = await fetch(server.url);
   const text = (await res.text()).replace(/\r\n/g, "\n");
   expect(text).toEqual(htmlText);
+});
+
+// RFC 9110 §8.4.1: content codings are case-insensitive. `x-gzip` is a
+// registered deprecated alias of `gzip`. Node/undici lowercase the
+// Content-Encoding value before matching and accept `x-gzip`; we must too,
+// otherwise res.text()/res.json() silently return raw compressed bytes.
+describe("fetch() decodes Content-Encoding case-insensitively", () => {
+  const payload = JSON.stringify({ hello: "world", n: 42 });
+  const bodies = {
+    gzip: gzipSync(payload),
+    deflate: deflateSync(payload),
+    br: brotliCompressSync(payload),
+    zstd: zstdCompressSync(payload),
+  };
+  // [Content-Encoding header value as sent on the wire, compressor]
+  const cases: Array<[string, keyof typeof bodies]> = [
+    ["gzip", "gzip"],
+    ["GZIP", "gzip"],
+    ["Gzip", "gzip"],
+    ["x-gzip", "gzip"],
+    ["X-Gzip", "gzip"],
+    ["X-GZIP", "gzip"],
+    ["deflate", "deflate"],
+    ["Deflate", "deflate"],
+    ["DEFLATE", "deflate"],
+    ["br", "br"],
+    ["BR", "br"],
+    ["Br", "br"],
+    ["zstd", "zstd"],
+    ["ZSTD", "zstd"],
+    ["Zstd", "zstd"],
+  ];
+
+  it.each(cases)("Content-Encoding: %s", async (enc, kind) => {
+    // Use node:http so the header value reaches the wire exactly as written.
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Encoding", enc);
+      res.setHeader("Content-Type", "application/json");
+      res.end(bodies[kind]);
+    });
+    await once(server.listen(0), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(res.status).toBe(200);
+      // Must be the decoded JSON, not the raw compressed bytes.
+      expect(await res.json()).toEqual({ hello: "world", n: 42 });
+    } finally {
+      server.close();
+    }
+  });
+
+  it("unknown Content-Encoding still passes through untouched", async () => {
+    const server = createServer((req, res) => {
+      res.setHeader("Content-Encoding", "foobar");
+      res.setHeader("Content-Type", "text/plain");
+      res.end("plain-text-body");
+    });
+    await once(server.listen(0), "listening");
+    try {
+      const { port } = server.address() as import("node:net").AddressInfo;
+      const res = await fetch(`http://127.0.0.1:${port}/`);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("plain-text-body");
+    } finally {
+      server.close();
+    }
+  });
 });
 
 it("fetch() with a gzip response works (multiple chunks, TCP server)", async done => {

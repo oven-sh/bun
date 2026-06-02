@@ -160,7 +160,7 @@ pub(super) mod lib_info {
             sys::RTLD::LAZY | sys::RTLD::LOCAL,
         );
         if handle.is_none() {
-            Output::debug("libinfo.dylib not found");
+            bun_core::debug!("libinfo.dylib not found");
         }
         HANDLE.store(handle.unwrap_or(core::ptr::null_mut()), Relaxed);
         handle

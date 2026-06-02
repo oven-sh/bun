@@ -19,7 +19,7 @@ use bun_core::FeatureFlags;
 
 use crate::bundled_ast::{self, NamedExports, NamedImports};
 use crate::options::{self, Format, Loader};
-use crate::ungate_support::perf;
+use crate::perf;
 use crate::{
     EntryPoint, ExportData, ImportData, ImportTracker, Index, IndexInt, LinkerContext, Part,
     RefImportData, ResolvedExports, WrapKind, js_meta,

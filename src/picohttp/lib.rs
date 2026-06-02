@@ -4,7 +4,6 @@ use core::fmt;
 
 use bstr::BStr;
 
-use bun_core::output as Output;
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
@@ -629,10 +628,7 @@ impl<'a> Response<'a> {
 
         match rc {
             -1 => {
-                // NOTE: `bun_core::debug!` macro is currently broken (it forwards
-                // `concat!(...)` into `pretty_errorln!` whose matcher is `$fmt:literal`).
-                // Use the function-form `output::debug` until the macro is fixed.
-                Output::debug(format_args!("Malformed HTTP response:\n{}", BStr::new(buf)));
+                bun_core::debug!("Malformed HTTP response:\n{}", BStr::new(buf));
                 Err(ParseResponseError::MalformedHttpResponse)
             }
             -2 => {

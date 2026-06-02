@@ -1069,10 +1069,25 @@ pub(crate) fn from_bytes(
                         ..Default::default()
                     });
                 }
-                let mut str = BunString::init(bytes);
+                // `timestamp` (without time zone) text carries no offset, so
+                // decode its components as UTC to match the binary path. `date`
+                // (UTC midnight) and `timestamptz` (explicit offset) already
+                // parse correctly via Date.parse, so only redirect `timestamp`.
+                let date = match tag {
+                    T::timestamp => crate::postgres::types::date::timestamp_text_to_ms_utc(global_object, bytes),
+                    _ => None,
+                };
+                let date = match date {
+                    Some(d) => d,
+                    None => {
+                        let mut str = BunString::init(bytes);
+                        crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)
+                            .map_err(crate::jsc::js_error_to_postgres)?
+                    }
+                };
                 Ok(SQLDataCell {
                     tag: Tag::Date,
-                    value: Value { date: crate::jsc::bun_string_jsc::parse_date(&mut str, global_object).map_err(crate::jsc::js_error_to_postgres)? },
+                    value: Value { date },
                     ..Default::default()
                 })
             }

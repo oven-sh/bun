@@ -141,17 +141,17 @@ pub(crate) fn simdutf_encode_len_url_safe(source_len: usize) -> usize {
 /// * `-` and `_` are used instead of `+` and `/`
 ///
 /// See the documentation for simdutf's `binary_to_base64` function for more details (simdutf_impl.h).
-pub(crate) fn simdutf_encode_url_safe(destination: &mut [u8], source: &[u8]) -> usize {
-    simdutf::base64::encode(source, destination, true)
+pub fn encode_url_safe(dest: &mut [u8], source: &[u8]) -> usize {
+    simdutf::base64::encode(source, dest, true)
 }
 
-/// `simdutf_encode_url_safe` into a freshly-allocated `Vec<u8>` sized exactly via
+/// `encode_url_safe` into a freshly-allocated `Vec<u8>` sized exactly via
 /// `simdutf_encode_len_url_safe` (simdutf computes the exact no-padding length, so
 /// the trailing `truncate` is a no-op kept for symmetry with `encode_alloc`).
 pub fn simdutf_encode_url_safe_alloc(source: &[u8]) -> Vec<u8> {
     let len = simdutf_encode_len_url_safe(source.len());
     let mut destination = vec![0u8; len];
-    let encoded_len = simdutf_encode_url_safe(&mut destination, source);
+    let encoded_len = encode_url_safe(&mut destination, source);
     destination.truncate(encoded_len);
     destination
 }
@@ -198,23 +198,6 @@ pub(crate) const fn url_safe_encode_len_from_size(n: usize) -> usize {
 #[inline]
 pub const fn url_safe_encode_len(source: &[u8]) -> usize {
     url_safe_encode_len_from_size(source.len())
-}
-
-// TODO(port): move to base64_sys
-unsafe extern "C" {
-    fn WTF__base64URLEncode(
-        input: *const u8,
-        input_len: usize,
-        output: *mut u8,
-        output_len: usize,
-    ) -> usize;
-}
-
-pub fn encode_url_safe(dest: &mut [u8], source: &[u8]) -> usize {
-    // TODO(port): bun.jsc.markBinding(@src()) — debug-only binding marker, no Rust equivalent yet
-    // SAFETY: WTF__base64URLEncode reads `input_len` bytes from `input` and writes at most
-    // `output_len` bytes to `output`; both slices are valid for those lengths.
-    unsafe { WTF__base64URLEncode(source.as_ptr(), source.len(), dest.as_mut_ptr(), dest.len()) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -406,10 +389,12 @@ pub mod vlq {
             }
         }
 
-        VLQResult {
-            start: start + encoded_.len(),
-            value: 0,
-        }
+        // Reached when the input is empty or ends mid-VLQ (the last byte's
+        // continuation bit is set with no following byte, or all 8 bytes have
+        // it set — both malformed). No value was decoded; return `start`
+        // unchanged so callers' no-progress checks treat the truncated
+        // mapping as a parse failure instead of silently accepting `value: 0`.
+        VLQResult { start, value: 0 }
     }
 
     #[inline]
@@ -1025,7 +1010,7 @@ pub fn wyhash_url_safe<'a>(
     let slice_to_write: &mut [u8] =
         bump.alloc_slice_fill_default(encode_len + usize::from(at_start));
 
-    let base64_encoded_hash_len = simdutf_encode_url_safe(slice_to_write, &h_bytes);
+    let base64_encoded_hash_len = encode_url_safe(slice_to_write, &h_bytes);
 
     let base64_encoded_hash = &slice_to_write[0..base64_encoded_hash_len];
 

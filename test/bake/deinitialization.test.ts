@@ -136,7 +136,17 @@ test.skipIf(!isASAN)(
 
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(String(dir), "terminate-fixture.ts")],
-      env: bunEnv,
+      env: {
+        ...bunEnv,
+        // The fix under test *deliberately leaks* the worker VM and bundle
+        // state when a dev server bundle is still in flight at terminate()
+        // (its WorkPool tasks can be neither cancelled nor awaited, so
+        // leaking is the only sound teardown). LeakSanitizer would report
+        // those intentional leaks at child exit; this test is about
+        // use-after-free, which ASAN proper still detects with leak
+        // detection off.
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=0"].filter(Boolean).join(":"),
+      },
       cwd: String(dir),
       stdout: "pipe",
       stderr: "pipe",

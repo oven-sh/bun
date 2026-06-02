@@ -539,9 +539,15 @@ impl FetchTasklet {
     }
 
     pub(crate) fn ref_(&self) {
-        // SAFETY: `self` is live; `ref_` only touches the interior-mutable
-        // atomic counter.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut()) };
+        Self::ref_ptr(core::ptr::from_ref(self).cast_mut());
+    }
+
+    /// Raw-pointer form of [`Self::ref_`] for code where no `&self` is available.
+    #[inline]
+    fn ref_ptr(this: *mut Self) {
+        // SAFETY: caller holds an existing ref, so `this` is live; `ref_` only
+        // touches the interior-mutable atomic counter.
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(this) };
     }
 
     /// # Safety
@@ -583,6 +589,42 @@ impl FetchTasklet {
             self_.javascript_vm,
             ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
         );
+    }
+
+    /// JS-side baseline ref (held since `get`). Released by `on_progress_update`'s
+    /// cleanup on the final tick, its shutdown early-out, or
+    /// `release_queued_tasks_for_shutdown` (dispatch.rs). JS thread only.
+    #[inline]
+    pub(crate) fn release_js_ref(this: *mut FetchTasklet) {
+        Self::deref(this);
+    }
+
+    /// HTTP-side baseline ref (held since `get`). Released by the final
+    /// `callback` or `release_at_shutdown`. Must not be called with the
+    /// tasklet `mutex` held: this may free the allocation the mutex lives in.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    #[inline]
+    pub(crate) fn release_http_ref(this: *mut FetchTasklet) {
+        // SAFETY: sound only because the caller still holds the ref being
+        // released, so `this` is live for the read. (Callers without that
+        // guarantee must not use this wrapper — the assert itself would be a
+        // UAF in debug builds.)
+        debug_assert!(unsafe { !(*this).mutex.is_held_by_current_thread() });
+        Self::deref_from_thread(this);
+    }
+
+    /// Sink ref taken in `start_request_stream`; released once per
+    /// `write_end_request` exit. JS thread both sides.
+    #[inline]
+    pub(crate) fn release_sink_ref(this: *mut FetchTasklet) {
+        Self::deref(this);
+    }
+
+    /// Drain-task ref taken on the HTTP thread in `on_write_request_data_drain`;
+    /// released on the JS thread in `resume_request_data_stream`.
+    #[inline]
+    pub(crate) fn release_drain_task_ref(this: *mut FetchTasklet) {
+        Self::deref(this);
     }
 
     // PORT NOTE: ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
@@ -719,8 +761,8 @@ impl FetchTasklet {
     /// `HTTPClientResultCallback::release_at_shutdown` for `FetchTasklet`.
     /// Called from `dealloc_in_flight_for_exit` on the HTTP thread for each
     /// request still in `in_flight` when `process.exit()` interrupts it.
-    /// `queue()` left two refs (initial +1 and `node_ref.ref_()`); the final
-    /// `callback`'s deref and `on_progress_update`'s JS-side deref will never
+    /// `get()` created two refs (`init_exact_refs(2)`); the final `callback`'s
+    /// HTTP-side release and `on_progress_update`'s JS-side release will never
     /// run, so this must balance both — but only when no `on_progress_update`
     /// is already parked in the parent's concurrent queue.
     ///
@@ -750,8 +792,10 @@ impl FetchTasklet {
         // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
         unsafe { (*this).shared.scheduled_response_buffer = MutableString::default() };
         // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
-        FetchTasklet::deref_from_thread(this);
+        FetchTasklet::release_http_ref(this);
         if !queued_progress_update {
+            // JS-side ref, released here on the HTTP thread: the JS thread is
+            // parked, so `deref_from_thread` is the only safe teardown route.
             // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
             FetchTasklet::deref_from_thread(this);
         }
@@ -773,7 +817,7 @@ impl FetchTasklet {
             }
 
             let global_this = self.js.global_this;
-            self.ref_(); // lets only unref when sink is done
+            self.ref_(); // sink ref — released by `release_sink_ref` in `write_end_request`
             // +1 because the task refs the sink
             let sink =
                 ResumableSink::init_exact_refs(&global_this, stream, std::ptr::from_mut(self), 2);
@@ -957,7 +1001,7 @@ impl FetchTasklet {
             self.mutex.unlock();
             if is_done {
                 // SAFETY: `self` is the live heap tasklet; we hold a ref.
-                FetchTasklet::deref(std::ptr::from_mut(self));
+                FetchTasklet::release_js_ref(std::ptr::from_mut(self));
             }
             return Ok(());
         }
@@ -985,7 +1029,7 @@ impl FetchTasklet {
                 let _ = vm;
                 poll_ref.unref(bun_io::js_vm_ctx());
                 // SAFETY: `this` is the live heap tasklet; we hold a ref.
-                FetchTasklet::deref(std::ptr::from_mut(this));
+                FetchTasklet::release_js_ref(std::ptr::from_mut(this));
             }
         };
 
@@ -1839,7 +1883,10 @@ impl FetchTasklet {
             is_http2: AtomicBool::new(false),
             signal_store: http::signals::Store::default(),
             signals: Signals::default(),
-            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            // Starts at 2: 1 for the JS thread, 1 for the HTTP thread.
+            // Relies on `get()` staying infallible after this `Box::new`
+            // (its `Result` return is vestigial).
+            ref_count: bun_ptr::ThreadSafeRefCount::init_exact_refs(2),
         });
 
         fetch_tasklet.signals = fetch_tasklet.signal_store.to();
@@ -2087,7 +2134,7 @@ impl FetchTasklet {
         if this_ref.javascript_vm.is_shutting_down() {
             return;
         }
-        // ref until the main thread callback is called
+        // drain-task ref — released by `release_drain_task_ref` in `resume_request_data_stream`
         this_ref.ref_();
         // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`; the queue
         // takes ownership of it.
@@ -2112,9 +2159,9 @@ impl FetchTasklet {
                 sink.drain();
             }
         })();
-        // deref when done because we ref inside onWriteRequestDataDrain
+        // balances the ref taken in `on_write_request_data_drain`
         // SAFETY: `this` is the live heap tasklet; we hold a ref.
-        FetchTasklet::deref(this);
+        FetchTasklet::release_drain_task_ref(this);
         let () = result;
         Ok(())
     }
@@ -2194,7 +2241,7 @@ impl FetchTasklet {
         if let Some(js_error) = err {
             if self.signal_store.aborted.load(Ordering::Relaxed) || self.js.abort_reason.has() {
                 // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
-                FetchTasklet::deref(this_ptr);
+                FetchTasklet::release_sink_ref(this_ptr);
                 return;
             }
             if !js_error.is_undefined_or_null() {
@@ -2206,7 +2253,7 @@ impl FetchTasklet {
                 // Using chunked transfer encoding, send the terminating chunk
                 let Some(thread_safe_stream_buffer) = self.stream_buffer_mut() else {
                     // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
-                    FetchTasklet::deref(this_ptr);
+                    FetchTasklet::release_sink_ref(this_ptr);
                     return;
                 };
                 // Mutex guards `buffer` against the HTTP thread; released when
@@ -2221,7 +2268,7 @@ impl FetchTasklet {
             }
         }
         // SAFETY: `this_ptr` derived from live `&mut self`; we hold a ref.
-        FetchTasklet::deref(this_ptr);
+        FetchTasklet::release_sink_ref(this_ptr);
     }
 
     pub(crate) fn abort_task(&mut self) {
@@ -2247,8 +2294,6 @@ impl FetchTasklet {
         node_ref.http.as_mut().unwrap().schedule(&mut batch);
         node_ref.js.poll_ref.ref_(bun_io::js_vm_ctx());
 
-        // increment ref so we can keep it alive until the http client is done
-        node_ref.ref_();
         http::HTTPThread::schedule(batch);
 
         Ok(node)
@@ -2340,7 +2385,7 @@ impl FetchTasklet {
                 task_ref.mutex.unlock();
                 if is_done {
                     // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
-                    FetchTasklet::deref_from_thread(task);
+                    FetchTasklet::release_http_ref(task);
                 }
                 return;
             }
@@ -2364,7 +2409,7 @@ impl FetchTasklet {
                 task_ref.mutex.unlock();
                 if is_done {
                     // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
-                    FetchTasklet::deref_from_thread(task);
+                    FetchTasklet::release_http_ref(task);
                 }
                 return;
             }
@@ -2392,13 +2437,15 @@ impl FetchTasklet {
             task_ref.mutex.unlock();
             if is_done {
                 // No on_progress_update will ever run for this final result, so
-                // release the JS-side ref it would have dropped, then the
-                // HTTP-side ref. The 1→0 transition runs `dealloc_for_shutdown`
-                // (Rust boxes only — JSC handles are leaked to destructOnExit).
+                // release the JS-side ref it would have dropped (raw
+                // `deref_from_thread` — we are on the HTTP thread, JS parked),
+                // then the HTTP-side ref. The 1→0 transition runs
+                // `dealloc_for_shutdown` (Rust boxes only — JSC handles are
+                // leaked to destructOnExit).
                 // SAFETY: `task` is the live heap tasklet; both refs held.
                 FetchTasklet::deref_from_thread(task);
                 // SAFETY: second ref still held until this 1→0 transition.
-                FetchTasklet::deref_from_thread(task);
+                FetchTasklet::release_http_ref(task);
             }
             return;
         }
@@ -2416,7 +2463,7 @@ impl FetchTasklet {
         // this is a atomic operation and will enqueue a task to deinit on the main thread
         if is_done {
             // SAFETY: `task` is the live heap tasklet; HTTP-thread ref held.
-            FetchTasklet::deref_from_thread(task);
+            FetchTasklet::release_http_ref(task);
         }
     }
 }

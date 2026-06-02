@@ -53,10 +53,11 @@ namespace HWY_NAMESPACE {
 
 namespace hn = hwy::HWY_NAMESPACE;
 
-// ⌊t/65025⌋ for t ≤ 33,228,287 (< 2^25.99): (t · 33818121) >> 41.
-// M = ⌈2^41/65025⌉ = 33818121; M·65025 − 2^41 = 23,021 ≤ 2^(41−26) ⇒ exact
-// over the range (Granlund-Montgomery), brute-force-verified end-to-end
-// against the u64 reference for all 65536 (sa·op) products × c/d grids.
+// ⌊t/65025⌋ for t ≤ 33,228,287 (< 2^25): (t · 33818121) >> 41.
+// M = ⌈2^41/65025⌉ = 33818121; e = M·65025 − 2^41 = 62,473 < 2^(41−25) ⇒
+// e·t < 2^41 over the range, so the shifted product never crosses a quotient
+// boundary (Granlund-Montgomery). Brute-force-verified end-to-end against
+// the u64 reference for all 65536 (sa·op) products × c/d grids.
 constexpr uint64_t kDivM = 33818121;
 constexpr int kDivS = 41;
 

@@ -597,11 +597,21 @@ impl Options {
                                 || registry_.starts_with(b"http://"))
                         {
                             let prev_scope = self.scope.clone();
+                            let prev_url = prev_scope.url.url();
+                            let new_url = bun_url::URL::parse(registry_);
+                            let token = if bun_core::without_trailing_slash(new_url.host)
+                                == bun_core::without_trailing_slash(prev_url.host)
+                                && (new_url.is_https() || !prev_url.is_https())
+                            {
+                                prev_scope.token
+                            } else {
+                                Box::default()
+                            };
                             // PORT NOTE: was `std.mem.zeroes(Api.NpmRegistry)`; zeroed slices are
                             // invalid in Rust — use Default (empty strings) which is semantically equivalent.
                             let api_registry = Api::NpmRegistry {
                                 url: registry_.into(),
-                                token: prev_scope.token,
+                                token,
                                 ..Default::default()
                             };
                             self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;

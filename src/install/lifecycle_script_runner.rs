@@ -410,13 +410,13 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         debug_assert!(self.remaining_fds > 0);
         self.remaining_fds -= 1;
 
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "<r><red>error<r>: Failed to read <b>{}<r> script output from \"<b>{}<r>\" due to error <b>{} {}<r>",
             bstr::BStr::new(self.script_name()),
             bstr::BStr::new(&self.package_name),
             err.errno,
             <&'static str>::from(err.get_errno()),
-        ));
+        );
         Output::flush();
         self.maybe_finished();
     }
@@ -903,12 +903,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         return;
                     }
                     self.print_output();
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" exited with {}<r>",
                         bstr::BStr::new(self.script_name()),
                         bstr::BStr::new(&self.package_name),
                         exit.code,
-                    ));
+                    );
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                     unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                     Output::flush();
@@ -999,10 +999,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 }
 
                 if PackageManager::verbose_install() {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><d>[Scripts]<r> Finished scripts for <b>{}<r>",
                         bun_core::fmt::quote(&self.package_name),
-                    ));
+                    );
                 }
 
                 if let Some(ctx) = &self.ctx {
@@ -1029,12 +1029,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 self.print_output();
                 let signal_code = bun_sys::SignalCode::from(signal);
 
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",
                     bstr::BStr::new(self.script_name()),
                     bstr::BStr::new(&self.package_name),
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
-                ));
+                );
 
                 // `Status::signal_code()` range-checks 1..=31 (`bun_core::SignalCode` is
                 // exhaustive); RT signals (>31) fall back to SIGTERM so the diverging
@@ -1059,12 +1059,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     return;
                 }
 
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: Failed to run <b>{}<r> script from \"<b>{}<r>\" due to\n{}",
                     bstr::BStr::new(self.script_name()),
                     bstr::BStr::new(&self.package_name),
                     err,
-                ));
+                );
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 Output::flush();
@@ -1084,9 +1084,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     /// This function may free the *LifecycleScriptSubprocess
     pub fn on_process_exit(&mut self, proc: *mut Process, _: Status, _: &Rusage) {
         if self.process != proc {
-            Output::debug_warn(format_args!(
+            bun_core::debug_warn!(
                 "<d>[LifecycleScriptSubprocess]<r> onProcessExit called with wrong process"
-            ));
+            );
             return;
         }
         self.has_called_process_exit = true;
@@ -1129,11 +1129,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
 
     pub fn deinit_and_delete_package(&mut self) {
         if self.manager().options.log_level.is_verbose() {
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "deleting optional dependency '{}' due to failed '{}' script",
                 bstr::BStr::new(&self.package_name),
                 bstr::BStr::new(self.script_name()),
-            ));
+            );
         }
         'try_delete_dir: {
             let Some(dirname) = bun_core::dirname(self.scripts.cwd.as_bytes()) else {
@@ -1199,10 +1199,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         );
 
         if log_level.is_verbose() {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<d>[Scripts]<r> Starting scripts for <b>\"{}\"<r>",
                 bstr::BStr::new(&lss.scripts.package_name),
-            ));
+            );
         }
 
         lss.increment_pending_script_tasks();
@@ -1211,11 +1211,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // SAFETY: `lifecycle_subprocess` is the allocation-rooted `heap::alloc` pointer
         // from `Self::new`; passing it gives the stored backrefs stable provenance.
         if let Err(err) = unsafe { Self::spawn_next_script(lifecycle_subprocess, first_index) } {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
                 bstr::BStr::new(LockfileScripts::NAMES[first_index as usize]),
                 err.name(),
-            ));
+            );
             Global::exit(1);
         }
 

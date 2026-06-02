@@ -662,18 +662,6 @@ impl ThreadPool {
         self.wait_group.wait();
     }
 
-    /// Wait for all tasks to complete, then shut down and deinit the thread pool.
-    ///
-    /// Takes `&mut self` (NOT by-value): worker threads hold `*const ThreadPool`
-    /// pointing at this struct's address; consuming `self` would move it to a new
-    /// stack slot and leave workers with dangling pointers (UAF + deadlock).
-    /// Zig `waitAndDeinit(self: *ThreadPool)` operates in place — match that.
-    pub fn wait_and_deinit(&mut self) {
-        self.wait_for_all();
-        self.shutdown();
-        self.join();
-    }
-
     fn force_spawn(&self) {
         // Try to notify a thread
         let is_waking = false;
@@ -1041,9 +1029,8 @@ impl ThreadPool {
 
         // If there are threads, start off the chain sending it the shutdown signal.
         // The thread receives the shutdown signal and sends it to the next thread, and the next..
-        // Use swap (not load) so join() is idempotent: a second call (e.g., from
-        // wait_and_deinit() followed by Drop) sees null and returns instead of
-        // touching freed worker stack memory.
+        // Use swap (not load) so join() is idempotent: a second call sees null and
+        // returns instead of touching freed worker stack memory.
         let Some(thread) = NonNull::new(self.threads.swap(ptr::null_mut(), Ordering::Acquire))
         else {
             return;

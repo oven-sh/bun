@@ -73,6 +73,21 @@ pub fn decode_binary_value<Context: ReaderContext>(
                 ..Default::default()
             })
         }
+        FieldType::MYSQL_TYPE_YEAR => {
+            // Binary protocol sends YEAR as a fixed 2-byte unsigned field;
+            // column_length is the display width (4), not the wire size.
+            if raw {
+                let data = reader.read(2)?;
+                return Ok(SQLDataCell::raw(Some(&data)));
+            }
+            Ok(SQLDataCell {
+                tag: CellTag::Uint4,
+                value: CellValue {
+                    uint4: reader.int::<u16>()? as u32,
+                },
+                ..Default::default()
+            })
+        }
         FieldType::MYSQL_TYPE_INT24 => {
             if raw {
                 // Binary protocol sends INT24 as a fixed 4-byte field; consume
@@ -283,9 +298,12 @@ pub fn decode_binary_value<Context: ReaderContext>(
         FieldType::MYSQL_TYPE_DATE
         | FieldType::MYSQL_TYPE_TIMESTAMP
         | FieldType::MYSQL_TYPE_DATETIME => match reader.byte()? {
+            // A zero-length binary DATETIME is MySQL's "0000-00-00 00:00:00"
+            // sentinel — surface it as Invalid Date (NaN), not the Unix epoch,
+            // so it agrees with the text path's from_text().
             0 => Ok(SQLDataCell {
                 tag: CellTag::Date,
-                value: CellValue { date: 0.0 },
+                value: CellValue { date: f64::NAN },
                 ..Default::default()
             }),
             l @ (11 | 7 | 4) => {
@@ -307,11 +325,35 @@ pub fn decode_binary_value<Context: ReaderContext>(
             _ => Err(bun_core::err!("InvalidBinaryValue")),
         },
 
+        // NEWDECIMAL is always sent as an ASCII decimal string regardless of the
+        // column's BINARY flag / charset. Computed decimals (SUM/AVG/arithmetic/CAST)
+        // carry the BINARY flag and charset 63, so the binary-charset heuristic in the
+        // string/blob arm below would wrongly return them as a Buffer.
+        FieldType::MYSQL_TYPE_NEWDECIMAL => {
+            if raw {
+                let data = reader.encode_len_string()?;
+                return Ok(SQLDataCell::raw(Some(&data)));
+            }
+            let string_data = reader.encode_len_string()?;
+            let slice = string_data.slice();
+            Ok(SQLDataCell {
+                tag: CellTag::String,
+                value: CellValue {
+                    string: if !slice.is_empty() {
+                        clone_utf8_wtf_impl(slice)
+                    } else {
+                        core::ptr::null_mut()
+                    },
+                },
+                free_value: 1,
+                ..Default::default()
+            })
+        }
+
         // When the column contains a binary string we return a Buffer otherwise a string
         FieldType::MYSQL_TYPE_ENUM
         | FieldType::MYSQL_TYPE_SET
         | FieldType::MYSQL_TYPE_GEOMETRY
-        | FieldType::MYSQL_TYPE_NEWDECIMAL
         | FieldType::MYSQL_TYPE_STRING
         | FieldType::MYSQL_TYPE_VARCHAR
         | FieldType::MYSQL_TYPE_VAR_STRING

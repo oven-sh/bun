@@ -29,6 +29,7 @@ use super::package_manager_options as Options;
 /// literal then write to stdout. The Zig version did this at comptime; here the
 /// help strings are runtime `&str`s so we use the runtime expander.
 #[inline]
+#[allow(clippy::disallowed_methods)] // template is a runtime &str parameter
 fn pretty_help(text: &str) {
     Output::pretty(format_args!(
         "{}",

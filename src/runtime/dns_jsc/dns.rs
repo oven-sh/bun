@@ -160,7 +160,7 @@ pub(super) mod lib_info {
             sys::RTLD::LAZY | sys::RTLD::LOCAL,
         );
         if handle.is_none() {
-            Output::debug("libinfo.dylib not found");
+            bun_core::debug!("libinfo.dylib not found");
         }
         HANDLE.store(handle.unwrap_or(core::ptr::null_mut()), Relaxed);
         handle
@@ -5251,7 +5251,7 @@ impl Resolver {
         // stack before null-terminating it. Reject anything that cannot fit so we never
         // index past that buffer. RFC 1035 caps hostnames at 253 octets and NI_MAXHOST
         // is 1025, so this never rejects a name that could have resolved.
-        if name.len() >= MAX_PATH_BYTES {
+        if name.len() >= MAX_PATH_BYTES || name.contains(&0) {
             let mut promise = JSPromiseStrong::init(global_this);
             let promise_value = promise.value();
             error_to_deferred(

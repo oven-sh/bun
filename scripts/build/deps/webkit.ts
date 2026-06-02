@@ -6,10 +6,10 @@
 // Preview autobuild of oven-sh/WebKit#235 rebased on current main —
 // the ucontext-SP fix for JSC's signalHandlerSuspendResume (so the GC
 // thread-suspend signal works under SA_ONSTACK, e.g. Go cgo's initsig,
-// instead of spinning forever). Rebased on 963f8758c29e (current main's
-// pin) so ICU/JSC ABI and the LTO-variant asset set match. Swap back to
+// instead of spinning forever). Rebased on 6d586e293f (current main's
+// pin) so JSC/ICU ABI and the LTO-variant asset set match. Swap back to
 // the merged hash once #235 lands.
-export const WEBKIT_VERSION = "autobuild-preview-pr-235-0eedb192";
+export const WEBKIT_VERSION = "autobuild-preview-pr-235-e478893a";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

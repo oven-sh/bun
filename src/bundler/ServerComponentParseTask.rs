@@ -17,12 +17,12 @@ use bun_ast::{ExprNodeList, LocRef, StmtOrExpr, UseDirective};
 use bun_ast::{ImportKind, ImportRecordFlags};
 
 use crate::AstBuilder::AstBuilder;
+use crate::JSAst;
 use crate::Worker;
 use crate::bundle_v2::BundleV2;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
 use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
-use crate::ungate_support::JSAst;
 
 pub use crate::ThreadPool;
 

@@ -607,8 +607,14 @@ impl<R> CssRuleList<R> {
                             break 'arm;
                         }
                     }
-                    CssRule::Container(_cont) => {
-                        // TODO(port): ContainerRule minify — Zig fallthrough.
+                    CssRule::Container(cont) => {
+                        // The condition-merge/dedup port is still pending, but the
+                        // nested rules must be minified so the nesting-away
+                        // selector expansion stays bounded by
+                        // `MAX_SELECTOR_EXPANSION` — otherwise an at-rule between
+                        // two nesting levels hides the inner levels from the cap
+                        // and the printer expands them exponentially.
+                        cont.rules.minify(context, parent_is_unused)?;
                     }
                     CssRule::LayerBlock(lay) => {
                         lay.rules.minify(context, parent_is_unused)?;
@@ -619,8 +625,10 @@ impl<R> CssRuleList<R> {
                     CssRule::LayerStatement(_lay) => {
                         // TODO(port): LayerStatementRule minify — Zig fallthrough.
                     }
-                    CssRule::MozDocument(_doc) => {
-                        // TODO(port): MozDocumentRule minify — Zig fallthrough.
+                    CssRule::MozDocument(doc) => {
+                        // See `Container` above: recurse so nested style rules
+                        // count against the selector-expansion cap.
+                        doc.rules.minify(context, parent_is_unused)?;
                     }
                     CssRule::Style(_sty) => {
                         // The full `.style` arm (selector compat partitioning,
@@ -641,9 +649,33 @@ impl<R> CssRuleList<R> {
                         }
                     }
                     CssRule::CounterStyle(_) => { /* TODO(port): Zig fallthrough */ }
-                    CssRule::Scope(_) => { /* TODO(port): Zig fallthrough */ }
-                    CssRule::Nesting(_) => { /* TODO(port): Zig fallthrough */ }
-                    CssRule::StartingStyle(_) => { /* TODO(port): Zig fallthrough */ }
+                    CssRule::Scope(scpe) => {
+                        // See `Container` above: recurse so nested style rules
+                        // count against the selector-expansion cap.
+                        scpe.rules.minify(context, parent_is_unused)?;
+                    }
+                    CssRule::Nesting(nst) => {
+                        // See `Container` above. `@nest` wraps a single style
+                        // rule whose own selectors also form a nesting level, so
+                        // charge them against the cap and recurse into its nested
+                        // rules with the multiplier bumped accordingly.
+                        //
+                        // Deliberately does NOT run `StyleRule::minify` on the
+                        // wrapped rule: that would feed its declarations through
+                        // the property handlers, which consume logical properties
+                        // (staging LTR/RTL fallbacks in the handler context) that
+                        // the `@nest` minify port does not yet drain — silently
+                        // dropping the declaration. Leaving the declarations
+                        // untouched preserves them verbatim, matching the
+                        // pre-port behavior.
+                        nst.style.charge_selector_expansion(context)?;
+                        nst.style.minify_nested_rules(context, parent_is_unused)?;
+                    }
+                    CssRule::StartingStyle(rl) => {
+                        // See `Container` above: recurse so nested style rules
+                        // count against the selector-expansion cap.
+                        rl.rules.minify(context, parent_is_unused)?;
+                    }
                     CssRule::FontPaletteValues(_) => { /* TODO(port): Zig fallthrough */ }
                     CssRule::Property(_) => { /* TODO(port): Zig fallthrough */ }
                     _ => {}

@@ -639,7 +639,7 @@ impl StandaloneModuleGraph {
                     module_format: module.module_format,
                     side: module.side,
                     cached_blob: None,
-                    encoding: Encoding::Binary,
+                    encoding: module.encoding,
                     wtf_string: BunString::empty(),
                 },
             );
@@ -889,22 +889,22 @@ pub(crate) fn to_bytes(
                             match Syscall::openat(Fd::cwd(), dest_z, flags, 0o664) {
                                 Ok(fd) => bun_sys::File::from_fd(fd),
                                 Err(e) => {
-                                    Output::pretty_errorln(format_args!(
+                                    bun_core::pretty_errorln!(
                                         "<r><red>error<r><d>:<r> failed to open {}: {}",
                                         bstr::BStr::new(dest_path),
                                         e
-                                    ));
+                                    );
                                     break 'dump;
                                 }
                             }
                         }
                     };
                     if let Err(e) = file.write_all(buf_bytes) {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r><d>:<r> failed to write {}: {}",
                             bstr::BStr::new(dest_path),
                             e
-                        ));
+                        );
                         break 'dump;
                     }
                 }
@@ -928,8 +928,17 @@ pub(crate) fn to_bytes(
             )),
             loader: output_file.loader,
             contents: string_builder.append_count_z(buf_bytes),
+            // Latin1 lets the runtime wrap the mmapped section bytes in a
+            // zero-copy ExternalStringImpl. The printer escapes non-ASCII for
+            // server-side JS, but `--banner`/`--footer`/hashbang and
+            // client-side (target=browser) chunks are concatenated verbatim
+            // as UTF-8, so verify the final bytes before committing to Latin1.
             encoding: match output_file.loader {
-                Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx => Encoding::Latin1,
+                Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
+                    if strings::first_non_ascii(buf_bytes).is_none() =>
+                {
+                    Encoding::Latin1
+                }
                 _ => Encoding::Binary,
             },
             module_format: if output_file.loader.is_javascript_like() {
@@ -1078,10 +1087,10 @@ pub(crate) fn inject(
     ) {
         Ok(n) => n,
         Err(e) => {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r><d>:<r> failed to get temporary file name: {}",
                 bstr::BStr::new(e.name())
-            ));
+            );
             return Fd::INVALID;
         }
     };
@@ -1091,7 +1100,7 @@ pub(crate) fn inject(
         #[cfg(unix)]
         {
             // Make the file writable so we can delete it
-            let _ = Syscall::fchmod(fd, 0o777);
+            let _ = Syscall::fchmod(fd, 0o700);
         }
         fd.close();
         let _ = Syscall::unlink(name);
@@ -1118,11 +1127,11 @@ pub(crate) fn inject(
                 // Zig prints `@errorName(err)` (e.g. `AccessDenied`); map the
                 // Win32 code through the errno table so users see a name, not
                 // a raw integer.
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {:?}",
                     e.to_system_errno()
                         .unwrap_or(bun_sys::SystemErrno::EUNKNOWN)
-                ));
+                );
                 return Fd::invalid();
             }
             let out = &out_buf[..zname.len()];
@@ -1138,10 +1147,10 @@ pub(crate) fn inject(
             ) {
                 Ok(f) => f,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
                         e
-                    ));
+                    );
                     return Fd::invalid();
                 }
             };
@@ -1170,7 +1179,7 @@ pub(crate) fn inject(
             for retry in 0..3 {
                 match Syscall::open(
                     zname,
-                    bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT,
+                    bun_sys::O::CLOEXEC | bun_sys::O::RDWR | bun_sys::O::CREAT | bun_sys::O::EXCL,
                     0,
                 ) {
                     Ok(res) => break 'brk2 res,
@@ -1243,10 +1252,10 @@ pub(crate) fn inject(
                             }
                         }
 
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r><d>:<r> failed to open bun executable to copy from as read-only\n{}",
                             err
-                        ));
+                        );
                         cleanup(zname, fd);
                         return Fd::INVALID;
                     }
@@ -1261,10 +1270,10 @@ pub(crate) fn inject(
             let _self_fd_guard = Syscall::CloseOnDrop::new(self_fd);
 
             if let Err(e) = bun_sys::copy_file(self_fd, fd) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {}",
                     e
-                ));
+                );
                 cleanup(zname, fd);
                 return Fd::INVALID;
             }
@@ -1279,10 +1288,7 @@ pub(crate) fn inject(
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
                 Ok(b) => b,
                 Err(err) => {
-                    Output::pretty_errorln(format_args!(
-                        "Error reading standalone module graph: {}",
-                        err
-                    ));
+                    bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
                     cleanup(zname, cloned_executable_fd);
                     return Fd::INVALID;
                 }
@@ -1290,29 +1296,20 @@ pub(crate) fn inject(
             let mut macho_file = match bun_macho::MachoFile::init(&input_bytes, bytes.len()) {
                 Ok(f) => f,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!(
-                        "Error initializing standalone module graph: {}",
-                        e
-                    ));
+                    bun_core::pretty_errorln!("Error initializing standalone module graph: {}", e);
                     cleanup(zname, cloned_executable_fd);
                     return Fd::INVALID;
                 }
             };
             if let Err(e) = macho_file.write_section(bytes) {
-                Output::pretty_errorln(format_args!(
-                    "Error writing standalone module graph: {}",
-                    e
-                ));
+                bun_core::pretty_errorln!("Error writing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
             drop(input_bytes);
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                Output::pretty_errorln(format_args!(
-                    "Error seeking to start of temporary file: {}",
-                    err
-                ));
+                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
@@ -1324,25 +1321,22 @@ pub(crate) fn inject(
                 bun_sys::FileWriter(cloned_executable_fd),
             );
             if let Err(e) = macho_file.build_and_sign(&mut buffered_writer) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "Error writing standalone module graph: {}",
                     bstr::BStr::new(e.name())
-                ));
+                );
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
             if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
-                Output::pretty_errorln(format_args!(
-                    "Error flushing standalone module graph: {}",
-                    e
-                ));
+                bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
+                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
             return cloned_executable_fd;
         }
@@ -1350,10 +1344,7 @@ pub(crate) fn inject(
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
                 Ok(b) => b,
                 Err(err) => {
-                    Output::pretty_errorln(format_args!(
-                        "Error reading standalone module graph: {}",
-                        err
-                    ));
+                    bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
                     cleanup(zname, cloned_executable_fd);
                     return Fd::INVALID;
                 }
@@ -1361,34 +1352,28 @@ pub(crate) fn inject(
             let mut pe_file = match bun_pe::PEFile::init(&input_bytes) {
                 Ok(f) => f,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!("Error initializing PE file: {}", e));
+                    bun_core::pretty_errorln!("Error initializing PE file: {}", e);
                     cleanup(zname, cloned_executable_fd);
                     return Fd::INVALID;
                 }
             };
             // Always strip authenticode when adding .bun section for --compile
             if let Err(e) = pe_file.add_bun_section(bytes, bun_pe::StripMode::StripAlways) {
-                Output::pretty_errorln(format_args!("Error adding Bun section to PE file: {}", e));
+                bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
             drop(input_bytes);
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                Output::pretty_errorln(format_args!(
-                    "Error seeking to start of temporary file: {}",
-                    err
-                ));
+                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
 
             let mut writer = bun_sys::FileWriter(cloned_executable_fd);
             if let Err(e) = pe_file.write(&mut writer) {
-                Output::pretty_errorln(format_args!(
-                    "Error writing PE file: {}",
-                    bstr::BStr::new(e.name())
-                ));
+                bun_core::pretty_errorln!("Error writing PE file: {}", bstr::BStr::new(e.name()));
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
@@ -1396,7 +1381,7 @@ pub(crate) fn inject(
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
+                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
             return cloned_executable_fd;
         }
@@ -1405,7 +1390,7 @@ pub(crate) fn inject(
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
                 Ok(b) => b,
                 Err(err) => {
-                    Output::pretty_errorln(format_args!("Error reading executable: {}", err));
+                    bun_core::pretty_errorln!("Error reading executable: {}", err);
                     cleanup(zname, cloned_executable_fd);
                     return Fd::INVALID;
                 }
@@ -1414,7 +1399,7 @@ pub(crate) fn inject(
             let mut elf_file = match bun_elf::ElfFile::init(input_bytes) {
                 Ok(f) => f,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!("Error initializing ELF file: {}", e));
+                    bun_core::pretty_errorln!("Error initializing ELF file: {}", e);
                     cleanup(zname, cloned_executable_fd);
                     return Fd::INVALID;
                 }
@@ -1423,16 +1408,13 @@ pub(crate) fn inject(
             elf_file.normalize_interpreter();
 
             if let Err(e) = elf_file.write_bun_section(bytes) {
-                Output::pretty_errorln(format_args!("Error writing .bun section to ELF: {}", e));
+                bun_core::pretty_errorln!("Error writing .bun section to ELF: {}", e);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
-                Output::pretty_errorln(format_args!(
-                    "Error seeking to start of temporary file: {}",
-                    err
-                ));
+                bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
@@ -1440,7 +1422,7 @@ pub(crate) fn inject(
             // Write the modified ELF data back to the file
             let write_file = bun_sys::File::borrow(&cloned_executable_fd);
             if let Err(err) = write_file.write_all(&elf_file.data) {
-                Output::pretty_errorln(format_args!("Error writing ELF file: {}", err));
+                bun_core::pretty_errorln!("Error writing ELF file: {}", err);
                 cleanup(zname, cloned_executable_fd);
                 return Fd::INVALID;
             }
@@ -1453,7 +1435,7 @@ pub(crate) fn inject(
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
+                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
             return cloned_executable_fd;
         }
@@ -1466,10 +1448,10 @@ pub(crate) fn inject(
                     + match Syscall::set_file_offset_to_end_windows(cloned_executable_fd) {
                         Ok(v) => v,
                         Err(e) => {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<r><red>error<r><d>:<r> failed to seek to end of temporary file\n{}",
                                 e
-                            ));
+                            );
                             cleanup(zname, cloned_executable_fd);
                             return Fd::invalid();
                         }
@@ -1481,7 +1463,7 @@ pub(crate) fn inject(
                     let fstat = match Syscall::fstat(cloned_executable_fd) {
                         Ok(res) => res,
                         Err(err) => {
-                            Output::pretty_errorln(format_args!("{}", err));
+                            bun_core::pretty_errorln!("{}", err);
                             cleanup(zname, cloned_executable_fd);
                             return Fd::INVALID;
                         }
@@ -1501,10 +1483,11 @@ pub(crate) fn inject(
                 //  written into the gap.
                 //
                 if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, seek_position) {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "{}\nwhile seeking to end of temporary file (pos: {})",
-                        err, seek_position
-                    ));
+                        err,
+                        seek_position
+                    );
                     cleanup(zname, cloned_executable_fd);
                     return Fd::INVALID;
                 }
@@ -1515,10 +1498,10 @@ pub(crate) fn inject(
                 match Syscall::write(cloned_executable_fd, remain) {
                     Ok(written) => remain = &remain[written..],
                     Err(err) => {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r><d>:<r> failed to write to temporary file\n{}",
                             err
-                        ));
+                        );
                         cleanup(zname, cloned_executable_fd);
                         return Fd::INVALID;
                     }
@@ -1530,7 +1513,7 @@ pub(crate) fn inject(
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
-                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o777) };
+                unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
 
             return cloned_executable_fd;
@@ -2004,9 +1987,7 @@ impl StandaloneModuleGraph {
                 return Ok(None);
             };
             if len < size_of::<Offsets>() + TRAILER.len() {
-                Output::debug_warn(format_args!(
-                    "bun standalone module graph is too small to be valid"
-                ));
+                bun_core::debug_warn!("bun standalone module graph is too small to be valid");
                 return Ok(None);
             }
             // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
@@ -2018,9 +1999,7 @@ impl StandaloneModuleGraph {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
             if trailer_bytes != TRAILER {
-                Output::debug_warn(format_args!(
-                    "bun standalone module graph has invalid trailer"
-                ));
+                bun_core::debug_warn!("bun standalone module graph has invalid trailer");
                 return Ok(None);
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
@@ -2035,9 +2014,7 @@ impl StandaloneModuleGraph {
                 return Ok(None);
             };
             if len < size_of::<Offsets>() + TRAILER.len() {
-                Output::debug_warn(format_args!(
-                    "bun standalone module graph is too small to be valid"
-                ));
+                bun_core::debug_warn!("bun standalone module graph is too small to be valid");
                 return Ok(None);
             }
             // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
@@ -2049,9 +2026,7 @@ impl StandaloneModuleGraph {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
             if trailer_bytes != TRAILER {
-                Output::debug_warn(format_args!(
-                    "bun standalone module graph has invalid trailer"
-                ));
+                bun_core::debug_warn!("bun standalone module graph has invalid trailer");
                 return Ok(None);
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
@@ -2066,9 +2041,7 @@ impl StandaloneModuleGraph {
                 return Ok(None);
             };
             if len < size_of::<Offsets>() + TRAILER.len() {
-                Output::debug_warn(format_args!(
-                    "bun standalone module graph is too small to be valid"
-                ));
+                bun_core::debug_warn!("bun standalone module graph is too small to be valid");
                 return Ok(None);
             }
             // SAFETY: `[len - Offsets - TRAILER, len)` is in-bounds (checked above) and
@@ -2080,9 +2053,7 @@ impl StandaloneModuleGraph {
                 core::slice::from_raw_parts(base.add(len - TRAILER.len()), TRAILER.len())
             };
             if trailer_bytes != TRAILER {
-                Output::debug_warn(format_args!(
-                    "bun standalone module graph has invalid trailer"
-                ));
+                bun_core::debug_warn!("bun standalone module graph has invalid trailer");
                 return Ok(None);
             }
             // SAFETY: offsets_ptr has at least size_of::<Offsets>() bytes.
@@ -2160,16 +2131,16 @@ impl StandaloneModuleGraph {
                     )
                 };
                 if rc != 0 {
-                    Output::debug_warn(format_args!(
+                    bun_core::debug_warn!(
                         "hintSourcePagesDontNeed: madvise failed errno={}",
                         bun_sys::last_errno()
-                    ));
+                    );
                     return;
                 }
-                Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "hintSourcePagesDontNeed: MADV_DONTNEED {} bytes",
                     end - start
-                ));
+                );
             }
         }
     }
@@ -2316,12 +2287,11 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     let map_blob =
         SourceMap::InternalSourceMap::from_vlq(map_vlq, 0).map_err(|_| err!("InvalidSourceMap"))?;
 
+    // Every offset/length in the serialized map is a u32 `StringPointer`;
+    // anything that cannot be represented is a build error, not a crash.
+    let map_blob_len_u32 = u32::try_from(map_blob.len()).map_err(|_| err!("SourceMapTooLarge"))?;
     header_list.extend_from_slice(&u32::to_le_bytes(sources_paths.items.len_u32()));
-    header_list.extend_from_slice(
-        &u32::try_from(map_blob.len())
-            .expect("int cast")
-            .to_le_bytes(),
-    );
+    header_list.extend_from_slice(&map_blob_len_u32.to_le_bytes());
 
     let string_payload_start_location = size_of::<u32>()
         + size_of::<u32>()
@@ -2339,8 +2309,10 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         string_payload.extend_from_slice(decoded);
 
         let slice = StringPointer {
-            offset: u32::try_from(offset + string_payload_start_location).expect("int cast"),
-            length: u32::try_from(string_payload.len() - offset).expect("int cast"),
+            offset: u32::try_from(offset + string_payload_start_location)
+                .map_err(|_| err!("SourceMapTooLarge"))?,
+            length: u32::try_from(string_payload.len() - offset)
+                .map_err(|_| err!("SourceMapTooLarge"))?,
         };
         header_list.extend_from_slice(&slice.offset.to_le_bytes());
         header_list.extend_from_slice(&slice.length.to_le_bytes());
@@ -2356,6 +2328,13 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         let offset = string_payload.len();
 
         let bound = bun_zstd::compress_bound(utf8.len());
+        // `ZSTD_compressBound` returns an *error code* (a value near
+        // `usize::MAX`) when the input size exceeds `ZSTD_MAX_INPUT_SIZE`;
+        // feeding that to `Vec::reserve` below would abort with a capacity
+        // overflow instead of failing the build.
+        if bun_zstd::is_error(bound) {
+            return Err(err!("SourceMapTooLarge"));
+        }
         // SAFETY: zstd writes only into the spare slice and reports the byte
         // count on success; on error we commit 0 and `Output::panic` diverges.
         unsafe {
@@ -2373,8 +2352,10 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         };
 
         let slice = StringPointer {
-            offset: u32::try_from(offset + string_payload_start_location).expect("int cast"),
-            length: u32::try_from(string_payload.len() - offset).expect("int cast"),
+            offset: u32::try_from(offset + string_payload_start_location)
+                .map_err(|_| err!("SourceMapTooLarge"))?,
+            length: u32::try_from(string_payload.len() - offset)
+                .map_err(|_| err!("SourceMapTooLarge"))?,
         };
         header_list.extend_from_slice(&slice.offset.to_le_bytes());
         header_list.extend_from_slice(&slice.length.to_le_bytes());

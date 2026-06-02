@@ -1455,10 +1455,10 @@ impl JSTranspiler {
             ));
         };
         let mut code = code;
-        if let StringOrBuffer::Buffer(buffer) = &code {
-            let bytes = buffer.slice().to_vec();
+        if matches!(code, StringOrBuffer::Buffer(_)) {
+            let bytes = code.slice().to_vec();
             global.vm().report_extra_memory(bytes.len());
-            buffer.buffer.value.unprotect();
+            bun_jsc::Unprotect::unprotect(&mut code);
             code = StringOrBuffer::EncodedSlice(bun_core::ZigStringSlice::init_owned(bytes));
         }
         // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`

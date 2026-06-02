@@ -1632,7 +1632,7 @@ static int64_t indexOf(JSC::JSGlobalObject* lexicalGlobalObject, ThrowScope& sco
     if (byteOffsetValue.isString()) {
         encodingValue = byteOffsetValue;
         byteOffsetValue = jsUndefined();
-        byteOffsetD = 0;
+        byteOffsetD = std::numeric_limits<double>::quiet_NaN();
     } else {
         // toNumber() can trigger JavaScript execution (valueOf/Symbol.toPrimitive),
         // which could detach the underlying ArrayBuffer. We must re-fetch the

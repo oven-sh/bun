@@ -1866,7 +1866,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 &list[start..],
                 false,
             ) {
-                bun_core::Output::warn(format_args!("Could not dump bundle: {}", err));
+                bun_core::warn!("Could not dump bundle: {}", err);
             }
         }
         let _ = start;
@@ -1915,7 +1915,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 &list[start..],
                 false,
             ) {
-                bun_core::Output::warn(format_args!("Could not dump bundle: {}", err));
+                bun_core::warn!("Could not dump bundle: {}", err);
             }
         }
         let _ = start;

@@ -43,6 +43,7 @@ pub enum MessageType {
     CopyOutResponse,
     CopyDone,
     CopyBothResponse,
+    NotificationResponse,
 }
 
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
@@ -494,10 +495,15 @@ pub(crate) fn on_data<Context: ReaderContext>(
             b'H' => connection.on(M::CopyOutResponse, reader.reborrow())?,
             b'c' => connection.on(M::CopyDone, reader.reborrow())?,
             b'W' => connection.on(M::CopyBothResponse, reader.reborrow())?,
+            b'A' => connection.on(M::NotificationResponse, reader.reborrow())?,
 
             _ => {
                 bun_core::scoped_log!(Postgres, "Unknown message: {}", c as char);
-                let to_skip = reader.length()?.saturating_sub(1);
+                let length = reader.length()?;
+                if length < 4 {
+                    return Err(AnyPostgresError::InvalidMessageLength);
+                }
+                let to_skip = length.saturating_sub(4);
                 bun_core::scoped_log!(Postgres, "to_skip: {}", to_skip);
                 reader.skip(usize::try_from(to_skip).expect("int cast"))?;
             }

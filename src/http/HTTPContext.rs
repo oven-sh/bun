@@ -1292,6 +1292,7 @@ impl<const SSL: bool> Handler<SSL> {
             }
 
             bun_core::scoped_log!(HTTPContext, "Unexpected data on socket");
+            HTTPContext::<SSL>::terminate_socket(socket);
 
             return;
         }

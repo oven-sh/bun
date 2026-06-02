@@ -2,33 +2,6 @@ use core::hint;
 use core::ptr::{self, NonNull};
 use core::sync::atomic::{AtomicPtr, Ordering};
 
-#[cfg(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "powerpc64",
-))]
-pub(crate) const CACHE_LINE_LENGTH: usize = 128;
-#[cfg(any(
-    target_arch = "arm",
-    target_arch = "mips",
-    target_arch = "mips64",
-    target_arch = "riscv64",
-))]
-pub(crate) const CACHE_LINE_LENGTH: usize = 32;
-#[cfg(target_arch = "s390x")]
-pub(crate) const CACHE_LINE_LENGTH: usize = 256;
-#[cfg(not(any(
-    target_arch = "x86_64",
-    target_arch = "aarch64",
-    target_arch = "powerpc64",
-    target_arch = "arm",
-    target_arch = "mips",
-    target_arch = "mips64",
-    target_arch = "riscv64",
-    target_arch = "s390x",
-)))]
-pub(crate) const CACHE_LINE_LENGTH: usize = 64;
-
 /// Intrusive next-pointer accessors for `UnboundedQueue<T>` nodes.
 ///
 /// Zig's `UnboundedQueue(T, next_field)` is parametric on the *field name* and
@@ -185,7 +158,7 @@ impl<T: Node> Batch<T> {
 /// Per-arch cache-half-line aligned wrapper — Zig's `align(queue_padding_length)`
 /// on `UnboundedQueue.back`/`.front`. Rust cannot express per-field alignment
 /// with a non-literal const, so this newtype is `#[repr(align(N))]`-cfg'd to
-/// `CACHE_LINE_LENGTH / 2` per target arch, keeping producer (CAS on `back`)
+/// half the target's cache-line size, keeping producer (CAS on `back`)
 /// and consumer (swap on `front`) on separate cache halves.
 #[cfg_attr(
     any(
@@ -232,8 +205,6 @@ impl<T: Node> Default for UnboundedQueue<T> {
 }
 
 impl<T: Node> UnboundedQueue<T> {
-    pub const QUEUE_PADDING_LENGTH: usize = CACHE_LINE_LENGTH / 2;
-
     /// Const constructor — `Default` is not usable in `static` initializers.
     #[inline]
     pub const fn new() -> Self {

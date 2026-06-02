@@ -64,7 +64,7 @@ pub fn detect_and_load_other_lockfile<'a>(
             Ok(r) => r,
             Err(e) => {
                 if e == err!("NPMLockfileVersionMismatch") {
-                    Output::pretty_errorln(
+                    bun_core::pretty_errorln!(
                         "<red><b>error<r><d>:<r> Please upgrade package-lock.json to lockfileVersion 2 or 3\n\nRun 'npm i --lockfile-version 3 --frozen-lockfile' to upgrade your lockfile without changing dependencies.",
                     );
                     Global::exit(1);
@@ -80,8 +80,8 @@ pub fn detect_and_load_other_lockfile<'a>(
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
             Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-            Output::pretty_error(" ");
-            Output::pretty_errorln("<d>migrated lockfile from <r><green>package-lock.json<r>");
+            bun_core::pretty_error!(" ");
+            bun_core::pretty_errorln!("<d>migrated lockfile from <r><green>package-lock.json<r>");
             Output::flush();
         }
 
@@ -107,8 +107,8 @@ pub fn detect_and_load_other_lockfile<'a>(
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
             Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-            Output::pretty_error(" ");
-            Output::pretty_errorln("<d>migrated lockfile from <r><green>yarn.lock<r>");
+            bun_core::pretty_error!(" ");
+            bun_core::pretty_errorln!("<d>migrated lockfile from <r><green>yarn.lock<r>");
             Output::flush();
         }
 
@@ -125,17 +125,17 @@ pub fn detect_and_load_other_lockfile<'a>(
             Err(e) => {
                 match e {
                     MigratePnpmLockfileError::PnpmLockfileTooOld => {
-                        Output::pretty_errorln(
+                        bun_core::pretty_errorln!(
                             "<red><b>warning<r><d>:<r> pnpm-lock.yaml version is too old (\\< v7)\n\nPlease upgrade using 'pnpm install --lockfile-only' first, then try again.",
                         );
                     }
                     MigratePnpmLockfileError::NonExistentWorkspaceDependency => {
-                        Output::warn(
+                        bun_core::warn!(
                             "Workspace link dependencies to non-existent folders aren't supported yet in pnpm-lock.yaml migration. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>",
                         );
                     }
                     MigratePnpmLockfileError::RelativeLinkDependency => {
-                        Output::warn(
+                        bun_core::warn!(
                             "Relative link dependencies aren't supported yet. Please follow along at <magenta>https://github.com/oven-sh/bun/issues/23026<r>",
                         );
                     }
@@ -143,7 +143,7 @@ pub fn detect_and_load_other_lockfile<'a>(
                         if log.has_errors() {
                             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         }
-                        Output::warn(
+                        bun_core::warn!(
                             "pnpm-lock.yaml migration failed due to missing workspace name.",
                         );
                     }
@@ -151,7 +151,7 @@ pub fn detect_and_load_other_lockfile<'a>(
                         if log.has_errors() {
                             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                         }
-                        Output::warn("Failed to parse pnpm-lock.yaml.");
+                        bun_core::warn!("Failed to parse pnpm-lock.yaml.");
                     }
                     MigratePnpmLockfileError::PnpmLockfileNotObject
                     | MigratePnpmLockfileError::PnpmLockfileMissingVersion
@@ -185,8 +185,8 @@ pub fn detect_and_load_other_lockfile<'a>(
 
         if matches!(migrate_result, LoadResult::Ok { .. }) {
             Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-            Output::pretty_error(" ");
-            Output::pretty_errorln("<d>migrated lockfile from <r><green>pnpm-lock.yaml<r>");
+            bun_core::pretty_error!(" ");
+            bun_core::pretty_errorln!("<d>migrated lockfile from <r><green>pnpm-lock.yaml<r>");
             Output::flush();
         }
 
@@ -1342,6 +1342,12 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                                 strings::last_index_of_char(str.slice, b'#')
                                                     .ok_or_else(|| err!("InvalidNPMLockfile"))?;
 
+                                            if !crate::repository::is_safe_resolved_tag(
+                                                &str.slice[hash_index + 1..],
+                                            ) {
+                                                return Err(err!("InvalidNPMLockfile"));
+                                            }
+
                                             let commit =
                                                 str.sub(&str.slice[hash_index + 1..]).value();
                                             Resolution::init(ResTagged::Git(Repository {
@@ -1364,6 +1370,12 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                                 strings::last_index_of_char(str.slice, b'#')
                                                     .ok_or_else(|| err!("InvalidNPMLockfile"))?;
 
+                                            if !crate::repository::is_safe_resolved_tag(
+                                                &str.slice[hash_index + 1..],
+                                            ) {
+                                                return Err(err!("InvalidNPMLockfile"));
+                                            }
+
                                             let commit =
                                                 str.sub(&str.slice[hash_index + 1..]).value();
                                             Resolution::init(ResTagged::Git(Repository {
@@ -1380,6 +1392,30 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                                     "-> {}",
                                     res.fmt_for_debug(this.buffers.string_bytes.as_slice())
                                 );
+
+                                if res.tag == resolution::Tag::Npm {
+                                    let buf = this.buffers.string_bytes.as_slice();
+                                    let url = res.npm().url.slice(buf);
+                                    let configured_registry = manager
+                                        .scope_for_package_name(
+                                            this.packages.items_name()[id as usize].slice(buf),
+                                        )
+                                        .url
+                                        .href();
+                                    if !lockfile::bun_lock::url_is_under_registry(
+                                        url,
+                                        configured_registry,
+                                    ) && !lockfile::bun_lock::url_is_under_registry(
+                                        url,
+                                        Npm::Registry::DEFAULT_URL.as_bytes(),
+                                    ) && !this.packages.items_meta()[id as usize]
+                                        .integrity
+                                        .tag
+                                        .is_supported()
+                                    {
+                                        return Err(err!("InvalidNPMLockfile"));
+                                    }
+                                }
 
                                 // id < pkg_count; columns re-borrowed disjointly.
                                 this.packages.items_resolution_mut()[id as usize] = res;
@@ -1517,10 +1553,10 @@ pub(crate) fn migrate_npm_lockfile<'a>(
     for i in 0..pkg_count {
         let r = &this.packages.items_resolution()[i];
         if r.tag == resolution::Tag::Uninitialized {
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "Could not resolve package '{}' in lockfile during migration",
                 bstr::BStr::new(this.packages.items_name()[i].slice(&this.buffers.string_bytes)),
-            ));
+            );
             is_missing_resolutions = true;
         } else {
             #[cfg(debug_assertions)]

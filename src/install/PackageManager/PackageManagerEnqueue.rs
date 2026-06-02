@@ -545,10 +545,10 @@ pub fn enqueue_dependency_to_root(
 
                         if verbose_install() && manager.pending_task_count() > 0 {
                             if PackageManager::has_enough_time_passed_between_waiting_messages() {
-                                Output::pretty_errorln(format_args!(
+                                bun_core::pretty_errorln!(
                                     "<d>[PackageManager]<r> waiting for {} tasks\n",
                                     manager.pending_task_count()
-                                ));
+                                );
                             }
                         }
                     }
@@ -926,7 +926,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                             if verbose_install() {
                                 let label = this.lockfile.str(&version.literal);
 
-                                Output::pretty_errorln(format_args!(
+                                bun_core::pretty_errorln!(
                                     "   -> \"{}\": \"{}\" -> {}@{}",
                                     bstr::BStr::new(this.lockfile.str(&result.package.name)),
                                     bstr::BStr::new(label),
@@ -935,7 +935,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         this.lockfile.buffers.string_bytes.as_slice(),
                                         bun_fmt::PathSep::Auto
                                     ),
-                                ));
+                                );
                             }
                             // Resolve dependencies first
                             if result.package.dependencies.len > 0 {
@@ -1157,10 +1157,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 }
 
                                 if verbose_install() {
-                                    Output::pretty_errorln(format_args!(
+                                    bun_core::pretty_errorln!(
                                         "Enqueue package manifest for download: {}",
                                         bstr::BStr::new(&name_str)
-                                    ));
+                                    );
                                 }
 
                                 // `get_network_task` touches only the
@@ -1442,7 +1442,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                     if verbose_install() {
                         let label = this.lockfile.str(&version.literal);
 
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "   -> \"{}\": \"{}\" -> {}@{}",
                             bstr::BStr::new(this.lockfile.str(&result.package.name)),
                             bstr::BStr::new(label),
@@ -1451,7 +1451,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 this.lockfile.buffers.string_bytes.as_slice(),
                                 bun_fmt::PathSep::Auto
                             ),
-                        ));
+                        );
                     }
                     // We shouldn't see any dependencies
                     if result.package.dependencies.len > 0 {
@@ -1733,6 +1733,21 @@ fn enqueue_git_clone(
     // slot already claimed would leave a claimed-but-uninit `Task` (which carries
     // `Log`/`Box<PatchTask>` drop glue) for the next `put()` to drop. With
     // `get_init` the slot is claimed only after the value is fully constructed.
+    //
+    // The patched-dependency entry can be missing (or its hash not yet
+    // computed) when install state went stale — e.g. the patch was removed
+    // from package.json, leaving the hash only in
+    // `patched_dependencies_to_remove`. Install the package unpatched instead
+    // of panicking.
+    let patch = patch_name_and_version_hash.and_then(|h| {
+        Some((
+            h,
+            this.lockfile
+                .patched_dependencies
+                .get(&h)?
+                .patchfile_hash()?,
+        ))
+    });
     let value = Task::Task {
         // `this` is a live `&mut PackageManager`; the task is owned by
         // `this.preallocated_resolve_tasks` and never outlives the manager.
@@ -1761,7 +1776,7 @@ fn enqueue_git_clone(
             }),
         },
         id: task_id,
-        apply_patch_task: if let Some(h) = patch_name_and_version_hash {
+        apply_patch_task: if let Some((h, patch_hash)) = patch {
             let dep = dependency;
             let pkg_id = match this
                 .lockfile
@@ -1772,13 +1787,6 @@ fn enqueue_git_clone(
                 PackageIndexEntry::Id(p) => *p,
                 PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
             };
-            let patch_hash = this
-                .lockfile
-                .patched_dependencies
-                .get(&h)
-                .unwrap()
-                .patchfile_hash()
-                .unwrap();
             let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
             // SAFETY: `pt` is fresh from `heap::alloc`; reclaim ownership.
             let mut pt = unsafe { bun_core::heap::take(pt) };
@@ -1806,6 +1814,20 @@ pub fn enqueue_git_checkout(
     // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
 ) -> *mut ThreadPool::Task {
+    // The patched-dependency entry can be missing (or its hash not yet
+    // computed) when install state went stale — e.g. the patch was removed
+    // from package.json, leaving the hash only in
+    // `patched_dependencies_to_remove`. Install the package unpatched instead
+    // of panicking.
+    let patch = patch_name_and_version_hash.and_then(|h| {
+        Some((
+            h,
+            this.lockfile
+                .patched_dependencies
+                .get(&h)?
+                .patchfile_hash()?,
+        ))
+    });
     // SAFETY: `this` is a live `&mut PackageManager`.
     let task_value = unsafe {
         Task::Task {
@@ -1838,7 +1860,7 @@ pub fn enqueue_git_checkout(
                     env: crate::repository::SharedEnv::get(this.env_mut()),
                 }),
             },
-            apply_patch_task: if let Some(h) = patch_name_and_version_hash {
+            apply_patch_task: if let Some((h, patch_hash)) = patch {
                 let dep_name_hash =
                     this.lockfile.buffers.dependencies[dependency_id as usize].name_hash;
                 let pkg_id = match this
@@ -1850,13 +1872,6 @@ pub fn enqueue_git_checkout(
                     PackageIndexEntry::Id(p) => *p,
                     PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
                 };
-                let patch_hash = this
-                    .lockfile
-                    .patched_dependencies
-                    .get(&h)
-                    .unwrap()
-                    .patchfile_hash()
-                    .unwrap();
                 let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
                 // SAFETY: `pt` is fresh from `heap::alloc`; reclaim ownership.
                 let mut pt = bun_core::heap::take(pt);
@@ -2468,26 +2483,26 @@ fn get_or_put_resolved_package(
                                 dependency::version::Tag::DistTag => {
                                     // SAFETY: `version.tag == DistTag`.
                                     let tag_str = this.lockfile.str(&version.dist_tag().tag);
-                                    Output::pretty_errorln(format_args!(
+                                    bun_core::pretty_errorln!(
                                         "<d>[minimum-release-age]<r> <b>{}@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
                                         bstr::BStr::new(package_name),
                                         bstr::BStr::new(tag_str),
                                         result.version.fmt(manifest_buf),
                                         newest.fmt(manifest_buf),
                                         min_age_seconds,
-                                    ));
+                                    );
                                 }
                                 dependency::version::Tag::Npm => {
                                     // SAFETY: `version.tag == Npm`.
                                     let version_str = &version.npm().version.fmt(manifest_buf);
-                                    Output::pretty_errorln(format_args!(
+                                    bun_core::pretty_errorln!(
                                         "<d>[minimum-release-age]<r> <b>{}<r>@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
                                         bstr::BStr::new(package_name),
                                         version_str,
                                         result.version.fmt(manifest_buf),
                                         newest.fmt(manifest_buf),
                                         min_age_seconds,
-                                    ));
+                                    );
                                 }
                                 _ => unreachable!(),
                             }
@@ -2628,6 +2643,10 @@ fn get_or_put_resolved_package(
                 }
 
                 // transitive folder dependencies do not have their dependencies resolved
+                if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder)) {
+                    break 'res FolderResolutionValue::Err(bun_core::err!("MissingPackageJSON"));
+                }
+
                 let mut package = Package::default();
 
                 {

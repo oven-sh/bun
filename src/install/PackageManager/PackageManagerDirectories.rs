@@ -233,10 +233,10 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                 ) {
                     Ok(d) => d,
                     Err(err) => {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: bun is unable to access tempdir: {}",
                             err.name()
-                        ));
+                        );
                         Global::crash();
                     }
                 }
@@ -274,27 +274,27 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     ) {
                         Ok(d) => d,
                         Err(err) => {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<r><red>error<r>: bun is unable to access tempdir: {}",
                                 err.name()
-                            ));
+                            );
                             Global::crash();
                         }
                     };
 
                     if verbose_install() {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><yellow>warn<r>: bun is unable to access tempdir: {}, using fallback",
                             err2.name()
-                        ));
+                        );
                     }
 
                     continue 'brk;
                 }
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: {} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>",
                     err2.name()
-                ));
+                );
                 Global::crash();
             }
         };
@@ -308,28 +308,28 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                     tempdir = match cache_directory.make_open_path(b".tmp", Default::default()) {
                         Ok(d) => d,
                         Err(err2) => {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<r><red>error<r>: bun is unable to write files to tempdir: {}",
                                 err2.name()
-                            ));
+                            );
                             Global::crash();
                         }
                     };
 
                     if verbose_install() {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><d>info<r>: cannot move files from tempdir: {}, using fallback",
                             bun_fmt::s(err.name())
-                        ));
+                        );
                     }
 
                     continue 'brk;
                 }
 
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: {} accessing temporary directory. Please set <b>$BUN_TMPDIR<r> or <b>$BUN_INSTALL<r>",
                     bun_fmt::s(err.name())
-                ));
+                );
                 Global::crash();
             }
         }
@@ -349,10 +349,10 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                 Ok(p) => &p[..],
                 Err(_) => b"it",
             };
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><yellow>warn<r>: Slow filesystem detected. If {} is a network drive, consider setting $BUN_INSTALL_CACHE_DIR to a local folder.",
                 bun_fmt::s(cache_dir_path)
-            ));
+            );
         }
     }
 
@@ -423,10 +423,10 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
         match Dir::cwd().make_open_path(b"node_modules/.cache", Default::default()) {
             Ok(d) => return d,
             Err(err) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: bun is unable to write files: {}",
                     err.name()
-                ));
+                );
                 Global::crash();
             }
         }
@@ -581,10 +581,7 @@ impl<'a> ByteCursor<'a> {
     #[inline(always)]
     fn finish_z(self) -> &'a ZStr {
         let at = self.at;
-        debug_assert!(at < self.buf.len());
-        // SAFETY: see `put`; one byte of headroom for the NUL is part of the
-        // PathBuffer-size invariant.
-        unsafe { *self.buf.as_mut_ptr().add(at) = 0 };
+        self.buf[at] = 0;
         ZStr::from_buf(self.buf, at)
     }
 }
@@ -1123,10 +1120,7 @@ pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
     ) {
         Ok(f) => f,
         Err(err) => {
-            Output::pretty_errorln(format_args!(
-                "<r><red>error:<r> {} create package.json",
-                err.name()
-            ));
+            bun_core::pretty_errorln!("<r><red>error:<r> {} create package.json", err.name());
             Global::crash();
         }
     };
@@ -1192,11 +1186,11 @@ pub fn save_lockfile(
         if !this.options.global {
             if log_level != LogLevel::Silent {
                 match this.subcommand {
-                    Subcommand::Remove => Output::pretty_errorln(format_args!(
+                    Subcommand::Remove => bun_core::pretty_errorln!(
                         "\npackage.json has no dependencies! Deleted empty lockfile"
-                    )),
+                    ),
                     _ => {
-                        Output::pretty_errorln(format_args!("No packages! Deleted empty lockfile"))
+                        bun_core::pretty_errorln!("No packages! Deleted empty lockfile")
                     }
                 }
             }
@@ -1260,7 +1254,7 @@ pub fn save_lockfile(
         this.progress.root.end();
         this.progress = Default::default();
     } else if log_level != LogLevel::Silent {
-        Output::pretty_errorln(format_args!("Saved lockfile"));
+        bun_core::pretty_errorln!("Saved lockfile");
         Output::flush();
     }
 
@@ -1319,10 +1313,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     let tmpname = ZStr::from_buf(&tmpname_buf, tmpname_len + 8);
 
     if let Err(err) = tmpfile.create(tmpname) {
-        Output::pretty_errorln(format_args!(
-            "<r><red>error:<r> failed to create tmpfile: {}",
-            err.name()
-        ));
+        bun_core::pretty_errorln!("<r><red>error:<r> failed to create tmpfile: {}", err.name());
         Global::crash();
     }
 

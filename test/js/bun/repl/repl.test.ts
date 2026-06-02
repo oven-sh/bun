@@ -1,6 +1,7 @@
 // Tests for Bun REPL
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { chmodSync, statSync } from "node:fs";
 import path from "path";
 
 // Helper to run REPL with piped stdin (non-TTY mode) and capture output
@@ -1077,5 +1078,78 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       send("test()\n");
       await waitFor("99");
     });
+  });
+});
+
+// History file written on REPL exit must be owner-only (0600), since it can
+// contain pasted credentials. See src/runtime/cli/repl.rs History::save.
+describe.skipIf(isWindows)("REPL history file permissions", () => {
+  test("persists history readable only by the owner", async () => {
+    using dir = tempDir("repl-history-perms", {});
+    const home = String(dir);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      stdin: Buffer.from(['const dbUrl = "postgres://user:hunter2@db.internal/prod"', ".exit", ""].join("\n")),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        TERM: "dumb",
+        NO_COLOR: "1",
+        HOME: home,
+      },
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    // Legitimate behavior still works: the typed line is persisted to
+    // $HOME/.bun_repl_history on exit.
+    const historyPath = path.join(home, ".bun_repl_history");
+    const content = await Bun.file(historyPath).text();
+    expect(content).toContain("const dbUrl");
+
+    // The file must not be readable or writable by group/other, while the
+    // owner keeps read/write access.
+    const mode = statSync(historyPath).mode & 0o777;
+    expect(mode & 0o077).toBe(0);
+    expect(mode & 0o600).toBe(0o600);
+
+    expect(stripAnsi(stdout)).toContain("Welcome to Bun");
+    expect(exitCode).toBe(0);
+  });
+
+  test("tightens permissions on a pre-existing history file", async () => {
+    using dir = tempDir("repl-history-perms-existing", {
+      ".bun_repl_history": "1 + 1\n",
+    });
+    const home = String(dir);
+    const historyPath = path.join(home, ".bun_repl_history");
+    chmodSync(historyPath, 0o644);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "repl"],
+      stdin: Buffer.from(['const dbUrl = "postgres://user:hunter2@db.internal/prod"', ".exit", ""].join("\n")),
+      stdout: "pipe",
+      stderr: "pipe",
+      env: {
+        ...bunEnv,
+        TERM: "dumb",
+        NO_COLOR: "1",
+        HOME: home,
+      },
+    });
+
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    const content = await Bun.file(historyPath).text();
+    expect(content).toContain("const dbUrl");
+
+    const mode = statSync(historyPath).mode & 0o777;
+    expect(mode & 0o077).toBe(0);
+    expect(mode & 0o600).toBe(0o600);
+
+    expect(stripAnsi(stdout)).toContain("Welcome to Bun");
+    expect(exitCode).toBe(0);
   });
 });

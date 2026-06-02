@@ -2021,6 +2021,12 @@ mod posix_impl {
             Ok(Fd::from_native(rc))
         }
     }
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
+        let dir = dir.as_fd();
+        super::linux_syscall::openat2_beneath(dir, path, flags, mode)
+            .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
+    }
     pub fn close(fd: Fd) -> Maybe<()> {
         // fd.zig:266 — call close ONCE; never retry on EINTR (Linux may have already
         // released the fd, retrying would close someone else's). Only EBADF surfaces.
@@ -4727,7 +4733,7 @@ pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
 pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
-        bun_core::Output::debug_warn("readv() called with 0 length buffer");
+        bun_core::debug_warn!("readv() called with 0 length buffer");
     }
     #[cfg(unix)]
     {
@@ -4776,7 +4782,7 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
 pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     #[cfg(debug_assertions)]
     if vecs.is_empty() {
-        bun_core::Output::debug_warn("preadv() called with 0 length buffer");
+        bun_core::debug_warn!("preadv() called with 0 length buffer");
     }
     #[cfg(unix)]
     {
@@ -9216,11 +9222,11 @@ pub enum WriteFileEncoding {
     Buffer,
 }
 /// Target — path (relative to `dirfd`) or an already-open fd.
-pub enum PathOrFileDescriptor {
-    Path(bun_core::PathString),
+pub enum PathOrFileDescriptor<'a> {
+    Path(&'a [u8]),
     Fd(Fd),
 }
-impl Default for PathOrFileDescriptor {
+impl Default for PathOrFileDescriptor<'_> {
     fn default() -> Self {
         PathOrFileDescriptor::Fd(Fd::INVALID)
     }
@@ -9230,7 +9236,7 @@ pub struct WriteFileArgs<'a> {
     pub data: WriteFileData<'a>,
     pub encoding: WriteFileEncoding,
     pub dirfd: Fd,
-    pub file: PathOrFileDescriptor,
+    pub file: PathOrFileDescriptor<'a>,
     pub mode: Mode,
 }
 impl<'a> Default for WriteFileArgs<'a> {
@@ -9253,8 +9259,7 @@ pub fn write_file_with_path_buffer(
     let WriteFileData::Buffer { buffer } = args.data;
     let fd = match args.file {
         PathOrFileDescriptor::Fd(fd) => fd,
-        PathOrFileDescriptor::Path(ref p) => {
-            let bytes = p.slice();
+        PathOrFileDescriptor::Path(bytes) => {
             if bytes.len() >= path_buf.0.len() {
                 return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(bytes));
             }

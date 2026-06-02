@@ -453,6 +453,7 @@ fn get_help_simple(param: &Param<Help>) -> &'static [u8] {
 /// lazily at runtime is the better trade for binary size.)
 #[cold]
 #[inline(never)]
+#[allow(clippy::disallowed_methods)] // template is a runtime help-string parameter
 fn pretty_help_desc(param: &Param<Help>) -> std::borrow::Cow<'static, [u8]> {
     if Output::enable_ansi_colors_stdout() {
         std::borrow::Cow::Owned(bun_core::output::pretty_fmt_runtime(param.id.msg, true))
@@ -749,7 +750,7 @@ where
 #[inline(never)]
 pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
-    Output::pretty(format_args!("\n"));
+    bun_core::pretty!("\n");
     if let Some(s) = param.names.short {
         if param.takes_value != Values::None && param.names.long.is_none() {
             bun_core::pretty!("  <cyan>-{}<r><d><cyan>=\\<val\\><r>", s as char);
@@ -757,13 +758,13 @@ pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
             bun_core::pretty!("  <cyan>-{}<r>", s as char);
         }
     } else {
-        Output::pretty(format_args!("    "));
+        bun_core::pretty!("    ");
     }
     if let Some(l) = param.names.long {
         if param.names.short.is_some() {
-            Output::pretty(format_args!(", "));
+            bun_core::pretty!(", ");
         } else {
-            Output::pretty(format_args!("  "));
+            bun_core::pretty!("  ");
         }
 
         if param.takes_value != Values::None {
@@ -772,7 +773,7 @@ pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
             bun_core::pretty!("<cyan>--{}<r>", bstr::BStr::new(l));
         }
     } else {
-        Output::pretty(format_args!("    "));
+        bun_core::pretty!("    ");
     }
     Ok(())
 }
@@ -830,11 +831,11 @@ pub fn simple_help(params: &[Param<Help>]) {
         // (ANSI on a colour TTY, stripped otherwise) so `--help` output is
         // tag-clean regardless of which helper a command uses.
         let desc = pretty_help_desc(param);
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "  {}  {}",
             bstr::BStr::new(&spaces_after),
             bstr::BStr::new(desc.as_ref()),
-        ));
+        );
     }
 }
 
@@ -871,11 +872,11 @@ pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
                 // rewritten at `comptime`. Mirror that via `pretty_help_desc`, which
                 // resolves the markup (ANSI on a colour TTY, stripped otherwise).
                 let desc = pretty_help_desc(param);
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "{}{}",
                     bstr::BStr::new(&SPACE_BUF[0..num_spaces_after]),
                     bstr::BStr::new(desc.as_ref()),
-                ));
+                );
             }
         }
     }

@@ -255,6 +255,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     {
                                         object_key = Some(&xml[i..i + __tag_end]);
                                         i = i + __tag_end + 6;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"LastModified" {
                                     if let Some(__tag_end) =
@@ -262,6 +264,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     {
                                         last_modified = Some(&xml[i..i + __tag_end]);
                                         i = i + __tag_end + 15;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"Size" {
                                     if let Some(__tag_end) =
@@ -271,6 +275,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
 
                                         object_size = bun_core::fmt::parse_decimal::<i64>(size);
                                         i = i + __tag_end + 7;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"StorageClass" {
                                     if let Some(__tag_end) =
@@ -278,6 +284,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     {
                                         storage_class = Some(&xml[i..i + __tag_end]);
                                         i = i + __tag_end + 15;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"ChecksumType" {
                                     if let Some(__tag_end) =
@@ -285,6 +293,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     {
                                         checksum_type = Some(&xml[i..i + __tag_end]);
                                         i = i + __tag_end + 15;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"ChecksumAlgorithm" {
                                     if let Some(__tag_end) =
@@ -292,6 +302,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                     {
                                         checksum_algorithme = Some(&xml[i..i + __tag_end]);
                                         i = i + __tag_end + 20;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"ETag" {
                                     if let Some(__tag_end) =
@@ -311,6 +323,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                         }
 
                                         i = i + __tag_end + 7;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"Owner" {
                                     if let Some(__tag_end) =
@@ -344,17 +358,20 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                                 }
                                             }
                                         }
+                                    } else {
+                                        i = xml.len();
                                     }
                                 } else if inner_tag_name_or_tag_end == b"RestoreStatus" {
                                     if let Some(__tag_end) =
                                         strings::index_of(&xml[i..], b"</RestoreStatus>")
                                     {
                                         i = i + __tag_end + 16;
+                                    } else {
+                                        i = xml.len();
                                     }
                                 }
                             } else {
-                                // char is not >
-                                i += 1;
+                                i = xml.len();
                             }
                         } else {
                             // char is not <
@@ -391,31 +408,43 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</Name>") {
                         result.name = Some(&xml[i..i + _end]);
                         i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"Delimiter" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</Delimiter>") {
                         result.delimiter = Some(&xml[i..i + _end]);
                         i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"NextContinuationToken" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</NextContinuationToken>") {
                         result.next_continuation_token = Some(&xml[i..i + _end]);
                         i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"ContinuationToken" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</ContinuationToken>") {
                         result.continuation_token = Some(&xml[i..i + _end]);
                         i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"StartAfter" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</StartAfter>") {
                         result.start_after = Some(&xml[i..i + _end]);
                         i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"EncodingType" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</EncodingType>") {
                         result.encoding_type = Some(&xml[i..i + _end]);
                         i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"KeyCount" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</KeyCount>") {
@@ -423,6 +452,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                         result.key_count = bun_core::fmt::parse_decimal::<i64>(key_count);
 
                         i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"MaxKeys" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</MaxKeys>") {
@@ -430,6 +461,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                         result.max_keys = bun_core::fmt::parse_decimal::<i64>(max_keys);
 
                         i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"Prefix" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</Prefix>") {
@@ -440,6 +473,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                         }
 
                         i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"IsTruncated" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</IsTruncated>") {
@@ -452,6 +487,8 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                         }
 
                         i += _end;
+                    } else {
+                        break;
                     }
                 } else if tag_name == b"CommonPrefixes" {
                     if let Some(_end) = strings::index_of(&xml[i..], b"</CommonPrefixes>") {
@@ -470,15 +507,19 @@ pub fn parse_s3_list_objects_result(xml: &[u8]) -> S3ListObjectsV2Result<'_> {
                                 {
                                     common_prefixes.push(&common_prefixes_string[j..j + __end]);
                                     j += __end;
+                                } else {
+                                    break;
                                 }
                             } else {
                                 break;
                             }
                         }
+                    } else {
+                        break;
                     }
                 }
             } else {
-                i += 1;
+                break;
             }
         }
 

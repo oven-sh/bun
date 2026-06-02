@@ -45,7 +45,21 @@ export const isVerbose = process.env.DEBUG === "1";
 // test.todoIf(isFlaky && isMacOS)("this test is flaky");
 export const isFlaky = isCI;
 export const isBroken = isCI;
-export const isASAN = basename(process.execPath).includes("bun-asan");
+// Detect ASAN from the runtime, not the binary name. CI's release ASAN lane
+// produces `bun-asan`, but a plain `bun bd` debug build is *also* ASAN-
+// instrumented while named `bun-debug` — so the name check alone is wrong for
+// local runs. `isASANEnabled` is a side-effect-free `#if ASAN_ENABLED` probe,
+// so it's correct for both. Fall back to the name check if the internal
+// binding is ever unavailable (e.g. an older comparison binary).
+export const isASAN = detectASAN();
+
+function detectASAN(): boolean {
+  try {
+    const { isASANEnabled } = require("bun:internal-for-testing");
+    if (typeof isASANEnabled === "function") return isASANEnabled();
+  } catch {}
+  return basename(process.execPath).includes("bun-asan");
+}
 
 export const bunEnv: NodeJS.Dict<string> = {
   ...process.env,

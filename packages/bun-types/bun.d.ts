@@ -9420,7 +9420,7 @@ declare module "bun" {
    * Types for `bun.lock`
    */
   type BunLockFile = {
-    lockfileVersion: 0 | 1;
+    lockfileVersion: 0 | 1 | 2;
     workspaces: {
       [workspace: string]: BunLockFileWorkspacePackage;
     };

@@ -563,6 +563,36 @@ impl DateTime {
         }
     }
 
+    /// Parse a MySQL text-protocol DATE/DATETIME/TIMESTAMP string
+    /// (`YYYY-MM-DD`, `YYYY-MM-DD HH:MM:SS`, or with `.ffffff` fractional
+    /// seconds) into components so the text path can treat them as UTC, the
+    /// same way the binary path does. Returns `None` for MySQL zero-date
+    /// sentinels (`0000-00-00`), impossible calendar values (`2024-02-31`), and
+    /// malformed input, so the caller surfaces `Invalid Date` — matching what
+    /// the previous `Date.parse` path produced for those.
+    pub fn from_text(text: &[u8]) -> Option<DateTime> {
+        let parsed = crate::shared::datetime_text::parse_mysql(text)?;
+        if parsed.month < 1
+            || parsed.month > 12
+            || parsed.day < 1
+            || parsed.day > days_in_month(parsed.year, parsed.month)
+            || parsed.hour > 23
+            || parsed.minute > 59
+            || parsed.second > 59
+        {
+            return None;
+        }
+        Some(DateTime {
+            year: parsed.year,
+            month: parsed.month,
+            day: parsed.day,
+            hour: parsed.hour,
+            minute: parsed.minute,
+            second: parsed.second,
+            microsecond: parsed.microsecond,
+        })
+    }
+
     pub fn to_binary(&self, field_type: FieldType, buffer: &mut [u8]) -> u8 {
         match field_type {
             FieldType::MYSQL_TYPE_YEAR => {
@@ -597,7 +627,25 @@ impl DateTime {
     }
 
     pub fn to_js_timestamp(&self, global_object: &JSGlobalObject) -> JsResult<f64> {
-        global_object.gregorian_date_time_to_ms(
+        // MySQL in permissive sql_mode can store zero / partial-zero dates like
+        // "0000-00-00" or "2024-00-15" and send them over the binary protocol.
+        // WTF::GregorianDateTime would silently wrap month=0 to December of the
+        // prior year, so validate here and surface NaN instead — matching the
+        // Invalid Date the text path produces via from_text().
+        if self.month < 1
+            || self.month > 12
+            || self.day < 1
+            || self.day > days_in_month(self.year, self.month)
+            || self.hour > 23
+            || self.minute > 59
+            || self.second > 59
+        {
+            return Ok(f64::NAN);
+        }
+        // from_unix_timestamp() breaks a Date's UTC epoch into Y/M/D h:m:s with
+        // pure-UTC arithmetic, so decode must also treat the stored wall-clock
+        // as UTC — otherwise a Date round-trips shifted by the local UTC offset.
+        global_object.gregorian_date_time_to_ms_utc(
             i32::from(self.year),
             i32::from(self.month),
             i32::from(self.day),

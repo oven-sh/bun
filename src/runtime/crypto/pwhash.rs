@@ -52,6 +52,10 @@ pub mod argon2 {
     const DEFAULT_SALT_LEN: usize = 32;
     const DEFAULT_HASH_LEN: u32 = 32;
 
+    const MAX_VERIFY_TIME_COST: u32 = 1 << 16;
+    const MAX_VERIFY_MEMORY_COST: u32 = 1 << 22;
+    const MAX_VERIFY_PARALLELISM: u32 = 64;
+
     /// `std.crypto.pwhash.argon2.Mode`
     #[derive(Copy, Clone, Eq, PartialEq)]
     pub enum Mode {
@@ -221,6 +225,36 @@ pub mod argon2 {
                 std::borrow::Cow::Owned(s)
             }
         };
+
+        if let Some(after_dollar) = normalised.strip_prefix('$') {
+            if let Some(sep) = after_dollar.find('$') {
+                let mut rest = &after_dollar[sep + 1..];
+                if let Some(after_version) = rest.strip_prefix("v=") {
+                    rest = match after_version.find('$') {
+                        Some(end) => &after_version[end + 1..],
+                        None => "",
+                    };
+                }
+                let params = &rest[..rest.find('$').unwrap_or(rest.len())];
+                for pair in params.split(',') {
+                    let Some((key, value)) = pair.split_once('=') else {
+                        continue;
+                    };
+                    let Ok(value) = value.parse::<u32>() else {
+                        continue;
+                    };
+                    let limit = match key {
+                        "m" => MAX_VERIFY_MEMORY_COST,
+                        "t" => MAX_VERIFY_TIME_COST,
+                        "p" => MAX_VERIFY_PARALLELISM,
+                        _ => continue,
+                    };
+                    if value > limit {
+                        return Err(bun_core::err!("WeakParameters"));
+                    }
+                }
+            }
+        }
 
         match vendor::verify_encoded(&normalised, password) {
             Ok(true) => Ok(()),

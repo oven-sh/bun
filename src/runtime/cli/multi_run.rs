@@ -5,7 +5,7 @@ use std::time::Instant;
 
 use bun_collections::{StringArrayHashMap, VecExt};
 use bun_core::strings;
-use bun_core::{self as bun, Error, Global, Output, err};
+use bun_core::{self as bun, Error, Global, Output, UnwrapOrOom, err};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 use bun_io::BufferedReader;
@@ -32,7 +32,12 @@ type OutputWriter = bun_core::io::Writer;
 
 /// Value type for package.json `scripts` map. Mirrors
 /// `bun_resolver::package_json::ScriptsMap` (`StringArrayHashMap<&'static [u8]>`).
+/// Its `&'static [u8]` values borrow the owning `PackageJSON.source_contents`.
 type ScriptsMap = StringArrayHashMap<&'static [u8]>;
+
+/// Owned variant of `ScriptsMap`: both keys and values are owned `Box<[u8]>`, so
+/// it can outlive the `PackageJSON` the bytes were parsed from (see `MatchedPackage`).
+type OwnedScriptsMap = StringArrayHashMap<Box<[u8]>>;
 
 struct ScriptConfig {
     label: Box<[u8]>,
@@ -478,7 +483,7 @@ impl<'a> State<'a> {
             dependent.remaining_dependencies -= 1;
             if dependent.remaining_dependencies == 0 {
                 if dependent.start().is_err() {
-                    Output::pretty_errorln("<r><red>error<r>: Failed to start process");
+                    bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
                     Global::exit(1);
                 }
             }
@@ -586,7 +591,7 @@ impl AbortHandler {
             );
             if res == 0 {
                 if cfg!(debug_assertions) {
-                    Output::warn("Failed to set abort handler\n");
+                    bun_core::warn!("Failed to set abort handler\n");
                 }
             }
         }
@@ -638,11 +643,16 @@ struct GroupInfo {
 
 /// Add configs for a single script name (with pre/post handling).
 /// When `label_prefix` is non-null, labels become "{prefix}:{name}" (for workspace runs).
-fn add_script_configs(
+///
+/// Generic over the scripts map value type so both the single-package path
+/// (values borrow the process-lifetime DirInfo-cached package.json) and the
+/// workspace path (values are owned `Box<[u8]>` copies, see `MatchedPackage`)
+/// can share this code. The script bytes are only ever read here, never stored.
+fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     configs: &mut Vec<ScriptConfig>,
     group_infos: &mut Vec<GroupInfo>,
     raw_name: &[u8],
-    scripts_map: Option<&ScriptsMap>,
+    scripts_map: Option<&StringArrayHashMap<V>>,
     cwd: &[u8],
     path: &[u8],
     label_prefix: Option<&[u8]>,
@@ -762,8 +772,8 @@ fn add_script_configs(
 pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
     // Validate flags
     if ctx.parallel && ctx.sequential {
-        Output::pretty_errorln(
-            "<r><red>error<r>: --parallel and --sequential cannot be used together",
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --parallel and --sequential cannot be used together"
         );
         Global::exit(1);
     }
@@ -789,8 +799,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     }
 
     if script_names.is_empty() {
-        Output::pretty_errorln(
-            "<r><red>error<r>: --parallel/--sequential requires at least one script name",
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --parallel/--sequential requires at least one script name"
         );
         Global::exit(1);
     }
@@ -865,10 +875,18 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         // Drop handles deinit
 
         // Phase 1: Collect matching packages (filesystem order is nondeterministic)
+        //
+        // `scripts` owns its bytes (`OwnedScriptsMap`): the `ScriptsMap` values
+        // parsed from each package.json borrow that package's `source_contents`,
+        // which is freed when the standalone `PackageJSON` drops at the end of
+        // each loop iteration below. Storing the borrowed map here would dangle
+        // (heap-use-after-free, #31636) — unlike the single-package path, whose
+        // package.json is kept alive by the process-lifetime DirInfo cache — so
+        // we deep-copy keys and values into owned storage before `pkgjson` drops.
         struct MatchedPackage {
             name: Box<[u8]>,
             dirpath: Box<[u8]>,
-            scripts: Box<ScriptsMap>,
+            scripts: OwnedScriptsMap,
             path: Box<[u8]>,
         }
         let mut matched_packages: Vec<MatchedPackage> = Vec::new();
@@ -897,9 +915,18 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 continue;
             }
 
-            let Some(pkg_scripts) = pkgjson.scripts else {
+            let Some(pkg_scripts) = &pkgjson.scripts else {
                 continue;
             };
+            // Deep-copy the scripts map while `pkgjson` (and the `source_contents`
+            // the borrowed `&'static [u8]` values point into) is still alive.
+            let mut owned_scripts = OwnedScriptsMap::with_capacity(pkg_scripts.count());
+            for (key, value) in pkg_scripts.iter() {
+                owned_scripts
+                    .put(&key[..], Box::<[u8]>::from(&value[..]))
+                    .unwrap_or_oom();
+            }
+
             let run_in_bun = ctx.debug.run_in_bun;
             let pkg_path_env = RunCommand::configure_path_for_run_with_package_json_dir(
                 ctx,
@@ -910,7 +937,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 run_in_bun,
             )?;
             let pkg_name: Box<[u8]> = if !pkgjson.name.is_empty() {
-                pkgjson.name
+                Box::<[u8]>::from(&pkgjson.name[..])
             } else {
                 // Fallback: use relative path from workspace root
                 Box::from(bun_paths::resolve_path::relative_platform::<
@@ -922,7 +949,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
             matched_packages.push(MatchedPackage {
                 name: pkg_name,
                 dirpath,
-                scripts: pkg_scripts,
+                scripts: owned_scripts,
                 path: pkg_path_env.into(),
             });
         }
@@ -971,11 +998,11 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             Some(&pkg.name),
                         )?;
                     } else if ctx.workspaces && !ctx.if_present {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: Missing \"{}\" script in package \"{}\"",
                             bstr::BStr::new(raw_name),
                             bstr::BStr::new(&pkg.name),
-                        ));
+                        );
                         Global::exit(1);
                     }
                 }
@@ -987,11 +1014,11 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 Global::exit(0);
             }
             if ctx.workspaces {
-                Output::pretty_errorln(
-                    "<r><red>error<r>: No workspace packages have matching scripts",
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: No workspace packages have matching scripts"
                 );
             } else {
-                Output::pretty_errorln("<r><red>error<r>: No packages matched the filter");
+                bun_core::pretty_errorln!("<r><red>error<r>: No packages matched the filter");
             }
             Global::exit(1);
         }
@@ -1011,7 +1038,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         let root_dir_info = match this_transpiler.resolver.read_dir_info(cwd) {
             Ok(Some(info)) => info,
             Ok(None) | Err(_) => {
-                Output::pretty_errorln("<r><red>error<r>: Failed to read directory");
+                bun_core::pretty_errorln!("<r><red>error<r>: Failed to read directory");
                 Global::exit(1);
             }
         };
@@ -1035,10 +1062,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                     matches.as_mut_slice().sort();
 
                     if matches.is_empty() {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: No scripts match pattern \"{}\"",
                             bstr::BStr::new(raw_name),
-                        ));
+                        );
                         Global::exit(1);
                     }
 
@@ -1054,10 +1081,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                         )?;
                     }
                 } else {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: Cannot use glob pattern \"{}\" without package.json scripts",
                         bstr::BStr::new(raw_name),
-                    ));
+                    );
                     Global::exit(1);
                 }
             } else {
@@ -1075,7 +1102,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     }
 
     if configs.is_empty() {
-        Output::pretty_errorln("<r><red>error<r>: No scripts to run");
+        bun_core::pretty_errorln!("<r><red>error<r>: No scripts to run");
         Global::exit(1);
     }
 
@@ -1192,7 +1219,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     for handle in state.handles.iter_mut() {
         if handle.remaining_dependencies == 0 {
             if handle.start().is_err() {
-                Output::pretty_errorln("<r><red>error<r>: Failed to start process");
+                bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
                 Global::exit(1);
             }
         }

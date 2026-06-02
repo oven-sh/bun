@@ -653,11 +653,11 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                             // calling `error.stack`. This message is only printed if
                             // the sourcemap has been found but is invalid, such as being
                             // invalid JSON text or corrupt mappings.
-                            bun_core::Output::warn(format_args!(
+                            bun_core::warn!(
                                 "Could not decode sourcemap in dev server runtime: {} - {}",
                                 ::bstr::BStr::new(source_filename),
                                 ::bstr::BStr::new(err.name()),
-                            ));
+                            );
                             // Disable the "try using --sourcemap=external" hint
                             crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
                             return None;
@@ -681,11 +681,11 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                                 // calling `error.stack`. This message is only printed if
                                 // the sourcemap has been found but is invalid, such as being
                                 // invalid JSON text or corrupt mappings.
-                                bun_core::Output::warn(format_args!(
+                                bun_core::warn!(
                                     "Could not decode sourcemap in '{}': {}",
                                     ::bstr::BStr::new(source_filename),
                                     ::bstr::BStr::new(err.name()),
-                                ));
+                                );
                                 // Disable the "try using --sourcemap=external" hint
                                 crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(
                                     true,
@@ -726,11 +726,11 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                         // calling `error.stack`. This message is only printed if
                         // the sourcemap has been found but is invalid, such as being
                         // invalid JSON text or corrupt mappings.
-                        bun_core::Output::warn(format_args!(
+                        bun_core::warn!(
                             "Could not decode sourcemap in '{}': {}",
                             ::bstr::BStr::new(source_filename),
                             ::bstr::BStr::new(err.name()),
-                        ));
+                        );
                         // Disable the "try using --sourcemap=external" hint
                         crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
                         return None;
@@ -740,11 +740,11 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
         }
 
         if let Some(err) = inline_err {
-            bun_core::Output::warn(format_args!(
+            bun_core::warn!(
                 "Could not decode sourcemap in '{}': {}",
                 ::bstr::BStr::new(source_filename),
                 ::bstr::BStr::new(err.name()),
-            ));
+            );
             // Disable the "try using --sourcemap=external" hint
             crate::SavedSourceMap::MissingSourceMapNoteInfo::set_seen_invalid(true);
             return None;
@@ -794,13 +794,8 @@ pub mod SavedSourceMap {
                 return;
             }
             if let Some(note) = PATH.lock().as_deref() {
-                bun_core::Output::note(format_args!(
-                    "missing sourcemaps for {}",
-                    ::bstr::BStr::new(note),
-                ));
-                bun_core::Output::note(
-                    "consider bundling with '--sourcemap' to get unminified traces",
-                );
+                bun_core::note!("missing sourcemaps for {}", ::bstr::BStr::new(note));
+                bun_core::note!("consider bundling with '--sourcemap' to get unminified traces");
             }
         }
     }
@@ -890,10 +885,10 @@ pub mod SerializedSourceMap {
                 self.decompressed_files[index] =
                     Some(match bun_zstd::decompress(&mut bytes, compressed_file) {
                         bun_zstd::Result::Err(err) => {
-                            bun_core::Output::warn(format_args!(
+                            bun_core::warn!(
                                 "Source map decompression error: {}",
                                 ::bstr::BStr::new(err.as_bytes()),
-                            ));
+                            );
                             Vec::new()
                         }
                         bun_zstd::Result::Success(n) => {
@@ -1278,11 +1273,11 @@ pub fn parse_json(
 // After all chunks are computed, they are joined together in a second pass.
 // This rewrites the first mapping in each chunk to be relative to the end
 // state of the previous chunk.
-pub fn append_source_map_chunk(
-    j: &mut bun_core::string_joiner::StringJoiner,
+pub fn append_source_map_chunk<'a>(
+    j: &mut bun_core::string_joiner::StringJoiner<'a>,
     prev_end_state_: SourceMapState,
     start_state_: SourceMapState,
-    source_map_: &[u8],
+    source_map_: &'a [u8],
 ) -> Result<(), bun_core::Error> {
     // TODO(port): narrow error set
     let mut prev_end_state = prev_end_state_;

@@ -424,29 +424,6 @@ pub const FILE_TYPE_CHAR: DWORD = 0x0002;
 pub const FILE_TYPE_PIPE: DWORD = 0x0003;
 pub const FILE_TYPE_REMOTE: DWORD = 0x8000;
 
-pub use bun_windows_sys::externs::LPDWORD;
-
-pub use bun_windows_sys::externs::GetBinaryTypeW;
-
-/// A 32-bit Windows-based application
-#[allow(dead_code)]
-pub const SCS_32BIT_BINARY: DWORD = 0;
-/// A 64-bit Windows-based application.
-#[allow(dead_code)]
-pub const SCS_64BIT_BINARY: DWORD = 6;
-/// An MS-DOS – based application
-#[allow(dead_code)]
-pub const SCS_DOS_BINARY: DWORD = 1;
-/// A 16-bit OS/2-based application
-#[allow(dead_code)]
-pub const SCS_OS216_BINARY: DWORD = 5;
-/// A PIF file that executes an MS-DOS – based application
-#[allow(dead_code)]
-pub const SCS_PIF_BINARY: DWORD = 3;
-/// A POSIX – based application
-#[allow(dead_code)]
-pub const SCS_POSIX_BINARY: DWORD = 4;
-
 pub use SetCurrentDirectoryW as SetCurrentDirectory;
 /// Each process has a single current directory made up of two parts:
 ///
@@ -3412,16 +3389,16 @@ pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
     {
         use bun_windows_sys::ntstatus::{OBJECT_NAME_INVALID, SHARING_VIOLATION};
         match err {
-            SHARING_VIOLATION => bun_core::Output::debug_warn(
+            SHARING_VIOLATION => bun_core::debug_warn!(
                 "Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE",
             ),
-            OBJECT_NAME_INVALID => bun_core::Output::debug_warn(
+            OBJECT_NAME_INVALID => bun_core::debug_warn!(
                 "Received OBJECT_NAME_INVALID, indicates a file path conversion issue.",
             ),
-            t if e == E::UNKNOWN => bun_core::Output::debug_warn(format_args!(
+            t if e == E::UNKNOWN => bun_core::debug_warn!(
                 "Called translateNTStatusToErrno with {:?} which does not have a mapping to errno.",
                 t
-            )),
+            ),
             _ => {}
         }
     }
@@ -3655,7 +3632,7 @@ pub fn win_sock_error_to_zig_error(
         t => {
             if t.0 != 0 {
                 #[cfg(debug_assertions)]
-                bun_core::Output::debug_warn(format_args!("Unknown WinSockError: {}", t.0));
+                bun_core::debug_warn!("Unknown WinSockError: {}", t.0);
             }
             return Ok(());
         }
@@ -4816,7 +4793,7 @@ pub fn move_opened_file_at(
 
     #[cfg(debug_assertions)]
     if rc == win32::ntstatus::ACCESS_DENIED {
-        bun_core::Output::debug_warn(
+        bun_core::debug_warn!(
             "moveOpenedFileAt was called on a file descriptor without access_mask=w.DELETE",
         );
     }

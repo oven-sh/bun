@@ -8966,3 +8966,134 @@ registry = { url = "http://localhost:${port}/", token = "${token}" }
   expect(received).toEqual([]);
   expect(await exited).not.toBe(0);
 });
+
+test("registry override from a project .env only keeps the saved token when the host matches and the scheme is not downgraded", async () => {
+  // `bun install` loads the project's `.env` before computing installer
+  // options, so a repo-committed `.env` can point BUN_CONFIG_REGISTRY at a
+  // different registry host. The token configured for the default registry
+  // scope is host-scoped and must only be attached to requests for that host.
+  const received: { url: string; authorization: string | null }[] = [];
+  using otherRegistry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      received.push({ url: req.url, authorization: req.headers.get("authorization") });
+      return new Response("not found", { status: 404 });
+    },
+  });
+
+  const token = "default-registry-secret-token";
+
+  // Case 1: the .env points the registry at a different host. The manifest
+  // request must reach that host without the default registry's token.
+  await Promise.all([
+    write(
+      join(packageDir, "bunfig.toml"),
+      `
+[install]
+cache = false
+registry = { url = "http://localhost:${port}/", token = "${token}" }
+`,
+    ),
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "no-deps": "1.0.0",
+        },
+      }),
+    ),
+    write(join(packageDir, ".env"), `BUN_CONFIG_REGISTRY=http://127.0.0.1:${otherRegistry.port}/\n`),
+  ]);
+
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    await stderr.text();
+    await stdout.text();
+
+    // The .env override must take effect: the manifest request goes to the
+    // overridden registry...
+    expect(received.length).toBeGreaterThan(0);
+    // ...but the token configured for the localhost registry must not be sent
+    // to the different host.
+    expect(received.filter(r => r.authorization !== null)).toEqual([]);
+    // The overridden registry returned 404, so this install fails.
+    expect(await exited).not.toBe(0);
+  }
+
+  // Case 2: when the override points at the same host the token was
+  // configured for, the token is still sent.
+  received.length = 0;
+  await Promise.all([
+    rm(join(packageDir, "bun.lock"), { force: true }),
+    rm(join(packageDir, "bun.lockb"), { force: true }),
+    write(
+      join(packageDir, "bunfig.toml"),
+      `
+[install]
+cache = false
+registry = { url = "http://127.0.0.1:${otherRegistry.port}/", token = "${token}" }
+`,
+    ),
+    write(join(packageDir, ".env"), `BUN_CONFIG_REGISTRY=http://127.0.0.1:${otherRegistry.port}/\n`),
+  ]);
+
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    await stderr.text();
+    await stdout.text();
+
+    expect(received.length).toBeGreaterThan(0);
+    expect(received.some(r => r.authorization === `Bearer ${token}`)).toBe(true);
+    expect(await exited).not.toBe(0);
+  }
+
+  // Case 3: the override points at the same host but downgrades https to
+  // http. The token configured for the https registry must not be sent.
+  received.length = 0;
+  await Promise.all([
+    rm(join(packageDir, "bun.lock"), { force: true }),
+    rm(join(packageDir, "bun.lockb"), { force: true }),
+    write(
+      join(packageDir, "bunfig.toml"),
+      `
+[install]
+cache = false
+registry = { url = "https://127.0.0.1:${otherRegistry.port}/", token = "${token}" }
+`,
+    ),
+    write(join(packageDir, ".env"), `BUN_CONFIG_REGISTRY=http://127.0.0.1:${otherRegistry.port}/\n`),
+  ]);
+
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    await stderr.text();
+    await stdout.text();
+
+    expect(received.length).toBeGreaterThan(0);
+    expect(received.filter(r => r.authorization !== null)).toEqual([]);
+    expect(await exited).not.toBe(0);
+  }
+});

@@ -20,33 +20,6 @@ use crate::Tag;
 static debug: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("copy_file", bun_core::output::Visibility::Hidden);
 
-#[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
-pub enum CopyFileRangeError {
-    #[error("FileTooBig")]
-    FileTooBig,
-    #[error("InputOutput")]
-    InputOutput,
-    /// `in` is not open for reading; or `out` is not open  for  writing;
-    /// or the  `O.APPEND`  flag  is  set  for `out`.
-    #[error("FilesOpenedWithWrongFlags")]
-    FilesOpenedWithWrongFlags,
-    #[error("IsDir")]
-    IsDir,
-    #[error("OutOfMemory")]
-    OutOfMemory,
-    #[error("NoSpaceLeft")]
-    NoSpaceLeft,
-    #[error("Unseekable")]
-    Unseekable,
-    #[error("PermissionDenied")]
-    PermissionDenied,
-    #[error("FileBusy")]
-    FileBusy,
-    // TODO(port): Zig unioned `posix.PReadError || posix.PWriteError || posix.UnexpectedError`
-    // here; in Rust those collapse into `bun_core::Error` via `From`.
-}
-bun_core::named_error_set!(CopyFileRangeError);
-
 #[cfg(windows)]
 pub type InputType<'a> = &'a bun_core::WStr; // bun.OSPathSliceZ == [:0]const u16
 #[cfg(not(windows))]
@@ -485,12 +458,6 @@ pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Res
 fn kernel_at_least(major: u32, minor: u32) -> bool {
     let v = bun_core::linux_kernel_version();
     (v.major, v.minor, v.patch) >= (major, minor, 0)
-}
-
-/// Map a raw `copy_file`-path errno to `bun_core::Error`.
-#[inline]
-pub fn copy_file_error_convert(e: crate::Error) -> bun_core::Error {
-    e.into()
 }
 
 // ported from: src/sys/copy_file.zig

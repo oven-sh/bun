@@ -1997,6 +1997,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         force_http2,
         force_http3,
         force_http1,
+        is_node_http_client: ALLOW_GET_BODY,
         check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {
             jsc::strong::Optional::empty()
         } else {

@@ -59,10 +59,14 @@ pub(crate) fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
 
 pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     use bun_sys::c;
-    let fd: Fd = this
-        .platform
-        .fd
-        .expect("KEventWatcher has an invalid file descriptor");
+    // `Watcher::stop_all_for_exit` (main thread) calls `platform.stop()`, which
+    // `take()`s this `fd` and closes the kqueue, to break the loop at exit. It
+    // runs under `this.mutex`, which this read does not hold, so the field can
+    // become `None` here — bail out instead of panicking; `watch_loop`'s
+    // `running` check (cleared by the same `stop()`) then ends the loop.
+    let Some(fd) = this.platform.fd else {
+        return Ok(());
+    };
 
     // not initialized each time
     // SAFETY: all-zero is a valid Kevent (#[repr(C)] POD)
@@ -80,6 +84,14 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
             core::ptr::null(), // timeout
         )
     };
+
+    // `kevent` returns -1 if the kqueue fd was closed out from under us — e.g.
+    // `stop_all_for_exit`/`stop()` closing it on the main thread at exit. Bail
+    // out instead of feeding a negative count into the `usize::try_from` below;
+    // `watch_loop`'s `running` check ends the loop.
+    if count < 0 {
+        return Ok(());
+    }
 
     // Give the events more time to coalesce
     if count < 128 / 2 {

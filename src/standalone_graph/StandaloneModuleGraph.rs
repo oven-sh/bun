@@ -2287,12 +2287,11 @@ pub(crate) fn serialize_json_source_map_for_standalone(
     let map_blob =
         SourceMap::InternalSourceMap::from_vlq(map_vlq, 0).map_err(|_| err!("InvalidSourceMap"))?;
 
+    // Every offset/length in the serialized map is a u32 `StringPointer`;
+    // anything that cannot be represented is a build error, not a crash.
+    let map_blob_len_u32 = u32::try_from(map_blob.len()).map_err(|_| err!("SourceMapTooLarge"))?;
     header_list.extend_from_slice(&u32::to_le_bytes(sources_paths.items.len_u32()));
-    header_list.extend_from_slice(
-        &u32::try_from(map_blob.len())
-            .expect("int cast")
-            .to_le_bytes(),
-    );
+    header_list.extend_from_slice(&map_blob_len_u32.to_le_bytes());
 
     let string_payload_start_location = size_of::<u32>()
         + size_of::<u32>()
@@ -2310,8 +2309,10 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         string_payload.extend_from_slice(decoded);
 
         let slice = StringPointer {
-            offset: u32::try_from(offset + string_payload_start_location).expect("int cast"),
-            length: u32::try_from(string_payload.len() - offset).expect("int cast"),
+            offset: u32::try_from(offset + string_payload_start_location)
+                .map_err(|_| err!("SourceMapTooLarge"))?,
+            length: u32::try_from(string_payload.len() - offset)
+                .map_err(|_| err!("SourceMapTooLarge"))?,
         };
         header_list.extend_from_slice(&slice.offset.to_le_bytes());
         header_list.extend_from_slice(&slice.length.to_le_bytes());
@@ -2327,6 +2328,13 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         let offset = string_payload.len();
 
         let bound = bun_zstd::compress_bound(utf8.len());
+        // `ZSTD_compressBound` returns an *error code* (a value near
+        // `usize::MAX`) when the input size exceeds `ZSTD_MAX_INPUT_SIZE`;
+        // feeding that to `Vec::reserve` below would abort with a capacity
+        // overflow instead of failing the build.
+        if bun_zstd::is_error(bound) {
+            return Err(err!("SourceMapTooLarge"));
+        }
         // SAFETY: zstd writes only into the spare slice and reports the byte
         // count on success; on error we commit 0 and `Output::panic` diverges.
         unsafe {
@@ -2344,8 +2352,10 @@ pub(crate) fn serialize_json_source_map_for_standalone(
         };
 
         let slice = StringPointer {
-            offset: u32::try_from(offset + string_payload_start_location).expect("int cast"),
-            length: u32::try_from(string_payload.len() - offset).expect("int cast"),
+            offset: u32::try_from(offset + string_payload_start_location)
+                .map_err(|_| err!("SourceMapTooLarge"))?,
+            length: u32::try_from(string_payload.len() - offset)
+                .map_err(|_| err!("SourceMapTooLarge"))?,
         };
         header_list.extend_from_slice(&slice.offset.to_le_bytes());
         header_list.extend_from_slice(&slice.length.to_le_bytes());

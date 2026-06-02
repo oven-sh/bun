@@ -114,15 +114,54 @@ struct HttpHandoff {
     body_size: http::BodySize,
 }
 
+/// One in-flight `fetch()`, shared between the JS thread (promise/body
+/// delivery) and the HTTP thread (socket I/O) for the request's lifetime.
+///
+/// # Refs
+///
+/// `ref_count` starts at 2 — one baseline ref per thread:
+///
+/// | ref | acquired (thread) | released (thread) |
+/// |---|---|---|
+/// | JS baseline | `get` — `init_exact_refs(2)` (JS) | `on_progress_update` final-tick cleanup or shutdown early-out (`release_js_ref`, JS); `callback`'s shutdown branch and `release_at_shutdown` (raw `deref_from_thread`, HTTP, JS thread parked); `release_queued_tasks_for_shutdown` in dispatch.rs (`release_js_ref`, JS) |
+/// | HTTP baseline | `get` — `init_exact_refs(2)` (JS, on the HTTP thread's behalf) | final `callback` or `release_at_shutdown` (`release_http_ref`, HTTP) |
+/// | sink | `start_request_stream` (JS) | every `write_end_request` exit (`release_sink_ref`, JS) |
+/// | drain task | `on_write_request_data_drain` (HTTP) | `resume_request_data_stream` (`release_drain_task_ref`, JS) |
+///
+/// # Lock invariants
+///
+/// User JS may run while the `shared` lock is held: `on_progress_update`
+/// drains the JSC microtask queue, runs `checkServerIdentity`, and can
+/// re-enter the sink's `cancel`/`pull` — all under the lock. JS reachable
+/// from there must never take the `shared` lock — it is non-recursive, so a
+/// relock is a deadlock. This is why `ignore_data` is an atomic: the
+/// GC-finalizer chain `on_response_finalize` →
+/// `ignore_remaining_response_body` must stay lock-free. Likewise a
+/// Locked-body `Response` must not be first-touched (`res.body`) from JS
+/// running under the lock — `res.body` →
+/// `on_start_streaming_http_response_body_callback` relocks.
+///
+/// # Lock order
+///
+/// `shared` lock → `ThreadSafeStreamBuffer`'s internal mutex; never the
+/// reverse.
+///
+/// # Final drop
+///
+/// The last release must route through `deref`/`deref_from_thread` so JSC
+/// handles die on the JS thread: `deinit` runs JS-side (bounced via
+/// `deinit_callback` if the last ref drops on the HTTP thread), and
+/// `dealloc_for_shutdown` only parks the box when the VM is exiting.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = FetchTasklet::deinit)]
 pub struct FetchTasklet {
     javascript_vm: &'static VirtualMachine,
+    /// `buf` leased `'static` to `AsyncHTTP` in `get()`.
     request_headers: Headers,
     /// This is url + proxy memory buffer and is owned by FetchTasklet
     /// We always clone url and proxy (if informed)
     url_proxy_buffer: Box<[u8]>,
-    // Custom Hostname
+    /// Custom hostname; leased `'static` to `AsyncHTTP` in `get()`.
     hostname: Option<Box<[u8]>>,
     reject_unauthorized: bool,
     upgraded_connection: bool,
@@ -130,20 +169,29 @@ pub struct FetchTasklet {
     /// JS-thread-only state.
     js: JsState,
 
-    /// HTTP↔JS shared state, guarded by `mutex`.
+    /// HTTP↔JS shared state, guarded by `mutex`. NOTE: user JS can run while
+    /// the lock is held — see the struct doc.
     shared: HttpHandoff,
     mutex: Mutex,
 
     // Self-referential: borrows from `js.request_body` / `request_headers` owned
     // by sibling fields, so the lifetime is erased to `'static`.
+    /// Stable heap Box. JS posts http-thread messages and atomic-signal
+    /// stores lock-free; the HTTP thread copies progress fields back via
+    /// `sync_progress_from` only under the `shared` lock.
     http: Option<Box<AsyncHTTP<'static>>>,
-    /// buffer being used by AsyncHTTP
+    /// Leased to `AsyncHTTP` by raw pointer (`get()`); the HTTP thread's socket
+    /// path appends lock-free between callbacks; `callback` drains it under the
+    /// `shared` lock; capacity freed on the JS thread in `clear_data`.
     response_buffer: MutableString,
     // PORT NOTE: ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
     // starts at 2) and shared with the HTTP thread via raw ptr; `Arc` can't be mutably
     // borrowed for `acquire/release`. Model as a raw pointer like Zig's
     // `?*http.ThreadSafeStreamBuffer`.
+    /// Has its own internal mutex; see "Lock order" in the struct doc.
     request_body_streaming_buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
+    /// Inline node reused for the coalesced progress task; one-in-flight is
+    /// guaranteed by the `has_schedule_callback` CAS.
     concurrent_task: ConcurrentTask,
     has_schedule_callback: AtomicBool,
     /// JS abandoned the body (GC finalizer / stream cancel). Relaxed: a stale
@@ -155,6 +203,8 @@ pub struct FetchTasklet {
     signal_store: http::signals::Store,
     signals: Signals,
 
+    /// Starts at 2: 1 for the JS thread, 1 for the HTTP thread (ref table in
+    /// the struct doc).
     ref_count: bun_ptr::ThreadSafeRefCount<FetchTasklet>,
 }
 

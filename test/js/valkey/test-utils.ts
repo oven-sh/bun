@@ -1,10 +1,12 @@
 import { RedisClient, type SpawnOptions } from "bun";
 import { afterAll, beforeAll, expect } from "bun:test";
-import { bunEnv, isCI, isDockerEnabled, randomPort, tempDirWithFiles } from "harness";
+import { bunEnv, dockerExe, isCI, isDockerEnabled, randomPort, tempDirWithFiles } from "harness";
 import path from "path";
 
 import * as dockerCompose from "../../docker/index.ts";
 import { UnixDomainSocketProxy } from "../../unix-domain-socket-proxy.ts";
+
+const dockerCLI = dockerExe() as string;
 
 // Route through the shared harness chokepoint so Docker availability is
 // decided in one place. In CI on a platform where Docker is expected, this

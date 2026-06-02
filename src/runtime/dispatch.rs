@@ -1139,12 +1139,13 @@ pub(crate) unsafe fn __bun_tick_queue_with_count(
 
 /// `__bun_release_task_at_shutdown` body — declared `extern "Rust"` in
 /// `bun_jsc::event_loop`. Called from `release_queued_tasks_for_shutdown` on
-/// the JS thread for every queued task that will never be dispatched (the JS
-/// thread is past `global_exit`'s `is_shutting_down` flip and the loop will
-/// not tick again), after the HTTP daemon has parked and before
-/// `destructOnExit`. Releases the boxes and JSC handles the dispatch path
-/// would have dropped. Tags not yet listed leak their box at exit; add them
-/// as LSan surfaces them.
+/// the JS thread for every queued task that will never be dispatched (the
+/// loop will not tick again): from `global_exit` after the HTTP daemon has
+/// parked, and from `WebWorker::shutdown` while the HTTP daemon is still
+/// running (see `release_queued_tasks_for_shutdown`'s doc). Both run before
+/// the caller's JSC teardown. Releases the boxes and JSC handles the dispatch
+/// path would have dropped. Tags not yet listed leak their box at exit; add
+/// them as LSan surfaces them.
 #[unsafe(no_mangle)]
 pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool {
     use bun_event_loop::task_tag;
@@ -1153,12 +1154,15 @@ pub(crate) fn __bun_release_task_at_shutdown(task: bun_event_loop::Task) -> bool
         // posted this entry, then deref'd its own +1 if final; the JS-side
         // +1 it expected `on_progress_update` to drop is the one we release
         // here. Runs on the JS thread, so the plain `deref` (→ `deinit` on
-        // 1→0) is the right teardown path; the HTTP daemon is already
-        // parked (`shutdown_for_exit` precedes `destroy`), so the
-        // `Box<AsyncHTTP>` and any `metadata` it owns are exclusively ours.
+        // 1→0) is the right teardown path. On the worker-shutdown caller the
+        // HTTP thread may still hold its own tasklet ref concurrently — the
+        // queued entry only represents one counted ref, so release it with
+        // the atomic `deref`; exclusive access (and thus `deinit`'s
+        // single-threaded teardown) exists only on the 1→0 transition, which
+        // requires every HTTP-side ref to have already been dropped.
         task_tag::FetchTasklet => {
-            // SAFETY: `task.ptr` is the live heap `FetchTasklet`; HTTP daemon is
-            // already parked so we hold the sole reference.
+            // SAFETY: `task.ptr` is the live heap `FetchTasklet` (the queued
+            // entry's counted ref keeps it alive until this decrement).
             FetchTasklet::deref(task.ptr.cast::<FetchTasklet>());
             true
         }

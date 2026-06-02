@@ -776,13 +776,25 @@ impl EventLoop {
     }
 
     /// Release queued-but-never-run tasks that own a ref the dispatch path
-    /// would have dropped. Called from `global_exit` after `shutdown_for_exit`
-    /// (HTTP daemon parked, no further cross-thread posts) and before
-    /// `destructOnExit` (JSC still live, so `FetchTasklet::deinit` can drop
-    /// its `Strong`/`Weak` handles). Re-runs `drop_concurrent_cpp_tasks` first
-    /// so any task the HTTP thread posted after the earlier drain — its
-    /// `is_shutting_down()` read is non-atomic and can lag — is forwarded into
-    /// `self.tasks` for the per-tag release below.
+    /// would have dropped. Two callers, both pre-JSC-teardown (JSC still
+    /// live, so `FetchTasklet::deinit` can drop its `Strong`/`Weak` handles):
+    ///
+    ///   * `global_exit`, after `shutdown_for_exit` — the HTTP daemon is
+    ///     parked, so no further cross-thread posts can land and released
+    ///     entries are the sole remaining refs.
+    ///   * `WebWorker::shutdown`, after `ConcurrentEnqueueGate::close()` —
+    ///     here the HTTP daemon is still RUNNING; the closed gate guarantees
+    ///     no further gated post can land (so this drain is complete), but a
+    ///     racing fetch callback may still hold its own tasklet ref
+    ///     concurrently. Per-tag release fns must therefore not assume
+    ///     exclusive ownership of the pointee — only that the queued entry
+    ///     carries one counted ref (released via atomic refcount; exclusivity
+    ///     exists only on a 1→0 transition).
+    ///
+    /// Re-runs `drop_concurrent_cpp_tasks` first so any task the HTTP thread
+    /// posted after the earlier drain — its `is_shutting_down()` read is
+    /// non-atomic and can lag — is forwarded into `self.tasks` for the
+    /// per-tag release below.
     ///
     /// `ManagedTask` entries are deliberately re-queued rather than freed:
     /// owners (e.g. `SendQueue.close_next_tick` / `after_close_task`) keep raw

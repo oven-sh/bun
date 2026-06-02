@@ -2394,9 +2394,13 @@ impl FetchTasklet {
         // `ct` is the inline `concurrent_task` field of the heap tasklet; the
         // queue takes ownership of its `next` link.
         Self::enqueue_concurrent(task_ref.javascript_vm, ct);
-        // The JS thread can't free the tasklet while we hold `task_ref.mutex`
-        // (`on_progress_update` locks it first), so exiting the gate here is
-        // safe even though the task above is already visible to the consumer.
+        // The JS thread can't free the tasklet while we hold `task_ref.mutex`:
+        // `on_progress_update` locks it first, and the other consumer of this
+        // task (`__bun_release_task_at_shutdown` from the worker-shutdown
+        // drain) doesn't lock it but drops only the entry's counted ref — our
+        // HTTP-side ref keeps the count ≥ 1 until after `mutex.unlock()`
+        // below. So exiting the gate here is safe even though the task above
+        // is already visible to consumers.
         task_ref.vm_gate_ref().exit();
 
         task_ref.mutex.unlock();

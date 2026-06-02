@@ -682,6 +682,21 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array(4096).fill(8));
     });
 
+    it("counts lone surrogates as their replacement-character bytes", async () => {
+      using dir = tempDir("bun-write-lone-surrogate", {});
+      const filePath = join(String(dir), "out.bin");
+      const stream = new ReadableStream({
+        type: "direct",
+        pull(controller) {
+          controller.write("a\uD800b"); // the lone surrogate encodes as U+FFFD
+          controller.close();
+        },
+      });
+
+      expect(await Bun.write(filePath, stream)).toBe(5);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array([0x61, 0xef, 0xbf, 0xbd, 0x62]));
+    });
+
     it("works through Bun.file().write()", async () => {
       using dir = tempDir("bun-file-write-stream", {});
       const filePath = join(String(dir), "out.txt");

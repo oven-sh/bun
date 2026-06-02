@@ -1,7 +1,7 @@
 import { S3Client } from "bun";
 import { describe, expect, it } from "bun:test";
-import net from "node:net";
 import { tempDir } from "harness";
+import net from "node:net";
 import { join } from "node:path";
 
 // Bun.write(Bun.file(localPath), s3file) — the S3-download-to-disk path.

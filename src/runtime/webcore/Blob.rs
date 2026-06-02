@@ -6122,8 +6122,7 @@ fn pipe_byte_stream_to_file_sink(
         if !bytes.is_empty() {
             // SAFETY: `file_sink` is the live +1 transferred to `pipe`.
             let _ = unsafe {
-                (*file_sink)
-                    .write(&streams::Result::Temporary(bun_ptr::RawSlice::new(&bytes)))
+                (*file_sink).write(&streams::Result::Temporary(bun_ptr::RawSlice::new(&bytes)))
             };
         }
         // `finish` consumes the boxed pipe; box it first so destroy()'s
@@ -6145,10 +6144,7 @@ fn pipe_byte_stream_to_file_sink(
 
     let pipe = bun_core::heap::into_raw(Box::new(FileSinkPipe {
         promise: jsc::JSPromiseStrong::init(global_this),
-        stream: webcore::readable_stream::ReadableStreamStrong::init(
-            readable_stream,
-            global_this,
-        ),
+        stream: webcore::readable_stream::ReadableStreamStrong::init(readable_stream, global_this),
         sink: file_sink,
         global_this: bun_ptr::BackRef::new(global_this),
     }));
@@ -6245,9 +6241,7 @@ impl FileSinkPipe {
                                 .resolve(global, JSValue::js_number(written as f64));
                         }
                         jsc::js_promise::Status::Rejected => {
-                            let _ = self
-                                .promise
-                                .reject(global, Ok(promise.result(global.vm())));
+                            let _ = self.promise.reject(global, Ok(promise.result(global.vm())));
                         }
                     }
                 } else {

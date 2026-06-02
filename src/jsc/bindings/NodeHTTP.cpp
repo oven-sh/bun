@@ -215,8 +215,6 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         JSString* jsValue = jsString(vm, value);
 
         Identifier nameIdentifier;
-        // The uWS parser preserves the original case of the header name in `pair.first`.
-        // `req.rawHeaders` keeps the wire case, `req.headers` is keyed by lowercase name.
         WTF::String originalCasedNameString = nameView.toString();
         JSString* originalCasedNameJSString = jsString(vm, originalCasedNameString);
         WTF::String lowercasedName;

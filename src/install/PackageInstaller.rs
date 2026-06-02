@@ -1522,6 +1522,15 @@ impl<'a> PackageInstaller<'a> {
                         path: self.node_modules.path.clone(),
                         dependency_id,
                     });
+                // When the patch is being removed, its entry is no longer in
+                // `lockfile.patched_dependencies` (only in
+                // `patched_dependencies_to_remove`), so there is no patch to
+                // apply after download — fetch the package unpatched.
+                let download_patch_hash = if remove_patch {
+                    None
+                } else {
+                    patch_name_and_version_hash
+                };
                 match resolution.tag {
                     resolution::Tag::Git => {
                         package_manager::enqueue_git_for_checkout(
@@ -1530,7 +1539,7 @@ impl<'a> PackageInstaller<'a> {
                             alias.slice(string_buf!()),
                             resolution,
                             context,
-                            patch_name_and_version_hash,
+                            download_patch_hash,
                         );
                     }
                     resolution::Tag::Github => {
@@ -1542,7 +1551,7 @@ impl<'a> PackageInstaller<'a> {
                             package_id,
                             &url,
                             context,
-                            patch_name_and_version_hash,
+                            download_patch_hash,
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
@@ -1568,7 +1577,7 @@ impl<'a> PackageInstaller<'a> {
                             package_id,
                             resolution.remote_tarball().slice(string_buf!()),
                             context,
-                            patch_name_and_version_hash,
+                            download_patch_hash,
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
@@ -1600,7 +1609,7 @@ impl<'a> PackageInstaller<'a> {
                             npm.version,
                             npm.url.slice(string_buf!()),
                             context,
-                            patch_name_and_version_hash,
+                            download_patch_hash,
                         ) {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),

@@ -197,7 +197,7 @@ describe("InternalSourceMap.fromVLQ validation", () => {
   };
 
   for (const [name, vlq] of Object.entries(invalid)) {
-    test(name, async () => {
+    test.concurrent(name, async () => {
       // Run fromVLQ in a child process: on a build without the validation,
       // the debug-mode i32 overflow trap aborts the whole process, which must
       // not take down the test runner (and must still be recorded as a

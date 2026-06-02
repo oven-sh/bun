@@ -190,13 +190,13 @@ it("globals are deletable", () => {
   expect(exitCode).toBe(0);
 });
 
-it("self is a getter", () => {
-  const descriptor = Object.getOwnPropertyDescriptor(globalThis, "self");
-  expect(descriptor.get).toBeInstanceOf(Function);
-  expect(descriptor.set).toBeInstanceOf(Function);
-  expect(descriptor.enumerable).toBe(true);
-  expect(descriptor.configurable).toBe(true);
-  expect(globalThis.self).toBe(globalThis);
+it("self is not defined on the main thread (matches Node.js)", () => {
+  // `self` is a WindowOrWorkerGlobalScope member. Node.js only exposes it in
+  // Worker threads, never on the main thread, and isomorphic libraries sniff
+  // `typeof self === "object"` to detect a browser/worker. Match Node here.
+  expect("self" in globalThis).toBe(false);
+  expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toBeUndefined();
+  expect(typeof self).toBe("undefined");
 });
 
 it("errors thrown by native code should be TypeError", async () => {

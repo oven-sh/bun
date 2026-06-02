@@ -3000,16 +3000,23 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 
     // ----- Public Properties -----
 
-    // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
-    putDirectAccessor(
-        this,
-        builtinNames.selfPublicName(),
-        JSC::GetterSetter::create(
-            vm,
+    // `self` is a member of WindowOrWorkerGlobalScope. Node.js only exposes it
+    // in Worker threads, never on the main thread, and isomorphic libraries use
+    // `typeof self === "object"` to sniff a browser/worker environment. Defining
+    // it on the main thread makes those libraries take the browser code path.
+    // Match Node: expose `self` everywhere except the main thread.
+    if (!scriptExecutionContext()->isMainThread()) {
+        // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
+        putDirectAccessor(
             this,
-            JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
-            JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
-        PropertyAttribute::Accessor | 0);
+            builtinNames.selfPublicName(),
+            JSC::GetterSetter::create(
+                vm,
+                this,
+                JSFunction::create(vm, this, 0, "get"_s, functionGetSelf, ImplementationVisibility::Public),
+                JSFunction::create(vm, this, 0, "set"_s, functionSetSelf, ImplementationVisibility::Public)),
+            PropertyAttribute::Accessor | 0);
+    }
 
     // TODO: this should be usable on the lookup table. it crashed las time i tried it
     putDirectCustomAccessor(vm, JSC::Identifier::fromString(vm, "onmessage"_s), JSC::CustomGetterSetter::create(vm, globalOnMessage, setGlobalOnMessage), 0);

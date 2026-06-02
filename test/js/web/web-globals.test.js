@@ -308,18 +308,56 @@ test("confirm (no) windows newline", async () => {
   expect(await proc.stderr.text()).toBe("No\n");
 });
 
+test("self is not defined on the main thread (matches Node.js)", () => {
+  // Node.js only exposes `self` in Worker threads, not on the main thread.
+  // Isomorphic libraries sniff `typeof self === "object"` to detect a
+  // browser/worker environment; defining it on the main thread makes them
+  // take the browser code path instead of the Node fallback.
+  // See https://github.com/oven-sh/bun/issues/31713
+  expect("self" in globalThis).toBe(false);
+  expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toBeUndefined();
+  expect(typeof self).toBe("undefined");
+});
+
+test("self is defined inside a Worker (matches Node.js and the Web spec)", async () => {
+  const { Worker } = await import("node:worker_threads");
+  const worker = new Worker(
+    `
+      const { parentPort } = require("node:worker_threads");
+      parentPort.postMessage({
+        hasSelf: "self" in globalThis,
+        typeofSelf: typeof self,
+        selfIsGlobalThis: typeof self === "object" ? self === globalThis : null,
+      });
+    `,
+    { eval: true },
+  );
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    worker.on("message", resolve);
+    worker.on("error", reject);
+    const result = await promise;
+    expect(result).toEqual({
+      hasSelf: true,
+      typeofSelf: "object",
+      selfIsGlobalThis: true,
+    });
+  } finally {
+    await worker.terminate();
+  }
+});
+
 test("globalThis.self = 123 works", () => {
-  expect(Object.getOwnPropertyDescriptor(globalThis, "self")).toMatchObject({
-    configurable: true,
-    enumerable: true,
-    get: expect.any(Function),
-    set: expect.any(Function),
-  });
+  const hadSelf = Object.hasOwn(globalThis, "self");
   const original = Object.getOwnPropertyDescriptor(globalThis, "self");
   try {
     globalThis.self = 123;
     expect(globalThis.self).toBe(123);
   } finally {
-    Object.defineProperty(globalThis, "self", original);
+    if (hadSelf) {
+      Object.defineProperty(globalThis, "self", original);
+    } else {
+      delete globalThis.self;
+    }
   }
 });

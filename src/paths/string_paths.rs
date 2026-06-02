@@ -323,19 +323,17 @@ pub fn to_w_dir_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
 /// instead of converting (mirrors the Zig-side fix in oven-sh/bun#27775).
 ///
 /// UTF-8 → UTF-16 never expands the unit count, so the byte count fitting
-/// already proves the fit; the exact (O(n) SIMD) count is only computed for
-/// longer inputs. The byte length is bounded as well: a fitting *valid* path
-/// takes at most 3 bytes per unit, while for invalid bytes the exact-length
-/// estimate undercounts (stray continuation bytes count zero units but become
-/// one U+FFFD each in the WTF-8 fallback) — without the byte cap, arbitrary-
-/// length garbage input would pass and overflow the u8-space path copies this
-/// check also guards.
+/// already proves the fit; the exact count — with the conversion's own WTF-8
+/// semantics, where each invalid byte becomes one U+FFFD unit — is only
+/// computed for longer inputs. The byte length is bounded as well: a fitting
+/// path takes at most 3 bytes per unit, and the cap also bounds the u8-space
+/// path copies this check guards (and the O(n) scan below).
 pub fn fits_in_wide_path_buffer(utf8: &[u8]) -> bool {
     const OVERHEAD: usize = windows::NT_UNC_OBJECT_PREFIX.len() + 2;
     const MAX_UNITS: usize = crate::PATH_MAX_WIDE - OVERHEAD;
     utf8.len() <= MAX_UNITS
         || (utf8.len() <= 3 * MAX_UNITS
-            && strings::element_length_utf8_into_utf16(utf8) <= MAX_UNITS)
+            && strings::element_length_wtf8_with_replacement_into_utf16(utf8) <= MAX_UNITS)
 }
 
 pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
@@ -720,10 +718,12 @@ mod tests {
         let cjk_max: Vec<u8> = "世".repeat(32757).into_bytes(); // 98271 B
         assert!(fits_in_wide_path_buffer(&cjk_max));
 
-        // Invalid bytes: the exact-length estimate counts stray continuation
-        // bytes as zero units, so the byte cap is what must reject
-        // arbitrary-length garbage (it can't name anything on disk anyway).
+        // Invalid bytes convert to one U+FFFD unit each; the count must use
+        // that semantics (simdutf's estimate counts stray continuation bytes
+        // as zero), and the byte cap rejects anything past what a fitting
+        // path could occupy.
         assert!(!fits_in_wide_path_buffer(&vec![0x80u8; 98300]));
+        assert!(!fits_in_wide_path_buffer(&vec![0x80u8; 32758]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32757]));
     }
 }

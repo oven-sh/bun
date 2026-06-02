@@ -3040,6 +3040,28 @@ pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
     Some(&mut buf[..written])
 }
 
+/// Exact UTF-16 unit count [`try_convert_utf8_to_utf16_in_buffer`] produces
+/// for `input`, including the WTF-8 fallback's one-U+FFFD-per-invalid-byte
+/// expansion. `element_length_utf8_into_utf16` (simdutf) is exact for valid
+/// UTF-8/WTF-8 but undercounts malformed input (stray continuation bytes
+/// count zero there yet convert to one unit each) — use this when the input
+/// may be arbitrary bytes and the count gates a buffer bound.
+pub fn element_length_wtf8_with_replacement_into_utf16(input: &[u8]) -> usize {
+    let mut units = 0usize;
+    let mut i = 0usize;
+    while i < input.len() {
+        if input[i] < 0x80 {
+            units += 1;
+            i += 1;
+        } else {
+            let (cp, adv) = decode_wtf8_one(&input[i..]);
+            units += if cp <= 0xFFFF { 1 } else { 2 };
+            i += adv;
+        }
+    }
+    units
+}
+
 /// Decode one WTF-8 sequence at the head of `s`; invalid lead/truncated → (U+FFFD, 1).
 /// Lone surrogates pass through (WTF-8). Helper for [`convert_utf8_to_utf16_in_buffer`].
 fn decode_wtf8_one(s: &[u8]) -> (u32, usize) {

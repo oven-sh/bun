@@ -1,6 +1,6 @@
 import { deserialize, serialize } from "bun:jsc";
 import { openSync } from "fs";
-import { bunEnv } from "harness";
+import { bunEnv, nodeExe } from "harness";
 import { bunExe } from "js/bun/shell/test_builder";
 import v8 from "node:v8";
 import { join } from "path";
@@ -438,6 +438,20 @@ test("Error blob serialized at version 13 (no cause field) still deserializes", 
     expect(out.message).toBe("hi");
     expect(Object.hasOwn(out, "cause")).toBe(false);
   }
+});
+
+test("Error cause parity tests also pass under node.js", async () => {
+  // error-cause-node-parity.test.mts is written with node:test, so bun test
+  // runs it natively; spawning `node --test` on the same file verifies Node
+  // agrees with every assertion.
+  await using proc = Bun.spawn({
+    cmd: [nodeExe() ?? "node", "--test", join(import.meta.dir, "error-cause-node-parity.test.mts")],
+    stdout: "inherit",
+    stderr: "inherit",
+    stdin: "ignore",
+    env: bunEnv,
+  });
+  expect(await proc.exited).toBe(0);
 });
 
 describe("structuredClone with ArrayBuffer larger than serialization buffer capacity", () => {

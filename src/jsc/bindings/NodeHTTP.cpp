@@ -21,6 +21,7 @@
 #include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <wtf/text/StringBuilder.h>
 #include "JSSocketAddressDTO.h"
 #include "node/JSNodeHTTPServerSocket.h"
 #include "node/JSNodeHTTPServerSocketPrototype.h"
@@ -151,94 +152,39 @@ static RequestHeaderKind requestHeaderKind(const WTF::String& lowercasedName)
     return RequestHeaderKind::Joinable;
 }
 
-struct RequestHeaderIdentity {
-    Identifier identifier;
-    RequestHeaderKind kind;
-};
-
-static RequestHeaderIdentity requestHeaderIdentity(JSC::VM& vm, StringView nameView)
-{
-    HTTPHeaderName name;
-    if (WebCore::findHTTPHeaderName(nameView, name))
-        return { WebCore::clientData(vm)->httpHeaderIdentifiers().identifierFor(vm, name), requestHeaderKind(name) };
-
-    WTF::String lowercasedName = nameView.toString().convertToASCIILowercase();
-    return { Identifier::fromString(vm, lowercasedName), requestHeaderKind(lowercasedName) };
-}
-
-static JSString* jsStringForRequestHeaderValue(JSC::JSGlobalObject* globalObject, JSC::VM& vm, std::string_view headerValue)
-{
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    std::span<Latin1Character> data;
-    auto value = String::tryCreateUninitialized(headerValue.length(), data);
-    if (value.isNull()) [[unlikely]] {
-        throwOutOfMemoryError(globalObject, scope);
-        return nullptr;
-    }
-    if (headerValue.length() > 0)
-        memcpy(data.data(), headerValue.data(), headerValue.length());
-    return jsString(vm, value);
-}
-
-static JSC::JSObject* buildHeadersObjectHandlingDuplicates(uWS::HttpRequest* request, JSObject* prototype, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+// Called after putDirect reported PutPropertySlot::ExistingProperty for a
+// request header name. The first pass stores every header with a single put,
+// so by the time a duplicate is detected the earlier value has already been
+// replaced. Re-derive the value Node.js would produce for this name from the
+// raw header list: the first value wins for singleton headers, Cookie joins
+// with "; ", and everything else joins with ", ". Names that map to the same
+// property key are exactly the names that are ASCII-case-insensitively equal.
+static JSString* duplicateRequestHeaderValue(uWS::HttpRequest* request, StringView nameView, RequestHeaderKind kind, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    size_t headerCount = 0;
-    for (auto it = request->begin(); it != request->end(); ++it)
-        headerCount++;
-
-    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, prototype, std::min(headerCount, static_cast<size_t>(JSFinalObject::maxInlineCapacity)));
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    JSC::JSArray* setCookiesHeaderArray = nullptr;
-    unsigned setCookieCount = 0;
+    WTF::StringBuilder builder;
+    ASCIILiteral separator = kind == RequestHeaderKind::Cookie ? "; "_s : ", "_s;
+    bool seenAny = false;
 
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
-        StringView nameView = StringView(std::span { reinterpret_cast<const Latin1Character*>(pair.first.data()), pair.first.length() });
-        JSString* jsValue = jsStringForRequestHeaderValue(globalObject, vm, pair.second);
-        RETURN_IF_EXCEPTION(scope, nullptr);
-
-        auto [nameIdentifier, kind] = requestHeaderIdentity(vm, nameView);
-
-        if (kind == RequestHeaderKind::SetCookie) {
-            if (!setCookiesHeaderArray) {
-                setCookiesHeaderArray = constructEmptyArray(globalObject, nullptr);
-                RETURN_IF_EXCEPTION(scope, nullptr);
-                headersObject->putDirect(vm, nameIdentifier, setCookiesHeaderArray, 0);
-                RETURN_IF_EXCEPTION(scope, nullptr);
-            }
-            setCookiesHeaderArray->putDirectIndex(globalObject, setCookieCount++, jsValue);
-            RETURN_IF_EXCEPTION(scope, nullptr);
+        StringView candidateName(std::span { reinterpret_cast<const Latin1Character*>(pair.first.data()), pair.first.length() });
+        if (!equalIgnoringASCIICase(candidateName, nameView))
             continue;
-        }
-
-        std::optional<uint32_t> index = parseIndex(nameIdentifier);
-        JSValue existing;
-        if (index) {
-            existing = headersObject->getDirectIndex(globalObject, index.value());
-            RETURN_IF_EXCEPTION(scope, nullptr);
-        } else {
-            existing = headersObject->getDirect(vm, nameIdentifier);
-        }
-
-        if (existing && kind == RequestHeaderKind::Singleton)
-            continue;
-
-        JSValue valueToPut = jsValue;
-        if (existing) {
-            valueToPut = jsString(globalObject, asString(existing), jsString(vm, String(kind == RequestHeaderKind::Cookie ? "; "_s : ", "_s)), jsValue);
-            RETURN_IF_EXCEPTION(scope, nullptr);
-        }
-
-        if (index)
-            headersObject->putDirectIndex(globalObject, index.value(), valueToPut);
-        else
-            headersObject->putDirect(vm, nameIdentifier, valueToPut, 0);
-        RETURN_IF_EXCEPTION(scope, nullptr);
+        if (seenAny)
+            builder.append(separator);
+        seenAny = true;
+        builder.append(StringView(std::span { reinterpret_cast<const Latin1Character*>(pair.second.data()), pair.second.length() }));
+        if (kind == RequestHeaderKind::Singleton)
+            break;
     }
 
-    return headersObject;
+    if (builder.hasOverflowed()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return nullptr;
+    }
+    return jsString(vm, builder.toString());
 }
 
 static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
@@ -273,7 +219,6 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
     JSC::JSString* setCookiesHeaderString = nullptr;
     MarkedArgumentBuffer arrayValues;
     HTTPHeaderIdentifiers& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
-    bool sawDuplicateHeader = false;
 
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
@@ -289,20 +234,23 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
 
         Identifier nameIdentifier;
         JSString* nameString = nullptr;
+        WTF::String lowercasedName;
         // `findHTTPHeaderName` only writes `name` when it returns true, so the
         // SetCookie check must be gated on a successful lookup rather than on the
         // (otherwise indeterminate) `name` value. set-cookie is always a known
         // header name, so an unrecognized header is never set-cookie.
+        bool knownHeader = WebCore::findHTTPHeaderName(nameView, name);
         bool isSetCookie = false;
 
-        if (WebCore::findHTTPHeaderName(nameView, name)) {
+        if (knownHeader) {
             nameString = identifiers.stringFor(globalObject, name);
             nameIdentifier = identifiers.identifierFor(vm, name);
             isSetCookie = name == WebCore::HTTPHeaderName::SetCookie;
         } else {
             WTF::String wtfString = nameView.toString();
             nameString = jsString(vm, wtfString);
-            nameIdentifier = Identifier::fromString(vm, wtfString.convertToASCIILowercase());
+            lowercasedName = wtfString.convertToASCIILowercase();
+            nameIdentifier = Identifier::fromString(vm, lowercasedName);
         }
 
         if (isSetCookie) {
@@ -320,12 +268,31 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
 
         } else {
             if (std::optional<uint32_t> index = parseIndex(nameIdentifier)) [[unlikely]] {
-                sawDuplicateHeader = true;
-                headersObject->putDirectIndex(globalObject, index.value(), jsValue);
+                // Index-shaped names can't report back through PutPropertySlot,
+                // so check for an existing value directly. A numeric name is
+                // never a known header name, so duplicates always comma-join.
+                JSValue existing = headersObject->getDirectIndex(globalObject, index.value());
+                RETURN_IF_EXCEPTION(scope, void());
+                JSValue valueToPut = jsValue;
+                if (existing) {
+                    valueToPut = jsString(globalObject, asString(existing), jsString(vm, String(", "_s)), jsValue);
+                    RETURN_IF_EXCEPTION(scope, void());
+                }
+                headersObject->putDirectIndex(globalObject, index.value(), valueToPut);
             } else {
                 PutPropertySlot slot(headersObject);
                 headersObject->putDirect(vm, nameIdentifier, jsValue, 0, slot);
-                sawDuplicateHeader |= slot.type() == PutPropertySlot::ExistingProperty;
+                if (slot.type() == PutPropertySlot::ExistingProperty) [[unlikely]] {
+                    // Duplicate header name. putDirect already located the
+                    // property and replaced its value, and the slot recorded
+                    // the offset it lives at, so apply Node's merge rules in
+                    // place without looking the name up again.
+                    RequestHeaderKind kind = knownHeader ? requestHeaderKind(name) : requestHeaderKind(lowercasedName);
+                    JSString* merged = duplicateRequestHeaderValue(request, nameView, kind, globalObject, vm);
+                    RETURN_IF_EXCEPTION(scope, void());
+                    headersObject->structure()->didReplaceProperty(slot.cachedOffset());
+                    headersObject->putDirectOffset(vm, slot.cachedOffset(), merged);
+                }
             }
             RETURN_IF_EXCEPTION(scope, void());
             arrayValues.append(nameString);
@@ -334,10 +301,6 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
         }
     }
 
-    if (sawDuplicateHeader) [[unlikely]] {
-        headersObject = buildHeadersObjectHandlingDuplicates(request, globalObject->objectPrototype(), globalObject, vm);
-        RETURN_IF_EXCEPTION(scope, void());
-    }
     args.append(headersObject);
 
     JSC::JSArray* array;
@@ -472,7 +435,6 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSArray* setCookiesHeaderArray = nullptr;
     JSC::JSString* setCookiesHeaderString = nullptr;
-    bool sawDuplicateHeader = false;
 
     unsigned i = 0;
 
@@ -491,9 +453,10 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         HTTPHeaderName name;
         WTF::String nameString;
         WTF::String lowercasedNameString;
+        bool knownHeader = WebCore::findHTTPHeaderName(nameView, name);
         bool isSetCookie = false;
 
-        if (WebCore::findHTTPHeaderName(nameView, name)) {
+        if (knownHeader) {
             nameString = WTF::httpHeaderNameStringImpl(name);
             lowercasedNameString = nameString;
             isSetCookie = name == WebCore::HTTPHeaderName::SetCookie;
@@ -520,23 +483,37 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         } else {
             Identifier nameIdentifier = Identifier::fromString(vm, lowercasedNameString);
             if (std::optional<uint32_t> index = parseIndex(nameIdentifier)) [[unlikely]] {
-                sawDuplicateHeader = true;
-                headersObject->putDirectIndex(globalObject, index.value(), jsValue);
+                // Index-shaped names can't report back through PutPropertySlot,
+                // so check for an existing value directly. A numeric name is
+                // never a known header name, so duplicates always comma-join.
+                JSValue existing = headersObject->getDirectIndex(globalObject, index.value());
+                RETURN_IF_EXCEPTION(scope, {});
+                JSValue valueToPut = jsValue;
+                if (existing) {
+                    valueToPut = jsString(globalObject, asString(existing), jsString(vm, String(", "_s)), jsValue);
+                    RETURN_IF_EXCEPTION(scope, {});
+                }
+                headersObject->putDirectIndex(globalObject, index.value(), valueToPut);
             } else {
                 PutPropertySlot slot(headersObject);
                 headersObject->putDirect(vm, nameIdentifier, jsValue, 0, slot);
-                sawDuplicateHeader |= slot.type() == PutPropertySlot::ExistingProperty;
+                if (slot.type() == PutPropertySlot::ExistingProperty) [[unlikely]] {
+                    // Duplicate header name. putDirect already located the
+                    // property and replaced its value, and the slot recorded
+                    // the offset it lives at, so apply Node's merge rules in
+                    // place without looking the name up again.
+                    RequestHeaderKind kind = knownHeader ? requestHeaderKind(name) : requestHeaderKind(lowercasedNameString);
+                    JSString* merged = duplicateRequestHeaderValue(request, nameView, kind, globalObject, vm);
+                    RETURN_IF_EXCEPTION(scope, {});
+                    headersObject->structure()->didReplaceProperty(slot.cachedOffset());
+                    headersObject->putDirectOffset(vm, slot.cachedOffset(), merged);
+                }
             }
             RETURN_IF_EXCEPTION(scope, {});
             array->putDirectIndex(globalObject, i++, jsString(vm, nameString));
             array->putDirectIndex(globalObject, i++, jsValue);
             RETURN_IF_EXCEPTION(scope, {});
         }
-    }
-
-    if (sawDuplicateHeader) [[unlikely]] {
-        headersObject = buildHeadersObjectHandlingDuplicates(request, prototype, globalObject, vm);
-        RETURN_IF_EXCEPTION(scope, {});
     }
 
     tuple->putInternalField(vm, 0, headersObject);

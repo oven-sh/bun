@@ -1691,6 +1691,69 @@ describe("HTTP Server Security Tests - Advanced", () => {
       // rawHeaders still reports every received header.
       expect(headers.rawHostCount).toBe(2);
     });
+
+    test("duplicate request header edge cases follow Node.js precedence rules", async () => {
+      // Expected values verified against Node.js v24.
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("request", (req, res) => {
+        try {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("ok");
+          resolve({
+            xTriple: req.headers["x-triple"],
+            xMixed: req.headers["x-mixed"],
+            xEmpty: req.headers["x-empty"],
+            server: req.headers.server,
+            retryAfter: req.headers["retry-after"],
+            numeric: req.headers["123"],
+            rawHeaderCount: req.rawHeaders.length,
+          });
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      const msg = [
+        "GET / HTTP/1.1",
+        "Host: localhost",
+        "X-Triple: one",
+        "X-Triple: two",
+        "X-Triple: three",
+        "x-MIXED: a",
+        "X-Mixed: b",
+        "X-Empty:",
+        "X-Empty: b",
+        "Server: apache",
+        "Server: nginx",
+        "Retry-After: 10",
+        "Retry-After: 20",
+        "123: a",
+        "123: b",
+        "Connection: close",
+        "",
+        "",
+      ].join("\r\n");
+
+      const response = await sendRequest(msg);
+      expect(response).toInclude("200");
+      const headers: any = await promise;
+      expect(headers).toEqual({
+        // Three or more occurrences are all joined, in order.
+        xTriple: "one, two, three",
+        // Names that differ only by case are the same header.
+        xMixed: "a, b",
+        // An empty first value still participates in the join.
+        xEmpty: ", b",
+        // Singleton headers keep the first value, including the ones WebCore
+        // has no HTTPHeaderName for (server, retry-after).
+        server: "apache",
+        retryAfter: "10",
+        // A header whose name parses as an array index joins like any other.
+        numeric: "a, b",
+        // rawHeaders still reports every received header (15 names + values).
+        rawHeaderCount: 30,
+      });
+    });
   });
 
   describe("HTTP Protocol Violations", () => {

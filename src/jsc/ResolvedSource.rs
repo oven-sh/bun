@@ -45,6 +45,13 @@ pub struct ResolvedSource {
     // -- Bytecode cache fields --
     pub bytecode_cache: *mut u8,
     pub bytecode_cache_size: usize,
+    /// Whether `bytecode_cache` is a heap allocation (`heap::into_raw`'d
+    /// `Box<[u8]>`) that the C++ `JSC::CachedBytecode` destructor must free.
+    /// `false` when the bytes point into the standalone executable's embedded
+    /// section (`bun build --compile`). Deliberately separate from
+    /// `source_code_needs_deref`, which C++ mutates while consuming the
+    /// source string.
+    pub bytecode_cache_needs_deref: bool,
     pub module_info: *mut c_void,
     /// The file path used as the source origin for bytecode cache validation.
     /// JSC validates bytecode by checking if the origin URL matches exactly what
@@ -68,6 +75,7 @@ impl Default for ResolvedSource {
             already_bundled: false,
             bytecode_cache: core::ptr::null_mut(),
             bytecode_cache_size: 0,
+            bytecode_cache_needs_deref: false,
             module_info: core::ptr::null_mut(),
             bytecode_origin_path: BunString::empty(),
         }
@@ -138,6 +146,19 @@ impl Drop for OwnedResolvedSource {
         // must not deref either).
         if self.0.source_code_needs_deref {
             self.0.source_code.deref();
+        }
+        if self.0.bytecode_cache_needs_deref && !self.0.bytecode_cache.is_null() {
+            // SAFETY: `bytecode_cache_needs_deref` marks the pointer as the
+            // `heap::into_raw`'d `Box<[u8]>` built on the runtime
+            // `// @bun @bytecode` path. `Drop` only runs when `into_ffi()` was
+            // never called, so Rust is still the sole owner of the buffer
+            // (the C++ `CachedBytecode` destructor frees it otherwise).
+            unsafe {
+                drop(bun_core::heap::take(core::ptr::slice_from_raw_parts_mut(
+                    self.0.bytecode_cache,
+                    self.0.bytecode_cache_size,
+                )));
+            }
         }
         self.0.specifier.deref();
         self.0.source_url.deref();

@@ -2732,6 +2732,9 @@ fn transpile_source_code_inner(
                         already_bundled: true,
                         bytecode_cache,
                         bytecode_cache_size,
+                        // C++ owns the buffer (heap::into_raw above); the
+                        // CachedBytecode destructor frees it.
+                        bytecode_cache_needs_deref: !bytecode_cache.is_null(),
                         is_commonjs_module,
                         ..Default::default()
                     }));

@@ -1715,6 +1715,38 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // for the server's lifetime); single-threaded JS context, no aliasing `&mut`.
         let vm = unsafe { &mut *self.vm_mut() };
 
+        if vm.is_shutting_down() {
+            // The VM is shutting down (`is_shutting_down` is set in `on_exit`,
+            // before `Zig__GlobalObject__destructOnExit`'s final GC /
+            // `lastChanceToFinalize()` — typically we get here from a server
+            // wrapper finalizer during that last collection): the event loop
+            // will never tick again, so the App.close + deinit task pair below would
+            // be freed *unrun* by `EventLoop::deinit()` and the entire server
+            // graph (config, user_routes, HTMLBundle routes, …) would leak.
+            // Run both steps synchronously instead, preserving the
+            // close-before-destroy ordering (`~TemplatedApp` requires `close()`
+            // to have run — destroying without closing leaks the listen-socket
+            // polls). The re-entrancy hazard the task split guards against
+            // (App.close firing handlers mid-GC) is moot here: this branch is
+            // only reachable with no listener, no pending requests, and no
+            // active websockets, and `Listener` finalizers already
+            // `closeAll()` synchronously on this same path (their closed
+            // sockets are drained right after `destructOnExit`).
+            if !self.flags.contains(ServerFlags::TERMINATED) {
+                self.flags.insert(ServerFlags::TERMINATED);
+                if let Some(app) = self.app {
+                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                    bun_opaque::opaque_deref_mut(app).close();
+                }
+            }
+            // SAFETY: `self` is the unique heap server pointer (its JS wrapper
+            // has been finalized — `schedule_deinit` is only reached with
+            // `js_value == Finalized`). `deinit` frees it; `self` must not be
+            // touched after this call, so return immediately.
+            Self::deinit(std::ptr::from_mut::<Self>(self));
+            return;
+        }
+
         if !self.flags.contains(ServerFlags::TERMINATED) {
             // App.close can cause finalizers to run.
             // scheduleDeinit can be called inside a finalizer.

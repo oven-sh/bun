@@ -124,11 +124,20 @@ Ref<SourceProvider> SourceProvider::create(
             const auto destructorNoOp = [](const void* ptr) {
                 // no-op, for bun build --compile.
             };
-            const auto destructor = resolvedSource.needsDeref ? destructorPtr : destructorNoOp;
+            // NOTE: do not gate this on `needsDeref` — that flag tracks the
+            // `source_code` string +1 and is cleared above (and mutated by
+            // `JSCommonJSModule::evaluate`'s wrapper-override path) before we
+            // get here, which both leaked runtime `// @bun @bytecode` buffers
+            // and could free embedded standalone-binary bytecode.
+            const auto destructor = resolvedSource.bytecode_cache_needs_deref ? destructorPtr : destructorNoOp;
 
             auto origin = getSourceOrigin();
 
             Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(resolvedSource.bytecode_cache, resolvedSource.bytecode_cache_size), destructor, {});
+            // The CachedBytecode now owns the buffer; clear the ownership
+            // marker (mirroring the `needsDeref` clearing above) so the copy
+            // stored in m_resolvedSource cannot be misread as still owning it.
+            resolvedSource.bytecode_cache_needs_deref = false;
             auto provider = adoptRef(*new SourceProvider(
                 globalObject->bunVM(),
                 resolvedSource,

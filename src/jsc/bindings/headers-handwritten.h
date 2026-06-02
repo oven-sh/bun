@@ -130,6 +130,10 @@ typedef struct ResolvedSource {
     // -- Bytecode cache fields --
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
+    // Whether `bytecode_cache` is heap-owned (Rust `Box<[u8]>` via
+    // `heap::into_raw`) and must be freed by the CachedBytecode destructor.
+    // False for `bun build --compile`, where it points into the executable.
+    bool bytecode_cache_needs_deref;
     void* module_info;
     // File path used as source origin for bytecode cache validation.
     // Converted to file:// URL. If empty, origin is derived from source_url.

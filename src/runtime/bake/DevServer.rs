@@ -1208,6 +1208,12 @@ impl Drop for DevServer {
                     // SAFETY: stored ref from `init_from_any_blob`; no live borrow.
                     unsafe { StaticRoute::deref_(cached.as_ptr()) };
                 }
+                // Zig `RouteBundle.deinit`: `html.html_bundle.deref()` — release
+                // the intrusive ref taken by `get_or_put_route_bundle` when the
+                // bundle was stored. `html_bundle` is a raw `*mut`, so dropping
+                // the Vec would otherwise leak the route (and its HTMLBundle).
+                // SAFETY: the slot holds a counted ref taken at store time.
+                unsafe { bun_ptr::RefCount::<HTMLBundleRoute>::deref(html.html_bundle) };
             }
         }
 

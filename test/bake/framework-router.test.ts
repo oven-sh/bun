@@ -1,6 +1,6 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
 import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
@@ -132,4 +132,69 @@ test("discovers from filesystem paths", () => {
       },
     ],
   });
+});
+
+// Regression: printing a route syntax error crashed the dev server instead of
+// reporting it. The 65+ parameter check recorded its message without a cursor
+// position, leaving `TinyLog.cursor_at` at the `u32::MAX` sentinel, and
+// `TinyLog.print` sliced `rel_path[cursor_at..]` with it.
+// The 65-directory fixture exceeds Windows' MAX_PATH; the code under test is
+// platform-independent.
+test.skipIf(isWindows)("dev server reports route syntax errors without crashing", async () => {
+  const manyParams = Array.from({ length: 65 }, (_, i) => `[p${i}]`).join("/");
+  const dir = tempDirWithFiles("fsr-syntax-error", {
+    "server.ts": `
+      export function render(req, meta) {
+        return meta.pageModule.default(req, meta);
+      }
+    `,
+    "main.ts": `
+      export default {
+        port: 0,
+        development: true,
+        app: {
+          framework: {
+            fileSystemRouterTypes: [
+              { root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" },
+            ],
+          },
+        },
+      };
+    `,
+    "routes/index.tsx": `export default () => new Response("ok");`,
+    "routes/[bad.tsx": `export default () => new Response("bad");`,
+    [`routes/${manyParams}/index.tsx`]: `export default () => new Response("deep");`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    cwd: dir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  // The route scan runs during server startup, so "Started development
+  // server" only prints after both syntax errors were reported. Without the
+  // fix the process dies while printing the 65-param error.
+  let stdout = "";
+  let url: string | undefined;
+  const decoder = new TextDecoder();
+  for await (const chunk of proc.stdout) {
+    stdout += decoder.decode(chunk, { stream: true });
+    url = stdout.match(/Started development server: (http:\/\/\S+)/)?.[1];
+    if (url) break;
+  }
+  expect(url).toBeDefined();
+
+  // The server must still respond after reporting the errors.
+  const res = await fetch(url!);
+  expect(await res.text()).toBe("ok");
+
+  proc.kill();
+  const stderr = await proc.stderr.text();
+  await proc.exited;
+  expect(stderr).toContain('"routes/[bad.tsx" is not a valid route');
+  expect(stderr).toContain('Missing "]" to match this route parameter');
+  expect(stderr).toContain("Pattern cannot have more than 64 param");
 });

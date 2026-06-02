@@ -4503,13 +4503,24 @@ pub(super) fn finalize_bundle(
         dev.incremental_result.html_routes_soft_affected.clear();
         ctx.gts.clear();
 
-        for index in &dev.incremental_result.client_components_affected {
+        // `trace_dependencies` appends to `client_components_affected` when it
+        // visits another client component boundary, so iterating a slice of the
+        // Vec here is iterator invalidation: the push reallocates the buffer and
+        // the stale iterator walks freed memory (whose bytes are promptly reused
+        // by `framework_routes_affected` pushes), producing garbage file indexes
+        // that crash `trace_dependencies` with an index-out-of-bounds. Iterate by
+        // index against the live Vec instead — entries appended mid-loop already
+        // had their `gts` bit set when pushed, so re-visiting them is a no-op.
+        let mut i = 0;
+        while i < dev.incremental_result.client_components_affected.len() {
+            let index = dev.incremental_result.client_components_affected[i];
             dev.server_graph.trace_dependencies(
-                *index,
+                index,
                 ctx.gts,
                 incremental_graph::TraceDependencyGoal::NoStop,
-                *index,
+                index,
             )?;
+            i += 1;
         }
 
         for request in &dev.incremental_result.framework_routes_affected {

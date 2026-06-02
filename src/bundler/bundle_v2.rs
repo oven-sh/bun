@@ -6826,19 +6826,21 @@ pub mod bv2_impl {
                         .text;
                     let loader = this.graph.input_files.items_loader()[source_index as usize];
                     if this.should_add_watcher(source_path) {
-                        // const generic `CLONE_FILE_PATH = isWindows`
-                        // matches `cfg!(windows)` at compile time.
-                        let _ = this
-                            .bun_watcher_mut()
-                            .unwrap()
-                            .add_file::<{ cfg!(windows) }>(
-                                parse_result.watcher_data.fd,
-                                source_path,
-                                bun_wyhash::hash(source_path) as u32,
-                                bun_watcher::Loader(loader as u8),
-                                parse_result.watcher_data.dir_fd,
-                                None,
-                            );
+                        // CLONE_FILE_PATH=true: `source_path` is not guaranteed to
+                        // be process-lifetime storage — `dupe_alloc` allocates the
+                        // disjoint `text\0pretty\0` case (e.g. every `ssr:`-prefixed
+                        // SSR-graph path) from the per-bundle arena, which is freed
+                        // when the bundle completes. The watchlist outlives the
+                        // bundle, so it must own its copy of the path (the watcher
+                        // dedups by hash, so this is one copy per watched file).
+                        let _ = this.bun_watcher_mut().unwrap().add_file::<true>(
+                            parse_result.watcher_data.fd,
+                            source_path,
+                            bun_wyhash::hash(source_path) as u32,
+                            bun_watcher::Loader(loader as u8),
+                            parse_result.watcher_data.dir_fd,
+                            None,
+                        );
                     }
                 }
             }

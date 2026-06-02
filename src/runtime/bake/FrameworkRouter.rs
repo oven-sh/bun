@@ -1385,7 +1385,10 @@ impl TinyLog {
     }
 
     pub fn print(&self, rel_path: &[u8]) {
-        let cursor_at = self.cursor_at as usize;
+        // `cursor_at` may still be the `empty()` sentinel (`u32::MAX`) when the
+        // producer recorded a message without a cursor position. Clamp to the
+        // path length so the slicing below cannot go out of bounds.
+        let cursor_at = (self.cursor_at as usize).min(rel_path.len());
         let cursor_len = self.cursor_len as usize;
         let after = &rel_path[cursor_at..];
         Output::err_generic(
@@ -1639,8 +1642,13 @@ impl FrameworkRouter {
                                 .parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
                         let parsed = match parse_result {
                             Err(_) => {
-                                log.cursor_at +=
-                                    u32::try_from(abs_root_len - root_len).expect("int cast");
+                                // Saturating: error paths that never called
+                                // `log.fail()` (e.g. OOM) leave `cursor_at` at
+                                // the `u32::MAX` sentinel; keep it there instead
+                                // of wrapping to a bogus position.
+                                log.cursor_at = log.cursor_at.saturating_add(
+                                    u32::try_from(abs_root_len - root_len).expect("int cast"),
+                                );
                                 ctx.on_router_syntax_error(full_rel_path, log)?;
                                 arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                                 continue 'outer;
@@ -1673,7 +1681,16 @@ impl FrameworkRouter {
                         }
 
                         if param_count > 64 {
-                            log.write(format_args!("Pattern cannot have more than 64 param"));
+                            // Highlight the whole path: unlike `fail()` callers
+                            // inside `parse`, there is no narrower span to point
+                            // at. Leaving the cursor unset (the `empty()`
+                            // sentinel) previously made `TinyLog::print` slice
+                            // `rel_path[u32::MAX..]` and crash the dev server.
+                            let _ = log.fail(
+                                format_args!("Pattern cannot have more than 64 param"),
+                                0,
+                                full_rel_path.len(),
+                            );
                             ctx.on_router_syntax_error(full_rel_path, log)?;
                             arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                             continue 'outer;

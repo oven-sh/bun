@@ -914,6 +914,30 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 }
+
+/**
+ * Whether `docker build` can build the `dockerhub/` images. Those Dockerfiles
+ * need BuildKit (`RUN --mount`, heredocs), and the build tests pass
+ * `--progress=plain` — both of which the legacy builder rejects. Docker only
+ * uses BuildKit when the buildx component is installed; podman's Buildah
+ * supports the same syntax natively.
+ */
+export function isDockerBuildEnabled(): boolean {
+  if (!isDockerEnabled()) {
+    return false;
+  }
+  const dockerCLI = dockerExe()!;
+  if (dockerCLI.includes("podman")) {
+    return true;
+  }
+  try {
+    execSync(`"${dockerCLI}" buildx version`, { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export async function waitForPort(port: number, timeout: number = 60_000): Promise<void> {
   let deadline = Date.now() + Math.max(1, timeout);
   let error: unknown;

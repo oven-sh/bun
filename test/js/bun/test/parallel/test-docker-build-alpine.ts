@@ -1,8 +1,8 @@
 import { expect } from "bun:test";
-import { bunEnv, dockerExe, isDockerEnabled } from "harness";
+import { bunEnv, dockerExe, isDockerBuildEnabled } from "harness";
 import { resolve } from "path";
 
-if (isDockerEnabled()) {
+if (isDockerBuildEnabled()) {
   const docker = dockerExe()!;
   const cwd = resolve(import.meta.dir, "..", "..", "..", "..", "..", "dockerhub", "alpine");
   const proc = Bun.spawn({

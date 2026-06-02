@@ -89,6 +89,13 @@ const NEHALEM_ALLOWED: &[CpuidFeature] = &[
     // emits them without explicit shadow-stack enablement, but they're
     // not NOP-safe.
     CpuidFeature::CET_IBT,
+    // CLDEMOTE (cache-line demote hint, NP 0F 1C /0) sits in the reserved
+    // hint-NOP space (0F 18-1F): processors that don't enumerate
+    // CPUID.(EAX=7,ECX=0):ECX[25] execute it as a NOP, so it can't fault on
+    // Nehalem. Newer Windows UCRT builds emit it unguarded in str* routines
+    // (observed: strpbrk), which is safe for exactly that reason — the SDE
+    // Nehalem emulator phase runs those bytes as NOPs and passes.
+    CpuidFeature::CLDEMOTE,
 ];
 
 /// Instructions that iced classifies as post-Nehalem but are actually safe

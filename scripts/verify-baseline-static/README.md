@@ -78,6 +78,9 @@ instead of stack-frame setup, it's a table. Allowlist the symbol.
 **x64:**
 
 - **ENDBR64 / CET_IBT** — NOP-compatible on pre-CET CPUs by design.
+- **CLDEMOTE** — reserved hint-NOP space (`0F 1C /0`); executes as a NOP on
+  CPUs that don't enumerate it. Newer Windows UCRTs emit it unguarded in
+  `str*` routines (observed: `strpbrk`).
 - **TZCNT** — LLVM preloads the destination with operand-width so the
   REP-BSF fallback on pre-BMI1 CPUs gives identical results. (LZCNT is
   **not** ignored: `BSR` and `LZCNT` produce different results, and LLVM

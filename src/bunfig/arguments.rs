@@ -234,11 +234,11 @@ pub fn load_system_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), bun_c
                 if log.has_any() {
                     let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                 }
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "aborted parsing auto-discovered system bunfig at \"{}\" ({}); keys before the error may have been applied",
                     BStr::new(path.as_bytes()),
                     err.name(),
-                ));
+                );
                 log.reset();
                 return Ok(());
             }
@@ -246,6 +246,7 @@ pub fn load_system_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), bun_c
 
         // TOML lexer errors reach ctx.log without propagating as Zig/Rust
         // errors. Check for that separately.
+        // SAFETY: process-global Log.
         let log = unsafe { &mut *log_ptr };
         if log.errors > errors_before {
             if result.is_explicit {
@@ -257,10 +258,10 @@ pub fn load_system_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), bun_c
                 Global::exit(1);
             }
             let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "aborted parsing auto-discovered system bunfig at \"{}\"; keys before the error may have been applied",
                 BStr::new(path.as_bytes()),
-            ));
+            );
             log.reset();
         }
     }

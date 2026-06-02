@@ -13,12 +13,14 @@
 //      never recognized — a spec-compliant keep-alive upstream that doesn't
 //      promptly FIN would deadlock the stream.
 //
-// Root cause: `handleShortRead` stashed partial envelope bytes into
-// `state.response_message_buffer` and `handleOnDataHeaders` re-entered from
-// `ProxyTunnel.onData` with `response_stage == .proxy_headers`, appending
-// decrypted upstream bytes onto the stale envelope and re-parsing it as the
-// user-facing response. The fix deinits the buffer in `startProxyHandshake`
-// after the TLS BIO has copied any trailing payload.
+// Root cause: `handle_short_read` stashed partial envelope bytes into
+// `state.response_message_buffer` and `handle_on_data_headers` re-entered
+// from `ProxyTunnel`'s `on_data` with `response_stage == proxy_headers`,
+// appending decrypted upstream bytes onto the stale envelope and re-parsing
+// it as the user-facing response. The fix (`src/http/lib.rs`,
+// `start_proxy_handshake`) `std::mem::take`s the buffer into a local before
+// `ProxyTunnel::start` and drops it after the TLS BIO has copied any
+// trailing payload.
 //
 // A CONNECT response that arrives in one TCP read does NOT trigger the bug —
 // the buffer stays empty on the first parse. This test forces two separate

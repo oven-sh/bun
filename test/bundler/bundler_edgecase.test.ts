@@ -2572,8 +2572,8 @@ describe("bundler", () => {
     },
   });
   // Many imports resolving through the same re-export chain from different
-  // entry distances: later resolutions reuse the memoized walk of the first,
-  // including its accumulated re-export dependency list.
+  // entry distances: later resolutions reuse the bindings written while the
+  // first import's chain was walked, including the re-export dependency list.
   itBundled("edgecase/SharedReExportChainManyImporters", {
     files: {
       "/entry.js": /* js */ `

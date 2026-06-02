@@ -745,7 +745,10 @@ pub fn scan_imports_and_exports(
                         re_exports_ptr = bun_ptr::BackRef::new(import.re_exports.slice());
                     }
 
-                    if let Some(named_import) = col_ref!(named_imports)[id].get(&r#ref) {
+                    {
+                        // The key came from this map's own `keys()`, so read
+                        // the value by the same index instead of re-hashing.
+                        let named_import = &col_ref!(named_imports)[id].values()[ni_i];
                         // `local_parts_with_uses` and the `top_level_symbol_to_parts`
                         // result are both arena-backed AstVec slices that this loop
                         // body never resizes; capture them as BackRefs (same

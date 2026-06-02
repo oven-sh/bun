@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import fs from "node:fs";
 import { join } from "node:path";
 
@@ -54,7 +54,8 @@ test("Bun.write(Bun.file(path), s3file) truncates a larger existing destination 
     },
   });
 
-  const dest = join(tmpdirSync(), "s3-download-truncate.bin");
+  using dir = tempDir("s3-download-truncate", {});
+  const dest = join(String(dir), "s3-download-truncate.bin");
 
   // Pre-existing destination that is 4x larger than the S3 object.
   fs.writeFileSync(dest, Buffer.alloc(4 * OBJECT_SIZE, 0xee));

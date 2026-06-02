@@ -181,9 +181,13 @@ extern "C" fn stop_all_for_exit_hook() {
 }
 
 /// Returns `false` if the process is already exiting, in which case the caller
-/// must not spawn a watcher thread. The `is_exiting` check runs under the same
-/// lock `stop_all_for_exit` holds, so a watcher that wins the register race is
-/// already in the list when the stop sweep iterates.
+/// must not spawn a watcher thread — it would race the exit-time teardown.
+/// Checks both exit predicates (same reason as the teardown guard in
+/// `thread_main`): `STOPPING_FOR_EXIT` covers `VirtualMachine::global_exit`
+/// (which calls `stop_all_for_exit` before `Global::exit` sets `IS_EXITING`),
+/// and `is_exiting()` covers a plain `Global::exit`. The check runs under the
+/// same lock `stop_all_for_exit` holds, so a watcher that wins the register
+/// race is already in the list when the stop sweep iterates.
 fn register_active(this: *mut Watcher) -> bool {
     // Install the `Global::exit` hook on first use. `add_early_exit_callback`
     // dedups, but a `Once` keeps the lock traffic off the common path.
@@ -191,7 +195,8 @@ fn register_active(this: *mut Watcher) -> bool {
     HOOK.call_once(|| bun_core::Global::add_early_exit_callback(stop_all_for_exit_hook));
 
     let mut list = ACTIVE_WATCHERS.lock();
-    if bun_core::Global::is_exiting() {
+    if STOPPING_FOR_EXIT.load(std::sync::atomic::Ordering::Acquire) || bun_core::Global::is_exiting()
+    {
         return false;
     }
     list.push(this as usize);

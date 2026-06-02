@@ -120,12 +120,12 @@ class DockerComposeHelper {
   }
 
   private async doUp(service: ServiceName): Promise<void> {
-    // Build the service if needed (for services like mysql_tls, postgres_tls that need building)
-    if (service === "mysql_tls" || service === "redis_unified" || service === "postgres_tls") {
-      const buildResult = await this.exec(["build", service]);
-      if (buildResult.exitCode !== 0) {
-        throw new Error(`Failed to build service ${service}: ${buildResult.stderr}`);
-      }
+    // Pre-build the service (a no-op for image-only services) so build time
+    // doesn't eat into the `up --wait` timeout below. CI pre-bakes everything
+    // via buildServices(); this covers local dev where that wasn't run.
+    const buildResult = await this.exec(["build", service]);
+    if (buildResult.exitCode !== 0) {
+      throw new Error(`Failed to build service ${service}: ${buildResult.stderr}`);
     }
 
     // Start the service and wait for it to be healthy.
@@ -404,10 +404,10 @@ class DockerComposeHelper {
    * Build all services that need building - useful for CI
    */
   async buildServices(): Promise<void> {
-    // One `compose build` with all services — buildkit parallelizes them.
-    const servicesToBuild = ["postgres_tls", "mysql_tls", "redis_unified"];
-    console.log(`Building ${servicesToBuild.join(", ")}...`);
-    const { exitCode, stderr } = await this.exec(["build", ...servicesToBuild]);
+    // Bare `compose build` builds every service that has a `build:` section,
+    // so there's no hardcoded list to keep in sync as services are converted.
+    console.log("Building all services with a build section...");
+    const { exitCode, stderr } = await this.exec(["build"]);
     if (exitCode !== 0) {
       throw new Error(`Failed to build services: ${stderr}`);
     }

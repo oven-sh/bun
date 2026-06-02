@@ -69,7 +69,6 @@ export function generateBuildOptionsRs(cfg: Config): string {
     "pub const ENABLE_TINYCC: bool = !cfg!(any(",
     `    all(windows, target_arch = "aarch64"),`,
     `    target_os = "android",`,
-    `    target_os = "freebsd",`,
     "));",
     "",
   ];

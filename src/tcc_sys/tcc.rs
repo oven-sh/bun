@@ -14,8 +14,8 @@ pub type TCCErrorFunc = Option<unsafe extern "C" fn(opaque: *mut c_void, msg: *c
 pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char);
 
 // `libtcc.a` is only built where `cfg.tinycc` is true (`scripts/build/config.ts`):
-// not Windows/aarch64 (TinyCC has no aarch64-pe-coff backend), not Android, not
-// FreeBSD (the vendored fork doesn't support those targets). On those platforms
+// not Windows/aarch64 (TinyCC has no aarch64-pe-coff backend), not Android.
+// On those platforms
 // these `extern "C"` decls would be undefined at link. Zig's `comptime
 // !Environment.enable_tinycc` early-returns in `ffi.zig` keep the *Zig*
 // callers off the analysis graph, so the Zig externs never get emitted; Rust
@@ -31,13 +31,13 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
 // Keep this predicate in sync with `cfg.tinycc` in `scripts/build/config.ts`.
 macro_rules! tcc_externs {
     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
-        #[cfg(not(any(target_os = "android", target_os = "freebsd", all(windows, target_arch = "aarch64"))))]
+        #[cfg(not(any(target_os = "android", all(windows, target_arch = "aarch64"))))]
         // TODO(port): move to tcc_sys (already in *_sys crate — verify crate layout)
         unsafe extern "C" {
             $($(#[$attr])* fn $name($($arg: $ty),*) $(-> $ret)?;)*
         }
         $(
-            #[cfg(any(target_os = "android", target_os = "freebsd", all(windows, target_arch = "aarch64")))]
+            #[cfg(any(target_os = "android", all(windows, target_arch = "aarch64")))]
             #[allow(unused_variables, clippy::missing_safety_doc)]
             unsafe extern "C" fn $name($($arg: $ty),*) $(-> $ret)? {
                 unreachable!(concat!(

@@ -853,10 +853,9 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // failure is loud ("cannot find -l:libatomic.a") and the fix is obvious.
   const staticLibatomic = partial.staticLibatomic ?? true;
 
-  // TinyCC: off on Windows ARM64 (not supported), Android (no upstream
-  // bionic support; FFI cc() falls back to dlopen-only), and FreeBSD
-  // (oven-sh/tinycc has no FreeBSD target).
-  const tinycc = partial.tinycc ?? !((windows && arm64) || abi === "android" || freebsd);
+  // TinyCC: off on Windows ARM64 (not supported) and Android (no upstream
+  // bionic support; FFI cc() falls back to dlopen-only).
+  const tinycc = partial.tinycc ?? !((windows && arm64) || abi === "android");
 
   const valgrind = partial.valgrind ?? false;
   const fuzzilli = partial.fuzzilli ?? false;

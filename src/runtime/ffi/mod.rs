@@ -122,7 +122,6 @@ mod TCC {
     // TODO(port): move to <area>_sys
     #[cfg(not(any(
         target_os = "android",
-        target_os = "freebsd",
         all(windows, target_arch = "aarch64")
     )))]
     unsafe extern "C" {
@@ -130,7 +129,6 @@ mod TCC {
     }
     #[cfg(any(
         target_os = "android",
-        target_os = "freebsd",
         all(windows, target_arch = "aarch64")
     ))]
     pub(super) unsafe fn tcc_delete(_s: *mut State) {

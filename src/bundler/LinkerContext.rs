@@ -171,15 +171,6 @@ pub struct LinkerContext<'a> {
     pub resolver: Option<bun_ptr::ParentRef<Resolver<'a>>>,
     pub cycle_detector: Vec<ImportTracker>,
 
-    /// Memoized import-resolution walks; see [`MemoizedMatchImport`]. Only
-    /// walks that end in an unambiguous `Found` terminal or a cycle — and
-    /// that emitted no diagnostics — are recorded, so replaying a hit is
-    /// observationally identical to re-walking the chain.
-    pub(crate) import_memo: HashMap<(u32, Ref), MemoizedMatchImport>,
-    /// One buffer per memoized walk, holding the `re_exports` dependencies it
-    /// accumulated; `MemoizedMatchImport.deps_index` points in here.
-    pub(crate) import_memo_re_exports: Vec<bun_alloc::AstVec<Dependency>>,
-
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     pub cjs_runtime_ref: Ref,
     pub esm_runtime_ref: Ref,
@@ -234,8 +225,6 @@ impl<'a> Default for LinkerContext<'a> {
             log: core::ptr::null_mut(),
             resolver: None,
             cycle_detector: Vec::new(),
-            import_memo: HashMap::new(),
-            import_memo_re_exports: Vec::new(),
             cjs_runtime_ref: Ref::NONE,
             esm_runtime_ref: Ref::NONE,
             unbound_module_ref: Ref::NONE,
@@ -530,8 +519,6 @@ impl<'a> LinkerContext<'a> {
             bun_ptr::ParentRef::from_raw(core::ptr::from_ref(&transpiler.resolver).cast())
         });
         self.cycle_detector = Vec::new();
-        self.import_memo = HashMap::new();
-        self.import_memo_re_exports = Vec::new();
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
         // caller-owned slice into the linker arena.
@@ -1607,28 +1594,6 @@ pub struct MatchImport {
     other_source_index: u32,
     other_name_loc: Loc, // Optional, goes with otherSourceIndex, ignore if zero,
     r#ref: Ref,
-}
-
-/// A completed `match_import_with_export` walk, keyed by the tracker it
-/// started from. Import chains have a single successor per tracker, so every
-/// tracker visited by a completed walk resolves to the same terminal; caching
-/// the outcome makes each `(source_index, import_ref)` pair get walked at
-/// most once per link instead of once per import that resolves through it.
-pub(crate) struct MemoizedMatchImport {
-    result: MatchImport,
-    /// The `re_exports` dependencies accumulated from this tracker to the end
-    /// of the chain — exactly what a fresh walk starting here would produce —
-    /// are `import_memo_re_exports[deps_index][deps_start..]`. The buffer is
-    /// recorded once per walk and shared by all of that walk's memo entries,
-    /// so the memo stays linear in the number of trackers walked.
-    /// `NO_DEPS` means the suffix is empty (always the case for `Cycle`
-    /// results, whose dependencies the callers discard).
-    deps_index: u32,
-    deps_start: u32,
-}
-
-impl MemoizedMatchImport {
-    const NO_DEPS: u32 = u32::MAX;
 }
 
 #[derive(Default, Clone, Copy, PartialEq, Eq)]
@@ -3541,19 +3506,19 @@ impl<'a> LinkerContext<'a> {
         let mut cycle_set: HashMap<ImportTracker, ()> = HashMap::new();
 
         // Trackers visited by this walk beyond the first, with the length of
-        // `re_exports` on arrival — each one's memo entry is `result` plus the
+        // `re_exports` on arrival — each one's binding is `result` plus the
         // dependencies appended from that point on. Single-step walks (the
         // overwhelmingly common case) never allocate this.
         let mut visited: Vec<(ImportTracker, usize)> = Vec::new();
-        // Whether this walk's outcome may be recorded in `import_memo`: set
-        // only at the two diagnostic-free terminals (an unambiguous `Found`
-        // and a detected cycle). Every other terminal either logs, mutates
-        // symbol state, or produces a result that depends on how the walk
-        // arrived, so replaying it for a different importer would not be
-        // equivalent to re-walking.
-        let mut memoizable = false;
+        // Whether the imports this walk passed through may be bound early
+        // (written into their files' `imports_to_bind`): set only when the
+        // walk ends at a diagnostic-free unambiguous `Found` terminal. Every
+        // other terminal either logs, mutates symbol state, or produces a
+        // result that depends on how the walk arrived, so pre-binding it for
+        // a different importer would not be equivalent to re-walking.
+        let mut bindable = false;
         // Walks that pass through `export * from` ambiguity recurse and
-        // compare the results afterwards; keep those out of the memo.
+        // compare the results afterwards; those never bind early.
         let mut saw_ambiguity = false;
 
         'loop_: loop {
@@ -3581,7 +3546,6 @@ impl<'a> LinkerContext<'a> {
                     kind: MatchImportKind::Cycle,
                     ..Default::default()
                 };
-                memoizable = true;
                 break 'loop_;
             }
 
@@ -3590,22 +3554,30 @@ impl<'a> LinkerContext<'a> {
                 break;
             }
 
-            // A previous walk already resolved the rest of this chain; its
-            // recorded result and dependency suffix are exactly what the
-            // remaining iterations would compute (see `MemoizedMatchImport`).
-            // This runs after the cycle check so a chain that feeds into an
-            // already-detected cycle still reports `Cycle`, via the memo.
-            if !self.import_memo.is_empty()
-                && let Some(memo) = self
-                    .import_memo
-                    .get(&(tracker.source_index.get(), tracker.import_ref))
+            // Mid-walk (never on the first iteration, so plain imports never
+            // pay this lookup), the tracker is a named import that may already
+            // be bound — by its own file's matching pass, or early by another
+            // walk that passed through it (see the binding loop below). Its
+            // stored target and `re_exports` suffix are exactly what the
+            // remaining iterations would compute, because import chains have
+            // a single successor per tracker. Only `Normal` bindings are used:
+            // other kinds either carry namespace state that depends on how the
+            // walk arrived or were written outside import matching.
+            if cycle_detector_top != self.cycle_detector.len()
+                && let Some(entry) = self.graph.meta.items_imports_to_bind()
+                    [tracker.source_index.get() as usize]
+                    .get(&tracker.import_ref)
+                && entry.kind == crate::ImportBindKind::Normal
             {
-                if memo.deps_index != MemoizedMatchImport::NO_DEPS {
-                    let deps = &self.import_memo_re_exports[memo.deps_index as usize];
-                    re_exports.extend_from_slice(&deps.slice()[memo.deps_start as usize..]);
-                }
-                result = memo.result.clone();
-                memoizable = true;
+                re_exports.extend_from_slice(entry.re_exports.slice());
+                result = MatchImport {
+                    kind: MatchImportKind::Normal,
+                    source_index: entry.data.source_index.get(),
+                    r#ref: entry.data.import_ref,
+                    name_loc: entry.data.name_loc,
+                    ..Default::default()
+                };
+                bindable = true;
                 break 'loop_;
             }
 
@@ -3901,7 +3873,7 @@ impl<'a> LinkerContext<'a> {
                         continue 'loop_;
                     }
 
-                    memoizable = true;
+                    bindable = true;
                 }
             }
 
@@ -3912,35 +3884,35 @@ impl<'a> LinkerContext<'a> {
         // loop is done. All remaining exit paths are below this point.
         self.cycle_detector.truncate(cycle_detector_top);
 
-        // Record the outcome for every intermediate tracker this walk passed
-        // through. Each of them is a named import whose own resolution would
-        // repeat the identical tail: they were all continued past in the
-        // `Found` arm, which overwrites `result` unconditionally, so the final
-        // `result` does not depend on where the walk started.
-        if memoizable && !saw_ambiguity && !visited.is_empty() {
-            // Store the dependency suffix once for the whole walk; each entry
-            // points at its own offset into it.
-            let base = visited[0].1;
-            let suffix: &[Dependency] = &re_exports.slice()[base..];
-            let deps_index = if result.kind != MatchImportKind::Cycle && !suffix.is_empty() {
-                self.import_memo_re_exports
-                    .push(bun_alloc::AstAlloc::vec_from_slice(suffix));
-                (self.import_memo_re_exports.len() - 1) as u32
-            } else {
-                MemoizedMatchImport::NO_DEPS
-            };
+        // Bind every intermediate tracker this walk passed through. Each is a
+        // named import whose own resolution would repeat the identical tail —
+        // they were all continued past in the `Found` arm, which overwrites
+        // `result` unconditionally, so the final `result` does not depend on
+        // where the walk started. Writing the binding now (the same entry,
+        // with the same dependency list, that
+        // `match_imports_with_exports_for_file` would store later — it skips
+        // imports that are already bound) means each import chain is walked
+        // once per link instead of once per import resolving through it.
+        if bindable && !saw_ambiguity && !visited.is_empty() {
+            debug_assert!(result.kind == MatchImportKind::Normal);
             for &(visited_tracker, deps_start) in &visited {
-                self.import_memo.insert(
-                    (
-                        visited_tracker.source_index.get(),
+                self.graph.meta.items_imports_to_bind_mut()
+                    [visited_tracker.source_index.get() as usize]
+                    .put(
                         visited_tracker.import_ref,
-                    ),
-                    MemoizedMatchImport {
-                        result: result.clone(),
-                        deps_index,
-                        deps_start: (deps_start - base) as u32,
-                    },
-                );
+                        crate::ImportData {
+                            kind: crate::ImportBindKind::Normal,
+                            re_exports: bun_alloc::AstAlloc::vec_from_slice(
+                                &re_exports.slice()[deps_start..],
+                            ),
+                            data: ImportTracker {
+                                source_index: crate::Index::init(result.source_index),
+                                import_ref: result.r#ref,
+                                name_loc: result.name_loc,
+                            },
+                        },
+                    )
+                    .expect("unreachable");
             }
         }
 
@@ -3977,7 +3949,6 @@ impl<'a> LinkerContext<'a> {
     pub(crate) fn match_imports_with_exports_for_file(
         &mut self,
         named_imports_ptr: *const crate::bundled_ast::NamedImports,
-        imports_to_bind: &mut crate::RefImportData,
         source_index: crate::IndexInt,
     ) {
         // Note: `ArrayHashMap` has no in-place key sort and `NamedImport` is
@@ -3994,10 +3965,9 @@ impl<'a> LinkerContext<'a> {
         //
         // SAFETY: `named_imports_ptr` points into the `graph.ast.named_imports`
         // SoA column, which is never reallocated during linking; the loop body
-        // never mutates that column (only `imports_to_bind`/`log`/`symbols`/
-        // `meta.probably_typescript_type`/`import_memo`/
-        // `import_memo_re_exports`), so the backing `keys`/`values` slices
-        // stay valid for the whole loop.
+        // never mutates that column (only `meta.imports_to_bind`/`log`/
+        // `symbols`/`meta.probably_typescript_type`), so the backing
+        // `keys`/`values` slices stay valid for the whole loop.
         let keys: *const [Ref] = unsafe { (*named_imports_ptr).keys() };
         // SAFETY: same column-validity invariant as `keys` above.
         let values: *const [NamedImport] = unsafe { (*named_imports_ptr).values() };
@@ -4010,6 +3980,18 @@ impl<'a> LinkerContext<'a> {
         for &i in &order {
             // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
             let (import_ref, named_import) = unsafe { ((*keys)[i], &(*values)[i]) };
+
+            // Already bound early by a walk that passed through this import
+            // (see `match_import_with_export`); the stored entry is identical
+            // to what re-resolving would produce, and `Normal` bindings have
+            // no other side effects to apply.
+            if let Some(entry) = self.graph.meta.items_imports_to_bind()
+                [source_index as usize]
+                .get(&import_ref)
+                && entry.kind != crate::ImportBindKind::Other
+            {
+                continue;
+            }
 
             // Re-use memory for the cycle detector
             self.cycle_detector.clear();
@@ -4026,15 +4008,16 @@ impl<'a> LinkerContext<'a> {
 
             match result.kind {
                 MatchImportKind::Normal => {
-                    imports_to_bind
+                    self.graph.meta.items_imports_to_bind_mut()[source_index as usize]
                         .put(
                             import_ref,
                             crate::ImportData {
+                                kind: crate::ImportBindKind::Normal,
                                 re_exports,
                                 data: ImportTracker {
                                     source_index: crate::Index::init(result.source_index),
                                     import_ref: result.r#ref,
-                                    ..Default::default()
+                                    name_loc: result.name_loc,
                                 },
                             },
                         )
@@ -4051,15 +4034,16 @@ impl<'a> LinkerContext<'a> {
                         });
                 }
                 MatchImportKind::NormalAndNamespace => {
-                    imports_to_bind
+                    self.graph.meta.items_imports_to_bind_mut()[source_index as usize]
                         .put(
                             import_ref,
                             crate::ImportData {
+                                kind: crate::ImportBindKind::NormalAndNamespace,
                                 re_exports,
                                 data: ImportTracker {
                                     source_index: crate::Index::init(result.source_index),
                                     import_ref: result.r#ref,
-                                    ..Default::default()
+                                    name_loc: result.name_loc,
                                 },
                             },
                         )

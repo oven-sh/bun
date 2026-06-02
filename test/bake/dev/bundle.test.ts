@@ -814,3 +814,42 @@ devTest("barrel optimization: two import statements from the same barrel (#28886
     await c.expectMessage("got: ALPHA BETA");
   },
 });
+
+// The watcher entry for a file whose "pretty" path is disjoint from its
+// absolute path (here: an import from outside the project root, whose pretty
+// path starts with "../") used to borrow path bytes out of the per-build
+// bundle arena instead of cloning them. DevServer frees that arena when the
+// build finishes, so a later watch event for the file made the watcher thread
+// read freed memory instead of hot-reloading. The rebuild loop below churns a
+// few more per-build arenas so the freed pages are recycled before the
+// outside-root file is touched, which turns the stale read into a SEGV on an
+// unfixed build (the watcher-thread crash seen in production).
+devTest("hot reload of a file imported from outside the project root", {
+  files: {
+    "../outside-root-dep/db.ts": `export const abc = "123";`,
+    "routes/index.ts": `
+      import { abc } from '../../outside-root-dep/db';
+      export default function (req, meta) {
+        return new Response('Hello, ' + abc + '!');
+      }
+    `,
+  },
+  framework: minimalFramework,
+  async test(dev) {
+    await dev.fetch("/").equals("Hello, 123!");
+    for (let i = 0; i < 4; i++) {
+      await dev.write(
+        "routes/index.ts",
+        `
+          import { abc } from '../../outside-root-dep/db';
+          export default function (req, meta) {
+            return new Response('Hello v${i}, ' + abc + '!');
+          }
+        `,
+      );
+      await dev.fetch("/").equals(`Hello v${i}, 123!`);
+    }
+    await dev.write("../outside-root-dep/db.ts", `export const abc = "456";`);
+    await dev.fetch("/").equals("Hello v3, 456!");
+  },
+});

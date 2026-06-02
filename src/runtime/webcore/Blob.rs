@@ -236,6 +236,8 @@ pub trait BlobExt {
         global_this: &JSGlobalObject,
         readable_stream: ReadableStream,
         extra_options: Option<JSValue>,
+        mkdirp_if_not_exists: bool,
+        mode: Option<bun_sys::Mode>,
     ) -> JsResult<JSValue>;
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_slice_from(
@@ -1412,6 +1414,8 @@ impl BlobExt for Blob {
         global_this: &JSGlobalObject,
         readable_stream: ReadableStream,
         extra_options: Option<JSValue>,
+        mkdirp_if_not_exists: bool,
+        mode: Option<bun_sys::Mode>,
     ) -> JsResult<JSValue> {
         let Some(store) = self.store.get().clone() else {
             return Ok(
@@ -1492,14 +1496,23 @@ impl BlobExt for Blob {
                 } else {
                     let mut file_path = bun_paths::PathBuffer::uninit();
                     let path = pathlike.path().slice_z(&mut file_path);
-                    match bun_sys::open(
-                        path,
-                        bun_sys::O::WRONLY
-                            | bun_sys::O::CREAT
-                            | bun_sys::O::TRUNC
-                            | bun_sys::O::NONBLOCK,
-                        WRITE_PERMISSIONS,
-                    ) {
+                    let open_flags = bun_sys::O::WRONLY
+                        | bun_sys::O::CREAT
+                        | bun_sys::O::TRUNC
+                        | bun_sys::O::NONBLOCK;
+                    let open_mode = mode.unwrap_or(WRITE_PERMISSIONS);
+                    let mut opened = bun_sys::open(path, open_flags, open_mode);
+                    // `Bun.write`'s `createPath` (default true): create the
+                    // parent directories and retry the open once.
+                    if let bun_sys::Result::Err(ref err) = opened {
+                        if err.get_errno() == bun_sys::E::ENOENT
+                            && mkdirp_if_not_exists
+                            && mkdirp_parent_of(path.as_bytes())
+                        {
+                            opened = bun_sys::open(path, open_flags, open_mode);
+                        }
+                    }
+                    match opened {
                         bun_sys::Result::Ok(result) => result,
                         bun_sys::Result::Err(err) => {
                             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1608,11 +1621,26 @@ impl BlobExt for Blob {
                     chunk_size: 0,
                     // `Bun.write` replaces the destination's contents.
                     truncate: true,
+                    mode: mode.unwrap_or(WRITE_PERMISSIONS),
                     ..Default::default()
                 });
 
                 // SAFETY: `init` returns a freshly-allocated +1 *mut FileSink.
-                if let bun_sys::Result::Err(err) = unsafe { (*sink).start(&stream_start) } {
+                let mut started = unsafe { (*sink).start(&stream_start) };
+                // `Bun.write`'s `createPath` (default true): create the parent
+                // directories and retry the start (which re-opens) once.
+                if let bun_sys::Result::Err(ref err) = started {
+                    if err.get_errno() == bun_sys::E::ENOENT && mkdirp_if_not_exists {
+                        if let PathOrFileDescriptor::Path(p) = &store.data.as_file().pathlike {
+                            if mkdirp_parent_of(p.slice()) {
+                                // SAFETY: `sink` is still the live +1 from `init`;
+                                // a failed `start` leaves it reusable.
+                                started = unsafe { (*sink).start(&stream_start) };
+                            }
+                        }
+                    }
+                }
+                if let bun_sys::Result::Err(err) = started {
                     // SAFETY: release the +1 strong ref taken by `init` on the error path.
                     unsafe { webcore::FileSink::deref(sink) };
                     return Ok(
@@ -4473,6 +4501,26 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
     Retry::No
 }
 
+/// `mkdir -p` the parent directory of `dest_path` on the JS thread. Returns
+/// `true` when the directories exist afterwards. Mirrors the ENOENT retry in
+/// `mkdir_if_not_exists` for `pipe_readable_stream_to_blob`, whose open does
+/// not go through the write-file task machinery.
+fn mkdirp_parent_of(dest_path: &[u8]) -> bool {
+    let Some(dirname) = bun_core::dirname(dest_path) else {
+        return false;
+    };
+    let mut node_fs = crate::node::fs::NodeFS::default();
+    matches!(
+        node_fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
+            path: crate::node::PathLike::String(bun_core::PathString::init(dirname)),
+            recursive: true,
+            always_return_none: true,
+            ..Default::default()
+        }),
+        bun_sys::Result::Ok(_)
+    )
+}
+
 /// `bun_sys::Error` only
 /// exposes `with_path(&[u8])`, so route through the
 /// `PathOrFileDescriptor`'s slice when it's a path and leave the error
@@ -4847,6 +4895,8 @@ pub fn write_file_with_source_destination(
                 ctx,
                 stream,
                 options.extra_options,
+                options.mkdirp_if_not_exists.unwrap_or(true),
+                options.mode,
             );
         } else {
             return Ok(
@@ -5339,10 +5389,29 @@ pub fn write_file_internal(
                     "ReadableStream has already been used"
                 )));
             }
+            // Reject locked streams before the pipe truncates the destination
+            // — the pipe's `getReader()` would fail anyway, but only after the
+            // destination file had been opened with `O_TRUNC`.
+            // `ReadableStream__isLocked` only reports native locks (`$reader`
+            // === true); a reader created from JS stores the reader object, so
+            // also consult the web-standard `locked` getter.
+            let locked = stream.is_locked(global_this)
+                || stream
+                    .value
+                    .get(global_this, "locked")?
+                    .is_some_and(|v| v.to_boolean());
+            if locked {
+                destination_blob.detach();
+                return Err(
+                    global_this.throw_invalid_arguments(format_args!("ReadableStream is locked"))
+                );
+            }
             return destination_blob.pipe_readable_stream_to_blob(
                 global_this,
                 stream,
                 options.extra_options,
+                options.mkdirp_if_not_exists.unwrap_or(true),
+                options.mode,
             );
         }
 

@@ -401,7 +401,7 @@ extern "C" JSC::EncodedJSValue ReadableStream__getStoredError(JSC::EncodedJSValu
         return {};
 
     JSValue storedError = stream->getDirect(vm, clientData->builtinNames().storedErrorPrivateName());
-    if (!storedError || storedError.isEmpty())
+    if (!storedError)
         return JSValue::encode(JSC::jsUndefined());
     return JSValue::encode(storedError);
 }

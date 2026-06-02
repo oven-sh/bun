@@ -390,8 +390,17 @@ impl Watcher {
             match me.watch_loop() {
                 Err(err) => {
                     me.watchloop_handle.store(false);
+                    // Take `mutex` around `platform.stop()` and the `running`
+                    // read: `stop_all_for_exit` on the main thread holds the
+                    // same mutex while it calls `platform.stop()`, so without
+                    // this the two `stop()` calls race (a double-`CloseHandle`
+                    // on Windows). `running` is also written under `mutex` by
+                    // `stop_all_for_exit`/`shutdown`, so read it here too.
+                    me.mutex.lock();
                     me.platform.stop();
-                    if me.running.load() {
+                    let was_running = me.running.load();
+                    me.mutex.unlock();
+                    if was_running {
                         (me.on_error)(me.ctx, err);
                     }
                 }

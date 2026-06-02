@@ -1440,6 +1440,34 @@ describe("TransformStream transformer.cancel", () => {
     expect(() => new TransformStream({ cancel: 42 })).toThrow(TypeError);
   });
 
+  test("reader.cancel() after terminate() with queued chunks settles cleanly", async () => {
+    // terminate() clears the transformer algorithms while the readable still
+    // holds the queued chunk and stays cancelable — and no hook may run for
+    // a transformer that is already torn down. (Node crashes here with an
+    // internal 'cancelAlgorithm is not a function' TypeError.)
+    const events = [];
+    const ts = new TransformStream(
+      {
+        transform(chunk, controller) {
+          controller.enqueue(chunk);
+          controller.terminate();
+        },
+        flush() {
+          events.push("flush");
+        },
+        cancel(reason) {
+          events.push(`cancel:${reason}`);
+        },
+      },
+      undefined,
+      { highWaterMark: 1 }, // let the write through with no reader attached
+    );
+    const writer = ts.writable.getWriter();
+    await writer.write("x");
+    await ts.readable.cancel("stop");
+    expect(events).toEqual([]);
+  });
+
   test("a write racing reader.cancel() rejects with the cancel reason", async () => {
     // The algorithms are already cleared while the cancel algorithm settles;
     // a write slipping into that window must reject with the teardown

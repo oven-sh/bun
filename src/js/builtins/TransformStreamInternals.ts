@@ -435,12 +435,19 @@ export function transformStreamDefaultSourceCancelAlgorithm(stream, reason) {
   const finishPromise = $getByIdDirectPrivate(controller, "finishPromise");
   if (finishPromise !== undefined) return finishPromise.promise;
 
+  const cancelAlgorithm = $getByIdDirectPrivate(controller, "cancelAlgorithm");
+  // controller.terminate() clears the algorithms while the readable can
+  // still hold queued chunks — and stay cancelable — without a finishPromise
+  // ever being set. The transformer is already torn down; there is nothing
+  // left to cancel. (The spec reference implementation crashes on this.)
+  if (cancelAlgorithm === undefined) return Promise.$resolve();
+
   const writable = $getByIdDirectPrivate(stream, "internalWritable");
 
   const promiseCapability = $newPromiseCapability(Promise);
   $putByIdDirectPrivate(controller, "finishPromise", promiseCapability);
 
-  const cancelPromise = $getByIdDirectPrivate(controller, "cancelAlgorithm").$call(undefined, reason);
+  const cancelPromise = cancelAlgorithm.$call(undefined, reason);
   $transformStreamDefaultControllerClearAlgorithms(controller);
 
   cancelPromise.$then(

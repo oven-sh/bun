@@ -1382,6 +1382,7 @@ impl Image {
                 source: JsCell::new(Source::Owned(bytes)),
                 ..Default::default()
             });
+            img.refresh_reported_size();
             return Ok(img.to_js(global));
         }
         #[cfg(not(any(target_os = "macos", windows)))]

@@ -1152,3 +1152,31 @@ describe("async context passes through", () => {
     expect(a).toBe("value");
   });
 });
+
+test("unhandledRejection handlers observe the rejected promise's context", async () => {
+  // unhandledRejection used to always see getStore() === undefined because
+  // the event is emitted at the end of the tick, after the async context
+  // active at rejection time was unwound.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { AsyncLocalStorage } = require("node:async_hooks");
+      const als = new AsyncLocalStorage();
+
+      process.on("unhandledRejection", () => {
+        console.log("unhandledRejection store:", als.getStore());
+      });
+
+      als.run(7, () => {
+        new Promise((_, rej) => setTimeout(() => rej(new Error("late")), 10));
+      });`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("unhandledRejection store: 7\n");
+  expect(exitCode).toBe(0);
+});

@@ -950,9 +950,9 @@ pub unsafe fn spawn_process_posix(
     // below Bun's minimum (API 28). Matches the rest of the codebase (e.g.
     // run_command.rs, install/PackageManager.rs, js/node/child_process.ts).
     #[cfg(target_os = "android")]
-    const SHELL_PATH: &CStr = c"/system/bin/sh";
+    const SHELL_PATH: &core::ffi::CStr = c"/system/bin/sh";
     #[cfg(not(target_os = "android"))]
-    const SHELL_PATH: &CStr = c"/bin/sh";
+    const SHELL_PATH: &core::ffi::CStr = c"/bin/sh";
 
     let spawn_result =
         match posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp) {

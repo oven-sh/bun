@@ -1411,6 +1411,32 @@ describe("TransformStream transformer.cancel", () => {
     ).toBe(fail);
   });
 
+  test("a failing flush racing reader.cancel() surfaces the flush error", async () => {
+    // The cancel joins the in-flight close's finishPromise; when the flush
+    // then rejects, the readable is already closed (by the cancel), so
+    // rejecting with the readable's storedError would surface `undefined`.
+    // Both promises must carry the flush error itself.
+    const fail = new Error("flush-fail");
+    const ts = new TransformStream({
+      async flush() {
+        await Bun.sleep(0);
+        throw fail;
+      },
+    });
+    const writer = ts.writable.getWriter();
+    await writer.ready;
+    const closeResult = writer.close().then(
+      () => null,
+      e => e,
+    );
+    const cancelResult = ts.readable.cancel("x").then(
+      () => null,
+      e => e,
+    );
+    expect(await closeResult).toBe(fail);
+    expect(await cancelResult).toBe(fail);
+  });
+
   test("a rejecting cancel rejects writer.abort() and errors the readable with that error", async () => {
     const fail = new Error("cancel-fail");
     const ts = new TransformStream({

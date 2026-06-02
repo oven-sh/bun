@@ -415,7 +415,11 @@ export function transformStreamDefaultSinkCloseAlgorithm(stream) {
     },
     r => {
       $transformStreamError($getByIdDirectPrivate(controller, "stream"), r);
-      promiseCapability.reject.$call(undefined, $getByIdDirectPrivate(readable, "storedError"));
+      // Reject with r per spec. The readable's storedError is normally the
+      // same value, but when a concurrent reader.cancel() already closed the
+      // readable, transformStreamError cannot error it and storedError is
+      // undefined — the flush error must not be swallowed.
+      promiseCapability.reject.$call(undefined, r);
     },
   );
   return promiseCapability.promise;
@@ -479,7 +483,10 @@ export function createCompressionTransform(engine) {
   const chunkSize = engine._chunkSize;
   // The ZlibBase constructor already allocated one output buffer for the
   // (unused) Duplex write path — start with it instead of allocating another.
-  let outBuffer = engine._outBuffer;
+  // Output buffers must be zero-filled: chunks are enqueued as views, and a
+  // consumer reaching past the view through chunk.buffer must see stream
+  // output or zeros, never recycled heap memory (allocUnsafe).
+  let outBuffer = engine._outBuffer.fill(0);
   let outOffset = 0;
   let closed = false;
   // The native handle reports errors by synchronously destroying the engine
@@ -551,7 +558,7 @@ export function createCompressionTransform(engine) {
       if (availOutAfter === 0 || outOffset >= chunkSize) {
         availOutBefore = chunkSize;
         outOffset = 0;
-        outBuffer = Buffer.allocUnsafe(chunkSize);
+        outBuffer = Buffer.alloc(chunkSize);
       }
 
       if (availOutAfter === 0) {

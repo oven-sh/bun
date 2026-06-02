@@ -526,6 +526,23 @@ describe("CompressionStream Node.js compatibility", () => {
       }
     });
 
+    test("bytes reachable past a chunk's view are zeroed, never recycled heap memory", async () => {
+      // Chunks intentionally share one backing buffer, so chunk.buffer
+      // reaches past the view's window. Everything past the last written
+      // byte must be deterministic zeros — an allocUnsafe backing store
+      // would disclose previous heap contents there.
+      const cs = new CompressionStream("gzip");
+      const writer = cs.writable.getWriter();
+      const collected = collect(cs.readable);
+      await writer.write(Buffer.from("hello"));
+      await writer.close();
+      const chunks = await collected;
+      const last = chunks[chunks.length - 1];
+      const tail = new Uint8Array(last.buffer, last.byteOffset + last.byteLength);
+      expect(tail.length).toBeGreaterThan(0);
+      expect(tail.every(byte => byte === 0)).toBe(true);
+    });
+
     test("small decompressed chunks are views over a shared buffer, not per-chunk copies", async () => {
       // Incompressible input dribbled in byte-at-a-time makes the engine
       // emit many small output chunks; they must land in one output buffer

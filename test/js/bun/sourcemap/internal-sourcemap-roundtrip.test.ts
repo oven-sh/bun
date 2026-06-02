@@ -197,8 +197,33 @@ describe("InternalSourceMap.fromVLQ validation", () => {
   };
 
   for (const [name, vlq] of Object.entries(invalid)) {
-    test(name, () => {
-      expect(() => internalSourceMap.fromVLQ(vlq)).toThrow("invalid VLQ input");
+    test(name, async () => {
+      // Run fromVLQ in a child process: on a build without the validation,
+      // the debug-mode i32 overflow trap aborts the whole process, which must
+      // not take down the test runner (and must still be recorded as a
+      // failure here).
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const { internalSourceMap } = require("bun:internal-for-testing");
+           try {
+             internalSourceMap.fromVLQ(${JSON.stringify(vlq)});
+             console.log("FROMVLQ_RETURNED_A_BLOB");
+           } catch (e) {
+             console.log("FROMVLQ_THREW: " + e.message);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "ignore",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      // Must reject the mappings as invalid — not return a blob built from
+      // wrapped/negative garbage, and not crash.
+      expect(stdout).toContain("FROMVLQ_THREW: InternalSourceMap.fromVLQ: invalid VLQ input");
+      expect(stdout).not.toContain("FROMVLQ_RETURNED_A_BLOB");
+      expect(exitCode).toBe(0);
     });
   }
 

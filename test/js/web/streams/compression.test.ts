@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import zlib from "node:zlib";
 
 describe("CompressionStream and DecompressionStream", () => {
   describe("brotli", () => {
@@ -428,7 +429,7 @@ describe("CompressionStream Node.js compatibility", () => {
 
   describe("malformed compressed input", () => {
     test("truncated gzip rejects with Z_BUF_ERROR on close like node", async () => {
-      const gzipped = require("node:zlib").gzipSync(Buffer.alloc(1000, "a"));
+      const gzipped = zlib.gzipSync(Buffer.alloc(1000, "a"));
       const err = (await decompress("gzip", [gzipped.subarray(0, gzipped.length - 5)]).then(
         () => null,
         e => e,
@@ -437,7 +438,6 @@ describe("CompressionStream Node.js compatibility", () => {
     });
 
     test("trailing garbage after the gzip stream rejects with Z_DATA_ERROR like node", async () => {
-      const zlib = require("node:zlib");
       const payload = Buffer.concat([zlib.gzipSync(Buffer.from("hello")), Buffer.from("garbage!")]);
       const err = (await decompress("gzip", [payload]).then(
         () => null,
@@ -480,13 +480,11 @@ describe("CompressionStream Node.js compatibility", () => {
 
   describe("gzip specifics", () => {
     test("concatenated gzip members decompress to the concatenated payload like node", async () => {
-      const zlib = require("node:zlib");
       const payload = Buffer.concat([zlib.gzipSync(Buffer.from("hello")), zlib.gzipSync(Buffer.from("world"))]);
       expect((await decompress("gzip", [payload])).toString()).toBe("helloworld");
     });
 
     test("decompressing byte-at-a-time yields the full payload", async () => {
-      const zlib = require("node:zlib");
       const expected = Buffer.alloc(300, "x");
       const gzipped = zlib.gzipSync(expected) as Buffer;
       const inputs = Array.from(gzipped, byte => new Uint8Array([byte]));
@@ -513,7 +511,6 @@ describe("CompressionStream Node.js compatibility", () => {
       // emit many small output chunks; they must land in one output buffer
       // instead of each paying for its own copy (this is the allocation
       // behavior the synchronous drive exists for).
-      const zlib = require("node:zlib");
       const payload = new Uint8Array(1024);
       crypto.getRandomValues(payload);
       const gzipped = zlib.gzipSync(payload) as Buffer;
@@ -542,7 +539,6 @@ describe("CompressionStream Node.js compatibility", () => {
     });
 
     test("output bytes match node:zlib for gzip", async () => {
-      const zlib = require("node:zlib");
       const payload = Buffer.alloc(100_000, "compression streams test ");
       expect(await decompress("gzip", [zlib.gzipSync(payload)])).toEqual(payload);
       const compressed = await drain(new CompressionStream("gzip"), [payload]);

@@ -57,7 +57,6 @@ pub struct CopyFile<'a> {
     pub system_error: Option<SystemError>,
 
     pub read_len: SizeType,
-    pub read_off: SizeType,
 
     // per LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
     // TODO(port): lifetime — this struct is Box-allocated and crosses threads;
@@ -120,7 +119,6 @@ impl<'a> CopyFile<'a> {
             source_fd: Fd::INVALID,
             system_error: None,
             read_len: 0,
-            read_off: 0,
         });
         CopyFilePromiseTask::create_on_js_thread(global_this, read_file)
     }
@@ -314,8 +312,6 @@ impl<'a> CopyFile<'a> {
         &mut self,
     ) -> Result<(), bun_core::Error> {
         use bun_sys::linux;
-
-        self.read_off += self.offset;
 
         let mut remain: usize = self.max_length as usize;
         let unknown_size = remain == MAX_SIZE as usize || remain == 0;

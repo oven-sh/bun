@@ -6,6 +6,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
 use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
+use bun_simdutf_sys::simdutf;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
 use crate::api::bun::process::Status as SpawnStatus;
@@ -49,6 +50,13 @@ pub struct FileSink {
     pub writer: JsCell<IOWriter>,
     pub event_loop_handle: EventLoopHandle,
     pub written: Cell<usize>,
+    /// Total bytes accepted by `write`/`write_latin1`/`write_utf16` (UTF-8
+    /// re-encoded length for string chunks). Unlike `written` — which mixes
+    /// "buffered" and "flushed" reports and can count the same bytes twice —
+    /// every accepted byte is counted here exactly once, so
+    /// `Blob::pipe_readable_stream_to_blob` can report how many bytes a piped
+    /// `ReadableStream` wrote.
+    pub received_bytes: Cell<u64>,
     pub pending: JsCell<streams::WritablePending>,
     pub signal: JsCell<streams::Signal>,
     pub done: Cell<bool>,
@@ -261,6 +269,9 @@ bun_io::impl_streaming_writer_parent! {
 pub struct Options {
     pub chunk_size: webcore::BlobSizeType,
     pub input_path: PathOrFileDescriptor,
+    /// Truncate the destination on open. Defaults to `false`:
+    /// `Bun.file(path).writer()` has always overwritten in place. Replace-style
+    /// writers (`Blob::pipe_readable_stream_to_blob`, i.e. `Bun.write`) opt in.
     pub truncate: bool,
     pub close: bool,
     pub mode: bun_sys::Mode,
@@ -271,7 +282,7 @@ impl Default for Options {
         Self {
             chunk_size: 1024,
             input_path: PathOrFileDescriptor::Fd(Fd::INVALID),
-            truncate: true,
+            truncate: false,
             close: false,
             mode: 0o664,
         }
@@ -280,8 +291,11 @@ impl Default for Options {
 
 impl Options {
     pub fn flags(&self) -> i32 {
-        let _ = self;
-        bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY
+        bun_sys::O::NONBLOCK
+            | bun_sys::O::CLOEXEC
+            | bun_sys::O::CREAT
+            | bun_sys::O::WRONLY
+            | if self.truncate { bun_sys::O::TRUNC } else { 0 }
     }
 }
 
@@ -1194,12 +1208,27 @@ impl FileSink {
         this
     }
 
+    /// Count the bytes the writer accepted from a single `write*` call into
+    /// `received_bytes`. `Wrote`/`Pending` buffer whatever was not written
+    /// immediately, so the whole chunk was accepted; `Done` is terminal and
+    /// only `amt` bytes were taken.
+    fn count_received(&self, rc: &WriteResult, chunk_len: usize) {
+        let accepted = match *rc {
+            WriteResult::Err(_) => 0,
+            WriteResult::Done(amt) => amt,
+            WriteResult::Wrote(_) | WriteResult::Pending(_) => chunk_len,
+        };
+        self.received_bytes
+            .set(self.received_bytes.get() + accepted as u64);
+    }
+
     pub fn write(&self, data: &streams::Result) -> streams::Writable {
         if self.done.get() {
             return streams::Writable::Done;
         }
         // SAFETY(JsCell): `IOWriter::write` buffers/writes to fd; does not call JS.
         let rc = self.writer.with_mut(|w| w.write(data.slice()));
+        self.count_received(&rc, data.slice().len());
         self.to_result(rc)
     }
 
@@ -1214,6 +1243,7 @@ impl FileSink {
         }
         // SAFETY(JsCell): `IOWriter::write_latin1` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_latin1(data.slice()));
+        self.count_received(&rc, simdutf::length::utf8::from::latin1(data.slice()));
         self.to_result(rc)
     }
 
@@ -1223,6 +1253,7 @@ impl FileSink {
         }
         // SAFETY(JsCell): `IOWriter::write_utf16` buffers/writes; no JS.
         let rc = self.writer.with_mut(|w| w.write_utf16(data.slice16()));
+        self.count_received(&rc, simdutf::length::utf8::from::utf16::le(data.slice16()));
         self.to_result(rc)
     }
 
@@ -1536,6 +1567,7 @@ impl FileSink {
             // SAFETY: sentinel only; never dispatched (overwritten before use).
             event_loop_handle: EventLoopHandle::init(core::ptr::null_mut()),
             written: Cell::new(0),
+            received_bytes: Cell::new(0),
             pending: JsCell::new(streams::WritablePending {
                 result: streams::Writable::Done,
                 ..Default::default()

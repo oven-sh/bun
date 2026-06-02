@@ -95,6 +95,7 @@ The second argument is the data to be written. It can be any of the following:
 - `ArrayBuffer` or `SharedArrayBuffer`
 - `TypedArray` (`Uint8Array`, et. al.)
 - `Response`
+- `ReadableStream`
 
 All possible permutations are handled using the fastest available system calls on the current platform.
 
@@ -279,7 +280,7 @@ interface Bun {
 
   write(
     destination: string | number | BunFile | URL,
-    input: string | Blob | ArrayBuffer | SharedArrayBuffer | TypedArray | Response,
+    input: string | Blob | ArrayBuffer | SharedArrayBuffer | TypedArray | Response | ReadableStream,
   ): Promise<number>;
 }
 

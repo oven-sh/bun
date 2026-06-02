@@ -1494,7 +1494,10 @@ impl BlobExt for Blob {
                     let path = pathlike.path().slice_z(&mut file_path);
                     match bun_sys::open(
                         path,
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
+                        bun_sys::O::WRONLY
+                            | bun_sys::O::CREAT
+                            | bun_sys::O::TRUNC
+                            | bun_sys::O::NONBLOCK,
                         WRITE_PERMISSIONS,
                     ) {
                         bun_sys::Result::Ok(result) => result,
@@ -1603,6 +1606,8 @@ impl BlobExt for Blob {
                 let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
                     input_path,
                     chunk_size: 0,
+                    // `Bun.write` replaces the destination's contents.
+                    truncate: true,
                     ..Default::default()
                 });
 
@@ -1691,18 +1696,23 @@ impl BlobExt for Blob {
                         return Ok(promise_value);
                     }
                     jsc::js_promise::Status::Fulfilled => {
+                        // SAFETY: `file_sink` is still our live +1 ref.
+                        let written = unsafe { (*file_sink).received_bytes.get() };
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.done(global_this);
                         return Ok(JSPromise::resolved_promise_value(
                             global_this,
-                            JSValue::js_number(0.0),
+                            JSValue::js_number(written as f64),
                         ));
                     }
                     jsc::js_promise::Status::Rejected => {
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
                         readable_stream.cancel(global_this);
+                        // The rejection is forwarded to the promise returned
+                        // below; don't also report it as unhandled.
+                        promise.set_handled(global_this.vm());
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
                             promise.result(global_this.vm()),
@@ -5314,6 +5324,23 @@ pub fn write_file_internal(
             break 'brk Blob::init_with_store(archive.store_ref().clone(), global_this);
         }
 
+        // Pipe a ReadableStream (or async iterable) into the destination
+        // instead of letting `Blob::get` stringify it to
+        // "[object ReadableStream]".
+        if let Some(stream) = ReadableStream::from_js(data, global_this)? {
+            if stream.is_disturbed(global_this) {
+                destination_blob.detach();
+                return Err(global_this.throw_invalid_arguments(format_args!(
+                    "ReadableStream has already been used"
+                )));
+            }
+            return destination_blob.pipe_readable_stream_to_blob(
+                global_this,
+                stream,
+                options.extra_options,
+            );
+        }
+
         break 'brk Blob::get::<false, false>(global_this, data)?;
     };
     // Detach the source blob on scope exit.
@@ -6034,7 +6061,11 @@ pub fn on_file_stream_resolve_request_stream(
     if let Some(stream) = strong.get(global_this) {
         stream.done(global_this);
     }
-    this.promise.resolve(global_this, JSValue::js_number(0.0))?;
+    // SAFETY: `this.sink` is the live +1 ref released by `FileStreamWrapper`'s
+    // `Drop` when `this` goes out of scope below.
+    let written = unsafe { (*this.sink).received_bytes.get() };
+    this.promise
+        .resolve(global_this, JSValue::js_number(written as f64))?;
     Ok(JSValue::UNDEFINED)
 }
 

@@ -116,13 +116,26 @@ impl<T> Weak<T> {
         ref_type: WeakRefType,
         ctx: &mut T,
     ) -> Self {
+        Self::create_ptr(value, global_this, ref_type, NonNull::from(ctx))
+    }
+
+    /// Like [`create`](Self::create), but takes `ctx` as a raw pointer for
+    /// callers that cannot form `&mut T` (e.g. while disjoint field borrows of
+    /// the owner are live). Same contract: `ctx` must be live for as long as
+    /// the weak ref's finalize callback can fire.
+    pub fn create_ptr(
+        value: JSValue,
+        global_this: &JSGlobalObject,
+        ref_type: WeakRefType,
+        ctx: NonNull<T>,
+    ) -> Self {
         if !value.is_empty() {
             return Self {
                 r#ref: Some(WeakImpl::init(
                     global_this,
                     value,
                     ref_type,
-                    Some(NonNull::from(ctx).cast::<c_void>()),
+                    Some(ctx.cast::<c_void>()),
                 )),
                 global_this: Some(global_this.into()),
                 _ctx: PhantomData,

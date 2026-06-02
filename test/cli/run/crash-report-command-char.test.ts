@@ -22,8 +22,6 @@ describe.concurrent("crash report command character", () => {
         {
           BUN_CRASH_REPORT_URL: base,
           BUN_ENABLE_CRASH_REPORTING: "1",
-          GITHUB_ACTIONS: undefined,
-          CI: undefined,
         },
       ]),
       cwd,

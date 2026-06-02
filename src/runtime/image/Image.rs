@@ -84,6 +84,14 @@ pub struct Image {
     /// `PipelineTask` at schedule time so chained calls between schedule and
     /// completion don't race the worker. Repeat `.composite()` calls replace.
     composite_layers: JsCell<Vec<CompositeLayer>>,
+    /// Byte total for `estimated_size()`. `estimatedSize` is called from
+    /// JSC's concurrent GC marker threads ("Called from any thread"), so it
+    /// must not walk `source`/`composite_layers` heap structures the JS
+    /// thread can drop mid-iteration (`.composite()` replaces the layer
+    /// Vec). Recomputed on the JS thread at every mutation site and read as
+    /// a single word from the GC thread — the same `reported_estimated_size`
+    /// convention Request/Response/Blob use.
+    reported_estimated_size: Cell<usize>,
 }
 
 impl Default for Image {
@@ -98,6 +106,7 @@ impl Default for Image {
             this_ref: JsCell::new(JsRef::empty()),
             pending_tasks: Cell::new(0),
             composite_layers: JsCell::new(Vec::new()),
+            reported_estimated_size: Cell::new(mem::size_of::<Image>()),
         }
     }
 }
@@ -435,6 +444,7 @@ impl Image {
             None,
             img.max_pixels,
         )?);
+        img.refresh_reported_size();
         debug_assert!(!matches!(img.source.get(), Source::JsBuffer));
         Ok(img.to_js(global))
     }
@@ -449,11 +459,19 @@ impl Image {
     }
 
     pub fn estimated_size(&self) -> usize {
+        // GC-thread-safe single-word read; see `reported_estimated_size`.
+        self.reported_estimated_size.get()
+    }
+
+    /// Recompute `reported_estimated_size`. JS thread only — it walks the
+    /// `source`/`composite_layers` heap structures, so call it after every
+    /// `source.set` / `composite_layers.set`.
+    fn refresh_reported_size(&self) {
         // Only the bytes WE own. .js_buffer is the caller's ArrayBuffer (already
         // counted via the cached value slot); the worker's RGBA scratch is
         // task-scoped and freed before any GC could observe it. Composite
         // overlay bytes ARE ours — copied at `.composite()` call time.
-        mem::size_of::<Image>()
+        let size = mem::size_of::<Image>()
             + match self.source.get() {
                 Source::JsBuffer | Source::Blob(_) => 0,
                 Source::Owned(b) => b.len(),
@@ -469,7 +487,8 @@ impl Image {
                     CompositeInput::Path(p) => p.len(),
                     CompositeInput::Raw { rgba, .. } => rgba.len(),
                 })
-                .sum::<usize>()
+                .sum::<usize>();
+        self.reported_estimated_size.set(size);
     }
 }
 
@@ -493,6 +512,7 @@ fn from_input_js(
         raw,
         img.max_pixels,
     )?);
+    img.refresh_reported_size();
     // Raw dims are constructor-known — let `.width`/`.height` answer
     // immediately, the way they would after the first awaited terminal.
     if let Source::Raw { width, height, .. } = img.source.get() {
@@ -1033,6 +1053,7 @@ impl Image {
             });
         }
         self.composite_layers.set(layers);
+        self.refresh_reported_size();
         // Root the user's overlay array in the wrapper's `compositeJS` cached
         // slot (GC-visited via WriteBarrier, like `sourceJS`). The owned byte
         // copies above already make the worker safe; this keeps the overlay
@@ -1709,6 +1730,7 @@ impl Image {
                         let p = ZBox::from_bytes(path.slice());
                         // `Source::Blob`'s `Strong` Drop releases the JS ref.
                         self.source.set(Source::Path(p));
+                        self.refresh_reported_size();
                     } else {
                         return Err(global.throw(format_args!("{REFUSE}")));
                     }
@@ -1873,6 +1895,7 @@ impl<'a> BlobReadChain<'a> {
                 // on the already-swapped source.
                 if matches!(image.source.get(), Source::Blob(_)) {
                     image.source.set(Source::Owned(bytes));
+                    image.refresh_reported_size();
                 } else {
                     drop(bytes);
                 }

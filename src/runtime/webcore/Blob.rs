@@ -1504,10 +1504,7 @@ impl BlobExt for Blob {
                     let path = pathlike.path().slice_z(&mut file_path);
                     match bun_sys::open(
                         path,
-                        bun_sys::O::WRONLY
-                            | bun_sys::O::CREAT
-                            | bun_sys::O::TRUNC
-                            | bun_sys::O::NONBLOCK,
+                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
                         WRITE_PERMISSIONS,
                     ) {
                         bun_sys::Result::Ok(result) => result,
@@ -1558,7 +1555,12 @@ impl BlobExt for Blob {
                 unsafe {
                     (*sink)
                         .writer
-                        .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)))
+                        .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
+                    // Path opens replace the destination: trim it to the bytes
+                    // written once the sink ends (`truncate_to_end_offset`).
+                    (*sink)
+                        .truncate_on_end
+                        .set(!matches!(pathlike, PathOrFileDescriptor::Fd(_)));
                 };
 
                 #[cfg(windows)]
@@ -1878,10 +1880,7 @@ impl BlobExt for Blob {
                     let mut file_path = bun_paths::PathBuffer::uninit();
                     match bun_sys::open(
                         p.slice_z(&mut file_path),
-                        bun_sys::O::WRONLY
-                            | bun_sys::O::CREAT
-                            | bun_sys::O::TRUNC
-                            | bun_sys::O::NONBLOCK,
+                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
                         WRITE_PERMISSIONS,
                     ) {
                         bun_sys::Result::Ok(result) => result,
@@ -1927,6 +1926,11 @@ impl BlobExt for Blob {
             sink_mut
                 .writer
                 .with_mut(|w| w.owns_fd = !matches!(pathlike, PathOrFileDescriptor::Fd(_)));
+            // Path opens replace the destination: trim it to the bytes written
+            // once the sink ends (`truncate_to_end_offset`).
+            sink_mut
+                .truncate_on_end
+                .set(!matches!(pathlike, PathOrFileDescriptor::Fd(_)));
 
             let start_result = sink_mut.writer.with_mut(|w| {
                 if is_stdout_or_stderr {

@@ -65,6 +65,12 @@ pub struct FileSink {
     pub is_socket: Cell<bool>,
     pub fd: Cell<Fd>,
 
+    /// Path-opened sink with `Options.truncate` (the default): when the sink
+    /// ends, trim the destination to exactly the bytes written. Deliberately
+    /// deferred to `end()` instead of `O_TRUNC` at open so rewriting a large
+    /// file in place does not free and reallocate every block (#31682, #25968).
+    pub truncate_on_end: Cell<bool>,
+
     pub auto_flusher: JsCell<AutoFlusher>,
     pub run_pending_later: FlushPendingTask,
 
@@ -283,12 +289,8 @@ impl Default for Options {
 
 impl Options {
     pub fn flags(&self) -> i32 {
-        let mut flags =
-            bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY;
-        if self.truncate {
-            flags |= bun_sys::O::TRUNC;
-        }
-        flags
+        let _ = self;
+        bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY
     }
 }
 
@@ -739,6 +741,13 @@ impl FileSink {
             }
             sys::Result::Ok(fd) => fd,
         };
+
+        // Path opens replace the destination: trim it to the bytes written
+        // once the sink ends (see `truncate_to_end_offset`). Overwrites any
+        // previous value so re-starting the sink with an fd clears it.
+        self.truncate_on_end.set(
+            options.truncate && matches!(options.input_path, PathOrFileDescriptor::Path(_)),
+        );
 
         #[cfg(windows)]
         {
@@ -1239,6 +1248,34 @@ impl FileSink {
         self.to_result(rc)
     }
 
+    /// Deferred truncate for path-opened sinks (`Options.truncate`): trim the
+    /// destination to exactly the bytes written now that the sink is ending.
+    ///
+    /// The byte count is the fd's current offset: path opens start at offset
+    /// zero and the writer only ever writes sequentially. Bytes still buffered
+    /// at this point flush sequentially afterwards, re-extending the file, so
+    /// the final size is still exactly the total bytes written. `lseek`
+    /// failing (pipe/tty/socket) skips the truncate, matching how `O_TRUNC`
+    /// is ignored for those file types.
+    fn truncate_to_end_offset(&self) {
+        if !self.truncate_on_end.get() {
+            return;
+        }
+        self.truncate_on_end.set(false);
+
+        #[cfg(not(windows))]
+        let fd = self.writer.get().get_fd();
+        #[cfg(windows)]
+        let fd = self.fd.get();
+        if fd == Fd::INVALID {
+            return;
+        }
+
+        if let sys::Result::Ok(offset) = bun_sys::lseek(fd, 0, libc::SEEK_CUR) {
+            let _ = bun_sys::ftruncate(fd, offset);
+        }
+    }
+
     pub fn end(&self, _err: Option<sys::Error>) -> sys::Result<()> {
         if self.done.get() {
             return sys::Result::Ok(());
@@ -1249,6 +1286,7 @@ impl FileSink {
         match self.writer.with_mut(|w| w.flush()) {
             WriteResult::Done(written) => {
                 self.written.set(self.written.get() + written as usize); // @truncate
+                self.truncate_to_end_offset();
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Ok(())
             }
@@ -1259,6 +1297,7 @@ impl FileSink {
             }
             WriteResult::Pending(written) => {
                 self.written.set(self.written.get() + written as usize); // @truncate
+                self.truncate_to_end_offset();
                 if !self.must_be_kept_alive_until_eof.get() {
                     self.must_be_kept_alive_until_eof.set(true);
                     self.ref_();
@@ -1268,6 +1307,7 @@ impl FileSink {
             }
             WriteResult::Wrote(written) => {
                 self.written.set(self.written.get() + written as usize); // @truncate
+                self.truncate_to_end_offset();
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Ok(())
             }
@@ -1364,6 +1404,7 @@ impl FileSink {
         match flush_result {
             WriteResult::Done(written) => {
                 self.update_ref(false);
+                self.truncate_to_end_offset();
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Ok(JSValue::js_number(written as f64))
             }
@@ -1375,6 +1416,7 @@ impl FileSink {
             WriteResult::Pending(pending_written) => {
                 self.written
                     .set(self.written.get() + pending_written as usize); // @truncate
+                self.truncate_to_end_offset();
                 if !self.must_be_kept_alive_until_eof.get() {
                     self.must_be_kept_alive_until_eof.set(true);
                     self.ref_();
@@ -1391,6 +1433,7 @@ impl FileSink {
                 sys::Result::Ok(unsafe { (*promise_result).to_js() })
             }
             WriteResult::Wrote(written) => {
+                self.truncate_to_end_offset();
                 self.writer.with_mut(|w| w.end());
                 sys::Result::Ok(JSValue::js_number(written as f64))
             }
@@ -1563,6 +1606,7 @@ impl FileSink {
             force_sync: Cell::new(false),
             is_socket: Cell::new(false),
             fd: Cell::new(Fd::INVALID),
+            truncate_on_end: Cell::new(false),
             auto_flusher: JsCell::new(AutoFlusher::default()),
             run_pending_later: FlushPendingTask::default(),
             readable_stream: JsCell::new(readable_stream::Strong::default()),

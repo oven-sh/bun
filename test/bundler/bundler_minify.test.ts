@@ -1217,4 +1217,66 @@ describe("bundler", () => {
       stdout: "object\nobject\nobject",
     },
   });
+
+  // https://github.com/oven-sh/bun/issues/31722
+  // An arrow whose body is a single `return <value>` collapses to a shorthand
+  // expression body when minifying: `(a) => { return a; }` becomes `(a) => a`.
+  itBundled("minify/ArrowReturnToExpressionBody", {
+    files: {
+      "/entry.js": /* js */ `
+        export const withArgs = (a, b, c) => { return a + b * c; };
+        export const noArgs = () => { return 42; };
+        export const asyncArrow = async x => { return x + 1; };
+        export const nested = () => () => { return 1; };
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toContain("(a, b, c) => a + b * c");
+      expect(code).toContain("() => 42");
+      expect(code).toContain("async (x) => x + 1");
+      expect(code).toContain("() => () => 1");
+      // The collapsed arrows must not keep the `{ return ... }` block body.
+      expect(code).not.toMatch(/=>\s*\{\s*return/);
+    },
+  });
+
+  // A bare `return;` (no value) cannot be expressed as a shorthand arrow body,
+  // so the block body must be preserved even when minifying.
+  itBundled("minify/ArrowBareReturnKeepsBlock", {
+    files: {
+      "/entry.js": /* js */ `
+        export const bare = (x) => { return; };
+        export const undef = (x) => { return undefined; };
+        export function fn(a) { return a + 1; }
+      `,
+    },
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      // Bare `return;` and `return undefined;` (normalized to `return;`) stay as blocks.
+      expect(code).toMatch(/bare = \(x\) => \{\s*return;?\s*\}/);
+      expect(code).toMatch(/undef = \(x\) => \{\s*return;?\s*\}/);
+      // Function declarations are never rewritten into arrows.
+      expect(code).toContain("function fn(a)");
+    },
+  });
+
+  // Without minifySyntax the block body must be preserved verbatim.
+  itBundled("minify/ArrowReturnNotCollapsedWithoutMinifySyntax", {
+    files: {
+      "/entry.js": /* js */ `
+        export const foo = (a) => { return a + 1; };
+      `,
+    },
+    minifySyntax: false,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toMatch(/=>\s*\{\s*return a \+ 1;?\s*\}/);
+    },
+  });
 });

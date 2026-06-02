@@ -2557,6 +2557,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
         }
+
+        // Collapse a single-`return` body to a shorthand expression body when
+        // minifying syntax: `(a) => { return a; }` becomes `(a) => a`. The
+        // printer (see js_printer EArrow) emits the shorthand when `prefer_expr`
+        // is set and the lone statement is a `return` with a value. A bare
+        // `return;` (no value) keeps the block body.
+        if p.options.features.minify_syntax
+            && stmts_list.len() == 1
+            && matches!(
+                stmts_list[0].data,
+                js_ast::StmtData::SReturn(ret) if ret.value.is_some(),
+            )
+        {
+            e_.prefer_expr = true;
+        }
+
         e_.body.stmts = bun_ast::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.

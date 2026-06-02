@@ -387,8 +387,8 @@ describe.concurrent("import source (source phase imports)", () => {
         "main.js": code,
         "add.wasm": ADD_WASM,
       });
-      expect(exitCode).not.toBe(0);
       expect(stderr.toLowerCase()).toContain("error");
+      expect(exitCode).not.toBe(0);
     });
 
     test("import source inside a TypeScript namespace is a syntax error", async () => {
@@ -399,8 +399,8 @@ describe.concurrent("import source (source phase imports)", () => {
         },
         "main.ts",
       );
-      expect(exitCode).not.toBe(0);
       expect(stderr.toLowerCase()).toContain("error");
+      expect(exitCode).not.toBe(0);
     });
   });
 

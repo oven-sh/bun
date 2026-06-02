@@ -1174,7 +1174,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // on every invocation. The `has_loaded_system_config` guard inside
         // `load_system_bunfig` makes this a no-op when `load_config` already
         // ran via the execArgv branch in `Command::start`.
-        if bun_core::env_var::BUN_SYSTEM_CONFIG.get_not_empty().is_some() {
+        if bun_core::env_var::BUN_SYSTEM_CONFIG
+            .get_not_empty()
+            .is_some()
+        {
             if let Err(err) = arguments::load_system_bunfig(CommandTag::RunCommand, ctx) {
                 // SAFETY: process-global Log; see `load_bunfig` note in arguments.rs.
                 let log = unsafe { &mut *ctx.log };

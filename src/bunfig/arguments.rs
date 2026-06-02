@@ -47,7 +47,10 @@ fn get_system_config_path(buf: &mut PathBuffer) -> SystemConfigResult<'_> {
                 is_explicit: true,
             };
         }
-        return SystemConfigResult { path: None, is_explicit: true };
+        return SystemConfigResult {
+            path: None,
+            is_explicit: true,
+        };
     }
 
     // `ALLUSERSPROFILE` is declared `posix = None`, so calling
@@ -62,11 +65,18 @@ fn get_system_config_path(buf: &mut PathBuffer) -> SystemConfigResult<'_> {
         // Windows: use %ALLUSERSPROFILE%\bunfig.toml (typically C:\ProgramData\bunfig.toml).
         if let Some(all_users) = env_var::ALLUSERSPROFILE.get_not_empty() {
             let paths: [&[u8]; 1] = [b"bunfig.toml"];
-            let joined =
-                resolve_path::join_abs_string_buf_z::<platform::Auto>(all_users, &mut **buf, &paths);
-            return SystemConfigResult { path: Some(joined), is_explicit: false };
+            let joined = resolve_path::join_abs_string_buf_z::<platform::Auto>(
+                all_users, &mut **buf, &paths,
+            );
+            return SystemConfigResult {
+                path: Some(joined),
+                is_explicit: false,
+            };
         }
-        SystemConfigResult { path: None, is_explicit: false }
+        SystemConfigResult {
+            path: None,
+            is_explicit: false,
+        }
     }
     #[cfg(not(windows))]
     {
@@ -122,29 +132,26 @@ fn load_bunfig(
     // /etc/bunfig.toml and ~/.bunfig.toml, neither of which usually exists)
     // drops the allocation naturally. Only leak on the `Ok` arm where
     // `Bunfig::parse` actually borrows from it.
-    let boxed_path = bun_core::ZBox::from_bytes(config_path.as_bytes())
-        .into_boxed_slice_with_nul();
+    let boxed_path = bun_core::ZBox::from_bytes(config_path.as_bytes()).into_boxed_slice_with_nul();
     // SAFETY: invariant — last byte is 0, written by `ZBox::from_bytes`.
     let owned_path = unsafe { ZStr::from_raw(boxed_path.as_ptr(), boxed_path.len() - 1) };
 
-    let source = match bun_ast::to_source(
-        owned_path,
-        bun_ast::ToSourceOptions { convert_bom: true },
-    ) {
-        Ok(s) => s,
-        Err(err) => {
-            if auto_loaded {
-                // `boxed_path` drops here — no leak on the common ENOENT probe.
-                return Ok(());
+    let source =
+        match bun_ast::to_source(owned_path, bun_ast::ToSourceOptions { convert_bom: true }) {
+            Ok(s) => s,
+            Err(err) => {
+                if auto_loaded {
+                    // `boxed_path` drops here — no leak on the common ENOENT probe.
+                    return Ok(());
+                }
+                bun_core::pretty_errorln!(
+                    "{}\nwhile reading config \"{}\"",
+                    err,
+                    BStr::new(owned_path.as_bytes()),
+                );
+                Global::exit(1);
             }
-            bun_core::pretty_errorln!(
-                "{}\nwhile reading config \"{}\"",
-                err,
-                BStr::new(owned_path.as_bytes()),
-            );
-            Global::exit(1);
-        }
-    };
+        };
 
     // Success: `source.path.text` (and any `ctx.log` location borrowed by
     // `Bunfig::parse`) points into `boxed_path`. Leak the allocation so the
@@ -211,8 +218,7 @@ pub fn load_system_bunfig(cmd: CommandTag, ctx: Context<'_>) -> Result<(), bun_c
 
         // System config is not project-level, so pass is_project = false.
         // Explicit paths aren't auto-loaded (must fail loudly on missing file).
-        let load_result =
-            load_bunfig(cmd, !result.is_explicit, false, path, ctx);
+        let load_result = load_bunfig(cmd, !result.is_explicit, false, path, ctx);
 
         match load_result {
             Ok(()) => {}

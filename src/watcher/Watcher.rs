@@ -602,14 +602,25 @@ impl Watcher {
         event.udata = watchlist_id as _;
         let mut events: [KEvent; 1] = [event];
 
+        // `stop_all_for_exit` (main thread, under `mutex`) `take()`s the kqueue
+        // fd and closes it at exit. `add_file`/`add_directory` can run on a
+        // transpiler/bundler pool thread (the resolver auto-watch), also under
+        // `mutex` — serialised with `stop()`, but in either order. If `stop()`
+        // won first, the fd is gone: skip the registration instead of
+        // `unwrap()`-panicking (which aborts the process). Matches the Linux
+        // backend, where the same late add returns `EBADF` and is discarded.
+        let Some(kq) = self.platform.fd else {
+            return;
+        };
+
         // This took a lot of work to figure out the right permutation
         // Basically:
         // - We register the event here.
         // our while(true) loop above receives notification of changes to any of the events created here.
-        // SAFETY: events ptr/len valid; kqueue fd unwrapped from Some
+        // SAFETY: events ptr/len valid; `kq` is the live kqueue fd.
         let _ = unsafe {
             libc::kevent(
-                self.platform.fd.unwrap().native(),
+                kq.native(),
                 events.as_ptr(),
                 1,
                 events.as_mut_ptr(),

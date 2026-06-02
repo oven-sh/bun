@@ -59,8 +59,13 @@ impl<T: Copy> Unaligned<T> {
 
     /// Reinterpret `&[Unaligned<T>]` as `&[T]` once the caller has proven
     /// `ptr` is naturally aligned (Zig `@alignCast`). Panics in debug if not.
+    /// Empty slices need no cast: their dangling pointer has align 1, not
+    /// `align_of::<T>()`, so they are returned as `&[]` directly.
     #[inline]
     pub fn slice_align_cast(slice: &[Unaligned<T>]) -> &[T] {
+        if slice.is_empty() {
+            return &[];
+        }
         debug_assert!(
             (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
             "Unaligned::slice_align_cast: pointer is not {}-byte aligned",
@@ -75,6 +80,9 @@ impl<T: Copy> Unaligned<T> {
     /// Mutable counterpart of [`slice_align_cast`].
     #[inline]
     pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
+        if slice.is_empty() {
+            return &mut [];
+        }
         debug_assert!(
             (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
             "Unaligned::slice_align_cast_mut: pointer is not {}-byte aligned",

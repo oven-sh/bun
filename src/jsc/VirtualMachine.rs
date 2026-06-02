@@ -278,6 +278,13 @@ pub struct VirtualMachine {
     pub macro_event_loop: EventLoop,
     pub regular_event_loop: EventLoop,
     pub event_loop: *mut EventLoop, // BORROW_FIELD — points at sibling regular_event_loop/macro_event_loop
+    /// PORT NOTE (Rust-only): refcounted gate shared with cross-thread
+    /// concurrent-task producers (e.g. `FetchTasklet` on the HTTP client
+    /// thread) so they can serialize their VM accesses against teardown of
+    /// this allocation. Allocated in `init()` (one ref owned by the VM);
+    /// `WebWorker::shutdown` `close()`s it before freeing the VM and drops
+    /// the VM's ref. See [`crate::event_loop::ConcurrentEnqueueGate`].
+    pub concurrent_enqueue_gate: *mut crate::event_loop::ConcurrentEnqueueGate,
 
     pub ref_strings: crate::ref_string::Map,
     pub ref_strings_mutex: bun_threading::Mutex,
@@ -753,6 +760,22 @@ impl VirtualMachine {
     pub fn event_loop_shared(&self) -> &EventLoop {
         // SAFETY: see `event_loop_mut`.
         unsafe { &*self.event_loop }
+    }
+
+    /// Take a counted ref on this VM's [`ConcurrentEnqueueGate`] for a
+    /// cross-thread producer that holds a backref to this VM. Must be called
+    /// on the JS thread while the VM is alive (i.e. where the backref itself
+    /// is created); release with [`event_loop::ConcurrentEnqueueGate::deref`].
+    pub fn retain_concurrent_enqueue_gate(
+        &self,
+    ) -> core::ptr::NonNull<crate::event_loop::ConcurrentEnqueueGate> {
+        // SAFETY: written once in `init()` from `ConcurrentEnqueueGate::new()`
+        // (never null) and freed only after the VM's ref drops, so it is live
+        // for the VM lifetime.
+        let gate = unsafe { &*self.concurrent_enqueue_gate };
+        gate.ref_();
+        // `concurrent_enqueue_gate` is non-null per the SAFETY note above.
+        core::ptr::NonNull::new(self.concurrent_enqueue_gate).unwrap()
     }
 
     /// Alias for [`Self::event_loop_mut`]. Kept for callers migrated on the
@@ -2113,6 +2136,8 @@ impl VirtualMachine {
             (*regular).virtual_machine = NonNull::new(vm);
             let _ = (*regular).tasks.ensure_unused_capacity(64);
             addr_of_mut!((*vm).event_loop).write(regular);
+            addr_of_mut!((*vm).concurrent_enqueue_gate)
+                .write(crate::event_loop::ConcurrentEnqueueGate::new());
 
             // `source_mappings.map` is a sibling-field backref onto
             // `saved_source_map_table`.

@@ -10,7 +10,7 @@
 //! poll deadline). See PORTING.md §Dispatch.
 
 use core::ptr::NonNull;
-use core::sync::atomic::{AtomicI32, AtomicPtr, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicPtr, Ordering};
 
 use bun_io::{self as Async, Waker};
 use bun_uws as uws;
@@ -1480,3 +1480,112 @@ pub(crate) fn __bun_spawn_sync_vm_set_event_loop(vm: *mut (), el: *mut ()) {
 pub(crate) fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: bool) -> bool {
     vm_from_ptr(vm).suppress_microtask_drain.replace(v)
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// ConcurrentEnqueueGate — VM-teardown guard for cross-thread producers
+// ──────────────────────────────────────────────────────────────────────────
+
+/// Serializes cross-thread producers of `EventLoop.concurrent_tasks` against
+/// teardown of the owning `VirtualMachine` allocation.
+///
+/// PORT NOTE (Rust-only; no Zig counterpart): worker teardown frees the
+/// `VirtualMachine` allocation (`WebWorker::shutdown`), but the HTTP client
+/// thread may still hold a `FetchTasklet` whose `javascript_vm` backref points
+/// at it — its result callback reads `vm.is_shutting_down` and pushes onto
+/// `vm.regular_event_loop.concurrent_tasks` (then wakes the VM's uws loop),
+/// all of which is a use-after-free once the worker thread has dealloc'd the
+/// VM. Zig has the same logical race but frees the worker VM by destroying a
+/// private mimalloc heap, which typically leaves the pages mapped and masks
+/// it; the Rust port frees through the global allocator, so the race is a
+/// hard segfault on the queue's atomic head swap.
+///
+/// The gate is a standalone refcounted allocation so it strictly outlives
+/// both sides: the VM holds one ref (`VirtualMachine.concurrent_enqueue_gate`,
+/// released when the worker frees the VM allocation) and every cross-thread
+/// producer holding a VM backref holds one (e.g. `FetchTasklet`, released
+/// with the tasklet). Producers bracket every touch of the VM with
+/// `enter()`/`exit()`; teardown calls `close()` exactly once, before invali-
+/// dating the VM. Because `close()` takes the same mutex, it blocks until any
+/// in-flight gated section has finished, and every later `enter()` returns
+/// `false` — so after `close()` returns, no producer is inside the VM and
+/// none can get back in. Teardown can then drain `concurrent_tasks` (the
+/// drain observes every push that won the race) and free the allocation.
+///
+/// Lock ordering: the gate is a leaf lock — producers may take it while
+/// holding their own state lock (e.g. `FetchTasklet.mutex`), and `close()`
+/// is called with no other locks held.
+#[derive(bun_ptr::ThreadSafeRefCounted)]
+#[ref_count(destroy = Self::destroy)]
+pub struct ConcurrentEnqueueGate {
+    ref_count: bun_ptr::ThreadSafeRefCount<Self>,
+    mutex: bun_threading::Mutex,
+    /// Guarded by `mutex`; atomic only so the type is `Sync` (every access
+    /// happens with the mutex held, hence `Relaxed`).
+    vm_alive: AtomicBool,
+}
+
+impl ConcurrentEnqueueGate {
+    /// Allocate an open gate with one ref (the VM's).
+    pub fn new() -> *mut Self {
+        bun_core::heap::into_raw(Box::new(Self {
+            ref_count: bun_ptr::ThreadSafeRefCount::init(),
+            mutex: bun_threading::Mutex::new(),
+            vm_alive: AtomicBool::new(true),
+        }))
+    }
+
+    pub fn ref_(&self) {
+        // SAFETY: `self` is live; `ref_` only touches the interior-mutable
+        // atomic `ref_count` field.
+        unsafe {
+            bun_ptr::ThreadSafeRefCount::<Self>::ref_(core::ptr::from_ref(self).cast_mut());
+        }
+    }
+
+    /// Drop one ref; frees the gate on the last one.
+    ///
+    /// Takes a raw pointer (not `&self`) because the call may drop the last
+    /// ref and free the allocation.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub fn deref(this: *mut Self) {
+        // SAFETY: caller holds a ref, so `this` is live until this decrement.
+        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::deref(this) };
+    }
+
+    /// Enter the gated section. Returns `true` with the gate lock HELD iff
+    /// the VM is still alive — the caller may touch the VM and must call
+    /// [`exit`](Self::exit) afterwards. Returns `false` (lock released) once
+    /// [`close`](Self::close) has run; the caller must not touch the VM.
+    #[must_use]
+    pub fn enter(&self) -> bool {
+        self.mutex.lock();
+        if self.vm_alive.load(Ordering::Relaxed) {
+            return true;
+        }
+        self.mutex.unlock();
+        false
+    }
+
+    /// Leave a gated section previously entered via a successful
+    /// [`enter`](Self::enter).
+    pub fn exit(&self) {
+        self.mutex.unlock();
+    }
+
+    /// Mark the VM dead. Blocks until any in-flight gated section exits;
+    /// afterwards every `enter()` fails. Called by VM teardown exactly once,
+    /// before the VM allocation is invalidated.
+    pub fn close(&self) {
+        self.mutex.lock();
+        self.vm_alive.store(false, Ordering::Relaxed);
+        self.mutex.unlock();
+    }
+
+    /// `#[ref_count(destroy)]` hook — last ref dropped.
+    unsafe fn destroy(this: *mut Self) {
+        // SAFETY: refcount hit zero; `this` came from `heap::into_raw` in
+        // `new()`, so reclaiming the box is exclusive.
+        unsafe { bun_core::heap::destroy(this) };
+    }
+}
+

@@ -17,6 +17,7 @@ use bun_http::{
 };
 use bun_io::KeepAlive;
 use bun_jsc::debugger::AsyncTaskTracker;
+use bun_jsc::event_loop::ConcurrentEnqueueGate;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
     self as jsc, GlobalRef, JSGlobalObject, JSValue, JsResult, StringJsc, StrongOptional,
@@ -66,6 +67,14 @@ pub struct FetchTasklet {
     pub result: HTTPClientResult<'static>,
     pub metadata: Option<HTTPResponseMetadata>,
     pub javascript_vm: &'static VirtualMachine,
+    /// Counted ref on `javascript_vm`'s [`ConcurrentEnqueueGate`], taken in
+    /// [`get`](Self::get) and released in [`deinit`](Self::deinit). Every
+    /// HTTP-thread dereference of `javascript_vm` must happen inside
+    /// `enter()`/`exit()` on this gate: worker teardown frees the
+    /// `VirtualMachine` allocation while this tasklet may still be in flight
+    /// on the HTTP thread, and the gate (a separate allocation that outlives
+    /// both sides) is what makes that race safe.
+    pub vm_gate: core::ptr::NonNull<ConcurrentEnqueueGate>,
     pub global_this: GlobalRef,
     pub request_body: HTTPRequestBody,
     // ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
@@ -302,9 +311,22 @@ impl FetchTasklet {
     /// and is thread-safe (lock-free MPSC push). `task` is a live
     /// `ConcurrentTaskItem` that the queue takes ownership of via its
     /// intrusive `next` link.
+    ///
+    /// HTTP-thread callers must hold `vm_gate` (see [`Self::vm_gate_ref`]) —
+    /// "the VM's lifetime" ends while the request is still in flight when a
+    /// worker is terminated, and the gate is what excludes that teardown.
     #[inline]
     fn enqueue_concurrent(vm: &VirtualMachine, task: core::ptr::NonNull<ConcurrentTask>) {
         vm.event_loop_shared().enqueue_task_concurrent(task);
+    }
+
+    /// The [`ConcurrentEnqueueGate`] this tasklet holds a counted ref on (see
+    /// the `vm_gate` field doc). Valid from `get()` until `deinit()`.
+    #[inline]
+    fn vm_gate_ref(&self) -> &ConcurrentEnqueueGate {
+        // SAFETY: `vm_gate` is the counted ref taken in `get()`; live until
+        // `deinit()` releases it.
+        unsafe { self.vm_gate.as_ref() }
     }
 
     /// Wrap a borrowed body chunk in a `StreamResult::Temporary*` for
@@ -392,7 +414,29 @@ impl FetchTasklet {
             return;
         }
         let self_ = Self::from_raw_ref(this);
+        // Take a temp ref on the gate for this gated section: the enqueued
+        // `deinit_callback` may run on the JS thread (and release the
+        // tasklet's own gate ref via `deinit`) before `exit()` below.
+        let gate_ptr = self_.vm_gate.as_ptr();
+        // SAFETY: the tasklet's counted gate ref is still held here (released
+        // only in `deinit`, which cannot have run — we hold the last tasklet
+        // ref), so `gate_ptr` is live.
+        let gate = unsafe { &*gate_ptr };
+        gate.ref_();
+        // A closed gate means the owning worker's VM has been (or is being)
+        // freed — same disposition as `is_shutting_down`, except the flag
+        // itself must not be read. Entering the gate is what makes the
+        // `is_shutting_down` read and the enqueue safe against teardown.
+        if !gate.enter() {
+            ConcurrentEnqueueGate::deref(gate_ptr);
+            // SAFETY: last ref; exclusive access. See the shutdown comment
+            // below — same reclaim path.
+            unsafe { FetchTasklet::dealloc_for_shutdown(this) };
+            return;
+        }
         if self_.javascript_vm.is_shutting_down() {
+            gate.exit();
+            ConcurrentEnqueueGate::deref(gate_ptr);
             // SAFETY: last ref; exclusive access. `deinit()` would run
             // `clear_data()` + `Drop` for the JSC `Strong`/`Weak` fields, which
             // reach into the VM's HandleSet from this (HTTP) thread — not
@@ -409,6 +453,8 @@ impl FetchTasklet {
             self_.javascript_vm,
             ConcurrentTask::from_callback(this, FetchTasklet::deinit_callback),
         );
+        gate.exit();
+        ConcurrentEnqueueGate::deref(gate_ptr);
     }
 
     // ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
@@ -501,6 +547,10 @@ impl FetchTasklet {
         // SAFETY: this was allocated via heap::alloc in `get()`; ref_count == 0 so exclusive
         let mut boxed = unsafe { bun_core::heap::take(this) };
         boxed.clear_data();
+        // Release the counted gate ref taken in `get()`. `deinit` runs exactly
+        // once per tasklet (directly, via `deinit_callback`, or on the parked
+        // box from `shutdown_for_exit`'s reclaim drain), so this balances.
+        ConcurrentEnqueueGate::deref(boxed.vm_gate.as_ptr());
         // self.http: Option<Box<AsyncHTTP>> dropped here automatically
         drop(boxed);
     }
@@ -1711,6 +1761,8 @@ impl FetchTasklet {
             result: HTTPClientResult::default(),
             metadata: None,
             javascript_vm: jsc_vm,
+            // JS thread, VM alive — the one place a gate ref may be taken.
+            vm_gate: jsc_vm.retain_concurrent_enqueue_gate(),
             global_this: GlobalRef::from(global_this),
             request_body: fetch_options.body,
             request_body_streaming_buffer: None,
@@ -1982,7 +2034,14 @@ impl FetchTasklet {
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
     pub(crate) fn on_write_request_data_drain(this: *mut FetchTasklet) {
         let this_ref = Self::from_raw_ref(this);
+        // Gate every VM access on this (HTTP) thread against worker teardown
+        // freeing the VM allocation; a closed gate means "VM is gone", same
+        // disposition as `is_shutting_down`.
+        if !this_ref.vm_gate_ref().enter() {
+            return;
+        }
         if this_ref.javascript_vm.is_shutting_down() {
+            this_ref.vm_gate_ref().exit();
             return;
         }
         // ref until the main thread callback is called
@@ -1993,6 +2052,10 @@ impl FetchTasklet {
             this_ref.javascript_vm,
             ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream),
         );
+        // The HTTP side still holds its own tasklet ref (the request is in
+        // flight), so `this`/the gate field stay valid across the enqueue
+        // even if the JS thread consumes the task immediately.
+        this_ref.vm_gate_ref().exit();
     }
 
     /// This is ALWAYS called from the main thread
@@ -2282,7 +2345,16 @@ impl FetchTasklet {
             }
         }
         // will deinit when done with the http client (when is_done = true)
-        if task_ref.javascript_vm.is_shutting_down() {
+        // Gate the VM accesses below (the `is_shutting_down` read and the
+        // enqueue + loop wakeup) against worker teardown freeing the VM
+        // allocation. Lock order: `task_ref.mutex` (held) → gate (leaf).
+        // A closed gate means the VM is gone — same disposition as
+        // `is_shutting_down`, except the flag itself must not be read.
+        let vm_gone = !task_ref.vm_gate_ref().enter();
+        if vm_gone || task_ref.javascript_vm.is_shutting_down() {
+            if !vm_gone {
+                task_ref.vm_gate_ref().exit();
+            }
             // VM teardown: the JS-thread side will never drain this buffer (its
             // on_progress_update bails the same way), so free the body bytes now.
             task_ref.scheduled_response_buffer = MutableString::default();
@@ -2322,6 +2394,10 @@ impl FetchTasklet {
         // `ct` is the inline `concurrent_task` field of the heap tasklet; the
         // queue takes ownership of its `next` link.
         Self::enqueue_concurrent(task_ref.javascript_vm, ct);
+        // The JS thread can't free the tasklet while we hold `task_ref.mutex`
+        // (`on_progress_update` locks it first), so exiting the gate here is
+        // safe even though the task above is already visible to the consumer.
+        task_ref.vm_gate_ref().exit();
 
         task_ref.mutex.unlock();
         // we are done with the http client so we can deref our side

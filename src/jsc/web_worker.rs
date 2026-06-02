@@ -1250,6 +1250,20 @@ impl WebWorker {
                 // is step 3 below).
                 rare.close_all_socket_groups(unsafe { &*vm_ptr });
             }
+            // Cut off cross-thread concurrent-task producers (the HTTP client
+            // thread's `FetchTasklet` callbacks) BEFORE the VM is invalidated
+            // below: `close()` synchronizes with any in-flight gated enqueue
+            // and makes every later one observe the gate closed instead of
+            // touching this VM (see `ConcurrentEnqueueGate`). Then release
+            // queued-but-never-run tasks while JSC is still alive — e.g. a
+            // parked `FetchTasklet` progress task owns the JS-side tasklet
+            // ref, and dropping it may run `deinit` → JSC `Strong`/`Weak`
+            // teardown. No gated producer can enqueue after `close()`, so
+            // this drain observes every task that won the race.
+            // SAFETY: `concurrent_enqueue_gate` is set in `init()` and the
+            // VM's ref is dropped only at the dealloc below, so it is live.
+            unsafe { &*vm.concurrent_enqueue_gate }.close();
+            vm.event_loop_mut().release_queued_tasks_for_shutdown();
             exit_code = i32::from(vm.exit_handler.exit_code);
             global_object = Some(vm.global);
         }
@@ -1310,6 +1324,13 @@ impl WebWorker {
                 if let Some(log) = (*vm_ptr).log.take() {
                     bun_core::heap::destroy(log.as_ptr());
                 }
+                // Drop the VM's ref on the (already closed) enqueue gate.
+                // Producers that still hold refs (in-flight fetches) keep the
+                // gate box alive past the VM dealloc below; that is the point.
+                jsc::event_loop::ConcurrentEnqueueGate::deref(core::mem::replace(
+                    &mut (*vm_ptr).concurrent_enqueue_gate,
+                    core::ptr::null_mut(),
+                ));
                 virtual_machine::VMHolder::set_vm(None);
                 // The VM was `alloc_zeroed(Layout::<VirtualMachine>())` in
                 // `init`, NOT `Box::new` — dealloc the raw storage directly so

@@ -40,6 +40,21 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     let buffer: &[StringID] = res.buffer();
     let record_kinds: &[RecordKind] = res.record_kinds();
 
+    let identifier_count = strings_lens.len();
+    let is_valid_string_id =
+        |id: StringID| (id.0 as usize) < identifier_count || id.0 >= StringID::STAR_NAMESPACE.0;
+    if !buffer.iter().copied().all(is_valid_string_id)
+        || !requested_modules_keys
+            .iter()
+            .copied()
+            .all(is_valid_string_id)
+        || !requested_modules_values
+            .iter()
+            .all(|&v| (v.0 as usize) < identifier_count || v.0 >= RequestedModuleValue::Json.0)
+    {
+        return core::ptr::null_mut();
+    }
+
     let identifiers = IdentifierArray::create(strings_lens.len());
     // SAFETY: `identifiers` is non-null (returned by `create`); destroyed exactly once at scope exit,
     // mirroring Zig's `defer identifiers.destroy()` (runs on both success and early-return paths).

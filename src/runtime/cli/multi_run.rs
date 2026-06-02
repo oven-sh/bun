@@ -483,7 +483,7 @@ impl<'a> State<'a> {
             dependent.remaining_dependencies -= 1;
             if dependent.remaining_dependencies == 0 {
                 if dependent.start().is_err() {
-                    Output::pretty_errorln("<r><red>error<r>: Failed to start process");
+                    bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
                     Global::exit(1);
                 }
             }
@@ -591,7 +591,7 @@ impl AbortHandler {
             );
             if res == 0 {
                 if cfg!(debug_assertions) {
-                    Output::warn("Failed to set abort handler\n");
+                    bun_core::warn!("Failed to set abort handler\n");
                 }
             }
         }
@@ -772,8 +772,8 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
 pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
     // Validate flags
     if ctx.parallel && ctx.sequential {
-        Output::pretty_errorln(
-            "<r><red>error<r>: --parallel and --sequential cannot be used together",
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --parallel and --sequential cannot be used together"
         );
         Global::exit(1);
     }
@@ -799,8 +799,8 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     }
 
     if script_names.is_empty() {
-        Output::pretty_errorln(
-            "<r><red>error<r>: --parallel/--sequential requires at least one script name",
+        bun_core::pretty_errorln!(
+            "<r><red>error<r>: --parallel/--sequential requires at least one script name"
         );
         Global::exit(1);
     }
@@ -998,11 +998,11 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                             Some(&pkg.name),
                         )?;
                     } else if ctx.workspaces && !ctx.if_present {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: Missing \"{}\" script in package \"{}\"",
                             bstr::BStr::new(raw_name),
                             bstr::BStr::new(&pkg.name),
-                        ));
+                        );
                         Global::exit(1);
                     }
                 }
@@ -1014,11 +1014,11 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                 Global::exit(0);
             }
             if ctx.workspaces {
-                Output::pretty_errorln(
-                    "<r><red>error<r>: No workspace packages have matching scripts",
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r>: No workspace packages have matching scripts"
                 );
             } else {
-                Output::pretty_errorln("<r><red>error<r>: No packages matched the filter");
+                bun_core::pretty_errorln!("<r><red>error<r>: No packages matched the filter");
             }
             Global::exit(1);
         }
@@ -1038,7 +1038,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         let root_dir_info = match this_transpiler.resolver.read_dir_info(cwd) {
             Ok(Some(info)) => info,
             Ok(None) | Err(_) => {
-                Output::pretty_errorln("<r><red>error<r>: Failed to read directory");
+                bun_core::pretty_errorln!("<r><red>error<r>: Failed to read directory");
                 Global::exit(1);
             }
         };
@@ -1062,10 +1062,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                     matches.as_mut_slice().sort();
 
                     if matches.is_empty() {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: No scripts match pattern \"{}\"",
                             bstr::BStr::new(raw_name),
-                        ));
+                        );
                         Global::exit(1);
                     }
 
@@ -1081,10 +1081,10 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
                         )?;
                     }
                 } else {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: Cannot use glob pattern \"{}\" without package.json scripts",
                         bstr::BStr::new(raw_name),
-                    ));
+                    );
                     Global::exit(1);
                 }
             } else {
@@ -1102,7 +1102,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     }
 
     if configs.is_empty() {
-        Output::pretty_errorln("<r><red>error<r>: No scripts to run");
+        bun_core::pretty_errorln!("<r><red>error<r>: No scripts to run");
         Global::exit(1);
     }
 
@@ -1219,7 +1219,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     for handle in state.handles.iter_mut() {
         if handle.remaining_dependencies == 0 {
             if handle.start().is_err() {
-                Output::pretty_errorln("<r><red>error<r>: Failed to start process");
+                bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
                 Global::exit(1);
             }
         }

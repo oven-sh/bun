@@ -4,7 +4,7 @@ use core::ptr;
 use bun_alloc::AllocError;
 use bun_core::{Error, err};
 #[cfg(not(windows))]
-use bun_core::{Global, Output, fmt as bun_fmt};
+use bun_core::{Global, fmt as bun_fmt};
 use bun_paths::{self, OSPathChar, OSPathSlice};
 use bun_sys::{self as sys, Dir, E, EntryKind, Fd, walker_skippable, walker_skippable::Walker};
 
@@ -254,11 +254,11 @@ impl FileCopier {
                         match dest_dir.create_file_z(entry.path, Default::default()) {
                             Ok(f) => break 'dest f,
                             Err(err) => {
-                                Output::pretty_errorln(format_args!(
+                                bun_core::pretty_errorln!(
                                     "<r><red>{}<r>: copy file {}",
                                     err.name(),
                                     bun_fmt::fmt_os_path(entry.path, Default::default()),
-                                ));
+                                );
                                 Global::exit(1);
                             }
                         }

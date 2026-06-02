@@ -732,10 +732,10 @@ impl SourceMapStore {
             Default::default(),
         ) {
             source_map::ParseResult::Fail(fail) => {
-                bun_core::output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "Failed to re-parse source map: {}",
                     bstr::BStr::new(fail.msg)
-                ));
+                );
                 None
             }
             source_map::ParseResult::Success(mut psm) => Some(GetResult {

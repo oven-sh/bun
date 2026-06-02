@@ -1206,7 +1206,7 @@ impl JSValue {
             // `JSGlobalObject::throw_invalid_property_type_value` is ported.
             return Err(global.throw_invalid_arguments(format_args!(
                 "The \"{}\" property must be of type string. Received a symbol",
-                alloc::string::String::from_utf8_lossy(property),
+                bstr::BStr::new(property),
             )));
         }
         let s = prop.to_bun_string(global)?;
@@ -1249,7 +1249,7 @@ impl JSValue {
         if !v.is_cell() || !v.is_callable() {
             return Err(global.throw_invalid_arguments(format_args!(
                 "{} must be a function",
-                alloc::string::String::from_utf8_lossy(property),
+                bstr::BStr::new(property),
             )));
         }
         Ok(Some(v))
@@ -1350,7 +1350,7 @@ impl JSValue {
             // JSValue.zig:1785-1787 — `property_name ++ " must be an array"` via throwInvalidArguments.
             return Err(global.throw_invalid_arguments(format_args!(
                 "{} must be an array",
-                alloc::string::String::from_utf8_lossy(property),
+                bstr::BStr::new(property),
             )));
         }
         if prop.get_length(global)? == 0 {
@@ -2408,7 +2408,7 @@ impl JSValue {
                 Some(obj) => Ok(Some(obj)),
                 None => Err(global.throw_invalid_arguments(format_args!(
                     "{} must be an object",
-                    alloc::string::String::from_utf8_lossy(property_name),
+                    bstr::BStr::new(property_name),
                 ))),
             },
             None => Ok(None),
@@ -2429,7 +2429,7 @@ impl JSValue {
         if !(v.is_cell() && v.js_type().is_array()) {
             return Err(global.throw_invalid_arguments(format_args!(
                 "{} must be an array",
-                alloc::string::String::from_utf8_lossy(property_name),
+                bstr::BStr::new(property_name),
             )));
         }
         if v.get_length(global)? == 0 {

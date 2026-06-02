@@ -159,6 +159,10 @@ class DockerComposeHelper {
     return parseInt(match[1], 10);
   }
 
+  private get testHost(): string {
+    return process.env.BUN_DOCKER_TEST_HOST || "127.0.0.1";
+  }
+
   async waitForPort(port: number, timeout: number = 10000): Promise<void> {
     const deadline = Date.now() + timeout;
     while (Date.now() < deadline) {
@@ -170,7 +174,7 @@ class DockerComposeHelper {
             resolve();
           });
           socket.once("error", reject);
-          socket.connect(port, "127.0.0.1");
+          socket.connect(port, this.testHost);
         });
         return;
       } catch {
@@ -197,7 +201,7 @@ class DockerComposeHelper {
     }
 
     const info: ServiceInfo = {
-      host: "127.0.0.1",
+      host: this.testHost,
       ports: {},
     };
 

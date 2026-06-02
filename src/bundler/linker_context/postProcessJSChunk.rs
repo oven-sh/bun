@@ -857,7 +857,7 @@ pub fn post_process_js_chunk(
 
     // TODO: meta contents
 
-    chunk.isolated_hash = c.generate_isolated_hash(chunk);
+    chunk.isolated_hash = c.generate_isolated_hash(chunk, worker_arena);
     chunk
         .flags
         .set(crate::chunk::Flags::IS_EXECUTABLE, is_executable);

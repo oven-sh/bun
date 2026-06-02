@@ -188,6 +188,29 @@ describe("glob.match", async () => {
       return undefined;
     }
   });
+
+  test("oversized cwd throws instead of crashing", async () => {
+    const glob = new Glob("*.ts");
+    const tooLong = Buffer.alloc(100_000, "x").toString();
+    // relative cwd
+    expect(returnError(() => [...glob.scanSync({ cwd: tooLong })])).toBeDefined();
+    expect(returnError(() => glob.scan({ cwd: tooLong }))).toBeDefined();
+    // relative cwd that would be resolved against process.cwd()
+    expect(returnError(() => [...glob.scanSync({ cwd: tooLong, absolute: true })])).toBeDefined();
+    // absolute cwd
+    expect(returnError(() => [...glob.scanSync({ cwd: "/" + tooLong })])).toBeDefined();
+    expect(returnError(() => glob.scan({ cwd: "/" + tooLong }))).toBeDefined();
+
+    function returnError(cb: () => any): Error | undefined {
+      try {
+        cb();
+      } catch (err) {
+        // @ts-expect-error
+        return err;
+      }
+      return undefined;
+    }
+  });
 });
 
 // From fast-glob regular.e2e.tes

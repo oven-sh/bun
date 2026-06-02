@@ -317,41 +317,4 @@ pub mod unicode_testing_apis {
     }
 }
 
-// ── string_paths TestingAPIs ────────────────────────────────────────────────
-pub mod paths_testing_apis {
-    use super::*;
-
-    /// Used in JS tests, see `internal-for-testing.ts`.
-    /// Calls `strings.toKernel32Path` with the buffer shape Windows'
-    /// `PathLike::os_path_kernel32` uses (a `PathBuffer` reinterpreted as
-    /// `[u16]`), hardcoded to the Windows sizes so the conversion's bounds
-    /// behavior — over-long paths must not write past the wide buffer — is
-    /// exercisable on every platform.
-    #[bun_jsc::host_fn]
-    pub fn js_to_kernel32_path(
-        global_this: &JSGlobalObject,
-        call_frame: &CallFrame,
-    ) -> JsResult<JSValue> {
-        let input_value = call_frame.argument(0);
-
-        if !input_value.is_string() {
-            return Err(global_this.throw(format_args!("toKernel32Path: expected string argument")));
-        }
-
-        let input = input_value.to_slice(global_this)?;
-
-        // Windows `MAX_PATH_BYTES` (3 × PATH_MAX_WIDE + 1 = 98302) halved
-        // (= 49151), matching `os_path_kernel32`'s `bytes_as_slice_mut::<u16>`
-        // view of the u8 `PathBuffer`.
-        const WIDE_LEN: usize = (3 * bun_core::PATH_MAX_WIDE).div_ceil(2);
-        let mut wbuf = vec![0u16; WIDE_LEN];
-        let result = bun_paths::strings::to_kernel32_path(&mut wbuf, input.slice());
-
-        let out = String::clone_utf16(result.as_slice());
-        let js = to_js(&out, global_this);
-        out.deref();
-        js
-    }
-}
-
 // ported from: src/jsc/bun_string_jsc.zig

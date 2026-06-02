@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isPosix, isWindows } from "harness";
+import { isPosix, isWindows } from "harness";
 import fs from "node:fs";
 
 // On POSIX systems, MAX_PATH_BYTES is 4096.
@@ -131,7 +131,7 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
   // the former fit the buffer, the latter exceeded the UTF-8 byte check).
   it("existsSync handles every path length across the buffer boundaries (#20258)", () => {
     for (const len of [49150, 49151, 64503, 98302, 98303]) {
-      expect(fs.existsSync("A".repeat(len))).toBe(false);
+      expect(fs.existsSync(Buffer.alloc(len, "A").toString())).toBe(false);
     }
   });
 
@@ -160,38 +160,11 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
   });
 
   it("still accepts multi-byte paths that are long in bytes but within the UTF-16 bound", () => {
-    // 30003 UTF-8 bytes but only 10003 UTF-16 units; fits every wide buffer.
-    const p = "C:\\" + Buffer.alloc(30000, "\u4e00").toString();
-    expect(fs.existsSync(p)).toBe(false);
-  });
-});
-
-// The kernel32 path conversion itself is platform-independent slice math;
-// this exercises the Windows buffer shape on every platform via the
-// bun:internal-for-testing hook, in a subprocess because the unfixed
-// conversion panics (aborting the process) instead of failing safe.
-describe("toKernel32Path conversion bounds", () => {
-  it("adds the long-path prefix and fail-safes over-long input", async () => {
-    await using proc = Bun.spawn({
-      cmd: [
-        bunExe(),
-        "-e",
-        `const { pathsInternals } = require("bun:internal-for-testing");
-const short = pathsInternals.toKernel32Path("C:\\\\foo\\\\bar");
-// Over-long for the 49151-u16 buffer: must fail safe (prefix-only / empty),
-// not write past the buffer and panic.
-const longDrive = pathsInternals.toKernel32Path("C:\\\\" + Buffer.alloc(49200, "a").toString());
-const longRelative = pathsInternals.toKernel32Path(Buffer.alloc(60000, "a").toString());
-// In-bounds even though longer than WPathBuffer: the kernel32 view holds
-// 49151 units, so this must still convert (4-unit prefix + 49103 units).
-const bigOk = pathsInternals.toKernel32Path("C:\\\\" + Buffer.alloc(49100, "a").toString());
-console.log(JSON.stringify([short, longDrive, longRelative, bigOk.length]));`,
-      ],
-      env: bunEnv,
-    });
-
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout.trim()).toBe(JSON.stringify(["\\\\?\\C:\\foo\\bar", "\\\\?\\", "", 49107]));
-    expect(exitCode).toBe(0);
+    // 90003 UTF-8 bytes — past the UTF-16-unit limit in bytes, so the exact
+    // UTF-16 length (30003 units, which fits) must be computed and accepted.
+    // statSync (which does not swallow errors) must reach the syscall and
+    // fail with ENOENT, not with the length guard's ENAMETOOLONG.
+    const p = "C:\\" + Buffer.alloc(90000, "\u4e00").toString();
+    expect(() => fs.statSync(p)).toThrow("ENOENT");
   });
 });

@@ -2143,6 +2143,12 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
 
         let value = self.get_body_value();
         if let Value::Locked(_locked) = value {
+            // Unlike the other consumers, this one must NOT take
+            // `try_blob_from_resolved_stream`: the parse below reads
+            // `blob.slice()` synchronously, and a converted file-backed blob
+            // has no in-memory bytes yet — there is no async
+            // file-read-then-parse path here (same in the Zig original, where
+            // `Response(Bun.file(p)).formData()` has the same limitation).
             let owned_readable = self.get_body_readable_stream(global_object);
             // PORT NOTE: reshaped for borrowck — re-borrow after self method call.
             let value = self.get_body_value();

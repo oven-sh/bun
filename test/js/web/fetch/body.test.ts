@@ -835,6 +835,19 @@ describe("Response wrapping a Bun.file() stream", () => {
     expect(() => new Response(body)).toThrow("ReadableStream has already been used");
   });
 
+  test(".formData() on a file stream still resolves with the parsed fields", async () => {
+    // formData() intentionally keeps the streaming path (its parser reads
+    // in-memory bytes synchronously); this pins that it keeps working
+    const payload = "a=hello&b=world";
+    const dir = tempDirWithFiles("body-file-stream-form", { "form.txt": payload });
+
+    const fd = await new Response(file(join(dir, "form.txt")).stream(), {
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+    }).formData();
+    expect(fd.get("a")).toBe("hello");
+    expect(fd.get("b")).toBe("world");
+  });
+
   test("a consumed file stream can't be wrapped into a new Response", async () => {
     const { path } = makeFile("body-file-stream-rewrap");
 

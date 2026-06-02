@@ -6150,9 +6150,11 @@ fn pipe_byte_stream_to_file_sink(
     }));
     // SAFETY: just allocated; live until `finish`/shims destroy it.
     let promise_value = unsafe { (*pipe).promise.value() };
-    byte_stream
-        .pipe
-        .set(webcore::Wrap::<FileSinkPipe>::init(unsafe { &mut *pipe }));
+    byte_stream.pipe.set(webcore::Wrap::<FileSinkPipe>::init(
+        // SAFETY: `pipe` was just heap-allocated above and stays live until
+        // `finish`/the then-shims destroy it; the Pipe holds the erased ptr.
+        unsafe { &mut *pipe },
+    ));
     promise_value
 }
 
@@ -6306,8 +6308,9 @@ pub fn on_file_sink_pipe_resolve(
     // SAFETY: trailing arg is the `*mut FileSinkPipe` boxed through `then()`
     // in `FileSinkPipe::finish`; we are the sole consumer.
     let this = args.ptr[args.len - 1].as_number() as usize as *mut FileSinkPipe;
-    // SAFETY: live until destroy below.
+    // SAFETY: `this` and its sink are live until destroy below.
     let written = unsafe { (*(*this).sink).written.get() };
+    // SAFETY: `this` is live until destroy below.
     let result = unsafe {
         (*this)
             .promise
@@ -6327,7 +6330,7 @@ pub fn on_file_sink_pipe_reject(
     // SAFETY: see resolve shim above.
     let this = args.ptr[args.len - 1].as_number() as usize as *mut FileSinkPipe;
     let err = args.ptr[0];
-    // SAFETY: live until destroy below.
+    // SAFETY: `this` is live until destroy below.
     let result = unsafe { (*this).promise.reject(global_this, Ok(err)) };
     // SAFETY: sole owner.
     unsafe { FileSinkPipe::destroy(this) };

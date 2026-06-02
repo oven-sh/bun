@@ -38,12 +38,20 @@ private:
         uint32_t val;
     };
 
+    /* Lowercase an ASCII uppercase letter; other bytes pass through unchanged.
+     * Header lookups pass lowercase names (`getHeader("host")`); since RFC 7230
+     * header names are case-insensitive, normalize to lowercase on add and
+     * mightHave so mixed-case keys hash to the same features. */
+    static inline unsigned char toLower(unsigned char c) {
+        return (unsigned char) (c | ((unsigned char) (c - 'A') < 26 ? 0x20 : 0));
+    }
+
     ScrambleArea getFeatures(std::string_view key) {
         ScrambleArea s;
-        s.p[0] = reinterpret_cast<const unsigned char&>(key[0]);
-        s.p[1] = reinterpret_cast<const unsigned char&>(key[key.length() - 1]);
-        s.p[2] = reinterpret_cast<const unsigned char&>(key[key.length() - 2]);
-        s.p[3] = reinterpret_cast<const unsigned char&>(key[key.length() >> 1]);
+        s.p[0] = toLower(reinterpret_cast<const unsigned char&>(key[0]));
+        s.p[1] = toLower(reinterpret_cast<const unsigned char&>(key[key.length() - 1]));
+        s.p[2] = toLower(reinterpret_cast<const unsigned char&>(key[key.length() - 2]));
+        s.p[3] = toLower(reinterpret_cast<const unsigned char&>(key[key.length() >> 1]));
         return s;
     }
 

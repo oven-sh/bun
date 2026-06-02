@@ -745,9 +745,8 @@ impl FileSink {
         // Path opens replace the destination: trim it to the bytes written
         // once the sink ends (see `truncate_to_end_offset`). Overwrites any
         // previous value so re-starting the sink with an fd clears it.
-        self.truncate_on_end.set(
-            options.truncate && matches!(options.input_path, PathOrFileDescriptor::Path(_)),
-        );
+        self.truncate_on_end
+            .set(options.truncate && matches!(options.input_path, PathOrFileDescriptor::Path(_)));
 
         #[cfg(windows)]
         {

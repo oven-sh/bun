@@ -113,7 +113,7 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     // Copy source paths out of the arena into owned storage.
     let mut source_paths_slice: Vec<Box<[u8]>> = Vec::with_capacity(source_count);
     for item in sources_paths.items.slice() {
-        let mut estr = item.data.as_e_string().ok_or(InvalidSourceMap)?;
+        let estr = item.data.as_e_string().ok_or(InvalidSourceMap)?;
         // handle_oom — fatal if OOM
         let s = estr.string(&arena).expect("OOM");
         source_paths_slice.push(Box::<[u8]>::from(s));
@@ -123,7 +123,7 @@ fn parse_internal(json_bytes: &[u8]) -> Result<Box<InputSourceMap>, InvalidSourc
     let mut sources_content_slice: Vec<Box<[u8]>> = Vec::with_capacity(source_count);
     if let Some(arr) = sources_content_opt {
         for item in arr.items.slice() {
-            let slot: Box<[u8]> = if let Some(mut estr) = item.data.as_e_string() {
+            let slot: Box<[u8]> = if let Some(estr) = item.data.as_e_string() {
                 let s = estr.string(&arena).expect("OOM");
                 if s.is_empty() {
                     Box::<[u8]>::from(&b""[..])

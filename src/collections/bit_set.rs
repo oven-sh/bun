@@ -1641,7 +1641,8 @@ impl DynamicBitSet {
 
     /// Like `is_set`, but returns `out_of_bounds` for indices past the end.
     pub fn is_set_allow_out_of_bound(&self, index: usize, out_of_bounds: bool) -> bool {
-        self.unmanaged.is_set_allow_out_of_bound(index, out_of_bounds)
+        self.unmanaged
+            .is_set_allow_out_of_bound(index, out_of_bounds)
     }
 
     /// Returns the total number of set bits in this bit set.

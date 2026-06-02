@@ -3985,9 +3985,8 @@ impl<'a> LinkerContext<'a> {
             // (see `match_import_with_export`); the stored entry is identical
             // to what re-resolving would produce, and `Normal` bindings have
             // no other side effects to apply.
-            if let Some(entry) = self.graph.meta.items_imports_to_bind()
-                [source_index as usize]
-                .get(&import_ref)
+            if let Some(entry) =
+                self.graph.meta.items_imports_to_bind()[source_index as usize].get(&import_ref)
                 && entry.kind != crate::ImportBindKind::Other
             {
                 continue;

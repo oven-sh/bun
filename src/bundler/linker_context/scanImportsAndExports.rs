@@ -722,9 +722,7 @@ pub fn scan_imports_and_exports(
                 // change preserved: ascending `inner_index`.
                 let ni_keys: &[Ref] = col_ref!(named_imports)[id].keys();
                 let mut ni_order: Vec<usize> = (0..ni_keys.len()).collect();
-                ni_order.sort_by(|&a, &b| {
-                    ni_keys[a].inner_index().cmp(&ni_keys[b].inner_index())
-                });
+                ni_order.sort_by(|&a, &b| ni_keys[a].inner_index().cmp(&ni_keys[b].inner_index()));
                 // Iterate by index so we can
                 // re-borrow `parts` after each `top_level_symbol_to_parts` call.
                 for &ni_i in &ni_order {

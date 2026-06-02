@@ -7,7 +7,7 @@
 use core::mem;
 
 use bun_collections::bit_set::ArrayBitSet;
-use bun_core::{PathString, strings};
+use bun_core::strings;
 use bun_core::{ZBox, ZStr};
 use bun_paths::{self as paths, PathBuffer};
 use bun_sys::{self as sys, Fd, FdExt};
@@ -135,8 +135,7 @@ impl<'a> PatchFile<'a> {
                         return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
                     }
                     let filepath_z = ZBox::from_vec_with_nul(file_creation.path.to_vec());
-                    let filepath = PathString::init(filepath_z.as_bytes());
-                    let filedir = paths::dirname_simple(filepath.slice());
+                    let filedir = paths::dirname_simple(filepath_z.as_bytes());
                     let mode = file_creation.mode;
 
                     if !filedir.is_empty() {

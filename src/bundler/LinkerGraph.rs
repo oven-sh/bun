@@ -7,7 +7,7 @@ use bun_ast::server_component_boundary;
 use bun_ast::symbol;
 use bun_ast::{DeclaredSymbol, DeclaredSymbolList, Dependency, Symbol};
 use bun_collections::{AutoBitSet, DynamicBitSetUnmanaged as BitSet, MultiArrayList, VecExt};
-use bun_core::PathString;
+use bun_core::RawSlice;
 
 use crate::IndexStringMap::IndexStringMap;
 use crate::{ImportTracker, Index, JSAst, Part, Ref, UseDirective, import_record, index, part};
@@ -20,11 +20,11 @@ bun_core::declare_scope!(LinkerGraph, visible);
 
 pub mod entry_point {
     use bun_collections::MultiArrayList;
-    use bun_core::PathString;
+    use bun_core::RawSlice;
 
     #[derive(Default)]
     pub struct EntryPoint {
-        pub output_path: PathString,
+        pub output_path: RawSlice<u8>,
         pub source_index: crate::IndexInt,
         pub output_path_was_auto_generated: bool,
     }
@@ -33,7 +33,7 @@ pub mod entry_point {
 
     bun_collections::multi_array_columns! {
         pub trait EntryPointColumns for EntryPoint {
-            output_path: PathString,
+            output_path: RawSlice<u8>,
             source_index: crate::IndexInt,
             output_path_was_auto_generated: bool,
         }
@@ -700,7 +700,7 @@ impl<'a> LinkerGraph<'a> {
             let mut ep_slice = self.entry_points.slice();
             let ep_cols = ep_slice.split_mut();
             let source_indices: &mut [index::Int] = ep_cols.source_index;
-            let path_strings: &mut [PathString] = ep_cols.output_path;
+            let path_strings: &mut [RawSlice<u8>] = ep_cols.output_path;
             ep_cols.output_path_was_auto_generated.fill(false);
 
             debug_assert_eq!(entry_points.len(), path_strings.len());
@@ -718,9 +718,9 @@ impl<'a> LinkerGraph<'a> {
 
                 // Check if this entry point has an original name (from virtual entry resolution)
                 if let Some(original_name) = entry_point_original_names.get(i.get()) {
-                    *path_string = PathString::init(original_name);
+                    *path_string = RawSlice::new(original_name);
                 } else {
-                    *path_string = PathString::init(source.path.text);
+                    *path_string = RawSlice::new(source.path.text);
                 }
 
                 *source_index = source.index.0;
@@ -739,7 +739,7 @@ impl<'a> LinkerGraph<'a> {
 
                 self.entry_points.append_assume_capacity(EntryPoint {
                     source_index: id,
-                    output_path: PathString::init(source.path.text),
+                    output_path: RawSlice::new(source.path.text),
                     output_path_was_auto_generated: true,
                 });
             }

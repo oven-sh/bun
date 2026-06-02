@@ -14,12 +14,13 @@ use bun_jsc::{self as jsc};
 // `ZigString` (repr(C)-identical to `bun_core::ZigString`, but with the
 // JSGlobalObject FFI methods); import that one so the call sites type-check.
 use bun_core::ZigStringSlice;
-use bun_core::{PathString, strings};
+use bun_core::strings;
 use bun_jsc::zig_string::ZigString;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
 use bun_paths::{self as bun_path, PathBuffer};
+use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
 
@@ -2480,8 +2481,7 @@ impl TestCommand {
         let mut pass_with_no_tests_from_filter = false;
         let mut changed_module_graph_files: Vec<Box<[u8]>> = Vec::new();
         // PORT NOTE: defer free handled by Drop.
-        let mut test_files: &mut [PathString] = if let Some(changed_since) =
-            &ctx.test_options.changed
+        let mut test_files: &mut [Interned] = if let Some(changed_since) = &ctx.test_options.changed
         {
             'brk: {
                 // If the Scanner found nothing, fall through to the existing
@@ -2532,7 +2532,7 @@ impl TestCommand {
             &mut all_test_files[..]
         };
         // TODO(port): test_files type — Zig is `[]PathString` slice into all_test_files or
-        // result.test_files; ownership in Rust needs reshaping. Using &mut [PathString] here.
+        // result.test_files; ownership in Rust needs reshaping. Using &mut [Interned] here.
 
         // --shard=M/N: sort the test files for determinism, then keep only
         // every Nth file starting at M-1. This round-robin distribution
@@ -2546,7 +2546,7 @@ impl TestCommand {
         // printing a confusing "running 0/0 test files".
         if let Some(shard) = &ctx.test_options.shard {
             if !test_files.is_empty() {
-                test_files.sort_by(|a, b| strings::order(a.slice(), b.slice()));
+                test_files.sort_by(|a, b| strings::order(a.as_bytes(), b.as_bytes()));
 
                 let mut write: usize = 0;
                 let total = test_files.len();
@@ -3039,12 +3039,12 @@ impl TestCommand {
     pub(crate) fn run_all_tests(
         reporter_: &mut CommandLineReporter,
         vm_: &mut VirtualMachine,
-        files_: &[PathString],
+        files_: &[Interned],
     ) {
         struct Context<'a> {
             reporter: &'a mut CommandLineReporter,
             vm: &'a mut VirtualMachine,
-            files: &'a [PathString],
+            files: &'a [Interned],
         }
         impl<'a> Context<'a> {
             pub(crate) fn begin(&mut self) {
@@ -3060,7 +3060,7 @@ impl TestCommand {
                         if let Err(err) = TestCommand::run(
                             reporter,
                             vm,
-                            file_name.slice(),
+                            file_name.as_bytes(),
                             bun_test::FirstLast {
                                 first: isolate || i == 0,
                                 last: isolate,
@@ -3083,7 +3083,7 @@ impl TestCommand {
                 if let Err(err) = TestCommand::run(
                     reporter,
                     vm,
-                    files[files.len() - 1].slice(),
+                    files[files.len() - 1].as_bytes(),
                     bun_test::FirstLast {
                         first: isolate || files.len() == 1,
                         last: true,

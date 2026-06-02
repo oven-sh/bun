@@ -85,8 +85,8 @@ test("fetch through CONNECT proxy with split 200 envelope surfaces upstream resp
               return;
             }
             const upstreamSock = net.connect(upstreamPort, "127.0.0.1", async () => {
-              // Force handleShortRead on the client by making the CONNECT
-              // 200 envelope arrive across two separate onData() calls in
+              // Force handle_short_read on the client by making the CONNECT
+              // 200 envelope arrive across two separate on_data() calls in
               // the fetch client. Nagle + TCP coalescence would otherwise
               // batch back-to-back writes into one segment. Disable Nagle
               // and yield between writes — the yield gives the kernel time

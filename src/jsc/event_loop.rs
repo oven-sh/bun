@@ -1039,11 +1039,18 @@ impl EventLoop {
     /// `task` must be a live `ConcurrentTaskItem` that the queue may take
     /// ownership of via its intrusive `next` link. All callers pass a
     /// freshly-allocated or struct-embedded task — never null.
+    ///
+    /// A terminated VM never drains its queue again, so the enqueue is
+    /// dropped (and the task intentionally leaked — its ownership contract
+    /// has no deallocation callback). This is reachable when a worker is
+    /// torn down while a Bake DevServer bundle is still in flight:
+    /// `WebWorker::shutdown` leaks the VM and sets `has_terminated`, and the
+    /// bundle's straggler ParseTask completions land here afterwards. (Zig
+    /// debug-paniced on this state; that turned a legitimate
+    /// terminate-mid-bundle into an abort.)
     pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTaskItem>) {
-        if cfg!(debug_assertions) {
-            if self.vm_ref().has_terminated {
-                panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
-            }
+        if self.vm_ref().has_terminated {
+            return;
         }
         self.concurrent_tasks.push(task);
         self.wakeup();
@@ -1200,10 +1207,11 @@ impl EventLoop {
         &self,
         batch: bun_threading::unbounded_queue::Batch<ConcurrentTaskItem>,
     ) {
-        if cfg!(debug_assertions) {
-            if self.vm_ref().has_terminated {
-                panic!("EventLoop.enqueueTaskConcurrent: VM has terminated");
-            }
+        // See `enqueue_task_concurrent`: a terminated VM never drains its
+        // queue again; drop the enqueue (leaking the batch) instead of
+        // pushing into — and waking — a torn-down loop.
+        if self.vm_ref().has_terminated {
+            return;
         }
         // Panic on an empty batch; `push_batch`'s first line is
         // `set_next(last, null)`, so a null `last` would be UB, not a clean fail.

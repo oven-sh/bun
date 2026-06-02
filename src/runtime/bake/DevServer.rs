@@ -1176,8 +1176,20 @@ impl Drop for DevServer {
 
         // The map's `Drop` runs `SerializedFailure::drop` for each value.
 
-        if self.current_bundle.is_some() {
-            debug_assert!(false); // impossible to de-initialize this state correctly.
+        // An async bundle may still be in flight: its ParseTasks on the shared
+        // `WorkPool` hold pointers into `bv2`, the bundle heap, and the
+        // `AstAllocState`, and they can be neither cancelled nor waited for
+        // here (the event loop that would drain their completions is tearing
+        // down). Zig deliberately leaked this state (DevServer.zig `deinit`,
+        // `.current_bundle` arm: "impossible to de-initialize this state
+        // correctly"); letting the field drop instead frees mi-heaps under a
+        // running parse — observed as scattered segfaults inside parser
+        // codegen (e.g. `generate_react_refresh_import_hmr`). Leak it.
+        // `VirtualMachine::pending_async_bundles` intentionally stays nonzero
+        // so a worker-thread teardown leaks the VM too (`WebWorker::shutdown`).
+        if let Some(bundle) = self.current_bundle.take() {
+            debug_log!("deinit with an in-flight bundle; leaking it");
+            let _ = ::core::mem::ManuallyDrop::new(bundle);
         }
 
         {
@@ -3387,6 +3399,16 @@ impl DevServer {
             promise: ::core::mem::take(&mut self.next_bundle.promise),
             resolution_failure_entries: Default::default(),
         });
+        // Tasks for this bundle are now queued on the shared `WorkPool`, each
+        // holding pointers into `bv2`/`heap` and this VM's event loop. Keep
+        // the VM's in-flight count in sync so a forced teardown
+        // (`WebWorker::shutdown`) knows it must leak the VM instead of
+        // freeing it under those tasks; `finalize_bundle` decrements.
+        {
+            let vm = self.vm();
+            vm.pending_async_bundles
+                .set(vm.pending_async_bundles.get() + 1);
+        }
 
         self.next_bundle.promise = DeferredPromise::default();
         self.next_bundle.requests = deferred_request::List::default();
@@ -3887,6 +3909,14 @@ pub(super) fn finalize_bundle(
         bv2.deinit_without_freeing_arena();
         if let Some(cb) = &mut dev.current_bundle {
             cb.promise.deinit_idempotently();
+        }
+        // The bundle ran to completion (`pending_items == 0`), so no task on
+        // the `WorkPool` references it anymore — releasing the VM's in-flight
+        // count makes a later teardown free the VM normally again.
+        {
+            let vm = dev.vm();
+            vm.pending_async_bundles
+                .set(vm.pending_async_bundles.get().saturating_sub(1));
         }
         // Drops `CurrentBundle.heap` (the arena `bv2.graph.heap` borrows).
         dev.current_bundle = None;

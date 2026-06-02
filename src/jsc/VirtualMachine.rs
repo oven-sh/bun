@@ -318,6 +318,21 @@ pub struct VirtualMachine {
     pub has_started_debugger: bool,
     pub has_terminated: bool,
 
+    /// Number of Bake `DevServer` bundles currently in flight on this VM.
+    /// Incremented by `DevServer::start_async_bundle`, decremented when
+    /// `finalize_bundle` clears `current_bundle`. Same-thread only (the
+    /// `DevServer` lives on this VM's thread), hence `Cell`; zero-valid for
+    /// the `alloc_zeroed` init.
+    ///
+    /// Read by `WebWorker::shutdown`: a nonzero count means ParseTasks on the
+    /// shared `WorkPool` still hold pointers into this VM — the bundle's
+    /// `AnyEventLoop::Js` handle points at `self.event_loop` (a value field
+    /// of this struct) and result enqueues go through
+    /// `EventLoop::enqueue_task_concurrent`. Those tasks can be neither
+    /// cancelled nor waited for once the event loop stops draining, so the VM
+    /// must be leaked rather than freed while this is nonzero.
+    pub pending_async_bundles: core::cell::Cell<u32>,
+
     #[cfg(debug_assertions)]
     pub debug_thread_id: std::thread::ThreadId,
     #[cfg(not(debug_assertions))]

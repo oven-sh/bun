@@ -1282,6 +1282,36 @@ impl WebWorker {
             // SAFETY: loop owned by this thread's VM; no concurrent access.
             unsafe { (*loop_).internal_loop_data.jsc_vm = core::ptr::null_mut() };
         }
+        // A Bake DevServer bundle may still be in flight on the shared
+        // `WorkPool`. Its ParseTasks hold pointers into this VM: the bundle's
+        // `AnyEventLoop::Js` handle points at `vm.event_loop` (a value field
+        // of the VM box), result enqueues go through
+        // `EventLoop::enqueue_task_concurrent`, and the resolver reads the
+        // worker env. Those tasks can be neither cancelled nor waited for —
+        // the loop above stopped draining, so the bundle completion that
+        // would decrement `pending_async_bundles` can never run. Freeing the
+        // VM / env / uws loop here is a use-after-free on the pool threads
+        // (observed as segfaults inside parser codegen, e.g.
+        // `generate_react_refresh_import_hmr`); leak them instead — the same
+        // doctrine as Zig's DevServer `.current_bundle` teardown arm
+        // ("impossible to de-initialize this state correctly").
+        // `has_terminated` turns the stragglers' enqueues into no-ops (see
+        // `EventLoop::enqueue_task_concurrent`).
+        if !vm_ptr.is_null()
+            // SAFETY: vm_ptr valid; sole owner (unpublished under vm_lock).
+            && unsafe { &*vm_ptr }.pending_async_bundles.get() > 0
+        {
+            log!(
+                "[{}] leaking the VM: a dev server bundle is still in flight",
+                self.execution_context_id
+            );
+            // SAFETY: vm_ptr valid; sole owner. Flag write (the VM is leaked,
+            // not `destroy()`ed) so concurrent enqueues bail out.
+            unsafe { (*vm_ptr).has_terminated = true };
+            virtual_machine::VMHolder::set_vm(None);
+            let _ = core::mem::ManuallyDrop::new(arena.take());
+            return;
+        }
         if !vm_ptr.is_null() {
             // SAFETY: vm_ptr valid; sole owner.
             // Must precede Loop.shutdown so uv_close isn't called twice on the

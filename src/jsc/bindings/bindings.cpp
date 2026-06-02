@@ -1973,8 +1973,8 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
             } else {
                 // the case where we do not need to clone the name
                 // when the header name is already present in the list
-                // we don't have that information here, so map.setUncommonHeaderCloneName exists
-                map.setUncommonHeaderCloneName(nameView, value);
+                // we don't have that information here, so map.addUncommonHeaderCloneName exists
+                map.addUncommonHeaderCloneName(nameView, value);
             }
         }
 
@@ -2003,7 +2003,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromUWS(void* arg1)
         if (WebCore::findHTTPHeaderName(nameView, name)) {
             map.add(name, WTF::move(value));
         } else {
-            map.setUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+            map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
         }
     }
     headers->setInternalHeaders(WTF::move(map));
@@ -2028,7 +2028,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromH3(void* arg1)
         if (WebCore::findHTTPHeaderName(nameView, hn)) {
             map.add(hn, WTF::move(value));
         } else {
-            map.setUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
+            map.addUncommonHeader(nameView.toString().isolatedCopy(), WTF::move(value));
         }
     });
     headers->setInternalHeaders(WTF::move(map));

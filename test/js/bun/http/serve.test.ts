@@ -2173,6 +2173,57 @@ it.concurrent("#6462", async () => {
   ]);
 });
 
+it.concurrent("combines duplicate request headers per the Fetch spec", async () => {
+  // WHATWG Fetch requires repeated header fields to be combined with ", " when
+  // read via Headers.get(). Previously Bun.serve overwrote duplicate non-common
+  // request header names with the last value, dropping earlier values.
+  let seen: Record<string, string | null> = {};
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      seen = {
+        xdup: req.headers.get("x-dup"),
+        xonce: req.headers.get("x-once"),
+        accept: req.headers.get("accept"),
+      };
+      return new Response("ok");
+    },
+  });
+
+  const { promise, resolve } = Promise.withResolvers<void>();
+  await Bun.connect({
+    port: server.port,
+    hostname: server.hostname,
+    socket: {
+      open(socket) {
+        socket.write(
+          "GET / HTTP/1.1\r\n" +
+            `Host: ${server.hostname}\r\n` +
+            "X-Dup: first\r\n" +
+            "X-Dup: second\r\n" +
+            "X-Dup: third\r\n" +
+            "X-Once: only\r\n" +
+            "Accept: text/html\r\n" +
+            "Accept: application/json\r\n" +
+            "Connection: close\r\n" +
+            "\r\n",
+        );
+      },
+      data() {},
+      close() {
+        resolve();
+      },
+    },
+  });
+  await promise;
+
+  expect(seen).toEqual({
+    xdup: "first, second, third",
+    xonce: "only",
+    accept: "text/html, application/json",
+  });
+});
+
 it.concurrent("#6583", async () => {
   const callback = mock();
   using server = Bun.serve({

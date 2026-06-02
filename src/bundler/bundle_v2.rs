@@ -2468,7 +2468,7 @@ pub mod bv2_impl {
                     // HTML is only allowed at the entry point.
                 };
                 let mut tmp_source = bun_ast::Source {
-                    path: path_as_static(&path.dupe_alloc().expect("oom")),
+                    path: path_as_static(&path.dupe_alloc(self.arena()).expect("oom")),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     ..Default::default()
                 };
@@ -2674,7 +2674,7 @@ pub mod bv2_impl {
             // surfacing as "Failed to load bundled module
             // 'bun-framework-react/server.tsx'" when the worker can no longer match
             // `built_in_modules`.
-            path = path.dupe_alloc().expect("oom");
+            path = path.dupe_alloc(self.arena()).expect("oom");
             // PORT NOTE: Zig's `var path = result.path()` is a `*Fs.Path` *into*
             // `result.path_pair`, so the `path.* = pathWithPrettyInitialized(...)`
             // assignment mutates the resolver result in place. The borrowck-reshape
@@ -7562,7 +7562,7 @@ pub mod bv2_impl {
         path: &bun_paths::fs::Path<'static>,
         target: options::Target,
         top_level_dir: &[u8],
-        _bump: &bun_alloc::Arena,
+        bump: &bun_alloc::Arena,
     ) -> Result<bun_paths::fs::Path<'static>, bun_core::Error> {
         use crate::bun_fs::PathResolverExt as _;
         use crate::bun_node_fallbacks;
@@ -7594,7 +7594,7 @@ pub mod bv2_impl {
             } else {
                 path_clone.pretty = rel;
             }
-            path_clone.dupe_alloc_fix_pretty()
+            path_clone.dupe_alloc_fix_pretty(bump)
         } else {
             let mut path_clone: crate::bun_fs::Path<'_> = *path;
             let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
@@ -7606,7 +7606,7 @@ pub mod bv2_impl {
             let _ = fbs.write_all(path_clone.text);
             let written = fbs.pos;
             path_clone.pretty = &buf.0[..written];
-            path_clone.dupe_alloc_fix_pretty()
+            path_clone.dupe_alloc_fix_pretty(bump)
         }
     }
 

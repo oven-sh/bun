@@ -195,7 +195,8 @@ fn register_active(this: *mut Watcher) -> bool {
     HOOK.call_once(|| bun_core::Global::add_early_exit_callback(stop_all_for_exit_hook));
 
     let mut list = ACTIVE_WATCHERS.lock();
-    if STOPPING_FOR_EXIT.load(std::sync::atomic::Ordering::Acquire) || bun_core::Global::is_exiting()
+    if STOPPING_FOR_EXIT.load(std::sync::atomic::Ordering::Acquire)
+        || bun_core::Global::is_exiting()
     {
         return false;
     }

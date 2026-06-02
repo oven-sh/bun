@@ -707,9 +707,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let expr = *e;
         let _ = in_;
         let mut e_ = expr.data.e_template().expect("infallible: variant checked");
-        if let Some(tag) = e_.tag {
+        if e_.tag.is_some() {
             p.visit_expr(e_.tag.as_mut().unwrap());
+        }
 
+        // Visit the interpolation values before the macro dispatch below: its
+        // early-return paths (dead code, macros disabled, node_modules, macro
+        // failure) replace the whole expression without visiting the parts,
+        // which would leave the scopes recorded during the parse pass for any
+        // arrows/functions inside them unconsumed and trip "Scope mismatch
+        // while visiting" on the next scope push. Mirrors e_call, which visits
+        // its arguments before macro handling.
+        // `Template.parts` is arena-owned (Zig: `[]E.TemplatePart`).
+        for part in e_.parts_mut().iter_mut() {
+            p.visit_expr(&mut part.value);
+        }
+
+        if let Some(tag) = e_.tag {
             if Self::ALLOW_MACROS {
                 let ref_ = match &e_.tag.unwrap().data {
                     Data::EImportIdentifier(ident) => Some(ident.ref_),
@@ -795,11 +809,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
             }
-        }
-
-        // `Template.parts` is arena-owned (Zig: `[]E.TemplatePart`).
-        for part in e_.parts_mut().iter_mut() {
-            p.visit_expr(&mut part.value);
         }
 
         // When mangling, inline string values into the template literal. Note that

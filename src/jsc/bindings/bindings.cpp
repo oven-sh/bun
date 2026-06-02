@@ -1954,14 +1954,19 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromPicoHeaders_(const void*
 
         for (size_t j = 0; j < end; j++) {
             PicoHTTPHeader header = pico_headers.ptr[j];
-            if (header.value.len == 0 || header.name.len == 0)
+            // picohttpparser reports obs-fold continuation lines with an empty
+            // name; skip those. Empty *values* must flow through so duplicate
+            // headers combine per the Fetch spec ("a, , c") and a lone empty
+            // header is still visible to JS, matching the uWS/H3 paths.
+            if (header.name.len == 0)
                 continue;
 
             StringView nameView = StringView(std::span { reinterpret_cast<const char*>(header.name.ptr), header.name.len });
 
             std::span<Latin1Character> data;
             auto value = String::createUninitialized(header.value.len, data);
-            memcpy(data.data(), header.value.ptr, header.value.len);
+            if (header.value.len > 0)
+                memcpy(data.data(), header.value.ptr, header.value.len);
 
             HTTPHeaderName name;
 

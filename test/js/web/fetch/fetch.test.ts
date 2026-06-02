@@ -2559,6 +2559,10 @@ it("combines duplicate response headers per the Fetch spec", async () => {
           "X-Dup: second\r\n" +
           "X-Dup: third\r\n" +
           "X-Once: only\r\n" +
+          "X-Gap: a\r\n" +
+          "X-Gap:\r\n" +
+          "X-Gap: c\r\n" +
+          "X-Empty:\r\n" +
           "Accept: text/html\r\n" +
           "Accept: application/json\r\n" +
           "Set-Cookie: a=1\r\n" +
@@ -2576,6 +2580,10 @@ it("combines duplicate response headers per the Fetch spec", async () => {
   expect(await res.text()).toBe("ok");
   expect(res.headers.get("x-dup")).toBe("first, second, third");
   expect(res.headers.get("x-once")).toBe("only");
+  // the combine step has no empty-value exception, and a lone empty header is
+  // still visible — undici returns "a, , c" and "" here, not "a, c" and null
+  expect(res.headers.get("x-gap")).toBe("a, , c");
+  expect(res.headers.get("x-empty")).toBe("");
   expect(res.headers.get("accept")).toBe("text/html, application/json");
   expect(res.headers.getSetCookie()).toEqual(["a=1", "b=2"]);
 });

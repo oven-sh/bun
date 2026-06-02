@@ -739,6 +739,18 @@ const IS_UV_FS_COPYFILE_DISABLED =
       expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array([10, 20, 30]));
     });
 
+    it("writes the values of an async generator function", async () => {
+      using dir = tempDir("bun-write-async-gen-fn", {});
+      const filePath = join(String(dir), "out.bin");
+
+      const written = await Bun.write(filePath, async function* () {
+        yield new Uint8Array([40, 50]);
+        yield new Uint8Array([60]);
+      });
+      expect(written).toBe(3);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array([40, 50, 60]));
+    });
+
     it("throws on an already-used stream", async () => {
       using dir = tempDir("bun-write-used-stream", {});
       const filePath = join(String(dir), "out.bin");

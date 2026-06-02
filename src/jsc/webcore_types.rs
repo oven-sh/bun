@@ -23,7 +23,7 @@ use core::ptr::NonNull;
 // (atomic refcounting now via `bun_ptr::ThreadSafeRefCount`)
 use std::rc::Rc;
 
-use bun_core::{PathString, immutable::AsciiStatus};
+use bun_core::immutable::AsciiStatus;
 use bun_http_types::MimeType::MimeType;
 
 use crate::JsCell;
@@ -424,7 +424,7 @@ impl Blob {
     pub fn get_file_name(&self) -> Option<&[u8]> {
         match &self.store.get().as_deref()?.data {
             store::Data::Bytes(bytes) => {
-                let n = bytes.stored_name.slice();
+                let n = &bytes.stored_name[..];
                 if n.is_empty() { None } else { Some(n) }
             }
             store::Data::File(file) => match &file.pathlike {
@@ -580,7 +580,8 @@ pub mod store {
         pub cap: SizeType,
         pub allocator: bun_alloc::StdAllocator,
         /// Used by standalone module graph and the `File` constructor.
-        pub stored_name: PathString,
+        /// Heap-owned (or empty); freed by `Bytes`'s `Drop`.
+        pub stored_name: Box<[u8]>,
     }
 
     // SAFETY: `Bytes` is morally `Vec<u8>`-with-custom-free. The raw
@@ -598,7 +599,7 @@ pub mod store {
                 len: 0,
                 cap: 0,
                 allocator: bun_alloc::basic::C_ALLOCATOR,
-                stored_name: PathString::default(),
+                stored_name: Box::default(),
             }
         }
     }
@@ -617,7 +618,7 @@ pub mod store {
                 len: len as SizeType,
                 cap: cap as SizeType,
                 allocator: bun_alloc::basic::C_ALLOCATOR,
-                stored_name: PathString::default(),
+                stored_name: Box::default(),
             }
         }
 
@@ -632,7 +633,7 @@ pub mod store {
                 len: len as SizeType,
                 cap: len as SizeType,
                 allocator: bun_alloc::basic::C_ALLOCATOR,
-                stored_name: PathString::default(),
+                stored_name: Box::default(),
             }
         }
 
@@ -642,10 +643,9 @@ pub mod store {
         /// `init_owned` paths) — asserts on a custom allocator (mmap/memfd).
         pub fn into_boxed_slice(self) -> Box<[u8]> {
             let mut this = core::mem::ManuallyDrop::new(self);
-            // SAFETY: `stored_name` ownership is consumed exactly once here;
-            // `ManuallyDrop` suppresses the `Drop` impl that would otherwise
-            // free it again.
-            unsafe { this.stored_name.deinit_owned() };
+            // `ManuallyDrop` suppresses the `Drop` impl, so free `stored_name`
+            // here explicitly (the buffer itself is reclaimed below).
+            drop(core::mem::take(&mut this.stored_name));
             let Some(ptr) = this.ptr else {
                 return Box::new([]);
             };
@@ -677,12 +677,12 @@ pub mod store {
                 len,
                 cap,
                 allocator,
-                stored_name: PathString::default(),
+                stored_name: Box::default(),
             }
         }
 
         #[inline]
-        pub fn init_empty_with_name(name: PathString) -> Bytes {
+        pub fn init_empty_with_name(name: Box<[u8]>) -> Bytes {
             Bytes {
                 stored_name: name,
                 ..Default::default()
@@ -735,10 +735,9 @@ pub mod store {
     impl Drop for Bytes {
         fn drop(&mut self) {
             // Zig `deinit`: `default_allocator.free(stored_name.slice())` then
-            // `this.allocator.free(ptr[0..cap])`.
-            // SAFETY: every writer of `stored_name` adopts a heap allocation via
-            // `PathString::init_owned`, or leaves it `EMPTY`.
-            unsafe { self.stored_name.deinit_owned() };
+            // `this.allocator.free(ptr[0..cap])`. `stored_name` is a `Box<[u8]>`,
+            // so its field `Drop` frees it; only the custom-allocator buffer
+            // needs an explicit free here.
             // Route through the existing accessor instead of re-deriving the
             // slice from raw parts here: `allocated_slice` already encapsulates
             // the `(ptr, cap)` → `&[u8]` invariant (and the `None` ⇒ `&[]`
@@ -916,7 +915,7 @@ pub mod store {
         pub fn get_path(&self) -> Option<&[u8]> {
             match &self.data {
                 Data::Bytes(bytes) => {
-                    let n = bytes.stored_name.slice();
+                    let n = &bytes.stored_name[..];
                     if n.is_empty() { None } else { Some(n) }
                 }
                 Data::File(file) => {
@@ -1010,40 +1009,12 @@ pub mod store {
 
     impl Drop for Store {
         /// `Store.deinit()` (Store.zig:179) sans the trailing `bun.destroy` —
-        /// `Box` handles the allocation.
-        fn drop(&mut self) {
-            match &mut self.data {
-                // `Bytes::drop` frees buffer + stored_name.
-                Data::Bytes(_) => {}
-                Data::File(file) => {
-                    // Zig:
-                    //   if (path == .string) allocator.free(@constCast(path.slice()));
-                    //   else file.pathlike.path.deinit();
-                    //
-                    // The `PathLike::String` payload is a *borrowed*
-                    // `(ptr,len)` pair whose backing buffer was duped for this
-                    // `Store` — `PathLike::drop` does NOT free it (it has no
-                    // way to know the buffer is owned), so free it explicitly
-                    // here. All other variants own their storage and release it
-                    // in `PathLike::drop`.
-                    if let PathOrFileDescriptor::Path(PathLike::String(s)) = &mut file.pathlike {
-                        // SAFETY: duped via mimalloc by the constructing call
-                        // site (e.g. `dupe_path`); `deinit_owned` no-ops on
-                        // empty.
-                        unsafe { s.deinit_owned() };
-                    }
-                    // `file.pathlike` (and its `PathLike` payload) drops at the
-                    // end of `Data`'s drop — that covers the
-                    // `else file.pathlike.path.deinit()` arm for the
-                    // ref-counted/owned variants.
-                }
-                Data::S3(_) => {
-                    // `s3.deinit(allocator)` released `credentials` and freed
-                    // `pathlike` — both handled by `Option<Arc<_>>::drop` and
-                    // `PathLike::drop` when `Data` drops.
-                }
-            }
-        }
+        /// `Box` handles the allocation. Every `Data` variant self-frees on
+        /// field drop: `Bytes::drop` frees its buffer + `stored_name`; the
+        /// `File.pathlike` / `S3` payloads (including an owned
+        /// `PathLike::String`, which owns its buffer via `CowSlice`) release in
+        /// `PathLike::drop`.
+        fn drop(&mut self) {}
     }
 
     // ────────────────────────────────────────────────────────────────────

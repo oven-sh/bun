@@ -817,10 +817,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 {
                     Ok(v) => Some(v),
                     Err(_) => {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: Invalid elide-lines: \"{}\"",
                             BStr::new(elide_lines)
-                        ));
+                        );
                         Global::exit(1);
                     }
                 };
@@ -1038,7 +1038,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                                 msg: b"",
                             },
                         ));
-                        Output::note("To evaluate TypeScript here, use 'bun --print'");
+                        bun_core::note!("To evaluate TypeScript here, use 'bun --print'");
                         Global::exit(1);
                     }
                 };
@@ -1212,13 +1212,17 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         } else {
             // Warn if --cpu-prof-name or --cpu-prof-dir is used without a profiler flag
             if args.option(b"--cpu-prof-name").is_some() {
-                Output::warn("--cpu-prof-name requires --cpu-prof or --cpu-prof-md to be enabled");
+                bun_core::warn!(
+                    "--cpu-prof-name requires --cpu-prof or --cpu-prof-md to be enabled"
+                );
             }
             if args.option(b"--cpu-prof-dir").is_some() {
-                Output::warn("--cpu-prof-dir requires --cpu-prof or --cpu-prof-md to be enabled");
+                bun_core::warn!(
+                    "--cpu-prof-dir requires --cpu-prof or --cpu-prof-md to be enabled"
+                );
             }
             if args.option(b"--cpu-prof-interval").is_some() {
-                Output::warn(
+                bun_core::warn!(
                     "--cpu-prof-interval requires --cpu-prof or --cpu-prof-md to be enabled",
                 );
             }
@@ -1229,7 +1233,7 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
         if heap_prof_v8 && heap_prof_md {
             // Both flags specified - warn and use markdown format
-            Output::warn(
+            bun_core::warn!(
                 "Both --heap-prof and --heap-prof-md specified; using --heap-prof-md (markdown format)",
             );
             ctx.runtime_options.heap_prof.enabled = true;
@@ -1252,12 +1256,12 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         } else {
             // Warn if --heap-prof-name or --heap-prof-dir is used without --heap-prof or --heap-prof-md
             if args.option(b"--heap-prof-name").is_some() {
-                Output::warn(
+                bun_core::warn!(
                     "--heap-prof-name requires --heap-prof or --heap-prof-md to be enabled",
                 );
             }
             if args.option(b"--heap-prof-dir").is_some() {
-                Output::warn(
+                bun_core::warn!(
                     "--heap-prof-dir requires --heap-prof or --heap-prof-md to be enabled",
                 );
             }
@@ -1284,9 +1288,9 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
         // Disallow any combination > 1
         if (use_system_ca as u8) + (use_openssl_ca as u8) + (use_bundled_ca as u8) > 1 {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: choose exactly one of --use-system-ca, --use-openssl-ca, or --use-bundled-ca"
-            ));
+            );
             Global::exit(1);
         }
 
@@ -1383,10 +1387,10 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
                 {
                     Ok(v) => Some(v),
                     Err(_) => {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error<r>: Invalid elide-lines: \"{}\"",
                             BStr::new(elide_lines)
-                        ));
+                        );
                         Global::exit(1);
                     }
                 };
@@ -1455,20 +1459,20 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
 
     if cmd == CommandTag::BuildCommand {
         if opts.entry_points.is_empty() && !ctx.bundler_options.bake {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<r><b>bun build <r><d>v{}<r>",
                 bun_core::Global::package_json_version_with_sha
-            ));
-            Output::pretty(format_args!(
+            );
+            bun_core::pretty!(
                 "<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n"
-            ));
+            );
             Output::flush();
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[...flags]<r>  \n"
-            ));
-            Output::pretty(format_args!(
+            );
+            bun_core::pretty!(
                 "\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n"
-            ));
+            );
             Output::flush();
             Global::exit(1);
         }
@@ -1548,10 +1552,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             ctx.test_options.default_timeout_ms = match strings::parse_int::<u32>(timeout_ms, 10) {
                 Ok(v) => v,
                 Err(_) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: Invalid timeout: \"{}\"",
                         BStr::new(timeout_ms)
-                    ));
+                    );
                     Output::flush();
                     Global::exit(1);
                 }
@@ -1565,10 +1569,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             {
                 Ok(v) => v,
                 Err(_) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: Invalid max-concurrency: \"{}\"",
                         BStr::new(max_concurrency)
-                    ));
+                    );
                     Global::exit(1);
                 }
             };
@@ -1590,10 +1594,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             } else if *reporter == b"lcov" {
                 ctx.test_options.coverage.reporters.lcov = true;
             } else {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: invalid coverage reporter '{}'. Available options: 'text' (console output), 'lcov' (code coverage file)",
                     BStr::new(reporter)
-                ));
+                );
                 Global::exit(1);
             }
         }
@@ -1649,19 +1653,16 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             ctx.test_options.bail = match strings::parse_int::<u32>(bail, 10) {
                 Ok(v) => v,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!(
-                        "<r><red>error<r>: --bail expects a number: {:?}",
-                        e
-                    ));
+                    bun_core::pretty_errorln!("<r><red>error<r>: --bail expects a number: {:?}", e);
                     Output::flush();
                     Global::exit(1);
                 }
             };
 
             if ctx.test_options.bail == 0 {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: --bail expects a number greater than 0"
-                ));
+                );
                 Output::flush();
                 Global::exit(1);
             }
@@ -1674,10 +1675,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             ctx.test_options.repeat_count = match strings::parse_int::<u32>(repeat_count, 10) {
                 Ok(v) => v,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: --rerun-each expects a number: {:?}",
                         e
-                    ));
+                    );
                     Global::exit(1);
                 }
             };
@@ -1688,19 +1689,17 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             ctx.test_options.retry = match strings::parse_int::<u32>(retry_count, 10) {
                 Ok(v) => v,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>error<r>: --retry expects a number: {:?}",
                         e
-                    ));
+                    );
                     Global::exit(1);
                 }
             };
         }
     }
     if ctx.test_options.retry != 0 && ctx.test_options.repeat_count != 0 {
-        Output::pretty_errorln(format_args!(
-            "<r><red>error<r>: --retry cannot be used with --rerun-each"
-        ));
+        bun_core::pretty_errorln!("<r><red>error<r>: --retry cannot be used with --rerun-each");
         Global::exit(1);
     }
     if let Some(name_pattern) = args.option(b"--test-name-pattern") {
@@ -1711,10 +1710,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         ) {
             Ok(r) => r,
             Err(_) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
                     bun_core::fmt::QuotedFormatter { text: name_pattern },
-                ));
+                );
                 Global::exit(1);
             }
         };
@@ -1728,9 +1727,9 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
     }
     if let Some(shard) = args.option(b"--shard") {
         let Some(sep) = strings::index_of_char(shard, b'/') else {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: --shard expects <d>'<r>index/count<d>'<r>, e.g. --shard=1/3"
-            ));
+            );
             Global::exit(1);
         };
         let sep = sep as usize;
@@ -1739,34 +1738,33 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         let index = match strings::parse_int::<u32>(index_str, 10) {
             Ok(v) => v,
             Err(_) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: --shard index must be a positive integer, got \"{}\"",
                     BStr::new(index_str)
-                ));
+                );
                 Global::exit(1);
             }
         };
         let count = match strings::parse_int::<u32>(count_str, 10) {
             Ok(v) => v,
             Err(_) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: --shard count must be a positive integer, got \"{}\"",
                     BStr::new(count_str)
-                ));
+                );
                 Global::exit(1);
             }
         };
         if count == 0 {
-            Output::pretty_errorln(format_args!(
-                "<r><red>error<r>: --shard count must be greater than 0"
-            ));
+            bun_core::pretty_errorln!("<r><red>error<r>: --shard count must be greater than 0");
             Global::exit(1);
         }
         if index == 0 || index > count {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: --shard index must be between 1 and {}, got {}",
-                count, index
-            ));
+                count,
+                index
+            );
             Global::exit(1);
         }
         ctx.test_options.shard = Some(Shard { index, count });
@@ -1785,10 +1783,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             match strings::parse_int::<u32>(parallel_str, 10) {
                 Ok(v) => v,
                 Err(_) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<red>error<r>: --parallel expects a positive integer, received \"{}\"",
                         BStr::new(parallel_str)
-                    ));
+                    );
                     Global::exit(1);
                 }
             }
@@ -1796,9 +1794,9 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
             u32::from(bun_core::get_thread_count().max(1))
         };
         if parsed == 0 {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<red>error<r>: --parallel expects a positive integer, received \"0\""
-            ));
+            );
             Global::exit(1);
         }
         ctx.test_options.parallel = parsed;
@@ -1810,10 +1808,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         ctx.test_options.parallel_delay_ms = match strings::parse_int::<u32>(delay_str, 10) {
             Ok(v) => Some(v),
             Err(_) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<red>error<r>: --parallel-delay expects a non-negative integer (milliseconds), received \"{}\"",
                     BStr::new(delay_str)
-                ));
+                );
                 Global::exit(1);
             }
         };
@@ -1824,10 +1822,10 @@ fn parse_test_command_options(args: &clap::Args<clap::Help>, ctx: Context<'_>) {
         ctx.test_options.seed = match strings::parse_int::<u32>(seed_str, 10) {
             Ok(v) => Some(v),
             Err(_) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<red>error<r>: Invalid seed value: {}",
                     BStr::new(seed_str)
-                ));
+                );
                 Global::exit(1);
             }
         };
@@ -1901,9 +1899,9 @@ fn parse_build_command_options(
     }
 
     if args.flag(b"--reject-unresolved") && !args.options(b"--allow-unresolved").is_empty() {
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "<r><red>error<r>: --reject-unresolved and --allow-unresolved cannot be used together"
-        ));
+        );
         Global::crash();
     } else if args.flag(b"--reject-unresolved") {
         ctx.bundler_options.allow_unresolved = Some(Vec::new());
@@ -1927,10 +1925,10 @@ fn parse_build_command_options(
         } else if packages == b"external" {
             opts.packages = Some(api::Packages::External);
         } else {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid packages setting: \"{}\"",
                 BStr::new(packages)
-            ));
+            );
             Global::crash();
         }
     }
@@ -1948,9 +1946,9 @@ fn parse_build_command_options(
         } else if env == b"disable" || env == b"0" {
             ctx.bundler_options.env_behavior = options::EnvBehavior::LoadAllWithoutInlining;
         } else {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: Expected 'env' to be 'inline', 'disable', or a prefix with a '*' character"
-            ));
+            );
             Global::crash();
         }
     }
@@ -2311,10 +2309,10 @@ fn parse_build_command_options(
 
         match format {
             options::Format::InternalBakeDev => {
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "--format={} is for debugging only, and may experience breaking changes at any moment",
                     BStr::new(format_str)
-                ));
+                );
                 Output::flush();
             }
             options::Format::Cjs => {
@@ -2400,10 +2398,10 @@ fn parse_build_command_options(
         } else if setting == b"linked" {
             opts.source_map = Some(api::SourceMap::Linked);
         } else {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: Invalid sourcemap setting: \"{}\"",
                 BStr::new(setting)
-            ));
+            );
             Global::crash();
         }
 

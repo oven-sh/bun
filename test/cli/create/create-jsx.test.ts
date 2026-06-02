@@ -1,7 +1,7 @@
 import type { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { cp, readdir } from "fs/promises";
-import { bunEnv, bunExe, isCI, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isCI, isWindows, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 async function getServerUrl(process: Subprocess<any, "pipe", any>, all = { text: "" }) {
@@ -322,6 +322,36 @@ for (const development of [true, false]) {
     });
   });
 }
+
+test("auto-install passes detected dependencies as positionals", async () => {
+  using dir = tempDir("create-arg-separator", {
+    "Component.tsx": `import "--trust";
+
+export default function Component() {
+  return <div>Hello</div>;
+}
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "create", "./Component.tsx"],
+    cwd: String(dir),
+    env: {
+      ...bunEnv,
+      // Unreachable registry so the spawned install fails fast offline.
+      BUN_CONFIG_REGISTRY: "http://localhost:1/",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  const installLine = stdout.split("\n").find(line => line.includes("--only-missing install"));
+  expect(installLine).toBeDefined();
+  expect(installLine).toContain(" install -- ");
+});
 
 function normalizeHTMLFn(development: boolean = true) {
   return (html: string) =>

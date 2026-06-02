@@ -356,7 +356,7 @@ impl<'a> State<'a> {
                 dependent.remaining_dependencies -= 1;
                 if dependent.remaining_dependencies == 0 {
                     if dependent.start().is_err() {
-                        Output::pretty_errorln("<r><red>error<r>: Failed to start process");
+                        bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
                         Global::exit(1);
                     }
                 }
@@ -673,7 +673,7 @@ impl AbortHandler {
             );
             if res == 0 {
                 if cfg!(debug_assertions) {
-                    Output::warn("Failed to set abort handler\n");
+                    bun_core::warn!("Failed to set abort handler\n");
                 }
             }
         }
@@ -706,7 +706,7 @@ pub(crate) fn run_scripts_with_filter(
     } else if ctx.positionals.len() > 0 {
         ctx.positionals[0].clone()
     } else {
-        Output::pretty_errorln("<r><red>error<r>: No script name provided");
+        bun_core::pretty_errorln!("<r><red>error<r>: No script name provided");
         Global::exit(1);
     };
     let script_name: &[u8] = &script_name_owned;
@@ -779,7 +779,7 @@ pub(crate) fn run_scripts_with_filter(
             None,
             IncludeScripts::IncludeScripts,
         ) else {
-            Output::warn("Failed to read package.json\n");
+            bun_core::warn!("Failed to read package.json\n");
             continue;
         };
         // TODO(port): PackageJSON::parse signature — enum args are placeholders.
@@ -1056,7 +1056,7 @@ pub(crate) fn run_scripts_with_filter(
         if handle.remaining_dependencies == 0 {
             if handle.start().is_err() {
                 // todo this should probably happen in "start"
-                Output::pretty_errorln("<r><red>error<r>: Failed to start process");
+                bun_core::pretty_errorln!("<r><red>error<r>: Failed to start process");
                 Global::exit(1);
             }
         }

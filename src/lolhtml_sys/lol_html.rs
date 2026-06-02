@@ -1091,6 +1091,12 @@ unsafe extern "C" {
         content_len: usize,
         is_html: bool,
     ) -> c_int;
+    fn lol_html_comment_replace(
+        comment: *mut Comment,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
     safe fn lol_html_comment_remove(comment: &mut Comment);
     safe fn lol_html_comment_is_removed(comment: &Comment) -> bool;
     safe fn lol_html_comment_source_location_bytes(comment: &Comment) -> SourceLocationBytes;
@@ -1126,10 +1132,9 @@ impl Comment {
 
     pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // PORT NOTE: Zig source calls lol_html_comment_before here (likely an upstream bug); ported faithfully
         // SAFETY: content ptr/len describe a valid slice
         match unsafe {
-            lol_html_comment_before(self, ptr_without_panic(content), content.len(), is_html)
+            lol_html_comment_replace(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
             -1 => Err(Error::Fail),

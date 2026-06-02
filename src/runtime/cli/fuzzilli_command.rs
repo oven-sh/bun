@@ -3,7 +3,7 @@ use core::ffi::c_int;
 
 #[cfg(unix)]
 use bun_core::zstr;
-use bun_core::{Environment, Global, Output};
+use bun_core::{Environment, Global};
 #[cfg(unix)]
 use bun_sys::{self as sys, Fd, FdExt, O};
 
@@ -21,17 +21,17 @@ impl FuzzilliCommand {
         // this body is unreachable when the flag is off; bail loudly if a caller
         // ever invokes it anyway.
         if !Environment::ENABLE_FUZZILLI {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: Fuzzilli mode is not enabled in this build"
-            ));
+            );
             Global::exit(1);
         }
 
         #[cfg(not(unix))]
         {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: Fuzzilli mode is only supported on POSIX systems"
-            ));
+            );
             Global::exit(1);
         }
 
@@ -42,13 +42,13 @@ impl FuzzilliCommand {
             // Verify REPRL file descriptors are available
             const REPRL_CRFD: c_int = 100;
             if Self::verify_fd(REPRL_CRFD).is_err() {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: REPRL_CRFD (fd {}) is not available. Run Bun under Fuzzilli.",
                     REPRL_CRFD
-                ));
-                Output::pretty_errorln(format_args!(
+                );
+                bun_core::pretty_errorln!(
                     "<r><d>Example: fuzzilli --profile=bun /path/to/bun fuzzilli<r>"
-                ));
+                );
                 Global::exit(1);
             }
 
@@ -59,9 +59,7 @@ impl FuzzilliCommand {
             let temp_dir_fd: Fd = match sys::open(zstr!("/tmp"), O::DIRECTORY | O::RDONLY, 0) {
                 Ok(fd) => fd,
                 Err(_) => {
-                    Output::pretty_errorln(format_args!(
-                        "<r><red>error<r>: Could not access /tmp directory"
-                    ));
+                    bun_core::pretty_errorln!("<r><red>error<r>: Could not access /tmp directory");
                     Global::exit(1);
                 }
             };
@@ -75,9 +73,7 @@ impl FuzzilliCommand {
             ) {
                 Ok(fd) => fd,
                 Err(_) => {
-                    Output::pretty_errorln(format_args!(
-                        "<r><red>error<r>: Could not create temp file"
-                    ));
+                    bun_core::pretty_errorln!("<r><red>error<r>: Could not create temp file");
                     Global::exit(1);
                 }
             };
@@ -85,17 +81,13 @@ impl FuzzilliCommand {
             // Write the script to the temp file
             match sys::write(temp_file_fd, reprl_script) {
                 Err(_) => {
-                    Output::pretty_errorln(format_args!(
-                        "<r><red>error<r>: Could not write temp file"
-                    ));
+                    bun_core::pretty_errorln!("<r><red>error<r>: Could not write temp file");
                     Global::exit(1);
                 }
                 Ok(_) => {}
             }
 
-            Output::pretty_errorln(format_args!(
-                "<r><d>[FUZZILLI] Temp file written, booting JS runtime<r>"
-            ));
+            bun_core::pretty_errorln!("<r><d>[FUZZILLI] Temp file written, booting JS runtime<r>");
 
             // Run the temp file
             let temp_path: &[u8] = b"/tmp/bun-fuzzilli-reprl.js";

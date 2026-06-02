@@ -1409,6 +1409,7 @@ impl Map {
     // TODO(refactor): `bun_sys::EnvMap` is `HashMap<String, String>`, which copies and is
     // UTF-8-lossy. Zig's `std.process.EnvMap` stored `[]const u8` borrows. Replace
     // `bun_sys::EnvMap` with a `&[u8]`-keyed map and drop the lossy round-trip here.
+    #[allow(clippy::disallowed_methods)] // lossy round-trip documented above
     pub fn std_env_map(&mut self) -> Result<StdEnvMapWrapper, AllocError> {
         let mut env_map = bun_sys::EnvMap::default();
         let mut it = self.map.iterator();
@@ -1576,9 +1577,9 @@ impl Map {
             .enumerate()
         {
             writer.write_str("\n    ")?;
-            writer.write_str(&String::from_utf8_lossy(k))?;
+            write!(writer, "{}", bstr::BStr::new(k))?;
             writer.write_str(": ")?;
-            writer.write_str(&String::from_utf8_lossy(&v.value))?;
+            write!(writer, "{}", bstr::BStr::new(&v.value))?;
             if i < count - 1 {
                 writer.write_str(", ")?;
             }

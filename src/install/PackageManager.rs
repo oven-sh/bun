@@ -203,7 +203,10 @@ impl PackageManagerCommand {
 Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
 ";
 
+        #[allow(clippy::disallowed_methods)]
+        // help-text consts contain <tag> markup that must be tag-walked
         Output::pretty(format_args!("{}", intro_text));
+        #[allow(clippy::disallowed_methods)]
         Output::pretty(format_args!("{}", outro_text));
         Output::flush();
     }
@@ -1244,14 +1247,14 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         Ok(d) => d,
         Err(e) if e == bun_core::err!(EEXIST) => {
             // it should not exist
-            Output::pretty_errorln("<r><red>error<r>: node-gyp tempdir already exists");
+            bun_core::pretty_errorln!("<r><red>error<r>: node-gyp tempdir already exists");
             Global::crash();
         }
         Err(e) => {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
                 e.name(),
-            ));
+            );
             Global::crash();
         }
     };
@@ -1277,10 +1280,10 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     ) {
         Ok(f) => f,
         Err(e) => {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
                 bstr::BStr::new(e.name()),
-            ));
+            );
             Global::crash();
         }
     };
@@ -1308,11 +1311,11 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
 
     if let Err(e) = node_gyp_file.write_all(CONTENT.as_bytes()) {
         // Zig: "..." ++ file_name ++ " file" — comptime concat, no runtime alloc
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "<r><red>error<r>: <b><red>{}<r> writing to {} file",
             bstr::BStr::new(e.name()),
             FILE_NAME,
-        ));
+        );
         Global::crash();
     }
 
@@ -1604,10 +1607,10 @@ pub fn init(
                             &[&bstr::BStr::new(package_json_path.as_bytes())],
                         );
                         if need_write {
-                            Output::note("package.json must be writable to add packages");
+                            bun_core::note!("package.json must be writable to add packages");
                         } else {
-                            Output::note(
-                                "package.json is missing read permissions, or is owned by another user",
+                            bun_core::note!(
+                                "package.json is missing read permissions, or is owned by another user"
                             );
                         }
                         Global::crash();
@@ -1945,10 +1948,7 @@ pub fn init(
 
     // SAFETY: main-thread init
     if PackageManager::verbose_install() {
-        Output::pretty_errorln(format_args!(
-            "Cache Dir: {}",
-            bstr::BStr::new(&options.cache_directory),
-        ));
+        bun_core::pretty_errorln!("Cache Dir: {}", bstr::BStr::new(&options.cache_directory));
         Output::flush();
     }
 

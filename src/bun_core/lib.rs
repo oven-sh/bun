@@ -62,7 +62,7 @@ pub use string::{
     string_joiner, write, zig_string,
 };
 pub use string::{
-    HashedString, MutableString, NodeEncoding, OwnedString, OwnedStringCell, PathString,
+    HashedString, MutableString, NodeEncoding, OwnedString, OwnedStringCell,
     SliceWithUnderlyingString, SmolStr, String, StringBuilder, WTFStringImpl, WTFStringImplExt,
     WTFStringImplStruct, ZigString, ZigStringSlice,
 };
@@ -3244,6 +3244,12 @@ pub fn capture_stack_trace(begin: usize, addrs: &mut [usize]) -> usize {
 /// and `[fp + PC_OFFSET]` is the caller's saved return address. Used as the
 /// `first_address` trim point for `capture_current` (which falls back to the
 /// full trace if it doesn't match).
+///
+/// Always call this directly from the frame you want anchored. Passing it as
+/// a callback (e.g. `unwrap_or_else(return_address)`) inlines it into the
+/// closure instead, which reads the closure's frame — popped again before any
+/// capture runs — so the returned PC matches no captured frame and the trim
+/// silently degrades to the full untrimmed trace.
 #[inline(always)]
 pub fn return_address() -> usize {
     #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]

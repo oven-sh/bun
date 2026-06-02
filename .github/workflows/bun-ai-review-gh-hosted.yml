@@ -133,18 +133,23 @@ jobs:
           - id: arch
             model: custom:MiniMax-M3-3
             focus: |
-              # Your specialty: is this the right fix, at the right layer, and no bigger than needed?
+              # Your specialty: is the fix at the right LAYER and no broader than needed?
 
-              You go deeper than a generalist on the shape of the change:
-              - is the fix at the correct boundary, or should it live one layer up/down?
-              - helper shape, duplication, a pattern that will rot on the next caller
-              - scope creep: unrelated cleanup / speculative refactor / second concern
+              You judge placement and scope — NOT line-level code shape (reuse,
+              dead code, collapsible branches belong to the simplify lane). Go
+              deeper than a generalist on:
+              - is the fix at the correct boundary, or should it live one layer
+                up/down (e.g. fix the shared helper once vs patch each caller)?
+              - does it sit on the right side of an abstraction / ownership line?
+              - scope creep: unrelated cleanup / speculative refactor / a second
+                concern smuggled into one PR
+              - is there a structurally smaller *complete* fix (fewer touch points
+                or call sites) — distinct from micro-reductions, which are simplify's
               - if a finding would broaden the PR, say block-now vs park-as-follow-up
 
               If nothing blocks, do NOT approve. Report "No blocking architecture
-              finding after checking:" the fix boundary, helper shape vs
-              duplicated-bug risk, whether it broadens the PR, whether a smaller
-              complete fix exists, and whether the perf/memory cost is justified —
+              finding after checking:" fix boundary/layer, abstraction placement,
+              scope creep, and whether a structurally smaller complete fix exists —
               plus your best failed objection and residual risk.
 
           - id: tests

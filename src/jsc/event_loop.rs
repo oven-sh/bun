@@ -1513,15 +1513,20 @@ pub(crate) fn __bun_spawn_sync_vm_swap_suppress_microtask_drain(vm: *mut (), v: 
 ///
 /// The gate is a standalone refcounted allocation so it strictly outlives
 /// both sides: the VM holds one ref (`VirtualMachine.concurrent_enqueue_gate`,
-/// released when the worker frees the VM allocation) and every cross-thread
-/// producer holding a VM backref holds one (e.g. `FetchTasklet`, released
-/// with the tasklet). Producers bracket every touch of the VM with
+/// released when the worker frees the VM allocation) and each participating
+/// cross-thread producer holds one for as long as it keeps a VM backref.
+/// `FetchTasklet` (the producer behind the observed crash) is the only
+/// participant so far; the S3 HTTP tasks (`S3HttpSimpleTask`,
+/// `S3HttpDownloadStreamingTask`) carry the same kind of backref and still
+/// enqueue ungated — the identical take-ref/bracket/reclaim pattern applies
+/// to them. Producers bracket every touch of the VM with
 /// `enter()`/`exit()`; teardown calls `close()` exactly once, before invali-
 /// dating the VM. Because `close()` takes the same mutex, it blocks until any
 /// in-flight gated section has finished, and every later `enter()` returns
-/// `false` — so after `close()` returns, no producer is inside the VM and
-/// none can get back in. Teardown can then drain `concurrent_tasks` (the
-/// drain observes every push that won the race) and free the allocation.
+/// `false` — so after `close()` returns, no gated producer is inside the VM
+/// and none can get back in. Teardown can then drain `concurrent_tasks` (the
+/// drain observes every gated push that won the race) and free the
+/// allocation.
 ///
 /// Lock ordering: the gate is a leaf lock — producers may take it while
 /// holding their own state lock (e.g. `FetchTasklet.mutex`), and `close()`

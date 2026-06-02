@@ -153,9 +153,11 @@ test(
     await using proc = Bun.spawn({
       cmd: [bunExe(), "main.js"],
       // Destruct-on-exit (what ASAN CI runs with) additionally walks the
-      // process-exit reclaim paths: dead-worker tasklets must not be parked
-      // in the exit reclaim list, whose drain tears down JSC handles — for a
-      // worker tasklet those handles died with the worker's JSC heap.
+      // process-exit reclaim paths: dead-worker tasklets sit parked in the
+      // process-global exit reclaim list, and the exit drain then runs their
+      // `deinit` — including JSC-handle teardown against worker heaps that
+      // died with `teardownJSCVM` (bmalloc-backed, so ASAN alone cannot
+      // flag it). The fixture must stay crash-free through that whole path.
       env: { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" },
       cwd: String(dir),
       stdout: "pipe",

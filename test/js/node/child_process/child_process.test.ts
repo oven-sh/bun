@@ -402,8 +402,8 @@ describe.if(isPosix)("spawning an executable with no shebang", () => {
     const result = spawnSync(scriptPath, ["a", "b"], { encoding: "utf8", env: bunEnv });
     expect(result.stderr).toBe("");
     expect(result.stdout).toBe(`arg0=${scriptPath}\nargs=a b\n`);
-    expect(result.status).toBe(0);
     expect(result.error).toBeUndefined();
+    expect(result.status).toBe(0);
   });
 
   it("execFile (async) runs it through /bin/sh", async () => {

@@ -34,6 +34,7 @@ synthesized-JSON stage anymore — the action posts its own findings directly.
 | opposition | MiniMax M3 | argue the PR is wrong — one sharp objection, missing test, perf/portability |
 | arch | MiniMax M3 | right fix at the right layer, smallest complete fix, no scope creep |
 | tests | GLM-5.1 | do the tests actually PROVE the fix (fail on old, pass on new) |
+| simplify | GLM-5.1 | can the code be simpler **without changing behaviour** — reuse, dead code, collapsible branches, smaller equivalents |
 | security | MiniMax M3 | STRIDE/OWASP security review (runs on every PR) — UB-as-exploit-primitive, input validation, info disclosure, DoS, crypto specifics when present |
 
 Lane focuses are defined inline in the workflow's `matrix.lane` block (one source

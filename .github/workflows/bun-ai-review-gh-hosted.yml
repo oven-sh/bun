@@ -46,7 +46,7 @@ jobs:
 
     strategy:
       fail-fast: false
-      max-parallel: 6
+      max-parallel: 7
       matrix:
         lane:
           - id: ub
@@ -170,6 +170,37 @@ jobs:
               could make it pass accidentally, whether assertions cover the
               dangerous post-submit mutation, and whether it is cheap enough for
               normal CI — plus your best failed objection and residual risk.
+
+          - id: simplify
+            model: custom:GLM-5.1-ZAI-Coding-0
+            focus: |
+              # Your specialty: can this code be simpler — WITHOUT changing behaviour?
+
+              You are not hunting bugs; you remove accidental complexity. Behaviour
+              must stay identical (same observable results, same error paths). You
+              go deeper than a generalist on reduction and reuse.
+
+              Look for:
+              - an existing helper/abstraction in the repo that already does this —
+                search before assuming it must be written here (bun_core, sys,
+                existing methods on the same type, a sibling call path)
+              - dead/no-op code, redundant clones/copies, needless intermediate
+                buffers or allocations
+              - branches that collapse, early-returns that flatten nesting,
+                duplicated match arms that merge
+              - a smaller equivalent expression or std/bun_core API replacing
+                hand-rolled logic
+              - code generalised beyond its single concrete caller
+
+              For each, show the before -> after shape and confirm behaviour is
+              unchanged. If a simplification trades clarity for brevity, say so and
+              leave the call to the human. Do not propose changes that alter
+              semantics, perf characteristics, or the UB fix's correctness.
+
+              If nothing simplifies, do NOT approve. Report "No simplification found
+              after checking:" reuse opportunities, dead/redundant code, collapsible
+              branches, smaller equivalents, and over-generalisation — plus the best
+              candidate you considered and why it was not worth it.
 
           - id: security
             # STRIDE/OWASP security review instead of code review (runs on every

@@ -4729,6 +4729,10 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         // execve only returns on error.
         #[allow(unused_mut)]
         let mut errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+        // The path whose exec attempt produced `errno`; the Linux retry below
+        // updates both together so the error message stays accurate.
+        #[allow(unused_mut)]
+        let mut attempted = exe.as_bytes();
 
         // Linux: `/proc/self/exe` reads as "<path> (deleted)" once the running
         // binary has been unlinked. If it was atomically replaced (`bun
@@ -4738,13 +4742,14 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if errno == libc::ENOENT {
             if let Some(trimmed) = exe.as_bytes().strip_suffix(b" (deleted)") {
-                let trimmed = ZBox::from_bytes(trimmed);
+                let trimmed_z = ZBox::from_bytes(trimmed);
                 libc::execve(
-                    trimmed.as_ptr(),
+                    trimmed_z.as_ptr(),
                     newargv.as_ptr().cast(),
                     envp.as_ptr().cast(),
                 );
                 errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+                attempted = trimmed;
             }
         }
 
@@ -4768,7 +4773,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
             let detail = crate::result::coreutils_error_map::get(errno).unwrap_or("unknown error");
             crate::output::err_generic(
                 "Failed to reload process: {} ({}) while executing \"{}\". The executable may have been deleted or replaced while Bun was running.",
-                (name, detail, bstr::BStr::new(exe.as_bytes())),
+                (name, detail, bstr::BStr::new(attempted)),
             );
             crate::Global::exit(1);
         }

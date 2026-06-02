@@ -83,7 +83,12 @@ pub struct FetchTasklet {
     /// native response ref if we still need it when JS is discarted
     // PORT NOTE: Response is intrusively refcounted; raw ptr matches Zig `?*Response`.
     pub native_response: Option<*mut Response>,
-    pub ignore_data: bool,
+    /// JS abandoned the body (GC finalizer / stream cancel). Relaxed: a stale
+    /// `false` on the HTTP side costs one extra buffered chunk, freed next callback.
+    pub ignore_data: AtomicBool,
+    /// Mirror of `result.is_http2`, stored by `callback` under the lock, read
+    /// lock-free by `skip_chunked_framing` on the request-write path.
+    pub is_http2: AtomicBool,
     /// stream strong ref if any is available
     pub readable_stream_ref: ReadableStreamStrong,
     pub request_headers: Headers,
@@ -1575,7 +1580,7 @@ impl FetchTasklet {
 
     fn on_stream_cancelled_callback(ctx: Option<*mut c_void>) {
         let this = Self::from_ctx(ctx.expect("ctx"));
-        if this.ignore_data {
+        if this.ignore_data.load(Ordering::Relaxed) {
             return;
         }
         this.ignore_remaining_response_body();
@@ -1678,7 +1683,7 @@ impl FetchTasklet {
             Response::unref(response);
         }
 
-        self.ignore_data = true;
+        self.ignore_data.store(true, Ordering::Relaxed);
     }
 
     pub(crate) fn on_resolve(&mut self) -> JSValue {
@@ -1727,7 +1732,8 @@ impl FetchTasklet {
             scheduled_response_buffer: MutableString::default(),
             response: jsc::Weak::default(),
             native_response: None,
-            ignore_data: false,
+            ignore_data: AtomicBool::new(false),
+            is_http2: AtomicBool::new(false),
             readable_stream_ref: ReadableStreamStrong::default(),
             request_headers: fetch_options.headers,
             promise,
@@ -2036,7 +2042,7 @@ impl FetchTasklet {
     /// set Content-Length without setting Transfer-Encoding.
     fn skip_chunked_framing(&self) -> bool {
         self.upgraded_connection
-            || self.result.is_http2
+            || self.is_http2.load(Ordering::Relaxed)
             || (self.request_headers.get(b"content-length").is_some()
                 && self.request_headers.get(b"transfer-encoding").is_none())
     }
@@ -2204,7 +2210,7 @@ impl FetchTasklet {
             FetchTasklet,
             "callback success={} ignore_data={} has_more={} bytes={}",
             result.is_success(),
-            task_ref.ignore_data,
+            task_ref.ignore_data.load(Ordering::Relaxed),
             result.has_more,
             result.body.as_ref().map(|b| b.list.len()).unwrap_or(0)
         );
@@ -2222,11 +2228,17 @@ impl FetchTasklet {
         let prev_metadata = task_ref.result.metadata.take();
         let prev_cert_info = task_ref.result.certificate_info.take();
         let prev_can_stream = task_ref.result.can_stream;
-        // SAFETY: lifetime erasure — `HTTPClientResult<'a>` borrows the
-        // `*mut MutableString` we passed into `AsyncHTTP::init` (which lives
-        // in `self.response_buffer` for the FetchTasklet's lifetime). Zig had
-        // no lifetime here; widen `'_` → `'static` to store it.
+        // The stored copy's `body` is never read (the bytes already live in
+        // `response_buffer`, alias asserted above on the incoming result).
+        let mut result = result;
+        result.body = None;
+        // SAFETY: lifetime erasure — `HTTPClientResult<'a>`'s only borrow is
+        // `body`, which is `None` here, so the `'_` → `'static` widening
+        // stores no live borrow.
         task_ref.result = unsafe { result.detach_lifetime() };
+        task_ref
+            .is_http2
+            .store(task_ref.result.is_http2, Ordering::Relaxed);
         // can_stream is a one-shot signal to start the request body stream; don't let a
         // later coalesced result clobber it before the JS thread sees it.
         task_ref.result.can_stream = task_ref.result.can_stream || prev_can_stream;
@@ -2258,7 +2270,7 @@ impl FetchTasklet {
         // above before the lifetime-erasing assignment; the bytes are already in place, so
         // no copy is needed and the `reset()` calls below operate on the right allocation.
 
-        if task_ref.ignore_data {
+        if task_ref.ignore_data.load(Ordering::Relaxed) {
             task_ref.response_buffer.reset();
 
             if task_ref.scheduled_response_buffer.list.capacity() > 0 {

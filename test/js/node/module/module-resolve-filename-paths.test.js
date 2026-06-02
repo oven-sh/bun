@@ -1,8 +1,9 @@
 // Use bun:test in Bun, or node:test in Node.js
+import { spawnSync } from "child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
 import Module from "module";
 import { tmpdir } from "os";
-import { dirname, join, resolve } from "path";
+import { dirname, join, relative, resolve } from "path";
 
 // Detect runtime and import appropriate test framework
 const isBun = typeof Bun !== "undefined";
@@ -178,6 +179,59 @@ test("require.resolve with relative path and options.paths (Next.js use case)", 
     });
 
     expect(resolved).toBe(resolve(dir, "node_modules/babel-plugin-react-compiler/dist/index.js"));
+  } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve options.paths resolves relative entries against the cwd like Node", () => {
+  // Relative `paths` entries used to be handed to the resolver verbatim and
+  // crashed with "cannot resolve DirInfo for non-absolute path". Node resolves
+  // them against the current working directory (Module._nodeModulePaths calls
+  // path.resolve).
+  const { path: dir, cleanup } = createTempDir("require-resolve-relative-paths", {
+    "apps/shared/core/node_modules/relative-paths-pkg/package.json": JSON.stringify({
+      name: "relative-paths-pkg",
+      main: "index.js",
+    }),
+    "apps/shared/core/node_modules/relative-paths-pkg/index.js": "module.exports = 'relative-paths';",
+  });
+
+  try {
+    const target = join(dir, "apps", "shared", "core");
+    const resolved = require.resolve("relative-paths-pkg", {
+      paths: [relative(process.cwd(), target)],
+    });
+
+    expect(resolved).toBe(resolve(target, "node_modules/relative-paths-pkg/index.js"));
+  } finally {
+    cleanup();
+  }
+});
+
+test("require.resolve options.paths accepts cwd-relative entries built with path.join", () => {
+  // Monorepo-style workspace directories like `apps/shared/core` (or
+  // `apps\shared\core` on Windows, via path.join) are common `paths` entries.
+  const { path: dir, cleanup } = createTempDir("require-resolve-cwd-relative-paths", {
+    "apps/shared/core/node_modules/cwd-relative-pkg/package.json": JSON.stringify({
+      name: "cwd-relative-pkg",
+      main: "index.js",
+    }),
+    "apps/shared/core/node_modules/cwd-relative-pkg/index.js": "module.exports = 'cwd-relative';",
+  });
+
+  try {
+    const script =
+      'const path = require("path");' +
+      'console.log(require.resolve("cwd-relative-pkg", { paths: [path.join("apps", "shared", "core")] }));';
+    const result = spawnSync(process.execPath, ["-e", script], {
+      cwd: dir,
+      encoding: "utf8",
+      env: { ...process.env, BUN_DEBUG_QUIET_LOGS: "1" },
+    });
+
+    expect(result.stdout.trim()).toBe(join(dir, "apps", "shared", "core", "node_modules", "cwd-relative-pkg", "index.js"));
+    expect(result.status).toBe(0);
   } finally {
     cleanup();
   }

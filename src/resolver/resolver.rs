@@ -2082,12 +2082,29 @@ impl<'a> Resolver<'a> {
                 bun_core::hint::cold();
                 for custom_path in custom_paths {
                     let custom_utf8 = custom_path.to_utf8_without_ref();
-                    match self.check_package_path(
-                        custom_utf8.slice(),
-                        import_path,
-                        kind,
-                        global_cache,
-                    ) {
+                    let custom_slice = custom_utf8.slice();
+                    // `require.resolve(id, { paths })` entries come from user
+                    // JS and may be relative (e.g. `"apps/shared/core"`). Node
+                    // resolves them against the current working directory
+                    // (`Module._nodeModulePaths` calls `path.resolve`); match
+                    // that. `check_package_path` requires an absolute
+                    // directory — the DirInfo cache is keyed on absolute
+                    // paths and asserts otherwise.
+                    let mut custom_abs_buf = bun_paths::path_buffer_pool::get();
+                    let custom_dir: &[u8] = if bun_paths::is_absolute(custom_slice) {
+                        custom_slice
+                    } else {
+                        match self
+                            .fs_ref()
+                            .abs_buf_checked(&[custom_slice], &mut *custom_abs_buf)
+                        {
+                            Some(abs) => abs,
+                            // Longer than MAX_PATH_BYTES; cannot name a real
+                            // directory.
+                            None => continue,
+                        }
+                    };
+                    match self.check_package_path(custom_dir, import_path, kind, global_cache) {
                         ResultUnion::Success(res) => return ResultUnion::Success(res),
                         ResultUnion::Pending(p) => return ResultUnion::Pending(p),
                         ResultUnion::Failure(p) => return ResultUnion::Failure(p),

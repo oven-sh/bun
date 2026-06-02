@@ -19,6 +19,31 @@ pub fn from_binary(bytes: &[u8]) -> f64 {
     (double_microseconds / US_PER_MS as f64) + POSTGRES_EPOCH_DATE as f64
 }
 
+/// Decode a Postgres `timestamp` (WITHOUT TIME ZONE) text value as UTC, so the
+/// text/simple-query path agrees with the binary path (which is already UTC).
+/// Postgres emits these as `YYYY-MM-DD HH:MM:SS[.ffffff]` with no offset;
+/// without this they'd go through JS `Date.parse` and be read as local time on
+/// non-UTC hosts. Returns `None` for anything that isn't this exact shape
+/// (e.g. `infinity`, BC dates, 5+ digit years), so the caller falls back to
+/// `Date.parse`. `timestamptz` and `date` already decode correctly via
+/// `Date.parse` and must NOT be routed here.
+pub fn timestamp_text_to_ms_utc(global_object: &JSGlobalObject, bytes: &[u8]) -> Option<f64> {
+    let parsed = crate::shared::datetime_text::parse_postgres_timestamp(bytes)?;
+    global_object
+        .gregorian_date_time_to_ms_utc(
+            i32::from(parsed.year),
+            i32::from(parsed.month),
+            i32::from(parsed.day),
+            i32::from(parsed.hour),
+            i32::from(parsed.minute),
+            i32::from(parsed.second),
+            // Fractional seconds → milliseconds (JS Date is ms-precision, like
+            // the binary path's f64 truncation).
+            (parsed.microsecond / 1000) as i32,
+        )
+        .ok()
+}
+
 pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> {
     let double_value = if value.is_date() {
         value.get_unix_timestamp()

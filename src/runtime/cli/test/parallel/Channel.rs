@@ -20,8 +20,6 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 
 use bun_collections::VecExt;
-#[cfg(windows)]
-use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::Fd;
 #[cfg(not(windows))]
@@ -207,19 +205,19 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 .init(uv::Loop::get(), true)
                 .to_error(bun_sys::Tag::pipe)
             {
-                Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "Channel.adopt: uv_pipe_init failed: {}",
                     e.name().escape_ascii(),
-                ));
+                );
                 drop(pipe);
                 return false;
             }
             if let Some(e) = pipe.open(fd.uv()).to_error(bun_sys::Tag::open) {
-                Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "Channel.adopt: uv_pipe_open({}) failed: {}",
                     fd.uv(),
                     e.name().escape_ascii(),
-                ));
+                );
                 // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
                 unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(pipe)) };
                 return false;
@@ -275,10 +273,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // caller; we only borrow it to start reading.
         let rc = unsafe { (*pipe).read_start_ctx::<Self>(core::ptr::from_mut(self)) };
         if let Some(e) = rc.to_error(bun_sys::Tag::listen) {
-            Output::debug_warn(format_args!(
+            bun_core::debug_warn!(
                 "Channel.adoptPipe: readStart failed: {}",
                 e.name().escape_ascii(),
-            ));
+            );
             // Caller still owns `pipe` on failure (Zig spec) and is responsible
             // for `close_and_destroy`.
             return false;

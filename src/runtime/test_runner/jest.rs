@@ -71,25 +71,25 @@ impl CurrentFile {
 
         if repeat_count > 0 {
             if repeat_count > 1 {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "{}{}: <d>(run #{})<r>\n",
                     bstr::BStr::new(prefix),
                     bstr::BStr::new(title),
                     repeat_index + 1
-                ));
+                );
             } else {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "{}{}:\n",
                     bstr::BStr::new(prefix),
                     bstr::BStr::new(title)
-                ));
+                );
             }
         } else {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "{}{}:\n",
                 bstr::BStr::new(prefix),
                 bstr::BStr::new(title)
-            ));
+            );
         }
 
         Output::flush();

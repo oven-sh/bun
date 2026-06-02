@@ -75,6 +75,21 @@ describe("X509Certificate", () => {
     expect(cert.serialNumber).toBeDefined();
     expect(typeof cert.fingerprint).toBe("string");
   });
+
+  test("serialNumber and modulus are uppercase hex (Node.js/OpenSSL compat)", () => {
+    // BoringSSL's BN_bn2hex/BN_print emit lowercase hex; Node.js uses OpenSSL which
+    // emits uppercase. Bun must normalize to uppercase so cert pinning by serial
+    // string works the same as in Node.js.
+    const cert = new X509Certificate(certPem);
+
+    expect(cert.serialNumber).toBe("147D36C1C2F74206DE9FAB5F2226D78ADB00A426");
+    expect(cert.serialNumber).toMatch(/^[0-9A-F]+$/);
+
+    const legacy = cert.toLegacyObject();
+    expect(legacy.serialNumber).toBe("147D36C1C2F74206DE9FAB5F2226D78ADB00A426");
+    expect(legacy.modulus).toMatch(/^[0-9A-F]+$/);
+    expect(legacy.modulus.startsWith("D456320AFB20D3827093DC2C4284ED04DFBABD56")).toBe(true);
+  });
 });
 
 // checkIssued() must return a boolean to match Node.js. Previously Bun

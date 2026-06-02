@@ -376,11 +376,11 @@ impl Fs {
                     Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
                         let handle = bun_sys::open_file(path, bun_sys::OpenFlags::READ_ONLY)
                             .map_err(bun_core::Error::from)?;
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><d>Internal error: directory mismatch for directory \"{}\", fd {}<r>. You don't need to do anything, but this indicates a bug.",
                             bstr::BStr::new(path),
                             dirname_fd,
-                        ));
+                        );
                         handle
                     }
                     Err(err) => return Err(err.into()),

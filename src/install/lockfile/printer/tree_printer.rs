@@ -1,5 +1,4 @@
 use bun_collections::{DynamicBitSet, HashMap};
-use bun_core::Output;
 use bun_io::Write;
 use bun_semver as semver;
 
@@ -85,15 +84,11 @@ where
                     if !printed_section_header {
                         printed_section_header = true;
                         let workspace_name = names[workspace_package_id as usize].slice(string_buf);
-                        // TODO(port): Output.prettyFmt comptime ANSI format string
-                        write!(
+                        bun_core::write_pretty!(
                             writer,
-                            "{}",
-                            Output::pretty_fmt_args(
-                                "<r>\n<cyan>{s}<r><d>:<r>\n",
-                                ENABLE_ANSI_COLORS,
-                                (bstr::BStr::new(workspace_name),),
-                            ),
+                            ENABLE_ANSI_COLORS,
+                            "<r>\n<cyan>{s}<r><d>:<r>\n",
+                            bstr::BStr::new(workspace_name),
                         )?;
                     }
                 }
@@ -136,15 +131,11 @@ where
             if !printed_section_header {
                 printed_section_header = true;
                 let workspace_name = names[workspace_package_id as usize].slice(string_buf);
-                // TODO(port): Output.prettyFmt comptime ANSI format string
-                write!(
+                bun_core::write_pretty!(
                     writer,
-                    "{}",
-                    Output::pretty_fmt_args(
-                        "<r>\n<cyan>{s}<r><d>:<r>\n",
-                        ENABLE_ANSI_COLORS,
-                        (bstr::BStr::new(workspace_name),),
-                    ),
+                    ENABLE_ANSI_COLORS,
+                    "<r>\n<cyan>{s}<r><d>:<r>\n",
+                    bstr::BStr::new(workspace_name),
                 )?;
             }
         }
@@ -264,26 +255,26 @@ where
     let dependency =
         &this.lockfile.buffers.dependencies.as_slice()[update_info.dependency_id as usize];
 
-    // TODO(port): Output.prettyFmt comptime ANSI format string
-    let fmt = if ENABLE_ANSI_COLORS {
-        "<r><cyan>↑<r> <b>{s}<r><d> <b>{f} →<r> <b><cyan>{f}<r>\n"
-    } else {
-        "<r>^ <b>{s}<r><d> <b>{f} -\\><r> <b>{f}<r>\n"
-    };
-
-    write!(
-        writer,
-        "{}",
-        Output::pretty_fmt_args(
-            fmt,
-            ENABLE_ANSI_COLORS,
-            (
-                bstr::BStr::new(dependency.name.slice(string_buf)),
-                update_info.version.fmt(update_info.version_buf),
-                update_info.resolution.npm().version.fmt(string_buf),
+    if ENABLE_ANSI_COLORS {
+        write!(
+            writer,
+            bun_core::pretty_fmt!(
+                "<r><cyan>↑<r> <b>{s}<r><d> <b>{f} →<r> <b><cyan>{f}<r>\n",
+                true
             ),
-        ),
-    )?;
+            bstr::BStr::new(dependency.name.slice(string_buf)),
+            update_info.version.fmt(update_info.version_buf),
+            update_info.resolution.npm().version.fmt(string_buf),
+        )?;
+    } else {
+        write!(
+            writer,
+            bun_core::pretty_fmt!("<r>^ <b>{s}<r><d> <b>{f} -\\><r> <b>{f}<r>\n", false),
+            bstr::BStr::new(dependency.name.slice(string_buf)),
+            update_info.version.fmt(update_info.version_buf),
+            update_info.resolution.npm().version.fmt(string_buf),
+        )?;
+    }
 
     Ok(())
 }
@@ -308,48 +299,45 @@ where
     if let Some(later_version_fmt) =
         manager.format_later_version_in_cache(package_name, dependency.name_hash, &resolution)
     {
-        // TODO(port): Output.prettyFmt comptime ANSI format string
-        let fmt = if ENABLE_ANSI_COLORS {
-            "<r><green>+<r> <b>{s}<r><d>@{f}<r> <d>(<blue>v{f} available<r><d>)<r>\n"
-        } else {
-            "<r>+ {s}<r><d>@{f}<r> <d>(v{f} available)<r>\n"
-        };
-        write!(
-            writer,
-            "{}",
-            Output::pretty_fmt_args(
-                fmt,
-                ENABLE_ANSI_COLORS,
-                (
-                    bstr::BStr::new(name),
-                    resolution.fmt(string_buf, PathSep::Posix),
-                    later_version_fmt,
+        if ENABLE_ANSI_COLORS {
+            write!(
+                writer,
+                bun_core::pretty_fmt!(
+                    "<r><green>+<r> <b>{s}<r><d>@{f}<r> <d>(<blue>v{f} available<r><d>)<r>\n",
+                    true
                 ),
-            ),
-        )?;
+                bstr::BStr::new(name),
+                resolution.fmt(string_buf, PathSep::Posix),
+                later_version_fmt,
+            )?;
+        } else {
+            write!(
+                writer,
+                bun_core::pretty_fmt!("<r>+ {s}<r><d>@{f}<r> <d>(v{f} available)<r>\n", false),
+                bstr::BStr::new(name),
+                resolution.fmt(string_buf, PathSep::Posix),
+                later_version_fmt,
+            )?;
+        }
 
         return Ok(());
     }
 
-    // TODO(port): Output.prettyFmt comptime ANSI format string
-    let fmt = if ENABLE_ANSI_COLORS {
-        "<r><green>+<r> <b>{s}<r><d>@{f}<r>\n"
+    if ENABLE_ANSI_COLORS {
+        write!(
+            writer,
+            bun_core::pretty_fmt!("<r><green>+<r> <b>{s}<r><d>@{f}<r>\n", true),
+            bstr::BStr::new(name),
+            resolution.fmt(string_buf, PathSep::Posix),
+        )?;
     } else {
-        "<r>+ {s}<r><d>@{f}<r>\n"
-    };
-
-    write!(
-        writer,
-        "{}",
-        Output::pretty_fmt_args(
-            fmt,
-            ENABLE_ANSI_COLORS,
-            (
-                bstr::BStr::new(name),
-                resolution.fmt(string_buf, PathSep::Posix),
-            ),
-        ),
-    )?;
+        write!(
+            writer,
+            bun_core::pretty_fmt!("<r>+ {s}<r><d>@{f}<r>\n", false),
+            bstr::BStr::new(name),
+            resolution.fmt(string_buf, PathSep::Posix),
+        )?;
+    }
 
     Ok(())
 }
@@ -494,18 +482,12 @@ where
                 }
             }
 
-            // TODO(port): Output.prettyFmt comptime ANSI format string
-            write!(
+            bun_core::write_pretty!(
                 writer,
-                "{}",
-                Output::pretty_fmt_args(
-                    " <r><b>{s}<r><d>@<b>{f}<r>\n",
-                    ENABLE_ANSI_COLORS,
-                    (
-                        bstr::BStr::new(package_name),
-                        resolved[package_id as usize].fmt(string_buf, PathSep::Auto),
-                    ),
-                ),
+                ENABLE_ANSI_COLORS,
+                " <r><b>{s}<r><d>@<b>{f}<r>\n",
+                bstr::BStr::new(package_name),
+                resolved[package_id as usize].fmt(string_buf, PathSep::Auto),
             )?;
         }
     }
@@ -537,18 +519,12 @@ where
             bin::Tag::None | bin::Tag::Dir => {
                 printed_installed_update_request = true;
 
-                // TODO(port): Output.prettyFmt comptime ANSI format string
-                write!(
+                bun_core::write_pretty!(
                     writer,
-                    "{}",
-                    Output::pretty_fmt_args(
-                        "<r><green>installed<r> <b>{s}<r><d>@{f}<r>\n",
-                        ENABLE_ANSI_COLORS,
-                        (
-                            bstr::BStr::new(package_name),
-                            resolved[package_id as usize].fmt(string_buf, PathSep::Posix),
-                        ),
-                    ),
+                    ENABLE_ANSI_COLORS,
+                    "<r><green>installed<r> <b>{s}<r><d>@{f}<r>\n",
+                    bstr::BStr::new(package_name),
+                    resolved[package_id as usize].fmt(string_buf, PathSep::Posix),
                 )?;
             }
             bin::Tag::Map | bin::Tag::File | bin::Tag::NamedFile => {
@@ -569,25 +545,16 @@ where
                 };
 
                 {
-                    // TODO(port): Output.prettyFmt comptime ANSI format string
-                    write!(
+                    bun_core::write_pretty!(
                         writer,
-                        "{}",
-                        Output::pretty_fmt_args(
-                            "<r><green>installed<r> {s}<r><d>@{f}<r> with binaries:\n",
-                            ENABLE_ANSI_COLORS,
-                            (
-                                bstr::BStr::new(package_name),
-                                resolved[package_id as usize].fmt(string_buf, PathSep::Posix),
-                            ),
-                        ),
+                        ENABLE_ANSI_COLORS,
+                        "<r><green>installed<r> {s}<r><d>@{f}<r> with binaries:\n",
+                        bstr::BStr::new(package_name),
+                        resolved[package_id as usize].fmt(string_buf, PathSep::Posix),
                     )?;
                 }
 
                 {
-                    // TODO(port): Output.prettyFmt comptime ANSI format string
-                    let fmt = "<r> <d>- <r><b>{s}<r>\n";
-
                     if matches!(manager.track_installed_bin, TrackInstalledBin::Pending) {
                         // PORT NOTE: `iterator.next()` returns `Result<Option<&[u8]>, E>` (Zig `!?[]const u8`);
                         // `catch null` → `.unwrap_or(None)`. Reshaped for borrowck — `bin_name`'s
@@ -595,14 +562,11 @@ where
                         if let Some(bin_name) = iterator.next().unwrap_or(None) {
                             let owned = Box::<[u8]>::from(bin_name);
 
-                            write!(
+                            bun_core::write_pretty!(
                                 writer,
-                                "{}",
-                                Output::pretty_fmt_args(
-                                    fmt,
-                                    ENABLE_ANSI_COLORS,
-                                    (bstr::BStr::new(&owned[..]),),
-                                ),
+                                ENABLE_ANSI_COLORS,
+                                "<r> <d>- <r><b>{s}<r>\n",
+                                bstr::BStr::new(&owned[..]),
                             )?;
 
                             manager.track_installed_bin = TrackInstalledBin::Basename(owned);
@@ -610,14 +574,11 @@ where
                     }
 
                     while let Some(bin_name) = iterator.next().unwrap_or(None) {
-                        write!(
+                        bun_core::write_pretty!(
                             writer,
-                            "{}",
-                            Output::pretty_fmt_args(
-                                fmt,
-                                ENABLE_ANSI_COLORS,
-                                (bstr::BStr::new(bin_name),),
-                            ),
+                            ENABLE_ANSI_COLORS,
+                            "<r> <d>- <r><b>{s}<r>\n",
+                            bstr::BStr::new(bin_name),
                         )?;
                     }
                 }

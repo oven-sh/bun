@@ -298,9 +298,12 @@ pub fn decode_binary_value<Context: ReaderContext>(
         FieldType::MYSQL_TYPE_DATE
         | FieldType::MYSQL_TYPE_TIMESTAMP
         | FieldType::MYSQL_TYPE_DATETIME => match reader.byte()? {
+            // A zero-length binary DATETIME is MySQL's "0000-00-00 00:00:00"
+            // sentinel — surface it as Invalid Date (NaN), not the Unix epoch,
+            // so it agrees with the text path's from_text().
             0 => Ok(SQLDataCell {
                 tag: CellTag::Date,
-                value: CellValue { date: 0.0 },
+                value: CellValue { date: f64::NAN },
                 ..Default::default()
             }),
             l @ (11 | 7 | 4) => {

@@ -8,7 +8,6 @@ use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
 
 use bun_collections::{ArrayHashMap, StringArrayHashMap};
-use bun_core::Output;
 use bun_core::{String as BunString, ZStr};
 use bun_jsc as jsc;
 use bun_paths::PathBuffer;
@@ -207,7 +206,7 @@ impl PathWatcher {
         // through the raw pointer so we don't form a `&mut uv_fs_event_t` that would
         // alias the `&mut PathWatcher` we derive below (Stacked Borrows).
         if unsafe { (*event).data }.is_null() {
-            Output::debug_warn("uvEventCallback called with null data");
+            bun_core::debug_warn!("uvEventCallback called with null data");
             return;
         }
         // SAFETY: event points to PathWatcher.handle; recover the parent via offset_of.

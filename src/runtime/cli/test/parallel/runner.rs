@@ -575,7 +575,7 @@ impl<'a> WorkerLoop<'a> {
         // SAFETY: vm pointer is valid for the worker's lifetime.
         let vm = unsafe { &mut *self.vm };
         if !self.cmds.channel.adopt(vm, Fd::from_uv(3)) {
-            Output::pretty_errorln("<red>error<r>: test worker failed to adopt IPC fd");
+            bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
         }
         // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread

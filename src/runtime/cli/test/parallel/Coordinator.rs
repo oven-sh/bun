@@ -266,11 +266,11 @@ impl<'a> Coordinator<'a> {
         }
         self.bailed = true;
         self.break_dots();
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "\nBailed out after {} failure{}<r>\n",
             self.bail,
             if self.bail == 1 { "" } else { "s" }
-        ));
+        );
         Output::flush();
         // PORT NOTE: reachable from on_frame/account_crash with the caller's
         // `w: &mut Worker` still live and used afterward; iter_mut() here
@@ -535,11 +535,11 @@ impl<'a> Coordinator<'a> {
     fn account_crash(&mut self, file_idx: u32, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "<r><red>✗<r> <b>{}<r> <d>(worker crashed: {})<r>\n",
             bstr::BStr::new(self.rel_path(file_idx)),
             bstr::BStr::new(describe_status(&mut buf, status)),
-        ));
+        );
         self.reporter.summary().fail += 1;
         self.reporter.summary().files += 1;
         self.crashed_files.push(file_idx);
@@ -558,14 +558,14 @@ impl<'a> Coordinator<'a> {
     fn abort_on_worker_panic(&mut self, file_idx: u32, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             concat!(
                 "\n<red>error<r>: a test worker process crashed with <b>{}<r> while running <b>{}<r>.\n",
                 "This indicates a bug in Bun or in a native addon, not in the test itself. Aborting.\n",
             ),
             bstr::BStr::new(describe_status(&mut buf, status)),
             bstr::BStr::new(self.rel_path(file_idx)),
-        ));
+        );
         Output::flush();
         // .shutdown() only takes effect between files, so a worker that's
         // mid-file would keep producing output after the panic banner.
@@ -630,7 +630,7 @@ impl<'a> Coordinator<'a> {
             // SAFETY: `wp` is in-bounds (see above); mutating `.range` through
             // *mut forms no `&mut Worker` aliasing the caller's live `w`.
             while let Some(idx) = unsafe { (*wp).range.pop_front() } {
-                Output::pretty_error(format_args!(
+                bun_core::pretty_error!(
                     "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
                     // PORT NOTE: reshaped for borrowck — inline rel_path body
                     // since `self.workers` is mutably borrowed.
@@ -639,7 +639,7 @@ impl<'a> Coordinator<'a> {
                         self.files[idx as usize].as_bytes(),
                     )),
                     bstr::BStr::new(reason),
-                ));
+                );
                 self.reporter.summary().fail += 1;
                 self.reporter.summary().files += 1;
                 self.crashed_files.push(idx);

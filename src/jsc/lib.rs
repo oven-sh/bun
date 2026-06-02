@@ -636,7 +636,7 @@ For a list of options, see this file:\n\n    \
 https://github.com/oven-sh/webkit/blob/main/Source/JavaScriptCore/runtime/OptionsList.h\n\n\
 Environment variables must be prefixed with \"BUN_JSC_\". This code runs before .env files are loaded, so those won't work here.\n\n\
 Warning: options change between releases of Bun and WebKit without notice. This is not a stable API, you should not rely on it beyond debugging something, and it may be removed entirely in a future version of Bun.",
-        alloc::string::String::from_utf8_lossy(name),
+        bstr::BStr::new(name),
     );
     bun_core::exit(1);
 }

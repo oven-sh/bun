@@ -162,8 +162,8 @@ impl BuildCommand {
             && ctx.bundler_options.outdir.is_empty()
             && !ctx.bundler_options.compile
         {
-            Output::pretty_errorln(
-                "<r><red>error<r><d>:<r> cannot use an external source map without --outdir",
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> cannot use an external source map without --outdir"
             );
             Global::exit(1);
         }
@@ -242,8 +242,8 @@ impl BuildCommand {
 
         if ctx.bundler_options.compile {
             if ctx.bundler_options.transform_only {
-                Output::pretty_errorln(
-                    "<r><red>error<r><d>:<r> --compile does not support --no-bundle",
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> --compile does not support --no-bundle"
                 );
                 Global::exit(1);
             }
@@ -265,8 +265,8 @@ impl BuildCommand {
                 // --compile --target=browser with all HTML entrypoints: produce self-contained HTML
                 ctx.args.target = Some(api::Target::Browser);
                 if ctx.bundler_options.code_splitting {
-                    Output::pretty_errorln(
-                        "<r><red>error<r><d>:<r> cannot use --compile --target browser with --splitting",
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> cannot use --compile --target browser with --splitting"
                     );
                     Global::exit(1);
                 }
@@ -285,8 +285,8 @@ impl BuildCommand {
             } else {
                 // Standard --compile: produce standalone bun executable
                 if !ctx.bundler_options.outdir.is_empty() {
-                    Output::pretty_errorln(
-                        "<r><red>error<r><d>:<r> cannot use --compile with --outdir",
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> cannot use --compile with --outdir"
                     );
                     Global::exit(1);
                 }
@@ -322,8 +322,8 @@ impl BuildCommand {
 
                 // If argv[0] is "bun" or "bunx", we don't check if the binary is standalone
                 if outfile == b"bun" || outfile == b"bunx" {
-                    Output::pretty_errorln(
-                        "<r><red>error<r><d>:<r> cannot use --compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for --outfile",
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> cannot use --compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for --outfile"
                     );
                     Global::exit(1);
                 }
@@ -334,8 +334,8 @@ impl BuildCommand {
             // Check if any entry point is an HTML file
             for entry_point in this_transpiler.options.entry_points.iter() {
                 if strings::has_suffix_comptime(entry_point, b".html") {
-                    Output::pretty_errorln(
-                        "<r><red>error<r><d>:<r> HTML imports are only supported when bundling",
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> HTML imports are only supported when bundling"
                     );
                     Global::exit(1);
                 }
@@ -347,14 +347,14 @@ impl BuildCommand {
             && fetcher.is_none()
         {
             if this_transpiler.options.entry_points.len() > 1 {
-                Output::pretty_errorln(
-                    "<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point.",
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> Must use <b>--outdir<r> when specifying more than one entry point."
                 );
                 Global::exit(1);
             }
             if this_transpiler.options.code_splitting {
-                Output::pretty_errorln(
-                    "<r><red>error<r><d>:<r> Must use <b>--outdir<r> when code splitting is enabled",
+                bun_core::pretty_errorln!(
+                    "<r><red>error<r><d>:<r> Must use <b>--outdir<r> when code splitting is enabled"
                 );
                 Global::exit(1);
             }
@@ -385,11 +385,11 @@ impl BuildCommand {
             let dir = match bun_sys::open_dir_at(Fd::cwd(), path) {
                 Ok(d) => d,
                 Err(err) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>{}<r> opening root directory {}",
                         bstr::BStr::new(err.name()),
                         bun_fmt::quote(path),
-                    ));
+                    );
                     Global::exit(1);
                 }
             };
@@ -398,11 +398,11 @@ impl BuildCommand {
             let result = match bun_sys::get_fd_path(dir, &mut src_root_dir_buf) {
                 Ok(p) => p,
                 Err(err) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>{}<r> resolving root directory {}",
                         bstr::BStr::new(err.name()),
                         bun_fmt::quote(path),
-                    ));
+                    );
                     Global::exit(1);
                 }
             };
@@ -660,10 +660,7 @@ impl BuildCommand {
                     let metafile_md = match MetafileBuilder::generate_markdown(metafile_json) {
                         Ok(md) => Some(md),
                         Err(err) => {
-                            Output::warn(format_args!(
-                                "Failed to generate markdown metafile: {}",
-                                err.name(),
-                            ));
+                            bun_core::warn!("Failed to generate markdown metafile: {}", err.name(),);
                             None
                         }
                     };
@@ -965,11 +962,11 @@ impl BuildCommand {
                     4usize.saturating_sub(bun_fmt::digit_count(compiled_elapsed.max(0)));
                 let padding_buf = [b' '; 16];
                 let padding_ = &padding_buf[0..compiled_elapsed_digit_count];
-                Output::pretty(format_args!("{}", bstr::BStr::new(padding_)));
+                bun_core::pretty!("{}", bstr::BStr::new(padding_));
 
                 Output::print_elapsed_stdout_trim(compiled_elapsed as f64);
 
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     " <green>compile<r>  <b><blue>{}{}<r>",
                     bstr::BStr::new(outfile),
                     if compile_target.os == OperatingSystem::Windows
@@ -979,12 +976,12 @@ impl BuildCommand {
                     } else {
                         ""
                     }
-                ));
+                );
 
                 if is_cross_compile {
-                    Output::pretty(format_args!(" <r><d>{}<r>\n", compile_target));
+                    bun_core::pretty!(" <r><d>{}<r>\n", compile_target);
                 } else {
-                    Output::pretty(format_args!("\n"));
+                    bun_core::pretty!("\n");
                 }
 
                 Output::flush();
@@ -993,21 +990,21 @@ impl BuildCommand {
 
             if log_ref.errors == 0 {
                 if opt_transform_only {
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "<green>Transpiled file in {}ms<r>",
                         (bun_core::time::nano_timestamp() - cli_start_time())
                             / (bun_core::time::NS_PER_MS as i128)
-                    ));
+                    );
                 } else {
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "<green>Bundled {} module{} in {}ms<r>",
                         reachable_file_count,
                         if reachable_file_count == 1 { "" } else { "s" },
                         (bun_core::time::nano_timestamp() - cli_start_time())
                             / (bun_core::time::NS_PER_MS as i128)
-                    ));
+                    );
                 }
-                Output::prettyln(format_args!("\n"));
+                bun_core::prettyln!("\n");
                 Output::flush();
             }
 
@@ -1100,7 +1097,7 @@ impl BuildCommand {
                 writer.write_all(b"\n")?;
             }
 
-            Output::prettyln(format_args!("\n"));
+            bun_core::prettyln!("\n");
             Output::flush();
         }
 
@@ -1145,10 +1142,7 @@ fn print_summary(
 
     let minified_digit_count: usize = 4usize.saturating_sub(bun_fmt::digit_count(minify_duration));
     if minified {
-        Output::pretty(format_args!(
-            "{}",
-            bstr::BStr::new(&padding_buf[0..minified_digit_count])
-        ));
+        bun_core::pretty!("{}", bstr::BStr::new(&padding_buf[0..minified_digit_count]));
         Output::print_elapsed_stdout_trim(minify_duration as f64);
         let output_size = {
             let mut total_size: u64 = 0;
@@ -1163,38 +1157,35 @@ fn print_summary(
         // we may inject sourcemaps or comments or import paths
         let delta: i64 = ((input_code_length as i128) - (output_size as i128)) as i64;
         if delta > 1024 {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "  <green>minify<r>  -{} <d>(estimate)<r>",
                 bun_fmt::size(
                     usize::try_from(delta).expect("int cast"),
                     Default::default()
                 )
-            ));
+            );
         } else if -delta > 1024 {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "  <b>minify<r>   +{} <d>(estimate)<r>",
                 bun_fmt::size(
                     usize::try_from(-delta).expect("int cast"),
                     Default::default()
                 )
-            ));
+            );
         } else {
-            Output::prettyln(format_args!("  <b>minify<r>"));
+            bun_core::prettyln!("  <b>minify<r>");
         }
     }
 
     let bundle_elapsed_digit_count: usize =
         4usize.saturating_sub(bun_fmt::digit_count(bundle_elapsed.max(0)));
 
-    Output::pretty(format_args!(
+    bun_core::pretty!(
         "{}",
         bstr::BStr::new(&padding_buf[0..bundle_elapsed_digit_count])
-    ));
+    );
     Output::print_elapsed_stdout_trim(bundle_elapsed as f64);
-    Output::prettyln(format_args!(
-        "  <green>bundle<r>  {} modules",
-        reachable_file_count
-    ));
+    bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
 }
 
 // ported from: src/cli/build_command.zig

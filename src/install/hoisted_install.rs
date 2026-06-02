@@ -527,10 +527,10 @@ pub(crate) fn install_hoisted_packages(
                         if pending_task_count > 0
                             && PackageManager::has_enough_time_passed_between_waiting_messages()
                         {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<d>[PackageManager]<r> waiting for {} tasks\n",
                                 pending_task_count
-                            ));
+                            );
                         }
                     }
 

@@ -325,10 +325,10 @@ pub fn generate_files(
         if log.has_written_initial_message {
             Output::print(format_args!("\n"));
         }
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "<r>📦 <b>Auto-installing {} detected dependencies<r>\n",
             dependencies.len() + dev_dependencies.len()
-        ));
+        );
     }
 
     if !dependencies.is_empty() {
@@ -364,9 +364,7 @@ pub fn generate_files(
                 shadcn_argv.extend(components.keys().iter().map(|k| &k[..]));
 
                 // print "bun" but use bun.selfExePath()
-                Output::prettyln(format_args!(
-                    "\n<r>😎 <b>Setting up shadcn/ui components<r>"
-                ));
+                bun_core::prettyln!("\n<r>😎 <b>Setting up shadcn/ui components<r>");
                 Output::command_out(Output::CommandArgv::List(&shadcn_argv));
                 Output::flush();
                 shadcn_argv[0] = bun_core::self_exe_path()?;
@@ -1005,18 +1003,15 @@ pub struct Logger {
 impl Logger {
     pub fn file(&mut self, template_file: &TemplateFile, name: &[u8], max_name_len: usize) {
         self.has_written_initial_message = true;
-        Output::pretty(format_args!(" <green>create<r>  "));
-        Output::pretty(format_args!("{}", bstr::BStr::new(name)));
+        bun_core::pretty!(" <green>create<r>  ");
+        bun_core::pretty!("{}", bstr::BStr::new(name));
         let name_len = name.len();
         let mut padding: usize = max_name_len - name_len;
         while padding > 0 {
-            Output::pretty(format_args!(" "));
+            bun_core::pretty!(" ");
             padding -= 1;
         }
-        Output::prettyln(format_args!(
-            "   <d>{}<r>",
-            <&'static str>::from(template_file.reason)
-        ));
+        bun_core::prettyln!("   <d>{}<r>", <&'static str>::from(template_file.reason));
     }
 
     pub fn if_new(&mut self) {
@@ -1024,7 +1019,7 @@ impl Logger {
             return;
         }
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><d>--------------------------------<r>\n\
              ✨ <b>{}<r> project configured\n\
              \n\
@@ -1038,7 +1033,7 @@ impl Logger {
              \n\
              <blue>Happy bunning! 🐇<r>",
             bstr::BStr::new(self.template.label())
-        ));
+        );
     }
 }
 

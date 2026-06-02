@@ -19,6 +19,7 @@ use crate::webcore::BlobExt as _;
 /// `.as_bytes()` method — covering all three call shapes in this file
 /// (`format_args!("{}", …)`, `writer.write_all(&…)`, `….as_bytes()`).
 #[inline]
+#[allow(clippy::disallowed_methods)] // template is a runtime parameter (Zig comptime param)
 fn pretty_fmt_const<const ENABLE_ANSI_COLORS: bool>(s: &str) -> PrettyStr {
     PrettyStr(Output::pretty_fmt_rt(s, ENABLE_ANSI_COLORS).0)
 }

@@ -60,6 +60,18 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_lsanDoLeakCheck, (JSC::JSGlobalObject * glob
     return encodedJSUndefined();
 }
 
+// Side-effect-free report of whether this binary was compiled with
+// AddressSanitizer. Lets the test harness detect ASAN without running a
+// stop-the-world leak check (see jsFunction_lsanDoLeakCheck).
+JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+#if ASAN_ENABLED
+    return JSValue::encode(jsBoolean(true));
+#else
+    return JSValue::encode(jsBoolean(false));
+#endif
+}
+
 // Returns the net refcount change on the *original* StringImpl after a
 // BunString owning one ref to it is passed through BunString__toThreadSafe
 // and then released. A correct implementation must return 0; a positive

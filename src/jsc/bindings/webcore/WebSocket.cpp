@@ -1893,6 +1893,12 @@ extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::We
 extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString* reason)
 {
     WTF::String wtf_reason = reason->transferToWTFString();
+    // The Rust client only calls this after a completed close handshake
+    // (received Close → echoed Close, or sent Close on ws.close()). For a
+    // server-initiated close m_state is still OPEN here; transition to
+    // CLOSING so didClose() reports wasClean = true. Abnormal closes go
+    // through WebSocket__didAbruptClose instead.
+    webSocket->didStartClosingHandshake();
     webSocket->didClose(0, errorCode, WTF::move(wtf_reason));
 }
 

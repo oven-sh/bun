@@ -160,11 +160,12 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
   });
 
   it("still accepts multi-byte paths that are long in bytes but within the UTF-16 bound", () => {
-    // 90003 UTF-8 bytes — past the UTF-16-unit limit in bytes, so the exact
-    // UTF-16 length (30003 units, which fits) must be computed and accepted.
-    // statSync (which does not swallow errors) must reach the syscall and
-    // fail with ENOENT, not with the length guard's ENAMETOOLONG.
+    // 90003 UTF-8 bytes — past the UTF-16-unit limit in bytes, so
+    // fits_in_wide_path_buffer must compute the exact UTF-16 length (30003
+    // units, which fits) and accept it. copyFileSync checks both paths
+    // against it and does not swallow errors, so it must get past the length
+    // guard and fail at the syscall with ENOENT — not ENAMETOOLONG.
     const p = "C:\\" + Buffer.alloc(90000, "\u4e00").toString();
-    expect(() => fs.statSync(p)).toThrow("ENOENT");
+    expect(() => fs.copyFileSync(p, "copy-file-dest-does-not-matter.txt")).toThrow("ENOENT");
   });
 });

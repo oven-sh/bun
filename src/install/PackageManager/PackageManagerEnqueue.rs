@@ -1733,6 +1733,18 @@ fn enqueue_git_clone(
     // slot already claimed would leave a claimed-but-uninit `Task` (which carries
     // `Log`/`Box<PatchTask>` drop glue) for the next `put()` to drop. With
     // `get_init` the slot is claimed only after the value is fully constructed.
+    //
+    // The patched-dependency entry can be missing (or its hash not yet
+    // computed) when install state went stale — e.g. the patch was removed
+    // from package.json, leaving the hash only in
+    // `patched_dependencies_to_remove`. Install the package unpatched instead
+    // of panicking.
+    let patch = patch_name_and_version_hash.and_then(|h| {
+        Some((
+            h,
+            this.lockfile.patched_dependencies.get(&h)?.patchfile_hash()?,
+        ))
+    });
     let value = Task::Task {
         // `this` is a live `&mut PackageManager`; the task is owned by
         // `this.preallocated_resolve_tasks` and never outlives the manager.
@@ -1761,7 +1773,7 @@ fn enqueue_git_clone(
             }),
         },
         id: task_id,
-        apply_patch_task: if let Some(h) = patch_name_and_version_hash {
+        apply_patch_task: if let Some((h, patch_hash)) = patch {
             let dep = dependency;
             let pkg_id = match this
                 .lockfile
@@ -1772,13 +1784,6 @@ fn enqueue_git_clone(
                 PackageIndexEntry::Id(p) => *p,
                 PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
             };
-            let patch_hash = this
-                .lockfile
-                .patched_dependencies
-                .get(&h)
-                .unwrap()
-                .patchfile_hash()
-                .unwrap();
             let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
             // SAFETY: `pt` is fresh from `heap::alloc`; reclaim ownership.
             let mut pt = unsafe { bun_core::heap::take(pt) };
@@ -1806,6 +1811,17 @@ pub fn enqueue_git_checkout(
     // if patched then we need to do apply step after network task is done
     patch_name_and_version_hash: Option<u64>,
 ) -> *mut ThreadPool::Task {
+    // The patched-dependency entry can be missing (or its hash not yet
+    // computed) when install state went stale — e.g. the patch was removed
+    // from package.json, leaving the hash only in
+    // `patched_dependencies_to_remove`. Install the package unpatched instead
+    // of panicking.
+    let patch = patch_name_and_version_hash.and_then(|h| {
+        Some((
+            h,
+            this.lockfile.patched_dependencies.get(&h)?.patchfile_hash()?,
+        ))
+    });
     // SAFETY: `this` is a live `&mut PackageManager`.
     let task_value = unsafe {
         Task::Task {
@@ -1838,7 +1854,7 @@ pub fn enqueue_git_checkout(
                     env: crate::repository::SharedEnv::get(this.env_mut()),
                 }),
             },
-            apply_patch_task: if let Some(h) = patch_name_and_version_hash {
+            apply_patch_task: if let Some((h, patch_hash)) = patch {
                 let dep_name_hash =
                     this.lockfile.buffers.dependencies[dependency_id as usize].name_hash;
                 let pkg_id = match this
@@ -1850,13 +1866,6 @@ pub fn enqueue_git_checkout(
                     PackageIndexEntry::Id(p) => *p,
                     PackageIndexEntry::Ids(ps) => ps[0], // TODO is this correct
                 };
-                let patch_hash = this
-                    .lockfile
-                    .patched_dependencies
-                    .get(&h)
-                    .unwrap()
-                    .patchfile_hash()
-                    .unwrap();
                 let pt = PatchTask::new_apply_patch_hash(this, pkg_id, patch_hash, h);
                 // SAFETY: `pt` is fresh from `heap::alloc`; reclaim ownership.
                 let mut pt = bun_core::heap::take(pt);

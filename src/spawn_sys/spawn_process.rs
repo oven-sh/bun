@@ -946,7 +946,34 @@ pub unsafe fn spawn_process_posix(
     let argv0 = options.argv0.unwrap_or_else(|| unsafe { *argv });
     // SAFETY: argv0 is a valid NUL-terminated C string (caller contract).
     let argv0_cstr = unsafe { bun_core::ffi::cstr(argv0) };
-    let spawn_result = posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp);
+    let spawn_result = match posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp)
+    {
+        // The file is executable but not a recognized format (e.g. a script with
+        // no shebang). libuv/Node retry the exec through `/bin/sh`, so the file is
+        // run as a shell script. Mirror that: re-exec `/bin/sh <file> <args...>`,
+        // where `<file>` is the originally-resolved path (becomes `$0` in the
+        // shell) and `<args...>` are the user-supplied arguments (argv[1..]).
+        Err(err) if err.get_errno() == bun_sys::E::ENOEXEC => {
+            let mut sh_argv: Vec<*const c_char> = Vec::new();
+            sh_argv.push(c"/bin/sh".as_ptr());
+            sh_argv.push(argv0_cstr.as_ptr());
+            // Skip the original argv[0] (arg0); keep the user-supplied args.
+            let mut i = 1usize;
+            loop {
+                // SAFETY: argv is a NULL-terminated array (caller contract), so
+                // `argv[i]` is valid until the NULL terminator is reached.
+                let arg = unsafe { *argv.add(i) };
+                if arg.is_null() {
+                    break;
+                }
+                sh_argv.push(arg);
+                i += 1;
+            }
+            sh_argv.push(core::ptr::null());
+            posix_spawn::spawn_z(c"/bin/sh", Some(&actions), Some(&attr), sh_argv.as_ptr(), envp)
+        }
+        other => other,
+    };
 
     match spawn_result {
         Err(err) => {

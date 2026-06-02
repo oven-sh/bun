@@ -176,6 +176,56 @@ function buildSyntheticVLQ(): string {
 
 // --- Tests ---
 
+describe("InternalSourceMap.fromVLQ validation", () => {
+  // fromVLQ accumulates relative VLQ deltas into absolute i32 values. A
+  // malformed/hostile mappings string can drive an accumulator negative or
+  // overflow it; both must be rejected as an invalid source map (matching
+  // Mapping.parse) instead of panicking in debug builds or carrying wrapped
+  // garbage into the serialized blob in release builds.
+  //
+  // "+/////D" encodes +2147483647 (i32::MAX); "D" encodes -1.
+  const INT32_MAX_VLQ = "+/////D";
+  const invalid: Record<string, string> = {
+    "generated column overflows i32": `${INT32_MAX_VLQ},${INT32_MAX_VLQ}`,
+    "negative absolute generated column": "D",
+    "negative absolute source index": "ADAA",
+    "negative absolute original line": "AADA",
+    "negative absolute original column": "AAAD",
+    "source index overflows i32": `A${INT32_MAX_VLQ}AA,A${INT32_MAX_VLQ}AA`,
+    "original line overflows i32": `AA${INT32_MAX_VLQ}A,AA${INT32_MAX_VLQ}A`,
+    "original column overflows i32": `AAA${INT32_MAX_VLQ},AAA${INT32_MAX_VLQ}`,
+  };
+
+  for (const [name, vlq] of Object.entries(invalid)) {
+    test(name, () => {
+      expect(() => internalSourceMap.fromVLQ(vlq)).toThrow("invalid VLQ input");
+    });
+  }
+
+  test("negative deltas with non-negative absolutes are still accepted", () => {
+    // gen col 5 → 2 (delta -3), original line 4 → 1 (delta -3): legal,
+    // out-of-order mappings exist in real maps.
+    const vlq = [
+      encodeVLQ(5) + encodeVLQ(0) + encodeVLQ(4) + encodeVLQ(7),
+      encodeVLQ(-3) + encodeVLQ(0) + encodeVLQ(-3) + encodeVLQ(-7),
+    ].join(",");
+    const blob = internalSourceMap.fromVLQ(vlq);
+    expect(blob.byteLength).toBeGreaterThan(32);
+    expect(decodeMappings(internalSourceMap.toVLQ(blob))).toEqual([
+      { genLine: 0, genCol: 5, srcIdx: 0, origLine: 4, origCol: 7 },
+      { genLine: 0, genCol: 2, srcIdx: 0, origLine: 1, origCol: 0 },
+    ]);
+  });
+
+  test("i32::MAX absolutes are accepted (boundary)", () => {
+    const vlq = `${INT32_MAX_VLQ}A${INT32_MAX_VLQ}${INT32_MAX_VLQ}`;
+    const blob = internalSourceMap.fromVLQ(vlq);
+    expect(decodeMappings(internalSourceMap.toVLQ(blob))).toEqual([
+      { genLine: 0, genCol: 2147483647, srcIdx: 0, origLine: 2147483647, origCol: 2147483647 },
+    ]);
+  });
+});
+
 describe("InternalSourceMap round-trip", () => {
   test("synthetic: fromVLQ → toVLQ preserves all 4-field positions; names dropped, 1-field skipped", () => {
     const vlqIn = buildSyntheticVLQ();

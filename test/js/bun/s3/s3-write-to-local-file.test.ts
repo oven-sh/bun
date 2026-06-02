@@ -30,9 +30,9 @@ describe("Bun.write(Bun.file(path), s3file)", () => {
     using dir = tempDir("s3-write-local", {});
     const dest = join(String(dir), "download.bin");
 
-    // resolves with 0 for ReadableStream-backed sources (including S3), on
-    // every platform — parity with the JS streaming loop
-    expect(await Bun.write(Bun.file(dest), makeClient(server.url.origin).file("some-key"))).toBe(0);
+    // resolves with the number of bytes written, on every platform —
+    // matching the documented Bun.write return value
+    expect(await Bun.write(Bun.file(dest), makeClient(server.url.origin).file("some-key"))).toBe(SIZE);
 
     const got = await Bun.file(dest).bytes();
     expect(got.byteLength).toBe(SIZE);
@@ -79,7 +79,7 @@ describe("Bun.write(Bun.file(path), s3file)", () => {
       // FileSink still has most of the body buffered when the last network
       // chunk arrives.
       const n = await Bun.write(Bun.file(1), client.file("big.bin"));
-      if (n !== 0) {
+      if (n !== ${SIZE}) {
         console.error("unexpected resolve value: " + n);
         process.exit(1);
       }

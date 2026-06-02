@@ -946,16 +946,24 @@ pub unsafe fn spawn_process_posix(
     let argv0 = options.argv0.unwrap_or_else(|| unsafe { *argv });
     // SAFETY: argv0 is a valid NUL-terminated C string (caller contract).
     let argv0_cstr = unsafe { bun_core::ffi::cstr(argv0) };
+    // Android's shell lives at /system/bin/sh; /bin is only symlinked on API 29+,
+    // below Bun's minimum (API 28). Matches the rest of the codebase (e.g.
+    // run_command.rs, install/PackageManager.rs, js/node/child_process.ts).
+    #[cfg(target_os = "android")]
+    const SHELL_PATH: &CStr = c"/system/bin/sh";
+    #[cfg(not(target_os = "android"))]
+    const SHELL_PATH: &CStr = c"/bin/sh";
+
     let spawn_result =
         match posix_spawn::spawn_z(argv0_cstr, Some(&actions), Some(&attr), argv, envp) {
             // The file is executable but not a recognized format (e.g. a script with
-            // no shebang). libuv/Node retry the exec through `/bin/sh`, so the file is
-            // run as a shell script. Mirror that: re-exec `/bin/sh <file> <args...>`,
-            // where `<file>` is the originally-resolved path (becomes `$0` in the
-            // shell) and `<args...>` are the user-supplied arguments (argv[1..]).
+            // no shebang). libuv/Node retry the exec through the shell, so the file is
+            // run as a shell script. Mirror that: re-exec `sh <file> <args...>`, where
+            // `<file>` is the originally-resolved path (becomes `$0` in the shell) and
+            // `<args...>` are the user-supplied arguments (argv[1..]).
             Err(err) if err.get_errno() == bun_sys::E::ENOEXEC => {
                 let mut sh_argv: Vec<*const c_char> = Vec::new();
-                sh_argv.push(c"/bin/sh".as_ptr());
+                sh_argv.push(SHELL_PATH.as_ptr());
                 sh_argv.push(argv0_cstr.as_ptr());
                 // Skip the original argv[0] (arg0); keep the user-supplied args.
                 let mut i = 1usize;
@@ -971,7 +979,7 @@ pub unsafe fn spawn_process_posix(
                 }
                 sh_argv.push(core::ptr::null());
                 posix_spawn::spawn_z(
-                    c"/bin/sh",
+                    SHELL_PATH,
                     Some(&actions),
                     Some(&attr),
                     sh_argv.as_ptr(),

@@ -1,21 +1,35 @@
 import { spawn, spawnSync } from "bun";
 import { beforeAll, expect, it } from "bun:test";
+import { existsSync } from "fs";
 import { bunEnv, bunExe } from "harness";
 import { join } from "path";
 
+const addonPath = join(__dirname, "napi-app/build/Debug/test_delete_ref_in_finalizer_experimental.node");
+
 beforeAll(() => {
-  // build the native addons in napi-app (cached once napi.test.ts or a
-  // previous run has built them)
-  const install = spawnSync({
-    cmd: [bunExe(), "install", "--verbose"],
-    cwd: join(__dirname, "napi-app"),
-    stderr: "inherit",
-    env: bunEnv,
-    stdout: "inherit",
-    stdin: "inherit",
-  });
-  if (!install.success) {
-    throw new Error("building napi-app addons failed");
+  // Build the native addons in napi-app, but only if the one this test needs
+  // is missing (napi.test.ts or a previous run usually has built it already).
+  // The addon doesn't link against bun, so an existing binary stays valid
+  // across bun builds; skipping the install avoids re-running the node-gyp
+  // rebuild, which is slow and occasionally flaky under resource pressure.
+  if (existsSync(addonPath)) {
+    return;
+  }
+  for (let attempt = 0; ; attempt++) {
+    const install = spawnSync({
+      cmd: [bunExe(), "install", "--verbose"],
+      cwd: join(__dirname, "napi-app"),
+      stderr: "inherit",
+      env: bunEnv,
+      stdout: "inherit",
+      stdin: "inherit",
+    });
+    if (install.success && existsSync(addonPath)) {
+      return;
+    }
+    if (attempt >= 1) {
+      throw new Error("building napi-app addons failed");
+    }
   }
 }, 300_000);
 

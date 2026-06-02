@@ -271,6 +271,10 @@ pub struct Options {
     pub truncate: bool,
     pub close: bool,
     pub mode: bun_sys::Mode,
+    /// Create missing parent directories on ENOENT and retry the open once.
+    /// Off by default; `Bun.write` destinations opt in (its `createPath`
+    /// option defaults to true), `.writer()` keeps plain open semantics.
+    pub mkdirp: bool,
 }
 
 impl Default for Options {
@@ -281,6 +285,7 @@ impl Default for Options {
             truncate: true,
             close: false,
             mode: 0o664,
+            mkdirp: false,
         }
     }
 }
@@ -706,7 +711,7 @@ impl FileSink {
             PathOrFileDescriptor::Fd(fd) => bun_io::PathOrFileDescriptor::Fd(*fd),
             PathOrFileDescriptor::Path(slice) => bun_io::PathOrFileDescriptor::Path(slice.slice()),
         };
-        let result = bun_io::open_for_writing(
+        let mut result = bun_io::open_for_writing(
             Fd::cwd(),
             &io_path,
             options.flags(),
@@ -724,6 +729,49 @@ impl FileSink {
             },
             is_pollable,
         );
+        if options.mkdirp {
+            if let (sys::Result::Err(err), PathOrFileDescriptor::Path(slice)) =
+                (&result, &options.input_path)
+            {
+                if err.get_errno() == bun_sys::E::ENOENT {
+                    // Create the missing parent directories and retry once
+                    // (the same recovery `Bun.write`'s buffered path performs
+                    // via `mkdir_if_not_exists`).
+                    if let Some(dirname) = bun_core::dirname(slice.slice()) {
+                        let mut node_fs = crate::node::fs::NodeFS::default();
+                        if let bun_sys::Result::Ok(_) =
+                            node_fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
+                                path: crate::node::PathLike::String(bun_core::PathString::init(
+                                    dirname,
+                                )),
+                                recursive: true,
+                                always_return_none: true,
+                                ..Default::default()
+                            })
+                        {
+                            result = bun_io::open_for_writing(
+                                Fd::cwd(),
+                                &io_path,
+                                options.flags(),
+                                options.mode,
+                                &mut pollable_out,
+                                &mut is_socket_out,
+                                self.force_sync.get(),
+                                &mut nonblocking_out,
+                                &mut force_sync_out,
+                                |_fs: &mut bool| {
+                                    #[cfg(unix)]
+                                    {
+                                        *_fs = true;
+                                    }
+                                },
+                                is_pollable,
+                            );
+                        }
+                    }
+                }
+            }
+        }
         self.pollable.set(pollable_out);
         self.is_socket.set(is_socket_out);
         self.nonblocking.set(nonblocking_out);

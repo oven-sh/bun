@@ -595,3 +595,120 @@ const IS_UV_FS_COPYFILE_DISABLED =
     expect(f.name).toBe(filePath);
   });
 });
+
+describe("Bun.write(path, response) streams to disk", () => {
+  // The Locked-body destination arm streams through the FileSink instead of
+  // buffering the entire body in memory first.
+  const SIZE = 4 * 1024 * 1024;
+  function makeServer() {
+    const payload = new Uint8Array(SIZE);
+    for (let i = 0; i < SIZE; i++) payload[i] = (i * 19) & 0xff;
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/chunked") {
+          return new Response(
+            new ReadableStream({
+              async pull(c) {
+                for (let o = 0; o < SIZE; o += 65536) {
+                  c.enqueue(payload.subarray(o, o + 65536));
+                  if (o % (1024 * 1024) === 0) await Bun.sleep(1);
+                }
+                c.close();
+              },
+            }),
+          );
+        }
+        return new Response(payload);
+      },
+    });
+    return { server, payload };
+  }
+
+  for (const path of ["/", "/chunked"]) {
+    it(`writes the body bytes and resolves with the count (${path === "/" ? "sized" : "chunked"})`, async () => {
+      const { server, payload } = makeServer();
+      using _s = server;
+      using dir = tempDir("bun-write-stream", {});
+      const dest = join(String(dir), "body.bin");
+
+      const res = await fetch(`${server.url.origin}${path}`);
+      const n = await Bun.write(dest, res);
+
+      expect(n).toBe(SIZE);
+      const got = await Bun.file(dest).bytes();
+      expect(got.byteLength).toBe(SIZE);
+      expect(Buffer.compare(got, payload)).toBe(0);
+    });
+  }
+
+  it("creates missing parent directories by default and honors createPath: false", async () => {
+    const { server } = makeServer();
+    using _s = server;
+    using dir = tempDir("bun-write-createpath", {});
+
+    const res = await fetch(server.url);
+    const n = await Bun.write(join(String(dir), "deep", "nested", "out.bin"), res);
+    expect(n).toBe(SIZE);
+
+    const res2 = await fetch(server.url);
+    expect(async () => {
+      await Bun.write(join(String(dir), "missing", "out.bin"), res2, { createPath: false });
+    }).toThrow();
+  });
+
+  it("memory stays bounded by the high-water mark, not the body size", async () => {
+    // 64MB body; the buffered implementation grows RSS by >= the body size
+    // (measured 5x), the streaming path by a fraction of it.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const SIZE = 64 * 1024 * 1024;
+        const CHUNK = 1024 * 1024;
+        const chunk = new Uint8Array(CHUNK).fill(0x42);
+        using server = Bun.serve({
+          port: 0,
+          fetch() {
+            let sent = 0;
+            return new Response(new ReadableStream({
+              async pull(c) {
+                while (sent < SIZE) {
+                  c.enqueue(chunk);
+                  sent += CHUNK;
+                  if (sent % (16 * CHUNK) === 0) await Bun.sleep(0);
+                }
+                c.close();
+              },
+            }));
+          },
+        });
+        const dest = require("node:path").join(require("node:os").tmpdir(), "bun-write-stream-rss-" + process.pid + ".bin");
+        Bun.gc(true);
+        const rss0 = process.memoryUsage.rss();
+        const res = await fetch(server.url);
+        const n = await Bun.write(dest, res);
+        const deltaMB = Math.round((process.memoryUsage.rss() - rss0) / 1048576);
+        require("node:fs").rmSync(dest, { force: true });
+        console.log(JSON.stringify({ n, deltaMB }));
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        // ASAN's quarantine retains freed allocations (256MB default), which
+        // would dominate the RSS delta on sanitizer builds; pin it small.
+        // Non-ASAN builds ignore this.
+        ASAN_OPTIONS: "quarantine_size_mb=16",
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const { n, deltaMB } = JSON.parse(stdout.trim().split("\n").at(-1));
+    expect(n).toBe(64 * 1024 * 1024);
+    // buffered: delta >= body size (64MB, measured ~5x); streaming: a fraction
+    expect(deltaMB).toBeLessThan(48);
+    expect(exitCode).toBe(0);
+  });
+});

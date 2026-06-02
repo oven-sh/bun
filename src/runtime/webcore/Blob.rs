@@ -237,6 +237,7 @@ pub trait BlobExt {
         global_this: &JSGlobalObject,
         readable_stream: ReadableStream,
         extra_options: Option<JSValue>,
+        mkdirp_if_not_exists: bool,
     ) -> JsResult<JSValue>;
     fn get_writer(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue>;
     fn get_slice_from(
@@ -1417,6 +1418,7 @@ impl BlobExt for Blob {
         global_this: &JSGlobalObject,
         readable_stream: ReadableStream,
         extra_options: Option<JSValue>,
+        mkdirp_if_not_exists: bool,
     ) -> JsResult<JSValue> {
         let Some(store) = self.store.get().clone() else {
             return Ok(
@@ -1610,6 +1612,7 @@ impl BlobExt for Blob {
                 let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
                     input_path,
                     chunk_size: 0,
+                    mkdirp: mkdirp_if_not_exists,
                     ..Default::default()
                 });
 
@@ -4900,6 +4903,7 @@ pub fn write_file_with_source_destination(
                 ctx,
                 stream,
                 options.extra_options,
+                options.mkdirp_if_not_exists.unwrap_or(true),
             );
         } else {
             return Ok(
@@ -5337,6 +5341,51 @@ pub fn write_file_internal(
                                 "ReadableStream has already been used"
                             )));
                         }
+                        // Stream network-fed bodies straight to disk
+                        // instead of buffering them wholly in memory first;
+                        // peak memory becomes the sink's high-water mark
+                        // instead of the body size. Only fetch responses and
+                        // server request bodies install the
+                        // on_start_streaming drain hook — their streams are
+                        // ByteStream-backed. Bodies driven by other producers
+                        // (e.g. HTMLRewriter) rely on the ValueBufferer
+                        // machinery, which a materialized stream would
+                        // bypass, so the check runs BEFORE to_readable_stream.
+                        let is_network_fed = matches!(
+                            &*body_value_ref,
+                            BodyValue::Locked(locked) if locked.on_start_streaming.is_some()
+                        );
+                        if is_network_fed {
+                            let _ = body_value_ref.to_readable_stream(global_this)?;
+                            let readable_opt = get_stream(global_this).or_else(|| {
+                                // SAFETY: re-borrow after `to_readable_stream`.
+                                let BodyValue::Locked(locked) = (unsafe { &mut *body_value })
+                                else {
+                                    return None;
+                                };
+                                locked.readable.get(global_this)
+                            });
+                            if let Some(readable) = readable_opt {
+                                if readable.is_disturbed(global_this) {
+                                    destination_blob.detach();
+                                    return Err(global_this.throw_invalid_arguments(
+                                        format_args!("ReadableStream has already been used"),
+                                    ));
+                                }
+                                if readable.ptr.bytes().is_some() {
+                                    return Ok(ControlFlow::Break(
+                                        destination_blob.pipe_readable_stream_to_blob(
+                                            global_this,
+                                            readable,
+                                            options.extra_options,
+                                            options.mkdirp_if_not_exists.unwrap_or(true),
+                                        )?,
+                                    ));
+                                }
+                            }
+                        }
+
+                        // No streaming-eligible body — keep the buffered path.
                         let task =
                             bun_core::heap::into_raw(Box::new(WriteFileWaitFromLockedValueTask {
                                 global_this: bun_ptr::BackRef::new(global_this),
@@ -6237,11 +6286,12 @@ impl FileSinkPipe {
             return;
         }
 
-        // Resolve with 0 on success — parity with the JSSink path this
-        // replaces, which discards the builtin's result and resolves with 0
-        // for every ReadableStream source (see the `Fulfilled` arm and
-        // `on_file_stream_resolve_request_stream` in
-        // `pipe_readable_stream_to_blob`).
+        // Resolve with the sink's total bytes written on success. The JSSink
+        // path historically resolved ReadableStream sources with 0; now that
+        // Bun.write(path, response) routes through here, the documented
+        // "number of bytes written" return value applies, and every settle
+        // path (here, the then-shims, and the JSSink wrapper) reports the
+        // same total.
         // SAFETY: `sink` is the live +1 held by this pipe.
         match unsafe { (*self.sink).end_from_js(global) } {
             bun_sys::Result::Ok(value) => {
@@ -6259,14 +6309,26 @@ impl FileSinkPipe {
                             return;
                         }
                         jsc::js_promise::Status::Fulfilled => {
-                            let _ = self.promise.resolve(global, JSValue::js_number(0.0));
+                            // SAFETY: `sink` live until destroy below.
+                            let written = unsafe { (*self.sink).written.get() };
+                            let _ = self
+                                .promise
+                                .resolve(global, JSValue::js_number(written as f64));
                         }
                         jsc::js_promise::Status::Rejected => {
                             let _ = self.promise.reject(global, Ok(promise.result(global.vm())));
                         }
                     }
                 } else {
-                    let _ = self.promise.resolve(global, JSValue::js_number(0.0));
+                    // Synchronous completion. `end_from_js` returns only the
+                    // final flush's count — resolve with the sink's running
+                    // total, matching the buffered Bun.write paths.
+                    let _ = value;
+                    // SAFETY: `sink` live until destroy below.
+                    let written = unsafe { (*self.sink).written.get() };
+                    let _ = self
+                        .promise
+                        .resolve(global, JSValue::js_number(written as f64));
                 }
             }
             bun_sys::Result::Err(err) => {
@@ -6352,13 +6414,15 @@ pub fn on_file_sink_pipe_resolve(
     // SAFETY: trailing arg is the `*mut FileSinkPipe` boxed through `then()`
     // in `FileSinkPipe::finish`; we are the sole consumer.
     let this = args.ptr[args.len - 1].as_number() as usize as *mut FileSinkPipe;
-    // Resolve with 0 — parity with the synchronous arms of
-    // `FileSinkPipe::finish` and with the JSSink path this replaces.
+    // Resolve with the sink's total bytes written — same value as the
+    // synchronous arms of `FileSinkPipe::finish`.
+    // SAFETY: `this` and its sink are live until destroy below.
+    let written = unsafe { (*(*this).sink).written.get() };
     // SAFETY: `this` is live until destroy below.
     let result = unsafe {
         (*this)
             .promise
-            .resolve(global_this, JSValue::js_number(0.0))
+            .resolve(global_this, JSValue::js_number(written as f64))
     };
     // SAFETY: sole owner.
     unsafe { FileSinkPipe::destroy(this) };
@@ -6437,7 +6501,11 @@ pub fn on_file_stream_resolve_request_stream(
     if let Some(stream) = strong.get(global_this) {
         stream.done(global_this);
     }
-    this.promise.resolve(global_this, JSValue::js_number(0.0))?;
+    // Resolve with the byte count, matching the buffered Bun.write paths.
+    // SAFETY: `this.sink` is the live +1 the wrapper holds until Drop.
+    let written = unsafe { (*this.sink).written.get() };
+    this.promise
+        .resolve(global_this, JSValue::js_number(written as f64))?;
     Ok(JSValue::UNDEFINED)
 }
 

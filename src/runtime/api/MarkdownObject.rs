@@ -50,12 +50,49 @@ impl PinnedView {
     fn slice(&self) -> &[u8] {
         self.0.byte_slice()
     }
+
+    /// A non-shared resizable ArrayBuffer can `resize()`/shrink its backing
+    /// store out from under a borrowed `&[u8]`. Pinning prevents detach but
+    /// not resize (see array_buffer.rs:28-30, JSValue.rs as_pinned_arraybuffer),
+    /// so input from such a buffer must be snapshotted before any JS reentry.
+    #[inline]
+    fn is_non_shared_resizable(&self) -> bool {
+        self.0.resizable && !self.0.shared
+    }
 }
 
 impl Drop for PinnedView {
     fn drop(&mut self) {
         self.0.unpin();
     }
+}
+
+/// Copy the submitted bytes into owned storage when (and only when) the input is
+/// backed by a non-shared resizable ArrayBuffer, before any option getter,
+/// callback, or component extraction can run JS that resizes the backing store.
+/// Returns `None` for string, fixed Buffer/TypedArray, and SharedArrayBuffer
+/// input, all of which keep the existing pinned fast path (no copy).
+#[inline]
+fn snapshot_resizable_markdown_input(pinned: &Option<PinnedView>) -> Option<Box<[u8]>> {
+    pinned
+        .as_ref()
+        .filter(|p| p.is_non_shared_resizable())
+        .map(|p| Box::<[u8]>::from(p.slice()))
+}
+
+/// The bytes the parser/renderer should read: the owned snapshot if one was
+/// taken (resizable RAB input), otherwise the pinned view (fixed buffers) or the
+/// `StringOrBuffer`'s own bytes (string input).
+#[inline]
+fn markdown_input_slice<'a>(
+    buffer: &'a StringOrBuffer,
+    pinned: &'a Option<PinnedView>,
+    snapshot: Option<&'a [u8]>,
+) -> &'a [u8] {
+    snapshot.unwrap_or_else(|| match pinned {
+        Some(pinned) => pinned.slice(),
+        None => buffer.slice(),
+    })
 }
 
 pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
@@ -90,10 +127,8 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
     };
 
     let pinned = PinnedView::pin(global_this, &buffer)?;
-    let input: &[u8] = match &pinned {
-        Some(p) => p.slice(),
-        None => buffer.slice(),
-    };
+    let input_snapshot = snapshot_resizable_markdown_input(&pinned);
+    let input = markdown_input_slice(&buffer, &pinned, input_snapshot.as_deref());
 
     let mut theme = md::AnsiTheme {
         colors: true,
@@ -164,10 +199,8 @@ pub(crate) fn render_to_html(
     };
 
     let pinned = PinnedView::pin(global_this, &buffer)?;
-    let input: &[u8] = match &pinned {
-        Some(p) => p.slice(),
-        None => buffer.slice(),
-    };
+    let input_snapshot = snapshot_resizable_markdown_input(&pinned);
+    let input = markdown_input_slice(&buffer, &pinned, input_snapshot.as_deref());
 
     let options = parse_options(global_this, opts_value)?;
 
@@ -276,10 +309,8 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     };
 
     let pinned = PinnedView::pin(global_this, &buffer)?;
-    let input: &[u8] = match &pinned {
-        Some(p) => p.slice(),
-        None => buffer.slice(),
-    };
+    let input_snapshot = snapshot_resizable_markdown_input(&pinned);
+    let input = markdown_input_slice(&buffer, &pinned, input_snapshot.as_deref());
 
     // Parse parser options from 3rd argument
     let options = parse_options(global_this, opts_value)?;
@@ -380,10 +411,8 @@ fn render_ast(
     };
 
     let pinned = PinnedView::pin(global_this, &buffer)?;
-    let input: &[u8] = match &pinned {
-        Some(p) => p.slice(),
-        None => buffer.slice(),
-    };
+    let input_snapshot = snapshot_resizable_markdown_input(&pinned);
+    let input = markdown_input_slice(&buffer, &pinned, input_snapshot.as_deref());
 
     // Parse parser options from 3rd argument
     let options = parse_options(global_this, opts_value)?;

@@ -1507,7 +1507,10 @@ impl BlobExt for Blob {
                         // O::TRUNC matches the POSIX FileSink open, which
                         // honors Options.truncate (default true): a fresh
                         // writer replaces the destination file's contents.
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK | bun_sys::O::TRUNC,
+                        bun_sys::O::WRONLY
+                            | bun_sys::O::CREAT
+                            | bun_sys::O::NONBLOCK
+                            | bun_sys::O::TRUNC,
                         WRITE_PERMISSIONS,
                     ) {
                         bun_sys::Result::Ok(result) => result,
@@ -1881,7 +1884,10 @@ impl BlobExt for Blob {
                         // O::TRUNC matches the POSIX FileSink open, which
                         // honors Options.truncate (default true): a fresh
                         // writer replaces the destination file's contents.
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK | bun_sys::O::TRUNC,
+                        bun_sys::O::WRONLY
+                            | bun_sys::O::CREAT
+                            | bun_sys::O::NONBLOCK
+                            | bun_sys::O::TRUNC,
                         WRITE_PERMISSIONS,
                     ) {
                         bun_sys::Result::Ok(result) => result,

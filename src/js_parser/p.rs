@@ -4088,13 +4088,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         debug_assert!(match stmt.phase {
             bun_ast::ImportPhase::Evaluation => true,
             bun_ast::ImportPhase::Defer =>
-                stmt.star_name_loc.is_some()
-                    && stmt.default_name.is_none()
-                    && stmt.items.is_empty(),
+                stmt.star_name_loc.is_some() && stmt.default_name.is_none() && stmt.items.is_empty(),
             bun_ast::ImportPhase::Source =>
-                stmt.default_name.is_some()
-                    && stmt.star_name_loc.is_none()
-                    && stmt.items.is_empty(),
+                stmt.default_name.is_some() && stmt.star_name_loc.is_none() && stmt.items.is_empty(),
         });
 
         stmt.import_record_index = self.add_import_record(ImportKind::Stmt, path.loc, path.text);

@@ -270,7 +270,10 @@ describe.concurrent("import source (source phase imports)", () => {
           }
         `,
         // Valid magic + version, truncated garbage section.
-        "corrupt.wasm": Buffer.concat([Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]), Buffer.from("garbage")]),
+        "corrupt.wasm": Buffer.concat([
+          Buffer.from([0x00, 0x61, 0x73, 0x6d, 0x01, 0x00, 0x00, 0x00]),
+          Buffer.from("garbage"),
+        ]),
       });
       expect(stderr).toBe("");
       expect(stdout.split("\n").filter(Boolean)).toEqual(["caught: true"]);

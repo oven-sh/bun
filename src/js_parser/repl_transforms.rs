@@ -282,16 +282,15 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                     // as-is: a namespace import, or a source phase import
                     // (awaiting the lowered `import.source()` already yields
                     // the module source — there is no `.default` unwrap).
-                    let direct_binding =
-                        if import_data.phase == bun_ast::ImportPhase::Source {
-                            import_data
-                                .default_name
-                                .map(|name| name.ref_.expect("infallible: ref bound"))
-                        } else if import_data.star_name_loc.is_some() {
-                            Some(import_data.namespace_ref)
-                        } else {
-                            None
-                        };
+                    let direct_binding = if import_data.phase == bun_ast::ImportPhase::Source {
+                        import_data
+                            .default_name
+                            .map(|name| name.ref_.expect("infallible: ref bound"))
+                    } else if import_data.star_name_loc.is_some() {
+                        Some(import_data.namespace_ref)
+                    } else {
+                        None
+                    };
 
                     if let Some(binding_ref) = direct_binding {
                         // import * as X from 'mod' -> var X = await import('mod')

@@ -2569,10 +2569,10 @@ it("combines duplicate response headers per the Fetch spec", async () => {
       );
     });
   });
-  await once(server.listen(0, "localhost"), "listening");
+  await once(server.listen(0, "127.0.0.1"), "listening");
   const { port } = server.address() as AddressInfo;
 
-  const res = await fetch(`http://localhost:${port}/`);
+  const res = await fetch(`http://127.0.0.1:${port}/`);
   expect(await res.text()).toBe("ok");
   expect(res.headers.get("x-dup")).toBe("first, second, third");
   expect(res.headers.get("x-once")).toBe("only");

@@ -214,7 +214,8 @@ impl SocketGroup {
     }
 
     /// Adopt an already-listening fd (received over IPC via SCM_RIGHTS) as a
-    /// listen socket, rather than creating+binding a new one.
+    /// listen socket, rather than creating+binding a new one. On failure
+    /// returns null and writes `ENOTSOCK`/`EINVAL` into `err`.
     pub fn listen_fd(
         &mut self,
         kind: SocketKind,
@@ -222,8 +223,10 @@ impl SocketGroup {
         fd: LIBUS_SOCKET_DESCRIPTOR,
         options: c_int,
         socket_ext_size: c_int,
+        err: &mut c_int,
     ) -> *mut ListenSocket {
-        // SAFETY: forwarding to C; `fd` is an owned, already-listening descriptor.
+        // SAFETY: forwarding to C; `fd` is an owned descriptor, `err` is a valid
+        // out-param the callee writes an errno into on failure.
         unsafe {
             us_socket_group_listen_fd(
                 self,
@@ -232,6 +235,7 @@ impl SocketGroup {
                 fd,
                 options,
                 socket_ext_size,
+                err,
             )
         }
     }
@@ -373,6 +377,7 @@ unsafe extern "C" {
         fd: LIBUS_SOCKET_DESCRIPTOR,
         options: c_int,
         socket_ext_size: c_int,
+        err: *mut c_int,
     ) -> *mut ListenSocket;
     /// Returns `us_socket_t*` (fast path) OR `us_connecting_socket_t*` (slow
     /// path), discriminated by `*is_connecting`. The public `connect()` method

@@ -405,15 +405,33 @@ struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t 
 
 /* Adopt an already-listening file descriptor (e.g. received over IPC via
  * SCM_RIGHTS) as a listen socket, rather than creating+binding a new one.
- * The fd must already be bound and in the LISTEN state. */
+ * The fd must already be a socket in the LISTEN state. On failure returns 0
+ * and writes an errno into *error: ENOTSOCK if the fd is not a socket,
+ * EINVAL if it is a socket but not listening. */
 struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
-        LIBUS_SOCKET_DESCRIPTOR fd, int options, int socket_ext_size) {
+        LIBUS_SOCKET_DESCRIPTOR fd, int options, int socket_ext_size, int *error) {
 #if defined(LIBUS_USE_LIBUV) || defined(WIN32)
     (void) group; (void) kind; (void) ssl_ctx; (void) fd; (void) options; (void) socket_ext_size;
+    *error = EINVAL;
     return 0;
 #else
     if (fd == LIBUS_SOCKET_ERROR) {
+        *error = EINVAL;
+        return 0;
+    }
+
+    /* Only an already-listening socket can be adopted. getsockopt(SO_ACCEPTCONN)
+     * fails with ENOTSOCK on a non-socket fd (e.g. stdin), and reports 0 for a
+     * socket that is not listening. Matches Node's EINVAL/ENOTSOCK behavior. */
+    int accepting = 0;
+    socklen_t optlen = sizeof(accepting);
+    if (getsockopt(fd, SOL_SOCKET, SO_ACCEPTCONN, (void *) &accepting, &optlen) != 0) {
+        *error = errno ? errno : ENOTSOCK;
+        return 0;
+    }
+    if (!accepting) {
+        *error = EINVAL;
         return 0;
     }
 

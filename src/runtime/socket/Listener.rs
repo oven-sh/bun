@@ -433,37 +433,45 @@ impl Listener {
                 )
             }),
             UnixOrHost::Fd(fd) => {
-                // Adopting a listening fd relies on `us_socket_group_listen_fd`,
-                // which is POSIX-only (it returns null under libuv/Windows).
-                // Keep the structured error there instead of falling through to
-                // the generic "Failed to listen" path, which would lose the
-                // code/syscall/fd fields.
-                #[cfg(windows)]
-                {
-                    let err = jsc::SystemError {
-                        errno: bun_sys::SystemErrno::EINVAL as c_int,
-                        code: bun_core::String::static_("EINVAL"),
-                        message: bun_core::String::static_(
-                            "Bun does not support listening on a file descriptor.",
-                        ),
-                        syscall: bun_core::String::static_("listen"),
-                        fd: fd.uv(),
-                        path: bun_core::String::empty(),
-                        hostname: bun_core::String::empty(),
-                        dest: bun_core::String::empty(),
-                    };
-                    return Err(global.throw_value(err.to_error_instance(global)));
-                }
-                #[cfg(not(windows))]
-                this_ref.group.with_mut(|g| {
+                // Adopt an already-listening fd. `us_socket_group_listen_fd`
+                // validates the fd (ENOTSOCK for a non-socket like stdin, EINVAL
+                // for a non-listening socket) and is a no-op under libuv/Windows
+                // (returns EINVAL). Throw the structured error here rather than
+                // falling through to the generic "Failed to listen" path, which
+                // uses an empty hostname and would be less useful for an fd.
+                let fd_native = fd.uv();
+                let mut fd_errno: c_int = 0;
+                let ls = this_ref.group.with_mut(|g| {
                     g.listen_fd(
                         kind,
                         secure_ctx_ptr,
                         fd.native() as uws::LIBUS_SOCKET_DESCRIPTOR,
                         socket_flags,
                         size_of::<*mut c_void>() as c_int,
+                        &mut fd_errno,
                     )
-                })
+                });
+                if ls.is_null() {
+                    if fd_errno == 0 {
+                        fd_errno = bun_sys::SystemErrno::EINVAL as c_int;
+                    }
+                    let code = bun_sys::SystemErrno::init(fd_errno as i64)
+                        .map_or("EINVAL", <&'static str>::from);
+                    let err = jsc::SystemError {
+                        errno: fd_errno,
+                        code: bun_core::String::static_(code),
+                        message: bun_core::String::static_(
+                            "Failed to listen on the given file descriptor.",
+                        ),
+                        syscall: bun_core::String::static_("listen"),
+                        fd: fd_native,
+                        path: bun_core::String::empty(),
+                        hostname: bun_core::String::empty(),
+                        dest: bun_core::String::empty(),
+                    };
+                    return Err(global.throw_value(err.to_error_instance(global)));
+                }
+                ls
             }
         };
         if listen_socket.is_null() {

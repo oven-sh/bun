@@ -750,8 +750,11 @@ impl NewBuilder<VLQSourceMap> {
         // latter holds the remapped *authored* line when `input_source_map` is
         // active — wrong coordinate space for this (intermediate) table, which
         // would poison the fast path. Without chaining the two are equal.
-        let original_line =
-            LineOffsetTable::find_line_with_hint(byte_offsets, loc, self.prev_intermediate_line as u32);
+        let original_line = LineOffsetTable::find_line_with_hint(
+            byte_offsets,
+            loc,
+            self.prev_intermediate_line as u32,
+        );
         self.prev_intermediate_line = original_line.max(0);
         let idx = original_line.max(0) as usize;
 

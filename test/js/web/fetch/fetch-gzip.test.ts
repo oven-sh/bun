@@ -197,7 +197,9 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   let pending,
     pendingChunks = [];
   const server = Bun.listen({
-    hostname: "localhost",
+    // Explicit loopback IP: "localhost" can resolve to ::1 for the listener
+    // while fetch() connects to 127.0.0.1, yielding ConnectionRefused.
+    hostname: "127.0.0.1",
     port: 0,
     socket: {
       drain(socket) {

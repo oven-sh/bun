@@ -1,2 +1,2 @@
-FROM crossbario/autobahn-testsuite
+FROM crossbario/autobahn-testsuite:25.10.1
 COPY config/fuzzingserver.json /config/fuzzingserver.json

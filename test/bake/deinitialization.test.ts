@@ -33,7 +33,9 @@ test.skipIf(!isASAN)(
           // A bundler macro spins up a JSC VM on the worker-pool thread
           // mid-parse, keeping parse tasks in flight long enough that some
           // reliably outlive the worker's teardown.
-          i % 2 === 0 ? `import { buildTag } from "./mac.ts" with { type: "macro" };\nconst TAG${i} = buildTag(${i});` : ""
+          i % 2 === 0
+            ? `import { buildTag } from "./mac.ts" with { type: "macro" };\nconst TAG${i} = buildTag(${i});`
+            : ""
         }
         export function Inner${i}() {
           const [count, setCount] = useState(${i});

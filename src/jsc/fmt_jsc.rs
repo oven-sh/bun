@@ -21,6 +21,7 @@ pub mod js_bindings {
     pub enum Formatter {
         EscapePowershell = 0,
         HighlightJavascript = 1,
+        HighlightJavascriptRedacted = 2,
     }
 
     /// Internal function for testing in highlighter.test.ts
@@ -40,6 +41,17 @@ pub mod js_bindings {
                         enable_colors: true,
                         check_for_unhighlighted_write: false,
                         ..Default::default()
+                    },
+                );
+                write!(writer, "{}", formatter).map_err(|_| global.throw_out_of_memory())?;
+            }
+            Formatter::HighlightJavascriptRedacted => {
+                let formatter = fmt::fmt_javascript(
+                    code,
+                    fmt::HighlighterOptions {
+                        enable_colors: true,
+                        check_for_unhighlighted_write: false,
+                        redact_sensitive_information: true,
                     },
                 );
                 write!(writer, "{}", formatter).map_err(|_| global.throw_out_of_memory())?;

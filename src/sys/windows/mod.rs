@@ -3389,16 +3389,16 @@ pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
     {
         use bun_windows_sys::ntstatus::{OBJECT_NAME_INVALID, SHARING_VIOLATION};
         match err {
-            SHARING_VIOLATION => bun_core::Output::debug_warn(
+            SHARING_VIOLATION => bun_core::debug_warn!(
                 "Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE",
             ),
-            OBJECT_NAME_INVALID => bun_core::Output::debug_warn(
+            OBJECT_NAME_INVALID => bun_core::debug_warn!(
                 "Received OBJECT_NAME_INVALID, indicates a file path conversion issue.",
             ),
-            t if e == E::UNKNOWN => bun_core::Output::debug_warn(format_args!(
+            t if e == E::UNKNOWN => bun_core::debug_warn!(
                 "Called translateNTStatusToErrno with {:?} which does not have a mapping to errno.",
                 t
-            )),
+            ),
             _ => {}
         }
     }
@@ -3632,7 +3632,7 @@ pub fn win_sock_error_to_zig_error(
         t => {
             if t.0 != 0 {
                 #[cfg(debug_assertions)]
-                bun_core::Output::debug_warn(format_args!("Unknown WinSockError: {}", t.0));
+                bun_core::debug_warn!("Unknown WinSockError: {}", t.0);
             }
             return Ok(());
         }
@@ -4793,7 +4793,7 @@ pub fn move_opened_file_at(
 
     #[cfg(debug_assertions)]
     if rc == win32::ntstatus::ACCESS_DENIED {
-        bun_core::Output::debug_warn(
+        bun_core::debug_warn!(
             "moveOpenedFileAt was called on a file descriptor without access_mask=w.DELETE",
         );
     }

@@ -5,7 +5,7 @@ use bun_alloc::MaxHeapAllocator;
 use bun_ast::Loc;
 use bun_core::fmt::quote;
 use bun_core::{Error, err};
-use bun_core::{PathString, String as BunString, immutable as strings};
+use bun_core::{String as BunString, immutable as strings};
 use bun_paths::{self as paths, PathBuffer};
 use bun_wyhash::hash;
 
@@ -371,9 +371,9 @@ pub fn write_output_files_to_disk(
                                     0o644
                                 },
                                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                                file: PathOrFileDescriptor::Path(PathString::init(
+                                file: PathOrFileDescriptor::Path(
                                     &fdpath[..frp.len() + BYTECODE_EXTENSION.len()],
-                                )),
+                                ),
                             },
                         ) {
                             Ok(_) => {}
@@ -444,7 +444,7 @@ pub fn write_output_files_to_disk(
                     0o644
                 },
                 dirfd: bun_sys::Fd::from_std_dir(&root_dir),
-                file: PathOrFileDescriptor::Path(PathString::init(&chunk.final_rel_path)),
+                file: PathOrFileDescriptor::Path(&chunk.final_rel_path),
             },
         ) {
             Err(e) => {

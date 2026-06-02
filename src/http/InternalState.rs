@@ -369,10 +369,10 @@ impl<'a> InternalState<'a> {
 
             if let Err(err) = self.decompressor.read_all(self.is_done()) {
                 if self.is_done() || err != bun_core::err!("ShortRead") {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>Decompression error: {}<r>",
                         bstr::BStr::new(err.name()),
-                    ));
+                    );
                     Output::flush();
                     self.compressed_body.reset();
                     return Err(err);
@@ -444,10 +444,10 @@ impl<'a> InternalState<'a> {
                 } else if !body_out_str.owns(&buffer) {
                     if let Err(err) = body_out_str.append(&buffer) {
                         let err: Error = err.into();
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>Failed to append to body buffer: {}<r>",
                             bstr::BStr::new(err.name()),
-                        ));
+                        );
                         Output::flush();
                         return Err(err);
                     }

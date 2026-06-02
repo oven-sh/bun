@@ -998,7 +998,7 @@ fn debug_css_order_impl(
                     }
                 }
                 writer.extend_from_slice(b" ]");
-                String::from_utf8_lossy(&writer).into_owned().into()
+                bstr::BStr::new(&writer).to_string().into()
             } else {
                 "[]".into()
             };

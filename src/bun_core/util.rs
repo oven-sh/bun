@@ -4722,11 +4722,28 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         envp.push(core::ptr::null());
 
         // we must clone selfExePath in case argv[0] was not an absolute path
-        let exec_path = self_exe_path().expect("unreachable").as_ptr();
+        let exe = self_exe_path().expect("unreachable");
+        let exec_path = exe.as_ptr();
 
         libc::execve(exec_path, newargv.as_ptr().cast(), envp.as_ptr().cast());
         // execve only returns on error.
-        let errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+        #[allow(unused_mut)]
+        let mut errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+
+        // Linux: `/proc/self/exe` reads as "<path> (deleted)" once the running
+        // binary has been unlinked. If it was atomically replaced (`bun
+        // upgrade`, a package reinstall, a rebuild), a fresh executable lives
+        // at the original path — retry with the suffix stripped so the reload
+        // lands on the replacement instead of failing.
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        if errno == libc::ENOENT {
+            if let Some(trimmed) = exe.as_bytes().strip_suffix(b" (deleted)") {
+                let trimmed = ZBox::from_bytes(trimmed);
+                libc::execve(trimmed.as_ptr(), newargv.as_ptr().cast(), envp.as_ptr().cast());
+                errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+            }
+        }
+
         if may_return {
             crate::output::pretty_errorln(format_args!(
                 "error: Failed to reload process: errno {}",
@@ -4734,7 +4751,28 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
             ));
             return;
         }
-        panic!("Unexpected error while reloading: errno {}", errno);
+        // The executable can legitimately be gone or unrunnable by the time a
+        // reload fires: deleted or replaced by `bun upgrade`, a package
+        // reinstall, or a rebuild while `--watch` is running. That's an
+        // environment problem, not a Bun bug, so report it and exit instead of
+        // emitting a crash report. Anything else still panics.
+        if matches!(
+            errno,
+            libc::ENOENT | libc::ENOTDIR | libc::EACCES | libc::ETXTBSY | libc::ENOEXEC
+        ) {
+            let name = crate::result::system_errno_name(errno).unwrap_or("EUNKNOWN");
+            let detail = crate::result::coreutils_error_map::get(errno).unwrap_or("unknown error");
+            crate::output::err_generic(
+                "Failed to reload process: {} ({}) while executing \"{}\". The executable may have been deleted or replaced while Bun was running.",
+                (name, detail, bstr::BStr::new(exe.as_bytes())),
+            );
+            crate::Global::exit(1);
+        }
+        let errno_name = crate::result::system_errno_name(errno).unwrap_or("EUNKNOWN");
+        panic!(
+            "Unexpected error while reloading: errno {} {}",
+            errno, errno_name
+        );
     }
 
     #[cfg(not(any(unix, windows)))]

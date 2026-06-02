@@ -1,6 +1,6 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, mergeWindowEnvs } from "harness";
+import { bunEnv, bunExe, isDebug, isLinux, mergeWindowEnvs, tempDir } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -74,6 +74,61 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
 
   expect(proc.exited).resolves.not.toBe(0);
   expect(sent).toBe(false);
+});
+
+describe.concurrent("crash report command character", () => {
+  // Crash while a given subcommand is running and return the command
+  // character from the trace string printed to stderr:
+  //   {base}/{version}/{platform char}{command char}{remainder}
+  // Expected characters must stay in sync with `Command.Tag.char()`
+  // (src/options_types/command_tag.rs) and bun.report's decoder.
+  async function commandCharFromCrash(args: string[], cwd?: string): Promise<string> {
+    using server = Bun.serve({ port: 0, fetch: () => new Response("OK") });
+    const base = new URL(server.url).origin;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: mergeWindowEnvs([
+        bunEnv,
+        {
+          BUN_CRASH_REPORT_URL: base,
+          BUN_ENABLE_CRASH_REPORTING: "1",
+          GITHUB_ACTIONS: undefined,
+          CI: undefined,
+        },
+      ]),
+      cwd,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(exitCode).not.toBe(0);
+
+    const trace = stderr.match(new RegExp(`${base.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/\\S+`));
+    expect(trace).not.toBeNull();
+    const payload = new URL(trace![0]).pathname.split("/")[2];
+    expect(payload.length).toBeGreaterThan(2);
+    return payload[1];
+  }
+
+  const fixture = path.join(import.meta.dir, "fixture-crash.js");
+
+  test("bun <script> encodes AutoCommand", async () => {
+    expect(await commandCharFromCrash([fixture, "panic"])).toBe("a");
+  });
+
+  test("bun run <script> encodes RunCommand", async () => {
+    expect(await commandCharFromCrash(["run", fixture, "panic"])).toBe("r");
+  });
+
+  test("bun test encodes TestCommand", async () => {
+    using dir = tempDir("crash-report-cmd-char", {
+      "crash.fixture.test.js": `
+        import { crash_handler } from "bun:internal-for-testing";
+        crash_handler.panic();
+      `,
+    });
+    expect(await commandCharFromCrash(["test", "crash.fixture.test.js"], String(dir))).toBe("t");
+  });
 });
 
 describe("automatic crash reporter", () => {

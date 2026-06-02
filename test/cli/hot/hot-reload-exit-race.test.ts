@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 
 // Regression for the watcher-vs-exit race observed on the x64-asan CI lane.
 // A file-watcher thread dispatching through the resolver's BSSMap singletons
@@ -35,7 +35,12 @@ import { bunEnv, bunExe, isASAN, tempDir } from "harness";
 // parent-directory auto-watch in `append_file_maybe_lock`), so writing sibling
 // files in it fires the `.directory` branch of `on_file_update` →
 // `bust_dir_cache` — no extra hook needed to reach the crash site.
-test.skipIf(!isASAN)(
+//
+// Requires BOTH ASAN (to catch the use-after-free) and a debug-assertions
+// build (for the hooks above): `bun-debug` / any debug-ASAN build. The CI
+// release-ASAN binary (`bun-asan`) has `debug_assertions` off — the hooks
+// compile out there — so skip rather than pass vacuously.
+test.skipIf(!isASAN || !isDebug)(
   "--hot exits cleanly while watcher is dispatching bust_dir_cache",
   async () => {
     using dir = tempDir("hot-exit-race", {

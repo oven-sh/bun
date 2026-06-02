@@ -166,6 +166,14 @@ pub trait WatcherContext {
 // of the port uses (see `VirtualMachine::bun_watcher_ptr`).
 static ACTIVE_WATCHERS: bun_core::Mutex<Vec<usize>> = bun_core::Mutex::new(Vec::new());
 
+/// Set once `stop_all_for_exit` runs. `Global::is_exiting()` covers the plain
+/// `Global::exit` path, but `VirtualMachine::global_exit` calls
+/// `stop_all_for_exit` directly and tears the heap down *before* it reaches
+/// `Global::exit` (which is what sets `IS_EXITING`). The watcher thread's
+/// teardown guard reads this too, so it skips reclaiming its own Box on both
+/// exit paths rather than racing that teardown.
+static STOPPING_FOR_EXIT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// `extern "C"` thunk matching `bun_core::Global::ExitFn`, registered once so
 /// `Global::exit` stops every watcher before the heap teardown / ASAN poison.
 extern "C" fn stop_all_for_exit_hook() {
@@ -206,6 +214,10 @@ fn unregister_active(this: *mut Watcher) {
 /// already in flight completes before this returns. Safe to call more than
 /// once; the platform `stop()` implementations are idempotent.
 pub fn stop_all_for_exit() {
+    // Read by the watcher thread's teardown guard so it skips reclaiming its
+    // Box on both exit paths (the direct `VirtualMachine::global_exit` call
+    // runs before `Global::exit` sets `IS_EXITING`).
+    STOPPING_FOR_EXIT.store(true, std::sync::atomic::Ordering::Release);
     let list = ACTIVE_WATCHERS.lock();
     for &addr in list.iter() {
         // SAFETY: pointers in the list are live `Box<Watcher>` allocations
@@ -432,12 +444,15 @@ impl Watcher {
         // later `stop_all_for_exit` can't observe a dangling pointer.
         unregister_active(this);
 
-        // If the process is exiting, `stop_all_for_exit` broke us out of the
-        // loop on the main thread which is now tearing the heap down (and under
-        // ASAN `libc_exit` is poisoning it). Don't reclaim the Box here: freeing
-        // on this thread would race that teardown. The process is about to die;
-        // let it reclaim everything. Mirrors the Zig spec's `isExiting` guard.
-        if bun_core::Global::is_exiting() {
+        // If we were stopped for process exit, the main thread is now tearing
+        // the heap down (`transpiler.deinit()` on the destruct path, and under
+        // ASAN `libc_exit` poisoning it on the plain path). Don't reclaim the
+        // Box here: freeing on this thread would race that teardown. The process
+        // is about to die; let it reclaim everything. `STOPPING_FOR_EXIT` covers
+        // the `VirtualMachine::global_exit` path (which calls `stop_all_for_exit`
+        // before `Global::exit` sets `IS_EXITING`); `is_exiting()` covers a plain
+        // `Global::exit`. Mirrors the Zig spec's `isExiting` guard.
+        if STOPPING_FOR_EXIT.load(std::sync::atomic::Ordering::Acquire) || bun_core::Global::is_exiting() {
             return Ok(());
         }
 

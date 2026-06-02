@@ -3687,7 +3687,6 @@ pub mod __gated_printer {
                                 self.print_expr(e.options, Level::Comma, ExprFlagSet::empty());
                             }
 
-                            // TODO: leading_interior_comments
                             self.print(b")");
                         }
                         if wrap {

@@ -1197,6 +1197,8 @@ impl WebWorker {
 
         // Snapshot everything we'll need after `this` may be freed (step 4).
         let cpp_worker = self.cpp_worker;
+        // For the leak-the-VM log in step 5 — `self.*` must not be read there.
+        let execution_context_id = self.execution_context_id;
         // worker-thread only field; no other thread reads `arena`.
         let mut arena = self.arena.replace(None);
         let env_loader = self.worker_env_loader.replace(core::ptr::null_mut());
@@ -1303,11 +1305,15 @@ impl WebWorker {
         {
             log!(
                 "[{}] leaking the VM: a dev server bundle is still in flight",
-                self.execution_context_id
+                execution_context_id
             );
-            // SAFETY: vm_ptr valid; sole owner. Flag write (the VM is leaked,
-            // not `destroy()`ed) so concurrent enqueues bail out.
-            unsafe { (*vm_ptr).has_terminated = true };
+            // SAFETY: vm_ptr valid; sole owner. Flag store (the VM is leaked,
+            // not `destroy()`ed) so concurrent enqueues bail out; `Release`
+            // pairs with the `Acquire` loads in
+            // `EventLoop::enqueue_task_concurrent{,_batch}`.
+            unsafe { &*vm_ptr }
+                .has_terminated
+                .store(true, core::sync::atomic::Ordering::Release);
             virtual_machine::VMHolder::set_vm(None);
             let _ = core::mem::ManuallyDrop::new(arena.take());
             return;

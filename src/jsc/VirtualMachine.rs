@@ -316,7 +316,12 @@ pub struct VirtualMachine {
 
     pub debugger: Option<Box<crate::debugger::Debugger>>,
     pub has_started_debugger: bool,
-    pub has_terminated: bool,
+    /// `AtomicBool` (not `bool`): stored on the VM's own thread
+    /// (`destroy()`, and `WebWorker::shutdown`'s leak-the-VM branch) while
+    /// WorkPool threads concurrently read it through `&VirtualMachine` in
+    /// `EventLoop::enqueue_task_concurrent{,_batch}` to drop enqueues onto a
+    /// terminated VM. Zero-valid for the `alloc_zeroed` init.
+    pub has_terminated: core::sync::atomic::AtomicBool,
 
     /// Number of Bake `DevServer` bundles currently in flight on this VM.
     /// Incremented by `DevServer::start_async_bundle`, decremented when
@@ -4469,7 +4474,8 @@ impl VirtualMachine {
             // once on the same thread; `self` is the live per-thread VM.
             unsafe { (hooks.deinit_runtime_state)(std::ptr::from_mut(self), state) };
         }
-        self.has_terminated = true;
+        self.has_terminated
+            .store(true, core::sync::atomic::Ordering::Release);
     }
     /// Note: takes the concrete
     /// `bun_core::io::Writer` since every call site passes

@@ -1049,7 +1049,11 @@ impl EventLoop {
     /// debug-paniced on this state; that turned a legitimate
     /// terminate-mid-bundle into an abort.)
     pub fn enqueue_task_concurrent(&self, task: core::ptr::NonNull<ConcurrentTaskItem>) {
-        if self.vm_ref().has_terminated {
+        if self
+            .vm_ref()
+            .has_terminated
+            .load(core::sync::atomic::Ordering::Acquire)
+        {
             return;
         }
         self.concurrent_tasks.push(task);
@@ -1210,7 +1214,11 @@ impl EventLoop {
         // See `enqueue_task_concurrent`: a terminated VM never drains its
         // queue again; drop the enqueue (leaking the batch) instead of
         // pushing into — and waking — a torn-down loop.
-        if self.vm_ref().has_terminated {
+        if self
+            .vm_ref()
+            .has_terminated
+            .load(core::sync::atomic::Ordering::Acquire)
+        {
             return;
         }
         // Panic on an empty batch; `push_batch`'s first line is

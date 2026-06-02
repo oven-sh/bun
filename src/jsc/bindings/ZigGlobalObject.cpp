@@ -3007,9 +3007,15 @@ void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
     // (which is neither a Window nor a Worker) makes them take the browser code
     // path. Expose `self` only off the main thread: Workers keep it for Web
     // Worker spec compatibility, the main thread matches Node by not having it.
-    // `WTF::isMainThread()` checks the actual thread, so globals derived on the
-    // main thread (e.g. a ShadowRealm) also don't get `self`.
-    if (!WTF::isMainThread()) {
+    //
+    // Use the same notion of "main thread" as `Bun.isMainThread`
+    // (`ScriptExecutionContext::isMainThread()`, i.e. execution-context id 1).
+    // Internal code such as `node:worker_threads` gates global `self` reads on
+    // `!Bun.isMainThread`, so the two checks must agree — using `WTF::isMainThread`
+    // here instead would diverge for a main-thread ShadowRealm (context id > 1
+    // but on the main OS thread), where `fakeParentPort()` would then read an
+    // undefined `self`. A ShadowRealm getting `self` is harmless.
+    if (!scriptExecutionContext()->isMainThread()) {
         // a direct accessor (uses js functions for get and set) cannot be on the lookup table. i think.
         putDirectAccessor(
             this,

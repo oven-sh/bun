@@ -350,6 +350,29 @@ test("self is defined inside a Worker (Web Worker spec)", async () => {
   }
 });
 
+test("node:worker_threads imports in a main-thread ShadowRealm", async () => {
+  // The `self` gate must use the same notion of "main thread" as
+  // `Bun.isMainThread`. A ShadowRealm runs on the main OS thread but has its own
+  // execution-context id (> 1), so `Bun.isMainThread` is false there. worker_threads
+  // builds `fakeParentPort()` when `!Bun.isMainThread`, reading the global `self`;
+  // if the gate disagreed, `self` would be undefined and the import would throw.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const realm = new ShadowRealm();
+       const isMainThread = await realm.importValue("node:worker_threads", "isMainThread");
+       console.log("ok:" + isMainThread);`,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("ok:false");
+  expect(exitCode).toBe(0);
+});
+
 test("globalThis.self = 123 works", () => {
   const hadSelf = Object.hasOwn(globalThis, "self");
   const original = Object.getOwnPropertyDescriptor(globalThis, "self");

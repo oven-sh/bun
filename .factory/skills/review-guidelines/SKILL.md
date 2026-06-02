@@ -1,8 +1,8 @@
 # Bun fork UB review guidelines
 
 Review with an adversarial correctness mindset. The goal is to find real
-undefined behavior, portability breaks, missing tests, claim errors, and
-merge blockers.
+undefined behavior, portability breaks, missing tests, claim errors, and merge
+blockers.
 
 Avoid style-only comments unless they hide a correctness issue.
 
@@ -83,6 +83,7 @@ Flag:
 - "freed pointer" claims where the exact state is only stale pointer/length
 
 Use precise language:
+
 - "stale pointer/length"
 - "active view region"
 - "submitted bytes"
@@ -90,7 +91,7 @@ Use precise language:
 - "red proof"
 - "green proof"
 
-## No approval language — a zero-finding review still needs an audit trail
+## No approval language - a zero-finding review still needs an audit trail
 
 Approval language is a failure mode. Do NOT output, as a standalone conclusion:
 
@@ -123,8 +124,10 @@ rubber stamp. The checklist items must be specific to your lane's specialty.
 
 ## Operating rule
 
-The swarm does not decide truth. It produces candidate objections. For every
-finding the human loop still asks: is it real, does it reproduce, does it fail
-on unpatched main, does the patch fix it, is the test proving the real bug, is
-the fix at the right boundary, is there a smaller complete fix, and what can be
-truthfully said upstream.
+Droid focused review is an auxiliary reviewer beside the `ub-review` evidence
+gate. It does not decide truth on its own. Findings should be concrete,
+evidence-backed, and useful to the human review loop. For every finding the
+human loop still asks: is it real, does it reproduce, does it fail on unpatched
+main, does the patch fix it, is the test proving the real bug, is the fix at the
+right boundary, is there a smaller complete fix, and what can be truthfully said
+inside the fork.

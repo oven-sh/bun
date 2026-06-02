@@ -22,13 +22,14 @@ defaults:
 jobs:
   packet:
     name: UB evidence packet / gh-runner
+    if: github.repository == 'EffortlessSteven/bun'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
       CARGO_TARGET_DIR: /tmp/ub-review-cargo-target
       CARGO_INSTALL_JOBS: "2"
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -57,7 +58,7 @@ jobs:
 
       - name: Build UB review packet
         id: ub-review
-        uses: EffortlessMetrics/ub-review@main
+        uses: EffortlessMetrics/ub-review@v0
         with:
           preset: bun-ub
           profile: gh-runner

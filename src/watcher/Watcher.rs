@@ -318,11 +318,13 @@ impl Watcher {
                 self.thread = Some(handle);
                 Ok(())
             }
-            Err(_) => {
+            Err(e) => {
                 // Spawn failed: drop the registration so the global list
                 // doesn't retain a pointer to a thread that never started.
+                // Keep the OS error in the panic message (matches the old
+                // `.expect("spawn FileWatcher thread")` diagnostic).
                 unregister_active(this);
-                panic!("spawn FileWatcher thread");
+                panic!("spawn FileWatcher thread: {e}");
             }
         }
     }

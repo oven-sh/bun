@@ -575,6 +575,19 @@ describe("DiffieHellman", () => {
     expect(dh.setPublicKey.name).toBe("setPublicKey");
     expect(dh.setPrivateKey.name).toBe("setPrivateKey");
   });
+
+  it("createDiffieHellman throws (not returns) on invalid prime size", () => {
+    // Regression: the DiffieHellman constructor returned the TypeError as a value instead of throwing it.
+    let caught;
+    try {
+      crypto.createDiffieHellman(2);
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TypeError);
+    expect(caught.code).toBe("ERR_INVALID_ARG_VALUE");
+    expect(caught.message).toBe("Invalid DH parameters");
+  });
 });
 
 describe("ECDH", () => {

@@ -498,7 +498,7 @@ impl JSBundleCompletionTask {
                         flag: FileSystemFlags::W,
                         mode: node_fs::DEFAULT_PERMISSION,
                         file: PathOrFileDescriptor::Path(PathLike::String(
-                            bun_core::PathString::init(write_path),
+                            bun_ptr::cow_slice::CowSlice::init_unchecked(write_path, false),
                         )),
                         flush: false,
                         data: StringOrBuffer::EncodedSlice(

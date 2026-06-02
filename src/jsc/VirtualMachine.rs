@@ -6546,7 +6546,7 @@ impl VirtualMachine {
                 // (heap::alloc) above and is not yet aliased.
                 unsafe { IPCInstance::deinit(instance) };
                 self.ipc = None;
-                bun_core::output::warn("Unable to start IPC socket");
+                bun_core::warn!("Unable to start IPC socket");
                 return None;
             };
             socket.set_timeout(0);

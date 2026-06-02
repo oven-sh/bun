@@ -1319,15 +1319,15 @@ mod draft {
             }
             if log.has_errors() {
                 if log.errors == 1 {
-                    Output::warn(format_args!(
+                    bun_core::warn!(
                         "Encountered an error while reading <b>{}<r>:\n\n",
                         bstr::BStr::new(npmrc_path.as_bytes()),
-                    ));
+                    );
                 } else {
-                    Output::warn(format_args!(
+                    bun_core::warn!(
                         "Encountered errors while reading <b>{}<r>:\n\n",
                         bstr::BStr::new(npmrc_path.as_bytes()),
-                    ));
+                    );
                 }
                 Output::flush();
             }

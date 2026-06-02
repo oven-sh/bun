@@ -201,9 +201,9 @@ impl ExtractTarball {
         } else {
             // Not sure where this case hits yet.
             // BUN-2WQ
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.",
-            ));
+            );
             debug_assert!(false);
             b"unnamed-package"
         };
@@ -381,13 +381,13 @@ impl ExtractTarball {
             if PackageManager::verbose_install() {
                 let decompressing_ended_at: u64 = bun_core::Timespec::now_allow_mocked_time().ns();
                 let elapsed = decompressing_ended_at - time_started_for_verbose_logs;
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "[{}] Extract {}<r> (decompressed {} tgz file in {})",
                     bun_fmt::s(name),
                     bun_fmt::s(tmpname.as_bytes()),
                     bun_core::fmt::size(tgz_bytes.len(), Default::default()),
                     bun_core::fmt::fmt_duration_one_decimal(elapsed),
-                ));
+                );
             }
 
             match self.resolution.tag {
@@ -484,12 +484,12 @@ impl ExtractTarball {
             if PackageManager::verbose_install() {
                 let elapsed = bun_core::Timespec::now_allow_mocked_time().ns()
                     - time_started_for_verbose_logs;
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "[{}] Extracted to {} ({})<r>",
                     bun_fmt::s(name),
                     bun_fmt::s(tmpname.as_bytes()),
                     bun_core::fmt::fmt_duration_one_decimal(elapsed),
-                ));
+                );
                 Output::flush();
             }
         }

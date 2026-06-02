@@ -592,9 +592,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if DEBUG && !Self::did_send_idletimeout_warning_once().load(Ordering::Relaxed) {
             if !crate::cli::Command::get().debug.silent {
                 Self::did_send_idletimeout_warning_once().store(true, Ordering::Relaxed);
-                bun_core::Output::warn(format_args!(
+                bun_core::warn!(
                     "Bun.serve() timed out a request after 10 seconds. Pass `idleTimeout` to configure."
-                ));
+                );
             }
         }
     }
@@ -2829,9 +2829,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         // QUIC over AF_UNIX is non-standard and Alt-Svc can't
                         // advertise it; drop the H3 listener instead of wiring
                         // an exotic transport nobody can reach.
-                        bun_core::Output::warn(format_args!(
-                            "http3: true with a unix socket — HTTP/3 listener skipped"
-                        ));
+                        bun_core::warn!("http3: true with a unix socket — HTTP/3 listener skipped");
                         // SAFETY: h3a is a live H3::App handle just taken from self.h3_app.
                         unsafe { uws_sys::h3::App::destroy(h3a) };
                     }

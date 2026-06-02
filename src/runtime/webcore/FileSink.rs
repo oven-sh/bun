@@ -692,14 +692,11 @@ impl FileSink {
         let mut nonblocking_out = self.nonblocking.get();
         // `OpenForWritingInput` is impl'd for
         // `bun_io::PathOrFileDescriptor`, not `webcore::PathOrFileDescriptor`;
-        // bridge by-value here. `PathString::init` borrows `slice.slice()` for
-        // the duration of `open_for_writing` (the call only needs it for
-        // `openat_a`).
+        // bridge by-value here. The borrowed slice is valid for the duration of
+        // `open_for_writing` (the call only needs it for `openat_a`).
         let io_path = match &options.input_path {
             PathOrFileDescriptor::Fd(fd) => bun_io::PathOrFileDescriptor::Fd(*fd),
-            PathOrFileDescriptor::Path(slice) => {
-                bun_io::PathOrFileDescriptor::Path(bun_core::PathString::init(slice.slice()))
-            }
+            PathOrFileDescriptor::Path(slice) => bun_io::PathOrFileDescriptor::Path(slice.slice()),
         };
         let result = bun_io::open_for_writing(
             Fd::cwd(),

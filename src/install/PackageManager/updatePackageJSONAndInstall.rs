@@ -211,10 +211,10 @@ fn update_package_json_and_install_with_manager_with_updates(
                 .as_property(b"peerDependencies")
                 .is_none()
         {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "package.json doesn't have dependencies, there's nothing to {}!",
                 <&'static str>::from(subcommand),
-            ));
+            );
             Global::exit(0);
         }
     }
@@ -389,10 +389,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     ) {
         Ok(n) => n,
         Err(e) => {
-            Output::pretty_errorln(format_args!(
-                "package.json failed to write due to error {}",
-                e.name(),
-            ));
+            bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
             Global::crash();
         }
     };
@@ -422,10 +419,7 @@ fn update_package_json_and_install_with_manager_with_updates(
     // printed source so the cached AST (consumed by `FolderResolver` for workspace
     // members during `install_with_manager`) reflects the new dependency list.
     if let Err(err) = current_package_json.reparse_root(manager.log_mut()) {
-        Output::pretty_errorln(format_args!(
-            "package.json failed to parse due to error {}",
-            err.name(),
-        ));
+        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name(),);
         Global::crash();
     }
 
@@ -512,10 +506,10 @@ fn update_package_json_and_install_with_manager_with_updates(
             ) {
                 Ok(n) => n,
                 Err(e) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "package.json failed to write due to error {}",
                         e.name(),
-                    ));
+                    );
                     Global::crash();
                 }
             };
@@ -561,10 +555,10 @@ fn update_package_json_and_install_with_manager_with_updates(
             match json::parse_package_json_utf8(&source, manager.log_mut(), &json_arena) {
                 Ok(v) => v,
                 Err(err) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "package.json failed to parse due to error {}",
                         err.name(),
-                    ));
+                    );
                     Global::crash();
                 }
             };
@@ -614,10 +608,7 @@ fn update_package_json_and_install_with_manager_with_updates(
         ) {
             Ok(n) => n,
             Err(e) => {
-                Output::pretty_errorln(format_args!(
-                    "package.json failed to write due to error {}",
-                    e.name(),
-                ));
+                bun_core::pretty_errorln!("package.json failed to write due to error {}", e.name(),);
                 Global::crash();
             }
         };
@@ -772,21 +763,15 @@ pub fn update_package_json_and_install_and_cli(
                 if e == bun_core::err!("MissingPackageJSON") {
                     match subcommand {
                         Subcommand::Update => {
-                            Output::pretty_errorln(format_args!(
-                                "<r>No package.json, so nothing to update"
-                            ));
+                            bun_core::pretty_errorln!("<r>No package.json, so nothing to update");
                             Global::crash();
                         }
                         Subcommand::Remove => {
-                            Output::pretty_errorln(format_args!(
-                                "<r>No package.json, so nothing to remove"
-                            ));
+                            bun_core::pretty_errorln!("<r>No package.json, so nothing to remove");
                             Global::crash();
                         }
                         Subcommand::Patch | Subcommand::PatchCommit => {
-                            Output::pretty_errorln(format_args!(
-                                "<r>No package.json, so nothing to patch"
-                            ));
+                            bun_core::pretty_errorln!("<r>No package.json, so nothing to patch");
                             Global::crash();
                         }
                         _ => {
@@ -814,11 +799,11 @@ pub fn update_package_json_and_install_and_cli(
         // for its template. Splice the version as a runtime arg instead — this matches the
         // approach taken by every other CLI subcommand banner (see e.g. `outdated_command.rs`,
         // `update_interactive_command.rs`).
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b>bun {} <r><d>v{}<r>\n",
             <&'static str>::from(subcommand),
             bun_core::Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
     }
 
@@ -885,9 +870,9 @@ pub fn update_package_json_and_install_and_cli(
                     };
 
                     if needs_to_print {
-                        Output::pretty_error(format_args!("\n"));
+                        bun_core::pretty_error!("\n");
 
-                        Output::warn(format_args!(
+                        bun_core::warn!(
                             "To run {}, add the global bin folder to $PATH:\n\n<cyan>{}<r>\n",
                             bun_core::fmt::quote(basename),
                             MoreInstructions {
@@ -896,7 +881,7 @@ pub fn update_package_json_and_install_and_cli(
                                 ),
                                 folder: manager.options.bin_path.as_bytes(),
                             },
-                        ));
+                        );
                         Output::flush();
                     }
                 }

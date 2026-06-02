@@ -760,7 +760,7 @@ impl BlobExt for Blob {
                 writer.write_int_le::<u32>(view.len() as u32)?;
                 writer.write_all(view)?;
 
-                let stored_name = bytes.stored_name.slice();
+                let stored_name = &bytes.stored_name[..];
                 writer.write_int_le::<u32>(stored_name.len() as u32)?;
                 writer.write_all(stored_name)?;
             } else {
@@ -3761,7 +3761,7 @@ impl BlobExt for Blob {
             size += core::mem::size_of::<Store>();
             match &store.data {
                 store::Data::Bytes(bytes) => {
-                    size += bytes.stored_name.estimated_size();
+                    size += bytes.stored_name.len();
                     size += if self.size.get() != MAX_SIZE {
                         self.size.get() as usize
                     } else {
@@ -3824,7 +3824,7 @@ impl BlobExt for Blob {
                     let copy = core::mem::replace(
                         path_or_fd,
                         PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
-                            bun_core::PathString::default(),
+                            bun_ptr::cow_slice::CowSlice::EMPTY,
                         )),
                     );
                     let PathOrFileDescriptor::Path(path) = copy else {
@@ -3849,7 +3849,9 @@ impl BlobExt for Blob {
                     *path_or_fd =
                         PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
                             // Heap-dupe: this buffer is freed by `Blob.Store.deinit`.
-                            bun_core::PathString::init_owned(b"\\\\.\\NUL".to_vec()),
+                            bun_ptr::cow_slice::CowSlice::init_owned(
+                                b"\\\\.\\NUL".to_vec().into_boxed_slice(),
+                            ),
                         ));
                 }
 
@@ -3878,7 +3880,7 @@ impl BlobExt for Blob {
                         if !path_or_fd.path().is_string() {
                             *path_or_fd = PathOrFileDescriptor::Path(
                                 crate::webcore::node_types::PathLike::String(
-                                    bun_core::PathString::default(),
+                                    bun_ptr::cow_slice::CowSlice::EMPTY,
                                 ),
                             );
                         }
@@ -3890,7 +3892,7 @@ impl BlobExt for Blob {
                 core::mem::replace(
                     path_or_fd,
                     PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
-                        bun_core::PathString::default(),
+                        bun_ptr::cow_slice::CowSlice::EMPTY,
                     )),
                 )
             }
@@ -4277,11 +4279,9 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 // ScopeGuard derefs to its inner Blob.
                 if let Some(store) = (*guard).store() {
                     if let store::Data::Bytes(bytes_store) = &mut store.data_mut() {
-                        // `PathString::init` only borrows ptr+len; the local
-                        // `name: Vec<u8>` would drop at the end of this block
-                        // and leave `stored_name` dangling. Transfer ownership
-                        // into the packed pointer; freed by `Bytes::Drop`.
-                        bytes_store.stored_name = bun_core::PathString::init_owned(name);
+                        // Transfer ownership of the local `name: Vec<u8>` into
+                        // `stored_name` (a `Box<[u8]>`); freed by `Bytes::Drop`.
+                        bytes_store.stored_name = name.into_boxed_slice();
                     }
                 }
                 // else: `name` drops here (Zig: `if (!consumed) free(name)`).
@@ -4315,12 +4315,12 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     let path_len = reader.read_int_le::<u32>()?;
                     let path = read_slice(reader, path_len as usize)?;
                     // Zig heap-allocates `path` and hands the allocation to
-                    // the store via `PathString.init(path)` (freed by
-                    // `Store.deinit`). `init_owned` consumes the Vec so the
-                    // store adopts the same allocation; borrowing here would
-                    // drop `path` at scope end and leave the store dangling.
+                    // the store (freed by `Store.deinit`). The owned `CowSlice`
+                    // adopts the `Box<[u8]>` so the store frees it in
+                    // `PathLike::drop`; borrowing here would drop `path` at scope
+                    // end and leave the store dangling.
                     let mut dest = PathOrFileDescriptor::Path(node::PathLike::String(
-                        bun_core::PathString::init_owned(path),
+                        bun_ptr::cow_slice::CowSlice::init_owned(path.into_boxed_slice()),
                     ));
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut dest,
@@ -4437,8 +4437,8 @@ pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
         if let store::Data::Bytes(bytes) = &mut store.data_mut() {
             if bytes.stored_name.is_empty() {
                 // Zig: `path_str.toUTF8Bytes(allocator)` → owned heap slice
-                // adopted by PathString and freed by `Bytes.deinit`.
-                bytes.stored_name = bun_core::PathString::init_owned(path_str.to_owned_slice());
+                // owned by `stored_name` (`Box<[u8]>`) and freed by `Bytes::Drop`.
+                bytes.stored_name = path_str.to_owned_slice().into_boxed_slice();
             }
         }
     }
@@ -4504,7 +4504,9 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
         if let Some(dirname) = bun_core::dirname(path_string.as_bytes()) {
             let mut node_fs = node::fs::NodeFS::default();
             match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                path: node::PathLike::String(bun_core::PathString::init(dirname)),
+                path: node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                    dirname, false,
+                )),
                 recursive: true,
                 always_return_none: true,
                 ..Default::default()
@@ -4639,9 +4641,11 @@ fn write_file_with_empty_source_to_destination(
                                 };
                                 let mkdir_result =
                                     node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                                        path: node::PathLike::String(bun_core::PathString::init(
-                                            dirpath,
-                                        )),
+                                        path: node::PathLike::String(
+                                            bun_ptr::cow_slice::CowSlice::init_unchecked(
+                                                dirpath, false,
+                                            ),
+                                        ),
                                         recursive: true,
                                         always_return_none: true,
                                         ..Default::default()
@@ -5708,13 +5712,9 @@ pub fn jsdom_file_construct_(
                 store::Data::Bytes(bytes) => {
                     // `get::<_, true>` on a single-Blob sequence returns
                     // `dupe()` (a shared StoreRef), so this `Bytes` may already
-                    // carry an owned `stored_name` from the source blob.
-                    // `PathString` is `Copy` — assignment alone would leak it.
-                    // SAFETY: every writer of `stored_name` adopts via
-                    // `PathString::init_owned` or leaves it `EMPTY`.
-                    unsafe { bytes.stored_name.deinit_owned() };
-                    bytes.stored_name =
-                        bun_core::PathString::init_owned(name_value_str.to_owned_slice());
+                    // carry an owned `stored_name` from the source blob; the
+                    // assignment drops (frees) the previous `Box<[u8]>`.
+                    bytes.stored_name = name_value_str.to_owned_slice().into_boxed_slice();
                 }
                 store::Data::S3(_) | store::Data::File(_) => {
                     blob.name.set(name_value_str.dupe_ref());
@@ -5724,7 +5724,7 @@ pub fn jsdom_file_construct_(
             // not store but we have a name so we need a store
             blob.store.set(Some(StoreRef::from(Store::new(Store {
                 data: store::Data::Bytes(store::Bytes::init_empty_with_name(
-                    bun_core::PathString::init_owned(name_value_str.to_owned_slice()),
+                    name_value_str.to_owned_slice().into_boxed_slice(),
                 )),
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 mime_type: bun_http_types::MimeType::NONE,

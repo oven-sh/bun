@@ -298,8 +298,12 @@ describe("gzip response edge cases", () => {
   // Behavior pins for the libdeflate fast path and its fallbacks: honest
   // streams decode byte-exactly; integrity violations (which both libdeflate
   // and zlib verify) reject with ZlibError regardless of which decode path
-  // ran. The corrupted-trailer cases also exercise the
-  // exact-size-reservation branch falling through to the streaming path.
+  // ran. The corrupted-trailer cases cover each exit from the exact-size
+  // reservation: `crc-corrupt` enters it and falls through on BadData,
+  // `isize-undersized` enters it with a reservation too small for the actual
+  // data and falls through on InsufficientSpace, and `isize-oversized`
+  // (~4.28 GB trailer) is rejected by the 32 MB cap and takes the shared
+  // scratch-buffer path instead.
   const payload = Buffer.alloc(300 * 1024);
   for (let i = 0; i < payload.length; i++) payload[i] = (i * 13) & 0xff;
 
@@ -313,7 +317,12 @@ describe("gzip response edge cases", () => {
     "honest-large": { body: Bun.gzipSync(payload), expected: payload },
     "honest-small": { body: Bun.gzipSync(Buffer.from("hello gzip world")), expected: Buffer.from("hello gzip world") },
     "empty": { body: Bun.gzipSync(Buffer.alloc(0)), expected: Buffer.alloc(0) },
-    "isize-corrupt": { body: corrupt(payload, 1), expected: "error" },
+    // ISIZE trailer is the last 4 bytes, little-endian; 300 KiB = 0x0004B000.
+    // Flipping the MSB yields 0xFF04B000 (> 32 MB cap); flipping the second
+    // byte yields 0x00044F00 = 282368 (< actual 307200, so the exact-size
+    // reservation comes up short).
+    "isize-oversized": { body: corrupt(payload, 1), expected: "error" },
+    "isize-undersized": { body: corrupt(payload, 3), expected: "error" },
     "crc-corrupt": { body: corrupt(payload, 8), expected: "error" },
     "truncated": { body: Buffer.from(Bun.gzipSync(payload)).subarray(0, 1000), expected: "error" },
   };
@@ -325,9 +334,9 @@ describe("gzip response edge cases", () => {
         fetch: () => new Response(c.body, { headers: { "Content-Encoding": "gzip" } }),
       });
       if (c.expected === "error") {
-        expect(async () => {
-          await (await fetch(server.url)).arrayBuffer();
-        }).toThrow();
+        // Depending on delivery, the rejection can surface from fetch()
+        // itself (fully-buffered body) or from reading the body.
+        await expect(fetch(server.url).then(r => r.arrayBuffer())).rejects.toThrow("ZlibError");
       } else {
         const got = Buffer.from(await (await fetch(server.url)).arrayBuffer());
         expect(Buffer.compare(got, c.expected)).toBe(0);

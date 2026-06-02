@@ -6822,17 +6822,14 @@ pub mod bv2_impl {
                         // the process lifetime and reads it on the watcher
                         // thread. Borrowing here (Zig passed
                         // `Environment.isWindows`) dangled those entries.
-                        let _ = this
-                            .bun_watcher_mut()
-                            .unwrap()
-                            .add_file::<true>(
-                                parse_result.watcher_data.fd,
-                                source_path,
-                                bun_wyhash::hash(source_path) as u32,
-                                bun_watcher::Loader(loader as u8),
-                                parse_result.watcher_data.dir_fd,
-                                None,
-                            );
+                        let _ = this.bun_watcher_mut().unwrap().add_file::<true>(
+                            parse_result.watcher_data.fd,
+                            source_path,
+                            bun_wyhash::hash(source_path) as u32,
+                            bun_watcher::Loader(loader as u8),
+                            parse_result.watcher_data.dir_fd,
+                            None,
+                        );
                     }
                 }
             }

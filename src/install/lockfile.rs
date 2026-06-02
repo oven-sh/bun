@@ -1195,6 +1195,9 @@ impl Lockfile {
         new.trusted_dependencies = old_trusted_dependencies;
         new.scripts = old_scripts;
         new.meta_hash = old.meta_hash;
+        // Carry the on-disk format version over from the lockfile we loaded so a
+        // re-save preserves it (a fresh `new` defaults to the current version).
+        new.text_lockfile_version = old.text_lockfile_version;
 
         if old.patched_dependencies.count() > 0 {
             clean_migrate_patched_dependencies_cold(old, &mut new)?;

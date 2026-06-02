@@ -99,10 +99,15 @@ impl StoredTrace {
     /// Capture the current call stack starting at `begin` (or the caller's return addr).
     pub fn capture(begin: Option<usize>) -> StoredTrace {
         let mut stored = StoredTrace::EMPTY;
-        let n = crate::capture_stack_trace(
-            begin.unwrap_or_else(crate::return_address),
-            &mut stored.data,
-        );
+        // Not `unwrap_or_else`: the default trim anchor must be read from this
+        // frame. Evaluated lazily, `return_address()` inlines into the closure
+        // and reads its popped frame, so the anchor matches no captured frame
+        // and the capture machinery is never trimmed.
+        let begin = match begin {
+            Some(addr) => addr,
+            None => crate::return_address(),
+        };
+        let n = crate::capture_stack_trace(begin, &mut stored.data);
         stored.index = n;
         // Trim trailing nulls (matches Zig loop).
         for (i, &addr) in stored.data[..n].iter().enumerate() {

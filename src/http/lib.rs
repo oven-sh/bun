@@ -3120,7 +3120,37 @@ impl<'a> HTTPClient<'a> {
         } else {
             crate::ssl_config::SSLConfig::ZERO
         };
+        // Take ownership of the CONNECT accumulation buffer BEFORE entering
+        // ProxyTunnel::start. The envelope has been fully consumed by the
+        // caller (handle_on_data_headers); we leave an empty buffer behind so
+        // that when the tunnel later re-enters handle_on_data_headers with
+        // decrypted upstream bytes, the stale CONNECT envelope isn't re-parsed
+        // as the user-facing response (see #30381). Without this, a split
+        // CONNECT 200 response (envelope arriving across two TCP reads) stays
+        // buffered; the tunnel's re-entry appends the decrypted upstream bytes
+        // onto it, re-parses the envelope as the response (leaking
+        // proxy-agent / connection: close into response.headers), and hands
+        // the upstream's raw HTTP/1.1 bytes to the body unparsed.
+        //
+        // `start_payload` may alias into this buffer's heap storage on the
+        // split-read path, but `std::mem::take` swaps only the `Vec` header —
+        // the heap allocation (and thus the bytes `start_payload` points at)
+        // stays put until `envelope_buf` is dropped at the end of this
+        // function. ProxyTunnel::start copies `start_payload` into the TLS BIO
+        // via start_with_payload -> BIO_write before it returns, so the bytes
+        // are captured before the drop.
+        //
+        // We hold the buffer in a local and drop it AFTER start() rather than
+        // clearing `self.state.response_message_buffer` afterwards:
+        // ProxyTunnel::start has synchronous failure paths (SSLWrapper init
+        // error, or a handshake-traffic error that synchronously fires
+        // on_close) that call close_and_fail -> fail -> the result callback,
+        // which can free the AsyncHTTP that embeds `*self`. Touching `self`
+        // after start() returns would be a use-after-free.
+        let envelope_buf = std::mem::take(&mut self.state.response_message_buffer);
         ProxyTunnel::start::<IS_SSL>(self, socket, &ssl_options, start_payload);
+        // Must not reference `self` past this point — see comment above.
+        drop(envelope_buf);
     }
 
     #[inline]

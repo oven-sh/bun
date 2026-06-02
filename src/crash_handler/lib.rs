@@ -1528,6 +1528,16 @@ mod draft {
         error_return_trace: Option<&StackTrace>,
         begin_addr: Option<usize>,
     ) -> ! {
+        // Not `unwrap_or_else(debug::return_address)`: the default trim anchor
+        // must be read from *this* function's frame. Evaluated lazily, the
+        // `#[inline(always)]` intrinsic reads the closure's frame instead,
+        // which is popped before the capture walks the stack — the anchor then
+        // matches no captured frame and the capture/handler frames survive the
+        // trim, burying the real crash site in every report.
+        let begin_addr = match begin_addr {
+            Some(addr) => addr,
+            None => debug::return_address(),
+        };
         crash_handler(
             if msg == b"reached unreachable code" {
                 CrashReason::Unreachable
@@ -1538,7 +1548,7 @@ mod draft {
             },
             match error_return_trace {
                 Some(ert) if ert.index > 0 => TraceSeed::ErrorReturn(ert),
-                _ => TraceSeed::BeginAddr(begin_addr.unwrap_or_else(debug::return_address)),
+                _ => TraceSeed::BeginAddr(begin_addr),
             },
         );
     }
@@ -1939,11 +1949,14 @@ mod draft {
         limits: bun_core::DumpStackTraceOptions,
     ) {
         Output::flush();
+        // Not `unwrap_or_else`: the default trim anchor must be read from this
+        // frame, not from a closure's popped frame (see `panic_impl`).
+        let first_address = match first_address {
+            Some(addr) => addr,
+            None => debug::return_address(),
+        };
         let mut addrs: [usize; 32] = [0; 32];
-        let n = debug::capture_stack_trace(
-            first_address.unwrap_or_else(debug::return_address),
-            &mut addrs,
-        );
+        let n = debug::capture_stack_trace(first_address, &mut addrs);
         let n = n.min(limits.frame_count);
         if !Environment::SHOW_CRASH_TRACE {
             // debug symbols aren't available, lets print a tracestring
@@ -3270,11 +3283,14 @@ mod draft {
     }
 
     pub fn dump_current_stack_trace(first_address: Option<usize>, limits: WriteStackTraceLimits) {
+        // Not `unwrap_or_else`: the default trim anchor must be read from this
+        // frame, not from a closure's popped frame (see `panic_impl`).
+        let first_address = match first_address {
+            Some(addr) => addr,
+            None => debug::return_address(),
+        };
         let mut addrs: [usize; 32] = [0; 32];
-        let n = debug::capture_stack_trace(
-            first_address.unwrap_or_else(debug::return_address),
-            &mut addrs,
-        );
+        let n = debug::capture_stack_trace(first_address, &mut addrs);
         let stack = StackTrace {
             index: n,
             instruction_addresses: &addrs,

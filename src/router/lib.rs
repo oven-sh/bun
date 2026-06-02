@@ -43,28 +43,8 @@ mod api {
 
 type CoreError = bun_core::Error;
 
-use bun_core::{HashedString, PathString};
-
-/// Every `PathString` stored on a [`Route`] wraps bytes interned in
-/// `FileSystem::dirname_store()` (process-lifetime arena — `append` returns
-/// `&'static [u8]`). `PathString::slice()` conservatively ties the borrow to
-/// `&self`; this re-widens it to the true `'static` lifetime so the slice can
-/// outlive the (Copy) `PathString` carrier and be stored in the SoA columns of
-/// [`RouteIndexList`] / `dedupe_dynamic`.
-///
-/// # Safety
-/// `ps` MUST have been constructed via `PathString::init(s)` where `s` was
-/// returned by `DirnameStore::append`/`append_lower_case` (or is a `'static`
-/// literal). All `Route` path fields satisfy this by construction in
-/// [`Route::parse`].
-#[inline]
-unsafe fn arena_slice(ps: PathString) -> &'static [u8] {
-    let s = ps.slice();
-    // SAFETY: caller contract — backing storage is the process-lifetime
-    // DirnameStore singleton; the `&'_ self` lifetime on `slice()` is an
-    // artificially-short reborrow.
-    unsafe { core::slice::from_raw_parts(s.as_ptr(), s.len()) }
-}
+use bun_core::HashedString;
+use bun_ptr::Interned;
 
 // ──────────────────────────────────────────────────────────────────────────
 // cross-tier decoupling
@@ -521,11 +501,11 @@ impl Routes {
                 return Some(Match {
                     params: std::ptr::from_mut(params),
                     name: index.name,
-                    path: index.abs_path.slice(),
+                    path: index.abs_path.as_bytes(),
                     pathname: url_path.pathname,
                     basename: index.basename,
                     hash: index_route_hash(),
-                    file_path: index.abs_path.slice(),
+                    file_path: index.abs_path.as_bytes(),
                     query_string: url_path.query_string,
                     client_framework_enabled: self.client_framework_enabled,
                     redirect_path: None,
@@ -544,11 +524,11 @@ impl Routes {
             return Some(Match {
                 params: std::ptr::from_mut(params),
                 name: route.name,
-                path: route.abs_path.slice(),
+                path: route.abs_path.as_bytes(),
                 pathname: url_path.pathname,
                 basename: route.basename,
                 hash: route.full_hash,
-                file_path: route.abs_path.slice(),
+                file_path: route.abs_path.as_bytes(),
                 query_string: url_path.query_string,
                 client_framework_enabled: self.client_framework_enabled,
                 redirect_path: None,
@@ -643,8 +623,8 @@ impl<'a> RouteLoader<'a> {
         // static route
         if route.param_count == 0 {
             // PORT NOTE: Zig getOrPut → std Entry API (StringHashMap = std HashMap).
-            if let Some(existing) = self.static_list.get(route.match_name.slice()) {
-                let source = bun_ast::Source::init_empty_file(route.abs_path.slice());
+            if let Some(existing) = self.static_list.get(route.match_name.as_bytes()) {
+                let source = bun_ast::Source::init_empty_file(route.abs_path.as_bytes());
                 self.log.add_error_fmt(
                     Some(&source),
                     bun_ast::Loc::EMPTY,
@@ -652,7 +632,7 @@ impl<'a> RouteLoader<'a> {
                         "Route \"{}\" is already defined by {}",
                         bstr::BStr::new(route.name),
                         // SAFETY: *existing aliases a Box<Route> in self.all_routes
-                        bstr::BStr::new(unsafe { &**existing }.abs_path.slice()),
+                        bstr::BStr::new(unsafe { &**existing }.abs_path.as_bytes()),
                     ),
                 );
                 return;
@@ -670,7 +650,7 @@ impl<'a> RouteLoader<'a> {
             // It will cause unexpected behavior.
             if new_route.has_uppercase {
                 if let Some(existing) = self.static_list.get(&new_route.name[1..]) {
-                    let source = bun_ast::Source::init_empty_file(new_route.abs_path.slice());
+                    let source = bun_ast::Source::init_empty_file(new_route.abs_path.as_bytes());
                     self.log.add_error_fmt(
                         Some(&source),
                         bun_ast::Loc::EMPTY,
@@ -678,7 +658,7 @@ impl<'a> RouteLoader<'a> {
                             "Route \"{}\" is already defined by {}",
                             bstr::BStr::new(new_route.name),
                             // SAFETY: *existing aliases a Box<Route> in self.all_routes
-                            bstr::BStr::new(unsafe { &**existing }.abs_path.slice()),
+                            bstr::BStr::new(unsafe { &**existing }.abs_path.as_bytes()),
                         ),
                     );
 
@@ -690,7 +670,7 @@ impl<'a> RouteLoader<'a> {
             }
 
             self.static_list
-                .put_assume_capacity(new_route.match_name.slice(), new_route_ptr);
+                .put_assume_capacity(new_route.match_name.as_bytes(), new_route_ptr);
             self.all_routes.push(new_route);
 
             return;
@@ -699,7 +679,7 @@ impl<'a> RouteLoader<'a> {
         {
             match self.dedupe_dynamic.entry(route.full_hash) {
                 Entry::Occupied(e) => {
-                    let source = bun_ast::Source::init_empty_file(route.abs_path.slice());
+                    let source = bun_ast::Source::init_empty_file(route.abs_path.as_bytes());
                     self.log.add_error_fmt(
                         Some(&source),
                         bun_ast::Loc::EMPTY,
@@ -712,8 +692,7 @@ impl<'a> RouteLoader<'a> {
                     return;
                 }
                 Entry::Vacant(v) => {
-                    // SAFETY: `Route::parse` interned `abs_path` via DirnameStore.
-                    v.insert(unsafe { arena_slice(route.abs_path) });
+                    v.insert(route.abs_path.as_bytes());
                 }
             }
         }
@@ -782,15 +761,11 @@ impl<'a> RouteLoader<'a> {
             }
 
             // PERF(port): was appendAssumeCapacity — profile if hot
-            // SAFETY: `Route::parse` interned every PathString field via
-            // `DirnameStore::append{,_lower_case}` (process-lifetime arena).
-            let (filepath, match_name, public_path) = unsafe {
-                (
-                    arena_slice(route.abs_path),
-                    arena_slice(route.match_name),
-                    arena_slice(route.public_path),
-                )
-            };
+            let (filepath, match_name, public_path) = (
+                route.abs_path.as_bytes(),
+                route.match_name.as_bytes(),
+                route.public_path.as_bytes(),
+            );
             route_list.push(RouteIndex {
                 name: route.name,
                 filepath,
@@ -993,10 +968,10 @@ impl TinyPtr {
 // Zig heap-allocates a separate buffer (`allocator.dupe`) so it doesn't mutate
 // memory it doesn't own (router.zig:537-547). The Rust port interns the
 // normalized path into `DirnameStore` (process-lifetime arena) instead, so
-// `abs_path` is uniformly a `PathString` over `'static` bytes on every
+// `abs_path` is uniformly an `Interned` over `'static` bytes on every
 // platform — keeping `RouteIndexList.filepath: &'static [u8]` sound and
 // avoiding the borrow-then-move at `RouteLoader::load_all`.
-pub type AbsPath = PathString;
+pub type AbsPath = Interned;
 
 pub struct Route {
     /// Public display name for the route.
@@ -1009,7 +984,7 @@ pub struct Route {
     /// - Omits leading slash
     /// - Lowercased
     /// This is [inconsistent with Next.js](https://github.com/vercel/next.js/issues/21498)
-    pub match_name: PathString,
+    pub match_name: Interned,
 
     pub basename: &'static [u8],
     pub full_hash: u32,
@@ -1020,7 +995,7 @@ pub struct Route {
     /// URL-safe path for the route's transpiled script relative to project's top level directory
     /// - It might not share a prefix with the absolute path due to symlinks.
     /// - It has a leading slash
-    pub public_path: PathString,
+    pub public_path: Interned,
 
     pub kind: pattern::Tag,
 
@@ -1051,12 +1026,9 @@ impl Route {
         // Reads go through `unsafe { &*entry }`; the single mutation
         // (`set_abs_path`) goes through `unsafe { &mut *entry }` after
         // `base_`/`extname` are no longer used.
-        // PORT NOTE: reshaped for borrowck — bind the `PathString` so the
-        // `.slice()` borrow lives across the closure below.
         // SAFETY: caller passes an EntryStore-owned pointer valid for the
         // process lifetime; no other live `&mut` to it during this call.
-        let entry_abs_path_ps = unsafe { &*entry }.abs_path();
-        let entry_abs_path = entry_abs_path_ps.slice();
+        let entry_abs_path = unsafe { &*entry }.abs_path().as_bytes();
         let mut abs_path_str: &[u8] = if entry_abs_path.is_empty() {
             b""
         } else {
@@ -1259,14 +1231,14 @@ impl Route {
                 // Zig: `entry.abs_path = PathString.init(abs_path_str)`.
                 // SAFETY: sole mutation; `base_`/`extname` (which may borrow
                 // `(*entry).base_.remainder_buf`) are not used after this.
-                unsafe { &mut *entry }.set_abs_path(bun_core::PathString::init(abs_path_str));
+                unsafe { &mut *entry }.set_abs_path(Interned::from_static(abs_path_str));
             }
 
             #[cfg(windows)]
             let abs_path: AbsPath = {
                 // Zig: `allocator.dupe(u8, platformToPosixBuf(...))` — process-
                 // lifetime heap dup. Intern into DirnameStore so the slice is
-                // genuinely `'static` and `arena_slice()` is sound on Windows.
+                // genuinely `'static` and the `Interned` widen is sound on Windows.
                 let normalized = bun_paths::resolve_path::platform_to_posix_buf(
                     abs_path_str,
                     &mut bufs.normalized_abs_path_buf,
@@ -1275,17 +1247,17 @@ impl Route {
                     .dirname_store()
                     .append(normalized)
                     .expect("unreachable");
-                PathString::init(interned)
+                Interned::from_static(interned)
             };
             #[cfg(not(windows))]
-            let abs_path = PathString::init(abs_path_str);
+            let abs_path = Interned::from_static(abs_path_str);
 
             #[cfg(all(debug_assertions, windows))]
             {
                 debug_assert!(!strings::index_of_char(name, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(public_path, b'\\').is_some());
                 debug_assert!(!strings::index_of_char(match_name, b'\\').is_some());
-                debug_assert!(!strings::index_of_char(abs_path.slice(), b'\\').is_some());
+                debug_assert!(!strings::index_of_char(abs_path.as_bytes(), b'\\').is_some());
                 // SAFETY: read-only reborrow; the `&mut` write above is dead.
                 debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
             }
@@ -1303,8 +1275,8 @@ impl Route {
             Some(Route {
                 name,
                 basename,
-                public_path: PathString::init(public_path),
-                match_name: PathString::init(match_name),
+                public_path: Interned::from_static(public_path),
+                match_name: Interned::from_static(match_name),
                 full_hash: if is_index {
                     index_route_hash()
                 } else {
@@ -1352,8 +1324,8 @@ pub mod sorter {
     }
 
     pub fn sort_by_name(a: &Route, b: &Route) -> bool {
-        let a_name = a.match_name.slice();
-        let b_name = b.match_name.slice();
+        let a_name = a.match_name.as_bytes();
+        let b_name = b.match_name.as_bytes();
 
         // route order determines route match order
         // - static routes go first because we match those first

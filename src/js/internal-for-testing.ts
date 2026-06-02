@@ -10,6 +10,7 @@
 const fmtBinding = $bindgenFn("fmt_jsc.bind.ts", "fmtString");
 
 export const highlightJavaScript = (code: string) => fmtBinding(code, "highlight-javascript");
+export const highlightJavaScriptRedacted = (code: string) => fmtBinding(code, "highlight-javascript-redacted");
 export const escapePowershell = (code: string) => fmtBinding(code, "escape-powershell");
 
 export const canonicalizeIP = $newCppFunction("NodeTLS.cpp", "Bun__canonicalizeIP", 1);

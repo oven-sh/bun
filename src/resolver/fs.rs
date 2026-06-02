@@ -7,11 +7,12 @@ use bstr::BStr;
 
 use bun_alloc::{AllocError, allocators};
 use bun_collections::VecExt as _;
+use bun_core::MutableString;
 use bun_core::{FeatureFlags, Generation, ZStr, env_var};
-use bun_core::{MutableString, PathString};
 use bun_paths::resolve_path::platform;
 use bun_paths::strings;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, resolve_path as path_handler};
+use bun_ptr::Interned;
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
 
@@ -370,7 +371,7 @@ pub enum EntryKind {
 /// Port of `FileSystem.Entry.Cache` in `fs.zig`.
 #[derive(Clone, Copy)]
 pub struct EntryCache {
-    pub symlink: PathString,
+    pub symlink: Interned,
     /// Too much code expects this to be 0
     /// don't make it bun.invalid_fd
     pub fd: Fd,
@@ -380,7 +381,7 @@ pub struct EntryCache {
 impl Default for EntryCache {
     fn default() -> Self {
         Self {
-            symlink: PathString::EMPTY,
+            symlink: Interned::EMPTY,
             fd: Fd::INVALID,
             kind: EntryKind::File,
         }
@@ -408,7 +409,7 @@ pub struct Entry {
     pub mutex: Mutex,
     pub need_stat: core::cell::Cell<bool>,
 
-    pub abs_path: PathString,
+    pub abs_path: Interned,
 }
 
 impl Entry {
@@ -443,7 +444,7 @@ impl Entry {
     }
 
     #[inline(always)]
-    pub fn set_cache_symlink(&self, symlink: PathString) {
+    pub fn set_cache_symlink(&self, symlink: Interned) {
         let mut c = self.cache.get();
         c.symlink = symlink;
         self.cache.set(c);
@@ -465,15 +466,15 @@ impl Entry {
         self.dir
     }
 
-    /// Zig: `entry.abs_path` field. `PathString` is `Copy`.
+    /// Zig: `entry.abs_path` field. `Interned` is `Copy`.
     #[inline]
-    pub fn abs_path(&self) -> PathString {
+    pub fn abs_path(&self) -> Interned {
         self.abs_path
     }
 
     /// Zig: `entry.abs_path = PathString.init(...)`.
     #[inline]
-    pub fn set_abs_path(&mut self, p: PathString) {
+    pub fn set_abs_path(&mut self, p: Interned) {
         self.abs_path = p;
     }
 
@@ -530,7 +531,7 @@ impl Entry {
                 Err(_) => return b"",
             }
         }
-        crate::path_string_static(&self.cache().symlink)
+        self.cache().symlink.as_bytes()
     }
 }
 
@@ -561,7 +562,7 @@ impl Default for Entry {
             base_lowercase_: strings::StringOrTinyString::init(b""),
             mutex: Mutex::default(),
             need_stat: core::cell::Cell::new(true),
-            abs_path: PathString::EMPTY,
+            abs_path: Interned::EMPTY,
         }
     }
 }
@@ -803,7 +804,7 @@ impl DirEntry {
                         // if found_kind is null, we have set need_stat above, so we
                         // store an arbitrary kind
                         existing.set_cache_kind(found_kind.unwrap_or(EntryKind::File));
-                        existing.set_cache_symlink(PathString::EMPTY);
+                        existing.set_cache_symlink(Interned::EMPTY);
                     }
                     break 'brk existing_ptr;
                 }
@@ -852,13 +853,13 @@ impl DirEntry {
                 // for each entry was a big performance issue for that package.
                 addr_of_mut!((*p).need_stat).write(core::cell::Cell::new(found_kind.is_none()));
                 addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
-                    symlink: PathString::EMPTY,
+                    symlink: Interned::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we
                     // store an arbitrary kind
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
                 }));
-                addr_of_mut!((*p).abs_path).write(PathString::EMPTY);
+                addr_of_mut!((*p).abs_path).write(Interned::EMPTY);
                 p
             }
         };
@@ -2311,7 +2312,7 @@ impl RealFS {
         let _ = (existing_fd, store_fd);
         let mut cache = EntryCache {
             kind: EntryKind::File,
-            symlink: PathString::EMPTY,
+            symlink: Interned::EMPTY,
             fd: Fd::INVALID,
         };
 
@@ -2412,7 +2413,7 @@ impl RealFS {
             // round-trip via `usize` (HANDLE is pointer-sized).
             match bun_sys::get_fd_path(Fd::from_native(handle as usize as u64), &mut *buf2) {
                 bun_sys::Result::Ok(real) => {
-                    cache.symlink = PathString::init(FilenameStore::instance().append(real)?);
+                    cache.symlink = Interned::from_static(FilenameStore::instance().append(real)?);
                 }
                 bun_sys::Result::Err(_) => {}
             }
@@ -2471,7 +2472,7 @@ impl RealFS {
                 cache.kind = EntryKind::File;
             }
             if !symlink.is_empty() {
-                cache.symlink = PathString::init(FilenameStore::instance().append(symlink)?);
+                cache.symlink = Interned::from_static(FilenameStore::instance().append(symlink)?);
             }
 
             Ok(cache)

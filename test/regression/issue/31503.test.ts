@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isMacOS, isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
 // https://github.com/oven-sh/bun/issues/31503
@@ -35,7 +35,11 @@ for (let s = 0; s < spellings; s++) {
 console.log("resolved-ok");
 `;
 
-test.skipIf(isWindows)(
+// Skipped on Windows (dir symlinks need privileges) and macOS (resolving through
+// ~500 symlinks exhausts its low default fd limit, so `Bun.resolveSync` throws).
+// The overflowing code path is in the libc/arch-independent allocator, so Linux
+// (glibc + musl, x64 + aarch64) coverage is sufficient.
+test.skipIf(isWindows || isMacOS)(
   "resolver filename store survives interning >270k long names (#31503)",
   async () => {
     using dir = tempDir("issue-31503", { "driver.js": DRIVER });

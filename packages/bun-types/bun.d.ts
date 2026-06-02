@@ -262,6 +262,10 @@ declare module "bun" {
     unref(): void;
   }
 
+  interface TransformerCancelCallback {
+    (reason: any): void | PromiseLike<void>;
+  }
+
   interface TransformerFlushCallback<O> {
     (controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
   }

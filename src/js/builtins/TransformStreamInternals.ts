@@ -594,12 +594,22 @@ export function createCompressionTransform(engine) {
       },
     },
     undefined,
-    // The readable side buffers up to one chunkSize of output before
-    // signalling backpressure. With the default strategy (highWaterMark 0,
-    // initial backpressure set), the first write would stall until a reader
-    // attaches — the Node-adapter implementation this replaces resolved
-    // writes immediately while buffering, and code in the wild awaits
-    // writes before reading.
-    { highWaterMark: chunkSize, size: chunk => chunk.byteLength },
+    // The readable side buffers output before signalling backpressure; a
+    // gated write only proceeds once a reader drains the queue. Two
+    // constraints pick the budget:
+    //
+    // - With the spec-default strategy (highWaterMark 0, initial
+    //   backpressure), the first write would stall until a reader attaches.
+    //   The Node-adapter implementation this replaces resolved writes while
+    //   ~16KB of *input* was buffered — so a decompression write whose
+    //   output expands far past its input (and every write after it) still
+    //   resolved with no reader attached, and code in the wild awaits
+    //   writes before reading. A budget of one chunkSize of *output* would
+    //   deadlock the write that follows any >16KB expansion.
+    // - An unbounded queue would break producer throttling in piped flows.
+    //
+    // 64 chunkSizes (1MiB) of output covers the old input-side acceptance
+    // for typical expansion ratios while keeping piped flows bounded.
+    { highWaterMark: 64 * chunkSize, size: chunk => chunk.byteLength },
   );
 }

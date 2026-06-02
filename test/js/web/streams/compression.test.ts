@@ -252,10 +252,10 @@ describe("CompressionStream and DecompressionStream", () => {
 });
 
 describe("CompressionStream write/read ordering", () => {
-  // The implementation buffers up to a chunk of output on the readable side:
-  // awaiting writes before any reader attaches must not deadlock. (A strictly
-  // spec-default TransformStream — readable highWaterMark 0 — would stall
-  // here; this pins Bun's long-standing buffered behavior.)
+  // The implementation buffers output on the readable side: awaiting writes
+  // before any reader attaches must not deadlock. (A strictly spec-default
+  // TransformStream — readable highWaterMark 0 — would stall here; this pins
+  // Bun's long-standing buffered behavior.)
   test("awaiting writes before reading does not deadlock", async () => {
     const cs = new CompressionStream("gzip");
     const writer = cs.writable.getWriter();
@@ -272,6 +272,26 @@ describe("CompressionStream write/read ordering", () => {
     const out: Uint8Array[] = [];
     for await (const chunk of ds.readable as unknown as AsyncIterable<Uint8Array>) out.push(chunk);
     expect(Buffer.concat(out).toString()).toBe("helloworld");
+  });
+
+  test("writes after a chunk whose output expands past the buffer still resolve before reading", async () => {
+    // ~100 bytes of input inflating to 64KB of output blows straight through
+    // a single-chunkSize readable budget; the writes that follow must still
+    // resolve with no reader attached — the node-adapter implementation
+    // accepted ~16KB of *input* regardless of how large the buffered output
+    // grew, and this sequence resolved on it.
+    const big = zlib.gzipSync(Buffer.alloc(64 * 1024));
+    const small = zlib.gzipSync(Buffer.from("hello"));
+    const ds = new DecompressionStream("gzip");
+    const writer = ds.writable.getWriter();
+    await writer.write(big);
+    for (let i = 0; i < 8; i++) await writer.write(small);
+    writer.close().catch(() => {});
+    const out: Uint8Array[] = [];
+    for await (const chunk of ds.readable as unknown as AsyncIterable<Uint8Array>) out.push(chunk);
+    const total = Buffer.concat(out);
+    expect(total.length).toBe(64 * 1024 + 8 * 5);
+    expect(total.subarray(64 * 1024).toString()).toBe("hello".repeat(8));
   });
 
   test("corrupt input rejects with Z_DATA_ERROR", async () => {

@@ -1,12 +1,19 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
 import * as stream from "node:stream";
 import * as util from "node:util";
 import * as zlib from "node:zlib";
+
+// The "streaming encode doesn't wait for entire input" tests push 50 MB of
+// random data through a compressor to observe incremental flushing. That is too
+// slow for the usual 15s budget under the sanitizer-instrumented debug/ASAN
+// build, so those builds get a longer timeout (same approach as #31505, with
+// extra headroom: 50 MB through ASAN brotli measures ~64s on a slow runner).
+const streamingEncodeTimeout = isDebug || isASAN ? 180_000 : 15_000;
 
 describe("prototype and name and constructor", () => {
   for (let [name, Class] of [
@@ -104,6 +111,139 @@ describe("zlib", () => {
     const data = new TextEncoder().encode("Hello World!".repeat(1));
     expect(() => gunzipSync(data, { library: "zlib" })).toThrow(new Error("incorrect header check"));
   });
+
+  // RFC 1952 §2.2: a gzip file may contain multiple members back-to-back.
+  // `cat a.gz b.gz` is a valid gzip stream that decodes to `a + b`.
+  it("Bun.gunzipSync decodes a concatenated multi-member gzip stream", () => {
+    const a = Buffer.from("Hello, ");
+    const b = Buffer.from("multi-member ");
+    const c = Buffer.from("gzip world!\n");
+    const multi = Buffer.concat([zlib.gzipSync(a), zlib.gzipSync(b), zlib.gzipSync(c)]);
+    const expected = Buffer.concat([a, b, c]);
+
+    expect(Buffer.from(gunzipSync(multi))).toEqual(expected);
+    // Must match node:zlib exactly.
+    expect(Buffer.from(gunzipSync(multi))).toEqual(zlib.gunzipSync(multi));
+  });
+
+  it("Bun.gunzipSync decodes multi-member gzip with trailing zero padding", () => {
+    const multi = Buffer.concat([zlib.gzipSync("abc"), zlib.gzipSync("def"), Buffer.alloc(10)]);
+    expect(Buffer.from(gunzipSync(multi)).toString()).toBe("abcdef");
+    expect(Buffer.from(gunzipSync(multi))).toEqual(zlib.gunzipSync(multi));
+  });
+
+  it("Bun.gunzipSync decodes multi-member gzip larger than the initial output buffer", () => {
+    const a = Buffer.alloc(5000, "A");
+    const b = Buffer.alloc(5000, "B");
+    const c = Buffer.alloc(5000, "C");
+    const multi = Buffer.concat([zlib.gzipSync(a), zlib.gzipSync(b), zlib.gzipSync(c)]);
+    const expected = Buffer.concat([a, b, c]);
+
+    const got = Buffer.from(gunzipSync(multi));
+    expect(got.length).toBe(expected.length);
+    expect(got.equals(expected)).toBe(true);
+  });
+
+  // The explicit { library: "libdeflate" } opt-in decodes every member of a
+  // concatenated stream itself (no fallback to the zlib path), and its output
+  // must byte-match both the default path and node:zlib.
+  it("Bun.gunzipSync({ library: 'libdeflate' }) decodes all members", () => {
+    const a = Buffer.from("first ");
+    const b = Buffer.from("second ");
+    const c = Buffer.from("third");
+    const multi = Buffer.concat([zlib.gzipSync(a), zlib.gzipSync(b), zlib.gzipSync(c)]);
+    const expected = Buffer.concat([a, b, c]);
+
+    expect(Buffer.from(gunzipSync(multi, { library: "libdeflate" }))).toEqual(expected);
+    // The libdeflate fast path, the default zlib path, and node:zlib all agree.
+    expect(Buffer.from(gunzipSync(multi, { library: "libdeflate" }))).toEqual(zlib.gunzipSync(multi));
+    expect(Buffer.from(gunzipSync(multi, { library: "libdeflate" }))).toEqual(
+      Buffer.from(gunzipSync(multi, { library: "zlib" })),
+    );
+    // Trailing zero padding is ignored, like the default path.
+    const padded = Buffer.concat([zlib.gzipSync("ab"), zlib.gzipSync("cd"), Buffer.alloc(8)]);
+    expect(Buffer.from(gunzipSync(padded, { library: "libdeflate" })).toString()).toBe("abcd");
+  });
+
+  // Regression: when the first member's plaintext is larger than the last
+  // member's ISIZE (the reserve hint), the libdeflate grow loop must keep
+  // doubling capacity. A buggy `reserve(capacity)` (relative to len==0) no-ops
+  // and spins forever. gzip(8KB) ++ gzip("x") is the minimal trigger.
+  it("Bun.gunzipSync({ library: 'libdeflate' }) does not hang when member 1 > member N", () => {
+    const big = Buffer.alloc(8192, "A");
+    const multi = Buffer.concat([zlib.gzipSync(big), zlib.gzipSync("x")]);
+    const got = Buffer.from(gunzipSync(multi, { library: "libdeflate" }));
+    expect(got.length).toBe(big.length + 1);
+    expect(got.equals(Buffer.concat([big, Buffer.from("x")]))).toBe(true);
+  });
+
+  // A single highly-compressible member whose plaintext outgrows the initial
+  // reserve also exercised the grow loop — it hung before the capacity-doubling
+  // fix. Its compressed size is tiny, so the ISIZE reserve starts small.
+  it("Bun.gunzipSync({ library: 'libdeflate' }) does not hang on a single large compressible member", () => {
+    const big = Buffer.alloc(10000, "A");
+    const got = Buffer.from(gunzipSync(zlib.gzipSync(big), { library: "libdeflate" }));
+    expect(got.length).toBe(big.length);
+    expect(got.equals(big)).toBe(true);
+  });
+
+  // Empty input is not a valid gzip stream; the libdeflate opt-in must error
+  // like the default zlib path and node:zlib (both reject it), not silently
+  // return an empty buffer.
+  it("Bun.gunzipSync({ library: 'libdeflate' }) errors on empty input", () => {
+    expect(() => gunzipSync(new Uint8Array(), { library: "libdeflate" })).toThrow();
+    // Matches the default path and node:zlib, which also throw.
+    expect(() => gunzipSync(new Uint8Array())).toThrow();
+    expect(() => zlib.gunzipSync(Buffer.alloc(0))).toThrow();
+  });
+
+  // Regression: the libdeflate opt-in shares the default path's 1 GiB
+  // decompression-bomb cap, but the cap must be consulted the way the underlying
+  // grow loop (decompress_to_vec_grow) does — on a grow and checked *before*
+  // doubling — so large-but-legitimate gzip streams still decode. The two cases
+  // below trip distinct code paths; both allocate multiple GiB, so they are
+  // skipped on CI (memory-constrained runners) and carry an explicit timeout
+  // because compressing ~1 GiB under the sanitizer-instrumented build exceeds
+  // the default, matching this file's other large-payload tests.
+  //
+  // NOTE: because of the CI skip, the cap-ordering here is manually-verified
+  // only (run locally on a box with >4 GiB free). The cap is a hardcoded
+  // 1 GiB with no injection point; a test-only override of the HTTP/zlib
+  // decompression paths wasn't deemed worth the surface area.
+
+  // A compressed stream larger than 1 GiB sizes the output Vec from the input
+  // (Vec::with_capacity(compressed.len()), since ISIZE >= 256 MB), so the buffer
+  // enters the loop already past the cap. Checking it on entry threw OutOfMemory
+  // before libdeflate ran, even though the output fits in the reservation.
+  // Stored-block gzip (level 0) keeps compressed ~= input, hitting the >1 GiB
+  // threshold without a real compression pass.
+  it.skipIf(isCI)(
+    "Bun.gunzipSync({ library: 'libdeflate' }) decodes a stream whose compressed size exceeds 1 GiB",
+    () => {
+      const n = 1024 * 1024 * 1024 + 32 * 1024 * 1024; // 1.03 GiB
+      const compressed = zlib.gzipSync(Buffer.alloc(n), { level: 0 });
+      expect(compressed.length).toBeGreaterThan(1024 * 1024 * 1024);
+      expect(gunzipSync(compressed, { library: "libdeflate" }).length).toBe(n);
+    },
+    15_000,
+  );
+
+  // A tiny compressed stream with a ~700 MB output forces the grow loop to
+  // double capacity past 1 GiB on its last step before the decode fits (from a
+  // sub-MB initial reservation the doublings land at ~696 MB < 700 MB, so the
+  // next double to ~1.39 GiB is required). The cap must allow that one doubling
+  // past 1 GiB and the decode at that size, like decompress_to_vec_grow which
+  // doubles while capacity <= max; rejecting it before the decode threw here.
+  it.skipIf(isCI)(
+    "Bun.gunzipSync({ library: 'libdeflate' }) decodes when the grow loop doubles past 1 GiB",
+    () => {
+      const n = 700 * 1000 * 1000;
+      const compressed = zlib.gzipSync(Buffer.alloc(n, 0x41)); // highly compressible
+      expect(compressed.length).toBeLessThan(1024 * 1024);
+      expect(gunzipSync(compressed, { library: "libdeflate" }).length).toBe(n);
+    },
+    15_000,
+  );
 });
 
 function* window(buffer, size, advance = size) {
@@ -244,31 +384,35 @@ describe("zlib.brotli", () => {
     }
   });
 
-  it("streaming encode doesn't wait for entire input", async () => {
-    const createPRNG = seed => {
-      let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
-      return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
-    };
-    const readStream = new stream.Readable();
-    const brotliStream = zlib.createBrotliCompress();
-    const rand = createPRNG(1);
-    let all = [];
+  it(
+    "streaming encode doesn't wait for entire input",
+    async () => {
+      const createPRNG = seed => {
+        let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
+        return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
+      };
+      const readStream = new stream.Readable();
+      const brotliStream = zlib.createBrotliCompress();
+      const rand = createPRNG(1);
+      let all = [];
 
-    const { promise, resolve, reject } = Promise.withResolvers();
-    brotliStream.on("data", chunk => all.push(chunk.length));
-    brotliStream.on("end", resolve);
-    brotliStream.on("error", reject);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      brotliStream.on("data", chunk => all.push(chunk.length));
+      brotliStream.on("end", resolve);
+      brotliStream.on("error", reject);
 
-    for (let i = 0; i < 50; i++) {
-      let buf = Buffer.alloc(1024 * 1024);
-      for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
-      readStream.push(buf);
-    }
-    readStream.push(null);
-    readStream.pipe(brotliStream);
-    await promise;
-    expect(all.length).toBeGreaterThanOrEqual(7);
-  }, 15_000);
+      for (let i = 0; i < 50; i++) {
+        let buf = Buffer.alloc(1024 * 1024);
+        for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
+        readStream.push(buf);
+      }
+      readStream.push(null);
+      readStream.pipe(brotliStream);
+      await promise;
+      expect(all.length).toBeGreaterThanOrEqual(7);
+    },
+    streamingEncodeTimeout,
+  );
 
   it("should accept params", async () => {
     const ZLIB = zlib.constants;
@@ -608,31 +752,35 @@ describe("zlib.zstd", () => {
     }
   });
 
-  it("streaming encode doesn't wait for entire input", async () => {
-    const createPRNG = seed => {
-      let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
-      return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
-    };
-    const readStream = new stream.Readable();
-    const zstdStream = zlib.createZstdCompress();
-    const rand = createPRNG(1);
-    let all = [];
+  it(
+    "streaming encode doesn't wait for entire input",
+    async () => {
+      const createPRNG = seed => {
+        let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
+        return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
+      };
+      const readStream = new stream.Readable();
+      const zstdStream = zlib.createZstdCompress();
+      const rand = createPRNG(1);
+      let all = [];
 
-    const { promise, resolve, reject } = Promise.withResolvers();
-    zstdStream.on("data", chunk => all.push(chunk.length));
-    zstdStream.on("end", resolve);
-    zstdStream.on("error", reject);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      zstdStream.on("data", chunk => all.push(chunk.length));
+      zstdStream.on("end", resolve);
+      zstdStream.on("error", reject);
 
-    for (let i = 0; i < 50; i++) {
-      let buf = Buffer.alloc(1024 * 1024);
-      for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
-      readStream.push(buf);
-    }
-    readStream.push(null);
-    readStream.pipe(zstdStream);
-    await promise;
-    expect(all.length).toBeGreaterThanOrEqual(7);
-  }, 15_000);
+      for (let i = 0; i < 50; i++) {
+        let buf = Buffer.alloc(1024 * 1024);
+        for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
+        readStream.push(buf);
+      }
+      readStream.push(null);
+      readStream.pipe(zstdStream);
+      await promise;
+      expect(all.length).toBeGreaterThanOrEqual(7);
+    },
+    streamingEncodeTimeout,
+  );
 });
 
 describe("async write buffer lifetime", () => {
@@ -734,5 +882,73 @@ describe("dictionary buffer lifetime", () => {
     await promise;
 
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
+  });
+});
+// @Jarred-Sumner asked for a test that runs in both Node.js and Bun and
+// verifies gzip decoding behaves identically. This spawns the same fixture
+// under each runtime and diffs the output: concatenated multi-member streams
+// (RFC 1952 §2.2), trailing zero padding, trailing gzip-header-shaped garbage,
+// and a single member — decoded through `zlib.gunzipSync` (both runtimes) and,
+// where available, `Bun.gunzipSync`.
+describe.skipIf(!nodeExe())("matches Node.js gzip decoding", () => {
+  // Runs under plain node *and* under bun, so it may only use node:zlib +
+  // globals. Prints one JSON line per scenario: the decoded output (or the
+  // thrown error's shape) so the two runtimes can be compared byte-for-byte.
+  const fixture = `
+    const zlib = require("zlib");
+    const mk = (...parts) => Buffer.concat(parts.map(p => zlib.gzipSync(Buffer.from(p))));
+    const cases = {
+      single: mk("hello world"),
+      multi: mk("Hello, ", "multi-member ", "gzip world!\\n"),
+      zeroPadded: Buffer.concat([mk("abc", "def"), Buffer.alloc(10)]),
+      headerGarbage: Buffer.concat([mk("abc", "def"), Buffer.from([0x1f, 0x8b, 0xff, 0xff]), Buffer.alloc(10)]),
+      large: mk("A".repeat(5000), "B".repeat(5000), "C".repeat(5000)),
+    };
+    const probe = (fn, buf) => {
+      try {
+        const out = Buffer.from(fn(buf));
+        return { ok: true, len: out.length, text: out.toString("base64") };
+      } catch (e) {
+        return { ok: false, code: e.code, message: String(e.message) };
+      }
+    };
+    const results = {};
+    for (const [name, buf] of Object.entries(cases)) {
+      results[name] = { zlib: probe(zlib.gunzipSync, buf) };
+      if (typeof Bun !== "undefined") results[name].bun = probe(Bun.gunzipSync, buf);
+    }
+    process.stdout.write(JSON.stringify(results));
+  `;
+
+  async function run(exe) {
+    await using proc = Bun.spawn({
+      cmd: [exe, "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // Surface stdout/stderr before the exit code so a malformed fixture gives a
+    // useful message instead of a bare JSON.parse throw.
+    expect(stderr).toBe("");
+    expect(stdout, `fixture produced no JSON on stdout (stderr: ${stderr})`).not.toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  it("Bun.gunzipSync and node:zlib decode every scenario the same as Node", async () => {
+    const [bun, node] = await Promise.all([run(bunExe()), run(nodeExe())]);
+
+    // node:zlib must match Node exactly for every scenario.
+    for (const name of Object.keys(node)) {
+      expect(bun[name].zlib, `node:zlib mismatch for "${name}"`).toEqual(node[name].zlib);
+    }
+
+    // Bun.gunzipSync must produce the same decoded bytes as Node's
+    // zlib.gunzipSync for the successful cases (it is single-shot, so trailing
+    // gzip-header garbage is the one case that may differ — skip its error shape).
+    for (const name of ["single", "multi", "zeroPadded", "large"]) {
+      expect(bun[name].bun, `Bun.gunzipSync mismatch for "${name}"`).toEqual(node[name].zlib);
+    }
   });
 });

@@ -130,6 +130,89 @@ impl Default for InternalState<'_> {
     }
 }
 
+/// Decode every RFC 1952 §2.2 gzip member in `input` into `out` (appending),
+/// driving libdeflate's single-member decoder in a loop so a concatenated
+/// stream (`cat a.gz b.gz`) stays on the fast path instead of falling back to
+/// zlib. `libdeflate_gzip_decompress_ex` reports the bytes consumed per member
+/// (`result.read`), so the cursor resumes from the unread portion.
+///
+/// Returns `Ok(total_written)` once the input is exhausted or only trailing
+/// zero padding remains (matching node:zlib's `*next_in != 0` stop). Returns
+/// `Err(())` — with `out` truncated back to its entry length — when a member
+/// fails to decode (bad data / oversized output); the caller then runs the
+/// zlib slow path, which surfaces the proper error. The caller should reserve
+/// a hint up front (e.g. the last member's ISIZE trailer — the only cheaply
+/// readable estimate); the loop grows as each member needs.
+fn decompress_gzip_members(
+    decompressor: &mut bun_libdeflate_sys::libdeflate::Decompressor,
+    input: &[u8],
+    out: &mut Vec<u8>,
+) -> core::result::Result<usize, ()> {
+    use bun_libdeflate_sys::libdeflate as bun_libdeflate;
+
+    let start_len = out.len();
+    let mut offset = 0usize;
+    while offset < input.len() {
+        // After a decoded member, trailing zero bytes are padding, not a
+        // member (same stop condition as the zlib path's `*next_in != 0`);
+        // accept what we have. A *leading* zero byte (offset == 0) is a bad
+        // gzip header, not padding — fall through so libdeflate reports
+        // BadData and the caller runs the erroring zlib path.
+        if offset > 0 && input[offset] == 0 {
+            break;
+        }
+
+        // `decompress_to_vec` appends into spare capacity and does not grow, so
+        // ensure room and double the *capacity* on InsufficientSpace. A member's
+        // output lands in `cap - len` spare; `len` stays put across retries (it
+        // only advances on Success), so the growth must double `capacity`, not
+        // `reserve(capacity)` (which is relative to `len` and no-ops once
+        // `len < cap` — an infinite loop).
+        let grow_to_double_capacity = |out: &mut Vec<u8>| {
+            let target = out.capacity().max(4096).saturating_mul(2);
+            out.reserve(target.saturating_sub(out.len()));
+        };
+        let result = loop {
+            // Decompression-bomb guard: share the zlib slow path's cap. At the
+            // top so it covers *both* grow paths (a stream whose members keep
+            // filling the spare exactly returns Success with `len == cap` and
+            // never hits InsufficientSpace).
+            if out.capacity() > crate::decompressor::MAX_DECOMPRESSED_BODY_SIZE {
+                out.truncate(start_len);
+                return Err(());
+            }
+            if out.spare_capacity_mut().is_empty() {
+                grow_to_double_capacity(out);
+            }
+            let result = decompressor.decompress_to_vec(
+                &input[offset..],
+                out,
+                bun_libdeflate::Encoding::Gzip,
+            );
+            if result.status == bun_libdeflate::Status::InsufficientSpace {
+                grow_to_double_capacity(out);
+                continue;
+            }
+            break result;
+        };
+
+        if result.status != bun_libdeflate::Status::Success {
+            // Bad data (e.g. trailing garbage that looks like a gzip header):
+            // fall back so the zlib path produces the matching error.
+            out.truncate(start_len);
+            return Err(());
+        }
+
+        // `read == 0` on Success would loop forever; treat as done defensively.
+        if result.read == 0 {
+            break;
+        }
+        offset += result.read;
+    }
+
+    Ok(out.len())
+}
+
 impl<'a> InternalState<'a> {
     pub fn init(body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) -> InternalState<'a> {
         let request_body = bun_ptr::RawSlice::new(body.slice());
@@ -293,42 +376,83 @@ impl<'a> InternalState<'a> {
                     if (estimated_size as usize) > deflater.shared_buffer.len()
                         && estimated_size < 32 * 1024 * 1024
                     {
-                        body_out_str.list.reserve_exact(
-                            (estimated_size as usize).saturating_sub(body_out_str.list.len()),
-                        );
                         body_out_str.list.clear();
-                        let result = deflater.decompressor_mut().decompress_to_vec(
+                        body_out_str.list.reserve_exact(estimated_size as usize);
+                        // Decode every gzip member on the fast path (RFC 1952
+                        // §2.2). `estimated_size` is the last member's ISIZE
+                        // trailer — a hint, not the total; `decompress_gzip_members`
+                        // grows the buffer as each member needs.
+                        if decompress_gzip_members(
+                            deflater.decompressor_mut(),
                             buffer,
                             &mut body_out_str.list,
-                            bun_libdeflate::Encoding::Gzip,
-                        );
-                        if result.status == bun_libdeflate::Status::Success {
+                        )
+                        .is_ok()
+                        {
                             still_needs_to_decompress = false;
+                        } else {
+                            // A member failed to decode — let the zlib slow
+                            // path run and surface the matching error.
+                            body_out_str.list.clear();
                         }
 
                         break 'libdeflate;
                     }
                 }
 
-                let result = deflater.decompressor_mut().decompress(
-                    buffer,
-                    &mut deflater.shared_buffer,
-                    match self.encoding {
-                        Encoding::Gzip => bun_libdeflate::Encoding::Gzip,
-                        Encoding::Deflate => bun_libdeflate::Encoding::Deflate,
-                        _ => unreachable!(),
-                    },
-                );
-
-                if result.status == bun_libdeflate::Status::Success {
-                    body_out_str
-                        .list
-                        .reserve_exact(result.written.saturating_sub(body_out_str.list.len()));
-                    // PERF(port): was appendSliceAssumeCapacity
-                    body_out_str
-                        .list
-                        .extend_from_slice(&deflater.shared_buffer[0..result.written]);
-                    still_needs_to_decompress = false;
+                if self.encoding == Encoding::Gzip {
+                    // gzip can be a concatenated multi-member stream (RFC 1952
+                    // §2.2); decode every member on the fast path, straight into
+                    // the output Vec (the 512 KiB shared_buffer can't hold the
+                    // combined output). Reserve a hint from the last member's
+                    // ISIZE trailer, but cap it at 32 MiB: the trailer is
+                    // attacker-controlled, so never pre-allocate more than that
+                    // from it — `decompress_gzip_members` grows as needed (under
+                    // the 1 GiB bomb cap) from there.
+                    let estimated_size = if buffer.len() > 16 {
+                        (u32::from_ne_bytes(
+                            buffer[buffer.len() - 4..][..4]
+                                .try_into()
+                                .expect("infallible: size matches"),
+                        ) as usize)
+                            .min(32 * 1024 * 1024)
+                    } else {
+                        buffer.len()
+                    };
+                    body_out_str.list.reserve(
+                        estimated_size
+                            .saturating_sub(body_out_str.list.len())
+                            .max(64),
+                    );
+                    if decompress_gzip_members(
+                        deflater.decompressor_mut(),
+                        buffer,
+                        &mut body_out_str.list,
+                    )
+                    .is_ok()
+                    {
+                        still_needs_to_decompress = false;
+                    } else {
+                        body_out_str.list.clear();
+                    }
+                } else {
+                    // deflate is single-member; decode via the shared scratch
+                    // buffer and copy out.
+                    let result = deflater.decompressor_mut().decompress(
+                        buffer,
+                        &mut deflater.shared_buffer,
+                        bun_libdeflate::Encoding::Deflate,
+                    );
+                    if result.status == bun_libdeflate::Status::Success {
+                        body_out_str
+                            .list
+                            .reserve_exact(result.written.saturating_sub(body_out_str.list.len()));
+                        // PERF(port): was appendSliceAssumeCapacity
+                        body_out_str
+                            .list
+                            .extend_from_slice(&deflater.shared_buffer[0..result.written]);
+                        still_needs_to_decompress = false;
+                    }
                 }
             }
             let _ = is_final_chunk;

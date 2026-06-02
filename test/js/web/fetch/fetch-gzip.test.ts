@@ -1,9 +1,9 @@
 import { Socket } from "bun";
 import { beforeAll, describe, expect, it } from "bun:test";
-import { gcTick } from "harness";
+import { bunEnv, bunExe, gcTick } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
-import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
+import { brotliCompressSync, deflateSync, gunzipSync, gzipSync, zstdCompressSync } from "node:zlib";
 import path from "path";
 
 const gzipped = path.join(import.meta.dir, "fixture.html.gz");
@@ -197,7 +197,10 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   let pending,
     pendingChunks = [];
   const server = Bun.listen({
-    hostname: "localhost",
+    // 127.0.0.1, not "localhost": on dual-stack hosts "localhost" can resolve
+    // to ::1 while the listener binds 127.0.0.1 (or vice versa), so fetch hits
+    // ConnectionRefused.
+    hostname: "127.0.0.1",
     port: 0,
     socket: {
       drain(socket) {
@@ -292,4 +295,234 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   socketToClose.end();
   server.stop();
   done();
+});
+
+// RFC 1952 §2.2: a gzip file may contain multiple back-to-back members
+// (`cat a.gz b.gz`). fetch() must decode all of them, not silently
+// truncate to the first.
+describe("fetch() with a concatenated multi-member gzip body", () => {
+  const a = Buffer.from("Hello, ");
+  const b = Buffer.from("multi-member ");
+  const c = Buffer.from("gzip world!\n");
+  const small = Buffer.concat([gzipSync(a), gzipSync(b), gzipSync(c)]);
+  const smallExpected = Buffer.concat([a, b, c]).toString();
+
+  const big1 = Buffer.alloc(300 * 1024, "A");
+  const big2 = Buffer.alloc(300 * 1024, "B");
+  const large = Buffer.concat([gzipSync(big1), gzipSync(big2)]);
+  const largeExpected = Buffer.concat([big1, big2]);
+
+  function serve(body: Buffer) {
+    return Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(body, {
+          headers: {
+            "Content-Encoding": "gzip",
+            "Content-Type": "text/plain",
+          },
+        });
+      },
+    });
+  }
+
+  it("decodes all members (small body, libdeflate fast path)", async () => {
+    using server = serve(small);
+    const res = await fetch(server.url);
+    expect(res.status).toBe(200);
+    const got = Buffer.from(await res.arrayBuffer());
+    expect(got.toString()).toBe(smallExpected);
+    // fetch's decoded body byte-equals node:zlib.gunzipSync of the same stream.
+    expect(got.equals(gunzipSync(small))).toBe(true);
+  });
+
+  it("decodes all members (large body)", async () => {
+    using server = serve(large);
+    const res = await fetch(server.url);
+    expect(res.status).toBe(200);
+    const got = Buffer.from(await res.arrayBuffer());
+    expect(got.length).toBe(largeExpected.length);
+    expect(got.equals(largeExpected)).toBe(true);
+    expect(got.equals(gunzipSync(large))).toBe(true);
+  });
+
+  // A `Content-Encoding: gzip` body that is not valid gzip (here: leading 0x00)
+  // must error, not silently return an empty 200. The multi-member loop only
+  // treats a zero byte as trailing padding *after* a member decoded, so a
+  // leading zero still reaches the erroring decode path.
+  it("errors on an invalid gzip body instead of returning empty", async () => {
+    using server = serve(Buffer.alloc(24)); // all zero bytes, not gzip
+    await expect(fetch(server.url).then(r => r.text())).rejects.toThrow();
+  });
+
+  // Regression: the libdeflate grow loop must double capacity, not
+  // `reserve(capacity)` (a no-op while len == 0). When the first member's
+  // plaintext exceeds the last member's ISIZE (the reserve hint) it would spin
+  // forever. First member > 512 KiB exercises the big-body reserve path.
+  it("does not hang when member 1 is larger than the reserve hint (member N)", async () => {
+    const first = Buffer.alloc(1024 * 1024, "A"); // 1 MiB
+    const last = Buffer.alloc(600 * 1024, "B"); // 600 KiB < first, > shared_buffer
+    const body = Buffer.concat([gzipSync(first), gzipSync(last)]);
+    const expected = Buffer.concat([first, last]);
+    using server = serve(body);
+    const res = await fetch(server.url);
+    expect(res.status).toBe(200);
+    const got = Buffer.from(await res.arrayBuffer());
+    expect(got.length).toBe(expected.length);
+    expect(got.equals(expected)).toBe(true);
+  });
+
+  it("decodes all members (chunked transfer, zlib slow path)", async () => {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              for (let i = 0; i < small.length; i += 7) {
+                controller.write(small.subarray(i, i + 7));
+                await controller.flush();
+              }
+              controller.close();
+            },
+          }),
+          {
+            headers: {
+              "Content-Encoding": "gzip",
+              "Content-Type": "text/plain",
+            },
+          },
+        );
+      },
+    });
+    const res = await fetch(server.url);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(smallExpected);
+  });
+
+  // The body is decompressed incrementally, one network read at a time (the
+  // Connection: close / streaming path — no Content-Length to buffer against).
+  // If a gzip member's trailer lands exactly on a read boundary, the reader
+  // sees StreamEnd with no input left: it must keep its inflate state alive for
+  // the next read instead of finishing and silently dropping later members.
+  //
+  // We force that exact boundary with a raw TCP server that writes each member
+  // as its own frame and only sends the next after the previous has fully
+  // drained into the kernel — so member A's trailer ends a read before B's
+  // bytes arrive. Small members keep the whole member inside one read (no
+  // output-buffer-full splitting), making the StreamEnd-at-boundary
+  // deterministic.
+  it("decodes all members split across network reads (streaming slow path)", async () => {
+    const partA = Buffer.from("first member payload");
+    const partB = Buffer.from("second member payload");
+    const partC = Buffer.from("third member payload");
+    const members = [gzipSync(partA), gzipSync(partB), gzipSync(partC)];
+    const expected = Buffer.concat([partA, partB, partC]).toString();
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        drain(socket) {
+          const q: Array<{ buf: Buffer; resolve: () => void }> = socket.data;
+          while (q.length) {
+            const head = q[0];
+            const n = socket.write(head.buf);
+            if (n < head.buf.length) {
+              head.buf = head.buf.subarray(n);
+              return;
+            }
+            q.shift();
+            head.resolve();
+          }
+        },
+        async open(socket) {
+          const q: Array<{ buf: Buffer; resolve: () => void }> = (socket.data = []);
+          // Resolve only once `buf` has fully drained into the kernel, so the
+          // next write lands in a separate network read on the client.
+          const send = (buf: Buffer) =>
+            new Promise<void>(resolve => {
+              if (q.length) {
+                q.push({ buf, resolve });
+                return;
+              }
+              const n = socket.write(buf);
+              if (n < buf.length) q.push({ buf: buf.subarray(n), resolve });
+              else resolve();
+            });
+
+          // Yield to the event loop's check phase between writes so the socket
+          // flushes each member as its own send() before the next is queued —
+          // a bare microtask can leave them in one TCP segment on fast loopback.
+          const tick = () => new Promise<void>(r => setImmediate(r));
+
+          await send(
+            Buffer.from(
+              "HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n",
+            ),
+          );
+          for (const member of members) {
+            await send(member);
+            await tick();
+          }
+          socket.end();
+        },
+      },
+    });
+
+    const res = await fetch(`http://${server.hostname}:${server.port}`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe(expected);
+  });
+
+  // The libdeflate fast path and the zlib slow path (BUN_FEATURE_FLAG_NO_LIBDEFLATE)
+  // must decode a multi-member body to the exact same bytes — and both must match
+  // node:zlib. A subprocess serves the stream and fetches it back, so the env flag
+  // takes effect on the HTTP thread; the two runs are diffed and compared to Node.
+  it("libdeflate and zlib paths decode a multi-member body identically", async () => {
+    const members = [Buffer.from("alpha "), Buffer.alloc(400 * 1024, "B"), Buffer.from(" omega")];
+    const body = Buffer.concat(members.map(m => gzipSync(m)));
+    const expected = gunzipSync(body); // node:zlib reference
+
+    // Fetch the concatenated gzip body back from an in-process server and print
+    // the decoded bytes as hex. Runs under whatever libdeflate setting the parent
+    // env dictates.
+    const script = `
+      const body = Buffer.from(${JSON.stringify(body.toString("base64"))}, "base64");
+      using server = Bun.serve({
+        port: 0,
+        fetch: () => new Response(body, { headers: { "Content-Encoding": "gzip" } }),
+      });
+      const res = await fetch(server.url);
+      if (res.status !== 200) throw new Error("status " + res.status);
+      const got = Buffer.from(await res.arrayBuffer());
+      process.stdout.write(got.toString("hex"));
+    `;
+
+    async function run(env: Record<string, string>) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // Surface stdout (and require it non-empty) before the exit code so an
+      // empty-body regression reports a useful message instead of a bare
+      // Buffer.from("", "hex") -> empty buffer comparison failure downstream.
+      expect(stderr).toBe("");
+      expect(stdout, `fetch produced no hex on stdout (stderr: ${stderr})`).not.toBe("");
+      expect(exitCode).toBe(0);
+      return Buffer.from(stdout, "hex");
+    }
+
+    const [fast, slow] = await Promise.all([run({}), run({ BUN_FEATURE_FLAG_NO_LIBDEFLATE: "1" })]);
+    // libdeflate fast path == node:zlib
+    expect(fast.equals(expected)).toBe(true);
+    // zlib slow path == node:zlib
+    expect(slow.equals(expected)).toBe(true);
+    // and therefore the two Bun paths agree with each other
+    expect(fast.equals(slow)).toBe(true);
+  });
 });

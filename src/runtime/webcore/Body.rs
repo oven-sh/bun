@@ -1959,8 +1959,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
                 if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
                     if let Value::Locked(locked) = self.get_body_value() {
                         return locked.set_promise(global_object, Action::GetJSON, Some(readable));
@@ -2008,8 +2006,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
                 if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
                     if let Value::Locked(locked) = self.get_body_value() {
                         return locked.set_promise(
@@ -2062,8 +2058,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 if readable.is_disturbed(global_object) {
                     return Ok(handle_body_already_used(global_object));
                 }
-                let value = self.get_body_value();
-                value.to_blob_if_possible();
                 if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
                     if let Value::Locked(locked) = self.get_body_value() {
                         return locked.set_promise(global_object, Action::GetBytes, Some(readable));
@@ -2218,7 +2212,6 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                 {
                     return Ok(handle_body_already_used(global_object));
                 }
-                value.to_blob_if_possible();
                 if !self.try_blob_from_resolved_stream(global_object, &mut readable) {
                     if let Value::Locked(locked) = self.get_body_value() {
                         return locked.set_promise(global_object, Action::GetBlob, Some(readable));

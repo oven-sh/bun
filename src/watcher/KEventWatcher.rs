@@ -85,12 +85,19 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         )
     };
 
-    // `kevent` returns -1 if the kqueue fd was closed out from under us — e.g.
-    // `stop_all_for_exit`/`stop()` closing it on the main thread at exit. Bail
-    // out instead of feeding a negative count into the `usize::try_from` below;
-    // `watch_loop`'s `running` check ends the loop.
+    // `kevent` returns -1 on error — don't feed a negative count into the
+    // `usize::try_from` below. Discriminate like INotifyWatcher (line ~319):
+    // EINTR retries (macOS `kevent` doesn't honour SA_RESTART), anything else
+    // is persistent and propagates as `Err` so `thread_main`'s Err arm runs
+    // `on_error` and exits. The common exit case — EBADF after
+    // `stop_all_for_exit` closes the kqueue — is covered either way:
+    // `running` is already false, so `watch_loop` stops on the next check.
     if count < 0 {
-        return Ok(());
+        use bun_sys::E;
+        return match bun_sys::get_errno(count) {
+            E::EINTR | E::EAGAIN => Ok(()),
+            e => Err(bun_sys::Error::from_code(e, bun_sys::Tag::kevent)),
+        };
     }
 
     // Give the events more time to coalesce

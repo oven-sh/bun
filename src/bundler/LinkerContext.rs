@@ -3626,7 +3626,8 @@ impl<'a> LinkerContext<'a> {
             // `graph.meta[..].resolved_exports[..].potentially_ambiguous_export_star_refs`;
             // that storage is never reallocated while this loop runs (only
             // `cycle_detector`, `log`, `graph.symbols`, and — via the
-            // recursive call below — `import_memo` are mutated).
+            // recursive call below — `import_memo` and
+            // `import_memo_re_exports` are mutated).
             let potentially_ambiguous_export_star_refs: &[crate::ImportData] =
                 advanced.import_data.get();
             saw_ambiguity |= !potentially_ambiguous_export_star_refs.is_empty();
@@ -3994,8 +3995,9 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: `named_imports_ptr` points into the `graph.ast.named_imports`
         // SoA column, which is never reallocated during linking; the loop body
         // never mutates that column (only `imports_to_bind`/`log`/`symbols`/
-        // `meta.probably_typescript_type`/`import_memo`), so the backing
-        // `keys`/`values` slices stay valid for the whole loop.
+        // `meta.probably_typescript_type`/`import_memo`/
+        // `import_memo_re_exports`), so the backing `keys`/`values` slices
+        // stay valid for the whole loop.
         let keys: *const [Ref] = unsafe { (*named_imports_ptr).keys() };
         // SAFETY: same column-validity invariant as `keys` above.
         let values: *const [NamedImport] = unsafe { (*named_imports_ptr).values() };

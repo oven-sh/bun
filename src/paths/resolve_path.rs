@@ -2219,6 +2219,14 @@ impl PosixToWinNormalizer {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
                     let source_root = windows_filesystem_root(source_dir);
+                    // The source root (arbitrarily long for UNC dirs) plus
+                    // the path must fit `buf`; such a join can't exist on NT
+                    // anyway, so fail safe to the un-joined input (which the
+                    // consuming lookup treats as nonexistent) instead of
+                    // writing past the buffer.
+                    if source_root.len() + maybe_posix_path.len() - 1 > buf.len() {
+                        return maybe_posix_path;
+                    }
                     buf[0..source_root.len()].copy_from_slice(source_root);
                     buf[source_root.len()..source_root.len() + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
@@ -2252,6 +2260,11 @@ impl PosixToWinNormalizer {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(mp) {
                     let source_root = windows_filesystem_root(source_dir);
+                    // See resolve_with_external_buf: over-long joins fail
+                    // safe to the un-joined input (+ NUL accounted for here).
+                    if source_root.len() + mp.len() > buf.len() {
+                        return maybe_posix_path;
+                    }
                     buf[0..source_root.len()].copy_from_slice(source_root);
                     buf[source_root.len()..source_root.len() + mp.len() - 1]
                         .copy_from_slice(&mp[1..]);

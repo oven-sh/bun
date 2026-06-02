@@ -4215,8 +4215,14 @@ mod windows_impl {
         // Longer than any path NT can address — reject up front instead of
         // letting the wide conversion below fail-safe to a prefix-only path
         // (mirrors `PathLikeExt` and the Zig-side fix in oven-sh/bun#27775,
-        // which handled `access` as one of its call sites).
-        if !bun_paths::string_paths::fits_in_wide_path_buffer(path.as_bytes()) {
+        // which handled `access` as one of its call sites). `path` may
+        // already carry a `\\?\` prefix (NodeFS::access routes through
+        // `slice_z`, which prepends it) — check the unprefixed form so the
+        // fit budget doesn't count the prefix twice and over-reject paths
+        // just under the limit.
+        if !bun_paths::string_paths::fits_in_wide_path_buffer(
+            bun_paths::string_paths::without_nt_prefix(path.as_bytes()),
+        ) {
             return Err(Error::new(E::ENAMETOOLONG, Tag::access).with_path(path.as_bytes()));
         }
         let mut wbuf = WPathBuffer::default();

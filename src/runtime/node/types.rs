@@ -1208,6 +1208,14 @@ impl PathLikeExt for PathLike {
                 return Ok(strings::to_kernel32_path(buf_u16, s));
             }
             if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
+                // Bail before the cwd resolution + normalization below write
+                // into fixed u8 buffers: UNC-shaped inputs pass through the
+                // resolver untouched and can reach `normalize_buf` at full
+                // MAX_PATH_BYTES length, whose root handling writes one past
+                // the input length.
+                if !strings::fits_in_wide_path_buffer(s) {
+                    return Err(NameTooLong);
+                }
                 // `buf` is the scratch for cwd-resolution; `b` is the pooled
                 // scratch for normalisation; final wide path lands back in `buf`.
                 let resolve = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(

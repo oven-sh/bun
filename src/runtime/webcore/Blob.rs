@@ -1731,12 +1731,17 @@ impl BlobExt for Blob {
                 );
             }
         }
+        // `assignToStream` returned undefined: a direct stream with a
+        // synchronous `pull` already ran to completion inside
+        // `readDirectStream`, so the sink has the byte count.
+        // SAFETY: `file_sink` is still our live +1 ref.
+        let written = unsafe { (*file_sink).received_bytes.get() };
         // SAFETY: release our +1 ref on the sink.
         unsafe { webcore::FileSink::deref(file_sink) };
 
         Ok(JSPromise::resolved_promise_value(
             global_this,
-            JSValue::js_number(0.0),
+            JSValue::js_number(written as f64),
         ))
     }
 

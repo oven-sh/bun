@@ -4739,7 +4739,11 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
         if errno == libc::ENOENT {
             if let Some(trimmed) = exe.as_bytes().strip_suffix(b" (deleted)") {
                 let trimmed = ZBox::from_bytes(trimmed);
-                libc::execve(trimmed.as_ptr(), newargv.as_ptr().cast(), envp.as_ptr().cast());
+                libc::execve(
+                    trimmed.as_ptr(),
+                    newargv.as_ptr().cast(),
+                    envp.as_ptr().cast(),
+                );
                 errno = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
             }
         }

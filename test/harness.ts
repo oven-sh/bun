@@ -8,7 +8,7 @@
 import { gc as bunGC, sleepSync, spawnSync, unsafe, which, write } from "bun";
 import { heapStats } from "bun:jsc";
 import { beforeAll, describe, expect } from "bun:test";
-import { ChildProcess, execSync, fork } from "child_process";
+import { ChildProcess, fork } from "child_process";
 import { readdir, rm, writeFile } from "fs/promises";
 import fs, { closeSync, openSync, rmSync } from "node:fs";
 import os from "node:os";
@@ -923,18 +923,24 @@ export function isDockerEnabled(): boolean {
     return false;
   }
 
-  // Keep `info` outside the try: a throw from `requireDockerInCI` for the
+  // Keep `infoOutput` outside the try: a throw from `requireDockerInCI` for the
   // "exited 0 but no Server Version" case must not be swallowed by the catch
   // (which would re-throw with the wrong "daemon not reachable" reason).
-  let info: Buffer;
+  // Use spawnSync with an argument array (not execSync with a shell string) to
+  // match the rest of this file and avoid any shell interpretation of the path.
+  let infoOutput: string;
   try {
-    info = execSync(`"${dockerCLI}" info`, { stdio: ["ignore", "pipe", "inherit"] });
+    const result = Bun.spawnSync({ cmd: [dockerCLI, "info"], stdout: "pipe", stderr: "inherit" });
+    if (!result.success) {
+      throw new Error("`docker info` exited non-zero");
+    }
+    infoOutput = result.stdout.toString();
   } catch {
     requireDockerInCI("`docker info` failed, so the daemon is not reachable");
     return false;
   }
 
-  if (info.toString().indexOf("Server Version:") !== -1) {
+  if (infoOutput.indexOf("Server Version:") !== -1) {
     return true;
   }
   requireDockerInCI("`docker info` did not report a running daemon (`Server Version:`)");

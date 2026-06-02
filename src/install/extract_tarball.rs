@@ -427,6 +427,10 @@ impl ExtractTarball {
                             // for GitHub tarballs, the root dir is always <user>-<repo>-<commit_id>
                             depth_to_skip: 1,
                             log: PackageManager::verbose_install(),
+                            // Match npm: installed packages never contain symlinks.
+                            // (GitHub tarballs are raw `git archive` output, the only
+                            // install path that reaches symlink entries.)
+                            skip_symlinks: true,
                             ..Default::default()
                         },
                     )?;
@@ -469,6 +473,10 @@ impl ExtractTarball {
                             depth_to_skip: 1,
                             npm: true,
                             log: PackageManager::verbose_install(),
+                            // `npm` already drops non-file entries; set this too so
+                            // the intent (installed packages are symlink-free) is
+                            // explicit and independent of the `npm` filter.
+                            skip_symlinks: true,
                             ..Default::default()
                         },
                     )?;

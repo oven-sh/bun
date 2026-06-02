@@ -1,11 +1,12 @@
 import { spawn } from "bun";
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import { access, chmod, lstat, readdir, readlink, rm, stat, symlink, writeFile } from "fs/promises";
-import { bunExe, bunEnv as env, tempDir } from "harness";
+import { existsSync } from "fs";
+import { access, chmod, lstat, mkdir, readdir, readlink, rm, stat, symlink, writeFile } from "fs/promises";
+import { bunExe, bunEnv as env, isMacOS, tempDir } from "harness";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 import { tmpdir } from "os";
-import { join } from "path";
+import { basename, dirname, join } from "path";
 
 // This test validates the fix for a symlink path traversal vulnerability in tarball extraction.
 // CVE: Path traversal via symlink when installing packages
@@ -521,6 +522,263 @@ describe.concurrent.skipIf(isWindows)("symlink path traversal protection", () =>
     }
   });
 });
+
+it.skipIf(!isMacOS)(
+  "tarball dir/symlink entries cannot escape the extraction root via Unicode-normalization aliasing of an earlier symlink",
+  async () => {
+    // End-to-end security regression: a tarball that tries to escape the
+    // extraction root via an NFC/NFD-aliased symlink chain must leave nothing
+    // outside the root. Two defenses make this true: (1) symlink entries are
+    // never materialized (matching npm), so the aliasing chain can't form; and
+    // (2) even if a symlink were created, the `O_NOFOLLOW_ANY` parent-open guard
+    // would refuse to follow it. On a case-insensitive normalizing filesystem
+    // (APFS) an NFC name and its NFD equivalent are the same on-disk entry but
+    // never byte-compare equal, so the cheap lexical prefix guard alone could be
+    // bypassed — this asserts the stronger guarantee holds regardless.
+    // Explicit escapes so the NFC/NFD distinction is visible in source and
+    // survives any editor/tool that normalizes Unicode on save.
+    const NFC = "\u00e9"; // "é" as one precomposed codepoint, UTF-8: c3 a9
+    const NFD = "e\u0301"; // "é" as "e" + combining acute, UTF-8: 65 cc 81
+    expect(Buffer.from(NFC).equals(Buffer.from(NFD))).toBe(false);
+
+    const victimName = `victim-${Math.random().toString(36).slice(2, 10)}`;
+    const victimLinkName = `victim-link-${Math.random().toString(36).slice(2, 10)}`;
+
+    // Climb far enough to clear `<BUN_TMPDIR>/<tmpname>/` regardless of how the
+    // tmpname is shaped. Anything beyond `installDir` lands in one of its
+    // ancestors, all of which are checked below.
+    const climb = 6;
+    const entries: Parameters<typeof createTarball>[0] = [
+      { name: "test-package/", type: "dir" },
+      {
+        name: "test-package/package.json",
+        type: "file",
+        content: JSON.stringify({ name: "test-package", version: "1.0.0" }),
+      },
+      { name: "test-package/a/", type: "dir" },
+      { name: `test-package/a/${NFC}`, type: "symlink", linkname: ".." },
+    ];
+    let head = "test-package/a";
+    for (let i = 0; i < climb; i++) {
+      head += `/${NFD}`;
+      entries.push({ name: `${head}/${NFC}`, type: "symlink", linkname: ".." });
+    }
+    entries.push({ name: `${head}/${NFD}/${victimName}/`, type: "dir" });
+    entries.push({ name: `${head}/${NFD}/${victimLinkName}`, type: "symlink", linkname: "." });
+    const tarball = createTarball(entries);
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.includes("/tarball/") || url.pathname.endsWith(".tar.gz")) {
+          return new Response(tarball, { headers: { "Content-Type": "application/gzip" } });
+        }
+        if (url.pathname.includes("/repos/")) {
+          return Response.json({ default_branch: "main" });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+
+    using dir = tempDir("nfd-symlink-escape", {});
+    const installDir = String(dir);
+    const tmpDir = join(installDir, "btmp");
+    await mkdir(tmpDir, { recursive: true });
+
+    await writeFile(
+      join(installDir, "package.json"),
+      JSON.stringify({
+        name: "test-app",
+        version: "1.0.0",
+        dependencies: { "test-package": "github:user/repo#main" },
+      }),
+    );
+
+    const escapedPaths: string[] = [];
+    try {
+      const proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: installDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: {
+          ...env,
+          GITHUB_API_URL: `http://localhost:${server.port}`,
+          BUN_INSTALL_CACHE_DIR: join(installDir, ".bun-cache"),
+          BUN_TMPDIR: tmpDir,
+          TMPDIR: tmpDir,
+        },
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      // The install must complete cleanly: the malicious entries are skipped,
+      // not treated as a hard error.
+      if (exitCode !== 0) {
+        console.error("Install failed with exit code:", exitCode);
+        console.error("stdout:", stdout);
+        console.error("stderr:", stderr);
+      }
+
+      // Neither the victim entries nor any `é → ..` link from the chain may
+      // appear above the extraction root. The first two `é` checks alone are
+      // sufficient to prove the chain was followed (one and two levels up).
+      if (existsSync(join(tmpDir, NFC))) escapedPaths.push(join(tmpDir, NFC));
+      if (existsSync(join(installDir, NFC))) escapedPaths.push(join(installDir, NFC));
+      for (let cur = tmpDir; ; cur = dirname(cur)) {
+        if (existsSync(join(cur, victimName))) escapedPaths.push(join(cur, victimName));
+        if (existsSync(join(cur, victimLinkName))) escapedPaths.push(join(cur, victimLinkName));
+        if (cur === dirname(cur)) break;
+      }
+      expect(escapedPaths).toEqual([]);
+
+      // Assert the clean exit before touching the filesystem so a non-zero
+      // exit surfaces here instead of as an opaque ENOENT from `access` below.
+      expect(exitCode).toBe(0);
+
+      // The legitimate package contents are still installed.
+      const pkgDir = join(installDir, "node_modules", "test-package");
+      await access(join(pkgDir, "package.json"));
+    } finally {
+      server.stop();
+      // Belt-and-braces cleanup of anything that escaped above the test root.
+      for (const p of escapedPaths) {
+        await rm(p, { recursive: true, force: true }).catch(() => {});
+      }
+      for (let cur = dirname(installDir); cur !== dirname(cur); cur = dirname(cur)) {
+        const link = join(cur, NFC);
+        // Only remove a link this test could have created: every link the
+        // escaped chain leaves behind is an `é -> ..` symlink, so gate on both
+        // "is a symlink" and "points to `..`" to stay scoped to test artifacts.
+        const isEscapedLink = await lstat(link).then(
+          s => s.isSymbolicLink(),
+          () => false,
+        );
+        if (
+          isEscapedLink &&
+          (await readlink(link).then(
+            t => t === "..",
+            () => false,
+          ))
+        ) {
+          await rm(link, { force: true }).catch(() => {});
+        }
+      }
+    }
+  },
+  60000,
+);
+
+it.skipIf(isWindows)(
+  "does not materialize symlinks from a GitHub tarball (matches npm) while directories and files still extract",
+  async () => {
+    // npm never installs symlinks: registry tarballs are filtered by pacote's
+    // `/Link$/` extract filter, and git/GitHub deps are packed with
+    // `npm-packlist`, whose `onstat` drops anything that isn't a file or
+    // directory. The GitHub path is the only place Bun's extractor reaches a
+    // symlink entry, so it now skips `SymbolicLink` entries there too. This
+    // matches npm and removes the symlink-traversal surface entirely. The
+    // directory entries (and the files inside them) must still be created.
+    const tarball = createTarball([
+      { name: "test-package/", type: "dir" },
+      {
+        name: "test-package/package.json",
+        type: "file",
+        content: JSON.stringify({ name: "test-package", version: "1.0.0" }),
+      },
+      // Symlinks with perfectly safe, in-package targets. Pre-skip these were
+      // created; now they must be dropped like npm does.
+      { name: "test-package/link-to-src", type: "symlink", linkname: "src" },
+      { name: "test-package/src/", type: "dir" },
+      { name: "test-package/src/index.js", type: "file", content: "module.exports = 42;" },
+      { name: "test-package/src/link-to-index", type: "symlink", linkname: "./index.js" },
+      // A directory that follows a symlink entry — still created.
+      { name: "test-package/nested/deep/", type: "dir" },
+      { name: "test-package/nested/deep/leaf.txt", type: "file", content: "inside-nested" },
+    ]);
+
+    const server = Bun.serve({
+      port: 0,
+      fetch(req) {
+        const url = new URL(req.url);
+        if (url.pathname.includes("/tarball/") || url.pathname.endsWith(".tar.gz")) {
+          return new Response(tarball, { headers: { "Content-Type": "application/gzip" } });
+        }
+        if (url.pathname.includes("/repos/")) {
+          return Response.json({ default_branch: "main" });
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    });
+
+    try {
+      using dir = tempDir("github-symlink-skip", {});
+      const installDir = String(dir);
+      // Pin the cache so we can assert against the extraction output directly.
+      // On Linux the cache→node_modules transfer (hardlink) drops symlinks
+      // regardless, so a node_modules-only check wouldn't prove the extractor
+      // skipped them; scanning the cache checks the extraction layer itself.
+      const cacheDir = join(installDir, ".bun-cache");
+
+      await writeFile(
+        join(installDir, "package.json"),
+        JSON.stringify({
+          name: "test-app",
+          version: "1.0.0",
+          dependencies: { "test-package": "github:user/repo#main" },
+        }),
+      );
+
+      const proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: installDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: { ...env, GITHUB_API_URL: `http://localhost:${server.port}`, BUN_INSTALL_CACHE_DIR: cacheDir },
+      });
+
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      if (exitCode !== 0) {
+        console.error("Install failed with exit code:", exitCode);
+        console.error("stdout:", stdout);
+        console.error("stderr:", stderr);
+      }
+      expect(exitCode).toBe(0);
+
+      // Directories and files still extract (into the cache and node_modules).
+      const pkgDir = join(installDir, "node_modules", "test-package");
+      await access(join(pkgDir, "package.json"));
+      await access(join(pkgDir, "src", "index.js"));
+      await access(join(pkgDir, "nested", "deep", "leaf.txt"));
+
+      // None of the package's symlink entries may be materialized — anywhere the
+      // package was written (the extraction cache or node_modules). This is the
+      // extraction-layer guarantee: the symlink entries in the tarball were
+      // skipped. (We match on the entry basenames to ignore Bun's own cache
+      // bookkeeping symlinks, e.g. the `@GH@…` friendly-name links.)
+      const skippedSymlinkNames = new Set(["link-to-src", "link-to-index"]);
+      const symlinksFound: string[] = [];
+      for (const root of [cacheDir, join(installDir, "node_modules", "test-package")]) {
+        const names = await readdir(root, { recursive: true }).catch(() => [] as string[]);
+        for (const name of names) {
+          if (!skippedSymlinkNames.has(basename(name))) continue;
+          const full = join(root, name);
+          const isLink = await lstat(full).then(
+            s => s.isSymbolicLink(),
+            () => false,
+          );
+          if (isLink) symlinksFound.push(full);
+        }
+      }
+      expect(symlinksFound).toEqual([]);
+    } finally {
+      server.stop();
+    }
+  },
+  60000,
+);
 
 it.skipIf(isWindows)(
   "rejects symlink targets that climb through other symlinks from the same archive (.bun-tag write stays inside the package)",

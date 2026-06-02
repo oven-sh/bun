@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, readdirSync, rmSync } from "node:fs";
+import { lstat, readlink } from "node:fs/promises";
 import { join } from "path";
 
 // Minimal ustar tarball builder (pathnames must be <100 bytes).
@@ -547,6 +548,49 @@ describe("Bun.Archive", () => {
           rmSync(windowsAbsPath, { force: true });
         }
       }
+    });
+
+    // The package installer skips symlink entries (to match npm), but that is
+    // scoped to `bun install` via ExtractOptions — the general-purpose
+    // `Bun.Archive.extract()` API must keep materializing symlinks.
+    test.skipIf(isWindows)("creates symlink entries (not scoped to the installer's skip)", async () => {
+      using dir = tempDir("archive-extract-symlink", {});
+
+      // ustar symlink header: typeflag '2' at offset 156, linkname at 157.
+      const symlinkEntry = (name: string, target: string): Buffer => {
+        const h = Buffer.alloc(512);
+        h.write(name, 0, 100, "utf8");
+        h.write("0000777\0", 100);
+        h.write("0000000\0", 108);
+        h.write("0000000\0", 116);
+        h.write("00000000000\0", 124); // size 0
+        h.write("00000000000\0", 136);
+        h.write("        ", 148);
+        h.write("2", 156); // typeflag: symbolic link
+        h.write(target, 157, 100, "utf8");
+        h.write("ustar\0", 257);
+        h.write("00", 263);
+        let sum = 0;
+        for (let i = 0; i < 512; i++) sum += h[i];
+        h.write(sum.toString(8).padStart(6, "0") + "\0 ", 148);
+        return h;
+      };
+      const tarball = new Uint8Array(
+        Buffer.concat([
+          ustarEntry("index.js", Buffer.from("module.exports = 1;")),
+          symlinkEntry("link.js", "index.js"),
+          Buffer.alloc(1024),
+        ]),
+      );
+
+      const archive = new Bun.Archive(tarball);
+      await archive.extract(String(dir));
+
+      const linkPath = join(String(dir), "link.js");
+      const st = await lstat(linkPath);
+      expect(st.isSymbolicLink()).toBe(true);
+      const target = await readlink(linkPath);
+      expect(target).toBe("index.js");
     });
   });
 

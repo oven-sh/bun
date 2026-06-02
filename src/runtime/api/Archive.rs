@@ -844,6 +844,9 @@ impl ExtractContext {
                 close_handles: true,
                 log: false,
                 npm: false,
+                // General-purpose extraction: keep creating symlinks (consistent
+                // with the glob-filtered `extract_to_disk_filtered` path).
+                skip_symlinks: false,
             },
         ) {
             Ok(c) => c,

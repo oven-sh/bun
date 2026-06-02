@@ -768,9 +768,24 @@ fn composite_input_from_js(
             },
             Source::Owned(b) => Ok(CompositeInput::Owned(b.clone())),
             Source::Path(p) => Ok(CompositeInput::Path(p.clone())),
-            Source::Blob(_) => Err(global.throw_invalid_arguments(format_args!(
-                "composite: fd/S3-backed Bun.file overlay — pass `await file.bytes()` or a path string"
-            ))),
+            // A path-backed `Bun.file()` Image resolves like a path string —
+            // the worker reads it at blend time (same store inspection as the
+            // sync `new Response(image)` path in `encode_for_body`). fd/S3
+            // Blobs have no bytes until an async read; refuse those.
+            Source::Blob(strong) => {
+                if let Some(blob) = strong.get().as_class_ref::<Blob>() {
+                    if let Some(store) = blob.store.get() {
+                        if let blob_store::Data::File(file) = &store.data {
+                            if let PathOrFileDescriptor::Path(path) = &file.pathlike {
+                                return Ok(CompositeInput::Path(ZBox::from_bytes(path.slice())));
+                            }
+                        }
+                    }
+                }
+                Err(global.throw_invalid_arguments(format_args!(
+                    "composite: fd/S3-backed Bun.file overlay — pass `await file.bytes()` or a path string"
+                )))
+            }
             // Raw pixels skip the worker's decode: copy them (same call-time
             // contract as every other overlay input) with their dims.
             Source::Raw {

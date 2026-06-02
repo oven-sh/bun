@@ -1849,6 +1849,11 @@ describe("composite()", () => {
     await Bun.write(p, solidPng(2, 2, GREEN));
     ({ data } = await compositePixels(base, [{ image: p }]));
     expect([...rgbaAt(data, 2, 0, 0)]).toEqual(GREEN);
+    // path-backed Bun.file() Image — resolves to its path like a path string
+    ({ data } = await compositePixels(base, [{ image: new Bun.Image(Bun.file(p)) }]));
+    expect([...rgbaAt(data, 2, 0, 0)]).toEqual(GREEN);
+    ({ data } = await compositePixels(base, [{ image: Bun.file(p).image() }]));
+    expect([...rgbaAt(data, 2, 0, 0)]).toEqual(GREEN);
   });
 
   test("JPEG overlay EXIF orientation follows the base's autoOrient", async () => {

@@ -149,7 +149,7 @@ Each layer accepts:
 
 Rules and behavior:
 
-- For a `Bun.file()` / `Bun.s3()` source, pass `await file.bytes()` or the path string — `Blob` values and fd/S3-backed `Image` overlays throw.
+- An `Image` created from a path-backed `Bun.file()` works as an overlay — it resolves to its path, read at blend time. For `Bun.s3()` / fd-backed sources, pass `await file.bytes()` or the path string — raw `Blob` values and fd/S3-backed `Image` overlays throw.
 - An `Image` overlay contributes its **input** bytes; its chained ops are not applied. Encode first (e.g. `await img.png().bytes()`) to transform an overlay. A raw-pixel-sourced `Image` (constructed with a `raw` descriptor) works directly — its pixel buffer is blended as-is, no encode round-trip needed.
 - An overlay must be **no larger than the base** in either dimension — an oversized overlay rejects the terminal with an error, matching sharp.
 - Repeat `composite()` calls **replace** the layer set rather than appending, matching sharp.

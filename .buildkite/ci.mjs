@@ -726,7 +726,9 @@ const SDE_URL = `https://downloadmirror.intel.com/859732/sde-external-${SDE_VERS
  */
 function hasWebKitChanges(options) {
   const { changedFiles = [] } = options;
-  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
+  // The WebKit pin (WEBKIT_VERSION) lives in scripts/build/deps/webkit.ts;
+  // it was previously in cmake/tools/SetupWebKit.cmake, which no longer exists.
+  return changedFiles.some(file => file.includes("scripts/build/deps/webkit.ts"));
 }
 
 /**

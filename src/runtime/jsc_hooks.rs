@@ -3478,7 +3478,14 @@ unsafe fn maybe_auto_watch_file(
     // `is_watcher_enabled()`; cast recovers the concrete type.
     let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
     if watcher
-        .add_file::<true>(input_fd, path.text, hash, loader, bun_sys::Fd::INVALID, None)
+        .add_file::<true>(
+            input_fd,
+            path.text,
+            hash,
+            loader,
+            bun_sys::Fd::INVALID,
+            None,
+        )
         .is_err()
     {
         // Close the fd we just opened on macOS;

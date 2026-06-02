@@ -2683,11 +2683,11 @@ impl<'a> LinkerContext<'a> {
                     "markFileReachableForCodeSplitting(entry: {}): {} {} ({})",
                     entry_points_count,
                     bstr::BStr::new(
-                        &parse_graph.input_files.items_source()[si as usize].path.pretty
+                        &parse_graph.input_files.items_source()[si as usize]
+                            .path
+                            .pretty
                     ),
-                    <&'static str>::from(
-                        parse_graph.ast.items_target()[si as usize].bake_graph()
-                    ),
+                    <&'static str>::from(parse_graph.ast.items_target()[si as usize].bake_graph()),
                     out_dist,
                 );
             }

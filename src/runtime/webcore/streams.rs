@@ -2379,7 +2379,8 @@ impl NetworkSink {
         // Since this is a JSSink, the NewJSSink function does @sizeOf(JSSink) which includes @sizeOf(ArrayBufferSink).
         if let Some(task) = self.task_ref() {
             //TODO: we could do better here
-            return task.buffered.memory_cost();
+            return task.part_buf.capacity()
+                + task.ready_parts.iter().map(|&(_, cap)| cap).sum::<usize>();
         }
         0
     }

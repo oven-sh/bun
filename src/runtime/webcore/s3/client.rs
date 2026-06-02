@@ -57,7 +57,6 @@ use crate::webcore::sink::SinkSignal;
 use crate::webcore::streams::NetworkSink;
 use bun_collections::IntegerBitSet;
 use bun_io::KeepAlive;
-use bun_io::StreamBuffer;
 
 bun_core::declare_scope!(S3UploadStream, visible);
 
@@ -514,7 +513,8 @@ pub(crate) fn writable_stream(
         // Zig pointer field.
         vm: VirtualMachine::get(),
         global_this: global_static,
-        buffered: StreamBuffer::default(),
+        part_buf: Vec::new(),
+        ready_parts: std::collections::VecDeque::new(),
         path: Box::<[u8]>::from(path),
         proxy: if !proxy_url.is_empty() {
             Box::<[u8]>::from(proxy_url)
@@ -883,7 +883,8 @@ pub fn upload_stream(
         // the Zig pointer field.
         vm: VirtualMachine::get(),
         global_this: global_static,
-        buffered: StreamBuffer::default(),
+        part_buf: Vec::new(),
+        ready_parts: std::collections::VecDeque::new(),
         path: Box::<[u8]>::from(path),
         proxy: if !proxy_url.is_empty() {
             Box::<[u8]>::from(proxy_url)

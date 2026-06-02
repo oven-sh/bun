@@ -717,8 +717,9 @@ impl AnyRoute {
                     // *without* deref). `RefPtr<T>` has no `Drop`, so a bit-copy
                     // here keeps the net refcount at 1 — bumping for the map
                     // slot would leak +1 per first-seen HTMLBundle.
-                    // SAFETY: `html_bundle` is the live `RefPtr<HTMLBundle>` from the
-                    // route map; `init` consumes its +1 ref into the new `Route`.
+                    // SAFETY: `html_bundle` is a borrowed pointer to the live
+                    // JS-wrapped `HTMLBundle`; `init` takes its own +1 ref on
+                    // it (released by `Route`'s `Drop`).
                     let route = html_bundle::Route::init(html_bundle);
                     // SAFETY: `route.data` is the just-allocated NonNull (rc=1);
                     // wrap without bumping so the map slot stays non-owning

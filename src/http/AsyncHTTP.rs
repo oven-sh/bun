@@ -657,7 +657,12 @@ fn send_sync_callback(
     if let Some(mut real) = async_http.real {
         // SAFETY: `real` outlives the HTTP-thread copy by construction.
         let real = unsafe { real.as_mut() };
-        real.response = async_http.response;
+        // Don't copy `response` back: it's a bitwise alias of
+        // `metadata.response`, whose buffers are freed when the caller drops
+        // the `HTTPResponseMetadata` returned by `send_sync`, so a stored copy
+        // would dangle. (Zig copied it, but Zig also leaked the metadata.)
+        // No sync caller reads `real.response`; they use the returned value.
+        real.response = None;
         real.request = async_http.request.take();
         real.response_headers = core::mem::take(&mut async_http.response_headers);
         real.response_encoding = async_http.response_encoding;
@@ -679,7 +684,7 @@ fn send_sync_callback(
 }
 
 impl<'a> AsyncHTTP<'a> {
-    pub fn send_sync(&mut self) -> Result<picohttp::Response<'static>, bun_core::Error> {
+    pub fn send_sync(&mut self) -> Result<crate::HTTPResponseMetadata, bun_core::Error> {
         crate::http_thread::init(&Default::default());
 
         // PORT NOTE: Zig leaked `ctx` (never destroyed). `Box::leak` is forbidden
@@ -705,12 +710,11 @@ impl<'a> AsyncHTTP<'a> {
             return Err(err);
         }
         debug_assert!(result.metadata.is_some());
-        // The returned `Response` borrows `metadata.owned_buf` (status text +
-        // header slices). Zig's `sendSync` returns `result.metadata.?.response`
-        // and never `deinit`s the metadata; mirror that by suppressing Drop so
-        // the borrowed buffer outlives the call. `send_sync` is one-shot CLI.
-        let metadata = core::mem::ManuallyDrop::new(result.metadata.unwrap());
-        Ok(metadata.response)
+        // `metadata.response` borrows `metadata.owned_buf` (status text +
+        // header slices), so hand the whole metadata to the caller — its
+        // `Deref` exposes the `Response`, and `Drop` reclaims the buffers
+        // (Zig's `sendSync` returned the bare `Response` and leaked them).
+        Ok(result.metadata.unwrap())
     }
 
     // ──────────────────────────────────────────────────────────────────────

@@ -970,6 +970,15 @@ where
 // `PathLikeExt` / `PathOrFdExt` extension traits.
 pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 
+/// Returned by [`PathLikeExt::slice_w`] / [`PathLikeExt::os_path`] /
+/// [`PathLikeExt::os_path_kernel32`] when the path's UTF-16 form would not
+/// fit a `WPathBuffer` (`strings::fits_in_wide_path_buffer`). NT caps paths
+/// at `PATH_MAX_WIDE` units, so such a path cannot exist on disk — callers
+/// map this to `false`/`ENAMETOOLONG` as appropriate instead of letting the
+/// conversion overflow (mirrors the Zig-side fix in oven-sh/bun#27775).
+#[derive(Debug, Clone, Copy)]
+pub struct NameTooLong;
+
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
 ///
 /// `to_thread_safe` / `into_thread_safe` / `slice` / `estimated_size` are
@@ -986,13 +995,16 @@ pub trait PathLikeExt {
     fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> &'a WStr
+    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
     where
         Self: Sized;
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> &'a OSPathSliceZ
+    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
-    fn os_path_kernel32<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a OSPathSliceZ
+    fn os_path_kernel32<'a>(
+        &'a self,
+        buf: &'a mut PathBuffer,
+    ) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
     fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Option<PathLike>>
@@ -1124,24 +1136,31 @@ impl PathLikeExt for PathLike {
     }
 
     #[inline]
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> &'a WStr {
-        strings::paths::to_w_path(buf, self.slice())
+    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
+        let sliced = self.slice();
+        if !strings::fits_in_wide_path_buffer(sliced) {
+            return Err(NameTooLong);
+        }
+        Ok(strings::paths::to_w_path(buf, sliced))
     }
 
     #[inline]
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> &'a OSPathSliceZ {
+    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
         {
             return self.slice_w(buf);
         }
         #[cfg(not(windows))]
         {
-            self.slice_z_with_force_copy::<false>(buf)
+            Ok(self.slice_z_with_force_copy::<false>(buf))
         }
     }
 
     #[inline]
-    fn os_path_kernel32<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a OSPathSliceZ {
+    fn os_path_kernel32<'a>(
+        &'a self,
+        buf: &'a mut PathBuffer,
+    ) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
         {
             let s = self.slice();
@@ -1156,12 +1175,15 @@ impl PathLikeExt for PathLike {
                 && (s[2] == b'.' || s[2] == b'?')
                 && bun_paths::is_sep_any(s[3])
             {
+                if !strings::fits_in_wide_path_buffer(s) {
+                    return Err(NameTooLong);
+                }
                 // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — 2-byte
                 // alignment is runtime-asserted inside `bytes_as_slice_mut`
                 // (port of Zig `@alignCast`); see PathBuffer doc comment for
                 // why the buffer is always sufficiently aligned in practice.
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return strings::to_kernel32_path(buf_u16, s);
+                return Ok(strings::to_kernel32_path(buf_u16, s));
             }
             if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
                 // `buf` is the scratch for cwd-resolution; `b` is the pooled
@@ -1175,30 +1197,36 @@ impl PathLikeExt for PathLike {
                     resolve,
                     &mut b[..],
                 );
+                if !strings::fits_in_wide_path_buffer(normal) {
+                    return Err(NameTooLong);
+                }
                 // `resolve`'s borrow of `buf` ended at the line above (NLL).
                 // SAFETY: same alignment note as above.
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return strings::to_kernel32_path(buf_u16, normal);
+                return Ok(strings::to_kernel32_path(buf_u16, normal));
             }
             // Handle "." specially since normalizeStringBuf strips it to an empty string
             if s.len() == 1 && s[0] == b'.' {
                 // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return strings::to_kernel32_path(buf_u16, b".");
+                return Ok(strings::to_kernel32_path(buf_u16, b"."));
             }
             let normal = bun_paths::resolve_path::normalize_string_buf::<
                 true,
                 bun_paths::platform::Windows,
                 false,
             >(s, &mut b[..]);
+            if !strings::fits_in_wide_path_buffer(normal) {
+                return Err(NameTooLong);
+            }
             // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
             let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-            return strings::to_kernel32_path(buf_u16, normal);
+            return Ok(strings::to_kernel32_path(buf_u16, normal));
         }
 
         #[cfg(not(windows))]
         {
-            self.slice_z_with_force_copy::<false>(buf)
+            Ok(self.slice_z_with_force_copy::<false>(buf))
         }
     }
 
@@ -1331,10 +1359,8 @@ impl PathLikeExt for PathLike {
             let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
             // Validate the UTF-8 byte length after conversion, since the path
-            // will be stored in a fixed-size PathBuffer (and, on Windows, the
-            // UTF-16 length against the fixed-size wide buffers).
+            // will be stored in a fixed-size PathBuffer.
             Valid::path_string_length(sliced.slice().len(), global)?;
-            Valid::path_utf16_units(sliced.slice(), global)?;
             Valid::path_null_bytes(sliced.slice(), global)?;
 
             let mut sliced = scopeguard::ScopeGuard::into_inner(sliced);
@@ -1349,10 +1375,8 @@ impl PathLikeExt for PathLike {
             let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
             // Validate the UTF-8 byte length after conversion, since the path
-            // will be stored in a fixed-size PathBuffer (and, on Windows, the
-            // UTF-16 length against the fixed-size wide buffers).
+            // will be stored in a fixed-size PathBuffer.
             Valid::path_string_length(sliced.slice().len(), global)?;
-            Valid::path_utf16_units(sliced.slice(), global)?;
             Valid::path_null_bytes(sliced.slice(), global)?;
 
             let mut sliced = scopeguard::ScopeGuard::into_inner(sliced);
@@ -1379,20 +1403,10 @@ impl PathLikeExt for PathLike {
 
 pub struct Valid;
 
-/// Maximum UTF-16 length of a path on Windows, in code units. Windows paths
-/// are converted into fixed wide buffers of `PATH_MAX_WIDE` (32767) units —
-/// the NT maximum path length — before reaching any syscall, so
-/// `MAX_PATH_BYTES` (a UTF-8 *byte* bound, 3×32767+1 to fit the worst-case
-/// UTF-16→UTF-8 expansion) does not by itself keep the converted path inside
-/// those buffers: an all-ASCII path can pass the byte check with up to 98302
-/// units. Reserve room for the longest prefix a converter prepends
-/// (`\??\UNC\`, 8 units), a trailing slash, and the NUL terminator.
-const MAX_PATH_UTF16_UNITS: usize = bun_core::PATH_MAX_WIDE - 10;
-
 impl Valid {
     pub fn path_slice(zig_str: &ZigStringSlice, ctx: &JSGlobalObject) -> JsResult<()> {
         match zig_str.slice().len() {
-            0..=MAX_PATH_BYTES => Self::path_utf16_units(zig_str.slice(), ctx),
+            0..=MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
@@ -1402,25 +1416,6 @@ impl Valid {
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
-    }
-
-    /// Windows only: reject paths whose UTF-16 form exceeds
-    /// [`MAX_PATH_UTF16_UNITS`] with `ENAMETOOLONG`, before they reach the
-    /// UTF-8 → UTF-16 conversion into a fixed `WPathBuffer`. A UTF-16 unit
-    /// consumes at least one UTF-8 byte, so the exact (O(n) SIMD) length is
-    /// only computed for paths longer than the limit in bytes.
-    pub fn path_utf16_units(slice: &[u8], ctx: &JSGlobalObject) -> JsResult<()> {
-        if cfg!(windows)
-            && slice.len() > MAX_PATH_UTF16_UNITS
-            && strings::element_length_utf8_into_utf16(slice) > MAX_PATH_UTF16_UNITS
-        {
-            let mut system_error =
-                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
-                    .to_system_error();
-            system_error.syscall = bun_core::String::DEAD;
-            return Err(ctx.throw_value(system_error.to_error_instance(ctx)));
-        }
-        Ok(())
     }
 
     pub fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
@@ -1447,7 +1442,7 @@ impl Valid {
                 Err(ctx
                     .throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty")))
             }
-            1..=MAX_PATH_BYTES => Self::path_utf16_units(slice, ctx),
+            1..=MAX_PATH_BYTES => Ok(()),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)

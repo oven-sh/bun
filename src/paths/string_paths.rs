@@ -316,6 +316,21 @@ pub fn to_w_dir_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     to_w_path_maybe_dir::<true>(wbuf, utf8)
 }
 
+/// Can `utf8`'s UTF-16 form fit a `WPathBuffer` (`PATH_MAX_WIDE` units, the
+/// NT maximum path length), leaving room for the longest prefix any converter
+/// prepends (`\??\UNC\`, 8 units), a trailing slash, and the NUL? Paths that
+/// fail this cannot exist on disk; callers surface `false`/`ENAMETOOLONG`
+/// instead of converting (mirrors the Zig-side fix in oven-sh/bun#27775).
+///
+/// UTF-8 → UTF-16 never expands the unit count, so the byte count fitting
+/// already proves the fit; the exact (O(n) SIMD) count is only computed for
+/// longer inputs.
+pub fn fits_in_wide_path_buffer(utf8: &[u8]) -> bool {
+    const OVERHEAD: usize = windows::NT_UNC_OBJECT_PREFIX.len() + 2;
+    utf8.len() + OVERHEAD <= crate::PATH_MAX_WIDE
+        || strings::element_length_utf8_into_utf16(utf8) + OVERHEAD <= crate::PATH_MAX_WIDE
+}
+
 pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     let path = if utf8.starts_with(&windows::NT_OBJECT_PREFIX_U8) {
         &utf8[windows::NT_OBJECT_PREFIX_U8.len()..]

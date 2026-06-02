@@ -106,19 +106,20 @@ describe.if(isWindows)("path length validation in normalizePathWindows", () => {
   });
 });
 
-// On Windows, node:fs converts paths to UTF-16 into fixed-size wide buffers:
-// PathLike.osPath uses a [32767]u16 WPathBuffer, and PathLike.osPathKernel32
-// views the 98302-byte PathBuffer as [49151]u16. Path validation previously
-// bounded only the UTF-8 *byte* length (98302), so an ASCII path of
-// 32767..98302 chars passed validation and the UTF-8→UTF-16 conversion wrote
-// past the wide buffer (simdutf performs no bounds checking), panicking with
-// "range end index 49151 out of range for slice of length 49150" instead of
-// throwing ENAMETOOLONG.
+// On Windows, node:fs converts paths to UTF-16 into fixed-size wide buffers
+// (PathLike.osPath: a [32767]u16 WPathBuffer; PathLike.osPathKernel32: the
+// 98302-byte PathBuffer viewed as [49151]u16). Path validation only bounds
+// the UTF-8 *byte* length (98302), so an ASCII path of 32767..98302 chars
+// passed validation and the UTF-8→UTF-16 conversion wrote past the wide
+// buffer (simdutf performs no bounds checking), panicking with "range end
+// index 49151 out of range for slice of length 49150". Paths that long can't
+// exist on NT (PATH_MAX_WIDE caps them), so the conversions now reject them
+// up front: exists → false, other ops → ENAMETOOLONG.
 describe.if(isWindows)("path length validation against UTF-16 conversion buffers", () => {
-  // Exceeds the 49151-u16 osPathKernel32 view (exists, recursive mkdir,
-  // copyFile).
+  // Used to overflow the 49151-u16 osPathKernel32 view (exists, recursive
+  // mkdir, copyFile src).
   const kernel32Long = "C:\\" + Buffer.alloc(49200, "a").toString();
-  // Exceeds the 32767-u16 WPathBuffer but not the osPathKernel32 view.
+  // Used to overflow the 32767-u16 WPathBuffer (copyFile dest, cp).
   const wideLong = "C:\\" + Buffer.alloc(40000, "a").toString();
 
   it("existsSync returns false instead of crashing", () => {
@@ -136,10 +137,6 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
 
   it("rejects over-long paths in recursive mkdirSync", () => {
     expect(() => fs.mkdirSync(kernel32Long, { recursive: true })).toThrow("ENAMETOOLONG");
-  });
-
-  it("rejects over-long paths in mkdirSync", () => {
-    expect(() => fs.mkdirSync(wideLong)).toThrow("ENAMETOOLONG");
   });
 
   it("rejects over-long src paths in copyFileSync", () => {

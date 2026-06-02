@@ -11,10 +11,13 @@ describe.concurrent("crash report command character", () => {
   //   {base}/{version}/{platform char}{command char}{remainder}
   // Expected characters must stay in sync with `Command.Tag.char()`
   // (src/options_types/command_tag.rs) and bun.report's decoder.
-  async function commandCharFromCrash(args: string[], cwd?: string): Promise<string> {
+  async function commandCharFromCrash(args: string[]): Promise<string> {
     using server = Bun.serve({ port: 0, fetch: () => new Response("OK") });
     const base = new URL(server.url).origin;
 
+    // No cwd override: on Windows the crash reporter spawns a detached child
+    // that inherits the crashing process's cwd, which would keep a tempDir
+    // cwd alive past the test and make its cleanup fail with EBUSY.
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
       env: mergeWindowEnvs([
@@ -24,7 +27,6 @@ describe.concurrent("crash report command character", () => {
           BUN_ENABLE_CRASH_REPORTING: "1",
         },
       ]),
-      cwd,
       stdio: ["ignore", "pipe", "pipe"],
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
@@ -54,6 +56,7 @@ describe.concurrent("crash report command character", () => {
         crash_handler.panic();
       `,
     });
-    expect(await commandCharFromCrash(["test", "crash.fixture.test.js"], String(dir))).toBe("t");
+    const testFile = path.join(String(dir), "crash.fixture.test.js");
+    expect(await commandCharFromCrash(["test", testFile])).toBe("t");
   });
 });

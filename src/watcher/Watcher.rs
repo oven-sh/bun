@@ -305,14 +305,18 @@ impl Watcher {
             return Ok(());
         }
         let this_addr = this as usize;
-        // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
-        // via `running`/`close_descriptors` and the thread frees the Box.
         match std::thread::Builder::new()
             .name("FileWatcher".into())
-            .spawn(move || unsafe {
+            .spawn(move || {
+                // SAFETY: `this_addr` is the heap `Box<Watcher>` from init();
+                // it outlives the thread (shutdown()/stop_all_for_exit coordinate
+                // teardown via `running`/`close_descriptors`), and the watcher
+                // thread owns it — `thread_main` reclaims the Box on exit.
                 // thread_main handles its own errors (on_error + frees the Box);
                 // there's no thread to propagate its Result to, so discard it.
-                let _ = Watcher::thread_main(this_addr as *mut Watcher);
+                unsafe {
+                    let _ = Watcher::thread_main(this_addr as *mut Watcher);
+                }
             }) {
             Ok(handle) => {
                 self.thread = Some(handle);

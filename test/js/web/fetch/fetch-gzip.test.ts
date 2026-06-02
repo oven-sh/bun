@@ -293,3 +293,26 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   server.stop();
   done();
 });
+
+describe("empty compressed responses", () => {
+  // A response that declares Content-Encoding but sends zero body bytes must
+  // resolve as an empty body, like Node — not fail with ZlibError.
+  // https://github.com/oven-sh/bun/issues/23149
+  for (const [name, write] of Object.entries({
+    "chunked": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n`,
+    "content-length-0": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\n\r\n`,
+  })) {
+    it(`empty gzip body via ${name} resolves as empty`, async () => {
+      const { createServer } = await import("node:net");
+      const raw = createServer(socket => void socket.write(write));
+      await new Promise<void>(resolve => raw.listen(0, () => resolve()));
+      const port = (raw.address() as { port: number }).port;
+      try {
+        const res = await fetch(`http://127.0.0.1:${port}/`);
+        expect(await res.text()).toBe("");
+      } finally {
+        raw.close();
+      }
+    });
+  }
+});

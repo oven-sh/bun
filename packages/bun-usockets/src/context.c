@@ -441,7 +441,13 @@ struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *g
 
     struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
     us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
-    us_poll_start(p, group->loop, LIBUS_SOCKET_READABLE);
+    /* Mirror us_socket_from_fd: honor the epoll_ctl/kevent return code so a
+     * registration failure is reported rather than yielding a dead listener. */
+    if (us_poll_start_rc(p, group->loop, LIBUS_SOCKET_READABLE) != 0) {
+        *error = errno ? errno : EINVAL;
+        us_poll_free(p, group->loop);
+        return 0;
+    }
 
     struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
     us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);

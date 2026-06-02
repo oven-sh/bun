@@ -133,7 +133,7 @@
 /**
  * @typedef {Object} Serialized
  * @property {"NODE_HANDLE"} cmd
- * @property {unknown} message
+ * @property {unknown} msg
  * @property {"net.Socket" | "net.Server" | "dgram.Socket"} type
  */
 /**
@@ -148,11 +148,18 @@
 export function serialize(message, handle, _options) {
   const net = require("node:net");
   if (handle instanceof net.Server) {
+    // fd passing uses SCM_RIGHTS, which is not implemented on Windows (the IPC
+    // write path drops the fd). Returning null there sends the bare message so
+    // the receiver still gets it (with handle === undefined) instead of a
+    // NODE_HANDLE the peer can never complete.
+    if (process.platform === "win32") return null;
     // The listening socket's fd is duplicated to the child via SCM_RIGHTS.
     // `_handle` (the Bun.listen result) stays alive on the sender until the
     // write completes, keeping the fd valid.
     if (!handle._handle) return null;
-    return [handle._handle, { cmd: "NODE_HANDLE", message, type: "net.Server" }];
+    // `msg` (not `message`) is the user-payload key in Node's NODE_HANDLE wire
+    // format (lib/internal/child_process.js), so a Node peer unwraps it too.
+    return [handle._handle, { cmd: "NODE_HANDLE", msg: message, type: "net.Server" }];
   }
   // net.Socket / dgram.Socket handle passing is not implemented yet; send the
   // message without the handle so the data still arrives.
@@ -168,11 +175,14 @@ export function parseHandle(target, serialized, fd) {
   const emit = $newZigFunction("ipc.zig", "emitHandleIPCMessage", 3);
   const net = require("node:net");
   // const dgram = require("node:dgram");
+  // Node's NODE_HANDLE envelope carries the user payload under `msg`; tolerate
+  // the legacy `message` key in case of a mismatched peer.
+  const userMessage = serialized.msg ?? serialized.message;
   switch (serialized.type) {
     case "net.Server": {
       const server = new net.Server();
       server.listen({ fd }, () => {
-        emit(target, serialized.message, server);
+        emit(target, userMessage, server);
       });
       return;
     }

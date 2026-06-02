@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, nodeExe, tempDir } from "harness";
 
 // Passing a net.Server handle over IPC duplicates the listening socket's fd to
 // the child via SCM_RIGHTS, which is POSIX-only.
@@ -70,5 +70,72 @@ process.on('message', (m, server) => {
   expect(stderr).toBe("");
   expect(stdout).toContain("CHILD_TYPEOF:object");
   expect(stdout).toContain("RESPONSE:Hello from child");
+  expect(exitCode).toBe(0);
+});
+
+// The NODE_HANDLE envelope carries the user payload under `msg` (Node's wire
+// format), so a Bun parent can hand a net.Server to a Node child and the child
+// still receives the accompanying message.
+const node = nodeExe();
+test.skipIf(isWindows || !node)("Bun parent can pass a net.Server (and message) to a Node child", async () => {
+  using dir = tempDir("ipc-server-handle-node", {
+    "parent.js": `
+import { fork } from 'node:child_process';
+import { createServer, connect } from 'node:net';
+
+const child = fork('child.js', [], { execPath: ${JSON.stringify(node)} });
+const server = createServer();
+
+function finish(ok, detail) {
+  console.log(ok ? 'RESPONSE:' + detail : 'FAILED:' + detail);
+  try { child.kill(); } catch {}
+  try { server.close(); } catch {}
+  process.exit(ok ? 0 : 1);
+}
+
+server.listen(0, '127.0.0.1', () => {
+  const port = server.address().port;
+  child.send({ greeting: 'hi-from-bun' }, server);
+  child.on('message', m => {
+    if (typeof m === 'object' && m.error) return finish(false, m.error);
+    if (m !== 'ready') return;
+    server.close();
+    const client = connect(port, '127.0.0.1');
+    client.setEncoding('utf8');
+    let data = '';
+    client.on('data', chunk => { data += chunk; });
+    client.on('end', () => finish(true, data));
+    client.on('error', err => finish(false, 'client:' + err.message));
+  });
+});
+`,
+    "child.js": `
+const net = require('node:net');
+process.on('message', (m, server) => {
+  if (!(server instanceof net.Server)) {
+    process.send({ error: 'handle was ' + typeof server });
+    return;
+  }
+  if (!m || m.greeting !== 'hi-from-bun') {
+    process.send({ error: 'message was ' + JSON.stringify(m) });
+    return;
+  }
+  server.on('connection', socket => socket.end('Hello from node child'));
+  process.send('ready');
+});
+`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "parent.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("RESPONSE:Hello from node child");
   expect(exitCode).toBe(0);
 });

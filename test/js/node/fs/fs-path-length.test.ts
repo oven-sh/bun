@@ -125,6 +125,15 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
     expect(fs.existsSync(kernel32Long)).toBe(false);
   });
 
+  // https://github.com/oven-sh/bun/issues/20258 — drive-letter-less paths of
+  // 49151..98302 chars crashed existsSync (49150 and 98303 already worked:
+  // the former fit the buffer, the latter exceeded the UTF-8 byte check).
+  it("existsSync handles every path length across the buffer boundaries (#20258)", () => {
+    for (const len of [49150, 49151, 64503, 98302, 98303]) {
+      expect(fs.existsSync("A".repeat(len))).toBe(false);
+    }
+  });
+
   it("rejects over-long paths in recursive mkdirSync", () => {
     expect(() => fs.mkdirSync(kernel32Long, { recursive: true })).toThrow("ENAMETOOLONG");
   });

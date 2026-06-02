@@ -2220,11 +2220,13 @@ impl PosixToWinNormalizer {
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
                     let source_root = windows_filesystem_root(source_dir);
                     // The source root (arbitrarily long for UNC dirs) plus
-                    // the path must fit `buf`; such a join can't exist on NT
+                    // the path must fit `buf` with one byte of headroom —
+                    // downstream normalization writes one past the input for
+                    // separator-less UNC roots. Such a join can't exist on NT
                     // anyway, so fail safe to the un-joined input (which the
                     // consuming lookup treats as nonexistent) instead of
                     // writing past the buffer.
-                    if source_root.len() + maybe_posix_path.len() - 1 > buf.len() {
+                    if source_root.len() + maybe_posix_path.len() - 1 >= buf.len() {
                         return maybe_posix_path;
                     }
                     buf[0..source_root.len()].copy_from_slice(source_root);
@@ -2307,9 +2309,13 @@ impl PosixToWinNormalizer {
                         windows_filesystem_root(cwd.as_bytes()).len()
                     };
                     // The cwd root (arbitrarily long for UNC cwds) plus the
-                    // path must fit `buf`; such a combination can't exist on
-                    // NT anyway, so error out instead of writing past it.
-                    if sr_len + maybe_posix_path.len() - 1 > buf.len() {
+                    // path must fit `buf` with one byte of headroom: the
+                    // joined result feeds `normalize_buf`, whose UNC-root
+                    // handling writes one past the input when the cwd is a
+                    // bare share root with no trailing separator. Such a
+                    // combination can't exist on NT anyway, so error out
+                    // instead of writing past a buffer.
+                    if sr_len + maybe_posix_path.len() - 1 >= buf.len() {
                         return Err(bun_core::err!("NameTooLong"));
                     }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]

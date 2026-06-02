@@ -609,9 +609,14 @@ fn message_with_type_and_level_(
         use crate::StringJsc as _;
         let first = vals_slice[0];
         if first.is_string_literal() {
+            // `OwnedString` releases the +1 ref `from_js` hands back (bun_core's
+            // `String` is `Copy` with no `Drop`), so the first arg doesn't leak.
+            let first_str = OwnedString::new(BunString::from_js(first, global)?);
             let mut prefixed = b"Assertion failed: ".to_vec();
-            prefixed.extend_from_slice(&BunString::from_js(first, global)?.to_utf8_bytes());
-            let prefixed = BunString::clone_utf8(&prefixed).to_js(global)?;
+            prefixed.extend_from_slice(&first_str.to_utf8_bytes());
+            // `transfer_to_js` consumes the +1 from `clone_utf8` into the JS
+            // string (no accompanying `deref`/`OwnedString` needed).
+            let prefixed = BunString::clone_utf8(&prefixed).transfer_to_js(global)?;
             _prefix_guard = Some(prefixed.protected());
             assert_args.push(prefixed);
             assert_args.extend_from_slice(&vals_slice[1..print_length]);

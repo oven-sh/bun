@@ -1331,8 +1331,10 @@ impl PathLikeExt for PathLike {
             let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
             // Validate the UTF-8 byte length after conversion, since the path
-            // will be stored in a fixed-size PathBuffer.
+            // will be stored in a fixed-size PathBuffer (and, on Windows, the
+            // UTF-16 length against the fixed-size wide buffers).
             Valid::path_string_length(sliced.slice().len(), global)?;
+            Valid::path_utf16_units(sliced.slice(), global)?;
             Valid::path_null_bytes(sliced.slice(), global)?;
 
             let mut sliced = scopeguard::ScopeGuard::into_inner(sliced);
@@ -1347,8 +1349,10 @@ impl PathLikeExt for PathLike {
             let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
             // Validate the UTF-8 byte length after conversion, since the path
-            // will be stored in a fixed-size PathBuffer.
+            // will be stored in a fixed-size PathBuffer (and, on Windows, the
+            // UTF-16 length against the fixed-size wide buffers).
             Valid::path_string_length(sliced.slice().len(), global)?;
+            Valid::path_utf16_units(sliced.slice(), global)?;
             Valid::path_null_bytes(sliced.slice(), global)?;
 
             let mut sliced = scopeguard::ScopeGuard::into_inner(sliced);
@@ -1375,10 +1379,20 @@ impl PathLikeExt for PathLike {
 
 pub struct Valid;
 
+/// Maximum UTF-16 length of a path on Windows, in code units. Windows paths
+/// are converted into fixed wide buffers of `PATH_MAX_WIDE` (32767) units —
+/// the NT maximum path length — before reaching any syscall, so
+/// `MAX_PATH_BYTES` (a UTF-8 *byte* bound, 3×32767+1 to fit the worst-case
+/// UTF-16→UTF-8 expansion) does not by itself keep the converted path inside
+/// those buffers: an all-ASCII path can pass the byte check with up to 98302
+/// units. Reserve room for the longest prefix a converter prepends
+/// (`\??\UNC\`, 8 units), a trailing slash, and the NUL terminator.
+const MAX_PATH_UTF16_UNITS: usize = bun_core::PATH_MAX_WIDE - 10;
+
 impl Valid {
     pub fn path_slice(zig_str: &ZigStringSlice, ctx: &JSGlobalObject) -> JsResult<()> {
         match zig_str.slice().len() {
-            0..=MAX_PATH_BYTES => Ok(()),
+            0..=MAX_PATH_BYTES => Self::path_utf16_units(zig_str.slice(), ctx),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
@@ -1388,6 +1402,25 @@ impl Valid {
                 Err(ctx.throw_value(system_error.to_error_instance(ctx)))
             }
         }
+    }
+
+    /// Windows only: reject paths whose UTF-16 form exceeds
+    /// [`MAX_PATH_UTF16_UNITS`] with `ENAMETOOLONG`, before they reach the
+    /// UTF-8 → UTF-16 conversion into a fixed `WPathBuffer`. A UTF-16 unit
+    /// consumes at least one UTF-8 byte, so the exact (O(n) SIMD) length is
+    /// only computed for paths longer than the limit in bytes.
+    pub fn path_utf16_units(slice: &[u8], ctx: &JSGlobalObject) -> JsResult<()> {
+        if cfg!(windows)
+            && slice.len() > MAX_PATH_UTF16_UNITS
+            && strings::element_length_utf8_into_utf16(slice) > MAX_PATH_UTF16_UNITS
+        {
+            let mut system_error =
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                    .to_system_error();
+            system_error.syscall = bun_core::String::DEAD;
+            return Err(ctx.throw_value(system_error.to_error_instance(ctx)));
+        }
+        Ok(())
     }
 
     pub fn path_string_length(len: usize, ctx: &JSGlobalObject) -> JsResult<()> {
@@ -1414,7 +1447,7 @@ impl Valid {
                 Err(ctx
                     .throw_invalid_arguments(format_args!("Invalid path buffer: can't be empty")))
             }
-            1..=MAX_PATH_BYTES => Ok(()),
+            1..=MAX_PATH_BYTES => Self::path_utf16_units(slice, ctx),
             _ => {
                 let mut system_error =
                     bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)

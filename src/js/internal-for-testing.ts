@@ -317,6 +317,18 @@ export const stringsInternals = {
   ) => string,
 };
 
+export const pathsInternals = {
+  /**
+   * Calls `bun.strings.toKernel32Path` with the Windows-sized wide buffer
+   * `PathLike.osPathKernel32` uses (a PathBuffer reinterpreted as u16), so the
+   * conversion's bounds handling — over-long paths must yield "" instead of
+   * writing past the buffer — is exercisable on all platforms.
+   */
+  toKernel32Path: $newZigFunction("paths/string_paths.zig", "TestingAPIs.jsToKernel32Path", 1) as (
+    path: string,
+  ) => string,
+};
+
 export const fetchH2Internals = {
   liveCounts: $newZigFunction("http/H2Client.zig", "TestingAPIs.liveCounts", 0) as () => {
     sessions: number;

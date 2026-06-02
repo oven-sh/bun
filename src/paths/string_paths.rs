@@ -207,6 +207,14 @@ pub fn to_w_path_normalize_auto_extend<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> 
 pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
     let mut renormalized = crate::path_buffer_pool::get();
 
+    // Longer than the pooled scratch buffer (and than any path the OS can
+    // address) — fail-safe to "" like `to_w_path_maybe_dir` does, instead of
+    // panicking in the `normalize_slashes_only` copy below.
+    if utf8.len() > renormalized.len() {
+        wbuf[0] = 0;
+        return wstr_in_buf(wbuf, 0);
+    }
+
     let mut path_to_use = normalize_slashes_only(&mut renormalized[..], utf8, b'\\');
 
     // is there a trailing slash? Let's remove it before converting to UTF-16
@@ -218,6 +226,14 @@ pub fn to_w_path_normalized<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
 }
 
 pub(crate) fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &'a WStr {
+    // Input (plus the NUL) doesn't fit in `wbuf` — fail-safe to "" like
+    // `to_w_path_maybe_dir` does, instead of panicking in the
+    // `normalize_slashes_only_t` copy below.
+    if path.len() >= wbuf.len() {
+        wbuf[0] = 0;
+        return wstr_in_buf(wbuf, 0);
+    }
+
     // PORT NOTE: reshaped for borrowck — Zig wrote into wbuf and then re-sliced wbuf;
     // here we capture the length and re-derive the mutable slice.
     let len = {
@@ -329,9 +345,25 @@ pub(crate) fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
 
     let cap = wbuf.len().saturating_sub(1 + (ADD_TRAILING_LASH as usize));
     // PORT NOTE: Zig used `bun.simdutf.convert.utf8.to.utf16.le.with_errors`;
-    // route through `crate::strings::convert_utf8_to_utf16_in_buffer` (same
+    // route through the checked `try_convert_utf8_to_utf16_in_buffer` (same
     // simdutf primitive + WTF-8 fallback) to avoid a `bun_simdutf` crate dep.
-    let mut count = crate::strings::convert_utf8_to_utf16_in_buffer(&mut wbuf[..cap], utf8).len();
+    //
+    // Over-long input is fail-safed to "" instead of overflowing: the Zig
+    // original handed simdutf a buffer it could write past, silently
+    // corrupting the stack once a path's UTF-16 form exceeded the wide
+    // buffer (32767 units for `WPathBuffer`, i.e. longer than any path NT
+    // can address). The empty result makes the consuming syscall fail
+    // cleanly; JS-facing paths are rejected with ENAMETOOLONG before they
+    // get here (`Valid` in `runtime/node/types.rs`). Prefixing wrappers
+    // (`to_kernel32_path`, `to_nt_path`, …) may then yield just their
+    // prefix, which likewise fails at the syscall.
+    let Some(converted) =
+        crate::strings::try_convert_utf8_to_utf16_in_buffer(&mut wbuf[..cap], utf8)
+    else {
+        wbuf[0] = 0;
+        return wstr_in_buf(wbuf, 0);
+    };
+    let mut count = converted.len();
 
     // Many Windows APIs expect normalized path slashes, particularly when the
     // long path prefix is added or the nt object prefix. To make this easier,

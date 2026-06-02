@@ -576,8 +576,7 @@ describe("DiffieHellman", () => {
     expect(dh.setPrivateKey.name).toBe("setPrivateKey");
   });
 
-  it("createDiffieHellman throws (not returns) on invalid prime size", () => {
-    // Regression: the DiffieHellman constructor returned the TypeError as a value instead of throwing it.
+  it("createDiffieHellman throws on invalid prime size", () => {
     let caught;
     try {
       crypto.createDiffieHellman(2);
@@ -587,6 +586,20 @@ describe("DiffieHellman", () => {
     expect(caught).toBeInstanceOf(TypeError);
     expect(caught.code).toBe("ERR_INVALID_ARG_VALUE");
     expect(caught.message).toBe("Invalid DH parameters");
+  });
+
+  it("createDiffieHellman throws when generator is non-numeric with numeric prime", () => {
+    // String generators are accepted in the buffer-prime branch (as the encoding arg), so the
+    // early type guard lets them through; the strict numeric check only fires in this branch.
+    let caught;
+    try {
+      crypto.createDiffieHellman(1024, "abc");
+    } catch (e) {
+      caught = e;
+    }
+    expect(caught).toBeInstanceOf(TypeError);
+    expect(caught.code).toBe("ERR_INVALID_ARG_TYPE");
+    expect(caught.message).toBe("Second argument must be an int32");
   });
 });
 

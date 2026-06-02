@@ -275,6 +275,27 @@ pub fn decode_binary_value<Context: ReaderContext>(
                                 return Err(bun_core::err!("InvalidBinaryValue"));
                             }
                         }
+                        if time.microseconds > 0 {
+                            // The 12-byte form carries microseconds; emit as a fractional
+                            // part zero-padded to 6 digits with trailing zeros stripped,
+                            // matching the mysql2 driver and MySQL's own TIME format
+                            // ([-][h]hh:mm:ss[.u[u[u[u[u[u]]]]]]).
+                            let mut frac = [0u8; 6];
+                            let mut us = time.microseconds;
+                            let mut i = 6;
+                            while i > 0 {
+                                i -= 1;
+                                frac[i] = b'0' + (us % 10) as u8;
+                                us /= 10;
+                            }
+                            let mut end = 6;
+                            while end > 1 && frac[end - 1] == b'0' {
+                                end -= 1;
+                            }
+                            if w.write_all(b".").is_err() || w.write_all(&frac[..end]).is_err() {
+                                return Err(bun_core::err!("InvalidBinaryValue"));
+                            }
+                        }
                         let remaining = w.len();
                         break 'brk &buffer[..32 - remaining];
                     };

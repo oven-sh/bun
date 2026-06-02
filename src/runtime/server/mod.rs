@@ -1470,19 +1470,32 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     // same crate, separate file. Kept there alongside `on_reload`/`reload_static_routes`
     // so the Zig diff stays side-by-side.
 
-    pub fn on_static_request_complete(&mut self) {
-        self.pending_requests -= 1;
-        self.deinit_if_we_can();
+    /// Takes `this: *mut Self`, not `&mut self`: completing the last pending
+    /// request may free the server synchronously (`deinit_if_we_can` →
+    /// `schedule_deinit` → `deinit` when the VM is shutting down), and
+    /// deallocating while a `&mut self` argument is still protected is UB
+    /// under Stacked Borrows / Tree Borrows — see the `borrow = ptr` rule in
+    /// src/CLAUDE.md.
+    pub(crate) fn on_static_request_complete(this: *mut Self) {
+        // SAFETY: `this` is the live heap server pointer; the raw field
+        // access ends before `deinit_if_we_can`, which may free `*this`.
+        unsafe { (*this).pending_requests -= 1 };
+        Self::deinit_if_we_can(this);
     }
 
+    /// Raw-pointer shape for the same reason as [`Self::on_static_request_complete`].
     #[inline]
-    pub fn on_request_complete(&mut self) {
-        // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
-        // for the server's lifetime); `.event_loop()` returns the VM-owned
-        // `*mut EventLoop`. Single-threaded JS context, no aliasing `&mut`.
-        unsafe { (*(*self.vm_mut()).event_loop()).process_gc_timer() };
-        self.pending_requests -= 1;
-        self.deinit_if_we_can();
+    pub(crate) fn on_request_complete(this: *mut Self) {
+        // SAFETY: `this` is the live heap server pointer. `vm_mut()` is the
+        // process-static `*mut VirtualMachine` (non-null for the server's
+        // lifetime); `.event_loop()` returns the VM-owned `*mut EventLoop`.
+        // Single-threaded JS context, no aliasing `&mut`. All access into
+        // `*this` ends before `deinit_if_we_can`, which may free `*this`.
+        unsafe {
+            (*(*(*this).vm_mut()).event_loop()).process_gc_timer();
+            (*this).pending_requests -= 1;
+        }
+        Self::deinit_if_we_can(this);
     }
 
     pub fn active_sockets_count(&self) -> u32 {
@@ -1615,112 +1628,167 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         self.stop_listening(abrupt);
-        self.deinit_if_we_can();
+        // `stop` is only reachable through a live JS wrapper (`server.stop()`
+        // / `Symbol.asyncDispose`), so `js_value` is never `Finalized` here
+        // and `deinit_if_we_can` cannot take the synchronous-free path while
+        // this frame's `&mut self` is protected.
+        Self::deinit_if_we_can(std::ptr::from_mut::<Self>(self));
     }
 
+    /// Takes `this: *mut Self`, not `&mut self`: when the JS wrapper has
+    /// already been finalized this may free the server synchronously (via
+    /// `schedule_deinit` while the VM is shutting down). Deallocating while a
+    /// `&mut self` argument is still protected is UB under Stacked Borrows /
+    /// Tree Borrows, so all field access is scoped to end before the
+    /// potentially-freeing call — the `borrow = ptr` rule in src/CLAUDE.md;
+    /// same shape as `Watcher::thread_main`.
     #[inline]
-    pub fn deinit_if_we_can(&mut self) {
-        httplog!(
-            "deinitIfWeCan. requests={}, listener={}, websockets={}, has_handled_all_closed_promise={}, all_closed_promise={}, has_js_deinited={}",
-            self.pending_requests,
-            if self.listener.is_none() {
-                "null"
-            } else {
-                "some"
-            },
-            if self.has_active_web_sockets() {
-                "active"
-            } else {
-                "no"
-            },
-            self.flags
-                .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE),
-            if self.all_closed_promise.has_value() {
-                "has"
-            } else {
-                "no"
-            },
-            matches!(self.js_value, jsc::JsRef::Finalized),
-        );
-
-        if self.pending_requests == 0
-            && !self.has_listener()
-            && !self.has_active_web_sockets()
-            && !self
-                .flags
-                .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE)
-            && self.all_closed_promise.has_value()
-            // `ServerAllConnectionsClosedTask::run_from_js_thread` early-returns
-            // (without resolving the promise) when the VM is shutting down —
-            // see the `if !vm.is_shutting_down()` gate there. Skip the
-            // allocation entirely so a `Server::finalize()` that fires during
-            // `lastChanceToFinalize()` doesn't strand a `Box` (and its
-            // `JSPromiseStrong`) that no event-loop tick will ever drain.
-            && !self.vm().is_shutting_down()
-        {
-            httplog!("schedule other promise");
-            // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
-            // again before the task has run.
-            self.flags
-                .insert(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE);
-
-            let global = self.global_this();
-            let vm_ref = jsc::VirtualMachine::get_mut();
-            ServerAllConnectionsClosedTask::schedule(
-                ServerAllConnectionsClosedTask {
-                    global_object: self.global_this,
-                    // Duplicate the Strong handle so that we can hold two independent strong references to it.
-                    promise: jsc::JSPromiseStrong::from_value(
-                        self.all_closed_promise.value(),
-                        global,
-                    ),
-                    tracker: jsc::AsyncTaskTracker::init(vm_ref),
+    pub(crate) fn deinit_if_we_can(this: *mut Self) {
+        let can_deinit = {
+            // SAFETY: `this` is the live heap server pointer and we are on
+            // the JS thread with exclusive access; this is the only live
+            // reference into `*this` and it ends with the enclosing block.
+            let me = unsafe { &mut *this };
+            httplog!(
+                "deinitIfWeCan. requests={}, listener={}, websockets={}, has_handled_all_closed_promise={}, all_closed_promise={}, has_js_deinited={}",
+                me.pending_requests,
+                if me.listener.is_none() {
+                    "null"
+                } else {
+                    "some"
                 },
-                vm_ref,
+                if me.has_active_web_sockets() {
+                    "active"
+                } else {
+                    "no"
+                },
+                me.flags
+                    .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE),
+                if me.all_closed_promise.has_value() {
+                    "has"
+                } else {
+                    "no"
+                },
+                matches!(me.js_value, jsc::JsRef::Finalized),
             );
-        }
-        if self.pending_requests == 0 && !self.has_listener() && !self.has_active_web_sockets() {
-            if let Some(ws) = self.config.websocket.as_mut() {
-                ws.handler.app = None;
-            }
-            self.unref();
 
-            // Detach DevServer. This is needed because there are aggressive
-            // tests that check for DevServer memory soundness. Keeping the JS
-            // binding alive should not pin `dev.memory_cost()` bytes.
-            if let Some(dev) = self.dev_server.take() {
-                if let Some(app) = self.app {
-                    // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                    bun_opaque::opaque_deref_mut(app).clear_routes();
+            if me.pending_requests == 0
+                && !me.has_listener()
+                && !me.has_active_web_sockets()
+                && !me
+                    .flags
+                    .contains(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE)
+                && me.all_closed_promise.has_value()
+                // `ServerAllConnectionsClosedTask::run_from_js_thread` early-returns
+                // (without resolving the promise) when the VM is shutting down —
+                // see the `if !vm.is_shutting_down()` gate there. Skip the
+                // allocation entirely so a `Server::finalize()` that fires during
+                // `lastChanceToFinalize()` doesn't strand a `Box` (and its
+                // `JSPromiseStrong`) that no event-loop tick will ever drain.
+                && !me.vm().is_shutting_down()
+            {
+                httplog!("schedule other promise");
+                // use a flag here instead of `this.all_closed_promise.get().isHandled(vm)` to prevent the race condition of this block being called
+                // again before the task has run.
+                me.flags.insert(ServerFlags::HAS_HANDLED_ALL_CLOSED_PROMISE);
+
+                let global = me.global_this();
+                let vm_ref = jsc::VirtualMachine::get_mut();
+                ServerAllConnectionsClosedTask::schedule(
+                    ServerAllConnectionsClosedTask {
+                        global_object: me.global_this,
+                        // Duplicate the Strong handle so that we can hold two independent strong references to it.
+                        promise: jsc::JSPromiseStrong::from_value(
+                            me.all_closed_promise.value(),
+                            global,
+                        ),
+                        tracker: jsc::AsyncTaskTracker::init(vm_ref),
+                    },
+                    vm_ref,
+                );
+            }
+            if me.pending_requests == 0 && !me.has_listener() && !me.has_active_web_sockets() {
+                if let Some(ws) = me.config.websocket.as_mut() {
+                    ws.handler.app = None;
                 }
-                drop(dev); // dev.deinit()
-            }
+                me.unref();
 
-            // Only free the memory if the JS reference has been freed too.
-            if matches!(self.js_value, jsc::JsRef::Finalized) {
-                self.schedule_deinit();
+                // Detach DevServer. This is needed because there are aggressive
+                // tests that check for DevServer memory soundness. Keeping the JS
+                // binding alive should not pin `dev.memory_cost()` bytes.
+                if let Some(dev) = me.dev_server.take() {
+                    if let Some(app) = me.app {
+                        // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                        bun_opaque::opaque_deref_mut(app).clear_routes();
+                    }
+                    drop(dev); // dev.deinit()
+                }
+
+                // Only free the memory if the JS reference has been freed too.
+                matches!(me.js_value, jsc::JsRef::Finalized)
+            } else {
+                false
             }
+        };
+        if can_deinit {
+            Self::schedule_deinit(this);
         }
     }
 
-    pub fn schedule_deinit(&mut self) {
-        if self.flags.contains(ServerFlags::DEINIT_SCHEDULED) {
-            httplog!("scheduleDeinit (again)");
-            return;
-        }
-        self.flags.insert(ServerFlags::DEINIT_SCHEDULED);
-        httplog!("scheduleDeinit");
+    /// Takes `this: *mut Self`, not `&mut self`: when the VM is shutting down
+    /// this frees the server synchronously via [`Self::deinit`], and
+    /// deallocating while a `&mut self` argument is still protected is UB
+    /// under Stacked Borrows / Tree Borrows (the `borrow = ptr` rule in
+    /// src/CLAUDE.md). All field access happens through a scoped reborrow
+    /// that ends before the freeing call.
+    pub(crate) fn schedule_deinit(this: *mut Self) {
+        {
+            // SAFETY: `this` is the live heap server pointer and we are on
+            // the JS thread with exclusive access; this is the only live
+            // reference into `*this` and it ends with the enclosing block.
+            let me = unsafe { &mut *this };
+            if me.flags.contains(ServerFlags::DEINIT_SCHEDULED) {
+                httplog!("scheduleDeinit (again)");
+                return;
+            }
+            me.flags.insert(ServerFlags::DEINIT_SCHEDULED);
+            httplog!("scheduleDeinit");
 
-        // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
-        // for the server's lifetime); single-threaded JS context, no aliasing `&mut`.
-        let vm = unsafe { &mut *self.vm_mut() };
+            // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine` (non-null
+            // for the server's lifetime); single-threaded JS context, no aliasing `&mut`.
+            let vm = unsafe { &mut *me.vm_mut() };
 
-        if vm.is_shutting_down() {
+            if !vm.is_shutting_down() {
+                if !me.flags.contains(ServerFlags::TERMINATED) {
+                    // App.close can cause finalizers to run.
+                    // scheduleDeinit can be called inside a finalizer.
+                    // Therefore, we split it into two tasks.
+                    me.flags.insert(ServerFlags::TERMINATED);
+                    let app = me.app.unwrap();
+                    vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(app, |app| {
+                        // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
+                        bun_opaque::opaque_deref_mut(app).close();
+                        Ok(())
+                    }));
+                }
+
+                vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
+                    this,
+                    |this| {
+                        // SAFETY: `this` is the unique owning server pointer enqueued
+                        // above; the task runs once on the JS thread.
+                        Self::deinit(this);
+                        Ok(())
+                    },
+                ));
+                return;
+            }
+
             // The VM is shutting down (`is_shutting_down` is set in `on_exit`,
             // before `Zig__GlobalObject__destructOnExit`'s final GC /
             // `lastChanceToFinalize()` — typically we get here from a server
             // wrapper finalizer during that last collection): the event loop
-            // will never tick again, so the App.close + deinit task pair below would
+            // will never tick again, so the App.close + deinit task pair above would
             // be freed *unrun* by `EventLoop::deinit()` and the entire server
             // graph (config, user_routes, HTMLBundle routes, …) would leak.
             // Run both steps synchronously instead, preserving the
@@ -1732,43 +1800,20 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // active websockets, and `Listener` finalizers already
             // `closeAll()` synchronously on this same path (their closed
             // sockets are drained right after `destructOnExit`).
-            if !self.flags.contains(ServerFlags::TERMINATED) {
-                self.flags.insert(ServerFlags::TERMINATED);
-                if let Some(app) = self.app {
+            if !me.flags.contains(ServerFlags::TERMINATED) {
+                me.flags.insert(ServerFlags::TERMINATED);
+                if let Some(app) = me.app {
                     // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                     bun_opaque::opaque_deref_mut(app).close();
                 }
             }
-            // SAFETY: `self` is the unique heap server pointer (its JS wrapper
-            // has been finalized — `schedule_deinit` is only reached with
-            // `js_value == Finalized`). `deinit` frees it; `self` must not be
-            // touched after this call, so return immediately.
-            Self::deinit(std::ptr::from_mut::<Self>(self));
-            return;
         }
-
-        if !self.flags.contains(ServerFlags::TERMINATED) {
-            // App.close can cause finalizers to run.
-            // scheduleDeinit can be called inside a finalizer.
-            // Therefore, we split it into two tasks.
-            self.flags.insert(ServerFlags::TERMINATED);
-            let app = self.app.unwrap();
-            vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(app, |app| {
-                // S008: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).close();
-                Ok(())
-            }));
-        }
-
-        vm.enqueue_task(bun_event_loop::ManagedTask::ManagedTask::new(
-            std::ptr::from_mut::<Self>(self),
-            |this| {
-                // SAFETY: `this` is the unique owning server pointer enqueued
-                // above; the task runs once on the JS thread.
-                Self::deinit(this);
-                Ok(())
-            },
-        ));
+        // SAFETY: `this` is the unique heap server pointer (its JS wrapper
+        // has been finalized — `schedule_deinit` is only reached with
+        // `js_value == Finalized`) and the scoped reborrow above has ended,
+        // so no reference into `*this` is live. `deinit` frees it; `this`
+        // must not be touched after this call.
+        Self::deinit(this);
     }
 
     pub fn on_listen(&mut self, socket: Option<*mut uws_sys::app::ListenSocket<SSL>>) {
@@ -3183,7 +3228,12 @@ pub trait ServerLike {
     /// trips `invalid_reference_casting`.
     fn vm_mut(&self) -> *mut jsc::VirtualMachine;
     fn config(&self) -> &ServerConfig;
-    fn on_request_complete(&mut self);
+    /// Raw `*mut Self`, not `&mut self`: completing the last pending request
+    /// can free the server synchronously during VM shutdown
+    /// (`deinit_if_we_can` → `schedule_deinit` → `deinit`), and no `&mut`
+    /// into the allocation may be protected when that happens — the
+    /// `borrow = ptr` rule in src/CLAUDE.md.
+    fn on_request_complete(this: *mut Self);
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
     fn js_value(&self) -> &jsc::JsRef;
     fn h3_alt_svc(&self) -> Option<&[u8]>;
@@ -3220,8 +3270,8 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
         &self.config
     }
     #[inline]
-    fn on_request_complete(&mut self) {
-        Self::on_request_complete(self)
+    fn on_request_complete(this: *mut Self) {
+        Self::on_request_complete(this)
     }
     #[inline]
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {
@@ -3398,6 +3448,40 @@ macro_rules! any_server_dispatch_mut {
     }};
 }
 
+/// Dispatch over the four `NewServer` monomorphizations as the typed raw
+/// pointer (`$s: *mut NewServer<SSL, DEBUG>`, no reference materialized).
+/// For calls that may free the server (`on_request_complete` →
+/// `deinit_if_we_can` → `schedule_deinit` → `deinit` during VM shutdown):
+/// deallocating while any `&`/`&mut` into the allocation is protected is
+/// Stacked-Borrows UB, so these paths stay raw end-to-end (the `borrow = ptr`
+/// rule in src/CLAUDE.md). The body is monomorphized four times, so
+/// `NewServer::method($s, …)` infers `<SSL, DEBUG>` from `$s`.
+macro_rules! any_server_dispatch_ptr {
+    ($self:expr, |$s:ident| $body:expr) => {{
+        let this = $self;
+        // ptr was produced by `AnyServer::from` for the matching tag and is
+        // non-null while the server is alive; the callee derefs it.
+        match this.tag {
+            AnyServerTag::HTTPServer => {
+                let $s = this.ptr.cast::<HTTPServer>();
+                $body
+            }
+            AnyServerTag::HTTPSServer => {
+                let $s = this.ptr.cast::<HTTPSServer>();
+                $body
+            }
+            AnyServerTag::DebugHTTPServer => {
+                let $s = this.ptr.cast::<DebugHTTPServer>();
+                $body
+            }
+            AnyServerTag::DebugHTTPSServer => {
+                let $s = this.ptr.cast::<DebugHTTPSServer>();
+                $body
+            }
+        }
+    }};
+}
+
 /// Dispatch over the four `NewServer` monomorphizations, simultaneously
 /// downcasting an [`uws::AnyResponse`] to the matching `*mut Response<SSL>`.
 ///
@@ -3541,11 +3625,11 @@ impl AnyServer {
     }
 
     pub fn on_request_complete(&mut self) {
-        any_server_dispatch_mut!(self, |s| s.on_request_complete())
+        any_server_dispatch_ptr!(self, |s| NewServer::on_request_complete(s))
     }
 
     pub fn on_static_request_complete(&mut self) {
-        any_server_dispatch_mut!(self, |s| s.on_static_request_complete())
+        any_server_dispatch_ptr!(self, |s| NewServer::on_static_request_complete(s))
     }
 
     pub fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer> {

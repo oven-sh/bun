@@ -855,7 +855,8 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       });
 
       expect(await Bun.write(filePath, stream)).toBe(0);
-      expect(Bun.file(filePath).size).toBe(0);
+      expect(await Bun.file(filePath).exists()).toBe(true);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array(0));
     });
 
     it("writes the values of an async iterable", async () => {
@@ -887,9 +888,10 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       expect(() => Bun.write(filePath, stream)).toThrow("ReadableStream has already been used");
     });
 
-    it("rejects on a locked stream", async () => {
+    it("throws on a locked stream without touching the destination", async () => {
       using dir = tempDir("bun-write-locked-stream", {});
       const filePath = join(String(dir), "out.bin");
+      await Bun.write(filePath, "precious contents");
       const stream = new ReadableStream({
         start(controller) {
           controller.enqueue(new Uint8Array([1]));
@@ -898,7 +900,55 @@ int posix_fadvise(int fd, off_t offset, off_t len, int advice) {
       });
       stream.getReader();
 
-      expect(async () => await Bun.write(filePath, stream)).toThrow("ReadableStream is locked");
+      expect(() => Bun.write(filePath, stream)).toThrow("ReadableStream is locked");
+      // the destination must not have been created-or-truncated first
+      expect(await Bun.file(filePath).text()).toBe("precious contents");
+    });
+
+    it("creates parent directories by default", async () => {
+      using dir = tempDir("bun-write-stream-createpath", {});
+      const filePath = join(String(dir), "made", "up", "dirs", "out.bin");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]));
+          controller.close();
+        },
+      });
+
+      expect(await Bun.write(filePath, stream)).toBe(3);
+      expect(await Bun.file(filePath).bytes()).toEqual(new Uint8Array([1, 2, 3]));
+    });
+
+    it("rejects with ENOENT when createPath is false", async () => {
+      using dir = tempDir("bun-write-stream-no-createpath", {});
+      const filePath = join(String(dir), "does", "not", "exist", "out.bin");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1]));
+          controller.close();
+        },
+      });
+
+      try {
+        await Bun.write(filePath, stream, { createPath: false });
+        expect.unreachable();
+      } catch (e) {
+        expect(e.code).toBe("ENOENT");
+      }
+    });
+
+    it.skipIf(isWindows)("applies the mode option to a newly created file", async () => {
+      using dir = tempDir("bun-write-stream-mode", {});
+      const filePath = join(String(dir), "out.bin");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1]));
+          controller.close();
+        },
+      });
+
+      expect(await Bun.write(filePath, stream, { mode: 0o600 })).toBe(1);
+      expect(fs.statSync(filePath).mode & 0o777).toBe(0o600);
     });
 
     it("rejects when the stream errors", async () => {

@@ -166,20 +166,20 @@ fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<
     if subcommand == Subcommand::Add {
         manager.subcommand = Subcommand::Add;
         if manager.options.should_print_command_name() {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<r><b>bun add <r><d>v{}<r>\n",
                 Global::package_json_version_with_sha,
-            ));
+            );
             Output::flush();
         }
         return update_package_json_and_install_with_manager(manager, &mut *ctx, &original_cwd);
     }
 
     if manager.options.should_print_command_name() {
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b>bun install <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
     }
 

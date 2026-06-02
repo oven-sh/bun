@@ -1598,8 +1598,8 @@ impl core::fmt::Display for String {
             }
             Ok(())
         } else if zs.is_utf8() {
-            // Zig wrote raw bytes; mirror that via lossy decode for Formatter.
-            f.write_str(&std::string::String::from_utf8_lossy(zs.slice()))
+            // Zig wrote raw bytes; BStr renders them without allocating.
+            write!(f, "{}", bstr::BStr::new(zs.slice()))
         } else {
             for &b in zs.slice() {
                 // Latin-1 byte → Unicode codepoint of the same value.

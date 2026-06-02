@@ -965,10 +965,10 @@ impl Runner {
         javascript_object: JSValue,
     ) -> Result<Expr, MacroError> {
         if cfg!(debug_assertions) {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<r><d>[macro]<r> call <d><b>{}<r>",
                 bstr::BStr::new(function_name)
-            ));
+            );
         }
 
         // PORT NOTE: Zig `exception_holder = jsc.ZigException.Holder.init();` —

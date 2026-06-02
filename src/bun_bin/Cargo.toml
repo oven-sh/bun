@@ -17,6 +17,7 @@ crate-type = ["staticlib"]
 workspace = true
 
 [dependencies]
+bstr.workspace = true
 bun_io.workspace = true
 libc.workspace = true
 

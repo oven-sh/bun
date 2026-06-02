@@ -209,11 +209,11 @@ impl ErrorReportRequest {
                 // allocates VLQ/result into the global heap and frees on Drop.
                 match dev.source_maps.get_parsed_source_map(id) {
                     None => {
-                        Output::debug_warn(format_args!(
+                        bun_core::debug_warn!(
                             "Failed to find mapping for {}, {}",
                             bstr::BStr::new(source_url),
                             id.get()
-                        ));
+                        );
                         *gop.value_ptr = None;
                         continue;
                     }

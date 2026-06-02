@@ -1413,7 +1413,7 @@ impl TinyLog {
         }
         if Output::enable_ansi_colors_stderr() {
             let symbols = bun_core::fmt::TableSymbols::UNICODE;
-            Output::pretty_error(format_args!("<blue>{}", symbols.top_column_sep()));
+            bun_core::pretty_error!("<blue>{}", symbols.top_column_sep());
             if cursor_len > 1 {
                 if writer_splat_bytes_all(w, symbols.horizontal_edge(), cursor_len - 1).is_err() {
                     return;
@@ -1439,7 +1439,7 @@ impl TinyLog {
         if w.write_all(self.msg.const_slice()).is_err() {
             return;
         }
-        Output::pretty_error(format_args!("<r>\n"));
+        bun_core::pretty_error!("<r>\n");
         Output::flush();
     }
 }

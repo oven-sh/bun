@@ -11,7 +11,7 @@ use bun_jsc::{JSGlobalObject, JSValue, StrongOptional};
 use bun_bundler::options_impl::LoaderExt as _;
 use bun_bundler::output_file::{OutputFile, Value as OutputFileValue};
 use bun_core::Output;
-use bun_core::{PathString, ZigStringSlice};
+use bun_core::ZigStringSlice;
 use bun_http_types::MimeType::MimeType;
 
 use crate::api::js_bundler::BuildArtifact;
@@ -68,10 +68,13 @@ impl SavedFile {
         // SAFETY: `bun_vm()` returns the live `*mut VirtualMachine` for a
         // Bun-owned global; we hold a unique `&mut` only for this call.
         let mime_type = global_this.bun_vm().as_mut().mime_type(path);
-        // `Store::drop` frees `PathLike::String` via `deinit_owned`, so the
-        // backing buffer must be owned by the store, not borrowed from `path`.
+        // An owned `PathLike::String` (a `CowSlice`) frees its buffer in
+        // `PathLike::drop`, so the backing buffer must be owned by the store,
+        // not borrowed from `path`.
         let store = BlobStore::init_file(
-            PathOrFileDescriptor::Path(PathLike::String(PathString::init_owned(path.to_vec()))),
+            PathOrFileDescriptor::Path(PathLike::String(bun_ptr::cow_slice::CowSlice::init_owned(
+                path.to_vec().into_boxed_slice(),
+            ))),
             mime_type,
         )
         .expect("unreachable");
@@ -154,12 +157,14 @@ impl OutputFileJsc for OutputFile {
             OutputFileValue::Saved(_) => {
                 let path_to_use: &[u8] = owned_pathname.unwrap_or(self.src_path.text);
 
-                // `Store::drop` frees a `PathLike::String` payload via
-                // `PathString::deinit_owned`, so the backing buffer must be
-                // owned by the store. `owned_pathname` is a borrow here (the
-                // caller drops its `Box<[u8]>` after this returns), so dupe it.
+                // An owned `PathLike::String` (a `CowSlice`) frees its buffer in
+                // `PathLike::drop`, so the backing buffer must be owned by the
+                // store. `owned_pathname` is a borrow here (the caller drops its
+                // `Box<[u8]>` after this returns), so dupe it.
                 let store_path = match owned_pathname {
-                    Some(p) => PathLike::String(PathString::init_owned(p.to_vec())),
+                    Some(p) => PathLike::String(bun_ptr::cow_slice::CowSlice::init_owned(
+                        p.to_vec().into_boxed_slice(),
+                    )),
                     None => dupe_path_like(self.src_path.text),
                 };
                 let file_blob = match BlobStore::init_file(

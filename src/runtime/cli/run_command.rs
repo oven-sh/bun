@@ -2944,6 +2944,18 @@ impl RunCommand {
     fn exec_stdin(ctx: &mut ContextData) -> Result<bool, bun_core::Error> {
         bun_core::scoped_log!(RUN_LOG, "Executing from stdin");
 
+        // When stdin is a TTY (interactive terminal), `bun -` would block
+        // waiting for input. Instead, print help so the user knows to pipe
+        // a script in: `echo 'console.log(42)' | bun -`
+        if Output::is_stdin_tty() {
+            prettyln!(
+                "<r><yellow>bun -<r> reads a script from stdin. Pipe a script instead:\n\n  \
+                 <b><green>echo<r> <blue>'console.log(42)' <r>| <b><green>bun -<r>\n"
+            );
+            RunCommand::print_help(None);
+            return Ok(true);
+        }
+
         // read from stdin
         // PERF(port): Zig `stackFallback(2048, …)` — could swap to
         // `SmallVec<[u8; 2048]>` if profiled hot; cold CLI path here.

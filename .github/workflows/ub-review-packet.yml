@@ -1,0 +1,93 @@
+name: UB Review Packet
+
+on:
+  pull_request:
+    types: [opened, ready_for_review]
+    paths-ignore:
+      - "**/*.md"
+      - "docs/**"
+
+permissions:
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ub-review-packet-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  packet:
+    name: UB evidence packet / gh-runner
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CARGO_TARGET_DIR: ${{ runner.temp }}/ub-review-cargo-target
+      CARGO_INSTALL_JOBS: "2"
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Fetch PR base ref
+        run: |
+          set -euo pipefail
+          git fetch --no-tags origin "+refs/heads/${{ github.base_ref }}:refs/remotes/origin/${{ github.base_ref }}"
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.95.0
+
+      - name: Cache ub-review bootstrap and sensors
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            ~/.cargo/bin/tokmd
+            ~/.cargo/bin/ripr
+            ~/.cargo/bin/unsafe-review
+            ${{ env.CARGO_TARGET_DIR }}
+          key: ub-review-gh-runner-v1-${{ runner.os }}-rust-1.95-core
+          restore-keys: |
+            ub-review-gh-runner-v1-${{ runner.os }}-rust-1.95-
+
+      - name: Build UB review packet
+        id: ub-review
+        uses: EffortlessMetrics/ub-review@main
+        with:
+          preset: bun-ub
+          profile: gh-runner
+          root: .
+          base: origin/${{ github.base_ref }}
+          head: HEAD
+          out: target/ub-review
+          install-tools: 'true'
+          tool-bundle: core
+          posting: review
+          mode: review-direct
+          github-token: ${{ github.token }}
+          minimax-api-key: ${{ secrets.MINIMAX }}
+          minimax-provider-kind: anthropic
+          opencode-api-key: ${{ secrets.OPENCODE }}
+          model-mode: auto
+          provider-policy: minimax-primary
+          lane-width: '10'
+          model-timeout-sec: '300'
+          max-inline-comments: '8'
+          model-concurrency: '8'
+          max-model-calls: '14'
+          fail-on-post-error: 'false'
+          allow-heavy: 'false'
+
+      - name: Upload UB review packet
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ub-review-packet-${{ github.event.pull_request.number || github.run_id }}
+          path: target/ub-review
+          if-no-files-found: warn
+          retention-days: 7

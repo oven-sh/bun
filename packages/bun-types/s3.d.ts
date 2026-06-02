@@ -639,7 +639,10 @@ declare module "bun" {
         | S3File
         | Blob
         | Archive
-        | ReadableStream,
+        | ReadableStream
+        | AsyncIterable<string | ArrayBuffer | ArrayBufferView>
+        | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
+        | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>),
       options?: S3Options,
     ): Promise<number>;
 
@@ -952,7 +955,10 @@ declare module "bun" {
         | Blob
         | File
         | Archive
-        | ReadableStream,
+        | ReadableStream
+        | AsyncIterable<string | ArrayBuffer | ArrayBufferView>
+        | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
+        | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>),
       options?: S3Options,
     ): Promise<number>;
 
@@ -1004,7 +1010,10 @@ declare module "bun" {
         | Blob
         | File
         | Archive
-        | ReadableStream,
+        | ReadableStream
+        | AsyncIterable<string | ArrayBuffer | ArrayBufferView>
+        | AsyncGenerator<string | ArrayBuffer | ArrayBufferView>
+        | (() => AsyncGenerator<string | ArrayBuffer | ArrayBufferView>),
       options?: S3Options,
     ): Promise<number>;
 

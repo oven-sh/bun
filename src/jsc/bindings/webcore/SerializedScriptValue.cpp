@@ -641,6 +641,7 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  *    | WasmMemoryTag <value:uint32_t>
  *    | RTCDataChannelTransferTag <identifier:uint32_t>
  *    | DOMExceptionTag <message:String> <name:String>
+ *    | ErrorInstanceTag <type:uint8_t> <message:NullableString> <line:uint32_t> <column:uint32_t> <sourceURL:NullableString> <stack:NullableString> <hasCause:uint8_t> (<cause:Value>)?  // added to the object pool; <hasCause> and <cause> exist since version 14
  *    | WebCodecsEncodedVideoChunkTag <identifier:uint32_t>
  *
  * Inside certificate, data is serialized in this format as per spec:

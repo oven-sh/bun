@@ -3210,6 +3210,14 @@ fn transpile_source_code_inner(
                     return Err(bun_core::err!("NotSupported"));
                 }
 
+                // Watch the wasm file the same way the file-loader path does
+                // for evaluation-phase wasm imports, so `--watch`/`--hot`
+                // pick up changes to it.
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                unsafe {
+                    maybe_auto_watch_file(jsc_vm, args.virtual_source.is_some(), path, loader)
+                };
+
                 // The wasm bytes: a virtual source when present (e.g. a
                 // `blob:` URL), otherwise the file on disk.
                 let owned_bytes: Vec<u8>;
@@ -3368,61 +3376,9 @@ fn transpile_source_code_inner(
                 }));
             }
 
-            // auto-watch for non-virtual absolute paths.
-            'auto_watch: {
-                if args.virtual_source.is_some() {
-                    break 'auto_watch;
-                }
-                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-                if !unsafe { &*jsc_vm }.is_watcher_enabled() {
-                    break 'auto_watch;
-                }
-                if !bun_paths::is_absolute(path.text)
-                    || bun_core::contains(path.text, b"node_modules")
-                {
-                    break 'auto_watch;
-                }
-                // kqueue watchers need a file descriptor to receive event
-                // notifications on it; inotify/win32 watch by path.
-                let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
-                    let mut buf = bun_paths::path_buffer_pool::get();
-                    if path.text.len() >= buf.len() {
-                        break 'auto_watch;
-                    }
-                    let z = bun_paths::resolve_path::z(path.text, &mut buf);
-                    match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
-                        Ok(fd) => fd,
-                        Err(_) => break 'auto_watch,
-                    }
-                } else {
-                    bun_sys::Fd::INVALID
-                };
-                let hash = bun_watcher::Watcher::get_hash(path.text);
-                // SAFETY: `bun_watcher` is the `*mut ImportWatcher`
-                // set when `is_watcher_enabled()`; cast recovers the concrete
-                // type.
-                let watcher =
-                    unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-                if watcher
-                    .add_file::<true>(
-                        input_fd,
-                        path.text,
-                        hash,
-                        loader,
-                        bun_sys::Fd::INVALID,
-                        None,
-                    )
-                    .is_err()
-                {
-                    // Close the fd we just opened on macOS;
-                    // not a transpile failure (the user didn't open it).
-                    #[cfg(target_os = "macos")]
-                    if input_fd.is_valid() {
-                        use bun_sys::FdExt as _;
-                        input_fd.close();
-                    }
-                }
-            }
+            // Auto-watch for non-virtual absolute paths.
+            // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+            unsafe { maybe_auto_watch_file(jsc_vm, args.virtual_source.is_some(), path, loader) };
 
             // `export default <path string>`.
             use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
@@ -3474,6 +3430,63 @@ fn transpile_source_code_inner(
                 tag: ResolvedSourceTag::ExportDefaultObject,
                 ..Default::default()
             }))
+        }
+    }
+}
+
+/// Register `path` with the watcher for loaders whose fetch path does not
+/// keep a file descriptor of its own (the file loader and the wasm
+/// module-source path). Opens a dedicated fd on kqueue platforms
+/// (inotify/win32 watch by path); failures are ignored — watching is
+/// best-effort, not part of the module load.
+///
+/// # Safety
+/// `jsc_vm` is the live per-thread VM.
+unsafe fn maybe_auto_watch_file(
+    jsc_vm: *mut VirtualMachine,
+    is_virtual_source: bool,
+    path: &Fs::Path,
+    loader: Loader,
+) {
+    if is_virtual_source {
+        return;
+    }
+    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+    if !unsafe { &*jsc_vm }.is_watcher_enabled() {
+        return;
+    }
+    if !bun_paths::is_absolute(path.text) || bun_core::contains(path.text, b"node_modules") {
+        return;
+    }
+    // kqueue watchers need a file descriptor to receive event notifications
+    // on it; inotify/win32 watch by path.
+    let input_fd = if bun_watcher::REQUIRES_FILE_DESCRIPTORS {
+        let mut buf = bun_paths::path_buffer_pool::get();
+        if path.text.len() >= buf.len() {
+            return;
+        }
+        let z = bun_paths::resolve_path::z(path.text, &mut buf);
+        match bun_sys::open(z, bun_watcher::WATCH_OPEN_FLAGS, 0) {
+            Ok(fd) => fd,
+            Err(_) => return,
+        }
+    } else {
+        bun_sys::Fd::INVALID
+    };
+    let hash = bun_watcher::Watcher::get_hash(path.text);
+    // SAFETY: `bun_watcher` is the `*mut ImportWatcher` set when
+    // `is_watcher_enabled()`; cast recovers the concrete type.
+    let watcher = unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
+    if watcher
+        .add_file::<true>(input_fd, path.text, hash, loader, bun_sys::Fd::INVALID, None)
+        .is_err()
+    {
+        // Close the fd we just opened on macOS;
+        // not a transpile failure (the user didn't open it).
+        #[cfg(target_os = "macos")]
+        if input_fd.is_valid() {
+            use bun_sys::FdExt as _;
+            input_fd.close();
         }
     }
 }

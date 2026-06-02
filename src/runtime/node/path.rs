@@ -3128,13 +3128,19 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
             {
                 // Translated from the following JS code:
                 //   path = `${resolvedDevice}\\`;
-                buf_size = resolved_device_len;
-                memmove(&mut buf2[0..buf_size], &tmp_buf[0..resolved_device_len]);
-                buf_offset = buf_size;
-                buf_size += 1;
-                buf2[buf_offset] = T::from_u8(CHAR_BACKWARD_SLASH);
-                path_ptr = buf2.as_ptr();
-                path_len = buf_size;
+                //
+                // Built in tmp_buf, NOT buf2: resolvedTail lives at
+                // buf2[0..resolved_tail_len], and writing the fallback there
+                // clobbered it (in JS this is a fresh string). tmp_buf already
+                // holds the device at [0..resolved_device_len]; the discarded
+                // env path/cwd bytes after it are dead, so only the separator
+                // needs appending. The device is always a 2-char drive (`X:`)
+                // here — a UNC device comes from an absolute path, which
+                // breaks out of the loop before this fallback runs — so this
+                // stays well within tmp_buf.
+                tmp_buf[resolved_device_len] = T::from_u8(CHAR_BACKWARD_SLASH);
+                path_ptr = tmp_buf.as_ptr();
+                path_len = resolved_device_len + 1;
             }
         }
 

@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import assert from "node:assert";
 // import child from "node:child_process";
+import { mkdirSync, rmSync } from "node:fs";
 import path from "node:path";
 // import fixtures from "./common/fixtures.js";
 
@@ -147,6 +148,47 @@ describe("path.resolve", () => {
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
+
+  // When the cwd has a backslash at index 2 and doesn't start with the
+  // requested drive, Node's drive-mismatch check decides the cwd lives on
+  // another device and falls back to `path = `${resolvedDevice}\``, built as a
+  // fresh JS string. The port built it inside the shared buffer that already
+  // held resolvedTail, clobbering the user's path segments (e.g. `C:\C:`
+  // instead of `C:\foo`). On POSIX this requires a cwd like `/r\…` — a
+  // backslash-named directory at the filesystem root — so it only runs as
+  // root on Linux; on Windows the same branch is hit by any cross-drive cwd.
+  test.skipIf(isWindows || !isLinux || process.getuid() !== 0)(
+    "win32 drive-relative input falls back to the drive root when the cwd does not live on the drive",
+    async () => {
+      const weirdCwd = `/r\\resolve-drive-mismatch-${Math.random().toString(36).slice(2)}`;
+      mkdirSync(weirdCwd);
+      try {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const p = require("path");
+             console.log(JSON.stringify([
+               p.win32.resolve("C:foo"),
+               p.win32.resolve("C:"),
+               p.win32.resolve("D:a", "b"),
+               p.win32.toNamespacedPath("C:foo"),
+             ]));`,
+          ],
+          env: bunEnv,
+          cwd: weirdCwd,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(JSON.parse(stdout.trim())).toEqual(["C:\\foo", "C:\\", "D:\\a\\b", "\\\\?\\C:\\foo"]);
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      } finally {
+        rmSync(weirdCwd, { recursive: true, force: true });
+      }
+    },
+  );
 
   test("undefined argument are ignored if absolute path comes first (reverse loop through args)", () => {
     expect(() => {

@@ -1,5 +1,5 @@
-import { describe, expect } from "bun:test";
-import { normalizeBunSnapshot } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { itBundled } from "./expectBundled";
 
 describe("bundler", () => {
@@ -1279,4 +1279,55 @@ describe("bundler", () => {
       expect(code).toMatch(/=>\s*\{\s*return a \+ 1;?\s*\}/);
     },
   });
+
+  // The collapse is gated on bundling, so minify-syntax alone (no bundle) must
+  // keep the block body. The runtime transpiler (`bun run`/`bun test`) forces
+  // minify-syntax on for bun targets but never bundles, so collapsing here
+  // would change `Function.prototype.toString()` output at runtime.
+  itBundled("minify/ArrowReturnNotCollapsedWhenNotBundling", {
+    files: {
+      "/entry.js": /* js */ `
+        export const foo = (a) => { return a + 1; };
+      `,
+    },
+    bundling: false,
+    minifySyntax: true,
+    minifyIdentifiers: false,
+    onAfterBundle(api) {
+      const code = api.readFile("/out.js");
+      expect(code).toMatch(/=>\s*\{\s*return a \+ 1;?\s*\}/);
+    },
+  });
+});
+
+// The runtime transpiler (`bun run`/`bun test`) implicitly enables
+// minify-syntax for bun targets but never bundles. A block-bodied arrow must
+// keep its block body there so `Function.prototype.toString()` is unchanged —
+// libraries like Elysia parse handler source via `.toString()`.
+// https://github.com/oven-sh/bun/issues/31722
+test("runtime transpiler does not collapse single-return arrow bodies", async () => {
+  using dir = tempDir("arrow-runtime-tostring", {
+    "index.js": /* js */ `
+      const withArgs = (a, b, c) => { return a + b * c; };
+      const noArgs = () => { return 42; };
+      console.log(JSON.stringify([withArgs.toString(), noArgs.toString()]));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const [withArgs, noArgs] = JSON.parse(stdout) as [string, string];
+  // The block body (and its `return`) must survive the runtime transpile.
+  expect(withArgs).toContain("return a + b * c");
+  expect(withArgs).toContain("{");
+  expect(noArgs).toContain("return 42");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });

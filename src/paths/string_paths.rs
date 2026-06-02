@@ -323,17 +323,24 @@ pub fn to_w_dir_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
 /// instead of converting (mirrors the Zig-side fix in oven-sh/bun#27775).
 ///
 /// UTF-8 → UTF-16 never expands the unit count, so the byte count fitting
-/// already proves the fit; the exact count — with the conversion's own WTF-8
-/// semantics, where each invalid byte becomes one U+FFFD unit — is only
-/// computed for longer inputs. The byte length is bounded as well: a fitting
-/// path takes at most 3 bytes per unit, and the cap also bounds the u8-space
-/// path copies this check guards (and the O(n) scan below).
+/// already proves the fit; the unit count (simdutf, SIMD) is only computed
+/// for longer inputs. The byte length is bounded as well: a converted unit
+/// consumes at least a third of a byte triple, so any input past 3×
+/// `MAX_UNITS` bytes cannot fit regardless of content — and the cap also
+/// bounds the u8-space path copies this check guards.
+///
+/// simdutf's length is exact for valid WTF-8; on malformed bytes it is an
+/// estimate (stray continuation bytes count zero yet convert to one U+FFFD
+/// unit each), so a malformed over-long path can pass this check. That is
+/// fine: the bounds-checked conversion downstream never overflows and fails
+/// safe to an empty path — such input merely gets a generic syscall error
+/// instead of the precise `ENAMETOOLONG`.
 pub fn fits_in_wide_path_buffer(utf8: &[u8]) -> bool {
     const OVERHEAD: usize = windows::NT_UNC_OBJECT_PREFIX.len() + 2;
     const MAX_UNITS: usize = crate::PATH_MAX_WIDE - OVERHEAD;
     utf8.len() <= MAX_UNITS
         || (utf8.len() <= 3 * MAX_UNITS
-            && strings::element_length_wtf8_with_replacement_into_utf16(utf8) <= MAX_UNITS)
+            && strings::element_length_utf8_into_utf16(utf8) <= MAX_UNITS)
 }
 
 pub fn to_kernel32_path<'a>(wbuf: &'a mut [u16], utf8: &[u8]) -> &'a WStr {
@@ -733,12 +740,14 @@ mod tests {
         let cjk_max: Vec<u8> = "世".repeat(32757).into_bytes(); // 98271 B
         assert!(fits_in_wide_path_buffer(&cjk_max));
 
-        // Invalid bytes convert to one U+FFFD unit each; the count must use
-        // that semantics (simdutf's estimate counts stray continuation bytes
-        // as zero), and the byte cap rejects anything past what a fitting
-        // path could occupy.
+        // Malformed bytes: simdutf's length is an estimate there (stray
+        // continuation bytes count zero yet convert to one U+FFFD unit
+        // each), so the check stays permissive for such input and the
+        // bounds-checked conversion fails safe downstream instead
+        // (`to_w_path_overlong_invalid_utf8_yields_empty`). The byte cap
+        // still rejects anything no fitting path could occupy.
         assert!(!fits_in_wide_path_buffer(&vec![0x80u8; 98300]));
-        assert!(!fits_in_wide_path_buffer(&vec![0x80u8; 32758]));
+        assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32758]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32757]));
     }
 }

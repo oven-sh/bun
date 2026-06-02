@@ -219,7 +219,30 @@ describe.concurrent("import source (source phase imports)", () => {
   test("binding only referenced in dead code keeps the source phase", async () => {
     // TS unused-import trimming must not strip the binding from an
     // `import source` statement — the grammar requires exactly one binding,
-    // and dropping it would lose the phase entirely.
+    // and dropping it would downgrade the statement to a bare
+    // evaluation-phase import (the file loader), silently losing the phase.
+    //
+    // Use a file that is not valid WebAssembly to make the phase observable:
+    // the module source is still requested even though the binding is never
+    // read, so loading must fail. If the binding were stripped, the file
+    // loader would accept the file and print "main".
+    const { stdout, stderr, exitCode } = await run(
+      {
+        "main.ts": `
+          import source mod from "./fake.wasm";
+          if (false) { console.log(mod); }
+          console.log("main");
+        `,
+        "fake.wasm": `not wasm at all`,
+      },
+      "main.ts",
+    );
+    expect(stdout).not.toContain("main");
+    expect(stderr).toContain("only WebAssembly modules have a module source");
+    expect(exitCode).not.toBe(0);
+  });
+
+  test("unused source phase binding still loads and compiles valid wasm", async () => {
     const { stdout, stderr, exitCode } = await run(
       {
         "main.ts": `

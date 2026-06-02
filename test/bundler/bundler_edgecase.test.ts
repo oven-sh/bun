@@ -2771,16 +2771,17 @@ describe("bundler", () => {
       expect(out).not.toContain("require_foo\u2014bar");
     },
   });
-  // The import cycle detector switches from a linear scan to a hash set once a
-  // re-export chain grows past 32 trackers. These tests use chains deep enough
-  // to take the hash-set path (the shallow path is covered by
-  // default/ExportInfiniteCycle1 in esbuild/default.test.ts).
+  // The import cycle detector switches from a linear scan to a hash set once
+  // a re-export chain outgrows CYCLE_SCAN_THRESHOLD (32 at the time of
+  // writing). These tests use chains twice that deep so they keep exercising
+  // the hash-set path even if the threshold is retuned (the shallow path is
+  // covered by default/ExportInfiniteCycle1 in esbuild/default.test.ts).
   itBundled("edgecase/DeepExportInfiniteCycle", {
     files: {
-      "/entry.js": Array.from({ length: 40 }, (_, i) => `export {v${i} as v${(i + 1) % 40}} from './entry'`).join("\n"),
+      "/entry.js": Array.from({ length: 64 }, (_, i) => `export {v${i} as v${(i + 1) % 64}} from './entry'`).join("\n"),
     },
     bundleErrors: {
-      "/entry.js": Array.from({ length: 40 }, (_, i) => `Detected cycle while resolving import "v${i}"`),
+      "/entry.js": Array.from({ length: 64 }, (_, i) => `Detected cycle while resolving import "v${i}"`),
     },
   });
   itBundled("edgecase/DeepReExportChainNoCycle", {
@@ -2790,9 +2791,9 @@ describe("bundler", () => {
         console.log(x);
       `,
       ...Object.fromEntries(
-        Array.from({ length: 40 }, (_, i) => [
+        Array.from({ length: 64 }, (_, i) => [
           `/f${i}.js`,
-          i === 39 ? `export const x = 42;` : `export { x } from './f${i + 1}.js';`,
+          i === 63 ? `export const x = 42;` : `export { x } from './f${i + 1}.js';`,
         ]),
       ),
     },
@@ -2812,9 +2813,9 @@ describe("bundler", () => {
         console.log(a + b + midA + midB);
       `,
       ...Object.fromEntries(
-        Array.from({ length: 40 }, (_, i) => [
+        Array.from({ length: 64 }, (_, i) => [
           `/f${i}.js`,
-          i === 39 ? `export const a = 1; export const b = 2;` : `export { a, b } from './f${i + 1}.js';`,
+          i === 63 ? `export const a = 1; export const b = 2;` : `export { a, b } from './f${i + 1}.js';`,
         ]),
       ),
     },
@@ -2828,13 +2829,13 @@ describe("bundler", () => {
   itBundled("edgecase/ReExportChainIntoCycle", {
     files: {
       "/entry.js": [
-        ...Array.from({ length: 40 }, (_, i) => `export {v${i} as v${(i + 1) % 40}} from './entry'`),
+        ...Array.from({ length: 64 }, (_, i) => `export {v${i} as v${(i + 1) % 64}} from './entry'`),
         `export {v0 as leadIn} from './entry'`,
       ].join("\n"),
     },
     bundleErrors: {
       "/entry.js": [
-        ...Array.from({ length: 40 }, (_, i) => `Detected cycle while resolving import "v${i}"`),
+        ...Array.from({ length: 64 }, (_, i) => `Detected cycle while resolving import "v${i}"`),
         `Detected cycle while resolving import "v0"`,
       ],
     },

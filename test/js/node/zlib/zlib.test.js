@@ -10,9 +10,10 @@ import * as zlib from "node:zlib";
 
 // The "streaming encode doesn't wait for entire input" tests push 50 MB of
 // random data through a compressor to observe incremental flushing. That is too
-// slow to finish in the 15s budget under the sanitizer-instrumented debug/ASAN
-// build, so skip it there; the release lanes provide the coverage.
-const streamingEncodeIt = isDebug || isASAN ? it.skip : it;
+// slow for the usual 15s budget under the sanitizer-instrumented debug/ASAN
+// build, so those builds get a longer timeout (same approach as #31505, with
+// extra headroom: 50 MB through ASAN brotli measures ~64s on a slow runner).
+const streamingEncodeTimeout = isDebug || isASAN ? 180_000 : 15_000;
 
 describe("prototype and name and constructor", () => {
   for (let [name, Class] of [
@@ -204,6 +205,11 @@ describe("zlib", () => {
   // skipped on CI (memory-constrained runners) and carry an explicit timeout
   // because compressing ~1 GiB under the sanitizer-instrumented build exceeds
   // the default, matching this file's other large-payload tests.
+  //
+  // NOTE: because of the CI skip, the cap-ordering here is manually-verified
+  // only (run locally on a box with >4 GiB free). The cap is a hardcoded
+  // 1 GiB with no injection point; a test-only override of the HTTP/zlib
+  // decompression paths wasn't deemed worth the surface area.
 
   // A compressed stream larger than 1 GiB sizes the output Vec from the input
   // (Vec::with_capacity(compressed.len()), since ISIZE >= 256 MB), so the buffer
@@ -378,7 +384,7 @@ describe("zlib.brotli", () => {
     }
   });
 
-  streamingEncodeIt(
+  it(
     "streaming encode doesn't wait for entire input",
     async () => {
       const createPRNG = seed => {
@@ -405,7 +411,7 @@ describe("zlib.brotli", () => {
       await promise;
       expect(all.length).toBeGreaterThanOrEqual(7);
     },
-    15_000,
+    streamingEncodeTimeout,
   );
 
   it("should accept params", async () => {
@@ -746,7 +752,7 @@ describe("zlib.zstd", () => {
     }
   });
 
-  streamingEncodeIt(
+  it(
     "streaming encode doesn't wait for entire input",
     async () => {
       const createPRNG = seed => {
@@ -773,7 +779,7 @@ describe("zlib.zstd", () => {
       await promise;
       expect(all.length).toBeGreaterThanOrEqual(7);
     },
-    15_000,
+    streamingEncodeTimeout,
   );
 });
 

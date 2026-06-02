@@ -19,19 +19,17 @@ beforeAll(() => {
   }
 }, 300_000);
 
-it(
-  "napi_delete_reference can be called from finalizers during GC in experimental modules",
-  async () => {
-    // Finalizers in NAPI_VERSION_EXPERIMENTAL modules run synchronously while
-    // the garbage collector is sweeping. Unlike napi_reference_unref (which
-    // really is forbidden there, see "napi_reference_unref is blocked from
-    // finalizers in experimental modules" in napi.test.ts), Node.js still
-    // allows napi_delete_reference during GC: it takes node_api_basic_env,
-    // and deleting the reference returned by napi_wrap is documented to be
-    // done from the finalize callback (node-addon-api's ObjectWrap destructor
-    // does exactly this). Bun used to abort with a "napi_reference_unref"
-    // panic.
-    const code = `
+it("napi_delete_reference can be called from finalizers during GC in experimental modules", async () => {
+  // Finalizers in NAPI_VERSION_EXPERIMENTAL modules run synchronously while
+  // the garbage collector is sweeping. Unlike napi_reference_unref (which
+  // really is forbidden there, see "napi_reference_unref is blocked from
+  // finalizers in experimental modules" in napi.test.ts), Node.js still
+  // allows napi_delete_reference during GC: it takes node_api_basic_env,
+  // and deleting the reference returned by napi_wrap is documented to be
+  // done from the finalize callback (node-addon-api's ObjectWrap destructor
+  // does exactly this). Bun used to abort with a "napi_reference_unref"
+  // panic.
+  const code = `
       const addon = require(${JSON.stringify(
         join(__dirname, "napi-app/build/Debug/test_delete_ref_in_finalizer_experimental.node"),
       )});
@@ -53,23 +51,21 @@ it(
       }
       console.log("SUCCESS");
     `;
-    const { BUN_INSPECT_CONNECT_TO: _, ASAN_OPTIONS, ...rest } = bunEnv;
-    await using proc = spawn({
-      cmd: [bunExe(), "-e", code],
-      env: {
-        ...rest,
-        // If the GC check wrongly fires, die with a plain abort instead of
-        // hanging in the crash reporter / ASAN symbolizer.
-        BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
-        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
-      },
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).not.toContain("FATAL ERROR");
-    expect(stdout).toContain("SUCCESS");
-    expect(exitCode).toBe(0);
-  },
-  30_000,
-);
+  const { BUN_INSPECT_CONNECT_TO: _, ASAN_OPTIONS, ...rest } = bunEnv;
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", code],
+    env: {
+      ...rest,
+      // If the GC check wrongly fires, die with a plain abort instead of
+      // hanging in the crash reporter / ASAN symbolizer.
+      BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT: "1",
+      ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=1:symbolize=0",
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("FATAL ERROR");
+  expect(stdout).toContain("SUCCESS");
+  expect(exitCode).toBe(0);
+}, 30_000);

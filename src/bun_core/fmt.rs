@@ -1866,7 +1866,15 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         text = &text[1..];
                     }
 
-                    if !text.is_empty() && (text[0] == b'=' || text[0] == b':') {
+                    // A redacted keyword followed by nothing but whitespace:
+                    // the loop above consumed the rest of the input, so there
+                    // is no value left to redact (`text[0]` below would be out
+                    // of bounds).
+                    if text.is_empty() {
+                        return Ok(());
+                    }
+
+                    if text[0] == b'=' || text[0] == b':' {
                         writer.write_char(text[0] as char)?;
                         text = &text[1..];
                         while !text.is_empty() && text[0].is_ascii_whitespace() {

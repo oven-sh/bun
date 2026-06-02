@@ -34,6 +34,19 @@ test.each([
   expect(typeof highlighterRedacted(input)).toBe("string");
 });
 
+// A redacted keyword followed by nothing but whitespace used to drain `text`
+// in the whitespace-skip loop and then index `text[0]` on an empty slice
+// (index out of bounds: the len is 0 but the index is 0).
+test.each([
+  "token ", // redacted keyword, trailing space
+  "email\n", // redacted keyword, trailing newline
+  "_auth\t", // redacted keyword, trailing tab
+  "_password  ", // redacted keyword, several trailing spaces
+  "x token = ", // value also drained after the separator
+])("redacting highlighter handles redacted keyword at end of input for %p", input => {
+  expect(typeof highlighterRedacted(input)).toBe("string");
+});
+
 test("redacting highlighter still redacts values", () => {
   const out = highlighterRedacted('_authToken = "npm_123456"');
   expect(out).not.toContain("npm_123456");

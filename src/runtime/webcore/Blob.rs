@@ -1511,7 +1511,13 @@ impl BlobExt for Blob {
                                     opened = bun_sys::open(path, open_flags, open_mode);
                                 }
                                 MkdirpParentResult::Failed(mkdir_err) => {
-                                    opened = bun_sys::Result::Err(mkdir_err);
+                                    // Reject with mkdir's own error (it carries
+                                    // the directory path); `with_path` below
+                                    // would mislabel it with the file path.
+                                    return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                                        global_this,
+                                        mkdir_err.to_js(global_this),
+                                    ));
                                 }
                                 MkdirpParentResult::NoParent => {}
                             }

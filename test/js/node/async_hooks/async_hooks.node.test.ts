@@ -1,5 +1,5 @@
 import assert from "assert";
-import { AsyncLocalStorage, AsyncResource } from "async_hooks";
+import { AsyncLocalStorage, AsyncResource, executionAsyncId, triggerAsyncId } from "async_hooks";
 
 test("node async_hooks.AsyncLocalStorage enable disable", async done => {
   const asyncLocalStorage = new AsyncLocalStorage<Map<string, any>>();
@@ -125,30 +125,33 @@ test("AsyncResource.prototype.emitDestroy returns the resource", () => {
 });
 
 test("runInAsyncScope makes executionAsyncId()/triggerAsyncId() match the resource", () => {
-  const async_hooks = require("async_hooks");
   const a = new AsyncResource("foobar");
 
   // At the top level Node reports executionAsyncId() === 1 (root).
-  const outerExecutionId = async_hooks.executionAsyncId();
+  const outerExecutionId = executionAsyncId();
   expect(outerExecutionId).toBe(1);
 
   a.runInAsyncScope(() => {
     // Inside the scope, the free functions report the resource's (non-zero) ids.
-    expect(async_hooks.executionAsyncId()).toBeGreaterThan(1);
-    expect(async_hooks.executionAsyncId()).toBe(a.asyncId());
-    expect(async_hooks.triggerAsyncId()).toBe(a.triggerAsyncId());
+    expect(executionAsyncId()).toBeGreaterThan(1);
+    expect(executionAsyncId()).toBe(a.asyncId());
+    expect(triggerAsyncId()).toBe(a.triggerAsyncId());
 
     // A resource created inside the scope inherits the current executionAsyncId()
-    // as its triggerAsyncId, and nesting restores correctly on exit.
+    // as its triggerAsyncId, whether or not an options object is passed.
     const b = new AsyncResource("bar");
+    const c = new AsyncResource("baz", {});
     expect(b.triggerAsyncId()).toBe(a.asyncId());
+    expect(c.triggerAsyncId()).toBe(a.asyncId());
+
+    // Nesting restores correctly on exit.
     b.runInAsyncScope(() => {
-      expect(async_hooks.executionAsyncId()).toBe(b.asyncId());
-      expect(async_hooks.triggerAsyncId()).toBe(b.triggerAsyncId());
+      expect(executionAsyncId()).toBe(b.asyncId());
+      expect(triggerAsyncId()).toBe(b.triggerAsyncId());
     });
-    expect(async_hooks.executionAsyncId()).toBe(a.asyncId());
+    expect(executionAsyncId()).toBe(a.asyncId());
   });
 
   // Restored to the outer value once the scope exits.
-  expect(async_hooks.executionAsyncId()).toBe(outerExecutionId);
+  expect(executionAsyncId()).toBe(outerExecutionId);
 });

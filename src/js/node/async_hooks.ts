@@ -277,17 +277,17 @@ class AsyncResource {
   constructor(type, opts?) {
     validateString(type, "type");
 
+    // Node defaults triggerAsyncId to the current executionAsyncId() (1 at the
+    // top level, or the enclosing resource's id inside a runInAsyncScope).
     let triggerAsyncId = opts;
     if (opts != null) {
       if (typeof opts !== "number") {
-        triggerAsyncId = opts.triggerAsyncId === undefined ? 1 : opts.triggerAsyncId;
+        triggerAsyncId = opts.triggerAsyncId === undefined ? currentExecutionAsyncId : opts.triggerAsyncId;
       }
       if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
         throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
       }
     } else {
-      // Node defaults this to the current executionAsyncId() (1 at the top
-      // level, or the enclosing resource's id inside a runInAsyncScope).
       triggerAsyncId = currentExecutionAsyncId;
     }
     if (hasEnabledCreateHook && type.length === 0) {

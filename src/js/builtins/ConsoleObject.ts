@@ -591,7 +591,7 @@ export function createConsoleConstructor(console: typeof globalThis.console) {
         if (args.length && typeof args[0] === "string") {
           args[0] = `Assertion failed: ${args[0]}`;
         } else {
-          args.unshift("Assertion failed");
+          ArrayPrototypeUnshift.$call(args, "Assertion failed");
         }
         // The arguments will be formatted in warn() again
         this.warn.$apply(this, args);

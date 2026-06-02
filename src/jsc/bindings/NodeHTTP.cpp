@@ -21,7 +21,7 @@
 #include "ZigGeneratedClasses.h"
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
-#include <wtf/text/StringBuilder.h>
+#include <wtf/text/MakeString.h>
 #include "JSSocketAddressDTO.h"
 #include "node/JSNodeHTTPServerSocket.h"
 #include "node/JSNodeHTTPServerSocketPrototype.h"
@@ -152,39 +152,20 @@ static RequestHeaderKind requestHeaderKind(const WTF::String& lowercasedName)
     return RequestHeaderKind::Joinable;
 }
 
-// Called after putDirect reported PutPropertySlot::ExistingProperty for a
-// request header name. The first pass stores every header with a single put,
-// so by the time a duplicate is detected the earlier value has already been
-// replaced. Re-derive the value Node.js would produce for this name from the
-// raw header list: the first value wins for singleton headers, Cookie joins
-// with "; ", and everything else joins with ", ". Names that map to the same
-// property key are exactly the names that are ASCII-case-insensitively equal.
-static JSString* duplicateRequestHeaderValue(uWS::HttpRequest* request, StringView nameView, RequestHeaderKind kind, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
+// Builds the value for a duplicated, non-singleton request header: the
+// existing value, the kind's separator, and the new value as one flat
+// string — never a rope.
+static JSString* joinedRequestHeaderValue(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSString* existing, RequestHeaderKind kind, const WTF::String& value)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    WTF::StringBuilder builder;
-    ASCIILiteral separator = kind == RequestHeaderKind::Cookie ? "; "_s : ", "_s;
-    bool seenAny = false;
-
-    for (auto it = request->begin(); it != request->end(); ++it) {
-        auto pair = *it;
-        StringView candidateName(std::span { reinterpret_cast<const Latin1Character*>(pair.first.data()), pair.first.length() });
-        if (!equalIgnoringASCIICase(candidateName, nameView))
-            continue;
-        if (seenAny)
-            builder.append(separator);
-        seenAny = true;
-        builder.append(StringView(std::span { reinterpret_cast<const Latin1Character*>(pair.second.data()), pair.second.length() }));
-        if (kind == RequestHeaderKind::Singleton)
-            break;
-    }
-
-    if (builder.hasOverflowed()) [[unlikely]] {
+    auto existingValue = existing->value(globalObject);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    String merged = tryMakeString(existingValue.data, kind == RequestHeaderKind::Cookie ? "; "_s : ", "_s, value);
+    if (merged.isNull()) [[unlikely]] {
         throwOutOfMemoryError(globalObject, scope);
         return nullptr;
     }
-    return jsString(vm, builder.toString());
+    return jsString(vm, merged);
 }
 
 static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSValue methodString, MarkedArgumentBuffer& args, JSC::JSGlobalObject* globalObject, JSC::VM& vm)
@@ -268,30 +249,34 @@ static void assignHeadersFromUWebSocketsForCall(uWS::HttpRequest* request, JSVal
 
         } else {
             if (std::optional<uint32_t> index = parseIndex(nameIdentifier)) [[unlikely]] {
-                // Index-shaped names can't report back through PutPropertySlot,
-                // so check for an existing value directly. A numeric name is
-                // never a known header name, so duplicates always comma-join.
+                // Index-shaped names store through the indexed path. A numeric
+                // name is never a known header name, so duplicates comma-join.
                 JSValue existing = headersObject->getDirectIndex(globalObject, index.value());
                 RETURN_IF_EXCEPTION(scope, void());
                 JSValue valueToPut = jsValue;
-                if (existing) {
-                    valueToPut = jsString(globalObject, asString(existing), jsString(vm, String(", "_s)), jsValue);
+                if (existing) [[unlikely]] {
+                    valueToPut = joinedRequestHeaderValue(globalObject, vm, asString(existing), RequestHeaderKind::Joinable, value);
                     RETURN_IF_EXCEPTION(scope, void());
                 }
                 headersObject->putDirectIndex(globalObject, index.value(), valueToPut);
             } else {
-                PutPropertySlot slot(headersObject);
-                headersObject->putDirect(vm, nameIdentifier, jsValue, 0, slot);
-                if (slot.type() == PutPropertySlot::ExistingProperty) [[unlikely]] {
-                    // Duplicate header name. putDirect already located the
-                    // property and replaced its value, and the slot recorded
-                    // the offset it lives at, so apply Node's merge rules in
-                    // place without looking the name up again.
+                // Locate the property the same way putDirect's replace path
+                // would, before storing anything: on a duplicate the first
+                // value is still intact at the returned offset.
+                PropertyOffset offset = headersObject->getDirectOffset(vm, nameIdentifier);
+                if (offset != invalidOffset) [[unlikely]] {
+                    // Duplicate header name, Node's rules: singleton headers
+                    // keep the first value (nothing to store), Cookie joins
+                    // with "; ", everything else joins with ", ".
                     RequestHeaderKind kind = knownHeader ? requestHeaderKind(name) : requestHeaderKind(lowercasedName);
-                    JSString* merged = duplicateRequestHeaderValue(request, nameView, kind, globalObject, vm);
-                    RETURN_IF_EXCEPTION(scope, void());
-                    headersObject->structure()->didReplaceProperty(slot.cachedOffset());
-                    headersObject->putDirectOffset(vm, slot.cachedOffset(), merged);
+                    if (kind != RequestHeaderKind::Singleton) {
+                        JSString* merged = joinedRequestHeaderValue(globalObject, vm, asString(headersObject->getDirect(offset)), kind, value);
+                        RETURN_IF_EXCEPTION(scope, void());
+                        headersObject->structure()->didReplaceProperty(offset);
+                        headersObject->putDirectOffset(vm, offset, merged);
+                    }
+                } else {
+                    headersObject->putDirect(vm, nameIdentifier, jsValue, 0);
                 }
             }
             RETURN_IF_EXCEPTION(scope, void());
@@ -483,30 +468,34 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         } else {
             Identifier nameIdentifier = Identifier::fromString(vm, lowercasedNameString);
             if (std::optional<uint32_t> index = parseIndex(nameIdentifier)) [[unlikely]] {
-                // Index-shaped names can't report back through PutPropertySlot,
-                // so check for an existing value directly. A numeric name is
-                // never a known header name, so duplicates always comma-join.
+                // Index-shaped names store through the indexed path. A numeric
+                // name is never a known header name, so duplicates comma-join.
                 JSValue existing = headersObject->getDirectIndex(globalObject, index.value());
                 RETURN_IF_EXCEPTION(scope, {});
                 JSValue valueToPut = jsValue;
-                if (existing) {
-                    valueToPut = jsString(globalObject, asString(existing), jsString(vm, String(", "_s)), jsValue);
+                if (existing) [[unlikely]] {
+                    valueToPut = joinedRequestHeaderValue(globalObject, vm, asString(existing), RequestHeaderKind::Joinable, value);
                     RETURN_IF_EXCEPTION(scope, {});
                 }
                 headersObject->putDirectIndex(globalObject, index.value(), valueToPut);
             } else {
-                PutPropertySlot slot(headersObject);
-                headersObject->putDirect(vm, nameIdentifier, jsValue, 0, slot);
-                if (slot.type() == PutPropertySlot::ExistingProperty) [[unlikely]] {
-                    // Duplicate header name. putDirect already located the
-                    // property and replaced its value, and the slot recorded
-                    // the offset it lives at, so apply Node's merge rules in
-                    // place without looking the name up again.
+                // Locate the property the same way putDirect's replace path
+                // would, before storing anything: on a duplicate the first
+                // value is still intact at the returned offset.
+                PropertyOffset offset = headersObject->getDirectOffset(vm, nameIdentifier);
+                if (offset != invalidOffset) [[unlikely]] {
+                    // Duplicate header name, Node's rules: singleton headers
+                    // keep the first value (nothing to store), Cookie joins
+                    // with "; ", everything else joins with ", ".
                     RequestHeaderKind kind = knownHeader ? requestHeaderKind(name) : requestHeaderKind(lowercasedNameString);
-                    JSString* merged = duplicateRequestHeaderValue(request, nameView, kind, globalObject, vm);
-                    RETURN_IF_EXCEPTION(scope, {});
-                    headersObject->structure()->didReplaceProperty(slot.cachedOffset());
-                    headersObject->putDirectOffset(vm, slot.cachedOffset(), merged);
+                    if (kind != RequestHeaderKind::Singleton) {
+                        JSString* merged = joinedRequestHeaderValue(globalObject, vm, asString(headersObject->getDirect(offset)), kind, value);
+                        RETURN_IF_EXCEPTION(scope, {});
+                        headersObject->structure()->didReplaceProperty(offset);
+                        headersObject->putDirectOffset(vm, offset, merged);
+                    }
+                } else {
+                    headersObject->putDirect(vm, nameIdentifier, jsValue, 0);
                 }
             }
             RETURN_IF_EXCEPTION(scope, {});

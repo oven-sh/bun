@@ -12768,7 +12768,10 @@ describe("shared createInstance validation (no server)", () => {
 
   // Credentials are written into the NUL-delimited Postgres StartupMessage as
   // `key\0value\0`; a NUL byte inside one would inject extra parameters, so
-  // the native parser must refuse it before connecting.
+  // the native parser must refuse it before connecting. The rejection is an
+  // ERR_INVALID_ARG_TYPE TypeError, matching the MySQL adapter and the Zig
+  // reference (`PostgresSQLConnection.zig` `throwInvalidArguments`) — the
+  // previous port threw a plain code-less Error here.
   test.concurrent.each(["username", "password", "database"] as const)(
     "rejects %s containing null bytes",
     async field => {
@@ -12779,8 +12782,25 @@ describe("shared createInstance validation (no server)", () => {
         e => e,
       );
       expect(err?.message).toBe(`${field} must not contain null bytes`);
+      expect(err?.code).toBe("ERR_INVALID_ARG_TYPE");
+      expect(err instanceof TypeError).toBe(true);
     },
   );
+
+  test.concurrent("SSL_CTX creation failure throws the structured BoringSSL error", async () => {
+    // An unparseable CA makes `SSL_CTX` creation fail synchronously inside
+    // createInstance, before any socket exists. The failure carries
+    // `code: "ERR_BORINGSSL"` like the MySQL adapter and the Zig reference
+    // (`err.toJS(globalObject)`) — the previous port threw a plain code-less
+    // Error with a static message.
+    await using sql = new SQL({ ...base, username: "u", tls: { ca: "not a pem" } });
+    const err: any = await sql`select 1`.then(
+      () => null,
+      e => e,
+    );
+    expect(err?.message).toBe("Invalid CA");
+    expect(err?.code).toBe("ERR_BORINGSSL");
+  });
 
   test.concurrent("rejects tls that is neither a boolean nor an object", async () => {
     // A truthy non-boolean/non-object upgrades sslMode to `require` in JS and

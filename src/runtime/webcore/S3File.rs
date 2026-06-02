@@ -5,7 +5,6 @@ use crate::webcore::blob::{self, Blob, BlobExt};
 use crate::webcore::s3::client as s3;
 use crate::webcore::s3::client::error_jsc::s3_error_to_js_with_async_stack;
 use crate::webcore::s3_client::S3CredentialsExt as _;
-use bun_core::output;
 use bun_core::strings;
 use bun_http::Method;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass as _, JsError, JsResult};
@@ -48,24 +47,19 @@ where
     };
 
     if !bucket_name.is_empty() {
-        write!(
+        bun_core::write_pretty!(
             writer,
-            "{}",
-            output::pretty_fmt_args(
-                " (<green>\"{}/{}\"<r>)<r> {{",
-                ENABLE_ANSI_COLORS,
-                (bstr::BStr::new(bucket_name), bstr::BStr::new(s3.path())),
-            ),
+            ENABLE_ANSI_COLORS,
+            " (<green>\"{s}/{s}\"<r>)<r> {{",
+            bstr::BStr::new(bucket_name),
+            bstr::BStr::new(s3.path()),
         )?;
     } else {
-        write!(
+        bun_core::write_pretty!(
             writer,
-            "{}",
-            output::pretty_fmt_args(
-                " (<green>\"{}\"<r>)<r> {{",
-                ENABLE_ANSI_COLORS,
-                (bstr::BStr::new(s3.path()),),
-            ),
+            ENABLE_ANSI_COLORS,
+            " (<green>\"{s}\"<r>)<r> {{",
+            bstr::BStr::new(s3.path()),
         )?;
     }
 
@@ -73,14 +67,11 @@ where
         writer.write_str("\n")?;
         let mut formatter = formatter.indented();
         formatter.write_indent(writer)?;
-        write!(
+        bun_core::write_pretty!(
             writer,
-            "{}",
-            output::pretty_fmt_args(
-                "type<d>:<r> <green>\"{}\"<r>",
-                ENABLE_ANSI_COLORS,
-                (bstr::BStr::new(content_type),),
-            ),
+            ENABLE_ANSI_COLORS,
+            "type<d>:<r> <green>\"{s}\"<r>",
+            bstr::BStr::new(content_type),
         )?;
 
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
@@ -93,10 +84,11 @@ where
         let mut formatter = formatter.indented();
         formatter.write_indent(writer)?;
 
-        write!(
+        bun_core::write_pretty!(
             writer,
-            "{}",
-            output::pretty_fmt_args("offset<d>:<r> <yellow>{}<r>", ENABLE_ANSI_COLORS, (offset,)),
+            ENABLE_ANSI_COLORS,
+            "offset<d>:<r> <yellow>{d}<r>",
+            offset
         )?;
 
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;

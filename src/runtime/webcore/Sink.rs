@@ -3,7 +3,6 @@ use core::ffi::c_void;
 use crate::api::bun_subprocess::Subprocess;
 use crate::webcore::streams::{self, Signal};
 use bun_collections::{TaggedPtrUnion, VecExt};
-use bun_core::Output;
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sys::{self as sys, Error as SysError};
@@ -1233,7 +1232,7 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
         subprocess.on_stdin_destroyed();
         return;
     }
-    Output::debug_warn("Unknown sink type");
+    bun_core::debug_warn!("Unknown sink type");
 }
 
 // ported from: src/runtime/webcore/Sink.zig

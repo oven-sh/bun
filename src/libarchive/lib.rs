@@ -280,7 +280,7 @@ pub mod lib {
                         match file.pwrite_all(data, block.offset) {
                             Err(_) => {
                                 *can_use_pwrite = false;
-                                bun_core::output::debug_warn(
+                                bun_core::debug_warn!(
                                     "libarchive: falling back to write() after pwrite() failure",
                                 );
                                 // Fall through to lseek+write path
@@ -1813,10 +1813,10 @@ impl Archiver {
 
                     if pathname.len() >= normalized_buf.len() {
                         if options.log {
-                            Output::warn(format_args!(
+                            bun_core::warn!(
                                 "Skipping entry with a path longer than the maximum path length: {}\n",
                                 bun_core::fmt::fmt_os_path(pathname, Default::default()),
-                            ));
+                            );
                         }
                         continue;
                     }
@@ -1879,10 +1879,10 @@ impl Archiver {
                     #[cfg(unix)]
                     if path_traverses_created_symlink(path_slice, &created_symlinks) {
                         if options.log {
-                            Output::warn(format_args!(
+                            bun_core::warn!(
                                 "Skipping entry that traverses a previously extracted symlink: {}\n",
                                 bun_core::fmt::fmt_os_path(path_slice, Default::default()),
-                            ));
+                            );
                         }
                         continue;
                     }
@@ -1967,14 +1967,14 @@ impl Archiver {
                                 ) {
                                     // Skip symlinks that would escape the extraction directory
                                     if options.log {
-                                        Output::warn(format_args!(
+                                        bun_core::warn!(
                                             "Skipping symlink with unsafe target: {} -> {}\n",
                                             bun_core::fmt::fmt_os_path(
                                                 path_slice,
                                                 Default::default(),
                                             ),
                                             bstr::BStr::new(link_target.as_bytes()),
-                                        ));
+                                        );
                                     }
                                     continue;
                                 }

@@ -23,6 +23,8 @@ pub mod shared {
     #[path = "CachedStructure.rs"]
     pub mod cached_structure;
 
+    pub mod datetime_text;
+
     #[path = "ObjectIterator.rs"]
     pub mod object_iterator;
 

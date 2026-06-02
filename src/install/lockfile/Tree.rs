@@ -589,20 +589,20 @@ pub(crate) fn is_filtered_dependency_or_workspace(
             let meta = &pkg_metas[pkg_id as usize];
             let name = lockfile.str(&pkg_names[pkg_id as usize]);
             if !meta.os.is_match(manager.options.os) && !meta.arch.is_match(manager.options.cpu) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<d>Skip installing<r> <b>{}<r> <d>- cpu & os mismatch<r>",
                     bstr::BStr::new(name)
-                ));
+                );
             } else if !meta.os.is_match(manager.options.os) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<d>Skip installing<r> <b>{}<r> <d>- os mismatch<r>",
                     bstr::BStr::new(name)
-                ));
+                );
             } else if !meta.arch.is_match(manager.options.cpu) {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<d>Skip installing<r> <b>{}<r> <d>- cpu mismatch<r>",
                     bstr::BStr::new(name)
-                ));
+                );
             }
         }
         return true;
@@ -806,11 +806,16 @@ impl Tree {
 
             let dependency = &dependencies[dep_id as usize];
 
-            if !crate::dependency::is_safe_install_folder_name(
-                dependency
-                    .name
-                    .slice(lockfile.buffers.string_bytes.as_slice()),
-            ) {
+            // An empty alias has no `node_modules/<name>` folder to escape, so
+            // don't treat it as unsafe — match the lockfile parser and isolated
+            // installer (`bun.lock.rs`, `isolated_install.rs`) which guard
+            // `!name.is_empty()` here rather than failing the whole install.
+            let dependency_name = dependency
+                .name
+                .slice(lockfile.buffers.string_bytes.as_slice());
+            if !dependency_name.is_empty()
+                && !crate::dependency::is_safe_install_folder_name(dependency_name)
+            {
                 builder.maybe_report_error(format_args!(
                     "Invalid dependency name \"{}\"",
                     dependency

@@ -558,18 +558,18 @@ impl HotReloadEvent {
         );
 
         if entry_points.set.count() == 0 {
-            bun_core::Output::debug_warn(format_args!("nothing to bundle"));
+            bun_core::debug_warn!("nothing to bundle");
             if !changed_file_paths.is_empty() {
-                bun_core::Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "modified files: {}",
                     bun_core::fmt::fmt_slice(changed_file_paths, ", ")
-                ));
+                );
             }
             if self.dirs.count() > 0 {
-                bun_core::Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "modified dirs: {}",
                     bun_core::fmt::fmt_slice(self.dirs.keys(), ", ")
-                ));
+                );
             }
 
             dev.publish(

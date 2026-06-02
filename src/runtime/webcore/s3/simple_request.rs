@@ -74,8 +74,8 @@ impl core::fmt::Debug for S3UploadResult<'_> {
             S3UploadResult::Success => f.write_str("Success"),
             S3UploadResult::Failure(err) => f
                 .debug_struct("Failure")
-                .field("code", &String::from_utf8_lossy(err.code))
-                .field("message", &String::from_utf8_lossy(err.message))
+                .field("code", &bstr::BStr::new(err.code))
+                .field("message", &bstr::BStr::new(err.message))
                 .finish(),
         }
     }

@@ -511,15 +511,15 @@ impl FSWatcher {
                 #[cfg(not(windows))]
                 Event::Rename(value) | Event::Change(value) => {
                     if is_file {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r> <d>File changed: {}<r>",
                             bstr::BStr::new(value)
-                        ));
+                        );
                     } else {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r> <d>Dir changed: {}<r>",
                             bstr::BStr::new(value)
-                        ));
+                        );
                     }
                 }
                 _ => {}
@@ -542,9 +542,9 @@ impl FSWatcher {
                 #[cfg(windows)]
                 Event::Rename(value) | Event::Change(value) => {
                     if is_file {
-                        Output::pretty_errorln(format_args!("<r> <d>File changed: {}<r>", value));
+                        bun_core::pretty_errorln!("<r> <d>File changed: {}<r>", value);
                     } else {
-                        Output::pretty_errorln(format_args!("<r> <d>Dir changed: {}<r>", value));
+                        bun_core::pretty_errorln!("<r> <d>Dir changed: {}<r>", value);
                     }
                 }
                 _ => {}

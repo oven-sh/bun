@@ -226,7 +226,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     continue;
                 }
 
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "<b><cyan>packed<r> {} {}\n",
                     bun_fmt::size(
                         usize::try_from(size.max(0)).expect("int cast"),
@@ -235,7 +235,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                         }
                     ),
                     bun_fmt::fmt_os_path(stripped, Default::default()),
-                ));
+                );
 
                 if next.kind != FileKind::File {
                     continue;
@@ -298,7 +298,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     }
                 }
             } else {
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "<b><cyan>packed<r> {} {}\n",
                     bun_fmt::size(
                         usize::try_from(size.max(0)).expect("int cast"),
@@ -307,7 +307,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                         }
                     ),
                     bun_fmt::fmt_os_path(pathname, Default::default()),
-                ));
+                );
             }
         }
 
@@ -542,10 +542,10 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 impl PublishCommand {
     pub(crate) fn exec(ctx: Command::Context) -> Result<(), Error> {
         // TODO(port): narrow error set
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b>bun publish <r><d>v{}<r>",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
@@ -628,7 +628,7 @@ impl PublishCommand {
                 }
             }
 
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "\n<green> +<r> {}@{}{}",
                 bstr::BStr::new(&context.package_name),
                 bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
@@ -637,7 +637,7 @@ impl PublishCommand {
                 } else {
                     ""
                 },
-            ));
+            );
 
             return Ok(());
         }
@@ -693,7 +693,7 @@ impl PublishCommand {
             }
         }
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "\n<green> +<r> {}@{}{}",
             bstr::BStr::new(&context.package_name),
             bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
@@ -702,7 +702,7 @@ impl PublishCommand {
             } else {
                 ""
             },
-        ));
+        );
 
         if PackageManager::get()
             .options
@@ -906,16 +906,16 @@ impl PublishCommand {
             );
 
             if package_exists {
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "Registry already knows about version {}; skipping.",
                     bstr::BStr::new(version_without_build_tag),
-                ));
+                );
                 return Ok(());
             }
         }
 
         // continues from `printSummary`
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}\n",
             bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
                 ctx.manager.options.publish_config.tag
@@ -928,7 +928,7 @@ impl PublishCommand {
                 "default"
             },
             bstr::BStr::new(registry.url.href()),
-        ));
+        );
 
         // dry-run stops here
         if ctx.manager.options.dry_run {
@@ -1048,7 +1048,7 @@ impl PublishCommand {
                     .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
                 {
                     Output::print_error(format_args!("\n"));
-                    Output::note(format_args!("{}", bstr::BStr::new(notice)));
+                    bun_core::note!("{}", bstr::BStr::new(notice));
                     Output::flush();
                 }
 
@@ -1110,7 +1110,7 @@ impl PublishCommand {
                             .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
                         {
                             Output::print_error(format_args!("\n"));
-                            Output::note(format_args!("{}", bstr::BStr::new(notice)));
+                            bun_core::note!("{}", bstr::BStr::new(notice));
                             Output::flush();
                         }
                     }
@@ -1200,9 +1200,9 @@ impl PublishCommand {
                 };
                 let done_url = URL::parse(crate::cli::cli_dupe(done_url_str));
 
-                Output::prettyln(format_args!(
+                bun_core::prettyln!(
                     "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
-                ));
+                );
 
                 const PADDING: usize = 1;
 
@@ -1249,10 +1249,7 @@ impl PublishCommand {
                 for _ in 0..PADDING {
                     Output::print(format_args!(" "));
                 }
-                Output::pretty(format_args!(
-                    "<b>{}<r>",
-                    bstr::BStr::new(auth_url_str.as_bytes())
-                ));
+                bun_core::pretty!("<b>{}<r>", bstr::BStr::new(auth_url_str.as_bytes()));
                 for _ in 0..PADDING {
                     Output::print(format_args!(" "));
                 }
@@ -1382,7 +1379,7 @@ impl PublishCommand {
                                 .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
                             {
                                 Output::print_error(format_args!("\n"));
-                                Output::note(format_args!("{}", bstr::BStr::new(notice)));
+                                bun_core::note!("{}", bstr::BStr::new(notice));
                                 Output::flush();
                             }
 
@@ -1658,10 +1655,10 @@ impl PublishCommand {
                         b"./",
                     );
                     if !bun_sys::exists_at(workspace_root, normalized) {
-                        Output::warn(format_args!(
+                        bun_core::warn!(
                             "bin '{}' does not exist",
                             bstr::BStr::new(normalized.as_bytes()),
-                        ));
+                        );
                     }
 
                     bin_props.push(G::Property {
@@ -1743,10 +1740,10 @@ impl PublishCommand {
                         }
 
                         if !bun_sys::exists_at(workspace_root, &value) {
-                            Output::warn(format_args!(
+                            bun_core::warn!(
                                 "bin '{}' does not exist",
                                 bstr::BStr::new(value.as_bytes()),
-                            ));
+                            );
                         }
 
                         bin_props.push(G::Property {
@@ -1804,10 +1801,10 @@ impl PublishCommand {
                     Ok(fd) => fd,
                     Err(e) => {
                         if e.get_errno() == bun_sys::E::ENOENT {
-                            Output::warn(format_args!(
+                            bun_core::warn!(
                                 "bin directory '{}' does not exist",
                                 bstr::BStr::new(normalized_bin_dir.as_bytes()),
-                            ));
+                            );
                             return Ok(());
                         } else {
                             Output::err(

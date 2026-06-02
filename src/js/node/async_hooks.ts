@@ -26,6 +26,13 @@ const setAsyncHooksEnabled = $newCppFunction("NodeAsyncHooks.cpp", "jsSetAsyncHo
 const cleanupLater = $newCppFunction("NodeAsyncHooks.cpp", "jsCleanupLater", 0);
 const { validateFunction, validateString, validateObject } = require("internal/validators");
 
+// Monotonic async id counter. Node reserves ids 0 and 1 (root), so the first
+// user-created resource is assigned id 2.
+let nextAsyncId = 2;
+function newAsyncId() {
+  return nextAsyncId++;
+}
+
 // Only run during debug
 function assertValidAsyncContextArray(array: unknown): array is ReadonlyArray<any> | undefined {
   // undefined is OK
@@ -256,6 +263,8 @@ if (IS_BUN_DEVELOPMENT) {
 class AsyncResource {
   type;
   #snapshot;
+  #asyncId;
+  #triggerAsyncId;
 
   constructor(type, opts?) {
     validateString(type, "type");
@@ -268,6 +277,9 @@ class AsyncResource {
       if (!Number.isSafeInteger(triggerAsyncId) || triggerAsyncId < -1) {
         throw $ERR_INVALID_ASYNC_ID("triggerAsyncId", triggerAsyncId);
       }
+    } else {
+      // Node defaults this to the current executionAsyncId(), which is 1 at the top level.
+      triggerAsyncId = 1;
     }
     if (hasEnabledCreateHook && type.length === 0) {
       throw $ERR_ASYNC_TYPE(type);
@@ -276,6 +288,8 @@ class AsyncResource {
     setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
+    this.#asyncId = newAsyncId();
+    this.#triggerAsyncId = triggerAsyncId;
   }
 
   emitBefore() {
@@ -287,15 +301,15 @@ class AsyncResource {
   }
 
   asyncId() {
-    return 0;
+    return this.#asyncId;
   }
 
   triggerAsyncId() {
-    return 0;
+    return this.#triggerAsyncId;
   }
 
   emitDestroy() {
-    //
+    return this;
   }
 
   runInAsyncScope(fn, thisArg, ...args) {

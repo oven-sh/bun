@@ -87,3 +87,39 @@ test("AsyncResource.bind", () => {
   });
   expect(fn()).toBe(true);
 });
+
+// https://github.com/oven-sh/bun/issues/31709
+test("AsyncResource.prototype.asyncId returns a unique, monotonically increasing id", () => {
+  const a = new AsyncResource("MY_ASYNC_RESOURCE");
+  const b = new AsyncResource("MY_ASYNC_RESOURCE");
+
+  // Each resource gets a positive integer id (0 was the old stub value).
+  expect(a.asyncId()).toBeGreaterThan(0);
+  expect(Number.isSafeInteger(a.asyncId())).toBe(true);
+
+  // Ids are unique and increase for later resources.
+  expect(b.asyncId()).toBeGreaterThan(a.asyncId());
+
+  // asyncId() is stable across calls, including after emitDestroy().
+  const id = a.asyncId();
+  a.emitDestroy();
+  expect(a.asyncId()).toBe(id);
+  expect(a.asyncId()).toBe(id);
+});
+
+test("AsyncResource.prototype.triggerAsyncId reflects the triggerAsyncId option", () => {
+  // No opts defaults to the current executionAsyncId() (1 at the top level).
+  expect(new AsyncResource("T").triggerAsyncId()).toBe(1);
+  // Object opts.
+  expect(new AsyncResource("T", { triggerAsyncId: 42 }).triggerAsyncId()).toBe(42);
+  expect(new AsyncResource("T", { triggerAsyncId: 0 }).triggerAsyncId()).toBe(0);
+  // Numeric opts is treated as the triggerAsyncId.
+  expect(new AsyncResource("T", 7).triggerAsyncId()).toBe(7);
+});
+
+test("AsyncResource.prototype.emitDestroy returns the resource", () => {
+  const a = new AsyncResource("T");
+  expect(a.emitDestroy()).toBe(a);
+  // Repeated calls keep returning the resource.
+  expect(a.emitDestroy()).toBe(a);
+});

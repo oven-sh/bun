@@ -4419,6 +4419,14 @@ impl VirtualMachine {
     }
     /// Worker-thread teardown.
     pub fn destroy(&mut self) {
+        // Publish the terminal flag before tearing the event loops down so a
+        // concurrent `EventLoop::enqueue_task_concurrent{,_batch}` (which
+        // no-ops once this is set) can't push into — and wake — a
+        // partially-deinitialized loop. Nothing drains the queue past this
+        // point anyway, so rejecting late producers loses no work.
+        self.has_terminated
+            .store(true, core::sync::atomic::Ordering::Release);
+
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
 
@@ -4474,8 +4482,6 @@ impl VirtualMachine {
             // once on the same thread; `self` is the live per-thread VM.
             unsafe { (hooks.deinit_runtime_state)(std::ptr::from_mut(self), state) };
         }
-        self.has_terminated
-            .store(true, core::sync::atomic::Ordering::Release);
     }
     /// Note: takes the concrete
     /// `bun_core::io::Writer` since every call site passes

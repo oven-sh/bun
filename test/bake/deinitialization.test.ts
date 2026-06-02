@@ -144,7 +144,10 @@ test.skipIf(!isASAN)(
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).not.toContain("AddressSanitizer");
+    // The only stderr a passing run produces is the dev server's
+    // bundle-progress lines (bundles that finish before the terminate());
+    // anything else — e.g. an AddressSanitizer report — is a failure.
+    expect(stderr.replace(/^Bundled page in .+$/gm, "").trim()).toBe("");
     expect(stdout).toContain("survived all");
     expect(exitCode).toBe(0);
   },

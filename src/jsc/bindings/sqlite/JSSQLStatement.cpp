@@ -1967,7 +1967,8 @@ static inline JSC::JSValue constructResultObject(JSC::JSGlobalObject* lexicalGlo
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    // 64 is the maximum we can preallocate here
+    // The cached Structure covers up to maxCachedStructureColumnCount (512) columns;
+    // rows wider than JSFinalObject::maxInlineCapacity use out-of-line butterfly storage.
     // see https://github.com/oven-sh/bun/issues/987
     JSC::JSObject* result;
 

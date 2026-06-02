@@ -117,31 +117,37 @@ fn load_bunfig(
     config_path: &ZStr,
     ctx: Context<'_>,
 ) -> Result<(), bun_core::Error> {
-    // Dupe `config_path` onto the heap so `ctx.log` can safely borrow it after
-    // the caller's PathBuffer goes out of scope. `Source::init_path_string_owned`
-    // goes through `IntoStr::into_str` which uses `detach_lifetime` to fake
-    // `&'static [u8]` from the caller's slice; errors logged by `Bunfig::parse`
-    // then store `Location.file = Cow::Borrowed(source.path.text)` in ctx.log.
-    // Those messages are often printed later (by `report_bunfig_load_failure`
-    // in `load_config()`'s catch, after `load_system_bunfig`'s `config_buf`
-    // stack frame has been dropped). Without duping, the later print reads
-    // freed stack memory — stack-use-after-return under ASAN.
+    // Intern `config_path` in the process-lifetime `FilenameStore` so `ctx.log`
+    // can safely borrow it after the caller's PathBuffer goes out of scope.
+    // `Source::init_path_string_owned` goes through `IntoStr::into_str` which
+    // uses `detach_lifetime` to fabricate `&'static [u8]` from the slice we pass
+    // to `to_source`; errors logged by `Bunfig::parse` then store
+    // `Location.file = Cow::Borrowed(source.path.text)` in ctx.log. Those
+    // messages are often printed later (by `report_bunfig_load_failure` in
+    // `load_config()`'s catch, after `load_system_bunfig`'s `config_buf` stack
+    // frame has been dropped). Borrowing the caller's stack buffer would read
+    // freed stack memory at print time — stack-use-after-return under ASAN.
     //
-    // Hold the `Box` un-leaked across `to_source()` so the `auto_loaded` ENOENT
-    // early-return (the common case: every `bun install` probes both
-    // /etc/bunfig.toml and ~/.bunfig.toml, neither of which usually exists)
-    // drops the allocation naturally. Only leak on the `Ok` arm where
-    // `Bunfig::parse` actually borrows from it.
-    let boxed_path = bun_core::ZBox::from_bytes(config_path.as_bytes()).into_boxed_slice_with_nul();
-    // SAFETY: invariant — last byte is 0, written by `ZBox::from_bytes`.
-    let owned_path = unsafe { ZStr::from_raw(boxed_path.as_ptr(), boxed_path.len() - 1) };
+    // `FilenameStore::append_parts` copies the bytes into a never-freed BSS
+    // singleton and returns a genuine `&'static [u8]`, so the fabricated
+    // `'static` lifetime is honest and LeakSanitizer sees the allocation as
+    // reachable (the Zig original duped into a never-`deinit`'d arena for the
+    // same reason). This is the codebase's standard way to own a path for the
+    // process lifetime — PORTING.md forbids `Box::leak`/`mem::forget` for this.
+    // We append a trailing NUL so the interned slice can back a `ZStr`.
+    // `load_bunfig` runs a bounded number of times per process (system, home,
+    // project), so interning even on the ENOENT probe is negligible.
+    let interned = bun_resolver::fs::FilenameStore::instance()
+        .append_parts(&[config_path.as_bytes(), b"\0"])?;
+    // SAFETY: `interned` ends in the NUL byte appended above; `from_raw` takes
+    // the length excluding it.
+    let owned_path = unsafe { ZStr::from_raw(interned.as_ptr(), interned.len() - 1) };
 
     let source =
         match bun_ast::to_source(owned_path, bun_ast::ToSourceOptions { convert_bom: true }) {
             Ok(s) => s,
             Err(err) => {
                 if auto_loaded {
-                    // `boxed_path` drops here — no leak on the common ENOENT probe.
                     return Ok(());
                 }
                 bun_core::pretty_errorln!(
@@ -152,20 +158,6 @@ fn load_bunfig(
                 Global::exit(1);
             }
         };
-
-    // Success: `source.path.text` (and any `ctx.log` location borrowed by
-    // `Bunfig::parse`) points into `boxed_path`. Leak the allocation so the
-    // `&'static [u8]` lifetime fabricated by `IntoStr::into_str` is honest —
-    // the path lives for the rest of the process, matching how `ctx.log`
-    // messages hold borrowed path slices across `load_config`'s control flow.
-    //
-    // Use `Box::into_raw` rather than `Box::leak` because `Box::leak(b)` is
-    // `unsafe { &mut *Box::into_raw(b) }`, and that `&mut` reborrow pops the
-    // SharedReadOnly tag that `owned_path` / `source.path.text` (derived from
-    // `boxed_path.as_ptr()` above) were created with — the subsequent
-    // `Bunfig::parse` read would trip Stacked Borrows. `Box::into_raw` just
-    // consumes the Box and returns the raw pointer, no `&mut` reborrow.
-    let _raw: *mut [u8] = Box::into_raw(boxed_path);
 
     bun_ast::stmt::data::Store::create();
     bun_ast::expr::data::Store::create();

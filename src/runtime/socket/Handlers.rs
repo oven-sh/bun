@@ -536,7 +536,13 @@ impl SocketConfig {
         // PORT NOTE: `errdefer result.deinit()` — result drops on `?` (Handlers::Drop unprotects)
 
         if result.fd.is_some() {
-            // If a user passes a file descriptor then prefer it over hostname or unix
+            // If a user passes a file descriptor then prefer it over hostname or unix.
+            // Carry the listen flags through so e.g. `listen({ fd, allowHalfOpen })`
+            // is honored on the adopted socket (net.Server.listen({ fd })).
+            result.exclusive = generated.exclusive;
+            result.allow_half_open = generated.allow_half_open;
+            result.reuse_port = generated.reuse_port;
+            result.ipv6_only = generated.ipv6_only;
         } else if let Some(unix) = generated.unix_.get() {
             if unix.length() == 0 {
                 return Err(global

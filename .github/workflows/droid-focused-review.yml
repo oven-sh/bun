@@ -21,6 +21,7 @@ jobs:
     if: github.repository == 'EffortlessSteven/bun'
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    continue-on-error: true
 
     permissions:
       contents: read
@@ -115,7 +116,14 @@ jobs:
           set -euo pipefail
 
           {
-            cat .factory/skills/review-guidelines/SKILL.md
+            if [[ -f .factory/skills/review-guidelines/SKILL.md ]]; then
+              cat .factory/skills/review-guidelines/SKILL.md
+            else
+              echo "# Bun fork UB review guidelines"
+              echo
+              echo "Use the lane focus below. Report only new, useful findings."
+              echo "Do not approve. This is auxiliary beside the ub-review gate."
+            fi
             echo
             printf '%s\n' "$LANE_FOCUS"
             echo

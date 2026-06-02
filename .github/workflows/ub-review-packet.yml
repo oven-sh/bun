@@ -24,7 +24,7 @@ jobs:
     name: UB evidence packet / gh-runner
     if: github.repository == 'EffortlessSteven/bun'
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 30
     env:
       CARGO_TARGET_DIR: /tmp/ub-review-cargo-target
       CARGO_INSTALL_JOBS: "2"
@@ -32,6 +32,7 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Fetch PR base ref
         run: |
@@ -58,7 +59,9 @@ jobs:
 
       - name: Build UB review packet
         id: ub-review
-        uses: EffortlessMetrics/ub-review@v0
+        # Pinned to the current post-v0 review-body/metrics/observation cleanup.
+        # Move to v0.1 after the next ub-review release is cut.
+        uses: EffortlessMetrics/ub-review@04b78422457093d400b522c4615266cdaa067500
         with:
           preset: bun-ub
           profile: gh-runner

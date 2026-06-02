@@ -1,12 +1,16 @@
 import { SQL } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
+import { isDockerEnabled } from "harness";
 import * as dockerCompose from "../../docker/index.ts";
 
 // Tests for `prepare: false` (unnamed prepared statements).
 // These verify that parameterized queries work correctly when using unnamed
 // prepared statements, which is critical for PgBouncer compatibility.
 
-describe("PostgreSQL prepare: false", async () => {
+// Gate on the shared chokepoint so this routes through isDockerEnabled() like
+// the rest of the suite: in CI where Docker is expected it fails loudly rather
+// than swallowing the failure into a silent test.skip below.
+describe.skipIf(!isDockerEnabled())("PostgreSQL prepare: false", async () => {
   let container: { port: number; host: string };
 
   try {

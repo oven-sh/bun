@@ -135,6 +135,19 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
     }
   });
 
+  it("rejects over-long paths in accessSync", () => {
+    expect(() => fs.accessSync(kernel32Long)).toThrow("ENAMETOOLONG");
+  });
+
+  // slice_z's drive-letter branch adds the \\?\ prefix in the 98302-byte
+  // PathBuffer; for byte lengths in (98297, 98302] the prefixed copy used to
+  // write past the buffer. It must fall back to the unprefixed form and
+  // surface the syscall's error (which one depends on the OS/filesystem).
+  it("handles drive-letter paths in the last bytes below MAX_PATH_BYTES", () => {
+    const p = "C:\\" + Buffer.alloc(98297, "a").toString();
+    expect(() => fs.statSync(p)).toThrow(/ENOENT|ENAMETOOLONG|EINVAL/);
+  });
+
   it("rejects over-long paths in recursive mkdirSync", () => {
     expect(() => fs.mkdirSync(kernel32Long, { recursive: true })).toThrow("ENAMETOOLONG");
   });

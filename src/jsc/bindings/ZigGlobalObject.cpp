@@ -1059,18 +1059,45 @@ void GlobalObject::reportUncaughtExceptionAtEventLoop(JSGlobalObject* globalObje
 
 extern "C" void Bun__handleHandledPromise(Zig::GlobalObject* JSGlobalObject, JSC::JSPromise* promise);
 
+// Entries in m_aboutToBeNotifiedRejectedPromises are either the rejected
+// JSPromise itself, or an AsyncContextFrame pairing it (as `callback`) with
+// the async context that was active when it was rejected.
+static JSC::JSPromise* rejectedPromiseFromEntry(JSC::JSCell* entry, JSC::JSValue* asyncContext = nullptr)
+{
+    if (auto* frame = dynamicDowncast<AsyncContextFrame>(entry)) {
+        if (asyncContext)
+            *asyncContext = frame->context.get();
+        return uncheckedDowncast<JSC::JSPromise>(frame->callback.get());
+    }
+    return uncheckedDowncast<JSC::JSPromise>(entry);
+}
+
 void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* promise,
     JSC::JSPromiseRejectionOperation operation)
 {
     auto* globalObj = static_cast<GlobalObject*>(obj);
 
     switch (operation) {
-    case JSPromiseRejectionOperation::Reject:
-        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, promise);
+    case JSPromiseRejectionOperation::Reject: {
+        // Snapshot the async context at rejection time, so that
+        // "unhandledRejection" listeners observe the rejected promise's
+        // AsyncLocalStorage context, like Node.js. The event itself is only
+        // emitted later (at the end of the tick, from handleRejectedPromises),
+        // by which point the context that was live here has been unwound.
+        JSC::JSCell* entry = promise;
+        if (globalObj->isAsyncContextTrackingEnabled()) {
+            if (auto* asyncContextData = globalObj->m_asyncContextData.get()) {
+                JSC::JSValue context = asyncContextData->getInternalField(0);
+                if (!context.isUndefined())
+                    entry = AsyncContextFrame::create(obj->vm(), globalObj->AsyncContextFrameStructure(), promise, context);
+            }
+        }
+        globalObj->m_aboutToBeNotifiedRejectedPromises.append(obj->vm(), globalObj, entry);
         break;
-    case JSPromiseRejectionOperation::Handle:
-        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching(globalObj, [&](JSC::WriteBarrier<JSC::JSPromise>& unhandledPromise) {
-            return unhandledPromise.get() == promise;
+    }
+    case JSPromiseRejectionOperation::Handle: {
+        bool removed = globalObj->m_aboutToBeNotifiedRejectedPromises.removeFirstMatching(globalObj, [&](JSC::WriteBarrier<JSC::JSCell>& entry) {
+            return rejectedPromiseFromEntry(entry.get()) == promise;
         });
         if (removed) break;
         // handleRejectedPromises() drains the list into a local buffer before
@@ -1081,13 +1108,14 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
         // handleRejectedPromises(), so there may be more than one).
         for (auto* inflight = globalObj->m_rejectedPromisesBeingProcessed; inflight; inflight = inflight->outer) {
             for (size_t i = inflight->index, n = inflight->buffer->size(); i < n; ++i) {
-                if (inflight->buffer->at(i).asCell() == promise)
+                if (rejectedPromiseFromEntry(inflight->buffer->at(i).asCell()) == promise)
                     return;
             }
         }
         // The promise rejection has already been notified, now we need to queue it for the rejectionHandled event
         Bun__handleHandledPromise(globalObj, promise);
         break;
+    }
     }
 }
 
@@ -3414,18 +3442,37 @@ void GlobalObject::handleRejectedPromises()
         InFlightRejections inflight { &promises, 0, m_rejectedPromisesBeingProcessed };
         WTF::SetForScope inflightScope(m_rejectedPromisesBeingProcessed, &inflight);
         for (size_t i = 0, size = promises.size(); i < size; ++i) {
-            auto* promise = static_cast<JSC::JSPromise*>(promises.at(i).asCell());
+            JSC::JSValue asyncContext;
+            auto* promise = rejectedPromiseFromEntry(promises.at(i).asCell(), &asyncContext);
             if (promise->isHandled())
                 continue;
             inflight.index = i + 1;
 
+            // Restore the async context that was active when the promise was
+            // rejected while the "unhandledRejection" event is emitted, like
+            // Node.js does. This mirrors how timers keep the async context
+            // installed while reporting an uncaught exception.
+            InternalFieldTuple* asyncContextData = nullptr;
+            JSC::JSValue restoreAsyncContext;
+            if (asyncContext) {
+                asyncContextData = m_asyncContextData.get();
+                restoreAsyncContext = asyncContextData->getInternalField(0);
+                asyncContextData->putInternalField(virtual_machine, 0, asyncContext);
+            }
+
             Bun__handleRejectedPromise(this, promise);
             if (auto ex = scope.exception()) {
-                if (virtual_machine.isTerminationException(ex)) [[unlikely]]
+                if (virtual_machine.isTerminationException(ex)) [[unlikely]] {
+                    if (asyncContextData)
+                        asyncContextData->putInternalField(virtual_machine, 0, restoreAsyncContext);
                     return;
+                }
                 (void)scope.tryClearException();
                 this->reportUncaughtExceptionAtEventLoop(this, ex);
             }
+
+            if (asyncContextData)
+                asyncContextData->putInternalField(virtual_machine, 0, restoreAsyncContext);
         }
         // An unhandledRejection handler may itself reject a promise; loop
         // until the list stays empty.

@@ -2275,8 +2275,7 @@ impl FetchTasklet {
             }
         } else {
             if success {
-                if task_ref.scheduled_response_buffer.list.is_empty() && !task_ref.result.has_more
-                {
+                if task_ref.scheduled_response_buffer.list.is_empty() && !task_ref.result.has_more {
                     // Final delivery into an empty scheduled buffer — the common
                     // buffered-response case, where this callback carries the
                     // complete body. Hand the accumulated bytes over instead of

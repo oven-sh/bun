@@ -591,15 +591,13 @@ describe("DiffieHellman", () => {
   it("createDiffieHellman throws when generator is non-numeric with numeric prime", () => {
     // String generators are accepted in the buffer-prime branch (as the encoding arg), so the
     // early type guard lets them through; the strict numeric check only fires in this branch.
-    let caught;
-    try {
-      crypto.createDiffieHellman(1024, "abc");
-    } catch (e) {
-      caught = e;
-    }
-    expect(caught).toBeInstanceOf(TypeError);
-    expect(caught.code).toBe("ERR_INVALID_ARG_TYPE");
-    expect(caught.message).toBe("Second argument must be an int32");
+    expect(() => crypto.createDiffieHellman(1024, "abc")).toThrow(
+      expect.objectContaining({
+        name: "TypeError",
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "Second argument must be an int32",
+      })
+    );
   });
 });
 

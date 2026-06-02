@@ -129,3 +129,116 @@ test("TextDecoder - replacement encoding", () => {
   const result = decoder.decode(bytes);
   expect(result).toBe("\uFFFD");
 });
+
+const cp = (...codes: number[]) => String.fromCharCode(...codes);
+
+test("TextDecoder - ISO-8859-2 encoding", () => {
+  const decoder = new TextDecoder("iso-8859-2");
+  expect(decoder.encoding).toBe("iso-8859-2");
+  expect(new TextDecoder("latin2").encoding).toBe("iso-8859-2");
+  expect(decoder.decode(new Uint8Array([0xbf, 0xcf, 0xdf]))).toBe(cp(0x017c, 0x010e, 0x00df));
+});
+
+test("TextDecoder - ISO-8859-4 encoding", () => {
+  const decoder = new TextDecoder("iso-8859-4");
+  expect(decoder.encoding).toBe("iso-8859-4");
+  expect(new TextDecoder("latin4").encoding).toBe("iso-8859-4");
+  expect(decoder.decode(new Uint8Array([0xbf, 0xcf, 0xdf]))).toBe(cp(0x014b, 0x012a, 0x00df));
+});
+
+test("TextDecoder - ISO-8859-5 encoding", () => {
+  const decoder = new TextDecoder("iso-8859-5");
+  expect(decoder.encoding).toBe("iso-8859-5");
+  expect(new TextDecoder("cyrillic").encoding).toBe("iso-8859-5");
+  expect(decoder.decode(new Uint8Array([0xbf, 0xcf, 0xdf]))).toBe(cp(0x041f, 0x042f, 0x043f));
+});
+
+test("TextDecoder - ISO-8859-10 encoding", () => {
+  const decoder = new TextDecoder("iso-8859-10");
+  expect(decoder.encoding).toBe("iso-8859-10");
+  expect(new TextDecoder("latin6").encoding).toBe("iso-8859-10");
+  expect(decoder.decode(new Uint8Array([0xbf, 0xcf, 0xdf]))).toBe(cp(0x014b, 0x00cf, 0x00df));
+});
+
+test("TextDecoder - ISO-8859-13 encoding", () => {
+  const decoder = new TextDecoder("iso-8859-13");
+  expect(decoder.encoding).toBe("iso-8859-13");
+  expect(decoder.decode(new Uint8Array([0xbf, 0xcf, 0xdf]))).toBe(cp(0x00e6, 0x013b, 0x00df));
+});
+
+test("TextDecoder - ISO-8859-14 encoding", () => {
+  const decoder = new TextDecoder("iso-8859-14");
+  expect(decoder.encoding).toBe("iso-8859-14");
+  expect(decoder.decode(new Uint8Array([0xbf, 0xcf, 0xdf]))).toBe(cp(0x1e61, 0x00cf, 0x00df));
+});
+
+test("TextDecoder - ISO-8859-15 encoding", () => {
+  const decoder = new TextDecoder("iso-8859-15");
+  expect(decoder.encoding).toBe("iso-8859-15");
+  expect(new TextDecoder("l9").encoding).toBe("iso-8859-15");
+  expect(decoder.decode(new Uint8Array([0xa4]))).toBe("\u20ac");
+  expect(decoder.decode(new Uint8Array([0xbf, 0xcf, 0xdf]))).toBe(cp(0x00bf, 0x00cf, 0x00df));
+});
+
+test("TextDecoder - ISO-8859-16 encoding", () => {
+  const decoder = new TextDecoder("iso-8859-16");
+  expect(decoder.encoding).toBe("iso-8859-16");
+  expect(decoder.decode(new Uint8Array([0xbf, 0xcf, 0xdf]))).toBe(cp(0x017c, 0x00cf, 0x00df));
+});
+
+test("TextDecoder - KOI8-R encoding", () => {
+  const decoder = new TextDecoder("koi8-r");
+  expect(decoder.encoding).toBe("koi8-r");
+  expect(new TextDecoder("koi8").encoding).toBe("koi8-r");
+  expect(decoder.decode(new Uint8Array([0xbf, 0xcf, 0xdf]))).toBe(cp(0x00a9, 0x043e, 0x044a));
+});
+
+test("TextDecoder - macintosh encoding", () => {
+  const decoder = new TextDecoder("macintosh");
+  expect(decoder.encoding).toBe("macintosh");
+  expect(new TextDecoder("x-mac-roman").encoding).toBe("macintosh");
+  expect(decoder.decode(new Uint8Array([0x80, 0xbf, 0xcf]))).toBe(cp(0x00c4, 0x00f8, 0x0153));
+});
+
+test("TextDecoder - x-mac-cyrillic encoding", () => {
+  const decoder = new TextDecoder("x-mac-cyrillic");
+  expect(decoder.encoding).toBe("x-mac-cyrillic");
+  expect(new TextDecoder("x-mac-ukrainian").encoding).toBe("x-mac-cyrillic");
+  expect(decoder.decode(new Uint8Array([0x80, 0xbf, 0xcf]))).toBe(cp(0x0410, 0x045a, 0x0455));
+});
+
+test("TextDecoder - windows-1250 encoding", () => {
+  const decoder = new TextDecoder("windows-1250");
+  expect(decoder.encoding).toBe("windows-1250");
+  expect(new TextDecoder("cp1250").encoding).toBe("windows-1250");
+  expect(decoder.decode(new Uint8Array([0x80, 0xbf, 0xcf]))).toBe(cp(0x20ac, 0x017c, 0x010e));
+});
+
+test("TextDecoder - windows-1251 encoding", () => {
+  const decoder = new TextDecoder("windows-1251");
+  expect(decoder.encoding).toBe("windows-1251");
+  expect(new TextDecoder("cp1251").encoding).toBe("windows-1251");
+  expect(decoder.decode(new Uint8Array([0x80, 0xbf, 0xcf]))).toBe(cp(0x0402, 0x0457, 0x041f));
+});
+
+test("TextDecoder - windows-1254 encoding", () => {
+  const decoder = new TextDecoder("windows-1254");
+  expect(decoder.encoding).toBe("windows-1254");
+  expect(new TextDecoder("iso-8859-9").encoding).toBe("windows-1254");
+  expect(new TextDecoder("latin5").encoding).toBe("windows-1254");
+  expect(decoder.decode(new Uint8Array([0x80, 0xcf, 0xdf]))).toBe(cp(0x20ac, 0x00cf, 0x00df));
+});
+
+test("TextDecoder - windows-1256 encoding", () => {
+  const decoder = new TextDecoder("windows-1256");
+  expect(decoder.encoding).toBe("windows-1256");
+  expect(new TextDecoder("cp1256").encoding).toBe("windows-1256");
+  expect(decoder.decode(new Uint8Array([0x80, 0xbf, 0xcf]))).toBe(cp(0x20ac, 0x061f, 0x062f));
+});
+
+test("TextDecoder - windows-1258 encoding", () => {
+  const decoder = new TextDecoder("windows-1258");
+  expect(decoder.encoding).toBe("windows-1258");
+  expect(new TextDecoder("cp1258").encoding).toBe("windows-1258");
+  expect(decoder.decode(new Uint8Array([0x80, 0xcf, 0xdf]))).toBe(cp(0x20ac, 0x00cf, 0x00df));
+});

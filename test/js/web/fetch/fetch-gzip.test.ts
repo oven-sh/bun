@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it } from "bun:test";
 import { gcTick } from "harness";
 import { once } from "node:events";
 import { createServer } from "node:http";
+import { createServer as createNetServer } from "node:net";
 import { brotliCompressSync, deflateSync, gzipSync, zstdCompressSync } from "node:zlib";
 import path from "path";
 
@@ -303,8 +304,7 @@ describe("empty compressed responses", () => {
     "content-length-0": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\n\r\n`,
   })) {
     it(`empty gzip body via ${name} resolves as empty`, async () => {
-      const { createServer } = await import("node:net");
-      const raw = createServer(socket => void socket.write(write));
+      const raw = createNetServer(socket => void socket.write(write));
       await new Promise<void>(resolve => raw.listen(0, () => resolve()));
       const port = (raw.address() as { port: number }).port;
       try {

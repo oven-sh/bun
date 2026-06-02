@@ -702,6 +702,21 @@ mod tests {
     }
 
     #[test]
+    fn convert_z_bounds() {
+        // The NUL-terminating conversion (used by the Windows profilers'
+        // path widening) shares the checked core: exact fit converts with
+        // the NUL in the reserved slot, over-long fails safe to "".
+        let mut wbuf = [1u16; 9];
+        let result = bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut wbuf, b"abcdefgh");
+        assert_eq!(result.len(), 8);
+        assert_eq!(wbuf[8], 0);
+
+        let result = bun_core::strings::convert_utf8_to_utf16_in_buffer_z(&mut wbuf, &[b'a'; 16]);
+        assert_eq!(result.len(), 0);
+        assert_eq!(wbuf[0], 0);
+    }
+
+    #[test]
     fn fits_in_wide_path_buffer_bounds() {
         // PATH_MAX_WIDE (32767) minus the 10-unit overhead (`\??\UNC\` +
         // trailing slash + NUL) = 32757 is the largest accepted size.

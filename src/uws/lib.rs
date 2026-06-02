@@ -102,7 +102,7 @@ pub struct SocketAddress {
     pub is_ipv6: bool,
 }
 
-pub use bun_uws_sys::loop_::on_thread_exit;
+pub use bun_uws_sys::loop_::{leak_loop_on_thread_exit, on_thread_exit};
 
 /// # Safety
 /// `filename` and `error_msg` must be valid NUL-terminated C strings.

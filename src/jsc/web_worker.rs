@@ -1314,6 +1314,14 @@ impl WebWorker {
             unsafe { &*vm_ptr }
                 .has_terminated
                 .store(true, core::sync::atomic::Ordering::Release);
+            // Early-returning skips `bun_uws::on_thread_exit()` below, but
+            // that alone does NOT leak the loop: the C++ `thread_local
+            // LoopCleaner` destructor still runs at thread exit (via
+            // `__cxa_thread_atexit`, independent of the unwind-free return
+            // path) and would `us_loop_free()` it — under a straggler that
+            // loaded `has_terminated == false` and is about to `wakeup()`
+            // this loop. Disarm it explicitly.
+            bun_uws::leak_loop_on_thread_exit();
             virtual_machine::VMHolder::set_vm(None);
             let _ = core::mem::ManuallyDrop::new(arena.take());
             return;
@@ -1369,12 +1377,12 @@ impl WebWorker {
         }
         bun_core::delete_all_pools_for_thread_exit();
         // Free this thread's lazily-created uWS loop and its 512 KiB recv
-        // buffer. The C++ thread_local `~LoopCleaner` does not fire here:
-        // we return normally and
-        // unwinding never crosses the `extern "C"` frame, so the destructor is
-        // skipped on glibc; under BUN_DESTRUCT_VM_ON_EXIT it would also gate
-        // on `!bun_is_exiting()`. Everything that registers polls on the loop
-        // (gc_controller, sockets, timers) has been deinit'd above.
+        // buffer. This nulls `getLazyLoop().loop`, so the C++ `thread_local
+        // ~LoopCleaner` — which DOES run at thread exit via
+        // `__cxa_thread_atexit` (see c-bindings.cpp `shared_header_buffer_get`
+        // note), independent of this unwind-free return path — becomes a
+        // no-op instead of double-freeing. Everything that registers polls on
+        // the loop (gc_controller, sockets, timers) has been deinit'd above.
         bun_uws::on_thread_exit();
         drop(arena.take());
 

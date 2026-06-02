@@ -7,7 +7,8 @@
 // -lto variants built with ThinLTO (per-module summaries for cross-language
 // importing), and the Windows ICU data table filtered + per-item zstd
 // compressed (lazily decompressed via bun_icu_decompress.cpp).
-export const WEBKIT_VERSION = "963f8758c29e965471c191668d5776a1a1b014b6";
+// Testing oven-sh/WebKit#246 (Linux LTO builds switched to ThinLTO).
+export const WEBKIT_VERSION = "autobuild-preview-pr-246-499040f7";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.

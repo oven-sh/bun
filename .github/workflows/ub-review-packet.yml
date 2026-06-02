@@ -25,7 +25,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
-      CARGO_TARGET_DIR: ${{ runner.temp }}/ub-review-cargo-target
+      CARGO_TARGET_DIR: /tmp/ub-review-cargo-target
       CARGO_INSTALL_JOBS: "2"
     steps:
       - uses: actions/checkout@v5

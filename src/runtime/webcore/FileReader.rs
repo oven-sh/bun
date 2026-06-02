@@ -605,8 +605,13 @@ impl FileReader {
                 if total_readed >= max_size {
                     // The window was already exhausted; drop the excess bytes
                     // and tear the reader down so a pending read resolves as
-                    // done instead of waiting forever.
+                    // done instead of waiting forever. On Windows the chunk
+                    // lands in the reader's buffer (not the per-loop stack
+                    // buffer), so clear it first — otherwise `on_reader_done`
+                    // hands the past-window bytes to `consume_reader_buffer`
+                    // and they get delivered as the final read.
                     if !self.reader().is_done() {
+                        self.reader().buffer().clear();
                         self.reader().close();
                     }
                     return false;

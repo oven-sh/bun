@@ -384,6 +384,28 @@ extern "C" bool ReadableStream__isLocked(JSC::EncodedJSValue possibleReadableStr
     return stream != nullptr && WebCore::ReadableStream::isLocked(globalObject, stream);
 }
 
+// Returns the stream's storedError when its state is $streamErrored, and an
+// empty JSValue otherwise (including when the value is not a ReadableStream).
+extern "C" JSC::EncodedJSValue ReadableStream__getStoredError(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)
+{
+    ASSERT(globalObject);
+    auto* stream = dynamicDowncast<WebCore::JSReadableStream>(JSValue::decode(possibleReadableStream));
+    if (!stream)
+        return {};
+
+    auto& vm = JSC::getVM(globalObject);
+    auto clientData = WebCore::clientData(vm);
+    JSValue state = stream->getDirect(vm, clientData->builtinNames().statePrivateName());
+    // $streamErrored === 3 (src/codegen/replacements.ts)
+    if (!state.isInt32() || state.asInt32() != 3)
+        return {};
+
+    JSValue storedError = stream->getDirect(vm, clientData->builtinNames().storedErrorPrivateName());
+    if (!storedError || storedError.isEmpty())
+        return JSValue::encode(JSC::jsUndefined());
+    return JSValue::encode(storedError);
+}
+
 extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream, void** ptr)
 {
     ASSERT(globalObject);

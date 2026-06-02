@@ -1505,11 +1505,16 @@ impl BlobExt for Blob {
                     // `Bun.write`'s `createPath` (default true): create the
                     // parent directories and retry the open once.
                     if let bun_sys::Result::Err(ref err) = opened {
-                        if err.get_errno() == bun_sys::E::ENOENT
-                            && mkdirp_if_not_exists
-                            && mkdirp_parent_of(path.as_bytes())
-                        {
-                            opened = bun_sys::open(path, open_flags, open_mode);
+                        if err.get_errno() == bun_sys::E::ENOENT && mkdirp_if_not_exists {
+                            match mkdirp_parent_of(path.as_bytes()) {
+                                MkdirpParentResult::Created => {
+                                    opened = bun_sys::open(path, open_flags, open_mode);
+                                }
+                                MkdirpParentResult::Failed(mkdir_err) => {
+                                    opened = bun_sys::Result::Err(mkdir_err);
+                                }
+                                MkdirpParentResult::NoParent => {}
+                            }
                         }
                     }
                     match opened {
@@ -1632,10 +1637,16 @@ impl BlobExt for Blob {
                 if let bun_sys::Result::Err(ref err) = started {
                     if err.get_errno() == bun_sys::E::ENOENT && mkdirp_if_not_exists {
                         if let PathOrFileDescriptor::Path(p) = &store.data.as_file().pathlike {
-                            if mkdirp_parent_of(p.slice()) {
-                                // SAFETY: `sink` is still the live +1 from `init`;
-                                // a failed `start` leaves it reusable.
-                                started = unsafe { (*sink).start(&stream_start) };
+                            match mkdirp_parent_of(p.slice()) {
+                                MkdirpParentResult::Created => {
+                                    // SAFETY: `sink` is still the live +1 from
+                                    // `init`; a failed `start` leaves it reusable.
+                                    started = unsafe { (*sink).start(&stream_start) };
+                                }
+                                MkdirpParentResult::Failed(mkdir_err) => {
+                                    started = bun_sys::Result::Err(mkdir_err);
+                                }
+                                MkdirpParentResult::NoParent => {}
                             }
                         }
                     }
@@ -4501,24 +4512,33 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
     Retry::No
 }
 
-/// `mkdir -p` the parent directory of `dest_path` on the JS thread. Returns
-/// `true` when the directories exist afterwards. Mirrors the ENOENT retry in
-/// `mkdir_if_not_exists` for `pipe_readable_stream_to_blob`, whose open does
-/// not go through the write-file task machinery.
-fn mkdirp_parent_of(dest_path: &[u8]) -> bool {
+pub enum MkdirpParentResult {
+    /// Parent directories exist now; retry the open.
+    Created,
+    /// `mkdir -p` itself failed; surface this error instead of the open's.
+    Failed(bun_sys::Error),
+    /// Nothing to create (no parent component); keep the open's error.
+    NoParent,
+}
+
+/// `mkdir -p` the parent directory of `dest_path` on the JS thread. Mirrors
+/// the ENOENT retry in `mkdir_if_not_exists` for
+/// `pipe_readable_stream_to_blob`, whose open does not go through the
+/// write-file task machinery.
+fn mkdirp_parent_of(dest_path: &[u8]) -> MkdirpParentResult {
     let Some(dirname) = bun_core::dirname(dest_path) else {
-        return false;
+        return MkdirpParentResult::NoParent;
     };
     let mut node_fs = crate::node::fs::NodeFS::default();
-    matches!(
-        node_fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-            path: crate::node::PathLike::String(bun_core::PathString::init(dirname)),
-            recursive: true,
-            always_return_none: true,
-            ..Default::default()
-        }),
-        bun_sys::Result::Ok(_)
-    )
+    match node_fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
+        path: crate::node::PathLike::String(bun_core::PathString::init(dirname)),
+        recursive: true,
+        always_return_none: true,
+        ..Default::default()
+    }) {
+        bun_sys::Result::Ok(_) => MkdirpParentResult::Created,
+        bun_sys::Result::Err(err) => MkdirpParentResult::Failed(err),
+    }
 }
 
 /// `bun_sys::Error` only
@@ -5404,6 +5424,17 @@ pub fn write_file_internal(
                 destination_blob.detach();
                 return Err(
                     global_this.throw_invalid_arguments(format_args!("ReadableStream is locked"))
+                );
+            }
+            // A stream that is already errored can never produce bytes; reject
+            // with its stored error before the pipe truncates the destination.
+            if let Some(stored_error) = stream.stored_error(global_this) {
+                destination_blob.detach();
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        stored_error,
+                    ),
                 );
             }
             return destination_blob.pipe_readable_stream_to_blob(

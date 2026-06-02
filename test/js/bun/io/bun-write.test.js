@@ -839,7 +839,22 @@ const IS_UV_FS_COPYFILE_DISABLED =
         },
       });
 
-      expect(async () => await Bun.write(filePath, stream)).toThrow("stream go boom");
+      await expect(Bun.write(filePath, stream)).rejects.toThrow("stream go boom");
+    });
+
+    it("rejects an already-errored stream without touching the destination", async () => {
+      using dir = tempDir("bun-write-preerrored-stream", {});
+      const filePath = join(String(dir), "out.bin");
+      await Bun.write(filePath, "precious contents");
+      const stream = new ReadableStream({
+        start(controller) {
+          controller.error(new Error("errored before write"));
+        },
+      });
+
+      await expect(Bun.write(filePath, stream)).rejects.toThrow("errored before write");
+      // the destination must not have been created-or-truncated first
+      expect(await Bun.file(filePath).text()).toBe("precious contents");
     });
   });
 });

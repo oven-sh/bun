@@ -129,11 +129,12 @@ describe.if(isWindows)("path length validation against UTF-16 conversion buffers
   // https://github.com/oven-sh/bun/issues/20258 — drive-letter-less paths of
   // 49151..98302 chars crashed existsSync (49150 and 98303 already worked:
   // the former fit the buffer, the latter exceeded the UTF-8 byte check).
-  it("existsSync handles every path length across the buffer boundaries (#20258)", () => {
-    for (const len of [49150, 49151, 64503, 98302, 98303]) {
+  it.each([49150, 49151, 64503, 98302, 98303])(
+    "existsSync handles path length %i across the buffer boundaries (#20258)",
+    len => {
       expect(fs.existsSync(Buffer.alloc(len, "A").toString())).toBe(false);
-    }
-  });
+    },
+  );
 
   it("rejects over-long paths in accessSync", () => {
     expect(() => fs.accessSync(kernel32Long)).toThrow("ENAMETOOLONG");

@@ -1104,7 +1104,7 @@ impl PathLikeExt for PathLike {
                     // a near-MAX_PATH_BYTES path over); fall through to the
                     // plain copy / too-long handling below.
                     Err(e) if e == bun_core::err!("NameTooLong") => None,
-                    Err(_) => panic!("Error while resolving path."),
+                    Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
                 if let Some(len) = resolved_len {
                     // SAFETY: `resolve_cwd_with_external_buf_z` wrote the NUL
@@ -1226,7 +1226,7 @@ impl PathLikeExt for PathLike {
                     // (UNC cwds can push a near-MAX_PATH_BYTES path over) —
                     // such a path can't exist on NT.
                     Err(e) if e == bun_core::err!("NameTooLong") => return Err(NameTooLong),
-                    Err(_) => panic!("Error while resolving path."),
+                    Err(e) => panic!("Error while resolving path: {e:?}"),
                 };
                 let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
                     resolve,

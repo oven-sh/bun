@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import fs from "fs";
-import { gcTick, tls, tmpdirSync } from "harness";
+import { gcTick, tempDir, tls, tmpdirSync } from "harness";
 import path, { join } from "path";
 import { setImmediate as setImmediatePromise } from "timers/promises";
 var setTimeoutAsync = (fn, delay) => {
@@ -172,9 +172,8 @@ describe("HTMLRewriter", () => {
         element.setInnerContent("<blink>it worked!</blink>", { html: true });
       },
     });
-    const filePath = join(tmpdirSync(), "html-rewriter-stream.txt.js");
-    await Bun.write(filePath, "<div>hello</div>");
-    var output = rewriter.transform(new Response(Bun.file(filePath).stream()));
+    using dir = tempDir("html-rewriter-stream", { "index.html": "<div>hello</div>" });
+    var output = rewriter.transform(new Response(Bun.file(join(String(dir), "index.html")).stream()));
     expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
   });
 

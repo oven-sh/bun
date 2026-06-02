@@ -2444,6 +2444,18 @@ describe("Response wrapping a Bun.file() stream", () => {
     expect(res.headers.get("content-length")).toBe(String(end - start));
   });
 
+  it("HEAD reports the same Content-Length as GET for a file-stream response", async () => {
+    const { path } = makeStreamFile();
+    using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(file(path).stream()),
+    });
+
+    const head = await fetch(server.url, { method: "HEAD" });
+    expect(head.headers.get("content-length")).toBe(String(STREAM_FILE_SIZE));
+    expect(head.headers.get("transfer-encoding")).toBeNull();
+  });
+
   it("aborting requests mid-transfer doesn't break the server", async () => {
     const { path } = makeStreamFile();
     using server = Bun.serve({

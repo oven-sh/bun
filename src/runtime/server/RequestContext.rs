@@ -2401,6 +2401,15 @@ where
         // not content-length or transfer-encoding so we need to respect the body
         let body_value = response.get_body_value();
         body_value.to_blob_if_possible();
+        // `to_blob_if_possible` can't see streams migrated into the JS-side
+        // cached slot; convert blob/file-backed streams here too so HEAD
+        // reports the same Content-Length the GET render path produces.
+        if matches!(body_value, Body::Value::Locked(_)) {
+            if let Some(mut readable) = response.get_body_readable_stream(global_this) {
+                let _ = response.try_blob_from_resolved_stream(global_this, &mut readable);
+            }
+        }
+        let body_value = response.get_body_value();
         match body_value {
             Body::Value::InternalBlob(_) | Body::Value::WTFStringImpl(_) => {
                 let mut blob = body_value.use_as_any_blob_allow_non_utf8_string();

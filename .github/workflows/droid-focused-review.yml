@@ -1,7 +1,7 @@
 name: Droid Focused Review
 
 # Fork-only auxiliary review beside the ub-review gate. Keep this small and
-# focused: one UB lane and one test-proof lane, both on GLM 5.1.
+# focused: one UB lane and one test-proof lane, both on MiniMax M3.
 
 on:
   pull_request:
@@ -74,16 +74,16 @@ jobs:
           filter: blob:none
           persist-credentials: false
 
-      - name: Build GLM model config
+      - name: Build MiniMax model config
         shell: bash
         env:
           DROID: ${{ secrets.DROID }}
-          GLM: ${{ secrets.GLM }}
+          MINIMAX: ${{ secrets.MINIMAX }}
         run: |
           set -euo pipefail
 
           test -n "${DROID:-}" || { echo "::error::Missing DROID secret"; exit 1; }
-          test -n "${GLM:-}" || { echo "::error::Missing GLM secret"; exit 1; }
+          test -n "${MINIMAX:-}" || { echo "::error::Missing MINIMAX secret"; exit 1; }
 
           # apiKey stays as an environment reference so the secret is not written
           # to disk. Droid expands it when reading settings.
@@ -92,12 +92,12 @@ jobs:
           {
             "customModels": [
               {
-                "displayName": "GLM-5.1-ZAI-Coding",
-                "model": "glm-5.1",
-                "baseUrl": "https://api.z.ai/api/coding/paas/v4",
-                "apiKey": "${GLM}",
-                "provider": "generic-chat-completion-api",
-                "maxOutputTokens": 131072
+                "displayName": "MiniMax-M3",
+                "model": "MiniMax-M3",
+                "baseUrl": "https://api.minimax.io/anthropic",
+                "apiKey": "${MINIMAX}",
+                "provider": "anthropic",
+                "maxOutputTokens": 32768
               }
             ]
           }
@@ -126,7 +126,7 @@ jobs:
       - name: Run Droid focused lane
         uses: EffortlessSteven/droid-action@cc240b7f6e3305cc8a3073ccaad4268d3b67361b
         env:
-          GLM: ${{ secrets.GLM }}
+          MINIMAX: ${{ secrets.MINIMAX }}
           ANTHROPIC_API_KEY: ""
           ANTHROPIC_AUTH_TOKEN: ""
           ANTHROPIC_BASE_URL: ""
@@ -138,7 +138,7 @@ jobs:
           settings: .factory/byok-settings.json
           automatic_review: true
           automatic_security_review: false
-          review_model: custom:GLM-5.1-ZAI-Coding-0
+          review_model: custom:MiniMax-M3-0
           review_label: droid-${{ matrix.lane.id }}
           completion_show_model: true
           include_suggestions: true

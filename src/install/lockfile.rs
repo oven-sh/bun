@@ -219,7 +219,7 @@ pub struct Lockfile {
     /// exact pin is a deliberate choice, not an artifact of which manifest
     /// happened to land first. Runtime-only — never serialised; sized lazily
     /// in `mark_exact_pin`.
-    pub exact_pinned: Vec<bool>,
+    pub exact_pinned: DynamicBitSet,
 }
 
 /// Zig: `Lockfile.Package.List` — `MultiArrayList(Package)`.
@@ -2125,7 +2125,7 @@ impl Lockfile {
             // session-appended, so the order-independence guard in
             // `get_package_id` applies from id 0.
             loaded_package_count: 0,
-            exact_pinned: Vec::new(),
+            exact_pinned: DynamicBitSet::default(),
         }
     }
 
@@ -2142,10 +2142,10 @@ impl Lockfile {
     #[inline]
     pub fn mark_exact_pin(&mut self, id: PackageID) {
         let i = id as usize;
-        if self.exact_pinned.len() <= i {
-            self.exact_pinned.resize(i + 1, false);
+        if self.exact_pinned.bit_length() <= i {
+            bun_core::handle_oom(self.exact_pinned.resize(i + 1, false));
         }
-        self.exact_pinned[i] = true;
+        self.exact_pinned.set(i);
     }
 
     pub fn get_package_id(
@@ -2184,7 +2184,7 @@ impl Lockfile {
         let buf = self.buffers.string_bytes.as_slice();
 
         let loaded_watermark = self.loaded_package_count;
-        let exact_pinned = self.exact_pinned.as_slice();
+        let exact_pinned = &self.exact_pinned;
         let try_satisfies_dedupe = |id: PackageID| -> bool {
             let existing = &resolutions[id as usize];
             if existing.tag != ResolutionTag::Npm {
@@ -2212,7 +2212,8 @@ impl Lockfile {
             // flake: a wide range (`*`, `>=X`) collapsing onto a sibling's
             // *range-resolved* lower major depending on whose manifest landed
             // first ("text lockfile is hoisted").
-            if id >= loaded_watermark && !exact_pinned.get(id as usize).copied().unwrap_or(false) {
+            if id >= loaded_watermark && !exact_pinned.is_set_allow_out_of_bound(id as usize, false)
+            {
                 if let Some(floor) = resolved_npm_floor {
                     if existing_ver.order(floor, buf, buf) == Ordering::Less
                         && existing_ver.major != floor.major

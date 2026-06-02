@@ -85,9 +85,6 @@ mod _impl {
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
-        /// Points into a JS `Uint32Array` (`this._writeState`). Kept alive because
-        /// the JS object is tied to the native handle as `_handle[owner_symbol]`.
-        pub write_result: Cell<Option<*mut u32>>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         // TODO(port): Strong on m_ctx self-ref → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
         pub this_value: JsCell<StrongOptional>, // Strong.Optional — empty-initialised
@@ -145,7 +142,6 @@ mod _impl {
                 // JSC_BORROW backref — the global outlives this m_ctx payload.
                 global_this: bun_ptr::BackRef::new(global_this),
                 stream: JsCell::new(stream),
-                write_result: Cell::new(None),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
@@ -188,10 +184,7 @@ mod _impl {
                     .throw());
             }
 
-            // this does not get gc'd because it is stored in the JS object's
-            // `this._writeState`. and the JS object is tied to the native handle
-            // as `_handle[owner_symbol]`.
-            // `flush_write_result` writes two u32s through this pointer, so the
+            // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
             let write_result_value = arguments.ptr[1];
             let Some(mut write_result_buf) = write_result_value.as_array_buffer(global_this) else {
@@ -217,7 +210,6 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_result = write_result_slice.as_mut_ptr();
             let write_callback =
                 validators::validate_function(global_this, "writeCallback", arguments.ptr[2])?;
 
@@ -240,7 +232,7 @@ mod _impl {
                 ));
             }
 
-            self.write_result.set(Some(write_result));
+            js::write_result_set_cached(this_value, global_this, write_result_value);
 
             js::write_callback_set_cached(
                 this_value,

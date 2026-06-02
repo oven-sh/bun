@@ -582,7 +582,7 @@ impl FileRoute {
         resp.clear_timeout();
         // SAFETY: `this` is live (ref held by caller); `deref()` may free it.
         unsafe {
-            if let Some(mut server) = (*this).server.get() {
+            if let Some(server) = (*this).server.get() {
                 server.on_static_request_complete();
             }
             Self::deref(this);

@@ -3925,8 +3925,11 @@ pub(super) fn finalize_bundle(
 
         dev.start_next_bundle_if_present();
 
-        // Unref the ref added in `start_async_bundle`
-        if let Some(server) = dev.server.as_mut() {
+        // Unref the ref added in `start_async_bundle`. Copy the `AnyServer`
+        // handle out (no `as_mut()`): the call can drop this very
+        // `Box<DevServer>` via `deinit_if_we_can`, so no reference into it
+        // may be live across the call.
+        if let Some(server) = dev.server {
             server.on_static_request_complete();
         }
     };
@@ -6683,14 +6686,12 @@ impl UnrefSourceMapRequest {
         // SAFETY: caller contract — ctx is the original Box allocation; no
         // live borrow of *ctx exists.
         let ctx = unsafe { bun_core::heap::take(ctx) };
+        // Copy the `AnyServer` handle out of the DevServer (no `as_mut()`):
+        // the call can drop the `Box<DevServer>` via `deinit_if_we_can`, so
+        // no reference into it may be live across the call.
         // SAFETY: dev outlives the request
-        unsafe {
-            (*ctx.dev)
-                .server
-                .as_mut()
-                .unwrap()
-                .on_static_request_complete()
-        };
+        let server = unsafe { (*ctx.dev).server.unwrap() };
+        server.on_static_request_complete();
         drop(ctx);
     }
 

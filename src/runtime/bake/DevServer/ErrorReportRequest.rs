@@ -85,18 +85,16 @@ impl ErrorReportRequest {
     /// `ctx` must be the pointer returned by `heap::alloc` in `run`; called
     /// exactly once (success path here, or via `on_error` on abort/error).
     pub(crate) fn finalize(ctx: *mut ErrorReportRequest) {
+        // Copy the `AnyServer` handle out of the DevServer (no `as_mut()`):
+        // the call can drop the `Box<DevServer>` via `deinit_if_we_can`, so
+        // no reference into it may be live across the call.
         // SAFETY: `ctx` is the original Box allocation produced by `run`; no
         // live borrow of `*ctx` exists (BodyReaderHandler hands us the raw
         // pointer, never `&mut self`). Only reachable via `on_body`/`on_error`,
         // both of which uphold this contract.
         unsafe {
-            (*ctx)
-                .dev
-                .get_mut()
-                .server
-                .as_mut()
-                .unwrap()
-                .on_static_request_complete();
+            let server = (*ctx).dev.get_mut().server.unwrap();
+            server.on_static_request_complete();
             drop(bun_core::heap::take(ctx));
         }
     }

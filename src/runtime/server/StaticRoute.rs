@@ -388,7 +388,7 @@ impl StaticRoute {
             resp.clear_aborted();
             resp.clear_on_writable();
             resp.clear_timeout();
-            if let Some(mut server) = (*this).server.get() {
+            if let Some(server) = (*this).server.get() {
                 server.on_static_request_complete();
             }
             Self::deref_(this);

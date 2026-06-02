@@ -3624,11 +3624,19 @@ impl AnyServer {
         any_server_dispatch_resp!(self, resp, |s, r| NewServer::on_request(s, req, r))
     }
 
-    pub fn on_request_complete(&mut self) {
+    /// By-value `self` (`AnyServer` is `Copy`), not `&mut self`: these reach
+    /// `deinit_if_we_can`, which drops the server-owned `Box<DevServer>` —
+    /// and the DevServer call sites store their `AnyServer` handle *inside*
+    /// that box (`dev.server`), so a `&mut self` argument would be a
+    /// protected reference into the very allocation being freed (Stacked
+    /// Borrows; `borrow = ptr` in src/CLAUDE.md). Callers copy the handle
+    /// out first.
+    pub fn on_request_complete(self) {
         any_server_dispatch_ptr!(self, |s| NewServer::on_request_complete(s))
     }
 
-    pub fn on_static_request_complete(&mut self) {
+    /// By-value `self` for the same reason as [`Self::on_request_complete`].
+    pub fn on_static_request_complete(self) {
         any_server_dispatch_ptr!(self, |s| NewServer::on_static_request_complete(s))
     }
 

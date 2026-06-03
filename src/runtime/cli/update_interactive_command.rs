@@ -1765,17 +1765,27 @@ impl UpdateInteractiveCommand {
                         !package_url.is_empty(),
                     );
 
+                    // NOTE: hyperlink must NOT be embedded in the same format_args!
+                    // as <r> tags because TerminalHyperlink emits raw `\` (0x5C)
+                    // bytes as part of OSC 8 escape sequences. pretty_fmt_runtime
+                    // interprets `\<` as a Bun-format escape, consuming the backslash
+                    // and corrupting the OSC 8 string terminator, leaving a stray 'r'
+                    // visible.  Split into separate prints so the hyperlink's raw bytes
+                    // bypass pretty_fmt_runtime.
+                    // See https://github.com/oven-sh/bun/issues/31446
                     if selected {
                         if checkbox_color == "red" {
-                            bun_core::pretty!("<r><red>{}<r>", hyperlink);
+                            Output::pretty(format_args!("<r><red>"));
                         } else if checkbox_color == "yellow" {
-                            bun_core::pretty!("<r><yellow>{}<r>", hyperlink);
+                            Output::pretty(format_args!("<r><yellow>"));
                         } else {
-                            bun_core::pretty!("<r><green>{}<r>", hyperlink);
+                            Output::pretty(format_args!("<r><green>"));
                         }
                     } else {
-                        bun_core::pretty!("<r>{}<r>", hyperlink);
+                        Output::pretty(format_args!("<r>"));
                     }
+                    Output::print(format_args!("{}", hyperlink));
+                    Output::pretty(format_args!("<r>"));
 
                     // Print dev/peer/optional tag if applicable
                     if pkg.behavior.is_dev() {

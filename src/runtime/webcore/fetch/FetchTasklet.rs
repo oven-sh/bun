@@ -1909,6 +1909,7 @@ impl FetchTasklet {
         http_client.client.flags.force_http2 = fetch_options.force_http2;
         http_client.client.flags.force_http3 = fetch_options.force_http3;
         http_client.client.flags.force_http1 = fetch_options.force_http1;
+        http_client.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
             // Intrusive `ref_count` starts at 2 (one for the main thread, one for the HTTP
@@ -2414,6 +2415,7 @@ pub struct FetchOptions {
     pub force_http2: bool,
     pub force_http3: bool,
     pub force_http1: bool,
+    pub is_node_http_client: bool,
 }
 
 impl Default for FetchOptions {
@@ -2447,6 +2449,7 @@ impl Default for FetchOptions {
             force_http2: false,
             force_http3: false,
             force_http1: false,
+            is_node_http_client: false,
         }
     }
 }

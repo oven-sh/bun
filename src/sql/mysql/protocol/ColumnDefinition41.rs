@@ -83,7 +83,7 @@ impl ColumnDefinition41 {
     pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: &mut NewReader<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<bool, bun_core::Error> {
         // Length encoded strings
         self.catalog = reader.encode_len_string()?;
         bun_core::scoped_log!(
@@ -155,16 +155,22 @@ impl ColumnDefinition41 {
         // ASAN quarantine (test/regression/issue/28632).
         let unchanged = matches!(&self.name_or_index,
             ColumnIdentifier::Name(existing) if existing.slice() == self.name.slice());
+        let mut changed = false;
         if !unchanged {
             let name_view = Data::Temporary(bun_ptr::RawSlice::new(self.name.slice()));
-            self.name_or_index = ColumnIdentifier::init(name_view)?;
+            let rebuilt = ColumnIdentifier::init(name_view)?;
+            changed = match (&self.name_or_index, &rebuilt) {
+                (ColumnIdentifier::Index(prev), ColumnIdentifier::Index(curr)) => prev != curr,
+                _ => true,
+            };
+            self.name_or_index = rebuilt;
         }
 
         // https://mariadb.com/kb/en/result-set-packets/#column-definition-packet
         // According to mariadb, there seem to be extra 2 bytes at the end that is not being used
         reader.skip(2);
 
-        Ok(())
+        Ok(changed)
     }
 
     // TODO(refactor): `decoderWrap(ColumnDefinition41, decodeInternal).decode` is a comptime
@@ -173,7 +179,7 @@ impl ColumnDefinition41 {
     pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: &mut NewReader<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<bool, bun_core::Error> {
         self.decode_internal(reader)
     }
 }

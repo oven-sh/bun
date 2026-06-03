@@ -1,0 +1,2 @@
+FROM postgres:15
+COPY init-scripts/postgres/ /docker-entrypoint-initdb.d/

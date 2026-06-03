@@ -211,6 +211,7 @@ pub struct Flags {
     /// Set after the first H3 retry so a stale-session/GOAWAY race retries
     /// once on a fresh connection but never loops.
     pub h3_retried: bool,
+    pub is_node_http_client: bool,
 }
 
 impl Default for Flags {
@@ -233,6 +234,7 @@ impl Default for Flags {
             force_http1: false,
             force_http3: false,
             h3_retried: false,
+            is_node_http_client: false,
         }
     }
 }
@@ -768,7 +770,7 @@ use core::ffi::c_uint;
 
 use bstr::BStr;
 use bun_boringssl as boringssl;
-use bun_collections::ArrayHashMap;
+use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output, err};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, immutable as strings};
@@ -1166,7 +1168,7 @@ pub fn print_request(
             headers: request.headers,
             bytes_read: request.bytes_read,
         };
-        Output::pretty_errorln(format_args!("{}", request_.curl(ignore_insecure, body)));
+        bun_core::pretty_errorln!("{}", request_.curl(ignore_insecure, body));
     }
 
     let ver: &str = match protocol {
@@ -1175,21 +1177,16 @@ pub fn print_request(
         Protocol::Http3 => "HTTP/3",
     };
     // TODO(port): pretty_fmt prefix elided pending Output::error_writer() in bun_core.
-    Output::pretty_errorln(format_args!(
-        "> {} {} {}",
-        ver,
-        BStr::new(request.method),
-        BStr::new(url),
-    ));
+    bun_core::pretty_errorln!("> {} {} {}", ver, BStr::new(request.method), BStr::new(url));
     for header in request.headers {
-        Output::pretty_errorln(format_args!("> {}", header));
+        bun_core::pretty_errorln!("> {}", header);
     }
     Output::flush();
 }
 
 #[cold]
 fn print_response(response: &picohttp::Response<'_>) {
-    Output::pretty_errorln(format_args!("{}", response));
+    bun_core::pretty_errorln!("{}", response);
     Output::flush();
 }
 
@@ -1717,7 +1714,18 @@ impl<'a> HTTPClient<'a> {
         ) {
             return false;
         }
+        if self.has_tls_options_unsupported_by_h3() {
+            return false;
+        }
         h3_alt_svc_enabled()
+    }
+
+    fn has_tls_options_unsupported_by_h3(&self) -> bool {
+        self.signals.get(signals::Field::CertErrors)
+            || self
+                .tls_props
+                .as_ref()
+                .is_some_and(|tls| tls.get().requires_custom_request_ctx)
     }
 
     pub fn first_call<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>) {
@@ -2165,6 +2173,9 @@ impl<'a> HTTPClient<'a> {
                     }
                 }
                 h if h == hash_header_const(CHUNKED_ENCODED_HEADER.name()) => {
+                    if !self.flags.is_streaming_request_body {
+                        continue;
+                    }
                     // We don't want to override chunked encoding header if it was set by the user
                     if will_append {
                         add_transfer_encoding = false;
@@ -2246,7 +2257,10 @@ impl<'a> HTTPClient<'a> {
                     picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, value);
                 header_count += 1;
             }
-        } else if let Some(content_length) = original_content_length {
+        } else if let Some(content_length) = original_content_length
+            && (self.flags.is_node_http_client
+                || matches!(bun_core::parse_unsigned::<usize>(content_length, 10), Ok(0)))
+        {
             request_headers_buf[header_count] =
                 picohttp::Header::new(CONTENT_LENGTH_HEADER_NAME, content_length);
             header_count += 1;
@@ -2500,6 +2514,11 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
             if self.http_proxy.is_some() || self.unix_socket_path.slice().len() > 0 {
+                self.fail(err!(HTTP3Unsupported));
+                self.complete_connecting_process();
+                return;
+            }
+            if self.has_tls_options_unsupported_by_h3() {
                 self.fail(err!(HTTP3Unsupported));
                 self.complete_connecting_process();
                 return;
@@ -3101,7 +3120,37 @@ impl<'a> HTTPClient<'a> {
         } else {
             crate::ssl_config::SSLConfig::ZERO
         };
+        // Take ownership of the CONNECT accumulation buffer BEFORE entering
+        // ProxyTunnel::start. The envelope has been fully consumed by the
+        // caller (handle_on_data_headers); we leave an empty buffer behind so
+        // that when the tunnel later re-enters handle_on_data_headers with
+        // decrypted upstream bytes, the stale CONNECT envelope isn't re-parsed
+        // as the user-facing response (see #30381). Without this, a split
+        // CONNECT 200 response (envelope arriving across two TCP reads) stays
+        // buffered; the tunnel's re-entry appends the decrypted upstream bytes
+        // onto it, re-parses the envelope as the response (leaking
+        // proxy-agent / connection: close into response.headers), and hands
+        // the upstream's raw HTTP/1.1 bytes to the body unparsed.
+        //
+        // `start_payload` may alias into this buffer's heap storage on the
+        // split-read path, but `std::mem::take` swaps only the `Vec` header —
+        // the heap allocation (and thus the bytes `start_payload` points at)
+        // stays put until `envelope_buf` is dropped at the end of this
+        // function. ProxyTunnel::start copies `start_payload` into the TLS BIO
+        // via start_with_payload -> BIO_write before it returns, so the bytes
+        // are captured before the drop.
+        //
+        // We hold the buffer in a local and drop it AFTER start() rather than
+        // clearing `self.state.response_message_buffer` afterwards:
+        // ProxyTunnel::start has synchronous failure paths (SSLWrapper init
+        // error, or a handshake-traffic error that synchronously fires
+        // on_close) that call close_and_fail -> fail -> the result callback,
+        // which can free the AsyncHTTP that embeds `*self`. Touching `self`
+        // after start() returns would be a use-after-free.
+        let envelope_buf = std::mem::take(&mut self.state.response_message_buffer);
         ProxyTunnel::start::<IS_SSL>(self, socket, &ssl_options, start_payload);
+        // Must not reference `self` past this point — see comment above.
+        drop(envelope_buf);
     }
 
     #[inline]
@@ -3164,7 +3213,7 @@ impl<'a> HTTPClient<'a> {
             // if less than 16 it will always be a ShortRead
             if to_read!().len() < 16 {
                 bun_core::scoped_log!(fetch, "handleShortRead");
-                self.handle_short_read::<IS_SSL>(incoming_data, socket, needs_move);
+                self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                 return;
             }
 
@@ -3187,7 +3236,7 @@ impl<'a> HTTPClient<'a> {
                         self.close_and_fail::<IS_SSL>(err!(ResponseHeadersTooLarge), socket);
                         return;
                     }
-                    self.handle_short_read::<IS_SSL>(incoming_data, socket, needs_move);
+                    self.handle_short_read::<IS_SSL>(to_read!(), socket, needs_move);
                     return;
                 }
                 Err(e) => {
@@ -3229,6 +3278,13 @@ impl<'a> HTTPClient<'a> {
                 bun_core::scoped_log!(fetch, "information headers");
 
                 self.state.pending_response = None;
+                if !needs_move {
+                    let remaining = to_read!().len();
+                    let buffer = &mut self.state.response_message_buffer.list;
+                    let consumed = buffer.len().saturating_sub(remaining);
+                    buffer.drain_front(consumed);
+                    to_read = bun_ptr::RawSlice::new(buffer.as_slice());
+                }
                 if to_read!().is_empty() {
                     // we only received 1XX responses, we wanna wait for the next status code
                     return;
@@ -3756,7 +3812,7 @@ impl<'a> HTTPClient<'a> {
         if PRINT_EVERY != 0 {
             let i = PRINT_EVERY_I.fetch_add(1, Ordering::Relaxed) + 1;
             if i.is_multiple_of(PRINT_EVERY) {
-                Output::prettyln(format_args!("Heap stats for HTTP thread\n"));
+                bun_core::prettyln!("Heap stats for HTTP thread\n");
                 Output::flush();
                 // PERF(port): MimallocArena dump_thread_stats — dropped (no DEFAULT_ARENA in Rust)
                 PRINT_EVERY_I.store(0, Ordering::Relaxed);
@@ -4026,6 +4082,11 @@ impl<'a> HTTPClient<'a> {
     ) -> Result<bool, bun_core::Error> {
         debug_assert!(self.state.transfer_encoding == Encoding::Identity);
         let content_length = self.state.content_length;
+        if let Some(len) = content_length
+            && incoming_data.len() > len.saturating_sub(self.state.total_body_received)
+        {
+            self.state.flags.allow_keepalive = false;
+        }
         // is it exactly as much as we need?
         if is_only_buffer
             && let Some(len) = content_length
@@ -4377,16 +4438,23 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"Content-Encoding") => {
                     if !self.flags.disable_decompression {
-                        if header.value() == b"gzip" {
+                        // RFC 9110 §8.4.1: content codings are case-insensitive.
+                        // `x-gzip` is a registered deprecated alias of `gzip`.
+                        let value = header.value();
+                        if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
+                            || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
+                        {
                             self.state.encoding = Encoding::Gzip;
                             self.state.content_encoding_i = header_i as u8;
-                        } else if header.value() == b"deflate" {
+                        } else if strings::eql_case_insensitive_ascii_check_length(
+                            value, b"deflate",
+                        ) {
                             self.state.encoding = Encoding::Deflate;
                             self.state.content_encoding_i = header_i as u8;
-                        } else if header.value() == b"br" {
+                        } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
                             self.state.encoding = Encoding::Brotli;
                             self.state.content_encoding_i = header_i as u8;
-                        } else if header.value() == b"zstd" {
+                        } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
                             self.state.encoding = Encoding::Zstd;
                             self.state.content_encoding_i = header_i as u8;
                         }
@@ -4402,25 +4470,29 @@ impl<'a> HTTPClient<'a> {
                     {
                         continue;
                     }
-                    if header.value() == b"gzip" {
+                    // RFC 9112 §7: transfer-coding names are case-insensitive.
+                    let value = header.value();
+                    if strings::eql_case_insensitive_ascii_check_length(value, b"gzip")
+                        || strings::eql_case_insensitive_ascii_check_length(value, b"x-gzip")
+                    {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Gzip;
                         }
-                    } else if header.value() == b"deflate" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"deflate") {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Deflate;
                         }
-                    } else if header.value() == b"br" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"br") {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Brotli;
                         }
-                    } else if header.value() == b"zstd" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"zstd") {
                         if !self.flags.disable_decompression {
                             self.state.transfer_encoding = Encoding::Zstd;
                         }
-                    } else if header.value() == b"identity" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"identity") {
                         self.state.transfer_encoding = Encoding::Identity;
-                    } else if header.value() == b"chunked" {
+                    } else if strings::eql_case_insensitive_ascii_check_length(value, b"chunked") {
                         self.state.transfer_encoding = Encoding::Chunked;
                     } else {
                         return Err(err!(UnsupportedTransferEncoding));

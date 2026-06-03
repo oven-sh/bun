@@ -151,12 +151,6 @@ impl ASTMemoryAllocator {
         }
     }
 
-    /// Zig: `var a: ASTMemoryAllocator = undefined; a.initWithoutStack(arena);`
-    /// — collapsed to a constructor that returns a ready instance.
-    pub fn new_without_stack(_fallback: &Arena) -> Self {
-        Self::default()
-    }
-
     /// The arena every allocation routes to: the caller-owned one for
     /// [`Self::borrowing`] instances, else the owned pooled one.
     #[inline]
@@ -370,22 +364,6 @@ impl ASTMemoryAllocator {
     #[inline]
     pub fn stack_allocator(&self) -> &Arena {
         self.arena()
-    }
-
-    /// Alias for callers that addressed the Zig `bump_allocator` field.
-    #[inline]
-    pub fn bump_allocator(&self) -> &Arena {
-        self.arena()
-    }
-
-    /// Initialize ASTMemoryAllocator as `undefined`, and call this.
-    pub fn init_without_stack(&mut self) {
-        // Zig set up the SFA with an empty fixed buffer so every alloc goes to the fallback
-        // `arena`. With bumpalo there is no stack buffer either way; just (re)initialize.
-        // PERF(port): was stack-fallback — profile
-        self.arena = Arena::new();
-        self.external_arena = ptr::null();
-        self.arena_dirty = false;
     }
 }
 

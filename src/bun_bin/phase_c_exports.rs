@@ -71,7 +71,7 @@ pub(crate) extern "C" fn Bun__panic(msg: *const u8, len: usize) -> ! {
         // SAFETY: `msg` is non-null (checked above) and the C++ caller guarantees it is valid for reading `len` bytes for the duration of this call.
         unsafe { core::slice::from_raw_parts(msg, len) }
     };
-    bun_core::output::panic(format_args!("{}", String::from_utf8_lossy(bytes)));
+    bun_core::output::panic(format_args!("{}", bstr::BStr::new(bytes)));
 }
 
 // REAL: now provided by bun_jsc (src/jsc/array_buffer.rs).

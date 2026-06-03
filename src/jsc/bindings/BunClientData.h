@@ -135,10 +135,25 @@ public:
 private:
     bool isWebCoreJSClientData() const final { return true; }
 
+    // Frees a per-VM `JSHeapData` but leaves the process-wide `useGlobalGC`
+    // singleton alone (it is shared by every VM). On the default `!useGlobalGC`
+    // path `ensureHeapData` allocates a fresh `JSHeapData` per VM, so without
+    // freeing it every terminated worker leaks its `JSHeapData` plus the
+    // FastMalloc-backed `IsoSubspace`s it embeds.
+    struct JSHeapDataDeleter {
+        void operator()(JSHeapData*) const;
+    };
+
     BunBuiltinNames m_builtinNames;
     std::unique_ptr<JSBuiltinFunctions> m_builtinFunctions;
 
-    JSHeapData* m_heapData;
+    // Owns the per-VM `JSHeapData`. Declared *before* the client `IsoSubspace`
+    // members below so it is destroyed *after* them (members destruct in
+    // reverse declaration order): each client `GCClient::IsoSubspace` holds a
+    // `LocalAllocator` whose `~LocalAllocator` unlinks itself from a
+    // `BlockDirectory` that lives inside the server-side `JSHeapData`, so the
+    // `JSHeapData` must outlive them.
+    std::unique_ptr<JSHeapData, JSHeapDataDeleter> m_heapData;
 
     RefPtr<WebCore::DOMWrapperWorld> m_normalWorld;
     JSC::GCClient::IsoSubspace m_domConstructorSpace;

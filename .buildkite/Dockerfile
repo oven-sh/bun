@@ -185,12 +185,12 @@ ENV FREEBSD_SYSROOT=/opt/freebsd-sysroot
 # splat at build time (scripts/build/winsysroot.ts — keep XWIN_VERSION in sync).
 # The Include/Lib aliases exist because clang-cl/lld-link compose SDK paths
 # in title case while the winsysroot-style splat writes lowercase.
-ARG XWIN_VERSION="0.6.7"
+ARG XWIN_VERSION="0.9.0"
 RUN XWIN_ARCH=$(if [ "$TARGETARCH" = "arm64" ]; then echo "aarch64"; else echo "x86_64"; fi) \
     && curl -fsSL "https://github.com/Jake-Shadle/xwin/releases/download/${XWIN_VERSION}/xwin-${XWIN_VERSION}-${XWIN_ARCH}-unknown-linux-musl.tar.gz" \
        -o /tmp/xwin.tar.gz \
     && tar -xzf /tmp/xwin.tar.gz -C /tmp \
-    && /tmp/xwin-${XWIN_VERSION}-${XWIN_ARCH}-unknown-linux-musl/xwin --accept-license --arch x86_64,aarch64 --include-atl --cache-dir /tmp/xwin-cache \
+    && /tmp/xwin-${XWIN_VERSION}-${XWIN_ARCH}-unknown-linux-musl/xwin --accept-license --arch x86_64,aarch64 --sdk-version 10.0.26100 --crt-version 14.44.17.14 --include-atl --cache-dir /tmp/xwin-cache \
        splat --use-winsysroot-style --preserve-ms-arch-notation --include-debug-libs --output /opt/winsysroot \
        > /dev/null \
     && ln -s include "/opt/winsysroot/Windows Kits/10/Include" \

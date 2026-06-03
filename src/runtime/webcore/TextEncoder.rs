@@ -280,13 +280,7 @@ pub(crate) unsafe extern "C" fn TextEncoder__encodeInto16(
     let output = unsafe { core::slice::from_raw_parts_mut(buf_ptr, buf_len) };
     // SAFETY: caller guarantees input_ptr[0..input_len] is valid UTF-16 data
     let input = unsafe { core::slice::from_raw_parts(input_ptr, input_len) };
-    let mut result: strings::EncodeIntoResult = strings::copy_utf16_into_utf8(output, input);
-    if output.len() >= 3 && (result.read == 0 || result.written == 0) {
-        const REPLACEMENT_CHAR: [u8; 3] = [239, 191, 189];
-        output[..REPLACEMENT_CHAR.len()].copy_from_slice(&REPLACEMENT_CHAR);
-        result.read = 1;
-        result.written = 3;
-    }
+    let result: strings::EncodeIntoResult = strings::copy_utf16_into_utf8(output, input);
     // Zig `@bitCast([2]u32 → u64)`: field 0 (`read`) at byte offset 0, field 1 (`written`)
     // at offset 4. Compose via native-endian bytes — identical bit pattern, no `unsafe`.
     let mut b = [0u8; 8];

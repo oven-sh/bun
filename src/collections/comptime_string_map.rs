@@ -27,7 +27,7 @@ pub struct KV<K: 'static, V> {
     pub value: V,
 }
 
-/// Precomputed lookup table. Construct via `comptime_string_map!` / `comptime_string_map_16!`.
+/// Precomputed lookup table. Construct via `comptime_string_map!`.
 ///
 /// `N` = number of entries, `LEN_TABLE` = `max_len + 1` (size of `len_indexes`).
 pub struct ComptimeStringMapWithKeyType<
@@ -48,9 +48,6 @@ pub struct ComptimeStringMapWithKeyType<
 
 pub type ComptimeStringMap<V, const N: usize, const LEN_TABLE: usize> =
     ComptimeStringMapWithKeyType<u8, V, N, LEN_TABLE>;
-
-pub type ComptimeStringMap16<V, const N: usize, const LEN_TABLE: usize> =
-    ComptimeStringMapWithKeyType<u16, V, N, LEN_TABLE>;
 
 /// Trait abstracting "has a length" for `get_with_eql` inputs — Zig used
 /// `if (@hasField(Input, "len")) input.len else input.length()`.
@@ -197,22 +194,6 @@ where
         None
     }
 
-    pub fn get_with_length_and_eql_list<I>(
-        &self,
-        str: I,
-        len: usize,
-        eqls: impl Fn(I, &[&'static [K]]) -> Option<usize>,
-    ) -> Option<V> {
-        let core::ops::Range { start, end } = self.len_bucket(len);
-
-        let range = &self.keys()[start..end];
-        if let Some(k) = eqls(str, range) {
-            return Some(self.kvs[start + k].value);
-        }
-
-        None
-    }
-
     pub fn get(&self, str: &[K]) -> Option<V> {
         if str.len() < self.min_len || str.len() > self.max_len {
             return None;
@@ -256,23 +237,6 @@ where
         self.get_with_length_and_eql(input, length, eql)
     }
 
-    pub fn get_with_eql_list<I>(
-        &self,
-        input: I,
-        eql: impl Fn(I, &[&'static [K]]) -> Option<usize>,
-    ) -> Option<V>
-    where
-        I: HasLength,
-    {
-        let length = input.length();
-        if length < self.min_len || length > self.max_len {
-            return None;
-        }
-
-        // PERF(port): was `inline while` dispatch to comptime-len variant.
-        self.get_with_length_and_eql_list(input, length, eql)
-    }
-
     /// Lookup the first-defined string key for a given value.
     ///
     /// Linear search.
@@ -300,26 +264,6 @@ where
     // TODO(port): `String` arrives in bun_alloc via move-in (was bun_core::String).
     pub fn from_string(&self, str: &bun_alloc::String) -> Option<V> {
         self.get_with_eql(str, bun_alloc::String::eql_comptime)
-    }
-
-    pub fn get_asciii_case_insensitive(&self, input: &[u8]) -> Option<V> {
-        // PORT NOTE: Zig name has triple-I (`getASCIIICaseInsensitive`); preserved per
-        // "match fn names" rule. Body is identical to `get_any_case` — both lowercase
-        // ASCII into a stack buffer then dispatch via eql_comptime_ignore_len. Zig
-        // duplicates them too (comptime_string_map.zig:212/256); we dedup here.
-        self.get_any_case(input)
-    }
-
-    #[inline]
-    pub fn get_with_eql_lowercase(
-        &self,
-        input: &[u8],
-        eql: impl Fn(&[u8], &'static [u8]) -> bool,
-    ) -> Option<V> {
-        // PORT NOTE: identical to `get_case_insensitive_with_eql` — Zig has both
-        // (`std.ascii.toLower` vs manual `'A'..'Z' => c+32`, byte-equivalent on u8).
-        // Kept as a named forwarder to honor the "match Zig fn names" rule.
-        self.get_case_insensitive_with_eql(input, eql)
     }
 
     pub fn get_any_case(&self, input: &[u8]) -> Option<V> {
@@ -377,16 +321,6 @@ macro_rules! comptime_string_map {
                 $( $crate::comptime_string_map::KV { key: $key, value: () } ),*
             ])
         })
-    }};
-}
-
-#[macro_export]
-macro_rules! comptime_string_map_16 {
-    ($V:ty, [ $( ($key:expr, $val:expr) ),* $(,)? ]) => {{
-        // PORT NOTE: Zig had `@compileError("Not implemented for this key type")` for non-u8
-        // in the kv-copy loop, but `ComptimeStringMap16` is exported anyway. Keep the
-        // export; the compile_error moves to the macro body if ever instantiated.
-        compile_error!("ComptimeStringMap16: not implemented for this key type");
     }};
 }
 

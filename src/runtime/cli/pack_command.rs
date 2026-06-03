@@ -149,23 +149,20 @@ impl<'a> Context<'a> {
         log_level: LogLevel,
     ) {
         if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
-            Output::prettyln(format_args!(
-                "\n<r><b><blue>Total files<r>: {}",
-                stats.total_files
-            ));
+            bun_core::prettyln!("\n<r><b><blue>Total files<r>: {}", stats.total_files);
             if let Some(shasum) = maybe_shasum {
-                Output::prettyln(format_args!(
+                bun_core::prettyln!(
                     "<b><blue>Shasum<r>: {}",
                     bun_fmt::bytes_to_hex_lower_string(shasum),
-                ));
+                );
             }
             if let Some(integrity) = maybe_integrity {
-                Output::prettyln(format_args!(
+                bun_core::prettyln!(
                     "<b><blue>Integrity<r>: {}",
                     bun_fmt::integrity::<true>(*integrity),
-                ));
+                );
             }
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<b><blue>Unpacked size<r>: {}",
                 bun_fmt::size(
                     stats.unpacked_size,
@@ -173,9 +170,9 @@ impl<'a> Context<'a> {
                         space_between_number_and_unit: false
                     }
                 ),
-            ));
+            );
             if stats.packed_size > 0 {
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "<b><blue>Packed size<r>: {}\n",
                     bun_fmt::size(
                         stats.packed_size,
@@ -183,13 +180,10 @@ impl<'a> Context<'a> {
                             space_between_number_and_unit: false
                         }
                     ),
-                ));
+                );
             }
             if stats.bundled_deps > 0 {
-                Output::pretty(format_args!(
-                    "<b><blue>Bundled deps<r>: {}\n",
-                    stats.bundled_deps
-                ));
+                bun_core::pretty!("<b><blue>Bundled deps<r>: {}\n", stats.bundled_deps);
             }
         }
     }
@@ -216,10 +210,10 @@ impl PackCommand {
         if manager.options.log_level != LogLevel::Silent
             && manager.options.log_level != LogLevel::Quiet
         {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<r><b>bun pack <r><d>v{}<r>",
                 Global::package_json_version_with_sha,
-            ));
+            );
             Output::flush();
         }
 
@@ -788,7 +782,7 @@ fn add_entire_tree(
             if let Some((pattern, kind)) = is_excluded(&entry, &entry_subpath, dir_depth, &ignores)
             {
                 if log_level.is_verbose() {
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
                         <&str>::from(kind),
                         bstr::BStr::new(pattern),
@@ -798,7 +792,7 @@ fn add_entire_tree(
                         } else {
                             ""
                         },
-                    ));
+                    );
                     Output::flush();
                 }
                 continue;
@@ -1256,7 +1250,7 @@ fn add_bundled_dep(
 
             if let Some((pattern, kind)) = is_excluded(&entry, &entry_subpath_, dir_depth, &[]) {
                 if log_level.is_verbose() {
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
                         <&str>::from(kind),
                         bstr::BStr::new(pattern),
@@ -1266,7 +1260,7 @@ fn add_bundled_dep(
                         } else {
                             ""
                         },
-                    ));
+                    );
                     Output::flush();
                 }
                 continue;
@@ -1367,7 +1361,7 @@ fn iterate_project_tree(
             if let Some((pattern, kind)) = is_excluded(&entry, &entry_subpath_, dir_depth, &ignores)
             {
                 if log_level.is_verbose() {
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
                         <&str>::from(kind),
                         bstr::BStr::new(pattern),
@@ -1377,7 +1371,7 @@ fn iterate_project_tree(
                         } else {
                             ""
                         },
-                    ));
+                    );
                     Output::flush();
                 }
                 continue;
@@ -2025,7 +2019,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             }
         }
     }
-    if package_name.is_empty() {
+    if package_name.is_empty() || has_unsafe_tarball_filename_part(package_name) {
         return Err(PackError::InvalidPackageName);
     }
 
@@ -2036,7 +2030,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let mut package_version = package_version_expr
         .as_string_cloned(bump)?
         .ok_or(PackError::InvalidPackageVersion)?;
-    if package_version.is_empty() {
+    if package_version.is_empty() || has_unsafe_tarball_filename_part(package_version) {
         return Err(PackError::InvalidPackageVersion);
     }
 
@@ -2258,7 +2252,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         package_name = package_name_expr
             .as_string_cloned(bump)?
             .ok_or(PackError::InvalidPackageName)?;
-        if package_name.is_empty() {
+        if package_name.is_empty() || has_unsafe_tarball_filename_part(package_name) {
             return Err(PackError::InvalidPackageName);
         }
 
@@ -2269,7 +2263,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         package_version = package_version_expr
             .as_string_cloned(bump)?
             .ok_or(PackError::InvalidPackageVersion)?;
-        if package_version.is_empty() {
+        if package_version.is_empty() || has_unsafe_tarball_filename_part(package_version) {
             return Err(PackError::InvalidPackageVersion);
         }
     }
@@ -2438,14 +2432,14 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
         if !FOR_PUBLISH {
             if opt_pack_destination(manager).is_empty() && opt_pack_filename(manager).is_empty() {
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "\n{}\n",
                     fmt_tarball_filename(
                         package_name,
                         package_version,
                         TarballNameStyle::Normalize
                     )
-                ));
+                );
             } else {
                 let mut dest_buf = PathBuffer::uninit();
                 let (abs_tarball_dest, _) = tarball_destination(
@@ -2456,10 +2450,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     package_version,
                     &mut dest_buf[..],
                 );
-                Output::pretty(format_args!(
-                    "\n{}\n",
-                    bstr::BStr::new(abs_tarball_dest.as_bytes())
-                ));
+                bun_core::pretty!("\n{}\n", bstr::BStr::new(abs_tarball_dest.as_bytes()));
             }
         }
 
@@ -2937,15 +2928,12 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
     if !FOR_PUBLISH {
         if opt_pack_destination(manager).is_empty() && opt_pack_filename(manager).is_empty() {
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "\n{}\n",
                 fmt_tarball_filename(package_name, package_version, TarballNameStyle::Normalize)
-            ));
+            );
         } else {
-            Output::pretty(format_args!(
-                "\n{}\n",
-                bstr::BStr::new(abs_tarball_dest.as_bytes())
-            ));
+            bun_core::pretty!("\n{}\n", bstr::BStr::new(abs_tarball_dest.as_bytes()));
         }
     }
 
@@ -2956,7 +2944,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     }
 
     if let Some(postpack_script_str) = &postpack_script {
-        Output::pretty(format_args!("\n"));
+        bun_core::pretty!("\n");
         run_lifecycle_script(
             ctx,
             postpack_script_str,
@@ -3046,6 +3034,18 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
 // ───────────────────────────────────────────────────────────────────────────
 // tarball name / destination
 // ───────────────────────────────────────────────────────────────────────────
+
+/// The output tarball filename is derived from the package.json `name` and
+/// `version` fields. Reject values that could steer the formed filename
+/// outside the destination directory (`.`/`..` path components, backslashes,
+/// drive/ADS colons, NUL); other unusual-but-harmless names (e.g. empty scope
+/// segments) keep packing as before.
+fn has_unsafe_tarball_filename_part(value: &[u8]) -> bool {
+    value
+        .split(|&c| c == b'/')
+        .any(|component| component == b"." || component == b"..")
+        || value.iter().any(|&c| matches!(c, b'\\' | b':' | 0))
+}
 
 fn tarball_destination<'a>(
     pack_destination: &[u8],
@@ -3910,7 +3910,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
 
         ctx.stats.unpacked_size += usize::try_from(package_json_stat.st_size).expect("int cast");
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "\n<r><b><cyan>packed<r> {} {}",
             bun_fmt::size(
                 usize::try_from(package_json_stat.st_size).expect("int cast"),
@@ -3919,7 +3919,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
                 }
             ),
             "package.json",
-        ));
+        );
 
         while let Some(item) = pack_queue.remove_or_null() {
             let stat = match bun_sys::fstatat(root_dir, &item.path) {
@@ -3940,7 +3940,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
 
             ctx.stats.unpacked_size += usize::try_from(stat.st_size).expect("int cast");
 
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<r><b><cyan>packed<r> {} {}",
                 bun_fmt::size(
                     usize::try_from(stat.st_size).expect("int cast"),
@@ -3949,17 +3949,14 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
                     }
                 ),
                 bstr::BStr::new(item.path.as_bytes()),
-            ));
+            );
         }
 
         for dep in &ctx.bundled_deps {
             if !dep.was_packed {
                 continue;
             }
-            Output::prettyln(format_args!(
-                "<r><b><green>bundled<r> {}",
-                bstr::BStr::new(&dep.name)
-            ));
+            bun_core::prettyln!("<r><b><green>bundled<r> {}", bstr::BStr::new(&dep.name));
         }
 
         Output::flush();
@@ -3970,7 +3967,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
         unreachable!()
     };
 
-    Output::prettyln(format_args!(
+    bun_core::prettyln!(
         "\n<r><b><cyan>packed<r> {} {}",
         bun_fmt::size(
             package_json_len,
@@ -3979,10 +3976,10 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
             }
         ),
         "package.json",
-    ));
+    );
 
     for entry in pack_list.iter() {
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b><cyan>packed<r> {} {}",
             bun_fmt::size(
                 entry.size,
@@ -3991,17 +3988,14 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
                 }
             ),
             bstr::BStr::new(entry.subpath.as_bytes()),
-        ));
+        );
     }
 
     for dep in &ctx.bundled_deps {
         if !dep.was_packed {
             continue;
         }
-        Output::prettyln(format_args!(
-            "<r><b><green>bundled<r> {}",
-            bstr::BStr::new(&dep.name)
-        ));
+        bun_core::prettyln!("<r><b><green>bundled<r> {}", bstr::BStr::new(&dep.name));
     }
 
     Output::flush();

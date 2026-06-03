@@ -184,7 +184,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
     {
         Output::print_error("\n");
-        Output::note(format_args!("{}", bstr::BStr::new(notice)));
+        bun_core::note!("{}", bstr::BStr::new(notice));
         Output::flush();
     }
 
@@ -236,22 +236,22 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         Some(error.to_vec())
     };
 
-    Output::pretty_errorln(format_args!(
+    bun_core::pretty_errorln!(
         "\n<red>{}<r>{}{}: {}\n",
         res.status_code,
         if !res.status.is_empty() { " " } else { "" },
         bstr::BStr::new(&res.status),
         bun_fmt::redacted_npm_url(req.url.href),
-    ));
+    );
 
     if res.status_code == 404
         && let Some((package_name, package_version)) = pkg_id
     {
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "\n - '{}@{}' does not exist in this registry",
             bstr::BStr::new(package_name),
             bstr::BStr::new(package_version),
-        ));
+        );
     } else if let Some(msg) = &message {
         if OTP_RESPONSE {
             if res.status_code == 401
@@ -260,11 +260,11 @@ pub fn response_error<const OTP_RESPONSE: bool>(
                     b"You must provide a one-time pass. Upgrade your client to npm@latest in order to use 2FA.",
                 )
             {
-                Output::pretty_errorln("\n - Received invalid OTP");
+                bun_core::pretty_errorln!("\n - Received invalid OTP");
                 Global::crash();
             }
         }
-        Output::pretty_errorln(format_args!("\n - {}", bstr::BStr::new(msg)));
+        bun_core::pretty_errorln!("\n - {}", bstr::BStr::new(msg));
     }
 
     Global::crash();
@@ -1107,7 +1107,7 @@ pub mod package_manifest {
                                 // previously set this to true.
                                 if !DID_WARN.swap(true, core::sync::atomic::Ordering::Relaxed) {
                                     // This is not an error. Nor is it really a warning.
-                                    Output::note(
+                                    bun_core::note!(
                                         "Linux filesystem or kernel lacks O_TMPFILE support. Using a fallback instead.",
                                     );
                                     Output::flush();
@@ -1278,11 +1278,11 @@ pub mod package_manifest {
                         save_task.cache_dir,
                     ) {
                         if PackageManager::verbose_install() {
-                            Output::warn(format_args!(
+                            bun_core::warn!(
                                 "Error caching manifest for {}: {}",
                                 bstr::BStr::new(save_task.manifest.name()),
                                 err.name(),
-                            ));
+                            );
                             Output::flush();
                         }
                     }
@@ -1463,7 +1463,7 @@ impl PackageManifest {
     }
 
     pub fn report_size(&self) {
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             " Versions count:            {}\n \
              External Strings count:    {}\n \
              Package Versions count:    {}\n\n \
@@ -1484,7 +1484,7 @@ impl PackageManifest {
                 + core::mem::size_of_val(&*self.external_strings)
                 + core::mem::size_of_val(&*self.package_versions)
                 + core::mem::size_of_val(&*self.string_buf),
-        ));
+        );
         Output::flush();
     }
 }
@@ -2033,11 +2033,11 @@ impl PackageManifest {
                 if scope.url_hash == *registry::DEFAULT_URL_HASH
                     && !strings::eql_long(expected_name, received_name, true)
                 {
-                    Output::warn(format_args!(
+                    bun_core::warn!(
                         "Package name mismatch. Expected <b>\"{}\"<r> but received <red>\"{}\"<r>",
                         bstr::BStr::new(expected_name),
                         bstr::BStr::new(received_name),
-                    ));
+                    );
                 }
             }
         }
@@ -2368,9 +2368,6 @@ impl PackageManifest {
         let all_prerelease_versions_range =
             release_versions_len..release_versions_len + pre_versions_len;
         let dist_tag_versions_start = release_versions_len + pre_versions_len;
-        // SAFETY: all_semver_versions is heap-allocated; we need disjoint mutable subslices.
-        // TODO(port): use split_at_mut chain instead of raw pointers.
-        let all_semver_versions_ptr: *mut Semver::Version = all_semver_versions.as_mut_ptr();
         let mut release_versions_cursor: usize = 0;
         let mut prerelease_versions_cursor: usize = release_versions_len;
 
@@ -3126,20 +3123,12 @@ impl PackageManifest {
                 }
 
                 if !parsed_version.version.tag.has_pre() {
-                    // SAFETY: cursor < release_versions_len by counting pass
-                    unsafe {
-                        *all_semver_versions_ptr.add(release_versions_cursor) =
-                            parsed_version.version.min();
-                    }
+                    all_semver_versions[release_versions_cursor] = parsed_version.version.min();
                     versioned_packages[versioned_package_releases_start] = package_version;
                     release_versions_cursor += 1;
                     versioned_package_releases_start += 1;
                 } else {
-                    // SAFETY: cursor in prerelease range
-                    unsafe {
-                        *all_semver_versions_ptr.add(prerelease_versions_cursor) =
-                            parsed_version.version.min();
-                    }
+                    all_semver_versions[prerelease_versions_cursor] = parsed_version.version.min();
                     versioned_packages[versioned_package_prereleases_start] = package_version;
                     prerelease_versions_cursor += 1;
                     versioned_package_prereleases_start += 1;
@@ -3188,11 +3177,8 @@ impl PackageManifest {
                             .value
                             .sliced(string_builder.allocated_slice());
 
-                        // SAFETY: dist_tag_versions_start + dist_tag_i < all_semver_versions.len()
-                        unsafe {
-                            *all_semver_versions_ptr.add(dist_tag_versions_start + dist_tag_i) =
-                                Semver::Version::parse(sliced_string).version.min();
-                        }
+                        all_semver_versions[dist_tag_versions_start + dist_tag_i] =
+                            Semver::Version::parse(sliced_string).version.min();
                         dist_tag_i += 1;
                     }
                 }

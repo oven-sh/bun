@@ -42,8 +42,6 @@ mod _impl {
         // `BackRef` centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
-        // LIFETIMES.tsv: BORROW_PARAM → Option<*mut u32> (points into JS Uint32Array backing store)
-        pub write_result: Cell<Option<*mut u32>>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
@@ -101,7 +99,6 @@ mod _impl {
                 // wrapper is owned by that global's heap).
                 global_this: bun_ptr::BackRef::new(global),
                 stream: JsCell::new(stream),
-                write_result: Cell::new(None),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
@@ -160,7 +157,7 @@ mod _impl {
                     write_state_value,
                 ));
             }
-            // `flush_write_result` writes two u32s through this pointer, so the
+            // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
             let write_state_slice = write_state.as_u32();
             if write_state_slice.len() < 2 {
@@ -171,7 +168,7 @@ mod _impl {
                     )
                     .throw());
             }
-            self.write_result.set(Some(write_state_slice.as_mut_ptr()));
+            js::write_result_set_cached(this_value, global, write_state_value);
 
             let write_js_callback =
                 validators::validate_function(global, "processCallback", process_callback_value)?;

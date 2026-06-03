@@ -426,13 +426,11 @@ impl<'a> URL<'a> {
     }
 
     pub fn s3_path(&self) -> &'a [u8] {
-        // we need to remove protocol if exists and ignore searchParams, should be host + pathname
-        let href = if !self.protocol.is_empty() && self.href.len() > self.protocol.len() + 2 {
+        if !self.protocol.is_empty() && self.href.len() > self.protocol.len() + 2 {
             &self.href[self.protocol.len() + 2..]
         } else {
             self.href
-        };
-        &href[0..href.len() - (self.search.len() + self.hash.len())]
+        }
     }
 
     pub fn display_host(&self) -> bun_fmt::HostFormatter<'_> {

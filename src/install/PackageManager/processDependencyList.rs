@@ -261,11 +261,11 @@ impl PackageManager {
                 } {
                     if log_level != LogLevel::Silent {
                         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>error:<r> expected package.json in <b>{}<r> to be a JSON file: {}\n",
                             resolution.fmt_url(string_buf),
                             err.name(),
-                        ));
+                        );
                     }
                     Global::crash();
                 }
@@ -315,11 +315,11 @@ impl PackageManager {
                         Err(err) => {
                             if log_level != LogLevel::Silent {
                                 let string_buf = self.lockfile.buffers.string_bytes.as_slice();
-                                Output::pretty_errorln(format_args!(
+                                bun_core::pretty_errorln!(
                                     "<r><red>error:<r> expected package.json in <b>{}<r> to be a JSON file: {}\n",
                                     resolution.fmt_url(string_buf),
                                     err.name(),
-                                ));
+                                );
                             }
                             Global::crash();
                         }

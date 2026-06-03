@@ -86,7 +86,7 @@ impl AuditCommand {
                     } else {
                         Output::err_generic("No package.json was found", ());
                     }
-                    Output::note("Run \"bun init\" to initialize a project");
+                    bun_core::note!("Run \"bun init\" to initialize a project");
                     Global::exit(1);
                 }
 
@@ -117,11 +117,10 @@ impl AuditCommand {
         audit_prod_only: bool,
         ignore_list: &[&[u8]],
     ) -> Result<u32, bun_alloc::AllocError> {
-        // TODO(port): comptime `Output.prettyFmt(..., true)` pre-expands ANSI tags at compile time.
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "<r><b>bun audit <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
         // PORT NOTE: Zig `pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true)`
@@ -152,9 +151,9 @@ impl AuditCommand {
                 let expr = match bun_json::parse::<true>(&source, &mut log, &bump) {
                     Ok(e) => e,
                     Err(_) => {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<red>error<r>: audit request failed to parse json. Is the registry down?"
-                        ));
+                        );
                         return Ok(1); // If we can't parse then safe to assume a similar failure
                     }
                 };
@@ -516,10 +515,10 @@ fn send_audit_request(
     };
 
     if res.status_code >= 400 {
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "<red>error<r>: audit request failed (status {})",
             res.status_code
-        ));
+        );
         Global::crash();
     }
 

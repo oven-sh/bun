@@ -49,11 +49,11 @@ fn load_bunfig(
                 if auto_loaded {
                     return Ok(());
                 }
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "{}\nwhile reading config \"{}\"",
                     err,
                     BStr::new(config_path.as_bytes()),
-                ));
+                );
                 Global::exit(1);
             }
         };
@@ -109,11 +109,11 @@ pub fn load_config_path(
                 return Ok(());
             }
 
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "{}\nreading global config \"{}\"",
                 err,
                 BStr::new(config_path.as_bytes()),
-            ));
+            );
             Global::exit(1);
         }
     }

@@ -913,6 +913,47 @@ describe("node:http", () => {
   });
 
   describe("get", () => {
+    it("treats host option containing URL delimiter characters as an unresolvable hostname", async () => {
+      let requestCount = 0;
+      const server = createServer((req, res) => {
+        requestCount++;
+        res.writeHead(200, { "Content-Type": "text/plain" });
+        res.end("ok");
+      });
+      try {
+        const url = await listen(server);
+
+        // The literal host option string is the DNS/connect target (Node.js semantics).
+        // Characters like "/" and "?" must not allow the value to be re-interpreted as a
+        // URL whose host points at a different server; the only acceptable outcome is a
+        // lookup failure with no request ever being sent.
+        const confusedHost = `127.0.0.1:${url.port}/?.invalid.example`;
+        const { promise, resolve, reject } = Promise.withResolvers();
+        const req = get({ host: confusedHost, path: "/info", auth: "svc:secret" }, res => {
+          res.resume();
+          reject(new Error(`request unexpectedly completed with status ${res.statusCode}`));
+        });
+        req.on("error", resolve);
+        const err: any = await promise;
+        expect(err.code).toBe("ENOTFOUND");
+        expect(err.hostname).toBe(confusedHost);
+        expect(requestCount).toBe(0);
+
+        // A plain host + port still works.
+        const { promise: okPromise, resolve: resolveOk, reject: rejectOk } = Promise.withResolvers();
+        get({ host: "127.0.0.1", port: url.port, path: "/info" }, res => {
+          let data = "";
+          res.setEncoding("utf8");
+          res.on("data", chunk => (data += chunk));
+          res.on("end", () => resolveOk({ statusCode: res.statusCode, data }));
+        }).on("error", rejectOk);
+        expect(await okPromise).toEqual({ statusCode: 200, data: "ok" });
+        expect(requestCount).toBe(1);
+      } finally {
+        server.close();
+      }
+    });
+
     it("should make a standard GET request, like request", async done => {
       const server = createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });
@@ -1587,6 +1628,132 @@ describe("HTTP Server Security Tests - Advanced", () => {
       await promise;
       expect(mockHandler).not.toHaveBeenCalled();
     });
+
+    test("duplicate request headers follow Node.js precedence rules", async () => {
+      // Expected values verified against Node.js v24: singleton headers keep
+      // the first value, joinable headers are comma-joined, Cookie joins with
+      // "; ", and Set-Cookie becomes an array.
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("request", (req, res) => {
+        try {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("ok");
+          resolve({
+            host: req.headers.host,
+            contentType: req.headers["content-type"],
+            authorization: req.headers.authorization,
+            accept: req.headers.accept,
+            xCustom: req.headers["x-custom"],
+            cookie: req.headers.cookie,
+            setCookie: req.headers["set-cookie"],
+            rawHostCount: req.rawHeaders.filter(h => h.toLowerCase() === "host").length,
+          });
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      const msg = [
+        "GET / HTTP/1.1",
+        "Host: first.example.com",
+        "Host: second.example.com",
+        "Content-Type: text/plain",
+        "Content-Type: text/html",
+        "Authorization: token1",
+        "Authorization: token2",
+        "Accept: application/json",
+        "Accept: text/html",
+        "X-Custom: one",
+        "X-Custom: two",
+        "Cookie: a=1",
+        "Cookie: b=2",
+        "Set-Cookie: x=1",
+        "Set-Cookie: y=2",
+        "Connection: close",
+        "",
+        "",
+      ].join("\r\n");
+
+      const response = await sendRequest(msg);
+      expect(response).toInclude("200");
+      const headers: any = await promise;
+      // Singleton headers keep the first value.
+      expect(headers.host).toBe("first.example.com");
+      expect(headers.contentType).toBe("text/plain");
+      expect(headers.authorization).toBe("token1");
+      // Other headers are joined with ", ".
+      expect(headers.accept).toBe("application/json, text/html");
+      expect(headers.xCustom).toBe("one, two");
+      // Cookie is joined with "; ".
+      expect(headers.cookie).toBe("a=1; b=2");
+      // Set-Cookie is collected into an array.
+      expect(headers.setCookie).toEqual(["x=1", "y=2"]);
+      // rawHeaders still reports every received header.
+      expect(headers.rawHostCount).toBe(2);
+    });
+
+    test("duplicate request header edge cases follow Node.js precedence rules", async () => {
+      // Expected values verified against Node.js v24.
+      const { promise, resolve, reject } = Promise.withResolvers();
+      server.on("request", (req, res) => {
+        try {
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("ok");
+          resolve({
+            xTriple: req.headers["x-triple"],
+            xMixed: req.headers["x-mixed"],
+            xEmpty: req.headers["x-empty"],
+            server: req.headers.server,
+            retryAfter: req.headers["retry-after"],
+            numeric: req.headers["123"],
+            rawHeaderCount: req.rawHeaders.length,
+          });
+        } catch (err) {
+          reject(err);
+        }
+      });
+
+      const msg = [
+        "GET / HTTP/1.1",
+        "Host: localhost",
+        "X-Triple: one",
+        "X-Triple: two",
+        "X-Triple: three",
+        "x-MIXED: a",
+        "X-Mixed: b",
+        "X-Empty:",
+        "X-Empty: b",
+        "Server: apache",
+        "Server: nginx",
+        "Retry-After: 10",
+        "Retry-After: 20",
+        "123: a",
+        "123: b",
+        "Connection: close",
+        "",
+        "",
+      ].join("\r\n");
+
+      const response = await sendRequest(msg);
+      expect(response).toInclude("200");
+      const headers: any = await promise;
+      expect(headers).toEqual({
+        // Three or more occurrences are all joined, in order.
+        xTriple: "one, two, three",
+        // Names that differ only by case are the same header.
+        xMixed: "a, b",
+        // An empty first value still participates in the join.
+        xEmpty: ", b",
+        // Singleton headers keep the first value, including the ones WebCore
+        // has no HTTPHeaderName for (server, retry-after).
+        server: "apache",
+        retryAfter: "10",
+        // A header whose name parses as an array index joins like any other.
+        numeric: "a, b",
+        // rawHeaders still reports every received header (15 names + values).
+        rawHeaderCount: 30,
+      });
+    });
   });
 
   describe("HTTP Protocol Violations", () => {
@@ -2036,3 +2203,52 @@ it("client request path that does not begin with a slash stays on the configured
   expect(stdout).toContain("OK");
   expect(exitCode).toBe(0);
 }, 15_000);
+
+it("http.request rejects an options.port that is not a valid port number", async () => {
+  // options.port must be an integer in the range 0-65535 (Node.js throws
+  // ERR_SOCKET_BAD_PORT for anything else). Bun builds the request target as
+  // `${protocol}//${host}:${port}${path}`, so an arbitrary string port such as
+  // "80@other-host/" must be rejected up front instead of being parsed as part
+  // of the URL authority, which would change the host the request is sent to.
+  const getError = (fn: () => unknown) => {
+    try {
+      fn();
+    } catch (err) {
+      return err as NodeJS.ErrnoException;
+    }
+    return undefined;
+  };
+
+  for (const badPort of ["80@169.254.169.254/latest/meta-data/?", "1234abc", -1, 65536]) {
+    const err = getError(() => http.request({ host: "127.0.0.1", port: badPort, path: "/" }));
+    expect(err?.code).toBe("ERR_SOCKET_BAD_PORT");
+  }
+
+  const typeErr = getError(() => http.request({ host: "127.0.0.1", port: {} as any, path: "/" }));
+  expect(typeErr?.code).toBe("ERR_INVALID_ARG_TYPE");
+
+  // A valid port keeps working, including when passed as a numeric string.
+  const server = createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("ok " + req.url);
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const body = await new Promise<string>((resolve, reject) => {
+      const req = http.request({ host: "127.0.0.1", port: String(port), path: "/hello" }, res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => (data += chunk));
+        res.on("end", () => resolve(data));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+    expect(body).toBe("ok /hello");
+  } finally {
+    server.close();
+  }
+});

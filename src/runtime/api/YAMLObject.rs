@@ -900,16 +900,14 @@ fn string_needs_quotes(str: &BunString) -> bool {
 
 /// Returns true when `str` would be parsed back as a number by `YAML.parse`.
 ///
-/// This mirrors the rules in `src/interchange/yaml.zig`'s `tryResolveNumber`:
-/// - Optional leading sign, optionally followed by `.inf`/`.Inf`/`.INF` for signed infinity.
-/// - Otherwise a numeric mantissa: digits/`.`/`e`/`E`/hex letters, plus additional `+`/`-`
-///   (the parser accepts any number of `+` after the leading sign as long as no `x` was
-///   seen, and at most one additional `-`).
-/// - `0x` / `0X` → hex digits; `0o` / `0O` → octal digits.
-/// - Additionally, `wtf.parseDouble` is a prefix parser, so a leading numeric prefix is
-///   enough for `YAML.parse` to resolve a number — e.g. `"1+5"` round-trips to `1`.
-///   We err on the side of quoting when the parser's scanner would accept the full token
-///   as `valid`.
+/// This mirrors the rules in `src/parsers/yaml.rs`'s `try_resolve_number` /
+/// `is_core_schema_number`:
+/// - Optional leading sign, optionally followed by `.inf`/`.Inf`/`.INF`.
+/// - Otherwise either an integer (`[0-9]+` / `0x…` / `0o…`) or a float
+///   matching §10.2.1.4 `[-+]? ( . [0-9]+ | [0-9]+ ( . [0-9]* )? ) ([eE][-+]?[0-9]+)?`.
+///   The parser-side gate now rejects non-conforming float-like tokens
+///   (e.g. `"1+5"`, `"1e"`, `"."`) so this mirror should err on the side of
+///   *quoting* whenever a token *might* parse as a number.
 fn string_is_number(str: &BunString) -> bool {
     let len = str.length();
     if len == 0 {

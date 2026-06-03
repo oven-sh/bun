@@ -1,5 +1,3 @@
-use core::fmt;
-
 use crate::symbol;
 
 // ───────────────────────────────── Index ─────────────────────────────────
@@ -174,34 +172,6 @@ impl Ref {
     #[inline]
     pub fn get_symbol<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> &mut symbol::Symbol {
         symbol_table.get_symbol(self)
-    }
-    pub fn dump<T: SymbolTable + ?Sized>(self, symbol_table: &mut T) -> RefDump<'_> {
-        RefDump {
-            ref_: self,
-            symbol: symbol_table.get_symbol(self),
-        }
-    }
-}
-
-// Zig: `DumpImplData` + `dumpImpl` — formatter wrapper returned by `Ref.dump`.
-pub struct RefDump<'a> {
-    ref_: Ref,
-    symbol: &'a symbol::Symbol,
-}
-impl fmt::Display for RefDump<'_> {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // SAFETY: original_name is an arena-owned slice valid for the lifetime of
-        // the symbol table this RefDump was borrowed from (parser/AST arena outlives it).
-        let name = self.symbol.original_name.slice();
-        write!(
-            f,
-            "Ref[inner={}, src={}, .{}; original_name={}, uses={}]",
-            self.ref_.inner_index(),
-            self.ref_.source_index(),
-            <&'static str>::from(self.ref_.tag()),
-            bstr::BStr::new(name),
-            self.symbol.use_count_estimate,
-        )
     }
 }
 

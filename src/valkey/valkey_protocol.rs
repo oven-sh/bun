@@ -219,6 +219,7 @@ pub struct ValkeyReader<'a> {
     /// Bytes of aggregate `Vec` preallocation still allowed for the current
     /// `read_value` call. See `take_prealloc_budget`.
     prealloc_budget: usize,
+    crlf_skip: usize,
 }
 
 impl<'a> ValkeyReader<'a> {
@@ -227,6 +228,7 @@ impl<'a> ValkeyReader<'a> {
             buffer,
             pos: 0,
             prealloc_budget: buffer.len(),
+            crlf_skip: 0,
         }
     }
 
@@ -251,7 +253,9 @@ impl<'a> ValkeyReader<'a> {
     pub fn read_until_crlf(&mut self) -> Result<&'a [u8], RedisError> {
         let buffer = &self.buffer[self.pos..];
         let limit = buffer.len().min(Self::MAX_LINE_LEN + 1);
-        for (i, &byte) in buffer[..limit].iter().enumerate() {
+        let start = self.crlf_skip.min(limit);
+        self.crlf_skip = 0;
+        for (i, &byte) in buffer.iter().enumerate().take(limit).skip(start) {
             if byte == b'\r' && buffer.len() > i + 1 && buffer[i + 1] == b'\n' {
                 let result = &buffer[0..i];
                 self.pos += i + 2;
@@ -608,6 +612,7 @@ pub struct ReplyScanner {
     /// Remaining child-value count for each in-progress aggregate, outermost
     /// first.
     stack: Vec<u64>,
+    crlf_skip: usize,
 }
 
 impl ReplyScanner {
@@ -616,6 +621,7 @@ impl ReplyScanner {
     pub fn reset(&mut self) {
         self.pos = 0;
         self.stack.clear();
+        self.crlf_skip = 0;
     }
 
     /// Resume scanning `buffer` (the connection's accumulated, unconsumed read
@@ -627,13 +633,22 @@ impl ReplyScanner {
                 buffer,
                 pos: self.pos,
                 prealloc_budget: 0,
+                crlf_skip: self.crlf_skip,
             };
             let children = match Self::scan_one(&mut reader, self.stack.len()) {
                 Ok(children) => children,
                 // `InvalidResponse` is the parser's "ran out of bytes" sentinel.
-                Err(RedisError::InvalidResponse) => return Ok(ScanResult::NeedMoreData),
+                Err(RedisError::InvalidResponse) => {
+                    self.crlf_skip = if reader.pos == self.pos + 1 {
+                        (buffer.len() - reader.pos).saturating_sub(1)
+                    } else {
+                        0
+                    };
+                    return Ok(ScanResult::NeedMoreData);
+                }
                 Err(err) => return Err(err),
             };
+            self.crlf_skip = 0;
             self.pos = reader.pos;
             if let Some(children) = children
                 && children > 0

@@ -606,7 +606,12 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8>(
         Encoding::Hex => Ok(strings::decode_hex_to_bytes_truncate(to_slice, input_slice)),
 
         Encoding::Base64 | Encoding::Base64url => {
-            Ok(bun_base64::decode(to_slice, input_slice).count)
+            let is_urlsafe = matches!(encoding_from_u8(ENCODING), Encoding::Base64url);
+            Ok(bun_base64::decode_lenient(
+                to_slice,
+                input_slice,
+                is_urlsafe,
+            ))
         }
     }
 }
@@ -750,20 +755,18 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
         }
 
         Encoding::Base64 | Encoding::Base64url => {
-            if to_len < 2 || len == 0 {
-                return Ok(0);
-            }
-
-            // very very slow case!
-            // shouldn't really happen though
+            // Match Node.js: two-byte strings are decoded from the low byte of
+            // each UTF-16 code unit (so e.g. U+013D behaves like '=' and
+            // U+1234 like '4'), the same narrowing Node's lenient fallback
+            // decoder applies.
             // SAFETY: caller guarantees `input[..len]` is valid; only an immutable view is
             // needed here since the output goes through `write_u8` with raw `to`.
             let input_slice = unsafe { bun_core::ffi::slice(input, len) };
-            let transcoded = strings::to_utf8_alloc(input_slice);
-            // transcoded dropped at end of scope
-            // SAFETY: `transcoded` is a valid local Vec; `to[..to_len]` validity is
-            // forwarded from this fn's contract and is disjoint from `transcoded`.
-            unsafe { write_u8::<ENCODING>(transcoded.as_ptr(), transcoded.len(), to, to_len) }
+            let mut narrowed = vec![0u8; len];
+            strings::copy_u16_into_u8(&mut narrowed, input_slice);
+            // SAFETY: `narrowed` is a valid local Vec; `to[..to_len]` validity is
+            // forwarded from this fn's contract and is disjoint from `narrowed`.
+            unsafe { write_u8::<ENCODING>(narrowed.as_ptr(), narrowed.len(), to, to_len) }
         } // else => return &[_]u8{};
     }
 }
@@ -845,14 +848,23 @@ pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
                 return Vec::new();
             }
 
-            let outlen = bun_base64::decode_len(slice);
-            let mut to = vec![0u8; outlen];
-
-            let wrote = bun_base64::decode(&mut to[..outlen], slice).count;
+            let is_urlsafe = matches!(encoding_from_u8(ENCODING), Encoding::Base64url);
+            let outlen = bun_base64::decode_lenient_len(slice.len());
+            // Decode into uninitialized spare capacity: the decoder only ever
+            // writes to the destination, and only the `wrote` bytes it
+            // initialized are committed below. This buffer becomes the
+            // Buffer's storage, so a zero-fill would be pure overhead for
+            // large inputs.
+            let mut to: Vec<u8> = Vec::new();
+            // SAFETY: the returned spare bytes are write-only until committed.
+            let dest = unsafe { bun_core::vec::reserve_spare_bytes(&mut to, outlen) };
+            let wrote = bun_base64::decode_lenient(&mut dest[..outlen], slice, is_urlsafe);
             if wrote == 0 {
                 return Vec::new();
             }
-            to.truncate(wrote);
+            // SAFETY: the decoder initialized the first `wrote` bytes
+            // (`wrote <= outlen <= capacity`).
+            unsafe { bun_core::vec::commit_spare(&mut to, wrote) };
             to
         }
     }
@@ -902,12 +914,14 @@ pub(crate) unsafe fn construct_from_u16<const ENCODING: u8>(
         }
 
         Encoding::Base64 | Encoding::Base64url => {
-            // very very slow case!
-            // shouldn't really happen though
-            let transcoded = strings::to_utf8_alloc(input_slice);
-            // transcoded dropped at end of scope
-            // SAFETY: `transcoded` is a valid local Vec.
-            unsafe { construct_from_u8::<ENCODING>(transcoded.as_ptr(), transcoded.len()) }
+            // Match Node.js: two-byte strings are decoded from the low byte of
+            // each UTF-16 code unit (so e.g. U+013D behaves like '=' and
+            // U+1234 like '4'), the same narrowing Node's lenient fallback
+            // decoder applies.
+            let mut narrowed = vec![0u8; len];
+            strings::copy_u16_into_u8(&mut narrowed, input_slice);
+            // SAFETY: `narrowed` is a valid local Vec.
+            unsafe { construct_from_u8::<ENCODING>(narrowed.as_ptr(), narrowed.len()) }
         }
     }
 }

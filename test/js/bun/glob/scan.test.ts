@@ -23,7 +23,7 @@
 import { Glob, GlobScanOptions } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import fg from "fast-glob";
-import { tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import * as fs from "node:fs";
 import * as path from "path";
 import { createTempDirectoryWithBrokenSymlinks, prepareEntries, tempFixturesDir } from "./util";
@@ -177,6 +177,29 @@ describe("glob.match", async () => {
     expect(returnError(() => glob.scan({ cwd: true }))).toBeDefined();
     // @ts-expect-error
     expect(returnError(() => glob.scan({ cwd: 123123 }))).toBeDefined();
+
+    function returnError(cb: () => any): Error | undefined {
+      try {
+        cb();
+      } catch (err) {
+        // @ts-expect-error
+        return err;
+      }
+      return undefined;
+    }
+  });
+
+  test("oversized cwd throws instead of crashing", async () => {
+    const glob = new Glob("*.ts");
+    const tooLong = Buffer.alloc(100_000, "x").toString();
+    // relative cwd
+    expect(returnError(() => [...glob.scanSync({ cwd: tooLong })])).toBeDefined();
+    expect(returnError(() => glob.scan({ cwd: tooLong }))).toBeDefined();
+    // relative cwd that would be resolved against process.cwd()
+    expect(returnError(() => [...glob.scanSync({ cwd: tooLong, absolute: true })])).toBeDefined();
+    // absolute cwd
+    expect(returnError(() => [...glob.scanSync({ cwd: "/" + tooLong })])).toBeDefined();
+    expect(returnError(() => glob.scan({ cwd: "/" + tooLong }))).toBeDefined();
 
     function returnError(cb: () => any): Error | undefined {
       try {
@@ -852,4 +875,64 @@ test.skipIf(process.platform === "win32")("patterns with many components", () =>
       .join("/") +
     "/*.txt";
   expect([...new Bun.Glob(sandwich).scanSync({ cwd: dir })].length).toBe(1);
+});
+
+// scan() keeps the cwd string it is given verbatim, but child paths pushed for
+// symlink work items are joined and normalized. The entry-name offset stored on
+// those work items must be derived from the normalized joined path, not from the
+// raw cwd, otherwise a cwd with redundant trailing separators plus a short-named
+// symlink makes the offset exceed the path length.
+test("scan handles a cwd with redundant trailing separators when following symlinks", async () => {
+  using dir = tempDir("glob-scan-symlink-raw-cwd", {
+    "haystack/regular.txt": "regular",
+    "haystack/target/inner.txt": "inner",
+  });
+
+  // Short-named symlink to a directory: after normalization the joined child
+  // path is shorter than the raw cwd string passed to scan() below.
+  try {
+    fs.symlinkSync("target", path.join(String(dir), "haystack", "L"), "dir");
+  } catch (err: any) {
+    if (err.code === "EPERM" || err.code === "EACCES") return;
+    throw err;
+  }
+
+  // cwd with redundant trailing separators, passed through to scan() as-is.
+  const rawCwd = path.join(String(dir), "haystack") + path.sep.repeat(4);
+
+  const script = `
+    const opts = {
+      cwd: process.env.GLOB_RAW_CWD,
+      absolute: true,
+      followSymlinks: true,
+      onlyFiles: false,
+    };
+    const shallow = await Array.fromAsync(new Bun.Glob("*").scan(opts));
+    const deep = await Array.fromAsync(new Bun.Glob("**/*").scan(opts));
+    console.log(JSON.stringify({ shallow, deep }));
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: { ...bunEnv, GLOB_RAW_CWD: rawCwd },
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const norm = (s: string) => s.replaceAll("\\", "/");
+  const root = norm(path.join(String(dir), "haystack"));
+
+  expect(stdout.trim()).not.toBe("");
+  const result = JSON.parse(stdout.trim());
+  const shallow = result.shallow.map(norm).sort();
+  const deep = result.deep.map(norm).sort();
+
+  // Only real entries under the scanned directory are reported, and the
+  // symlinked directory is still traversed.
+  expect(shallow).toEqual([`${root}/L`, `${root}/regular.txt`, `${root}/target`].sort());
+  expect(deep).toEqual(
+    [`${root}/L`, `${root}/L/inner.txt`, `${root}/regular.txt`, `${root}/target`, `${root}/target/inner.txt`].sort(),
+  );
+  expect(exitCode).toBe(0);
 });

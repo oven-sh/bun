@@ -15,26 +15,19 @@ use bun_core::ThreadLock;
 pub use bv2_impl::api;
 pub use bv2_impl::bake_types;
 pub use bv2_impl::dispatch;
+pub use bv2_impl::{
+    CompileResult, CompileResultForSourceMap, CompileResultForSourceMapColumns, ContentHasher,
+    DeclInfo, DeclInfoKind, EventLoop, ImportTracker, PartRange, StableRef, WrapKind,
+    generic_path_with_pretty_initialized, target_from_hashbang,
+};
 pub use bv2_impl::{DevServerInput, DevServerOutput, ImportTrackerIterator, ImportTrackerStatus};
-// DEDUP(D059): the value-type set below is canonically defined in
-// `crate::ungate_support` (lib.rs:15 glob-re-exports it at the crate root). The
-// `bv2_impl` draft body previously carried duplicate definitions that no caller
-// reached; re-export the canonical ones here to preserve `bundle_v2::Foo`
-// spellings for external callers.
-pub use crate::ungate_support::entry_point::{
-    EntryPoint, Kind as EntryPointKind, List as EntryPointList,
-};
-pub use crate::ungate_support::{
-    ExportData, ImportData, ImportTracker, JSMeta, generic_path_with_pretty_initialized,
-};
 // Flatten the impl-body module into this file's namespace so external callers
 // (`bun_runtime::cli::*`, `linker_context::*`) reference items as
 // `bundle_v2::Foo` rather than naming the implementation submodule.
 use self::bake_types as bake;
-pub use crate::ungate_support::RefImportData;
 pub use bv2_impl::{
-    BuildResult, BundleV2Result, CompletionStruct, CrossChunkImport, DependenciesScanner,
-    DependenciesScannerResult, EXTERNAL_FREE_VTABLE, OnDependenciesAnalyze, singleton,
+    BuildResult, BundleV2Result, CompletionStruct, DependenciesScanner, DependenciesScannerResult,
+    EXTERNAL_FREE_VTABLE, OnDependenciesAnalyze, singleton,
 };
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
@@ -44,7 +37,6 @@ use crate::barrel_imports::RequestedExports;
 use crate::cache::ExternalFreeFunction;
 use crate::options::{self, Target};
 use crate::transpiler::Transpiler;
-use crate::ungate_support::EventLoop;
 use crate::{Index, IndexInt, LinkerContext};
 
 // ── re-exports so callers can reference these via `bundle_v2::…` ──
@@ -345,12 +337,12 @@ pub mod bv2_impl {
 
     use crate::Graph::InputFileColumns;
     use crate::Index;
+    use crate::JSAst;
+    use crate::bun_fs as Fs;
     use crate::options_impl::TargetExt;
     use crate::transpiler::Transpiler;
-    use crate::ungate_support::JSAst;
-    use crate::ungate_support::bun_fs as Fs;
 
-    use crate::ungate_support::{bun_css, import_record};
+    use crate::{bun_css, import_record};
     use bun_alloc::{AllocError, Arena as ThreadLocalArena};
 
     use bun_ast::server_component_boundary;
@@ -863,7 +855,7 @@ pub mod bv2_impl {
 
                 pub fn has_any_matches(
                     &self,
-                    path: &crate::ungate_support::bun_fs::Path,
+                    path: &crate::bun_fs::Path,
                     is_on_load: bool,
                 ) -> bool {
                     let mut namespace_string = if path.is_file() {
@@ -1096,9 +1088,7 @@ pub mod bv2_impl {
                 fn result_for_key(key: &'static [u8]) -> bun_resolver::Result {
                     bun_resolver::Result {
                         path_pair: bun_resolver::PathPair {
-                            primary: crate::ungate_support::bun_fs::Path::init_with_namespace(
-                                key, b"file",
-                            ),
+                            primary: crate::bun_fs::Path::init_with_namespace(key, b"file"),
                             ..Default::default()
                         },
                         module_type: crate::options::ModuleType::Unknown,
@@ -1416,10 +1406,6 @@ pub mod bv2_impl {
     bun_core::declare_scope!(ReachableFiles, visible);
     bun_core::declare_scope!(TreeShake, hidden);
     bun_core::declare_scope!(PartRanges, hidden);
-    // `ContentHasher` scope moved to `ungate_support.rs` alongside the canonical
-    // `ContentHasher` struct (DEDUP D059).
-    // Zig: `bun.Output.scoped(.watcher, .visible)` — lowercase to avoid colliding
-    // with the `Watcher` type alias (hot-reloader handle) in this module.
     bun_core::declare_scope!(watcher, visible);
 
     pub use bun_js_printer::MangledProps;
@@ -1555,7 +1541,7 @@ pub mod bv2_impl {
 
     /// `bun.jsc.AnyEventLoop` — re-export the linker's alias
     /// (`Option<NonNull<bun_event_loop::AnyEventLoop>>`).
-    pub use crate::ungate_support::EventLoop;
+    pub use crate::linker_context_mod::EventLoop;
 
     // `JSBundleCompletionTask` (JSBundler.zig) — typed-ptr marker for
     // `BundleV2.completion`. The concrete struct lives in `bun_runtime` (its
@@ -1565,11 +1551,6 @@ pub mod bv2_impl {
     // `PhantomData<(*mut u8, PhantomPinned)>` so it is `!Send + !Sync + !Unpin`
     // and has no usable size/layout in this crate.
     bun_opaque::opaque_ffi! { pub struct JSBundleCompletionTask; }
-
-    // DEDUP(D059): `generic_path_with_pretty_initialized` is canonically defined in
-    // `crate::ungate_support`. After D090 the `Fs::Path` / `bun_paths::fs::Path<'static>`
-    // distinction is purely a `'static` alias, so the in-module caller passes
-    // through directly.
 
     /// Erase `&[u8]` to `&'static [u8]` for storage in lifetime-erased
     /// `Path<'static>` slots (`ImportRecord.path`, `Graph.input_files`).
@@ -1943,7 +1924,7 @@ pub mod bv2_impl {
     impl<'a> BundleV2<'a> {
         pub fn find_reachable_files(&mut self) -> Result<Box<[Index]>, Error> {
             // RAII guard — `Ctx` ends the span on Drop (Zig: `defer trace.end()`).
-            let _trace = crate::ungate_support::perf::trace("Bundler.findReachableFiles");
+            let _trace = crate::perf::trace("Bundler.findReachableFiles");
 
             // Create a quick index for server-component boundaries.
             // We need to mark the generated files as reachable, or else many files will appear missing.
@@ -2487,7 +2468,7 @@ pub mod bv2_impl {
                     // HTML is only allowed at the entry point.
                 };
                 let mut tmp_source = bun_ast::Source {
-                    path: path_as_static(&path.dupe_alloc().expect("oom")),
+                    path: path_as_static(&path.dupe_alloc(self.arena()).expect("oom")),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
                     ..Default::default()
                 };
@@ -2693,7 +2674,7 @@ pub mod bv2_impl {
             // surfacing as "Failed to load bundled module
             // 'bun-framework-react/server.tsx'" when the worker can no longer match
             // `built_in_modules`.
-            path = path.dupe_alloc().expect("oom");
+            path = path.dupe_alloc(self.arena()).expect("oom");
             // PORT NOTE: Zig's `var path = result.path()` is a `*Fs.Path` *into*
             // `result.path_pair`, so the `path.* = pathWithPrettyInitialized(...)`
             // assignment mutates the resolver result in place. The borrowck-reshape
@@ -3259,7 +3240,7 @@ pub mod bv2_impl {
         }
 
         fn clone_ast(&mut self) -> Result<(), Error> {
-            let _trace = crate::ungate_support::perf::trace("Bundler.cloneAST");
+            let _trace = crate::perf::trace("Bundler.cloneAST");
             // TODO(port): bun.safety.alloc.assertEq
             self.linker.graph.ast = self.graph.ast.clone()?;
 
@@ -3955,7 +3936,7 @@ pub mod bv2_impl {
                     ) {
                         Ok(m) => Some(m),
                         Err(err) => {
-                            Output::warn(format_args!("Failed to generate metafile: {}", err));
+                            bun_core::warn!("Failed to generate metafile: {}", err);
                             None
                         }
                     }
@@ -5035,7 +5016,7 @@ pub mod bv2_impl {
                 ) {
                     Ok(m) => Some(m),
                     Err(err) => {
-                        Output::warn(format_args!("Failed to generate metafile: {}", err.name()));
+                        bun_core::warn!("Failed to generate metafile: {}", err.name());
                         None
                     }
                 }
@@ -5049,10 +5030,7 @@ pub mod bv2_impl {
                     match crate::linker_context::metafile_builder::generate_markdown(mf) {
                         Ok(m) => Some(m),
                         Err(err) => {
-                            Output::warn(format_args!(
-                                "Failed to generate metafile markdown: {}",
-                                err
-                            ));
+                            bun_core::warn!("Failed to generate metafile markdown: {}", err);
                             None
                         }
                     }
@@ -5124,11 +5102,11 @@ pub mod bv2_impl {
             match bun_sys::File::write_file(bun_core::Fd::cwd(), joined_z, content) {
                 Ok(()) => {}
                 Err(err) => {
-                    Output::warn(format_args!(
+                    bun_core::warn!(
                         "Failed to write metafile to '{}': {}",
                         bstr::BStr::new(file_path),
                         err
-                    ));
+                    );
                 }
             }
         }
@@ -5440,15 +5418,13 @@ pub mod bv2_impl {
             // Generate chunks
             let js_part_ranges = self
                 .arena()
-                .alloc_slice_fill_default::<crate::ungate_support::PartRange>(
-                    js_reachable_files.len(),
-                );
+                .alloc_slice_fill_default::<crate::PartRange>(js_reachable_files.len());
             let parts = self.graph.ast.items_parts();
             debug_assert_eq!(js_reachable_files.len(), js_part_ranges.len());
             for (source_index, part_range) in
                 js_reachable_files.iter().zip(js_part_ranges.iter_mut())
             {
-                *part_range = crate::ungate_support::PartRange {
+                *part_range = crate::PartRange {
                     source_index: *source_index,
                     part_index_begin: 0,
                     part_index_end: parts[source_index.get() as usize].len() as u32,
@@ -5711,9 +5687,7 @@ pub mod bv2_impl {
             // returned `Path<'static>` doesn't keep `self` borrowed (borrowck).
             let bump: &'static bun_alloc::Arena =
                 unsafe { bun_ptr::detach_lifetime_ref::<bun_alloc::Arena>(self.arena()) };
-            // DEDUP(D059): route through the canonical body in `ungate_support`;
-            // D090 unified `Fs::Path` and `bun_paths::fs::Path<'static>` so the shims are identity.
-            let out = crate::ungate_support::generic_path_with_pretty_initialized(
+            let out = generic_path_with_pretty_initialized(
                 path,
                 target,
                 self.transpiler.fs().top_level_dir,
@@ -6875,7 +6849,7 @@ pub mod bv2_impl {
         }
 
         pub fn on_parse_task_complete(parse_result: &mut parse_task::Result, this: &mut BundleV2) {
-            let _trace = crate::ungate_support::perf::trace("Bundler.onParseTaskComplete");
+            let _trace = crate::perf::trace("Bundler.onParseTaskComplete");
             // PORT NOTE: Zig aliased `const graph = &this.graph;`. Borrowck rejects
             // holding that across the `this.*` method calls below (each takes
             // `&mut BundleV2`), so re-borrow `this.graph` at each use site instead.
@@ -7331,27 +7305,323 @@ pub mod bv2_impl {
         }
     }
 
-    // `UseDirective`/`ServerComponentBoundary` already imported at module head.
-
-    // DEDUP(D059): WrapKind / ImportData / ExportData / JSMeta / JSMetaFlags /
-    // EntryPoint{,Kind,List} / PartRange / StableRef / ImportTracker / DeclInfo* /
-    // CompileResult* / ContentHasher / cheap_prefix_normalizer / target_from_hashbang
-    // are canonically defined in `crate::ungate_support` (which `lib.rs` already
-    // glob-re-exports at the crate root, so every cross-module caller resolves
-    // there). The duplicate definitions that previously lived here were provably
-    // unreferenced — `bundle_v2.rs` itself uses `crate::ungate_support::PartRange`
-    // at the `compute_chunks` body, bypassing its own copy. Re-export the canonical
-    // set so any in-module / `bv2_impl::Foo` reference still resolves.
     pub use crate::AdditionalFile;
-    pub use crate::ungate_support::entry_point::{
-        EntryPoint, Kind as EntryPointKind, List as EntryPointList,
-    };
-    pub use crate::ungate_support::js_meta::Flags as JSMetaFlags;
-    pub use crate::ungate_support::{
-        CompileResult, CompileResultForSourceMap, ContentHasher, DeclInfo, DeclInfoKind,
-        ExportData, ImportData, ImportTracker, JSMeta, PartRange, ResolvedExports, StableRef,
-        TopLevelSymbolToParts, WrapKind, cheap_prefix_normalizer, target_from_hashbang,
-    };
+    pub use bun_core::cheap_prefix_normalizer;
+
+    #[derive(Clone, Copy, Default)]
+    pub struct PartRange {
+        pub source_index: Index,
+        pub part_index_begin: u32,
+        pub part_index_end: u32,
+    }
+
+    #[repr(C, packed)]
+    #[derive(Clone, Copy)]
+    pub struct StableRef {
+        pub stable_source_index: IndexInt,
+        pub r#ref: bun_ast::Ref,
+    }
+
+    impl StableRef {
+        pub fn is_less_than(_: (), a: StableRef, b: StableRef) -> bool {
+            let (a_idx, b_idx) = (a.stable_source_index, b.stable_source_index);
+            a_idx < b_idx
+                || (a_idx == b_idx && { a.r#ref }.inner_index() < { b.r#ref }.inner_index())
+        }
+    }
+
+    impl PartialEq for StableRef {
+        #[inline]
+        fn eq(&self, other: &Self) -> bool {
+            let (a_idx, a_ref) = (self.stable_source_index, self.r#ref);
+            let (b_idx, b_ref) = (other.stable_source_index, other.r#ref);
+            a_idx == b_idx && a_ref == b_ref
+        }
+    }
+    impl Eq for StableRef {}
+    impl Ord for StableRef {
+        #[inline]
+        fn cmp(&self, other: &Self) -> core::cmp::Ordering {
+            let (a_idx, a_ref) = (self.stable_source_index, self.r#ref);
+            let (b_idx, b_ref) = (other.stable_source_index, other.r#ref);
+            (a_idx, a_ref.inner_index()).cmp(&(b_idx, b_ref.inner_index()))
+        }
+    }
+    impl PartialOrd for StableRef {
+        #[inline]
+        fn partial_cmp(&self, other: &Self) -> Option<core::cmp::Ordering> {
+            Some(self.cmp(other))
+        }
+    }
+
+    #[derive(Clone, Copy, Default, PartialEq, Eq)]
+    pub struct ImportTracker {
+        pub source_index: Index,
+        pub name_loc: bun_ast::Loc,
+        pub import_ref: bun_ast::Ref,
+    }
+
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum DeclInfoKind {
+        Declared,
+        Lexical,
+    }
+    #[derive(Clone)]
+    pub struct DeclInfo {
+        pub name: Box<[u8]>,
+        pub kind: DeclInfoKind,
+    }
+
+    pub enum CompileResult {
+        Javascript {
+            source_index: IndexInt,
+            result: bun_js_printer::PrintResult,
+            decls: Box<[DeclInfo]>,
+        },
+        Css {
+            result: Result<Box<[u8]>, bun_core::Error>,
+            source_index: IndexInt,
+            source_map: Option<bun_sourcemap::Chunk>,
+        },
+        Html {
+            source_index: IndexInt,
+            code: Box<[u8]>,
+            script_injection_offset: u32,
+        },
+    }
+
+    impl CompileResult {
+        pub fn source_index(&self) -> IndexInt {
+            match self {
+                CompileResult::Javascript { source_index, .. }
+                | CompileResult::Css { source_index, .. }
+                | CompileResult::Html { source_index, .. } => *source_index,
+            }
+        }
+
+        pub fn code(&self) -> &[u8] {
+            match self {
+                CompileResult::Javascript { result, .. } => match result {
+                    bun_js_printer::PrintResult::Result(r) => &r.code,
+                    bun_js_printer::PrintResult::Err(_) => b"",
+                },
+                CompileResult::Css { result, .. } => match result {
+                    Ok(v) => v,
+                    Err(_) => b"",
+                },
+                CompileResult::Html { code, .. } => code,
+            }
+        }
+
+        pub fn into_code(self) -> Box<[u8]> {
+            match self {
+                CompileResult::Javascript { result, .. } => match result {
+                    bun_js_printer::PrintResult::Result(r) => r.code,
+                    bun_js_printer::PrintResult::Err(_) => Box::default(),
+                },
+                CompileResult::Css { result, .. } => result.unwrap_or_default(),
+                CompileResult::Html { code, .. } => code,
+            }
+        }
+
+        pub fn source_map_chunk(&self) -> Option<&bun_sourcemap::Chunk> {
+            match self {
+                CompileResult::Javascript { result, .. } => match result {
+                    bun_js_printer::PrintResult::Result(r) => r.source_map.as_ref(),
+                    bun_js_printer::PrintResult::Err(_) => None,
+                },
+                CompileResult::Css { source_map, .. } => source_map.as_ref(),
+                CompileResult::Html { .. } => None,
+            }
+        }
+    }
+
+    impl Clone for CompileResult {
+        fn clone(&self) -> Self {
+            match self {
+                CompileResult::Javascript {
+                    source_index,
+                    result,
+                    decls,
+                } => CompileResult::Javascript {
+                    source_index: *source_index,
+                    result: match result {
+                        bun_js_printer::PrintResult::Result(r) => {
+                            bun_js_printer::PrintResult::Result(
+                                bun_js_printer::PrintResultSuccess {
+                                    code: r.code.clone(),
+                                    source_map: r.source_map.clone(),
+                                },
+                            )
+                        }
+                        bun_js_printer::PrintResult::Err(e) => bun_js_printer::PrintResult::Err(*e),
+                    },
+                    decls: decls.clone(),
+                },
+                CompileResult::Css {
+                    result,
+                    source_index,
+                    source_map,
+                } => CompileResult::Css {
+                    result: result.clone(),
+                    source_index: *source_index,
+                    source_map: source_map.clone(),
+                },
+                CompileResult::Html {
+                    source_index,
+                    code,
+                    script_injection_offset,
+                } => CompileResult::Html {
+                    source_index: *source_index,
+                    code: code.clone(),
+                    script_injection_offset: *script_injection_offset,
+                },
+            }
+        }
+    }
+
+    impl Default for CompileResult {
+        fn default() -> Self {
+            CompileResult::Javascript {
+                source_index: 0,
+                result: bun_js_printer::PrintResult::Result(bun_js_printer::PrintResultSuccess {
+                    code: Box::new([]),
+                    source_map: None,
+                }),
+                decls: Box::new([]),
+            }
+        }
+    }
+
+    pub struct CompileResultForSourceMap {
+        pub source_map_chunk: bun_sourcemap::Chunk,
+        pub generated_offset: bun_sourcemap::LineColumnOffset,
+        pub source_index: u32,
+    }
+
+    bun_collections::multi_array_columns! {
+        pub trait CompileResultForSourceMapColumns for CompileResultForSourceMap {
+            source_map_chunk: bun_sourcemap::Chunk,
+            generated_offset: bun_sourcemap::LineColumnOffset,
+            source_index: u32,
+        }
+    }
+
+    #[derive(Default)]
+    pub struct ContentHasher {
+        pub hasher: bun_hash::XxHash64Streaming,
+    }
+    bun_core::declare_scope!(ContentHasher, hidden);
+    impl ContentHasher {
+        pub(crate) fn write(&mut self, bytes: &[u8]) {
+            bun_core::scoped_log!(
+                ContentHasher,
+                "HASH_UPDATE {}:\n{}\n----------\n",
+                bytes.len(),
+                bstr::BStr::new(bytes)
+            );
+            self.hasher.update(&(bytes.len() as u64).to_ne_bytes());
+            self.hasher.update(bytes);
+        }
+        pub(crate) fn run(bytes: &[u8]) -> u64 {
+            let mut h = ContentHasher::default();
+            h.write(bytes);
+            h.digest()
+        }
+        pub(crate) fn write_ints(&mut self, i: &[u32]) {
+            bun_core::scoped_log!(ContentHasher, "HASH_UPDATE: {:?}\n", i);
+            self.hasher.update(bytemuck::cast_slice::<u32, u8>(i));
+        }
+        pub(crate) fn digest(&self) -> u64 {
+            self.hasher.digest()
+        }
+    }
+
+    #[repr(u8)]
+    #[derive(Clone, Copy, PartialEq, Eq, Default)]
+    pub enum WrapKind {
+        #[default]
+        None = 0,
+        Cjs,
+        Esm,
+    }
+
+    pub fn target_from_hashbang(buffer: &[u8]) -> Option<options::Target> {
+        const HB: &[u8] = b"#!/usr/bin/env bun";
+        if buffer.len() > HB.len() && buffer.starts_with(HB) {
+            match buffer[HB.len()] {
+                b'\n' | b' ' => return Some(options::Target::Bun),
+                _ => {}
+            }
+        }
+        None
+    }
+
+    pub fn generic_path_with_pretty_initialized(
+        path: &bun_paths::fs::Path<'static>,
+        target: options::Target,
+        top_level_dir: &[u8],
+        bump: &bun_alloc::Arena,
+    ) -> Result<bun_paths::fs::Path<'static>, bun_core::Error> {
+        use crate::bun_fs::PathResolverExt as _;
+        use crate::bun_node_fallbacks;
+        use bun_io::Write as _;
+
+        let mut buf = bun_paths::path_buffer_pool::get();
+
+        let is_node = path.namespace == b"node";
+        if is_node
+            && (strings::has_prefix(path.text, bun_node_fallbacks::IMPORT_PATH)
+                || !bun_paths::is_absolute(path.text))
+        {
+            return Ok(*path);
+        }
+
+        if path.is_file() || is_node {
+            let mut buf2 = bun_paths::path_buffer_pool::get();
+            let rel = bun_paths::resolve_path::relative_platform_buf::<
+                bun_paths::resolve_path::platform::Loose,
+                false,
+            >(&mut **buf2, top_level_dir, path.text);
+            let mut path_clone: crate::bun_fs::Path<'_> = *path;
+            if target == options::Target::BakeServerComponentsSsr {
+                let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
+                let _ = fbs.write_all(b"ssr:");
+                let _ = fbs.write_all(rel);
+                let written = fbs.pos;
+                path_clone.pretty = &buf.0[..written];
+            } else {
+                path_clone.pretty = rel;
+            }
+            path_clone.dupe_alloc_fix_pretty(bump)
+        } else {
+            let mut path_clone: crate::bun_fs::Path<'_> = *path;
+            let mut fbs = bun_io::FixedBufferStream::new_mut(&mut buf.0[..]);
+            if target == options::Target::BakeServerComponentsSsr {
+                let _ = fbs.write_all(b"ssr:");
+            }
+            let _ = write_escaped_namespace(&mut fbs, path_clone.namespace);
+            let _ = fbs.write_all(b":");
+            let _ = fbs.write_all(path_clone.text);
+            let written = fbs.pos;
+            path_clone.pretty = &buf.0[..written];
+            path_clone.dupe_alloc_fix_pretty(bump)
+        }
+    }
+
+    fn write_escaped_namespace<W: bun_io::Write + ?Sized>(
+        w: &mut W,
+        slice: &[u8],
+    ) -> bun_io::Result {
+        let mut rest = slice;
+        while let Some(i) = strings::index_of_char(rest, b':') {
+            w.write_all(&rest[..i as usize])?;
+            w.write_all(b"::")?;
+            rest = &rest[i as usize + 1..];
+        }
+        w.write_all(rest)
+    }
 
     #[repr(u8)]
     #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -7390,17 +7660,10 @@ pub mod bv2_impl {
     /// `bundle_v2.zig:ImportTracker.Iterator`.
     ///
     /// `import_data` is a raw slice into
-    /// `graph.meta[i].resolved_exports[..].potentially_ambiguous_export_star_refs`
-    /// (Zig returned `Vec.slice()` directly). The graph SoA is never
-    /// reallocated during `match_import_with_export`, so the pointer stays valid
-    /// for the iterator's lifetime; the caller only reads `.data` from each entry.
-    ///
-    /// DEDUP NOTE (D060): `value` / `import_data` name the `crate::`-root
-    /// (`ungate_support`) flavours of `ImportTracker` / `ImportData` rather than
-    /// the local `bv2_impl` duplicates so that `LinkerContext`'s 30+ live call
-    /// sites (which import the crate-root types) type-check against this single
-    /// canonical definition. The local duplicates collapse in the sibling
-    /// `ImportTracker` / `ImportData` dedup clusters.
+    /// `graph.meta[i].resolved_exports[..].potentially_ambiguous_export_star_refs`.
+    /// The graph SoA is never reallocated during `match_import_with_export`, so
+    /// the pointer stays valid for the iterator's lifetime; the caller only reads
+    /// `.data` from each entry.
     pub struct ImportTrackerIterator {
         pub status: ImportTrackerStatus,
         pub value: crate::ImportTracker,
@@ -7418,66 +7681,6 @@ pub mod bv2_impl {
                 value: crate::ImportTracker::default(),
                 import_data: bun_ptr::BackRef::new(&[] as &[crate::ImportData]),
             }
-        }
-    }
-
-    // `PathTemplate` already in scope via `crate::options`.
-
-    // PORT NOTE: `CrossChunkImport`/`CrossChunkImportItem` are TYPE_ONLY-hoisted in
-    // `ungate_support` so `Chunk::ImportsFromOtherChunks` can name them without a
-    // cycle. Re-export the canonical definitions here (instead of duplicating) so
-    // `sorted_cross_chunk_imports` and `Chunk` agree on the element type.
-    pub use crate::ungate_support::{
-        CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList,
-    };
-
-    impl CrossChunkImportItem {
-        pub fn less_than(_: (), a: &CrossChunkImportItem, b: &CrossChunkImportItem) -> bool {
-            strings::order(&a.export_alias, &b.export_alias) == core::cmp::Ordering::Less
-        }
-    }
-
-    impl CrossChunkImport {
-        pub fn less_than(_: (), a: &CrossChunkImport, b: &CrossChunkImport) -> bool {
-            a.chunk_index < b.chunk_index
-        }
-
-        pub fn sorted_cross_chunk_imports(
-            list: &mut Vec<CrossChunkImport>,
-            chunks: &mut [Chunk],
-            imports_from_other_chunks: &mut chunk::ImportsFromOtherChunks,
-        ) -> Result<(), Error> {
-            // PORT NOTE: reshaped for borrowck — Zig used `defer list.* = result;`.
-            list.clear();
-            list.reserve(imports_from_other_chunks.count());
-
-            for i in 0..imports_from_other_chunks.count() {
-                let chunk_index = imports_from_other_chunks.keys()[i];
-                let chunk = &mut chunks[chunk_index as usize];
-
-                // Sort imports from a single chunk by alias for determinism
-                let exports_to_other_chunks = &chunk.content.javascript().exports_to_other_chunks;
-                let import_items = &mut imports_from_other_chunks.values_mut()[i];
-                for item in import_items.slice_mut() {
-                    item.export_alias = (*exports_to_other_chunks.get(&item.r#ref).unwrap()).into();
-                    debug_assert!(!item.export_alias.is_empty());
-                }
-                import_items
-                    .slice_mut()
-                    .sort_by(|a, b| strings::order(&a.export_alias, &b.export_alias));
-
-                // Zig value-copies the Vec header so both `result[_]` and the
-                // map slot share the backing buffer; `rename_symbols_in_chunk`
-                // re-reads `imports_from_other_chunks.values()` afterwards. Taking
-                // would leave the map slot empty and break that consumer.
-                list.push(CrossChunkImport {
-                    chunk_index,
-                    sorted_import_items: import_items.shallow_copy(),
-                });
-            }
-
-            list.sort_by_key(|a| a.chunk_index);
-            Ok(())
         }
     }
 

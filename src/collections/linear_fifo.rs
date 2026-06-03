@@ -710,10 +710,15 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             } else {
                 index %= buf_len;
             }
+            // Length of the wrapped prefix `buf[0..wrap_len)`. The readable
+            // region is split into the tail `buf[head..buf_len)` and this
+            // prefix; `wrap_len <= head` (since `count <= buf_len`) so the
+            // prefix never overlaps the tail.
+            let wrap_len = head + count - buf_len;
             let buf = self.buf.as_mut_slice();
             if index < head {
                 // If the item to remove is before the head, one slice is moved.
-                shift_down_one(&mut buf[index..count - head]);
+                shift_down_one(&mut buf[index..wrap_len]);
             } else {
                 // The items before and after the head have to be shifted
                 // SAFETY: buf[0] is initialized (it's in the wrapped readable
@@ -723,7 +728,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                 // SAFETY: writing into the last slot; previous occupant already
                 // shifted down.
                 unsafe { ptr::write(buf.as_mut_ptr().add(buf_len - 1), wrap) };
-                shift_down_one(&mut buf[..head - count]);
+                shift_down_one(&mut buf[..wrap_len]);
             }
         }
         self.count -= 1;
@@ -885,6 +890,141 @@ mod tests {
             let mut read_buf = [0u8; 3];
             let n = fifo.read(&mut read_buf);
             assert_eq!(3usize, n); // NOTE: It should be the number of items.
+        }
+    }
+
+    // 16-slot static buffer: `POWERS_OF_TWO` is true, matching the in-tree
+    // `weak_refs` FIFO in the dev server's source-map store (cap 16), the one
+    // real caller of `ordered_remove_item`. `i32` elements make every shift
+    // observable (distinct values), unlike a buffer of repeated bytes.
+    type WrapFifo = LinearFifo<i32, StaticBuffer<i32, 16>>;
+
+    /// Drains the FIFO into a `Vec` without mutating it, preserving FIFO order.
+    fn fifo_to_vec(fifo: &WrapFifo) -> Vec<i32> {
+        (0..fifo.readable_length())
+            .map(|i| fifo.peek_item(i))
+            .collect()
+    }
+
+    // Regression for the wrapped-branch bounds bug: `ordered_remove_item` used
+    // `count - head` / `head - count` for the wrapped-prefix length instead of
+    // the correct `head + count - buf_len`. In wrapped layouts that panics with
+    // an out-of-range slice index (and in narrow cases silently corrupts
+    // contents). The two sub-branches are `index < head` (item in the wrapped
+    // prefix) and `index >= head` (item in the tail segment).
+    #[test]
+    fn ordered_remove_item_wrapped_tail_branch_head_lt_count() {
+        // write 12, read 8, write 10 -> head=8, count=14, buf_len=16.
+        let mut fifo = WrapFifo::init();
+        for v in 0..12 {
+            fifo.write_item(v).unwrap();
+        }
+        for _ in 0..8 {
+            fifo.read_item().unwrap();
+        }
+        for v in 100..110 {
+            fifo.write_item(v).unwrap();
+        }
+
+        // Precondition: readable region wraps, and head < count.
+        assert_eq!(fifo.head, 8);
+        assert_eq!(fifo.count, 14);
+        assert_eq!(fifo.buf_len(), 16);
+        assert!(fifo.buf_len() - fifo.head < fifo.count);
+        assert!(fifo.head < fifo.count);
+
+        let mut expected = fifo_to_vec(&fifo);
+        assert_eq!(
+            expected,
+            vec![
+                8, 9, 10, 11, 100, 101, 102, 103, 104, 105, 106, 107, 108, 109
+            ]
+        );
+
+        // offset 6 -> index = (8 + 6) & 15 = 14 >= head -> tail sub-branch.
+        fifo.ordered_remove_item(6);
+        expected.remove(6);
+
+        assert_eq!(fifo.readable_length(), 13);
+        assert_eq!(fifo_to_vec(&fifo), expected);
+        assert_eq!(
+            expected,
+            vec![8, 9, 10, 11, 100, 101, 103, 104, 105, 106, 107, 108, 109]
+        );
+    }
+
+    #[test]
+    fn ordered_remove_item_wrapped_prefix_branch_head_gt_count() {
+        // write 12, read 12, write 8 -> head=12, count=8, buf_len=16.
+        let mut fifo = WrapFifo::init();
+        for v in 0..12 {
+            fifo.write_item(v).unwrap();
+        }
+        for _ in 0..12 {
+            fifo.read_item().unwrap();
+        }
+        for v in 200..208 {
+            fifo.write_item(v).unwrap();
+        }
+
+        // Precondition: readable region wraps, and head > count.
+        assert_eq!(fifo.head, 12);
+        assert_eq!(fifo.count, 8);
+        assert_eq!(fifo.buf_len(), 16);
+        assert!(fifo.buf_len() - fifo.head < fifo.count);
+        assert!(fifo.head > fifo.count);
+
+        let mut expected = fifo_to_vec(&fifo);
+        assert_eq!(expected, vec![200, 201, 202, 203, 204, 205, 206, 207]);
+
+        // offset 5 -> index = (12 + 5) & 15 = 1 < head -> wrapped-prefix sub-branch.
+        fifo.ordered_remove_item(5);
+        expected.remove(5);
+
+        assert_eq!(fifo.readable_length(), 7);
+        assert_eq!(fifo_to_vec(&fifo), expected);
+        assert_eq!(expected, vec![200, 201, 202, 203, 204, 206, 207]);
+    }
+
+    // Exhaustively remove every valid offset from a wrapped layout and compare
+    // against a reference `Vec`. Uses a fresh FIFO per offset (remove mutates).
+    #[test]
+    fn ordered_remove_item_wrapped_all_offsets_match_reference() {
+        // Build the same wrapped layout as the tail-branch test: head=8, count=14.
+        let build = || {
+            let mut fifo = WrapFifo::init();
+            for v in 0..12 {
+                fifo.write_item(v).unwrap();
+            }
+            for _ in 0..8 {
+                fifo.read_item().unwrap();
+            }
+            for v in 100..110 {
+                fifo.write_item(v).unwrap();
+            }
+            fifo
+        };
+
+        let reference = fifo_to_vec(&build());
+        assert!(build().buf_len() - build().head < build().count);
+
+        for offset in 0..reference.len() {
+            let mut fifo = build();
+            fifo.ordered_remove_item(offset);
+
+            let mut expected = reference.clone();
+            expected.remove(offset);
+
+            assert_eq!(
+                fifo.readable_length(),
+                expected.len(),
+                "count must drop by one for offset {offset}"
+            );
+            assert_eq!(
+                fifo_to_vec(&fifo),
+                expected,
+                "contents mismatch for offset {offset}"
+            );
         }
     }
 }

@@ -340,12 +340,11 @@ impl ResponseLike for bun_uws::AnyResponse {
         *self
     }
     fn get_remote_socket_info(&mut self) -> Option<bun_uws::SocketAddress> {
-        // `bun_uws_sys::SocketAddress<'static>` borrows the socket's IP buffer;
-        // re-box into the owned `bun_uws::SocketAddress` shape this trait uses.
+        // Re-box into the owned `bun_uws::SocketAddress` shape this trait uses.
         (*self)
             .get_remote_socket_info()
             .map(|a| bun_uws::SocketAddress {
-                ip: a.ip.to_vec().into_boxed_slice(),
+                ip: a.ip().to_vec().into_boxed_slice(),
                 port: a.port,
                 is_ipv6: a.is_ipv6,
             })
@@ -559,18 +558,18 @@ impl HotReloadEvent {
         );
 
         if entry_points.set.count() == 0 {
-            bun_core::Output::debug_warn(format_args!("nothing to bundle"));
+            bun_core::debug_warn!("nothing to bundle");
             if !changed_file_paths.is_empty() {
-                bun_core::Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "modified files: {}",
                     bun_core::fmt::fmt_slice(changed_file_paths, ", ")
-                ));
+                );
             }
             if self.dirs.count() > 0 {
-                bun_core::Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "modified dirs: {}",
                     bun_core::fmt::fmt_slice(self.dirs.keys(), ", ")
-                ));
+                );
             }
 
             dev.publish(

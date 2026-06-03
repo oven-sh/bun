@@ -79,6 +79,20 @@ JSHeapData* JSHeapData::ensureHeapData(Heap& heap)
 
 DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(JSVMClientData);
 
+// Frees a per-VM `JSHeapData`; leaves the `useGlobalGC` singleton alone (it is
+// shared by every VM and lives for the process lifetime). This runs as part of
+// `~JSVMClientData` member teardown — after the client `IsoSubspace` members,
+// whose `~LocalAllocator` dereferences a `BlockDirectory` inside this object
+// (see the member-ordering note in the header). `~VM` invokes `~JSVMClientData`
+// only after `heap.lastChanceToFinalize()`, with `heap` (a `VM` member)
+// outliving the destructor, so tearing the server `IsoSubspace`s down here is
+// safe.
+void JSVMClientData::JSHeapDataDeleter::operator()(JSHeapData* heapData) const
+{
+    if (!JSC::Options::useGlobalGC())
+        delete heapData;
+}
+
 JSVMClientData::~JSVMClientData()
 {
     m_clients.forEach([](auto& client) {

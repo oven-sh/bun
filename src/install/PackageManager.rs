@@ -354,7 +354,7 @@ bun_output::declare_scope!(PackageManager, hidden);
 
 pub struct PackageManager {
     pub cache_directory_: Option<bun_sys::Dir>,
-    pub cache_directory_path: ZBox, // TODO(port): lifetime — singleton-leaked
+    pub cache_directory_path: ZBox, // owned; process lifetime via the leaked singleton
     pub root_dir: &'static mut fs::DirEntry,
     // allocator dropped per §Allocators (was `bun.default_allocator`). For the
     // handful of sites that allocated AST nodes via `Expr.allocate(manager.allocator, …)`

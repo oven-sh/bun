@@ -839,23 +839,23 @@ function getTestBunStep(platform, options, testOptions = {}) {
 }
 
 /**
- * Pilot lane: route a tiny darwin-aarch64 test subset to the Tart-backed
- * macOS host. Soft-fails so a Tart hiccup never reds the build. The Tart
- * agent registers `tart=true` and deliberately omits `release-tier`, so the
- * existing darwin jobs (which all pin a tier — see getTestAgent) never land
- * on it; this step is the only consumer.
+ * Pilot lane: route a FULL darwin-aarch64 test shard to the Tart-backed
+ * macOS host — identical to the normal test-bun step (same parallelism,
+ * same test set) so we validate a real workload, not a toy subset.
+ * Soft-fails so a Tart hiccup never reds the build. The Tart agent
+ * registers `tart=true` and deliberately omits `release-tier`, so the
+ * existing darwin jobs (which all pin a tier — see getTestAgent) never
+ * land on it; this step is the only consumer.
  *
  * @param {PipelineOptions} options
  * @param {string} [buildId]
  * @returns {Step}
  */
 function getTartPilotStep(options, buildId) {
-  const args = ["--step=darwin-aarch64-build-bun", "--vendor=false"];
+  // Mirror getTestBunStep for {os:darwin, arch:aarch64} but routed to tart=true.
+  const args = ["--step=darwin-aarch64-build-bun"];
   if (buildId) args.push(`--build-id=${buildId}`);
-  args.push(
-    "--include=test/js/bun/util/which.test.ts",
-    "--include=test/js/bun/util/bun-main.test.ts",
-  );
+  args.push("--exclude=integration/bun-types");
   return {
     key: "darwin-aarch64-tart-pilot-test-bun",
     label: `${getBuildkiteEmoji("darwin")} aarch64 - test-bun (tart pilot)`,
@@ -869,7 +869,8 @@ function getTartPilotStep(options, buildId) {
     soft_fail: true,
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    timeout_in_minutes: 10,
+    parallelism: 2,
+    timeout_in_minutes: 30,
     command: `./scripts/runner.node.mjs ${args.join(" ")}`,
   };
 }

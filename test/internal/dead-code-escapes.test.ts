@@ -25,12 +25,15 @@ import { globAllSources } from "../../scripts/glob-sources.ts";
 // Item-level escapes only: `#[allow(dead_code)]`, combined lists like
 // `#[allow(dead_code, non_snake_case)]`, and `#[cfg_attr(<pred>, allow(dead_code))]`
 // — including predicates that themselves contain commas, e.g.
-// `#[cfg_attr(any(unix, test), allow(dead_code))]` (lazy `[\s\S]+?,` backtracks to
-// the first comma whose suffix parses as `allow(...)`), and attributes that
-// rustfmt wrapped across multiple lines (`[\s\S]` spans newlines).
+// `#[cfg_attr(any(unix, test), allow(dead_code))]` (lazy `[^\]]+?,` backtracks to
+// the first comma whose suffix parses as `allow(...)`), attributes that rustfmt
+// wrapped across multiple lines (newlines aren't `]`), and trailing meta items
+// after the allow, e.g. `#[cfg_attr(test, allow(dead_code), derive(Debug))]`
+// (`[^\]]*\]` tail). Neither `[^\]]` class can cross a `]`, so a match is always
+// fenced inside a single attribute and cannot span from one `#[...]` to the next.
 // Module-level `#![allow(...)]` blocks (codegen surfaces such as
 // `runtime/generated_classes.rs` and `jsc/cpp.rs`) are intentionally not counted.
-const ESCAPE = /#\[\s*(?:cfg_attr\([\s\S]+?,\s*)?allow\([^)]*\bdead_code\b[^)]*\)\s*\)?\s*\]/g;
+const ESCAPE = /#\[\s*(?:cfg_attr\([^\]]+?,\s*)?allow\([^)]*\bdead_code\b[^)]*\)[^\]]*\]/g;
 
 const limits: Record<string, number> = await Bun.file(import.meta.dir + "/dead-code-escape-limits.json").json();
 

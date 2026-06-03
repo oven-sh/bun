@@ -18,6 +18,7 @@
 
 #include "PathInlines.h"
 #include "ZigGlobalObject.h"
+#include "BunProcess.h"
 #include "headers.h"
 #include "ErrorCode.h"
 
@@ -791,7 +792,25 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRunMain, (JSGlobalObject * globalObject, JSC:
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto arg1 = callFrame->argument(0);
+
+    // Node defaults the argument to process.argv[1] (the main entry point):
+    // `function executeUserEntryPoint(main = process.argv[1])`. Without this,
+    // `runMain()` with no argument would coerce `undefined` to the literal
+    // string "undefined" and fail to resolve it as a module.
+    if (arg1.isUndefined()) {
+        auto* zigGlobalObject = defaultGlobalObject(globalObject);
+        if (auto* process = zigGlobalObject->processObject()) {
+            JSValue argv = process->getArgv(globalObject);
+            RETURN_IF_EXCEPTION(scope, {});
+            if (auto* argvArray = dynamicDowncast<JSArray>(argv)) {
+                arg1 = argvArray->getIndex(globalObject, 1);
+                RETURN_IF_EXCEPTION(scope, {});
+            }
+        }
+    }
+
     auto name = makeAtomString(arg1.toWTFString(globalObject));
+    RETURN_IF_EXCEPTION(scope, {});
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, nullptr, nullptr);
     RETURN_IF_EXCEPTION(scope, {});

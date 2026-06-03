@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, ospath } from "harness";
+import { bunEnv, bunExe, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -232,6 +232,32 @@ describe.concurrent("node-module-module", () => {
     expect(stdout.trim()).toBe("pass");
     expect(await proc.exited).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/31773
+  // runMain() with no argument must default to process.argv[1] (the current
+  // main entry) like Node, instead of coercing `undefined` to the string
+  // "undefined" and failing to resolve it as a module.
+  test.each([
+    ["esm", "entry.mjs", `import { runMain } from "node:module";\nrunMain();\nconsole.log("ran");\n`],
+    ["cjs", "entry.cjs", `const { runMain } = require("node:module");\nrunMain();\nconsole.log("ran");\n`],
+  ])("runMain() with no argument defaults to the main entry (%s)", async (_name, filename, source) => {
+    using dir = tempDir("run-main-no-arg", { [filename]: source });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), filename],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("Cannot find package");
+    expect(stdout.trim()).toBe("ran");
+    expect(exitCode).toBe(0);
+  });
+
   test.each(["no args", "--access-early"])("children, %s", async arg => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), path.join(import.meta.dir, "children-fixture/a.cjs"), arg],

@@ -123,8 +123,6 @@ struct WyhashWriter<'a> {
     hasher: &'a mut Wyhash,
 }
 
-impl<'a> WyhashWriter<'a> {}
-
 impl<'a> std::io::Write for WyhashWriter<'a> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         self.hasher.update(bytes);

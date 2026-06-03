@@ -230,7 +230,6 @@ impl BoxShadowHandler {
 
                     let mut unparsed = unp.deep_clone(arena);
                     context.add_unparsed_fallbacks(arena, &mut unparsed);
-                    let _ = &mut unparsed;
                     dest.push(Property::Unparsed(unparsed));
                     self.flushed = true;
                 } else {

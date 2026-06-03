@@ -565,7 +565,6 @@ impl BorderImageHandler {
                         };
 
                     context.add_unparsed_fallbacks(arena, &mut unparsed_clone);
-                    let _ = &mut unparsed_clone;
                     self.flushed_properties.insert(
                         BorderImageProperty::try_from_property_id(unparsed_clone.property_id.tag())
                             .unwrap(),

@@ -1358,6 +1358,149 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
   }
 });
 
+// `toBuffer(ptr, offset, len)` without an explicit finalizer used to adopt the
+// caller's pointer as owned and install Bun's allocator deallocator, so GC would
+// `mi_free` foreign (caller-owned) memory — an ASAN bad-free / release SIGSEGV.
+// These run in a subprocess because the bug crashes the process on unpatched Bun.
+describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
+  async function runsClean(script) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const gcLoop = `for (let i = 0; i < 20; i++) { Bun.gc(true); Buffer.alloc(1024 * 1024); }`;
+
+  // Forcing GC repeatedly in a subprocess costs a few seconds on a debug build, so
+  // the default 5s budget is too tight to be reliable. (On an unpatched Bun the child
+  // SIGSEGVs and then wedges in the crash handler, so there the red signal is this
+  // timeout rather than the exit-code assertion.)
+  const GC_TIMEOUT = 20_000;
+
+  // Post-condition on the ACTUAL caller memory the bad-free targets: drop only the
+  // adopted Buffer, then confirm `original[index]` (the storage `ptr(...)` pointed
+  // at) is still readable and writable — proving its backing was NOT freed. Then
+  // drop `original` too, so unpatched hits the same pointer a second time. That
+  // turns "the process didn't abort" into "the foreign memory survived".
+  const originalSurvives = (index, expected) => `
+      adopted = null;
+      ${gcLoop}
+      if (original[${index}] !== ${expected}) throw new Error("caller memory corrupted after adopted GC: " + original[${index}]);
+      original[${index}] = 0x55;
+      if (original[${index}] !== 0x55) throw new Error("caller memory not writable after adopted GC");
+      original = null;
+      ${gcLoop}
+  `;
+
+  it(
+    "toBuffer(ptr(buffer)) does not free foreign memory on GC",
+    async () => {
+      const { stdout, exitCode } = await runsClean(`
+      import { ptr, toBuffer } from "bun:ffi";
+      let original = Buffer.alloc(64, 0x41);
+      let adopted = toBuffer(ptr(original), 0, 64);
+      if (adopted[0] !== 0x41) throw new Error("expected a zero-copy view");
+      adopted[0] = 0x42;
+      if (original[0] !== 0x42) throw new Error("expected an aliasing view");
+      ${originalSurvives(0, "0x42")}
+      console.log("survived-gc");
+    `);
+      expect(stdout).toContain("survived-gc");
+      expect(exitCode).toBe(0);
+    },
+    GC_TIMEOUT,
+  );
+
+  it(
+    "toBuffer(ptr(buffer), offset) does not free an interior pointer on GC",
+    async () => {
+      // The adopted view starts at original[8], so both the aliasing check and the
+      // post-GC survival check must inspect that byte, not original[0].
+      const { stdout, exitCode } = await runsClean(`
+      import { ptr, toBuffer } from "bun:ffi";
+      let original = Buffer.alloc(64, 0x41);
+      let adopted = toBuffer(ptr(original), 8, 48);
+      if (adopted[0] !== 0x41) throw new Error("expected a zero-copy view");
+      adopted[0] = 0x42;
+      if (original[8] !== 0x42) throw new Error("expected a view aliasing original[8]");
+      ${originalSurvives(8, "0x42")}
+      console.log("survived-gc");
+    `);
+      expect(stdout).toContain("survived-gc");
+      expect(exitCode).toBe(0);
+    },
+    GC_TIMEOUT,
+  );
+
+  it(
+    "toBuffer(ptr(typedArray)) does not free foreign memory on GC",
+    async () => {
+      const { stdout, exitCode } = await runsClean(`
+      import { ptr, toBuffer } from "bun:ffi";
+      let original = new Uint8Array(64).fill(0x41);
+      let adopted = toBuffer(ptr(original), 0, 64);
+      ${originalSurvives(0, "0x41")}
+      console.log("survived-gc");
+    `);
+      expect(stdout).toContain("survived-gc");
+      expect(exitCode).toBe(0);
+    },
+    GC_TIMEOUT,
+  );
+
+  // Regression (the #1 risk): the bad-free fix must NOT change the explicit-finalizer
+  // path — when the caller supplies a finalizer, it still takes ownership and the
+  // deallocator is invoked exactly once on GC. Self-contained via cc() (TinyCC) so the
+  // deallocator's call count is isolated from the shared ffi-test fixture's counter.
+  it(
+    "toBuffer with an explicit finalizer calls the deallocator exactly once on GC",
+    () => {
+      using dir = tempDir("ffi-tobuffer-finalizer", {
+        "dealloc.c": `
+        static int ffi_called = 0;
+        static void* ffi_last_ptr = 0;
+        static unsigned char ffi_buf[128];
+        void ffi_dealloc(void* p, void* ctx) { (void)ctx; ffi_last_ptr = p; ffi_called++; }
+        void* ffi_get_dealloc(void) { return (void*)&ffi_dealloc; }
+        void* ffi_get_buf(void) { return (void*)ffi_buf; }
+        void* ffi_get_last_ptr(void) { return ffi_last_ptr; }
+        int ffi_get_called(void) { return ffi_called; }
+      `,
+      });
+      const { symbols } = cc({
+        source: `${String(dir)}/dealloc.c`,
+        symbols: {
+          ffi_get_dealloc: { args: [], returns: "ptr" },
+          ffi_get_buf: { args: [], returns: "ptr" },
+          ffi_get_last_ptr: { args: [], returns: "ptr" },
+          ffi_get_called: { args: [], returns: "int" },
+        },
+      });
+      const bufPtr = symbols.ffi_get_buf();
+      let buf = toBuffer(bufPtr, 0, 128, symbols.ffi_get_dealloc());
+      expect(buf.length).toBe(128);
+      expect(symbols.ffi_get_called()).toBe(0); // not called during construction
+      buf = null;
+      // Await the collection rather than assuming one pass suffices: a single
+      // Bun.gc(true) can still see `buf` conservatively from the stack.
+      for (let i = 0; i < 20 && symbols.ffi_get_called() === 0; i++) {
+        Bun.gc(true);
+        Buffer.alloc(1024 * 1024);
+      }
+      expect(symbols.ffi_get_called()).toBe(1); // called exactly once on GC
+      expect(symbols.ffi_get_last_ptr()).toBe(bufPtr); // with the buffer's own pointer
+      Bun.gc(true);
+      expect(symbols.ffi_get_called()).toBe(1); // not called again
+    },
+    GC_TIMEOUT,
+  );
+});
+
 describe.skipIf(!FFI_FIXTURE_PATH)("engine-native FFI (single implementation)", () => {
   const lib = FFI_FIXTURE_PATH;
   it("linkSymbols() binds and calls symbols from raw pointers", () => {

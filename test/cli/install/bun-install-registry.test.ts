@@ -4941,8 +4941,10 @@ describe("update", () => {
   // failed. The trigger is a self-referencing override (`"$pkg"`) on a
   // package that's also a transitive of another root dep.
   test("no-args leaves lockfile in sync with package.json (regression #31748)", async () => {
-    // Bug is in the text lockfile serializer; force text format via
-    // `--save-text-lockfile` on initial install. (Suite default is binary.)
+    // The bug is at the in-memory `Dependency.version.literal` level and
+    // affects both lockfile formats. We force text via `--save-text-lockfile`
+    // only so the second regression test below can grep the lockfile text
+    // (suite default is binary).
     await write(
       packageJson,
       JSON.stringify({

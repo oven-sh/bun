@@ -73,4 +73,32 @@ describe("WebSocket.bufferedAmount (client)", () => {
       close();
     }
   });
+
+  // Per the WHATWG spec, bufferedAmount "does not reset to zero once the
+  // connection closes" — after close() it only increases with further send().
+  test("does not reset to 0 after close() while a backlog is queued", async () => {
+    const { port, close } = await nonDrainingServer();
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
+      const { promise, resolve, reject } = Promise.withResolvers<{ beforeClose: number; afterClose: number }>();
+      ws.onerror = () => reject(new Error("unexpected error event"));
+      ws.onopen = () => {
+        const chunk = Buffer.alloc(64 * 1024, 0x7a).toString();
+        for (let i = 0; i < 4000; i++) ws.send(chunk);
+        const beforeClose = ws.bufferedAmount;
+        ws.close();
+        // Reading immediately after close() must retain the queued backlog,
+        // not snap back to 0.
+        const afterClose = ws.bufferedAmount;
+        resolve({ beforeClose, afterClose });
+      };
+      const { beforeClose, afterClose } = await promise;
+
+      expect(beforeClose).toBeGreaterThan(64 * 1024);
+      // The backlog must survive the close() transition.
+      expect(afterClose).toBe(beforeClose);
+    } finally {
+      close();
+    }
+  });
 });

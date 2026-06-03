@@ -230,6 +230,13 @@ pub const Process = struct {
     ref_count: RefCount,
     exit_handler: ProcessExitHandler = ProcessExitHandler{},
     sync: bool = false,
+    /// Windows only: the console input mode captured at spawn time when this
+    /// child inherited our console stdin, so we can restore it after the child
+    /// exits. A child can switch the shared console input buffer back to cooked
+    /// mode and libuv's cached tty mode keeps us from re-applying raw mode. null
+    /// when stdin was not an inherited console (the common case) or on POSIX.
+    /// See WindowsConsoleInGuard.
+    windows_console_in_mode: ?u32 = null,
     event_loop: jsc.EventLoopHandle,
 
     pub fn memoryCost(_: *const Process) usize {
@@ -294,6 +301,14 @@ pub const Process = struct {
 
         if (this.hasExited()) {
             this.detach();
+            // A child that inherited our console stdin may have switched the
+            // shared console input buffer back to cooked mode. Put back the mode
+            // we captured at spawn so an interactive parent (e.g. a TUI in raw
+            // mode) keeps receiving raw keystrokes instead of cooked, echoed,
+            // line-buffered input. No-op unless we snapshotted a mode for this
+            // child. See WindowsConsoleInGuard.
+            WindowsConsoleInGuard.restore(this.windows_console_in_mode);
+            this.windows_console_in_mode = null;
         }
 
         exit_handler.call(this, status, rusage);
@@ -1668,6 +1683,46 @@ pub fn spawnProcessPosix(
     unreachable;
 }
 
+/// Windows: a child that inherits our console stdin can switch the shared
+/// console input buffer back to cooked mode (ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT)
+/// — cmd.exe, PowerShell, git, node, python and many CRTs reconfigure CONIN$ on
+/// startup. libuv's uv_tty_set_mode caches the last mode it applied and
+/// early-returns when asked for that same mode:
+///
+///     if ((int)mode == tty->tty.rd.mode.mode) return 0;   // no SetConsoleMode
+///
+/// so once the OS mode is changed out from under it, libuv never re-applies it,
+/// and a subsequent setRawMode(true) from JS is a no-op. The user-visible result
+/// is a TUI that keeps rendering while its stdin is cooked: keystrokes echo and
+/// line-buffer instead of reaching the app. We mirror what the POSIX path does
+/// via bun_restore_stdio: snapshot the console input mode before handing the
+/// console to the child and restore it when the child exits.
+const WindowsConsoleInGuard = struct {
+    /// Returns the current console input mode iff `stdin` is an inherited
+    /// console handle, otherwise null. GetConsoleMode only succeeds on a real
+    /// console handle, so a redirected (pipe/file) stdin returns null and the
+    /// guard is skipped.
+    fn snapshot(stdin: WindowsSpawnOptions.Stdio) ?u32 {
+        if (comptime Environment.isWindows) {
+            if (stdin != .inherit) return null;
+            const handle = std.os.windows.peb().ProcessParameters.hStdInput;
+            var mode: bun.windows.DWORD = undefined;
+            if (bun.c.GetConsoleMode(handle, &mode) == 0) return null;
+            return mode;
+        }
+        return null;
+    }
+
+    /// Restore a mode captured by `snapshot`. No-op when `saved` is null.
+    fn restore(saved: ?u32) void {
+        if (comptime Environment.isWindows) {
+            const mode = saved orelse return;
+            const handle = std.os.windows.peb().ProcessParameters.hStdInput;
+            _ = bun.c.SetConsoleMode(handle, mode);
+        }
+    }
+};
+
 pub fn spawnProcessWindows(
     options: *const WindowsSpawnOptions,
     argv: [*:null]?[*:0]const u8,
@@ -1861,6 +1916,10 @@ pub fn spawnProcessWindows(
         .event_loop = options.windows.loop,
         .pid = 0,
     });
+    // Capture the console input mode before uv_spawn so it reflects our mode,
+    // not whatever the child sets. Restored in Process.onExit when the child
+    // exits. See WindowsConsoleInGuard.
+    process.windows_console_in_mode = WindowsConsoleInGuard.snapshot(options.stdin);
 
     defer {
         if (failed) {

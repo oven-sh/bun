@@ -6,7 +6,6 @@ use crate::webcore::blob::BlobExt as _;
 use crate::webcore::blob::store::S3Ext as _;
 use crate::webcore::s3::MultiPartUploadOptions;
 use crate::webcore::s3::client::{ACL, S3Credentials, StorageClass};
-use bun_core::output;
 use bun_jsc::{CallFrame, ConsoleFormatter, ErrorCode, JSGlobalObject, JSValue, JsResult};
 
 use super::s3_file as S3File;
@@ -122,10 +121,11 @@ where
 
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>endpoint<d>:<r> \"", ENABLE_ANSI_COLORS))?;
-        write!(
+        bun_core::write_pretty!(
             writer,
-            "{}",
-            output::pretty_fmt_args("<r><b>{}<r>\"", ENABLE_ANSI_COLORS, (BStr::new(endpoint),))
+            ENABLE_ANSI_COLORS,
+            "<r><b>{s}<r>\"",
+            BStr::new(endpoint),
         )?;
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
         writer.write_str("\n")?;
@@ -137,10 +137,11 @@ where
         };
         formatter.write_indent(writer)?;
         writer.write_str(pfmt!("<r>region<d>:<r> \"", ENABLE_ANSI_COLORS))?;
-        write!(
+        bun_core::write_pretty!(
             writer,
-            "{}",
-            output::pretty_fmt_args("<r><b>{}<r>\"", ENABLE_ANSI_COLORS, (BStr::new(region),))
+            ENABLE_ANSI_COLORS,
+            "<r><b>{s}<r>\"",
+            BStr::new(region),
         )?;
         formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
         writer.write_str("\n")?;
@@ -181,15 +182,12 @@ where
 
         if let Some(acl_value) = acl {
             formatter.write_indent(writer)?;
-            writer.write_str(pfmt!("<r>acl<d>:<r> ", ENABLE_ANSI_COLORS))?;
-            write!(
+            writer.write_str(pfmt!("<r>acl<d>:<r> \"", ENABLE_ANSI_COLORS))?;
+            bun_core::write_pretty!(
                 writer,
-                "{}",
-                output::pretty_fmt_args(
-                    "<r><b>{}<r>\"",
-                    ENABLE_ANSI_COLORS,
-                    (BStr::new(acl_value.to_string()),),
-                )
+                ENABLE_ANSI_COLORS,
+                "<r><b>{s}<r>\"",
+                BStr::new(acl_value.to_string()),
             )?;
             formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
 
@@ -318,14 +316,11 @@ impl S3Client {
                 &self.credentials.bucket
             };
         if !bucket_name.is_empty() {
-            write!(
+            bun_core::write_pretty!(
                 writer,
-                "{}",
-                output::pretty_fmt_args(
-                    " (<green>\"{}\"<r>)<r> {{",
-                    ENABLE_ANSI_COLORS,
-                    (BStr::new(bucket_name),),
-                )
+                ENABLE_ANSI_COLORS,
+                " (<green>\"{s}\"<r>)<r> {{",
+                BStr::new(bucket_name),
             )?;
         } else {
             writer.write_str(" {")?;

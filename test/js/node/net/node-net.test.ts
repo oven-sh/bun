@@ -3,7 +3,18 @@ import { heapStats } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, expectMaxObjectTypeCount, isASAN, isDebug, isWindows, tmpdirSync } from "harness";
 import { randomUUID } from "node:crypto";
-import { connect, createConnection, createServer, isIP, isIPv4, isIPv6, Server, Socket, Stream } from "node:net";
+import {
+  BlockList,
+  connect,
+  createConnection,
+  createServer,
+  isIP,
+  isIPv4,
+  isIPv6,
+  Server,
+  Socket,
+  Stream,
+} from "node:net";
 import { join } from "node:path";
 
 const socket_domain = tmpdirSync();
@@ -35,6 +46,66 @@ it("should support net.isIPv6()", () => {
   expect(isIPv6("127.0.0.1")).toBe(false);
   expect(isIPv6("127.0.0.1/24")).toBe(false);
   expect(isIPv6("127.000.000.001")).toBe(false);
+});
+
+describe("net.BlockList subnet rules", () => {
+  // Expected values verified against Node.js v24.
+  it("matches IPv4-mapped IPv6 subnet rules against IPv4 and mapped addresses", () => {
+    const blockList = new BlockList();
+    blockList.addSubnet("::ffff:1.1.1.0", 120, "ipv6");
+    expect(blockList.check("1.1.1.1", "ipv4")).toBe(true);
+    expect(blockList.check("1.1.2.1", "ipv4")).toBe(false);
+    expect(blockList.check("::ffff:1.1.1.1", "ipv6")).toBe(true);
+    expect(blockList.check("::ffff:1.1.2.1", "ipv6")).toBe(false);
+  });
+
+  it("matches IPv4 subnet rules against IPv4-mapped IPv6 addresses", () => {
+    const blockList = new BlockList();
+    blockList.addSubnet("1.1.1.0", 24, "ipv4");
+    expect(blockList.check("::ffff:1.1.1.1", "ipv6")).toBe(true);
+    expect(blockList.check("::ffff:1.1.2.1", "ipv6")).toBe(false);
+    expect(blockList.check("::1", "ipv6")).toBe(false);
+    expect(blockList.check("1.1.1.255", "ipv4")).toBe(true);
+    expect(blockList.check("1.1.2.0", "ipv4")).toBe(false);
+  });
+
+  it("does not match IPv4 addresses against non-mapped IPv6 subnet rules", () => {
+    const blockList = new BlockList();
+    blockList.addSubnet("8592:757c:efae:4e45::", 64, "ipv6");
+    expect(blockList.check("1.1.1.1", "ipv4")).toBe(false);
+    expect(blockList.check("8592:757c:efae:4e45::f", "ipv6")).toBe(true);
+    expect(blockList.check("8592:757c:efaf:4e45::f", "ipv6")).toBe(false);
+  });
+
+  it("matches exact-prefix subnet rules", () => {
+    const v4 = new BlockList();
+    v4.addSubnet("10.0.0.1", 32, "ipv4");
+    expect(v4.check("10.0.0.1", "ipv4")).toBe(true);
+    expect(v4.check("10.0.0.2", "ipv4")).toBe(false);
+    expect(v4.check("::ffff:10.0.0.1", "ipv6")).toBe(true);
+
+    const v6 = new BlockList();
+    v6.addSubnet("::1", 128, "ipv6");
+    expect(v6.check("::1", "ipv6")).toBe(true);
+    expect(v6.check("::2", "ipv6")).toBe(false);
+
+    const mapped = new BlockList();
+    mapped.addSubnet("::ffff:10.0.0.1", 128, "ipv6");
+    expect(mapped.check("10.0.0.1", "ipv4")).toBe(true);
+    expect(mapped.check("10.0.0.2", "ipv4")).toBe(false);
+  });
+
+  it("matches zero-prefix subnet rules", () => {
+    const v4 = new BlockList();
+    v4.addSubnet("0.0.0.0", 0, "ipv4");
+    expect(v4.check("255.255.255.255", "ipv4")).toBe(true);
+    expect(v4.check("::1", "ipv6")).toBe(false);
+
+    const v6 = new BlockList();
+    v6.addSubnet("::", 0, "ipv6");
+    expect(v6.check("8592:757c:efae:4e45::f", "ipv6")).toBe(true);
+    expect(v6.check("1.2.3.4", "ipv4")).toBe(true);
+  });
 });
 
 describe("net.Socket read", () => {

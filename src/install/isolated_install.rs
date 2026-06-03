@@ -901,10 +901,10 @@ pub(crate) fn install_isolated_packages(
         if manager.options.log_level.is_verbose() {
             let full_tree_end = timer.elapsed();
             timer = std::time::Instant::now();
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "Resolved peers [{}]",
                 bun_fmt::fmt_duration_one_decimal(full_tree_end.as_nanos() as u64)
-            ));
+            );
         }
 
         let mut dedupe: HashMap<PackageID, Vec<DedupeInfo>> = HashMap::default();
@@ -1158,10 +1158,10 @@ pub(crate) fn install_isolated_packages(
 
         if manager.options.log_level.is_verbose() {
             let dedupe_end = timer.elapsed();
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "Created store [{}]",
                 bun_fmt::fmt_duration_one_decimal(dedupe_end.as_nanos() as u64)
-            ));
+            );
         }
 
         break 'store Store {

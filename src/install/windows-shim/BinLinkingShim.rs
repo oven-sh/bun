@@ -156,11 +156,11 @@ mod host {
     #[track_caller]
     pub fn embedded_executable_data() -> &'static [u8] {
         if EMBEDDED_EXECUTABLE_DATA.is_empty() {
-            bun_core::Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: bun_shim_impl.exe is empty — the Windows shim \
              PE must be built before this crate is compiled (the build is \
              missing the windows-shim step)",
-            ));
+            );
             bun_core::Global::crash();
         }
         EMBEDDED_EXECUTABLE_DATA

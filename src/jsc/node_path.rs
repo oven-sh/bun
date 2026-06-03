@@ -1,13 +1,14 @@
 //! `node.PathLike` / `node.PathOrFileDescriptor` — single nominal definitions.
 //!
 //! LAYERING: ported from `src/runtime/node/types.zig:532-910`. Defined at the
-//! `bun_jsc` tier because every variant payload (`PathString`, `Buffer` =
+//! `bun_jsc` tier because every variant payload (`CowSlice<u8>`, `Buffer` =
 //! `MarkedArrayBuffer`, `SliceWithUnderlyingString`, `ZigStringSlice`, `Fd`)
 //! is already reachable from this crate. `bun_runtime::node::types`
 //! `pub use`s these and layers the JS-argument-parsing helpers (`from_js`,
 //! `from_js_with_allocator`) on top via inherent impls in that crate.
 
-use bun_core::{PathString, SliceWithUnderlyingString, ZigStringSlice};
+use bun_core::{SliceWithUnderlyingString, ZigStringSlice};
+use bun_ptr::cow_slice::CowSlice;
 use bun_sys::Fd;
 
 use crate::array_buffer::MarkedArrayBuffer;
@@ -87,7 +88,7 @@ impl<T: Unprotect + Default> Default for ThreadSafe<T> {
 
 /// `node.PathLike` (types.zig:532) — `union(enum)`.
 pub enum PathLike {
-    String(PathString),
+    String(CowSlice<u8>),
     Buffer(MarkedArrayBuffer),
     SliceWithUnderlyingString(SliceWithUnderlyingString),
     ThreadsafeString(SliceWithUnderlyingString),
@@ -97,7 +98,7 @@ pub enum PathLike {
 impl Default for PathLike {
     #[inline]
     fn default() -> Self {
-        PathLike::String(PathString::empty())
+        PathLike::String(CowSlice::EMPTY)
     }
 }
 
@@ -107,7 +108,13 @@ impl Clone for PathLike {
     /// the same bytes as the original.
     fn clone(&self) -> Self {
         match self {
-            Self::String(s) => Self::String(*s),
+            // An owned path must be duped so the clone is independently
+            // droppable; a borrowed path shares the backing (non-owning).
+            Self::String(s) => Self::String(if s.is_owned() {
+                bun_core::handle_oom(CowSlice::init_dupe(s.slice()))
+            } else {
+                s.borrow()
+            }),
             Self::Buffer(b) => Self::Buffer(MarkedArrayBuffer {
                 buffer: b.buffer,
                 // The clone borrows the JS-owned backing store; only the
@@ -141,6 +148,8 @@ impl Clone for PathLike {
 impl Drop for PathLike {
     fn drop(&mut self) {
         match self {
+            // `CowSlice` frees its backing in its own `Drop` iff it owns it;
+            // a borrowed path is a no-op.
             Self::String(_) => {}
             Self::Buffer(b) => {
                 if b.pinned {
@@ -177,7 +186,7 @@ impl PathLike {
 
     pub fn estimated_size(&self) -> usize {
         match self {
-            Self::String(s) => s.estimated_size(),
+            Self::String(s) => s.length(),
             Self::Buffer(b) => b.slice().len(),
             Self::SliceWithUnderlyingString(_) | Self::ThreadsafeString(_) => 0,
             Self::EncodedSlice(s) => s.slice().len(),

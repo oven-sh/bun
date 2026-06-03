@@ -88,10 +88,10 @@ pub fn generate_and_write_profile(vm: &mut VM, config: &HeapProfilerConfig) -> R
     }
 
     // Print message to stderr to let user know where the profile was written
-    Output::pretty_errorln(format_args!(
+    bun_core::pretty_errorln!(
         "Heap profile written to: {}",
         bstr::BStr::new(path_buf.slice())
-    ));
+    );
     Output::flush();
     Ok(())
 }

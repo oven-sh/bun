@@ -2219,6 +2219,16 @@ impl PosixToWinNormalizer {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
                     let source_root = windows_filesystem_root(source_dir);
+                    // The source root (arbitrarily long for UNC dirs) plus
+                    // the path must fit `buf` with one byte of headroom —
+                    // downstream normalization writes one past the input for
+                    // separator-less UNC roots. Such a join can't exist on NT
+                    // anyway, so fail safe to the un-joined input (which the
+                    // consuming lookup treats as nonexistent) instead of
+                    // writing past the buffer.
+                    if source_root.len() + maybe_posix_path.len() - 1 >= buf.len() {
+                        return maybe_posix_path;
+                    }
                     buf[0..source_root.len()].copy_from_slice(source_root);
                     buf[source_root.len()..source_root.len() + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
@@ -2252,6 +2262,11 @@ impl PosixToWinNormalizer {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(mp) {
                     let source_root = windows_filesystem_root(source_dir);
+                    // See resolve_with_external_buf: over-long joins fail
+                    // safe to the un-joined input (+ NUL accounted for here).
+                    if source_root.len() + mp.len() > buf.len() {
+                        return maybe_posix_path;
+                    }
                     buf[0..source_root.len()].copy_from_slice(source_root);
                     buf[source_root.len()..source_root.len() + mp.len() - 1]
                         .copy_from_slice(&mp[1..]);
@@ -2293,6 +2308,16 @@ impl PosixToWinNormalizer {
                         let cwd = bun_core::getcwd(buf)?;
                         windows_filesystem_root(cwd.as_bytes()).len()
                     };
+                    // The cwd root (arbitrarily long for UNC cwds) plus the
+                    // path must fit `buf` with one byte of headroom: the
+                    // joined result feeds `normalize_buf`, whose UNC-root
+                    // handling writes one past the input when the cwd is a
+                    // bare share root with no trailing separator. Such a
+                    // combination can't exist on NT anyway, so error out
+                    // instead of writing past a buffer.
+                    if sr_len + maybe_posix_path.len() - 1 >= buf.len() {
+                        return Err(bun_core::err!("NameTooLong"));
+                    }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     let res = &buf[0..sr_len + maybe_posix_path.len() - 1];
@@ -2329,6 +2354,13 @@ impl PosixToWinNormalizer {
                         let cwd = bun_core::getcwd(buf)?;
                         windows_filesystem_root(cwd.as_bytes()).len()
                     };
+                    // The cwd root (arbitrarily long for UNC cwds) plus the
+                    // path and its NUL must fit `buf`; such a combination
+                    // can't exist on NT anyway, so error out instead of
+                    // writing past it.
+                    if sr_len + maybe_posix_path.len() > buf.len() {
+                        return Err(bun_core::err!("NameTooLong"));
+                    }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     buf[sr_len + maybe_posix_path.len() - 1] = 0;
@@ -2349,6 +2381,9 @@ impl PosixToWinNormalizer {
             );
         }
 
+        if maybe_posix_path.len() + 1 > buf.len() {
+            return Err(bun_core::err!("NameTooLong"));
+        }
         buf[..maybe_posix_path.len()].copy_from_slice(maybe_posix_path);
         buf[maybe_posix_path.len()] = 0;
         // SAFETY: NUL at buf[maybe_posix_path.len()]

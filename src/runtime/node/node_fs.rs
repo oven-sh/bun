@@ -194,7 +194,7 @@ use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
     ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FileSystemFlags, FileSystemFlagsKind,
-    PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, VectorArrayBuffer,
+    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al. (mirrors Zig's
@@ -1881,8 +1881,26 @@ mod _async_tasks {
             let args = &this.args;
             let mut src_buf = OSPathBuffer::uninit();
             let mut dest_buf = OSPathBuffer::uninit();
-            let src = args.src.os_path(&mut src_buf);
-            let dest = args.dest.os_path(&mut dest_buf);
+            let name_too_long = |path: &PathLike| sys::Error {
+                errno: E::ENAMETOOLONG as _,
+                syscall: sys::Tag::copyfile,
+                path: path.slice().into(),
+                ..Default::default()
+            };
+            let src = match args.src.os_path(&mut src_buf) {
+                Ok(p) => p,
+                Err(NameTooLong) => {
+                    this.finish_concurrently(Err(name_too_long(&args.src)));
+                    return;
+                }
+            };
+            let dest = match args.dest.os_path(&mut dest_buf) {
+                Ok(p) => p,
+                Err(NameTooLong) => {
+                    this.finish_concurrently(Err(name_too_long(&args.dest)));
+                    return;
+                }
+            };
 
             #[cfg(windows)]
             {
@@ -5473,6 +5491,18 @@ impl NodeFS {
 
         #[cfg(windows)]
         {
+            // Paths whose UTF-16 form exceeds the wide buffers can't exist on
+            // disk; reject instead of overflowing the conversion below.
+            for path in [&args.src, &args.dest] {
+                if !strings::fits_in_wide_path_buffer(path.slice()) {
+                    return Err(sys::Error {
+                        errno: E::ENAMETOOLONG as _,
+                        syscall: sys::Tag::copyfile,
+                        path: path.slice().into(),
+                        ..Default::default()
+                    });
+                }
+            }
             let mut dest_buf = paths::os_path_buffer_pool::get();
             let src = strings::to_kernel32_path(
                 bun_core::cast_slice_mut::<u8, u16>(&mut self.sync_error_buf),
@@ -5525,7 +5555,11 @@ impl NodeFS {
         let slice = if path.slice().is_empty() {
             os_path_literal_empty()
         } else {
-            path.os_path_kernel32(&mut self.sync_error_buf)
+            match path.os_path_kernel32(&mut self.sync_error_buf) {
+                Ok(p) => p,
+                // Over PATH_MAX_WIDE — such a path can't exist on disk.
+                Err(NameTooLong) => return Ok(false),
+            }
         };
 
         Ok(sys::exists_os_path(slice, false))
@@ -5800,7 +5834,17 @@ impl NodeFS {
         ctx: &Ctx,
     ) -> Maybe<ret::Mkdir> {
         let mut buf = paths::path_buffer_pool::get();
-        let path = args.path.os_path_kernel32(&mut *buf);
+        let path = match args.path.os_path_kernel32(&mut *buf) {
+            Ok(p) => p,
+            Err(NameTooLong) => {
+                return Err(sys::Error {
+                    errno: E::ENAMETOOLONG as _,
+                    syscall: sys::Tag::mkdir,
+                    path: args.path.slice().into(),
+                    ..Default::default()
+                });
+            }
+        };
         if args.always_return_none {
             self.mkdir_recursive_os_path_impl::<Ctx, false>(ctx, path, args.mode)
         } else {
@@ -8246,8 +8290,20 @@ impl NodeFS {
     pub fn cp(&mut self, args: &args::Cp, _: Flavor) -> Maybe<ret::Cp> {
         let mut src_buf = OSPathBuffer::uninit();
         let mut dest_buf = OSPathBuffer::uninit();
-        let src_len = args.src.os_path(&mut src_buf).len();
-        let dest_len = args.dest.os_path(&mut dest_buf).len();
+        let name_too_long = |path: &PathLike| sys::Error {
+            errno: E::ENAMETOOLONG as _,
+            syscall: sys::Tag::copyfile,
+            path: path.slice().into(),
+            ..Default::default()
+        };
+        let src_len = match args.src.os_path(&mut src_buf) {
+            Ok(p) => p.len(),
+            Err(NameTooLong) => return Err(name_too_long(&args.src)),
+        };
+        let dest_len = match args.dest.os_path(&mut dest_buf) {
+            Ok(p) => p.len(),
+            Err(NameTooLong) => return Err(name_too_long(&args.dest)),
+        };
         self.cp_sync_inner(
             &mut src_buf,
             PathInt::try_from(src_len).expect("int cast"),

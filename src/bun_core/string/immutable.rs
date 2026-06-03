@@ -2963,19 +2963,47 @@ pub fn starts_with_windows_drive_letter_t<T: Copy + Into<u32>>(s: &[T]) -> bool 
 /// UTF-8 falls back to a scalar WTF-8 decoder that emits U+FFFD for malformed
 /// bytes and passes unpaired surrogates through (so non-empty input never yields
 /// an empty slice — fixes #8197 / the TODO at unicode.zig:1537).
+///
+/// Panics when the output does not fit. Callers that cannot statically size
+/// `buf` for the worst case must use [`try_convert_utf8_to_utf16_in_buffer`].
 pub fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u8]) -> &'a mut [u16] {
-    if input.is_empty() {
-        return &mut buf[..0];
+    let buf_len = buf.len();
+    match try_convert_utf8_to_utf16_in_buffer(buf, input) {
+        Some(out) => out,
+        None => panic!(
+            "convert_utf8_to_utf16_in_buffer: buf too small (have {} u16 for {} input bytes)",
+            buf_len,
+            input.len(),
+        ),
     }
-    assert!(
-        input.len() <= buf.len() || element_length_utf8_into_utf16(input) <= buf.len(),
-        "convert_utf8_to_utf16_in_buffer: buf too small (have {} u16 for {} input bytes)",
-        buf.len(),
-        input.len(),
-    );
+}
+
+/// Checked variant of [`convert_utf8_to_utf16_in_buffer`]: returns `None` when
+/// the converted output does not fit in `buf`, and never writes past `buf`.
+///
+/// simdutf's convert API takes only an output *pointer* and writes however
+/// many units the input needs, so it must not be entered unless the output
+/// provably fits: either `input.len() <= buf.len()` (a UTF-16 unit always
+/// consumes at least one UTF-8 byte, and surrogate pairs produce 2 units from
+/// 4 bytes), or the exact converted length fits. On invalid input simdutf
+/// stops at the first error having written only the valid prefix's units,
+/// which is ≤ that same exact-length estimate; the WTF-8 fallback can exceed
+/// the estimate (stray continuation bytes become one U+FFFD each), so it
+/// re-checks capacity on every write.
+pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
+    buf: &'a mut [u16],
+    input: &[u8],
+) -> Option<&'a mut [u16]> {
+    if input.is_empty() {
+        return Some(&mut buf[..0]);
+    }
+    if input.len() > buf.len() && element_length_utf8_into_utf16(input) > buf.len() {
+        return None;
+    }
     let r = simdutf::convert::utf8::to::utf16::with_errors::le(input, buf);
     if r.is_successful() {
-        return &mut buf[..r.count];
+        debug_assert!(r.count <= buf.len());
+        return Some(&mut buf[..r.count]);
     }
     // WTF-8 fallback (invalid byte → U+FFFD; lone surrogates pass through).
     let mut written = 0usize;
@@ -2983,15 +3011,24 @@ pub fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u8]) -> 
     while i < input.len() {
         let b = input[i];
         if b < 0x80 {
+            if written >= buf.len() {
+                return None;
+            }
             buf[written] = b as u16;
             written += 1;
             i += 1;
         } else {
             let (cp, adv) = decode_wtf8_one(&input[i..]);
             if cp <= 0xFFFF {
+                if written >= buf.len() {
+                    return None;
+                }
                 buf[written] = cp as u16;
                 written += 1;
             } else {
+                if written + 2 > buf.len() {
+                    return None;
+                }
                 let [hi, lo] = encode_surrogate_pair(cp);
                 buf[written] = hi;
                 buf[written + 1] = lo;
@@ -3000,7 +3037,7 @@ pub fn convert_utf8_to_utf16_in_buffer<'a>(buf: &'a mut [u16], input: &[u8]) -> 
             i += adv;
         }
     }
-    &mut buf[..written]
+    Some(&mut buf[..written])
 }
 
 /// Decode one WTF-8 sequence at the head of `s`; invalid lead/truncated → (U+FFFD, 1).

@@ -1772,3 +1772,40 @@ impl<'a> Scanner<'a> {
 }
 
 // ported from: src/url/url.zig
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_host_vs_hostname_with_explicit_port() {
+        let url = URL::parse(b"https://registry.example.com:443/pkg");
+        assert_eq!(url.hostname, b"registry.example.com");
+        assert_eq!(url.host, b"registry.example.com:443");
+        assert_eq!(url.get_port_auto(), 443);
+    }
+
+    #[test]
+    fn test_host_vs_hostname_without_port() {
+        let url = URL::parse(b"https://registry.example.com/pkg");
+        assert_eq!(url.hostname, b"registry.example.com");
+        assert_eq!(url.host, b"registry.example.com");
+        assert_eq!(url.get_port_auto(), 443);
+    }
+
+    #[test]
+    fn test_same_origin_hostname_plus_port_matches() {
+        let explicit = URL::parse(b"https://registry.example.com:443/pkg-1.0.0.tgz");
+        let implicit = URL::parse(b"https://registry.example.com/pkg");
+        assert!(explicit.protocol == implicit.protocol);
+        assert!(explicit.hostname == implicit.hostname);
+        assert!(explicit.get_port_auto() == implicit.get_port_auto());
+    }
+
+    #[test]
+    fn test_same_origin_host_mismatch_with_explicit_port() {
+        let explicit = URL::parse(b"https://registry.example.com:443/pkg-1.0.0.tgz");
+        let implicit = URL::parse(b"https://registry.example.com/pkg");
+        assert_ne!(explicit.host, implicit.host);
+    }
+}

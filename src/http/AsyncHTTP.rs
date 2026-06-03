@@ -575,6 +575,7 @@ impl<'a> AsyncHTTP<'a> {
         http_proxy: Option<URL<'a>>,
         hostname: Option<&'a [u8]>,
         redirect_type: FetchRedirect,
+        tls_props: Option<SSLConfigSharedPtr>,
     ) -> AsyncHTTP<'a> {
         Self::init(
             method,
@@ -589,6 +590,7 @@ impl<'a> AsyncHTTP<'a> {
             Options {
                 http_proxy,
                 hostname,
+                tls_props,
                 ..Options::default()
             },
         )

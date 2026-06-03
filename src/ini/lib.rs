@@ -11,6 +11,28 @@ use bun_ast::{Loc, Log, Source};
 
 type OOM<T> = Result<T, AllocError>;
 
+/// Resolve `value` (a certfile/keyfile path) relative to the `.npmrc` directory.
+/// If `value` is already absolute, return it unchanged.
+pub(crate) fn resolve_relative_npmrc_path(npmrc_path: &[u8], value: Box<[u8]>) -> Box<[u8]> {
+    if value.is_empty() {
+        return value;
+    }
+    // Absolute on POSIX starts with `/`; on Windows starts with a drive letter + colon
+    if value[0] == b'/' || (value.len() > 2 && value[1] == b':') {
+        return value;
+    }
+    match bun_core::dirname(npmrc_path) {
+        Some(dir) => {
+            let mut resolved = Vec::with_capacity(dir.len() + 1 + value.len());
+            resolved.extend_from_slice(dir);
+            resolved.push(b'/');
+            resolved.extend_from_slice(&value);
+            resolved.into_boxed_slice()
+        }
+        None => value,
+    }
+}
+
 // ──────────────────────────────────────────────────────────────────────────
 // Options
 // ──────────────────────────────────────────────────────────────────────────
@@ -251,7 +273,7 @@ mod draft {
 
     use super::{
         ConfigItem, ConfigOpt, IniOption, NODE_LINKER_MAP, NodeLinker, Options, is_quoted,
-        next_dot, should_skip_line,
+        next_dot, resolve_relative_npmrc_path, should_skip_line,
     };
 
     type OOM<T> = Result<T, AllocError>;
@@ -1673,22 +1695,6 @@ mod draft {
                     //
                     // Scoped registries are set like this:
                     // - @myorg:registry=https://somewhere-else.com/myorg
-                    let conf_item: &ConfigItem = &conf_item_;
-                    match conf_item.optname {
-                        ConfigOpt::Certfile | ConfigOpt::Keyfile => {
-                            iter.log.add_warning_fmt(
-                            Some(source),
-                            iter.config.properties.at(iter.prop_idx - 1).key.as_ref().unwrap().loc,
-                            format_args!(
-                                "The following .npmrc registry option was not applied:\n\n  <b>{}<r>\n\nBecause we currently don't support the <b>{}<r> option.",
-                                conf_item,
-                                <&'static str>::from(conf_item.optname),
-                            ),
-                        );
-                            continue;
-                        }
-                        _ => {}
-                    }
                     if let Some(x) = conf_item_.dupe()? {
                         configs.push(x);
                     }
@@ -1717,6 +1723,8 @@ mod draft {
                                     .as_bytes(),
                             ),
                             email: Box::default(),
+                            certfile: Box::default(),
+                            keyfile: Box::default(),
                         });
                         install.default_registry.as_mut().unwrap()
                     };
@@ -1745,7 +1753,16 @@ mod draft {
                                 v.email = x;
                             }
                         }
-                        ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
+                        ConfigOpt::Certfile => {
+                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                                v.certfile = resolve_relative_npmrc_path(npmrc_path.as_bytes(), x);
+                            }
+                        }
+                        ConfigOpt::Keyfile => {
+                            if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                                v.keyfile = resolve_relative_npmrc_path(npmrc_path.as_bytes(), x);
+                            }
+                        }
                     }
                 }
 
@@ -1797,7 +1814,16 @@ mod draft {
                                     v.email = x;
                                 }
                             }
-                            ConfigOpt::Certfile | ConfigOpt::Keyfile => unreachable!(),
+                            ConfigOpt::Certfile => {
+                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                                    v.certfile = resolve_relative_npmrc_path(npmrc_path.as_bytes(), x);
+                                }
+                            }
+                            ConfigOpt::Keyfile => {
+                                if let Some(x) = conf_item.dupe_value_decoded(log, source)? {
+                                    v.keyfile = resolve_relative_npmrc_path(npmrc_path.as_bytes(), x);
+                                }
+                            }
                         }
                         // We have to keep going as it could match multiple scopes
                         continue;

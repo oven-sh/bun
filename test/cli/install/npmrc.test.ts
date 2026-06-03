@@ -493,4 +493,53 @@ registry=https://somehost.com/org1/npm/registry/
     // Should be empty since there's no matching token for /org1/npm/registry/
     expect(result.default_registry_token).toBe("");
   });
+
+  test("certfile and keyfile are parsed for default registry", () => {
+    const ini = `
+//registry.npmjs.org/:certfile=/path/to/cert.pem
+//registry.npmjs.org/:keyfile=/path/to/key.pem
+`;
+    const result = loadNpmrc(ini);
+    expect(result.default_registry_certfile).toEqual("/path/to/cert.pem");
+    expect(result.default_registry_keyfile).toEqual("/path/to/key.pem");
+  });
+
+  test("certfile and keyfile are empty by default", () => {
+    const ini = ``;
+    const result = loadNpmrc(ini);
+    expect(result.default_registry_certfile).toEqual("");
+    expect(result.default_registry_keyfile).toEqual("");
+  });
+
+  test("certfile and keyfile work with custom registry", () => {
+    const ini = `
+registry=https://my-registry.example.com/
+//my-registry.example.com/:certfile=/etc/ssl/client-cert.pem
+//my-registry.example.com/:keyfile=/etc/ssl/client-key.pem
+//my-registry.example.com/:_authToken=my-token
+`;
+    const result = loadNpmrc(ini);
+    expect(result.default_registry_url).toEqual("https://my-registry.example.com/");
+    expect(result.default_registry_certfile).toEqual("/etc/ssl/client-cert.pem");
+    expect(result.default_registry_keyfile).toEqual("/etc/ssl/client-key.pem");
+    expect(result.default_registry_token).toEqual("my-token");
+  });
+
+  test("certfile without keyfile is parsed", () => {
+    const ini = `
+//registry.npmjs.org/:certfile=/path/to/cert.pem
+`;
+    const result = loadNpmrc(ini);
+    expect(result.default_registry_certfile).toEqual("/path/to/cert.pem");
+    expect(result.default_registry_keyfile).toEqual("");
+  });
+
+  test("keyfile without certfile is parsed", () => {
+    const ini = `
+//registry.npmjs.org/:keyfile=/path/to/key.pem
+`;
+    const result = loadNpmrc(ini);
+    expect(result.default_registry_certfile).toEqual("");
+    expect(result.default_registry_keyfile).toEqual("/path/to/key.pem");
+  });
 });

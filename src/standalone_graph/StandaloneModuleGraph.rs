@@ -1572,6 +1572,7 @@ pub(crate) fn download_to_path(
                 http_proxy,
                 None,
                 bun_http::FetchRedirect::Follow,
+                None,
             ));
             async_http.client.progress_node =
                 core::ptr::NonNull::new(core::ptr::from_mut(progress));

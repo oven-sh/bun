@@ -8,6 +8,7 @@ use bun_core::{Global, Output, pretty, prettyln};
 use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};
 use bun_install::lockfile::package::PackageColumns as _;
+use bun_install::npm::registry::registry_tls_config;
 use bun_install::package_manager_real::command_line_arguments::AuditLevel;
 use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{CommandLineArguments, PackageManager, Subcommand};
@@ -487,6 +488,7 @@ fn send_audit_request(
     let url = URL::parse(&url_str);
 
     let http_proxy = pm.http_proxy(&url);
+    let tls_props = registry_tls_config(&pm.options.scope);
 
     // PORT NOTE: Zig passed `headers.content.ptr.?[0..headers.content.len]`.
     let headers_buf: &[u8] = headers.content.written_slice();
@@ -505,6 +507,7 @@ fn send_audit_request(
         http_proxy,
         None,
         http::FetchRedirect::Follow,
+        tls_props,
     );
     let res = match req.send_sync() {
         Ok(r) => r,

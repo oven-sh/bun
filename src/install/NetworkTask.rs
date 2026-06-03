@@ -629,6 +629,7 @@ impl NetworkTask {
         // `headers_buf` / `last_modified` now alias.
         let _ = ManuallyDrop::new(core::mem::take(&mut header_builder.content));
         let completion_callback = self.get_completion_callback();
+        let tls_props = npm::registry::registry_tls_config(scope);
         // TODO(port): narrow error set
         // PORT NOTE: MaybeUninit overwrite — see field doc; old slot value is
         // either uninitialized (fresh hive slot) or a stale bitwise copy from
@@ -644,6 +645,7 @@ impl NetworkTask {
             http::FetchRedirect::Follow,
             AsyncHTTPOptions {
                 http_proxy,
+                tls_props,
                 ..Default::default()
             },
         ));
@@ -831,8 +833,21 @@ impl NetworkTask {
         // the identical pattern in `for_manifest` above.
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
 
+        let tls_props = {
+            let registry = scope.url.url();
+            if url.protocol == registry.protocol
+                && url.hostname == registry.hostname
+                && url.get_port_auto() == registry.get_port_auto()
+            {
+                npm::registry::registry_tls_config(scope)
+            } else {
+                None
+            }
+        };
+
         let mut http_options = AsyncHTTPOptions {
             http_proxy: pm.http_proxy(&url),
+            tls_props,
             ..Default::default()
         };
 

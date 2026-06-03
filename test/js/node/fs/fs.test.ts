@@ -2572,6 +2572,104 @@ describe("createWriteStream", () => {
       }
     });
   });
+
+  // https://github.com/oven-sh/bun/issues/31763
+  // Many small writes must be coalesced through Writable's `_writev` batching
+  // (like Node's fs.WriteStream) instead of one `_write`/write(2) per chunk.
+  // The batch can exceed IOV_MAX (1024) iovecs, which writev(2) rejects with
+  // EINVAL unless the syscall layer batches — so this also covers that path.
+  it("coalesces many small writes via _writev (issue #31763)", async () => {
+    const streamPath = join(tmpdirSync(), "writev-batching.bin");
+    const stream = createWriteStream(streamPath);
+
+    // fs.WriteStream exposes a working _writev; the regression disabled it.
+    expect(typeof stream._writev).toBe("function");
+
+    // Count how many chunks each drain path consumes.
+    const writevSpy = spyOn(stream, "_writev");
+
+    const CHUNK_COUNT = 5000; // comfortably past IOV_MAX so batching is forced
+    const chunk = Buffer.from("0123456789\n"); // 11 bytes
+    let written = 0;
+
+    const { promise: done, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("error", reject);
+    stream.on("finish", resolve);
+
+    const pump = () => {
+      while (written < CHUNK_COUNT) {
+        written++;
+        if (!stream.write(chunk)) {
+          stream.once("drain", pump);
+          return;
+        }
+      }
+      stream.end();
+    };
+    pump();
+    await done;
+
+    // Output is byte-for-byte correct regardless of how it was batched.
+    expect(statSync(streamPath).size).toBe(CHUNK_COUNT * chunk.length);
+    expect(readFileSync(streamPath)).toEqual(Buffer.concat(new Array(CHUNK_COUNT).fill(chunk)));
+
+    // _writev must have been used, and it must have handled batches larger
+    // than IOV_MAX without erroring.
+    expect(writevSpy).toHaveBeenCalled();
+    const maxBatch = Math.max(...writevSpy.mock.calls.map(args => (args[0] as unknown[]).length));
+    expect(maxBatch).toBeGreaterThan(1024);
+  });
+});
+
+describe("fs.writev past IOV_MAX", () => {
+  // https://github.com/oven-sh/bun/issues/31763
+  // writev(2)/pwritev(2) reject more than IOV_MAX (1024) iovecs with EINVAL;
+  // Bun must batch the syscall so fs.writev behaves like Node's.
+  const makeBuffers = (n: number) => {
+    const buffers = new Array<Buffer>(n);
+    for (let i = 0; i < n; i++) buffers[i] = Buffer.from([i & 0xff]);
+    return buffers;
+  };
+
+  it.each([1023, 1024, 1025, 2000, 5000])("writevSync handles %d buffers", count => {
+    const p = join(tmpdirSync(), `writev-sync-${count}.bin`);
+    const fd = openSync(p, "w");
+    try {
+      const buffers = makeBuffers(count);
+      expect(writevSync(fd, buffers)).toBe(count);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(p)).toEqual(Buffer.concat(makeBuffers(count)));
+  });
+
+  it("writevSync with a position handles more than IOV_MAX buffers", () => {
+    const p = join(tmpdirSync(), "pwritev-sync.bin");
+    const fd = openSync(p, "w");
+    const prefix = "prefix";
+    try {
+      writeSync(fd, prefix, 0);
+      const buffers = makeBuffers(3000);
+      expect(writevSync(fd, buffers, prefix.length)).toBe(3000);
+    } finally {
+      closeSync(fd);
+    }
+    const out = readFileSync(p);
+    expect(out.subarray(0, prefix.length).toString()).toBe(prefix);
+    expect(out.subarray(prefix.length)).toEqual(Buffer.concat(makeBuffers(3000)));
+  });
+
+  it("async fs.writev handles more than IOV_MAX buffers", async () => {
+    const p = join(tmpdirSync(), "writev-async.bin");
+    const fd = openSync(p, "w");
+    const buffers = makeBuffers(2500);
+    const { promise, resolve, reject } = Promise.withResolvers<number>();
+    fs.writev(fd, buffers, (err, written) => (err ? reject(err) : resolve(written)));
+    const written = await promise;
+    closeSync(fd);
+    expect(written).toBe(2500);
+    expect(readFileSync(p)).toEqual(Buffer.concat(makeBuffers(2500)));
+  });
 });
 
 describe("fs/promises", () => {

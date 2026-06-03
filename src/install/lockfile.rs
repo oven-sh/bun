@@ -930,7 +930,8 @@ impl Lockfile {
         {
             let string_buf = self.buffers.string_bytes.as_slice();
             let root_deps = root_deps_list.get(self.buffers.dependencies.as_slice());
-            let root_resolution_ids = root_resolutions_list.get(self.buffers.resolutions.as_slice());
+            let root_resolution_ids =
+                root_resolutions_list.get(self.buffers.resolutions.as_slice());
             let resolutions = self.packages.items_resolution();
             let packages_len = self.packages.len();
 
@@ -1010,7 +1011,9 @@ impl Lockfile {
                 continue;
             };
             let external = string_builder.append::<ExternalString>(literal);
-            let sliced = external.value.sliced(string_builder.string_bytes.as_slice());
+            let sliced = external
+                .value
+                .sliced(string_builder.string_bytes.as_slice());
             override_dep.version = dependency::parse(
                 override_dep.name,
                 override_dep.name_hash,

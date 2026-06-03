@@ -602,8 +602,19 @@ impl WebSocketProxyTunnel {
     }
 
     /// Encrypted bytes still buffered in the tunnel awaiting a writable socket.
-    pub(crate) fn buffered_amount(&self) -> usize {
-        self.write_buffer.size()
+    ///
+    /// Takes `*const Self` and projects to `write_buffer` via `addr_of!` rather
+    /// than forming a whole-struct `&Self`: this is reachable from inside the
+    /// SSL-wrapper callbacks (abrupt close during the connected phase), which
+    /// hold a `&mut SslWrapper` over the `wrapper` field — a whole-struct borrow
+    /// would overlap it (see the module's Aliasing model doc).
+    ///
+    /// # Safety
+    /// `this` must point to a live `WebSocketProxyTunnel`.
+    pub(crate) unsafe fn buffered_amount(this: *const Self) -> usize {
+        // SAFETY: `this` is live; short-lived shared borrow of the disjoint
+        // `write_buffer` field only (never touches `wrapper`).
+        unsafe { (*ptr::addr_of!((*this).write_buffer)).size() }
     }
 }
 

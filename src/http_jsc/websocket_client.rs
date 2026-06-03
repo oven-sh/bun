@@ -2109,8 +2109,13 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn buffered_amount(&self) -> usize {
         let mut buffered = self.send_buffer.readable_length();
         if let Some(tunnel) = &self.proxy_tunnel {
-            // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
-            buffered += unsafe { tunnel.as_ref() }.buffered_amount();
+            // Use the raw-ptr accessor, not `tunnel.as_ref()`: this runs inside
+            // the tunnel's SSL-wrapper callbacks on an abrupt close (fail()),
+            // where a whole-struct `&WebSocketProxyTunnel` would overlap the
+            // live `&mut SslWrapper` over its `wrapper` field (UB under Stacked
+            // Borrows — see WebSocketProxyTunnel's Aliasing model doc).
+            // SAFETY: `tunnel` (NonNull) points to a live tunnel.
+            buffered += unsafe { WebSocketProxyTunnel::buffered_amount(tunnel.as_ptr()) };
         }
         buffered
     }

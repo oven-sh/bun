@@ -25,11 +25,12 @@ import { globAllSources } from "../../scripts/glob-sources.ts";
 // Item-level escapes only: `#[allow(dead_code)]`, combined lists like
 // `#[allow(dead_code, non_snake_case)]`, and `#[cfg_attr(<pred>, allow(dead_code))]`
 // — including predicates that themselves contain commas, e.g.
-// `#[cfg_attr(any(unix, test), allow(dead_code))]` (lazy `.+?,` backtracks to the
-// first comma whose suffix parses as `allow(...)`).
+// `#[cfg_attr(any(unix, test), allow(dead_code))]` (lazy `[\s\S]+?,` backtracks to
+// the first comma whose suffix parses as `allow(...)`), and attributes that
+// rustfmt wrapped across multiple lines (`[\s\S]` spans newlines).
 // Module-level `#![allow(...)]` blocks (codegen surfaces such as
 // `runtime/generated_classes.rs` and `jsc/cpp.rs`) are intentionally not counted.
-const ESCAPE = /#\[(?:cfg_attr\(.+?,\s*)?allow\([^)]*\bdead_code\b[^)]*\)\)?\]/g;
+const ESCAPE = /#\[\s*(?:cfg_attr\([\s\S]+?,\s*)?allow\([^)]*\bdead_code\b[^)]*\)\s*\)?\s*\]/g;
 
 const limits: Record<string, number> = await Bun.file(import.meta.dir + "/dead-code-escape-limits.json").json();
 
@@ -43,12 +44,10 @@ for (const abs of rustSources) {
   // under its canonical path.
   if (path.relative(root, realpathSync(abs)).replaceAll(path.sep, "/") !== source) continue;
   const content = await file(abs).text();
-  let n = 0;
-  for (const line of content.split("\n")) {
-    const trim = line.trim();
-    if (trim.startsWith("//")) continue;
-    n += [...trim.matchAll(ESCAPE)].length;
-  }
+  // Whole-file scan so rustfmt-wrapped attributes are counted too; strip
+  // full-line `//` comments first so commented-out escapes stay ignored.
+  const stripped = content.replace(/^\s*\/\/.*$/gm, "");
+  const n = [...stripped.matchAll(ESCAPE)].length;
   if (n > 0) counts[source] = n;
 }
 

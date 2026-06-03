@@ -1626,12 +1626,7 @@ impl Template {
         #[cfg(windows)]
         {
             // Zig: `bun.getenvZAnyCase("USER")` walks `std.os.environ` (bun.zig:913).
-            // `bun_core::getenv_z_any_case` is a TODO stub on Windows that always
-            // returns None (bun_core/util.rs), so calling it here makes the probe
-            // dead code. Use `std::env::var`, which on Windows goes through
-            // `GetEnvironmentVariableW` (inherently case-insensitive) — matching
-            // the Zig any-case semantics.
-            if let Ok(user) = std::env::var("USER") {
+            if let Some(user) = bun_core::getenv_z_any_case(bun_core::zstr!("USER")) {
                 let mut pathbuf = path_buffer_pool::get();
                 // Zig: `std.fmt.bufPrintZ(..) catch { return false; }` —
                 // fallible on overflow, do not panic.
@@ -1639,12 +1634,11 @@ impl Template {
                     use std::io::Write as _;
                     let total = pathbuf.len();
                     let mut cursor: &mut [u8] = &mut pathbuf[..];
-                    if cursor
-                        .write_fmt(format_args!(
-                            "C:\\Users\\{}\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
-                            user
-                        ))
-                        .is_err()
+                    if cursor.write_all(b"C:\\Users\\").is_err()
+                        || cursor.write_all(user).is_err()
+                        || cursor
+                            .write_all(b"\\AppData\\Local\\Programs\\Cursor\\Cursor.exe")
+                            .is_err()
                     {
                         return false;
                     }

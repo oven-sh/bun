@@ -62,8 +62,8 @@ pub mod api {
     pub use bun_dotenv::DotEnvBehavior;
 
     /// schema.zig:711 — `enum(u8)` (open). Kept closed.
-    /// Variants PascalCased to match the only downstream writers
-    /// (`jsc/config.rs`, `runtime/cli/Arguments.rs` → `api::ResolveMode::Lazy`).
+    /// Variants PascalCased to match the only downstream writer
+    /// (`runtime/cli/Arguments.rs` → `api::ResolveMode::Lazy`).
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum ResolveMode {

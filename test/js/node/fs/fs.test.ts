@@ -2662,11 +2662,15 @@ describe("fs.writev past IOV_MAX", () => {
   it("async fs.writev handles more than IOV_MAX buffers", async () => {
     const p = join(tmpdirSync(), "writev-async.bin");
     const fd = openSync(p, "w");
-    const buffers = makeBuffers(2500);
-    const { promise, resolve, reject } = Promise.withResolvers<number>();
-    fs.writev(fd, buffers, (err, written) => (err ? reject(err) : resolve(written)));
-    const written = await promise;
-    closeSync(fd);
+    let written: number;
+    try {
+      const buffers = makeBuffers(2500);
+      const { promise, resolve, reject } = Promise.withResolvers<number>();
+      fs.writev(fd, buffers, (err, w) => (err ? reject(err) : resolve(w)));
+      written = await promise;
+    } finally {
+      closeSync(fd);
+    }
     expect(written).toBe(2500);
     expect(readFileSync(p)).toEqual(Buffer.concat(makeBuffers(2500)));
   });

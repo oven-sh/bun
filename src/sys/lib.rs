@@ -4664,7 +4664,12 @@ pub fn pwritev(fd: Fd, vecs: &[PlatformIoVecConst], offset: i64) -> Maybe<usize>
             }
 
             remaining = &remaining[chunk_len..];
-            position += bytes_written as i64;
+            // A negative `offset` is the "use the current file offset" sentinel;
+            // keep it across batches instead of turning it into an explicit
+            // offset (matches `sys_uv::pwritev`).
+            if position >= 0 {
+                position += bytes_written as i64;
+            }
         }
 
         Ok(total_written)

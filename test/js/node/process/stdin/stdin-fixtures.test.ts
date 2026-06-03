@@ -1,6 +1,6 @@
 import { spawn } from "child_process";
 import path from "path";
-import { bunExe } from "harness";
+import { bunEnv, bunExe } from "harness";
 
 type Test = {
   file: string;
@@ -24,10 +24,14 @@ async function run(cmd: string, test: Test): Promise<RunResult> {
     });
 
     let autoKilled = false;
+    // Hang-guard: generous enough that a debug/ASAN build (where first
+    // `process.stdin` access pays ~0.5s for `require("node:net")`, ×2 for the
+    // node+bun pair the caller drives) completes the staged exchange before it
+    // trips. Tests that intentionally hang (pause/unref) are still killed here.
     setTimeout(() => {
       autoKilled = true;
       child.kill("SIGTERM");
-    }, 1000);
+    }, 5000);
 
     child.on("error", err => {
       reject(err);
@@ -113,13 +117,20 @@ async function runBoth(test: Test): Promise<RunResult> {
 }
 
 describe("stdin", () => {
-  it("pause allows process to exit", async () => {
-    // in node, raw stdin behaves differently than pty. run this test in bun only for now.
-    expect(await run(bunExe(), { file: "pause.fixture.js", stdin: ["abc\n", "pause\n", "def\n"], end: false }))
-      .toMatchInlineSnapshot(`
+  // runBoth drives node then bun; both intentionally hang on pause-without-end
+  // and are SIGTERM'd by the 5s hang-guard, so allow headroom for 2× that.
+  it(
+    "pause without end matches Node (does not exit)",
+    async () => {
+      // pause() alone does not allow the process to exit on pipe stdin in
+      // Node.js — Readable's maybeReadMore re-calls _read() → readStart().
+      // This asserts Bun matches Node.
+      expect(
+        await runBoth({ file: "pause.fixture.js", stdin: ["abc\n", "pause\n", "def\n"], end: false }),
+      ).toMatchInlineSnapshot(`
       {
-        "autoKilled": false,
-        "exitCode": 0,
+        "autoKilled": true,
+        "exitCode": null,
         "stderr": "",
         "stdout": 
       "%READY%
@@ -127,13 +138,13 @@ describe("stdin", () => {
       %READY%
       got stdin "pause"
       %READY%
-      beforeExit with code 0
-      exit with code 0
       "
       ,
       }
     `);
-  });
+    },
+    20_000,
+  );
   it("pause with readable listener does not allow process to exit", async () => {
     expect(
       await runBoth({
@@ -209,5 +220,37 @@ describe("stdin", () => {
       ,
       }
     `);
+  });
+
+  // Bun-only (no `node` dependency) regression for the process-exit keepalive.
+  // process.stdin is a net.Socket over a native Pipe whose readStart() re-refs
+  // the event loop. After `.on("data")` schedules the readable machine's
+  // resume_(), a synchronous `.pause()` must still let the process exit: the
+  // post-pause read(0) -> _read -> readStart() re-arm would otherwise pin the
+  // loop open forever on a held-open stdin pipe. The 'pause' handler readStop()s
+  // on the next tick to release it.
+  it("pause right after a data listener lets the process exit (no node dep)", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          process.stdin.on("data", () => {});
+          process.stdin.pause();
+        `,
+      ],
+      // Leave stdin a pipe held open by this parent (never written/ended): the
+      // child must exit on its own, not because stdin closed.
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+      env: bunEnv,
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
   });
 });

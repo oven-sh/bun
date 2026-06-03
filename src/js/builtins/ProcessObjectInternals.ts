@@ -117,6 +117,75 @@ export function getStdinStream(
   fdType: BunProcessStdinFdType,
 ) {
   $assert(fd === 0);
+
+  if (!isTTY && fdType !== BunProcessStdinFdType.file) {
+    // PIPE or socket. Node lib/internal/bootstrap/switches/is_main_thread.js
+    // getStdin() uses net.Socket({fd}) which constructs a native Pipe handle
+    // via createHandle.
+    //
+    // fdType is classified purely from fstat() mode bits, which set S_IFSOCK
+    // for *every* socket fd (TCP, UDP, AF_UNIX). createHandle's guessHandleType
+    // only wraps PIPE-shaped fds (FIFOs + AF_UNIX stream sockets) and throws
+    // ERR_INVALID_FD_TYPE for TCP/UDP (no native TCP handle yet), so a TCP/UDP
+    // socket on stdin (inetd, systemd StandardInput=socket, stdio:[tcpSocket])
+    // would otherwise make the first process.stdin access throw. Fall back to
+    // the native stream path for anything createHandle rejects.
+    const net = require("node:net");
+    let stdin;
+    try {
+      stdin = new net.Socket({
+        fd,
+        readable: true,
+        writable: false,
+        manualStart: true,
+      });
+    } catch (e) {
+      if ((e as any)?.code !== "ERR_INVALID_FD_TYPE") throw e;
+      stdin = undefined;
+    }
+
+    if (stdin) {
+      stdin._writableState.ended = true;
+      stdin.fd = fd;
+
+      if (stdin._handle && stdin._handle.readStop) {
+        stdin._handle.reading = false;
+        stdin._readableState.reading = false;
+        stdin._handle.readStop();
+      }
+
+      // Node's createStdin() attaches this 'pause' listener. In bun a Pipe
+      // handle's readStart() re-refs the event loop, so the readable machine's
+      // resume_() — scheduled by the first 'data'/'resume' and still firing a
+      // post-pause read(0) → _read → readStart() on the next tick — re-arms the
+      // reader after pause() and would keep the process alive forever. This
+      // readStop() releases the loop so `stdin.on("data", …); stdin.pause()`
+      // can exit.
+      //
+      // It must run on nextTick, not synchronously: bun emits 'pause'
+      // synchronously from Readable.pause(), which is *before* the pending
+      // resume_() runs, so a synchronous readStop() here would be immediately
+      // undone by resume_()'s readStart(). Deferring puts this stop after
+      // resume_(). The `reading && !readableFlowing` guard (matching Node)
+      // re-checks state on the tick, so a synchronous `stdin.pause();
+      // stdin.resume()` — flowing again by then — skips the stop and drops no
+      // buffered data.
+      stdin.on("pause", function onpause() {
+        process.nextTick(() => {
+          if (!stdin._handle || !$isCallable(stdin._handle.readStop)) return;
+          if (stdin._handle.reading && !stdin.readableFlowing && stdin.listenerCount("readable") === 0) {
+            stdin._readableState.reading = false;
+            stdin._handle.reading = false;
+            stdin._handle.readStop();
+          }
+        });
+      });
+
+      return stdin;
+    }
+    // else: TCP/UDP/unknown socket fd — fall through to Bun.stdin.stream().
+  }
+
   const native = Bun.stdin.stream();
   const source = native.$bunNativePtr;
 
@@ -189,7 +258,11 @@ export function getStdinStream(
   stream.fd = fd;
 
   // tty.ReadStream is supposed to extend from net.Socket.
-  // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods
+  // but we haven't made that work yet. Until then, we need to manually add some of net.Socket's methods.
+  // fdType !== file covers the TCP/UDP/unknown-socket fallthrough above (a socket
+  // fd createHandle rejected): those land on this fs.ReadStream, which has no
+  // native ref/unref, so process.stdin.ref()/unref() would otherwise throw.
+  // (pipe/AF_UNIX-socket stdin already returned early as a net.Socket.)
   if (isTTY || fdType !== BunProcessStdinFdType.file) {
     stream.ref = function () {
       forceUnref = false;

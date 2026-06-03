@@ -57,7 +57,27 @@ const getBufferedAmount = $newZigFunction("runtime/socket/socket.zig", "jsGetBuf
 
 const bunTlsSymbol = Symbol.for("::buntls::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
-const owner_symbol = Symbol("owner_symbol");
+const { owner_symbol } = require("internal/shared");
+
+const guessHandleType = $newZigFunction("node_util_binding.zig", "guessHandleType", 1);
+const handleTypes = ["TCP", "TTY", "UDP", "FILE", "PIPE", "UNKNOWN"];
+const { Pipe, constants: PipeConstants } = process.binding("pipe_wrap");
+const UV_EOF = -4095;
+const kBuffer = Symbol("kBuffer");
+const kBufferCb = Symbol("kBufferCb");
+const kBufferGen = Symbol("kBufferGen");
+
+function createHandle(fd, isServer) {
+  validateInt32(fd, "fd", 0);
+  const type = handleTypes[guessHandleType(fd)];
+  if (type === "PIPE") {
+    return new Pipe(isServer ? PipeConstants.SERVER : PipeConstants.SOCKET);
+  }
+  // TCP needs a distinct handle (remoteAddress/localAddress/port); Pipe lacks
+  // those, so wrapping a TCP fd in Pipe would yield a socket that reads bytes
+  // but silently reports no peer/local address. Reject until tcp_wrap lands.
+  throw $ERR_INVALID_FD_TYPE(type);
+}
 
 const kServerSocket = Symbol("kServerSocket");
 const kBytesWritten = Symbol("kBytesWritten");
@@ -81,7 +101,7 @@ const kwriteCallback = Symbol("writeCallback");
 const kSocketClass = Symbol("kSocketClass");
 
 function endNT(socket, callback, err) {
-  socket.$end();
+  socket.$end?.();
   callback(err);
 }
 function emitCloseNT(self, hasError) {
@@ -685,8 +705,6 @@ function Socket(options?) {
   Duplex.$call(this, {
     ...opts,
     allowHalfOpen,
-    readable: true,
-    writable: true,
     //For node.js compat do not emit close on destroy.
     emitClose: false,
     autoDestroy: true,
@@ -728,14 +746,26 @@ function Socket(options?) {
   // Shut down the socket when we're finished with it.
   this.on("end", onSocketEnd);
 
-  if (options?.fd !== undefined) {
-    const { fd } = options;
-    validateInt32(fd, "fd", 0);
+  if (options?.handle != null) {
+    this._handle = options.handle;
+    initSocketHandle(this);
+  } else if (options?.fd !== undefined) {
+    this._handle = createHandle(options.fd, false);
+    const err = this._handle.open(options.fd);
+    if (err) throw new ErrnoException(err, "open");
+    initSocketHandle(this);
+    this.readable = options.readable !== false;
+    this.writable = options.writable !== false;
   }
 
   if (socket instanceof Socket) {
     this[ksocket] = socket;
   }
+  // Must run before the auto-start below: read(0) can synchronously re-enter
+  // onStreamRead for a stream-wrap handle (Pipe/TTY) that drains already-
+  // buffered data, and that callback checks kBuffer/kBufferCb/kBufferGen — set
+  // them first so the first chunk reaches onread.callback, not push() (Node
+  // orders the onread setup before the read(0) auto-start for the same reason).
   if (onread) {
     if (typeof onread !== "object") {
       throw new TypeError("onread must be an object");
@@ -743,6 +773,12 @@ function Socket(options?) {
     if (typeof onread.callback !== "function") {
       throw new TypeError("onread.callback must be a function");
     }
+    if (!$isTypedArrayView(onread.buffer) && typeof onread.buffer !== "function") {
+      throw $ERR_INVALID_ARG_TYPE("options.onread.buffer", ["Buffer", "Uint8Array", "function"], onread.buffer);
+    }
+    this[kBuffer] = true;
+    this[kBufferCb] = onread.callback;
+    this[kBufferGen] = typeof onread.buffer === "function" ? onread.buffer : () => onread.buffer;
     // when the onread option is specified we use a different handlers object
     this[khandlers] = {
       ...SocketHandlers2,
@@ -757,6 +793,16 @@ function Socket(options?) {
         }
       },
     };
+  }
+
+  if (this._handle && $isCallable(this._handle.readStart) && options.readable !== false) {
+    if (options.pauseOnCreate) {
+      this._handle.reading = false;
+      this._handle.readStop();
+      this._readableState.flowing = false;
+    } else if (!options.manualStart) {
+      this.read(0);
+    }
   }
   if (signal) {
     if (signal.aborted) {
@@ -792,7 +838,7 @@ Socket.prototype._onTimeout = function () {
   const handle = this._handle;
   // if there is a handle, and it has pending data,
   // we suppress the timeout because a write is in progress
-  if (handle && getBufferedAmount(handle) > 0) {
+  if (handle && !$isCallable(handle.readStart) && getBufferedAmount(handle) > 0) {
     return;
   }
   this.emit("timeout");
@@ -1207,23 +1253,51 @@ Object.defineProperty(Socket.prototype, "pending", {
   },
 });
 
-Socket.prototype.resume = function resume() {
-  if (!this.connecting) {
-    this._handle?.resume();
-  }
-  return Duplex.prototype.resume.$call(this);
-};
-
 Socket.prototype.pause = function pause() {
-  if (!this.destroyed) {
-    this._handle?.pause();
+  if (!this.connecting && this._handle && !this.destroyed) {
+    if ($isCallable(this._handle.readStop)) {
+      // stream-wrap handle (Pipe/TTY): stop reads via readStop. But a 'readable'
+      // listener keeps the stream in non-flowing mode where read() still needs
+      // the underlying reader armed to buffer data — Node leaves it reading in
+      // that case. Only readStop when there's no 'readable' listener.
+      if (this._handle.reading !== false && this.listenerCount("readable") === 0) {
+        this._handle.reading = false;
+        const err = this._handle.readStop();
+        if (err) this.destroy(new ErrnoException(err, "read"));
+      }
+    } else {
+      // usocket-backed handle: native pause() (matches pre-stdin behavior).
+      this._handle.pause?.();
+    }
   }
   return Duplex.prototype.pause.$call(this);
 };
 
+Socket.prototype.resume = function resume() {
+  if (!this.connecting && this._handle) {
+    if ($isCallable(this._handle.readStart)) {
+      // stream-wrap handle (Pipe/TTY): drive reads via readStart.
+      if (!this._handle.reading) tryReadStart(this);
+    } else {
+      // usocket-backed handle: native resume() (matches pre-stdin behavior;
+      // required for e.g. pauseOnConnect server sockets to un-pause).
+      this._handle.resume?.();
+    }
+  }
+  return Duplex.prototype.resume.$call(this);
+};
+
 Socket.prototype.read = function read(size) {
-  if (!this.connecting) {
-    this._handle?.resume();
+  if (!this.connecting && this._handle) {
+    if ($isCallable(this._handle.readStart)) {
+      // stream-wrap handle (Pipe/TTY). Match Node: only re-arm reads from read()
+      // for the onread option (kBuffer), which delivers data to a callback
+      // instead of the readable buffer so _read never fires to pull more. The
+      // normal data path is driven by _read via Duplex.read() below.
+      if (this[kBuffer] && !this._handle.reading) tryReadStart(this);
+    } else {
+      this._handle.resume?.();
+    }
   }
   return Duplex.prototype.read.$call(this, size);
 };
@@ -1232,8 +1306,10 @@ Socket.prototype._read = function _read(size) {
   const socket = this._handle;
   if (this.connecting || !socket) {
     this.once("connect", () => this._read(size));
+  } else if ($isCallable(socket.readStart)) {
+    if (!socket.reading) tryReadStart(this);
   } else {
-    socket?.resume();
+    socket?.resume?.();
   }
 };
 
@@ -1466,6 +1542,13 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
     return false;
   }
   this._unrefTimer();
+  if ($isCallable(socket.readStart)) {
+    // Stream-wrap handle (TTY/Pipe). Full writeBuffer/req plumbing is a
+    // follow-up; reachable only for duplex net.Socket({fd}), never for
+    // process.stdin which is constructed with writable:false.
+    callback($ERR_METHOD_NOT_IMPLEMENTED("_write on stream-wrap handle"));
+    return false;
+  }
   const success = socket.$write(chunk, encoding);
   this[kBytesWritten] = socket.bytesWritten;
   if (success) {
@@ -1480,7 +1563,18 @@ Socket.prototype._write = function _write(chunk, encoding, callback) {
 function createConnection(...args) {
   const normalized = normalizeArgs(args);
   const options = normalized[0];
-  const socket = new Socket(options);
+  // bun's connect({fd}) adopts the fd into a fresh usocket (see
+  // Socket.prototype.connect). Don't let the Socket constructor also claim the
+  // fd by wrapping it in a Pipe handle — that both mutates fd state (O_NONBLOCK,
+  // a live read poll) and leaves the wrong handle type for doConnect. Strip fd
+  // from the ctor options; connect() below re-attaches it. `new Socket({fd})`
+  // used directly (not via connect) still gets its Pipe handle.
+  let ctorOptions = options;
+  if (options != null && options.fd !== undefined) {
+    ctorOptions = { ...options };
+    delete ctorOptions.fd;
+  }
+  const socket = new Socket(ctorOptions);
 
   if (options.timeout) {
     socket.setTimeout(options.timeout);
@@ -2588,7 +2682,76 @@ function initSocketHandle(self) {
   // Handle creation may be deferred to bind() or connect() time.
   if (self._handle) {
     self._handle[owner_symbol] = self;
+    if ($isCallable(self._handle.readStart)) {
+      self._handle.onread = onStreamRead;
+    }
   }
+}
+
+// Node lib/internal/stream_base_commons.js onStreamRead.
+function onStreamRead(nread, arrayBuffer) {
+  const self = this[owner_symbol];
+  if (nread > 0) {
+    // Refresh the inactivity timer on every chunk (Node's kUpdateTimer, and
+    // what SocketHandlers.data does) so an active-reading socket with
+    // setTimeout() doesn't spuriously emit "timeout".
+    self._unrefTimer();
+    self.bytesRead += nread;
+    let ret;
+    if (self[kBuffer]) {
+      // onread: {buffer, callback}. Node's native layer reads directly into the
+      // user buffer so nread <= buffer.byteLength. Bun's stream-wrap handle
+      // (Pipe/TTY) reads into its own scratch buffer and can deliver a chunk
+      // larger than the user buffer, so copy in user-buffer-sized slices and
+      // invoke the callback once per slice (re-fetching kBufferGen() each time,
+      // as Node does) rather than truncating and dropping the remainder.
+      let offset = 0;
+      let pause = false;
+      do {
+        let userBuf = self[kBufferGen]();
+        let n;
+        if ($isTypedArrayView(userBuf)) {
+          const cap = userBuf.byteLength;
+          n = nread - offset < cap ? nread - offset : cap;
+          if (userBuf !== arrayBuffer || offset !== 0) {
+            userBuf.set(arrayBuffer.subarray(offset, offset + n));
+          }
+        } else {
+          // No typed-array buffer supplied: hand over the remaining slice.
+          userBuf = offset === 0 ? arrayBuffer : arrayBuffer.subarray(offset);
+          n = nread - offset;
+        }
+        offset += n;
+        // `false` means "pause future reads", not "discard what I already
+        // have" — finish delivering this chunk, then honor the pause below.
+        if (self[kBufferCb](n, userBuf) === false) pause = true;
+        // Break on no progress (zero-length user buffer) to avoid looping
+        // forever.
+        if (n === 0) break;
+      } while (offset < nread);
+      ret = pause ? false : true;
+    } else {
+      ret = self.push(arrayBuffer);
+    }
+    if (ret === false && this.reading) {
+      this.reading = false;
+      this.readStop();
+    }
+    return;
+  }
+  if (nread === 0) return;
+  if (nread !== UV_EOF) {
+    self.destroy(new ErrnoException(nread, "read"));
+    return;
+  }
+  self.push(null);
+  self.read(0);
+}
+
+function tryReadStart(socket) {
+  socket._handle.reading = true;
+  const err = socket._handle.readStart();
+  if (err) socket.destroy(new ErrnoException(err, "read"));
 }
 
 function closeSocketHandle(self, isException, isCleanupPending = false) {

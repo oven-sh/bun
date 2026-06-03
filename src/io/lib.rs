@@ -335,6 +335,7 @@ bun_dispatch::link_interface! {
         FileReader,
         FileResponseStream,
         Terminal,
+        Pipe,
         CronRegister,
         CronRemove,
         FilterRunHandle,

@@ -306,7 +306,9 @@ describe("empty compressed responses", () => {
     "content-length-0": `HTTP/1.1 200 OK\r\nContent-Encoding: gzip\r\nContent-Length: 0\r\n\r\n`,
   })) {
     it(`empty gzip body via ${name} resolves as empty`, async () => {
-      const raw = createNetServer(socket => void socket.write(write));
+      // end() rather than write(): FIN the connection after the response so
+      // nothing is left parked in the keep-alive pool when the server closes.
+      const raw = createNetServer(socket => void socket.end(write));
       await new Promise<void>(resolve => raw.listen(0, () => resolve()));
       const port = (raw.address() as { port: number }).port;
       try {

@@ -1927,16 +1927,18 @@ describe("bundler", () => {
     },
   });
   // Guard against over-eager removal: a computed key that actually has side
-  // effects must keep the object alive even when the binding is unused.
+  // effects must keep the object alive even when the binding is unused. The
+  // side effect is observed at runtime (the flag it sets is printed) so the
+  // test fails if the computed-key call is tree-shaken away.
   itBundled("edgecase/ComputedKeyWithSideEffectsNotTreeShaken#31755", {
     files: {
       "/entry.ts": `
         import './lib';
-        console.log('ok');
+        console.log(globalThis.hit === true ? 'side-effect-ran' : 'side-effect-missing');
       `,
       "/lib.ts": `
-        export function sideEffectKept() { globalThis.hit = true; return 'k'; }
-        const keptObject = { [sideEffectKept()]: 1 };
+        function sideEffectKept() { globalThis.hit = true; return 'k'; }
+        const unusedObject = { [sideEffectKept()]: 1 };
       `,
     },
     onAfterBundle(api) {
@@ -1944,7 +1946,7 @@ describe("bundler", () => {
       api.expectFile("/out.js").toContain("sideEffectKept");
     },
     run: {
-      stdout: `ok`,
+      stdout: `side-effect-ran`,
     },
   });
   itBundled("edgecase/ImportMetaMain", {

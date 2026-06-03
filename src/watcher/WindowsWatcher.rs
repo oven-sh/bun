@@ -224,8 +224,8 @@ impl EventIterator {
 }
 
 impl WindowsWatcher {
-    // TODO(port): in-place init — `self` is the pre-allocated `platform` slot inside
-    // crate::Watcher (64KB+ buffers; avoid moving). Zig sig: `fn init(this, root) !void`.
+    // `self` is the pre-allocated `platform` slot inside crate::Watcher
+    // (64KB+ buffers; avoid moving).
     pub(crate) fn init(&mut self, root: &[u8]) -> Result<(), bun_core::Error> {
         use bun_paths::string_paths as paths;
         let mut pathbuf = WPathBuffer::uninit();

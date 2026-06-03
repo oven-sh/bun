@@ -850,7 +850,6 @@ impl Drop for FSEventsLoop {
         }
 
         // Vec storage freed by its own Drop (or explicit deinit)
-        // TODO(port): confirm Vec<T> implements Drop or needs explicit deinit()
     }
 }
 

@@ -93,7 +93,6 @@ impl EnvStr {
         // duplicated bytes transfers to RefCountedStr.
         let str: Box<[u8]> = Box::<[u8]>::from(old_str);
         let len = str.len();
-        // TODO(port): RefCountedStr::init signature — assumed to take ownership and return *mut RefCountedStr
         Self::pack(
             to_ptr(RefCountedStr::init(str) as *const c_void),
             Tag::Refcounted,

@@ -146,7 +146,6 @@ impl FetchHeaders {
         global: &JSGlobalObject,
         value: JSValue,
     ) -> JsResult<Option<NonNull<FetchHeaders>>> {
-        // TODO(port): bun.jsc.fromJSHostCallGeneric — wraps the FFI call and converts a pending VM exception into JsError
         host_fn::from_js_host_call_generic(global, || {
             NonNull::new(WebCore__FetchHeaders__createFromJS(global, value))
         })

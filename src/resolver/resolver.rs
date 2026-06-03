@@ -398,8 +398,7 @@ pub struct Bufs {
     #[cfg(not(windows))]
     pub win32_normalized_dir_info_cache: (),
 }
-// TODO(port): bun.ThreadlocalBuffers(Bufs) — lazily-allocated threadlocal Box<Bufs>.
-// In Rust we model it as a `thread_local! { static BUFS_PTR: BufsSlot }` caching a
+// `Bufs` is modeled as a `thread_local! { static BUFS_PTR: BufsSlot }` caching a
 // leaked `Box<Bufs>` pointer. `BufsSlot`'s `Drop` reclaims that box when a
 // worker/transpiler-pool thread exits; the main thread's lives process-lifetime
 // (as in Zig, which never freed it). The `bufs!()` macro hands out `&mut` to a
@@ -1155,7 +1154,6 @@ impl<'a> Resolver<'a> {
 
         // Only setting 'current_action' in debug mode because module resolution
         // is done very often, and has a very low crash rate.
-        // TODO(port): bun.crash_handler.current_action save/restore (Environment.show_crash_trace gated)
         #[cfg(debug_assertions)]
         let _crash_guard =
             ::bun_crash_handler::set_current_action_resolver(source_dir, import_path, kind);
@@ -4397,7 +4395,6 @@ impl<'a> Resolver<'a> {
 
                     #[cfg(unix)]
                     let open_req: core::result::Result<FD, bun_core::Error> = {
-                        // TODO(port): std.fs.openDirAbsoluteZ — using bun_sys equivalent
                         bun_sys::open_dir_absolute_z(
                             sentinel,
                             bun_sys::OpenDirOptions {
@@ -6082,7 +6079,6 @@ impl<'a> Resolver<'a> {
                             BIN_FOLDERS_LOADED.store(true, core::sync::atomic::Ordering::Release);
                         }
 
-                        // TODO(port): std.fs.Dir.openDirZ → bun_sys
                         let Ok(file) = bun_sys::open_dir_z(
                             fd,
                             bun_paths::path_literal!(b"node_modules/.bin"),

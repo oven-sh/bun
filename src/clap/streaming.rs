@@ -6,7 +6,6 @@ use crate as clap;
 use crate::args::ArgIter;
 
 // Disabled because not all CLI arguments are parsed with Clap.
-// TODO(port): Zig `pub var` — using AtomicBool for safe mutable global.
 pub static WARN_ON_UNRECOGNIZED_FLAG: AtomicBool = AtomicBool::new(false);
 
 /// The result returned from StreamingClap.next

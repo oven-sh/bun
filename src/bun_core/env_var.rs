@@ -832,7 +832,6 @@ macro_rules! __key_opt {
         None
     };
     ($lit:literal) => {
-        // TODO(port): need a `zstr!` const constructor for &'static ZStr from a string literal.
         Some($crate::zstr!($lit))
     };
 }

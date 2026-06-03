@@ -69,8 +69,6 @@ pub trait PosixPipeWriter {
     fn get_file_type(&self) -> FileType;
     fn get_force_sync(&self) -> bool;
 
-    // TODO(port): Zig accesses `parent.handle` (PollOrFd) directly for logging
-    // in on_poll. Expose via accessor instead of requiring a field.
     fn handle(&self) -> &PollOrFd;
 
     /// Only reads `get_file_type()` / `get_fd()` from `self`; takes `&self` so
@@ -289,7 +287,6 @@ pub trait PosixBufferedWriterParent {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn on_writable(_this: *mut Self) {}
-    // TODO(port): Zig calls `parent.eventLoop()` (returns anytype); pin a concrete type.
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn event_loop(this: *mut Self) -> EventLoopHandle;
@@ -1848,7 +1845,6 @@ impl StreamBuffer {
     }
 
     pub fn write_type_as_bytes_assume_capacity<T: bun_core::NoUninit>(&mut self, data: T) {
-        // TODO(port): Zig round-trips through bun.Vec<u8> here; Rust just writes bytes.
         // PERF(port): was assume_capacity
         self.list.extend_from_slice(bun_core::bytes_of(&data));
     }
@@ -2407,8 +2403,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
     #[allow(dead_code)]
     fn write_internal_u8(&mut self, buffer: &[u8], kind: WriteKind) -> WriteResult {
-        // TODO(port): Zig used `comptime writeFn: anytype` (fn-ptr identity);
-        // Rust splits into u8/u16 paths via WriteKind enum.
         if self.is_done {
             return WriteResult::Done(0);
         }

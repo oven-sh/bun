@@ -31,7 +31,6 @@ fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
         return 0;
     };
     let end = start + q as usize;
-    // TODO(port): narrow error set
     strings::parse_int::<u32>(&head[start..end], 10).unwrap_or(0)
 }
 

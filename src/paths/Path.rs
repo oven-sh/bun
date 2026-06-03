@@ -690,7 +690,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
         #[cfg(windows)]
         {
-            // TODO(port): pick long_path_prefix vs long_path_prefix_u8 based on U.
             this._buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
         }
 

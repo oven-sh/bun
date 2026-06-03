@@ -873,7 +873,6 @@ impl Task {
         let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
         let pkg_res = pkg_resolutions[pkg_id as usize];
 
-        // TODO(port): Zig labeled-switch `next_step:` modeled as loop+match
         let mut step =
             Step::from_u32(entry_steps[self.entry_id.get() as usize].load(Ordering::Acquire));
         'step: loop {
@@ -901,7 +900,6 @@ impl Task {
                             };
                             let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
 
-                            // TODO(port): Zig labeled-switch `backend:` modeled as loop+match
                             let mut backend = InstallMethod::Hardlink;
                             'backend: loop {
                                 match backend {

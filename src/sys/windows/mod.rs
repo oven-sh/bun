@@ -3500,8 +3500,6 @@ pub use bun_windows_sys::{
 
 // Bun__UVSignalHandle__{init,close}: see src/runtime/node/uv_signal_handle_windows.zig
 
-// TODO(port): @export(&windows_process_dlopen, .{ .name = "Bun__LoadLibraryBunString" }) — see #[unsafe(no_mangle)] fn below
-
 /// Is not the actual UID of the user, but just a hash of username.
 pub fn user_unique_id() -> u32 {
     // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/165836c1-89d7-4abb-840d-80cf2510aa3e
@@ -3532,7 +3530,6 @@ pub fn win_sock_error_to_zig_error(
     err: win32::ws2_32::WinsockError,
 ) -> Result<(), bun_core::Error> {
     use win32::ws2_32::WinsockError as W;
-    // TODO(port): Zig used `inline else` proposal; manual mapping below.
     let tag = match err {
         W::WSA_INVALID_HANDLE => "WSA_INVALID_HANDLE",
         W::WSA_NOT_ENOUGH_MEMORY => "WSA_NOT_ENOUGH_MEMORY",
@@ -4203,7 +4200,6 @@ pub mod rescle {
             None
         };
 
-        // TODO(port): bun.strings.toUTF16AllocForReal returns owned [:0]u16; using Box<[u16]> here.
         let title_w = title
             .map(|t| bun_core::strings::to_utf16_alloc_for_real(t, false, true))
             .transpose()?;
@@ -4362,9 +4358,6 @@ const WATCHER_CHILD_ENV_Z: &[u16] = bun_core::w!("_BUN_WATCHER_CHILD\0");
 // magic exit code to indicate to the watcher manager that the child process should be re-spawned
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
 pub const WATCHER_RELOAD_EXIT: DWORD = 3224497970;
-
-// TODO(port): re-export of bun_runtime::api::bun::spawn::PosixSpawn removed (T1→T6 upward).
-// Callers should import `bun_runtime::api::bun::spawn::PosixSpawn` directly.
 
 pub fn is_watcher_child() -> bool {
     let mut buf: [u16; 1] = [0];
@@ -4569,7 +4562,6 @@ pub fn spawn_watcher_child(
             wShowWindow: 0,
             cbReserved2: 0,
             lpReserved2: ptr::null_mut(),
-            // TODO(port): std.fs.File.stdin/stdout/stderr().handle — use bun_sys stdio handles
             hStdInput: bun_sys::Fd::stdin().native(),
             hStdOutput: bun_sys::Fd::stdout().native(),
             hStdError: bun_sys::Fd::stderr().native(),

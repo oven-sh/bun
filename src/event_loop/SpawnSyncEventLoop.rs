@@ -30,8 +30,7 @@ use bun_uws as uws;
 // MOVE-IN: EventLoopHandle relocated from bun_jsc — see AnyEventLoop.rs.
 use crate::EventLoopHandle;
 
-// TODO(port): `@FieldType(jsc.VirtualMachine, "event_loop_handle")` — comptime reflection on a
-// foreign struct field. On POSIX this is `?*uws.Loop`, on Windows `?*libuv.Loop`.
+// On POSIX this is `?*uws.Loop`, on Windows `?*libuv.Loop`.
 #[cfg(unix)]
 pub type VmEventLoopHandle = Option<NonNull<uws::Loop>>;
 #[cfg(windows)]

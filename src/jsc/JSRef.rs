@@ -108,8 +108,6 @@ pub enum JsRef {
 // Belt-and-suspenders: JSValue and Strong are already !Send/!Sync, but make it
 // explicit so a future refactor of those types cannot accidentally make JsRef
 // sendable.
-// TODO(port): if a zero-cost marker is preferred over auto-trait inference,
-// wrap in a struct with `PhantomData<*const ()>`.
 const _: PhantomData<*const ()> = PhantomData;
 
 impl JsRef {

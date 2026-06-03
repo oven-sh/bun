@@ -18,7 +18,6 @@ pub struct Options {
     pub log_level: LogLevel,
     pub global: bool,
 
-    // TODO(port): std.fs.Dir → bun_sys::Fd (directory handle); default was bun.FD.invalid.stdDir()
     pub global_bin_dir: bun_sys::Fd,
     pub explicit_global_directory: &'static [u8],
     /// destination directory to link bins into
@@ -102,7 +101,6 @@ impl Default for Options {
             global: false,
             global_bin_dir: bun_sys::Fd::INVALID,
             explicit_global_directory: b"",
-            // TODO(port): bun.pathLiteral("node_modules/.bin") — platform-specific separator at comptime
             bin_path: bun_paths::path_literal!("node_modules/.bin"),
             did_override_default_scope: false,
             // PORT NOTE: Zig had `= undefined`; always assigned in `load()` before read.

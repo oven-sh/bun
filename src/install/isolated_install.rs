@@ -123,10 +123,7 @@ struct WyhashWriter<'a> {
     hasher: &'a mut Wyhash,
 }
 
-impl<'a> WyhashWriter<'a> {
-    // TODO(port): Zig used std.io.GenericWriter; here we impl std::io::Write
-    // directly so `write!()` works and never errors.
-}
+impl<'a> WyhashWriter<'a> {}
 
 impl<'a> std::io::Write for WyhashWriter<'a> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
@@ -242,7 +239,6 @@ pub(crate) fn install_isolated_packages(
 
     let store: Store = 'store: {
         let mut timer = std::time::Instant::now();
-        // TODO(port): std.time.Timer.start() catch unreachable → Instant::now()
         let pkgs = lockfile.packages.slice();
         let pkg_dependency_slices = pkgs.items_dependencies();
         let pkg_resolutions = pkgs.items_resolution();
@@ -676,7 +672,6 @@ pub(crate) fn install_isolated_packages(
 
             // TODO: make this sort in an order that allows peers to be resolved last
             // and devDependency handling to match `hoistDependency`
-            // TODO(port): std.sort.pdq → slice::sort_by with DepSorter
             {
                 let sorter = lockfile::DepSorter { lockfile };
                 dep_ids_sort_buf.sort_by(|a, b| {
@@ -1246,8 +1241,6 @@ pub(crate) fn install_isolated_packages(
                                 // patch or be mutated underneath other projects.
                                 if lockfile.patched_dependencies.count() > 0 {
                                     let mut name_version_buf = PathBuffer::uninit();
-                                    // TODO(port): std.fmt.bufPrint returned the written
-                                    // slice; emulate via cursor write into the PathBuffer.
                                     let mut cursor =
                                         std::io::Cursor::new(&mut name_version_buf.0[..]);
                                     let name_version: &[u8] = match write!(

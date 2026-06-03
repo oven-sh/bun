@@ -671,7 +671,6 @@ pub unsafe fn spawn_process_posix(
         }
 
         if options.detached {
-            // TODO(port): @hasDecl check — assume present on platforms that define it.
             #[cfg(any(target_os = "linux", target_os = "android"))]
             {
                 // glibc/musl/bionic <spawn.h> all define POSIX_SPAWN_SETSID as 0x80;

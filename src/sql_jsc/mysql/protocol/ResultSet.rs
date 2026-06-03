@@ -137,7 +137,6 @@ impl<'a> Row<'a> {
             }
             MYSQL_TYPE_INT24 => {
                 if column.flags.contains(ColumnFlags::UNSIGNED) {
-                    // TODO(port): Zig used u24; Rust has no u24 — u32 parse then mask not needed (text protocol bounds)
                     let val: u32 = parse_int::<u32>(value.slice(), 10).unwrap_or(0);
                     *cell = SQLDataCell {
                         tag: Tag::Uint4,

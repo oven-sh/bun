@@ -217,7 +217,7 @@ impl Default for ParseResultFail {
     fn default() -> Self {
         Self {
             loc: bun_ast::Loc::default(),
-            err: bun_core::err!("Unknown"), // TODO(port): Zig has no default for `err`
+            err: bun_core::err!("Unknown"),
             value: 0,
             msg: b"",
         }
@@ -1148,7 +1148,6 @@ pub fn parse_json(
             let Some(s) = item.data.as_e_string() else {
                 return Err(bun_core::err!("InvalidSourceMap"));
             };
-            // TODO(port): e_string.string(alloc) — exact API TBD
             let s = s.string(arena)?;
             v.push(Box::<[u8]>::from(s));
         }
@@ -1336,9 +1335,6 @@ pub fn append_source_map_chunk<'a>(
 }
 
 /// Always returns UTF-8.
-// TODO(port): Zig was generic over `comptime T: type` (u8/u16). Rust cannot
-// express `[]const T` literals generically without a helper trait; split into
-// two functions and dispatch at the (only) callsite.
 fn find_source_mapping_url_u8(source: &[u8]) -> Option<bun_core::zig_string::Slice> {
     const NEEDLE: &[u8] = b"\n//# sourceMappingURL=";
     let found = bun_core::strings::last_index_of(source, NEEDLE)?;

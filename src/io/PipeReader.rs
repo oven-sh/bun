@@ -1711,7 +1711,6 @@ impl WindowsBufferedReader {
 
     #[cfg(not(windows))]
     pub fn start_reading(&mut self) -> sys::Result<()> {
-        // TODO(port): Windows-only path; stubbed on non-Windows so the type still compiles.
         sys::Result::Ok(())
     }
 
@@ -1779,9 +1778,7 @@ impl WindowsBufferedReader {
                     self.flags.insert(WindowsFlags::IS_PAUSED);
                 }
                 #[cfg(not(windows))]
-                _ => {
-                    // TODO(port): Pipe/Tty arms are Windows-only.
-                }
+                _ => {}
             }
             // self.source already None via take().
             if CALL_DONE {

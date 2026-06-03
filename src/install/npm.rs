@@ -211,8 +211,6 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
     Ok(username.to_vec())
 }
 
-// TODO(port): body gated — picohttp::Response field shape drift
-
 pub fn response_error<const OTP_RESPONSE: bool>(
     req: &AsyncHTTP,
     res: &picohttp::Response,
@@ -889,8 +887,6 @@ impl PackageManifest {
         self.pkg.name.slice(&self.string_buf)
     }
 
-    // TODO(port): bun_io::DiscardingWriter — counting writer not exposed yet
-
     pub fn byte_length(&self, scope: &registry::Scope) -> usize {
         let mut counter = bun_io::DiscardingWriter::new();
         match package_manifest::Serializer::write(self, scope, &mut counter) {
@@ -1292,7 +1288,7 @@ pub mod package_manifest {
             // TODO(port): lifetime — `scope` is borrowed across a thread boundary; Zig assumed
             // the Registry.Scope outlives the threadpool task. Prove or change to owned.
             let task = bun_core::heap::into_raw(SaveTask::new(SaveTask {
-                manifest: this.clone(), // TODO(port): Zig copied PackageManifest by value
+                manifest: this.clone(),
                 scope,
                 tmpdir,
                 cache_dir,
@@ -3345,7 +3341,7 @@ impl PackageManifest {
         match how_many_bytes_to_store_indices {
             1 => sort_with_int!(u8),
             2 => sort_with_int!(u16),
-            3 => sort_with_int!(u32), // TODO(port): Zig used u24; Rust has no u24, use u32
+            3 => sort_with_int!(u32),
             4 => sort_with_int!(u32),
             5..=8 => sort_with_int!(u64),
             _ => {

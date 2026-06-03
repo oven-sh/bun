@@ -1418,8 +1418,6 @@ impl PercentEncoding {
         let mut buf: Vec<u8> = Vec::with_capacity(input.len());
         // errdefer allocator.free(buf) — Vec drops automatically on error
 
-        // TODO(port): Zig used fixedBufferStream into a pre-sized [u8; input.len];
-        // here we just write into a Vec and truncate.
         let len = Self::decode(&mut buf, input)?;
 
         buf.truncate(len as usize);

@@ -9,10 +9,9 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem;
 
+use bun_cares_sys::c_ares as ares;
 use bun_core::{OwnedString, String as BunString, ZStr};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
-// TODO(port): move to <area>_sys — c-ares FFI lives in bun_cares_sys
-use bun_cares_sys::c_ares as ares;
 
 // `pub const js = jsc.Codegen.JSSocketAddress;` + toJS/fromJS/fromJSDirect
 // → handled by the JsClass derive; codegen wires toJS/fromJS/fromJSDirect.
@@ -781,7 +780,6 @@ fn pton_noerr(af: c_int, addr: &[u8], dst: *mut c_void) -> bool {
 
 // FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
 #[repr(u16)]
-// TODO(port): repr should be inet::sa_family_t but Rust requires concrete int; sa_family_t is u16 on posix+win
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum AF {
     INET = inet::AF_INET as u16,

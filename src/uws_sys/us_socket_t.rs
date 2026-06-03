@@ -117,7 +117,6 @@ impl us_socket_t {
         if length < 0 {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
-            // TODO(port): bun.errnoToZigErr — map errno to bun_core::Error
             return Err(bun_core::errno_to_zig_err(errno as i32));
         }
         debug_assert!(buf.len() >= length as usize);
@@ -135,7 +134,6 @@ impl us_socket_t {
         if length < 0 {
             let errno = bun_errno::get_errno(length);
             debug_assert!(errno != bun_errno::E::SUCCESS);
-            // TODO(port): bun.errnoToZigErr — map errno to bun_core::Error
             return Err(bun_core::errno_to_zig_err(errno as i32));
         }
         debug_assert!(buf.len() >= length as usize);
@@ -190,7 +188,6 @@ impl us_socket_t {
     /// Type-erased ext storage — `LIBUS_EXT_ALIGNMENT`-aligned bytes
     /// immediately after the C struct. Prefer `ext<T>()`.
     pub fn ext_ptr(&mut self) -> *mut u8 {
-        // TODO(port): Rust pointer types do not carry alignment; LIBUS_EXT_ALIGNMENT == 16
         c::us_socket_ext(self).cast::<u8>()
     }
 
@@ -525,7 +522,6 @@ pub struct StreamBuffer {
 }
 
 impl us_socket_stream_buffer_t {
-    // TODO(port): ownership — Zig does not free the previous list_ptr here; matches that.
     pub fn update(&mut self, stream_buffer: StreamBuffer) {
         // Decompose the Vec<u8> backing `stream_buffer.list` into raw parts so
         // the C side can read ptr/len/cap directly.

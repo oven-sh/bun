@@ -143,7 +143,6 @@ pub(crate) unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
 pub use bun_uws_sys::LIBUS_SOCKET_DESCRIPTOR;
 
 mod c {
-    // TODO(port): move to uws_sys
     unsafe extern "C" {
         // safe: no args; returns a process-static NUL-terminated cipher list.
         pub(crate) safe fn us_get_default_ciphers() -> *const core::ffi::c_char;

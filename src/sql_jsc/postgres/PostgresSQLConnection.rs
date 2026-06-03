@@ -94,8 +94,6 @@ use crate::jsc::verify_error_to_js;
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = Self::deinit)]
 pub struct PostgresSQLConnection {
-    // TODO(port): bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive refcount;
-    // ref()/deref() forward to this. When it hits 0, `deinit` runs and frees the Box.
     pub socket: JsCell<Socket>,
     pub status: Cell<Status>,
     // Private — intrusive refcount invariant; reach via `ref_()`/`deref()`
@@ -1224,7 +1222,6 @@ pub(crate) fn call(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsR
         if !entry.is_empty() && entry.contains(&0) {
             drop(options_buf);
             // tls_config / secure released by the errdefer above.
-            // TODO(port): Zig used `entry[1] ++ " must not contain null bytes"` (comptime concat).
             return global_object.throw_invalid_arguments_fmt(format_args!(
                 "{} must not contain null bytes",
                 bstr::BStr::new(name)
@@ -1406,7 +1403,6 @@ impl<const SSL: bool> SocketHandler<SSL> {
     }
 
     // pub const onHandshake = if (ssl) onHandshake_ else null;
-    // TODO(port): conditional associated const fn — in Rust, expose `Option<fn(...)>`.
     pub const ON_HANDSHAKE: Option<
         fn(&PostgresSQLConnection, SocketType<SSL>, i32, uws::us_bun_verify_error_t),
     > = if SSL { Some(Self::on_handshake_) } else { None };
@@ -1481,11 +1477,6 @@ impl PostgresSQLConnection {
         });
     }
 
-    // TODO(port): `deinit` is the intrusive-refcount destructor (called when ref_count hits 0).
-    // Not `impl Drop` because it frees `self`'s own Box and is also called directly on the
-    // connect-fail path before any JS wrapper exists. Non-pub: callers are `deref()` and the
-    // connect-fail path in `call()`, both in this file.
-    //
     // Raw-pointer receiver: this function ends in `heap::take(this)`. A `&mut self`
     // argument would carry a Stacked Borrows protector for the whole frame, and freeing
     // the allocation while that protector is live is UB ("deallocating while item is
@@ -2444,7 +2435,6 @@ impl PostgresSQLConnection {
                     bigint: request_flags.bigint,
                     global_object: self.global(),
                     count: 0,
-                    // TODO(port): other Putter default fields
                 };
 
                 let mut stack_buf = [DataCell::SQLDataCell::default(); 70];
@@ -3081,7 +3071,6 @@ impl PostgresSQLConnection {
 
     pub fn update_ref(&self) {
         self.update_has_pending_activity();
-        // TODO(port): Zig reads `pending_activity_count.raw` (non-atomic). Using Relaxed load.
         if self.pending_activity_count.load(Ordering::Relaxed) > 0 {
             self.poll_ref.with_mut(|r| {
                 r.r#ref(bun_io::posix_event_loop::get_vm_ctx(

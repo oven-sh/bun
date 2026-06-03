@@ -1469,7 +1469,6 @@ impl Tag {
     pub const SetEndOfFile: Tag = Tag(100);
     // ── PORT NOTE: tags below this line are Rust-port-only (no Zig ordinal).
     // They sit above the Zig range so a Zig-produced `Tag` never collides.
-    // TODO(port): upstream these into sys.zig's `Tag` enum, then realign.
     pub const dup2: Tag = Tag(101);
     pub const fchdir: Tag = Tag(102);
     pub const fchownat: Tag = Tag(103);

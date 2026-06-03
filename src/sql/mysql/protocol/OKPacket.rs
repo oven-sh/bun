@@ -11,7 +11,6 @@ pub struct OKPacket {
     pub warnings: u16,
     pub info: Data,
     pub session_state_changes: Data,
-    // TODO(port): Zig u24 — using u32, callers must ensure value fits in 24 bits
     pub packet_size: u32,
 }
 

@@ -165,9 +165,6 @@ pub(crate) fn build_url_with_printer<R, E>(
     }
 }
 
-// TODO(port): `bun.ThreadlocalBuffers(struct{...})` returns a type with `.get()`
-// yielding a `*Bufs` into TLS. Model as a thread_local RefCell; callers borrow
-// for the duration of the function.
 struct TlBufs {
     final_path_buf: PathBuffer,
     folder_name_buf: PathBuffer,

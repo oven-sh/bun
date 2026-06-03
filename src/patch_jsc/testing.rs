@@ -63,10 +63,6 @@ impl TestingAPIs {
     pub fn apply(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         let args = Self::parse_apply_args(global, frame)?;
 
-        // TODO(port): lifetime — `PatchFile<'a>` borrows its source bytes, so the Zig
-        // `ApplyArgs { patchfile, patchfile_txt }` pair is self-referential in Rust.
-        // PORTING.md forbids Box::leak / lifetime-extend, so we store the owned bytes
-        // in `ApplyArgs` and reparse here (already validated in `parse_apply_args`).
         let patchfile: PatchFile<'_> =
             parse_patch_file(&args.patchfile_txt).expect("validated in parse_apply_args");
 
@@ -182,9 +178,6 @@ impl TestingAPIs {
 }
 
 pub struct ApplyArgs {
-    // TODO(port): lifetime — Zig stored both `ZigString.Slice` and `PatchFile`
-    // (which borrows it). Self-referential in Rust; PORTING.md forbids
-    // Box::leak/lifetime-extend, so we store owned bytes and reparse on use.
     patchfile_txt: Vec<u8>,
     dirfd: Fd,
 }

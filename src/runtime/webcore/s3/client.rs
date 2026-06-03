@@ -61,7 +61,6 @@ use bun_io::StreamBuffer;
 
 bun_core::declare_scope!(S3UploadStream, visible);
 
-// TODO(port): `bun.JSTerminated!T` is not in the type map; assuming a thin alias in bun_jsc.
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 
 pub(crate) fn stat(

@@ -411,7 +411,6 @@ impl LineEditor {
         if self.cursor == self.buffer.len() {
             self.buffer.extend_from_slice(slice);
         } else {
-            // TODO(port): Vec has no insert_slice; splice is equivalent
             self.buffer
                 .splice(self.cursor..self.cursor, slice.iter().copied());
         }
@@ -1675,7 +1674,6 @@ impl<'a> Repl<'a> {
                 ..Default::default()
             },
         )?;
-        // TODO(port): array.writer.flush() — Vec<u8> writer needs no flush
         Ok(Some(array.into_boxed_slice()))
     }
 

@@ -14,8 +14,6 @@ use bun_sys as sys;
 
 bun_core::declare_scope!(HTMLScanner, hidden);
 
-// TODO(port): lifetime — `log`/`source` are borrowed for the scanner's lifetime
-// (LIFETIMES.tsv had no row for this file; classified locally as BORROW_PARAM).
 pub(crate) struct HTMLScanner<'a> {
     // arena field dropped — global mimalloc (see PORTING.md §Allocators).
     pub import_records: Vec<ImportRecord>, // Zig: ImportRecord.List

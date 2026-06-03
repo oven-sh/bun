@@ -43,7 +43,6 @@ pub struct INotifyWatcher {
     pub loaded: bool,
 
     // Avoid statically allocating because it increases the binary size.
-    // TODO(port): lifetime — owned heap allocation; Box matches `default_allocator.alignedAlloc` in init()
     pub eventlist_bytes: Box<EventListBytes>,
     /// pointers into the next chunk of events
     // BACKREF: raw pointers into `eventlist_bytes`; self-referential, never freed individually.

@@ -5,9 +5,6 @@
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-// TODO(port): proc-macro — `#[bun_jsc::host_fn]` will wrap these into the
-// `JSHostFn` ABI for `JSFunction::create`. Until that lands, the bodies are
-// plain `JSHostFnZig`-shaped fns (compile-checked, not yet ABI-wrapped).
 pub fn operating_system_is_match(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_install::npm;
     let args = frame.arguments_old::<1>();

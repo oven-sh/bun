@@ -32,7 +32,6 @@ pub type ErrorFunc<Ctx> = unsafe extern "C" fn(ctx: *mut Ctx, msg: *const c_char
 macro_rules! tcc_externs {
     ($($(#[$attr:meta])* fn $name:ident($($arg:ident: $ty:ty),* $(,)?) $(-> $ret:ty)?;)*) => {
         #[cfg(not(any(target_os = "android", target_os = "freebsd", all(windows, target_arch = "aarch64"))))]
-        // TODO(port): move to tcc_sys (already in *_sys crate — verify crate layout)
         unsafe extern "C" {
             $($(#[$attr])* fn $name($($arg: $ty),*) $(-> $ret)?;)*
         }

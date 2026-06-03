@@ -52,7 +52,6 @@ pub use bun_jsc_macros::{JsClass, JsClassDerive, codegen_cached_accessors, host_
 /// — `extern "..."` takes a string literal, not an expression. The
 /// `#[bun_jsc::host_fn]` / `#[bun_jsc::host_call]` attribute macros emit the
 /// correct ABI per-target instead. See PORTING.md §FFI / §JSC types.
-// TODO(port): proc-macro — `conv` is encoded in #[bun_jsc::host_fn] / #[bun_jsc::host_call].
 #[cfg(all(windows, target_arch = "x86_64"))]
 pub const CONV: &str = "sysv64";
 #[cfg(not(all(windows, target_arch = "x86_64")))]
@@ -2124,7 +2123,6 @@ pub fn opaque_wrap<Context, F>() -> OpaqueCallback
 where
     F: FnTyped<Context>,
 {
-    // TODO(port): Zig used `comptime Function: fn(*Context) void` as a value param.
     extern "C" fn callback<Context, F: FnTyped<Context>>(ctx: *mut c_void) {
         // SAFETY: caller guarantees ctx is a valid *mut Context.
         let context: &mut Context = unsafe { bun_ptr::callback_ctx::<Context>(ctx) };
@@ -2146,7 +2144,6 @@ pub type Error = ErrorCode;
 
 /// Maximum Date in JavaScript is less than Number.MAX_SAFE_INTEGER (u52).
 pub const INIT_TIMESTAMP: JSTimeType = (1u64 << 52) - 1;
-// TODO(port): Zig u52 — Rust has no u52. Using u64.
 pub type JSTimeType = u64;
 
 /// `jsc.zig:245 toJSTime(sec, nsec)`. Zig: `@intCast` (safety-checked sign

@@ -446,7 +446,6 @@ impl Token {
         match self {
             Token::Open(_) => SmolStr::from_char(b'{'),
             Token::Comma => SmolStr::from_char(b','),
-            // TODO(port): bun_core::SmolStr — see Clone for Token above.
             Token::Text(txt) => SmolStr::from_slice(txt.slice()).expect("OOM cloning SmolStr"),
             Token::Close => SmolStr::from_char(b'}'),
             Token::Eof => SmolStr::empty(),

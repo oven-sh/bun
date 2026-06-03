@@ -2187,8 +2187,6 @@ impl Result {
     }
 
     pub fn is_overflowing<const COUNT: usize>(&self) -> bool {
-        // TODO(port): Zig compares the whole packed struct against a usize here
-        // (`r.index >= count`); reproduce by comparing the raw u32.
         self.index.raw() as usize >= COUNT
     }
 }
@@ -2198,7 +2196,6 @@ impl Result {
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Required interface for the `Block` parameter of `OverflowGroup`/`OverflowList`.
-/// TODO(port): Zig used structural duck-typing; this trait names the methods the body calls.
 pub trait OverflowBlock {
     /// In-place initialize the `used` counter on possibly-uninitialized storage.
     /// SAFETY: `this` must point to writable, properly-aligned storage of `Self`.
@@ -2759,7 +2756,6 @@ struct EmptyType {
 }
 
 /// Trait modeling Zig's `comptime AppendType` switch in `doAppend`.
-/// TODO(port): Zig dispatches on the *type* (EmptyType / single slice / iterable-of-slices).
 pub trait BSSAppendable {
     /// Total byte length (excluding sentinel).
     fn total_len(&self) -> usize;
@@ -3204,7 +3200,6 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
         let _key = Self::key_hash(denormalized_key);
 
         let _guard = self.mutex.lock();
-        // TODO(port): narrow error set — IndexMap::get_or_put can only OOM.
         match self.index.entry(_key) {
             std::collections::hash_map::Entry::Occupied(e) => {
                 let v = *e.get();

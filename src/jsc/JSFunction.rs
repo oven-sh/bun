@@ -65,10 +65,6 @@ unsafe extern "C" {
 }
 
 impl JSFunction {
-    // TODO(port): Zig accepted `implementation` as either `JSHostFnZig` (safe) or
-    // `JSHostFn` (raw ABI) via comptime `@TypeOf` dispatch, calling `jsc.toJSHostFn`
-    // for the safe form. In Rust, callers produce a `JSHostFn` via `#[bun_jsc::host_fn]`,
-    // so we take the raw fn pointer type directly.
     pub fn create(
         global: &JSGlobalObject,
         fn_name: impl Into<BunString>,

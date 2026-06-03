@@ -14,7 +14,6 @@ use css::prefixes::is_flex_2009;
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
 #[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)]
-// TODO(port): css::DefineEnumProperty derive provides parse/to_css/eql/hash/deep_clone over kebab-case variant names
 pub enum FlexDirection {
     /// Flex items are laid out in a row.
     #[default]

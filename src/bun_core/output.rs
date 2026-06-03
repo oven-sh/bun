@@ -7,8 +7,7 @@
 //!   * thin `macro_rules!` wrappers (`pretty!`, `pretty_errorln!`, `note!`, …) that perform
 //!     the compile-time format-string rewrite via `pretty_fmt!`.
 //!
-//! `pretty_fmt!` itself (the `<red>…<r>` → ANSI substitution) is necessarily a proc-macro;
-//! a stub is declared here and flagged `TODO(port): proc-macro`.
+//! `pretty_fmt!` itself (the `<red>…<r>` → ANSI substitution) is necessarily a proc-macro.
 
 use core::cell::{Cell, RefCell};
 use core::ffi::c_int;

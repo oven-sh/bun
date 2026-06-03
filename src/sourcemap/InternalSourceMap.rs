@@ -87,7 +87,7 @@
 use core::mem::size_of;
 use core::ptr;
 
-use crate::Ordinal; // TODO(port): bun_core::Ordinal — local shim
+use crate::Ordinal;
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 
@@ -298,7 +298,6 @@ impl State {
             source_index: self.source_index,
             name_index: -1,
         }
-        // TODO(port): verify Mapping field shape (`generated`/`original` struct name) in bun_sourcemap.
     }
 }
 

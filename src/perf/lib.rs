@@ -141,11 +141,10 @@ pub use darwin_impl::Darwin;
 mod darwin_impl {
     use super::*;
     use bun_sys::darwin::OSLog;
-    use core::sync::atomic::AtomicPtr;
-    // TODO(port): verify Rust path for `OSLog.Signpost.Interval` and `.PointsOfInterest` category
     use bun_sys::darwin::os_log::signpost::{
         Category as SignpostCategory, Interval as SignpostInterval,
     };
+    use core::sync::atomic::AtomicPtr;
 
     pub struct Darwin {
         interval: SignpostInterval,
@@ -169,7 +168,6 @@ mod darwin_impl {
         }
 
         fn get_once() {
-            // TODO(port): verify `OSLog::init()` signature; Zig returns `?*OSLog`
             if let Some(log) = OSLog::init() {
                 OS_LOG.store(log.as_ptr(), Ordering::Release);
             }

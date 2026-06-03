@@ -10,7 +10,6 @@ use crate::node::node_zlib_binding::Error;
 // `#[bun_jsc::host_fn]`s; field types (`Strong`, `WorkPoolTask`) are not yet
 // exported with the expected shapes. The pure-FFI `Context` (zlib state
 // machine) is hoisted below as the non-JSC body.
-// TODO(port): un-gate once bun_jsc Strong/JsClass + bun_threading::WorkPoolTask land.
 
 mod _impl {
     use super::*;

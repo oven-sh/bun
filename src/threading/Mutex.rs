@@ -132,7 +132,6 @@ impl Drop for MutexGuard {
 
 // Zig: `pub const deinit = void;` — no-op; Drop is implicit and there is nothing to free.
 
-// TODO(port): Zig also gates on `!builtin.single_threaded`; Rust has no direct equivalent.
 #[cfg(debug_assertions)]
 type Impl = DebugImpl;
 #[cfg(not(debug_assertions))]

@@ -300,8 +300,6 @@ impl NetworkTask {
 
         // SAFETY: `real` is set by the HTTP thread before invoking the
         // completion callback; Zig unwraps with `.?`.
-        // TODO(port): Zig does a struct-value copy `real.* = async_http.*` —
-        // requires `AsyncHTTP: Clone` or a bitwise copy helper.
         unsafe {
             let real = async_http.real.expect("unreachable").as_ptr();
             ptr::write(real, ptr::read(async_http));

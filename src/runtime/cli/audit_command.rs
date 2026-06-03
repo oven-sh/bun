@@ -847,7 +847,6 @@ fn print_enhanced_audit_report(
                     dependents: paths,
                 };
             }
-            // TODO(port): Zig pushes a copy of the (POD) struct; cloned here.
             result.value_ptr.vulnerabilities.push(VulnerabilityInfo {
                 severity: vulnerability.severity.clone(),
                 title: vulnerability.title.clone(),
@@ -902,7 +901,6 @@ fn print_enhanced_audit_report(
                             }
                             reversed_items.reverse();
 
-                            // TODO(port): std.mem.join → manual join into Vec<u8>.
                             let mut vuln_pkg_path: Vec<u8> = Vec::new();
                             for (i, item) in reversed_items.iter().enumerate() {
                                 if i > 0 {

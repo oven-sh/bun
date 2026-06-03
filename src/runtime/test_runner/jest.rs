@@ -117,7 +117,6 @@ pub struct TestRunner<'a> {
     pub only: bool,
     pub run_todo: bool,
     pub concurrent: bool,
-    // TODO(port): std.Random has no direct Rust equivalent; using xoshiro256++ handle.
     pub randomize: Option<bun_core::rand::DefaultPrng>,
     /// The --seed value when --randomize is on. Used to derive a per-file
     /// shuffle PRNG from hash(seed, file_path) so within-file test order is
@@ -130,7 +129,6 @@ pub struct TestRunner<'a> {
     pub max_concurrency: u32,
 
     // PORT NOTE: `std.mem.Allocator param` field deleted — global mimalloc.
-    // TODO(port): `drainer` had `= undefined` default in Zig
     pub drainer: jsc::AnyTask::AnyTask,
 
     pub has_pending_tests: bool,
@@ -208,7 +206,6 @@ impl<'a> TestRunner<'a> {
             return false;
         }
         let file_path = self.files.items_source()[file_id as usize].path.text();
-        // TODO(port): MultiArrayList column accessor name (`items(.source)` in Zig)
 
         // Check if the file path matches any of the glob patterns
         for pattern in glob_patterns {

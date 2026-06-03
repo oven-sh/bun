@@ -578,7 +578,6 @@ fn sum_bufs_len(bufs: &[PlatformIOVec]) -> usize {
 
 pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
     let uv_fd = fd.uv();
-    // TODO(port): comptime bun.assert(bun.PlatformIOVec == uv.uv_buf_t) — static type-eq assert
     const _: () = assert!(
         core::mem::size_of::<PlatformIOVec>() == core::mem::size_of::<uv::uv_buf_t>()
             && core::mem::align_of::<PlatformIOVec>() == core::mem::align_of::<uv::uv_buf_t>()
@@ -652,7 +651,6 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
 
 pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usize> {
     let uv_fd = fd.uv();
-    // TODO(port): comptime bun.assert(bun.PlatformIOVec == uv.uv_buf_t) — static type-eq assert
     const _: () = assert!(
         core::mem::size_of::<PlatformIOVec>() == core::mem::size_of::<uv::uv_buf_t>()
             && core::mem::align_of::<PlatformIOVec>() == core::mem::align_of::<uv::uv_buf_t>()

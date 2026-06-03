@@ -72,15 +72,10 @@ const DBG: bool = cfg!(debug_assertions);
 
 /// In Zig: `@import("root") == @This()` — true when this module IS the binary root
 /// (the standalone `bun_shim_impl.exe`), false when compiled into bun.exe.
-// TODO(port): this should be a cargo feature (`shim_standalone`) set only when building
-// the standalone shim binary; the `bun` crate is unavailable in standalone builds.
 const IS_STANDALONE: bool = cfg!(feature = "shim_standalone");
 
 #[cfg(not(feature = "shim_standalone"))]
 bun_output::declare_scope!(bun_shim_impl, hidden);
-
-// TODO(port): Zig `callmod_inline` selects `.always_inline` in standalone, `bun.callmod_inline`
-// otherwise. Rust has no per-callsite call modifier; rely on `#[inline(always)]` on `w::teb()`.
 
 /// A copy of all ntdll declarations this program uses
 mod nt {
@@ -440,11 +435,6 @@ pub(crate) enum LauncherMode {
 }
 
 impl LauncherMode {
-    // TODO(port): Zig's `RetType`/`FailRetType` returned different types per variant
-    // (`noreturn`/`void`/`ReadWithoutLaunchResult`). Stable Rust const-generics cannot
-    // associate a return type with a const value. We unify on `LauncherRet` below; the
-    // public wrappers (`try_startup_from_bun_js`, `read_without_launch`, `main`) narrow it.
-
     // PERF(port): comptime mode/reason demoted to runtime args — profile if it shows up on a hot path.
     #[cold]
     #[inline(never)]
@@ -470,9 +460,6 @@ enum LauncherRet {
 
 /// Abstraction over `()` (standalone), `FromBunRunContext`, and `FromBunShellContext`
 /// for the Zig `bun_ctx: anytype` parameter.
-// TODO(port): this trait approximates Zig comptime duck-typing; methods that don't apply
-// to a given impl call `unreachable!()` (matching the Zig — those code paths are gated by
-// `is_standalone`/`mode` checks that prevent the call at runtime).
 trait BunCtx {
     fn base_path(&self) -> *mut u16;
     fn base_path_len(&self) -> usize;

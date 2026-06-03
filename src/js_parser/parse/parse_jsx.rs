@@ -347,7 +347,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let end_tag = JSXTag::parse(p)?;
 
                     if end_tag.name != tag.name {
-                        // TODO(port): arena param dropped from Zig signature.
                         p.log().add_range_error_fmt_with_note(
                             Some(p.source),
                             end_tag.range,

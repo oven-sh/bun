@@ -2426,10 +2426,6 @@ pub mod cache {
             }
         }
 
-        // TODO(port): Zig `Fs.deinit` references `c.entries` which is not a field on `Fs` —
-        // dead code (Zig lazy compilation never instantiated it). No Drop impl needed beyond
-        // the auto-drop of `shared_buffer` / `macro_shared_buffer`.
-
         /// Port of `Fs.readFileShared` (cache.zig:87) — read `path` into the
         /// caller's `shared` buffer (HMR / dev-server path).
         pub fn read_file_shared(

@@ -3002,11 +3002,6 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :553-558 — watcher path uses ref-counted source.
-                // TODO(b2-blocked): `VirtualMachine::ref_counted_resolved_source`.
-                // Spec RETURNS the ref-counted `ResolvedSource` here (with
-                // `is_commonjs_module`/`module_info` patched on). Gated so the
-                // fall-through to the non-watcher tail below is an explicit,
-                // intentional degradation rather than a silent live divergence.
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 if unsafe { &*jsc_vm }.is_watcher_enabled() {
                     // SAFETY: `extra.source_code_printer` is non-null per

@@ -545,7 +545,6 @@ pub trait WebSocketHandler: Sized + 'static {
 /// Server type that handles the HTTP→WS upgrade. Replaces Zig's
 /// `comptime ServerType` parameter to `WebSocketBehavior.Wrap`.
 pub trait WebSocketUpgradeServer<const SSL: bool>: Sized + 'static {
-    // TODO(port): `*NewApp(is_ssl).Response` — exact Rust type pending App.rs port.
     /// # Safety
     /// `this` is the raw user-data pointer passed to `uws_ws()` at registration
     /// time, cast to `*mut Self`. **Its actual pointee type is discriminated by

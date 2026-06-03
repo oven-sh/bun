@@ -416,11 +416,6 @@ pub use bun_core::S as s;
 // getErrno
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig `getErrno(rc: anytype)` dispatches on `@TypeOf(rc)` at comptime:
-//   - if NTSTATUS → translateNTStatusToErrno(rc)
-//   - otherwise   → ignore rc, read Win32 GetLastError() then WSAGetLastError()
-// Rust has no specialization on stable; callers must pick the right overload.
-
 /// `getErrno(rc)` for the NTSTATUS case.
 #[allow(dead_code)]
 pub(crate) fn get_errno_ntstatus(rc: NTSTATUS) -> E {
@@ -704,11 +699,6 @@ impl SystemErrno {
     pub fn to_error(self) -> bun_core::Error {
         bun_core::Error::from_errno(self as u16 as i32)
     }
-
-    // TODO(port): Zig `init(code: anytype)` is comptime type-dispatch over u16 / c_int /
-    // Win32Error / std.os.windows.Win32Error / signed integers. Stable Rust has no
-    // specialization, so this is split into typed entry points. Callers that passed
-    // arbitrary integer types should pick `init_c_int`.
 
     /// `init(code: u16)` — Win32/WSA error codes and negated-uv codes encoded as u16.
     pub fn init_u16(code: u16) -> Option<SystemErrno> {

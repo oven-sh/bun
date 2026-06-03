@@ -355,7 +355,6 @@ impl Parser<'_> {
             return false;
         }
         pos += u32::try_from(tag.len()).expect("int cast");
-        // TODO(port): if OFF != u32, adjust the cast above.
         if pos >= self.size {
             return true;
         }

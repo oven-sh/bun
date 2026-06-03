@@ -153,7 +153,6 @@ pub use crate::linker_context::prepare_css_asts_for_chunk::{
 pub use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
 pub use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
 
-// TODO(port): DeferredBatchTask, ParseTask re-exports — Zig re-exports from bundle_v2
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 
@@ -439,12 +438,6 @@ pub mod EntryPoint {
 use crate::bundled_ast::Flags as AstFlags;
 use crate::generic_path_with_pretty_initialized;
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
-
-// TODO(port): method bodies depend on `LinkerGraph` SoA accessors
-// (`graph.files.items_*()`, `graph.ast.items_*()`, `graph.meta.items_*()`),
-// `crate::thread_pool::Worker`, `generic_path_with_pretty_initialized`, and the gated
-// `linker_context/` submodules. The struct + LinkerOptions + SourceMapData
-// above are real; this impl block un-gates with `LinkerGraph.rs`.
 
 impl<'a> LinkerContext<'a> {
     pub fn arena(&self) -> &Bump {
@@ -1777,12 +1770,6 @@ pub(crate) fn crash_guard_for_part_range(
 ) -> bun_crash_handler::ActionGuard {
     bun_crash_handler::scoped_action(bundle_generate_chunk_action(c, chunk, part_range))
 }
-
-// TODO(port): scan/tree-shake/link method bodies. These reach into
-// `LinkerGraph` SoA fields (`graph.files`, `graph.meta`, `graph.ast`), the
-// gated `linker_context/scanImportsAndExports.rs`, `bun_resolve_builtins`,
-// and `css::css_modules`. The bodies are real ports of `LinkerContext.zig`
-// and un-gate together with `LinkerGraph.rs`.
 
 impl<'a> LinkerContext<'a> {
     pub fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &Bump) -> u64 {

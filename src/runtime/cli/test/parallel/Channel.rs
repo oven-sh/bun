@@ -480,8 +480,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 break;
             }
             let Ok(kind) = frame::Kind::try_from(self.r#in[head + 4]) else {
-                // TODO(port): Zig used std.meta.intToEnum; ensure Kind impls
-                // TryFrom<u8> in frame.rs.
                 head += 5usize + len as usize;
                 continue;
             };

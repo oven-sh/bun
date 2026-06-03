@@ -6,9 +6,7 @@
 // ════════════════════════════════════════════════════════════════════════════
 // Loop / Poll / Waker / Closer / FilePoll-vtable / heap / pipes / MaxBuf /
 // openForWriting / PipeReader / PipeWriter compile on POSIX. `source` and the
-// Windows*Reader/Writer impls are `#[cfg(windows)]`-gated (libuv-only). See
-// TODO(port) notes for remaining shims (`bun_sys::syslog`, `bun_sys::Error::oom`,
-// `bun_core::debug_warn`).
+// Windows*Reader/Writer impls are `#[cfg(windows)]`-gated (libuv-only).
 // ════════════════════════════════════════════════════════════════════════════
 
 #![allow(unsafe_op_in_unsafe_fn)]
@@ -708,8 +706,6 @@ impl IoRequestLoop {
                 panic!("Failed to create epoll file descriptor");
             }
             loop_.epoll_fd = Fd::from_native(raw);
-            // TODO(port): Zig used `std.posix.epoll_create1` which already error-checks; here we
-            // only panic on negative, matching semantics.
 
             {
                 // SAFETY: all-zero is a valid epoll_event (POD).
@@ -1273,8 +1269,6 @@ macro_rules! intrusive_uv_fs {
 
 impl Default for Request {
     fn default() -> Self {
-        // TODO(port): Zig had `next: ?*Request = null, scheduled: bool = false` defaults
-        // but `callback` has no default; callers must overwrite `callback`.
         Self {
             next: bun_threading::Link::new(),
             callback: |_| unreachable!(),

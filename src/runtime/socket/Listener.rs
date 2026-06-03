@@ -190,7 +190,6 @@ impl Listener {
 
         // Only deinit handlers if there's an error; otherwise we put them in a `Listener` and
         // need them to stay alive.
-        // TODO(port): errdefer handlers.deinit() — scopeguard captures &mut into socket_config; reshaped below.
 
         let port = socket_config.port;
         let ssl_enabled = socket_config.ssl.is_some();

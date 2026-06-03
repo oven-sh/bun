@@ -229,8 +229,6 @@ pub struct Argon2Params {
 }
 
 impl Argon2Params {
-    // TODO(port): pwhash.argon2.Params.interactive_2id.{m,t} — hard-code Zig stdlib's
-    // values here once the pwhash shim is settled.
     pub(crate) const DEFAULT: Argon2Params = Argon2Params {
         memory_cost: pwhash::argon2::Params::INTERACTIVE_2ID_M,
         time_cost: pwhash::argon2::Params::INTERACTIVE_2ID_T,

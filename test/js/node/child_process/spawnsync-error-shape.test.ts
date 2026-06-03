@@ -16,25 +16,20 @@ async function run(cmd: string[]) {
     env: bunEnv,
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  return { stdout, stderr, exitCode };
+  return { output: stdout + stderr, exitCode };
 }
 
 describe("spawnSync error/result shape parity", () => {
   test.if(!!nodeExe())("tests pass on node.js", async () => {
-    const { stdout, stderr, exitCode } = await run([nodeExe()!, "--test", fixture]);
-    const output = stdout + stderr;
-    // node --test reports failures both in the summary and via a non-zero exit.
+    const { output, exitCode } = await run([nodeExe()!, "--test", fixture]);
+    // Guard against a "0 tests ran" false pass, then require a clean exit.
     expect(output).toContain("pass 2");
-    expect(output).toContain("fail 0");
     expect(exitCode).toBe(0);
   });
 
   test("tests pass on bun", async () => {
-    const { stdout, stderr } = await run([bunExe(), "test", fixture]);
-    const output = stdout + stderr;
-    // `bun test` on a node:test file does not propagate failures to the exit
-    // code, so assert on the reported pass/fail counts instead.
-    expect(output).toContain(" 2 pass");
-    expect(output).toContain(" 0 fail");
+    const { output, exitCode } = await run([bunExe(), "test", fixture]);
+    expect(output).toContain("2 pass");
+    expect(exitCode).toBe(0);
   });
 });

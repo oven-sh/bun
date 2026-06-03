@@ -421,12 +421,25 @@ pub mod Runtime {
                 self.standard_decorators,
                 self.lower_using,
                 self.repl_mode,
-                // note that we do not include .inject_jest_globals, as we bail out of the cache entirely if this is true
             ];
 
             // `[bool; N]` is N bytes of 0x00/0x01; matches Zig `std.mem.asBytes(&bools)`.
             // `bool: NoUninit`, `u8: AnyBitPattern` → `cast_slice` is statically sound.
             hasher.update(bytemuck::cast_slice::<bool, u8>(&bools));
+
+            // `inject_jest_globals` is hashed separately (not in the bools array)
+            // so plain-run hashes stay byte-identical and existing cache entries
+            // remain valid. `bun test` sets it for every module it loads, and
+            // bare `describe`/`test`/`expect` only work because the parser
+            // injects an import from "bun:test" — so an entry transpiled by a
+            // plain `bun <file>` run (no injection) must never be replayed by
+            // the test runner, or the file silently registers zero tests.
+            // Parses where the injection actually fires still never write an
+            // entry at all (`input_hash` is cleared after injecting, see
+            // parse_entry.rs).
+            if self.inject_jest_globals {
+                hasher.update(b"jest");
+            }
 
             // Hash --feature flags. These directly affect transpiled output via
             // feature("NAME") replacement in visitExpr.zig. When empty, we add

@@ -351,6 +351,7 @@ pub mod bun_object {
         BunObject_callback_jest => Jest::call,
         BunObject_callback_listen => super::static_adapters::listener_listen,
         BunObject_callback_mmap => super::mmap_file,
+        BunObject_callback_ms => super::ms,
         BunObject_callback_nanoseconds => super::nanoseconds,
         BunObject_callback_openInEditor => super::open_in_editor,
         BunObject_callback_registerMacro => super::register_macro,
@@ -1556,6 +1557,73 @@ pub(crate) fn index_of_line(
 }
 
 pub use crate::crypto as crypto_mod;
+
+/// `Bun.ms(value, options?)` — a drop-in for the npm `ms` package.
+///
+/// - `Bun.ms("2 days")` → `172800000` (parse a duration string to ms).
+/// - `Bun.ms(60000)` → `"1m"` (format ms to a compact string).
+/// - `Bun.ms(60000, { long: true })` → `"1 minute"` (verbose form).
+#[bun_jsc::host_fn]
+pub(crate) fn ms(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+    let arguments = callframe.arguments_old::<2>();
+    let args = arguments.slice();
+
+    let Some(&value) = args.first() else {
+        return Err(global_this.throw_type_error(format_args!(
+            "ms() expects a string like \"2 days\" or a number of milliseconds"
+        )));
+    };
+
+    // String input → parse to milliseconds. Use `is_string_literal` (primitive
+    // `string` only) rather than `is_string`, because the `ms` package checks
+    // `typeof val === "string"` — a boxed `new String(...)` is `"object"` and
+    // takes the throw path below.
+    if value.is_string_literal() {
+        let slice = value.to_slice(global_this)?;
+        // The `ms` package only calls `parse()` for non-empty strings; an empty
+        // string falls through to its `throw`.
+        if slice.slice().is_empty() {
+            return Err(global_this.throw_type_error(format_args!(
+                "ms(): value must be a non-empty string or a finite number"
+            )));
+        }
+        // Matching `ms`: a non-empty string that doesn't parse returns
+        // `undefined` (its regex simply doesn't match), rather than throwing.
+        match bun_core::parse_ms(slice.slice()) {
+            Some(ms) => Ok(JSValue::js_number(ms)),
+            None => Ok(JSValue::UNDEFINED),
+        }
+    } else if value.is_number() {
+        // Numeric input → format to a human-readable string. The `ms` package
+        // does a strict `typeof val === 'number' && isFinite(val)` check (no
+        // coercion), so only real finite numbers reach the formatter.
+        let num = value.as_number();
+        if !num.is_finite() {
+            return Err(global_this.throw_type_error(format_args!(
+                "ms(): value must be a finite number of milliseconds"
+            )));
+        }
+
+        let mut long = false;
+        if let Some(&opts) = args.get(1) {
+            if opts.is_object() {
+                if let Some(long_val) = opts.get_truthy(global_this, "long")? {
+                    long = long_val.to_boolean();
+                }
+            }
+        }
+
+        let mut out = String::new();
+        bun_core::format_ms(num, long, &mut out);
+        bun_string_jsc::create_utf8_for_js(global_this, out.as_bytes())
+    } else {
+        // Matches the `ms` package, which throws on anything that is neither a
+        // non-empty string nor a finite number.
+        Err(global_this.throw_type_error(format_args!(
+            "ms(): value must be a string like \"2 days\" or a number of milliseconds"
+        )))
+    }
+}
 
 #[bun_jsc::host_fn]
 pub(crate) fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {

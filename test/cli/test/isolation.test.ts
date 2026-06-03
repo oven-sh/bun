@@ -563,7 +563,10 @@ test.concurrent("--isolate: cached SourceProvider's module_info rebuilds correct
   expect(stderr).toContain("3 pass");
   expect(stderr).toContain("0 fail");
   expect(exitCode).toBe(0);
-});
+  // Transpiling three files against a 2000-export module and spawning a child
+  // takes well over the 5s default under ASAN (and runs concurrently with the
+  // other heavy cases in this file); give it explicit headroom.
+}, 30_000);
 
 test.concurrent(
   "--isolate: cached module_info handles `import * as ns; export { ns }` as a Namespace export",

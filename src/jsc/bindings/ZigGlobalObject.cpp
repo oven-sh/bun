@@ -633,9 +633,33 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // new global and adopt the refs before unprotecting the old one.
     globalObject->adoptNapiEnvsForTestIsolation(oldGlobal);
 
-    // Drop the permanent root on the previous global so its module registry,
-    // require.cache, and user objects become collectable. JSC's CodeCache and
-    // Bun's RuntimeTranspilerCache are VM/process scoped and survive.
+    // Drop the module registry and require.cache on the outgoing global before
+    // unprotecting it. Every value stored in a module top-level binding is
+    // rooted through these maps (the module record holds its environment, which
+    // holds the bindings), so they survive a collection as long as the global
+    // is reachable at all — and the global can stay transiently reachable across
+    // the swap (e.g. a ScriptExecutionContext map entry, a pending native task,
+    // or a not-yet-swept cell). Clearing the maps here severs
+    // moduleLoader -> record -> environment -> bindings so the per-file module
+    // graph is reclaimed even while the global shell lingers. Without this, the
+    // graph accumulates linearly with the number of test files and OOMs large
+    // suites. Mirrors GlobalObject::reload() and Zig__GlobalObject__destructOnExit().
+    {
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto* moduleLoader = oldGlobal->moduleLoader();
+        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
+        // under cellLock(); take the same lock so clearAll() can't race it.
+        {
+            WTF::Locker locker { moduleLoader->cellLock() };
+            moduleLoader->clearAll();
+        }
+        oldGlobal->requireMap()->clear(oldGlobal);
+        scope.assertNoException();
+    }
+
+    // Drop the permanent root on the previous global so the global shell itself
+    // (and anything else it still roots) becomes collectable. JSC's CodeCache
+    // and Bun's RuntimeTranspilerCache are VM/process scoped and survive.
     oldGlobal->isThreadLocalDefaultGlobalObject = false;
     JSC::gcUnprotect(oldGlobal);
 

@@ -1250,7 +1250,6 @@ pub enum Flags {
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
-#[allow(dead_code)]
 pub type FlagsStruct = FlagsSet;
 
 impl Flags {

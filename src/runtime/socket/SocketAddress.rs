@@ -1043,15 +1043,9 @@ pub mod inet {
     #![allow(non_camel_case_types)]
     use bun_sys::windows::ws2_32 as ws2;
     // PORT NOTE: `bun_windows_sys::ws2_32` does not currently surface
-    // `IN4ADDR_LOOPBACK` / `INET6_ADDRSTRLEN` / `ADDRESS_FAMILY` / `USHORT`;
-    // mirror the `ws2ipdef.h` / `ws2def.h` values locally so the Windows
-    // build resolves without widening the leaf crate.
-    /// `ws2ipdef.h`: `#define IN4ADDR_LOOPBACK 0x0100007f` — the raw
-    /// **network-order** `s_addr` value for 127.0.0.1. Spelled via
-    /// `from_ne_bytes` so the wire bytes `[127,0,0,1]` are explicit (yields
-    /// `0x0100_007f` on little-endian Windows, matching the header literal).
-    #[allow(dead_code)]
-    pub(crate) const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
+    // `INET6_ADDRSTRLEN` / `ADDRESS_FAMILY` / `USHORT`; mirror the
+    // `ws2ipdef.h` / `ws2def.h` values locally so the Windows build
+    // resolves without widening the leaf crate.
     /// `ws2ipdef.h`: `INET6_ADDRSTRLEN == 65` on Windows (vs 46 on POSIX).
     pub use bun_sys::posix::INET6_ADDRSTRLEN;
     pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
@@ -1064,7 +1058,6 @@ pub mod inet {
 #[cfg(not(windows))]
 pub mod inet {
     #![allow(non_camel_case_types)]
-    pub const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
     pub use bun_sys::posix::INET6_ADDRSTRLEN;
     // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
     pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];

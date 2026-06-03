@@ -336,7 +336,6 @@ impl E {
 /// bun_errno::posix::*` unconditionally. Windows has no real `mode_t`/kernel
 /// `errno`, so this is the minimal subset higher tiers reach for.
 pub mod posix {
-    use super::SystemErrno;
     pub type mode_t = i32;
 
     /// Zig: `std.posix.E` — alias to the platform errno enum so cross-platform
@@ -345,45 +344,6 @@ pub mod posix {
     /// Zig: `std.posix.S` — file-mode bits. Re-export the canonical module so
     /// `posix::S::IFDIR` / `posix::S::ISREG(m)` resolve identically to POSIX.
     pub use super::s as S;
-
-    #[allow(dead_code)]
-    pub(crate) const ACCES: i32 = SystemErrno::EACCES as i32;
-    #[allow(dead_code)]
-    pub(crate) const AGAIN: i32 = SystemErrno::EAGAIN as i32;
-    #[allow(dead_code)]
-    pub(crate) const BADF: i32 = SystemErrno::EBADF as i32;
-    #[allow(dead_code)]
-    pub(crate) const BUSY: i32 = SystemErrno::EBUSY as i32;
-    #[allow(dead_code)]
-    pub(crate) const EXIST: i32 = SystemErrno::EEXIST as i32;
-    #[allow(dead_code)]
-    pub(crate) const INTR: i32 = SystemErrno::EINTR as i32;
-    #[allow(dead_code)]
-    pub(crate) const INVAL: i32 = SystemErrno::EINVAL as i32;
-    #[allow(dead_code)]
-    pub(crate) const ISDIR: i32 = SystemErrno::EISDIR as i32;
-    #[allow(dead_code)]
-    pub(crate) const MFILE: i32 = SystemErrno::EMFILE as i32;
-    #[allow(dead_code)]
-    pub(crate) const NAMETOOLONG: i32 = SystemErrno::ENAMETOOLONG as i32;
-    #[allow(dead_code)]
-    pub(crate) const NOENT: i32 = SystemErrno::ENOENT as i32;
-    #[allow(dead_code)]
-    pub(crate) const NOMEM: i32 = SystemErrno::ENOMEM as i32;
-    #[allow(dead_code)]
-    pub(crate) const NOSPC: i32 = SystemErrno::ENOSPC as i32;
-    #[allow(dead_code)]
-    pub(crate) const NOSYS: i32 = SystemErrno::ENOSYS as i32;
-    #[allow(dead_code)]
-    pub(crate) const NOTDIR: i32 = SystemErrno::ENOTDIR as i32;
-    #[allow(dead_code)]
-    pub(crate) const NOTSUP: i32 = SystemErrno::ENOTSUP as i32;
-    #[allow(dead_code)]
-    pub(crate) const PERM: i32 = SystemErrno::EPERM as i32;
-    #[allow(dead_code)]
-    pub(crate) const PIPE: i32 = SystemErrno::EPIPE as i32;
-    #[allow(dead_code)]
-    pub(crate) const XDEV: i32 = SystemErrno::EXDEV as i32;
 }
 
 /// Uppercase re-export so `bun_errno::S::IFDIR` compiles cross-platform.
@@ -415,12 +375,6 @@ pub use bun_core::S as s;
 // ──────────────────────────────────────────────────────────────────────────
 // getErrno
 // ──────────────────────────────────────────────────────────────────────────
-
-/// `getErrno(rc)` for the NTSTATUS case.
-#[allow(dead_code)]
-pub(crate) fn get_errno_ntstatus(rc: NTSTATUS) -> E {
-    windows::translate_ntstatus_to_errno(rc)
-}
 
 /// `getErrno(rc)` for every non-NTSTATUS case (rc is ignored, mirrors Zig).
 pub fn get_errno<T>(_rc: T) -> E {

@@ -1204,7 +1204,6 @@ impl ValueExt for Value {
 // Free functions: parse
 // ──────────────────────────────────────────────────────────────────────────
 
-#[allow(dead_code)]
 pub fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u8]> {
     let mut i: usize = 0;
     if dep.len() > 2 && dep[i] == b'/' {

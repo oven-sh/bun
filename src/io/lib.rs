@@ -2037,7 +2037,6 @@ pub mod waker {
         /// Stand-in until `init()` runs (e.g. a `BundleThread` allocated before
         /// its real waker is created). `Fd::INVALID` is sentinel-only; never
         /// poll/wake through it.
-        #[allow(dead_code)]
         pub const fn placeholder() -> Self {
             Self { fd: Fd::INVALID }
         }
@@ -2062,7 +2061,6 @@ pub mod waker {
             Self { fd }
         }
 
-        #[allow(dead_code)]
         pub fn wait(&self) {
             // eventfd reads are always exactly 8 bytes (u64 counter). Use a u64
             // directly instead of type-punning through usize, which would be UB
@@ -2205,12 +2203,10 @@ pub mod waker {
         /// `wake()`/`wait()`/`uv_loop()`. Mirrors `LinuxWaker::placeholder` /
         /// `KEventWaker::placeholder` so cross-platform call sites don't fall
         /// back to `mem::zeroed()` (UB for the niche-optimised `Option<BackRef>`).
-        #[allow(dead_code)]
         pub const fn placeholder() -> Self {
             Self { loop_: None }
         }
 
-        #[allow(dead_code)]
         pub fn init() -> Result<Self, bun_core::Error> {
             Ok(Self {
                 loop_: Some(bun_ptr::BackRef::from(
@@ -2228,7 +2224,6 @@ pub mod waker {
             self.loop_.expect("WindowsWaker used before init()")
         }
 
-        #[allow(dead_code)]
         pub fn wait(&self) {
             // Do NOT route through `WindowsLoop::wait(&mut self)`: that would
             // materialize a `&mut WindowsLoop` over the process-global
@@ -2261,7 +2256,6 @@ pub mod waker {
         /// block at the call site. Mirrors Zig's `waker.loop.uv_loop` field
         /// chain (BundleThread.zig:79).
         #[inline]
-        #[allow(dead_code)]
         pub fn uv_loop(&self) -> *mut bun_sys::windows::libuv::Loop {
             // `BackRef` deref is safe (process-lifetime singleton); `uv_loop`
             // is a `Copy` field set once by C `us_create_loop`.

@@ -97,8 +97,6 @@ pub mod sizes;
 pub mod source_provider;
 #[path = "SourceType.rs"]
 pub mod source_type;
-#[path = "static_export.rs"]
-pub mod static_export;
 #[path = "TextCodec.rs"]
 pub mod text_codec;
 #[path = "URLSearchParams.rs"]
@@ -559,8 +557,6 @@ pub mod codegen_mod;
 pub mod comptime_string_map_jsc;
 #[path = "ConcurrentPromiseTask.rs"]
 pub mod concurrent_promise_task;
-#[path = "config.rs"]
-pub mod config;
 #[path = "EventLoopHandle.rs"]
 pub mod event_loop_handle;
 #[path = "FFI.rs"]

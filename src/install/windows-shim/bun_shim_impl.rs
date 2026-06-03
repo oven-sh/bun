@@ -218,7 +218,6 @@ pub enum FailReason {
     NoDirname,
     CouldNotOpenShim,
     CouldNotReadShim,
-    #[allow(dead_code)]
     InvalidShimDataSize,
     ShimNotFound,
     CreateProcessFailed,
@@ -1586,7 +1585,6 @@ impl FromBunRunContext {
     /// View `base_path[0..base_path_len]` as a slice. Centralises the (ptr, len)
     /// → slice reconstruction so callers don't open-code `from_raw_parts`.
     #[inline]
-    #[allow(dead_code)]
     pub(crate) fn base_path_slice(&self) -> &[u16] {
         // SAFETY: caller of `try_startup_from_bun_js` (run_command.rs) sets
         // `base_path`/`base_path_len` from a live `[u16]` buffer it owns for
@@ -1640,7 +1638,6 @@ impl BunCtx for &FromBunRunContext {
 /// this returns void, to which the caller should still try invoking the exe directly. This
 /// is to handle version mismatches where bun.exe's decoder is too new than the .bunx file.
 #[cfg(not(feature = "shim_standalone"))]
-#[allow(dead_code)]
 pub fn try_startup_from_bun_js(context: FromBunRunContext) {
     debug_assert!(!context.base_path_slice().starts_with(&NT_OBJECT_PREFIX));
     const _: () = assert!(!IS_STANDALONE);
@@ -1716,9 +1713,7 @@ impl BunCtx for &FromBunShellContext {
 // negligible here and gives us safe matching.
 pub enum ReadWithoutLaunchResult {
     /// enum which has a predefined custom formatter
-    #[allow(dead_code)]
     Err(FailReason),
-    #[allow(dead_code)]
     CommandLine(*const u16, usize),
 }
 

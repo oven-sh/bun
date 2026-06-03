@@ -329,9 +329,9 @@ unsafe fn init_runtime_state(
     // validity-invariant UB, so write via `ptr::write` (NOT assignment — the
     // zeroed bytes are not a valid `Transpiler` to drop).
     //
-    // PORT NOTE: `configure_transform_options_for_bun_vm` lives in the
-    // ``-gated `bun_jsc::config` module; its body (3 field overwrites) is
-    // inlined below over the caller-supplied `opts.transform_options`.
+    // PORT NOTE: Zig's `configureTransformOptionsForBunVM` (jsc/config.zig)
+    // has its body (3 field overwrites) inlined below over the
+    // caller-supplied `opts.transform_options`.
     // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
     // `VirtualMachine::init` immediately before this hook fires.
     let log: *mut bun_ast::Log = unsafe { &*vm }

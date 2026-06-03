@@ -1949,19 +1949,14 @@ pub struct WindowsStreamingWriter<Parent: WindowsStreamingWriterParent> {
     pub parent: *mut Parent,
     pub is_done: bool,
     // we use only one write_req, any queued data in outgoing will be flushed after this ends
-    #[allow(dead_code)]
     pub write_req: uv::uv_write_t,
-    #[allow(dead_code)]
     pub write_buffer: uv::uv_buf_t,
 
     // queue any data that we want to write here
-    #[allow(dead_code)]
     pub outgoing: StreamBuffer,
     // libuv requires a stable ptr when doing async so we swap buffers
-    #[allow(dead_code)]
     pub current_payload: StreamBuffer,
     // we preserve the last write result for simplicity
-    #[allow(dead_code)]
     pub last_write_result: WriteResult,
     // some error happed? we will not report onClose only onError
     pub closed_without_reporting: bool,
@@ -2045,7 +2040,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// would alias the live `&mut self` under Stacked Borrows. All vtable
     /// dispatch goes through `Parent::method(ptr, ..)` which takes `*mut Self`.
     #[inline]
-    #[allow(dead_code)]
     fn parent(&self) -> *mut Parent {
         self.parent
     }
@@ -2065,7 +2059,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// `Parent::on_error(Self::r(this).parent(), err)` dispatch blocks in
     /// `on_write_complete` / `on_fs_write_complete` / `process_send` into one.
     #[inline(always)]
-    #[allow(dead_code)]
     fn r_on_error(this: *mut Self, err: sys::Error) {
         let parent = Self::r(this).parent;
         // SAFETY: type invariant — set-once parent backref outlives writer.
@@ -2076,7 +2069,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// invariant and laundered-receiver rationale. Collapses the two
     /// `Parent::on_write` arms in `on_write_complete` into one `unsafe`.
     #[inline(always)]
-    #[allow(dead_code)]
     fn r_on_write(this: *mut Self, written: usize, status: WriteStatus) {
         let parent = Self::r(this).parent;
         // SAFETY: type invariant — set-once parent backref outlives writer.
@@ -2090,7 +2082,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
     /// read order at each scopeguard site. Collapses the three
     /// `Parent::deref` blocks into one `unsafe`.
     #[inline(always)]
-    #[allow(dead_code)]
     fn r_deref(this: *mut Self) {
         let parent = Self::r(this).parent;
         // SAFETY: type invariant — set-once parent backref; ref taken in
@@ -2099,17 +2090,14 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         unsafe { Parent::deref(parent) }
     }
 
-    #[allow(dead_code)]
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>() + self.current_payload.memory_cost() + self.outgoing.memory_cost()
     }
 
-    #[allow(dead_code)]
     pub fn has_pending_data(&self) -> bool {
         self.outgoing.is_not_empty() || self.current_payload.is_not_empty()
     }
 
-    #[allow(dead_code)]
     fn on_write_complete(&mut self, status: uv::ReturnCode) {
         // PORT_NOTES_PLAN R-2: `&mut self` carries LLVM `noalias`, but
         // `Parent::on_write` (e.g. `FileSink::on_write`) re-enters JS via
@@ -2401,7 +2389,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         }
     }
 
-    #[allow(dead_code)]
     fn write_internal_u8(&mut self, buffer: &[u8], kind: WriteKind) -> WriteResult {
         if self.is_done {
             return WriteResult::Done(0);
@@ -2458,7 +2445,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.last_write_result.clone()
     }
 
-    #[allow(dead_code)]
     fn write_internal_u16(&mut self, buffer: &[u16]) -> WriteResult {
         if self.is_done {
             return WriteResult::Done(0);
@@ -2514,22 +2500,18 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.last_write_result.clone()
     }
 
-    #[allow(dead_code)]
     pub fn write_utf16(&mut self, buf: &[u16]) -> WriteResult {
         self.write_internal_u16(buf)
     }
 
-    #[allow(dead_code)]
     pub fn write_latin1(&mut self, buffer: &[u8]) -> WriteResult {
         self.write_internal_u8(buffer, WriteKind::Latin1)
     }
 
-    #[allow(dead_code)]
     pub fn write(&mut self, buffer: &[u8]) -> WriteResult {
         self.write_internal_u8(buffer, WriteKind::Bytes)
     }
 
-    #[allow(dead_code)]
     pub fn flush(&mut self) -> WriteResult {
         if self.is_done {
             return WriteResult::Done(0);
@@ -2542,7 +2524,6 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
         self.last_write_result.clone()
     }
 
-    #[allow(dead_code)]
     pub fn end(&mut self) {
         if self.is_done {
             return;

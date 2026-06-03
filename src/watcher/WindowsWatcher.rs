@@ -17,11 +17,7 @@ bun_core::declare_scope!(watcher, visible);
 
 pub(crate) type Platform = WindowsWatcher;
 
-#[allow(dead_code)]
-pub(crate) type EventListIndex = core::ffi::c_int;
-
 pub struct WindowsWatcher {
-    #[allow(dead_code)]
     pub mutex: Mutex,
     pub iocp: HANDLE,
     pub watcher: DirWatcher,
@@ -401,8 +397,6 @@ impl WindowsWatcher {
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum Timeout {
     Infinite = w::INFINITE,
-    #[allow(dead_code)]
-    Minimal = 1,
     None = 0,
 }
 

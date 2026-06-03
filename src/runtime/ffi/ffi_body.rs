@@ -2566,7 +2566,6 @@ unsafe extern "C" {
 pub enum Step {
     Pending,
     Compiled(Compiled),
-    #[allow(dead_code)]
     Failed {
         msg: Box<[u8]>,
         allocated: bool,
@@ -2579,7 +2578,6 @@ pub struct Compiled {
     pub js_function: JSValue,
     // Zig: `?*anyopaque` — opaque storage, never dereferenced. NonNull avoids
     // a &T → *mut T cast at the assignment site in compile_callback().
-    #[allow(dead_code)]
     pub js_context: Option<NonNull<JSGlobalObject>>,
     pub ffi_callback_function_wrapper: Option<NonNull<c_void>>,
 }

@@ -4,11 +4,9 @@
 use core::cell::Cell;
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use std::sync::atomic::AtomicU32;
 
 use bun_ptr::{RefCount, RefPtr};
 
-use bun_io::{FilePoll, KeepAlive};
 use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPromise, JSValue, JsCell, JsRef, JsResult,
     VirtualMachine,
@@ -304,26 +302,6 @@ bitflags::bitflags! {
         /// by the caller). Owned terminals are closed when the subprocess exits
         /// so the exit callback fires; borrowed terminals are left open for reuse.
         const OWNS_TERMINAL                = 1 << 6;
-    }
-}
-
-// TODO(port): Poll appears unreferenced (dead code per LIFETIMES.tsv). Porting for parity.
-pub enum Poll {
-    PollRef(Option<NonNull<FilePoll>>), // TODO(port): lifetime
-    WaitThread(WaitThreadPoll),
-}
-
-pub struct WaitThreadPoll {
-    pub ref_count: AtomicU32,
-    pub poll_ref: KeepAlive,
-}
-
-impl Default for WaitThreadPoll {
-    fn default() -> Self {
-        Self {
-            ref_count: AtomicU32::new(0),
-            poll_ref: KeepAlive::default(),
-        }
     }
 }
 

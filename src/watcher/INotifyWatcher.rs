@@ -184,13 +184,6 @@ impl INotifyWatcher {
         result
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn unwatch(&mut self, wd: EventListIndex) {
-        debug_assert!(self.loaded);
-        let _ = self.watch_count.fetch_sub(1, Ordering::Release);
-        let _ = bun_sys::linux::inotify_rm_watch(self.fd.native(), wd);
-    }
-
     // PORT NOTE: kept as in-place &mut self init (not `-> Result<Self, _>`) because
     // INotifyWatcher is embedded as `Watcher.platform` with field defaults already set.
     pub(crate) fn init(&mut self, _root: &[u8]) -> Result<(), bun_core::Error> {

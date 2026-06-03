@@ -86,6 +86,8 @@ impl Options {
         let mut maybe_package_name: Option<&'static [u8]> = None;
         let mut has_version = false; //  --version
         let mut has_revision = false; // --revision
+        let mut force_bun = false; // --bun / -b
+        let mut force_no_bun = false; // --no-bun
         let mut i: usize = 0;
 
         // SAFETY: `opts` is only ever returned when a package name is found, otherwise the process exits.
@@ -114,8 +116,16 @@ impl Options {
                     opts.verbose_install = true;
                 } else if positional == b"--silent" {
                     opts.silent_install = true;
-                } else if positional == b"--bun" || positional == b"-b" {
-                    ctx.debug.run_in_bun = true;
+                } else if positional == b"--bun" || positional == b"-b" || positional == b"--bun=true" {
+                    force_bun = true;
+                } else if positional == b"--no-bun" || positional == b"--bun=false" {
+                    force_no_bun = true;
+                } else if positional.starts_with(b"--bun=") {
+                    Output::err_generic(
+                        "Invalid value for --bun: expected `true` or `false`, got `{}`",
+                        format_args!("{}", BStr::new(&positional[b"--bun=".len()..])),
+                    );
+                    Global::exit(1);
                 } else if positional == b"--no-install" {
                     opts.no_install = true;
                 } else if positional == b"--package" || positional == b"-p" {
@@ -163,6 +173,18 @@ impl Options {
             }
 
             i += 1;
+        }
+
+        // --bun and --no-bun are mutually exclusive. Resolved after the loop so
+        // the run/auto path (see Arguments.rs) and bunx behave identically.
+        if force_bun && force_no_bun {
+            Output::err_generic("Cannot use both --bun and --no-bun", format_args!(""));
+            Global::exit(1);
+        }
+        if force_bun {
+            ctx.debug.run_in_bun = true;
+        } else if force_no_bun {
+            ctx.debug.run_in_bun = false;
         }
 
         // Handle --package flag case differently

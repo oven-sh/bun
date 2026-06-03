@@ -19,6 +19,150 @@ pub(crate) fn is_newline(c: u8) -> bool {
     c == b'\n' || c == b'\r'
 }
 
+const SWAR_LO: u64 = 0x0101_0101_0101_0101;
+const SWAR_HI: u64 = 0x8080_8080_8080_8080;
+
+/// High bit set in every byte of `w` equal to `b`. May also set high bits in
+/// bytes above the first match, so callers must take the lowest set bit.
+#[inline(always)]
+fn swar_matches_byte(w: u64, b: u8) -> u64 {
+    let x = w ^ (SWAR_LO * b as u64);
+    x.wrapping_sub(SWAR_LO) & !x & SWAR_HI
+}
+
+/// Find the offset of the first `\n` or `\r` at or after `start`, or `text.len()`
+/// if the rest of the text has no newline. Word-at-a-time (SWAR) scan: this runs
+/// for every byte of every line, so the per-byte loop it replaces shows up hot.
+#[inline]
+pub(crate) fn find_line_end(text: &[u8], start: usize) -> usize {
+    let len = text.len();
+    let mut i = start;
+    while i + 8 <= len {
+        let w = u64::from_le_bytes(text[i..i + 8].try_into().expect("8-byte chunk"));
+        let hits = swar_matches_byte(w, b'\n') | swar_matches_byte(w, b'\r');
+        if hits != 0 {
+            return i + (hits.trailing_zeros() as usize) / 8;
+        }
+        i += 8;
+    }
+    while i < len {
+        if is_newline(text[i]) {
+            return i;
+        }
+        i += 1;
+    }
+    len
+}
+
+/// Index of the first byte at or after `start` that needs HTML escaping
+/// (`&`, `<`, `>`, `"`), or `text.len()` if none. The renderer escapes every
+/// piece of normal text through this, so the bulk scan is NEON on aarch64 with
+/// a SWAR fallback elsewhere.
+#[inline]
+pub(crate) fn find_html_escape_byte(text: &[u8], start: usize) -> usize {
+    let len = text.len();
+    let mut i = start;
+
+    #[cfg(target_arch = "aarch64")]
+    {
+        // SAFETY: NEON is baseline on aarch64; loads stay within `text[i..i+16]`.
+        unsafe {
+            use core::arch::aarch64::*;
+            while i + 16 <= len {
+                let v = vld1q_u8(text.as_ptr().add(i));
+                let m = vorrq_u8(
+                    vorrq_u8(vceqq_u8(v, vdupq_n_u8(b'&')), vceqq_u8(v, vdupq_n_u8(b'<'))),
+                    vorrq_u8(vceqq_u8(v, vdupq_n_u8(b'>')), vceqq_u8(v, vdupq_n_u8(b'"'))),
+                );
+                // 4 bits per lane; lowest set nibble = first matching byte.
+                let mask = vget_lane_u64::<0>(vreinterpret_u64_u8(vshrn_n_u16::<4>(
+                    vreinterpretq_u16_u8(m),
+                )));
+                if mask != 0 {
+                    return i + (mask.trailing_zeros() as usize) / 4;
+                }
+                i += 16;
+            }
+        }
+    }
+
+    while i + 8 <= len {
+        let w = u64::from_le_bytes(text[i..i + 8].try_into().expect("8-byte chunk"));
+        let hits = swar_matches_byte(w, b'&')
+            | swar_matches_byte(w, b'<')
+            | swar_matches_byte(w, b'>')
+            | swar_matches_byte(w, b'"');
+        if hits != 0 {
+            return i + (hits.trailing_zeros() as usize) / 8;
+        }
+        i += 8;
+    }
+    while i < len {
+        if matches!(text[i], b'&' | b'<' | b'>' | b'"') {
+            return i;
+        }
+        i += 1;
+    }
+    len
+}
+
+/// Find the index of the first occurrence of `needle` at or after `start`.
+/// Same SWAR scheme as `find_line_end`; used instead of the FFI SIMD search for
+/// the short slices the inline parser scans, where call overhead dominates.
+#[inline]
+pub(crate) fn find_byte(text: &[u8], start: usize, needle: u8) -> Option<usize> {
+    let len = text.len();
+    let mut i = start;
+    while i + 8 <= len {
+        let w = u64::from_le_bytes(text[i..i + 8].try_into().expect("8-byte chunk"));
+        let hits = swar_matches_byte(w, needle);
+        if hits != 0 {
+            return Some(i + (hits.trailing_zeros() as usize) / 8);
+        }
+        i += 8;
+    }
+    while i < len {
+        if text[i] == needle {
+            return Some(i);
+        }
+        i += 1;
+    }
+    None
+}
+
+/// Find the index of the first byte at or after `start` whose entry in `table`
+/// is non-zero, or `content.len()` if there is none. Reads eight table entries
+/// per iteration so plain-text runs between special characters are skipped in
+/// bulk instead of one byte at a time.
+#[inline]
+pub(crate) fn next_marked_byte(table: &[u8; 256], content: &[u8], start: usize) -> usize {
+    let len = content.len();
+    // Mark-dense input (e.g. runs of emphasis characters) hits this immediately;
+    // skip the eight-entry probe in that case.
+    if start < len && table[content[start] as usize] != 0 {
+        return start;
+    }
+    let mut i = start;
+    while i + 8 <= len {
+        let f = table[content[i] as usize]
+            | table[content[i + 1] as usize]
+            | table[content[i + 2] as usize]
+            | table[content[i + 3] as usize]
+            | table[content[i + 4] as usize]
+            | table[content[i + 5] as usize]
+            | table[content[i + 6] as usize]
+            | table[content[i + 7] as usize];
+        if f != 0 {
+            break;
+        }
+        i += 8;
+    }
+    while i < len && table[content[i] as usize] == 0 {
+        i += 1;
+    }
+    i
+}
+
 /// Check if byte is ASCII alphanumeric.
 #[inline]
 pub(crate) fn is_alpha_num(c: u8) -> bool {

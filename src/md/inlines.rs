@@ -123,6 +123,27 @@ impl Parser<'_> {
             return Ok(());
         }
 
+        // Single-line blocks (the common case) need no line merging: process the
+        // source slice directly instead of copying it into the scratch buffer.
+        if block_lines.len() == 1 {
+            let vline = block_lines[0];
+            if vline.beg <= vline.end && vline.end <= self.size {
+                let text = self.text;
+                let mut slice = &text[vline.beg as usize..vline.end as usize];
+                if trim_trailing {
+                    while let Some((&last, rest)) = slice.split_last() {
+                        if last == b' ' || last == b'\t' {
+                            slice = rest;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+                return self.process_inline_content(slice, vline.beg);
+            }
+            return Ok(());
+        }
+
         self.buffer.clear();
 
         for vline in block_lines {
@@ -165,6 +186,16 @@ impl Parser<'_> {
             return Err(parser::Error::StackOverflow);
         }
 
+        // Fast path: no special characters at all (every construct this function
+        // recognizes starts with a byte in the mark map), so the whole slice is a
+        // single plain-text run. Common for table cells, list items and headings.
+        if helpers::next_marked_byte(self.mark_char_map.table(), content, 0) >= content.len() {
+            if !content.is_empty() {
+                self.emit_text(TextType::Normal, content)?;
+            }
+            return Ok(());
+        }
+
         // Failed HTML terminator searches recorded for another slice must not
         // leak into this one (the merged-line buffer is recycled across blocks,
         // so a stale entry could alias a new slice of the same length). The
@@ -183,9 +214,10 @@ impl Parser<'_> {
         self.collect_emphasis_delimiters(content, &brackets);
         self.resolve_emphasis_delimiters();
 
-        // Copy resolved delimiters locally (recursive calls may modify emph_delims)
-        // PORT NOTE: Zig dupe() catch OOM → emit plain text fallback; Rust Vec::clone aborts on OOM.
-        let resolved: Vec<EmphDelim> = self.emph_delims.clone();
+        // Recursive calls (link labels) rebuild self.emph_delims for their own
+        // slice, so the parent keeps its resolved delimiters locally and hands the
+        // storage back at the end for reuse.
+        let resolved: Vec<EmphDelim> = core::mem::take(&mut self.emph_delims);
 
         // Phase 2: Emit content using resolved emphasis info
         let mut i: usize = 0;
@@ -193,13 +225,12 @@ impl Parser<'_> {
         let mut delim_cursor: usize = 0;
 
         while i < content.len() {
-            let c = content[i];
-
-            // Fast path: character has no special meaning, skip it
-            if !self.mark_char_map.is_set(c as usize) {
-                i += 1;
-                continue;
+            // Fast path: bulk-skip runs of characters with no special meaning.
+            i = helpers::next_marked_byte(self.mark_char_map.table(), content, i);
+            if i >= content.len() {
+                break;
             }
+            let c = content[i];
 
             // Newline from merged lines — check for hard break
             if c == b'\n' {
@@ -489,7 +520,8 @@ impl Parser<'_> {
         if text_start < content.len() {
             self.emit_text(TextType::Normal, &content[text_start..])?;
         }
-        // Hand the bracket-map storage back for reuse by the next block.
+        // Hand the delimiter and bracket-map storage back for reuse by the next block.
+        self.emph_delims = resolved;
         self.bracket_pairs = brackets.into_storage();
         // Restore the enclosing slice's memo (the entries built for this slice
         // are meaningless to the caller).
@@ -546,7 +578,7 @@ impl Parser<'_> {
     /// or null if no matching closer found.
     pub fn find_code_span_end(&self, content: &[u8], start: usize, count: usize) -> Option<usize> {
         let mut pos = start;
-        while let Some(backtick_pos) = bun_core::strings::index_of_char_pos(content, b'`', pos) {
+        while let Some(backtick_pos) = helpers::find_byte(content, pos, b'`') {
             pos = backtick_pos + 1;
             while pos < content.len() && content[pos] == b'`' {
                 pos += 1;
@@ -579,6 +611,13 @@ impl Parser<'_> {
         self.emph_delims.clear();
         let mut i: usize = 0;
         while i < content.len() {
+            // Every character this pass cares about is in the mark map, so runs of
+            // unmarked bytes can be skipped in bulk; marked-but-irrelevant bytes
+            // (e.g. '&', ']') still fall through to the `i += 1` at the bottom.
+            i = helpers::next_marked_byte(self.mark_char_map.table(), content, i);
+            if i >= content.len() {
+                break;
+            }
             let c = content[i];
             // Skip backslash escapes
             if c == b'\\' && i + 1 < content.len() && helpers::is_ascii_punctuation(content[i + 1])

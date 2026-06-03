@@ -32,7 +32,22 @@ pub struct OutputBuffer {
 }
 
 impl OutputBuffer {
+    #[inline]
     fn write(&mut self, data: &[u8]) {
+        let len = self.list.len();
+        if self.list.capacity() - len >= data.len() {
+            // Common case: capacity was reserved up front, append without the
+            // grow/oom bookkeeping so callers can inline this into plain stores.
+            // (Writes after an OOM may still land here, but `take_output` discards
+            // the buffer once `oom` is set, so they are never observed.)
+            self.list.extend_from_slice(data);
+            return;
+        }
+        self.write_grow(data);
+    }
+
+    #[cold]
+    fn write_grow(&mut self, data: &[u8]) {
         if self.oom {
             return;
         }
@@ -43,25 +58,26 @@ impl OutputBuffer {
         self.list.extend_from_slice(data);
     }
 
+    #[inline]
     fn write_byte(&mut self, b: u8) {
-        if self.oom {
+        if self.list.capacity() - self.list.len() >= 1 {
+            self.list.push(b);
             return;
         }
-        if self.list.try_reserve(1).is_err() {
-            self.oom = true;
-            return;
-        }
-        self.list.push(b);
+        self.write_grow(&[b]);
     }
 }
 
 impl<'src> HtmlRenderer<'src> {
     pub(crate) fn init(src_text: &'src [u8], render_opts: RenderOptions) -> HtmlRenderer<'src> {
+        // HTML output is typically 1.2x-1.7x the source size; reserving up front
+        // avoids repeated growth-reallocations of the output buffer. Capped so a
+        // pathological input can't trigger an enormous speculative allocation.
+        let mut list = Vec::new();
+        let reserve = (src_text.len() * 2 + 64).min(16 * 1024 * 1024);
+        let _ = list.try_reserve(reserve);
         HtmlRenderer {
-            out: OutputBuffer {
-                list: Vec::new(),
-                oom: false,
-            },
+            out: OutputBuffer { list, oom: false },
             src_text,
             image_nesting_level: 0,
             saved_img_title: Box::default(),
@@ -75,11 +91,11 @@ impl<'src> HtmlRenderer<'src> {
     // deinit → Drop: body only freed Vec/tracker fields, which Rust drops
     // automatically. No explicit Drop impl needed.
 
-    pub(crate) fn to_owned_slice(&mut self) -> Result<Box<[u8]>, AllocError> {
+    pub(crate) fn take_output(&mut self) -> Result<Vec<u8>, AllocError> {
         if self.out.oom {
             return Err(AllocError);
         }
-        Ok(core::mem::take(&mut self.out.list).into_boxed_slice())
+        Ok(core::mem::take(&mut self.out.list))
     }
 
     pub(crate) fn renderer(&mut self) -> Renderer<'_> {
@@ -429,25 +445,27 @@ impl<'src> HtmlRenderer<'src> {
     // HTML writing utilities
     // ========================================
 
+    #[inline]
     pub(crate) fn write(&mut self, data: &[u8]) {
         if self.heading_tracker.in_heading {
-            if self.heading_buf.try_reserve(data.len()).is_err() {
-                self.out.oom = true;
-                return;
-            }
-            self.heading_buf.extend_from_slice(data);
+            self.write_to_heading_buf(data);
         } else {
             self.out.write(data);
         }
     }
 
+    fn write_to_heading_buf(&mut self, data: &[u8]) {
+        if self.heading_buf.try_reserve(data.len()).is_err() {
+            self.out.oom = true;
+            return;
+        }
+        self.heading_buf.extend_from_slice(data);
+    }
+
+    #[inline]
     fn write_byte(&mut self, b: u8) {
         if self.heading_tracker.in_heading {
-            if self.heading_buf.try_reserve(1).is_err() {
-                self.out.oom = true;
-                return;
-            }
-            self.heading_buf.push(b);
+            self.write_to_heading_buf(&[b]);
         } else {
             self.out.write_byte(b);
         }
@@ -494,58 +512,45 @@ impl<'src> HtmlRenderer<'src> {
 
     pub(crate) fn write_html_escaped(&mut self, txt: &[u8]) {
         let mut i: usize = 0;
-        let needle: &[u8] = b"&<>\"";
-
         loop {
-            let Some(next) = strings::index_of_any(&txt[i..], needle) else {
+            let pos = helpers::find_html_escape_byte(txt, i);
+            if pos >= txt.len() {
                 self.write(&txt[i..]);
                 return;
-            };
-            let pos = i + next;
+            }
             if pos > i {
                 self.write(&txt[i..pos]);
             }
-            // needle b"&<>\"" guarantees Some
+            // find_html_escape_byte only stops on bytes html_escape_entity knows
             self.write(strings::html_escape_entity(txt[pos]).unwrap());
             i = pos + 1;
         }
     }
 
     fn write_url_escaped(&mut self, txt: &[u8]) {
-        for &byte in txt {
-            self.write_url_byte(byte);
+        let mut i: usize = 0;
+        while i < txt.len() {
+            // Bulk-copy runs of bytes write_url_byte would pass through verbatim.
+            let pos = helpers::next_marked_byte(&URL_ESCAPE_STOP, txt, i);
+            if pos > i {
+                self.write(&txt[i..pos]);
+            }
+            if pos >= txt.len() {
+                return;
+            }
+            self.write_url_byte(txt[pos]);
+            i = pos + 1;
         }
     }
 
     fn write_url_byte(&mut self, byte: u8) {
-        match byte {
-            b'&' | b'\'' => self.write(strings::html_escape_entity(byte).unwrap()),
-            b'A'..=b'Z'
-            | b'a'..=b'z'
-            | b'0'..=b'9'
-            | b'-'
-            | b'.'
-            | b'_'
-            | b'~'
-            | b':'
-            | b'/'
-            | b'?'
-            | b'#'
-            | b'@'
-            | b'!'
-            | b'$'
-            | b'('
-            | b')'
-            | b'*'
-            | b'+'
-            | b','
-            | b';'
-            | b'='
-            | b'%' => self.write_byte(byte),
-            _ => {
-                let [hi, lo] = bun_core::fmt::hex_byte_upper(byte);
-                self.write(&[b'%', hi, lo]);
-            }
+        if URL_ESCAPE_STOP[byte as usize] == 0 {
+            self.write_byte(byte);
+        } else if byte == b'&' || byte == b'\'' {
+            self.write(strings::html_escape_entity(byte).unwrap());
+        } else {
+            let [hi, lo] = bun_core::fmt::hex_byte_upper(byte);
+            self.write(&[b'%', hi, lo]);
         }
     }
 
@@ -553,6 +558,16 @@ impl<'src> HtmlRenderer<'src> {
     fn write_url_with_escapes(&mut self, txt: &[u8]) {
         let mut i: usize = 0;
         while i < txt.len() {
+            // Bulk-copy runs of bytes that need no escaping ('\\' and '&' are
+            // stop bytes, so the branches below still see them).
+            let run_end = helpers::next_marked_byte(&URL_ESCAPE_STOP, txt, i);
+            if run_end > i {
+                self.write(&txt[i..run_end]);
+                i = run_end;
+                if i >= txt.len() {
+                    break;
+                }
+            }
             if txt[i] == b'\\' && i + 1 < txt.len() && helpers::is_ascii_punctuation(txt[i + 1]) {
                 self.write_url_byte(txt[i + 1]);
                 i += 2;
@@ -647,6 +662,27 @@ impl<'src> HtmlRenderer<'src> {
 // ========================================
 // Static helpers
 // ========================================
+
+/// Single source of truth for URL escaping: zero entries are written verbatim
+/// by `write_url_byte`, non-zero entries get percent-encoded or entity-escaped,
+/// and the URL writers use the same table to bulk-copy safe runs.
+static URL_ESCAPE_STOP: [u8; 256] = {
+    let mut t = [1u8; 256];
+    let mut b: usize = 0;
+    while b < 256 {
+        if (b as u8).is_ascii_alphanumeric() {
+            t[b] = 0;
+        }
+        b += 1;
+    }
+    let safe: &[u8] = b"-._~:/?#@!$()*+,;=%";
+    let mut k: usize = 0;
+    while k < safe.len() {
+        t[safe[k] as usize] = 0;
+        k += 1;
+    }
+    t
+};
 
 // PORT NOTE: Zig's manual `*anyopaque + VTable` is collapsed into the
 // `RendererImpl` trait (see types.rs); the static VTABLE is no longer needed.

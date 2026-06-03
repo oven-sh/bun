@@ -382,6 +382,26 @@ impl Parser<'_> {
                 continue;
             }
 
+            // A ref def can only start at the very beginning of the paragraph, so
+            // when the first character already rules that out, skip the block
+            // without merging its lines (the common case for ordinary text).
+            {
+                // SAFETY: n_lines >= 1 and lines_off + size_of::<VerbatimLine>() <= bytes_len
+                // per the lines_size bounds check above.
+                let first: VerbatimLine = unsafe {
+                    bytes_ptr
+                        .add(lines_off)
+                        .cast::<VerbatimLine>()
+                        .read_unaligned()
+                };
+                if first.beg < first.end
+                    && first.end <= self.size
+                    && self.text[first.beg as usize] != b'['
+                {
+                    continue;
+                }
+            }
+
             // Merge lines into buffer to parse ref defs
             self.buffer.clear();
             for li in 0..n_lines {

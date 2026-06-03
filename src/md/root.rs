@@ -210,7 +210,7 @@ impl Options {
 }
 
 // TODO(port): narrow error set — Zig: `parser.Parser.Error`
-pub fn render_to_html(text: &[u8]) -> Result<Box<[u8]>, parser::ParserError> {
+pub fn render_to_html(text: &[u8]) -> Result<Vec<u8>, parser::ParserError> {
     render_to_html_with_options(text, Options::default())
 }
 
@@ -218,7 +218,7 @@ pub fn render_to_html(text: &[u8]) -> Result<Box<[u8]>, parser::ParserError> {
 pub fn render_to_html_with_options(
     text: &[u8],
     options: Options,
-) -> Result<Box<[u8]>, parser::ParserError> {
+) -> Result<Vec<u8>, parser::ParserError> {
     parser::render_to_html(text, options.to_flags(), options.to_render_options())
 }
 

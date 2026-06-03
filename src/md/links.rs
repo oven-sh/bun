@@ -37,10 +37,19 @@ pub struct Autolink {
 
 /// Characters that can affect bracket matching: the brackets themselves,
 /// backslash escapes, code spans, and (unless HTML spans are disabled) HTML
-/// tags/autolinks. Used to SIMD-skip runs of ordinary text while building the
-/// bracket-pair map.
-const BRACKET_SCAN_CHARS: &[u8] = b"[]\\`<";
-const BRACKET_SCAN_CHARS_NO_HTML: &[u8] = b"[]\\`";
+/// tags/autolinks. Stop tables for `helpers::next_marked_byte`, used to skip
+/// runs of ordinary text while building the bracket-pair map.
+const fn bracket_scan_table(chars: &[u8]) -> [u8; 256] {
+    let mut t = [0u8; 256];
+    let mut i = 0;
+    while i < chars.len() {
+        t[chars[i] as usize] = 1;
+        i += 1;
+    }
+    t
+}
+static BRACKET_SCAN_STOP: [u8; 256] = bracket_scan_table(b"[]\\`<");
+static BRACKET_SCAN_STOP_NO_HTML: [u8; 256] = bracket_scan_table(b"[]\\`");
 
 /// Result of matching a `[` against its closing `]`.
 struct BracketScan {
@@ -122,23 +131,23 @@ impl Parser<'_> {
 
         // No '[' means nothing will ever be looked up; no ']' means every
         // opener is trivially unmatched (e.g. "[".repeat(n)) — skip the walk.
-        if bun_core::immutable::index_of_char(content, b'[').is_none() {
+        if helpers::find_byte(content, 0, b'[').is_none() {
             return BracketMatches {
                 pairs: storage,
                 no_closers: false,
             };
         }
-        if bun_core::immutable::index_of_char(content, b']').is_none() {
+        if helpers::find_byte(content, 0, b']').is_none() {
             return BracketMatches {
                 pairs: storage,
                 no_closers: true,
             };
         }
 
-        let scan_chars: &'static [u8] = if self.flags.no_html_spans {
-            BRACKET_SCAN_CHARS_NO_HTML
+        let scan_stop: &'static [u8; 256] = if self.flags.no_html_spans {
+            &BRACKET_SCAN_STOP_NO_HTML
         } else {
-            BRACKET_SCAN_CHARS
+            &BRACKET_SCAN_STOP
         };
 
         // While an opener is still unmatched, its `close` slot holds the index
@@ -183,12 +192,15 @@ impl Parser<'_> {
                     }
                     pos += 1;
                 }
-                // Ordinary text: SIMD-jump to the next character that can
-                // affect bracket matching.
-                _ => match bun_core::immutable::index_of_any(&content[pos..], scan_chars) {
-                    Some(rel) => pos += rel as usize,
-                    None => break,
-                },
+                // Ordinary text: jump to the next character that can affect
+                // bracket matching.
+                _ => {
+                    let next = helpers::next_marked_byte(scan_stop, content, pos);
+                    if next >= content.len() {
+                        break;
+                    }
+                    pos = next;
+                }
             }
         }
 

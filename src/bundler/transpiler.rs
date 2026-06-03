@@ -2218,8 +2218,8 @@ fn parse_md_loader<'a>(
     let html: &'static [u8] = match bun_md::root::render_to_html(&source.contents) {
         // Spec transpiler.zig:1162 allocates the rendered HTML via
         // `arena` (the per-parse arena), so it is freed with the
-        // arena. Arena-copy the heap `Box<[u8]>` and let it drop;
-        // PORTING.md §Forbidden patterns bars `Box::leak` here.
+        // arena. Arena-copy the heap `Vec<u8>` and let it drop;
+        // PORTING.md §Forbidden patterns bars leaking it here.
         // SAFETY: ARENA — `arena` outlives the returned
         // `ParseResult.ast` (the AST crate's `Str` convention erases
         // `'bump` to `'static` for `E::String.data`).

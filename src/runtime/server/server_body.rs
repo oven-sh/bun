@@ -2370,12 +2370,14 @@ where
                 );
             }
 
-            let mut url = URL::parse(temp_url_str);
+            let url = URL::parse(temp_url_str);
 
-            // `bun.String.cloneUTF8(url.href)` below makes its own copy, so the
-            // joined buffer only needs to live through this block. The else arm
-            // borrows `temp_url_str` (kept alive by `url_zig_str`) instead of
-            // duping it just to satisfy a uniform `defer free` like the Zig did.
+            // `URL::parse` always sets `href` to its full input, so the buffer
+            // *is* the href — no second parse needed. When the joined arm owns
+            // an all-ASCII `Vec<u8>` it is adopted into a WTF::ExternalStringImpl
+            // below (zero-copy); the borrowed arm and any non-ASCII fall back
+            // to `clone_utf8` (the borrowed arm already saved a dupe by not
+            // owning `temp_url_str`).
             let owned_url_buf: std::borrow::Cow<'_, [u8]> = if url.hostname.is_empty() {
                 std::borrow::Cow::Owned(
                     strings::append(&self.base_url_string_for_joining, url.pathname).into_vec(),
@@ -2383,7 +2385,6 @@ where
             } else {
                 std::borrow::Cow::Borrowed(temp_url_str)
             };
-            url = URL::parse(&owned_url_buf);
 
             if arguments.len() >= 2 && arguments[1].is_object() {
                 let opts = arguments[1];
@@ -2423,8 +2424,14 @@ where
                 }
             }
 
+            let url_string = match owned_url_buf {
+                std::borrow::Cow::Owned(v) if strings::is_all_ascii(&v) => {
+                    BunString::create_external_globally_allocated_latin1(v)
+                }
+                other => BunString::clone_utf8(&other),
+            };
             Box::new(Request::init2(
-                BunString::clone_utf8(url.href),
+                url_string,
                 headers,
                 // Moves `body` into the per-VM hive pool (ref_count = 1).
                 crate::webcore::body::hive_alloc(body),

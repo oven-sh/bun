@@ -497,7 +497,10 @@ extern "C" void JSC__putDirectOffset(JSC::VM* vm, JSC::EncodedJSValue object, ui
 }
 extern "C" uint32_t JSC__JSObject__maxInlineCapacity = JSC::JSFinalObject::maxInlineCapacity;
 
-// PostgreSQL time formatting helpers - following WebKit's pattern
+// PostgreSQL time formatting helpers - following WebKit's pattern.
+// formatTime is also shared by the MySQL binary TIME decoder, which emits the
+// same shape (zero-padded components, fractional seconds trimmed of trailing
+// zeros); MySQL's sign is prepended on the Rust side.
 extern "C" size_t Postgres__formatTime(int64_t microseconds, char* buffer, size_t bufferSize)
 {
     // Convert microseconds since midnight to time components

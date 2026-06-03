@@ -1597,9 +1597,13 @@ unsafe extern "C" {
     // `&mut [u8; N]` is ABI-identical to `*mut u8` (thin pointer to a `Sized`
     // array == pointer to its first element); the reference type discharges the
     // "valid for `buffer_size` bytes" precondition, so → `safe fn`. The C++
-    // side never writes past `buffer_size`, and the only two callers pass
-    // exactly these fixed-size stack arrays.
-    safe fn Postgres__formatTime(
+    // side never writes past `buffer_size`, and every caller passes exactly
+    // these fixed-size stack arrays.
+    //
+    // `pub(crate)`: the MySQL binary TIME decoder shares this formatter — the
+    // output shape (zero-padded components, fractional seconds trimmed of
+    // trailing zeros) is identical for both drivers.
+    pub(crate) safe fn Postgres__formatTime(
         microseconds: i64,
         buffer: &mut [u8; 32],
         buffer_size: usize,

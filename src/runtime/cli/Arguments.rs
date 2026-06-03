@@ -320,6 +320,9 @@ pub(crate) const AUTO_OR_RUN_PARAMS: &[ParamType] = &[
         "-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)"
     ),
     parse_param!(
+        "--no-bun                          Force a script or package to use Node.js instead of Bun's runtime, overriding `bun = true` in bunfig.toml"
+    ),
+    parse_param!(
         "--no-orphans                      Exit when the parent process dies, and on exit SIGKILL every descendant. Linux/macOS only."
     ),
     parse_param!(
@@ -1409,9 +1412,19 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         cmd,
         CommandTag::RunCommand | CommandTag::AutoCommand | CommandTag::BunxCommand
     ) {
-        // "run.bun" in bunfig.toml
-        if args.flag(b"--bun") {
+        // "run.bun" in bunfig.toml. CLI flags override the bunfig value in either
+        // direction: --bun forces it on, --no-bun forces it off. The two are
+        // mutually exclusive (see the --compile-autoload-bunfig pair below).
+        let force_bun = args.flag(b"--bun");
+        let force_no_bun = args.flag(b"--no-bun");
+        if force_bun && force_no_bun {
+            Output::err_generic("Cannot use both --bun and --no-bun", ());
+            Global::crash();
+        }
+        if force_bun {
             ctx.debug.run_in_bun = true;
+        } else if force_no_bun {
+            ctx.debug.run_in_bun = false;
         }
     }
 

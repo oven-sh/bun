@@ -54,6 +54,60 @@ describe.each(["bun run", "bun"])(`%s`, cmd => {
     });
   });
 
+  test("--no-bun overrides `bun = true` in bunfig", async () => {
+    const bunfig = toTOMLString({
+      run: {
+        bun: true,
+      },
+    });
+
+    const cwd = tempDirWithFiles("run.where.node.no-bun", {
+      "bunfig.toml": bunfig,
+      "package.json": JSON.stringify(
+        {
+          scripts: {
+            "where-node": `which node`,
+          },
+        },
+        null,
+        2,
+      ),
+    });
+
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "--silent", "--no-bun", ...runCmd, "where-node"],
+      env: bunEnv,
+      stderr: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
+      cwd,
+    });
+    const nodeBin = result.stdout.toString().trim();
+
+    // With `bun = true` in bunfig but --no-bun on the CLI, `node` must resolve
+    // to the real Node.js, not the symlinked Bun runtime.
+    expect(realpathSync(nodeBin)).toBe(realpathSync(node));
+    expect(result.success).toBeTrue();
+  });
+
+  test("--bun and --no-bun together is an error", async () => {
+    const cwd = tempDirWithFiles("run.bun.conflict", {
+      "package.json": JSON.stringify({ scripts: { noop: "true" } }, null, 2),
+    });
+
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), "--bun", "--no-bun", ...runCmd, "noop"],
+      env: bunEnv,
+      stderr: "pipe",
+      stdout: "pipe",
+      stdin: "ignore",
+      cwd,
+    });
+
+    expect(result.stderr.toString()).toContain("Cannot use both --bun and --no-bun");
+    expect(result.success).toBeFalse();
+  });
+
   describe.each(["bun", "system", "default"])(`run.shell = "%s"`, shellStr => {
     if (isWindows && shellStr === "system") return; // windows always uses the bun shell now
     const shell = shellStr === "default" ? (isWindows ? "bun" : "system") : shellStr;

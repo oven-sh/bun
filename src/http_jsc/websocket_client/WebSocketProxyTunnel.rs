@@ -600,6 +600,11 @@ impl WebSocketProxyTunnel {
     pub(crate) fn has_backpressure(&self) -> bool {
         self.write_buffer.is_not_empty()
     }
+
+    /// Encrypted bytes still buffered in the tunnel awaiting a writable socket.
+    pub(crate) fn buffered_amount(&self) -> usize {
+        self.write_buffer.size()
+    }
 }
 
 impl Drop for WebSocketProxyTunnel {

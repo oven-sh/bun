@@ -857,8 +857,6 @@ void WebSocket::sendWebSocketData(const char* baseAddress, size_t length, const 
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
         Bun__WebSocketClient__writeBinaryData(this->m_connectedWebSocket.client, reinterpret_cast<const unsigned char*>(baseAddress), length, static_cast<uint8_t>(op));
-        // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
-        // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
@@ -887,8 +885,6 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
     case ConnectedWebSocketKind::Client: {
         auto zigStr = Zig::toZigString(message);
         Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &zigStr, static_cast<uint8_t>(op));
-        // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
-        // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
@@ -1224,7 +1220,25 @@ WebSocket::State WebSocket::readyState() const
 
 unsigned WebSocket::bufferedAmount() const
 {
-    return saturateAdd(m_bufferedAmount, m_bufferedAmountAfterClose);
+    // Query the live send-buffer size from the connection so backpressure is
+    // observable while OPEN. After close the connection is gone, so fall back
+    // to m_bufferedAmount (set by didClose() to the unhandled buffered amount).
+    size_t buffered = m_bufferedAmount;
+    switch (m_connectedWebSocketKind) {
+    case ConnectedWebSocketKind::Client:
+        buffered = Bun__WebSocketClient__getBufferedAmount(this->m_connectedWebSocket.client);
+        break;
+    case ConnectedWebSocketKind::ClientSSL:
+        buffered = Bun__WebSocketClientTLS__getBufferedAmount(this->m_connectedWebSocket.clientSSL);
+        break;
+    case ConnectedWebSocketKind::None:
+        break;
+    }
+
+    unsigned clamped = buffered > std::numeric_limits<unsigned>::max()
+        ? std::numeric_limits<unsigned>::max()
+        : static_cast<unsigned>(buffered);
+    return saturateAdd(clamped, m_bufferedAmountAfterClose);
 }
 
 String WebSocket::protocol() const

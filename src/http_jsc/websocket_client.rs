@@ -2092,6 +2092,24 @@ impl<const SSL: bool> WebSocket<SSL> {
         // This is under-estimated a little, as we don't include usockets context.
         cost
     }
+
+    /// Bytes queued by `send()` that have not yet been written to the socket.
+    /// Backs the client `WebSocket.bufferedAmount` getter. Includes the framing
+    /// bytes of buffered frames (the send buffer holds fully framed messages),
+    /// plus any encrypted bytes the proxy tunnel still holds.
+    //
+    // `extern "C"` entrypoint; `this` is non-null by C++ contract (see SAFETY comment below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub extern "C" fn get_buffered_amount(this: *const Self) -> usize {
+        // SAFETY: called from C++ with a valid pointer
+        let this = unsafe { &*this };
+        let mut buffered = this.send_buffer.readable_length();
+        if let Some(tunnel) = &this.proxy_tunnel {
+            // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
+            buffered += unsafe { tunnel.as_ref() }.buffered_amount();
+        }
+        buffered
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2110,6 +2128,7 @@ macro_rules! export_websocket_client {
         cancel = $cancel:ident,
         close = $close:ident,
         finalize = $finalize:ident,
+        get_buffered_amount = $get_buffered_amount:ident,
         init = $init:ident,
         init_with_tunnel = $init_with_tunnel:ident,
         memory_cost = $memory_cost:ident,
@@ -2128,6 +2147,10 @@ macro_rules! export_websocket_client {
         #[unsafe(no_mangle)]
         pub extern "C" fn $finalize(this: *mut WebSocket<$ssl>) {
             WebSocket::<$ssl>::finalize(this)
+        }
+        #[unsafe(no_mangle)]
+        pub extern "C" fn $get_buffered_amount(this: *const WebSocket<$ssl>) -> usize {
+            WebSocket::<$ssl>::get_buffered_amount(this)
         }
         #[unsafe(no_mangle)]
         pub extern "C" fn $init(
@@ -2200,6 +2223,7 @@ export_websocket_client!(
     cancel = Bun__WebSocketClient__cancel,
     close = Bun__WebSocketClient__close,
     finalize = Bun__WebSocketClient__finalize,
+    get_buffered_amount = Bun__WebSocketClient__getBufferedAmount,
     init = Bun__WebSocketClient__init,
     init_with_tunnel = Bun__WebSocketClient__initWithTunnel,
     memory_cost = Bun__WebSocketClient__memoryCost,
@@ -2212,6 +2236,7 @@ export_websocket_client!(
     cancel = Bun__WebSocketClientTLS__cancel,
     close = Bun__WebSocketClientTLS__close,
     finalize = Bun__WebSocketClientTLS__finalize,
+    get_buffered_amount = Bun__WebSocketClientTLS__getBufferedAmount,
     init = Bun__WebSocketClientTLS__init,
     init_with_tunnel = Bun__WebSocketClientTLS__initWithTunnel,
     memory_cost = Bun__WebSocketClientTLS__memoryCost,

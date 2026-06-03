@@ -839,6 +839,42 @@ function getTestBunStep(platform, options, testOptions = {}) {
 }
 
 /**
+ * Pilot lane: route a tiny darwin-aarch64 test subset to the Tart-backed
+ * macOS host. Soft-fails so a Tart hiccup never reds the build. The Tart
+ * agent registers `tart=true` and deliberately omits `release-tier`, so the
+ * existing darwin jobs (which all pin a tier — see getTestAgent) never land
+ * on it; this step is the only consumer.
+ *
+ * @param {PipelineOptions} options
+ * @param {string} [buildId]
+ * @returns {Step}
+ */
+function getTartPilotStep(options, buildId) {
+  const args = ["--step=darwin-aarch64-build-bun"];
+  if (buildId) args.push(`--build-id=${buildId}`);
+  args.push(
+    "--include=test/js/bun/util/which.test.ts",
+    "--include=test/js/bun/util/bun-main.test.ts",
+  );
+  return {
+    key: "darwin-aarch64-tart-pilot-test-bun",
+    label: `${getBuildkiteEmoji("darwin")} aarch64 - test-bun (tart pilot)`,
+    depends_on: buildId ? [] : ["darwin-aarch64-build-bun"],
+    agents: {
+      queue: "test-darwin",
+      os: "darwin",
+      arch: "aarch64",
+      tart: "true",
+    },
+    soft_fail: true,
+    retry: getRetry(),
+    cancel_on_build_failing: isMergeQueue(),
+    timeout_in_minutes: 10,
+    command: `./scripts/runner.node.mjs ${args.join(" ")}`,
+  };
+}
+
+/**
  * @param {Platform} platform
  * @param {PipelineOptions} options
  * @returns {Step}
@@ -1495,6 +1531,11 @@ async function getPipeline(options = {}) {
           steps: [getTestBunStep(target, options, { testFiles, buildId })],
         })),
       );
+      steps.push({
+        key: "darwin-aarch64",
+        group: getTargetLabel({ os: "darwin", arch: "aarch64" }),
+        steps: [getTartPilotStep(options, buildId)],
+      });
     }
   }
 

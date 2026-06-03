@@ -240,10 +240,11 @@ describe("WebSocket.bufferedAmount (client)", () => {
     }
   });
 
-  // A raw socket close/reset (no Close handshake) while a backlog is queued must
-  // also preserve bufferedAmount. This exercises the socket-close callback path,
-  // which frees the send buffer before dispatching the close event.
-  test("does not reset to 0 on a raw socket reset while a backlog is queued", async () => {
+  // An abrupt socket close (no WebSocket Close handshake) while a backlog is
+  // queued must also preserve bufferedAmount. Depending on the platform's event
+  // loop this routes through either handle_close() (socket-close callback) or
+  // handle_end() -> fail(); both snapshot the backlog before freeing it.
+  test("does not reset to 0 on an abrupt socket close while a backlog is queued", async () => {
     const { promise: ready, resolve: onReady } = Promise.withResolvers<number>();
     const server = net.createServer(sock => {
       let buf = "";
@@ -264,8 +265,9 @@ describe("WebSocket.bufferedAmount (client)", () => {
             `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
         );
         upgraded = true;
-        // Stop reading so the client's sends pile up, then abruptly destroy
-        // the connection (RST) — no Close handshake.
+        // Stop reading so the client's sends pile up, then abruptly destroy the
+        // connection (sends FIN; the client's own writes to the closed peer may
+        // then draw an RST) — no WebSocket Close handshake either way.
         sock.pause();
         sock.destroy();
       });

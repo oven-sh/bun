@@ -2619,6 +2619,66 @@ describe("createWriteStream", () => {
     const maxBatch = Math.max(...writevSpy.mock.calls.map(args => (args[0] as unknown[]).length));
     expect(maxBatch).toBeGreaterThan(1024);
   });
+
+  // https://github.com/oven-sh/bun/issues/31763
+  // On a partial write the WriteStream retries the unwritten tail. With no
+  // `start`, `this.pos` is undefined ("current offset"); the retry must keep
+  // it undefined rather than computing `undefined + bytesWritten === NaN`,
+  // which the binding would coerce to offset 0 and overwrite the file head.
+  it.each(["write", "writev"])("partial %s retry does not corrupt the file (issue #31763)", async method => {
+    const streamPath = join(tmpdirSync(), `partial-${method}.bin`);
+    const payload = Buffer.from("ABCDEFGHIJKLMNOPQRSTUVWXYZ");
+    const positions: unknown[] = [];
+    let first = true;
+
+    // Simulate a short write on the first syscall, then a clean retry,
+    // delegating to the real fs so bytes actually land on disk.
+    const customFs: any = {
+      open: fs.open,
+      close: fs.close,
+      write(fd, data, offset, length, position, cb) {
+        positions.push(position);
+        if (first) {
+          first = false;
+          const half = Math.floor(length / 2);
+          fs.write(fd, data, offset, half, position, (err, written) => cb(err, written, data));
+          return;
+        }
+        fs.write(fd, data, offset, length, position, cb);
+      },
+      writev(fd, chunks, position, cb) {
+        positions.push(position);
+        if (first) {
+          first = false;
+          // Write only the first chunk, report it as a partial write.
+          fs.writev(fd, [chunks[0]], position, (err, written) => cb(err, written, chunks));
+          return;
+        }
+        fs.writev(fd, chunks, position, cb);
+      },
+    };
+
+    const stream = createWriteStream(streamPath, { fs: customFs } as any);
+    const { promise: done, resolve, reject } = Promise.withResolvers<void>();
+    stream.on("error", reject);
+    stream.on("finish", resolve);
+    if (method === "writev") {
+      // Force the buffered writev path with a cork + multiple writes.
+      stream.cork();
+      stream.write(payload.subarray(0, 10));
+      stream.write(payload.subarray(10));
+      stream.uncork();
+      stream.end();
+    } else {
+      stream.end(payload);
+    }
+    await done;
+
+    // A NaN -> 0 retry offset would overwrite the head; the bytes must be intact.
+    expect(readFileSync(streamPath)).toEqual(payload);
+    // The retry must never pass NaN as the position.
+    expect(positions.some(p => typeof p === "number" && Number.isNaN(p))).toBe(false);
+  });
 });
 
 describe("fs.writev past IOV_MAX", () => {

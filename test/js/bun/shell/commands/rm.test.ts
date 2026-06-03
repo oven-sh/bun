@@ -223,3 +223,101 @@ test.skipIf(process.platform === "win32")(
     }
   },
 );
+
+test.skipIf(process.platform === "win32")(
+  "recursive rm does not unlink files through a swapped intermediate path component",
+  async () => {
+    const FILLER = 128;
+    const ITERATIONS = 5;
+
+    let swapped = 0;
+    for (let iter = 0; iter < ITERATIONS; iter++) {
+      const files: Record<string, string> = {
+        "stash/.keep": "",
+        "target/sub/canary.txt": "",
+      };
+      for (let j = 0; j < FILLER; j++) {
+        files[`victim/inner/f${j}.txt`] = "important";
+        files[`target/sub/inner/f${j}.txt`] = "";
+      }
+      const root = tempDirWithFiles(`rm-swap-mid-${iter}`, files);
+      const victimDir = path.join(root, "victim");
+      const target = path.join(root, "target");
+      const entry = path.join(target, "sub");
+      const canary = path.join(entry, "canary.txt");
+
+      const running = $`rm -rf ${target}`.nothrow().quiet().run();
+      const deadline = Date.now() + 10_000;
+      while (existsSync(canary) && Date.now() < deadline) {}
+      try {
+        renameSync(entry, path.join(root, "stash", "sub"));
+        symlinkSync(victimDir, entry);
+        swapped++;
+      } catch {}
+      const result = await running;
+
+      const stderrText = result.stderr.toString();
+      if (stderrText === `rm: ${target}: Directory not empty\n`) {
+        expect(result.exitCode).toBe(1);
+      } else {
+        expect(stderrText).toBe("");
+        expect(result.exitCode).toBe(0);
+      }
+
+      for (let j = 0; j < FILLER; j++) {
+        expect(existsSync(path.join(victimDir, "inner", `f${j}.txt`))).toBeTrue();
+      }
+      expect(existsSync(victimDir)).toBeTrue();
+    }
+    expect(swapped).toBeGreaterThan(0);
+  },
+);
+
+test.skipIf(process.platform === "win32")(
+  "recursive rm does not rmdir through a swapped intermediate path component",
+  async () => {
+    const FILLER = 64;
+    const ITERATIONS = 5;
+
+    let swapped = 0;
+    for (let iter = 0; iter < ITERATIONS; iter++) {
+      const files: import("harness").DirectoryTree = {
+        "stash/.keep": "",
+        "target/sub/canary.txt": "",
+      };
+      for (let j = 0; j < FILLER; j++) {
+        files[`victim/inner/leaf${j}`] = {};
+        files[`target/sub/inner/leaf${j}`] = {};
+      }
+      const root = tempDirWithFiles(`rm-swap-rmdir-${iter}`, files);
+      const victimDir = path.join(root, "victim");
+      const target = path.join(root, "target");
+      const entry = path.join(target, "sub");
+      const canary = path.join(entry, "canary.txt");
+
+      const running = $`rm -rf ${target}`.nothrow().quiet().run();
+      const deadline = Date.now() + 10_000;
+      while (existsSync(canary) && Date.now() < deadline) {}
+      try {
+        renameSync(entry, path.join(root, "stash", "sub"));
+        symlinkSync(victimDir, entry);
+        swapped++;
+      } catch {}
+      const result = await running;
+
+      const stderrText = result.stderr.toString();
+      if (stderrText === `rm: ${target}: Directory not empty\n`) {
+        expect(result.exitCode).toBe(1);
+      } else {
+        expect(stderrText).toBe("");
+        expect(result.exitCode).toBe(0);
+      }
+
+      for (let j = 0; j < FILLER; j++) {
+        expect(existsSync(path.join(victimDir, "inner", `leaf${j}`))).toBeTrue();
+      }
+      expect(existsSync(victimDir)).toBeTrue();
+    }
+    expect(swapped).toBeGreaterThan(0);
+  },
+);

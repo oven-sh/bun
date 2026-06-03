@@ -4495,10 +4495,19 @@ impl VirtualMachine {
         // each stored map and `deinit()`s the sibling `saved_source_map_table`.
         drop(core::mem::take(&mut self.source_mappings));
 
-        if let Some(rare) = self.rare_data.take() {
+        if self.rare_data.is_some() {
+            // Must run BEFORE `rare_data.take()`: `CronJob::clear_all_for_vm`
+            // reads `vm.rare_data` to drain the job list and early-returns on
+            // `None`. Calling it after the take() made it a no-op, leaking
+            // every still-registered CronJob (and tripping the
+            // `cron_jobs.is_empty()` assert in `RareData::drop` when a job
+            // survived finalization, e.g. `process.exit()` from inside a cron
+            // callback).
             if let Some(hooks) = runtime_hooks() {
                 (hooks.cron_clear_all_teardown)(self);
             }
+        }
+        if let Some(rare) = self.rare_data.take() {
             // Paired with `rare_data()`'s register_root_region. Without this,
             // every terminated Worker leaves a stale LSAN root entry pointing
             // into a freed arena.

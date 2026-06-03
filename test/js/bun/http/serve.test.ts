@@ -2396,3 +2396,87 @@ it.if(isPosix)("serves /bun:info over a unix socket in development mode", async 
   expect(text).toContain("bun_version");
   expect(res.status).toBe(200);
 });
+
+// Server teardown during VM shutdown: when the server wrapper is finalized by
+// the exit-time GC (`lastChanceToFinalize`), the event loop never ticks again,
+// so the uws App close + server free run synchronously instead of as deferred
+// event-loop tasks.
+describe.concurrent("server deinit during process exit", () => {
+  it("stopped server finalized at exit", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const server = Bun.serve({ port: 0, fetch: () => new Response("ok") });
+         const res = await fetch("http://localhost:" + server.port + "/");
+         console.log(await res.text());
+         server.stop(true);
+         process.exit(0);`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("exit with a request still in flight", async () => {
+    // The request context still holds a pending-request ref when the server
+    // wrapper is finalized, so the free is deferred until the request itself
+    // is torn down later in shutdown.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const server = Bun.serve({
+           port: 0,
+           fetch() {
+             // Exit while this request is still pending.
+             queueMicrotask(() => {
+               console.log("exiting");
+               process.exit(0);
+             });
+             return new Promise(() => {});
+           },
+         });
+         fetch("http://localhost:" + server.port + "/").catch(() => {});`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("exiting\n");
+    expect(exitCode).toBe(0);
+  });
+
+  it("stopped server collected before exit", async () => {
+    // Normal (non-shutdown) path: the wrapper is GC'd while the loop is still
+    // ticking, so close + free go through the deferred task pair.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `{
+           let server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+           await fetch("http://localhost:" + server.port + "/");
+           server.stop(true);
+           server = null;
+         }
+         Bun.gc(true);
+         await Bun.sleep(0);
+         Bun.gc(true);
+         await Bun.sleep(0);
+         console.log("done");`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("done\n");
+    expect(exitCode).toBe(0);
+  });
+});

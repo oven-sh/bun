@@ -574,7 +574,7 @@ impl NodeHTTPResponse {
 
         self.buffered_request_body_data_during_pause
             .with_mut(|b| b.clear_and_free());
-        let mut server = self.server;
+        let server = self.server;
         self.poll_ref.with_mut(|r| r.unref(vm));
         self.unregister_auto_flush();
 

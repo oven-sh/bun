@@ -1208,6 +1208,12 @@ impl Drop for DevServer {
                     // SAFETY: stored ref from `init_from_any_blob`; no live borrow.
                     unsafe { StaticRoute::deref_(cached.as_ptr()) };
                 }
+                // Zig `RouteBundle.deinit`: `html.html_bundle.deref()` — release
+                // the intrusive ref taken by `get_or_put_route_bundle` when the
+                // bundle was stored. `html_bundle` is a raw `*mut`, so dropping
+                // the Vec would otherwise leak the route (and its HTMLBundle).
+                // SAFETY: the slot holds a counted ref taken at store time.
+                unsafe { bun_ptr::RefCount::<HTMLBundleRoute>::deref(html.html_bundle) };
             }
         }
 
@@ -3909,8 +3915,11 @@ pub(super) fn finalize_bundle(
 
         dev.start_next_bundle_if_present();
 
-        // Unref the ref added in `start_async_bundle`
-        if let Some(server) = dev.server.as_mut() {
+        // Unref the ref added in `start_async_bundle`. Copy the `AnyServer`
+        // handle out (no `as_mut()`): the call can drop this very
+        // `Box<DevServer>` via `deinit_if_we_can`, so no reference into it
+        // may be live across the call.
+        if let Some(server) = dev.server {
             server.on_static_request_complete();
         }
     };
@@ -6652,14 +6661,12 @@ impl UnrefSourceMapRequest {
         // SAFETY: caller contract — ctx is the original Box allocation; no
         // live borrow of *ctx exists.
         let ctx = unsafe { bun_core::heap::take(ctx) };
+        // Copy the `AnyServer` handle out of the DevServer (no `as_mut()`):
+        // the call can drop the `Box<DevServer>` via `deinit_if_we_can`, so
+        // no reference into it may be live across the call.
         // SAFETY: dev outlives the request
-        unsafe {
-            (*ctx.dev)
-                .server
-                .as_mut()
-                .unwrap()
-                .on_static_request_complete()
-        };
+        let server = unsafe { (*ctx.dev).server.unwrap() };
+        server.on_static_request_complete();
         drop(ctx);
     }
 

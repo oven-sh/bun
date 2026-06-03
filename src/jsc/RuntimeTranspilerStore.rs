@@ -1032,17 +1032,33 @@ impl TranspilerJob {
         }
 
         if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
-            let bytecode_slice = parse_result.already_bundled.bytecode_slice();
+            // Move the bytecode out of `parse_result` and transfer ownership
+            // to C++ (matches `transpile_source_code_inner` in jsc_hooks.rs and
+            // the Zig default_allocator semantics): `parse_result` is dropped
+            // when this function returns, so a borrowed `bytecode_slice()`
+            // pointer would dangle by the time the JS thread builds the
+            // `JSC::CachedBytecode` over it. `bytecode_cache_needs_deref`
+            // tells the C++ CachedBytecode destructor to free the buffer.
+            let already_bundled = core::mem::take(&mut parse_result.already_bundled);
+            let is_commonjs_module = already_bundled.is_common_js();
+            let (bytecode_cache, bytecode_cache_size) = match already_bundled {
+                AlreadyBundled::Bytecode(bytes) | AlreadyBundled::BytecodeCjs(bytes) => {
+                    let len = bytes.len();
+                    if len == 0 {
+                        (ptr::null_mut(), 0)
+                    } else {
+                        (bun_core::heap::into_raw(bytes).cast::<u8>(), len)
+                    }
+                }
+                _ => (ptr::null_mut(), 0),
+            };
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
                 source_code: String::clone_latin1(&parse_result.source.contents),
                 already_bundled: true,
-                bytecode_cache: if !bytecode_slice.is_empty() {
-                    bytecode_slice.as_ptr().cast_mut()
-                } else {
-                    ptr::null_mut()
-                },
-                bytecode_cache_size: bytecode_slice.len(),
-                is_commonjs_module: parse_result.already_bundled.is_common_js(),
+                bytecode_cache,
+                bytecode_cache_size,
+                bytecode_cache_needs_deref: !bytecode_cache.is_null(),
+                is_commonjs_module,
                 tag: this_tag,
                 ..Default::default()
             });

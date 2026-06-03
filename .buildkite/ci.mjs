@@ -140,6 +140,9 @@ const buildPlatforms = [
   { os: "linux", arch: "aarch64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", baseline: true, distro: "amazonlinux", release: "2023", features: ["docker"] },
+  // ASAN lanes are PR-only (filtered out on main — see getPipelineOptions and
+  // includeASAN in getPipeline) and never ship in releases.
+  { os: "linux", arch: "aarch64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "x64", profile: "asan", distro: "amazonlinux", release: "2023", features: ["docker"] },
   { os: "linux", arch: "aarch64", abi: "musl", distro: "alpine", release: "3.23" },
   { os: "linux", arch: "x64", abi: "musl", distro: "alpine", release: "3.23" },
@@ -194,6 +197,7 @@ const testPlatforms = [
   { os: "linux", arch: "aarch64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", baseline: true, distro: "debian", release: "13", tier: "latest" },
+  { os: "linux", arch: "aarch64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "x64", profile: "asan", distro: "debian", release: "13", tier: "latest" },
   { os: "linux", arch: "aarch64", distro: "ubuntu", release: "25.04", tier: "latest" },
   { os: "linux", arch: "x64", distro: "ubuntu", release: "25.04", tier: "latest" },
@@ -688,7 +692,12 @@ function getTargetTriplet(platform) {
  * @returns {boolean}
  */
 function needsBaselineVerification(platform) {
-  const { os, arch, baseline } = platform;
+  const { os, arch, baseline, profile } = platform;
+  // ASAN builds are PR-only test artifacts that never ship, and they don't
+  // produce the ${triplet}-profile.zip this step downloads (the asan link
+  // uploads ${triplet}-asan.zip instead — see scripts/build/ci.ts). The
+  // release lanes already cover instruction-policy verification.
+  if (profile === "asan") return false;
   if (os === "linux") return (arch === "x64" && baseline) || arch === "aarch64";
   if (os === "windows") return arch === "x64" && baseline;
   return false;
@@ -717,7 +726,9 @@ const SDE_URL = `https://downloadmirror.intel.com/859732/sde-external-${SDE_VERS
  */
 function hasWebKitChanges(options) {
   const { changedFiles = [] } = options;
-  return changedFiles.some(file => file.includes("SetupWebKit.cmake"));
+  // The WebKit pin (WEBKIT_VERSION) lives in scripts/build/deps/webkit.ts;
+  // it was previously in cmake/tools/SetupWebKit.cmake, which no longer exists.
+  return changedFiles.some(file => file.includes("scripts/build/deps/webkit.ts"));
 }
 
 /**

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // Each .on() / .onDocument() call heap-allocates an ElementHandler / DocumentHandler
 // struct via bun.default_allocator. When the HTMLRewriter is garbage-collected,
@@ -77,5 +77,7 @@ test.skipIf(isDebug)(
     expect(deltaMB).toBeLessThan(25);
     expect(exitCode).toBe(0);
   },
-  15_000,
+  // ASAN instrumentation makes each pass several times slower (observed >15s
+  // total on aarch64-asan); same workload, just more wall-clock headroom.
+  isASAN ? 90_000 : 15_000,
 );

@@ -788,7 +788,10 @@ impl Drop for Route {
     fn drop(&mut self) {
         // pending responses keep a ref to the route
         debug_assert!(self.pending_responses.get().is_empty());
-        // `pending_responses` (Vec) and `bundle` (IntrusiveRc) auto-drop.
+        // `pending_responses` (Vec) auto-drops. `RefPtr`/`IntrusiveRc` has no
+        // `Drop`, so release the bundle ref taken in `Route::init` explicitly
+        // (mirrors Zig `Route.deinit` calling `this.bundle.deref()`).
+        self.bundle.deref();
         // `state` has no `Drop` glue for the intrusive-pointer variants — release
         // them explicitly (mirrors Zig `Route.deinit` calling `this.state.deinit()`).
         // `with_mut` is fine here — refcount==0 so no other `&Route` exists.

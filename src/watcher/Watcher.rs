@@ -267,7 +267,12 @@ impl Watcher {
                     let _ = bun_sys::close(fd);
                 }
             }
-            // watchlist freed by Drop on Box
+            // `MultiArrayList`'s `Drop` is slab-only and never runs column
+            // destructors; drop the rows first or every `Cow::Owned`
+            // `file_path` leaks (matches Zig, where the watchlist allocator
+            // owned the dupes).
+            me.watchlist.drop_elements();
+            // watchlist slab freed by Drop on Box
             // SAFETY: this was heap-allocated by caller of init()
             drop(unsafe { bun_core::heap::take(this) });
         }
@@ -318,7 +323,11 @@ impl Watcher {
                     let _ = bun_sys::close(fd);
                 }
             }
-            // watchlist freed by Drop below
+            // `MultiArrayList`'s `Drop` is slab-only and never runs column
+            // destructors; drop the rows first or every `Cow::Owned`
+            // `file_path` leaks.
+            me.watchlist.drop_elements();
+            // watchlist slab freed by Drop below
         }
 
         // Close trace file if open
@@ -397,6 +406,12 @@ impl Watcher {
             if item == last_item || self.watchlist.len() <= item as usize {
                 continue;
             }
+            // `swap_remove` is a bitwise row overwrite that never runs column
+            // destructors — take the `Cow::Owned` file_path out first or it
+            // leaks (matches Zig, where the watchlist allocator owned the dupe).
+            drop(core::mem::take(
+                &mut self.watchlist.items_file_path_mut()[item as usize],
+            ));
             self.watchlist.swap_remove(item as usize);
 
             // swapRemove put a different entry at `item`, but its kqueue registration still
@@ -1093,6 +1108,7 @@ pub enum WatchItemKind {
 /// the unsafe generic `Slice::items::<F>(field)`.
 pub trait WatchItemColumns {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>];
+    fn items_file_path_mut(&mut self) -> &mut [Cow<'static, [u8]>];
     fn items_hash(&self) -> &[u32];
     fn items_fd(&self) -> &[Fd];
     fn items_fd_mut(&mut self) -> &mut [Fd];
@@ -1105,6 +1121,9 @@ pub trait WatchItemColumns {
 impl WatchItemColumns for WatchList {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
         self.items::<"file_path", Cow<'static, [u8]>>()
+    }
+    fn items_file_path_mut(&mut self) -> &mut [Cow<'static, [u8]>] {
+        self.items_mut::<"file_path", Cow<'static, [u8]>>()
     }
     fn items_hash(&self) -> &[u32] {
         self.items::<"hash", u32>()
@@ -1130,6 +1149,9 @@ impl WatchItemColumns for WatchList {
 impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
     fn items_file_path(&self) -> &[Cow<'static, [u8]>] {
         self.items::<"file_path", Cow<'static, [u8]>>()
+    }
+    fn items_file_path_mut(&mut self) -> &mut [Cow<'static, [u8]>] {
+        self.items_mut::<"file_path", Cow<'static, [u8]>>()
     }
     fn items_hash(&self) -> &[u32] {
         self.items::<"hash", u32>()

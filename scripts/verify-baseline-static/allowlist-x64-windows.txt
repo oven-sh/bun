@@ -846,7 +846,16 @@ sinf                        [AVX, FMA]
 sinh_fma                    [AVX, FMA]
 sinhf_fma                   [AVX, FMA]
 strnlen                     [AVX, AVX2]
-strpbrk                     [AVX, AVX2]   # UCRT vectorized str routine, runtime-gated on __isa_available
+# strpbrk: UCRT vectorized str routine, runtime-gated on __isa_available.
+# RTM is a disassembly artifact, not real code: MSVC puts the routine's
+# switch jump table in .text right after the body's ret. The 4-byte table
+# entries (verified by disassembling bun-profile.exe at the flagged VA:
+# `c6 f8 1a 03` = target offset 0x031af8c6, one of a +7-stride run matching
+# the pslldq/jmp ladder dispatched via `jmp *table(%rsi,%r9,4)`) happen to
+# decode as `xabort imm8` (C6 F8 ib). Layout shifts (e.g. a WebKit bump)
+# change the offsets stored in the table, so which junk instruction the
+# linear sweep sees here varies build to build.
+strpbrk                     [AVX, AVX2, RTM]
 tan                         [AVX, FMA]
 tanf                        [AVX, FMA]
 tanh_fma                    [AVX, FMA]

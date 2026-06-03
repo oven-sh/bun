@@ -879,9 +879,12 @@ where
             // server is a BACKREF; pool put + onRequestComplete
             server
                 .release_request_context(std::ptr::from_mut::<Self>(self).cast::<c_void>(), HTTP3);
-            // SAFETY: `&mut` through the backref — the server outlives this
-            // context and no other borrow of it is live here.
-            unsafe { (*server.as_ptr()).on_request_complete() };
+            // Raw `*mut S` end-to-end: completing the last pending request
+            // can free the server synchronously during VM shutdown
+            // (`deinit_if_we_can` → `schedule_deinit` → `deinit`), which must
+            // not happen while a `&mut` into the server allocation is
+            // protected (Stacked Borrows; `borrow = ptr` in src/CLAUDE.md).
+            ThisServer::on_request_complete(server.as_ptr());
         }
     }
 

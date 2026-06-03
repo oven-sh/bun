@@ -717,8 +717,9 @@ impl AnyRoute {
                     // *without* deref). `RefPtr<T>` has no `Drop`, so a bit-copy
                     // here keeps the net refcount at 1 — bumping for the map
                     // slot would leak +1 per first-seen HTMLBundle.
-                    // SAFETY: `html_bundle` is the live `RefPtr<HTMLBundle>` from the
-                    // route map; `init` consumes its +1 ref into the new `Route`.
+                    // SAFETY: `html_bundle` is a borrowed pointer to the live
+                    // JS-wrapped `HTMLBundle`; `init` takes its own +1 ref on
+                    // it (released by `Route`'s `Drop`).
                     let route = html_bundle::Route::init(html_bundle);
                     // SAFETY: `route.data` is the just-allocated NonNull (rc=1);
                     // wrap without bumping so the map slot stays non-owning
@@ -2710,10 +2711,18 @@ where
     pub fn finalize(self: Box<Self>) {
         httplog!("finalize");
         // `deinit_if_we_can` may defer the actual free (pending requests still
-        // hold a ref), so hand ownership back to the raw teardown path.
-        let this = bun_core::heap::release(self);
-        this.js_value.finalize();
-        this.deinit_if_we_can();
+        // hold a ref), so hand ownership back to the raw teardown path. Stay
+        // on the raw pointer: when the VM is shutting down,
+        // `deinit_if_we_can` frees `*this` synchronously, which must not
+        // happen while any `&`/`&mut` into the allocation is protected
+        // (Stacked Borrows; `borrow = ptr` in src/CLAUDE.md). The `Box`
+        // argument itself is fine — by-value boxes carry only a weak
+        // protector, which permits deallocation.
+        let this = bun_core::heap::into_raw(self);
+        // SAFETY: `this` is the heap pointer just unboxed above; the field
+        // borrow ends before `deinit_if_we_can`.
+        unsafe { (*this).js_value.finalize() };
+        Self::deinit_if_we_can(this);
     }
 
     pub fn get_all_closed_promise(&mut self, global: &JSGlobalObject) -> JSValue {

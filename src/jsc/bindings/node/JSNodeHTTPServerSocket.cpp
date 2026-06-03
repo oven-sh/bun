@@ -247,7 +247,10 @@ void JSNodeHTTPServerSocket::onData(const char* data, int length, bool last)
 
     WebCore::ScriptExecutionContext* scriptExecutionContext = globalObject->scriptExecutionContext();
 
-    if (scriptExecutionContext) {
+    // Mirror onClose: never allocate JS cells or post tasks while the VM is
+    // shutting down (this can be reached from uws close callbacks during the
+    // final GC, when allocation is forbidden and posted tasks never run).
+    if (scriptExecutionContext && !globalObject->isShuttingDown()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
         JSC::JSUint8Array* buffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(reinterpret_cast<const uint8_t*>(data), length));
         auto chunk = JSC::JSValue(buffer);

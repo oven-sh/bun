@@ -1915,12 +1915,19 @@ impl FetchTasklet {
         // SAFETY: `response` is freshly allocated above; ownership transfers to JSC.
         let response_js = Response::make_maybe_pooled(&global_this, response);
         response_js.ensure_still_alive();
-        t.js.response = jsc::Weak::<FetchTasklet>::create_ptr(
-            response_js,
-            &global_this,
-            jsc::WeakRefType::FetchResponse,
-            core::ptr::NonNull::new(t.task).expect("live tasklet"),
-        );
+        // SAFETY: `t.task` is the live heap tasklet (`Parts` is only built
+        // from one), and the resulting `Weak` is stored in `t.js.response` —
+        // a field of that same tasklet — so it is cleared or dropped (which
+        // destroys the C++ WeakRef) before the tasklet is freed. The finalize
+        // callback can therefore never observe a dangling ctx.
+        t.js.response = unsafe {
+            jsc::Weak::<FetchTasklet>::create_ptr(
+                response_js,
+                &global_this,
+                jsc::WeakRefType::FetchResponse,
+                core::ptr::NonNull::new(t.task).expect("live tasklet"),
+            )
+        };
         // Response is intrusively refcounted; bump for native_response.
         // SAFETY: `response` is the live heap allocation owned by JSC after
         // `make_maybe_pooled`; `ref_` bumps the intrusive refcount.

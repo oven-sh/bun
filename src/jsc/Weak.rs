@@ -116,14 +116,23 @@ impl<T> Weak<T> {
         ref_type: WeakRefType,
         ctx: &mut T,
     ) -> Self {
-        Self::create_ptr(value, global_this, ref_type, NonNull::from(ctx))
+        // SAFETY: `ctx` is derived from a live `&mut T`, so it satisfies the
+        // liveness contract at creation; the caller's `&mut T` is the same
+        // proof `create` has always demanded.
+        unsafe { Self::create_ptr(value, global_this, ref_type, NonNull::from(ctx)) }
     }
 
     /// Like [`create`](Self::create), but takes `ctx` as a raw pointer for
     /// callers that cannot form `&mut T` (e.g. while disjoint field borrows of
-    /// the owner are live). Same contract: `ctx` must be live for as long as
-    /// the weak ref's finalize callback can fire.
-    pub fn create_ptr(
+    /// the owner are live).
+    ///
+    /// # Safety
+    ///
+    /// `ctx` must point to a live `T` and remain valid for as long as the
+    /// weak ref's finalize callback can fire — the GC finalizer dereferences
+    /// it. (`create` enforces this via `&mut T`; here the caller must prove
+    /// liveness instead.)
+    pub unsafe fn create_ptr(
         value: JSValue,
         global_this: &JSGlobalObject,
         ref_type: WeakRefType,

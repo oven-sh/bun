@@ -237,4 +237,59 @@ describe("WebSocket.bufferedAmount (client)", () => {
       server.close();
     }
   });
+
+  // A raw socket close/reset (no Close handshake) while a backlog is queued must
+  // also preserve bufferedAmount. This exercises the socket-close callback path,
+  // which frees the send buffer before dispatching the close event.
+  test("does not reset to 0 on a raw socket reset while a backlog is queued", async () => {
+    const { promise: ready, resolve: onReady } = Promise.withResolvers<number>();
+    const server = net.createServer(sock => {
+      let buf = "";
+      let upgraded = false;
+      sock.on("data", d => {
+        if (upgraded) return;
+        buf += d.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        const key = /sec-websocket-key:\s*(.+)\r\n/i.exec(buf)?.[1]?.trim() ?? "";
+        const accept = crypto
+          .createHash("sha1")
+          .update(key + WS_MAGIC)
+          .digest("base64");
+        sock.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+        );
+        upgraded = true;
+        // Stop reading so the client's sends pile up, then abruptly destroy
+        // the connection (RST) — no Close handshake.
+        sock.pause();
+        sock.destroy();
+      });
+      sock.on("error", () => {});
+    });
+    server.listen(0, "127.0.0.1", () => onReady((server.address() as net.AddressInfo).port));
+    const port = await ready;
+
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
+      const { promise, resolve } = Promise.withResolvers<{ beforeClose: number; onClose: number }>();
+      let beforeClose = 0;
+      ws.onopen = () => {
+        const chunk = Buffer.alloc(64 * 1024, 0x7d).toString();
+        for (let i = 0; i < 4000; i++) ws.send(chunk);
+        beforeClose = ws.bufferedAmount;
+      };
+      ws.onclose = () => resolve({ beforeClose, onClose: ws.bufferedAmount });
+      ws.onerror = () => {};
+      const { beforeClose: queued, onClose } = await promise;
+
+      expect(queued).toBeGreaterThan(64 * 1024);
+      // The backlog must survive the abrupt socket close.
+      expect(onClose).toBeGreaterThan(64 * 1024);
+    } finally {
+      server.close();
+    }
+  });
 });

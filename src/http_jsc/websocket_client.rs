@@ -253,7 +253,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // the destructor's finalize() — does not leak. When reached via
         // fail(), outgoing_websocket is already None and this is a no-op.
         if had_tunnel {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
+            this.dispatch_abrupt_close(ErrorCode::Ended, None);
         }
     }
 
@@ -345,10 +345,15 @@ impl<const SSL: bool> WebSocket<SSL> {
     pub fn handle_close(&mut self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
         log!("onClose");
         jsc::mark_binding!();
+        // Snapshot the backlog before clear_data() frees it, so the close event
+        // does not see bufferedAmount reset to 0 (e.g. peer RST with unsent
+        // frames). SAFETY: `self` is a live `&mut Self`; buffered_amount only
+        // does short-lived raw-ptr field reads.
+        let buffered = unsafe { Self::buffered_amount(self) };
         self.clear_data();
         self.tcp.detach();
 
-        self.dispatch_abrupt_close(ErrorCode::Ended);
+        self.dispatch_abrupt_close(ErrorCode::Ended, Some(buffered));
 
         // For the socket.
         // SAFETY: `self: &mut Self` → `*mut Self`; this is the terminal
@@ -1304,7 +1309,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
     fn send_pong(&mut self) -> bool {
         if !self.has_tcp() {
-            self.dispatch_abrupt_close(ErrorCode::Ended);
+            self.dispatch_abrupt_close(ErrorCode::Ended, None);
             return false;
         }
 
@@ -1364,7 +1369,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let body_len = body_len.min(123);
         log!("Sending close with code {}", code);
         if !self.has_tcp() {
-            self.dispatch_abrupt_close(ErrorCode::Ended);
+            self.dispatch_abrupt_close(ErrorCode::Ended, None);
             self.clear_data();
             return;
         }
@@ -1481,7 +1486,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let this = unsafe { &mut *this_ptr };
 
         if !this.has_tcp() || op > 0xF {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
+            this.dispatch_abrupt_close(ErrorCode::Ended, None);
             return;
         }
 
@@ -1527,7 +1532,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let this = unsafe { &mut *this_ptr };
 
         if !this.has_tcp() || op > 0xF {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
+            this.dispatch_abrupt_close(ErrorCode::Ended, None);
             return;
         }
 
@@ -1570,7 +1575,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             let _ = this.send_data(bytes, !this.has_backpressure(), opcode);
         } else {
             // Invalid blob, close connection
-            this.dispatch_abrupt_close(ErrorCode::Ended);
+            this.dispatch_abrupt_close(ErrorCode::Ended, None);
         }
     }
 
@@ -1588,7 +1593,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: str_ is a valid pointer from C++
         let str = unsafe { &*str_ };
         if !this.has_tcp() {
-            this.dispatch_abrupt_close(ErrorCode::Ended);
+            this.dispatch_abrupt_close(ErrorCode::Ended, None);
             return;
         }
 
@@ -1641,18 +1646,20 @@ impl<const SSL: bool> WebSocket<SSL> {
         );
     }
 
-    fn dispatch_abrupt_close(&mut self, code: ErrorCode) {
+    /// `buffered_override` lets a caller that already cleared the send buffer
+    /// (e.g. `handle_close()` calls `clear_data()` first) pass the backlog it
+    /// captured beforehand. `None` snapshots the live send buffer here.
+    fn dispatch_abrupt_close(&mut self, code: ErrorCode, buffered_override: Option<usize>) {
         let Some(out) = self.outgoing_websocket.take() else {
             return;
         };
         self.poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
         jsc::mark_binding!();
-        // Capture the unsent backlog before the call (it may already be 0 if a
-        // caller such as handle_close() cleared the buffer first) so C++ can
-        // keep bufferedAmount from resetting to 0 on abrupt close.
+        // Capture the unsent backlog so C++ can keep bufferedAmount from
+        // resetting to 0 on abrupt close.
         // SAFETY: `self` is a live `&mut Self`; buffered_amount only does
         // short-lived raw-ptr field reads.
-        let buffered = unsafe { Self::buffered_amount(self) };
+        let buffered = buffered_override.unwrap_or_else(|| unsafe { Self::buffered_amount(self) });
         CppWebSocket::opaque_ref(out.as_ptr()).did_abrupt_close(code, buffered);
         // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
         // caller's ref guard (see cancel/handle_close).
@@ -2130,9 +2137,12 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// `this` must point to a live `WebSocket<SSL>`.
     pub unsafe fn buffered_amount(this: *const Self) -> usize {
         // SAFETY: `this` is live; short-lived shared borrows of the disjoint
-        // `send_buffer` and `proxy_tunnel` fields only.
+        // `send_buffer` and `proxy_tunnel` fields only (never a whole-struct
+        // `&Self`, which could overlap a live `&mut Self` on a re-entrant call).
         let mut buffered = unsafe { (*core::ptr::addr_of!((*this).send_buffer)).readable_length() };
-        if let Some(tunnel) = unsafe { *core::ptr::addr_of!((*this).proxy_tunnel) } {
+        // SAFETY: as above — `proxy_tunnel` is `Copy` (Option<NonNull<_>>).
+        let tunnel = unsafe { *core::ptr::addr_of!((*this).proxy_tunnel) };
+        if let Some(tunnel) = tunnel {
             // Raw-ptr accessor, not `tunnel.as_ref()`: reachable inside the
             // tunnel's SSL-wrapper callbacks on abrupt close, where a
             // whole-struct `&WebSocketProxyTunnel` would overlap the live

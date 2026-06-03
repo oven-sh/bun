@@ -54,8 +54,6 @@ pub type EventType = libc::kevent;
 // TODO:
 #[cfg(windows)]
 pub type EventType = *mut c_void;
-// TODO(port): Zig had `.wasm => @compileError("Unsupported OS")` — no Rust equivalent needed;
-// the missing cfg arm will fail to compile on wasm.
 
 /// Trait replacing Zig's `comptime Handler: anytype` with `@hasDecl` checks for
 /// optional `pre`/`post`. Implementors override `PRE`/`POST` if they have them.

@@ -1159,8 +1159,6 @@ pub(crate) fn sleep_sync(
         )));
     }
 
-    // TODO(port): std.Thread.sleep — bun owns its own sleep; using thread::sleep
-    // here matches Zig's blocking semantics (this is a sync API).
     std::thread::sleep(core::time::Duration::from_millis(
         u64::try_from(milliseconds).expect("int cast"),
     ));
@@ -1558,9 +1556,6 @@ pub(crate) fn index_of_line(
 }
 
 pub use crate::crypto as crypto_mod;
-// TODO(port): `pub const Crypto = @import("../crypto/crypto.zig");` re-exports
-// the crypto module under this file's namespace; in Rust the canonical path is
-// `crate::crypto`.
 
 #[bun_jsc::host_fn]
 pub(crate) fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
@@ -1787,7 +1782,6 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
                     libc::MAP_PRIVATE
                 };
 
-                // TODO(port): @hasField(std.c.MAP, "SYNC") — gated by target_os in Rust.
                 #[cfg(target_os = "linux")]
                 if opts
                     .get_boolean_loose(global_this, "sync")?

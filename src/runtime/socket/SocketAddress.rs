@@ -9,10 +9,9 @@ use core::cell::Cell;
 use core::ffi::{c_int, c_void};
 use core::mem;
 
+use bun_cares_sys::c_ares as ares;
 use bun_core::{OwnedString, String as BunString, ZStr};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsError, JsResult, StringJsc, URL};
-// TODO(port): move to <area>_sys — c-ares FFI lives in bun_cares_sys
-use bun_cares_sys::c_ares as ares;
 
 // `pub const js = jsc.Codegen.JSSocketAddress;` + toJS/fromJS/fromJSDirect
 // → handled by the JsClass derive; codegen wires toJS/fromJS/fromJSDirect.
@@ -781,7 +780,6 @@ fn pton_noerr(af: c_int, addr: &[u8], dst: *mut c_void) -> bool {
 
 // FIXME: c-headers-for-zig casts AF_* and PF_* to `c_int` when it should be `comptime_int`
 #[repr(u16)]
-// TODO(port): repr should be inet::sa_family_t but Rust requires concrete int; sa_family_t is u16 on posix+win
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub enum AF {
     INET = inet::AF_INET as u16,
@@ -1045,15 +1043,9 @@ pub mod inet {
     #![allow(non_camel_case_types)]
     use bun_sys::windows::ws2_32 as ws2;
     // PORT NOTE: `bun_windows_sys::ws2_32` does not currently surface
-    // `IN4ADDR_LOOPBACK` / `INET6_ADDRSTRLEN` / `ADDRESS_FAMILY` / `USHORT`;
-    // mirror the `ws2ipdef.h` / `ws2def.h` values locally so the Windows
-    // build resolves without widening the leaf crate.
-    /// `ws2ipdef.h`: `#define IN4ADDR_LOOPBACK 0x0100007f` — the raw
-    /// **network-order** `s_addr` value for 127.0.0.1. Spelled via
-    /// `from_ne_bytes` so the wire bytes `[127,0,0,1]` are explicit (yields
-    /// `0x0100_007f` on little-endian Windows, matching the header literal).
-    #[allow(dead_code)]
-    pub(crate) const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
+    // `INET6_ADDRSTRLEN` / `ADDRESS_FAMILY` / `USHORT`; mirror the
+    // `ws2ipdef.h` / `ws2def.h` values locally so the Windows build
+    // resolves without widening the leaf crate.
     /// `ws2ipdef.h`: `INET6_ADDRSTRLEN == 65` on Windows (vs 46 on POSIX).
     pub use bun_sys::posix::INET6_ADDRSTRLEN;
     pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];
@@ -1066,7 +1058,6 @@ pub mod inet {
 #[cfg(not(windows))]
 pub mod inet {
     #![allow(non_camel_case_types)]
-    pub const IN4ADDR_LOOPBACK: u32 = u32::from_ne_bytes([127, 0, 0, 1]);
     pub use bun_sys::posix::INET6_ADDRSTRLEN;
     // Make sure this is in line with IN6ADDR_ANY_INIT in `netinet/in.h` on all platforms.
     pub(crate) const IN6ADDR_ANY_INIT: [u8; 16] = [0; 16];

@@ -2,7 +2,6 @@ use core::cmp::Ordering;
 use core::fmt;
 
 use crate::Version;
-// TODO(port): verify exact module path for Query::Token::Wildcard in bun_semver
 use crate::query::token::Wildcard;
 
 #[repr(u8)]

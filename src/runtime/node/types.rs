@@ -1662,7 +1662,6 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
             slice = &slice[2..];
         }
 
-        // TODO(port): std.fmt.parseInt over &[u8] — need byte-slice radix parser in bun_core
         match strings::parse_int::<Mode>(slice, 8) {
             Ok(v) => v as u32,
             Err(_) => {
@@ -1986,7 +1985,6 @@ pub struct Dirent {
     pub kind: DirentKind,
 }
 
-// TODO(port): Zig used `std.fs.File.Kind`. std::fs is banned; map to bun_sys::FileKind.
 pub type DirentKind = bun_sys::FileKind;
 
 // TODO(port): move to runtime_sys

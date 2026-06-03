@@ -189,7 +189,6 @@ where
 
     #[cfg(windows)]
     {
-        // TODO(port): bun_sys::windows::GetFileType
         *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
             != 0
             && !force_sync;

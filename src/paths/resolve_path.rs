@@ -154,7 +154,6 @@ pub(crate) fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     }
 
     if index == 0 {
-        // TODO(port): Zig returned &[_]u8{separator} (static); needs per-platform &'static [u8; 1]
         return Some(P::P.separator_string().as_bytes());
     }
 
@@ -289,7 +288,6 @@ pub(crate) fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) 
     }
 
     if index == 0 {
-        // TODO(port): Zig returned &[_]u8{separator} (static one-byte slice)
         return P::P.separator_string().as_bytes();
     }
 
@@ -387,7 +385,6 @@ pub(crate) fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>
     normalized_to_: &'a [u8],
     buf: &'a mut [u8],
 ) -> &'a [u8] {
-    // TODO(port): return borrows either `buf` or `normalized_to_`; lifetimes need unification.
     let mut normalized_from = normalized_from_;
     let mut normalized_to = normalized_to_;
     let win_root_len: Option<usize> = if P::P == Platform::Windows {
@@ -613,7 +610,6 @@ pub fn dirname<P: PlatformT>(str: &[u8]) -> &[u8] {
         }
         Platform::Windows => {
             let Some(separator) = last_index_of_separator_windows(str) else {
-                // TODO(port): std.fs.path.diskDesignatorWindows
                 return crate::disk_designator_windows(str);
             };
             &str[..separator]
@@ -904,9 +900,6 @@ pub fn normalize_string_generic<
         is_separator,
     )
 }
-
-// TODO(port): `separatorAdapter(T, func)` wrapped a `fn(comptime T, char) bool`
-// into `fn(T) bool`. In Rust we pass closures directly; no adapter needed.
 
 pub fn normalize_string_generic_t<
     'a,
@@ -1257,9 +1250,6 @@ impl Platform {
         }
     }
 
-    // TODO(port): get_separator_func_t returned a generic fn-over-T; Rust cannot
-    // express that as a value. Callers use `is_separator_t::<T>` directly instead.
-
     pub const fn get_last_separator_func(self) -> LastSeparatorFunction {
         match self {
             Platform::Loose => last_index_of_separator_loose,
@@ -1267,9 +1257,6 @@ impl Platform {
             Platform::Posix => last_index_of_separator_posix,
         }
     }
-
-    // TODO(port): get_last_separator_func_t — same as above; callers dispatch
-    // via `last_index_of_separator_*_t::<T>` directly.
 
     #[inline(always)]
     pub fn is_separator(self, char: u8) -> bool {

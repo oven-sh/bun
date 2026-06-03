@@ -16,7 +16,6 @@ pub use bun_core::JsError as ErasedJsError;
 pub type JsResult<T> = core::result::Result<T, ErasedJsError>;
 
 pub struct AnyTask {
-    // TODO(port): lifetime — type-erased callback context; raw by design.
     pub ctx: Option<NonNull<c_void>>,
     pub callback: fn(*mut c_void) -> JsResult<()>,
 }

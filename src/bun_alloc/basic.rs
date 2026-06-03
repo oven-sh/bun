@@ -1,8 +1,6 @@
 use core::ffi::c_void;
 
 use crate::{default_alloc, mimalloc};
-// TODO(port): `Allocator`/`AllocatorVTable`/`Alignment` are the bun_alloc crate's
-// equivalents of `std.mem.Allocator`, its `VTable`, and `std.mem.Alignment`.
 // TODO(refactor): consider reshaping the vtable struct into `trait Allocator` impls.
 use crate::{Alignment, AllocatorVTable, StdAllocator};
 

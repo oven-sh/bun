@@ -84,8 +84,6 @@ use crate::cli::init_command::InitCommand;
 use crate::cli::open;
 use crate::run_command::RunCommand as Run;
 
-// TODO(port): inherent associated type `Digest = [u8; N]` requires nightly
-// `inherent_associated_types`; mirror pack_command.rs and spell the array out.
 type SHA1Digest = [u8; sha::SHA1::DIGEST];
 type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
@@ -137,8 +135,6 @@ pub enum FromTarballError {
 }
 bun_core::oom_from_alloc!(FromTarballError);
 
-// TODO(port): Zig defined this as a nested type alias on the Context struct;
-// inherent associated types are unstable (rust#8995) so hoist to module scope.
 pub(crate) type FromWorkspaceError = pack::PackError<true>;
 
 impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
@@ -1263,7 +1259,6 @@ impl PublishCommand {
                 Output::flush();
 
                 // on another thread because pressing enter is not required
-                // TODO(port): Zig used std.Thread.spawn — bun_threading has no spawn; use std::thread::Builder
                 match std::thread::Builder::new()
                     .spawn(move || Self::press_enter_to_open_in_browser(auth_url_str))
                 {
@@ -1673,7 +1668,6 @@ impl PublishCommand {
                         ..Default::default()
                     });
 
-                    // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
                     json.data
                         .e_object_mut()
                         .expect("infallible: variant checked")
@@ -1759,7 +1753,6 @@ impl PublishCommand {
                         });
                     }
 
-                    // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
                     json.data
                         .e_object_mut()
                         .expect("infallible: variant checked")
@@ -1817,7 +1810,6 @@ impl PublishCommand {
                     }
                 };
 
-                // TODO(port): Zig used std.fs.Dir here for openDirZ — using bun_sys::Fd instead
                 let mut dirs: Vec<(Fd, Box<[u8]>, bool)> = Vec::new();
 
                 dirs.push((bin_dir, normalized_bin_dir.as_bytes().into(), false));
@@ -1884,7 +1876,6 @@ impl PublishCommand {
                         });
 
                         if entry.kind == bun_sys::EntryKind::Directory {
-                            // TODO(port): Zig used dir.openDirZ — substituting bun_sys::openat
                             let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0)
                             else {
                                 continue;

@@ -24,10 +24,7 @@ use crate::api::bun::process::{
     self as spawn, Process, Rusage, SpawnOptions, SpawnProcessResult, Status,
     event_loop_handle_to_ctx,
 };
-// TODO(port): crate path for `bun.DotEnv.Loader`
 use bun_dotenv::Loader as DotEnvLoader;
-// TODO(port): crate path for `bun.io` BufferedReader/ReadState — assumed `bun_io`
-// TODO(port): crate path for Output writer type
 type OutputWriter = bun_core::io::Writer;
 
 /// Value type for package.json `scripts` map. Mirrors
@@ -41,7 +38,6 @@ type OwnedScriptsMap = StringArrayHashMap<Box<[u8]>>;
 
 struct ScriptConfig {
     label: Box<[u8]>,
-    // TODO(port): was `[:0]const u8` — NUL-terminated, used directly as argv element
     command: Box<[u8]>,
     cwd: Box<[u8]>,
     /// PATH env var value for this script
@@ -1117,8 +1113,6 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
     let use_colors = Output::enable_ansi_colors_stderr();
 
     let mut state = State {
-        // TODO(port): allocate handles slice; Zig used uninitialized alloc + per-index assign.
-        // Using Vec then into_boxed_slice after init loop below to avoid MaybeUninit gymnastics.
         handles: Box::default(),
         event_loop,
         event_loop_handle: EventLoopHandle::init_mini(event_loop),

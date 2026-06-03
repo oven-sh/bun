@@ -35,8 +35,6 @@ impl InitCommand {
         label: &'static str,
         default: &[u8],
     ) -> Result<Vec<u8>, Error> {
-        // TODO(port): Zig returns `[:0]const u8` (NUL-terminated, length-carrying).
-        // We return `Vec<u8>` here and NUL-terminate at the call sites that need it.
         #[allow(clippy::disallowed_methods)]
         // label is a runtime parameter that may contain <tag> markup
         Output::pretty(format_args!("{}", label));
@@ -56,7 +54,6 @@ impl InitCommand {
             });
 
         let mut input: Vec<u8> = Vec::new();
-        // TODO(port): bun.Output.buffered_stdin.reader().readUntilDelimiterArrayList(&input, '\n', 1024)
         Output::buffered_stdin_read_until_delimiter(&mut input, b'\n', 1024)?;
 
         if strings::ends_with_char(&input, b'\r') {
@@ -376,7 +373,6 @@ impl InitCommand {
         }
 
         if let Some(ifdir) = initialize_in_folder {
-            // TODO(port): std.fs.cwd().makePath → bun_sys::make_path / bun.makePath
             if let Err(err) = bun_sys::Dir::cwd().make_path(ifdir) {
                 bun_core::pretty_errorln!(
                     "Failed to create directory {}: {}",
@@ -402,12 +398,10 @@ impl InitCommand {
         let _ = Fs::FileSystem::init(None)?;
         let pathname =
             Fs::PathName::init(Fs::FileSystem::get().top_level_dir_without_trailing_slash());
-        // TODO(port): std.fs.cwd() → bun_sys::Fd::cwd(); the Zig kept a std.fs.Dir handle
         let destination_dir = Fd::cwd();
 
         let mut fields = PackageJSONFields::default();
 
-        // TODO(port): destination_dir.openFile("package.json", .{ .mode = .read_write }) catch null
         let mut package_json_file: Option<bun_sys::File> =
             bun_sys::File::openat(destination_dir, b"package.json", bun_sys::O::RDWR, 0).ok();
         let mut package_json_contents: MutableString = MutableString::init_empty();
@@ -509,7 +503,6 @@ impl InitCommand {
                     .or_else(|| package_json_expr.get(b"main"))
                 {
                     if let Some(str_) = name.as_utf8_string_literal() {
-                        // TODO(port): asStringZ returns NUL-terminated; we store bytes only
                         fields.entry_point = str_.to_vec();
                     }
                 }
@@ -884,7 +877,6 @@ impl InitCommand {
                         }
                     }
 
-                    // TODO(port): entry_point must be NUL-terminated for createNew
                     let mut ep_z = fields.entry_point.clone();
                     ep_z.push(0);
                     let ep_zstr = ZStr::from_slice_with_nul(&ep_z[..]);
@@ -1133,8 +1125,6 @@ pub struct PackageJSONFields {
     pub type_: &'static [u8],
     /// ARENA: allocated from `bun_ast::Expr` Store via `initialize_store()`; no deinit.
     pub object: Option<StoreRef<bun_ast::E::Object>>,
-    // TODO(port): Zig type was `[:0]const u8`; we drop the NUL sentinel and
-    // re-terminate at FFI boundaries.
     pub entry_point: Vec<u8>,
     pub private: bool,
 }
@@ -1494,7 +1484,6 @@ impl Template {
     }
 
     const AGENT_RULE: &'static [u8] = include_bytes!("./init/rule.md");
-    // TODO(port): Zig `[:0]const u8` literal — Rust byte literals are not NUL-terminated.
     const CURSOR_RULE: TemplateFile = TemplateFile::new(
         b".cursor/rules/use-bun-instead-of-node-vite-npm-pnpm.mdc",
         Self::AGENT_RULE,
@@ -1540,7 +1529,6 @@ impl Template {
             } else {
                 template_file.path
             };
-            // TODO(port): asset_path / template_file.path need NUL termination for create_new
             let asset_path_z = {
                 let mut v = asset_path.to_vec();
                 v.push(0);
@@ -1638,12 +1626,7 @@ impl Template {
         #[cfg(windows)]
         {
             // Zig: `bun.getenvZAnyCase("USER")` walks `std.os.environ` (bun.zig:913).
-            // `bun_core::getenv_z_any_case` is a TODO stub on Windows that always
-            // returns None (bun_core/util.rs), so calling it here makes the probe
-            // dead code. Use `std::env::var`, which on Windows goes through
-            // `GetEnvironmentVariableW` (inherently case-insensitive) — matching
-            // the Zig any-case semantics.
-            if let Ok(user) = std::env::var("USER") {
+            if let Some(user) = bun_core::getenv_z_any_case(bun_core::zstr!("USER")) {
                 let mut pathbuf = path_buffer_pool::get();
                 // Zig: `std.fmt.bufPrintZ(..) catch { return false; }` —
                 // fallible on overflow, do not panic.
@@ -1651,12 +1634,11 @@ impl Template {
                     use std::io::Write as _;
                     let total = pathbuf.len();
                     let mut cursor: &mut [u8] = &mut pathbuf[..];
-                    if cursor
-                        .write_fmt(format_args!(
-                            "C:\\Users\\{}\\AppData\\Local\\Programs\\Cursor\\Cursor.exe",
-                            user
-                        ))
-                        .is_err()
+                    if cursor.write_all(b"C:\\Users\\").is_err()
+                        || cursor.write_all(user).is_err()
+                        || cursor
+                            .write_all(b"\\AppData\\Local\\Programs\\Cursor\\Cursor.exe")
+                            .is_err()
                     {
                         return false;
                     }
@@ -1691,9 +1673,6 @@ impl Template {
             Template::ReactBlank => REACT_BLANK_FILES,
             Template::ReactTailwind => REACT_TAILWIND_FILES,
             Template::ReactTailwindShadcn => REACT_SHADCN_FILES,
-            // TODO(port): Zig `else => &.{.{ &.{}, &.{} }}` constructs a single
-            // bogus TemplateFile; preserved as an empty slice here since the
-            // branch is unreachable in practice.
             _ => &[],
         }
     }
@@ -1717,7 +1696,6 @@ impl Template {
                     ],
                 )
             } else {
-                // TODO(port): path needs NUL termination for create_new
                 let mut p = path.to_vec();
                 p.push(0);
                 Assets::create_new(
@@ -2003,8 +1981,6 @@ fn is_safe_entry_point_path(path: &[u8]) -> bool {
 
 #[inline]
 fn exists_z(path: &[u8]) -> bool {
-    // TODO(port): Zig `existsZ` takes `[:0]const u8`; here we accept `&[u8]` and
-    // let bun_sys handle termination via the non-Z `exists` (copies into a buffer).
     bun_sys::exists(path)
 }
 

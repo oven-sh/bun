@@ -3,7 +3,6 @@ use enumset::EnumSet;
 #[allow(non_camel_case_types)]
 #[repr(u8)]
 #[derive(enumset::EnumSetType, Debug)]
-// TODO(port): EnumSetType derive auto-impls Copy/Clone/Eq/PartialEq; verify it coexists with #[repr(u8)] (needed for FFI @intFromEnum)
 pub enum Method {
     ACL = 0,
     BIND = 1,

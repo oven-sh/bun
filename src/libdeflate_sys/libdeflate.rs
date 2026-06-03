@@ -472,7 +472,6 @@ pub(crate) const LIBDEFLATE_BAD_DATA: c_uint = 1;
 pub(crate) const LIBDEFLATE_SHORT_OUTPUT: c_uint = 2;
 pub(crate) const LIBDEFLATE_INSUFFICIENT_SPACE: c_uint = 3;
 
-// TODO(port): Zig uses `enum(c_uint)`; Rust cannot write `#[repr(c_uint)]`.
 // `u32` matches `c_uint` on all Bun targets.
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq)]

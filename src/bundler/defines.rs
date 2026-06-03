@@ -64,7 +64,6 @@ fn defines_path() -> FsPath<'static> {
 }
 
 // Zig: `pub const Data = DefineData;` inside `Define`
-// TODO(port): inherent associated type aliases are unstable; expose as module-level alias.
 pub type Data = DefineData;
 
 // ══════════════════════════════════════════════════════════════════════════

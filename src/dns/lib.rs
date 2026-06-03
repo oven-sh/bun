@@ -43,7 +43,6 @@ mod sock {
 // duplicate the POSIX/Windows split (see dns_jsc::dns).
 pub use sock::{addrinfo, freeaddrinfo};
 
-// TODO(port): move to dns_sys / verify libc crate exposes these on all targets
 #[cfg(windows)]
 pub const AI_V4MAPPED: c_int = 2048;
 #[cfg(not(windows))]
@@ -88,9 +87,6 @@ impl GetAddrInfo {
 
     pub fn hash(&self) -> u64 {
         let mut hasher = Wyhash::init(0);
-        // TODO(port): Zig used asBytes(&port) ++ asBytes(&options) where Options is
-        // packed struct(u64). Rust Options is not bit-packed; verify hash stability
-        // is not load-bearing across process boundaries (it isn't — used for in-memory dedupe).
         hasher.update(&self.port.to_ne_bytes());
         hasher.update(&self.options.to_packed_bytes());
         hasher.update(&self.name);
@@ -304,9 +300,6 @@ impl Default for Backend {
     }
 }
 
-// TODO(port): std.net.Address — std::net is banned. `bun_sys::net::Address`
-// wraps `libc::sockaddr_storage`; `.in/.in6` views go through the typed
-// `as_in4()`/`as_in6()` accessors. `.un` still casts on `as_sockaddr()`.
 pub type Address = bun_sys::net::Address;
 
 pub struct GetAddrInfoResult {

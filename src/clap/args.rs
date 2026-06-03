@@ -72,8 +72,6 @@ pub struct OsIterator {
 }
 
 impl OsIterator {
-    // TODO(port): Zig aliased `process.ArgIterator.InitError`; no std::process here.
-
     pub fn init() -> OsIterator {
         let mut res = OsIterator {
             exe_arg: None,

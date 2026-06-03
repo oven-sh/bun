@@ -2,7 +2,6 @@ use super::new_writer::{NewWriter, WriterContext};
 use crate::postgres::AnyPostgresError;
 
 pub struct ArrayList<'a> {
-    // TODO(port): lifetime — Zig `*std.array_list.Managed(u8)`; classified as BORROW_PARAM (mutable borrow of caller's buffer)
     pub array: &'a mut Vec<u8>,
 }
 

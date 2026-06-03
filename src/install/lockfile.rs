@@ -78,7 +78,7 @@ pub use self::bun_lockb as Serializer;
 pub use self::catalog_map::CatalogMap;
 pub use self::lockfile_json_stringify_for_debugging::json_stringify;
 pub use self::override_map::OverrideMap;
-pub use self::package::Package; // TODO(port): Zig was `Package(u64)` — generic instantiation
+pub use self::package::Package;
 pub use self::tree::Tree;
 pub use crate::padding_checker::assert_no_uninitialized_padding;
 // Bring the derive-generated `items_*` column accessors (`PackageColumns` for
@@ -176,7 +176,6 @@ pub struct Lockfile {
     pub meta_hash: MetaHash,
 
     pub packages: PackageList,
-    // TODO(port): Lockfile.Package.List is a MultiArrayList<Package>
     pub buffers: Buffers,
 
     /// name -> PackageID || [*]PackageID
@@ -630,7 +629,6 @@ impl Lockfile {
         log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
         let mut stream = Stream::new(buf);
-        // TODO(port): Stream{ .buffer = buf, .pos = 0 }
 
         self.format = FormatVersion::current();
         self.scripts = Scripts::default();
@@ -1433,9 +1431,6 @@ impl Lockfile {
     }
 
     /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
-    // TODO(port): Zig uses `comptime method` to make several params conditionally `void`.
-    // Rust const-generic enums need #[derive(ConstParamTy)] on Tree::BuilderMethod and the
-    // value-level branching can't change param types. Consider two monomorphized fns.
     pub fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,

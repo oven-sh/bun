@@ -259,7 +259,6 @@ impl HmrSocket {
                             return;
                         }
 
-                        // TODO(port): std.time.Timer — `start_async_bundle` takes Instant.
                         let timer = std::time::Instant::now();
                         dev.start_async_bundle(event.entry_points, true, timer)
                             // bun.handleOom(err) — Rust aborts on OOM by default

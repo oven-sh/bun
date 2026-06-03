@@ -8,8 +8,6 @@ use bun_core::strings;
 
 use crate::HTTPClient;
 use crate::NewHTTPContext;
-// TODO(port): SSLConfig arrives from move-in
-// (MOVE_DOWN bun_runtime::api::server::server_config::SSLConfig → bun_http)
 use crate::ssl_config::SSLConfig;
 
 #[derive(Default)]

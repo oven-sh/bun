@@ -3753,7 +3753,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // from expression to binding should be written to "invalidLog" instead. That
     // way we can potentially keep this as an expression if it turns out it's not
     // needed as a binding after all.
-    // TODO(port): needs ArrayBinding (B.rs gated trait), Flags::PropertyInit
     fn convert_expr_to_binding(
         &mut self,
         expr: ExprNodeIndex,
@@ -3899,7 +3898,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    // TODO(port): heavy body, depends on parse_*/visit_*/ImportScanner/full E surface
     pub fn convert_expr_to_binding_and_initializer(
         &mut self,
         _expr: &mut ExprNodeIndex,
@@ -6241,8 +6239,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     pub fn jsx_import(&mut self, kind: JSXImport, loc: bun_ast::Loc) -> Expr {
-        // TODO(port): Zig used `switch (kind) { inline else => |field| ... @tagName(field) }`.
-        // We replicate via tag_name() helper on the enum.
         let ref_: Ref = match self.jsx_imports.get_with_tag(kind) {
             Some(existing) => existing,
             None => {
@@ -8209,8 +8205,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .write_to_hasher(&mut ctx.hasher, self.symbols.as_mut_slice());
             }
         } else {
-            // TODO(port): Zig used `inline .e_identifier, .e_import_identifier, .e_commonjs_export_identifier => |id, tag|`
-            // with @unionInit. We expand the three arms.
             match &hook_call.target.data {
                 js_ast::ExprData::EIdentifier(id) => {
                     let gop = ctx.user_hooks.get_or_put(id.ref_).expect("oom");

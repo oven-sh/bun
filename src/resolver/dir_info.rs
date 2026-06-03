@@ -366,9 +366,6 @@ impl Flags {
 pub use Flags as Flag;
 
 impl DirInfo {
-    // TODO(port): in-place cache invalidation, not Drop — DirInfo lives in BSS-backed
-    // allocators::BSSMap storage so Drop never fires naturally; callers invoke this
-    // explicitly when invalidating the cache slot. Zig name was `deinit`.
     pub fn reset(&mut self) {
         if let Some(p) = self.package_json.take() {
             // SAFETY: `p` carries mut-provenance from `intern_package_json` (NonNull

@@ -44,9 +44,7 @@ pub struct OutputFile {
 }
 
 impl OutputFile {
-    // TODO(port): Zig `zero_value` is a const struct literal; Rust can't make this a
-    // true `const` because `Box`/`fs::Path` aren't const-constructible. Exposed as a
-    // plain fn so call sites read `OutputFile::zero_value()`.
+    // Not a `const` because `Box`/`fs::Path` aren't const-constructible.
     pub fn zero_value() -> OutputFile {
         OutputFile {
             loader: Loader::File,
@@ -341,7 +339,6 @@ impl OutputFile {
         }
     }
 
-    // TODO(port): Zig took `std.fs.File`; std::fs is banned. Accepting a raw `Fd`.
     pub fn init_file(file: Fd, pathname: &'static [u8], size: usize) -> OutputFile {
         OutputFile {
             loader: Loader::File,
@@ -352,7 +349,6 @@ impl OutputFile {
         }
     }
 
-    // TODO(port): Zig took `std.fs.Dir`; using `Fd` for the dir handle.
     pub fn init_file_with_dir(
         file: Fd,
         pathname: &'static [u8],
@@ -376,7 +372,6 @@ pub enum OptionsData {
         data: Box<[u8]>,
     },
     File {
-        // TODO(port): Zig used `std.fs.File` / `std.fs.Dir`; mapped to `Fd`.
         file: Fd,
         size: usize,
         dir: Fd,

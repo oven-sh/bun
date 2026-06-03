@@ -3,17 +3,15 @@ use core::ffi::{c_int, c_void};
 use core::ptr::NonNull;
 
 use crate::http_thread::InitOpts as HTTPThreadInitOpts;
+use crate::ssl_config::{self, SSLConfig};
 use crate::{
     self as http, AlpnOffer, HTTPCertError, HTTPClient, InitError, get_cert_error_from_no, h2,
 };
 use bun_boringssl::ssl_ctx_setup;
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::{HiveArray, TaggedPtrUnion};
-use bun_core::{self, Error, FeatureFlags};
-// TODO(port): SSLConfig arrives from move-in
-// (MOVE_DOWN bun_runtime::api::server::server_config::SSLConfig → bun_http)
-use crate::ssl_config::{self, SSLConfig};
 use bun_core::strings;
+use bun_core::{self, Error, FeatureFlags};
 use bun_uws as uws;
 
 bun_core::declare_scope!(HTTPContext, hidden);

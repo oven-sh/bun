@@ -116,7 +116,6 @@ impl Frame {
 
 /// Payload reader; bounds-checked, returns zero/empty on truncation.
 pub struct Reader<'a> {
-    // TODO(port): lifetime — borrowed cursor over caller-owned payload slice
     pub p: &'a [u8],
 }
 

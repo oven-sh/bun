@@ -424,7 +424,6 @@ pub(crate) fn prompt_for_warnings() -> bool {
     bun_core::pretty!("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ");
     Output::flush();
 
-    // TODO(port): Zig used std.fs.File.stdin().readerStreaming(); use bun_core stdin reader.
     let mut reader = bun_core::output::stdin_reader();
 
     let Ok(first_byte) = reader.take_byte() else {
@@ -476,7 +475,6 @@ pub(crate) fn prompt_for_warnings() -> bool {
 struct PackageCollector<'a> {
     manager: &'a PackageManager,
     dedupe: ArrayHashMap<PackageID, ()>,
-    // TODO(port): Zig uses bun.LinearFifo(QueueItem, .Dynamic); VecDeque is the closest std equivalent.
     queue: VecDeque<QueueItem>,
     package_paths: ArrayHashMap<PackageID, PackagePath>,
 }
@@ -819,7 +817,6 @@ fn attempt_security_scan_with_retry(
             BStr::new(original_cwd)
         );
     }
-    // TODO(port): std.time.milliTimestamp() — use bun_core::time helper or std::time::Instant.
     let start_time = bun_core::time::milli_timestamp();
 
     let finder = ScannerFinder {

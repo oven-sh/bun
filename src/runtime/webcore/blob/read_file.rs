@@ -366,7 +366,6 @@ impl ReadFile {
             read_eof: false,
             size: 0,
             buffer: Vec::new(),
-            // TODO(port): was `undefined` — overwritten before first schedule.
             task: WorkPoolTask {
                 node: Default::default(),
                 callback: Self::do_read_loop_task,

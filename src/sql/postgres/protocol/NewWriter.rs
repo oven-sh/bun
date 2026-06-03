@@ -5,9 +5,6 @@ use crate::postgres::types::int_types::{PostgresInt32, PostgresInt64, int32};
 /// took as comptime fn-pointer params (`offsetFn_`, `writeFunction_`,
 /// `pwriteFunction_`). In Zig those were passed explicitly; in Rust the
 /// trait bound IS that binding.
-// TODO(port): `NewWriterWrap`'s explicit fn-pointer params collapse into this
-// trait. If a caller needs to wrap a context with *different* fns than its
-// inherent impl (none do today), add a newtype that impls this trait.
 pub trait WriterContext: Copy {
     fn offset(self) -> usize;
     fn write(self, bytes: &[u8]) -> Result<(), AnyPostgresError>;

@@ -64,8 +64,6 @@ impl AlgorithmExt for Algorithm {
         }
     }
 
-    // TODO(port): Zig built this at comptime via a labeled block iterating
-    // EnumArray. bun_core::String is not const-constructible; use a lazy static.
     fn names() -> &'static [BunString] {
         static NAMES: std::sync::OnceLock<[BunString; ALL.len()]> = std::sync::OnceLock::new();
         NAMES

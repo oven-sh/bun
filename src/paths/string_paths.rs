@@ -449,7 +449,6 @@ pub fn path_contains_node_modules_folder(path: &[u8]) -> bool {
 pub use crate::is_sep_any as char_is_any_slash;
 
 #[inline(always)]
-#[allow(dead_code)]
 pub fn starts_with_windows_drive_letter(s: &[u8]) -> bool {
     starts_with_windows_drive_letter_t(s)
 }

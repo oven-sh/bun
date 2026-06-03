@@ -20,7 +20,6 @@ use crate::output_file::{
 };
 use crate::{BundleV2, Chunk, cheap_prefix_normalizer};
 
-// TODO(port): bun_sys::{write_file_with_path_buffer, WriteFileArgs, ...} arrive from move-in.
 use bun_sys::{
     FdDirExt, PathOrFileDescriptor, WriteFileArgs, WriteFileData, WriteFileEncoding,
     write_file_with_path_buffer,
@@ -38,8 +37,6 @@ pub fn write_output_files_to_disk(
 ) -> Result<(), Error> {
     let _trace = bun_core::perf::trace("Bundler.writeOutputFilesToDisk");
 
-    // TODO(port): Zig used `std.fs.cwd().makeOpenPath`. Replace with bun_sys
-    // directory API once available; using a placeholder wrapper here.
     let root_dir = match bun_sys::Dir::cwd().make_open_path(root_path, Default::default()) {
         Ok(dir) => dir,
         Err(e) => {

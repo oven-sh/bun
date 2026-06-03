@@ -304,7 +304,6 @@ pub fn generate_code_for_file_in_chunk_js<'r, 'src>(
             flags.wrap,
             &ast,
         ) {
-            // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent
             return PrintResult::Err(err);
         }
 

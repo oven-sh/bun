@@ -74,9 +74,6 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
             ptr: Some(this.ptr),
         }
     }
-
-    // TODO(port): Zig's `ExternalShared(T).Optional` was an inherent associated type.
-    // Stable Rust callers spell `ExternalSharedOptional<T>` directly.
 }
 
 impl<T: ExternalSharedDescriptor> core::ops::Deref for ExternalShared<T> {

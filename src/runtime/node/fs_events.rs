@@ -93,12 +93,10 @@ pub(crate) const K_FS_EVENTS_RENAMED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_REMOVED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_RENAMED;
 
-#[allow(dead_code)]
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
 // PORTING.md §Global mutable state: written under FSEVENTS_DEFAULT_LOOP_MUTEX,
 // read with double-checked-locking. AtomicPtr gives safe load/store; the mutex
 // serialises the init/teardown writes (Acquire/Release publishes the pointee).
-#[allow(dead_code)]
 static FSEVENTS_DEFAULT_LOOP: AtomicPtr<FSEventsLoop> = AtomicPtr::new(ptr::null_mut());
 
 #[cfg(unix)]
@@ -746,7 +744,6 @@ impl FSEventsLoop {
         }
     }
 
-    #[allow(dead_code)]
     fn register_watcher(&mut self, watcher: *mut FSEventsWatcher) {
         {
             let _guard = self.mutex.lock_guard();
@@ -850,7 +847,6 @@ impl Drop for FSEventsLoop {
         }
 
         // Vec storage freed by its own Drop (or explicit deinit)
-        // TODO(port): confirm Vec<T> implements Drop or needs explicit deinit()
     }
 }
 
@@ -884,7 +880,6 @@ impl FSEventsWatcher {
     /// global default loop from `FSEventsLoop::init`) for the lifetime of the
     /// returned watcher; mutable access to its watcher list is serialized by
     /// `loop_.mutex` inside `register_watcher`.
-    #[allow(dead_code)]
     pub(crate) fn init(
         loop_: NonNull<FSEventsLoop>,
         path: &[u8],
@@ -931,7 +926,6 @@ impl Drop for FSEventsWatcher {
     }
 }
 
-#[allow(dead_code)]
 pub fn watch(
     path: &[u8],
     recursive: bool,
@@ -968,12 +962,10 @@ pub fn watch(
 }
 
 /// `extern "C"` thunk so this fits `bun_core::Global::ExitFn`.
-#[allow(dead_code)]
 extern "C" fn close_and_wait_on_exit() {
     close_and_wait()
 }
 
-#[allow(dead_code)]
 pub(crate) fn close_and_wait() {
     #[cfg(not(target_os = "macos"))]
     {

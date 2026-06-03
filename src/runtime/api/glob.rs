@@ -15,7 +15,6 @@ use bun_sys as syscall;
 
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
 // generated C++ wrapper. See PORTING.md §JSC ".classes.ts-backed types".
-// TODO(port): #[derive(bun_jsc::JsClass)] once codegen is wired for Rust.
 #[bun_jsc::JsClass]
 pub struct Glob {
     pattern: Box<[u8]>,

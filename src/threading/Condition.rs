@@ -282,7 +282,6 @@ mod windows_impl {
             #[cfg(debug_assertions)]
             {
                 // The internal state of the DebugMutex needs to be handled here as well.
-                // TODO(port): std.Thread.getCurrentId() equivalent in bun_threading.
                 mutex
                     .impl_
                     .locking_thread

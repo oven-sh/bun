@@ -12,8 +12,6 @@ use bun_uws::quic;
 
 use super::ClientSession;
 use crate::HttpClient;
-// TODO(port): H3Client.zig sits at src/http/H3Client.zig alongside the h3_client/ dir;
-// confirm the module path for `live_streams` once the crate layout is wired.
 use crate::h3_client as h3;
 
 pub struct Stream {

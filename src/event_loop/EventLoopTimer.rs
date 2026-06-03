@@ -206,11 +206,6 @@ pub enum Tag {
 }
 
 impl Tag {
-    // TODO(port): Zig `pub fn Type(comptime T: Tag) type` returns a type at comptime.
-    // Rust has no value→type mapping. All call sites (`jsTimerInternalsFlags`, `fire`)
-    // have been manually expanded above. If a generic mapping is ever needed,
-    // consider a trait `TagType<const T: Tag> { type Out; }` with per-variant impls.
-
     pub fn allow_fake_timers(self) -> bool {
         match self {
             Tag::WTFTimer // internal

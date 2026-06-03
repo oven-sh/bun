@@ -660,8 +660,6 @@ pub fn exit(code: u32) -> ! {
 
     #[cfg(debug_assertions)]
     {
-        // TODO(port): Zig asserts the debug allocator deinit() == .ok and nulls
-        // the backing. Map to `bun_alloc::debug_allocator_data` once ported.
         debug_assert!(debug_allocator_data::deinit_ok());
     }
 
@@ -789,9 +787,6 @@ pub fn crash() -> ! {
 
 pub const user_agent: &str = concatcp!("Bun/", package_json_version);
 
-// TODO(port): `*const c_char` is `!Sync`; wrap this in a `#[repr(transparent)]`
-// Sync newtype or export via a `#[used]` static byte array. Kept as-is to
-// mirror the Zig `export const`.
 #[repr(transparent)]
 pub struct SyncCStr(pub *const c_char);
 // SAFETY: points into a `'static` string literal; the pointer is never mutated.

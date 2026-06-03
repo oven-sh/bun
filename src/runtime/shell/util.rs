@@ -11,8 +11,4 @@ pub enum OutKind {
 // `bun_spawn` *crate* re-exports under the same name.
 pub use crate::api::bun_spawn::stdio::Stdio;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-#[allow(dead_code)]
-pub(crate) type WatchFd = core::ffi::c_int; // std.posix.fd_t
-
 // ported from: src/shell/util.zig

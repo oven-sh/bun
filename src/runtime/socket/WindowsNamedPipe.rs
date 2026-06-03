@@ -72,9 +72,6 @@ pub struct WindowsNamedPipe {
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
 
-    // TODO(port): `bun.io.StreamingWriter(WindowsNamedPipe, .{ onClose, onWritable, onError, onWrite })`
-    // is a comptime type-generator binding callbacks at type level. Encode callbacks as a
-    // trait impl (`impl StreamingWriterHandler for WindowsNamedPipe`) or const-generic vtable.
     pub writer: StreamingWriter<WindowsNamedPipe>,
 
     pub incoming: Vec<u8>, // Maybe we should use IPCBuffer here as well

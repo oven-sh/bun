@@ -38,7 +38,6 @@ pub struct Coordinator<'a> {
     pub argv: Box<[bun_spawn::CStrPtr]>,
     /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
     /// and BUN_TEST_WORKER_ID appended.
-    // TODO(port): []const [:null]?[*:0]const u8 — see argv note.
     pub envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub workers: &'a mut [Worker],
@@ -204,7 +203,6 @@ impl<'a> Coordinator<'a> {
         if self.bailed || !self.has_undispatched_files() {
             return;
         }
-        // TODO(port): std.time.milliTimestamp() — verify bun_core helper name.
         let now = bun_core::time::milli_timestamp();
         for w in self.workers[..self.spawned_count as usize].iter() {
             if !w.alive {
@@ -502,8 +500,6 @@ impl<'a> Coordinator<'a> {
 
         let mut respawned = false;
         if !self.bailed && self.has_undispatched_files() {
-            // TODO(port): explicit deinit of ipc/out/err — in Rust these become
-            // Drop on assignment; verify no double-free with Default::default().
             w.ipc = Default::default();
             w.out = WorkerPipe::new(PipeRole::Stdout, std::ptr::from_ref::<Worker>(w));
             w.err = WorkerPipe::new(PipeRole::Stderr, std::ptr::from_ref::<Worker>(w));
@@ -709,7 +705,6 @@ fn is_panic_status(status: &SpawnStatus) -> bool {
 }
 
 fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] {
-    // TODO(port): std.fmt.bufPrint — using io::Write on &mut [u8].
     match status {
         SpawnStatus::Exited(e) => {
             let mut cursor: &mut [u8] = &mut buf[..];

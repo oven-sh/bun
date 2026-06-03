@@ -5102,6 +5102,59 @@ describe("update", () => {
     await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
   });
 
+  // Guards a regression introduced by the e4a94e7c refactor that dropped the
+  // alias filter from the root-dep mutation pass. The refresh path was then
+  // willing to rewrite an aliased $-ref override (`"a1": "$a1"` where
+  // `"a1": "npm:no-deps@^1"`), but `which_version_is_pinned` on the cloned
+  // alias literal `"npm:no-deps@^1.0.0"` returns `Patch` (leading `n` hits
+  // the default branch), so the override would have been overwritten with a
+  // bare `"1.1.0"` — stripping the `npm:foo@` prefix and the alias semantics.
+  // Same regression existed in the closed #31754 PR.
+  test("no-args leaves aliased \\$-ref overrides untouched (regression #31748)", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          // npm-alias spec on root: "a1" points at no-deps.
+          "a1": "npm:no-deps@^1.0.0",
+        },
+        overrides: {
+          // $-ref override on the alias. Pre-fix this would get rewritten
+          // to "1.1.0" (or similar) after bun update.
+          "a1": "$a1",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+    expect(await exists(join(packageDir, "bun.lock"))).toBe(true);
+
+    await runBunUpdate(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    // package.json should bump the alias spec to the new version.
+    expect(await file(packageJson).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "a1": "npm:no-deps@^1.1.0",
+      },
+      overrides: {
+        "a1": "$a1",
+      },
+    });
+
+    // The override entry in bun.lock must remain a full alias spec — it is
+    // a clone of the root alias dep, so the literal includes the `npm:foo@`
+    // prefix. Bare `"1.1.0"` here would mean the refresh stripped the alias.
+    const lockfileText = await file(join(packageDir, "bun.lock")).text();
+    const overridesMatch = lockfileText.match(/"overrides":\s*\{[^}]*"a1":\s*"([^"]+)"/);
+    expect(overridesMatch?.[1]).toMatch(/^npm:no-deps@/);
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
+  });
+
   test("duplicate peer dependency (one package is invalid_package_id)", async () => {
     await write(
       packageJson,

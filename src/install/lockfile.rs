@@ -865,10 +865,25 @@ impl Lockfile {
                     continue;
                 };
 
+                // Scope: only handle plain npm semver. The pin-style logic
+                // below (`which_version_is_pinned` + `^`/`~`/exact prefix)
+                // assumes a `1.2.3`-shaped literal. For `npm:foo@…` aliases
+                // and `catalog:default` references — both of which can show
+                // up in a `$`-ref override as clones of the root dep —
+                // `which_version_is_pinned` falls into the default branch
+                // on the leading `n` / `c`, returns `Patch`, and we'd write
+                // a bare semver, stripping the `npm:foo@` / `catalog:`
+                // prefix and breaking the next install. Leave those alone;
+                // they remain a known limitation tracked in the PR comment.
+                let existing_literal = override_dep.version.literal.slice(string_buf);
+                let trimmed = strings::trim(existing_literal, &strings::WHITESPACE_CHARS);
+                if trimmed.starts_with(b"npm:") || trimmed.starts_with(b"catalog:") {
+                    continue;
+                }
+
                 // Preserve the override's existing pin style (`^`/`~`/exact)
                 // so the new literal matches what `PackageJSONEditor` writes
                 // into `package.json` for the bumped dep.
-                let existing_literal = override_dep.version.literal.slice(string_buf);
                 let pinned = Semver::Version::which_version_is_pinned(existing_literal);
                 let version_fmt = resolved_version.fmt(string_buf);
                 let mut new_literal: Vec<u8> = Vec::new();

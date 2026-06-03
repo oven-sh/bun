@@ -2867,17 +2867,19 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-// Full, synchronous collection that does NOT delete unlinked code blocks or
-// clear the source-provider caches (unlike JSC__VM__runGC). Used by the
-// `bun test --isolate` per-file global swap to reclaim the previous file's
-// detached module graph while preserving the VM-scoped caches (bytecode,
-// IsolatedModuleCache) that keep the next file fast.
-void JSC__VM__collectNowFull(JSC::VM* vm)
+// Request a full collection on the GC thread without blocking the event loop
+// (unlike JSC__VM__runGC, which does a synchronous collectNow). Used by the
+// `bun test --isolate` per-file global swap: the previous file's module graph
+// has just been detached (moduleLoader registry + require cache cleared), but
+// the tight per-file loop applies no allocation pressure, so the heap would
+// otherwise never schedule a full collection and the detached graph would
+// accumulate across files. Requesting a full (not eden) async collection lets
+// the concurrent collector reclaim the old global's heap while the next file
+// loads, keeping peak RSS flat without stalling the event loop.
+void JSC__VM__collectFullAsync(JSC::VM* vm)
 {
     JSC::JSLockHolder lock(*vm);
-    vm->finalizeSynchronousJSExecution();
-    vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
-    vm->finalizeSynchronousJSExecution();
+    vm->heap.collectAsync(JSC::GCRequest(JSC::CollectionScope::Full));
 }
 
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)

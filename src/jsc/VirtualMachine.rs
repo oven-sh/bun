@@ -4809,13 +4809,14 @@ impl VirtualMachine {
 
         // `create_for_test_isolation` detached the previous file's module graph
         // from the (now-unrooted) old global, but nothing in the per-file loop
-        // applies enough allocation pressure to trigger a full collection, so
+        // applies enough allocation pressure to schedule a full collection, so
         // the detached graph would otherwise sit in the old heap until the end
         // of the run — peak RSS growing linearly with the number of files and
-        // OOMing large suites. Force a full collection here to reclaim it and
-        // return the freed blocks to the OS, keeping RSS flat across files.
-        self.global().vm().collect_now_full();
-        bun_core::Global::mimalloc_cleanup(false);
+        // OOMing large suites. Request a full collection on the GC thread to
+        // reclaim it between files; this runs concurrently and does not stall
+        // the event loop. Freed blocks are returned to the OS by the
+        // `mimalloc_cleanup` the per-file loop already runs before each swap.
+        self.global().vm().collect_full_async();
     }
 
     /// Spec VirtualMachine.zig:2641 `_loadMacroEntryPoint`.

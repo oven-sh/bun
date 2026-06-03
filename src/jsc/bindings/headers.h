@@ -302,7 +302,7 @@ CPP_DECL void JSC__JSValue__toZigString(JSC::EncodedJSValue JSValue0, ZigString*
 CPP_DECL size_t JSC__VM__blockBytesAllocated(JSC::VM* arg0);
 CPP_DECL void JSC__VM__clearExecutionTimeLimit(JSC::VM* arg0);
 CPP_DECL void JSC__VM__collectAsync(JSC::VM* arg0);
-CPP_DECL void JSC__VM__collectNowFull(JSC::VM* arg0);
+CPP_DECL void JSC__VM__collectFullAsync(JSC::VM* arg0);
 CPP_DECL JSC::VM* JSC__VM__create(unsigned char HeapType0);
 CPP_DECL void JSC__VM__deinit(JSC::VM* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL void JSC__VM__deleteAllCode(JSC::VM* arg0, JSC::JSGlobalObject* arg1);

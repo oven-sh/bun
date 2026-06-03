@@ -23,10 +23,13 @@ import path from "path";
 import { globAllSources } from "../../scripts/glob-sources.ts";
 
 // Item-level escapes only: `#[allow(dead_code)]`, combined lists like
-// `#[allow(dead_code, non_snake_case)]`, and `#[cfg_attr(<pred>, allow(dead_code))]`.
+// `#[allow(dead_code, non_snake_case)]`, and `#[cfg_attr(<pred>, allow(dead_code))]`
+// — including predicates that themselves contain commas, e.g.
+// `#[cfg_attr(any(unix, test), allow(dead_code))]` (lazy `.+?,` backtracks to the
+// first comma whose suffix parses as `allow(...)`).
 // Module-level `#![allow(...)]` blocks (codegen surfaces such as
 // `runtime/generated_classes.rs` and `jsc/cpp.rs`) are intentionally not counted.
-const ESCAPE = /#\[(?:cfg_attr\([^,]+,\s*)?allow\([^)]*\bdead_code\b[^)]*\)\)?\]/g;
+const ESCAPE = /#\[(?:cfg_attr\(.+?,\s*)?allow\([^)]*\bdead_code\b[^)]*\)\)?\]/g;
 
 const limits: Record<string, number> = await Bun.file(import.meta.dir + "/dead-code-escape-limits.json").json();
 

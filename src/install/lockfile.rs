@@ -35,7 +35,7 @@ use crate::string_builder;
 use crate::update_request::UpdateRequest;
 use crate::{
     self as Install, DependencyID, ExternalSlice, Features, PackageID, PackageManager,
-    PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash, dependency,
+    PackageNameAndVersionHash, PackageNameHash, Subcommand, TruncatedPackageNameHash, dependency,
     dependency::Dependency, initialize_store, invalid_dependency_id, invalid_package_id,
     npm as Npm,
 };
@@ -780,6 +780,200 @@ impl Lockfile {
             .map(Cleaned::New)
     }
 
+    /// Re-write root-workspace dependency literals after `bun update` (no args).
+    ///
+    /// For every entry in `manager.updating_packages` (populated by
+    /// `PackageJSONEditor::edit_update_no_args(before_install: true)` from the
+    /// pre-update package.json), look up the resolved version in this lockfile,
+    /// then overwrite the matching root dep's `version.literal` with the new
+    /// caret/tilde/exact range — mirroring what the post-install
+    /// `edit_update_no_args(before_install: false)` writes back to package.json.
+    ///
+    /// Without this, the in-memory root deps keep their pre-update literals
+    /// (e.g. `^7.3.3`), so the workspace snapshot serialized by
+    /// `bun.lock::write_workspace_deps` ends up out of sync with the bumped
+    /// package.json (e.g. `^7.3.5`) — which then fails
+    /// `bun install --frozen-lockfile`. See issue #31748.
+    fn preprocess_updating_packages(
+        old: &mut Lockfile,
+        manager: &mut PackageManager,
+        exact_versions: bool,
+    ) -> Result<(), BunError> {
+        let workspace_package_id = manager
+            .root_package_id
+            .get(old, manager.workspace_name_hash);
+        let root_deps_list: DependencySlice =
+            old.packages.items_dependencies()[workspace_package_id as usize];
+
+        if (root_deps_list.off as usize) >= old.buffers.dependencies.len() {
+            return Ok(());
+        }
+
+        let mut string_builder = string_builder!(old);
+
+        // Pass 1: count required capacity for new literals (mirrors
+        // `preprocess_update_requests`'s count phase).
+        {
+            let root_deps: &[Dependency] =
+                root_deps_list.get(old.buffers.dependencies.as_slice());
+            let old_resolutions_list =
+                old.packages.items_resolutions()[workspace_package_id as usize];
+            let old_resolutions: &[PackageID] =
+                old_resolutions_list.get(old.buffers.resolutions.as_slice());
+            let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
+            let packages_len = old.packages.len();
+
+            for (key, info) in manager.updating_packages.iter() {
+                let name_hash = SemverStringBuilder::string_hash(key);
+                for (dep, &old_resolution) in root_deps.iter().zip(old_resolutions.iter()) {
+                    if dep.name_hash != name_hash {
+                        continue;
+                    }
+                    if old_resolution as usize >= packages_len
+                        || old_resolution == invalid_package_id
+                    {
+                        continue;
+                    }
+                    let res = resolutions_of_yore[old_resolution as usize];
+                    if res.tag != ResolutionTag::Npm {
+                        continue;
+                    }
+
+                    let prefix =
+                        pinned_prefix(&info.original_version_literal, exact_versions);
+                    let npm_ver = res.npm().version;
+                    let len = bun_core::fmt::count(format_args!(
+                        "{}{}",
+                        prefix,
+                        npm_ver.fmt(string_builder.string_bytes.as_slice()),
+                    ));
+
+                    if len >= SemverString::MAX_INLINE_LEN {
+                        string_builder.cap += len;
+                    }
+                    break;
+                }
+            }
+        }
+
+        string_builder.allocate()?;
+
+        // Pass 2: write the new literals and reparse `dep.version`.
+        {
+            let mut temp_buf = [0u8; 513];
+
+            let root_deps: &mut [Dependency] =
+                root_deps_list.mut_(old.buffers.dependencies.as_mut_slice());
+            let old_resolutions_list_lists = old.packages.items_resolutions();
+            let old_resolutions_list =
+                old_resolutions_list_lists[workspace_package_id as usize];
+            let old_resolutions: &[PackageID] =
+                old_resolutions_list.get(old.buffers.resolutions.as_slice());
+            let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
+            let packages_len = old.packages.len();
+
+            // Own (name, original-literal) pairs up-front so the later
+            // `&mut *manager` reborrow for `dependency::parse` does not alias
+            // the `manager.updating_packages` immutable borrow.
+            let updating: Vec<(Vec<u8>, Vec<u8>)> = manager
+                .updating_packages
+                .iter()
+                .map(|(k, v)| (k.to_vec(), v.original_version_literal.to_vec()))
+                .collect();
+
+            for (key, original_literal) in updating.iter() {
+                let name_hash = SemverStringBuilder::string_hash(key);
+                for (dep, &old_resolution) in
+                    root_deps.iter_mut().zip(old_resolutions.iter())
+                {
+                    if dep.name_hash != name_hash {
+                        continue;
+                    }
+                    if old_resolution as usize >= packages_len
+                        || old_resolution == invalid_package_id
+                    {
+                        continue;
+                    }
+                    let res = resolutions_of_yore[old_resolution as usize];
+                    if res.tag != ResolutionTag::Npm {
+                        continue;
+                    }
+
+                    let prefix = pinned_prefix(original_literal, exact_versions);
+
+                    let buf = {
+                        let mut cursor: &mut [u8] = &mut temp_buf[..];
+                        let start_len = cursor.len();
+                        let npm_ver = res.npm().version;
+                        if write!(
+                            cursor,
+                            "{}{}",
+                            prefix,
+                            npm_ver.fmt(string_builder.string_bytes.as_slice()),
+                        )
+                        .is_err()
+                        {
+                            break;
+                        }
+                        let written = start_len - cursor.len();
+                        &temp_buf[..written]
+                    };
+
+                    // Skip if the literal didn't actually change.
+                    if buf == dep.version.literal.slice(string_builder.string_bytes.as_slice())
+                    {
+                        break;
+                    }
+
+                    let external_version = string_builder.append::<ExternalString>(buf);
+                    let sliced = external_version
+                        .value
+                        .sliced(string_builder.string_bytes.as_slice());
+                    dep.version = dependency::parse(
+                        dep.name,
+                        dep.name_hash,
+                        sliced.slice,
+                        &sliced,
+                        None,
+                        &mut *manager,
+                    )
+                    .unwrap_or_default();
+                    break;
+                }
+            }
+        }
+
+        string_builder.clamp();
+
+        // Second pass: propagate updated root literals to any matching
+        // `$`-reference overrides. Override entries created by
+        // `OverrideMap::parse_override_value` for `"$name"`-style values are
+        // clones of the root dep at parse time, so they hold the stale literal
+        // unless we refresh them here.
+        if old.overrides.map.count() > 0 {
+            let root_deps_list_inner: DependencySlice =
+                old.packages.items_dependencies()[workspace_package_id as usize];
+            let root_deps: &[Dependency] =
+                root_deps_list_inner.get(old.buffers.dependencies.as_slice());
+
+            // Index root deps by name_hash for O(1) lookup below.
+            let mut root_by_hash: BunHashMap<PackageNameHash, Dependency> =
+                BunHashMap::default();
+            root_by_hash.reserve(root_deps.len());
+            for dep in root_deps {
+                root_by_hash.insert(dep.name_hash, dep.clone());
+            }
+
+            for override_dep in old.overrides.map.values_mut() {
+                if let Some(matching_root) = root_by_hash.get(&override_dep.name_hash) {
+                    override_dep.version = matching_root.version.clone();
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     fn preprocess_update_requests(
         old: &mut Lockfile,
         manager: &mut PackageManager,
@@ -1060,6 +1254,15 @@ impl Lockfile {
 
         if !updates.is_empty() {
             clean_preprocess_update_requests_cold(old, manager, updates, exact_versions)?;
+        } else if manager.subcommand == Subcommand::Update
+            && manager.updating_packages.count() > 0
+        {
+            // Plain `bun update` (no positional args) — no UpdateRequest entries,
+            // but `manager.updating_packages` was populated by the pre-install AST
+            // walk. Mirror the workspace-snapshot fix-up that the request path
+            // already does, so the lockfile's root-dep literals stay in sync with
+            // the post-install `package.json` writes (issue #31748).
+            clean_preprocess_updating_packages_cold(old, manager, exact_versions)?;
         }
 
         // Caller owns the new lockfile; return `Box<Lockfile>` so Drop reclaims
@@ -1294,6 +1497,30 @@ fn clean_preprocess_update_requests_cold(
     exact_versions: bool,
 ) -> Result<(), BunError> {
     Lockfile::preprocess_update_requests(old, manager, updates, exact_versions)
+}
+
+#[cold]
+#[inline(never)]
+fn clean_preprocess_updating_packages_cold(
+    old: &mut Lockfile,
+    manager: &mut PackageManager,
+    exact_versions: bool,
+) -> Result<(), BunError> {
+    Lockfile::preprocess_updating_packages(old, manager, exact_versions)
+}
+
+/// Pick the prefix (`^`/`~`/empty) the original literal's pin style requires
+/// for the new version. Used by both `bun update <pkg>` (which has explicit
+/// `UpdateRequest`s) and plain `bun update` (via `updating_packages`).
+fn pinned_prefix(original_literal: &[u8], exact_versions: bool) -> &'static str {
+    if exact_versions {
+        return "";
+    }
+    match Semver::Version::which_version_is_pinned(original_literal) {
+        Semver::PinnedVersion::Patch => "",
+        Semver::PinnedVersion::Minor => "~",
+        Semver::PinnedVersion::Major => "^",
+    }
 }
 
 #[cold]

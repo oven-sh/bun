@@ -4934,6 +4934,65 @@ test("name from manifest is scoped and url encoded", async () => {
 });
 
 describe("update", () => {
+  // Regression test for https://github.com/oven-sh/bun/issues/31748
+  // `bun update` (no args) used to leave the lockfile's root-workspace
+  // dependency snapshot out of sync with the package.json caret ranges it
+  // itself just wrote, so the very next `bun install --frozen-lockfile`
+  // failed. The trigger is a self-referencing override (`"$pkg"`) on a
+  // package that's also a transitive of another root dep.
+  test("no-args leaves lockfile in sync with package.json (regression #31748)", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "1.0.0",
+          "one-range-dep": "1.0.0",
+        },
+        overrides: {
+          "no-deps": "$no-deps",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    // Loosen the no-deps range so `bun update` has room to bump it.
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "^1.0.0",
+          "one-range-dep": "1.0.0",
+        },
+        overrides: {
+          "no-deps": "$no-deps",
+        },
+      }),
+    );
+
+    await runBunUpdate(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    expect(await file(packageJson).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "no-deps": "^1.1.0",
+        "one-range-dep": "1.0.0",
+      },
+      overrides: {
+        "no-deps": "$no-deps",
+      },
+    });
+
+    // The fix: `bun install --frozen-lockfile` immediately after `bun update`
+    // must succeed. Pre-fix this errored: "lockfile had changes, but lockfile
+    // is frozen". `runBunInstall` asserts no "error:" in stderr and exit 0.
+    await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
+  });
+
   test("duplicate peer dependency (one package is invalid_package_id)", async () => {
     await write(
       packageJson,

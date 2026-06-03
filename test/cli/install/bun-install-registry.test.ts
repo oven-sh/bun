@@ -4941,6 +4941,8 @@ describe("update", () => {
   // failed. The trigger is a self-referencing override (`"$pkg"`) on a
   // package that's also a transitive of another root dep.
   test("no-args leaves lockfile in sync with package.json (regression #31748)", async () => {
+    // Bug is in the text lockfile serializer; force text format via
+    // `--save-text-lockfile` on initial install. (Suite default is binary.)
     await write(
       packageJson,
       JSON.stringify({
@@ -4955,8 +4957,9 @@ describe("update", () => {
       }),
     );
 
-    await runBunInstall(env, packageDir);
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+    expect(await exists(join(packageDir, "bun.lock"))).toBe(true);
 
     // Loosen the no-deps range so `bun update` has room to bump it.
     await write(
@@ -4998,47 +5001,56 @@ describe("update", () => {
   // by `bun update` of a different root dep. An earlier draft of the #31748
   // fix blindly cloned the root dep into every matching override entry; this
   // test guards against that.
-  test("no-args preserves literal override on an unbumped root dep (regression #31748)", async () => {
-    // `no-deps` is exact-pinned so `bun update` won't touch it; `one-range-dep`
-    // is exact-pinned so it can't bump either. The literal override on
-    // `one-range-dep` has a *different* literal from the root dep, which the
-    // fix's "match pre-update root literal" heuristic must respect (skip).
+  test("no-args preserves literal override that differs from root literal (regression #31748)", async () => {
+    // The literal override is on the SAME dep being bumped, with a literal
+    // that differs from the root dep's literal:
+    //
+    //   deps.no-deps        = "^1.0.0"     → root lockfile literal "^1.0.0"
+    //   overrides.no-deps   = "^1.0.1"     → override lockfile literal "^1.0.1"
+    //
+    // After `bun update`, root no-deps bumps to "^1.1.0". A naive override
+    // propagation that copies root.version into every matching override
+    // would clobber the override literal to "^1.1.0", diverging from
+    // package.json's "^1.0.1" and failing the final --frozen-lockfile check.
+    // The fix's "match pre-update root literal" heuristic skips this case.
     await write(
       packageJson,
       JSON.stringify({
         name: "foo",
         dependencies: {
           "no-deps": "^1.0.0",
-          "one-range-dep": "1.0.0",
         },
         overrides: {
-          // Literal override that's intentionally *different* from the root's
-          // literal so the heuristic in `preprocess_updating_packages`
-          // identifies it as user-authored (not a `$one-range-dep` clone) and
-          // leaves it alone.
-          "one-range-dep": "1.0.0",
+          "no-deps": "^1.0.1",
         },
       }),
     );
 
-    await runBunInstall(env, packageDir);
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+    expect(await exists(join(packageDir, "bun.lock"))).toBe(true);
 
     await runBunUpdate(env, packageDir);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    // `no-deps` bumps; the literal override on `one-range-dep` stays exactly
-    // as the user wrote it.
+    // The literal override stays exactly as the user wrote it (would have been
+    // clobbered to "^1.1.0" by the naive draft of the fix).
     expect(await file(packageJson).json()).toEqual({
       name: "foo",
       dependencies: {
         "no-deps": "^1.1.0",
-        "one-range-dep": "1.0.0",
       },
       overrides: {
-        "one-range-dep": "1.0.0",
+        "no-deps": "^1.0.1",
       },
     });
+
+    // Lockfile's overrides section must also keep the user's literal range.
+    // Pre-fix naive propagation clobbered this to root's "^1.1.0", which is
+    // why we assert directly rather than relying on `--frozen-lockfile` alone.
+    const lockfileText = await file(join(packageDir, "bun.lock")).text();
+    const overridesMatch = lockfileText.match(/"overrides":\s*\{[^}]*"no-deps":\s*"([^"]+)"/);
+    expect(overridesMatch?.[1]).toBe("^1.0.1");
 
     await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
   });

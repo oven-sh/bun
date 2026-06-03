@@ -49,7 +49,12 @@ unsafe extern "C" {
         reason: ErrorCode,
         buffered_amount: usize,
     );
-    fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: *const BunString);
+    fn WebSocket__didClose(
+        websocket_context: &CppWebSocket,
+        code: u16,
+        reason: *const BunString,
+        buffered_amount: usize,
+    );
     fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
         clone: bool,
@@ -85,13 +90,16 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub(crate) fn did_close(&self, code: u16, reason: &mut BunString) {
+    /// `buffered_amount` is the sender's unsent backlog captured *before* this
+    /// call (the send buffer is freed during close teardown), so C++ can keep
+    /// `WebSocket.bufferedAmount` from resetting to 0 once closed.
+    pub(crate) fn did_close(&self, code: u16, reason: &mut BunString, buffered_amount: usize) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; reason outlives the call.
-        unsafe { WebSocket__didClose(self, code, reason) };
+        unsafe { WebSocket__didClose(self, code, reason, buffered_amount) };
         event_loop.exit();
     }
 

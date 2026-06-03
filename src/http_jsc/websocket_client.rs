@@ -265,7 +265,9 @@ impl<const SSL: bool> WebSocket<SSL> {
             // close event fires synchronously inside it, yet the send buffer is
             // not freed until cancel() below, so C++ must be told the amount now
             // (it cannot query the connection across this &mut self borrow).
-            let buffered = self.buffered_amount();
+            // SAFETY: `self` is a live `&mut Self`; buffered_amount only does
+            // short-lived raw-ptr field reads.
+            let buffered = unsafe { Self::buffered_amount(self) };
             CppWebSocket::opaque_ref(ws.as_ptr()).did_abrupt_close(code, buffered);
             // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
             // the socket/tunnel I/O ref (or by caller's guard).
@@ -1285,9 +1287,11 @@ impl<const SSL: bool> WebSocket<SSL> {
                 true
             }
             Err(true) => {
-                // `terminate → clear_data` resets `send_buffer`; drop the
-                // taken fifo without restoring.
-                drop(buf);
+                // Restore the backlog before terminating: fail() snapshots
+                // send_buffer.readable_length() for bufferedAmount, so it must
+                // still be here. `terminate → cancel → clear_data` frees it
+                // immediately afterward, so this does not leak.
+                self.send_buffer = buf;
                 self.terminate(ErrorCode::FailedToWrite);
                 false
             }
@@ -1412,8 +1416,14 @@ impl<const SSL: bool> WebSocket<SSL> {
         let slice = &final_body_bytes[..slice_len];
 
         if self.enqueue_encoded_bytes(slice) {
+            // Snapshot the unsent backlog before clear_data() frees it, so the
+            // JS close event does not see bufferedAmount reset to 0 (spec: it
+            // does not reset once the connection closes).
+            // SAFETY: `self` is a live `&mut Self`; buffered_amount only does
+            // short-lived raw-ptr field reads.
+            let buffered = unsafe { Self::buffered_amount(self) };
             self.clear_data();
-            self.dispatch_close(dispatch_code.unwrap_or(code), &mut reason);
+            self.dispatch_close(dispatch_code.unwrap_or(code), &mut reason, buffered);
         }
     }
 
@@ -1640,20 +1650,22 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Capture the unsent backlog before the call (it may already be 0 if a
         // caller such as handle_close() cleared the buffer first) so C++ can
         // keep bufferedAmount from resetting to 0 on abrupt close.
-        let buffered = self.buffered_amount();
+        // SAFETY: `self` is a live `&mut Self`; buffered_amount only does
+        // short-lived raw-ptr field reads.
+        let buffered = unsafe { Self::buffered_amount(self) };
         CppWebSocket::opaque_ref(out.as_ptr()).did_abrupt_close(code, buffered);
         // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
         // caller's ref guard (see cancel/handle_close).
         unsafe { Self::deref(self) };
     }
 
-    fn dispatch_close(&mut self, code: u16, reason: &mut bun_core::String) {
+    fn dispatch_close(&mut self, code: u16, reason: &mut bun_core::String, buffered_amount: usize) {
         let Some(out) = self.outgoing_websocket.take() else {
             return;
         };
         self.poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
         jsc::mark_binding!();
-        CppWebSocket::opaque_ref(out.as_ptr()).did_close(code, reason);
+        CppWebSocket::opaque_ref(out.as_ptr()).did_close(code, reason, buffered_amount);
         // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
         // caller's ref guard.
         unsafe { Self::deref(self) };
@@ -2106,14 +2118,25 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Backs the client `WebSocket.bufferedAmount` getter. Includes the framing
     /// bytes of buffered frames (the send buffer holds fully framed messages),
     /// plus any encrypted bytes the proxy tunnel still holds.
-    pub fn buffered_amount(&self) -> usize {
-        let mut buffered = self.send_buffer.readable_length();
-        if let Some(tunnel) = &self.proxy_tunnel {
-            // Use the raw-ptr accessor, not `tunnel.as_ref()`: this runs inside
-            // the tunnel's SSL-wrapper callbacks on an abrupt close (fail()),
-            // where a whole-struct `&WebSocketProxyTunnel` would overlap the
-            // live `&mut SslWrapper` over its `wrapper` field (UB under Stacked
-            // Borrows — see WebSocketProxyTunnel's Aliasing model doc).
+    ///
+    /// Takes `*const Self` and projects to `send_buffer`/`proxy_tunnel` via
+    /// `addr_of!` rather than forming a whole-struct `&Self`: the C++
+    /// `bufferedAmount` getter can run re-entrantly while a `&mut Self` is live
+    /// (JS reads `ws.bufferedAmount` inside an `onmessage` handler dispatched
+    /// from `dispatch_data(&mut self)`), and a whole-struct `&Self` would pop
+    /// that borrow's Unique tag (UB under Stacked Borrows).
+    ///
+    /// # Safety
+    /// `this` must point to a live `WebSocket<SSL>`.
+    pub unsafe fn buffered_amount(this: *const Self) -> usize {
+        // SAFETY: `this` is live; short-lived shared borrows of the disjoint
+        // `send_buffer` and `proxy_tunnel` fields only.
+        let mut buffered = unsafe { (*core::ptr::addr_of!((*this).send_buffer)).readable_length() };
+        if let Some(tunnel) = unsafe { *core::ptr::addr_of!((*this).proxy_tunnel) } {
+            // Raw-ptr accessor, not `tunnel.as_ref()`: reachable inside the
+            // tunnel's SSL-wrapper callbacks on abrupt close, where a
+            // whole-struct `&WebSocketProxyTunnel` would overlap the live
+            // `&mut SslWrapper` (see WebSocketProxyTunnel's Aliasing model doc).
             // SAFETY: `tunnel` (NonNull) points to a live tunnel.
             buffered += unsafe { WebSocketProxyTunnel::buffered_amount(tunnel.as_ptr()) };
         }
@@ -2123,8 +2146,8 @@ impl<const SSL: bool> WebSocket<SSL> {
     // `extern "C"` entrypoint; `this` is non-null by C++ contract (see SAFETY comment below).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub extern "C" fn get_buffered_amount(this: *const Self) -> usize {
-        // SAFETY: called from C++ with a valid pointer
-        unsafe { &*this }.buffered_amount()
+        // SAFETY: called from C++ with a valid pointer.
+        unsafe { Self::buffered_amount(this) }
     }
 }
 

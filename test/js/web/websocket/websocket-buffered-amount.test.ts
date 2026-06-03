@@ -52,6 +52,13 @@ function maskedServerFrame(): Buffer {
   return Buffer.concat([header, masked]);
 }
 
+// A valid (unmasked) server Close frame with status 1000. Triggers the client's
+// graceful close handshake (echo Close), not the abrupt-close path.
+function serverCloseFrame(): Buffer {
+  // FIN + opcode 0x8 (close), unmasked, 2-byte payload = status code 1000.
+  return Buffer.from([0x88, 0x02, 0x03, 0xe8]);
+}
+
 describe("WebSocket.bufferedAmount (client)", () => {
   test("reflects the backlog queued to a peer that stopped reading", async () => {
     const { port, close } = await nonDrainingServer();
@@ -170,6 +177,61 @@ describe("WebSocket.bufferedAmount (client)", () => {
       // Must not reset to 0 on the abrupt close: the backlog is still queued.
       // (Not an exact match — a few frames may drain between the read above and
       // the close, so assert it stays a large backlog rather than an exact value.)
+      expect(onClose).toBeGreaterThan(64 * 1024);
+    } finally {
+      server.close();
+    }
+  });
+
+  // The server-initiated graceful close (peer sends a Close frame, client echoes
+  // it) is a fourth close path. It must also preserve the backlog rather than
+  // reset bufferedAmount to 0.
+  test("does not reset to 0 on a server-initiated close while a backlog is queued", async () => {
+    const { promise: ready, resolve: onReady } = Promise.withResolvers<number>();
+    const server = net.createServer(sock => {
+      let buf = "";
+      let upgraded = false;
+      sock.on("data", d => {
+        if (upgraded) return;
+        buf += d.toString("latin1");
+        if (!buf.includes("\r\n\r\n")) return;
+        const key = /sec-websocket-key:\s*(.+)\r\n/i.exec(buf)?.[1]?.trim() ?? "";
+        const accept = crypto
+          .createHash("sha1")
+          .update(key + WS_MAGIC)
+          .digest("base64");
+        sock.write(
+          "HTTP/1.1 101 Switching Protocols\r\n" +
+            "Upgrade: websocket\r\n" +
+            "Connection: Upgrade\r\n" +
+            `Sec-WebSocket-Accept: ${accept}\r\n\r\n`,
+        );
+        upgraded = true;
+        // Stop reading so the client's sends pile up, then send a valid Close
+        // frame to initiate a graceful close handshake.
+        sock.pause();
+        sock.write(serverCloseFrame());
+      });
+      sock.on("error", () => {});
+    });
+    server.listen(0, "127.0.0.1", () => onReady((server.address() as net.AddressInfo).port));
+    const port = await ready;
+
+    try {
+      const ws = new WebSocket(`ws://127.0.0.1:${port}/`);
+      const { promise, resolve } = Promise.withResolvers<{ beforeClose: number; onClose: number }>();
+      let beforeClose = 0;
+      ws.onopen = () => {
+        const chunk = Buffer.alloc(64 * 1024, 0x7c).toString();
+        for (let i = 0; i < 4000; i++) ws.send(chunk);
+        beforeClose = ws.bufferedAmount;
+      };
+      ws.onclose = () => resolve({ beforeClose, onClose: ws.bufferedAmount });
+      ws.onerror = () => {};
+      const { beforeClose: queued, onClose } = await promise;
+
+      expect(queued).toBeGreaterThan(64 * 1024);
+      // The backlog must survive the server-initiated close.
       expect(onClose).toBeGreaterThan(64 * 1024);
     } finally {
       server.close();

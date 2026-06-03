@@ -1594,7 +1594,7 @@ void WebSocket::didStartClosingHandshake()
     // });
 }
 
-void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason)
+void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, const String& reason, size_t bufferedAmountSnapshot)
 {
     // LOG(Network, "WebSocket %p didClose()", this);
     if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::None)
@@ -1614,11 +1614,15 @@ void WebSocket::didClose(unsigned unhandledBufferedAmount, unsigned short code, 
 
     bool wasClean = m_state == CLOSING && !unhandledBufferedAmount && code != 0; // WebSocketChannel::CloseEventCodeAbnormalClosure;
     m_state = CLOSED;
-    // Don't reset the backlog: close()/terminate() already snapshotted the
-    // unsent bytes into m_bufferedAmount, and the spec requires bufferedAmount
-    // not to drop to 0 once closed. Keep whichever is larger.
+    // Don't reset the backlog: the unsent bytes at close time were snapshotted
+    // (by close()/terminate() into m_bufferedAmount, or passed here via
+    // bufferedAmountSnapshot for the peer-initiated close handshake). The spec
+    // requires bufferedAmount not to drop to 0 once closed, so keep the largest.
+    unsigned snapshot = clampToUnsigned(bufferedAmountSnapshot);
     if (unhandledBufferedAmount > m_bufferedAmount)
         m_bufferedAmount = unhandledBufferedAmount;
+    if (snapshot > m_bufferedAmount)
+        m_bufferedAmount = snapshot;
     ASSERT(scriptExecutionContext());
     this->m_connectedWebSocketKind = ConnectedWebSocketKind::None;
     this->m_upgradeClient = nullptr;
@@ -1929,7 +1933,7 @@ extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::We
 {
     webSocket->didFailWithErrorCode(errorCode, bufferedAmount);
 }
-extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString* reason)
+extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString* reason, size_t bufferedAmount)
 {
     WTF::String wtf_reason = reason->transferToWTFString();
     // The Rust client only calls this after a completed close handshake
@@ -1937,8 +1941,13 @@ extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t erro
     // server-initiated close m_state is still OPEN here; transition to
     // CLOSING so didClose() reports wasClean = true. Abnormal closes go
     // through WebSocket__didAbruptClose instead.
+    //
+    // Pass the queued backlog as bufferedAmountSnapshot (not as
+    // unhandledBufferedAmount): this close handshake completed cleanly, so
+    // wasClean must stay true regardless of any application data still queued,
+    // but bufferedAmount must not reset to 0 (spec).
     webSocket->didStartClosingHandshake();
-    webSocket->didClose(0, errorCode, WTF::move(wtf_reason));
+    webSocket->didClose(0, errorCode, WTF::move(wtf_reason), bufferedAmount);
 }
 
 extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const ZigString* str)

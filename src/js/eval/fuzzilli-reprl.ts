@@ -13,6 +13,12 @@ globalThis.require = require;
 globalThis.__dirname = "/";
 globalThis.__filename = "/fuzzilli.js";
 
+// Prevent unhandled promise rejections from killing the REPRL process.
+// Fuzzed scripts may create async operations whose rejections fire after
+// eval completes. Synchronous exceptions are already caught by the
+// try/catch around eval in the REPRL loop below.
+process.on("unhandledRejection", () => {});
+
 // ============================================================================
 // REPRL Protocol Loop
 // ============================================================================

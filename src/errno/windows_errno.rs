@@ -376,7 +376,8 @@ pub use bun_core::S as s;
 // getErrno
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `getErrno(rc)` for every non-NTSTATUS case (rc is ignored, mirrors Zig).
+/// `getErrno(rc)` — `rc` is ignored, mirroring Zig's non-NTSTATUS branch;
+/// NTSTATUS callers use `windows::translate_ntstatus_to_errno` directly.
 pub fn get_errno<T>(_rc: T) -> E {
     if let Some(sys) = Win32Error::get().to_system_errno() {
         return sys.to_e();

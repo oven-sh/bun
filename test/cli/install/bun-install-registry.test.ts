@@ -5057,6 +5057,51 @@ describe("update", () => {
     await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
   });
 
+  // Sharper variant: deps and overrides use the EXACT SAME literal string
+  // (`^1.0.0` in both). The previous heuristic ("override literal matches
+  // pre-update root literal → treat as $-ref") misfired here and tracked the
+  // root after `bun update`. With the explicit `OverrideMap.self_referential`
+  // marker, a literal override is never confused with a `$`-ref.
+  test("no-args preserves literal override that coincides with root literal (regression #31748)", async () => {
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "^1.0.0",
+        },
+        overrides: {
+          // Literal coincides with the deps literal — only the explicit
+          // `self_referential` marker can distinguish this from `"$no-deps"`.
+          "no-deps": "^1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir, { saveTextLockfile: true });
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    await runBunUpdate(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    // deps bumps to ^1.1.0; override stays at ^1.0.0 because it was a literal.
+    expect(await file(packageJson).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "no-deps": "^1.1.0",
+      },
+      overrides: {
+        "no-deps": "^1.0.0",
+      },
+    });
+
+    const lockfileText = await file(join(packageDir, "bun.lock")).text();
+    const overridesMatch = lockfileText.match(/"overrides":\s*\{[^}]*"no-deps":\s*"([^"]+)"/);
+    expect(overridesMatch?.[1]).toBe("^1.0.0");
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
+  });
+
   test("duplicate peer dependency (one package is invalid_package_id)", async () => {
     await write(
       packageJson,

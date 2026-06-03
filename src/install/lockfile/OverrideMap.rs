@@ -23,6 +23,13 @@ declare_scope!(OverrideMap, visible);
 pub struct OverrideMap {
     // `ArrayHashMap` defaults to identity hashing for integer keys.
     pub map: ArrayHashMap<PackageNameHash, Dependency>,
+    /// Tracks which `map` entries were created from `"$pkg"`-style
+    /// self-references so `bun update` can refresh them when the
+    /// referenced root dep bumps without disturbing user-authored literal
+    /// overrides. Key = override entry's name hash (same as `map` key),
+    /// value = name hash of the referenced root dep (`pkg` in `"$pkg"`).
+    /// Not serialized — re-derived from package.json on every parse.
+    pub self_referential: ArrayHashMap<PackageNameHash, PackageNameHash>,
 }
 
 impl OverrideMap {
@@ -75,6 +82,17 @@ impl OverrideMap {
         for (k, v) in self.map.keys().iter().zip(self.map.values()) {
             new.map
                 .put_assume_capacity(*k, v.clone_in(pm, old_string_bytes, new_builder)?);
+        }
+
+        new.self_referential
+            .ensure_total_capacity(self.self_referential.count())?;
+        for (k, v) in self
+            .self_referential
+            .keys()
+            .iter()
+            .zip(self.self_referential.values())
+        {
+            new.self_referential.put_assume_capacity(*k, *v);
         }
 
         Ok(new)
@@ -287,7 +305,7 @@ impl OverrideMap {
                 continue;
             }
 
-            if let Some(version) = parse_override_value(
+            if let Some(parsed) = parse_override_value(
                 "override",
                 lockfile_dependencies,
                 pm,
@@ -299,7 +317,11 @@ impl OverrideMap {
                 version_str,
                 builder,
             )? {
-                self.map.put_assume_capacity(name_hash, version);
+                if let Some(ref_name_hash) = parsed.ref_name_hash {
+                    self.self_referential
+                        .put(name_hash, ref_name_hash)?;
+                }
+                self.map.put_assume_capacity(name_hash, parsed.dep);
             }
         }
         Ok(())
@@ -395,7 +417,7 @@ impl OverrideMap {
                 continue;
             }
 
-            if let Some(version) = parse_override_value(
+            if let Some(parsed) = parse_override_value(
                 "resolution",
                 lockfile_dependencies,
                 pm,
@@ -408,11 +430,25 @@ impl OverrideMap {
                 builder,
             )? {
                 let name_hash = SemverBuilder::string_hash(k);
-                self.map.put_assume_capacity(name_hash, version);
+                if let Some(ref_name_hash) = parsed.ref_name_hash {
+                    self.self_referential
+                        .put(name_hash, ref_name_hash)?;
+                }
+                self.map.put_assume_capacity(name_hash, parsed.dep);
             }
         }
         Ok(())
     }
+}
+
+/// Returned by [`parse_override_value`]: the cloned/parsed dependency plus,
+/// for `"$pkg"`-style values, the referenced root dep's `name_hash`. Callers
+/// record the latter in [`OverrideMap::self_referential`] so a later
+/// `bun update` can refresh just these entries without touching user-authored
+/// literal overrides. See issue #31748.
+pub struct ParsedOverride {
+    pub dep: Dependency,
+    pub ref_name_hash: Option<PackageNameHash>,
 }
 
 // `field` is only used in warning-message
@@ -431,7 +467,7 @@ pub fn parse_override_value(
     key: &[u8],
     value: &[u8],
     builder: &mut StringBuilder,
-) -> Result<Option<Dependency>, Error> {
+) -> Result<Option<ParsedOverride>, Error> {
     if value.is_empty() {
         log.add_warning_fmt(Some(source), loc, format_args!("Missing {} value", field));
         return Ok(None);
@@ -451,7 +487,10 @@ pub fn parse_override_value(
                 .name
                 .eql(ref_name_str, builder.string_bytes.as_slice(), ref_name)
             {
-                return Ok(Some(dep.clone()));
+                return Ok(Some(ParsedOverride {
+                    dep: dep.clone(),
+                    ref_name_hash: Some(dep.name_hash),
+                }));
             }
         }
         log.add_warning_fmt(
@@ -496,10 +535,13 @@ pub fn parse_override_value(
         }
     };
 
-    Ok(Some(Dependency {
-        name,
-        name_hash,
-        version,
-        behavior: Behavior::default(),
+    Ok(Some(ParsedOverride {
+        dep: Dependency {
+            name,
+            name_hash,
+            version,
+            behavior: Behavior::default(),
+        },
+        ref_name_hash: None,
     }))
 }

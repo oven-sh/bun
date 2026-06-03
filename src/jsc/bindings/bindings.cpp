@@ -2997,6 +2997,46 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     return JSC::JSValue::encode(result);
 }
 
+// Invokes the global `parseInt` function (radix unspecified, i.e.
+// `Number.parseInt(value)`, used by console.log's `%i` specifier). `parseInt`
+// coerces the argument with ToString, so this matches Node for arrays, objects
+// and numeric-prefix strings. The caller guards against Symbol (which throws in
+// ToString) and BigInt before reaching here.
+extern "C" double Bun__JSValue__parseInt(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSFunction* parseInt = globalObject->parseIntFunction();
+    JSC::CallData callData = JSC::getCallData(parseInt);
+
+    JSC::MarkedArgumentBuffer argList;
+    argList.append(JSC::JSValue::decode(value));
+
+    JSC::JSValue result = JSC::call(globalObject, parseInt, callData, JSC::jsUndefined(), argList);
+    RETURN_IF_EXCEPTION(scope, PNaN);
+    return result.asNumber();
+}
+
+// Invokes the global `parseFloat` function (`Number.parseFloat(value)`, used by
+// console.log's `%f` specifier). Coerces with ToString like Node. The caller
+// guards against Symbol before reaching here.
+extern "C" double Bun__JSValue__parseFloat(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue value)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSFunction* parseFloat = globalObject->parseFloatFunction();
+    JSC::CallData callData = JSC::getCallData(parseFloat);
+
+    JSC::MarkedArgumentBuffer argList;
+    argList.append(JSC::JSValue::decode(value));
+
+    JSC::JSValue result = JSC::call(globalObject, parseFloat, callData, JSC::jsUndefined(), argList);
+    RETURN_IF_EXCEPTION(scope, PNaN);
+    return result.asNumber();
+}
+
 JSC::EncodedJSValue JSObjectCallAsFunctionReturnValueHoldingAPILock(JSContextRef ctx, JSObjectRef object,
     JSObjectRef thisObject,
     size_t argumentCount,

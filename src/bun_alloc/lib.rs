@@ -1899,7 +1899,7 @@ pub fn bss_heap_init<T>(init_at: unsafe fn(*mut T)) -> NonNull<T> {
     // allocation; lives for process lifetime (singleton; never freed/unmapped,
     // matching Zig). `init_at` is therefore free to skip writing any field whose
     // all-zeros bit pattern is already a valid initial value (e.g. `OverflowList`'s
-    // 32 KiB `[Option<Box<_>>; 4095]` array — `None` is the null niche).
+    // 32 KiB `[Option<Box<_>>; 4096]` array — `None` is the null niche).
     unsafe { init_at(ptr.as_ptr()) };
     ptr
 }
@@ -2205,6 +2205,7 @@ pub trait OverflowBlock {
 }
 
 const OVERFLOW_GROUP_MAX: usize = 4095;
+const OVERFLOW_GROUP_SLOTS: usize = OVERFLOW_GROUP_MAX + 1;
 // Zig: `UsedSize = std.math.IntFittingRange(0, max + 1)` → u13. Rust has no u13; use u16.
 type OverflowUsedSize = u16;
 
@@ -2213,7 +2214,7 @@ pub struct OverflowGroup<Block> {
     // ...right?
     pub used: OverflowUsedSize,
     pub allocated: OverflowUsedSize,
-    pub ptrs: [Option<Box<Block>>; OVERFLOW_GROUP_MAX],
+    pub ptrs: [Option<Box<Block>>; OVERFLOW_GROUP_SLOTS],
 }
 
 impl<Block: OverflowBlock> OverflowGroup<Block> {
@@ -2223,7 +2224,16 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
         self.allocated = 0;
     }
 
-    pub fn tail(&mut self) -> &mut Block {
+    pub fn tail(&mut self) -> core::result::Result<&mut Block, AllocError> {
+        if self.used as usize + 1 >= OVERFLOW_GROUP_SLOTS
+            && self.ptrs[self.used as usize]
+                .as_ref()
+                .expect("alloc")
+                .is_full()
+        {
+            return Err(AllocError);
+        }
+
         if self.allocated > 0
             && self.ptrs[self.used as usize]
                 .as_ref()
@@ -2240,6 +2250,7 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
         }
 
         if self.allocated <= self.used {
+            debug_assert!((self.allocated as usize) < OVERFLOW_GROUP_SLOTS);
             // Zig: default_allocator.create(Block) catch unreachable
             // SAFETY: Box<MaybeUninit> → zero() initializes the `used` counter; payload array
             // is `[MaybeUninit<T>; N]` and stays uninit exactly as Zig does.
@@ -2251,7 +2262,7 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
             self.allocated = self.allocated.wrapping_add(1);
         }
 
-        self.ptrs[self.used as usize].as_mut().expect("alloc")
+        Ok(self.ptrs[self.used as usize].as_mut().expect("alloc"))
     }
 
     #[inline]
@@ -2320,8 +2331,8 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     /// In-place init of just the three scalar counters (`list.used`,
     /// `list.allocated`, `count`) into storage that is already all-zeros.
     ///
-    /// `list.ptrs: [Option<Box<_>>; 4095]` is ~32 KiB; the all-zeros bit
-    /// pattern is `[None; 4095]` via the null-pointer niche, so when `slot`
+    /// `list.ptrs: [Option<Box<_>>; 4096]` is ~32 KiB; the all-zeros bit
+    /// pattern is `[None; 4096]` via the null-pointer niche, so when `slot`
     /// lives in a fresh `bss_lazy_bytes`/`bss_heap_init` mapping (always
     /// zero-on-read) we touch one cache line instead of faulting eight pages.
     ///
@@ -2344,9 +2355,10 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
     }
 
     #[inline]
-    pub fn append(&mut self, value: ValueType) -> &mut ValueType {
+    pub fn append(&mut self, value: ValueType) -> core::result::Result<&mut ValueType, AllocError> {
+        let block = self.list.tail()?;
         self.count += 1;
-        self.list.tail().append(value)
+        Ok(block.append(value))
     }
 
     pub fn reset(&mut self) {
@@ -2450,12 +2462,9 @@ unsafe impl<ValueType: Send, const COUNT: usize> Sync for BSSList<ValueType, COU
 
 const BSS_LIST_CHUNK_SIZE: usize = 256;
 
-/// Fixed overflow-block capacity for `BSSStringList` / `BSSMapInner`.
-/// Zig uses `count / 4`; stable Rust cannot express const-generic arithmetic
-/// (`generic_const_exprs`), so use a nonzero stand-in until the
-/// per-instantiation value is threaded through. A value of 0 here would make
-/// `OverflowListBlock::is_full` always true and `at_index`'s `idx % COUNT` panic.
-pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 64;
+/// Zig's per-store overflow-block size is `count / 4`; this shared constant must
+/// be >= the largest store's, i.e. the filename store's `8192 / 4`.
+pub const BSS_OVERFLOW_BLOCK_SIZE: usize = 2048;
 
 /// `#[repr(C)]` with `prev` before `data` so the inline `BSSList::tail` block's
 /// scalar fields cluster at the front of the singleton mapping (see the layout
@@ -2742,8 +2751,6 @@ pub struct BSSStringList<
     // `[..backing_buf_used]` / `[..slice_buf_used]` are ever read.
     pub backing_buf: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ITEM_LENGTH
     pub backing_buf_used: u64,
-    // TODO(port): Overflow = OverflowList<&'static [u8], COUNT / 4> (generic_const_exprs).
-    // Fixed nonzero block size until generic_const_exprs lands; 0 would div-by-zero in at_index.
     pub overflow_list: OverflowList<&'static [u8], BSS_OVERFLOW_BLOCK_SIZE>,
     pub slice_buf: NonNull<[MaybeUninit<&'static [u8]>]>, // len == COUNT
     pub slice_buf_used: u16,
@@ -2816,7 +2823,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         // ~1.4 MiB of array storage stays unfaulted until `append` writes a byte.
         // Match that exactly: lazy-map the arrays, write the four scalars, and
         // zero only the three OverflowList counters (its 32 KiB `ptrs` array is
-        // already `[None; 4095]` because `slot` came from `bss_heap_init`).
+        // already `[None; 4096]` because `slot` came from `bss_heap_init`).
         // SAFETY: caller contract — `slot` is a valid, exclusive, aligned
         // `*mut Self` in all-zeros storage from `bss_heap_init`.
         unsafe {
@@ -3043,6 +3050,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
         let value_len: usize = value.total_len() + 1;
 
         let (out_ptr, out_len): (*mut u8, usize);
+        let mut from_heap = false;
         if value_len + (self.backing_buf_used as usize) < self.backing_buf.len() - 1 {
             let start = self.backing_buf_used as usize;
             self.backing_buf_used += value_len as u64;
@@ -3065,14 +3073,12 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
             (out_ptr, out_len) = (dst.as_mut_ptr(), value_len - 1);
         } else {
-            // Zig: `var value_buf = try self.allocator.alloc(u8, value_len);` — propagate OOM.
-            // Route through mimalloc directly (PORTING.md forbids `Box::leak`). BSSStringList
-            // never frees overflow allocations (matches Zig); the singleton lives for
-            // process lifetime.
-            let ptr = mimalloc::mi_malloc(value_len).cast::<u8>();
+            // Zig: `var value_buf = try self.allocator.alloc(u8, value_len)` — propagate OOM.
+            let ptr = default_alloc::malloc(value_len).cast::<u8>();
             if ptr.is_null() {
                 return Err(AllocError);
             }
+            from_heap = true;
             // SAFETY: `ptr` is a fresh allocation of `value_len` bytes with no other alias.
             let value_buf = unsafe { core::slice::from_raw_parts_mut(ptr, value_len) };
             value.copy_into(&mut value_buf[..value_len - 1]);
@@ -3100,7 +3106,13 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
         if result.is_overflow() {
             if self.overflow_list.len() == result.index() {
-                let _ = self.overflow_list.append(stored);
+                if let Err(e) = self.overflow_list.append(stored) {
+                    if from_heap {
+                        // SAFETY: `out_ptr` is the `default_alloc::malloc` above, unreferenced now.
+                        unsafe { default_alloc::free(out_ptr.cast()) };
+                    }
+                    return Err(e);
+                }
             } else {
                 *self.overflow_list.at_index_mut(result) = stored;
             }
@@ -3133,8 +3145,6 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
     pub index: IndexMap,
-    // TODO(port): Overflow = OverflowList<ValueType, COUNT / 4> (generic_const_exprs).
-    // Fixed nonzero block size until generic_const_exprs lands; 0 would div-by-zero in at_index.
     pub overflow_list: OverflowList<ValueType, BSS_OVERFLOW_BLOCK_SIZE>,
     pub mutex: Mutex,
     // Zig leaves `backing_buf` undefined; only `[0..backing_buf_used]` is initialized.
@@ -3155,7 +3165,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
     pub unsafe fn init_at(slot: *mut Self) {
         // SAFETY: caller contract — `slot` is a valid, exclusive, aligned
         // `*mut Self` in all-zeros storage from `bss_heap_init`. The 32 KiB
-        // `overflow_list.list.ptrs` array is already `[None; 4095]` (null
+        // `overflow_list.list.ptrs` array is already `[None; 4096]` (null
         // niche), so write only the three counters; `backing_buf` is
         // intentionally left uninitialized (Zig: `undefined`).
         unsafe {
@@ -3273,11 +3283,11 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
             }
         }
 
-        self.index.insert(result.hash, result.index);
-
+        // Insert into `index` only after the slot is materialized below, so a
+        // failed (fallible) `append` can't leave a dangling hash -> index entry.
         let ret = if result.index.is_overflow() {
             if self.overflow_list.len() == result.index.index() {
-                self.overflow_list.append(value)
+                self.overflow_list.append(value)?
             } else {
                 let ptr = self.overflow_list.at_index_mut(result.index);
                 *ptr = value;
@@ -3290,6 +3300,7 @@ impl<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool>
             // SAFETY: just initialized on the line above.
             unsafe { self.backing_buf[idx].assume_init_mut() }
         };
+        self.index.insert(result.hash, result.index);
         Ok(ret)
     }
 

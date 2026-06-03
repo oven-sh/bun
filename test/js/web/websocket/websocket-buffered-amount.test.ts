@@ -17,7 +17,10 @@ function nonDrainingServer(): Promise<{ port: number; close: () => void }> {
         buf += d.toString("latin1");
         if (!buf.includes("\r\n\r\n")) return;
         const key = /sec-websocket-key:\s*(.+)\r\n/i.exec(buf)?.[1]?.trim() ?? "";
-        const accept = crypto.createHash("sha1").update(key + WS_MAGIC).digest("base64");
+        const accept = crypto
+          .createHash("sha1")
+          .update(key + WS_MAGIC)
+          .digest("base64");
         sock.write(
           "HTTP/1.1 101 Switching Protocols\r\n" +
             "Upgrade: websocket\r\n" +

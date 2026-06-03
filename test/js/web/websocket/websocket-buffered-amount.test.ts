@@ -167,7 +167,10 @@ describe("WebSocket.bufferedAmount (client)", () => {
       const { beforeClose: queued, onClose } = await promise;
 
       expect(queued).toBeGreaterThan(64 * 1024);
-      expect(onClose).toBe(queued);
+      // Must not reset to 0 on the abrupt close: the backlog is still queued.
+      // (Not an exact match — a few frames may drain between the read above and
+      // the close, so assert it stays a large backlog rather than an exact value.)
+      expect(onClose).toBeGreaterThan(64 * 1024);
     } finally {
       server.close();
     }

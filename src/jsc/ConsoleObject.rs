@@ -2598,13 +2598,7 @@ pub mod formatter {
                                 //     2. Symbol -> NaN
                                 //     3. otherwise -> Number(current)
                                 if next_value.is_int32() {
-                                    let int = next_value.as_int32();
-                                    writer.add_for_new_line(if i != 0 {
-                                        bun_core::fmt::digit_count(int)
-                                    } else {
-                                        1
-                                    });
-                                    writer.print(format_args!("{int}"));
+                                    writer.print_int32_format_specifier(next_value.as_int32());
                                     i += 1;
                                     continue 'outer;
                                 }
@@ -2630,13 +2624,7 @@ pub mod formatter {
                                 //        leading digits the way Node does).
                                 if next_value.is_int32() {
                                     // Already an int, parseInt parses to itself.
-                                    let int = next_value.as_int32();
-                                    writer.add_for_new_line(if i != 0 {
-                                        bun_core::fmt::digit_count(int)
-                                    } else {
-                                        1
-                                    });
-                                    writer.print(format_args!("{int}"));
+                                    writer.print_int32_format_specifier(next_value.as_int32());
                                     i += 1;
                                     continue 'outer;
                                 }
@@ -2660,13 +2648,7 @@ pub mod formatter {
                                 //        not special-cased: parseFloat(String(x))
                                 //        yields its numeric value, matching Node.
                                 if next_value.is_int32() {
-                                    let int = next_value.as_int32();
-                                    writer.add_for_new_line(if i != 0 {
-                                        bun_core::fmt::digit_count(int)
-                                    } else {
-                                        1
-                                    });
-                                    writer.print(format_args!("{int}"));
+                                    writer.print_int32_format_specifier(next_value.as_int32());
                                     i += 1;
                                     continue 'outer;
                                 }
@@ -2821,6 +2803,14 @@ pub mod formatter {
             if self.ctx.write_fmt(args).is_err() {
                 self.failed = true;
             }
+        }
+
+        /// Fast path for a `%d`/`%i`/`%f` specifier whose argument is already
+        /// an int32: `Number`/`parseInt`/`parseFloat` all map it to itself, so
+        /// print it directly.
+        pub fn print_int32_format_specifier(&mut self, value: i32) {
+            self.add_for_new_line(bun_core::fmt::digit_count(value));
+            self.print(format_args!("{value}"));
         }
 
         /// Format a number produced by a `%d`/`%i`/`%f` specifier, matching

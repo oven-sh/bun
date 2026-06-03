@@ -263,11 +263,9 @@ describe("transpiler cache", () => {
   });
   test("bun test does not replay a cache entry written by a plain run", () => {
     // `bun test` binds bare `describe`/`test`/`expect` by injecting an import
-    // from "bun:test" at transpile time, and `inject_jest_globals` is
-    // deliberately excluded from the features hash. A plain `bun <file>` run
-    // of the same bytes transpiles without that injection and writes a cache
-    // entry under the same key, so replaying the entry under `bun test` would
-    // silently register zero tests.
+    // from "bun:test" at transpile time. A plain `bun <file>` run of the same
+    // bytes transpiles without that injection, so replaying its cache entry
+    // under `bun test` would silently register zero tests.
     const code =
       `console.log("DESCRIBE_IS:" + typeof describe);\n` +
       `if (typeof describe !== "undefined") {\n` +

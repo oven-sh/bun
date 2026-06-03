@@ -40,6 +40,10 @@ pub const Coordinator = struct {
     windows_job: if (Environment.isWindows) ?std.os.windows.HANDLE else void =
         if (Environment.isWindows) null else {},
 
+    /// Consecutive pre-`.ready` exits a worker slot tolerates before the
+    /// slot stops respawning and the remaining files are aborted.
+    const max_startup_failures = 2;
+
     fn isDone(this: *const Coordinator) bool {
         return (this.files_done >= this.files.len or this.bailed) and this.live_workers == 0;
     }
@@ -202,7 +206,11 @@ pub const Coordinator = struct {
 
     pub fn onFrame(this: *Coordinator, w: *Worker, kind: Frame.Kind, rd: *Frame.Reader) void {
         switch (kind) {
-            .ready => this.assignWorkOrRetry(w),
+            .ready => {
+                w.reached_ready = true;
+                w.startup_failures = 0;
+                this.assignWorkOrRetry(w);
+            },
             .file_start => _ = rd.u32_(),
             .test_done => {
                 const idx = rd.u32_();
@@ -292,6 +300,11 @@ pub const Coordinator = struct {
         // the IPC pipe has been drained and this reap actually runs.
         this.live_workers -= 1;
         this.flushCaptured(w);
+        // Process spawned but died before the IPC handshake — bad init,
+        // startup segfault, failed fd-3 adopt, etc. `inflight` is null so
+        // the mid-file handling below never fires; without the per-slot
+        // counter this slot would respawn forever.
+        const startup_failure = w.inflight == null and !w.reached_ready;
         if (w.inflight) |idx| {
             this.breakDots();
             this.ensureHeader(idx);
@@ -311,10 +324,36 @@ pub const Coordinator = struct {
             if (panicked) {
                 this.abortOnWorkerPanic(idx, status);
             }
+        } else if (startup_failure) {
+            w.startup_failures += 1;
+            // A fatal signal during init is a Bun bug just as much as one
+            // mid-file — abort the whole run so the panic stderr (already
+            // flushed via flushCaptured) isn't buried.
+            if (isPanicStatus(status)) {
+                this.abortOnWorkerStartupPanic(w, status);
+            }
+        }
+
+        const can_respawn = !this.bailed and w.startup_failures < max_startup_failures and this.hasUndispatchedFiles();
+
+        if (startup_failure and !this.bailed) {
+            // `can_respawn` is false either because the slot hit the cap or
+            // because there's no work left. Only the former warrants the red
+            // error; the latter is benign (another slot stole the range).
+            this.breakDots();
+            var buf: [32]u8 = undefined;
+            if (can_respawn) {
+                Output.prettyError("<r><yellow>⟳<r> test worker {d} exited during startup ({s}), retrying\n", .{ w.idx + 1, describeStatus(&buf, status) });
+            } else if (w.startup_failures >= max_startup_failures) {
+                Output.prettyError("<r><red>error<r>: test worker {d} exited during startup ({s}) {d} times\n", .{ w.idx + 1, describeStatus(&buf, status), w.startup_failures });
+            } else {
+                Output.prettyError("<r><d>test worker {d} exited during startup ({s})<r>\n", .{ w.idx + 1, describeStatus(&buf, status) });
+            }
+            Output.flush();
         }
 
         var respawned = false;
-        if (!this.bailed and this.hasUndispatchedFiles()) {
+        if (can_respawn) {
             w.ipc.deinit();
             w.out.deinit();
             w.err.deinit();
@@ -322,6 +361,7 @@ pub const Coordinator = struct {
             w.out = .{ .role = .stdout, .worker = w };
             w.err = .{ .role = .stderr, .worker = w };
             w.process = null;
+            w.reached_ready = false;
             if (w.start()) |_| {
                 respawned = true;
             } else |e| {
@@ -418,6 +458,32 @@ pub const Coordinator = struct {
         if (this.bailed) return;
         this.bailed = true;
         this.abortQueuedFiles("aborted: worker panicked");
+    }
+
+    /// `abortOnWorkerPanic` for the pre-`.ready` case — no `file_idx` to
+    /// name because nothing was dispatched yet.
+    fn abortOnWorkerStartupPanic(this: *Coordinator, w: *Worker, status: bun.spawn.Status) void {
+        this.breakDots();
+        var buf: [32]u8 = undefined;
+        Output.prettyError(
+            "\n<red>error<r>: test worker {d} crashed with <b>{s}<r> during startup.\n" ++
+                "This indicates a bug in Bun. Aborting.\n",
+            .{ w.idx + 1, describeStatus(&buf, status) },
+        );
+        Output.flush();
+        for (this.workers[0..this.spawned_count]) |*other| {
+            if (!other.alive) continue;
+            if (other.process) |p| {
+                if (Environment.isPosix) {
+                    _ = std.c.kill(-p.pid, std.posix.SIG.TERM);
+                } else {
+                    _ = p.kill(1);
+                }
+            }
+        }
+        if (this.bailed) return;
+        this.bailed = true;
+        this.abortQueuedFiles("aborted: worker panicked during startup");
     }
 
     /// Mark every not-yet-dispatched file as failed so `drive()` can exit

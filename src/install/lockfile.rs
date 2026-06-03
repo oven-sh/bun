@@ -891,6 +891,141 @@ impl Lockfile {
         Ok(())
     }
 
+    /// Re-sync `$name` self-referencing overrides with the direct dependency
+    /// they mirror.
+    ///
+    /// `"overrides": { "vite": "$vite" }` stores a clone of the `vite` direct
+    /// dependency taken when package.json was parsed. `bun update` resolves a
+    /// newer version and rewrites package.json's range (e.g. `^7.3.3` ->
+    /// `^7.3.5`) *after* resolution, so the stored override keeps the pre-bump
+    /// range and the saved lockfile no longer matches the package.json it was
+    /// written next to — the next `bun install --frozen-lockfile` then reports
+    /// the override as changed.
+    ///
+    /// This rewrites each self-referencing override (whose referenced
+    /// dependency `bun update` is bumping) to that dependency's resolved
+    /// version, preserving the override's pin style (`^`/`~`/exact) so the
+    /// result matches the range `PackageJSONEditor` writes into package.json
+    /// for the same dependency.
+    pub fn refresh_self_referential_overrides(
+        &mut self,
+        manager: &mut PackageManager,
+    ) -> Result<(), AllocError> {
+        if self.overrides.self_referential.count() == 0 {
+            return Ok(());
+        }
+
+        let workspace_package_id = manager
+            .root_package_id
+            .get(self, manager.workspace_name_hash);
+
+        let root_deps_list = self.packages.items_dependencies()[workspace_package_id as usize];
+        let root_resolutions_list =
+            self.packages.items_resolutions()[workspace_package_id as usize];
+
+        // Collect the (override key hash -> resolved version literal) rewrites
+        // first so the read of the direct dependency's resolution doesn't
+        // overlap the `StringBuilder`'s mutable borrow of `buffers.string_bytes`.
+        let mut rewrites: Vec<(PackageNameHash, Vec<u8>)> = Vec::new();
+        {
+            let string_buf = self.buffers.string_bytes.as_slice();
+            let root_deps = root_deps_list.get(self.buffers.dependencies.as_slice());
+            let root_resolution_ids = root_resolutions_list.get(self.buffers.resolutions.as_slice());
+            let resolutions = self.packages.items_resolution();
+            let packages_len = self.packages.len();
+
+            debug_assert_eq!(root_deps.len(), root_resolution_ids.len());
+            for (&override_key_hash, &ref_name_hash) in self
+                .overrides
+                .self_referential
+                .keys()
+                .iter()
+                .zip(self.overrides.self_referential.values())
+            {
+                let Some(override_dep) = self.overrides.map.get(&override_key_hash) else {
+                    continue;
+                };
+
+                // Find the referenced direct dependency's resolved npm version.
+                let mut resolved: Option<&Semver::Version> = None;
+                for (dep, &package_id) in root_deps.iter().zip(root_resolution_ids) {
+                    if dep.name_hash != ref_name_hash {
+                        continue;
+                    }
+                    // Only re-sync when this direct dependency's range is being
+                    // rewritten in package.json (i.e. it is one of the packages
+                    // `bun update` is bumping). A self-referencing override
+                    // mirrors the dependency's range literal, not its resolved
+                    // version, so for a dependency whose range is left untouched
+                    // the override already matches package.json and must not be
+                    // rewritten to its resolved version.
+                    if !manager
+                        .updating_packages
+                        .contains_key(dep.name.slice(string_buf))
+                    {
+                        break;
+                    }
+                    if package_id == invalid_package_id || package_id as usize >= packages_len {
+                        break;
+                    }
+                    let resolution = &resolutions[package_id as usize];
+                    if resolution.tag == ResolutionTag::Npm {
+                        resolved = Some(&resolution.npm().version);
+                    }
+                    break;
+                }
+                let Some(resolved_version) = resolved else {
+                    continue;
+                };
+
+                // Preserve the override's existing pin style (`^`/`~`/exact).
+                let existing_literal = override_dep.version.literal.slice(string_buf);
+                let pinned = Semver::Version::which_version_is_pinned(existing_literal);
+                let version_fmt = resolved_version.fmt(string_buf);
+                let mut new_literal: Vec<u8> = Vec::new();
+                let _ = match pinned {
+                    Semver::PinnedVersion::Patch => write!(&mut new_literal, "{}", version_fmt),
+                    Semver::PinnedVersion::Minor => write!(&mut new_literal, "~{}", version_fmt),
+                    Semver::PinnedVersion::Major => write!(&mut new_literal, "^{}", version_fmt),
+                };
+
+                if new_literal.as_slice() != existing_literal {
+                    rewrites.push((override_key_hash, new_literal));
+                }
+            }
+        }
+
+        if rewrites.is_empty() {
+            return Ok(());
+        }
+
+        let mut string_builder = string_builder!(self);
+        for (_, literal) in &rewrites {
+            string_builder.count(literal);
+        }
+        string_builder.allocate()?;
+
+        for (override_key_hash, literal) in &rewrites {
+            let Some(override_dep) = self.overrides.map.get_mut(override_key_hash) else {
+                continue;
+            };
+            let external = string_builder.append::<ExternalString>(literal);
+            let sliced = external.value.sliced(string_builder.string_bytes.as_slice());
+            override_dep.version = dependency::parse(
+                override_dep.name,
+                override_dep.name_hash,
+                sliced.slice,
+                &sliced,
+                None,
+                &mut *manager,
+            )
+            .unwrap_or_default();
+        }
+        string_builder.clamp();
+
+        Ok(())
+    }
+
     pub fn clean(
         &mut self,
         manager: &mut PackageManager,

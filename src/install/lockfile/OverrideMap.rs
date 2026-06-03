@@ -25,6 +25,16 @@ pub struct OverrideMap {
     // Zig used ArrayIdentityContext.U64 (identity hash on u64 key); the Rust
     // `ArrayHashMap` defaults to identity hashing for integer keys.
     pub map: ArrayHashMap<PackageNameHash, Dependency>,
+
+    /// Overrides defined as a `$name` reference to a direct dependency's spec
+    /// (`"overrides": { "vite": "$vite" }`). Maps the override key's name hash
+    /// to the referenced direct dependency's name hash so the stored value can
+    /// be re-synced with the direct dependency after `bun update` bumps it —
+    /// see `Lockfile::refresh_self_referential_overrides`. A `$name` override
+    /// stores a *clone* of the direct dependency taken at parse time, which
+    /// otherwise goes stale the moment the direct dependency's resolved version
+    /// changes.
+    pub self_referential: ArrayHashMap<PackageNameHash, PackageNameHash>,
 }
 
 impl OverrideMap {
@@ -78,6 +88,20 @@ impl OverrideMap {
             // PERF(port): was ensureTotalCapacity + putAssumeCapacity — profile if hot
             new.map
                 .put_assume_capacity(*k, v.clone_in(pm, old_string_bytes, new_builder)?);
+        }
+
+        // `self_referential` keys are plain name hashes (no string-pool data), so a
+        // straight copy suffices — the referenced direct dependency is re-resolved
+        // against the new lockfile's buffers in `refresh_self_referential`.
+        new.self_referential
+            .ensure_total_capacity(self.self_referential.count())?;
+        for (k, v) in self
+            .self_referential
+            .keys()
+            .iter()
+            .zip(self.self_referential.values())
+        {
+            new.self_referential.put_assume_capacity(*k, *v);
         }
 
         Ok(new)
@@ -291,7 +315,7 @@ impl OverrideMap {
                 continue;
             }
 
-            if let Some(version) = parse_override_value(
+            if let Some(parsed) = parse_override_value(
                 "override",
                 lockfile_dependencies,
                 pm,
@@ -303,7 +327,10 @@ impl OverrideMap {
                 version_str,
                 builder,
             )? {
-                self.map.put_assume_capacity(name_hash, version);
+                self.map.put_assume_capacity(name_hash, parsed.dep);
+                if let Some(ref_name_hash) = parsed.self_referential_name_hash {
+                    self.self_referential.put(name_hash, ref_name_hash)?;
+                }
             }
         }
         Ok(())
@@ -399,7 +426,7 @@ impl OverrideMap {
                 continue;
             }
 
-            if let Some(version) = parse_override_value(
+            if let Some(parsed) = parse_override_value(
                 "resolution",
                 lockfile_dependencies,
                 pm,
@@ -412,11 +439,24 @@ impl OverrideMap {
                 builder,
             )? {
                 let name_hash = SemverBuilder::string_hash(k);
-                self.map.put_assume_capacity(name_hash, version);
+                self.map.put_assume_capacity(name_hash, parsed.dep);
+                if let Some(ref_name_hash) = parsed.self_referential_name_hash {
+                    self.self_referential.put(name_hash, ref_name_hash)?;
+                }
             }
         }
         Ok(())
     }
+}
+
+/// Result of resolving a single `overrides`/`resolutions` entry's value.
+pub struct ParsedOverride {
+    pub dep: Dependency,
+    /// For a `$name` self-reference, the referenced direct dependency's name
+    /// hash; `None` for a literal spec. Lets
+    /// `Lockfile::refresh_self_referential_overrides` re-sync the override
+    /// after the direct dependency is bumped.
+    pub self_referential_name_hash: Option<PackageNameHash>,
 }
 
 // PERF(port): was comptime monomorphization (`comptime field: []const u8`).
@@ -436,7 +476,7 @@ pub fn parse_override_value(
     key: &[u8],
     value: &[u8],
     builder: &mut StringBuilder,
-) -> Result<Option<Dependency>, Error> {
+) -> Result<Option<ParsedOverride>, Error> {
     if value.is_empty() {
         log.add_warning_fmt(Some(source), loc, format_args!("Missing {} value", field));
         return Ok(None);
@@ -456,7 +496,10 @@ pub fn parse_override_value(
                 .name
                 .eql(ref_name_str, builder.string_bytes.as_slice(), ref_name)
             {
-                return Ok(Some(dep.clone()));
+                return Ok(Some(ParsedOverride {
+                    dep: dep.clone(),
+                    self_referential_name_hash: Some(dep.name_hash),
+                }));
             }
         }
         log.add_warning_fmt(
@@ -501,11 +544,14 @@ pub fn parse_override_value(
         }
     };
 
-    Ok(Some(Dependency {
-        name,
-        name_hash,
-        version,
-        behavior: Behavior::default(),
+    Ok(Some(ParsedOverride {
+        dep: Dependency {
+            name,
+            name_hash,
+            version,
+            behavior: Behavior::default(),
+        },
+        self_referential_name_hash: None,
     }))
 }
 

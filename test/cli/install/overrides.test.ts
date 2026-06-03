@@ -245,3 +245,67 @@ test("overrides do not apply to workspaces", async () => {
   expect(await exited).toBe(0);
   expect(await stderr.text()).not.toContain("Saved lockfile");
 });
+
+// https://github.com/oven-sh/bun/issues/31748
+// `bun update` bumps a direct dependency's resolved version and rewrites its
+// package.json range *after* resolution, but used to leave a `$name`
+// self-referencing override pointing at the pre-bump range. The saved bun.lock
+// then no longer matched the package.json it was written next to, so the
+// immediate next `bun install --frozen-lockfile` failed. `is-odd@0.1.0` has a
+// transitive `is-number: ^1.1.0`, so the stale `$is-number` override changes
+// how that transitive resolves — mirroring the issue's nuxt -> vite-node ->
+// vite shape that makes the frozen check fail.
+test("bun update re-syncs a self-referencing override so frozen install passes", async () => {
+  const tmp = tmpdirSync();
+  const pkgPath = join(tmp, "package.json");
+
+  writeFileSync(
+    pkgPath,
+    JSON.stringify({
+      name: "self-ref-override",
+      dependencies: { "is-number": "1.1.0", "is-odd": "0.1.0" },
+      overrides: { "is-number": "$is-number" },
+    }),
+  );
+  install(tmp, ["install", "--save-text-lockfile"]);
+
+  // Widen the range so `bun update` has a newer version to move to within the
+  // same major (1.1.0 -> 1.1.2). The lockfile is still consistent here.
+  writeFileSync(
+    pkgPath,
+    JSON.stringify({
+      name: "self-ref-override",
+      dependencies: { "is-number": "^1.1.0", "is-odd": "0.1.0" },
+      overrides: { "is-number": "$is-number" },
+    }),
+  );
+  install(tmp, ["install", "--frozen-lockfile"]);
+
+  const update = Bun.spawnSync({
+    cmd: [bunExe(), "update", "--linker=hoisted"],
+    cwd: tmp,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  expect(update.exitCode).toBe(0);
+
+  // The bumped package.json range and the override must agree, so the next
+  // install parses the same `$is-number` value the lockfile was saved with.
+  const pkg = JSON.parse(readFileSync(pkgPath).toString());
+  expect(pkg.dependencies["is-number"]).toBe("^1.1.2");
+  expect(pkg.overrides["is-number"]).toBe("$is-number");
+  const lockfile = readFileSync(join(tmp, "bun.lock")).toString();
+  expect(lockfile).toContain(`"overrides": {\n    "is-number": "^1.1.2",\n  }`);
+
+  // The regression: this frozen install must not report that the lockfile changed.
+  const frozen = Bun.spawnSync({
+    cmd: [bunExe(), "install", "--frozen-lockfile", "--linker=hoisted"],
+    cwd: tmp,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  expect(frozen.stderr.toString()).not.toContain("lockfile had changes, but lockfile is frozen");
+  expect(frozen.exitCode).toBe(0);
+});

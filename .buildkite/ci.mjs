@@ -850,7 +850,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
  * @returns {Step}
  */
 function getTartPilotStep(options, buildId) {
-  const args = ["--step=darwin-aarch64-build-bun"];
+  const args = ["--step=darwin-aarch64-build-bun", "--vendor=false"];
   if (buildId) args.push(`--build-id=${buildId}`);
   args.push(
     "--include=test/js/bun/util/which.test.ts",

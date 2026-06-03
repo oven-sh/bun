@@ -157,7 +157,7 @@ it("console.log with SharedArrayBuffer", () => {
 // parseInt/parseFloat convert the argument to a string first, so an array
 // prints its comma-joined leading number and a numeric-prefix string parses
 // its leading digits, rather than Number()-coercing everything to NaN.
-describe("format specifier number coercion (#31777)", () => {
+describe.concurrent("format specifier number coercion (#31777)", () => {
   const cases: Array<[string, string]> = [
     // %i (parseInt) -- the originally reported case
     [`console.log("%i %i", [1, 2, 3, 4, 5])`, "1 %i"],

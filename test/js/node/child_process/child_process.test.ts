@@ -4,7 +4,7 @@ import fs from "fs";
 import { bunEnv, bunExe, isLinux, isWindows, nodeExe, runBunInstall, shellExe, tmpdirSync } from "harness";
 import { ChildProcess, exec, execFile, execFileSync, execSync, spawn, spawnSync } from "node:child_process";
 import { once } from "node:events";
-import { promisify } from "node:util";
+import { getSystemErrorName, promisify } from "node:util";
 import path from "path";
 const debug = process.env.DEBUG ? console.log : () => {};
 
@@ -548,7 +548,9 @@ it("spawnSync(does-not-exist) matches Node's ENOENT result shape", () => {
   // "never started" case with status/signal/output null, pid 0, and leaves
   // stdout/stderr undefined (see https://github.com/oven-sh/bun/issues/31767).
   expect(x.error?.code).toEqual("ENOENT");
-  expect(x.error.errno).toEqual(-2);
+  // errno is the libuv-negated value, which differs by platform (-2 on POSIX,
+  // -4058 on Windows); assert via its name like Node's own spawnsync test does.
+  expect(getSystemErrorName(x.error.errno)).toEqual("ENOENT");
   expect(x.error.path).toEqual("does-not-exist");
   expect(x.error.syscall).toEqual("spawnSync does-not-exist");
   expect(x.error.spawnargs).toEqual([]);

@@ -1,5 +1,6 @@
 use crate::jsc::JSGlobalObject;
 use crate::mysql::my_sql_value::{DateTime, Time};
+use crate::postgres::data_cell::Postgres__formatTime;
 use crate::shared::sql_data_cell::SQLDataCell;
 use crate::shared::sql_data_cell::{Tag as CellTag, Value as CellValue};
 use bun_sql::mysql::mysql_types as types;
@@ -246,39 +247,37 @@ pub fn decode_binary_value<Context: ReaderContext>(
                     let data = reader.read(l as usize)?;
                     let time = Time::from_data(&data)?;
 
-                    let total_hours: u32 = time.hours as u32 + time.days * 24;
-                    // -838:59:59 to 838:59:59 is valid (it only store seconds)
-                    // it should be represented as HH:MM:SS or HHH:MM:SS if total_hours > 99
-                    let mut buffer = [0u8; 32];
-                    let sign: &str = if time.negative { "-" } else { "" };
-                    let slice: &[u8] = 'brk: {
-                        use std::io::Write;
-                        let mut w = &mut buffer[..];
-                        if total_hours > 99 {
-                            if write!(
-                                w,
-                                "{}{:03}:{:02}:{:02}",
-                                sign, total_hours, time.minutes, time.seconds
-                            )
-                            .is_err()
-                            {
-                                return Err(bun_core::err!("InvalidBinaryValue"));
-                            }
-                        } else {
-                            if write!(
-                                w,
-                                "{}{:02}:{:02}:{:02}",
-                                sign, total_hours, time.minutes, time.seconds
-                            )
-                            .is_err()
-                            {
-                                return Err(bun_core::err!("InvalidBinaryValue"));
-                            }
-                        }
-                        let remaining = w.len();
-                        break 'brk &buffer[..32 - remaining];
-                    };
-                    // PORT NOTE: reshaped for borrowck — compute remaining before re-borrowing buffer
+                    // -838:59:59.999999 to 838:59:59.999999 is valid, rendered as
+                    // [-][H]HH:MM:SS with the fractional part zero-padded to 6
+                    // digits and trimmed of trailing zeros ("02:03:04.5"), matching
+                    // the mysql2 driver. That is exactly the shape the Postgres
+                    // TIME decoder emits, so reuse its formatter; only the sign is
+                    // MySQL-specific (the wire form carries absolute components
+                    // plus an is_negative byte). Totals are computed in u64 and
+                    // clamped to MySQL's hard cap so a malformed day count cannot
+                    // overflow the formatter's i64.
+                    const MAX_TIME_MICROS: u64 =
+                        ((838 * 3600 + 59 * 60 + 59) * 1_000_000) + 999_999;
+                    let total_seconds = (time.days as u64 * 24 + time.hours as u64) * 3600
+                        + time.minutes as u64 * 60
+                        + time.seconds as u64;
+                    let total_micros = total_seconds
+                        .saturating_mul(1_000_000)
+                        .saturating_add(time.microseconds as u64)
+                        .min(MAX_TIME_MICROS) as i64;
+
+                    let mut buffer = [0u8; 33];
+                    let mut len = 0usize;
+                    if time.negative {
+                        buffer[0] = b'-';
+                        len = 1;
+                    }
+                    let body: &mut [u8; 32] = (&mut buffer[len..len + 32])
+                        .try_into()
+                        .expect("infallible: slice length is 32");
+                    len += Postgres__formatTime(total_micros, body, 32);
+                    let slice = &buffer[..len];
+
                     Ok(SQLDataCell {
                         tag: CellTag::String,
                         value: CellValue {

@@ -592,6 +592,45 @@ if (isDockerEnabled()) {
           expect(result2).toEqual(times);
         });
 
+        test("time with fractional seconds", async () => {
+          await using sql = new SQL({ ...getOptions(), max: 1 });
+          const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");
+          await sql`CREATE TEMPORARY TABLE ${sql(random_name)} (a TIME(6))`;
+          const times = [
+            { a: "02:03:04" },
+            { a: "02:03:04.5" },
+            { a: "02:03:04.123456" },
+            { a: "-02:03:04.123456" },
+            { a: "838:59:58.999999" },
+            { a: null },
+          ];
+          await sql`INSERT INTO ${sql(random_name)} ${sql(times)}`;
+
+          // Binary protocol: matches the mysql2 driver — fractional part with trailing
+          // zeros stripped, omitted entirely when zero.
+          const result = await sql`SELECT * FROM ${sql(random_name)}`;
+          expect(result).toEqual([
+            { a: "02:03:04" },
+            { a: "02:03:04.5" },
+            { a: "02:03:04.123456" },
+            { a: "-02:03:04.123456" },
+            { a: "838:59:58.999999" },
+            { a: null },
+          ]);
+
+          // Text protocol: server sends the column at its declared precision, passed
+          // through as-is.
+          const result2 = await sql`SELECT * FROM ${sql(random_name)}`.simple();
+          expect(result2).toEqual([
+            { a: "02:03:04.000000" },
+            { a: "02:03:04.500000" },
+            { a: "02:03:04.123456" },
+            { a: "-02:03:04.123456" },
+            { a: "838:59:58.999999" },
+            { a: null },
+          ]);
+        });
+
         test("date", async () => {
           await using sql = new SQL({ ...getOptions(), max: 1 });
           const random_name = "test_" + randomUUIDv7("hex").replaceAll("-", "");

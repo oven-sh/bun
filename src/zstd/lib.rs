@@ -219,6 +219,15 @@ pub fn compress_bound(src_size: usize) -> usize {
     c::ZSTD_compressBound(src_size)
 }
 
+/// `ZSTD_isError` — true when a `size_t` return value (including from
+/// [`compress_bound`], see zstd.h: "ZSTD_compressBound() itself can fail, if
+/// `srcSize >= ZSTD_MAX_INPUT_SIZE`") is an error code rather than a size.
+/// Error codes are near `usize::MAX`, so treating one as a size requests an
+/// absurd allocation.
+pub fn is_error(code: usize) -> bool {
+    c::ZSTD_isError(code) != 0
+}
+
 /// ZSTD_decompress() :
 /// `compressedSize` : must be the _exact_ size of some number of compressed and/or skippable frames.
 /// `dstCapacity` is an upper bound of originalSize to regenerate.

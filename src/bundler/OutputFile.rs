@@ -5,7 +5,7 @@ use crate::options::Loader;
 // the `options` module already defines them locally.
 use crate::options::{OutputKind, Side};
 use bun_core::Error;
-use bun_core::{PathString, String as BunString};
+use bun_core::String as BunString;
 use bun_paths::PathBuffer;
 use bun_paths::fs;
 use bun_paths::resolve_path::{self, platform};
@@ -478,7 +478,7 @@ impl OutputFile {
                         encoding: bun_sys::WriteFileEncoding::Buffer,
                         mode: if self.is_executable { 0o755 } else { 0o644 },
                         dirfd: root_dir,
-                        file: bun_sys::PathOrFileDescriptor::Path(PathString::init(rel_path)),
+                        file: bun_sys::PathOrFileDescriptor::Path(rel_path),
                     },
                 )?;
             }

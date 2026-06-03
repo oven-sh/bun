@@ -332,10 +332,7 @@ pub fn generate_files(
     }
 
     if !dependencies.is_empty() {
-        let mut argv: Vec<&[u8]> = Vec::new();
-        argv.push(b"bun");
-        argv.push(b"--only-missing");
-        argv.push(b"install");
+        let mut argv: Vec<&[u8]> = vec![b"bun", b"--only-missing", b"install", b"--"];
         argv.extend(dependencies.iter().map(|d| &d[..]));
         run_install(&mut argv)?;
     }
@@ -361,6 +358,7 @@ pub fn generate_files(
                     shadcn_argv.push(b"--src-dir");
                 }
                 shadcn_argv.push(b"-y");
+                shadcn_argv.push(b"--");
                 shadcn_argv.extend(components.keys().iter().map(|k| &k[..]));
 
                 // print "bun" but use bun.selfExePath()

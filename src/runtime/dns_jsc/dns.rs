@@ -5041,7 +5041,7 @@ impl Resolver {
                     break 'brk RecordType::DEFAULT;
                 }
                 // TODO(port): phf custom hasher — Zig used getWithEql with ZigString.eqlComptime
-                match RECORD_TYPE_MAP.get(record_type_str.get_zig_string(global_this).slice()) {
+                match RECORD_TYPE_MAP.get(record_type_str.to_slice(global_this).slice()) {
                     Some(r) => *r,
                     None => {
                         return Err(global_this.throw_invalid_argument_property_value(
@@ -5994,8 +5994,8 @@ impl Resolver {
                 "non-empty string",
             ));
         }
-        let addr_zigstr = addr_str.get_zig_string(global_this);
-        let addr_s = addr_zigstr.slice();
+        let addr_slice = addr_str.to_slice(global_this);
+        let addr_s = addr_slice.slice();
 
         let port_value = arguments.ptr[1];
         let port: u16 = port_value.to_port_number(global_this)?;

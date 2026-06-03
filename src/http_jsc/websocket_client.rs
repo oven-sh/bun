@@ -1011,19 +1011,16 @@ impl<const SSL: bool> WebSocket<SSL> {
                             .copy_from_slice(&self.ping_frame_bytes[6..][..ping_len]);
                         let close_data = &close_data_buf[..ping_len];
                         if ping_len >= 2 {
-                            let mut code = u16::from_be_bytes([close_data[0], close_data[1]]);
-                            if code == 1001 {
-                                code = 1000;
-                            }
-                            if code < 1000
-                                || (code >= 1004 && code < 1007)
-                                || (code >= 1016 && code <= 2999)
-                            {
-                                code = 1002;
-                            }
+                            let received_code = u16::from_be_bytes([close_data[0], close_data[1]]);
+                            let (echo_code, dispatch_code) = received_close_codes(received_code);
                             let mut buf: [u8; 125] = [0; 125];
                             buf[..ping_len - 2].copy_from_slice(&close_data[2..ping_len]);
-                            self.send_close_with_body(code, Some(&mut buf), ping_len - 2);
+                            self.send_close_with_body(
+                                echo_code,
+                                Some(dispatch_code),
+                                Some(&mut buf),
+                                ping_len - 2,
+                            );
                         } else {
                             self.send_close();
                         }
@@ -1056,7 +1053,9 @@ impl<const SSL: bool> WebSocket<SSL> {
     }
 
     pub fn send_close(&mut self) {
-        self.send_close_with_body(1000, None, 0);
+        // Received a bodyless Close: echo a normal-closure frame on the wire,
+        // but report 1005 ("no status received") to JS per RFC 6455 §7.1.5.
+        self.send_close_with_body(1000, Some(1005), None, 0);
     }
 
     // PORT NOTE: Zig passed `socket` by value (a copy of `this.tcp`). Every
@@ -1339,7 +1338,17 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    fn send_close_with_body(&mut self, code: u16, body: Option<&mut [u8; 125]>, body_len: usize) {
+    /// `code` is the status code written to the wire frame. `dispatch_code`
+    /// overrides the code reported to JS (`CloseEvent.code`) when it differs
+    /// from the wire code — e.g. a received bodyless Close echoes 1000 but
+    /// reports 1005; when `None`, JS sees `code`.
+    fn send_close_with_body(
+        &mut self,
+        code: u16,
+        dispatch_code: Option<u16>,
+        body: Option<&mut [u8; 125]>,
+        body_len: usize,
+    ) {
         // RFC 6455 §5.5: control-frame payloads are capped at 125 bytes total,
         // and a close-frame payload starts with the 2-byte status code, so the
         // reason text is limited to 123 bytes.
@@ -1399,7 +1408,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         if self.enqueue_encoded_bytes(slice) {
             self.clear_data();
-            self.dispatch_close(code, &mut reason);
+            self.dispatch_close(dispatch_code.unwrap_or(code), &mut reason);
         }
     }
 
@@ -1706,12 +1715,12 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // (the only other borrow) ended at `wrote_len` above, so this
                 // `&mut` is unique.
                 let buf = unsafe { &mut *close_reason_buf.as_mut_ptr().cast::<[u8; 125]>() };
-                this.send_close_with_body(code, Some(buf), wrote_len);
+                this.send_close_with_body(code, None, Some(buf), wrote_len);
                 return;
             }
         }
 
-        this.send_close_with_body(code, None, 0);
+        this.send_close_with_body(code, None, None, 0);
     }
 
     pub extern "C" fn init(
@@ -2384,6 +2393,19 @@ pub enum ReceiveState {
     Pong,
     Close,
     Fail,
+}
+
+/// Map a status code received in a Close frame to the `(wire echo, JS dispatch)`
+/// pair. RFC 6455 §7.4.1: codes outside the legal on-wire set (`<1000`, the
+/// reserved `1004`–`1006`, and `1016`–`2999`) are a protocol error, so JS sees
+/// 1002. §7.1.5: the JS-visible code is otherwise the received one. The wire
+/// echo acknowledges a 1001 ("going away") with a normal-closure frame.
+fn received_close_codes(received: u16) -> (u16, u16) {
+    let is_invalid =
+        received < 1000 || (1004..1007).contains(&received) || (1016..=2999).contains(&received);
+    let dispatch = if is_invalid { 1002 } else { received };
+    let echo = if dispatch == 1001 { 1000 } else { dispatch };
+    (echo, dispatch)
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -449,7 +449,6 @@ function WriteStream(this: FSStream, path: string | null, options?: any): void {
     if (!write) this._write = null;
     if (!writev) this._writev = null;
   } else {
-    this._writev = undefined;
     $assert(this[kFs].write, "assuming user does not delete fs.write!");
   }
 
@@ -542,7 +541,7 @@ function writeAll(data, size, pos, cb, retries = 0) {
 }
 
 function writevAll(chunks, size, pos, cb, retries = 0) {
-  this[kFs].writev(this.fd, chunks, this.pos, (er, bytesWritten, buffers) => {
+  this[kFs].writev(this.fd, chunks, pos, (er, bytesWritten, buffers) => {
     // No data currently available and operation should be retried later.
     if (er?.code === "EAGAIN") {
       er = null;

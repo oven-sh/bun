@@ -392,6 +392,27 @@ static JSValue handleVirtualModuleResult(
             RELEASE_AND_RETURN(scope, reject(JSValue::decode(res->result.err.value)));
         }
 
+        // When a plugin returns source for a CommonJS module, it must be wrapped
+        // in a JSCommonJSModule so its named exports resolve when imported as ESM
+        // (and so require() evaluates it as CommonJS). Mirrors the non-virtual
+        // path in fetchESMSourceCode / fetchCommonJSModuleNonBuiltin.
+        if (res->result.value.isCommonJSModule) {
+            if (commonJSModule) {
+                commonJSModule->evaluate(globalObject, specifier->toWTFString(BunString::ZeroCopy), res->result.value);
+                if (scope.exception()) [[unlikely]] {
+                    RELEASE_AND_RETURN(scope, reject(scope.exception()));
+                }
+                return commonJSModule;
+            }
+
+            auto* specifierJS = JSC::jsString(vm, specifier->toWTFString(BunString::ZeroCopy));
+            auto created = Bun::createCommonJSModule(globalObject, specifierJS, res->result.value);
+            if (created.has_value()) {
+                RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, WTF::move(created.value()))));
+            }
+            RELEASE_AND_RETURN(scope, reject(scope.exception()));
+        }
+
         auto provider = Zig::SourceProvider::create(globalObject, res->result.value);
         return resolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
     }

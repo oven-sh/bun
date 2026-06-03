@@ -843,9 +843,27 @@ impl Lockfile {
             let packages_len = old.packages.len();
 
             for (key, info) in manager.updating_packages.iter() {
+                // Scope: only handle plain npm semver ranges. `npm:foo@…`
+                // aliases need the prefix preserved when rewriting the
+                // literal; catalog (`catalog:default`) and dist-tag
+                // (`latest`, picked up by `--latest`) need their own format
+                // logic. Touching them here strips the alias/catalog
+                // semantics from `dep.version` and breaks the post-install
+                // package.json edit. Leave them on the unchanged path —
+                // workspace-snapshot drift on aliases is tolerated by
+                // `--frozen-lockfile`; `$pkg` overrides on aliases are a
+                // known follow-up (see #31748).
+                if info.is_alias {
+                    continue;
+                }
                 let name_hash = SemverStringBuilder::string_hash(key);
                 for (dep, &old_resolution) in root_deps.iter().zip(old_resolutions.iter()) {
                     if dep.name_hash != name_hash {
+                        continue;
+                    }
+                    if dep.version.tag != dependency::Tag::Npm {
+                        // Skip Catalog/DistTag/etc. — they need bespoke
+                        // literal reformatting that we don't do here.
                         continue;
                     }
                     if old_resolution as usize >= packages_len
@@ -891,21 +909,28 @@ impl Lockfile {
             let resolutions_of_yore: &[Resolution] = old.packages.items_resolution();
             let packages_len = old.packages.len();
 
-            // Own (name, original-literal) pairs up-front so the later
-            // `&mut *manager` reborrow for `dependency::parse` does not alias
-            // the `manager.updating_packages` immutable borrow.
-            let updating: Vec<(Vec<u8>, Vec<u8>)> = manager
+            // Own (name, original-literal, is_alias) tuples up-front so the
+            // later `&mut *manager` reborrow for `dependency::parse` does not
+            // alias the `manager.updating_packages` immutable borrow.
+            let updating: Vec<(Vec<u8>, Vec<u8>, bool)> = manager
                 .updating_packages
                 .iter()
-                .map(|(k, v)| (k.to_vec(), v.original_version_literal.to_vec()))
+                .map(|(k, v)| (k.to_vec(), v.original_version_literal.to_vec(), v.is_alias))
                 .collect();
 
-            for (key, original_literal) in updating.iter() {
+            for (key, original_literal, is_alias) in updating.iter() {
+                // Mirror the scope filter from pass 1 — see comment there.
+                if *is_alias {
+                    continue;
+                }
                 let name_hash = SemverStringBuilder::string_hash(key);
                 for (dep, &old_resolution) in
                     root_deps.iter_mut().zip(old_resolutions.iter())
                 {
                     if dep.name_hash != name_hash {
+                        continue;
+                    }
+                    if dep.version.tag != dependency::Tag::Npm {
                         continue;
                     }
                     if old_resolution as usize >= packages_len

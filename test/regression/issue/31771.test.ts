@@ -36,8 +36,7 @@ function makeFixtures() {
   }
   files["graph.ts"] = graph;
   for (let i = 0; i < LARGE_N; i++) {
-    files[`t${i}.test.ts`] =
-      `import "./graph";\nimport { test } from "bun:test";\ntest("noop", () => {});\n`;
+    files[`t${i}.test.ts`] = `import "./graph";\nimport { test } from "bun:test";\ntest("noop", () => {});\n`;
   }
   return files;
 }

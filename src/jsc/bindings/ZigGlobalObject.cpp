@@ -646,14 +646,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__createForTestIsolation(Zig::G
     // suites. Mirrors GlobalObject::reload() and Zig__GlobalObject__destructOnExit().
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
-        auto* moduleLoader = oldGlobal->moduleLoader();
-        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
-        // under cellLock(); take the same lock so clearAll() can't race it.
-        {
-            WTF::Locker locker { moduleLoader->cellLock() };
-            moduleLoader->clearAll();
-        }
-        oldGlobal->requireMap()->clear(oldGlobal);
+        oldGlobal->clearModuleRegistry();
         scope.assertNoException();
     }
 
@@ -3350,16 +3343,23 @@ template void GlobalObject::visitOutputConstraints(JSCell*, SlotVisitor&);
 
 // DEFINE_VISIT_CHILDREN(Zig::GlobalObject);
 
-void GlobalObject::reload()
+void GlobalObject::clearModuleRegistry()
 {
-    auto& vm = this->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* moduleLoader = this->moduleLoader();
     {
-        auto* moduleLoader = this->moduleLoader();
+        // JSModuleLoader::visitChildrenImpl iterates these maps on the GC thread
+        // under cellLock(); take the same lock so clearAll() can't race it.
         WTF::Locker locker { moduleLoader->cellLock() };
         moduleLoader->clearAll();
     }
     this->requireMap()->clear(this);
+}
+
+void GlobalObject::reload()
+{
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    this->clearModuleRegistry();
     RETURN_IF_EXCEPTION(scope, );
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.
@@ -3981,12 +3981,7 @@ extern "C" void Zig__GlobalObject__destructOnExit(Zig::GlobalObject* globalObjec
         // ExternalStringImpl deallocators never run and LSan reports the
         // backing buffers as leaked. Mirrors WebWorker__teardownJSCVM.
         auto scope = DECLARE_THROW_SCOPE(vm);
-        {
-            auto* moduleLoader = globalObject->moduleLoader();
-            WTF::Locker locker { moduleLoader->cellLock() };
-            moduleLoader->clearAll();
-        }
-        globalObject->requireMap()->clear(globalObject);
+        globalObject->clearModuleRegistry();
         scope.exception(); // mirror WebWorker__teardownJSCVM — leave any pending exception in place
     }
     gcUnprotect(globalObject);

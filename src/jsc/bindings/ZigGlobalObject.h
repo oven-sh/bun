@@ -729,6 +729,12 @@ public:
 
     void reload();
 
+    // Drop this global's module loader registry (ESM) and require cache (CJS),
+    // severing moduleLoader -> record -> environment -> bindings so module
+    // top-level state becomes collectable. Used by reload(), the
+    // `bun test --isolate` global swap, and process-exit teardown.
+    void clearModuleRegistry();
+
     JSC::Structure* jsonlParseResultStructure() { return m_jsonlParseResultStructure.get(this); }
     JSC::Structure* pathParsedObjectStructure() { return m_pathParsedObjectStructure.get(this); }
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }

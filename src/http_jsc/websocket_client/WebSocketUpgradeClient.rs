@@ -691,7 +691,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: short-lived `&mut` for the field take; ends before the FFI call.
         let ws = unsafe { (*this).outgoing_websocket.take() };
         if let Some(ws) = ws {
-            CppWebSocket::opaque_ref(ws).did_abrupt_close(code);
+            // The upgrade handshake has no send buffer yet, so the backlog is 0.
+            CppWebSocket::opaque_ref(ws).did_abrupt_close(code, 0);
             // SAFETY: `this` carries root provenance; may free `this`.
             unsafe { Self::deref(this) };
         }

@@ -261,7 +261,12 @@ impl<const SSL: bool> WebSocket<SSL> {
         jsc::mark_binding!();
         if let Some(ws) = self.outgoing_websocket.take() {
             log!("fail ({})", <&'static str>::from(code));
-            CppWebSocket::opaque_ref(ws.as_ptr()).did_abrupt_close(code);
+            // Snapshot the unsent backlog before did_abrupt_close(): the JS
+            // close event fires synchronously inside it, yet the send buffer is
+            // not freed until cancel() below, so C++ must be told the amount now
+            // (it cannot query the connection across this &mut self borrow).
+            let buffered = self.buffered_amount();
+            CppWebSocket::opaque_ref(ws.as_ptr()).did_abrupt_close(code, buffered);
             // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
             // the socket/tunnel I/O ref (or by caller's guard).
             unsafe { Self::deref(self) };
@@ -1632,7 +1637,11 @@ impl<const SSL: bool> WebSocket<SSL> {
         };
         self.poll_ref.unref(Self::vm_loop_ctx(&self.global_this));
         jsc::mark_binding!();
-        CppWebSocket::opaque_ref(out.as_ptr()).did_abrupt_close(code);
+        // Capture the unsent backlog before the call (it may already be 0 if a
+        // caller such as handle_close() cleared the buffer first) so C++ can
+        // keep bufferedAmount from resetting to 0 on abrupt close.
+        let buffered = self.buffered_amount();
+        CppWebSocket::opaque_ref(out.as_ptr()).did_abrupt_close(code, buffered);
         // SAFETY: `self: &mut Self` → `*mut Self`; allocation kept live by
         // caller's ref guard (see cancel/handle_close).
         unsafe { Self::deref(self) };
@@ -2097,18 +2106,20 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// Backs the client `WebSocket.bufferedAmount` getter. Includes the framing
     /// bytes of buffered frames (the send buffer holds fully framed messages),
     /// plus any encrypted bytes the proxy tunnel still holds.
-    //
-    // `extern "C"` entrypoint; `this` is non-null by C++ contract (see SAFETY comment below).
-    #[allow(clippy::not_unsafe_ptr_arg_deref)]
-    pub extern "C" fn get_buffered_amount(this: *const Self) -> usize {
-        // SAFETY: called from C++ with a valid pointer
-        let this = unsafe { &*this };
-        let mut buffered = this.send_buffer.readable_length();
-        if let Some(tunnel) = &this.proxy_tunnel {
+    pub fn buffered_amount(&self) -> usize {
+        let mut buffered = self.send_buffer.readable_length();
+        if let Some(tunnel) = &self.proxy_tunnel {
             // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
             buffered += unsafe { tunnel.as_ref() }.buffered_amount();
         }
         buffered
+    }
+
+    // `extern "C"` entrypoint; `this` is non-null by C++ contract (see SAFETY comment below).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub extern "C" fn get_buffered_amount(this: *const Self) -> usize {
+        // SAFETY: called from C++ with a valid pointer
+        unsafe { &*this }.buffered_amount()
     }
 }
 

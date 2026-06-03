@@ -1683,12 +1683,21 @@ void WebSocket::didConnect(us_socket_t* socket, char* bufferedData, size_t buffe
     this->didConnect();
 }
 
-void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code)
+void WebSocket::didFailWithErrorCode(Bun::WebSocketErrorCode code, size_t bufferedAmount)
 {
     // from new WebSocket() -> connect()
 
     if (m_state == CLOSED)
         return;
+
+    // Keep the backlog reported before this abrupt close (captured on the Rust
+    // side, since the connection's send buffer is freed during teardown) so
+    // bufferedAmount does not reset to 0 — see bufferedAmount(). Keep the larger
+    // value; this also makes the socket-close path (buffer already cleared → 0)
+    // a no-op.
+    unsigned clamped = clampToUnsigned(bufferedAmount);
+    if (clamped > m_bufferedAmount)
+        m_bufferedAmount = clamped;
 
     this->m_upgradeClient = nullptr;
     if (this->m_connectedWebSocketKind == ConnectedWebSocketKind::ClientSSL) {
@@ -1916,9 +1925,9 @@ extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, v
     webSocket->didConnectWithTunnel(tunnel, bufferedData, len, deflate_params);
 }
 
-extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)
+extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode, size_t bufferedAmount)
 {
-    webSocket->didFailWithErrorCode(errorCode);
+    webSocket->didFailWithErrorCode(errorCode, bufferedAmount);
 }
 extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString* reason)
 {

@@ -44,7 +44,11 @@ unsafe extern "C" {
         buffered_len: usize,
         deflate_params: *const websocket_deflate::Params,
     );
-    safe fn WebSocket__didAbruptClose(websocket_context: &CppWebSocket, reason: ErrorCode);
+    safe fn WebSocket__didAbruptClose(
+        websocket_context: &CppWebSocket,
+        reason: ErrorCode,
+        buffered_amount: usize,
+    );
     fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: *const BunString);
     fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
@@ -69,12 +73,15 @@ unsafe extern "C" {
 // borrows (often while `&mut WebSocket<SSL>` is also live), so `&mut self`
 // would force needless `unsafe { &mut *ptr }` at every site.
 impl CppWebSocket {
-    pub(crate) fn did_abrupt_close(&self, reason: ErrorCode) {
+    /// `buffered_amount` is the sender's unsent backlog captured *before* this
+    /// call (the connection's send buffer may be freed during the abrupt-close
+    /// teardown), so C++ can keep `WebSocket.bufferedAmount` from resetting to 0.
+    pub(crate) fn did_abrupt_close(&self, reason: ErrorCode, buffered_amount: usize) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
-        WebSocket__didAbruptClose(self, reason);
+        WebSocket__didAbruptClose(self, reason, buffered_amount);
         event_loop.exit();
     }
 

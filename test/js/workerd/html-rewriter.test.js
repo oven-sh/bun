@@ -177,6 +177,23 @@ describe("HTMLRewriter", () => {
     expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
   });
 
+  it("(from file stream) errors cleanly when the stream is held by a reader", async () => {
+    var rewriter = new HTMLRewriter();
+    rewriter.on("div", {
+      element(element) {
+        element.setInnerContent("<blink>it worked!</blink>", { html: true });
+      },
+    });
+    using dir = tempDir("html-rewriter-stream-locked", { "index.html": "<div>hello</div>" });
+    const response = new Response(Bun.file(join(String(dir), "index.html")).stream());
+    // a raw-constructor reader locks the stream without disturbing it; the
+    // buffering path must refuse to consume it out from under the reader
+    new ReadableStreamDefaultReader(response.body);
+    expect(async () => {
+      await rewriter.transform(response).text();
+    }).toThrow("Stream already used, please create a new one");
+  });
+
   it("supports attribute iterator", async () => {
     var rewriter = new HTMLRewriter();
     var expected = [

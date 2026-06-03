@@ -2565,4 +2565,38 @@ describe("Response wrapping a Bun.file() stream", () => {
     expect(stderr).toContain("ReadableStream is locked");
     expect(exitCode).toBe(1);
   });
+
+  it("a stream locked by a raw-constructor reader keeps the streaming error semantics", async () => {
+    // Same as above, but with new ReadableStreamDefaultReader(body), which —
+    // unlike getReader() — doesn't run the deferred $start thunk: the stream
+    // is locked but not disturbed, and the native blob conversion must not
+    // serve it out from under the reader.
+    const { path } = makeStreamFile();
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        using server = Bun.serve({
+          port: 0,
+          fetch: () => {
+            const response = new Response(Bun.file(${JSON.stringify(path)}).stream());
+            new ReadableStreamDefaultReader(response.body);
+            return response;
+          },
+        });
+        const res = await fetch(server.url);
+        const body = await res.text();
+        console.log("status:" + res.status + " body-bytes:" + body.length);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("status:200 body-bytes:0");
+    expect(stderr).toContain("ReadableStream is locked");
+    expect(exitCode).toBe(1);
+  });
 });

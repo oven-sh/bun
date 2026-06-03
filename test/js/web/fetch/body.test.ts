@@ -807,6 +807,35 @@ describe("Response wrapping a Bun.file() stream", () => {
     reader.releaseLock();
   });
 
+  test("a raw-constructor reader on a file stream keeps rejecting consumption", async () => {
+    const { path } = makeFile("body-file-stream-raw-reader");
+
+    const response = new Response(file(path).stream());
+    // unlike getReader(), new ReadableStreamDefaultReader() doesn't run the
+    // deferred $start thunk, so the stream is locked but not yet disturbed —
+    // the native blob conversion must still refuse to steal it
+    const reader = new ReadableStreamDefaultReader(response.body!);
+    expect(response.body!.locked).toBe(true);
+    expect(async () => {
+      await response.bytes();
+    }).toThrow("ReadableStream is locked");
+    // the reader is still attached; the stream wasn't detached out from
+    // under it, and the failed attempt marks the body used
+    expect(response.body!.locked).toBe(true);
+    expect(response.bodyUsed).toBe(true);
+  });
+
+  test("a raw-constructor reader on a blob-backed body stream keeps rejecting consumption", async () => {
+    const response = new Response(new Blob(["blob source data"]).stream());
+    const reader = new ReadableStreamDefaultReader(response.body!);
+    expect(response.body!.locked).toBe(true);
+    expect(async () => {
+      await response.bytes();
+    }).toThrow("ReadableStream is locked");
+    expect(response.body!.locked).toBe(true);
+    expect(response.bodyUsed).toBe(true);
+  });
+
   test("response.body.cancel() still works and marks the body used", async () => {
     const { path } = makeFile("body-file-stream-cancel");
 

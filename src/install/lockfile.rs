@@ -809,6 +809,25 @@ impl Lockfile {
             return Ok(());
         }
 
+        // Snapshot each root dep's PRE-update literal bytes, keyed by
+        // name_hash. The override propagation at the tail of this fn uses
+        // this to distinguish `$pkg`-style overrides (whose `version.literal`
+        // is a clone of the root dep's literal at parse time, so it matches
+        // the snapshot) from user-authored literal overrides like
+        // `"overrides": { "vite": "1.0.0" }` (whose literal is independent,
+        // so it does NOT match) — we must not clobber the latter.
+        let pre_update_root_literals: BunHashMap<PackageNameHash, Vec<u8>> = {
+            let root_deps: &[Dependency] =
+                root_deps_list.get(old.buffers.dependencies.as_slice());
+            let buf = old.buffers.string_bytes.as_slice();
+            let mut map: BunHashMap<PackageNameHash, Vec<u8>> = BunHashMap::default();
+            map.reserve(root_deps.len());
+            for dep in root_deps {
+                map.insert(dep.name_hash, dep.version.literal.slice(buf).to_vec());
+            }
+            map
+        };
+
         let mut string_builder = string_builder!(old);
 
         // Pass 1: count required capacity for new literals (mirrors
@@ -945,18 +964,25 @@ impl Lockfile {
 
         string_builder.clamp();
 
-        // Second pass: propagate updated root literals to any matching
-        // `$`-reference overrides. Override entries created by
-        // `OverrideMap::parse_override_value` for `"$name"`-style values are
-        // clones of the root dep at parse time, so they hold the stale literal
-        // unless we refresh them here.
+        // Propagate updated root literals to `$`-reference overrides only.
+        // `OverrideMap::parse_override_value` clones the root dep wholesale
+        // when it sees `"$name"`, so a $-ref override's `version.literal`
+        // exactly matches the pre-update root literal. A user-authored
+        // literal override (e.g. `"vite": "1.0.0"`) has its own independent
+        // literal and would NOT match — leave those alone so we don't
+        // silently rewrite the user's pin.
+        //
+        // Edge case: a user who wrote `"vite": "^7.3.3"` in BOTH deps and
+        // overrides will be treated as a $-ref here (literals coincide) and
+        // their override will track root after `bun update`. Documenting this
+        // as accepted behavior since it preserves dep/override consistency.
         if old.overrides.map.count() > 0 {
             let root_deps_list_inner: DependencySlice =
                 old.packages.items_dependencies()[workspace_package_id as usize];
             let root_deps: &[Dependency] =
                 root_deps_list_inner.get(old.buffers.dependencies.as_slice());
+            let buf = old.buffers.string_bytes.as_slice();
 
-            // Index root deps by name_hash for O(1) lookup below.
             let mut root_by_hash: BunHashMap<PackageNameHash, Dependency> =
                 BunHashMap::default();
             root_by_hash.reserve(root_deps.len());
@@ -965,9 +991,19 @@ impl Lockfile {
             }
 
             for override_dep in old.overrides.map.values_mut() {
-                if let Some(matching_root) = root_by_hash.get(&override_dep.name_hash) {
-                    override_dep.version = matching_root.version.clone();
+                let Some(matching_root) = root_by_hash.get(&override_dep.name_hash) else {
+                    continue;
+                };
+                let Some(pre_update_literal) =
+                    pre_update_root_literals.get(&override_dep.name_hash)
+                else {
+                    continue;
+                };
+                // Only propagate when the override looks like a $-ref clone.
+                if override_dep.version.literal.slice(buf) != pre_update_literal.as_slice() {
+                    continue;
                 }
+                override_dep.version = matching_root.version.clone();
             }
         }
 

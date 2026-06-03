@@ -4993,6 +4993,56 @@ describe("update", () => {
     await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
   });
 
+  // Companion to the regression test above: a user-authored LITERAL override
+  // (not a "$pkg" reference) on one root dep must NOT be silently rewritten
+  // by `bun update` of a different root dep. An earlier draft of the #31748
+  // fix blindly cloned the root dep into every matching override entry; this
+  // test guards against that.
+  test("no-args preserves literal override on an unbumped root dep (regression #31748)", async () => {
+    // `no-deps` is exact-pinned so `bun update` won't touch it; `one-range-dep`
+    // is exact-pinned so it can't bump either. The literal override on
+    // `one-range-dep` has a *different* literal from the root dep, which the
+    // fix's "match pre-update root literal" heuristic must respect (skip).
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "no-deps": "^1.0.0",
+          "one-range-dep": "1.0.0",
+        },
+        overrides: {
+          // Literal override that's intentionally *different* from the root's
+          // literal so the heuristic in `preprocess_updating_packages`
+          // identifies it as user-authored (not a `$one-range-dep` clone) and
+          // leaves it alone.
+          "one-range-dep": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    await runBunUpdate(env, packageDir);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+    // `no-deps` bumps; the literal override on `one-range-dep` stays exactly
+    // as the user wrote it.
+    expect(await file(packageJson).json()).toEqual({
+      name: "foo",
+      dependencies: {
+        "no-deps": "^1.1.0",
+        "one-range-dep": "1.0.0",
+      },
+      overrides: {
+        "one-range-dep": "1.0.0",
+      },
+    });
+
+    await runBunInstall(env, packageDir, { frozenLockfile: true, savesLockfile: false });
+  });
+
   test("duplicate peer dependency (one package is invalid_package_id)", async () => {
     await write(
       packageJson,

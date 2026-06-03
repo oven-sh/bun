@@ -851,19 +851,24 @@ function getTestBunStep(platform, options, testOptions = {}) {
  * @param {string} [buildId]
  * @returns {Step}
  */
-function getTartPilotStep(options, buildId) {
-  // Mirror getTestBunStep for {os:darwin, arch:aarch64} but routed to tart=true.
-  const args = ["--step=darwin-aarch64-build-bun"];
+function getTartPilotStep(options, buildId, arch) {
+  // One ephemeral Tart guest per job, on the physical arm64 host (fond-mighty-corgi).
+  // arch="aarch64": native. arch="x64": downloads the x64 build; macOS runs it under
+  // Rosetta 2 automatically inside the guest (proven — cosmetic AVX warning only).
+  // Both lanes target the SAME agent (tart=true), so arm64-1 offers availability for
+  // both. The agent omits release-tier so existing darwin jobs never land on it.
+  const rosetta = arch === "x64";
+  const args = [`--step=darwin-${arch}-build-bun`];
   if (buildId) args.push(`--build-id=${buildId}`);
   args.push("--exclude=integration/bun-types");
   return {
-    key: "darwin-aarch64-tart-pilot-test-bun",
-    label: `${getBuildkiteEmoji("darwin")} aarch64 - test-bun (tart pilot)`,
-    depends_on: buildId ? [] : ["darwin-aarch64-build-bun"],
+    key: `darwin-${arch}-tart-pilot-test-bun`,
+    label: `${getBuildkiteEmoji("darwin")} ${arch} - test-bun (tart pilot${rosetta ? ", rosetta" : ""})`,
+    depends_on: buildId ? [] : [`darwin-${arch}-build-bun`],
     agents: {
       queue: "test-darwin",
       os: "darwin",
-      arch: "aarch64",
+      arch: "aarch64", // physical host is arm64; x64 runs via Rosetta
       tart: "true",
     },
     soft_fail: true,
@@ -1535,7 +1540,12 @@ async function getPipeline(options = {}) {
       steps.push({
         key: "darwin-aarch64",
         group: getTargetLabel({ os: "darwin", arch: "aarch64" }),
-        steps: [getTartPilotStep(options, buildId)],
+        steps: [getTartPilotStep(options, buildId, "aarch64")],
+      });
+      steps.push({
+        key: "darwin-x64",
+        group: getTargetLabel({ os: "darwin", arch: "x64" }),
+        steps: [getTartPilotStep(options, buildId, "x64")],
       });
     }
   }

@@ -2566,10 +2566,7 @@ unsafe extern "C" {
 pub enum Step {
     Pending,
     Compiled(Compiled),
-    Failed {
-        msg: Box<[u8]>,
-        allocated: bool,
-    },
+    Failed { msg: Box<[u8]>, allocated: bool },
 }
 
 pub struct Compiled {

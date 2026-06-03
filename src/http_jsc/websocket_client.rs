@@ -1296,6 +1296,16 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // send_buffer.readable_length() for bufferedAmount, so it must
                 // still be here. `terminate → cancel → clear_data` frees it
                 // immediately afterward, so this does not leak.
+                //
+                // KNOWN GAP (tunnel only): if the tunnel's SslWrapper::write_data
+                // hits a fatal SSL error it fires on_close → fail() *synchronously
+                // inside* the write above — before this restore — so that
+                // bufferedAmount snapshot reads 0. Reporting the data as
+                // `self.send_buffer` cannot be kept populated across the write
+                // without either aliasing UB (the slice handed to write is
+                // borrowed from it) or an extra per-flush copy; the window is a
+                // fatal-handshake/close-notify error mid-flush, and 0 there is no
+                // worse than the pre-feature behavior.
                 self.send_buffer = buf;
                 self.terminate(ErrorCode::FailedToWrite);
                 false

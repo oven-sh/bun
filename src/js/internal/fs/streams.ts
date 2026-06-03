@@ -526,7 +526,10 @@ function writeAll(data, size, pos, cb, retries = 0) {
 
     retries = bytesWritten ? 0 : retries + 1;
     size -= bytesWritten;
-    pos += bytesWritten;
+    // Only advance an explicit position; `undefined` means "current file
+    // offset", and `undefined + bytesWritten` would be `NaN` (coerced to
+    // offset 0 by the binding, overwriting the file head on retry).
+    if (pos !== undefined) pos += bytesWritten;
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {
@@ -556,7 +559,10 @@ function writevAll(chunks, size, pos, cb, retries = 0) {
 
     retries = bytesWritten ? 0 : retries + 1;
     size -= bytesWritten;
-    pos += bytesWritten;
+    // Only advance an explicit position; `undefined` means "current file
+    // offset", and `undefined + bytesWritten` would be `NaN` (coerced to
+    // offset 0 by the binding, overwriting the file head on retry).
+    if (pos !== undefined) pos += bytesWritten;
 
     // Try writing non-zero number of bytes up to 5 times.
     if (retries > 5) {

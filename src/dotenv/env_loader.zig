@@ -826,14 +826,14 @@ pub const Loader = struct {
                 break :brk pos;
             }
 
-            const stat = try file.stat();
+            const stat = try bun.sys.fstat(.fromStdFile(file)).unwrap();
 
-            if (stat.size == 0 or stat.kind != .file) {
+            if (stat.size <= 0 or bun.sys.kindFromMode(stat.mode) != .file) {
                 @field(this, base) = logger.Source.initPathString(base, "");
                 return;
             }
 
-            break :brk stat.size;
+            break :brk @as(usize, @intCast(stat.size));
         };
 
         var buf = try this.allocator.alloc(u8, end + 1);
@@ -899,14 +899,14 @@ pub const Loader = struct {
                 break :brk pos;
             }
 
-            const stat = try file.stat();
+            const stat = try bun.sys.fstat(.fromStdFile(file)).unwrap();
 
-            if (stat.size == 0 or stat.kind != .file) {
+            if (stat.size <= 0 or bun.sys.kindFromMode(stat.mode) != .file) {
                 try this.custom_files_loaded.put(file_path, logger.Source.initPathString(file_path, ""));
                 return;
             }
 
-            break :brk stat.size;
+            break :brk @as(usize, @intCast(stat.size));
         };
 
         var buf = try this.allocator.alloc(u8, end + 1);

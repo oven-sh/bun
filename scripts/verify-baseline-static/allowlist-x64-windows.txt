@@ -846,10 +846,7 @@ sinf                        [AVX, FMA]
 sinh_fma                    [AVX, FMA]
 sinhf_fma                   [AVX, FMA]
 strnlen                     [AVX, AVX2]
-# CLDEMOTE: newer UCRT builds on the CI image surface cldemote cache hints in
-# strpbrk's vectorized path. Hint-space encoding (NP 0f 1c /0) — architecturally
-# a NOP on CPUs without CLDEMOTE (SDM vol. 2), so baseline-safe with no gate.
-strpbrk                     [AVX, AVX2, CLDEMOTE]   # UCRT vectorized str routine, runtime-gated on __isa_available
+strpbrk                     [AVX, AVX2]   # UCRT vectorized str routine, runtime-gated on __isa_available
 tan                         [AVX, FMA]
 tanf                        [AVX, FMA]
 tanh_fma                    [AVX, FMA]

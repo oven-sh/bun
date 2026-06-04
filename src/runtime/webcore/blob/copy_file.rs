@@ -1571,9 +1571,7 @@ impl CopyFileWindows {
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop.
-        let _guard = unsafe {
-            jsc::event_loop::EventLoop::enter_scope(self.event_loop.as_ptr())
-        };
+        let _guard = unsafe { jsc::event_loop::EventLoop::enter_scope(self.event_loop.as_ptr()) };
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };
         // `promise` points to a GC-owned `JSPromise` cell, not into `self`; valid after `destroy`.
@@ -1657,9 +1655,7 @@ impl CopyFileWindows {
         let promise = JSPromise::opaque_mut(self.promise.swap());
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
         // calls enter() now and exit() on drop.
-        let _guard = unsafe {
-            jsc::event_loop::EventLoop::enter_scope(self.event_loop.as_ptr())
-        };
+        let _guard = unsafe { jsc::event_loop::EventLoop::enter_scope(self.event_loop.as_ptr()) };
 
         // SAFETY: self was heap-allocated in init(); destroy reclaims and drops it. self is not accessed afterward.
         unsafe { Self::destroy(core::ptr::from_mut(self)) };

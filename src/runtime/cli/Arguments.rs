@@ -275,6 +275,12 @@ pub(crate) const RUNTIME_PARAMS_: &[ParamType] = &[
     parse_param!(
         "--throw-deprecation               Determine whether or not deprecation warnings result in errors."
     ),
+    parse_param!(
+        "--abort-on-uncaught-exception     Abort instead of exiting when an uncaught exception is not handled."
+    ),
+    parse_param!(
+        "--abort_on_uncaught_exception     Alias of --abort-on-uncaught-exception (V8 accepts both spellings)."
+    ),
     parse_param!("--title <STR>                     Set the process title"),
     parse_param!(
         "--zero-fill-buffers                Boolean to force Buffer.allocUnsafe(size) to be zero-filled."
@@ -675,6 +681,9 @@ pub(crate) static Bun__Node__ProcessNoDeprecation: core::sync::atomic::AtomicBoo
     core::sync::atomic::AtomicBool::new(false);
 #[unsafe(no_mangle)]
 pub(crate) static Bun__Node__ProcessThrowDeprecation: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
+#[unsafe(no_mangle)]
+pub(crate) static Bun__Node__AbortOnUncaughtException: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 #[repr(u8)]
@@ -1252,6 +1261,13 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
         if args.flag(b"--throw-deprecation") {
             Bun__Node__ProcessThrowDeprecation.store(true, core::sync::atomic::Ordering::Relaxed);
+        }
+        // V8 (and therefore node) accepts both the dashed and the
+        // underscored spelling of this flag.
+        if args.flag(b"--abort-on-uncaught-exception")
+            || args.flag(b"--abort_on_uncaught_exception")
+        {
+            Bun__Node__AbortOnUncaughtException.store(true, core::sync::atomic::Ordering::Relaxed);
         }
         if let Some(title) = args.option(b"--title") {
             // Static is `Mutex<Option<Box<[u8]>>>` so `process.title = "..."`

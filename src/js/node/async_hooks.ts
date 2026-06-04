@@ -276,6 +276,18 @@ class AsyncResource {
     setAsyncHooksEnabled(true);
     this.type = type;
     this.#snapshot = get();
+
+    // Node's domain init hook tags every async resource created while a
+    // domain is active with a non-enumerable `domain` property.
+    const domain = (process as any).domain;
+    if (domain !== null && domain !== undefined) {
+      Object.defineProperty(this, "domain", {
+        configurable: true,
+        enumerable: false,
+        value: domain,
+        writable: true,
+      });
+    }
   }
 
   emitBefore() {

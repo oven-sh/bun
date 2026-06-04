@@ -27,6 +27,11 @@ class Process : public WebCore::JSEventEmitter {
     // Only used by internal code via passing to queueNextTick
     LazyProperty<Process, JSFunction> m_emitHelperFunction;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
+    // Set by node:domain (jsFunctionSetDomainErrorHandler). Consulted by
+    // Bun__handleUncaughtException before the public capture callback and
+    // 'uncaughtException' listeners; a truthy return marks the exception
+    // as handled by a domain.
+    WriteBarrier<Unknown> m_domainErrorHandler;
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
@@ -120,6 +125,16 @@ public:
         return m_uncaughtExceptionCaptureCallback.get();
     }
 
+    inline void setDomainErrorHandler(JSC::JSValue callback)
+    {
+        m_domainErrorHandler.set(vm(), this, callback);
+    }
+
+    inline JSC::JSValue getDomainErrorHandler()
+    {
+        return m_domainErrorHandler.get();
+    }
+
     inline Structure* cpuUsageStructure() { return m_cpuUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* resourceUsageStructure() { return m_resourceUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }
@@ -129,5 +144,6 @@ public:
 
 bool isSignalName(WTF::String input);
 JSC_DECLARE_HOST_FUNCTION(Process_functionDlopen);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionSetDomainErrorHandler);
 
 } // namespace Bun

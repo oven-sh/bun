@@ -818,7 +818,9 @@ describe.concurrent(() => {
     const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallbackAbort.js")], {
       stderr: "pipe",
     });
-    expect(await proc.exited).toBe(1);
+    // An exception thrown from the capture callback exits with code 7 like
+    // node (internal exception handler run-time failure).
+    expect(await proc.exited).toBe(7);
     expect(await proc.stderr.text()).toContain("bar");
   });
 });

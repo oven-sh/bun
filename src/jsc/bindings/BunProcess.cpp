@@ -131,6 +131,7 @@ typedef int mode_t;
 #include <cstring>
 extern "C" bool Bun__Node__ProcessNoDeprecation;
 extern "C" bool Bun__Node__ProcessThrowDeprecation;
+extern "C" bool Bun__Node__AbortOnUncaughtException;
 extern "C" int32_t bun_stdio_tty[3];
 
 namespace Bun {
@@ -909,6 +910,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback, (JSC::JSGl
     return JSC::JSValue::encode(jsUndefined());
 }
 
+// Used by node:domain ($newCppFunction) to install its uncaught-exception
+// dispatch hook. Intentionally not exposed as a process property.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionSetDomainErrorHandler, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    globalObject->processObject()->setDomainErrorHandler(callFrame->argument(0));
+    return JSC::JSValue::encode(jsUndefined());
+}
+
 JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto* zigGlobal = defaultGlobalObject(globalObject);
@@ -1225,16 +1235,57 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
 
     auto uncaughtExceptionIdent = Identifier::fromString(JSC::getVM(globalObject), "uncaughtException"_s);
 
-    // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
+    // node:domain installs a dispatch hook when it is first loaded. It runs
+    // before the public capture callback and 'uncaughtException' listeners
+    // and returns true when an active domain handled the exception.
+    auto domainHandler = process->getDomainErrorHandler();
+    if (!domainHandler.isEmpty() && !domainHandler.isUndefinedOrNull()) {
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSValue handled = call(lexicalGlobalObject, domainHandler, args, "domainErrorHandler"_s);
+        if (auto ex = scope.exception()) {
+            (void)scope.tryClearException();
+            // An exception thrown from a top-level domain 'error' handler is
+            // fatal: node aborts when --abort-on-uncaught-exception is set
+            // and otherwise exits with code 7 (internal exception handler
+            // run-time failure).
+            Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
+            if (Bun__Node__AbortOnUncaughtException) {
+                abort();
+            }
+            Bun__Process__exit(lexicalGlobalObject, 7);
+        }
+        if (handled.toBoolean(lexicalGlobalObject)) {
+            return true;
+        }
+    }
+
     auto capture = process->getUncaughtExceptionCaptureCallback();
+
+    // --abort-on-uncaught-exception aborts (after printing the error) unless
+    // a capture callback is installed — either explicitly or by a domain
+    // with an 'error' handler (which returned true above). This mirrors
+    // V8/node, where the abort happens at throw time, before
+    // 'uncaughtException' listeners are consulted: listeners do not suppress
+    // the abort, only a capture callback does.
+    if (Bun__Node__AbortOnUncaughtException && (capture.isEmpty() || capture.isUndefinedOrNull())) {
+        Bun__logUnhandledException(JSValue::encode(exception));
+        abort();
+    }
+
+    // if there is an uncaughtExceptionCaptureCallback, call it and consider the exception handled
     if (!capture.isEmpty() && !capture.isUndefinedOrNull()) {
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
         (void)call(lexicalGlobalObject, capture, args, "uncaughtExceptionCaptureCallback"_s);
         if (auto ex = scope.exception()) {
             (void)scope.tryClearException();
-            // if an exception is thrown in the uncaughtException handler, we abort
+            // An exception thrown in the capture callback is fatal: abort
+            // under --abort-on-uncaught-exception, otherwise exit with code
+            // 7 like node (internal exception handler run-time failure).
             Bun__logUnhandledException(JSValue::encode(JSValue(ex)));
-            Bun__Process__exit(lexicalGlobalObject, 1);
+            if (Bun__Node__AbortOnUncaughtException) {
+                abort();
+            }
+            Bun__Process__exit(lexicalGlobalObject, 7);
         }
     } else if (wrapped.listenerCount(uncaughtExceptionIdent) > 0) {
         wrapped.emit(uncaughtExceptionIdent, args);
@@ -3265,6 +3316,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
+    visitor.append(thisObject->m_domainErrorHandler);
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_argv);

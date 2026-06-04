@@ -1413,6 +1413,10 @@ impl VirtualMachine {
         ) > 0;
         if !handled {
             // TODO maybe we want a separate code path for uncaught exceptions
+            // NOTE: --abort-on-uncaught-exception is handled inside
+            // Bun__handleUncaughtException (the abort fires before
+            // 'uncaughtException' listeners, like node), so by the time we
+            // get here with `handled == false` the flag is already honored.
             self.unhandled_error_counter += 1;
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);

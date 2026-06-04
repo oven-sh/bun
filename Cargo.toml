@@ -19,6 +19,7 @@ members = [
   "src/libarchive",
   "src/md",
   "src/paths",
+  "src/react_compiler",
   "src/resolver",
   "src/safety",
   "src/semver",
@@ -413,6 +414,7 @@ bun_dispatch = { path = "src/dispatch" }
 bun_brotli = { path = "src/brotli" }
 bun_bundler_jsc = { path = "src/bundler_jsc" }
 bun_perf = { path = "src/perf" }
+bun_react_compiler = { path = "src/react_compiler" }
 bun_resolve_builtins = { path = "src/resolve_builtins" }
 bun_sourcemap_jsc = { path = "src/sourcemap_jsc" }
 bun_url = { path = "src/url" }

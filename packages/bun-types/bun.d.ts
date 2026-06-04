@@ -2902,6 +2902,23 @@ declare module "bun" {
     reactFastRefresh?: boolean;
 
     /**
+     * Enable React Compiler (experimental).
+     *
+     * Automatically memoizes React components and hooks using the React
+     * Compiler, built into the bundler — no Babel plugin or extra
+     * dependencies required. Compiled output imports
+     * `react/compiler-runtime`, which ships with React 19 or later.
+     *
+     * Files are compiled with `compilationMode: "infer"` semantics: only
+     * functions that are components or hooks are transformed, and
+     * `"use no memo"` directives are honored. Files inside `node_modules`
+     * are never compiled.
+     *
+     * @default false
+     */
+    reactCompiler?: boolean;
+
+    /**
      * A map of file paths to their contents for in-memory bundling.
      *
      * This allows you to bundle virtual files that don't exist on disk, or override

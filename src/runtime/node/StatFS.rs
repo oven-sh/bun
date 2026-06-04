@@ -4,7 +4,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // On POSIX this is `libc::statfs`; on Windows it's `uv_statfs_t` (the value
 // `sys_uv::statfs` returns / `uv_fs_statfs` writes into `req.ptr`). Field
 // names match (`f_type`/`f_bsize`/…); widths differ (u64 vs platform-specific)
-// but `init` does an explicit `as i64`/`as $Int` truncate so either shape works.
+// but `init` normalizes them through `i64` so either shape works.
 #[cfg(unix)]
 pub(crate) type RawStatFS = libc::statfs;
 #[cfg(not(unix))]
@@ -14,7 +14,9 @@ pub(crate) type RawStatFS = bun_sys::StatFS;
 // integer type via `const Int = if (big) i64 else i32;`. Stable Rust const
 // generics cannot select a field type from a `const BIG: bool`, so we generate
 // the two concrete instantiations with a small macro. The two exported aliases
-// (`StatFSSmall`, `StatFSBig`) are the only call sites.
+// (`StatFSSmall`, `StatFSBig`) are the only call sites. Both Rust instantiations
+// use i64 storage because the non-bigint C binding also accepts i64 and turns
+// the fields into JS numbers.
 macro_rules! define_statfs_type {
     ($name:ident, $Int:ty, big = $big:expr) => {
         #[allow(non_snake_case)]
@@ -82,10 +84,9 @@ macro_rules! define_statfs_type {
                 #[cfg(target_arch = "wasm32")]
                 compile_error!("Unsupported OS");
 
-                // @truncate(@as(i64, @intCast(x))) — @intCast to i64 then @truncate to Int.
                 // PORT NOTE: platform field types vary (u32/i64/u64); `as i64` matches
-                // Zig's @intCast for the in-range values statfs reports, then `as $Int`
-                // is the @truncate (intentional wrap).
+                // Zig's @intCast for the in-range values statfs reports, and `$Int`
+                // keeps the generated concrete struct fields consistent.
                 Self {
                     _fstype: (fstype_ as i64) as $Int,
                     _bsize: (bsize_ as i64) as $Int,
@@ -128,7 +129,7 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-define_statfs_type!(StatFSSmall, i32, big = false);
+define_statfs_type!(StatFSSmall, i64, big = false);
 define_statfs_type!(StatFSBig, i64, big = true);
 
 /// Union between `Stats` and `BigIntStats` where the type can be decided at runtime

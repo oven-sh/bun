@@ -1,4 +1,4 @@
-use crate::{JSGlobalObject, JSValue, BunStackTrace};
+use crate::{BunStackTrace, JSGlobalObject, JSValue};
 
 bun_opaque::opaque_ffi! {
     /// Opaque representation of a JavaScript exception

@@ -11,8 +11,8 @@ use core::marker::PhantomData;
 
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
-    AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
-    JSObject, JSPromise, JSString, JSType, JsClass, JsError, JsResult, BunException,
+    AnyPromise, ArrayBuffer, BuiltinName, BunException, JSArrayIterator, JSGlobalObject,
+    JSInternalPromise, JSObject, JSPromise, JSString, JSType, JsClass, JsError, JsResult,
     bun_string_jsc, ffi, host_fn,
 };
 

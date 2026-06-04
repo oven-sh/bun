@@ -23,7 +23,7 @@
 use core::ffi::c_void;
 
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, BunStackFrame};
+use bun_jsc::{BunStackFrame, CallFrame, JSGlobalObject, JSInternalPromise, JSValue};
 
 // ─── VirtualMachine ──────────────────────────────────────────────────────────
 //

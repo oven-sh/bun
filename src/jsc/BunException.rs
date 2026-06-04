@@ -8,7 +8,7 @@ use bun_url::URL as ZigURL;
 
 use crate::module_loader::ModuleLoader;
 use crate::virtual_machine::VirtualMachine;
-use crate::{JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, BunStackFrame, BunStackTrace};
+use crate::{BunStackFrame, BunStackTrace, JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue};
 
 // SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
 // opaque `UnsafeCell`-backed handle (`&` is ABI-identical to non-null `*mut`);

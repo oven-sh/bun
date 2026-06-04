@@ -6,8 +6,8 @@ use bun_core::String as BunString;
 use bun_core::ZigStringSlice;
 use bun_url::URL as ZigURL;
 
-use crate::SourceProvider;
 use crate::BunStackFrame;
+use crate::SourceProvider;
 
 /// Represents a JavaScript stack trace
 #[repr(C)]

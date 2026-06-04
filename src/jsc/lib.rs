@@ -57,6 +57,12 @@ pub const CONV: &str = "C";
 // Submodules. Each `#[path]` points at the actual PascalCase / snake_case
 // .rs file.
 // ──────────────────────────────────────────────────────────────────────────
+#[path = "BunErrorType.rs"]
+pub mod bun_error_type;
+#[path = "BunStackFrameCode.rs"]
+pub mod bun_stack_frame_code;
+#[path = "BunStackFramePosition.rs"]
+pub mod bun_stack_frame_position;
 #[path = "CommonAbortReason.rs"]
 pub mod common_abort_reason;
 #[path = "CustomGetterSetter.rs"]
@@ -99,12 +105,6 @@ pub mod text_codec;
 pub mod url_search_params;
 #[path = "WTF.rs"]
 pub mod wtf;
-#[path = "BunErrorType.rs"]
-pub mod bun_error_type;
-#[path = "BunStackFrameCode.rs"]
-pub mod bun_stack_frame_code;
-#[path = "BunStackFramePosition.rs"]
-pub mod bun_stack_frame_position;
 
 /// `bun.schema.api` types that reference `BunStackFramePosition` (this crate)
 /// and so cannot live in `bun_options_types::schema::api` without a dep cycle.
@@ -433,6 +433,9 @@ pub use self::common_strings::CommonStrings;
 pub use self::dom_url::DOMURL;
 pub use self::js_big_int::JSBigInt;
 
+pub use self::bun_error_type::BunErrorType;
+pub use self::bun_stack_frame_code::BunStackFrameCode;
+pub use self::bun_stack_frame_position::BunStackFramePosition;
 pub use self::common_abort_reason::{CommonAbortReason, CommonAbortReasonExt};
 pub use self::custom_getter_setter::CustomGetterSetter;
 /// Some drafts spell this `jsc::ErrCode` — keep both until call-sites converge.
@@ -454,9 +457,6 @@ pub use self::source_provider::SourceProvider;
 pub use self::source_type::SourceType;
 pub use self::text_codec::TextCodec;
 pub use self::url_search_params::URLSearchParams;
-pub use self::bun_error_type::BunErrorType;
-pub use self::bun_stack_frame_code::BunStackFrameCode;
-pub use self::bun_stack_frame_position::BunStackFramePosition;
 
 #[path = "GarbageCollectionController.rs"]
 pub mod garbage_collection_controller;
@@ -494,6 +494,12 @@ pub mod virtual_machine_exports;
 #[path = "host_fn.rs"] pub mod host_fn;
 #[path = "AnyPromise.rs"]
 pub mod any_promise;
+#[path = "BunException.rs"]
+pub mod bun_exception;
+#[path = "BunStackFrame.rs"]
+pub mod bun_stack_frame;
+#[path = "BunStackTrace.rs"]
+pub mod bun_stack_trace;
 #[path = "javascript_core_c_api.rs"]
 pub mod c_api;
 #[path = "CachedBytecode.rs"]
@@ -516,12 +522,6 @@ pub mod system_error;
 pub mod url;
 #[path = "VM.rs"]
 pub mod vm;
-#[path = "BunException.rs"]
-pub mod bun_exception;
-#[path = "BunStackFrame.rs"]
-pub mod bun_stack_frame;
-#[path = "BunStackTrace.rs"]
-pub mod bun_stack_trace;
 // `generated_classes_list.rs` is mounted by `bun_runtime` (see its lib.rs) —
 // every aliased type lives in api/webcore/test_runner/bake, so mounting it
 // here would create a `bun_jsc → bun_runtime` cycle.
@@ -984,12 +984,12 @@ mod __macro_smoke {
 // above with `#[path = "…"] pub mod …;`). These were previously placeholder
 // newtypes; the real opaque-FFI structs now live in their own files and are
 // surfaced here at the crate root.
+pub use self::bun_stack_frame::BunStackFrame;
+pub use self::bun_stack_trace::BunStackTrace;
 pub use self::cached_bytecode::CachedBytecode;
 pub use self::deferred_error::DeferredError;
 pub use self::dom_form_data::DOMFormData;
 pub use self::url::URL;
-pub use self::bun_stack_frame::BunStackFrame;
-pub use self::bun_stack_trace::BunStackTrace;
 pub use abort_signal::{AbortSignal, AbortSignalRef};
 
 // `VM` / `JSGlobalObject` — opaque FFI handles to C++-owned objects. Defined

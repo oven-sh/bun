@@ -16,7 +16,7 @@ use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
 use crate::virtual_machine::{VirtualMachine, runtime_hooks};
-use crate::{self as jsc, CallFrame, JSGlobalObject, BunException};
+use crate::{self as jsc, BunException, CallFrame, JSGlobalObject};
 
 bun_core::declare_scope!(debugger, visible);
 bun_core::declare_scope!(TestReporterAgent, visible);

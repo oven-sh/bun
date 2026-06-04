@@ -1,26 +1,15 @@
-'use strict';
+"use strict";
 
 // New Streams API - Share
 //
 // Pull-model multi-consumer streaming. Shares a single source among
 // multiple consumers with explicit buffering.
 
-const {
-  shareProtocol,
-  shareSyncProtocol,
-} = require("internal/streams/iter/types");
+const { shareProtocol, shareSyncProtocol } = require("internal/streams/iter/types");
 
-const {
-  from,
-  fromSync,
-  isAsyncIterable,
-  isSyncIterable,
-} = require("internal/streams/iter/from");
+const { from, fromSync, isAsyncIterable, isSyncIterable } = require("internal/streams/iter/from");
 
-const {
-  pull: pullWithTransforms,
-  pullSync: pullSyncWithTransforms,
-} = require("internal/streams/iter/pull");
+const { pull: pullWithTransforms, pullSync: pullSyncWithTransforms } = require("internal/streams/iter/pull");
 
 const {
   kMultiConsumerDefaultHWM,
@@ -33,15 +22,9 @@ const {
   validateBackpressure,
 } = require("internal/streams/iter/utils");
 
-const {
-  RingBuffer,
-} = require("internal/streams/iter/ringbuffer");
+const { RingBuffer } = require("internal/streams/iter/ringbuffer");
 
-const {
-  validateAbortSignal,
-  validateInteger,
-  validateObject,
-} = require("internal/validators");
+const { validateAbortSignal, validateInteger, validateObject } = require("internal/validators");
 
 // =============================================================================
 // Async Share Implementation
@@ -141,8 +124,7 @@ class ShareImpl {
               const chunk = self.#buffer.get(bufferIndex);
               const cursor = state.cursor;
               state.cursor++;
-              if (cursor === self.#cachedMinCursor &&
-                  --self.#cachedMinCursorConsumers === 0) {
+              if (cursor === self.#cachedMinCursor && --self.#cachedMinCursorConsumers === 0) {
                 self.#tryTrimBuffer();
               }
               return { __proto__: null, done: false, value: chunk };
@@ -172,8 +154,7 @@ class ShareImpl {
           __proto__: null,
           next() {
             const next = state.pendingNext.then(getNext, getNext);
-            state.pendingNext =
-              next.then(undefined, () => {});
+            state.pendingNext = next.then(undefined, () => {});
             return next;
           },
 
@@ -246,17 +227,15 @@ class ShareImpl {
       }
 
       switch (this.#options.backpressure) {
-        case 'strict':
-          throw $ERR_OUT_OF_RANGE(
-            'buffer size', `<= ${this.#options.highWaterMark}`,
-            this.#buffer.length);
-        case 'block': {
+        case "strict":
+          throw $ERR_OUT_OF_RANGE("buffer size", `<= ${this.#options.highWaterMark}`, this.#buffer.length);
+        case "block": {
           const { promise, resolve } = Promise.withResolvers();
           this.#pullWaiters.push(resolve);
           await promise;
           break;
         }
-        case 'drop-oldest':
+        case "drop-oldest":
           this.#buffer.shift();
           this.#bufferStart++;
           for (const consumer of this.#consumers) {
@@ -267,7 +246,7 @@ class ShareImpl {
           }
           this.#recomputeMinCursor();
           return true;
-        case 'drop-newest':
+        case "drop-newest":
           return true;
       }
     }
@@ -291,24 +270,20 @@ class ShareImpl {
       try {
         if (!this.#sourceIterator) {
           if (isAsyncIterable(this.#source)) {
-            this.#sourceIterator =
-              this.#source[Symbol.asyncIterator]();
+            this.#sourceIterator = this.#source[Symbol.asyncIterator]();
           } else if (isSyncIterable(this.#source)) {
-            const syncIterator =
-              this.#source[Symbol.iterator]();
+            const syncIterator = this.#source[Symbol.iterator]();
             this.#sourceIterator = {
               __proto__: null,
               async next() {
                 return syncIterator.next();
               },
               async return() {
-                return syncIterator.return?.() ??
-                       { __proto__: null, done: true, value: undefined };
+                return syncIterator.return?.() ?? { __proto__: null, done: true, value: undefined };
               },
             };
           } else {
-            throw $ERR_INVALID_ARG_TYPE(
-              'source', ['AsyncIterable', 'Iterable'], this.#source);
+            throw $ERR_INVALID_ARG_TYPE("source", ["AsyncIterable", "Iterable"], this.#source);
           }
         }
 
@@ -348,8 +323,7 @@ class ShareImpl {
   }
 
   #recomputeMinCursor() {
-    const { minCursor, minCursorConsumers } = getMinCursor(
-      this.#consumers, this.#bufferStart + this.#buffer.length);
+    const { minCursor, minCursorConsumers } = getMinCursor(this.#consumers, this.#bufferStart + this.#buffer.length);
     this.#cachedMinCursor = minCursor;
     this.#cachedMinCursorConsumers = minCursorConsumers;
   }
@@ -452,8 +426,7 @@ class SyncShareImpl {
               const chunk = self.#buffer.get(bufferIndex);
               const cursor = state.cursor;
               state.cursor++;
-              if (cursor === self.#cachedMinCursor &&
-                  --self.#cachedMinCursorConsumers === 0) {
+              if (cursor === self.#cachedMinCursor && --self.#cachedMinCursorConsumers === 0) {
                 self.#tryTrimBuffer();
               }
               return { __proto__: null, done: false, value: chunk };
@@ -468,16 +441,15 @@ class SyncShareImpl {
             // Check buffer limit
             if (self.#buffer.length >= self.#options.highWaterMark) {
               switch (self.#options.backpressure) {
-                case 'strict':
+                case "strict":
+                  throw $ERR_OUT_OF_RANGE("buffer size", `<= ${self.#options.highWaterMark}`, self.#buffer.length);
+                case "block":
                   throw $ERR_OUT_OF_RANGE(
-                    'buffer size', `<= ${self.#options.highWaterMark}`,
-                    self.#buffer.length);
-                case 'block':
-                  throw $ERR_OUT_OF_RANGE(
-                    'buffer size', `<= ${self.#options.highWaterMark} ` +
-                    '(blocking not available in sync context)',
-                    self.#buffer.length);
-                case 'drop-oldest':
+                    "buffer size",
+                    `<= ${self.#options.highWaterMark} ` + "(blocking not available in sync context)",
+                    self.#buffer.length,
+                  );
+                case "drop-oldest":
                   self.#buffer.shift();
                   self.#bufferStart++;
                   for (const consumer of self.#consumers) {
@@ -488,7 +460,7 @@ class SyncShareImpl {
                   }
                   self.#recomputeMinCursor();
                   break;
-                case 'drop-newest':
+                case "drop-newest":
                   state.detached = true;
                   self.#deleteConsumer(state);
                   return { __proto__: null, done: true, value: undefined };
@@ -508,8 +480,7 @@ class SyncShareImpl {
               const chunk = self.#buffer.get(newBufferIndex);
               const cursor = state.cursor;
               state.cursor++;
-              if (cursor === self.#cachedMinCursor &&
-                  --self.#cachedMinCursorConsumers === 0) {
+              if (cursor === self.#cachedMinCursor && --self.#cachedMinCursorConsumers === 0) {
                 self.#tryTrimBuffer();
               }
               return { __proto__: null, done: false, value: chunk };
@@ -597,8 +568,7 @@ class SyncShareImpl {
   }
 
   #recomputeMinCursor() {
-    const { minCursor, minCursorConsumers } = getMinCursor(
-      this.#consumers, this.#bufferStart + this.#buffer.length);
+    const { minCursor, minCursorConsumers } = getMinCursor(this.#consumers, this.#bufferStart + this.#buffer.length);
     this.#cachedMinCursor = minCursor;
     this.#cachedMinCursorConsumers = minCursorConsumers;
   }
@@ -630,16 +600,12 @@ function onShareCancel(shareImpl, signal) {
 function share(source, options = { __proto__: null }) {
   // Normalize source via from() - accepts strings, ArrayBuffers, protocols, etc.
   const normalized = from(source);
-  validateObject(options, 'options');
-  const {
-    highWaterMark = kMultiConsumerDefaultHWM,
-    backpressure = 'strict',
-    signal,
-  } = options;
-  validateInteger(highWaterMark, 'options.highWaterMark');
+  validateObject(options, "options");
+  const { highWaterMark = kMultiConsumerDefaultHWM, backpressure = "strict", signal } = options;
+  validateInteger(highWaterMark, "options.highWaterMark");
   validateBackpressure(backpressure);
   if (signal !== undefined) {
-    validateAbortSignal(signal, 'options.signal');
+    validateAbortSignal(signal, "options.signal");
   }
 
   const opts = {
@@ -661,12 +627,9 @@ function share(source, options = { __proto__: null }) {
 function shareSync(source, options = { __proto__: null }) {
   // Normalize source via fromSync() - accepts strings, ArrayBuffers, protocols, etc.
   const normalized = fromSync(source);
-  validateObject(options, 'options');
-  const {
-    highWaterMark = kMultiConsumerDefaultHWM,
-    backpressure = 'strict',
-  } = options;
-  validateInteger(highWaterMark, 'options.highWaterMark');
+  validateObject(options, "options");
+  const { highWaterMark = kMultiConsumerDefaultHWM, backpressure = "strict" } = options;
+  validateInteger(highWaterMark, "options.highWaterMark");
   validateBackpressure(backpressure);
 
   const opts = {
@@ -691,17 +654,15 @@ const Share = {
   from(input, options) {
     if (isShareable(input)) {
       const result = input[shareProtocol](options);
-      if (result === null || typeof result !== 'object') {
-        throw $ERR_INVALID_RETURN_VALUE(
-          'an object', '[Symbol.for(\'Stream.shareProtocol\')]', result);
+      if (result === null || typeof result !== "object") {
+        throw $ERR_INVALID_RETURN_VALUE("an object", "[Symbol.for('Stream.shareProtocol')]", result);
       }
       return result;
     }
     if (isAsyncIterable(input) || isSyncIterable(input)) {
       return share(input, options);
     }
-    throw $ERR_INVALID_ARG_TYPE(
-      'input', ['Shareable', 'AsyncIterable', 'Iterable'], input);
+    throw $ERR_INVALID_ARG_TYPE("input", ["Shareable", "AsyncIterable", "Iterable"], input);
   },
 };
 
@@ -710,17 +671,15 @@ const SyncShare = {
   fromSync(input, options) {
     if (isSyncShareable(input)) {
       const result = input[shareSyncProtocol](options);
-      if (result === null || typeof result !== 'object') {
-        throw $ERR_INVALID_RETURN_VALUE(
-          'an object', '[Symbol.for(\'Stream.shareSyncProtocol\')]', result);
+      if (result === null || typeof result !== "object") {
+        throw $ERR_INVALID_RETURN_VALUE("an object", "[Symbol.for('Stream.shareSyncProtocol')]", result);
       }
       return result;
     }
     if (isSyncIterable(input)) {
       return shareSync(input, options);
     }
-    throw $ERR_INVALID_ARG_TYPE(
-      'input', ['SyncShareable', 'Iterable'], input);
+    throw $ERR_INVALID_ARG_TYPE("input", ["SyncShareable", "Iterable"], input);
   },
 };
 

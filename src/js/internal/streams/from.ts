@@ -62,9 +62,7 @@ function from(Readable, iterable, opts) {
       PromisePrototypeThen.$call(
         close(combinedError),
         $isCallable(cb) ? () => process.nextTick(cb, combinedError) : () => {}, // nextTick is here in case cb throws
-        $isCallable(cb)
-          ? closeError => process.nextTick(cb, aggregateTwoErrors(combinedError, closeError))
-          : () => {},
+        $isCallable(cb) ? closeError => process.nextTick(cb, aggregateTwoErrors(combinedError, closeError)) : () => {},
       );
     });
   };

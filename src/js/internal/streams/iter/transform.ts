@@ -1,4 +1,4 @@
-'use strict';
+"use strict";
 
 // Compression / Decompression Transforms
 //
@@ -8,19 +8,15 @@
 // I/O and upstream transforms can overlap with compression work.
 // Each factory returns a transform descriptor that can be passed to pull().
 
-const { Buffer } = require('node:buffer');
-const { isArrayBufferView, isAnyArrayBuffer } = require('node:util/types');
-const { kValidatedTransform } = require('internal/streams/iter/types');
-const {
-  checkRangesOrGetDefault,
-  validateFiniteNumber,
-  validateObject,
-} = require('internal/validators');
+const { Buffer } = require("node:buffer");
+const { isArrayBufferView, isAnyArrayBuffer } = require("node:util/types");
+const { kValidatedTransform } = require("internal/streams/iter/types");
+const { checkRangesOrGetDefault, validateFiniteNumber, validateObject } = require("internal/validators");
 
-const NativeZlib = $zig('node_zlib_binding.zig', 'NativeZlib');
-const NativeBrotli = $zig('node_zlib_binding.zig', 'NativeBrotli');
-const NativeZstd = $zig('node_zlib_binding.zig', 'NativeZstd');
-const constants = process.binding('constants').zlib;
+const NativeZlib = $zig("node_zlib_binding.zig", "NativeZlib");
+const NativeBrotli = $zig("node_zlib_binding.zig", "NativeBrotli");
+const NativeZstd = $zig("node_zlib_binding.zig", "NativeZstd");
+const constants = process.binding("constants").zlib;
 
 const Uint8ArraySlice = Uint8Array.prototype.slice;
 
@@ -34,23 +30,35 @@ function genericNodeError(message, options) {
 
 const {
   // Zlib modes
-  DEFLATE, INFLATE, GZIP, GUNZIP,
-  BROTLI_ENCODE, BROTLI_DECODE,
-  ZSTD_COMPRESS, ZSTD_DECOMPRESS,
+  DEFLATE,
+  INFLATE,
+  GZIP,
+  GUNZIP,
+  BROTLI_ENCODE,
+  BROTLI_DECODE,
+  ZSTD_COMPRESS,
+  ZSTD_DECOMPRESS,
   // Zlib flush
-  Z_NO_FLUSH, Z_FINISH,
+  Z_NO_FLUSH,
+  Z_FINISH,
   // Zlib defaults
   Z_DEFAULT_WINDOWBITS,
   Z_DEFAULT_STRATEGY,
   // Brotli flush
-  BROTLI_OPERATION_PROCESS, BROTLI_OPERATION_FINISH,
+  BROTLI_OPERATION_PROCESS,
+  BROTLI_OPERATION_FINISH,
   // Zlib ranges
-  Z_MIN_CHUNK, Z_MIN_WINDOWBITS, Z_MAX_WINDOWBITS,
-  Z_MIN_LEVEL, Z_MAX_LEVEL,
-  Z_MIN_MEMLEVEL, Z_MAX_MEMLEVEL,
+  Z_MIN_CHUNK,
+  Z_MIN_WINDOWBITS,
+  Z_MAX_WINDOWBITS,
+  Z_MIN_LEVEL,
+  Z_MAX_LEVEL,
+  Z_MIN_MEMLEVEL,
+  Z_MAX_MEMLEVEL,
   Z_FIXED,
   // Zstd flush
-  ZSTD_e_continue, ZSTD_e_end,
+  ZSTD_e_continue,
+  ZSTD_e_end,
 } = constants;
 
 // ---------------------------------------------------------------------------
@@ -71,11 +79,10 @@ const kEmpty = Buffer.alloc(0);
 
 function validateChunkSize(options) {
   let chunkSize = options.chunkSize;
-  if (!validateFiniteNumber(chunkSize, 'options.chunkSize')) {
+  if (!validateFiniteNumber(chunkSize, "options.chunkSize")) {
     chunkSize = DEFAULT_OUTPUT_SIZE;
   } else if (chunkSize < Z_MIN_CHUNK) {
-    throw $ERR_OUT_OF_RANGE('options.chunkSize',
-                            `>= ${Z_MIN_CHUNK}`, chunkSize);
+    throw $ERR_OUT_OF_RANGE("options.chunkSize", `>= ${Z_MIN_CHUNK}`, chunkSize);
   }
   return chunkSize;
 }
@@ -84,16 +91,13 @@ function validateDictionary(dictionary) {
   if (dictionary === undefined) return undefined;
   if (isArrayBufferView(dictionary)) return dictionary;
   if (isAnyArrayBuffer(dictionary)) return Buffer.from(dictionary);
-  throw $ERR_INVALID_ARG_TYPE(
-    'options.dictionary',
-    ['Buffer', 'TypedArray', 'DataView', 'ArrayBuffer'],
-    dictionary);
+  throw $ERR_INVALID_ARG_TYPE("options.dictionary", ["Buffer", "TypedArray", "DataView", "ArrayBuffer"], dictionary);
 }
 
 function validateParams(params, maxParam, makeError) {
   if (params === undefined) return;
-  if (typeof params !== 'object' || params === null) {
-    throw $ERR_INVALID_ARG_TYPE('options.params', 'Object', params);
+  if (typeof params !== "object" || params === null) {
+    throw $ERR_INVALID_ARG_TYPE("options.params", "Object", params);
   }
   const keys = Object.keys(params);
   for (let i = 0; i < keys.length; i++) {
@@ -103,8 +107,8 @@ function validateParams(params, maxParam, makeError) {
       throw makeError(origKey);
     }
     const value = params[origKey];
-    if (typeof value !== 'number' && typeof value !== 'boolean') {
-      throw $ERR_INVALID_ARG_TYPE('options.params[key]', 'number', value);
+    if (typeof value !== "number" && typeof value !== "boolean") {
+      throw $ERR_INVALID_ARG_TYPE("options.params[key]", "number", value);
     }
   }
 }
@@ -114,25 +118,14 @@ function validateParams(params, maxParam, makeError) {
 // Mirrors the pattern in lib/zlib.js.
 // ---------------------------------------------------------------------------
 const kMaxBrotliParam = Math.max(
-  ...Object.entries(constants).map(
-    ({ 0: key, 1: value }) =>
-      (key.startsWith('BROTLI_PARAM_') ? value : 0),
-  ),
+  ...Object.entries(constants).map(({ 0: key, 1: value }) => (key.startsWith("BROTLI_PARAM_") ? value : 0)),
 );
 const brotliInitParamsArray = new Uint32Array(kMaxBrotliParam + 1);
 
-const kMaxZstdCParam = Math.max(
-  ...Object.keys(constants).map(
-    key => (key.startsWith('ZSTD_c_') ? constants[key] : 0),
-  ),
-);
+const kMaxZstdCParam = Math.max(...Object.keys(constants).map(key => (key.startsWith("ZSTD_c_") ? constants[key] : 0)));
 const zstdInitCParamsArray = new Uint32Array(kMaxZstdCParam + 1);
 
-const kMaxZstdDParam = Math.max(
-  ...Object.keys(constants).map(
-    key => (key.startsWith('ZSTD_d_') ? constants[key] : 0),
-  ),
-);
+const kMaxZstdDParam = Math.max(...Object.keys(constants).map(key => (key.startsWith("ZSTD_d_") ? constants[key] : 0)));
 const zstdInitDParamsArray = new Uint32Array(kMaxZstdDParam + 1);
 
 // ---------------------------------------------------------------------------
@@ -151,32 +144,33 @@ function createZlibHandle(mode, options, processCallback, onError) {
   // "close before init" assertion if validation throws.
   const chunkSize = validateChunkSize(options);
   const windowBits = checkRangesOrGetDefault(
-    options.windowBits, 'options.windowBits',
-    Z_MIN_WINDOWBITS, Z_MAX_WINDOWBITS, Z_DEFAULT_WINDOWBITS);
+    options.windowBits,
+    "options.windowBits",
+    Z_MIN_WINDOWBITS,
+    Z_MAX_WINDOWBITS,
+    Z_DEFAULT_WINDOWBITS,
+  );
   // Default compression level 4 (not Z_DEFAULT_COMPRESSION which maps to
   // level 6). Level 4 is ~1.5x faster with only ~5-10% worse compression
   // ratio - the sweet spot for streaming and HTTP content-encoding.
-  const level = checkRangesOrGetDefault(
-    options.level, 'options.level',
-    Z_MIN_LEVEL, Z_MAX_LEVEL, 4);
+  const level = checkRangesOrGetDefault(options.level, "options.level", Z_MIN_LEVEL, Z_MAX_LEVEL, 4);
   // memLevel 9 uses ~128KB more memory than 8 but provides faster hash
   // lookups during compression. Negligible memory cost for the speed gain.
-  const memLevel = checkRangesOrGetDefault(
-    options.memLevel, 'options.memLevel',
-    Z_MIN_MEMLEVEL, Z_MAX_MEMLEVEL, 9);
+  const memLevel = checkRangesOrGetDefault(options.memLevel, "options.memLevel", Z_MIN_MEMLEVEL, Z_MAX_MEMLEVEL, 9);
   const strategy = checkRangesOrGetDefault(
-    options.strategy, 'options.strategy',
-    Z_DEFAULT_STRATEGY, Z_FIXED, Z_DEFAULT_STRATEGY);
+    options.strategy,
+    "options.strategy",
+    Z_DEFAULT_STRATEGY,
+    Z_FIXED,
+    Z_DEFAULT_STRATEGY,
+  );
   const dictionary = validateDictionary(options.dictionary);
 
   const handle = new NativeZlib(mode);
   const writeState = new Uint32Array(2);
 
   handle.onerror = onError;
-  handle.init(
-    windowBits, level, memLevel, strategy,
-    writeState, processCallback, dictionary,
-  );
+  handle.init(windowBits, level, memLevel, strategy, writeState, processCallback, dictionary);
 
   return { __proto__: null, handle, writeState, chunkSize };
 }
@@ -191,8 +185,7 @@ function createBrotliHandle(mode, options, processCallback, onError) {
   // Note: bun's NativeBrotli.init() does not take a dictionary parameter;
   // validate for parity but the dictionary is not passed to the engine.
   validateDictionary(options.dictionary);
-  validateParams(options.params, kMaxBrotliParam,
-                 key => $ERR_BROTLI_INVALID_PARAM(key));
+  validateParams(options.params, kMaxBrotliParam, key => $ERR_BROTLI_INVALID_PARAM(key));
 
   const handle = new NativeBrotli(mode);
   const writeState = new Uint32Array(2);
@@ -218,11 +211,7 @@ function createBrotliHandle(mode, options, processCallback, onError) {
   }
 
   handle.onerror = onError;
-  if (!handle.init(
-    brotliInitParamsArray,
-    writeState,
-    processCallback,
-  )) {
+  if (!handle.init(brotliInitParamsArray, writeState, processCallback)) {
     throw $ERR_ZLIB_INITIALIZATION_FAILED();
   }
 
@@ -242,18 +231,15 @@ function createZstdHandle(mode, options, processCallback, onError) {
   // validate for parity but the dictionary is not passed to the engine.
   validateDictionary(options.dictionary);
   const maxParam = isCompress ? kMaxZstdCParam : kMaxZstdDParam;
-  validateParams(options.params, maxParam,
-                 key => $ERR_ZSTD_INVALID_PARAM(key));
+  validateParams(options.params, maxParam, key => $ERR_ZSTD_INVALID_PARAM(key));
 
   const pledgedSrcSize = options.pledgedSrcSize;
   if (pledgedSrcSize !== undefined) {
-    if (typeof pledgedSrcSize !== 'number' || Number.isNaN(pledgedSrcSize)) {
-      throw $ERR_INVALID_ARG_TYPE('options.pledgedSrcSize', 'number',
-                                  pledgedSrcSize);
+    if (typeof pledgedSrcSize !== "number" || Number.isNaN(pledgedSrcSize)) {
+      throw $ERR_INVALID_ARG_TYPE("options.pledgedSrcSize", "number", pledgedSrcSize);
     }
     if (pledgedSrcSize < 0) {
-      throw $ERR_OUT_OF_RANGE('options.pledgedSrcSize', '>= 0',
-                              pledgedSrcSize);
+      throw $ERR_OUT_OF_RANGE("options.pledgedSrcSize", ">= 0", pledgedSrcSize);
     }
   }
 
@@ -272,12 +258,7 @@ function createZstdHandle(mode, options, processCallback, onError) {
   }
 
   handle.onerror = onError;
-  handle.init(
-    initArray,
-    pledgedSrcSize,
-    writeState,
-    processCallback,
-  );
+  handle.init(initArray, pledgedSrcSize, writeState, processCallback);
 
   return { __proto__: null, handle, writeState, chunkSize };
 }
@@ -294,7 +275,7 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
   return {
     __proto__: null,
     [kValidatedTransform]: true,
-    transform: async function*(source, options) {
+    transform: async function* (source, options) {
       const { signal } = options;
 
       // Fail fast if already aborted - don't allocate a native handle.
@@ -332,9 +313,7 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
             pending.push(outBuf.subarray(outOffset, outOffset + have));
           } else {
             // Partial fill, buffer will be reused - must copy.
-            pending.push(Uint8ArraySlice.$call(outBuf,
-                                               outOffset,
-                                               outOffset + have));
+            pending.push(Uint8ArraySlice.$call(outBuf, outOffset, outOffset + have));
           }
           pendingBytes += have;
           outOffset += have;
@@ -355,9 +334,7 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
           writeAvailIn = availInAfter;
           writeAvailOutBefore = chunkSize - outOffset;
 
-          handle.write(writeFlush,
-                       writeInput, writeInOff, writeAvailIn,
-                       outBuf, outOffset, writeAvailOutBefore);
+          handle.write(writeFlush, writeInput, writeInOff, writeAvailIn, outBuf, outOffset, writeAvailOutBefore);
           return; // Will call onWriteComplete again.
         }
 
@@ -398,7 +375,7 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
           reject(signal.reason ?? $makeAbortError());
         }
       };
-      signal.addEventListener('abort', onAbort, { __proto__: null, once: true });
+      signal.addEventListener("abort", onAbort, { __proto__: null, once: true });
 
       // Dispatch input to the threadpool and return a promise.
       function processInputAsync(input, flushFlag) {
@@ -414,9 +391,7 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
         // Keep input alive while the threadpool references it.
         handle.buffer = input;
 
-        handle.write(flushFlag,
-                     input, 0, writeAvailIn,
-                     outBuf, outOffset, writeAvailOutBefore);
+        handle.write(flushFlag, input, 0, writeAvailIn, outBuf, outOffset, writeAvailOutBefore);
         return promise;
       }
 
@@ -495,11 +470,15 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
           }
         }
       } finally {
-        signal.removeEventListener('abort', onAbort);
+        signal.removeEventListener("abort", onAbort);
         handle.close();
         // Close the upstream iterator so its finally blocks run promptly
         // rather than waiting for GC.
-        try { await iter.return?.(); } catch { /* Intentional no-op. */ }
+        try {
+          await iter.return?.();
+        } catch {
+          /* Intentional no-op. */
+        }
       }
     },
   };
@@ -515,7 +494,7 @@ function makeZlibTransform(createHandleFn, processFlag, finishFlag) {
 function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
   return {
     __proto__: null,
-    transform: function*(source) {
+    transform: function* (source) {
       // The processCallback is never called in sync mode, but handle.init()
       // requires it. Pass a no-op.
       let error = null;
@@ -539,17 +518,14 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
         let availIn = input.byteLength;
         let availOutBefore = chunkSize - outOffset;
 
-        handle.writeSync(flushFlag,
-                         input, inOff, availIn,
-                         outBuf, outOffset, availOutBefore);
+        handle.writeSync(flushFlag, input, inOff, availIn, outBuf, outOffset, availOutBefore);
         if (error) throw error;
 
         while (true) {
           const availOut = writeState[0];
           const availInAfter = writeState[1];
           const have = availOutBefore - availOut;
-          const bufferExhausted = availOut === 0 ||
-                                  outOffset + have >= chunkSize;
+          const bufferExhausted = availOut === 0 || outOffset + have >= chunkSize;
 
           if (have > 0) {
             if (bufferExhausted && outOffset === 0) {
@@ -560,9 +536,7 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
               pending.push(outBuf.subarray(outOffset, outOffset + have));
             } else {
               // Partial fill, buffer reused - must copy.
-              pending.push(Uint8ArraySlice.$call(outBuf,
-                                                 outOffset,
-                                                 outOffset + have));
+              pending.push(Uint8ArraySlice.$call(outBuf, outOffset, outOffset + have));
             }
             pendingBytes += have;
             outOffset += have;
@@ -580,9 +554,7 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
             availIn = availInAfter;
             availOutBefore = chunkSize - outOffset;
 
-            handle.writeSync(flushFlag,
-                             input, inOff, availIn,
-                             outBuf, outOffset, availOutBefore);
+            handle.writeSync(flushFlag, input, inOff, availIn, outBuf, outOffset, availOutBefore);
             if (error) throw error;
             continue;
           }
@@ -649,34 +621,30 @@ function makeZlibTransformSync(createHandleFn, processFlag, finishFlag) {
 const kNullPrototype = { __proto__: null };
 
 function compressGzip(options = kNullPrototype) {
-  validateObject(options, 'options');
-  return makeZlibTransform(
-    (cb, onErr) => createZlibHandle(GZIP, options, cb, onErr),
-    Z_NO_FLUSH, Z_FINISH,
-  );
+  validateObject(options, "options");
+  return makeZlibTransform((cb, onErr) => createZlibHandle(GZIP, options, cb, onErr), Z_NO_FLUSH, Z_FINISH);
 }
 
 function compressDeflate(options = kNullPrototype) {
-  validateObject(options, 'options');
-  return makeZlibTransform(
-    (cb, onErr) => createZlibHandle(DEFLATE, options, cb, onErr),
-    Z_NO_FLUSH, Z_FINISH,
-  );
+  validateObject(options, "options");
+  return makeZlibTransform((cb, onErr) => createZlibHandle(DEFLATE, options, cb, onErr), Z_NO_FLUSH, Z_FINISH);
 }
 
 function compressBrotli(options = kNullPrototype) {
-  validateObject(options, 'options');
+  validateObject(options, "options");
   return makeZlibTransform(
     (cb, onErr) => createBrotliHandle(BROTLI_ENCODE, options, cb, onErr),
-    BROTLI_OPERATION_PROCESS, BROTLI_OPERATION_FINISH,
+    BROTLI_OPERATION_PROCESS,
+    BROTLI_OPERATION_FINISH,
   );
 }
 
 function compressZstd(options = kNullPrototype) {
-  validateObject(options, 'options');
+  validateObject(options, "options");
   return makeZlibTransform(
     (cb, onErr) => createZstdHandle(ZSTD_COMPRESS, options, cb, onErr),
-    ZSTD_e_continue, ZSTD_e_end,
+    ZSTD_e_continue,
+    ZSTD_e_end,
   );
 }
 
@@ -685,34 +653,30 @@ function compressZstd(options = kNullPrototype) {
 // ---------------------------------------------------------------------------
 
 function decompressGzip(options = kNullPrototype) {
-  validateObject(options, 'options');
-  return makeZlibTransform(
-    (cb, onErr) => createZlibHandle(GUNZIP, options, cb, onErr),
-    Z_NO_FLUSH, Z_FINISH,
-  );
+  validateObject(options, "options");
+  return makeZlibTransform((cb, onErr) => createZlibHandle(GUNZIP, options, cb, onErr), Z_NO_FLUSH, Z_FINISH);
 }
 
 function decompressDeflate(options = kNullPrototype) {
-  validateObject(options, 'options');
-  return makeZlibTransform(
-    (cb, onErr) => createZlibHandle(INFLATE, options, cb, onErr),
-    Z_NO_FLUSH, Z_FINISH,
-  );
+  validateObject(options, "options");
+  return makeZlibTransform((cb, onErr) => createZlibHandle(INFLATE, options, cb, onErr), Z_NO_FLUSH, Z_FINISH);
 }
 
 function decompressBrotli(options = kNullPrototype) {
-  validateObject(options, 'options');
+  validateObject(options, "options");
   return makeZlibTransform(
     (cb, onErr) => createBrotliHandle(BROTLI_DECODE, options, cb, onErr),
-    BROTLI_OPERATION_PROCESS, BROTLI_OPERATION_FINISH,
+    BROTLI_OPERATION_PROCESS,
+    BROTLI_OPERATION_FINISH,
   );
 }
 
 function decompressZstd(options = kNullPrototype) {
-  validateObject(options, 'options');
+  validateObject(options, "options");
   return makeZlibTransform(
     (cb, onErr) => createZstdHandle(ZSTD_DECOMPRESS, options, cb, onErr),
-    ZSTD_e_continue, ZSTD_e_end,
+    ZSTD_e_continue,
+    ZSTD_e_end,
   );
 }
 
@@ -721,34 +685,30 @@ function decompressZstd(options = kNullPrototype) {
 // ---------------------------------------------------------------------------
 
 function compressGzipSync(options = kNullPrototype) {
-  validateObject(options, 'options');
-  return makeZlibTransformSync(
-    (cb, onErr) => createZlibHandle(GZIP, options, cb, onErr),
-    Z_NO_FLUSH, Z_FINISH,
-  );
+  validateObject(options, "options");
+  return makeZlibTransformSync((cb, onErr) => createZlibHandle(GZIP, options, cb, onErr), Z_NO_FLUSH, Z_FINISH);
 }
 
 function compressDeflateSync(options = kNullPrototype) {
-  validateObject(options, 'options');
-  return makeZlibTransformSync(
-    (cb, onErr) => createZlibHandle(DEFLATE, options, cb, onErr),
-    Z_NO_FLUSH, Z_FINISH,
-  );
+  validateObject(options, "options");
+  return makeZlibTransformSync((cb, onErr) => createZlibHandle(DEFLATE, options, cb, onErr), Z_NO_FLUSH, Z_FINISH);
 }
 
 function compressBrotliSync(options = kNullPrototype) {
-  validateObject(options, 'options');
+  validateObject(options, "options");
   return makeZlibTransformSync(
     (cb, onErr) => createBrotliHandle(BROTLI_ENCODE, options, cb, onErr),
-    BROTLI_OPERATION_PROCESS, BROTLI_OPERATION_FINISH,
+    BROTLI_OPERATION_PROCESS,
+    BROTLI_OPERATION_FINISH,
   );
 }
 
 function compressZstdSync(options = kNullPrototype) {
-  validateObject(options, 'options');
+  validateObject(options, "options");
   return makeZlibTransformSync(
     (cb, onErr) => createZstdHandle(ZSTD_COMPRESS, options, cb, onErr),
-    ZSTD_e_continue, ZSTD_e_end,
+    ZSTD_e_continue,
+    ZSTD_e_end,
   );
 }
 
@@ -757,34 +717,30 @@ function compressZstdSync(options = kNullPrototype) {
 // ---------------------------------------------------------------------------
 
 function decompressGzipSync(options = kNullPrototype) {
-  validateObject(options, 'options');
-  return makeZlibTransformSync(
-    (cb, onErr) => createZlibHandle(GUNZIP, options, cb, onErr),
-    Z_NO_FLUSH, Z_FINISH,
-  );
+  validateObject(options, "options");
+  return makeZlibTransformSync((cb, onErr) => createZlibHandle(GUNZIP, options, cb, onErr), Z_NO_FLUSH, Z_FINISH);
 }
 
 function decompressDeflateSync(options = kNullPrototype) {
-  validateObject(options, 'options');
-  return makeZlibTransformSync(
-    (cb, onErr) => createZlibHandle(INFLATE, options, cb, onErr),
-    Z_NO_FLUSH, Z_FINISH,
-  );
+  validateObject(options, "options");
+  return makeZlibTransformSync((cb, onErr) => createZlibHandle(INFLATE, options, cb, onErr), Z_NO_FLUSH, Z_FINISH);
 }
 
 function decompressBrotliSync(options = kNullPrototype) {
-  validateObject(options, 'options');
+  validateObject(options, "options");
   return makeZlibTransformSync(
     (cb, onErr) => createBrotliHandle(BROTLI_DECODE, options, cb, onErr),
-    BROTLI_OPERATION_PROCESS, BROTLI_OPERATION_FINISH,
+    BROTLI_OPERATION_PROCESS,
+    BROTLI_OPERATION_FINISH,
   );
 }
 
 function decompressZstdSync(options = kNullPrototype) {
-  validateObject(options, 'options');
+  validateObject(options, "options");
   return makeZlibTransformSync(
     (cb, onErr) => createZstdHandle(ZSTD_DECOMPRESS, options, cb, onErr),
-    ZSTD_e_continue, ZSTD_e_end,
+    ZSTD_e_continue,
+    ZSTD_e_end,
   );
 }
 

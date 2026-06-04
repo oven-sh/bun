@@ -481,7 +481,9 @@ function fromWritable(writable, options = kNullPrototype) {
   function isWritable() {
     // Duck-typed streams may not have these properties -- treat missing
     // as false (i.e., writable is still open).
-    return !(writable.destroyed ?? false) && !(writable.writableFinished ?? false) && !(writable.writableEnded ?? false);
+    return (
+      !(writable.destroyed ?? false) && !(writable.writableFinished ?? false) && !(writable.writableEnded ?? false)
+    );
   }
 
   function isFull() {

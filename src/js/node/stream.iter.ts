@@ -40,13 +40,7 @@ const {
 } = require("internal/streams/iter/consumers");
 
 // Classic stream interop (Node.js-specific, not part of the spec)
-const {
-  fromReadable,
-  fromWritable,
-  toReadable,
-  toReadableSync,
-  toWritable,
-} = require("internal/streams/iter/classic");
+const { fromReadable, fromWritable, toReadable, toReadableSync, toWritable } = require("internal/streams/iter/classic");
 
 // Multi-consumer
 const { broadcast, Broadcast } = require("internal/streams/iter/broadcast");

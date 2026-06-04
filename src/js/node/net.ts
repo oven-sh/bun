@@ -741,7 +741,12 @@ function Socket(options?) {
     // isSocket() covers stdio handed to a child as a socketpair (how spawn
     // implements pipes on unix); writable-only adoption with sync write(2)
     // is correct there too.
-    if (stats.isFIFO() || stats.isCharacterDevice() || stats.isFile() || (stats.isSocket() && options.readable !== true)) {
+    if (
+      stats.isFIFO() ||
+      stats.isCharacterDevice() ||
+      stats.isFile() ||
+      (stats.isSocket() && options.readable !== true)
+    ) {
       this[kSyncWriteFd] = fd;
       this._write = fdSyncWrite;
       this._writev = fdSyncWritev;

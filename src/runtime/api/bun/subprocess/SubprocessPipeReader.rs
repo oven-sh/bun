@@ -28,7 +28,7 @@ pub enum State {
     Err(bun_sys::Error),
 }
 
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive, single-thread.
+// Intrusive, single-thread ref-count; `deinit` runs when the last ref drops.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = PipeReader::deinit, debug_name = "PipeReader")]
 pub struct PipeReader {
@@ -121,8 +121,7 @@ impl PipeReader {
         MaxBuf::add_to_pipereader(limit, &mut this.reader.maxbuf);
         #[cfg(windows)]
         {
-            // Zig: `this.reader.source = .{ .pipe = this.stdio_result.buffer }` —
-            // on Windows `StdioResult` is the `WindowsStdioResult` enum and the
+            // On Windows `StdioResult` is the `WindowsStdioResult` enum and the
             // `.buffer` payload is a heap-allocated `uv::Pipe`. Ownership
             // transfers to `reader.source`; `stdio_result` is left `Unavailable`.
             if let StdioResult::Buffer(pipe) = this.stdio_result.take() {
@@ -246,8 +245,7 @@ impl PipeReader {
             return Vec::new();
         }
 
-        // PERF(port): Zig returns `out.items` (len-only slice) without shrinking capacity;
-        // returning the Vec preserves capacity, which is the same intent.
+        // Returning the Vec preserves capacity intentionally.
         out
     }
 
@@ -265,7 +263,7 @@ impl PipeReader {
         &mut self,
         global_object: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        // `defer this.detach()` — detach() = clear `process` backref + deref. The deref
+        // detach() at scope exit = clear `process` backref + deref. The deref
         // may drop the last ref, so it must run after the result is computed; the backref
         // clear must also wait (from_pipe hands `&mut self.reader` to JS, which may
         // re-enter on_reader_done/on_reader_error and consult `self.process`). Compound
@@ -310,7 +308,7 @@ impl PipeReader {
         match &mut self.state {
             State::Done(bytes) => {
                 let bytes = core::mem::take(bytes);
-                // `defer this.state = .{ .done = &.{} }` — state.done is now empty via take().
+                // `state.done` is now empty via `take()`.
                 // `MarkedArrayBuffer::from_bytes` takes a borrowed `&mut [u8]`
                 // with `owns_buffer = true` (freed via mimalloc on the JS side); leak the
                 // boxed slice so JS becomes the owner — same pattern as
@@ -324,7 +322,7 @@ impl PipeReader {
     }
 
     pub(crate) fn on_reader_error(&mut self, err: bun_sys::Error) {
-        // Zig: if state == .done, free state.done — handled by Drop of the replaced Vec.
+        // A previous `State::Done` buffer is freed by Drop of the replaced Vec.
         self.state = State::Err(err);
         if let Some(process) = self.process.take() {
             // `process` backref is valid while set; cleared before deref.
@@ -397,16 +395,15 @@ impl PipeReader {
             );
         }
 
-        // Zig: if state == .done, free state.done — handled by Drop of `state` when Box drops.
-        // Zig: this.reader.deinit() — handled by Drop of `reader` field when Box drops.
+        // The `state` buffer and `reader` are freed by Drop when the Box drops.
 
         // SAFETY: `this` was created via heap::alloc in `create()`.
         drop(unsafe { bun_core::heap::take(this) });
     }
 }
 
-// `bun.io.BufferedReader.init(@This())` — vtable parent. The Zig spec declares
-// `onReaderDone`/`onReaderError`/`loop`/`eventLoop` (no `onReadChunk`).
+// BufferedReader vtable parent: `onReaderDone`/`onReaderError`/`loop`/
+// `eventLoop` (no `onReadChunk`).
 // `on_reader_done`/`on_reader_error` are tail-position (the reader is finished
 // with `self`), so `&mut *this` autoref is OK.
 bun_io::impl_buffered_reader_parent! {
@@ -437,5 +434,3 @@ bun_io::impl_buffered_reader_parent! {
         sp.on_max_buffer(kind);
     };
 }
-
-// ported from: src/runtime/api/bun/subprocess/SubprocessPipeReader.zig

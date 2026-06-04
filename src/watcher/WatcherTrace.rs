@@ -7,9 +7,7 @@ use bun_threading::Guarded;
 use crate::watcher_impl::{ChangedFilePath, WatchEvent, WatchList};
 
 /// Optional trace file for debugging watcher events.
-// PORTING.md §Concurrency: Zig used a bare `var trace_file: ?File = null` plus
-// the implicit single-threaded init/watcher-thread/deinit ordering. Rust
-// `static mut` is forbidden — wrap in `bun_threading::Guarded` (cheap when
+// Wrapped in `bun_threading::Guarded` (cheap when
 // uncontended; only the watcher thread touches this after init).
 static TRACE_FILE: Guarded<Option<File>> = Guarded::new(None);
 
@@ -45,17 +43,14 @@ pub fn write_events(
         return;
     };
 
-    // Zig passed a stack `[4096]u8` to `bufferedWriter(&buffer)`;
     // `bun_sys::File::buffered_writer()` wraps `std::io::BufWriter` which
-    // owns its own heap buffer. Same observable behaviour.
+    // owns its own heap buffer.
     let buffered = file.buffered_writer();
     // `defer buffered.flush() catch |err| { Output.err(...) }`
     let mut writer = scopeguard::guard(buffered, |mut w| {
         if let Err(err) = w.flush() {
-            // Zig passed the error-union tag (`@errorName`) to Output.err;
-            // here we map the `std::io::Error` to the interned errno-name
-            // code, so an errno name (e.g. `ENOSPC`) renders instead of
-            // Zig's generic `WriteFailed` tag — debug-trace-only path.
+            // Map the `std::io::Error` to the interned errno-name code, so an
+            // errno name (e.g. `ENOSPC`) renders — debug-trace-only path.
             output::err(
                 bun_core::Error::from(err),
                 "Failed to flush watcher trace file",
@@ -64,9 +59,8 @@ pub fn write_events(
         }
     });
 
-    // Get current timestamp
-    // std.time.milliTimestamp() — std::time is not in the banned
-    // I/O set; revisit if a `bun_core::time` helper exists.
+    // Get current timestamp. `std::time` is not in the banned I/O set;
+    // revisit if a `bun_core::time` helper exists.
     let timestamp: i64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| i64::try_from(d.as_millis()).expect("int cast"))
@@ -117,9 +111,8 @@ pub fn write_events(
         }
 
         // Write array of event types.
-        // Zig walks `std.meta.fields(Op)` (lowercase field names).
         // bitflags `iter_names()` yields SCREAMING_CASE const names; use the
-        // shared lowercase OP_NAMES table so trace JSON matches Zig exactly.
+        // shared lowercase OP_NAMES table so trace JSON keys stay lowercase.
         let mut first = true;
         for &(flag, name) in crate::watcher_impl::OP_NAMES {
             if !event.op.contains(flag) {
@@ -191,5 +184,3 @@ pub fn write_events(
 pub(crate) fn deinit() {
     let _ = TRACE_FILE.lock().take();
 }
-
-// ported from: src/watcher/WatcherTrace.zig

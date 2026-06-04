@@ -456,11 +456,9 @@ pub fn generate_slug<'a>(
         out_len -= 1;
     }
 
-    // Deduplicate via slug_counts. Zig: single `getOrPut` with the borrowed
-    // key, duping it on first insert; `StringHashMap::get_or_put` does the
-    // same in one probe (the map owns its keys, value starts at 0 on miss).
+    // Deduplicate via slug_counts. `StringHashMap::get_or_put` probes
+    // once (the map owns its keys, value starts at 0 on miss).
     let Ok(gop) = slug_counts.get_or_put(&text_buf[..out_len]) else {
-        // Zig: `catch return base_slug`
         return &text_buf[..out_len];
     };
     if !gop.found_existing {
@@ -542,5 +540,3 @@ impl HeadingIdTracker {
         self.text_buf.clear();
     }
 }
-
-// ported from: src/md/helpers.zig

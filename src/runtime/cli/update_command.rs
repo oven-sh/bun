@@ -20,4 +20,3 @@ impl UpdateCommand {
     }
 }
 
-// ported from: src/cli/update_command.zig

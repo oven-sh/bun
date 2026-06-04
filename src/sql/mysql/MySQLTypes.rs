@@ -1,7 +1,7 @@
 use strum::IntoStaticStr;
 
-// Zig source is `enum(u8) { ..., _ }` (non-exhaustive — any u8 is a valid
-// CharacterSet). This Rust enum is exhaustive, so constructing it from a raw
+// On the wire any u8 is a valid
+// CharacterSet. This Rust enum is exhaustive, so constructing it from a raw
 // wire byte is only allowed through a checked constructor — never `transmute`.
 // The live decode path uses the separate non-exhaustive `protocol::CharacterSet`
 // type (protocol/CharacterSet.rs); nothing decodes into this enum.
@@ -253,7 +253,7 @@ impl Default for CharacterSet {
 
 // MySQL field types
 // https://dev.mysql.com/doc/dev/mysql-server/latest/binary__log__types_8h.html#a8935f33b06a3a88ba403c63acd806920
-// Zig source is `enum(u8) { ..., _ }` (non-exhaustive). This Rust enum is
+// On the wire any u8 is possible. This Rust enum is
 // exhaustive: all wire decoding must go through the range-checked `from_raw`
 // below (returns `None` for unknown bytes) — never `transmute`.
 #[repr(u8)]
@@ -293,12 +293,11 @@ pub enum FieldType {
 }
 
 impl FieldType {
-    // Zig: `pub const fromJS = @import("../../sql_jsc/mysql/MySQLValue.zig").fieldTypeFromJS;`
-    // Deleted per PORTING.md — `from_js` is provided as an extension-trait method in the
+    // `from_js` is provided as an extension-trait method in the
     // `bun_sql_jsc` crate; the base type carries no JSC dependency.
 
-    /// Decode a raw protocol byte. Zig `FieldType` is a non-exhaustive
-    /// `enum(u8)` so `@enumFromInt` accepts any byte; this Rust enum is
+    /// Decode a raw protocol byte. On the wire any byte is possible; this
+    /// Rust enum is
     /// exhaustive, so unknown bytes return `None` instead of producing an
     /// invalid discriminant. LLVM folds the contiguous arms to two range
     /// checks.
@@ -357,9 +356,7 @@ impl FieldType {
     }
 }
 
-// Zig: `pub const Value = @import("../../sql_jsc/mysql/MySQLValue.zig").Value;`
-// Deleted per PORTING.md — `*_jsc` re-export alias; callers in Rust import
-// `bun_sql_jsc::mysql::mysql_value::Value` directly.
+// Callers import `bun_sql_jsc::mysql::mysql_value::Value` directly.
 
 pub(crate) type MySQLInt32 = Int4;
 pub(crate) type MySQLInt64 = Int8;
@@ -367,5 +364,3 @@ pub(crate) type MySQLInt64 = Int8;
 pub type Int3 = u32;
 pub type Int4 = u32;
 pub type Int8 = u64;
-
-// ported from: src/sql/mysql/MySQLTypes.zig

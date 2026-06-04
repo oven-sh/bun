@@ -20,7 +20,7 @@ use super::frame::{self, Frame};
 use super::worker::{PipeRole, Worker, WorkerPipe};
 use crate::test_command::CommandLineReporter;
 
-// `bun.spawn.Status` lives in src/runtime/api/bun/process.zig
+// `Status` lives in `crate::api::bun::process`
 // (not the lower-tier `bun_spawn` crate). Worker.exit_status is this type.
 use crate::api::bun::process::Process;
 use crate::api::bun::process::Status as SpawnStatus;
@@ -87,7 +87,7 @@ impl<'a> Coordinator<'a> {
         // into `self.workers`. `iter_mut()` would materialize a second
         // `&mut Worker` for that same slot — instant UB under Stacked Borrows
         // regardless of what the loop body does. Iterate via raw pointers
-        // instead, mirroring Zig's `for (this.workers) |*v|` (raw `*Worker`).
+        // instead.
         let mut victim: Option<*mut Worker> = None;
         let mut most: u32 = 0;
         let base: *mut Worker = self.workers.as_mut_ptr();
@@ -175,7 +175,7 @@ impl<'a> Coordinator<'a> {
         // A prior failed start()'s errdefer leaves ipc.done = true; reset so a
         // retry on the same slot starts with a fresh channel.
         w.ipc = Default::default();
-        // The Zig stores a back-pointer; in Rust this is an intrusive backref (raw ptr).
+        // Intrusive backref (raw ptr).
         // Built via from_mut so the stored `*const` carries write provenance:
         // WorkerPipe::on_read_chunk later mutates the Worker through cast_mut().
         let w_ptr = std::ptr::from_mut::<Worker>(w).cast_const();
@@ -276,7 +276,7 @@ impl<'a> Coordinator<'a> {
         // Reachable from on_frame/account_crash with the caller's
         // `w: &mut Worker` still live and used afterward; iter_mut() here
         // would create a second `&mut Worker` for `w`'s slot (UB). Iterate
-        // via raw pointers — mirrors Zig `for (this.workers[..]) |*other|`.
+        // via raw pointers.
         let base: *mut Worker = self.workers.as_mut_ptr();
         let n = self.spawned_count as usize;
         for i in 0..n {
@@ -420,8 +420,7 @@ impl<'a> Coordinator<'a> {
                 }
             }
             frame::Kind::RepeatBufs => {
-                // Zig `inline for` over a 3-tuple of &mut buffers;
-                // unrolled here because an array of disjoint &mut fields needs
+                // Unrolled because an array of disjoint &mut fields needs
                 // explicit splitting.
                 self.reporter
                     .failures_to_repeat_buf
@@ -524,8 +523,7 @@ impl<'a> Coordinator<'a> {
             }
             // Explicit early release: `w` is a borrowed slot in self.workers, so
             // Drop won't fire until Coordinator teardown. Assigning defaults
-            // drops the old values now (pipe FDs, capture buffer) to match the
-            // Zig's explicit deinit() calls.
+            // drops the old values now (pipe FDs, capture buffer).
             w.ipc = Default::default();
             w.out = WorkerPipe::new(PipeRole::Stdout, core::ptr::null());
             w.err = WorkerPipe::new(PipeRole::Stderr, core::ptr::null());
@@ -578,7 +576,7 @@ impl<'a> Coordinator<'a> {
         // Reachable from reap_worker with the caller's
         // `w: &mut Worker` still live and used afterward; iter_mut() would
         // create a second `&mut Worker` for `w`'s slot (UB). Iterate via raw
-        // pointers — mirrors Zig `for (this.workers[..]) |*other|`.
+        // pointers.
         let base: *mut Worker = self.workers.as_mut_ptr();
         let n = self.spawned_count as usize;
         for i in 0..n {
@@ -621,7 +619,7 @@ impl<'a> Coordinator<'a> {
         // Reachable from reap_worker/abort_on_worker_panic with the
         // caller's `w: &mut Worker` still live and used afterward; iter_mut()
         // would create a second `&mut Worker` for `w`'s slot (UB). Iterate via
-        // raw pointers — mirrors Zig `for (this.workers) |*w|`.
+        // raw pointers.
         let base: *mut Worker = self.workers.as_mut_ptr();
         let len = self.workers.len();
         for i in 0..len {
@@ -849,4 +847,3 @@ pub mod abort_handler {
     }
 }
 
-// ported from: src/cli/test/parallel/Coordinator.zig

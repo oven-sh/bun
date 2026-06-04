@@ -13,7 +13,7 @@ mod _impl {
 
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
     use crate::node::util::validators;
-    // `bun.zlib.NodeMode` — #[repr(u8)] enum shared by all native-zlib stream types.
+    // #[repr(u8)] enum shared by all native-zlib stream types.
     use bun_zlib::NodeMode;
 
     // `jsc.Codegen.JSNativeZstd` cached-property accessors (`mod js`) are emitted
@@ -22,7 +22,7 @@ mod _impl {
     // `src/codegen/generate-classes.ts` for `values: [...]` in `zlib.classes.ts`.
 
     /// Placeholder WorkPoolTask callback — overwritten by CompressionStream::write
-    /// before the task is ever scheduled (mirrors Zig `.{ .callback = undefined }`).
+    /// before the task is ever scheduled.
     /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     /// struct-init site; the body never dereferences the pointer.
     fn unset_task_callback(_: *mut WorkPoolTask) {
@@ -36,7 +36,7 @@ mod _impl {
     #[bun_jsc::JsClass]
     #[derive(bun_ptr::CellRefCounted)]
     pub struct NativeZstd {
-        // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — intrusive single-thread refcount.
+        // Intrusive single-thread refcount.
         pub ref_count: Cell<u32>,
         // LIFETIMES.tsv: JSC_BORROW. The global outlives this m_ctx payload;
         // `BackRef` centralises the single unsafe deref so the trait impl is safe.
@@ -57,10 +57,9 @@ mod _impl {
     // `pub const js = jsc.Codegen.JSNativeZstd; toJS/fromJS/fromJSDirect = js.*;` — provided by
     // `#[bun_jsc::JsClass]` derive (wires to_js / from_js / from_js_direct).
     //
-    // `const impl = CompressionStream(@This());` and the `pub const write = impl.write; ...` re-exports
-    // resolve through the `CompressionStreamImpl` trait below — `CompressionStream::<NativeZstd>` then
+    // `CompressionStream::<NativeZstd>` (via the `CompressionStreamImpl` trait below)
     // supplies write / run_from_js_thread / write_sync / reset / close / set_on_error / get_on_error /
-    // finalize as the generic mixin, just like the Zig comptime fn.
+    // finalize as the generic mixin.
 
     impl NativeZstd {
         // C-ABI shim is emitted by `#[bun_jsc::JsClass]` (calls `<Self>::constructor`);
@@ -117,8 +116,8 @@ mod _impl {
         pub fn estimated_size(&self) -> usize {
             core::mem::size_of::<Self>()
                 + match self.stream.get().mode {
-                    NodeMode::ZSTD_COMPRESS => 5272, // estimate of bun.c.ZSTD_sizeof_CCtx(self.stream.state)
-                    NodeMode::ZSTD_DECOMPRESS => 95968, // estimate of bun.c.ZSTD_sizeof_DCtx(self.stream.state)
+                    NodeMode::ZSTD_COMPRESS => 5272, // estimate of ZSTD_sizeof_CCtx(self.stream.state)
+                    NodeMode::ZSTD_DECOMPRESS => 95968, // estimate of ZSTD_sizeof_DCtx(self.stream.state)
                     _ => 0,
                 }
         }
@@ -239,9 +238,9 @@ mod _impl {
         }
     }
 
-    // `fn deinit(this: *@This()) void` — called by RefCount when count hits 0.
-    // `poll_ref.deinit()` and `this_value` (Strong) cleanup are handled by their own Drop impls.
-    // `bun.destroy(this)` is the Box free, handled by IntrusiveRc dropping the Box.
+    // Called by RefCount when the count hits 0. `poll_ref` and `this_value`
+    // (Strong) cleanup are handled by their own Drop impls; the Box free is
+    // handled by IntrusiveRc dropping the Box.
     impl Drop for NativeZstd {
         fn drop(&mut self) {
             self.stream.with_mut(|s| match s.mode {
@@ -412,7 +411,7 @@ mod _impl {
                         self.state_ptr().cast(),
                         &raw mut self.output,
                         &raw mut self.input,
-                        // @intCast c_int → ZSTD_EndDirective (c_uint)
+                        // cast c_int → ZSTD_EndDirective (c_uint)
                         self.flush as c_uint,
                     )
                 },
@@ -434,7 +433,7 @@ mod _impl {
         }
 
         pub fn get_error_info(&mut self) -> Error {
-            // Zig: `defer this.remaining = 0;` — compute result, then clear, then return.
+            // Compute result, then clear `remaining`, then return.
             let err = c::ZSTD_getErrorCode(self.remaining as usize);
             let result = if err == 0 {
                 Error::OK
@@ -522,7 +521,7 @@ mod _impl {
 
         #[inline]
         fn state_ptr(&self) -> *mut c_void {
-            // Mirrors Zig `@ptrCast(this.state)` on `?*anyopaque` — passes null through if unset.
+            // Passes null through if unset.
             self.state.unwrap_or(ptr::null_mut())
         }
     }
@@ -531,10 +530,7 @@ mod _impl {
     // Stamps `impl CompressionContext for Context`, `impl Taskable`/
     // `CompressionStreamImpl for NativeZstd`, and `pub mod js { … }` so
     // `CompressionStream::<NativeZstd>::*` (write/writeSync/reset/close/
-    // emit_error/…) can reach this struct's fields the way the Zig comptime mixin
-    // did via duck-typed `this.field` access.
+    // emit_error/…) can reach this struct's fields.
     crate::__impl_compression_stream!(NativeZstd, Context, "NativeZstd");
     crate::__compression_stream_mixin_reexports!(NativeZstd);
 } // mod _impl
-
-// ported from: src/runtime/node/zlib/NativeZstd.zig

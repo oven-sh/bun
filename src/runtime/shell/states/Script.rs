@@ -116,7 +116,7 @@ impl Script {
             // The shell env is owned by the parent when the parent is the
             // Interpreter or a Subshell; otherwise this Script represents a
             // command substitution which duped from the parent and must
-            // deinitialize it (Zig: `this.base.shell.deinit()`).
+            // deinitialize it.
             if !me.base.shell.is_null() {
                 // SAFETY: `me.base.shell` is the duped env this Script owned;
                 // null-checked and exclusively held here.
@@ -154,5 +154,3 @@ impl Script {
         &raw const me.node.stmts[idx]
     }
 }
-
-// ported from: src/shell/states/Script.zig

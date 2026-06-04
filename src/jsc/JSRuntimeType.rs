@@ -19,5 +19,3 @@ impl JSRuntimeType {
     pub const SYMBOL: Self = Self(0x100);
     pub const BIG_INT: Self = Self(0x200);
 }
-
-// ported from: src/jsc/JSRuntimeType.zig

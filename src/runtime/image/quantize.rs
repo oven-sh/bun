@@ -11,7 +11,6 @@
 
 use bun_alloc::AllocError;
 
-// Zig named this `Result`; renamed to avoid shadowing `core::result::Result`.
 pub(crate) struct QuantizeResult {
     /// `[colors][4]u8` RGBA palette.
     pub palette: Box<[u8]>,
@@ -23,10 +22,9 @@ pub(crate) struct QuantizeResult {
     pub has_alpha: bool,
 }
 
-// Zig `deinit` only freed `palette`/`indices`; both are now `Box<[u8]>`, so
+// `palette`/`indices` are `Box<[u8]>`, so
 // `Drop` is automatic — no explicit impl needed.
 
-// Zig named this `Box`; renamed to avoid shadowing `std::boxed::Box`.
 #[derive(Clone, Copy)]
 struct ColorBox {
     /// Slice into the shared `order` index buffer.
@@ -62,7 +60,7 @@ pub struct Options {
     /// Floyd–Steinberg error diffusion. Hides banding on gradients at the
     /// cost of grain on flat areas; off by default to match Sharp's
     /// `palette:true` default.
-    // No `Default` impl — Zig's field default was `= false`; callers must
+    // No `Default` impl — callers must
     // pass this explicitly.
     pub dither: bool,
 }
@@ -85,7 +83,6 @@ pub(crate) fn quantize(
     }
 
     let mut boxes: Vec<ColorBox> = Vec::with_capacity(want as usize);
-    // PERF(port): was appendAssumeCapacity
     boxes.push(shrink(rgba, &order, 0, n));
 
     while boxes.len() < want as usize {
@@ -117,7 +114,6 @@ pub(crate) fn quantize(
         slice.sort_unstable_by_key(|&p| rgba[p as usize * 4 + ch as usize]);
         let mid = b.lo + (b.hi - b.lo) / 2;
         boxes[pick] = shrink(rgba, &order, b.lo, mid);
-        // PERF(port): was appendAssumeCapacity
         boxes.push(shrink(rgba, &order, mid, b.hi));
     }
 
@@ -200,7 +196,6 @@ fn map_floyd_steinberg(
     let stride: usize = w as usize * 4;
     let mut cur: Vec<i32> = vec![0i32; stride];
     let mut nxt: Vec<i32> = vec![0i32; stride];
-    // (Zig @memset to 0 is folded into vec! init above.)
 
     let mut y: u32 = 0;
     while y < h {
@@ -285,5 +280,3 @@ fn shrink(rgba: &[u8], order: &[u32], lo: u32, hi: u32) -> ColorBox {
     }
     ColorBox { lo, hi, min, max }
 }
-
-// ported from: src/runtime/image/quantize.zig

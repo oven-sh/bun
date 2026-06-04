@@ -1,11 +1,11 @@
 //! `libbun_rust.a` — the Rust-port staticlib.
 //!
 //! Built by `cargo build -p bun_bin` (emitted from `scripts/build/rust.ts`)
-//! and linked into the final `bun-debug` executable by ninja's link step,
-//! occupying the slot `bun-zig.o` used to. The clang++ driver supplies the
+//! and linked into the final `bun-debug` executable by ninja's link step.
+//! The clang++ driver supplies the
 //! C runtime startup (`_start` → `main`); `main` below is the process entry.
 //!
-//! Init order mirrors `src/main.zig`:
+//! Init order:
 //!   1. crash handler / signal masks
 //!   2. allocator wiring (mimalloc as `#[global_allocator]`)
 //!   3. argv / start-time capture
@@ -45,8 +45,7 @@ use bun_core::Global;
 use bun_core::StackCheck;
 use bun_core::output;
 
-/// mimalloc as the process allocator — matches Zig's `bun.default_allocator`
-/// and the `uv_replace_allocator(mi_*)` call in `main.zig` on Windows.
+/// mimalloc as the process allocator.
 #[cfg(not(bun_asan))]
 #[global_allocator]
 static ALLOC: bun_alloc::Mimalloc = bun_alloc::Mimalloc;
@@ -76,7 +75,7 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // detect_leaks=0: off by default (Linux defaults it on); CI opts in via
     //   ASAN_OPTIONS with a suppressions file.
     //
-    // Matches `src/safety/asan.zig` exactly. Do NOT add `symbolize=0`
+    // Do NOT add `symbolize=0`
     // here — LSAN's function-name suppression matching (`test/leaksan.supp`)
     // requires symbolized stacks; with symbolization disabled every entry like
     // `leak:uws_create_app` silently stops matching and CI reports the
@@ -86,16 +85,12 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
 }
 
 /// LSAN built-in suppressions, merged with whatever `LSAN_OPTIONS=suppressions=`
-/// the CI runner passes (`test/leaksan.supp`). That file's entries were written
-/// against Zig's symbol mangling (`runtime.node.zlib.NativeZlib.Context.init`,
-/// `jsc.web_worker.create`, …); LSAN matches by *substring on a symbolized
-/// frame*, so after the Rust port renamed every frame to `bun_<crate>::<mod>`
-/// none of the Zig-named rules fire and CI reports the same intentionally-
-/// leaked-at-exit allocations the suppressions were authored for. Baking the
-/// Rust spellings into the binary keeps `leaksan.supp` as the C/C++/JSC list
-/// and lets the Rust list ride with the code that produces the symbols.
+/// the CI runner passes (`test/leaksan.supp`). LSAN matches by *substring on a
+/// symbolized frame*; baking the Rust symbol spellings into the binary keeps
+/// `leaksan.supp` as the C/C++/JSC list and lets the Rust list ride with the
+/// code that produces the symbols.
 ///
-/// Also covers one Rust-only false positive that has no Zig analogue:
+/// Also covers one Rust-only false positive:
 /// `std::thread::Builder::spawn` allocates an `Arc<thread::Inner>` that the
 /// detached thread holds in TLS for its lifetime; LSAN does not scan other
 /// threads' TLS roots at exit, so every long-lived detached thread (HTTP
@@ -141,7 +136,7 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
 }
 
 /// Process entry point. `extern "C"` so the linker resolves crt1.o's
-/// undefined `main` against this symbol — same role as Zig's `pub fn main`.
+/// undefined `main` against this symbol.
 ///
 /// `argc`/`argv` are forwarded to `bun_core::init_argv` immediately: on
 /// glibc/macOS/Windows libstd also captures them via a `.init_array` hook /
@@ -149,8 +144,7 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
 /// receives no arguments (musl's `__libc_start_main` does not pass
 /// `(argc,argv,envp)` to constructors), so `std::env::args_os()` returns
 /// empty and the binary would see argc=0. Capturing the C-runtime-provided
-/// pair here is the only portable source — same contract as Zig's
-/// `bun.initArgv` wrapping `std.os.argv`.
+/// pair here is the only portable source.
 ///
 /// # Safety
 /// `argv` must point to `argc` valid NUL-terminated C strings that live for
@@ -166,7 +160,7 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
-    // SIGPIPE/SIGXFSZ → SIG_IGN, like main.zig's posix block.
+    // SIGPIPE/SIGXFSZ → SIG_IGN.
     // SAFETY: `SIGPIPE`/`SIGXFSZ` are valid signal numbers and `SIG_IGN` is a
     // valid disposition; called once on the main thread before any other
     // thread is spawned, so there is no concurrent sigaction.
@@ -176,10 +170,9 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
     }
 
-    // main.zig:40-50 — Windows-only startup. Must run BEFORE the first libuv
+    // Windows-only startup. Must run BEFORE the first libuv
     // call (uv allocator) and before anything reads `Bun.env`/`process.env`
-    // (env conversion). The Zig spec orders these between sigaction and
-    // `start_time`/`initArgv`.
+    // (env conversion).
     #[cfg(windows)]
     {
         // SAFETY: mimalloc fns match the libuv allocator signatures; called
@@ -207,7 +200,7 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     output::stdio::init();
     let _flush = output::flush_guard();
 
-    // main.zig: `bun_warn_avx_missing(...)` — x86_64 + SIMD + posix only.
+    // `bun_warn_avx_missing(...)` — x86_64 + SIMD + posix only.
     #[cfg(all(target_arch = "x86_64", unix))]
     if bun_core::Environment::ENABLE_SIMD {
         unsafe extern "C" {
@@ -229,8 +222,7 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
 
     // 6. Push high-tier allocator vtable addresses into the
     //    `bun_safety::alloc::has_ptr` registry so debug-only allocator-mismatch
-    //    checks can identify `LinuxMemFdAllocator`/`MimallocArena` instances
-    //    (Zig: inline `isInstance` chain in `safety/alloc.zig:hasPtr`).
+    //    checks can identify `LinuxMemFdAllocator`/`MimallocArena` instances.
     //    Runs once; reads are lock-free Relaxed.
     bun_runtime::allocators::register_safety_vtables();
 

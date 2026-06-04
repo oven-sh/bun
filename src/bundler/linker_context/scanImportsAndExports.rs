@@ -1,12 +1,10 @@
-//! Port of `src/bundler/linker_context/scanImportsAndExports.zig`.
-//
-// The Zig body takes ~20 simultaneous mutable column slices
-// (`this.graph.ast.items(.field)`) and freely interleaves them with
+// This pass works over ~20 simultaneous mutable column slices
+// (`this.graph.ast.items(.field)`) freely interleaved with
 // `&mut LinkerContext` method calls. Rust's borrowck forbids both holding
 // overlapping `&mut [T]` columns from the same `MultiArrayList` and holding
 // any `&mut` column across a `&mut self` call into `this.graph`. The columns
 // are physically disjoint (SoA layout) and the underlying `MultiArrayList`
-// never reallocates inside this function, so this port caches the column
+// never reallocates inside this function, so we cache the column
 // base pointers once via `Slice::items_raw` and dereferences them at each
 // use site through `*mut [T]`. This is the documented escape hatch in
 // `bun_collections::multi_array_list::Slice::items_raw`.
@@ -86,7 +84,6 @@ pub fn scan_imports_and_exports(
 
     // `reachable_files` is borrowed out of `this.graph` while the
     // body also calls `&mut this.graph` methods. Snapshot the indices.
-    // PERF(port): was zero-copy slice; profile.
     let mut reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
 
     // ── cache SoA column base pointers ────────────────────────────────────
@@ -115,8 +112,8 @@ pub fn scan_imports_and_exports(
     let module_refs: *mut [Ref] = ast.module_ref;
     let wrapper_refs: *mut [Ref] = ast.wrapper_ref;
     let parts_list: *mut [PartList] = ast.parts;
-    // Zig: `[]?*bun.css.BundlerStyleSheet` — element is a *mutable* nullable
-    // pointer (matches `BundledAst.css: Option<*mut BundlerStyleSheet>`).
+    // Element is a *mutable* nullable
+    // pointer (`BundledAst.css: Option<*mut BundlerStyleSheet>`).
     let css_asts: *mut [CssCol] = ast.css;
 
     let input_files: *mut [Source] = input.source;
@@ -130,9 +127,6 @@ pub fn scan_imports_and_exports(
         meta.sorted_and_filtered_export_aliases;
     let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
     let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
-
-    // Zig copies `symbols` to a local and `defer`-writes it back.
-    // In Rust `this.graph.symbols` is the same storage, so no copy-back needed.
 
     {
         // Step 1: Figure out what modules must be CommonJS
@@ -486,11 +480,9 @@ pub fn scan_imports_and_exports(
         // imported using an import star statement.
         // Note: `do` will wait for all to finish before moving forward
         //
-        // Zig dispatched via `worker_pool.each(arena, this,
-        // doStep5, reachable_files)` (parallel fan-out, blocks until done).
         // `do_step5` only touches distinct SoA rows per `source_index` (the
-        // columns are pre-sized and never reallocate during this step),
-        // matching the Zig invariant. We pass `*mut LinkerContext` through a
+        // columns are pre-sized and never reallocate during this step).
+        // We pass `*mut LinkerContext` through a
         // `Sync` wrapper; the callee derefs it to `&LinkerContext` (shared)
         // for reads and writes per-row cells via raw `split_raw()` pointers —
         // mirroring `GenerateChunkCtx` (`generate_js_renamer` likewise never
@@ -523,11 +515,10 @@ pub fn scan_imports_and_exports(
             );
         }
 
-        // Zig calls `takeAstOwnership` here because `doStep5` appends to
-        // `part.dependencies`/`declared_symbols` with the worker allocator.
-        // In the Rust port those are global-allocator `Vec`s (thread-safe to
-        // grow) and `do_step_5` never pushes to the arena-backed `PartList`/
-        // import-record columns, so no transfer is needed.
+        // No post-fan-out ownership transfer is needed: `do_step5` only grows
+        // global-allocator `Vec`s (`part.dependencies`, `declared_symbols`),
+        // which are thread-safe to grow per-row, and never pushes to the
+        // arena-backed `PartList`/import-record columns.
     }
 
     if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {
@@ -602,7 +593,7 @@ pub fn scan_imports_and_exports(
             };
 
             // Allocate the identifier-name buffer from the linker arena so it is
-            // reclaimed when the link pass ends (Zig: `this.arena().alloc(u8, ...)`).
+            // reclaimed when the link pass ends.
             // The slices handed out below are stored in `Symbol.original_name: *const [u8]`,
             // which is arena-lifetime by construction.
             let string_buffer: &mut [u8] = this
@@ -613,8 +604,7 @@ pub fn scan_imports_and_exports(
             // `ptr`/`cap` and frees it via the global arena. Here the
             // backing buffer is arena-owned (bumpalo), so dropping would hand
             // mimalloc a pointer it never allocated. Wrap in `ManuallyDrop` —
-            // the arena reclaims the storage on reset, matching Zig's implicit
-            // no-destructor semantics.
+            // the arena reclaims the storage on reset.
             let mut builder = core::mem::ManuallyDrop::new(bun_core::StringBuilder {
                 len: 0,
                 cap: string_buffer.len(),
@@ -696,7 +686,7 @@ pub fn scan_imports_and_exports(
                 }
             }
 
-            // End-of-scope assert (Zig used `defer`); relies on there being no
+            // End-of-scope assert; relies on there being no
             // early returns inside this block.
             debug_assert!(builder.len == builder.cap);
 
@@ -815,11 +805,10 @@ pub fn scan_imports_and_exports(
                         this.top_level_symbols_to_parts(target_source_index.get(), target_ref);
                     dependencies.reserve(top_to_parts.len());
                     for part_index in top_to_parts {
-                        // PERF(port): was appendAssumeCapacity
                         dependencies.push(Dependency {
                             // `crate::Index` ↔ `bun_ast::Index` are both
-                            // `#[repr(transparent)] u32` newtypes ported from the
-                            // same Zig `ast.Index`; bridge by `.value` until B-3
+                            // `#[repr(transparent)] u32` newtypes;
+                            // bridge by `.value` until B-3
                             // collapses them to a single re-export.
                             source_index: bun_ast::Index(target_source_index.get()),
                             part_index: *part_index,
@@ -831,7 +820,6 @@ pub fn scan_imports_and_exports(
 
                 // Ensure "exports" is included if the current output format needs it
                 if force_include_exports {
-                    // PERF(port): was appendAssumeCapacity
                     dependencies.push(Dependency {
                         source_index: bun_ast::Index::source(source_index as usize),
                         part_index: bun_ast::NAMESPACE_EXPORT_PART_INDEX,
@@ -840,7 +828,6 @@ pub fn scan_imports_and_exports(
 
                 // Include the wrapper if present
                 if add_wrapper {
-                    // PERF(port): was appendAssumeCapacity
                     dependencies.push(Dependency {
                         source_index: bun_ast::Index::source(source_index as usize),
                         part_index: col_ref!(wrapper_part_indices)[id].get(),
@@ -1175,7 +1162,7 @@ fn should_call_runtime_require(format: options::Format) -> bool {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// DependencyWrapper — port of the inner Zig struct.
+// DependencyWrapper
 // ──────────────────────────────────────────────────────────────────────────
 struct DependencyWrapper<'a> {
     flags: &'a mut [js_meta::Flags],
@@ -1261,7 +1248,7 @@ impl DependencyWrapper<'_> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ExportStarContext — port of the inner Zig struct. Holds raw column ptrs.
+// ExportStarContext — holds raw column ptrs.
 // ──────────────────────────────────────────────────────────────────────────
 struct ExportStarContext<'a> {
     import_records_list: *mut [ImportRecordList<'a>],
@@ -1315,7 +1302,6 @@ impl<'a> ExportStarContext<'a> {
 
             // Collect (alias, name) pairs so the
             // loop body can mutably borrow `resolved_exports` / `imports_to_bind`.
-            // PERF(port): was zero-copy `iter()` over StringArrayHashMap; profile.
             let exports_len = col_ref!(self.named_exports)[other_id].keys().len();
             'next_export: for ne_i in 0..exports_len {
                 // `BackRef<[u8]>` — points into the `named_exports` key
@@ -1387,8 +1373,7 @@ impl<'a> ExportStarContext<'a> {
             self.add_exports(resolved_exports, target_id, other_source_index);
         }
 
-        // Zig: `defer this.source_index_stack.shrinkRetainingCapacity(stack_end_pos - 1)`
-        // — inlined at scope end (no early returns after the push).
+        // Scope-end truncation (no early returns after the push).
         self.source_index_stack.truncate(stack_end_pos - 1);
     }
 }
@@ -1404,8 +1389,8 @@ mod __css_validation {
     use bun_ast::Log;
     use bun_collections::{ArrayHashMap, StringArrayHashMap};
 
-    // Zig: `?*bun.css.BundlerStyleSheet` — keep the column element as a raw
-    // `*mut` (matches `BundledAst.css`), so we never launder a `&T` into `&mut T`.
+    // Keep the column element as a raw
+    // `*mut` (`BundledAst.css`), so we never launder a `&T` into `&mut T`.
     use crate::bundled_ast::CssCol;
 
     /// `ArrayHashAdapter` so `LocalScope` (`ArrayHashMap<Box<[u8]>, LocalEntry>`)
@@ -1712,7 +1697,6 @@ mod __css_validation {
             }
         }
 
-        // PERF(port): was stack-fallback arena (1024 bytes) — profile.
         // SAFETY: parse_graph backref valid for link step. Read-only.
         let input = this.parse_graph().input_files.split_raw();
         let mut visitor = Visitor {
@@ -1733,4 +1717,3 @@ mod __css_validation {
     }
 }
 
-// ported from: src/bundler/linker_context/scanImportsAndExports.zig

@@ -65,7 +65,7 @@ impl Timer {
         repeat_ms: i32,
     ) {
         // SAFETY: ext storage was allocated with size_of::<T>() in create();
-        // @setRuntimeSafety(false) in Zig — caller guarantees T matches.
+        // caller guarantees T matches.
         unsafe {
             us_timer_set(self, cb, ms, repeat_ms);
             let value_ptr = us_timer_ext(self);
@@ -93,17 +93,15 @@ impl Timer {
         }
     }
 
-    // Zig name is `as`, which is a Rust keyword.
+    // Named `as_` because `as` is a Rust keyword.
     pub fn as_<T>(&mut self) -> T {
         unsafe {
-            // SAFETY: @setRuntimeSafety(false) in Zig — reinterpret the ext slot
-            // (`*?*anyopaque`) as `*?T`, deref, unwrap. The slot was allocated
-            // with `size_of::<T>()` and written via [`set`] as a bare `T`, so
-            // read it as `T` directly. Zig's `?*T` is one word with a null
-            // niche, but Rust's `Option<*mut T>` is two words — wrapping in
-            // `Option<T>` here over-reads and misinterprets the bytes. Callers
-            // pass pointer-ish `T` and tolerate a (debug-asserted) null read
-            // exactly as Zig's `.?` would.
+            // SAFETY: the ext slot was allocated with `size_of::<T>()` and
+            // written via [`set`] as a bare `T`, so read it as `T` directly.
+            // Wrapping in `Option<T>` here would over-read and misinterpret
+            // the bytes (`Option<*mut T>` has no niche, so it is two words
+            // while the slot is one). Callers pass pointer-ish `T` and
+            // tolerate a (debug-asserted) null read.
             let slot: *mut T = us_timer_ext(self).cast();
             slot.read()
         }
@@ -128,5 +126,3 @@ unsafe extern "C" {
     );
     pub safe fn us_timer_loop(t: &mut Timer) -> *mut Loop;
 }
-
-// ported from: src/uws_sys/Timer.zig

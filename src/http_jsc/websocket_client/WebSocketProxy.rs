@@ -20,7 +20,7 @@ pub(crate) struct WebSocketProxy {
 
 impl WebSocketProxy {
     /// Initialize a new WebSocketProxy
-    // params are owned (Zig caller transfers allocator ownership; freed in deinit)
+    // params are owned (caller transfers ownership; freed in deinit)
     pub(crate) fn init(
         target_host: Box<[u8]>,
         target_is_https: bool,
@@ -75,5 +75,3 @@ impl Drop for WebSocketProxy {
         }
     }
 }
-
-// ported from: src/http_jsc/websocket_client/WebSocketProxy.zig

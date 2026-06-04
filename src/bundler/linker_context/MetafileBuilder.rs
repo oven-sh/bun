@@ -422,9 +422,8 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>
     )?;
 
     // Get final output with all chunk references resolved.
-    // The Zig original passes `&chunks[0]` as the dummy chunk and `chunks` as the
-    // full slice (aliased). `code()` takes both as `&` now, so pass `&chunks[0]`
-    // directly — overlapping shared borrows are fine.
+    // `code()` takes the dummy chunk and the full slice as `&`, so pass
+    // `&chunks[0]` directly — overlapping shared borrows are fine.
     let code_result = intermediate.code(
         None,
         parse_graph,
@@ -449,11 +448,10 @@ fn write_json_string(writer: &mut impl Write, str: &[u8]) -> std::io::Result<()>
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Minimal `std.json.Value`-shaped tree for `generate_markdown`.
+// Minimal dynamic JSON value tree for `generate_markdown`.
 //
-// Zig's `generateMarkdown` re-parses the metafile JSON via
-// `std.json.parseFromSlice(std.json.Value, …)` — a generic dynamic-tree parse.
-// The Rust crates available here (`bun_parsers::json`) only expose an
+// `generate_markdown` re-parses the metafile JSON as a dynamic tree.
+// The crates available here (`bun_parsers::json`) only expose an
 // AST-expr parser, so a small self-contained Value/parser is provided below
 // covering exactly the subset the metafile format uses.
 // ──────────────────────────────────────────────────────────────────────────
@@ -711,7 +709,7 @@ impl<'a> JsonParser<'a> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// generate_markdown helper structs (local to the function in Zig; hoisted here)
+// generate_markdown helper structs.
 // Lifetime <'a> ties borrowed slices to the parsed JSON value's lifetime.
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -1625,5 +1623,3 @@ fn strip_parent_refs(path: &[u8]) -> &[u8] {
     }
     result
 }
-
-// ported from: src/bundler/linker_context/MetafileBuilder.zig

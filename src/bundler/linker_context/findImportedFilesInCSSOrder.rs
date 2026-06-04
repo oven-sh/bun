@@ -14,10 +14,9 @@ use crate::linker_context_mod::debug;
 use crate::{Index, LinkerContext};
 use bun_ast::Index as AstIndex;
 
-// Zig's `entry.*` / `@memcpy` are bitwise copies of arena-backed
-// `CssImportOrder` values (the inner `Vec`s point into bump arenas and are
-// never individually freed). Rust's `Vec` has `Drop`, so a literal `*entry`
-// is not `Copy`. We replicate the Zig bitwise-copy semantics here.
+// `CssImportOrder` values are arena-backed (the inner `Vec`s point into bump
+// arenas and are never individually freed). Rust's `Vec` has `Drop`, so a
+// literal `*entry` is not `Copy`; we duplicate the values bitwise instead.
 // `conditions` slabs come from `deep_clone_conditions`, which allocates them
 // from the `LinkerGraph` arena (`graph.heap`). The `Vec` headers aliasing a
 // slab are `mem::forget`'d everywhere (`CssImportOrder::drop` + the
@@ -32,9 +31,8 @@ unsafe fn bitwise_copy<T>(src: &T) -> T {
     unsafe { core::ptr::read(src) }
 }
 
-/// Zig: `order.len = wip_order.len; @memcpy(order.slice(), wip_order.slice());
-/// wip_order.clearRetainingCapacity();` — bitwise move of arena-backed entries
-/// from `wip` back into `order`'s buffer (which always has `cap >= wip.len`).
+/// Bitwise move of arena-backed entries from `wip` back into `order`'s
+/// buffer (which always has `cap >= wip.len`).
 #[inline]
 fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrder>) {
     debug_assert!(order.capacity() >= wip.len());
@@ -46,7 +44,7 @@ fn memcpy_and_reset(order: &mut Vec<CssImportOrder>, wip: &mut Vec<CssImportOrde
     unsafe { order.set_len(0) };
     // `Vec::append` = reserve (no-op given the debug_assert) +
     // `copy_nonoverlapping` into `order[0..]` + `wip.set_len(0)` — exactly the
-    // original `@memcpy` + `clearRetainingCapacity` sequence.
+    // bitwise move described above.
     order.append(wip);
 }
 
@@ -85,8 +83,8 @@ pub fn find_imported_files_in_css_order<'a>(
         css_asts: &'a [crate::bundled_ast::CssCol],
         all_import_records: &'a [bun_ast::import_record::List<'a>],
 
-        // Zig's `graph: *LinkerGraph` is never read in `visit()`;
-        // dropped here to avoid an aliasing `&mut this.graph` borrow against
+        // No `graph` field — `visit()` never reads it, and holding one would
+        // create an aliasing `&mut this.graph` borrow against
         // `arena`/`css_asts` (which already borrow `this.graph`).
         // `BackRef` (not `&'a Graph`) so the visitor's `'a` borrow stays
         // disjoint from `LinkerContext` (constructed from the raw `parse_graph`
@@ -156,9 +154,8 @@ pub fn find_imported_files_in_css_order<'a>(
             //     })
             // }
 
-            // Zig: `defer { _ = visitor.visited.pop(); }` — explicit pop at end.
-            // The defer is registered AFTER the `orelse return` above, so skipping the
-            // pop on that early-return path matches the original semantics.
+            // `visited.pop()` happens at the end of this function; the early
+            // return above intentionally skips it.
 
             // Iterate over the top-level "@import" rules
             let mut import_record_idx: usize = 0;
@@ -237,7 +234,6 @@ pub fn find_imported_files_in_css_order<'a>(
                         } else {
                             self.order.push(CssImportOrder {
                                 kind: CssImportOrderKind::ExternalPath(record.path),
-                                // Zig's `wrapping_conditions.*` is a bitwise struct copy.
                                 // SAFETY: arena-backed `Vec` header; the pushed
                                 // `CssImportOrder` never drops it (see the note at
                                 // `bitwise_copy`), so the aliased buffer is freed once
@@ -286,10 +282,9 @@ pub fn find_imported_files_in_css_order<'a>(
             self.order.push(CssImportOrder {
                 // `crate::Index` (= `bun_ast::Index`) and the
                 // `bun_ast::Index` carried by `CssImportOrderKind::SourceIndex`
-                // are TYPE_ONLY mirrors of the same Zig `bun.ast.Index`;
+                // are the same underlying index type;
                 // both are `#[repr(transparent)]` over `u32`.
                 kind: CssImportOrderKind::SourceIndex(AstIndex(source_index.get())),
-                // Zig's `wrapping_conditions.*` is a bitwise struct copy.
                 // SAFETY: arena-backed `Vec` header; `CssImportOrder` suppresses
                 // `Drop` on it (see the note at `bitwise_copy`), so the aliased
                 // buffer is freed once with the arena.
@@ -297,7 +292,6 @@ pub fn find_imported_files_in_css_order<'a>(
                 condition_import_records: Vec::new(),
             });
 
-            // Explicit pop replacing Zig's `defer { _ = visitor.visited.pop(); }`.
             let _ = self.visited.pop();
         }
     }
@@ -390,8 +384,7 @@ pub fn find_imported_files_in_css_order<'a>(
         // Borrowck: `order.at(i)` and `order.mut_(i)`
         // cannot overlap, and `is_conditional_import_redundant` needs to read
         // both `entry.conditions` and `order.at(j).conditions`. Hold raw
-        // pointers into the Vec buffer (Zig used the same pattern via
-        // `*const` slice returns); `order.mut_(i)` only writes `.kind` and
+        // pointers into the Vec buffer; `order.mut_(i)` only writes `.kind` and
         // never reallocates, so the conditions pointer stays valid.
         let order_ptr = order.as_mut_ptr();
         'next_backward: while i != 0 {
@@ -741,8 +734,6 @@ pub fn find_imported_files_in_css_order<'a>(
     order
 }
 
-/// Zig: `wrapping_conditions.deepCloneInfallible(visitor.arena)`.
-///
 /// The returned list is later bitwise-copied into `CssImportOrder` entries via
 /// `bitwise_copy(wrapping_conditions)`, so callers `mem::forget` the local after
 /// the recursive `visit()` to keep the aliased buffer alive. The slab is
@@ -772,15 +763,13 @@ fn deep_clone_conditions(list: &Vec<ImportConditions>, arena: &Arena) -> Vec<Imp
     }
 }
 
-/// Zig: `bun.handleOom(wrapping_import_records.clone(arena))` — shallow
-/// memcpy of `ImportRecord` values into a fresh allocation.
+/// Shallow copy of `ImportRecord` values into a fresh allocation.
 #[inline]
 fn shallow_clone_records(list: &Vec<ImportRecord>) -> Vec<ImportRecord> {
     let mut out = Vec::<ImportRecord>::init_capacity(list.len() as usize);
     for r in list.slice_const() {
-        // `ImportRecord` is plain-old-data in Zig (no destructor);
-        // `Path<'static>` slices borrow resolver storage. Bitwise copy matches
-        // the Zig `clone(arena)` semantics.
+        // `ImportRecord` is plain-old-data; its `Path<'static>` slices borrow
+        // resolver storage.
         // SAFETY: `ImportRecord` is POD (borrowed slices, no owning `Drop`); a
         // bitwise duplicate aliasing the same resolver storage is sound and
         // neither copy frees it.
@@ -919,7 +908,7 @@ impl CssOrderDebugStep {
 }
 
 fn debug_css_order(this: &LinkerContext, order: &Vec<CssImportOrder>, step: CssOrderDebugStep) {
-    // PERF(port): `step` was a comptime enum param; debug-only so demoted to runtime.
+    // `step` is a runtime param; this path is debug-only.
     #[cfg(debug_assertions)]
     {
         let tag = step.tag_name();
@@ -1013,4 +1002,3 @@ pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
 
-// ported from: src/bundler/linker_context/findImportedFilesInCSSOrder.zig

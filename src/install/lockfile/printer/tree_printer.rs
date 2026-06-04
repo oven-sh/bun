@@ -14,8 +14,6 @@ use bun_sys::Fd;
 
 type Bitset = DynamicBitSet;
 
-// Zig's `comptime print_section_header: enum(u1)` two-state flag is mapped to
-// `const PRINT_SECTION_HEADER: bool`.
 fn print_installed_workspace_section<
     W,
     const ENABLE_ANSI_COLORS: bool,
@@ -529,8 +527,7 @@ where
                     done: false,
                     dir_iterator: None,
                     package_name: name,
-                    // Zig default `bun.invalid_fd.stdDir()` — never read on
-                    // the .map/.file/.named_file paths this arm covers.
+                    // Never read on the .map/.file/.named_file paths this arm covers.
                     destination_node_modules: Fd::INVALID,
                     buf: bun_paths::PathBuffer::uninit(),
                     string_buffer: string_buf,
@@ -549,9 +546,8 @@ where
 
                 {
                     if matches!(manager.track_installed_bin, TrackInstalledBin::Pending) {
-                        // `iterator.next()` returns `Result<Option<&[u8]>, E>` (Zig `!?[]const u8`);
-                        // `catch null` → `.unwrap_or(None)`. Reshaped for borrowck — `bin_name`'s
-                        // borrow of `iterator.buf` must end before the loop's `iterator.next()`.
+                        // `bin_name`'s borrow of `iterator.buf` must end before
+                        // the loop's `iterator.next()`.
                         if let Some(bin_name) = iterator.next().unwrap_or(None) {
                             let owned = Box::<[u8]>::from(bin_name);
 
@@ -587,5 +583,3 @@ where
 
     Ok(())
 }
-
-// ported from: src/install/lockfile/printer/tree_printer.zig

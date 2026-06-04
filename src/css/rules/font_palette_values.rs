@@ -53,7 +53,6 @@ impl FontPaletteValuesRule {
         while let Some(result) = parser.next() {
             if let Ok(decl) = result {
                 properties.push(decl);
-                // PERF(port): was `append(input.arena(), decl) catch unreachable`
             }
         }
 
@@ -231,9 +230,6 @@ impl BasePalette {
 
 pub(crate) struct FontPaletteValuesDeclarationParser {}
 
-// Zig models these as nested namespace structs (`DeclarationParser`,
-// `RuleBodyItemParser`, `AtRuleParser`, `QualifiedRuleParser`) duck-typed by
-// `RuleBodyParser`. In Rust these are trait impls.
 const _: () = {
     use crate::css_properties::custom::{CustomProperty, CustomPropertyName};
     use crate::css_properties::font::FontFamily;
@@ -279,7 +275,6 @@ const _: () = {
             }}
 
             input.reset(&state);
-            // PERF(port): Zig passed `input.arena()` + `null` here.
             let opts = ParserOptions::default(None);
             let custom = CustomProperty::parse(CustomPropertyName::from_str(name), input, &opts)?;
             Ok(FontPaletteValuesProperty::Custom(custom))
@@ -349,4 +344,3 @@ const _: () = {
     }
 };
 
-// ported from: src/css/rules/font_palette_values.zig

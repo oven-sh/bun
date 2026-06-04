@@ -275,9 +275,8 @@ impl SupportsCondition {
         let mut seen_declarations: ArrayHashMap<SeenDeclKey, usize> = ArrayHashMap::new();
 
         loop {
-            // Reshaped for borrowck — Zig threaded `*?i32` through a
-            // local `Closure` struct (LIFETIMES.tsv: BORROW_PARAM); a Rust closure
-            // capturing `&mut expected_type` is the direct equivalent.
+            // A closure capturing `&mut expected_type` threads the expected
+            // type through the parse attempt.
             let _condition =
                 input.try_parse(|i: &mut css::Parser| -> css::Result<SupportsCondition> {
                     let location = i.current_source_location();
@@ -408,14 +407,14 @@ impl SupportsCondition {
     }
 }
 
-// Dedup key for `@supports` declaration conditions; the manual Hash/PartialEq
-// below match the Zig hash-map context (wrapping_add of string hash and enum int).
+// Dedup key for `@supports` declaration conditions; manual Hash/PartialEq
+// (wrapping_add of string hash and enum int).
 struct SeenDeclKey(PropertyId, &'static [u8]);
 
 impl core::hash::Hash for SeenDeclKey {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        // wyhash of the value bytes +% the property-id tag, mirroring the Zig
-        // hash-map context. `hash_string` returns u32 directly — no narrowing cast.
+        // wyhash of the value bytes +% the property-id tag.
+        // `hash_string` returns u32 directly — no narrowing cast.
         let h: u32 = bun_collections::array_hash_map::hash_string(self.1);
         state.write_u32(h.wrapping_add(self.0.tag() as u32));
     }
@@ -423,7 +422,7 @@ impl core::hash::Hash for SeenDeclKey {
 
 impl PartialEq for SeenDeclKey {
     fn eq(&self, other: &Self) -> bool {
-        // Zig: tag-only equality + slice byte equality.
+        // Tag-only equality + slice byte equality.
         self.0.tag() as u16 == other.0.tag() as u16 && self.1 == other.1
     }
 }
@@ -487,4 +486,3 @@ impl<R> SupportsRule<R> {
     }
 }
 
-// ported from: src/css/rules/supports.zig

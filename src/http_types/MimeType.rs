@@ -21,17 +21,15 @@ mod loader_disc {
 // ───────────────────────────────────────────────────────────────────────────
 // `Table` (= generated `mime_type_list_enum::MimeTypeList`). The Rust side is a
 // hand-rolled stand-in (`&'static str` newtype) until
-// `src/codegen/generate-compact-string-table.ts` emits `.rs`. See PERF(port)
+// `src/codegen/generate-compact-string-table.ts` emits `.rs`. See the
 // note at the top of `mime_type_list_enum.rs`.
 // ───────────────────────────────────────────────────────────────────────────
 pub use super::mime_type_list_enum::MimeTypeList as Table;
 use bun_collections::StringHashMap;
 
-// `Table` variant names in Zig are raw MIME-type strings
-// (e.g. `@"application/json"`), which are not valid Rust identifiers.
 // `mime_type_list_enum.rs` exposes `const fn from_mime_literal(&'static str)`,
 // an UNCHECKED literal wrapper: a typo'd literal still compiles and simply
-// never matches anything at runtime (comparison is string equality, not Zig's
+// never matches anything at runtime (comparison is string equality, not an
 // enum compare). The checked, packed-enum form is pending the codegen `.rs`
 // backend — see the header of `mime_type_list_enum.rs`.
 macro_rules! t {
@@ -42,7 +40,6 @@ macro_rules! t {
 
 #[derive(Clone, PartialEq, Eq)]
 pub struct MimeType {
-    // Zig `deinit` frees `value` via allocator → owning type per §Type-map.
     // `Cow` so the `pub const` items below stay `Borrowed` and const-constructible.
     pub value: Cow<'static, [u8]>,
     pub category: Category,
@@ -71,9 +68,8 @@ impl Compact {
             <&'static str>::from(self.value),
         );
 
-        // Zig matches on `Table` enum variants directly; here `t!` wraps an
-        // unchecked `&'static str` literal and the compares are runtime string
-        // equality (see the macro definition above for the caveats).
+        // `t!` wraps an unchecked `&'static str` literal and the compares are
+        // runtime string equality (see the macro definition above for the caveats).
         let v = self.value;
         if v == t!("application/webassembly") {
             return WASM;
@@ -119,7 +115,6 @@ impl Compact {
 pub fn create_hash_table() -> Result<Map, bun_alloc::AllocError> {
     let mut map = Map::default();
     map.reserve(Table::ALL.len() as u32 as usize);
-    // PERF(port): was put_assume_capacity_no_clobber + borrowed-key map — Rust
     // `StringHashMap` boxes the key.
     for entry in Table::ALL {
         assert!(
@@ -341,8 +336,6 @@ impl MimeType {
     }
 
     pub fn init(str_: &[u8], dupe: bool, allocated: Option<&mut bool>) -> MimeType {
-        // Zig signature is `(str_, ?Allocator param, allocated: ?*bool)`.
-        // Allocator presence == "dupe the input"; replaced with `dupe: bool` (see §Allocators).
         let mut str = str_;
         if let Some(slash) = str.iter().position(|&b| b == b'/') {
             let category_ = &str[0..slash];
@@ -478,8 +471,8 @@ impl MimeType {
 
     #[inline]
     fn maybe_dupe(s: &[u8], _dupe: bool) -> Cow<'static, [u8]> {
-        // Zig borrowed the input slice in the no-dupe case (zero-copy). A
-        // non-'static borrow would need a lifetime parameter on `MimeType`, so
+        // Borrowing the input slice in the no-dupe case (zero-copy) would need
+        // a lifetime parameter on `MimeType`, so
         // both cases copy here; never launder the borrow to 'static instead.
         Cow::Owned(s.to_vec())
     }
@@ -512,15 +505,15 @@ pub fn by_extension_no_default(ext_without_leading_dot: &[u8]) -> Option<MimeTyp
 // this is partially auto-generated
 pub use super::mime_type_list_enum::ALL;
 
-// TODO: do a comptime static hash map for this
+// TODO: use a precomputed static hash map for this
 // its too many branches to use ComptimeStringMap
 pub fn by_name(name: &[u8]) -> MimeType {
     MimeType::init(name, false, None)
 }
 
-// phf_map! rejects duplicate keys at compile time. The Zig source
-// contained duplicate entries for "tsx", "yaml", "yml" (Zig ComptimeStringMap
-// silently kept the first occurrence) — later duplicates dropped below.
+// phf_map! rejects duplicate keys at compile time. The original table
+// contained duplicate entries for "tsx", "yaml", "yml" — only the first
+// occurrence is kept; later duplicates dropped below.
 pub(crate) static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"123" => t!("application/vnd.lotus-1-2-3"),
     b"1km" => t!("application/vnd.1000minds.decision-model+xml"),
@@ -1491,7 +1484,7 @@ pub(crate) static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"tsx" => t!("application/javascript"),
     b"tsd" => t!("application/timestamped-data"),
     b"tsv" => t!("text/tab-separated-values"),
-    // (dup "tsx" dropped — phf rejects, Zig kept first occurrence above)
+    // (dup "tsx" dropped — phf rejects; first occurrence above wins)
     b"ttc" => t!("font/collection"),
     b"ttf" => t!("font/ttf"),
     b"ttl" => t!("text/turtle"),
@@ -1691,10 +1684,10 @@ pub(crate) static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {
     b"xwd" => t!("image/x-xwindowdump"),
     b"xyz" => t!("chemical/x-xyz"),
     b"xz" => t!("application/x-xz"),
-    // (dup "yaml" dropped — phf rejects, Zig kept first occurrence above)
+    // (dup "yaml" dropped — phf rejects; first occurrence above wins)
     b"yang" => t!("application/yang"),
     b"yin" => t!("application/yin+xml"),
-    // (dup "yml" dropped — phf rejects, Zig kept first occurrence above)
+    // (dup "yml" dropped — phf rejects; first occurrence above wins)
     b"ymp" => t!("text/x-suse-ymp"),
     b"z1" => t!("application/x-zmachine"),
     b"z2" => t!("application/x-zmachine"),
@@ -1728,7 +1721,6 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
         return None;
     }
 
-    // PERF(port): was `inline for` over heterogeneous-length tuples
     for (header, table) in IMAGES_HEADERS {
         if bytes.len() >= header.len() && &bytes[0..header.len()] == *header {
             return Some(Compact::from(*table).to_mime_type());
@@ -1736,5 +1728,3 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
     }
     None
 }
-
-// ported from: src/http_types/MimeType.zig

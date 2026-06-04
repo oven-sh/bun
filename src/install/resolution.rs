@@ -71,7 +71,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         value: Value { uninitialized: () },
     };
 
-    /// Use like Resolution.init(.{ .npm = VersionedURL{ ... } })
+    /// Construct from a tagged value, e.g. `Resolution::init(TaggedValue::Npm(...))`.
     #[inline]
     pub fn init(value: TaggedValue<SemverInt>) -> Self {
         Self {
@@ -81,13 +81,13 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
         }
     }
 
-    /// Port of `Resolution.init(.{ .root = {} })` — convenience constructor.
+    /// Convenience constructor for a root resolution.
     #[inline]
     pub fn init_root() -> Self {
         Self::init(TaggedValue::Root)
     }
 
-    /// Port of `Resolution.init(.{ .symlink = s })` — convenience constructor.
+    /// Convenience constructor for a symlink resolution.
     #[inline]
     pub fn init_symlink(s: String) -> Self {
         Self::init(TaggedValue::Symlink(s))
@@ -362,8 +362,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     }
 
     /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone` now
-    /// that `ResolutionType: Clone + Copy`. Mirrors Zig
-    /// `Resolution.clone(buf, Builder, builder)`.
+    /// that `ResolutionType: Clone + Copy`.
     pub fn clone_into<B>(&self, buf: &[u8], builder: &mut B) -> Self
     where
         B: StringBuilderLike,
@@ -493,9 +492,8 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     }
 }
 
-// The duck-typed `Builder` Zig comptime param maps to the
-// `bun_semver::StringBuilder` trait (`count` + `append<T>`); local alias kept
-// so dependents that named `resolution::StringBuilderLike` still resolve.
+// Local alias for the `bun_semver::StringBuilder` trait (`count` + `append<T>`),
+// kept so dependents that named `resolution::StringBuilderLike` still resolve.
 pub use bun_semver::StringBuilder as StringBuilderLike;
 
 pub struct StorePathFormatter<'a, SemverInt: VersionInt> {
@@ -551,14 +549,12 @@ pub struct URLFormatter<'a, SemverInt: VersionInt> {
 }
 
 impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
-    /// Byte-exact port of Zig `URLFormatter.format` (`writer.writeAll` / `{s}`).
-    ///
     /// Prefer this over the `Display` impl whenever the output is persisted to
     /// disk (yarn.lock, lockfile JSON): `core::fmt::Display` routes through
     /// `&str` and the `BStr` adapter is *lossy* on non-UTF-8 bytes (a Linux
     /// folder/tarball path under a Latin-1 directory would emit U+FFFD instead
-    /// of the original byte). `write_to` mirrors Zig's `writeAll(slice)` and
-    /// pushes the lockfile string-buffer bytes through unchanged.
+    /// of the original byte). `write_to` pushes the lockfile string-buffer
+    /// bytes through unchanged.
     pub(crate) fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
         W: bun_core::io::Write + ?Sized,
@@ -652,10 +648,9 @@ pub struct Formatter<'a, SemverInt: VersionInt> {
 }
 
 impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
-    /// Byte-exact port of Zig `Formatter.format`. See [`URLFormatter::write_to`]
-    /// for rationale — `Display` is lossy on non-UTF-8 path bytes; this writes
-    /// the lockfile string-buffer slices verbatim via `write_all`, matching
-    /// Zig's `writer.writeAll` / `{s}`.
+    /// See [`URLFormatter::write_to`] for rationale — `Display` is lossy on
+    /// non-UTF-8 path bytes; this writes the lockfile string-buffer slices
+    /// verbatim via `write_all`.
     pub fn write_to<W>(&self, writer: &mut W) -> Result<(), bun_core::Error>
     where
         W: bun_core::io::Write + ?Sized,
@@ -877,9 +872,9 @@ pub(crate) fn value_init<SemverInt: VersionInt>(field: TaggedValue<SemverInt>) -
     value
 }
 
-// Zig `enum(u8) { ..., _ }` is non-exhaustive — values outside the named set are
-// valid (lockfile bytes may carry unknown tags, and every `switch` has an `else`
-// arm). A `#[repr(u8)] enum` would be UB for such values, so Tag is a transparent
+// Tag is non-exhaustive — values outside the named set are valid (lockfile
+// bytes may carry unknown tags, and every match has a fallback arm).
+// A `#[repr(u8)] enum` would be UB for such values, so Tag is a transparent
 // u8 newtype with associated consts. Const patterns (structural `PartialEq`) keep
 // `match tag { Tag::Npm => ... }` working, and the `_` arms in callers stay live.
 #[repr(transparent)]
@@ -945,8 +940,8 @@ impl Tag {
             || self == Tag::Github
     }
 
-    /// Mirrors `bun.tagName(Tag, tag)` — returns the Zig snake_case tag name,
-    /// or `None` for an unnamed (non-exhaustive) value.
+    /// Returns the snake_case tag name, or `None` for an unnamed
+    /// (non-exhaustive) value.
     pub fn name(self) -> Option<&'static str> {
         Some(match self {
             Tag::Uninitialized => "uninitialized",
@@ -990,5 +985,3 @@ pub enum FromPnpmLockfileError {
 bun_core::oom_from_alloc!(FromPnpmLockfileError);
 
 bun_core::named_error_set!(FromPnpmLockfileError);
-
-// ported from: src/install/resolution.zig

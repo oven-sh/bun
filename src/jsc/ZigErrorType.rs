@@ -9,5 +9,3 @@ pub struct ZigErrorType {
     // passed by value across the C++ boundary, not a heap-allocated Rust struct.
     pub value: JSValue,
 }
-
-// ported from: src/jsc/ZigErrorType.zig

@@ -16,11 +16,8 @@ pub(crate) type EntryIndex = bun_core::GenericIndex<u32, AssetsMarker>;
 
 #[derive(Default)]
 pub struct Assets {
-    /// Keys are absolute paths, sharing memory with `IncrementalGraph(.client)`
-    /// key storage in Zig (`replacePath` writes `stable_abs_path` back into
-    /// `key_ptr`). Here `StringArrayHashMap` stores owned `Box<[u8]>`
-    /// keys; the borrow-from-graph optimization is dropped.
-    // PERF(port): keys aliased IncrementalGraph storage in Zig.
+    /// Keys are absolute paths. `StringArrayHashMap` stores owned `Box<[u8]>`
+    /// keys.
     pub path_map: StringArrayHashMap<EntryIndex>,
     /// Content-addressable store. Multiple paths can point to the same content
     /// hash, tracked by `refs`. One ref held to each `StaticRoute` while stored
@@ -49,7 +46,7 @@ impl Assets {
     /// browser caching. The old URL is immediately revoked.
     ///
     /// `abs_path` is not allocated. Ownership of `contents` is transferred to
-    /// this function (Zig: `Ownership is transferred`).
+    /// this function.
     pub fn replace_path(
         &mut self,
         abs_path: &[u8],
@@ -58,11 +55,10 @@ impl Assets {
         content_hash: u64,
     ) -> Result<EntryIndex, bun_alloc::AllocError> {
         debug_assert!(self.owner().magic == Magic::Valid);
-        // Zig: `defer assert(assets.files.count() == assets.refs.items.len);`
-        // The invariant is re-checked before each return below.
+        // Invariant: `files.count() == refs.len()`, re-checked before each
+        // return below.
 
-        // Zig `std.fmt.bytesToHex(std.mem.asBytes(&content_hash), .lower)` —
-        // hex-encodes the *native-endian bytes* of the u64.
+        // Hex-encodes the *native-endian bytes* of the u64.
         let mut hex_buf = [0u8; 16];
         let hex_len = bun_fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex_buf);
         scoped_log!(
@@ -76,7 +72,7 @@ impl Assets {
         );
 
         // Captured up-front so borrows of `self.files` / `self.path_map` below don't
-        // overlap with `owner()` (`&self`) calls. Zig: `assets.owner().server orelse unreachable`.
+        // overlap with `owner()` (`&self`) calls.
         let server = self.owner().server;
         debug_assert!(server.is_some());
 
@@ -121,9 +117,7 @@ impl Assets {
                         ..Default::default()
                     },
                 );
-                // Zig: `comptime assert(@TypeOf(slice.items(.hash)[0]) == void);`
-                // `ArrayHashMap<u64, _>` keys the entry on the hash itself;
-                // nothing to assert at runtime.
+                // `ArrayHashMap<u64, _>` keys the entry on the hash itself.
                 self.needs_reindex = true;
                 debug_assert_eq!(self.files.count(), self.refs.len());
                 return Ok(entry_index);
@@ -148,7 +142,6 @@ impl Assets {
             self.refs.push(1);
         } else {
             self.refs[file_index] += 1;
-            // Zig: `var contents_mut = contents.*; contents_mut.detach();`
             // Release the owned blob on the duplicate-content path.
             contents.detach();
         }
@@ -165,9 +158,9 @@ impl Assets {
         content_hash: u64,
         ref_count: u32,
     ) -> Result<Option<&mut *mut StaticRoute>, bun_alloc::AllocError> {
-        // Zig: `defer assert(assets.files.count() == assets.refs.items.len);`
-        // `gop.value_ptr` borrows `self.files` mutably, so re-derive the slot
-        // via `values_mut()[index]` after the invariant assert.
+        // Invariant: `files.count() == refs.len()`. `gop.value_ptr` borrows
+        // `self.files` mutably, so re-derive the slot via
+        // `values_mut()[index]` after the invariant assert.
         let file_index_gop = self.files.get_or_put(content_hash)?;
         let index = file_index_gop.index;
         let found = file_index_gop.found_existing;
@@ -263,8 +256,8 @@ impl Assets {
 
 impl Drop for Assets {
     fn drop(&mut self) {
-        // Zig `deinit(assets, alloc)`: path_map/files/refs storage is freed by their own Drop;
-        // only the manual StaticRoute derefs remain as a side effect.
+        // path_map/files/refs storage is freed by their own Drop; only the
+        // manual StaticRoute derefs remain.
         for &blob in self.files.values() {
             // SAFETY: we hold one ref to each stored StaticRoute; release it.
             unsafe { StaticRoute::deref_(blob) };

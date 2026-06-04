@@ -7,7 +7,6 @@ pub trait ToJsWithType {
     fn to_js_with_type(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError>;
 }
 
-// Covers Zig arms `[:0]u8, []u8, []const u8, [:0]const u8` — all collapse to a byte slice.
 impl ToJsWithType for &[u8] {
     fn to_js_with_type(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError> {
         let str = bun_core::String::borrow_utf8(self);
@@ -22,8 +21,8 @@ impl ToJsWithType for bun_core::String {
     }
 }
 
-// Reshaped Zig's `*Data` + `defer value.deinit()` → owned `Data`; Drop at the
-// end of this fn replaces the explicit deinit (same pattern as bytea.rs/json.rs).
+// Takes owned `Data`; Drop at the
+// end of this fn frees it (same pattern as bytea.rs/json.rs).
 impl ToJsWithType for Data {
     fn to_js_with_type(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError> {
         let str = bun_core::String::borrow_utf8(self.slice());
@@ -33,4 +32,3 @@ impl ToJsWithType for Data {
     }
 }
 
-// ported from: src/sql_jsc/postgres/types/PostgresString.zig

@@ -308,7 +308,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             l @ (11 | 7 | 4) => {
                 let data = reader.read(l as usize)?;
                 let time = DateTime::from_data(&data)?;
-                // Zig's `!SQLDataCell` is anyerror; map JsError variants to their
+                // Map JsError variants to their
                 // interned bun_core::Error names so `?` can widen here.
                 let ts = time.to_js_timestamp(global_object).map_err(|e| match e {
                     bun_jsc::JsError::OutOfMemory => bun_core::err!("OutOfMemory"),
@@ -435,11 +435,9 @@ pub fn decode_binary_value<Context: ReaderContext>(
     }
 }
 
-// Zig accesses `bun.String.cloneUTF8(slice).value.WTFStringImpl` directly (union field);
-// `leak_wtf_impl()` is the Rust equivalent — transfers the +1 ref to the cell (`free_value = 1`).
+// `leak_wtf_impl()` transfers the +1 ref to the cell (`free_value = 1`).
 #[inline]
 fn clone_utf8_wtf_impl(slice: &[u8]) -> bun_core::WTFStringImpl {
     bun_core::String::clone_utf8(slice).leak_wtf_impl()
 }
 
-// ported from: src/sql_jsc/mysql/protocol/DecodeBinaryValue.zig

@@ -1,6 +1,6 @@
 //! An allocator that attempts to allocate from a provided buffer first,
 //! falling back to another allocator when the buffer is exhausted.
-//! Unlike `std.heap.StackFallbackAllocator`, this does not own the buffer.
+//! The buffer is borrowed, not owned.
 
 use core::ffi::c_void;
 
@@ -93,4 +93,3 @@ unsafe fn free(ctx: *mut c_void, buf: &mut [u8], alignment: Alignment, ra: usize
     self_.fallback.raw_free(buf, alignment, ra)
 }
 
-// ported from: src/bun_alloc/BufferFallbackAllocator.zig

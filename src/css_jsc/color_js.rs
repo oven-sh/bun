@@ -16,16 +16,16 @@ pub(crate) enum OutputColorFormat {
     Ansi256,
     Css,
     Hex,
-    HexUpper, // Zig: `HEX`
+    HexUpper,
     Hsl,
     Lab,
     Number,
     Rgb,
     Rgba,
-    RgbArray,   // Zig: `@"[rgb]"`
-    RgbaArray,  // Zig: `@"[rgba]"`
-    RgbObject,  // Zig: `@"{rgb}"`
-    RgbaObject, // Zig: `@"{rgba}"`
+    RgbArray,
+    RgbaArray,
+    RgbObject,
+    RgbaObject,
 }
 
 impl bun_jsc::FromJsEnum for OutputColorFormat {
@@ -164,8 +164,8 @@ pub mod ansi256 {
 
     pub(crate) type Buffer = [u8; 24];
 
-    /// Zig signature took `RGBA`; here we take the channels directly so the
-    /// pure escape-sequence builder doesn't depend on `bun_css::values::color`.
+    /// Takes the channels directly so the pure escape-sequence builder
+    /// doesn't depend on `bun_css::values::color`.
     pub(crate) fn from(red: u8, green: u8, blue: u8, buf: &mut Buffer) -> &[u8] {
         let val = get(red as u32, green as u32, blue as u32);
         // 0x1b is the escape character
@@ -221,7 +221,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
     let parsed_color: css::CssColorParseResult = 'brk: {
         if args[0].is_number() {
             let number: i64 = args[0].to_int64();
-            // Zig: packed struct(u32) { blue: u8, green: u8, red: u8, alpha: u8 }
+            // u32 bit layout, LSB-first: blue, green, red, alpha (one byte each).
             let int: u32 = number.rem_euclid(u32::MAX as i64).unsigned_abs() as u32;
             let blue = (int & 0xff) as u8;
             let green = ((int >> 8) & 0xff) as u8;
@@ -307,8 +307,8 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
 
         input = args[0].to_slice(global)?;
 
-        // Zig used ArenaAllocator + stackFallback(4096) (free init); MimallocArena::new()
-        // calls mi_heap_new(), so defer creation to the paths that actually allocate.
+        // MimallocArena::new() calls mi_heap_new(), so defer creation to the
+        // paths that actually allocate.
         let arena = Arena::new();
         let mut parser_input = css::ParserInput::new(input.slice(), &arena);
         let mut parser = css::Parser::new(
@@ -326,7 +326,6 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 return Ok(JSValue::NULL);
             }
 
-            // Matches Zig's `@tagName(err.basic().kind)`.
             let kind_name = match err.basic().kind {
                 css::BasicParseErrorKind::unexpected_token(_) => "unexpected_token",
                 css::BasicParseErrorKind::end_of_input => "end_of_input",
@@ -581,8 +580,6 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             let mut dest: Vec<u8> = Vec::new();
 
             let symbols = SymbolMap::init_list(Default::default());
-            // Zig passes (allocator, ArrayList, writer, opts, null, null, &symbols);
-            // the Rust signature maps 1:1 (arena, buffer, writer, opts, None, None, &symbols).
             let mut printer = css::Printer::new(
                 &arena,
                 bun_alloc::ArenaVec::<u8>::new_in(&arena),
@@ -602,5 +599,3 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
         }
     }
 }
-
-// ported from: src/css_jsc/color_js.zig

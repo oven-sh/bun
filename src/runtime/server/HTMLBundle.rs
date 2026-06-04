@@ -29,7 +29,7 @@ use crate::server::server_config::MethodOptional;
 use crate::server::{AnyRoute, AnyServer, GetOrStartLoadResult, ServePluginsCallback, StaticRoute};
 use crate::webcore::AnyBlob;
 
-// `bun.Output.scoped(.HTMLBundle, .hidden)` — wrapped in a sub-module so the
+// Scoped debug logger — wrapped in a sub-module so the
 // `pub static HTMLBundle` doesn't leak alongside the `pub struct HTMLBundle`
 // re-export from `crate::server`.
 mod debug_scope {
@@ -42,7 +42,6 @@ use debug_scope::HTMLBundle as debug;
 // hence the ref count alongside the JS wrapper.
 // `*mut HTMLBundle` is the m_ctx payload of a
 // `.classes.ts` wrapper — FFI rule says intrusive `RefPtr`.
-// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundle")]
 pub struct HTMLBundle {
@@ -87,7 +86,7 @@ const _: () = {
         fn to_js(self, _global: &JSGlobalObject) -> JSValue {
             // HTMLBundle is *only* constructed via `init()` → `IntrusiveRc::new`
             // (heap-boxed, intrusive-refcounted) and wrapped via the inherent
-            // `HTMLBundle::to_js(*mut Self, …)` below. The Zig codegen `toJS`
+            // `HTMLBundle::to_js(*mut Self, …)` below, which
             // wraps the *existing* `*HTMLBundle` allocation; re-boxing a
             // by-value `self` here would split the allocation from its refcount
             // and make `finalize`'s `deref` target the wrong heap block. No
@@ -114,7 +113,7 @@ const _: () = {
 impl HTMLBundle {
     /// Initialize an HTMLBundle given a path.
     pub fn init(global: &JSGlobalObject, path: &[u8]) -> IntrusiveRc<HTMLBundle> {
-        // Zig `try allocator.dupe` was the only fallible op; Box::from aborts on OOM.
+        // Box::from aborts on OOM.
         IntrusiveRc::new(HTMLBundle {
             ref_count: RefCount::init(),
             global,
@@ -127,7 +126,6 @@ impl HTMLBundle {
         bun_ptr::finalize_js_box_noop(self);
     }
 
-    // Zig `deinit`: only `allocator.free(this.path)` + `bun.destroy(this)`.
     // `path: Box<[u8]>` auto-drops; dealloc handled by IntrusiveRc — no explicit Drop body.
 
     pub fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -147,7 +145,6 @@ pub(crate) type HTMLBundleRoute = Route;
 // (non-Copy). `*mut Route` is recovered from uws userdata and the
 // `JSBundleCompletionTask` backref while a prior `&Route` may still be on the
 // stack — `&mut self` would alias (UB); `&self` + `UnsafeCell` is sound.
-// `bun.ptr.RefCount(Route, "ref_count", Route.deinit, .{ .debug_name = "HTMLBundleRoute" })`
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundleRoute")]
 pub struct Route {
@@ -188,7 +185,7 @@ pub enum State {
     Html(*mut StaticRoute),
 }
 
-// Zig's `State.deinit` is *only* invoked from `Route.deinit` and the
+// `State::deinit` is *only* invoked from `Route::deinit` and the
 // dev-mode reset in `onAnyRequest`; ordinary `this.state = ...` overwrites in
 // `onComplete`/`onPluginsResolved`/etc. do NOT run it. Mapping it to `impl Drop`
 // would fire on every assignment — in particular `on_complete`'s
@@ -316,8 +313,8 @@ impl Route {
             }
         }
 
-        // Zig `state: switch (this.state) { ... continue :state this.state; }` — one re-dispatch
-        // after `.pending` schedules the bundle.
+        // One re-dispatch
+        // after `Pending` schedules the bundle.
         loop {
             match route.state.get() {
                 State::Pending => {
@@ -375,7 +372,7 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    // TODO: use the code from DevServer.zig to render the error
+                    // TODO: use the code from DevServer.rs to render the error
                     resp.end_without_body(true);
                 }
                 State::Html(html) => {
@@ -429,7 +426,7 @@ impl Route {
         let vm = global.bun_vm().as_mut();
 
         let mut config = JSBundlerConfig::default();
-        // Zig `errdefer config.deinit(allocator)` — `Config` owns its fields and
+        // `Config` owns its fields and
         // drops on early-return.
         config.entry_points.insert(&self.bundle.path)?;
         let xform = &vm.transpiler.options.transform_options;
@@ -480,10 +477,8 @@ impl Route {
 
         if let Some(define) = &cli.args.serve_define {
             debug_assert_eq!(define.keys.len(), define.values.len());
-            // Zig bulk-set `entries.len` + `@memcpy` + `reIndex` against
-            // `StringArrayHashMap`; Rust `StringMap` exposes only put/insert. Same
-            // result, slightly more hash work.
-            // PERF(port): was bulk reIndex — profile if hot.
+            // `StringMap` exposes only put/insert (no bulk re-index);
+            // profile if hot.
             for (k, v) in define.keys.iter().zip(define.values.iter()) {
                 config.define.put(k, v)?;
             }
@@ -541,8 +536,6 @@ impl Route {
                 }
                 let mut log = Log::init();
                 completion_task.log.clone_to_with_recycled(&mut log, true);
-                // Reshaped for borrowck — Zig wrote
-                // `this.state = .{ .err = ... }` then mutated `this.state.err`.
                 if let Some(server) = self.server.get() {
                     if server.config().is_development() {
                         // `Output.errorWriterBuffered()` → process-global writer;
@@ -587,9 +580,7 @@ impl Route {
                     bun_output::flush();
                 }
 
-                // Reshaped for borrowck — Zig appended every route in
-                // iteration order then mutably called `html_route.clone()` through
-                // a raw ptr aliasing the route table. `AnyRoute::Static` carries
+                // `AnyRoute::Static` carries
                 // an intrusive `*mut StaticRoute` here; defer appending the HTML
                 // entry-point until after cloning so we retain the sole owner for
                 // the `clone()` mutable borrow. Static routes are keyed by
@@ -624,7 +615,6 @@ impl Route {
                         let n = {
                             use std::io::Write as _;
                             let mut cursor = std::io::Cursor::new(&mut hashbuf[..]);
-                            // `bufPrint(&buf, "{f}", .{hexIntLower(hash)}) catch unreachable`
                             write!(
                                 cursor,
                                 "{}",
@@ -759,7 +749,7 @@ impl Route {
                         .config()
                         .is_development()
                     {
-                        // TODO: use the code from DevServer.zig to render the error
+                        // TODO: use the code from DevServer.rs to render the error
                     } else {
                         // To protect privacy, do not show errors to end users in production.
                         // TODO: Show a generic error page.
@@ -781,10 +771,10 @@ impl Drop for Route {
         debug_assert!(self.pending_responses.get().is_empty());
         // `pending_responses` (Vec) and `bundle` (IntrusiveRc) auto-drop.
         // `state` has no `Drop` glue for the intrusive-pointer variants — release
-        // them explicitly (mirrors Zig `Route.deinit` calling `this.state.deinit()`).
+        // them explicitly.
         // `with_mut` is fine here — refcount==0 so no other `&Route` exists.
         self.state.with_mut(|s| s.deinit());
-        // `bun.destroy(this)` handled by IntrusiveRc dealloc.
+        // The Box free is handled by IntrusiveRc dealloc.
     }
 }
 
@@ -809,7 +799,7 @@ impl Drop for PendingResponse {
         // SAFETY: `route` was a live IntrusiveRc-managed Route when stored;
         // matches the `ref()` taken when this PendingResponse was created.
         unsafe { RefCount::<Route>::deref(self.route) };
-        // `bun.destroy(this)` handled by heap::take caller.
+        // The Box free is handled by the heap::take caller.
     }
 }
 
@@ -830,8 +820,6 @@ impl PendingResponse {
         // `ScopedRef` bumps the count and derefs on every exit path.
         let _keep_route = unsafe { bun_ptr::ScopedRef::new(route_ptr) };
 
-        // Reshaped for borrowck — Zig accessed this.route.pending_responses through
-        // raw ptr; mutate via raw ptr (single-threaded).
         // SAFETY: single-threaded; Route is alive (we hold a ref). R-2: deref as
         // shared (`&*`); `pending_responses` is `JsCell`-wrapped.
         let route = unsafe { &*route_ptr };
@@ -852,5 +840,3 @@ impl PendingResponse {
         }
     }
 }
-
-// ported from: src/runtime/server/HTMLBundle.zig

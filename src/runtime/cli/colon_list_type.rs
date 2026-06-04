@@ -2,18 +2,14 @@ use bun_core::fmt as bun_fmt;
 use bun_core::strings;
 use bun_core::{Error, Global, err, pretty_errorln};
 
-// Zig: `pub fn ColonListType(comptime t: type, comptime value_resolver: anytype) type`
-//
-// The Zig type-generator takes (a) the value type and (b) a comptime resolver fn,
-// and also branches on `comptime t == bun.schema.api.Loader`. Rust cannot take a
-// fn value as a const generic, so both params collapse into one trait that the
+// The value type and its resolver fn collapse into one trait that the
 // value type implements. Each `T` declares its own resolver and whether it is the
 // schema Loader.
 pub(crate) trait ColonListValue: Sized {
-    /// Mirrors `comptime value_resolver(str)`.
+    /// Parses one value from its string form.
     fn resolve_value(input: &[u8]) -> Result<Self, Error>;
 
-    /// Mirrors `if (comptime t == bun.schema.api.Loader)`.
+    /// Whether `T` is the schema `Loader` type.
     const IS_LOADER: bool = false;
 }
 
@@ -26,8 +22,7 @@ pub(crate) struct ColonListType<T: ColonListValue> {
 
 impl<T: ColonListValue> ColonListType<T> {
     pub(crate) fn init(count: usize) -> Self {
-        // Zig allocs two uninit slices of `count` and index-assigns in `load`;
-        // Rust uses `Vec::with_capacity` + `push`, which is infallible here.
+        // `Vec::with_capacity` + `push`, which is infallible here.
         let keys = Vec::with_capacity(count);
         let values = Vec::with_capacity(count);
 
@@ -62,7 +57,6 @@ impl<T: ColonListValue> ColonListType<T> {
                 .push(match T::resolve_value(&str[midpoint + 1..str.len()]) {
                     Ok(v) => v,
                     Err(e) if e == err!("InvalidLoader") => {
-                        // Mirrors Zig `bun.fmt.enumTagList(bun.options.Loader, .dash)`.
                         pretty_errorln!(
                             "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of:{}",
                             bun_fmt::quote(&str[midpoint + 1..str.len()]),
@@ -89,5 +83,3 @@ impl<T: ColonListValue> ColonListType<T> {
         Ok(list)
     }
 }
-
-// ported from: src/cli/colon_list_type.zig

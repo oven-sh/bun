@@ -210,8 +210,6 @@ impl FetchHeaders {
             .expect("WebCore__FetchHeaders__createEmpty returned null")
     }
 
-    // Reshaped for borrowck — Zig took `pico_headers: anytype` and read
-    // `pico_headers.list.ptr` / `.list.len`. In Rust, callers pass the slice directly.
     pub fn create_from_pico_headers<T>(pico_headers_list: &[T]) -> NonNull<FetchHeaders> {
         let out = PicoHeaders {
             ptr: pico_headers_list.as_ptr().cast::<c_void>(),
@@ -347,5 +345,3 @@ impl FetchHeaders {
 // `WebCore__FetchHeaders__put` extern decl above and the `fast_*` methods take
 // it by value, so the re-export is ABI-transparent.
 pub use bun_http_types::Method::HeaderName as HTTPHeaderName;
-
-// ported from: src/jsc/FetchHeaders.zig

@@ -1,5 +1,4 @@
-//! `bun.sys.Dir` — directory handle + helpers. Port of the `Dir` half of
-//! `src/sys/sys.zig` (Zig: `bun.sys.Dir` ≈ `std.fs.Dir`).
+//! `bun.sys.Dir` — directory handle + helpers.
 //!
 //! Owns the descriptor; closes it on Drop (skipping `Fd::INVALID` and the
 //! `AT_FDCWD` sentinel). Use [`Dir::into_raw`] to hand the fd off,
@@ -21,15 +20,15 @@ impl Drop for Dir {
     }
 }
 
-/// Options for `Dir::copy_file` (Zig: `std.fs.Dir.CopyFileOptions`).
+/// Options for `Dir::copy_file`.
 #[derive(Clone, Copy, Default)]
 pub struct CopyFileOptions {
     /// When set, the destination is created with this mode instead of the
-    /// source file's mode (Zig: `override_mode: ?File.Mode`).
+    /// source file's mode.
     pub override_mode: Option<Mode>,
 }
 
-/// Options for `Dir::make_open_path` (Zig: `std.fs.Dir.OpenOptions`).
+/// Options for `Dir::make_open_path`.
 #[derive(Clone, Copy, Default)]
 pub struct OpenDirOptions {
     pub iterate: bool,
@@ -83,7 +82,7 @@ impl Dir {
         get_fd_path(self.fd, buf)
     }
     /// Close now. Equivalent to dropping `self` but discards the syscall
-    /// result (matches Zig's `Dir.close()`).
+    /// result.
     #[inline]
     pub fn close(self) {
         drop(self);
@@ -101,13 +100,13 @@ impl Dir {
         unsafe { &*(core::ptr::from_ref(fd).cast::<Dir>()) }
     }
 
-    /// `std.fs.Dir.makePath` — `mkdir -p` relative to this dir.
+    /// `mkdir -p` relative to this dir.
     #[inline]
     pub fn make_path(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
         mkdir_recursive_at(self.fd, sub_path).map_err(Into::into)
     }
-    /// `std.fs.Dir.makeOpenPath` — try `openDir` first; on ENOENT, `makePath`
-    /// then `openDir` (Zig: vendor/zig/lib/std/fs/Dir.zig `makeOpenPath`).
+    /// Try opening the directory first; on ENOENT, `make_path`
+    /// then open it.
     pub fn make_open_path(
         &self,
         sub_path: &[u8],
@@ -124,10 +123,10 @@ impl Dir {
             Err(e) => Err(e.into()),
         }
     }
-    /// `std.fs.Dir.deleteTree` — recursive `rm -rf`. Port of Zig
-    /// `std.fs.Dir.deleteTree` (stack-based depth-first walk; std/fs/Dir.zig).
+    /// Recursive `rm -rf`
+    /// (stack-based depth-first walk).
     pub fn delete_tree(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
-        // `deleteTreeOpenInitialSubpath` — try unlinking as a file first; if
+        // `delete_tree_open_initial_subpath` — try unlinking as a file first; if
         // that yields IsDir/EPERM, open it as an iterable directory.
         let initial = match self.delete_tree_open_initial_subpath(sub_path)? {
             Some(d) => d,
@@ -139,8 +138,7 @@ impl Dir {
             parent_dir: Fd,
             iter: dir_iterator::WrappedIterator,
         }
-        // Ensure every still-open iterator dir is closed on early return
-        // (Zig: `defer StackItem.closeAll(stack.items)`).
+        // Ensure every still-open iterator dir is closed on early return.
         let mut stack = scopeguard::guard(Vec::<StackItem>::with_capacity(16), |mut s| {
             for item in s.drain(..) {
                 let _ = close(item.iter.dir());
@@ -175,10 +173,7 @@ impl Dir {
                             },
                         };
                         let parent = top.iter.dir();
-                        // The Zig original caps the stack at 16 and falls back to
-                        // `deleteTreeMinStackSizeWithKindHint` past that depth. The
-                        // `Vec` here grows, so the capacity check is dropped — same
-                        // semantics, no fixed-depth limit.
+                        // The `Vec` grows as needed, so no fixed-depth limit.
                         stack.push(StackItem {
                             name: entry.name.slice_u8().to_vec(),
                             parent_dir: parent,
@@ -208,7 +203,7 @@ impl Dir {
             let parent_dir = top.parent_dir;
             let name = core::mem::take(&mut top.name);
             // Pop before closing so the cleanup guard doesn't double-close on
-            // an error from `unlinkat_a` (Zig: `stack.items.len -= 1`).
+            // an error from `unlinkat_a`.
             stack.pop();
             let _ = close(dir_fd);
 
@@ -259,7 +254,7 @@ impl Dir {
         Ok(())
     }
 
-    /// Port of `std.fs.Dir.deleteTreeOpenInitialSubpath` — try removing
+    /// Try removing
     /// `sub_path` as a file; on `EISDIR`/`EPERM` open it as an iterable
     /// directory and return the fd. Returns `None` when removal succeeded or
     /// the path doesn't exist.
@@ -306,7 +301,7 @@ pub const AT_REMOVEDIR: i32 = libc::AT_REMOVEDIR;
 #[cfg(windows)]
 pub const AT_REMOVEDIR: i32 = 0x200;
 
-/// sys.zig:2928 `rmdirat` — `unlinkat(dir, path, AT_REMOVEDIR)`.
+/// `rmdirat` — `unlinkat(dir, path, AT_REMOVEDIR)`.
 #[inline]
 pub fn rmdirat(dirfd: impl AsFd, path: &ZStr) -> Maybe<()> {
     let dirfd = dirfd.as_fd();
@@ -324,17 +319,17 @@ fn unlinkat_a(dirfd: Fd, path: &[u8], flags: i32) -> Maybe<()> {
     unlinkat_with_flags(dirfd, z, flags)
 }
 
-/// `std.fs.File.CreateFlags` — subset used by `Dir::createFileZ` callers
-/// (e.g. `repository.zig:649`, `PackageManagerDirectories.zig`).
+/// File-creation flags — subset used by `create_file_z` callers
+/// (e.g. the package-manager repository/directories code).
 #[derive(Clone, Copy, Default)]
 pub struct CreateFlags {
     pub truncate: bool,
-    /// Open for reading as well as writing (Zig: `read: bool = false`).
+    /// Open for reading as well as writing (defaults to false).
     pub read: bool,
 }
 
 impl Dir {
-    /// `std.fs.Dir.makeDir` — single-level `mkdirat` (mode 0o755) relative to
+    /// Single-level `mkdirat` (mode 0o755) relative to
     /// this dir. Unlike `make_path`, does NOT create intermediate directories
     /// and surfaces `error.PathAlreadyExists` for callers to branch on.
     pub fn make_dir(&self, sub_path: &[u8]) -> core::result::Result<(), bun_core::Error> {
@@ -351,9 +346,9 @@ impl Dir {
         }
     }
 
-    /// `std.fs.Dir.symLink` — `symlinkat(target, self.fd, link)`. The
-    /// `is_directory` flag is a no-op on POSIX (kept for parity with Zig's
-    /// `SymLinkFlags`); on Windows it selects junction vs. file-symlink and
+    /// `symlinkat(target, self.fd, link)`. The
+    /// `is_directory` flag is a no-op on POSIX;
+    /// on Windows it selects junction vs. file-symlink and
     /// callers route through `sys_uv::symlink_uv` instead.
     pub fn sym_link(
         &self,
@@ -378,8 +373,8 @@ impl Dir {
         symlinkat(tz, self.fd, lz).map_err(Into::into)
     }
 
-    /// `std.fs.Dir.createFileZ` — create (or truncate) `sub_path` relative to
-    /// this dir and return a `File` handle. Zig stdlib semantics: `O_CREAT`,
+    /// Create (or truncate) `sub_path` relative to
+    /// this dir and return a `File` handle: `O_CREAT`,
     /// `O_WRONLY` (or `O_RDWR` if `flags.read`), `O_TRUNC` if `flags.truncate`.
     pub fn create_file_z(
         &self,
@@ -395,18 +390,18 @@ impl Dir {
         Ok(File::from_fd(fd))
     }
 
-    /// `std.fs.Dir.deleteFileZ` — `unlinkat(self.fd, sub_path, 0)`.
+    /// `unlinkat(self.fd, sub_path, 0)`.
     #[inline]
     pub fn delete_file_z(&self, sub_path: &ZStr) -> core::result::Result<(), bun_core::Error> {
         unlinkat(self.fd, sub_path).map_err(Into::into)
     }
 
-    /// `std.fs.Dir.copyFile` — open `source_path` (relative to `self`), create
+    /// Open `source_path` (relative to `self`), create
     /// `dest_path` (relative to `dest_dir`) with `O_CREAT|O_TRUNC`, then stream
     /// the contents via [`copy_file`]. Mode is taken from the source's `fstat`
-    /// unless `options.override_mode` is set (Zig stdlib semantics, minus the
-    /// `AtomicFile` rename — Bun's only call site is `gitignore` → `.gitignore`
-    /// where atomicity isn't required).
+    /// unless `options.override_mode` is set. No atomic-rename step —
+    /// Bun's only call site is `gitignore` → `.gitignore`
+    /// where atomicity isn't required.
     pub fn copy_file(
         &self,
         source_path: &[u8],
@@ -443,8 +438,8 @@ impl Dir {
         r.map_err(Into::into)
     }
 
-    /// `std.fs.Dir.openDirZ` — open `sub_path` (NUL-terminated) relative to
-    /// this dir as a `Dir` handle. Zig stdlib semantics: `O_DIRECTORY |
+    /// Open `sub_path` (NUL-terminated) relative to
+    /// this dir as a `Dir` handle: `O_DIRECTORY |
     /// O_RDONLY | O_CLOEXEC` (handled by `open_dir_at`).
     #[inline]
     pub fn open_dir_z(&self, sub_path: &ZStr) -> core::result::Result<Dir, bun_core::Error> {
@@ -453,13 +448,15 @@ impl Dir {
             .map_err(Into::into)
     }
 
-    /// `std.fs.Dir.openDir(sub_path, .{ .iterate, .no_follow, .access_sub_paths = true })`.
+    /// Open `sub_path` as an iterable, no-follow `Dir` handle with sub-path
+    /// access.
     ///
-    /// On POSIX, `iterate` / `access_sub_paths` are advisory (stdlib opens with
-    /// `O_DIRECTORY | O_RDONLY | O_CLOEXEC` regardless). On Windows the flags
-    /// select the access mask: `iterate` adds `FILE_LIST_DIRECTORY`, and the
-    /// handle is opened **without** `read_only` so the caller may create/rename
-    /// children — matching `std.fs.Dir.openDir`, *not* `bun.openDir`.
+    /// On POSIX, `iterate` / `access_sub_paths` are advisory (the handle is
+    /// opened with `O_DIRECTORY | O_RDONLY | O_CLOEXEC` regardless). On Windows
+    /// the flags select the access mask: `iterate` adds `FILE_LIST_DIRECTORY`,
+    /// and the handle is opened **without** `read_only` so the caller may
+    /// create/rename children — unlike the read-only `open_dir_*` iteration
+    /// helpers.
     #[inline]
     pub fn open_dir(
         &self,

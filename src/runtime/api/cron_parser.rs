@@ -298,7 +298,7 @@ fn parse_field<T: BitInt>(field: &[u8], min: u8, max: u8, kind: NameKind) -> Res
             if s.is_empty() {
                 return Err(CronError::InvalidStep);
             }
-            // Zig parsed the step as `u7`, so 128-255 overflow into InvalidStep too.
+            // Steps 128-255 overflow into InvalidStep too.
             match bun_core::parse_decimal::<u8>(s) {
                 Some(v @ 0..=127) => v,
                 _ => return Err(CronError::InvalidStep),
@@ -441,5 +441,3 @@ macro_rules! impl_bit_int {
     )*};
 }
 impl_bit_int!(u8, u16, u32, u64);
-
-// ported from: src/runtime/api/cron_parser.zig

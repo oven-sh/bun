@@ -155,7 +155,6 @@ fn apply_barrel_optimization_impl(
 
     // Build the set of needed import_record_indices from already-requested
     // export names. Export * records are always needed.
-    // PERF(port): was stack-fallback (8192) — profile if hot.
     let mut needed_records: ArrayHashMap<u32, ()> = ArrayHashMap::default();
 
     for record_idx in ast.export_star_import_records.iter() {
@@ -208,7 +207,6 @@ fn apply_barrel_optimization_impl(
     // import records that share a path with any needed record.
     if dev_handle.is_some() {
         // Collect paths of needed records.
-        // PERF(port): was stack-fallback (4096) — profile if hot.
         let mut needed_paths: StringArrayHashMap<()> = StringArrayHashMap::default();
 
         for rec_idx in needed_records.keys() {
@@ -370,10 +368,9 @@ pub(crate) fn schedule_barrel_deferred_imports(
     result_source_index: u32,
     result_ast_target: bun_ast::Target,
 ) -> Result<i32, AllocError> {
-    // The Zig original passed `*ParseTask.Result.Success` and read `result.ast`
-    // after `graph.ast.set(idx, result.ast)` value-copied it. Rust *moves*
-    // `result.ast` into `graph.ast`, so this fn reads the just-written
-    // `graph.ast[result_source_index]` instead. Phase 1/2 only read
+    // `result.ast` is *moved*
+    // into `graph.ast` before this fn runs, so this fn reads the just-written
+    // `graph.ast[result_source_index]`. Phase 1/2 only read
     // `import_records` / `named_imports` for THIS index; the BFS (Phase 3)
     // takes fresh `&mut graph.ast` borrows after these raw reads are dead.
     //
@@ -543,7 +540,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // Build work queue from this file's named_imports, then propagate
     // through chains of barrels. Only runs real work when barrels exist
     // (targets with deferred records).
-    // PERF(port): was stack-fallback (8192) — profile if hot.
     let mut queue: Vec<BarrelWorkItem> = Vec::new();
 
     // Read-only deref — valid through Phase 2 (see the raw-read note above).
@@ -661,7 +657,6 @@ pub(crate) fn schedule_barrel_deferred_imports(
     // dedup via requested_exports to prevent cycles.
     let initial_queue_len = queue.len();
 
-    // PERF(port): was stack-fallback (1024) — profile if hot.
     let mut barrels_to_resolve: ArrayHashMap<u32, ()> = ArrayHashMap::default();
 
     let mut newly_scheduled: i32 = 0;
@@ -821,4 +816,3 @@ fn persist_barrel_export(dev: &crate::dispatch::DevServerHandle, barrel_path: &[
     dev.register_barrel_export(barrel_path, alias)
 }
 
-// ported from: src/bundler/barrel_imports.zig

@@ -1,7 +1,5 @@
-//! JSC host fns extracted from `src/install/npm.zig` so that `install/` has
-//! no `JSValue`/`JSGlobalObject`/`CallFrame` references. Each enum keeps a
-//! `pub const jsFunction… = @import(...)` alias so call sites and the
-//! `$newZigFunction("npm.zig", "…")` codegen path are unchanged.
+//! JSC host fns for `bun_install::npm`, kept here so that `install/` has
+//! no `JSValue`/`JSGlobalObject`/`CallFrame` references.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
@@ -122,8 +120,7 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
         }
     };
 
-    // Zig built a borrowing `bun.URL` struct literal (host/hostname/
-    // href/origin/protocol all slicing `registry`). The Rust `Scope.url` field
+    // The `Scope.url` field
     // is `OwnedURL`, which stores only the href buffer and re-derives components
     // via `URL::parse` on demand. `load_by_file`/`read_all` only consult
     // `scope.url_hash` and `scope.url.href().len()`, so copying the raw href is
@@ -185,5 +182,3 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
     let mut result = BunString::borrow_utf8(&buf);
     bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut result, global)
 }
-
-// ported from: src/install_jsc/npm_jsc.zig

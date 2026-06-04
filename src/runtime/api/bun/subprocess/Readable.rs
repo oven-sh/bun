@@ -16,7 +16,7 @@ use bun_ptr::cow_slice::CowSlice;
 use super::subprocess_pipe_reader::PipeReader;
 use super::{StdioResult, Subprocess};
 
-// `bun.ptr.CowString` — the Zig-shaped owned/borrowed byte slice (has
+// `bun.ptr.CowString` — owned/borrowed byte slice (has
 // `init_owned` / `length` / `take_slice`). Distinct from the std `Cow` alias
 // re-exported at `bun_ptr::CowString`.
 pub type CowString = CowSlice<u8>;
@@ -58,8 +58,8 @@ impl Readable {
         unsafe { &mut *pipe.as_ptr() }
     }
 
-    /// Clear the `PipeReader`'s `process` backref and release the caller's ref
-    /// (Zig: `pipe.detach()`). Centralises what was the `into_raw()` +
+    /// Clear the `PipeReader`'s `process` backref and release the caller's ref.
+    /// Centralises what was the `into_raw()` +
     /// `unsafe { PipeReader::detach(raw) }` dance so the three callers in
     /// `finalize` / `to_js` / `to_buffered_value` stay safe — the caller's
     /// `IntrusiveRc` encodes the "live + one ref" invariant `detach()` needs,
@@ -116,8 +116,7 @@ impl Readable {
         super::assert_stdio_result!(result);
 
         // Ownership of any resource inside `stdio` (notably `.memfd`) is being
-        // *transferred* into the returned `Readable` — Zig's `Readable.init`
-        // never calls `stdio.deinit()`. `Stdio` has a Rust `Drop` impl that
+        // *transferred* into the returned `Readable`. `Stdio` has a `Drop` impl that
         // would close the memfd, so suppress it here to avoid a double-close
         // (EBADF) when the Readable later closes the same fd.
         let stdio = mem::ManuallyDrop::new(stdio);
@@ -324,5 +323,3 @@ impl Readable {
 }
 
 use bun_core as _; // bun.Output → bun_core (panics inlined as panic!())
-
-// ported from: src/runtime/api/bun/subprocess/Readable.zig

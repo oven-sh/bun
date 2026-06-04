@@ -73,8 +73,7 @@ pub enum BasicShape {
 }
 
 /// An [`inset()`](https://www.w3.org/TR/css-shapes-1/#funcdef-inset) rectangle shape.
-// Zig declares this `const` (file-private) but it's reachable via `pub enum BasicShape::Inset`,
-// so Rust requires `pub` here — Zig has no private-in-public lint.
+// Reachable via `pub enum BasicShape::Inset`, so it must be `pub`.
 pub struct InsetRect {
     /// The rectangle.
     pub rect: Rect<LengthPercentage>,
@@ -107,8 +106,7 @@ pub struct Polygon {
     /// The points of each vertex of the polygon.
     // If Polygon ever becomes arena-fed this must become (§Allocators: AST crates are arena-fed)
     // `bun_alloc::ArenaVec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.
-    // No construction site exists in src/css/*.zig today, so provenance is unconfirmed; keeping
-    // plain Vec<Point> until the arena story is verified.
+    // Keeping plain Vec<Point> until the arena story is verified.
     pub points: Vec<Point>,
 }
 
@@ -152,7 +150,6 @@ pub enum MaskMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, css::Parse, css::ToCss)]
 pub enum MaskClip {
     /// A geometry box.
-    // Zig: @"geometry-box"
     GeometryBox(GeometryBox),
     /// The painted content is not clipped.
     #[css(name = "no-clip")]
@@ -213,8 +210,7 @@ pub struct Mask {
 }
 
 impl Mask {
-    // Zig's PropertyFieldMap was an anon-struct const consumed by comptime
-    // reflection in shorthand handlers; represented here as an assoc const slice.
+    // Shorthand field→property map, consumed by shorthand handlers.
     pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
         ("image", PropertyIdTag::MaskImage),
         ("position", PropertyIdTag::MaskPosition),
@@ -226,8 +222,7 @@ impl Mask {
         ("mode", PropertyIdTag::MaskMode),
     ];
 
-    // Zig's VendorPrefixMap was an anon-struct const of bools consumed by
-    // comptime reflection; represented here as a field-name slice.
+    // Field names that carry a vendor prefix.
     pub const VENDOR_PREFIX_MAP: &'static [&'static str] =
         &["image", "position", "size", "repeat", "clip", "origin"];
 
@@ -423,7 +418,7 @@ impl MaskBorder {
         });
 
         if border_image.is_ok() || mode.is_some() {
-            // PERF(port): Zig used `comptime BorderImage.default()` — could const-eval the default
+            // PERF: could const-eval the default
             let bi = border_image.unwrap_or_else(|_| BorderImage::default());
             Ok(MaskBorder {
                 source: bi.source,
@@ -519,8 +514,6 @@ pub enum WebKitMaskSourceType {
 
 // blocked_on: PropertyId::WebKitMaskComposite variant name (codegen spelling is `WebKitMaskComposite`)
 pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
-    // Zig spells these variants kebab-case (@"mask-border-source" etc.); the
-    // Rust PropertyId enum uses the PascalCase spellings below.
     match property_id {
         PropertyId::MaskBorderSource => Some(PropertyId::MaskBoxImageSource(VendorPrefix::WEBKIT)),
         PropertyId::MaskBorderSlice => Some(PropertyId::MaskBoxImageSlice(VendorPrefix::WEBKIT)),
@@ -533,5 +526,3 @@ pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> 
         _ => None,
     }
 }
-
-// ported from: src/css/properties/masking.zig

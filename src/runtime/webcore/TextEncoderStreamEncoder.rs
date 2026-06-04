@@ -75,7 +75,6 @@ impl TextEncoderStreamEncoder {
         //
         let mut buffer: Vec<u8> = Vec::with_capacity(input.len() + prepend_replacement_len);
         if prepend_replacement_len > 0 {
-            // PERF(port): was appendSliceAssumeCapacity
             buffer.extend_from_slice(&[0xef, 0xbf, 0xbd]);
         }
 
@@ -99,7 +98,7 @@ impl TextEncoderStreamEncoder {
         }
 
         if cfg!(debug_assertions) {
-            // wrap in comptime if so simdutf isn't called in a release build here.
+            // guarded so simdutf isn't called in a release build here.
             debug_assert!(
                 buffer.len()
                     == (simdutf::length::utf8::from::latin1(input) + prepend_replacement_len)
@@ -180,7 +179,6 @@ impl TextEncoderStreamEncoder {
         );
 
         if let Some(pre) = &prepend {
-            // PERF(port): was appendSliceAssumeCapacity
             buf.extend_from_slice(&pre.bytes[0..pre.len as usize]);
         }
 
@@ -234,5 +232,3 @@ impl TextEncoderStreamEncoder {
         }
     }
 }
-
-// ported from: src/runtime/webcore/TextEncoderStreamEncoder.zig

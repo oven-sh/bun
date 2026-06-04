@@ -16,9 +16,8 @@ pub const BROTLI_SHARED_DICTIONARY_SERIALIZED: c_int = 1;
 pub type enum_BrotliSharedDictionaryType = c_uint;
 pub type BrotliSharedDictionaryType = enum_BrotliSharedDictionaryType;
 
-// pub extern fn BrotliSharedDictionaryCreateInstance(alloc_func: brotli_alloc_func, free_func: brotli_free_func, opaque: ?*anyopaque) ?*BrotliSharedDictionary;
-// pub extern fn BrotliSharedDictionaryDestroyInstance(dict: ?*BrotliSharedDictionary) void;
-// pub extern fn BrotliSharedDictionaryAttach(dict: ?*BrotliSharedDictionary, type: BrotliSharedDictionaryType, data_size: usize, data: [*]const u8) c_int;
+// Not bound: BrotliSharedDictionaryCreateInstance, BrotliSharedDictionaryDestroyInstance,
+// BrotliSharedDictionaryAttach (unused).
 
 unsafe extern "C" {
     // Opaque handle by reference + scalars only.
@@ -182,7 +181,7 @@ impl BrotliDecoder {
     }
 }
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliDecoderResult {
     err = 0,
@@ -191,14 +190,12 @@ pub enum BrotliDecoderResult {
     needs_more_output = 3,
 }
 
-// NOTE: brotli_c.zig (translate-c output) defines this error-code table three times
-// (loose `BROTLI_DECODER_*` consts, a subset `BrotliDecoderErrorCode` enum, and the
-// full `BrotliDecoderErrorCode2` enum). They are intentionally collapsed here into the
-// single complete enum below; `BrotliDecoderErrorCode` is kept as an alias for FFI
-// signatures. Do not re-add the duplicates on a mechanical re-port.
+// NOTE: the duplicate error-code tables the upstream brotli headers define are
+// intentionally collapsed into the single enum below; `BrotliDecoderErrorCode`
+// is kept as an alias so FFI signatures keep their upstream names.
 pub type BrotliDecoderErrorCode = BrotliDecoderErrorCode2;
 
-#[repr(i32)] // Zig: enum(c_int)
+#[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliDecoderErrorCode2 {
     NO_ERROR = 0,
@@ -236,7 +233,7 @@ pub enum BrotliDecoderErrorCode2 {
 pub const BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION: c_int = 0;
 pub const BROTLI_DECODER_PARAM_LARGE_WINDOW: c_int = 1;
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliDecoderParameter {
     DISABLE_RING_BUFFER_REALLOCATION = 0,
@@ -255,7 +252,7 @@ pub const BROTLI_MODE_GENERIC: c_int = 0;
 pub const BROTLI_MODE_TEXT: c_int = 1;
 pub const BROTLI_MODE_FONT: c_int = 2;
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliEncoderMode {
     generic = 0,
@@ -279,7 +276,7 @@ pub const BROTLI_PARAM_NPOSTFIX: c_int = 7;
 pub const BROTLI_PARAM_NDIRECT: c_int = 8;
 pub const BROTLI_PARAM_STREAM_OFFSET: c_int = 9;
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliEncoderParameter {
     mode = 0,
@@ -362,7 +359,7 @@ bun_opaque::opaque_ffi! {
     pub struct BrotliEncoder;
 }
 
-#[repr(u32)] // Zig: enum(c_uint)
+#[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum BrotliEncoderOperation {
     process = 0,
@@ -490,4 +487,3 @@ pub const BROTLI_DEFAULT_QUALITY: c_int = 11;
 pub const BROTLI_DEFAULT_WINDOW: c_int = 22;
 pub const BROTLI_DEFAULT_MODE: c_int = BROTLI_MODE_GENERIC;
 
-// ported from: src/brotli_sys/brotli_c.zig

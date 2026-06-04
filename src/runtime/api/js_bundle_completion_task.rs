@@ -50,14 +50,13 @@ use crate::node::types::{
 };
 use crate::server::html_bundle;
 
-/// Mirrors Zig `BundleV2.JSBundleCompletionTask`. See module doc for the
-/// layering rationale.
-// `bun.ptr.ThreadSafeRefCount(@This(), "ref_count", deinit, .{})`
-// NOTE: comment says ThreadSafeRefCount but field is `RefCount<Self>` — pre-
-// existing port discrepancy, not addressed by the dedup.
+/// See module doc for the layering rationale.
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(destroy = Self::deinit, debug_name = "JSBundleCompletionTask")]
 pub struct JSBundleCompletionTask {
+    // NOTE: this should arguably be a thread-safe refcount, but it is the plain
+    // (non-atomic) `RefCount<Self>` — a pre-existing discrepancy. See the
+    // `unsafe impl Send` below for the thread-affinity constraint this imposes.
     pub ref_count: RefCount<Self>,
     pub config: JSBundlerConfig,
     // BACKREF — the JS-thread `EventLoop` outlives every completion task; safe
@@ -95,7 +94,7 @@ impl JSBundleCompletionTask {
         boxed.poll_ref.disable();
         if let Some(plugin) = boxed.plugins.take() {
             // `plugin` is the live FFI handle stashed at construction;
-            // last-ref drop is the only place that releases it (Zig: `plugin.deinit()`).
+            // last-ref drop is the only place that releases it.
             Plugin::destroy(plugin.as_ptr());
         }
         // Owned fields (`config`, `log`, `result`, `promise`) drop with the Box.
@@ -103,7 +102,12 @@ impl JSBundleCompletionTask {
 }
 
 // SAFETY: enqueued onto the bundle thread; field access is serialized by
-// the producer/consumer handshake (`UnboundedQueue` + `Waker`).
+// the producer/consumer handshake (`UnboundedQueue` + `Waker`). Additionally,
+// `ref_count` is the non-atomic `RefCount<Self>` (a `Cell<u32>`; its
+// `ThreadLock` asserts single-thread affinity in debug builds only), so all
+// `ref_()`/`deref()` calls must happen on the JS thread — the bundle thread
+// may hold and transfer an already-taken +1 across the handshake but must
+// never touch the count itself.
 unsafe impl Send for JSBundleCompletionTask {}
 
 /// `BundleV2.createAndScheduleCompletionTask` — construct, take a process-keepalive
@@ -979,8 +983,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         transpiler.resolver.env_loader =
             NonNull::new(transpiler.env.cast::<bun_dotenv::Loader<'_>>());
         // `Resolver.opts` is the resolver-crate subset
-        // — re-project from the now-mutated `transpiler.options` (Zig assigned
-        // the struct by value: `resolver.opts = transpiler.options`).
+        // — re-project from the now-mutated `transpiler.options`.
         transpiler.sync_resolver_opts();
         Ok(())
     }
@@ -1024,8 +1027,6 @@ impl CompletionStruct for JSBundleCompletionTask {
         &mut self,
         bump: &'a Arena,
     ) -> Result<&'a mut Transpiler<'a>, bun_core::Error> {
-        // Zig: `transpiler.* = try bun.Transpiler.init(alloc, &completion.log,
-        //        api.TransformOptions{ ... }, completion.env);`
         let config = &self.config;
         let opts = api::TransformOptions {
             define: if config.define.count() > 0 {
@@ -1049,13 +1050,9 @@ impl CompletionStruct for JSBundleCompletionTask {
             extension_order: Vec::new(),
             env_files: Vec::new(),
             conditions: config.conditions.keys().to_vec(),
-            // The Zig original read `transpiler.options.ignore_dce_annotations`
-            // off the *uninitialized* out-param (i.e. whatever the previous
-            // build left there). There is no prior `Transpiler` here; use the
-            // config value, which `configure_bundler` reapplies anyway.
+            // Use the config value, which `configure_bundler` reapplies anyway.
             ignore_dce_annotations: config.ignore_dce_annotations,
             drop: config.drop.keys().to_vec(),
-            // Same uninitialized-read in the original for `bunfig_path`; default empty.
             bunfig_path: Box::default(),
             jsx: Some(config.jsx.clone()),
             ..Default::default()
@@ -1069,7 +1066,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         let t = Transpiler::init(bump, log, opts, Some(env))?;
         let transpiler: &'a mut Transpiler<'a> = bump.alloc(t);
 
-        // Post-init field wiring (the rest of Zig `configureBundler`).
+        // Post-init field wiring.
         // Reborrow through a raw ptr so `&mut self` is usable
         // again after handing `&'a mut Transpiler` (which is tied to `bump`,
         // not `self`) to the trait method.
@@ -1102,8 +1099,7 @@ impl CompletionStruct for JSBundleCompletionTask {
         // (`NonNull`) end-to-end; `ThreadPool::init` stores it as `*mut`.
         let worker_pool = NonNull::new(thread_pool);
 
-        // Zig passed the same `heap` by value (mimalloc handle struct copy);
-        // `Graph.heap` is now a borrow, so reuse the caller-owned `bump`.
+        // `Graph.heap` is a borrow, so reuse the caller-owned `bump`.
         let mut bv2 = BundleV2::init(transpiler, None, bump, event_loop, false, worker_pool, bump)?;
 
         bv2.plugins = self.plugins();
@@ -1115,7 +1111,7 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         self.set_transpiler(&raw mut *bv2);
 
-        // Snapshot entry points as `&[&[u8]]` (Zig `keys()` is `[][]const u8`).
+        // Snapshot entry points as `&[&[u8]]`.
         let entry_points: Vec<&[u8]> = self
             .config
             .entry_points
@@ -1126,9 +1122,8 @@ impl CompletionStruct for JSBundleCompletionTask {
 
         let run = bv2.run_from_js_in_new_thread(&entry_points);
 
-        // Zig: `defer { ast_memory_allocator.pop(); this.deinitWithoutFreeingArena(); }`
-        // (the AST-allocator pop lives in `generate_in_new_thread`).
-        // `errdefer { source_maps.*_wait_group.wait(); }` — only on error path.
+        // The AST-allocator pop lives in `generate_in_new_thread`; the
+        // source-map wait-group waits run only on the error path.
         match run {
             Ok(build) => {
                 self.set_result(BundleV2Result::Value(build));
@@ -1144,5 +1139,3 @@ impl CompletionStruct for JSBundleCompletionTask {
         }
     }
 }
-
-// ported from: src/bundler_jsc/JSBundleCompletionTask.zig

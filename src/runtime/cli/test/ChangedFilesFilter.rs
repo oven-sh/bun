@@ -41,7 +41,6 @@ use bun_which::which;
 use crate::Command;
 use crate::api::bun_process::sync as spawn_sync;
 
-// named `Result` in Zig; kept verbatim for side-by-side diffing.
 // `core::result::Result` is fully qualified throughout this file to avoid the
 // shadow.
 pub struct Result<'a> {
@@ -129,9 +128,7 @@ pub(crate) fn filter<'a>(
     //
     // `BundleV2::scan_module_graph_from_cli` takes
     // `&'a mut Transpiler<'a>` (invariant), so the arena, log, and transpiler
-    // are process-lifetime. The Zig original does the same — see the comment
-    // after the call about intentionally leaving the ThreadLocalArena and
-    // worker pool alive. Route through the shared CLI arena.
+    // are process-lifetime. Route through the shared CLI arena.
     let arena: &'static Arena = crate::cli::cli_arena();
     let log: &'static mut bun_ast::Log = arena.alloc(bun_ast::Log::new());
 
@@ -158,8 +155,8 @@ pub(crate) fn filter<'a>(
     scan_transpiler.options.tree_shaking = false;
     scan_transpiler.configure_linker();
     let _ = scan_transpiler.configure_defines();
-    // Zig assigns `resolver.opts = options` by value; `Transpiler::init`
-    // already projected resolver.opts, so sync only the fields we changed above.
+    // `Transpiler::init` already projected resolver.opts, so sync only the
+    // fields we changed above.
     scan_transpiler.resolver.opts.target = scan_transpiler.options.target;
     scan_transpiler.resolver.opts.packages = bun_resolver::options::Packages::External;
     scan_transpiler.resolver.opts.output_dir = Box::default();
@@ -226,11 +223,9 @@ pub(crate) fn filter<'a>(
         }
         // All scanned entry points are absolute, and the resolver emits
         // absolute file paths as well.
-        // PERF(port): was putAssumeCapacity — profile if it shows up on a hot path.
         path_to_index.put_assume_capacity(path_text, u32::try_from(idx).unwrap());
         // Copy out of the bundler's arena so the caller can use these paths
         // after the BundleV2 heap is gone.
-        // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.
         graph_files.push(Box::<[u8]>::from(path_text));
     }
 
@@ -301,9 +296,7 @@ pub(crate) fn filter<'a>(
         }
     }
 
-    // The Zig original left the BundleV2 alive for the rest of the process —
-    // its AST payload lived in `graph.heap`. In the Rust port `to_ast()`
-    // materializes `Vec<Symbol>` / `Vec<Part>` / `Vec<ImportRecord>` on the
+    // `to_ast()` materializes `Vec<Symbol>` / `Vec<Part>` / `Vec<ImportRecord>` on the
     // global heap and the slab-only `MultiArrayList` drop never frees them, so
     // release the graph columns and the bundler-owned worker pool now that
     // everything needed has been copied out above. The scan transpiler itself
@@ -351,7 +344,7 @@ pub(crate) fn init_watch_trigger() {
             let seed: u64 =
                 bun_core::time::milli_timestamp() as u64 ^ unsafe { libc::getpid() } as u64;
             // wyhash of a time^pid seed; only used to make a unique temp
-            // trigger-file name (Zig used DefaultPrng for the same purpose).
+            // trigger-file name.
             let rand: u64 = bun_wyhash::hash(&seed.to_ne_bytes());
             let tmpdir = RealFS::tmpdir_path();
             let mut fresh: Vec<u8> = Vec::new();
@@ -369,7 +362,7 @@ pub(crate) fn init_watch_trigger() {
             let fresh = ZBox::from_vec(fresh);
             // Export once so every exec()'d descendant inherits the same
             // path. Adding (not removing) an env var is safe w.r.t.
-            // `std.os.environ`; it simply won't be visible to code that
+            // the environ snapshot; it simply won't be visible to code that
             // iterates the startup-captured slice in this process.
             // SAFETY: both strings are NUL-terminated; setenv copies into libc env storage.
             unsafe {
@@ -439,7 +432,7 @@ fn consume_watch_trigger() -> Option<StringSet> {
             if !sys::exists(path) {
                 continue;
             }
-            let _ = set.insert(path); // OOM-only Result (Zig: catch unreachable)
+            let _ = set.insert(path); // OOM-only Result
         }
         // If every triggering path was a deletion, fall back to git so the
         // user at least gets the same behaviour as the initial run rather
@@ -457,8 +450,6 @@ pub(crate) enum GitError {
     GitNotFound,
     #[error("GitFailed")]
     GitFailed,
-    // Zig union'd `std.mem.Allocator.Error` here; allocator params
-    // were dropped (global mimalloc aborts on OOM), so OutOfMemory is gone.
 }
 
 bun_core::named_error_set!(GitError);
@@ -608,7 +599,6 @@ pub(crate) struct GitResult {
 
 fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
     let mut argv: Vec<&[u8]> = Vec::with_capacity(args.len() + 3);
-    // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.
     argv.push(git_path);
     // `core.quotePath` (on by default) wraps non-ASCII filenames in quotes
     // and emits octal escapes. We want raw UTF-8 paths so they match the
@@ -628,10 +618,8 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         // Windows rather than spinning up a MiniEventLoop.
         #[cfg(windows)]
         windows: spawn_sync::WindowsOptions {
-            // Zig `EventLoopHandle.init(anytype)` accepted a
-            // `*VirtualMachine` and called `vm.eventLoop()` internally; the
-            // Rust split keeps `init` taking the erased `*mut ()` event-loop
-            // pointer directly, so unwrap it here.
+            // `init` takes the erased `*mut ()` event-loop pointer
+            // directly, so unwrap it here.
             loop_: EventLoopHandle::init(VirtualMachine::get().event_loop().cast()),
             ..Default::default()
         },
@@ -691,10 +679,9 @@ fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
         // `StringSet.insert` dupes the key internally; abort on OOM rather
         // than propagating so the set can never be left holding a pointer
         // into our stack `buf` on the errdefer cleanup path.
-        let _ = set.insert(abs); // OOM-only Result (Zig: catch unreachable)
+        let _ = set.insert(abs); // OOM-only Result
     }
 }
 
 use crate::Command::HotReload;
 
-// ported from: src/cli/test/ChangedFilesFilter.zig

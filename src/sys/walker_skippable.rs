@@ -183,8 +183,6 @@ impl Drop for Walker {
     fn drop(&mut self) {
         if !self.stack.is_empty() {
             for item in &mut self.stack[1..] {
-                // Zig had `if (self.stack.items.len != 0)` here, which is always true inside
-                // this branch — preserved as-is.
                 item.iter.dir().close();
             }
             // `self.stack` Vec drops itself.
@@ -238,5 +236,3 @@ pub fn walk(
         resolve_unknown_entry_types: false,
     })
 }
-
-// ported from: src/sys/walker_skippable.zig

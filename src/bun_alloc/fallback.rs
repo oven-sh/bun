@@ -4,9 +4,8 @@ use crate::Alignment;
 
 pub mod z;
 
-/// `std.heap.c_allocator` — a `std.mem.Allocator` value backed by libc
-/// malloc/free. Exposed as a ZST with inherent `raw_*` methods mirroring the
-/// Zig vtable so the zeroing wrapper in `z.rs` can layer on top.
+/// An allocator backed by libc malloc/free. Exposed as a ZST with inherent
+/// `raw_*` methods so the zeroing wrapper in `z.rs` can layer on top.
 #[derive(Clone, Copy, Default)]
 pub struct CAllocator;
 
@@ -16,7 +15,7 @@ impl CAllocator {
     #[inline]
     pub fn raw_alloc(&self, len: usize, alignment: Alignment, _ret_addr: usize) -> Option<*mut u8> {
         // libc malloc guarantees alignment to `max_align_t`; for larger
-        // alignments use the aligned variant (Zig's `CAllocator` does the same).
+        // alignments use the aligned variant.
         let align = alignment.to_byte_units();
         // SAFETY: libc malloc/aligned_alloc are sound for any nonzero size.
         let ptr = unsafe {
@@ -48,8 +47,8 @@ impl CAllocator {
         new_len: usize,
         _ret_addr: usize,
     ) -> bool {
-        // Zig `CAllocator.resize`: in-place only — succeed on shrink or if the
-        // backing allocation already has enough usable size; never relocate.
+        // In-place only — succeed on shrink or if the backing allocation
+        // already has enough usable size; never relocate.
         if new_len <= buf.len() {
             return true;
         }
@@ -67,8 +66,7 @@ impl CAllocator {
         }
         #[cfg(windows)]
         {
-            // Zig's `std.heap.CAllocator` probes `_msize` on Windows. Our
-            // over-aligned path uses `_aligned_malloc`, and MSDN forbids
+            // Our over-aligned path uses `_aligned_malloc`, and MSDN forbids
             // `_msize` on those blocks — must use `_aligned_msize` instead.
             unsafe extern "C" {
                 fn _msize(p: *mut c_void) -> usize;
@@ -127,8 +125,7 @@ pub use z::ALLOCATOR as z_allocator;
 /// and must go through [`CAllocator::raw_free`] so `_aligned_free` is used.
 pub unsafe fn free_without_size(ptr: *mut c_void) {
     // SAFETY: caller contract — ptr is null or a plain malloc-family allocation;
-    // libc free accepts null. Same precondition as Zig `std.c.free`.
+    // libc free accepts null.
     unsafe { libc::free(ptr) }
 }
 
-// ported from: src/bun_alloc/fallback.zig

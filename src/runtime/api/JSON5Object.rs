@@ -88,7 +88,7 @@ struct Stringifier {
     space: Space,
     // NOTE: `JSValue` keys live on the heap here, but every entry is also
     // live on the native stack via the `stringify_value` recursion chain, so the
-    // conservative GC scan keeps them alive. Matches the Zig.
+    // conservative GC scan keeps them alive.
     visiting: HashMap<JSValue, ()>,
 }
 
@@ -209,7 +209,7 @@ impl Stringifier {
         }
 
         // Object or array — check for circular references.
-        // Zig: `try visiting.getOrPut(...)`. The call site is wired for fallible
+        // The call site is wired for fallible
         // allocation (Err → OutOfMemory), but `zig_hash_map`'s grow path currently
         // allocates infallibly and aborts on OOM, so the Err arm only becomes live
         // once the collections-side grow is made fallible.
@@ -223,8 +223,7 @@ impl Stringifier {
                 .throw(format_args!("Converting circular structure to JSON5"))
                 .into());
         }
-        // NOTE: reshaped for borrowck — Zig used `defer visiting.remove`;
-        // a scopeguard here would hold `&mut self.visiting` across the recursive
+        // NOTE: a scopeguard here would hold `&mut self.visiting` across the recursive
         // `&mut self` calls below, so remove manually after the call instead.
         let result = if unwrapped.is_array() {
             self.stringify_array(global, unwrapped)
@@ -434,9 +433,8 @@ impl Stringifier {
 }
 
 fn estring_to_js(str: &E::EString, global: &JSGlobalObject) -> JsResult<JSValue> {
-    // NOTE: shim for `EString::to_js(allocator, global)` (lives in
-    // `bun_ast::e::String` Zig-side). The JSON5 parser never builds
-    // ropes, so the simple slice → JS path is sufficient.
+    // NOTE: the JSON5 parser never builds ropes, so the simple slice → JS
+    // path is sufficient.
     if str.is_utf16 {
         let zig = ZigString::init_utf16(str.slice16());
         let bun_s = BunString::init(zig);
@@ -486,5 +484,3 @@ fn expr_to_js_with_check(
         _ => Ok(JSValue::UNDEFINED),
     }
 }
-
-// ported from: src/runtime/api/JSON5Object.zig

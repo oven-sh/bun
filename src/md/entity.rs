@@ -2157,5 +2157,3 @@ static ENTITY_MAP: &[Entity] = &[
     Entity { name: b"&zwj;", codepoints: [8205, 0] },
     Entity { name: b"&zwnj;", codepoints: [8204, 0] },
 ];
-
-// ported from: src/md/entity.zig

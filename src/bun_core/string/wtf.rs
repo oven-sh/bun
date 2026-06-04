@@ -1,5 +1,4 @@
 use crate::string::strings;
-// Note (port): ZigString.Slice is a nested type in Zig; in Rust it lives alongside ZigString.
 use crate::string::ZigStringSlice;
 
 // Canonical layout lives in `bun_alloc` (lowest-tier crate) so the
@@ -46,8 +45,7 @@ impl WTFStringImplExt for WTFStringImplStruct {
     fn to_latin1_slice(&self) -> ZigStringSlice {
         self.r#ref();
         let s = self.latin1_slice();
-        // ZigStringSlice::WTF derefs `self` on Drop — replaces the Zig
-        // StringImplAllocator vtable trick with explicit ownership.
+        // ZigStringSlice::WTF derefs `self` on Drop.
         // SAFETY: `self` is a live WTF::StringImpl with refcount just bumped above;
         // we store only a `*const` (never materialize `&mut`) and the matching
         // deref happens via FFI on Drop. Mutation of m_ref_count is C++-side
@@ -112,8 +110,8 @@ impl WTFStringImplExt for WTFStringImplStruct {
         ZigStringSlice::init_owned(strings::to_utf8_alloc(self.utf16_slice()))
     }
 
-    /// Allocates a NUL-terminated UTF-8 copy. Port of `toOwnedSliceZ`.
-    /// `.len()` excludes the sentinel (Zig `[:0]u8` semantics).
+    /// Allocates a NUL-terminated UTF-8 copy.
+    /// `.len()` excludes the sentinel.
     fn to_owned_slice_z(&self) -> crate::ZBox {
         if self.is_8bit() {
             if let Some(utf8) = strings::to_utf8_from_latin1_z(self.latin1_slice()) {
@@ -149,10 +147,7 @@ impl WTFStringImplExt for WTFStringImplStruct {
         if self.is_8bit() {
             let input = self.latin1_slice();
             if !input.is_empty() {
-                // Port: latin1→utf8 length is just elementLengthLatin1IntoUTF8
-                // (each high byte becomes 2 utf8 bytes). The Zig went through
-                // jsc.WebCore.encoding.byteLengthU8 but for Utf8 target that
-                // reduces to the same arithmetic.
+                // latin1→utf8 length: each high byte becomes 2 utf8 bytes.
                 strings::element_length_latin1_into_utf8(input)
             } else {
                 0
@@ -177,14 +172,7 @@ impl WTFStringImplExt for WTFStringImplStruct {
     }
 }
 
-// Note (port): Zig's `StringImplAllocator` was a `std.mem.Allocator` vtable trick
-// (alloc() bumped ref, free() dropped it) so a `ZigString.Slice` would deref the
-// WTFStringImpl when freed. Replaced by `ZigStringSlice::WTF { .. }` explicit
-// ownership variant — see `to_latin1_slice` above. No allocator trait needed.
-
 // `WTF.parseDouble` canonical now lives in bun_core::fmt (tier-0) so
 // `bun_interchange` (yaml/toml) and `bun_js_parser::lexer` can call it without
-// any string/jsc dep. Re-exported here to keep the Zig namespace shape.
+// any string/jsc dep. Re-exported here for back-compat.
 pub use crate::fmt::{InvalidCharacter, parse_double};
-
-// ported from: src/string/wtf.zig

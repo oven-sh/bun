@@ -36,7 +36,7 @@ impl ScanOpts {
         _arena: &Arena,
         cwd_val: JSValue,
         absolute: bool,
-        fn_name: &'static str, // PERF(port): was comptime monomorphization
+        fn_name: &'static str,
     ) -> JsResult<Box<[u8]>> {
         let cwd_string = bun_core::OwnedString::new(BunString::from_js(cwd_val, global_this)?);
         if cwd_string.is_empty() {
@@ -58,7 +58,7 @@ impl ScanOpts {
                 break 'cwd_str Box::<[u8]>::from(cwd_utf8.slice());
             }
 
-            // `cwd_utf8` drops at scope exit (was `defer cwd_utf8.deinit()`).
+            // `cwd_utf8` drops at scope exit.
             let mut path_buf2 = [0u8; MAX_PATH_BYTES * 2];
 
             if !absolute {
@@ -97,7 +97,7 @@ impl ScanOpts {
     fn from_js(
         global_this: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-        fn_name: &'static str, // PERF(port): was comptime monomorphization
+        fn_name: &'static str,
         arena: &mut Arena,
     ) -> JsResult<Option<ScanOpts>> {
         let Some(opts_obj) = arguments.next_eat() else {
@@ -298,7 +298,7 @@ impl Glob {
         &self,
         global_this: &JSGlobalObject,
         arguments: &mut ArgumentsSlice,
-        fn_name: &'static str, // PERF(port): was comptime monomorphization
+        fn_name: &'static str,
         arena: &mut Arena,
     ) -> JsResult<Option<Box<GlobWalker>>> {
         let Some(match_opts) = ScanOpts::from_js(global_this, arguments, fn_name, arena)? else {
@@ -357,7 +357,7 @@ impl Glob {
         let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
-        // `arguments` drops at scope exit (was `defer arguments.deinit()`).
+        // `arguments` drops at scope exit.
         let Some(pat_arg) = arguments.next_eat() else {
             return Err(global_this.throw(format_args!(
                 "Glob.constructor: expected 1 arguments, got 0"
@@ -464,8 +464,7 @@ impl Glob {
                 }
                 Ok(Some(gw)) => gw,
             };
-        // Zig: `defer { globWalker.deinit(true); alloc.destroy(globWalker); }` — Box<GlobWalker>
-        // drops at scope exit (`GlobWalker::Drop` ≡ `deinit(true)`).
+        // Box<GlobWalker> drops at scope exit.
 
         match glob_walker.walk()? {
             bun_sys::Result::Err(err) => {
@@ -483,9 +482,6 @@ impl Glob {
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PERF(port): was arena bulk-free — Zig used a local ArenaAllocator for the
-        // toSlice() temp allocation. Dropped here; to_slice() owns its buffer.
-
         let arguments_ = callframe.arguments_old::<1>();
         // SAFETY: bun_vm() returns a non-null *mut to the live VirtualMachine for this global.
         let mut arguments = ArgumentsSlice::init(global_this.bun_vm(), arguments_.slice());
@@ -502,12 +498,10 @@ impl Glob {
         }
 
         let str = str_arg.to_slice(global_this)?;
-        // `str` drops at scope exit (was `defer str.deinit()`).
+        // `str` drops at scope exit.
 
         Ok(JSValue::from(
             bun_glob::r#match(&self.pattern, str.slice()).matches(),
         ))
     }
 }
-
-// ported from: src/runtime/api/glob.zig

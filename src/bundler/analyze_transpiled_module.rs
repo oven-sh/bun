@@ -25,7 +25,7 @@ pub use bun_js_printer::analyze_transpiled_module::{
 /// `bundler_jsc::analyze_jsc::to_js_module_record`.
 pub type RequestedModuleValue = FetchParameters;
 
-/// Legacy name used by `linker_context::postProcessJSChunk` — the Zig side
+/// Legacy name used by `linker_context::postProcessJSChunk` — the type was
 /// renamed `ImportAttributes` → `FetchParameters` but the bundler call site
 /// still spells `ImportAttributes::None`.
 pub(crate) type ImportAttributes = FetchParameters;
@@ -34,14 +34,14 @@ pub(crate) type ImportAttributes = FetchParameters;
 // RecordKind
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Non-exhaustive `enum(u8)` in Zig — any byte value is representable, so model
+/// Any byte value is representable, so model
 /// as a transparent newtype with associated consts (a `#[repr(u8)] enum` would
 /// be UB for unknown discriminants read out of the serialized buffer).
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct RecordKind(pub u8);
 // SAFETY: `#[repr(transparent)]` over `u8` — no padding, every bit pattern is
-// a valid `u8` (Zig modeled this as a non-exhaustive `enum(u8)`). `Pod` lets
+// a valid `u8`. `Pod` lets
 // `bytemuck::{cast_slice,try_cast_slice}` reinterpret byte buffers and the
 // printer-crate `#[repr(u8)]` enum into `&[RecordKind]` without `unsafe`.
 unsafe impl bytemuck::Zeroable for RecordKind {}
@@ -116,19 +116,17 @@ bitflags::bitflags! {
 }
 
 impl Flags {
-    /// Zig: `Flags.contains_import_meta` packed-struct field. Exposed as a
+    /// Exposed as a
     /// method so downstream callers (e.g. `bundler_jsc::analyze_jsc`) can read
     /// the bit without depending on the bitflags const name.
     #[inline]
     pub const fn contains_import_meta(self) -> bool {
         self.contains(Flags::CONTAINS_IMPORT_META)
     }
-    /// Zig: `Flags.is_typescript` packed-struct field.
     #[inline]
     pub const fn is_typescript(self) -> bool {
         self.contains(Flags::IS_TYPESCRIPT)
     }
-    /// Zig: `Flags.has_tla` packed-struct field.
     #[inline]
     pub const fn has_tla(self) -> bool {
         self.contains(Flags::HAS_TLA)
@@ -154,8 +152,7 @@ bun_core::named_error_set!(ModuleInfoError);
 /// Alignment: the on-disk format pads every multi-byte field to a 4-byte
 /// offset, and [`Self::create`] allocates the backing buffer with 4-byte
 /// alignment ([`MODULE_INFO_ALIGN`]), so every `RawSlice<T>` here is properly
-/// aligned for `T` and `.slice()` is sound. (Zig used `[]align(1) const T`
-/// because its allocator didn't guarantee the base; we do instead.)
+/// aligned for `T` and `.slice()` is sound.
 pub struct ModuleInfoDeserialized {
     pub strings_buf: bun_ptr::RawSlice<u8>,
     pub strings_lens: bun_ptr::RawSlice<u32>,
@@ -232,9 +229,7 @@ impl ModuleInfoDeserialized {
         unsafe {
             match (*this).owner {
                 Owner::ModuleInfo(mi) => {
-                    // Zig recovered the parent via
-                    // `@fieldParentPtr("_deserialized", self)`. The Rust port
-                    // stores the `*mut ModuleInfo` directly because the printer
+                    // The `*mut ModuleInfo` is stored directly because the printer
                     // crate's `ModuleInfo` no longer embeds this struct.
                     drop(bun_core::heap::take(mi));
                     drop(bun_core::heap::take(this));
@@ -342,8 +337,7 @@ impl ModuleInfoDeserialized {
     /// cache or standalone module graph). Returns `None` instead of panicking on
     /// corrupt/truncated data.
     pub fn create_from_cached_record(source: &[u8]) -> Option<Box<ModuleInfoDeserialized>> {
-        // Zig matched on error.OutOfMemory → bun.outOfMemory(); in
-        // Rust, allocation failure aborts via the global arena, so only
+        // Allocation failure aborts via the global arena, so only
         // BadModuleInfo remains.
         Self::create(source).ok()
     }
@@ -437,9 +431,7 @@ unsafe fn free_aligned_dup(slice: *mut [u8]) {
 /// or its length is not a multiple of `size_of::<T>()` (i.e. the format's
 /// internal padding was violated).
 ///
-/// (Zig used `std.mem.bytesAsSlice` → `[]align(1) const T`; Rust has no
-/// under-aligned reference type, so we guarantee alignment instead via
-/// `bytemuck::try_cast_slice`, which checks both alignment and size.)
+/// (`bytemuck::try_cast_slice` checks both alignment and size.)
 #[inline]
 fn bytes_as_slice<T: bytemuck::AnyBitPattern>(bytes: &[u8]) -> Result<&[T], ModuleInfoError> {
     bytemuck::try_cast_slice(bytes).map_err(|_| ModuleInfoError::BadModuleInfo)
@@ -469,8 +461,7 @@ pub trait ModuleInfoExt {
     /// `this` must originate from `heap::alloc(ModuleInfo::create(..))`.
     unsafe fn destroy_raw(this: *mut ModuleInfo);
     /// Finalize and box the raw-pointer `ModuleInfoDeserialized` view, taking
-    /// ownership of `self`. Replaces the Zig pattern of writing into the
-    /// embedded `_deserialized` field and handing out a `&mut` to it.
+    /// ownership of `self`.
     fn into_deserialized(self: Box<Self>) -> Box<ModuleInfoDeserialized>;
 }
 
@@ -481,9 +472,8 @@ impl ModuleInfoExt for ModuleInfo {
         drop(unsafe { bun_core::heap::take(this) });
     }
     fn into_deserialized(mut self: Box<Self>) -> Box<ModuleInfoDeserialized> {
-        // Zig wrote a self-referential `_deserialized` view inside
-        // `ModuleInfo` during `finalize()`. The Rust printer-crate `ModuleInfo`
-        // exposes a borrowed `as_deserialized()` instead; here we materialise the
+        // The printer-crate `ModuleInfo`
+        // exposes a borrowed `as_deserialized()`; here we materialise the
         // raw-pointer FFI shape and tie its lifetime to the leaked `Box<ModuleInfo>`.
         if !self.finalized {
             let _ = self.finalize();
@@ -532,7 +522,6 @@ impl ModuleInfoExt for ModuleInfo {
 
 // zig__renderDiff, zig__ModuleInfoDeserialized__toJSModuleRecord, and the
 // JSModuleRecord/IdentifierArray opaques: see bun_bundler_jsc::analyze_jsc
-// (Zig `comptime { _ = @import }` force-reference dropped per porting guide.)
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
@@ -557,8 +546,5 @@ pub(crate) extern "C" fn zig_log(msg: *const c_char) {
     let msg = unsafe { NonNull::new(msg.cast_mut()).unwrap_unchecked() };
     // SAFETY: `msg` is non-null and points to a NUL-terminated C string per the contract above.
     let bytes = unsafe { bun_core::ffi::cstr(msg.as_ptr()) }.to_bytes();
-    // Zig: `Output.errorWriter().print("{s}\n", .{bytes}) catch {}`.
     bun_core::Output::print_error(format_args!("{}\n", bstr::BStr::new(bytes)));
 }
-
-// ported from: src/bundler/analyze_transpiled_module.zig

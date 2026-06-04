@@ -11,8 +11,7 @@ use bun_uws_sys::Loop as UwsLoop;
 
 pub type Loop = UwsLoop;
 
-// Note: `addActive`/`subActive` live on `PosixLoop` in Zig (uws_sys/Loop.zig)
-// but the Rust `bun_uws_sys::Loop` only exposes `inc`/`dec`/`ref_`/`unref`. The
+// Note: `bun_uws_sys::Loop` only exposes `inc`/`dec`/`ref_`/`unref`. The
 // `active` counter is a public field, so inline the saturating math here until
 // `bun_uws_sys` grows `add_active`/`sub_active`. On Windows the uws loop has no
 // such counter (libuv tracks active handles itself); `posix_event_loop` is only
@@ -33,7 +32,7 @@ bun_core::declare_scope!(KeepAlive, visible);
 #[cfg(not(windows))]
 use bun_sys::syslog;
 
-/// Local port of `Maybe(T).errnoSys` (Zig: src/runtime/node.zig). `bun_sys`
+/// Local `errno_sys` helper. `bun_sys`
 /// does not yet expose this helper on `Result<T>`; once it does, drop this and
 /// call `sys::Result::<()>::errno_sys` directly.
 ///
@@ -81,7 +80,7 @@ unsafe extern "Rust" {
 /// Kind of fd a `FilePoll` (or pipe reader/writer) is wrapping. Lives here so
 /// `bun_io` (which now depends on this crate) and `FilePoll::file_type` share
 /// one definition; `bun_io::pipes` re-exports it for downstream callers.
-// Note: Zig defines this in src/io/pipes.zig; sunk one tier to break the
+// Note: sunk one tier to break the
 // io↔aio cycle (FilePoll::file_type was the only aio→io edge).
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum FileType {
@@ -114,8 +113,7 @@ pub fn get_vm_ctx(kind: AllocatorType) -> EventLoopCtx {
 
 /// JS-thread [`EventLoopCtx`] for `KeepAlive::{ref_,unref}` / `FilePoll`.
 ///
-/// Zig passed `*jsc.VirtualMachine` directly via `anytype` dispatch
-/// (`posix_event_loop.zig:45`); the Rust crate split routes through the
+/// The crate split routes through the
 /// link-time `__bun_get_vm_ctx` hook installed by `bun_runtime::init()`.
 /// Every `Js`-tier caller (i.e. everything outside the install/Mini loop)
 /// wants exactly `get_vm_ctx(AllocatorType::Js)`, so this shorthand replaces
@@ -136,10 +134,9 @@ pub fn js_vm_ctx() -> EventLoopCtx {
 #[cfg(all(target_os = "macos", debug_assertions))]
 type KQueueGenerationNumber = usize;
 #[cfg(all(unix, not(all(target_os = "macos", debug_assertions))))]
-type KQueueGenerationNumber = u8; // Note: Zig uses `u0`; smallest Rust int is u8. Gated by cfg below.
+type KQueueGenerationNumber = u8; // Note: conceptually zero-width; smallest Rust int is u8. Gated by cfg below.
 
-// PORTING.md §Global mutable state: counter → Atomic. Debug-only diagnostic;
-// `Relaxed` matches Zig's `+%=` (no synchronization implied).
+// Debug-only diagnostic; `Relaxed` (no synchronization implied).
 #[cfg(all(target_os = "macos", debug_assertions))]
 static MAX_GENERATION_NUMBER: core::sync::atomic::AtomicUsize =
     core::sync::atomic::AtomicUsize::new(0);
@@ -174,14 +171,10 @@ fn make_kevent(
     ev
 }
 
-/// Zig std's `.freebsd` `EV` struct omits EOF; the kernel value is the
+/// The kernel value is the
 /// same as Darwin/OpenBSD (sys/event.h: `#define EV_EOF 0x8000`).
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
 const EV_EOF: u16 = 0x8000;
-
-// Note: Zig's `kqueue_or_epoll` comptime literal was only spliced into a
-// `panicLog` that the Rust port routes through `bun_output::panic!` (which
-// already names the syscall via `Tag`). No remaining call site → dropped.
 
 // ──────────────────────────────────────────────────────────────────────────
 // FilePoll Owner — hot-path tag+ptr (CYCLEBREAK §Hot dispatch list).
@@ -338,8 +331,7 @@ impl FilePoll {
         FileType::Pipe
     }
 
-    // Note: Zig `onKQueueEvent`/`onEpollEvent` take `_: *Loop` (unused, raw-pointer
-    // semantics). The Rust signatures drop the loop parameter entirely: holding a
+    // Note: these handlers take no loop parameter: holding a
     // protected `&mut Loop` across `on_update` would alias the fresh `&mut Loop`
     // that downstream `__bun_run_file_poll` handlers conjure via
     // `EventLoopCtx::platform_event_loop()` when they re-enter the loop
@@ -444,7 +436,7 @@ impl FilePoll {
 
         // Hot-path hoisted-match: the per-tag `switch` lives in
         // `bun_runtime::dispatch::__bun_run_file_poll` (link-time extern) so
-        // this T3 crate names no variant types. // PERF(port): was inline switch.
+        // this T3 crate names no variant types.
         // SAFETY: `self` is a live FilePoll for the duration of the call
         // (guaranteed by the uws loop callback contract).
         unsafe { __bun_run_file_poll(self, size_or_offset) };
@@ -549,8 +541,7 @@ impl FilePoll {
             next_to_free: ptr::null_mut(),
             allocator_type: if vm.is_js() { AllocatorType::Js } else { AllocatorType::Mini },
             #[cfg(all(target_os = "macos", debug_assertions))]
-            // Matches Zig `max_generation_number +%= 1`; single-threaded event
-            // loop so `Relaxed` ordering is sufficient.
+            // Single-threaded event loop so `Relaxed` ordering is sufficient.
             generation_number: MAX_GENERATION_NUMBER
                 .fetch_add(1, core::sync::atomic::Ordering::Relaxed)
                 .wrapping_add(1),
@@ -559,8 +550,7 @@ impl FilePoll {
         }
     }
 
-    // Note: Zig branches on @TypeOf(vm) for *PackageManager, EventLoopHandle, else.
-    // Callers normalize to EventLoopCtx before calling.
+    // Note: callers normalize to EventLoopCtx before calling.
     pub fn init(vm: EventLoopCtx, fd: Fd, flags: FlagsSet, owner: Owner) -> *mut FilePoll {
         let value = Self::new_value(vm, fd, flags, owner);
         let generation_number = value.generation_number;
@@ -707,8 +697,7 @@ impl FilePoll {
                 flags |= EPOLL::IN;
             }
 
-            // Note: Zig uses `linux.epoll_event{ .data = .{ .ptr = ... } }`;
-            // libc::epoll_event flattens the union to a single `u64` field.
+            // Note: libc::epoll_event flattens the data union to a single `u64` field.
             let mut event = linux::epoll_event {
                 events: flags,
                 u64: Pollable::init(self).ptr() as u64,
@@ -925,9 +914,8 @@ impl FilePoll {
         fd: Fd,
         force_unregister: bool,
     ) -> sys::Result<()> {
-        // Note: reshaped for borrowck (Zig `defer this.deactivate(loop)`) — compute the
-        // syscall result first, then unconditionally deactivate. Avoids the raw-pointer scopeguard
-        // the literal translation would require.
+        // Note: compute the syscall result first, then unconditionally
+        // deactivate. Avoids a raw-pointer scopeguard.
         #[cfg(any(
             target_os = "linux",
             target_os = "android",
@@ -1332,11 +1320,9 @@ impl fmt::Display for FlagsFormatter {
 // Store
 // ──────────────────────────────────────────────────────────────────────────
 
-// Zig used `if (bun.heap_breakdown.enabled) 0 else 128` so the macOS
-// Instruments heap-breakdown build routes every FilePoll through its tagged
-// zone; the Rust `bun_alloc::heap_breakdown` is a no-op outside those builds,
-// so the 128-slot hive is unconditional here (same choice as
-// `RuntimeTranspilerStore`'s TranspilerJob hive).
+// `bun_alloc::heap_breakdown` is a no-op outside macOS Instruments
+// heap-breakdown builds, so the 128-slot hive is unconditional here (same
+// choice as `RuntimeTranspilerStore`'s TranspilerJob hive).
 #[cfg(not(windows))]
 const HIVE_SIZE: usize = 128;
 #[cfg(not(windows))]
@@ -1389,8 +1375,8 @@ impl Store {
     /// `poll` is a live, fully-initialized slot in `self.hive`. It may point
     /// *inside* `self.hive`'s inline `[FilePoll; 128]` buffer, so accepting it
     /// as `&mut FilePoll` while `&mut self` is live would retag overlapping
-    /// storage under Stacked Borrows (UB). Mirror Zig's alias-tolerant
-    /// `poll: *FilePoll` and touch fields only through raw pointer ops — same
+    /// storage under Stacked Borrows (UB). Take it as a raw pointer and
+    /// touch fields only through raw pointer ops — same
     /// rationale as `process_deferred_frees` above.
     pub fn put(&mut self, poll: ptr::NonNull<FilePoll>, vm: EventLoopCtx, ever_registered: bool) {
         let poll = poll.as_ptr();
@@ -1447,7 +1433,7 @@ impl Store {
 // onTick (exported)
 // ──────────────────────────────────────────────────────────────────────────
 
-// `Pollable` mirrors Zig `bun.TaggedPointerUnion(.{FilePoll})`.
+// `Pollable` is a single-variant tagged-pointer union over `FilePoll`.
 //
 // Note: `bun_collections::TaggedPtrUnion<(FilePoll,)>` cannot be
 // instantiated here — `impl_tagged_ptr_union!` would generate
@@ -1461,7 +1447,7 @@ pub(crate) struct Pollable {
 }
 
 impl Pollable {
-    /// Tag value for `FilePoll` (index 0 in the Zig type tuple → `1024 - 0`).
+    /// Tag value for `FilePoll` (index 0 → `1024 - 0`).
     #[allow(dead_code)]
     pub(crate) const FILE_POLL_TAG: u16 = 1024;
 
@@ -1601,5 +1587,3 @@ mod tests {
         assert_eq!(err.get_errno(), sys::E::EINVAL);
     }
 }
-
-// ported from: src/aio/posix_event_loop.zig

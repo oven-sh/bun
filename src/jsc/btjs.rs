@@ -7,13 +7,13 @@ use crate::{CallFrame, VirtualMachineRef as VirtualMachine};
 #[cfg(debug_assertions)]
 use bun_core::{self, Error, err};
 
-// Port of the subset of Zig `std.debug.*` used by btjs.zig: `SelfInfo`, `StackIterator`,
-// plus the symbol-lookup helpers. The frame-pointer unwinder lives in `bun_core::debug`.
+// `SelfInfo`, `StackIterator`, plus the symbol-lookup helpers. The
+// frame-pointer unwinder lives in `bun_core::debug`.
 #[cfg(debug_assertions)]
 mod zig_std_debug {
     pub(super) use bun_core::debug::{StackIterator, frame_address};
 
-    // ── SelfInfo (vendor/zig/lib/std/debug/SelfInfo.zig) ─────────────────
+    // ── SelfInfo ─────────────────────────────────────────────────────────
     // D104: relocated to `bun_crash_handler::debug` (lower-tier crate, also
     // needed by the crash handler's stack-trace printer). Re-export so the
     // in-file callers below compile unchanged.
@@ -24,8 +24,7 @@ mod zig_std_debug {
 #[cfg(debug_assertions)]
 use zig_std_debug::{Module, SelfInfo, SourceLocation, StackIterator, SymbolInfo};
 
-// Port of the subset of `std.io.tty.{Config,Color,detectConfig}` used by btjs.zig
-// (vendor/zig/lib/std/Io/tty.zig). The `windows_api` variant is omitted because
+// A Windows console-API colour variant is deliberately omitted because
 // btjs writes to an in-memory `Vec<u8>` returned to lldb, not to the live console
 // handle, so `SetConsoleTextAttribute` would colour the wrong stream.
 #[cfg(debug_assertions)]
@@ -33,18 +32,17 @@ mod tty {
     // D089: `Config`/`Color`/`set_color` deduped to the canonical port in
     // `bun_crash_handler::debug` (lower-tier crate; `Vec<u8>` already impls
     // `bun_io::Write` so the generic `set_color` covers btjs's in-memory sink).
-    // `detect_config_stdout` stays LOCAL — it ports a *different* Zig call
-    // site (`detectConfig(stdout())` with NO_COLOR/CLICOLOR_FORCE/isatty) than
-    // crash_handler's `detect_tty_config_stderr()` (Output::ENABLE_ANSI_COLORS_STDERR).
+    // `detect_config_stdout` stays LOCAL — it implements a *different* detection
+    // (stdout with NO_COLOR/CLICOLOR_FORCE/isatty) than crash_handler's
+    // `detect_tty_config_stderr()` (Output::ENABLE_ANSI_COLORS_STDERR).
     pub(super) use bun_crash_handler::debug::{Color, TtyConfig as Config};
 
     /// Port of `process.hasNonEmptyEnvVarConstant`.
     fn has_non_empty_env_var(name: &core::ffi::CStr) -> bool {
         #[cfg(windows)]
         {
-            // Zig spec (vendor/zig/lib/std/process.zig:435-446) reads the Win32
-            // environment via `getenvW`, NOT MSVCRT `getenv`. The CRT keeps its
-            // own narrow-string env cache that is not updated by
+            // Read the Win32 environment directly, NOT via MSVCRT `getenv`. The
+            // CRT keeps its own narrow-string env cache that is not updated by
             // `SetEnvironmentVariableW`, which is how Bun mutates env vars at
             // runtime — so `libc::getenv` would silently miss those.
             unsafe extern "system" {
@@ -84,7 +82,7 @@ mod tty {
         }
     }
 
-    /// Port of `std.io.tty.detectConfig(std.fs.File.stdout())`.
+    /// Detect the TTY color configuration for stdout (color env vars + isatty).
     pub(super) fn detect_config_stdout() -> Config {
         let force_color: Option<bool> = if has_non_empty_env_var(c"NO_COLOR") {
             Some(false)
@@ -128,8 +126,8 @@ unsafe extern "C" {
 /// allocated using bun.default_allocator. when called from lldb, it is never freed.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn dumpBtjsTrace() -> *const c_char {
-    // Zig: `if (comptime bun.Environment.isDebug)` — must use #[cfg], not cfg!(), so the
-    // entire debug impl is DCE'd from release builds.
+    // Must use #[cfg], not cfg!(), so the entire debug impl is DCE'd from
+    // release builds.
     #[cfg(debug_assertions)]
     {
         return dump_btjs_trace_debug_impl();
@@ -166,9 +164,6 @@ fn dump_btjs_trace_debug_impl() -> *const c_char {
                 .cast_const();
         }
     };
-
-    // std.log.info("jsc_llint_begin: {x}", .{@intFromPtr(&jsc_llint_begin)});
-    // std.log.info("jsc_llint_end: {x}", .{@intFromPtr(&jsc_llint_end)});
 
     let tty_config = tty::detect_config_stdout();
 
@@ -308,8 +303,7 @@ fn print_line_info(
     symbol_name: &[u8],
     compile_unit_name: &[u8],
     tty_config: tty::Config,
-    // Zig: `comptime printLineFromFile: anytype` — anytype maps to generic/impl-Trait so it
-    // monomorphizes (PORTING.md type map), not a runtime fn pointer.
+    // impl-Trait so it monomorphizes, not a runtime fn pointer.
     print_line_from_file: impl Fn(&mut Vec<u8>, &SourceLocation) -> Result<(), Error>,
     do_llint: bool,
 ) -> Result<(), Error> {
@@ -385,8 +379,7 @@ fn print_line_from_file_any_os(
 
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
-    // Zig used std.fs.cwd().openFile directly (bypassing bun.sys); PORTING.md
-    // forbids std::fs, so bun_sys is used here. `bun_sys::File::open_at`/`read`
+    // `bun_sys::File::open_at`/`read`
     // are direct openat(2)/read(2) wrappers with no event-loop involvement, so
     // they are safe to call from inside a crash handler / lldb.
     let f = bun_sys::File::open_at(
@@ -463,8 +456,7 @@ fn replace_scalar(slice: &mut [u8], from: u8, to: u8) {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Thin forwarders to the `zig_std_debug` port — keep the call-site shape
-// matching the Zig (`std.debug.getSelfDebugInfo()`, `it.getLastError()`, …).
+// Thin forwarders to `zig_std_debug`.
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(debug_assertions)]
 #[inline]
@@ -487,4 +479,3 @@ fn get_module_name_for_address(di: &mut SelfInfo, addr: usize) -> Option<Box<[u8
     di.get_module_name_for_address(addr)
 }
 
-// ported from: src/jsc/btjs.zig

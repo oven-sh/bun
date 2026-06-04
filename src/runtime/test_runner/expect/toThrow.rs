@@ -15,7 +15,7 @@ pub(crate) fn to_throw(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // `defer this.postMatch(globalThis)` — scopeguard owns the &mut Expect and runs
+    // The scopeguard owns the &mut Expect and runs
     // post_match on drop; the body re-borrows `this` through Deref/DerefMut so post_match
     // runs on every exit path (Ok and Err alike).
     let this = scopeguard::guard(this, |t| t.post_match(global));
@@ -66,7 +66,6 @@ pub(crate) fn to_throw(
     let did_throw = result_.is_some();
 
     if not {
-        // PERF(port): was comptime — get_signature should be const fn returning &'static str
         let signature: &'static str = get_signature("toThrow", "<green>expected<r>", true);
 
         if !did_throw {
@@ -408,8 +407,7 @@ pub(crate) fn to_throw(
     let result = return_value_from_function;
     let mut formatter = Formatter::new(global).with_quote_strings(true);
     let mut formatter2 = super::make_formatter(global);
-    // Zig `received_line` was concatenated via `++` into each fmt string
-    // below; Rust `format_args!` only accepts literals so the value is inlined at each site.
+    // `format_args!` only accepts literal fmt strings, so `received_line` is inlined at each site.
     // received_line = "Received function did not throw\nReceived value: <red>{f}<r>\n"
 
     if expected_value.is_empty() || expected_value.is_undefined() {
@@ -474,5 +472,3 @@ pub(crate) fn to_throw(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toThrow.zig

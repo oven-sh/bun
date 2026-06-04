@@ -106,8 +106,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
 
     let changes_len = usize::try_from(count.max(0)).expect("int cast");
     let changes = &changelist[0..changes_len];
-    // reshaped for borrowck — Zig re-slices `watchevents` in place; Rust tracks out_len
-    // and slices once at the end to avoid overlapping &mut borrows of `this`.
+    // Track out_len and slice once at the end to avoid overlapping &mut
+    // borrows of `this`.
     let watchevents = &mut this.watch_events[0..changes_len];
     let mut out_len: usize = 0;
     if changes_len > 0 {
@@ -128,7 +128,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     }
 
     // RAII: `MutexGuard` holds the mutex by raw pointer (no borrow of `this`)
-    // and unlocks on Drop — Zig: `this.mutex.lock(); defer this.mutex.unlock();`.
+    // and unlocks on Drop.
     let _guard = this.mutex.lock_guard();
     if this.running.load() {
         // reshaped for borrowck — copy the (small, ≤128) deduped slice
@@ -140,10 +140,8 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         (this.on_file_update)(this.ctx, &mut deduped, changed, &this.watchlist);
     }
 
-    // Zig: `defer Output.flush()`. No early returns above, so flush once at the
-    // single exit point instead of via scopeguard.
+    // No early returns above, so flush once at the single exit point instead
+    // of via scopeguard.
     Output::flush();
     Ok(())
 }
-
-// ported from: src/watcher/KEventWatcher.zig

@@ -35,8 +35,7 @@ pub trait GradientPosition: Sized + Clone + PartialEq {
 
 // Only two `D` instantiations exist (`LengthValue` / `Angle`); both already
 // satisfy `DimensionPercentage<D>: CalcValue` in `calc.rs`. A blanket impl
-// would need to re-state that bound; concrete impls are simpler and match
-// the Zig monomorphization sites exactly.
+// would need to re-state that bound; concrete impls are simpler.
 macro_rules! impl_gradient_position {
     ($ty:ty) => {
         impl GradientPosition for $ty {
@@ -1575,5 +1574,3 @@ pub(crate) fn convert_stops_to_webkit(
 
     Some(stops)
 }
-
-// ported from: src/css/values/gradient.zig

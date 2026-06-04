@@ -2,14 +2,13 @@
 #![warn(unused_must_use)]
 //! `bun.schema.api` namespace.
 //!
-//! Ground truth: `src/options_types/schema.zig` (the `pub const api = struct {…}`
-//! block — generated from `src/api/schema.peechy`). The full peechy → `.rs`
-//! emitter is not landed yet; this crate hand-ports the slice of the schema
-//! that downstream crates name today (`bun_ini`, `bun_install`, `bun_runtime`
+//! Ground truth: `src/api/schema.peechy`. The full peechy → `.rs` emitter is
+//! not landed yet; this crate hand-writes the slice of the schema that
+//! downstream crates name today (`bun_ini`, `bun_install`, `bun_runtime`
 //! bunfig parser) so they can un-gate against real field shapes.
 //!
 //! LAYERING: the actual data shapes (`NpmRegistry`, `NpmRegistryMap`, `Ca`,
-//! `BunInstall`) were originally hand-ported in two places — here *and* in
+//! `BunInstall`) were originally hand-written in two places — here *and* in
 //! `bun_options_types::schema::api`. Downstream crates ended up holding values
 //! of one and passing them to functions typed against the other (e.g.
 //! `bun_options_types::context::install` vs. `bun_ini::load_npmrc_config`),
@@ -34,9 +33,8 @@ pub use bun_options_types::schema::api::{
 // npm_registry  — module path for the nested `NpmRegistry::Parser`
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig nests `pub const Parser = struct {…}` inside `NpmRegistry`. Rust can't
-/// nest a type inside a struct, so it lives in a sibling module and the
-/// canonical path becomes `bun_api::npm_registry::Parser`.
+/// `Parser` lives in a sibling module of `NpmRegistry`; the canonical path
+/// is `bun_api::npm_registry::Parser`.
 pub mod npm_registry {
     use bun_url::URL;
 
@@ -78,5 +76,3 @@ pub mod npm_registry {
         }
     }
 }
-
-// ported from: src/options_types/schema.zig

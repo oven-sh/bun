@@ -17,14 +17,11 @@ pub fn from_js<V: Copy>(
     // `defer str.deref()` — `OwnedString` releases the +1 ref on Drop.
     let str = OwnedString::new(BunString::from_js(input, global_this)?);
     debug_assert!(str.tag() != Tag::Dead);
-    // Zig used `Map.getWithEql(str, bun.String.eqlComptime)`, comparing a
-    // `bun.String` against the map's comptime UTF-8 keys without unconditionally
-    // transcoding. `phf` keys are `&[u8]`, so materialize UTF-8 bytes and do a
-    // direct phf lookup.
-    // PERF(port): avoid the UTF-8 transcode for 8-bit/latin1-backed strings —
+    // `phf` keys are `&[u8]`, so materialize UTF-8 bytes and do a direct phf
+    // lookup.
+    // PERF: avoid the UTF-8 transcode for 8-bit/latin1-backed strings —
     // profile if hot.
     let utf8 = str.to_utf8();
     Ok(map.get(utf8.slice()).copied())
 }
 
-// ported from: src/jsc/comptime_string_map_jsc.zig

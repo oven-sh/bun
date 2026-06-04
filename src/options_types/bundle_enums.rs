@@ -1,4 +1,4 @@
-//! Pure enum/struct option types extracted from `bundler/options.zig` so
+//! Pure enum/struct bundler option types, kept here so
 //! `cli/` and other tiers can reference them without depending on `bundler/`.
 //! Aliased back at original locations — call sites unchanged.
 //!
@@ -63,12 +63,10 @@ impl Format {
         b"internal_bake_dev" => Format::InternalBakeDev,
     };
 
-    // `fromJS` alias to `bundler_jsc/options_jsc.zig` deleted — see PORTING.md
-    // (`to_js`/`from_js` live as extension-trait methods in the `*_jsc` crate).
+    // `to_js`/`from_js` live as extension-trait methods in the `*_jsc` crate.
 
     pub fn from_string(slice: &[u8]) -> Option<Format> {
-        // Zig: Map.getWithEql(slice, bun.strings.eqlComptime) — eqlComptime is
-        // exact byte equality, which is phf's default lookup.
+        // Exact byte equality, which is phf's default lookup.
         Self::MAP.get(slice).copied()
     }
 }
@@ -95,8 +93,6 @@ pub type BundlePackageMap = bun_collections::StringArrayHashMap<BundlePackage>;
 
 // ─── move-in: TYPE_ONLY from bun_bundler::options ─────────────────────────
 
-/// `bundler/options.zig:1815` `BundleOptions.ForceNodeEnv`.
-///
 /// Set by the process environment to override the JSX configuration. When
 /// `Unspecified`, tsconfig.json drives the choice between "react-jsx" and
 /// "react-jsx-dev-runtime".
@@ -109,7 +105,7 @@ pub enum ForceNodeEnv {
     Production,
 }
 
-/// `bundler/options.zig` `ModuleType` — package.json `"type"` field.
+/// package.json `"type"` field.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
 pub enum ModuleType {
@@ -294,7 +290,7 @@ impl ImportKindExt for bun_ast::ImportKind {
 
 // ─── move-in: TYPE_ONLY from bun_runtime::bake::framework ──────────────────────────
 
-/// `bake/bake.zig` `Framework.BuiltInModule` — virtual module backing for a
+/// Virtual module backing for a
 /// framework-declared built-in: either an import path to redirect to, or
 /// inline source code.
 #[derive(Clone, Debug)]
@@ -317,5 +313,3 @@ impl From<bun_ast::ExportsKind> for ModuleType {
         }
     }
 }
-
-// ported from: src/options_types/BundleEnums.zig

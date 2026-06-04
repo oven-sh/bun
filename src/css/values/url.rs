@@ -107,7 +107,6 @@ impl Url {
         let url: &[u8] = unsafe { bun_collections::detach_lifetime(url) };
 
         if dest.minify && !is_internal {
-            // PERF(port): was std.Io.Writer.Allocating with dest.arena — using Vec<u8>; profile if hot
             let mut buf: Vec<u8> = Vec::new();
             // PERF(alloc) we could use stack fallback here?
             // `Token::to_css_generic(UnquotedUrl(url))` is inlined here —
@@ -167,5 +166,3 @@ impl Url {
         hasher.update(&self.import_record_idx.to_ne_bytes());
     }
 }
-
-// ported from: src/css/values/url.zig

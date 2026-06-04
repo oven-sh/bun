@@ -1,10 +1,10 @@
 //! `DevServer.PackedMap` — compact source-map slice (VLQ mappings + escaped
 //! source contents) shared between `IncrementalGraph` files and
-//! `SourceMapStore` entries. Spec: src/runtime/bake/DevServer/PackedMap.zig.
+//! `SourceMapStore` entries.
 
 use std::rc::Rc;
 
-/// Line count newtype (Zig: `bun.GenericIndex(u32, u8)`).
+/// Line count newtype.
 pub(crate) type LineCount = bun_core::GenericIndex<u32, u8>;
 
 /// `PackedMap.end_state` — only the two fields the bundler needs to thread

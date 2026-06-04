@@ -83,14 +83,13 @@ pub(crate) fn to_be_one_of(
     }
 
     // handle failure
-    // Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
-    // `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
-    // the same backing formatter. Use a second formatter for the second value (matches toBe.rs).
+    // The `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters
+    // cannot alias the same backing formatter. Use a second formatter for the
+    // second value (matches toBe.rs).
     let mut formatter = super::make_formatter(global_this);
     let mut formatter2 = super::make_formatter(global_this);
     if not {
         let signature = get_signature("toBeOneOf", "<green>expected<r>", true);
-        // Zig `{f}` fmt specifier mapped to Rust `{}` (Display); `++` mapped to concat!.
         return this.throw(
             global_this,
             signature,
@@ -121,4 +120,3 @@ pub(crate) fn to_be_one_of(
     );
 }
 
-// ported from: src/test_runner/expect/toBeOneOf.zig

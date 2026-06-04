@@ -11,14 +11,14 @@ use crate::query::token::Wildcard;
 pub type Version = VersionType<u64>;
 
 // ──────────────────────────────────────────────────────────────────────────
-// VersionInt — trait capturing the operations the Zig generic needed on
-// `comptime IntType: type`. Only u32 and u64 are instantiated.
+// VersionInt — trait capturing the operations the generic version type needs
+// from its integer parameter. Only u32 and u64 are instantiated.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait VersionInt: Copy + Default + Eq + Ord + fmt::Display + 'static {
     const ZERO: Self;
     const MAX: Self;
-    /// Zig: `_tag_padding: [if (IntType == u32) 4 else 0]u8` — explicit zeroed
+    /// Explicit zeroed
     /// padding so lockfile byte-serialization is deterministic.
     type TagPadding: Copy + Default + 'static;
     fn parse_ascii(s: &[u8]) -> Option<Self>;
@@ -30,7 +30,6 @@ impl VersionInt for u64 {
     type TagPadding = [u8; 0];
     #[inline]
     fn parse_ascii(s: &[u8]) -> Option<Self> {
-        // Semantics match Zig `std.fmt.parseUnsigned(u64, s, 10) catch null`:
         // None for empty, any non-[0-9] byte, or overflow. Callers rely on
         // the non-digit None case for pre-release identifier ordering
         // (semver identifiers are `[0-9A-Za-z-]+`, so `_` never appears).
@@ -58,15 +57,14 @@ pub struct VersionType<T: VersionInt> {
     pub major: T,
     pub minor: T,
     pub patch: T,
-    // Zig: `_tag_padding: [if (IntType == u32) 4 else 0]u8 = .{0} ** ...` —
-    // explicit zeroed bytes so the alignment gap before `tag` is deterministic
-    // for lockfile serialization (see padding_checker.zig).
+    // Explicit zeroed bytes so the alignment gap before `tag` is deterministic
+    // for lockfile serialization.
     #[doc(hidden)]
     pub _tag_padding: T::TagPadding,
     pub tag: Tag,
 }
 
-// Layout must match Zig `extern struct` exactly (lockfile binary format).
+// Layout is load-bearing (lockfile binary format).
 const _: () = {
     assert!(core::mem::size_of::<Tag>() == 32);
     assert!(core::mem::align_of::<Tag>() == 8);
@@ -254,8 +252,8 @@ impl<T: VersionInt> VersionType<T> {
                     | b'\t'
                     | b'\n'
                     | b'\r'
-                    | 0x0B // std.ascii.control_code.vt
-                    | 0x0C // std.ascii.control_code.ff
+                    | 0x0B // vertical tab
+                    | 0x0C // form feed
 
                     // version separators
                     | b'v'
@@ -492,8 +490,8 @@ impl<T: VersionInt> VersionType<T> {
                 | b'\t'
                 | b'\n'
                 | b'\r'
-                | 0x0B // std.ascii.control_code.vt
-                | 0x0C // std.ascii.control_code.ff
+                | 0x0B // vertical tab
+                | 0x0C // form feed
 
                 // version separators
                 | b'v'
@@ -696,8 +694,6 @@ impl<T: VersionInt> VersionType<T> {
             return match T::parse_ascii(&bytes[0..byte_i as usize]) {
                 Some(v) => Some(v),
                 None => {
-                    // Zig printed `@errorName(err)` here; the Rust parse error carries
-                    // no tag name, so the message omits it.
                     bun_core::pretty_errorln!(
                         "ERROR parsing version: \"{}\", bytes: {}",
                         bstr::BStr::new(input),
@@ -1079,9 +1075,8 @@ impl Tag {
         } else {
             let pre_slice = self.pre.slice(slice);
             buf[..pre_slice.len()].copy_from_slice(pre_slice);
-            // reshaped for borrowck — Zig does
-            // `String.init(buf.*, buf.*[0..pre_slice.len])` then advances buf.
-            // We capture the init args before advancing.
+            // reshaped for borrowck —
+            // capture the init args before advancing `buf`.
             pre = SemverString::init(buf, &buf[0..pre_slice.len()]);
             *buf = &mut core::mem::take(buf)[pre_slice.len()..];
         }
@@ -1265,5 +1260,3 @@ impl<T: VersionInt> Default for ParseResult<T> {
         }
     }
 }
-
-// ported from: src/semver/Version.zig

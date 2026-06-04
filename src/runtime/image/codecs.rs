@@ -80,10 +80,10 @@ pub(crate) static BACKEND: core::sync::atomic::AtomicU8 =
         Backend::Bun as u8
     });
 
-/// Runtime half of the dispatch check; the comptime half is the
+/// Runtime half of the dispatch check; the compile-time half is the
 /// `#[cfg(any(target_os = "macos", windows))]` gate at each call site (types
 /// can't be runtime-conditional, so the two stay separate). On platforms with
-/// no backend the cfg is comptime-dead and this is never referenced.
+/// no backend the cfg is compile-time dead and this is never referenced.
 #[cfg(any(target_os = "macos", windows))]
 #[inline]
 fn use_system() -> bool {
@@ -293,14 +293,11 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
             };
             // GIF transparency is a binary palette-index flag — the RGB at
             // α=0 is whatever the colour-table slot happened to hold and has
-            // no defined meaning. The static decoder emits `[0,0,0,0]`
-            // (codec_gif.zig: `pal[t] = .{0,0,0,0}`) and ImageIO does the
+            // no defined meaning. The static decoder (codec_gif.rs) emits
+            // `[0,0,0,0]` and ImageIO does the
             // same, but WIC's indexed→32bppRGBA converter expands the palette
-            // entry verbatim, leaving the original RGB with α=0. Zig never
-            // hit this because `bun.windows.GetProcAddressA` widens the
-            // symbol to UTF-16 for the narrow-only Win32 `GetProcAddress`,
-            // so `WICConvertBitmapSource` was never resolved and WIC decode
-            // always fell through to the static path. Normalise here so
+            // entry verbatim, leaving the original RGB with α=0. Normalise
+            // here so
             // every backend yields identical bytes for the same GIF.
             for px in d.rgba.chunks_exact_mut(4) {
                 if px[3] == 0 {
@@ -314,7 +311,6 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
     }
 }
 
-// Zig returned `(Error || error{BackendUnavailable})!Decoded`; reshaped to
 // `Result<Option<Decoded>, Error>` where `Ok(None)` = BackendUnavailable.
 fn decode_via_system(_bytes: &[u8], _max_pixels: u64) -> Result<Option<Decoded>, Error> {
     #[cfg(any(target_os = "macos", windows))]
@@ -460,7 +456,7 @@ pub struct EncodeOptions {
 impl Default for EncodeOptions {
     fn default() -> Self {
         Self {
-            format: Format::Png, // arbitrary — Zig has no default; callers set it at construction
+            format: Format::Png, // arbitrary; callers set it at construction
             quality: 80,
             lossless: false,
             compression_level: -1,
@@ -500,11 +496,10 @@ impl Drop for Encoded {
     }
 }
 
-/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`, `std.c.free`) to the
+/// Adapt a 1-arg C free (`tj3Free`, `WebPFree`, libc `free`) to the
 /// 2-arg JSC deallocator signature.
 // Rust cannot capture a runtime fn pointer in a non-capturing `extern "C" fn`,
-// so this is a macro that mints a static trampoline per call site (the moral
-// equivalent of Zig's `wrap(comptime f: anytype)`).
+// so this is a macro that mints a static trampoline per call site.
 #[macro_export]
 macro_rules! encoded_wrap_free {
     ($f:path) => {{
@@ -664,7 +659,7 @@ pub(crate) fn resize(
     dh: u32,
     f: Filter,
 ) -> Result<Vec<u8>, Error> {
-    // Zig: `if (@hasDecl(b, "scale"))` — only `backend_coregraphics` provides
+    // Only `backend_coregraphics` provides
     // scale/rotate/flip (vImage); WIC has decode/encode only.
     #[cfg(target_os = "macos")]
     if use_system() {
@@ -710,7 +705,7 @@ pub(crate) fn resize(
     // fits the same block, so this is free.
     block.truncate(out_sz);
     block.shrink_to_fit();
-    // PERF(port): Zig used realloc directly; Vec::shrink_to_fit may not be in-place — profile if hot.
+    // PERF: Vec::shrink_to_fit may not be in-place — profile if hot.
     Ok(block)
 }
 
@@ -776,5 +771,3 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
     };
     Ok(out)
 }
-
-// ported from: src/runtime/image/codecs.zig

@@ -11,8 +11,7 @@ use crate::node::StringOrBuffer;
 use crate::crypto::create_crypto_error;
 use crate::crypto::evp::{self, Algorithm};
 
-// BoringSSL error code; not yet exported by `bun_boringssl_sys`
-// (Zig: src/boringssl_sys/boringssl.zig:6422).
+// BoringSSL error code; not yet exported by `bun_boringssl_sys`.
 const EVP_R_MEMORY_LIMIT_EXCEEDED: u32 = 132;
 
 pub(crate) struct PBKDF2 {
@@ -74,8 +73,8 @@ impl PBKDF2 {
         true
     }
 
-    // Zig `deinit()` only freed `password`/`salt`; both are `StringOrBuffer`
-    // whose `Drop` releases the slice/WTF ref, so the explicit hook is gone —
+    // `password`/`salt` are `StringOrBuffer` whose `Drop` releases the
+    // slice/WTF ref, so no explicit cleanup hook is needed —
     // dropping `PBKDF2` is sufficient for the sync path. The async path holds
     // `ThreadSafe<PBKDF2>`, whose `Drop` additionally unprotects JS-rooted
     // buffers via the `Unprotect` impl below.
@@ -178,7 +177,7 @@ impl PBKDF2 {
                         format_args!("Invalid digest: {}", bstr::BStr::new(name)),
                     )
                     .throw());
-                // `slice` drops here (was `defer slice.deinit()`).
+                // `slice` drops here.
             }
             return Err(bun_jsc::JsError::Thrown);
         };
@@ -190,7 +189,6 @@ impl PBKDF2 {
             length: keylen,
             algorithm,
         };
-        // Zig: `defer { if (globalThis.hasException()) { if (is_async) out.deinitAndUnprotect() else out.deinit(); } }`
         // Non-async path: `StringOrBuffer` fields drop with `out` on early return — no explicit call needed.
         let mut guard = scopeguard::guard(&mut out, |out| {
             if global_this.has_exception() && is_async {
@@ -255,8 +253,8 @@ impl PBKDF2 {
 }
 
 impl bun_jsc::Unprotect for PBKDF2 {
-    /// Zig `PBKDF2.deinitAndUnprotect`, JS-side half — owned slices are
-    /// released by `Drop for StringOrBuffer`.
+    /// JS-side half of cleanup — owned slices are released by
+    /// `Drop for StringOrBuffer`.
     #[inline]
     fn unprotect(&mut self) {
         self.password.unprotect();
@@ -277,8 +275,7 @@ pub(crate) struct Pbkdf2Ctx {
 impl AnyTaskJobCtx for Pbkdf2Ctx {
     fn run(&mut self, _global: *mut JSGlobalObject) {
         let len = usize::try_from(self.pbkdf2.length).expect("int cast");
-        // Zig: `bun.default_allocator.alloc(u8, len) catch { ... }`
-        // Rust `Vec` allocation aborts on OOM; mirror the error path with try_reserve.
+        // `Vec` allocation aborts on OOM; use try_reserve to surface an error instead.
         let mut buf = Vec::new();
         if buf.try_reserve_exact(len).is_err() {
             self.err = Some(EVP_R_MEMORY_LIMIT_EXCEEDED);
@@ -307,7 +304,6 @@ impl AnyTaskJobCtx for Pbkdf2Ctx {
         debug_assert!(output_slice.len() == usize::try_from(self.pbkdf2.length).expect("int cast"));
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
         let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
-        // Zig: `this.output = &[_]u8{};` — already done via `mem::take` above.
         promise.resolve(global_this, buffer_value)?;
         Ok(())
     }
@@ -315,7 +311,7 @@ impl AnyTaskJobCtx for Pbkdf2Ctx {
 
 pub(crate) type Job = AnyTaskJob<Pbkdf2Ctx>;
 
-/// Zig `Job.create` — heap-allocate, init the promise, ref the loop, and hand
+/// Heap-allocate, init the promise, ref the loop, and hand
 /// to the work pool. Returns the live job so the caller can read
 /// `(*job).ctx.promise.value()` before the JS-thread completion fires.
 /// Free fn (not `impl Job`) because `AnyTaskJob<_>` is a foreign type.
@@ -344,7 +340,6 @@ pub fn pbkdf2<'a>(
     iteration_count: u32,
     algorithm: Algorithm,
 ) -> Option<&'a [u8]> {
-    // Return type borrows `output`; Zig returned `?[]const u8` aliasing the input.
     let mut pbk = PBKDF2 {
         algorithm,
         password: StringOrBuffer::EncodedSlice(ZigStringSlice::from_utf8_never_free(password)),
@@ -359,5 +354,3 @@ pub fn pbkdf2<'a>(
 
     Some(output)
 }
-
-// ported from: src/runtime/crypto/PBKDF2.zig

@@ -33,7 +33,7 @@ pub mod bun_s3 {
     pub use crate::webcore::s3::MultiPartUpload;
 }
 
-/// `Blob.SizeType` is `u52` in Zig; the Rust port uses `u64` (see `webcore::blob::SizeType`).
+/// `Blob.SizeType` is `u64` (see `webcore::blob::SizeType`).
 // alias the canonical `webcore::BlobSizeType` so `SignalVTable.ready`'s
 // fn-pointer signature is structurally identical to callers that name the public
 // re-export (e.g. `sink::SinkSignal::init`).
@@ -95,10 +95,10 @@ impl Start {
             Start::ChunkSize(chunk) => Ok(JSValue::from(chunk)),
             Start::Err(err) => Err(err.throw(global_this)),
             Start::OwnedAndDone(list) => {
-                // Zig captures `|list|` by bitwise copy with no destructor and
-                // hands the allocation to JSC (no-copy + MarkedArrayBuffer_deallocator). In
-                // Rust `list` is an owned Vec whose Drop would free the same buffer →
-                // double-free. Suppress Drop via ManuallyDrop so JSC is the sole owner.
+                // The allocation is handed to JSC (no-copy +
+                // MarkedArrayBuffer_deallocator). `list` is an owned Vec whose Drop would
+                // free the same buffer → double-free. Suppress Drop via ManuallyDrop so
+                // JSC is the sole owner.
                 let mut list = core::mem::ManuallyDrop::new(list);
                 let ab = ArrayBuffer::from_bytes(list.slice_mut(), JSType::Uint8Array);
                 ab.to_js(global_this)
@@ -117,10 +117,8 @@ impl Start {
 
         if let Some(chunk_size) = value.get(global_this, b"chunkSize")? {
             if chunk_size.is_number() {
-                // Zig: `@as(Blob.SizeType, @intCast(@truncate(@as(i52, chunkSize.toInt64()))))`
-                // — `@truncate` to i52 then `@intCast` to u32. Low-32-bit wrap matches that
-                // for the in-range values JS can produce; revisit if exact i52 sign-extension
-                // semantics matter.
+                // Low-32-bit wrap is correct for the in-range values JS can produce;
+                // revisit if exact i52 sign-extension semantics matter.
                 return Ok(Start::ChunkSize(chunk_size.to_int64() as BlobSizeType));
             }
         }
@@ -128,11 +126,9 @@ impl Start {
         Ok(Start::Empty)
     }
 
-    /// Runtime-tag dispatcher for `from_js_with_tag`. Zig calls
-    /// `Start.fromJSWithTag(..., comptime tag)` from `JSSink.start` via
-    /// `@field(streams.Start, abi_name)`; Rust models the per-sink tag as
-    /// `JsSinkType::START_TAG` (a runtime `Option<StartTag>`) so we re-enter
-    /// the const-generic body via this match.
+    /// Runtime-tag dispatcher for `from_js_with_tag`. The per-sink tag is
+    /// `JsSinkType::START_TAG` (a runtime `Option<StartTag>`); this match
+    /// re-enters the tag-specific body.
     pub fn from_js_with_runtime_tag(
         global_this: &JSGlobalObject,
         value: JSValue,
@@ -198,7 +194,6 @@ impl Start {
                 {
                     if chunk_size_val.is_number() {
                         empty = false;
-                        // Zig: `@intCast(@max(0, @as(i51, @truncate(toInt64()))))`
                         chunk_size = 0i64.max(chunk_size_val.to_int64()) as BlobSizeType;
                     }
                 }
@@ -218,7 +213,6 @@ impl Start {
                     value.fast_get(global_this, jsc::BuiltinName::HighWaterMark)?
                 {
                     if chunk_size_val.is_number() {
-                        // Zig: `@intCast(@max(0, @as(i51, @truncate(toInt64()))))`
                         chunk_size = 0i64.max(chunk_size_val.to_int64()) as BlobSizeType;
                     }
                 }
@@ -235,8 +229,6 @@ impl Start {
                     return Ok(Start::FileSink(FileSinkOptions {
                         chunk_size,
                         input_path: crate::webcore::PathOrFileDescriptor::Path(
-                            // Zig `path.toSlice(globalThis, allocator)` — allocator param
-                            // folded into the owning `ZigStringSlice`.
                             path.to_slice(global_this)?,
                         ),
                         ..Default::default()
@@ -284,7 +276,6 @@ impl Start {
                 {
                     if chunk_size_val.is_number() {
                         empty = false;
-                        // Zig: `@intCast(@max(256, @as(i51, @truncate(toInt64()))))`
                         chunk_size = 256i64.max(chunk_size_val.to_int64()) as BlobSizeType;
                     }
                 }
@@ -294,9 +285,8 @@ impl Start {
                 }
             }
             _ => {
-                // Zig: `@compileError("Unsupported tag " ++ @tagName(tag))` — const-generic
-                // monomorphization makes this dead for valid TAG; runtime unreachable
-                // until `generic_const_exprs` lets us hoist to a compile error.
+                // Dead for every valid TAG; runtime unreachable until
+                // `generic_const_exprs` lets us hoist to a compile error.
                 unreachable!("Unsupported StartTag");
             }
         }
@@ -391,8 +381,8 @@ pub enum ResultTag {
 
 impl StreamResult {
     pub fn slice16(&self) -> &[u16] {
-        // Caller guarantees bytes are u16-aligned and even length (mirrors Zig
-        // @ptrCast/@alignCast); bytemuck checks both at runtime.
+        // Caller guarantees bytes are u16-aligned and even length;
+        // bytemuck checks both at runtime.
         bytemuck::cast_slice(self.slice())
     }
 
@@ -441,8 +431,8 @@ impl Default for WritablePending {
     }
 }
 
-// Zig `WritablePending.deinit` / `WritableFuture.deinit` only deinit the owned
-// JSPromiseStrong field — JSPromiseStrong implements Drop, so no explicit Drop impl is needed here.
+// `WritablePending` / `WritableFuture` only own the JSPromiseStrong field —
+// JSPromiseStrong implements Drop, so no explicit Drop impl is needed here.
 
 pub enum WritableFuture {
     None,
@@ -483,7 +473,7 @@ pub struct WritableHandler {
 
 pub type WritableHandlerFn = fn(ctx: *mut c_void, result: Writable);
 
-/// Trait replacing Zig's `comptime handler_fn` — implementors provide the callback.
+/// Implementors provide the write-completion callback.
 pub trait WritablePendingCallback {
     fn on_handle(&mut self, result: Writable);
 }
@@ -508,10 +498,8 @@ impl WritablePending {
     /// `consumed` and pins the state at `Pending` so a later `run()` resolves
     /// the buffered amount.
     ///
-    /// Zig html_rewriter calls `pending.applyBackpressure(allocator,
-    /// &this.output, pending, bytes)` — that decl never existed in Zig (the
-    /// caller is dead code there). This is the minimal real implementation
-    /// matching that call shape.
+    /// This is the minimal implementation matching the html_rewriter
+    /// call shape.
     pub fn apply_backpressure(&mut self, _output: &mut Sink<'_>, bytes: &[u8]) {
         self.consumed = self.consumed.saturating_add(bytes.len() as BlobSizeType);
         self.state = PendingState::Pending;
@@ -536,7 +524,7 @@ impl WritablePending {
                     ctx: h.ctx,
                     handler: h.handler,
                 });
-                // Zig left self.result intact (bitwise copy); reset to Done here —
+                // Reset self.result to Done here —
                 // verify no caller reads it after run().
                 (h.handler)(h.ctx, core::mem::replace(&mut self.result, Writable::Done));
             }
@@ -632,7 +620,7 @@ pub struct Pending {
 impl Default for Pending {
     fn default() -> Self {
         Self {
-            // Zig `future: Future = undefined` — a Handler with null ctx is the inert placeholder;
+            // A Handler with null ctx is the inert placeholder;
             // always overwritten before the future is invoked.
             future: PendingFuture::Handler(PendingHandler {
                 ctx: core::ptr::null_mut(),
@@ -644,7 +632,7 @@ impl Default for Pending {
     }
 }
 
-/// Trait replacing Zig's `comptime handler_fn` for Result.Pending.
+/// Implementors provide the callback for Result.Pending.
 pub trait PendingCallback {
     fn on_handle(&mut self, result: StreamResult);
 }
@@ -677,10 +665,8 @@ impl Pending {
         }
 
         let clone = Box::new(core::mem::take(self));
-        // Zig copied *self then reset only state+result (zig:451-452);
-        // `mem::take` already resets `state`/`result`/`future` via `Default`, so the
-        // explicit re-assignments are unnecessary here. Zig left `future` untouched —
-        // no reader observes it after this.
+        // `mem::take` resets `state`/`result`/`future` via `Default`;
+        // no reader observes `future` after this.
         // VM event loop is a singleton; temporary `&mut` is the sole borrow
         // for the duration of `enqueue_task` (no re-entry into Rust).
         // `Task::from_boxed` owns the `Box → *mut` leak; the matching
@@ -777,7 +763,7 @@ impl Pending {
                 StreamResult::fulfill_promise(&mut self.result, *promise, global_this);
             }
             PendingFuture::Handler(h) => {
-                // Zig left self.result intact (bitwise copy); reset to Done here —
+                // Reset self.result to Done here —
                 // verify no caller reads it after run().
                 (h.handler)(
                     h.ctx,
@@ -807,8 +793,8 @@ impl StreamResult {
     ) {
         // dropped (only used for read-only `event_loop()`) before any re-entrant call.
         let vm = global_this.bun_vm();
-        // Zig holds `loop` and `promise` across re-entrant resolve/reject.
-        // In Rust a long-lived `&mut EventLoop` / `&mut JSPromise` would alias any
+        // A long-lived `&mut EventLoop` / `&mut JSPromise` held across
+        // re-entrant resolve/reject would alias any
         // `&mut` the re-entered JS path materializes through `vm.event_loop()` or the
         // same promise. `event_loop_ref()` is the audited safe accessor that forms a
         // fresh temporary `&mut EventLoop` per call so no two `&mut` are live at once.
@@ -868,18 +854,15 @@ impl StreamResult {
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         if VirtualMachine::get().is_shutting_down() {
-            // Zig copies `*this` to `that` and calls `that.deinit()` — a bitwise move of
-            // ownership out of `*this` followed by free. `release()` is the port of `deinit`;
-            // call it on `self` so `.owned`/`.owned_and_done` ByteLists are freed and
-            // `.err.JSValue` is unprotected instead of leaking on the shutdown path.
+            // `release()` frees `.owned`/`.owned_and_done` ByteLists and
+            // unprotects `.err.JSValue` instead of leaking on the shutdown path.
             self.release();
             return Ok(JSValue::ZERO);
         }
 
         match self {
             StreamResult::Owned(list) => {
-                // Zig overwrites `result.* = .{ .temporary = .{} }` with no
-                // destructor after handing the buffer to JSC. In Rust the later
+                // The buffer is handed to JSC; the later
                 // `*result = Temporary(...)` in fulfill_promise drops the old Vec,
                 // double-freeing the allocation now owned by JSC. Move it out and suppress
                 // Drop so JSC's MarkedArrayBuffer_deallocator is the sole owner.
@@ -894,7 +877,7 @@ impl StreamResult {
                 ab.to_js(global_this)
             }
             StreamResult::Temporary(temp) | StreamResult::TemporaryAndDone(temp) => {
-                // Zig (streams.zig:574-587): allocate an uninitialized Uint8Array and
+                // Allocate an uninitialized Uint8Array and
                 // memcpy the temporary chunk into it — avoids the extra zeroing that
                 // `ArrayBuffer::create` would do.
                 let temp_slice = temp.slice();
@@ -1032,8 +1015,7 @@ impl Default for SignalVTable {
     }
 }
 
-/// Trait replacing Zig's `@hasDecl(Wrapped, "onClose")` duck-typing.
-/// Default methods named `on_*` mirror the Zig fallback to `close`/`ready`/`start`.
+/// Implementors provide the `on_close`/`on_ready`/`on_start` callbacks.
 pub trait SignalHandler {
     fn on_close(&mut self, err: Option<SysError>);
     fn on_ready(&mut self, amount: Option<BlobSizeType>, offset: Option<BlobSizeType>);
@@ -1059,11 +1041,10 @@ impl SignalVTable {
             unsafe { bun_ptr::callback_ctx::<W>(this) }.on_start();
         }
 
-        // Zig used `comptime &VTable.wrap(Type)` for a static address.
         // Rust cannot const-promote a generic-dependent struct literal to
         // `&'static`, so the vtable is stored by-value in `Signal` instead
-        // (three fn pointers — same size as the Zig `*const VTable` payload
-        // would dereference to anyway).
+        // (three fn pointers — same size as the pointed-to payload a
+        // `&'static VTable` would dereference to anyway).
         SignalVTable {
             close: on_close::<W>,
             ready: on_ready::<W>,
@@ -1076,8 +1057,8 @@ impl SignalVTable {
 // HTTPServerWritable
 // ──────────────────────────────────────────────────────────────────────────
 
-// Zig's type-level branch `if (http3) uws.H3.Response else uws.NewApp(ssl).Response` would
-// require an associated-type trait keyed on const generics. The pointer is kept opaque at the
+// Selecting the response type from the const generics would require an
+// associated-type trait keyed on them. The pointer is kept opaque at the
 // type level; all dispatch happens at runtime through `any_res()` / `uws::AnyResponse`.
 pub type UwsResponse<const SSL: bool, const HTTP3: bool> = c_void;
 
@@ -1239,7 +1220,6 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
 
 impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// Const-generic → runtime dispatch for the type-erased `res` field.
-    /// Mirrors Zig's `const UWSResponse = if (http3) uws.H3.Response else uws.NewApp(ssl).Response`.
     #[inline]
     fn any_res(&self) -> Option<uws::AnyResponse> {
         let res = self.res?;
@@ -1297,7 +1277,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             );
             return false;
         };
-        // Zig holds `res` across `handleFirstWriteIfNecessary`, whose
+        // `res` is held across `handleFirstWriteIfNecessary`, whose
         // callback (RequestContext.renderMetadata) writes status/headers through
         // the same uWS response. `AnyResponse` is `Copy` and dispatches to
         // zero-sized opaque handles, so reusing `res` across the re-entrant
@@ -1439,8 +1419,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     }
 
     fn readable_slice(&self) -> &[u8] {
-        // Zig `this.buffer.ptr[this.offset..this.buffer.len]`; `handle_wrote`
-        // maintains `offset <= buffer.len()`.
+        // `handle_wrote` maintains `offset <= buffer.len()`.
         &self.buffer[self.offset as usize..]
     }
 
@@ -1461,11 +1440,10 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         // if we do, it will cause this to be delayed until the next call, each time
         // TODO: should we break it in smaller chunks?
         let to_write = (write_offset as BlobSizeType).min(self.buffer.len() as BlobSizeType - 1);
-        // Reshaped for borrowck — capture the chunk length before send. Zig captured the
-        // whole slice (`readableSlice()[to_write..]`) here and passed it to send;
-        // `send_readable` re-slices the buffer at call time instead, which observes any
-        // mutation send's internals perform. The length, used only for `total_written` and
-        // the empty check, is computed at the same point as Zig's `chunk.len`.
+        // Capture the chunk length before send.
+        // `send_readable` re-slices the buffer at call time, which observes any
+        // mutation send's internals perform. The length is used only for
+        // `total_written` and the empty check.
         let chunk_start = to_write as usize;
         let chunk_len = self.readable_slice().len().saturating_sub(chunk_start);
         // if we have nothing to write, we are done
@@ -1877,7 +1855,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
     fn register_auto_flusher(&mut self) {
         let Some(res) = self.any_res() else { return };
-        // Match streams.zig:1231 — reset per-enqueue so a long stream of
+        // Reset per-enqueue so a long stream of
         // sub-highWaterMark writes between auto-flushes still bumps the idle
         // timeout.
         res.reset_timeout();
@@ -1972,8 +1950,6 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
 
             self.buffer = Vec::<u8>::default();
             self.pooled_buffer = None;
-            // Zig `pooled.release()` → Rust `ObjectPool::release(node)`
-            // (the Node `Parent` back-ref was dropped in the port; see pool.rs).
             // SAFETY: `pooled` was obtained from `ByteListPool::get_node` and is
             // exclusively owned by this stream; `data` was rewritten just above,
             // so it is initialized. Ownership returns to the pool.
@@ -1989,7 +1965,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         }
     }
 
-    /// Zig: `flushPromise(this) bun.JSTerminated!void` — only VM termination
+    /// Only VM termination
     /// escapes; promise resolution cannot raise an ordinary JS exception here.
     pub fn flush_promise(&mut self) -> core::result::Result<(), jsc::JsTerminated> {
         if let Some(prom) = self.pending_flush.take() {
@@ -2002,8 +1978,8 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
                 global_this,
                 JSValue::js_number(self.wrote.saturating_sub(self.wrote_at_start_of_flush) as f64),
             );
-            // Zig `defer this.wrote_at_start_of_flush = this.wrote` reads `this.wrote`
-            // at scope exit (AFTER resolve, which may reenter JS and mutate `wrote`). Read it here,
+            // `this.wrote_at_start_of_flush = this.wrote` must read `this.wrote`
+            // AFTER resolve, which may reenter JS and mutate `wrote`. Read it here,
             // not before the call.
             //
             // R-2 noalias mitigation (PORT_NOTES_PLAN R-2; precedent
@@ -2091,7 +2067,7 @@ pub type H3ResponseSink = HTTPServerWritable<true, true>;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct NetworkSink {
-    // Zig holds an intrusive refcount (`task.ref()`/`task.deref()`). Stored as `BackRef`
+    // Stored as `BackRef`
     // (set-once); while `Some` the sink holds a counted ref on the intrusively
     // ref-counted `MultiPartUpload`, released in `detach_writable`.
     pub task: Option<BackRef<bun_s3::MultiPartUpload>>,
@@ -2207,7 +2183,7 @@ impl NetworkSink {
         }
     }
 
-    /// Zig: `onWritable(...) bun.JSTerminated!void` — narrowed like
+    /// Narrowed like
     /// `flushPromise`; promise resolution only fails on VM termination.
     pub fn on_writable(
         task: &mut bun_s3::MultiPartUpload,
@@ -2446,12 +2422,9 @@ pub type NetworkSinkJSSink = crate::webcore::sink::JSSink<NetworkSink>;
 // BufferAction
 // ──────────────────────────────────────────────────────────────────────────
 //
-// Zig models this as `union(enum) { text/arrayBuffer/blob/bytes/json: JSPromise.Strong }`
-// purely so `switch (this.*) { inline else => |p| ... }` gives a one-line forwarder and
-// `@typeInfo(...).tag_type` gives a free Tag enum. In Rust neither shortcut exists, and
-// every variant carries the *same* payload, so the idiomatic shape is `{tag, payload}`.
+// Every variant carries the *same* payload, so the idiomatic shape is `{tag, payload}`.
 // No caller pattern-matches on the variant — they only read `.tag()` or forward to the
-// promise — so this is layout-only, behaviour-identical.
+// promise.
 
 pub struct BufferAction {
     tag: BufferActionTag,
@@ -2519,7 +2492,6 @@ impl BufferAction {
     }
 }
 
-// Zig `BufferAction.deinit` only deinits the JSPromiseStrong payload.
 // JSPromiseStrong implements Drop, so the struct drops it automatically — no explicit
 // `impl Drop for BufferAction` needed.
 
@@ -2561,8 +2533,8 @@ impl ReadResult {
             ReadResult::Err(err) => StreamResult::Err(StreamError::Error(err)),
             ReadResult::Done => StreamResult::Done,
             ReadResult::Read(slice) => 'brk: {
-                // Zig's `slice` may point at the same allocation as
-                // `buf` (it checks `slice.ptr != buf.ptr`). Forming `&mut *slice`
+                // `slice` may point at the same allocation as
+                // `buf` (we check `slice.ptr != buf.ptr`). Forming `&mut *slice`
                 // while the `buf: &mut [u8]` parameter is live would violate
                 // Rust's aliasing rules in the `!owned` case. Stay on raw
                 // pointers: `<*mut [u8]>::len()` reads only the fat-pointer
@@ -2573,8 +2545,8 @@ impl ReadResult {
                 let owned = slice_ptr.cast_const() != buf.as_ptr();
                 let done = is_done || (close_on_empty && slice_len == 0);
 
-                // Zig `bun.Vec<u8>.fromOwnedSlice(slice)` adopts an existing heap
-                // allocation by pointer/len (cap = len). The contract is: when
+                // An existing heap allocation is adopted
+                // by pointer/len (cap = len). The contract is: when
                 // `slice.ptr != buf.ptr` the slice IS a default-allocator heap
                 // allocation whose ownership is being transferred into the
                 // StreamResult, and downstream `Result.release()` frees it via
@@ -2609,5 +2581,3 @@ impl ReadResult {
         }
     }
 }
-
-// ported from: src/runtime/webcore/streams.zig

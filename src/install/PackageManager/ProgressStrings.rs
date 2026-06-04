@@ -114,8 +114,8 @@ impl PackageManager {
         // SAFETY: `node` is `self.downloads_node` / `self.scripts_node`, both of
         // which point at storage owned by (or outliving) this `PackageManager`
         // singleton; `progress_name_buf` is an inline field of that same
-        // singleton, so erasing the slice lifetime to `'static` matches Zig's
-        // raw-pointer aliasing (`node.name = this.progress_name_buf[..]`).
+        // singleton, so the buffer outlives every node that references it and
+        // erasing the slice lifetime to `'static` is sound.
         unsafe {
             let len = if Output::enable_ansi_colors_stderr() {
                 if IS_FIRST {
@@ -176,8 +176,7 @@ impl PackageManager {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface — Zig declares these at file scope with an
-// explicit `*PackageManager` first param. Thin shims over the
+// Free-function re-export surface. Thin shims over the
 // `impl PackageManager` bodies above so `pub use progress_mod::{...}` in
 // `PackageManager.rs` resolves (matching the directories/enqueue pattern).
 // ──────────────────────────────────────────────────────────────────────────
@@ -206,5 +205,3 @@ pub fn start_progress_bar(manager: &mut PackageManager) {
 pub fn end_progress_bar(manager: &mut PackageManager) {
     manager.end_progress_bar()
 }
-
-// ported from: src/install/PackageManager/ProgressStrings.zig

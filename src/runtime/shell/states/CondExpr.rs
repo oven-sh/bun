@@ -50,8 +50,7 @@ impl CondExpr {
     }
 
     pub(crate) fn next(interp: &Interpreter, this: NodeId) -> Yield {
-        // Spec: CondExpr.zig `next()` — expand each arg via Expansion, then
-        // evaluate the operator.
+        // Expand each arg via Expansion, then evaluate the operator.
         loop {
             let (shell, node) = {
                 let me = interp.as_condexpr(this);
@@ -92,14 +91,14 @@ impl CondExpr {
         }
     }
 
-    /// Spec: CondExpr.zig `commandImplStart`. Evaluates the operator against
+    /// Evaluates the operator against
     /// the expanded `args` and returns the resulting exit code.
     fn command_impl_start(interp: &Interpreter, this: NodeId, op: ast::CondExprOp) -> Yield {
         use ast::CondExprOp as Op;
         let parent = interp.as_condexpr(this).base.parent;
         match op {
             Op::DashC | Op::DashD | Op::DashF => {
-                // Spec: empty expansion or empty path → exit 1 (bash always
+                // Empty expansion or empty path → exit 1 (bash always
                 // gives 1; Windows `stat("")` can succeed and return cwd's
                 // stat, so the empty-path check must be explicit).
                 let path_empty = {
@@ -109,7 +108,7 @@ impl CondExpr {
                 if path_empty {
                     return interp.child_done(parent, this, 1);
                 }
-                // Spec (CondExpr.zig `commandImplStart` + `doStat`): post a
+                // Post a
                 // `ShellCondExprStatTask` to the thread pool; the result comes
                 // back on the main thread via `on_stat_task_done`.
                 let (cwd_fd, mut path) = {
@@ -167,13 +166,15 @@ impl CondExpr {
                     !ast::CondExprOp::is_supported(op),
                     "supported CondExprOp not handled in command_impl_start"
                 );
-                // Spec: unsupported op is unreachable (parser rejects it).
+                // Unsupported op is unreachable (parser rejects it).
                 interp.child_done(parent, this, 1)
             }
         }
     }
 
-    /// Spec: CondExpr.zig `onIOWriterChunk` (lines 267-279).
+    /// IOWriter completion callback for the error message written in
+    /// `WaitingWriteErr`: on write failure finish with the errno as the exit
+    /// code, otherwise finish with exit code 1.
     pub(crate) fn on_io_writer_chunk(
         interp: &Interpreter,
         this: NodeId,
@@ -182,8 +183,7 @@ impl CondExpr {
     ) -> Yield {
         let parent = interp.as_condexpr(this).base.parent;
         if let Some(e) = err {
-            // Spec: `@intFromEnum(err.?.getErrno())` — recover the positive
-            // errno (`to_shell_system_error` negated it).
+            // Recover the positive errno (`to_shell_system_error` negated it).
             let exit_code: ExitCode = e.errno.unsigned_abs() as ExitCode;
             return interp.child_done(parent, this, exit_code);
         }
@@ -199,7 +199,7 @@ impl CondExpr {
         )
     }
 
-    /// Spec: CondExpr.zig `onStatTaskComplete`. Main-thread re-entry for the
+    /// Main-thread re-entry for the
     /// off-thread `stat`/`lstat` posted by a unary file-test operator.
     pub(crate) fn on_stat_task_done(
         interp: &Interpreter,
@@ -207,8 +207,7 @@ impl CondExpr {
         stat: &bun_sys::Result<bun_sys::Stat>,
         path: &[u8],
     ) {
-        // Spec: CondExpr.zig `onStatTaskComplete` + `.stat_complete` arm of
-        // `next()` — evaluate `op` against the stat result.
+        // Evaluate `op` against the stat result.
         let _ = path;
         debug_assert!(matches!(
             interp.as_condexpr(this).state,
@@ -241,11 +240,11 @@ impl CondExpr {
         exit_code: ExitCode,
     ) -> Yield {
         // Child is always an Expansion that produced one arg.
-        // Spec: CondExpr.zig `childDone` — on nonzero, write the failing
-        // error and finish; otherwise collect the expanded word and advance.
+        // On nonzero exit, write the failing error and finish; otherwise
+        // collect the expanded word and advance.
         if exit_code != 0 {
-            // Spec: pull the expansion error out before deiniting the child,
-            // then `writeFailingError("{f}\n", err)`.
+            // Pull the expansion error out before deiniting the child, then
+            // write the failing error.
             let err = Expansion::take_err(interp, child);
             interp.deinit_node(child);
             if let Some(err) = err {
@@ -253,10 +252,7 @@ impl CondExpr {
                 err.deinit();
                 return y;
             }
-            // Defensive fallback — Zig would safety-panic on the union
-            // access here, then unconditionally finish via
-            // `writeFailingError` with exit 1, so 1 is the only exit code
-            // this path can produce per spec.
+            // Defensive fallback — finish via `writeFailingError` with exit 1.
             debug_assert!(false, "Expansion child failed without an error");
             let parent = interp.as_condexpr(this).base.parent;
             return interp.child_done(parent, this, 1);
@@ -273,7 +269,7 @@ impl CondExpr {
         Yield::Next(this)
     }
 
-    /// Spec: CondExpr.zig `doStat` — heap-allocate a `ShellCondExprStatTask`
+    /// Heap-allocate a `ShellCondExprStatTask`
     /// and hand it to the work pool; `run_from_thread_pool` performs the
     /// `statat`, then the main thread resumes via
     /// `ShellCondExprStatTask::run_from_main_thread` → `on_stat_task_done`.
@@ -302,9 +298,8 @@ impl CondExpr {
         Yield::suspended()
     }
 
-    /// Spec: CondExpr.zig `writeFailingError` →
-    /// `ShellExecEnv.writeFailingErrorFmt` (same shape as
-    /// `Builtin::cmd_write_failing_error`): `.fd` stderr enqueues an async
+    /// Same shape as `Builtin::cmd_write_failing_error`: `.fd` stderr
+    /// enqueues an async
     /// write and parks in `WaitingWriteErr` (resumed by
     /// `on_io_writer_chunk`); otherwise append to the captured stderr buffer
     /// and finish with exit 1.
@@ -319,7 +314,7 @@ impl CondExpr {
         let mut buf = Vec::new();
         let _ = buf.write_fmt(args);
         if interp.as_condexpr(this).io.stderr.needs_io().is_some() {
-            // Spec: `enqueueCb(ctx)` — only the `.fd` arm transitions state.
+            // Only the fd arm transitions state.
             interp.as_condexpr_mut(this).state = CondExprState::WaitingWriteErr;
             let child = io_writer::ChildPtr::new(this, io_writer::WriterTag::CondExpr);
             // `OutKind::Fd` guaranteed by `needs_io()`.
@@ -330,10 +325,6 @@ impl CondExpr {
         }
         // No-IO path: append to the shell env's captured stderr and finish
         // synchronously with exit 1 (matches `on_io_writer_chunk`).
-        // Intentional divergence: Zig's `writeFailingErrorFmt` `.ignore` arm
-        // is a known-broken FIXME — it yields a synthetic `onIOWriterChunk`
-        // which (state != waiting_write_err) hits `unreachableState` and
-        // panics. The Rust port deliberately finishes with exit 1 instead.
         if let OutKind::Pipe = &interp.as_condexpr(this).io.stderr {
             // SAFETY: single trampoline frame; no other borrow of the env's
             // (or its parent's) stderr buffer is live.
@@ -367,15 +358,12 @@ impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellCondExprSta
 impl crate::shell::interpreter::ShellTaskCtx
     for crate::shell::dispatch_tasks::ShellCondExprStatTask
 {
-    // The `ShellTask` is embedded one level down (`.task.task`), mirroring the
-    // Zig spec's nested `task:` field; the dispatch arm
-    // (`shell_dispatch!(nested ...)`) walks the same two hops.
+    // The `ShellTask` is embedded one level down (`.task.task`); the dispatch
+    // arm (`shell_dispatch!(nested ...)`) walks the same two hops.
     const TASK_OFFSET: usize =
         core::mem::offset_of!(crate::shell::dispatch_tasks::ShellCondExprStatTask, task)
             + core::mem::offset_of!(crate::shell::dispatch_tasks::CondExprStatInner, task);
 
-    /// Spec: CondExpr.zig `ShellCondExprStatTask.runFromThreadPool` —
-    /// `ShellSyscall.statat(cwdfd, path)`.
     fn run_from_thread_pool(this: &mut Self) {
         let inner = &mut this.task;
         debug_assert!(inner.path.last() == Some(&0));
@@ -390,5 +378,3 @@ impl crate::shell::interpreter::ShellTaskCtx
         crate::shell::dispatch_tasks::ShellCondExprStatTask::run_from_main_thread(this, interp);
     }
 }
-
-// ported from: src/shell/states/CondExpr.zig

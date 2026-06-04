@@ -142,16 +142,11 @@ impl Bin {
         }
     }
 
-    /// Zig: `Bin.clone(buf, prev_external_strings, all_extern_strings,
-    /// extern_strings_slice, Builder, builder)`.
-    ///
-    /// the Zig API takes both the full `all_extern_strings` buffer
-    /// and a writable tail subslice into the **same** buffer — the full slice
-    /// is only used by `ExternalStringList::init` to compute the tail's
-    /// offset. In Rust those two views alias (`&[T]` overlapping `&mut [T]` is
-    /// UB under Stacked Borrows), so callers pass the precomputed offset
-    /// instead and we build the `ExternalStringList` directly. Renamed
-    /// `clone` → `clone_with_buffers` to avoid shadowing `Clone::clone`.
+    /// Callers pass the precomputed offset of the writable tail within
+    /// `all_extern_strings` (a full-buffer view would alias the writable
+    /// tail, which is UB under Stacked Borrows) and we build the
+    /// `ExternalStringList` directly. Named `clone_with_buffers` to avoid
+    /// shadowing `Clone::clone`.
     pub fn clone_with_buffers<B: StringBuilder>(
         &self,
         buf: &[u8],
@@ -247,13 +242,9 @@ impl Bin {
                             (current_len + num_props).saturating_sub(extern_strings.len()),
                         )
                         .map_err(|_| AllocError)?;
-                    // reshaped for borrowck — Zig bumped `items.len += num_props`
-                    // up-front and wrote into the spare-capacity region by raw pointer
-                    // (leaving partially-init slots on mid-loop bailout); here we push
-                    // incrementally so a bailout leaves only the slots actually written.
-                    // The returned `Bin` is `Tag::None` on bailout so the slots are never
-                    // indexed either way — strictly safer/less wasteful, no caller-visible
-                    // divergence.
+                    // Push incrementally so a bailout leaves only the slots
+                    // actually written. The returned `Bin` is `Tag::None` on
+                    // bailout so the slots are never indexed either way.
                     let mut i: usize = 0;
                     for bin_prop in props {
                         let Some(key_str) =
@@ -471,7 +462,7 @@ pub enum ToJsonStyle {
     MultiLine,
 }
 
-// `comptime StringBuilder: type` param maps onto the canonical
+// The canonical
 // `bun_semver::StringBuilder` trait (count + append<T> + provided
 // append_string/append_external_string wrappers). Re-exported so
 // `bin_real::StringBuilder` paths still resolve.
@@ -593,8 +584,8 @@ pub struct NamesIterator<'a> {
     pub dir_iterator: Option<sys::dir_iterator::WrappedIterator>,
     pub package_name: String,
     /// Borrowed view of the destination `node_modules` directory fd; the
-    /// caller owns the underlying `Dir`. Default is `Fd::INVALID` (Zig:
-    /// `bun.invalid_fd.stdDir()`), which `next_in_dir()` never reaches.
+    /// caller owns the underlying `Dir`. Default is `Fd::INVALID`, which
+    /// `next_in_dir()` never reaches.
     pub destination_node_modules: Fd,
     pub buf: PathBuffer,
     pub string_buffer: &'a [u8],
@@ -692,13 +683,11 @@ impl<'a> NamesIterator<'a> {
     }
 }
 
-// BACKREF — Zig stores `*const ArrayList(Dependency)` /
-// `*const ArrayList(u8)` (non-exclusive). `PackageInstaller` holds a
+// BACKREF — `PackageInstaller` holds a
 // `&mut Lockfile` alongside a `Box<[TreeContext]>` whose `binaries` queues
 // alias into `lockfile.buffers`; a `&'a Vec<_>` borrow here would force the
 // `TreeContext.binaries` field to carry an unsatisfiable `'static` (the
 // installer outlives no concrete lifetime for its own self-borrowed buffers).
-// `BackRef<Vec<_>>` mirrors the Zig ownership model exactly.
 pub struct PriorityQueueContext {
     pub dependencies: bun_ptr::BackRef<Vec<Dependency>>,
     pub string_buf: bun_ptr::BackRef<Vec<u8>>,
@@ -731,7 +720,6 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 // Min-heap keyed by `PriorityQueueContext::less_than` (string-order of dep names).
 pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
-// Zig's `Bin.PriorityQueue.Context` is an inherent associated type;
 // `inherent_associated_types` is unstable, so callers use `Bin::PriorityQueueContext`.
 pub type Context = PriorityQueueContext;
 
@@ -805,8 +793,8 @@ pub struct Linker<'a> {
     /// Usually will be the same as `node_modules_path`.
     /// Used to support native bin linking.
     ///
-    /// Zig uses `*bun.AbsPath(.{})` and intentionally aliases this
-    /// with `node_modules_path` (the common case). A `&'a AbsPath` would
+    /// This intentionally may alias `node_modules_path` (the common
+    /// case). A `&'a AbsPath` would
     /// conflict with the `&'a mut AbsPath` borrow on `node_modules_path`, so
     /// keep it as a raw pointer; the only read site dereferences it under a
     /// SAFETY note in `build_target_package_dir`.
@@ -922,8 +910,7 @@ impl<'a> Linker<'a> {
         }
 
         if let Some(seen) = self.seen.as_deref_mut() {
-            // StringHashMap::get_or_put boxes the key on insert; the
-            // Zig wrote `entry.key_ptr.* = dupe(abs_dest)` which is implicit here.
+            // StringHashMap::get_or_put boxes the key on insert.
             let _ = seen.get_or_put(abs_dest.as_bytes());
         }
 
@@ -1116,12 +1103,10 @@ impl<'a> Linker<'a> {
         abs_dest: &ZStr,
         global: bool,
     ) {
-        // Zig declares `var shim_buf: [65536]u8` and later
-        // `@ptrCast(@alignCast(...))`s it to `[*]u16` inside encode_into. In Zig
-        // `@alignCast` is a *runtime safety check* (panics in safe builds on
-        // misalignment), but in Rust constructing a `&mut [u16]` from a pointer
-        // that is not 2-aligned is *immediate language UB* — the reference
-        // validity invariant requires alignment even if never dereferenced.
+        // `encode_into` reinterprets this byte buffer as `[u16]`.
+        // Constructing a `&mut [u16]` from a pointer that is not 2-aligned is
+        // *immediate language UB* — the reference validity invariant requires
+        // alignment even if never dereferenced.
         // `[u8; N]` has `align_of == 1`, so the compiler is free to place it at
         // an odd address. Force 2-byte alignment at the declaration site so the
         // `*mut u16` slice construction in `encode_into` is provably sound.
@@ -1158,9 +1143,6 @@ impl<'a> Linker<'a> {
                         return;
                     }
 
-                    // borrowck — Zig's `save()`/`defer restore()` returns a
-                    // `ResetScope` holding `&mut Path`, which would keep
-                    // `node_modules_path` exclusively borrowed across `append()`.
                     // Snapshot the length and restore via `set_length` after.
                     let node_modules_path_save = self.node_modules_path.len();
                     let _ = self.node_modules_path.append(b".bin");
@@ -1198,7 +1180,7 @@ impl<'a> Linker<'a> {
         let shebang = 'shebang: {
             let first_content_chunk: Option<&[u8]> = 'contents: {
                 // Loop-fill via `read_all` so a short read can't truncate the
-                // shebang sniff (Zig used a streaming reader's readVec here).
+                // shebang sniff.
                 let read = match target.read_all(&mut read_in_buf) {
                     sys::Result::Ok(n) => n,
                     sys::Result::Err(_) => break 'contents None,
@@ -1293,9 +1275,7 @@ impl<'a> Linker<'a> {
                         return;
                     }
 
-                    // reshaped for borrowck — Zig's `var s = path.save();
-                    // defer s.restore();` returns a `ResetScope` holding `&mut Path`;
-                    // capture `len()` and restore via `set_length()` so the path
+                    // Capture `len()` and restore via `set_length()` so the path
                     // can be re-borrowed for `append`/`slice` in between.
                     let node_modules_path_save = self.node_modules_path.len();
                     let _ = self.node_modules_path.append(b".bin");
@@ -1314,8 +1294,6 @@ impl<'a> Linker<'a> {
                             return;
                         }
                     }
-                    // NOTE: unreachable in Zig too — the third symlink call below the
-                    // switch in the original is dead code (both arms above return).
                 }
 
                 // beyond this error can only be `.EXIST`
@@ -1349,7 +1327,7 @@ impl<'a> Linker<'a> {
         // SAFETY: `target_node_modules_path` is set at construction to either
         // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
         // both outlive `self` and are not mutated for the duration of this
-        // read (mirrors Zig's aliasing `*AbsPath`).
+        // read.
         let dest_dir_without_trailing_slash =
             strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
         let package_name = self.target_package_name.slice();
@@ -1468,8 +1446,7 @@ impl<'a> Linker<'a> {
     ///
     /// Falls through to (1) when nothing exists so the existing
     /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
-    // reshaped for borrowck — Zig took `*const Linker` but only read
-    // `is_native_binlink_redirect()`. Hoist that bool to a parameter so the
+    // `is_native_binlink_redirect()` is hoisted to a parameter so the
     // caller can drop its `&self` borrow before mutably calling
     // `link_bin_or_create_shim`. Result borrows the threadlocal join buffer
     // (lifetime tied to `package_dir` per `join_abs_string_z`'s signature).
@@ -1507,7 +1484,7 @@ impl<'a> Linker<'a> {
         // SAFETY: `target_node_modules_path` is set at construction to either
         // a caller-owned `AbsPath` or the same buffer as `node_modules_path`;
         // both outlive `self` and are not mutated for the duration of this
-        // read (mirrors Zig's aliasing `*AbsPath`).
+        // read.
         let dest_dir_without_trailing_slash =
             strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
 
@@ -1532,8 +1509,8 @@ impl<'a> Linker<'a> {
 
     /// Returns the offset into `self.abs_dest_buf` where the destination dir ends
     /// (i.e. where the bin name should be written).
-    // reshaped — Zig returned a `[]u8` view (remain) into abs_dest_buf;
-    // returning an offset avoids overlapping &mut borrows of self.
+    // Returning an offset (rather than a slice into abs_dest_buf) avoids
+    // overlapping &mut borrows of self.
     pub fn build_destination_dir(&mut self, global: bool) -> usize {
         let dest_dir_without_trailing_slash =
             strings::without_trailing_slash(self.node_modules_path.slice());
@@ -1571,11 +1548,10 @@ impl<'a> Linker<'a> {
 
         debug_assert!(self.bin.tag != Tag::None);
 
-        // reshaped for borrowck — `link_bin_or_create_shim(&mut self, ..)`
+        // `link_bin_or_create_shim(&mut self, ..)`
         // is called while `abs_target` / `abs_dest` borrow `self.abs_target_buf`
-        // / `self.abs_dest_buf`. The Zig holds raw `[]u8` views (no exclusivity
-        // implied) and `link_bin_or_create_shim` never reads or writes those two
-        // buffers (it only touches `rel_buf`, `node_modules_path`, `seen`, `err`,
+        // / `self.abs_dest_buf`. `link_bin_or_create_shim` never reads or writes
+        // those two buffers (it only touches `rel_buf`, `node_modules_path`, `seen`, `err`,
         // `skipped_due_to_missing_bin`). Detach the `abs_dest` borrow via a raw
         // pointer so borrowck allows the disjoint access; the SAFETY invariant
         // is that `abs_dest_buf` is not aliased mutably for the lifetime of the
@@ -1755,7 +1731,7 @@ impl<'a> Linker<'a> {
                         // SAFETY: `join_abs_string_z` writes into the thread-local
                         // `PARSER_JOIN_INPUT_BUFFER`; result does not borrow
                         // `package_dir`. Detached so `abs_target_buf` can be
-                        // reused inside the loop body (see Zig comment below).
+                        // reused inside the loop body (see the SAFETY note below).
                         ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                     };
 
@@ -1792,8 +1768,7 @@ impl<'a> Linker<'a> {
                                     // SAFETY: result lives in `self.abs_target_buf`, which
                                     // `link_bin_or_create_shim` does not write to (only
                                     // `rel_buf`/`node_modules_path`/`seen`/`err`/
-                                    // `skipped_due_to_missing_bin` are touched). Mirrors
-                                    // the Zig aliasing.
+                                    // `skipped_due_to_missing_bin` are touched).
                                     ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
                                 };
 
@@ -1966,5 +1941,3 @@ impl<'a> Linker<'a> {
         }
     }
 }
-
-// ported from: src/install/bin.zig

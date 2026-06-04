@@ -28,7 +28,6 @@ pub struct PendingConnect {
 }
 
 impl PendingConnect {
-    /// Zig: `pub const new = bun.TrivialNew(@This());`
     pub fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
@@ -63,7 +62,7 @@ impl PendingConnect {
     /// `Box<Self>` back to the caller. Associated fn (not `&mut self`) because
     /// the list owns `Box<Self>` — `swap_remove` would otherwise drop the very
     /// allocation `&mut self` borrows from (UAF). Caller holds the returned
-    /// Box until scope exit (Zig: `defer pc.deinit()`).
+    /// Box until scope exit.
     pub fn unregister_from(this: *const Self, ctx: &mut NewHTTPContext<true>) -> Option<Box<Self>> {
         let list = &mut ctx.pending_h2_connects;
         // reshaped for borrowck (was `for + swapRemove + return`)
@@ -72,10 +71,7 @@ impl PendingConnect {
             .map(|i| list.swap_remove(i))
     }
 
-    // Zig `deinit` freed `hostname`, deinited `waiters`, and `bun.destroy(this)`.
-    // In Rust all three are handled by dropping `Box<PendingConnect>` — `Box<[u8]>`
+    // Cleanup is handled by dropping `Box<PendingConnect>` — `Box<[u8]>`
     // and `Vec<_>` fields free themselves, and the Box frees the allocation.
     // No explicit `Drop` impl needed.
 }
-
-// ported from: src/http/h2_client/PendingConnect.zig

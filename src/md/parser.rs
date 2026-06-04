@@ -5,8 +5,7 @@ use core::ffi::c_void;
 
 use bun_collections::bit_set::{ArrayBitSet, num_masks_for};
 
-// Zig `bun.bit_set.StaticBitSet(256)` resolves to `ArrayBitSet(usize, 256)`
-// (size > @bitSizeOf(usize)). Stable Rust cannot branch a type on a const
+// Stable Rust cannot branch a type on a const
 // generic, so per bit_set.rs guidance we pick `ArrayBitSet` directly. The
 // inline scanner in inlines.rs depends on `is_set()` being real — a no-op
 // stub here makes every byte fall through the fast path and disables all
@@ -20,10 +19,10 @@ use super::types::{
     Align, BlockType, Container, Flags, Mark, NUM_OPENER_STACKS, OFF, OpenerStack, Renderer,
     TABLE_MAXCOLCOUNT, VerbatimLine,
 };
-use crate::RenderOptions; // Zig: `root.RenderOptions` (root.zig → crate lib.rs)
+use crate::RenderOptions;
 
-// Re-exports that Zig nested under `Parser.*` — Rust has no struct-scoped type
-// aliases, so they live at module scope as `parser::EmphDelim` etc.
+// Rust has no struct-scoped type
+// aliases, so these live at module scope as `parser::EmphDelim` etc.
 pub use super::inlines::{EmphDelim, HtmlScanMemo, MAX_EMPH_MATCHES};
 pub use super::ref_defs::RefDef;
 
@@ -32,7 +31,6 @@ pub use super::ref_defs::RefDef;
 // PORTING.md's mechanical-port guidance was "no struct lifetimes", but raw-ptr
 // here would obscure every `ch()` call; one obvious `'a` is the honest mapping.
 pub struct Parser<'a> {
-    // Zig field `std.mem.Allocator` param — dropped; global mimalloc.
     pub text: &'a [u8],
     pub size: OFF,
     pub flags: Flags,
@@ -52,7 +50,7 @@ pub struct Parser<'a> {
     // Dynamic arrays
     pub marks: Vec<Mark>,
     pub containers: Vec<Container>,
-    // Zig used `ArrayListAlignedUnmanaged(u8, .@"4")`: 4-byte alignment is
+    // 4-byte alignment is
     // load-bearing for the `BlockHeader` reinterpretation in
     // `get_block_header_at`. Here the invariant rests on (a) offsets being
     // padded to a multiple of 4 by every writer and (b) the global allocator
@@ -128,7 +126,7 @@ impl Default for BlockHeader {
     }
 }
 
-/// `Parser.Error` in Zig is `bun.JSError || bun.StackOverflow`, i.e. the union
+/// `Parser`'s error type: the union
 /// of `{ OutOfMemory, JSError, JSTerminated }` with `{ StackOverflow }`.
 // (`bun_jsc::JsError` covers the first three, but the md crate sits below
 // `bun_jsc` in the layering, so the variants stay flat here.)
@@ -219,8 +217,7 @@ impl<'a> Parser<'a> {
         p
     }
 
-    // Zig `fn deinit(self: *Parser)` only frees the `ArrayListUnmanaged` fields.
-    // All of those are now `Vec<_>`, so `Drop` is automatic — no explicit impl.
+    // All owned buffers are `Vec<_>`, so `Drop` is automatic — no explicit impl.
 
     #[inline]
     pub fn ch(&self, off: OFF) -> u8 {
@@ -272,12 +269,10 @@ impl<'a> Parser<'a> {
     // Delegated methods (re-exports)
     // ========================================
     //
-    // In Zig these are `pub const foo = other_mod.foo;` aliases that pull free
-    // functions into `Parser`'s decl namespace so they dispatch as methods
-    // (`parser.foo(...)`). Rust has no decl-aliasing; instead each sibling
+    // Each sibling
     // module defines its own `impl Parser<'_> { ... }` block (multiple `impl`
     // blocks per type within one crate are idiomatic). The list below is kept
-    // as documentation so the .zig ↔ .rs diff stays line-aligned.
+    // as documentation of where each method lives.
     //
     // render_blocks.rs — impl Parser:
     //   enter_block, leave_block, process_code_block, process_html_block,
@@ -333,10 +328,8 @@ pub fn render_to_html(
     let input = helpers::skip_utf8_bom(text);
 
     let mut html_renderer = HtmlRenderer::init(input, render_opts);
-    // Zig `errdefer html_renderer.deinit()` — Drop handles cleanup on `?`.
 
     let mut parser = Parser::init(input, flags, html_renderer.renderer());
-    // Zig `defer parser.deinit()` — Drop handles cleanup at scope exit.
 
     // HtmlRenderer never returns JSError/JSTerminated, so OutOfMemory is the only possible error.
     match parser.process_doc() {
@@ -364,9 +357,6 @@ pub fn render_with_renderer<'a>(
     let input = helpers::skip_utf8_bom(text);
 
     let mut p = Parser::init(input, flags, rend);
-    // Zig `defer p.deinit()` — Drop.
 
     p.process_doc()
 }
-
-// ported from: src/md/parser.zig

@@ -21,8 +21,8 @@ pub enum PostinstallOptimizer {
 }
 
 // `string_hash` is `Wyhash11` (not `const fn`; only the std-Wyhash final4
-// variant has a const re-port), so this stays a `LazyLock` rather than a
-// `const` array as in the Zig comptime original.
+// variant has a const implementation), so this is a `LazyLock` rather than a
+// `const` array.
 static DEFAULT_NATIVE_BINLINKS_NAME_HASHES: LazyLock<[PackageNameHash; 2]> = LazyLock::new(|| {
     [
         semver::string::Builder::string_hash(b"esbuild"),
@@ -35,8 +35,7 @@ struct DefaultIgnore {
     minimum_version: semver::Version,
 }
 
-// `Version::parse_utf8` is not `const fn`, so this stays a `LazyLock` rather
-// than a comptime constant as in Zig.
+// `Version::parse_utf8` is not `const fn`, so this is a `LazyLock`.
 static DEFAULT_IGNORE: LazyLock<[DefaultIgnore; 1]> = LazyLock::new(|| {
     [DefaultIgnore {
         name_hash: semver::string::Builder::string_hash(b"sharp"),
@@ -50,9 +49,8 @@ impl PostinstallOptimizer {
         expr: &js_ast::Expr,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
-        // Zig `expr.asArray()` returns null for both non-array AND empty
-        // array, so the `items.len == 0` check below is dead in Zig too — preserved
-        // for diff parity.
+        // `expr.as_array()` returns `None` for both non-array AND empty
+        // array, so the `items.len == 0` check below is dead.
         let Some(mut array) = expr.as_array() else {
             return Ok(false);
         };
@@ -67,8 +65,7 @@ impl PostinstallOptimizer {
             // JSON parsing never folds strings into ropes (same invariant
             // `as_utf8_string_literal` asserted before this was inlined).
             debug_assert!(s.next.is_none());
-            // Zig `entry.asString(allocator)` transcodes UTF-16 → UTF-8 before
-            // hashing. The JSON lexer emits UTF-16 `EString`s for non-ASCII
+            // The JSON lexer emits UTF-16 `EString`s for non-ASCII
             // package.json strings, so both representations must hash the same
             // UTF-8 bytes.
             let hash = if s.is_utf8() {
@@ -118,8 +115,8 @@ impl PostinstallOptimizer {
         target_os: npm::OperatingSystem,
     ) -> Option<PackageID> {
         // Windows needs file extensions.
-        // Zig: `@enumFromInt(Npm.OperatingSystem.win32)` — wrap the raw bit in the
-        // newtype since `WIN32` is exported as the underlying `u16` repr, not `Self`.
+        // Wrap the raw bit in the newtype since `WIN32` is exported as the
+        // underlying `u16` repr, not `Self`.
         if target_os.is_match(npm::OperatingSystem(npm::OperatingSystem::WIN32)) {
             return None;
         }
@@ -143,9 +140,8 @@ impl PostinstallOptimizer {
     }
 }
 
-// Zig: `std.ArrayHashMapUnmanaged(PackageNameHash, PostinstallOptimizer,
-// install.ArrayIdentityContext.U64, false)` — the key is already a hash, so use the
-// identity context rather than re-hashing it.
+// The key is already a hash, so use the identity context rather than
+// re-hashing it.
 pub type Map = ArrayHashMap<PackageNameHash, PostinstallOptimizer, ArrayIdentityContextU64>;
 
 #[derive(Default)]
@@ -182,8 +178,8 @@ impl List {
             }
         }
 
-        // Zig: feature flag has `default: false` and returns bool directly; the Rust
-        // env_var port returns `Option<bool>`. unwrap_or(false) preserves the default.
+        // The feature flag defaults to false; `env_var` returns `Option<bool>`,
+        // so unwrap_or(false) preserves the default.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER
             .get()
             .unwrap_or(false)
@@ -203,7 +199,7 @@ impl List {
         target_os: npm::OperatingSystem,
         tree_id: Option<TreeId>,
     ) -> bool {
-        // Zig: feature flag has `default: false`; see note on the binlinker flag above.
+        // The feature flag defaults to false; see note on the binlinker flag above.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_IGNORE_SCRIPTS
             .get()
             .unwrap_or(false)
@@ -288,5 +284,3 @@ impl List {
         None
     }
 }
-
-// ported from: src/install/postinstall_optimizer.zig

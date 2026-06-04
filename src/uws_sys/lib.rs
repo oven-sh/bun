@@ -36,7 +36,7 @@ pub type SslCtx = bun_boringssl_sys::SSL_CTX;
 
 /// `struct us_bun_verify_error_t` — TLS handshake verification result.
 ///
-/// Field is named `error_no` (mirrors the Zig `error_no`) so the Node-compat
+/// Field is named `error_no` so the Node-compat
 /// `verifyError`/`authorizationError` paths read naturally; the C struct's
 /// first member is `int error` and the layout is identical.
 #[repr(C)]
@@ -139,7 +139,7 @@ impl Opcode {
     pub const Close: Opcode = Opcode(8);
     pub const Ping: Opcode = Opcode(9);
     pub const Pong: Opcode = Opcode(10);
-    // Upper-case aliases for callers that ported the Zig screaming-snake names
+    // Upper-case aliases for callers that use the screaming-snake names
     // (`uWS::OpCode::TEXT` etc.). Same bit values; both spellings are accepted
     // so the merge of `bun_uws::Opcode` into this type doesn't ripple.
     pub const CONTINUATION: Opcode = Opcode(0);
@@ -264,7 +264,7 @@ impl UpgradedDuplex {
 // Same link-time-dispatch as `UpgradedDuplex` above: the real
 // `WindowsNamedPipe` lives in `bun_runtime::socket`; this opaque handle
 // forwards to `extern "C"` symbols that the runtime crate exports with
-// `#[no_mangle]`. Surface mirrors `src/jsc/api/bun/socket.zig WindowsNamedPipe`.
+// `#[no_mangle]`.
 #[cfg(windows)]
 unsafe extern "C" {
     safe fn WindowsNamedPipe__ssl_error(this: &WindowsNamedPipe) -> us_bun_verify_error_t;
@@ -420,7 +420,7 @@ pub use socket_group::SocketGroup;
 pub use us_socket::{CloseCode, us_socket_stream_buffer_t, us_socket_t};
 pub use web_socket::{AnyWebSocket, RawWebSocket, WebSocketBehavior};
 
-/// Zig `NewApp(ssl)` / `NewApp(ssl).Response` aliases.
+/// Legacy aliases for `App<SSL>` / `Response<SSL>`.
 pub type NewApp<const SSL: bool> = app::App<SSL>;
 pub type NewAppResponse<const SSL: bool> = response::Response<SSL>;
 pub type Socket = us_socket::us_socket_t;

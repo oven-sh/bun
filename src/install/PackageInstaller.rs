@@ -49,18 +49,18 @@ pub struct PendingLifecycleScript {
 }
 
 pub struct PackageInstaller<'a> {
-    /// Zig: `*PackageManager` — BACKREF into the singleton. Raw pointer (not
+    /// BACKREF into the singleton. Raw pointer (not
     /// `&'a mut`) because the install loop also re-borrows the same object
     /// via the caller's `this`/`mgr_ptr` (e.g. `run_tasks(this, &mut installer)`
     /// in `hoisted_install`); a `&'a mut` here would assert exclusivity that
     /// the call shape contradicts. Never null. Access via `manager()` /
     /// `manager_mut()`.
     pub manager: *mut PackageManager,
-    /// Zig: `*Lockfile` — BACKREF into `(*manager).lockfile`. Same aliasing
+    /// BACKREF into `(*manager).lockfile`. Same aliasing
     /// rationale as `manager`; the column-slice fields below also point into
     /// it. Never null. Access via `lockfile()` / `lockfile_mut()`.
     pub lockfile: *mut Lockfile,
-    /// Zig: `*Progress` — BACKREF into `(*manager).progress`. Never null.
+    /// BACKREF into `(*manager).progress`. Never null.
     pub progress: *mut Progress,
 
     /// relative paths from `next` will be copied into this list.
@@ -71,8 +71,7 @@ pub struct PackageInstaller<'a> {
     pub force_install: bool,
     pub root_node_modules_folder: Dir,
     pub summary: &'a mut package_install::Summary,
-    // Zig also stored `options: *const Options` (a BACKREF into
-    // `(*manager).options`). Dropped — every caller reads via
+    // No `options` backref field — every caller reads via
     // `self.manager().options` so the shared borrow stays a child of the live
     // `&mut PackageManager` Unique tag rather than a sibling raw.
     // The following slice fields alias into `self.lockfile.packages` (BACKREF).
@@ -81,9 +80,8 @@ pub struct PackageInstaller<'a> {
     // and are only ever *grown*, never freed; `fix_cached_lockfile_package_slices`
     // re-snapshots after a grow. `RawSlice` carries no lifetime, so the
     // assignment sites do not need a `&'a → &'a` lifetime-detach round-trip.
-    // `resolutions` was `&'a mut [Resolution]` in the Zig spec but every Rust
-    // call site is a read (`&raw const self.resolutions[i]`), so it is also
-    // `RawSlice` here.
+    // Every `resolutions` call site is a read (`&raw const self.resolutions[i]`),
+    // so it is also `RawSlice` here.
     pub metas: bun_ptr::RawSlice<Package::Meta>,
     pub names: bun_ptr::RawSlice<String>,
     pub pkg_dependencies: bun_ptr::RawSlice<DependencySlice>,
@@ -181,7 +179,7 @@ impl NodeModulesFolder {
     ) -> Result<bun_sys::file::ReadToEndResult, bun_core::Error> {
         let file = self.open_file(root_node_modules_dir, file_path)?;
         let res = file.read_to_end_small();
-        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = file.close(); // close error is non-actionable
         Ok(match res {
             Ok(bytes) => bun_sys::file::ReadToEndResult { bytes, err: None },
             Err(e) => bun_sys::file::ReadToEndResult {
@@ -221,7 +219,7 @@ impl NodeModulesFolder {
     pub(crate) fn open_dir(&self, root: &Dir) -> Result<Dir, bun_core::Error> {
         #[cfg(unix)]
         {
-            // std.posix.toPosixPath — copies into a NUL-terminated PathBuffer
+            // Copy into a NUL-terminated PathBuffer.
             let mut path_buf = PathBuffer::uninit();
             let path_z = bun_paths::resolve_path::z(self.path.as_slice(), &mut path_buf);
             return root
@@ -427,9 +425,8 @@ impl<'a> PackageInstaller<'a> {
 
     /// Increments the number of installed packages for a tree id and runs available scripts
     /// if the tree is finished.
-    // Zig parametrised this on `comptime should_install_packages: bool`.
-    // Rust can't pass `!CONST_PARAM` as a const-generic arg on stable, and the
-    // bool only gates a single call below, so it's a runtime arg here.
+    // `should_install_packages` only gates a single call below, so it's a
+    // runtime arg rather than a const generic.
     pub(crate) fn increment_tree_install_count(
         &mut self,
         should_install_packages: bool,
@@ -496,8 +493,8 @@ impl<'a> PackageInstaller<'a> {
 
     pub(crate) fn link_tree_bins(
         &mut self,
-        // zig passes `tree: *TreeContext` + `tree_id`; reshaped to take only
-        // `tree_id` and re-borrow `&mut self.trees[tree_id]` to satisfy borrowck.
+        // Takes only `tree_id` and re-borrows `&mut self.trees[tree_id]` to
+        // satisfy borrowck.
         tree_id: TreeContextId,
         link_target_buf: &mut [u8],
         link_dest_buf: &mut [u8],
@@ -597,12 +594,12 @@ impl<'a> PackageInstaller<'a> {
             };
 
             loop {
-                // reshaped for borrowck — Zig aliases the same `*AbsPath` for
-                // both `node_modules_path` (mut) and `target_node_modules_path` (read-only)
-                // when no replacement is set. Derive both from a single `*mut` so the
-                // read pointer shares the write reference's provenance (a `*const` taken
-                // from `&node_modules_path` would be popped by the later `&mut` reborrow
-                // under stacked-borrows).
+                // `node_modules_path` (mut) and `target_node_modules_path`
+                // (read-only) refer to the same buffer when no replacement is
+                // set. Derive both from a single `*mut` so the read pointer
+                // shares the write reference's provenance (a `*const` taken
+                // from `&node_modules_path` would be popped by the later
+                // `&mut` reborrow under stacked-borrows).
                 // SAFETY: `bin::Linker::link` only reads `target_node_modules_path` and
                 // never writes through it while `node_modules_path` is borrowed.
                 let nm_ptr: *mut AbsPath = &raw mut node_modules_path;
@@ -692,7 +689,7 @@ impl<'a> PackageInstaller<'a> {
                     self.lockfile().buffers.trees.as_slice(),
                     self.lockfile().buffers.dependencies.as_slice(),
                     self.lockfile().buffers.string_bytes.as_slice(),
-                    // PERF(port): `tree_id` ranges over `0..self.trees.len()`
+                    // `tree_id` ranges over `0..self.trees.len()`
                     // and tree IDs are u32 by construction; avoid the
                     // `try_from` panic-format path on this per-tree loop.
                     tree_id as u32,
@@ -780,8 +777,8 @@ impl<'a> PackageInstaller<'a> {
         &mut self,
         log_level: Options::LogLevel,
     ) {
-        // Manual save/restore of self.node_modules / self.current_tree_id (Zig restored
-        // via `defer`): a guard cannot capture `&mut self` alongside the loop body's
+        // Manual save/restore of self.node_modules / self.current_tree_id:
+        // a guard cannot capture `&mut self` alongside the loop body's
         // `&mut self`. The function is infallible and its single exit below restores.
         let prev_node_modules = core::mem::take(&mut self.node_modules);
         let prev_tree_id = self.current_tree_id;
@@ -793,7 +790,7 @@ impl<'a> PackageInstaller<'a> {
                 || Self::can_install_package_for_tree(
                     &self.completed_trees,
                     self.lockfile().buffers.trees.as_slice(),
-                    // PERF(port): `i` ranges over `0..self.trees.len()`; tree
+                    // `i` ranges over `0..self.trees.len()`; tree
                     // IDs are u32 by construction.
                     i as u32,
                 )
@@ -843,8 +840,7 @@ impl<'a> PackageInstaller<'a> {
 
     pub(crate) fn complete_remaining_scripts(&mut self, log_level: Options::LogLevel) {
         // reshaped for borrowck — drain by move since loop body needs `&mut
-        // self.manager` and `spawn_package_lifecycle_scripts` consumes the list. Zig
-        // iterated by struct copy and never re-read `pending_lifecycle_scripts` after.
+        // self.manager` and `spawn_package_lifecycle_scripts` consumes the list.
         for entry in core::mem::take(&mut self.pending_lifecycle_scripts) {
             let package_name: Box<[u8]> = entry.list.package_name.clone();
             // .monotonic is okay because this value isn't modified from any other thread.
@@ -1028,8 +1024,8 @@ impl<'a> PackageInstaller<'a> {
             let callbacks = removed.value;
             // `defer callbacks.deinit(this.manager.allocator)` — Vec drops.
 
-            // Manual save/restore of self.node_modules / self.current_tree_id (Zig used
-            // `defer`; see install_available_packages). Infallible body — both exit
+            // Manual save/restore of self.node_modules / self.current_tree_id
+            // (see install_available_packages). Infallible body — both exit
             // paths below restore the saved values.
             let prev_node_modules = core::mem::take(&mut self.node_modules);
             let prev_tree_id = self.current_tree_id;
@@ -1055,7 +1051,6 @@ impl<'a> PackageInstaller<'a> {
                 let callback_package_id =
                     self.lockfile().buffers.resolutions.as_slice()[context.dependency_id as usize];
                 self.node_modules.tree_id = context.tree_id;
-                // zig assigns `context.path` (ArrayList struct copy).
                 // `DependencyInstallContext.path: Vec<u8>` — clone since `cb` is `&`.
                 self.node_modules.path.clone_from(&context.path);
                 self.current_tree_id = context.tree_id;
@@ -1136,14 +1131,12 @@ impl<'a> PackageInstaller<'a> {
 
         match resolution_tag {
             resolution::Tag::Git | resolution::Tag::Github | resolution::Tag::Root => {
-                // zig `inline for (Lockfile.Scripts.names) |hook| { @field(...) }`.
                 // The `FIELD_NAMES` table lists each script field accessor.
                 for &(_, accessor) in PackageScripts::FIELD_NAMES.iter() {
                     count += (!accessor(&scripts).is_empty()) as usize;
                 }
             }
             _ => {
-                // zig `inline for (.{"preinstall","install","postinstall"})` over @field.
                 count += (!scripts.preinstall.is_empty()) as usize;
                 count += (!scripts.install.is_empty()) as usize;
                 count += (!scripts.postinstall.is_empty()) as usize;
@@ -1178,8 +1171,8 @@ impl<'a> PackageInstaller<'a> {
     ) {
         // reshaped for borrowck — `string_bytes` is not mutated during install,
         // so capture a raw slice once to avoid repeatedly re-borrowing `self.lockfile`
-        // across `&mut self` method calls below (Zig accessed `lockfile.buffers.string_bytes`
-        // freely inline). SAFETY: `buffers.string_bytes` is append-only and never freed
+        // across `&mut self` method calls below.
+        // SAFETY: `buffers.string_bytes` is append-only and never freed
         // for the lifetime of this `PackageInstaller`.
         let string_buf_ptr =
             bun_ptr::RawSlice::new(self.lockfile().buffers.string_bytes.as_slice());
@@ -1210,8 +1203,8 @@ impl<'a> PackageInstaller<'a> {
         }
 
         // `PackageInstall` stores both `destination_dir_subpath: &mut ZStr`
-        // and `destination_dir_subpath_buf: &mut [u8]` aliasing the same bytes (Zig
-        // slices don't enforce noalias). Derive BOTH from a single `*mut PathBuffer`
+        // and `destination_dir_subpath_buf: &mut [u8]` aliasing the same bytes.
+        // Derive BOTH from a single `*mut PathBuffer`
         // so neither `&mut` invalidates the other under stacked-borrows.
         let subpath_buf_ptr: *mut PathBuffer = &raw mut self.destination_dir_subpath_buf;
         let destination_dir_subpath: &mut ZStr = {
@@ -1262,7 +1255,6 @@ impl<'a> PackageInstaller<'a> {
             {
                 break 'brk (None, None, None, false);
             }
-            // PERF(port): was stack-fallback
             let mut name_and_version: Vec<u8> = Vec::new();
             use std::io::Write;
             write!(
@@ -1303,10 +1295,10 @@ impl<'a> PackageInstaller<'a> {
 
         // reshaped for borrowck — `PackageInstall` borrows several `self.*`
         // fields while subsequent code also accesses `self.manager` / `self.node_modules`
-        // / `self.lockfile` mutably (Zig aliased freely). Detach the borrows via a
+        // / `self.lockfile` mutably. Detach the borrows via a
         // `ParentRef` so `installer`'s lifetime is independent of `&mut self`.
         // BACKREF — none of these fields are dropped, moved, or resized while
-        // `installer` is alive (matches Zig invariant; see `PackageInstaller` field docs).
+        // `installer` is alive (see `PackageInstaller` field docs).
         let node_modules_ref = bun_ptr::ParentRef::<NodeModulesFolder>::new(&self.node_modules);
         let mut installer = PackageInstall {
             progress: if self.manager().options.log_level.show_progress() {
@@ -1320,7 +1312,6 @@ impl<'a> PackageInstaller<'a> {
             // field outlives `installer`. `destination_dir_subpath` above derives from the
             // same raw pointer, so this `&mut` does not invalidate it under stacked-borrows.
             destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
-            // zig `arena: this.lockfile.allocator` dropped — global mimalloc.
             package_name: pkg_name,
             patch: patch_patch.map(|_| package_install::Patch {
                 contents_hash: patch_contents_hash.unwrap(),
@@ -1966,8 +1957,7 @@ impl<'a> PackageInstaller<'a> {
                         // - Access Denied because this specific package is unwritable
                         // in the case of the former, the logs are extremely noisy, so we
                         // will exit early, otherwise set a flag to not re-stat
-                        // zig fn-local `const Singleton = struct { var node_modules_is_ok = false; }`
-                        // — translated to a module-level static since Rust lacks fn-local mutable statics.
+                        // Static flag since Rust lacks fn-local mutable statics.
                         static NODE_MODULES_IS_OK: core::sync::atomic::AtomicBool =
                             core::sync::atomic::AtomicBool::new(false);
                         if !NODE_MODULES_IS_OK.load(Ordering::Relaxed) {
@@ -2348,5 +2338,3 @@ impl<'a> PackageInstaller<'a> {
         );
     }
 }
-
-// ported from: src/install/PackageInstaller.zig

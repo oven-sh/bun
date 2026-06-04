@@ -50,9 +50,8 @@ impl<'a> ObjectIterator<'a> {
             }
         }
 
-        // Note: Zig `defer { if (cell_i >= columns_count) { ... } }` is
-        // lowered to a labeled block whose result is computed first, then the
-        // deferred bookkeeping runs exactly once before returning.
+        // The labeled block computes the result first, then the bookkeeping
+        // below runs exactly once before returning.
         let result: JsResult<Option<JSValue>> = 'out: {
             let property = match JSObject::get_index(self.columns, global_object, cell_i) {
                 Ok(v) => v,
@@ -69,10 +68,8 @@ impl<'a> ObjectIterator<'a> {
             }
 
             // `get_own_by_value` maps the C++ empty (zero) return to `None`,
-            // exactly like Zig's `getOwnByValue` (`?JSValue`, zero → null). Zig's
-            // `value == .zero` arm therefore can never be true (an unwrapped
-            // optional is never zero); `Some(JSValue::ZERO)` below mirrors that
-            // defensively-dead comparison 1:1.
+            // so the `Some(JSValue::ZERO)` comparison below is defensively dead
+            // (an unwrapped value is never zero).
             let value: Option<JSValue> = self.current_row.get_own_by_value(global_object, property);
             if value == Some(JSValue::ZERO) || value.is_some_and(|v| v.is_undefined()) {
                 if !global_object.has_exception() {
@@ -96,5 +93,3 @@ impl<'a> ObjectIterator<'a> {
         result
     }
 }
-
-// ported from: src/sql_jsc/shared/ObjectIterator.zig

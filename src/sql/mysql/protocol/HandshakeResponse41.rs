@@ -22,10 +22,6 @@ pub struct HandshakeResponse41 {
     pub sequence_id: u8,
 }
 
-// Zig `deinit` only freed owned fields (Data values + connect_attrs keys/values).
-// In Rust, `Data: Drop` and `StringHashMap<Box<[u8]>>: Drop` handle this automatically,
-// so no explicit `impl Drop` is needed.
-
 impl HandshakeResponse41 {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &mut self,
@@ -106,7 +102,6 @@ impl HandshakeResponse41 {
         Ok(())
     }
 
-    // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &mut self,
         writer: NewWriter<Context>,
@@ -114,5 +109,3 @@ impl HandshakeResponse41 {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/mysql/protocol/HandshakeResponse41.zig

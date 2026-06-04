@@ -1,9 +1,7 @@
 //! Intrusive reference counting (single-threaded and thread-safe) + `RefPtr<T>`
 //! debug-tracking wrapper.
 //!
-//! Ported from `src/ptr/ref_count.zig`. The Zig original uses comptime
-//! type-returning functions (`fn RefCount(T, field_name, destructor, opts) type`)
-//! as mixins; in Rust this becomes a pair of (embedded struct + trait the host
+//! Each ref-count mixin is a pair of (embedded struct + trait the host
 //! type implements). See `RefCounted` / `ThreadSafeRefCounted`.
 
 use core::cell::Cell;
@@ -49,9 +47,8 @@ fn dump_stack_hook(trace: Option<&StoredTrace>, ret_addr: usize) {
 
 /// Options for `RefCount` / `ThreadSafeRefCount`.
 ///
-/// Zig's `Options` also carried `destructor_ctx: ?type`. A *type*
-/// cannot be a struct field in Rust; it becomes the associated type
-/// `RefCounted::DestructorCtx` instead.
+/// The destructor-context knob is the associated type
+/// `RefCounted::DestructorCtx`, not a field here.
 #[derive(Default)]
 pub struct Options {
     /// Defaults to the type basename.
@@ -60,7 +57,7 @@ pub struct Options {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Host-type traits (replace Zig's comptime `field_name` / `destructor` params)
+// Host-type traits (field projection + destructor)
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `bun.meta.typeBaseName` — strip the module path (and the path inside any
@@ -76,20 +73,15 @@ fn type_base_name(name: &'static str) -> &'static str {
 }
 
 /// Implemented by types that embed a [`RefCount`] field.
-///
-/// Replaces the Zig comptime parameters `field_name: []const u8`,
-/// `destructor: anytype`, and `options: Options` passed to
-/// `RefCount(T, field_name, destructor, options)`.
 pub trait RefCounted: Sized {
-    /// Zig: `options.destructor_ctx orelse void`.
     type DestructorCtx;
 
-    /// Zig: `options.debug_name orelse bun.meta.typeBaseName(@typeName(T))`.
+    /// Defaults to the type basename.
     fn debug_name() -> &'static str {
         type_base_name(core::any::type_name::<Self>())
     }
 
-    /// Zig: `&@field(self, field_name)` — locate the embedded `RefCount` field.
+    /// Locate the embedded `RefCount` field.
     ///
     /// # Safety
     /// `this` must be non-null, properly aligned, and in-bounds of an
@@ -103,7 +95,7 @@ pub trait RefCounted: Sized {
     /// and no other side effects.
     unsafe fn get_ref_count(this: *mut Self) -> *mut RefCount<Self>;
 
-    /// Zig: the `destructor` fn pointer passed to `RefCount(...)`.
+    /// Called when the refcount reaches zero.
     ///
     /// # Safety
     /// `this` must point to a live `Self` with `raw_count == 0`.
@@ -112,12 +104,12 @@ pub trait RefCounted: Sized {
 
 /// Implemented by types that embed a [`ThreadSafeRefCount`] field.
 pub trait ThreadSafeRefCounted: Sized {
-    /// Zig: `options.debug_name orelse bun.meta.typeBaseName(@typeName(T))`.
+    /// Defaults to the type basename.
     fn debug_name() -> &'static str {
         type_base_name(core::any::type_name::<Self>())
     }
 
-    /// Zig: `&@field(self, field_name)`.
+    /// Locate the embedded `ThreadSafeRefCount` field.
     ///
     /// # Safety
     /// `this` must be non-null, properly aligned, and in-bounds of an
@@ -131,7 +123,7 @@ pub trait ThreadSafeRefCounted: Sized {
     /// and no other side effects.
     unsafe fn get_ref_count(this: *mut Self) -> *mut ThreadSafeRefCount<Self>;
 
-    /// Zig: the `destructor: fn (*T) void` parameter.
+    /// Called when the refcount reaches zero.
     ///
     /// # Safety
     /// `this` must point to a live `Self` with `raw_count == 0`.
@@ -145,10 +137,6 @@ pub trait ThreadSafeRefCounted: Sized {
 }
 
 /// Unifying trait so `RefPtr<T>` works with either ref-count flavor.
-///
-/// Zig's `RefPtr` reflected on `@FieldType(T, "ref_count")` and the
-/// private `is_ref_count == unique_symbol` marker to accept either mixin. In
-/// Rust the trait bound IS that check.
 pub trait AnyRefCounted: Sized {
     type DestructorCtx;
 
@@ -158,10 +146,8 @@ pub trait AnyRefCounted: Sized {
     /// # Safety
     /// `this` must point to a live `Self`.
     unsafe fn rc_deref_with_context(this: *mut Self, ctx: Self::DestructorCtx);
-    /// Zig's `deref(self)` forwards `{}` (void) as the ctx — equivalent to
-    /// `Default::default()`. Types with a non-unit `DestructorCtx` must call
-    /// `rc_deref_with_context` explicitly (matches Zig's compile error when
-    /// `destructor_ctx != null`).
+    /// Forwards `Default::default()` as the ctx. Types with a non-unit
+    /// `DestructorCtx` must call `rc_deref_with_context` explicitly.
     ///
     /// # Safety
     /// `this` must point to a live `Self`.
@@ -298,9 +284,8 @@ impl<T: RefCounted> RefCount<T> {
         {
             count.debug.assert_valid();
         }
-        // Zig used per-type scoped logging (`bun.Output.Scoped(debug_name, .hidden)`
-        // keyed on T's name); `bun_core::scoped_log!` requires a static scope
-        // ident, so all types share the single `ref_count` scope.
+        // `bun_core::scoped_log!` requires a static scope ident, so all types
+        // share the single `ref_count` scope.
         bun_core::scoped_log!(
             ref_count,
             "0x{:x}   ref {} -> {}:",
@@ -309,8 +294,6 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get() + 1,
         );
         if DEBUG_STACK_TRACE {
-            // Zig: dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]});
-            // the frame_count/skip options are not carried over.
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
@@ -344,8 +327,6 @@ impl<T: RefCounted> RefCount<T> {
             count.raw_count.get() - 1,
         );
         if DEBUG_STACK_TRACE {
-            // Zig: dump_current_stack_trace(ret, {frame_count:2, skip:[ref_count.zig]});
-            // the frame_count/skip options are not carried over.
             dump_stack_hook(None, return_address());
         }
         count.assert_single_threaded();
@@ -402,7 +383,6 @@ impl<T: RefCounted> RefCount<T> {
 
     /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
-        // Zig: gated on `bun.Environment.ci_assert`.
         assert!(self.raw_count.get() == 0);
     }
 
@@ -424,7 +404,7 @@ impl<T: RefCounted> RefCount<T> {
     // `T::get_ref_count` above; not duplicated here.
 
     // `is_ref_count = unique_symbol` and `ref_count_options` were
-    // comptime-reflection markers for `RefPtr`; replaced by the `AnyRefCounted`
+    // reflection markers for `RefPtr`; replaced by the `AnyRefCounted`
     // trait bound.
 }
 
@@ -620,7 +600,6 @@ impl<T: ThreadSafeRefCounted> ThreadSafeRefCount<T> {
 
     /// The count is 0 after the destructor is called.
     pub fn assert_no_refs(&self) {
-        // Zig: gated on `bun.Environment.ci_assert`.
         assert!(self.raw_count.load(Ordering::SeqCst) == 0);
     }
 
@@ -776,9 +755,6 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
 // with the `RefCounted` blanket above (Rust forbids overlapping blanket impls).
 // Instead, thread-safe hosts opt in via `#[derive(ThreadSafeRefCounted)]`,
 // which emits the per-type `AnyRefCounted` impl alongside the trait impl.
-//
-// Zig: `RefPtr` reflected on `@FieldType(T, "ref_count")` to accept either
-// mixin; the derive is the manual half of that dispatch.
 
 // ──────────────────────────────────────────────────────────────────────────
 // RefPtr
@@ -796,8 +772,7 @@ pub fn noop_debug_data() -> *mut dyn DebugDataOps {
 ///
 /// # ⚠️ No `Drop` impl — the owned ref must be released *manually*
 ///
-/// This mirrors the Zig original, which (having no destructors) never released
-/// on scope exit. `RefPtr` does **not** implement `Drop`: dropping a `RefPtr`
+/// `RefPtr` does **not** implement `Drop`: dropping a `RefPtr`
 /// value — including `Option::take()`-then-drop, or letting a struct field
 /// holding one go out of scope — **leaks** the strong ref it owns. On every
 /// path that gives up a `RefPtr` you must explicitly call one of:
@@ -827,14 +802,12 @@ impl<T: AnyRefCounted> RefPtr<T> {
     pub unsafe fn init_ref(raw_ptr: *mut T) -> Self {
         // SAFETY: caller contract
         unsafe { T::rc_ref(raw_ptr) };
-        // Zig re-asserted `is_ref_count == unique_symbol` here;
-        // the `T: AnyRefCounted` bound is that assertion.
         // SAFETY: caller contract
         unsafe { Self::unchecked_and_unsafe_init(raw_ptr, return_address()) }
     }
 
     // NOTE: would be nice to use a const for deref dispatch, but keep two
-    // methods for clarity (matches Zig comment).
+    // methods for clarity.
 
     /// Decrement the reference count, and destroy the object if the count is 0.
     pub fn deref(&self)
@@ -853,11 +826,11 @@ impl<T: AnyRefCounted> RefPtr<T> {
         }
         // SAFETY: data is live (we hold a ref)
         unsafe { T::rc_deref_with_context(self.as_ptr(), ctx) };
-        // Zig poisoned the handle (`@constCast(self).data = undefined`) to make
-        // UAF fail faster. Rust cannot mutate through `&self` without
-        // UnsafeCell, and `&self` is load-bearing here: hundreds of call sites
-        // (including Drop impls and ScopedRef) deref through a borrow they
-        // cannot move out of, so a by-value signature is not an option.
+        // The handle is not poisoned after release: that would require
+        // mutating through `&self` (UnsafeCell), and `&self` is load-bearing
+        // here: hundreds of call sites (including Drop impls and ScopedRef)
+        // deref through a borrow they cannot move out of, so a by-value
+        // signature is not an option.
     }
 
     pub fn dupe_ref(&self) -> Self {
@@ -972,8 +945,7 @@ impl<T: AnyRefCounted> RefPtr<T> {
             // SAFETY: data is live (we hold a ref)
             unsafe { (*T::rc_debug_data(ptr)).release(self.debug, return_address()) };
         }
-        // Zig set `self.data = undefined`; taking `self` by value
-        // here makes the RefPtr unusable, which is the same intent.
+        // Taking `self` by value makes the RefPtr unusable afterwards.
         ptr
     }
 
@@ -1014,7 +986,7 @@ impl<T: AnyRefCounted> core::ops::Deref for RefPtr<T> {
 
 /// RAII scope guard for an intrusive refcount: bumps on construction, derefs
 /// on `Drop`. Use to bracket a `ref_()`/`deref()` pair that protects `*T`
-/// across a re-entrant call (Zig: `this.ref(); defer this.deref();`).
+/// across a re-entrant call.
 ///
 /// Unlike [`RefPtr`] this is not a smart-pointer handle (no `Deref`, not
 /// stored in fields) — it exists solely so the paired deref runs on every
@@ -1044,7 +1016,7 @@ where
     /// Adopt an already-held ref: does **not** bump on construction, but still
     /// derefs on `Drop`. Use when the matching `ref()` was taken earlier (e.g.
     /// by an in-flight async op) and this scope is responsible for releasing
-    /// it (Zig: `defer this.deref();` with no preceding `this.ref()`).
+    /// it.
     ///
     /// # Safety
     /// `ptr` must point to a live `T` for which the caller owns one outstanding
@@ -1077,7 +1049,6 @@ struct TrackedRef {
 }
 
 /// Not an index, just a unique identifier for the debug data.
-// Zig used `bun.GenericIndex(u32, TrackedRef)` (opaque type-tag).
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct TrackedRefId(u32);
 
@@ -1110,16 +1081,11 @@ const MAGIC_VALID: u128 = 0x2f84_e51d;
 
 /// Provides Ref tracking. This is not generic over the pointer T to reduce
 /// analysis complexity.
-// Zig parameterized on `comptime thread_safe: bool` and selected
-// `Count`/`Lock` types accordingly. Rust cannot select a type from a const
-// bool without a helper trait; instead we parameterize on the `Count` storage
-// type directly (`Cell<u32>` or `AtomicU32`). The lock and `next_id` are made
-// uniformly thread-safe (debug-only — perf irrelevant).
+// Parameterized on the `Count` storage type directly (`Cell<u32>` or
+// `AtomicU32`). The lock and `next_id` are made uniformly thread-safe
+// (debug-only — perf irrelevant).
 #[cfg(debug_assertions)]
 pub struct DebugData<Count> {
-    // Zig used `align(@alignOf(u32))` to reduce the u128's alignment to 4.
-    // Rust cannot under-align a field; this is debug-only, so the extra
-    // padding is irrelevant.
     magic: u128,
     lock: bun_core::Mutex<()>,
     next_id: AtomicU32,
@@ -1152,7 +1118,6 @@ impl<Count: CountLoad> DebugData<Count> {
     }
 
     fn alloc_id(&self) -> TrackedRefId {
-        // Zig branched on `thread_safe` (atomic RMW vs plain ++).
         // Debug-only path; always atomic here.
         TrackedRefId::new(self.next_id.fetch_add(1, Ordering::SeqCst))
     }
@@ -1167,16 +1132,13 @@ impl<Count: CountLoad> DebugData<Count> {
         self.frees.insert(id, TrackedDeref);
     }
 
-    // Zig `deinit` took `std.mem.asBytes(self)` as `data: []const u8`
-    // but never read it; the Rust port dropped the parameter to avoid forming a
-    // `&[u8]` over `T` (which may contain padding/uninit bytes — UB to read).
     fn deinit(&mut self, ret_addr: usize) {
         self.assert_valid();
-        self.magic = 0; // Zig: `= undefined`
+        self.magic = 0;
         let _guard = self.lock.lock();
         self.map.clear();
         self.map.shrink_to_fit();
-        // Zig `clearAndFree` — clear and release the allocation.
+        // Clear and release the allocation.
         self.frees.clear();
         self.frees.shrink_to_fit();
         let _ = ret_addr;
@@ -1190,14 +1152,10 @@ impl<Count: CountLoad> DebugDataOps for DebugData<Count> {
     }
 
     fn acquire(&mut self, return_address: usize) -> TrackedRefId {
-        // Zig's `acquire` took `count_pointer: *Count` because
-        // `RefPtr.uncheckedAndUnsafeInit` reached into `raw_ptr.ref_count.raw_count`.
-        // The dyn surface cannot name `Count`; the typed call site
-        // (RefCount::ref_/ThreadSafeRefCount::ref_) wires the count_pointer
-        // separately. Here we acquire without a count_pointer; that is fine
-        // because the only leak-dump path (`dump_active_refs`) receives the
-        // current count explicitly as a parameter, so nothing reads a stored
-        // count_pointer in the Rust shape.
+        // The dyn surface cannot name `Count`, so we acquire without a count
+        // pointer; that is fine because the only leak-dump path
+        // (`dump_active_refs`) receives the current count explicitly as a
+        // parameter, so nothing reads a stored count pointer.
         let _guard = self.lock.lock();
         let id = self.alloc_id();
         self.map.insert(
@@ -1279,9 +1237,7 @@ fn generic_dump(
 // maybe_assert_no_refs
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Zig used `@hasField(T, "ref_count")` + `@hasDecl(Rc, "assertNoRefs")`
-/// reflection to make this a no-op for non-ref-counted types. In Rust the
-/// "has ref_count" check IS the trait bound: callers that passed a
+/// The trait bound restricts this to ref-counted types; callers with a
 /// non-ref-counted T must simply not call this.
 pub fn maybe_assert_no_refs<T: AnyRefCounted>(ptr: &T) {
     // SAFETY: `ptr` is a live reference to T
@@ -1297,10 +1253,10 @@ fn return_address() -> usize {
     bun_core::return_address()
 }
 
-// Zig used `@fieldParentPtr(field_name, count)`. The field name is not known
-// here as a const, but `T::get_ref_count` is a pure raw-pointer field
-// projection (`&raw mut (*this).field` — no read), so probing an
-// uninitialized stack value yields the field offset soundly.
+// The ref-count field name is not known here as a const, but
+// `T::get_ref_count` is a pure raw-pointer field projection
+// (`&raw mut (*this).field` — no read), so probing an uninitialized stack
+// value yields the field offset soundly.
 
 #[cfg(debug_assertions)]
 #[inline(always)]
@@ -1325,8 +1281,6 @@ fn offset_of_ref_count_ts<T: ThreadSafeRefCounted>() -> usize {
 }
 
 // `const unique_symbol = opaque {};` — type-identity marker for
-// comptime assertion in `RefPtr`. Replaced by `AnyRefCounted` trait bound.
+// compile-time assertion in `RefPtr`. Replaced by `AnyRefCounted` trait bound.
 
 bun_core::declare_scope!(ref_count, hidden);
-
-// ported from: src/ptr/ref_count.zig

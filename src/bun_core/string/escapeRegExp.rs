@@ -56,5 +56,3 @@ pub fn escape_reg_exp_for_package_name_matching<W: std::io::Write>(
 
 // The JS-facing wrappers (`jsEscapeRegExp` / `jsEscapeRegExpForPackageNameMatching`)
 // live in the `*_jsc` crate as extension-trait methods.
-
-// ported from: src/string/escapeRegExp.zig

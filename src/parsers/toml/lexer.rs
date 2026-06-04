@@ -4,12 +4,11 @@ use bun_ast as js_ast;
 use bun_ast::LexerLog;
 use bun_core::fmt::hex_digit_value_u32;
 use bun_core::strings;
-// In Zig it's `bun.CodePoint` (i32); lives at `bun_core::strings::CodePoint`.
 use bun_core::strings::CodePoint;
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug, strum::IntoStaticStr)]
-#[allow(non_camel_case_types)] // PORTING.md: "Match the Zig's structure" — Zig: `t_end_of_file`.
+#[allow(non_camel_case_types)]
 pub enum T {
     t_end_of_file,
 
@@ -49,9 +48,8 @@ pub enum T {
 pub struct Lexer<'a> {
     // Borrowed (`&'a Source`) rather than owned so
     // `identifier`/`string_literal_slice` can borrow `&'a [u8]` from
-    // `source.contents` without a self-referential struct. The Zig original
-    // copied `Source` by value because Zig has no borrow checker; the Rust
-    // `bun_ast::Source.contents` is now `Cow<'static,[u8]>` so an owned copy
+    // `source.contents` without a self-referential struct.
+    // `bun_ast::Source.contents` is `Cow<'static,[u8]>` so an owned copy
     // would tie those slices to `&self` instead of `'a`.
     pub source: &'a bun_ast::Source,
     pub log: &'a mut bun_ast::Log,
@@ -291,8 +289,7 @@ impl<'a> Lexer<'a> {
                             i += 1;
                         }
                     }
-                    // `bytes` is intentionally discarded here, matching the
-                    // Zig original's dead store.
+                    // `bytes` is intentionally discarded here.
                 }
 
                 // Store bigints as text to avoid precision loss;
@@ -467,7 +464,6 @@ impl<'a> Lexer<'a> {
 
     #[inline]
     pub fn expect(&mut self, token: T) -> Result<(), Error> {
-        // PERF(port): was comptime monomorphization (`comptime token: T`) — profile
         if self.token != token {
             self.expected(token)?;
         }
@@ -912,10 +908,6 @@ impl<'a> Lexer<'a> {
                         c if c == 'v' as CodePoint => {
                             // Vertical tab is invalid JSON
                             // We're going to allow it.
-                            // if (comptime is_json) {
-                            //     lexer.end = start + iter.i - width2;
-                            //     try lexer.syntaxError();
-                            // }
                             buf.push(11);
                             continue;
                         }
@@ -1114,7 +1106,6 @@ impl<'a> Lexer<'a> {
                                 // fixed-length
                             } else {
                                 // Fixed-length
-                                // comptime var j: usize = 0;
                                 let mut j: usize = 0;
                                 while j < 4 {
                                     match hex_digit_value_u32(c3 as u32) {
@@ -1235,7 +1226,7 @@ impl<'a> Lexer<'a> {
     pub fn range(&self) -> bun_ast::Range {
         bun_ast::Range {
             loc: bun_ast::usize2loc(self.start),
-            len: (self.end - self.start) as i32, // std.math.lossyCast
+            len: (self.end - self.start) as i32,
         }
     }
 
@@ -1294,13 +1285,10 @@ pub(crate) fn is_identifier_part(code_point: CodePoint) -> bool {
         | '-'
         | ':'
     ) && (0..=127).contains(&code_point)
-    // The `(0..=127)` bound is required for the byte cast above to be sound;
-    // the Zig original matched the CodePoint directly against char ranges.
+    // The `(0..=127)` bound is required for the byte cast above to be sound.
 }
 
 #[inline]
 fn float64(num: CodePoint) -> f64 {
     num as f64
 }
-
-// ported from: src/interchange/toml/lexer.zig

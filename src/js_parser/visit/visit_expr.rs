@@ -17,16 +17,12 @@ use bun_ast as js_ast;
 use bun_ast::flags as Flags;
 use bun_ast::{E, Expr, ExprNodeIndex, ExprNodeList, G, Stmt, Symbol};
 
-// Local short-hands so the visitor bodies read close to the Zig
-// (`expr.data.e_dot`, `Expr.Data.e_binary`, `Op.Code.un_typeof`) without a
-// bulk find-replace at every call-site.
+// Local short-hands used heavily in the visitor bodies.
 use js_ast::ExprData as Data;
 use js_ast::ExprTag as Tag;
 use js_ast::OpCode as Op;
 
-// Zig: `pub fn VisitExpr(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
+// The 25+ per-variant `e_*` helpers are private; only `visit_expr` /
 // `visit_expr_in_out` are surfaced.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -36,8 +32,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // and only writes back when the visitor produces a *different* node.
     #[inline]
     pub fn visit_expr(&mut self, e: &mut Expr) {
-        // Zig: `if (only_scan_imports_and_do_not_visit) @compileError(...)` — SCAN_ONLY
-        // monomorphizations must never reach the visit pass.
+        // SCAN_ONLY monomorphizations must never reach the visit pass.
         debug_assert!(
             !SCAN_ONLY,
             "only_scan_imports_and_do_not_visit must not run visit_expr",
@@ -56,9 +51,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .add_error(Some(self.source), e.loc, b"Invalid assignment target");
         }
 
-        // Zig dispatches via `inline else => |tag| if (comptime @hasDecl(visitors, @tagName(tag)))`.
-        // Rust has no struct-decl reflection; expand to an explicit match over the tags that have
-        // a visitor defined below. Any tag without a visitor leaves `*e` unchanged.
+        // Explicit match over the tags that have a visitor defined below.
+        // Any tag without a visitor leaves `*e` unchanged.
         use js_ast::ExprTag as Tag;
         match e.data.tag() {
             Tag::ENewTarget => Self::e_new_target(self, e, in_),
@@ -90,14 +84,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // ─── visitors ───────────────────────────────────────────────────────────
-    // In Zig these live on a nested `const visitors = struct { ... }`; in Rust they are private
-    // associated fns on this impl so they can see the const-generic feature params.
+    // Private associated fns on this impl so they can see the const-generic
+    // feature params.
 
     fn e_new_target(_: &mut Self, _e: &mut Expr, _: ExprIn) {
-        // this error is not necessary and it is causing breakages
-        // if (!p.fn_only_data_visit.is_new_target_allowed) {
-        //     p.log.addRangeError(p.source, target.range, "Cannot use \"new.target\" here") catch unreachable;
-        // }
+        // The "Cannot use \"new.target\" here" range error is intentionally
+        // not emitted: it is not necessary and it was causing breakages.
     }
 
     fn e_string(_: &mut Self, _e: &mut Expr, _: ExprIn) {
@@ -347,7 +339,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     // big match arms into the recursive dispatcher, inflating its stack frame to
     // ~968B; deep ASTs then thrash L1d on the spill/reload (the spill into that
     // frame is the #2 hottest bun-native instruction under `bun --bun lint`).
-    // Mirrors Zig's switch-with-helper-fns layout.
     #[inline(never)]
     fn e_jsx_element(p: &mut Self, e: &mut Expr, in_: ExprIn) {
         let expr = *e;
@@ -357,8 +348,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             .data
             .e_jsx_element()
             .expect("infallible: variant checked");
-        // Zig: `switch (comptime jsx_transform_type)`; JSX is no longer a
-        // type parameter — dispatch on the runtime `P::jsx_transform` field.
+        // JSX is not a type parameter — dispatch on the runtime
+        // `P::jsx_transform` field.
         match p.jsx_transform {
             JSXTransformType::React => {
                 let tag: Expr = 'tagger: {
@@ -368,13 +359,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                     if p.options.jsx.runtime == options::JSX::Runtime::Classic {
                         // `jsx_strings_to_member_expression` wants `&[&'a [u8]]`.
-                        // In Zig, `options.jsx.fragment: []const string` borrows from the
-                        // long-lived `transpiler.options.jsx`, so the strings outlive the
-                        // AST. Here, `options.jsx.fragment: Box<[Box<[u8]>]>` is OWNED by
+                        // `options.jsx.fragment: Box<[Box<[u8]>]>` is OWNED by
                         // `P` and dropped when `Parser::parse` returns — but the parts are
                         // stored in symbols / `E::Dot.name` and read later by the printer.
-                        // Dupe each part into the arena (which backs the AST) to restore
-                        // the spec's lifetime invariant. Build the `&[&'a [u8]]` slice
+                        // Dupe each part into the arena (which backs the AST) so they
+                        // outlive the parse. Build the `&[&'a [u8]]` slice
                         // directly in the AST arena instead of a throwaway global-heap
                         // `Vec` — keeps the visitor off the `#[global_allocator]`.
                         let arena = p.arena;
@@ -419,15 +408,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if runtime == options::JSX::Runtime::Classic || is_key_after_spread {
                     // Arguments to createElement()
                     let mut args = ExprNodeList::init_capacity(2 + children_count as usize);
-                    // PERF(port): was assume_capacity
                     VecExt::append(&mut args, tag);
 
                     let num_props = e_.properties.len_u32();
                     if num_props > 0 {
-                        // Zig duped the property slice into a fresh arena allocation
-                        // before wrapping in E.Object. PropertyList = Vec<Property> here is
-                        // already arena-backed and the JSX node is consumed; reuse in place.
-                        // PERF(port): was arena alloc + bun.copy — profile if it shows up on a hot path
+                        // PropertyList = Vec<Property> is already arena-backed and the
+                        // JSX node is consumed; reuse in place.
                         VecExt::append(
                             &mut args,
                             p.new_expr(
@@ -447,7 +433,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let mut arg = *child;
                         p.visit_expr(&mut arg);
                         if !matches!(arg.data, Data::EMissing(..)) {
-                            // PERF(port): was assume_capacity
                             VecExt::append(&mut args, arg);
                         }
                     }
@@ -468,8 +453,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.jsx_strings_to_member_expression(expr.loc, parts)
                             .expect("unreachable")
                     } else {
-                        // Spec (visitExpr.zig:257) calls jsxStringsToMemberExpression(factory)
-                        // unconditionally before the runtime check; that has the side-effect of
+                        // jsxStringsToMemberExpression(factory) must run
+                        // unconditionally before the runtime check; it has the side-effect of
                         // findSymbol(loc, factory[0]) which records usage of the factory ident.
                         // The full helper is Pragma-shape-blocked, so replicate the side-effect
                         // for the Automatic + key-after-spread path and discard the result.
@@ -510,10 +495,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         None
                     };
 
-                    // Zig reassigns `props` (a `*Vec(G.Property)`) to point inside
-                    // a spread object's properties via raw arena pointer. Track as a
-                    // `StoreRef` (safe `Deref`/`DerefMut`) so the spread-collapse walk
-                    // and the `push`/`take` calls below stay in safe code.
+                    // `props` may be reassigned to point inside a spread object's
+                    // properties. Track it as a `StoreRef` (safe `Deref`/`DerefMut`) so
+                    // the spread-collapse walk and the `push`/`take` calls below stay
+                    // in safe code.
                     let mut props_handle = js_ast::StoreRef::from_bump(&mut e_.properties);
 
                     // arguments needs to be like
@@ -524,9 +509,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     {
                         let mut last_child: u32 = 0;
-                        // Zig wrote `e_.children.ptr[last_child] = p.visitExpr(child)`
-                        // while iterating a slice over the same buffer. Iterate by index to avoid
-                        // borrowck on `e_.children`.
+                        // Iterate by index to avoid a borrowck conflict on
+                        // `e_.children` (writes alias the buffer being iterated).
                         for i in 0..children_count {
                             let mut visited = e_.children.slice()[i as usize];
                             p.visit_expr(&mut visited);
@@ -540,7 +524,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         e_.children.truncate(last_child as usize);
                     }
 
-                    // PERF(port): was process-static — profile if it shows up on a hot path
                     let children_key = p.new_expr(prefill::string::CHILDREN, expr.loc);
 
                     // Optimization: if the only non-child prop is a spread object
@@ -561,10 +544,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         {
                             break;
                         }
-                        // reshaped for borrowck — Zig reassigns `props` to point
-                        // inside the spread object's properties. Compute the next handle in
-                        // a block so the `DerefMut` borrow of `props_handle` ends before
-                        // reassignment.
+                        // Compute the next handle in a block so the `DerefMut`
+                        // borrow of `props_handle` ends before reassignment.
                         let next = {
                             let inner = props_handle.slice_mut()[0]
                                 .value
@@ -713,7 +694,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // arrows/functions inside them unconsumed and trip "Scope mismatch
         // while visiting" on the next scope push. Mirrors e_call, which visits
         // its arguments before macro handling.
-        // `Template.parts` is arena-owned (Zig: `[]E.TemplatePart`).
+        // `Template.parts` is arena-owned.
         for part in e_.parts_mut().iter_mut() {
             p.visit_expr(&mut part.value);
         }
@@ -775,7 +756,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         // We must visit it to convert inline_identifiers and record usage
                         // Reborrow via the field-disjoint `Lexer::log()` accessor
                         // so `&p.lexer` and `&mut p.options` split cleanly under
-                        // borrowck — Zig held two raw `*Log`.
+                        // borrowck.
                         let log = p.lexer.log();
                         let source = p.source;
                         let Ok(macro_result) = p
@@ -823,9 +804,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // iteration on the heap instead of recursion on the call stack to avoid
         // stack overflow for deeply-nested ASTs.
         //
-        // Zig stores `*E.Binary` (arena ptr). `BinaryExpressionVisitor.e`
-        // is the `StoreRef<E::Binary>` arena handle directly — `Copy` + safe
-        // `Deref`/`DerefMut`, so no raw-pointer detach is needed here.
+        // `BinaryExpressionVisitor.e` is the `StoreRef<E::Binary>` arena
+        // handle — `Copy` + safe `Deref`/`DerefMut`, so no raw-pointer detach
+        // is needed here.
         let mut v: BinaryExpressionVisitor = BinaryExpressionVisitor {
             e: e_,
             loc: expr.loc,
@@ -840,8 +821,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let stack_bottom = p.binary_expression_stack.len();
 
         // Assigned on every `break` arm of the loop below; the initial input
-        // `expr` is never read directly (Zig's `var current = expr` was a
-        // pre-init habit, not load-bearing).
+        // `expr` is never read directly.
         let mut current;
 
         // Iterate down into the AST along the left node of the binary operation.
@@ -1176,8 +1156,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         // `e_` is `StoreRef<E::Index>` — mutations above wrote through
-        // DerefMut into the same arena slot `expr.data` already points at. Zig's
-        // `p.newExpr(e_, loc)` re-wraps the same pointer; here `*e` is already that.
+        // DerefMut into the same arena slot `expr.data` already points at,
+        // so `*e` is already up to date.
     }
 
     fn e_unary(p: &mut Self, e: &mut Expr, _: ExprIn) {
@@ -1751,8 +1731,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && matches!(key.data, Data::EString(..))
                 {
                     let key_str = key.data.e_string().expect("infallible: variant checked");
-                    // Zig `string(arena)` transcodes UTF-16; while
-                    // E.rs has duplicate impls (E0034), reach the bytes directly
+                    // While E.rs has duplicate impls (E0034), reach the bytes directly
                     // — class-name keys are parser-produced (UTF-8, no rope).
                     p.decorator_class_name = if !key_str.is_utf16 {
                         Some(key_str.data.slice())
@@ -1830,7 +1809,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //
         // const binding = await import(`./${process.platform}-${process.arch}.node`);
         //
-        // Zig `defer` restores at scope exit; restored manually before each return.
+        // Restored manually before each return.
         let prev_should_fold_typescript_constant_expressions = true;
         p.should_fold_typescript_constant_expressions = true;
 
@@ -1928,8 +1907,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.record_usage(p.exports_ref);
                     }
 
-                    // `Scope.parent: ?*Scope` in Zig is `Option<StoreRef<Scope>>` here;
-                    // walk via the safe arena back-pointer.
+                    // Walk `Scope.parent` (`Option<StoreRef<Scope>>`) via the safe
+                    // arena back-pointer.
                     let mut scope_iter: Option<js_ast::StoreRef<js_ast::Scope>> =
                         Some(p.current_scope);
                     while let Some(mut scope) = scope_iter {
@@ -1970,7 +1949,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         {
             let old_ce = p.options.ignore_dce_annotations;
-            // Zig `defer` restores at scope exit; do it manually below.
+            // Restored manually below.
             let old_should_fold_typescript_constant_expressions =
                 p.should_fold_typescript_constant_expressions;
             let old_is_control_flow_dead = p.is_control_flow_dead;
@@ -2015,7 +1994,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.visit_expr(arg);
             }
 
-            // Restore deferred state (Zig `defer`).
+            // Restore saved state.
             p.options.ignore_dce_annotations = old_ce;
             p.should_fold_typescript_constant_expressions =
                 old_should_fold_typescript_constant_expressions;
@@ -2211,7 +2190,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.macro_call_count += 1;
                 // Reborrow via the field-disjoint `Lexer::log()` accessor
                 // so `&p.lexer` and `&mut p.options` split cleanly under
-                // borrowck — Zig held two raw `*Log`.
+                // borrowck.
                 let log = p.lexer.log();
                 let source = p.source;
                 let macro_result = match p
@@ -2264,10 +2243,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //
         // When we see a hook call, we need to hash it, and then mark a flag so that if
         // it is assigned to a variable, that variable also get's hashed.
-        //
-        // `Runtime::Features.server_components` is a `bool` stub; the
-        // full Zig type is `enum { off, client, server }` with `.isServerSide()`. Treat
-        // `true` as server-side until the enum lands.
         if p.options.features.react_fast_refresh
             || p.options.features.server_components.is_server_side()
         {
@@ -2473,9 +2448,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        // Zig: `std.mem.toBytes(...)` then `bytesToValue(...)` to save/restore. In Rust the struct
-        // is `Copy`/`Clone`, so just copy it.
-        // reshaped — toBytes/bytesToValue → plain copy.
+        // The struct is `Copy`, so save/restore is a plain copy.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
         p.fn_or_arrow_data_visit = FnOrArrowDataVisit {
             is_arrow: true,
@@ -2493,7 +2466,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionArgs, expr.loc)
             .expect("unreachable");
-        // PERF(port): was arena dupe — profile if it shows up on a hot path
         let dupe: &'a mut [Stmt] = p.arena.alloc_slice_copy(e_.body.stmts.slice());
 
         let args_mut: &mut [G::Arg] = e_.args.slice_mut();
@@ -2508,15 +2480,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.push_scope_for_visit_pass(js_ast::scope::Kind::FunctionBody, e_.body.loc)
             .expect("unreachable");
 
-        // Zig: `const prev = p.react_refresh.hook_ctx_storage; defer ... = prev; ... = &react_hook_data;`
-        // hook_ctx_storage is a raw NonNull so a stack local is fine; we manually restore `prev`
-        // on every exit path below (Zig used `defer`).
+        // hook_ctx_storage is a raw NonNull so a stack local is fine; we manually
+        // restore `prev` on every exit path below.
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
         p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
-        // Zig `ListManaged(Stmt).fromOwnedSlice(p.arena, dupe)` adopted the arena slice
-        // without copying; bumpalo Vec cannot adopt an existing slice, so this copies.
+        // bumpalo Vec cannot adopt an existing slice, so this copies.
         // PERF: profile if it shows up on a hot path (react-refresh only).
         let mut stmts_list = bun_alloc::vec_from_iter_in(dupe.iter().copied(), p.arena);
         let mut temp_opts = PrependTempRefsOpts {
@@ -2525,15 +2495,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
         p.visit_stmts_and_prepend_temp_refs(&mut stmts_list, &mut temp_opts)
             .expect("unreachable");
-        // Zig: `p.arena.free(e_.body.stmts)` — arena-backed, no individual free in Rust.
         p.pop_scope();
         p.pop_scope();
 
         p.fn_only_data_visit.is_inside_async_arrow_fn = old_inside_async_arrow_fn;
         p.fn_or_arrow_data_visit = old_fn_or_arrow_data;
 
-        // Zig: defer p.react_refresh.hook_ctx_storage = prev — restore before any further `p.*`
-        // call so the stack-local pointer never escapes this frame.
+        // Restore before any further `p.*` call so the stack-local pointer
+        // never escapes this frame.
         p.react_refresh.hook_ctx_storage = prev_hook_ctx;
 
         if let Some(hook) = react_hook_data.as_mut() {
@@ -2585,18 +2554,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return;
         }
 
-        // Zig: `const prev = p.react_refresh.hook_ctx_storage; defer ... = prev; ... = &react_hook_data;`
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
         p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
-        // Spec (visitExpr.zig e_function): visitFunc(e_.func, expr.loc) — for function
-        // *expressions* the .function_args scope is pushed at the `function` keyword loc
-        // (parseFn.zig:364), not at open_parens_loc. (s_function correctly uses open_parens_loc.)
+        // For function *expressions* the .function_args scope is pushed at the
+        // `function` keyword loc, not at open_parens_loc. (s_function correctly
+        // uses open_parens_loc.)
         e_.func = p.visit_func(core::mem::take(&mut e_.func), expr.loc);
 
-        // Zig: defer p.react_refresh.hook_ctx_storage = prev — restore now so the stack-local
-        // pointer never escapes this frame.
+        // Restore now so the stack-local pointer never escapes this frame.
         p.react_refresh.hook_ctx_storage = prev_hook_ctx;
 
         // Remove unused function names when minifying (only when bundling is enabled)
@@ -2660,7 +2627,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let decorator_name_from_context = p.decorator_class_name;
         p.decorator_class_name = None;
 
-        // Zig: `p.visitClass(expr.loc, e_, Ref.None)`
         let _ = p.visit_class(expr.loc, &mut e_, Ref::NONE);
 
         // Lower standard decorators for class expressions

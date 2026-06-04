@@ -230,7 +230,7 @@ pub struct RareData {
     /// Erased `*mut webcore::blob::Store` (intrusive-refcounted on the runtime
     /// side). Constructed via `__bun_stdio_blob_store_new`; high tier casts back.
     /// `mode` is cached so [`Bun__Process__getStdinFdType`] doesn't have to
-    /// re-stat (Zig read `store.data.file.mode`).
+    /// re-stat.
     pub stderr_store: Option<NonNull<c_void>>,
     pub stderr_mode: Mode,
     pub stdin_store: Option<NonNull<c_void>>,
@@ -306,8 +306,8 @@ pub struct RareData {
     pub s3_default_client: Strong,
     pub default_csrf_secret: Box<[u8]>,
 
-    /// Owned NUL-terminated buffer (`[:0]u8`). `len()` includes the trailing 0;
-    /// [`Self::tls_default_ciphers`] strips it to match Zig `dupeZ` semantics.
+    /// Owned NUL-terminated buffer. `len()` includes the trailing 0;
+    /// [`Self::tls_default_ciphers`] strips it.
     pub tls_default_ciphers: Option<Box<[u8]>>,
 
     // proxy_env_storage moved to VirtualMachine — see comment there on why
@@ -317,7 +317,6 @@ pub struct RareData {
     pub path_buf: PathBuf,
 }
 
-// Type aliases matching Zig's local imports
 pub(crate) type FilePollStore = Async::file_poll::Store;
 
 impl Default for RareData {
@@ -384,7 +383,6 @@ impl PathBuf {
     const S: usize = MAX_PATH_BYTES;
 
     /// Returns the smallest lazily-allocated tier buffer that fits `min_len`.
-    // PERF(port): was stack-fallback (FixedBufferAllocator + fallback allocator).
     // Revisit caller semantics for inputs exceeding the large tier.
     pub fn get(&mut self, min_len: usize) -> &mut [u8] {
         if min_len <= 2 * Self::S {
@@ -458,8 +456,7 @@ pub struct Slot<'a> {
 }
 
 /// Helper macro: expands `$body` once per proxy-env field, binding `$name`
-/// (the static byte-string key) and `$field` (the field ident). Replaces
-/// the Zig `inline for (@typeInfo(...).fields)` iteration.
+/// (the static byte-string key) and `$field` (the field ident).
 macro_rules! for_each_proxy_field {
     ($self:expr, |$name:ident, $field:ident| $body:block) => {{
         // Uppercase fields are declared first. On Windows the case-insensitive
@@ -589,8 +586,7 @@ pub use bun_s3_signing::credentials::AWSSignatureCache;
 // RareData methods — simple accessors / lazy-init
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Expand `$body` once per embedded `SocketGroup` field — the Rust analogue of
-/// Zig's `inline for (socket_group_fields) |f| @field(this, f)`.
+/// Expand `$body` once per embedded `SocketGroup` field.
 macro_rules! for_each_socket_group {
     ($self:ident, |$g:ident| $body:block) => {{
         {
@@ -946,7 +942,7 @@ impl RareData {
     // ── close_all_socket_groups ───────────────────────────────────────────
     /// Drain every embedded socket group. Must run BEFORE JSC teardown — closeAll
     /// fires on_close → JS callbacks → needs a live VM. RareData.deinit() runs
-    /// after `WebWorker__teardownJSCVM` (web_worker.zig), so doing the closeAll
+    /// after `WebWorker__teardownJSCVM`, so doing the closeAll
     /// there would dispatch into freed JSC heap.
     pub fn close_all_socket_groups(&mut self, vm: &VirtualMachine) {
         // closeAll() dispatches on_close into JS while the VM is still alive, so a
@@ -986,7 +982,7 @@ impl RareData {
 //
 // Low tier owns the fstat + lazy-init flow; the actual `webcore::blob::Store`
 // allocation goes through `__bun_stdio_blob_store_new` (link-time extern
-// defined in `bun_runtime::webcore::blob`). Zig built `Blob.Store` inline.
+// defined in `bun_runtime::webcore::blob`).
 // ──────────────────────────────────────────────────────────────────────────
 
 unsafe extern "Rust" {
@@ -1049,8 +1045,7 @@ impl RareData {
                 Ok(stat) => stat.st_mode as Mode,
                 Err(_) => 0,
             };
-            // Zig: `if (fd.unwrapValid()) |valid| std.posix.isatty(valid.native()) else false`
-            // — on Windows an invalid stdin handle must short-circuit to false.
+            // On Windows an invalid stdin handle must short-circuit to false.
             let is_atty = fd.unwrap_valid().map(syscall::isatty).unwrap_or(false);
             let store = Self::stdio_ctor(fd, is_atty, mode);
             self.stdin_store = NonNull::new(store);
@@ -1092,9 +1087,9 @@ pub(crate) extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i
         }
         _ => unreachable!(),
     };
-    // Zig: `bun.S.ISFIFO(mode)` / `bun.S.ISSOCK(mode)` — platform-shimmed (works on
-    // Windows where libc::S_IFSOCK is undefined and on macOS where the libc constants
-    // are u16). `kind_from_mode` uses hard-coded u32 octal masks for the same effect.
+    // `kind_from_mode` uses hard-coded u32 octal masks so it works on
+    // Windows where libc::S_IFSOCK is undefined and on macOS where the libc
+    // constants are u16.
     match bun_sys::kind_from_mode(mode) {
         bun_sys::FileKind::NamedPipe => StdinFdType::Pipe,
         bun_sys::FileKind::UnixDomainSocket => StdinFdType::Socket,
@@ -1199,5 +1194,3 @@ impl Drop for RareData {
 }
 
 pub use bun_event_loop::SpawnSyncEventLoop::SpawnSyncEventLoop as SpawnSyncEventLoopReexport;
-
-// ported from: src/jsc/rare_data.zig

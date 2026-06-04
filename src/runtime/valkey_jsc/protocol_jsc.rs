@@ -1,4 +1,4 @@
-//! `to_js` bridges for the RESP protocol types in `valkey/valkey_protocol.zig`.
+//! `to_js` bridges for the RESP protocol types.
 //! The protocol parser, `RESPValue` union, and `ValkeyReader` stay in
 //! `valkey/`; only the `JSGlobalObject`/`JSValue`-touching conversions live
 //! here so `valkey/` is JSC-free.
@@ -8,8 +8,7 @@ use bun_valkey::valkey_protocol::{RESPValue, RedisError};
 
 // keep `protocol` referenced for sibling drafts
 
-/// Zig: `valkeyErrorToJS(global, message: ?[]const u8, err)`.
-/// All Rust callers always provide a message (never `None`), so the parameter
+/// All callers always provide a message, so the parameter
 /// is `impl AsRef<[u8]>` to accept `&str`, `&[u8]`, `&[u8; N]`, `&Box<[u8]>`
 /// uniformly without forcing `Some(..)` at every call site.
 pub fn valkey_error_to_js(
@@ -130,8 +129,7 @@ pub fn resp_value_to_js_with_options(
             for entry in entries.iter_mut() {
                 let js_key =
                     resp_value_to_js_with_options(&mut entry.key, global, ToJSOptions::default())?;
-                // Zig: `js_obj.putMayBeIndex(global, &key_str, value)` — no Rust binding yet,
-                // so route through `put_to_property_key` which performs the same
+                // Route through `put_to_property_key`, which performs
                 // index-vs-string property dispatch on the JSValue key.
                 let _ = js_key.to_bun_string(global)?; // preserve toString side-effect/exception path
                 let js_value = resp_value_to_js_with_options(&mut entry.value, global, options)?;
@@ -175,5 +173,3 @@ pub fn resp_value_to_js_with_options(
         }
     }
 }
-
-// ported from: src/runtime/valkey_jsc/protocol_jsc.zig

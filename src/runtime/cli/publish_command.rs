@@ -89,9 +89,8 @@ type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
 pub(crate) struct PublishCommand;
 
-// Zig used `if (directory_publish) ?[]const u8 else void` for the script fields
-// and `if (directory_publish) *DotEnv.Loader else void` for script_env. Rust const generics
-// cannot vary field types; we keep them as Option<> in both instantiations and rely on
+// Const generics cannot vary field types; the script fields and script_env are
+// kept as Option<> in both instantiations and we rely on
 // invariants (always None / never used when DIRECTORY_PUBLISH == false).
 pub struct Context<'a, const DIRECTORY_PUBLISH: bool> {
     pub manager: &'a mut PackageManager,
@@ -327,7 +326,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
         // Note: adopt `package_json_contents` (already an owned `Box<[u8]>`)
         // into the process-lifetime side-table so the `Source` borrow stays
-        // alive across `normalized_package` (Zig held an arena slice). Zero-copy.
+        // alive across `normalized_package`. Zero-copy.
         let package_json_contents: &'static [u8] = crate::cli::cli_adopt(package_json_contents);
 
         let bump = bun_alloc::Arena::new();
@@ -456,11 +455,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
     /// `bun publish` without a tarball path. Automatically pack the current workspace and get
     /// information required for publishing
-    // Note: Zig declares this on the comptime-generic `Context(directory_publish)`
-    // but only ever instantiates it as `Context(true).fromWorkspace`; lazy comptime
-    // evaluation hid the `pack(true) -> Context(true)` mismatch for the unused
-    // `false` branch. Rust type-checks all monomorphisations, so pin the return
-    // type to the only valid shape. `'static` matches `pack::pack`'s return —
+    // Note: the return type is pinned to `Context<'static, true>`, the only
+    // valid shape. `'static` matches `pack::pack`'s return —
     // the embedded `&mut PackageManager` / `Command::Context` are process-
     // lifetime singletons reborrowed through raw pointers there.
     pub fn from_workspace(
@@ -471,8 +467,8 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         let manager_ptr: *mut PackageManager = manager;
         let log: &mut bun_ast::Log = manager.log_mut();
         // SAFETY: `manager_ptr` was just derived from `manager: &'a mut PackageManager`;
-        // `log` borrows the disjoint `.log` field, so the aliased `&mut` here mirrors
-        // Zig's freely-aliased `*PackageManager`.
+        // `log` borrows the disjoint `.log` field, so the re-derived `&mut`
+        // never touches memory the live `log` borrow covers.
         let load_from_disk_result =
             lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
 
@@ -519,9 +515,9 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         );
 
         let mut pack_ctx = pack::Context {
-            // SAFETY: `manager_ptr` came from `&'a mut PackageManager`; the
-            // overlapping borrow with `lockfile_ref` mirrors Zig's freely-
-            // aliased `*PackageManager`.
+            // SAFETY: `manager_ptr` came from `&'a mut PackageManager`;
+            // `lockfile_ref` borrows the local `lockfile`, not the manager,
+            // so the re-derived `&mut` is the only live manager borrow.
             manager: unsafe { &mut *manager_ptr },
             command_ctx: ctx,
             lockfile: lockfile_ref,
@@ -720,8 +716,7 @@ impl PublishCommand {
 
             // Note: reshaped for borrowck — `command_ctx: &mut ContextData`
             // is held by `context`; `run_package_script_foreground` needs
-            // `&mut ContextData` too. Re-derive from the raw pointer (mirrors
-            // Zig's freely-aliased `Command.Context`).
+            // `&mut ContextData` too. Re-derive from the raw pointer.
             let cmd_ctx_ptr: *mut crate::cli::command::ContextData = context.command_ctx;
 
             if let Some(publish_script) = &context.publish_script {
@@ -798,8 +793,7 @@ impl PublishCommand {
         }
 
         // Note: `URL::parse` borrows; dupe into the process-lifetime CLI
-        // arena so the URL outlives the local Vec (mirrors `allocPrint`
-        // ownership in the Zig spec).
+        // arena so the URL outlives the local Vec.
         let package_url = URL::parse(crate::cli::cli_dupe(&url_buf));
 
         let Ok(mut response_buf) = MutableString::init(1024) else {
@@ -931,7 +925,7 @@ impl PublishCommand {
         }
 
         // Note: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
-        // request body (Zig had no lifetimes). Single-shot CLI path — adopt the
+        // request body. Single-shot CLI path — adopt the
         // already-owned `Box<[u8]>` (base64-encoded tarball; can be multi-MB)
         // into the process-lifetime side-table. Zero-copy.
         let publish_req_body: &'static [u8] = crate::cli::cli_adopt(
@@ -963,8 +957,7 @@ impl PublishCommand {
         )
         .map_err(|_| AllocError)?;
         // Note: `URL::parse` borrows; dupe into the process-lifetime CLI
-        // arena so the URL outlives `print_buf.clear()` below (Zig's
-        // `allocPrint` owned its buffer).
+        // arena so the URL outlives `print_buf.clear()` below.
         let publish_url = URL::parse(crate::cli::cli_dupe(&print_buf));
         print_buf.clear();
 
@@ -1128,8 +1121,8 @@ impl PublishCommand {
             });
 
         loop {
-            // SAFETY: `buffered_stdin()` returns a process-global `*mut`; single-threaded
-            // access here mirrors Zig's `Output.buffered_stdin().reader()`.
+            // SAFETY: `buffered_stdin()` returns a process-global `*mut`; this
+            // loop is the only accessor while it runs (single-threaded CLI path).
             match unsafe { (*Output::buffered_stdin()).reader().read_byte() } {
                 Ok(b'\n') => break,
                 Ok(_) => continue,
@@ -1137,8 +1130,6 @@ impl PublishCommand {
             }
         }
 
-        // Note: Zig used `std.process.Child.init(&.{Open.opener, auth_url})
-        // .spawnAndWait()`. Route through `bun.spawnSync` (PORTING.md §Spawning).
         let _ = spawn_sync::spawn(&spawn_sync::Options {
             argv: vec![Box::from(open::OPENER), Box::from(auth_url.as_bytes())],
             envp: None,
@@ -1284,8 +1275,8 @@ impl PublishCommand {
                 loop {
                     response_buf.reset();
 
-                    // Note: Zig copied `done_url`/`auth_headers.entries` by value each
-                    // loop turn; in Rust both move into `init_sync`, so re-clone per iteration.
+                    // Note: `done_url`/`auth_headers.entries` move into
+                    // `init_sync`, so re-clone per iteration.
                     let mut req = http::AsyncHTTP::init_sync(
                         http::Method::GET,
                         done_url.clone(),
@@ -1317,8 +1308,7 @@ impl PublishCommand {
                                     'default: {
                                         let trimmed =
                                             strings::trim(retry, &strings::WHITESPACE_CHARS);
-                                        // Note: std.fmt.parseInt(u32, _, 10) — header value is bytes,
-                                        // not UTF-8; use the byte-slice parser per PORTING.md.
+                                        // Header value is bytes, not UTF-8; use the byte-slice parser.
                                         let Ok(seconds) = strings::parse_int::<u32>(trimmed, 10)
                                         else {
                                             break 'default;
@@ -1604,7 +1594,7 @@ impl PublishCommand {
             if entry.kind == bun_sys::EntryKind::Directory {
                 continue;
             }
-            // Zig: `DirIterator.iterate(dir, .u8)` — entry names are UTF-8 on every platform.
+            // Entry names are UTF-8 on every platform.
             let name = entry.name.slice_u8();
             if !is_readme_filename(name) {
                 continue;
@@ -1824,7 +1814,7 @@ impl PublishCommand {
                     let mut iter = DirIterator::iterate(dir);
                     while let Some(entry) = iter.next().ok().flatten() {
                         let (name, subpath): (&'static ZStr, &'static ZStr) = {
-                            // Zig: `DirIterator.iterate(dir, .u8)` — UTF-8 entry name on every platform.
+                            // Entry names are UTF-8 on every platform.
                             let name = entry.name.slice_u8();
                             let mut join: Vec<u8> = Vec::new();
                             write!(
@@ -1838,7 +1828,6 @@ impl PublishCommand {
                             .map_err(|_| AllocError)?;
                             join.push(0);
                             let join_len = join.len() - 1;
-                            // Note: reshaped for borrowck — Zig sliced into the same allocation for both name and subpath.
                             // Dupe into the process-lifetime CLI arena (bytes flow into long-lived `E::String` nodes).
                             let interned: &'static [u8] = crate::cli::cli_dupe(&join);
                             // SAFETY: NUL terminator at interned[join_len] (copied from `join`).
@@ -2133,5 +2122,3 @@ impl From<GetOTPError> for PublishError {
         PublishError::OutOfMemory
     }
 }
-
-// ported from: src/cli/publish_command.zig

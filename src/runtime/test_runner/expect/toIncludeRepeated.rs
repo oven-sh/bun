@@ -62,7 +62,7 @@ impl Expect {
 
         let expect_string_as_str_owned = expect_string.to_slice_or_null(global)?;
         let sub_string_as_str_owned = substring.to_slice_or_null(global)?;
-        // defer .deinit() → handled by Drop
+        // cleanup handled by Drop
 
         let expect_string_as_str = expect_string_as_str_owned.slice();
         let sub_string_as_str = sub_string_as_str_owned.slice();
@@ -73,7 +73,7 @@ impl Expect {
             )));
         }
 
-        // std.mem.count(u8, haystack, needle) — non-overlapping occurrence count
+        // Non-overlapping occurrence count.
         let actual_count = expect_string_as_str.find_iter(sub_string_as_str).count();
         let mut pass = actual_count == count_as_num as usize;
 
@@ -90,7 +90,7 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let mut formatter3 = super::make_formatter(global);
-        // defer formatter.deinit() → handled by Drop
+        // formatter cleanup handled by Drop
         let expect_string_fmt = expect_string.to_fmt(&mut formatter);
         let substring_fmt = substring.to_fmt(&mut formatter2);
         let times_fmt = count.to_fmt(&mut formatter3);
@@ -172,5 +172,3 @@ impl Expect {
         }
     }
 }
-
-// ported from: src/test_runner/expect/toIncludeRepeated.zig

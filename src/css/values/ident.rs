@@ -47,15 +47,13 @@ macro_rules! arena_slice_newtype {
             }
 
             pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-                // Zig `css.implementDeepClone` — field-wise. The
-                // `*const [u8]` slice is arena-owned (never mutated, freed on
-                // arena reset), so identity copy is correct (matches generics.zig
-                // "const strings" fast-path).
+                // The `*const [u8]` slice is arena-owned (never mutated, freed
+                // on arena reset), so identity copy is correct.
                 *self
             }
 
             pub fn hash(&self, hasher: &mut Wyhash) {
-                // Zig `css.implementHash` (comptime field-walk) → arena slice bytes.
+                // Hash the arena slice bytes.
                 hasher.update(self.v());
             }
 
@@ -94,7 +92,7 @@ pub struct DashedIdentReference {
 
 impl DashedIdentReference {
     pub(crate) fn eql(&self, rhs: &Self) -> bool {
-        // Zig `css.implementEql` — field-wise over `ident` and `from`.
+        // Field-wise over `ident` and `from`.
         use crate::generics::CssEql;
         self.ident.eql(&rhs.ident) && self.from.eql(&rhs.from)
     }
@@ -148,11 +146,10 @@ impl DashedIdentReference {
             let ident_v = unsafe { crate::arena_str(self.ident.v) };
             let source_index = dest.loc.source_index;
             let bump = dest.arena;
-            // Zig `referenceDashed` took `*Printer` and called
-            // `dest.importRecord()` internally. Rust borrowck forbids handing
+            // Borrowck forbids handing
             // `dest` to a method on `dest.css_module`, so resolve the path
-            // here and pass the slice down. The `?` preserves the Zig
-            // `try dest.importRecord(...)` error path.
+            // here and pass the slice down. The `?` propagates the
+            // `import_record` error path.
             use crate::properties::css_modules::Specifier;
             let specifier_path: Option<&[u8]> = match &self.from {
                 Some(Specifier::ImportRecordIndex(idx)) => {
@@ -186,10 +183,8 @@ arena_slice_newtype! {
     DashedIdent
 }
 
-/// Hash/eql context for [`DashedIdentHashMap`] — port of the anonymous context
-/// struct in Zig `DashedIdent.HashMap(V)`: keys hash their string bytes via
-/// `std.array_hash_map.hashString` (wyhash seed 0, truncated to u32) and
-/// compare by byte equality.
+/// Hash/eql context for [`DashedIdentHashMap`]: keys hash their string bytes
+/// (wyhash seed 0, truncated to u32) and compare by byte equality.
 #[derive(Default, Clone, Copy)]
 pub struct DashedIdentContext;
 
@@ -205,7 +200,7 @@ impl bun_collections::array_hash_map::ArrayHashContext<DashedIdent> for DashedId
     }
 }
 
-/// Zig `pub fn HashMap(comptime V: type) type` — inherent assoc type aliases
+/// Inherent assoc type aliases
 /// are unstable in Rust, so this is a free type alias instead.
 pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V, DashedIdentContext>;
 
@@ -262,7 +257,7 @@ impl Ident {
 #[derive(Clone, Copy, Default)]
 pub struct IdentOrRef(u128);
 
-// Zig packed struct(u128) field layout, LSB-first:
+// Packed u128 field layout, LSB-first:
 //   __ptrbits: u63  -> bits  0..63
 //   __ref_bit: bool -> bit   63
 //   __len:     u64  -> bits 64..128
@@ -330,15 +325,14 @@ impl IdentOrRef {
         }
     }
 
-    // NOTE: no `#[cfg(not(debug_assertions))]` variant. Zig's `@compileError` is lazy (fires only
-    // if the body is analyzed); Rust's `compile_error!` fires at expansion and would break every
-    // release build. Omitting the fn in release yields a name-resolution error at the call site,
-    // which is the closest Rust equivalent.
+    // NOTE: no `#[cfg(not(debug_assertions))]` variant. `compile_error!` fires at expansion and
+    // would break every release build. Omitting the fn in release yields a name-resolution error
+    // at the call site, which is the intent: this is debug-only.
 
     pub fn from_ident(ident: Ident) -> Self {
         let s = ident.v();
         let (ptr, len) = (s.as_ptr() as usize as u64, s.len() as u64);
-        // @intCast(@intFromPtr(...)) — narrowing usize→u63 is checked in debug
+        // narrowing usize→u63 is checked in debug
         debug_assert!(ptr & (1u64 << 63) == 0);
         Self::pack(ptr, false, len)
     }
@@ -432,9 +426,9 @@ impl IdentOrRef {
         if let Some(ident) = self.as_ident() {
             hasher.update(ident.v());
         } else {
-            // SAFETY: self is #[repr(transparent)] u128; reading first 2 bytes matches Zig's
-            // `slice_u8[0..2]` (which is almost certainly a Zig bug — hashes 2 bytes, not 16).
-            // Preserved verbatim for behavioral parity; PR #30784 hashes the full identity.
+            // SAFETY: self is #[repr(transparent)] u128 (16 bytes), so reading the first 2
+            // bytes is in-bounds. Hashing only 2 of the 16 bytes (sic) is preserved for
+            // behavioral compatibility; PR #30784 hashes the full identity.
             let bytes = unsafe {
                 core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2)
             };
@@ -537,5 +531,3 @@ impl CustomIdent {
 
 /// A list of CSS [`<custom-ident>`](https://www.w3.org/TR/css-values-4/#custom-idents) values.
 pub type CustomIdentList = SmallList<CustomIdent, 1>;
-
-// ported from: src/css/values/ident.zig

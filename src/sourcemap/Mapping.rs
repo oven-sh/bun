@@ -99,8 +99,7 @@ impl Default for ListValue {
     }
 }
 
-/// Dispatch a single body over both `ListValue` arms — Rust's spelling of Zig's
-/// `switch (this.impl) { inline else => |*list| ... }`. `$body` is duplicated
+/// Dispatch a single body over both `ListValue` arms. `$body` is duplicated
 /// textually so each arm monomorphizes over its own `MultiArrayList<T>`; the
 /// arms therefore need NOT have a common element type, only a common `$body`
 /// result type. Match-ergonomics governs the borrow: pass `&v` / `&mut v` and
@@ -155,9 +154,9 @@ impl List {
         with_names.ensure_total_capacity(without_names.len())?;
         // `without_names` drops at end of scope (was `defer without_names.deinit(allocator)`).
 
-        // Zig used set_len + per-column memcpy. Rust MultiArrayList has no
+        // MultiArrayList has no
         // public `set_len`; rebuild element-wise (capacity already reserved, so no
-        // realloc). PERF(port): revisit once typed mut-column accessors exist.
+        // realloc). PERF: revisit once typed mut-column accessors exist.
         for i in 0..without_names.len() {
             with_names.append_assume_capacity(without_names.get(i).to_named());
         }
@@ -363,10 +362,8 @@ impl Lookup {
         }
 
         if bun_paths::is_absolute(base_filename) {
-            // Zig passed runtime `.auto` Platform; bun_paths exposes
-            // const-generic `PlatformT` only. `platform::Auto` is a cfg-selected
-            // type alias (Posix on unix, Windows on windows), which is what
-            // `.auto` resolved to at comptime anyway.
+            // `platform::Auto` is a cfg-selected
+            // type alias (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
             return Some(bun_core::String::clone_utf8(
                 bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(dir, name),
@@ -428,9 +425,8 @@ impl Lookup {
             let name: &[u8] = &source_map.external_source_names[index];
 
             let mut buf = bun_paths::PathBuffer::uninit();
-            // Zig passed runtime `.auto` / `.loose`; bun_paths
-            // exposes const-generic `PlatformT` ZSTs. `platform::Auto` is
-            // cfg-selected (Posix on unix, Windows on windows) — same result.
+            // `platform::Auto` is
+            // cfg-selected (Posix on unix, Windows on windows).
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);
             let normalized = bun_paths::resolve_path::join_abs_string_buf_z::<
                 bun_paths::platform::Loose,
@@ -746,5 +742,3 @@ pub fn parse(
     psm.input_line_count = input_line_count;
     ParseResult::Success(psm)
 }
-
-// ported from: src/sourcemap/Mapping.zig

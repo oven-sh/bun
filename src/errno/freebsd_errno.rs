@@ -153,4 +153,3 @@ pub use uv_e as UV_E;
 // thread-local `__error()` slot.
 impl_get_errno_libc!(i32, u32, isize, usize, i64);
 
-// ported from: src/errno/freebsd_errno.zig

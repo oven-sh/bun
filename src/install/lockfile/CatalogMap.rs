@@ -29,8 +29,8 @@ pub struct CatalogMap {
     pub groups: ArrayHashMap<String, Map>,
 }
 
-/// Zig `String.arrayHashContext(lockfile, null)` — convenience constructor that
-/// reads the lockfile's string buffer for both arg & existing sides. Lives here
+/// Convenience constructor that reads the lockfile's string buffer for both
+/// arg & existing sides. Lives here
 /// (not on `bun_semver::String`) to avoid a `bun_semver → bun_install` back-edge.
 #[inline]
 fn ctx(buf: &[u8]) -> ArrayHashContext<'_> {
@@ -359,7 +359,7 @@ impl CatalogMap {
             });
     }
 
-    // Zig `deinit(allocator)` deleted: `Map` and `ArrayHashMap<String, Map>` are owned
+    // No explicit `deinit`: `Map` and `ArrayHashMap<String, Map>` are owned
     // collections whose `Drop` recursively frees the nested maps.
 
     /// Accepts `lockfile.buffers.string_bytes` directly (rather than the whole
@@ -402,10 +402,8 @@ impl CatalogMap {
             .default
             .ensure_total_capacity(self.default.count())?;
 
-        // Zig re-reads `new.buffers.string_bytes.items` at every
-        // `putAssumeCapacityContext` call. Mirror that here: per insert,
-        // finish the `&mut builder` appends FIRST, then snapshot the buffer
-        // for the hash/eql closures. Snapshotting once up-front would freeze
+        // Per insert, finish the `&mut builder` appends FIRST, then snapshot
+        // the buffer for the hash/eql closures. Snapshotting once up-front would freeze
         // the slice length pre-append and OOB-panic on any non-inline key.
         for (dep_name, dep) in self.default.keys().iter().zip(self.default.values()) {
             let new_key = builder.append::<String>(dep_name.slice(old_buf));
@@ -520,5 +518,3 @@ fn put_entries_from_pnpm_lockfile(
     }
     Ok(())
 }
-
-// ported from: src/install/lockfile/CatalogMap.zig

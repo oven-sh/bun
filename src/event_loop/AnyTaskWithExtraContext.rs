@@ -14,7 +14,6 @@ pub struct AnyTaskWithExtraContext {
 
 impl Default for AnyTaskWithExtraContext {
     fn default() -> Self {
-        // Zig: ctx/callback default to `undefined`, next defaults to `null`.
         Self {
             ctx: None,
             callback: |_, _| unreachable!("callback was undefined"),
@@ -27,10 +26,6 @@ impl AnyTaskWithExtraContext {
     /// Heap-allocates a wrapper around `ptr`, returns a pointer to the embedded
     /// `AnyTaskWithExtraContext`. When `run` fires, it calls `callback(ptr, extra)`
     /// and then frees the wrapper.
-    ///
-    /// Zig signature: `fn fromCallbackAutoDeinit(ptr: anytype, comptime fieldName: [:0]const u8) *AnyTaskWithExtraContext`
-    /// where `fieldName` names a decl on `@TypeOf(ptr).*`. Rust cannot look up a
-    /// method by comptime string, so callers pass the function directly.
     pub fn from_callback_auto_deinit<T>(
         ptr: *mut T,
         callback: fn(*mut T, *mut c_void),
@@ -42,9 +37,8 @@ impl AnyTaskWithExtraContext {
             // a borrow lifetime cannot be expressed. Caller guarantees `ptr`
             // outlives the task.
             wrapped: *mut T,
-            // Extra field vs Zig: Zig monomorphized the callback into `Wrapper.function`
-            // via `comptime fieldName`. Stable Rust has no const fn-pointer generics,
-            // so we store it here instead.
+            // Stable Rust has no const fn-pointer generics,
+            // so the callback is stored here instead.
             callback: fn(*mut T, *mut c_void),
         }
 
@@ -74,22 +68,16 @@ impl AnyTaskWithExtraContext {
         }
     }
 
-    /// Zig signature: `fn from(this: *@This(), of: anytype, comptime field: []const u8) *@This()`
-    /// — initializes `this` in place to call `@TypeOf(of).field(of, extra)` with
-    /// `ContextType = void`.
-    // Zig used `@field(T, field)` comptime decl lookup; Rust callers
-    // pass the fn pointer directly.
-    // Zig passes `ContextType = void` (the unit type, NOT `anyopaque`); `*void`
-    // is zero-bit so the callee is effectively `fn(*T)` only. Mapped here to
-    // `*mut ()` to keep the two-arg stored ABI uniform.
-    // Name kept as `from` to match Zig; not the `From` trait.
+    /// Initializes `self` in place to call `callback(of, extra)`.
+    // The unit context means the callee is effectively `fn(*T)` only; mapped
+    // to `*mut ()` to keep the two-arg stored ABI uniform.
+    // Named `from` for historical reasons; not the `From` trait.
     pub fn from<T>(&mut self, of: *mut T, callback: fn(*mut T, *mut ())) -> *mut Self {
         *self = New::<T, ()>::init(of, callback);
         std::ptr::from_mut::<Self>(self)
     }
 
     pub fn run(&mut self, extra: *mut c_void) {
-        // Zig: @setRuntimeSafety(false) — no-op in Rust release; debug keeps the unwrap check.
         let callback = self.callback;
         let ctx = self.ctx;
         // SAFETY: caller contract — `ctx` was set by `init`/`from*` to a live pointer.
@@ -97,8 +85,6 @@ impl AnyTaskWithExtraContext {
     }
 }
 
-/// Zig: `fn New(comptime Type: type, comptime ContextType: type, comptime Callback: anytype) type`
-///
 /// Stable Rust cannot take a fn value as a const generic, so `Callback` moves to
 /// a runtime argument on `init` and is type-erased (ABI-identical: both forms
 /// are thin fn pointers taking two thin data pointers).
@@ -108,8 +94,7 @@ impl<T, C> New<T, C> {
     pub fn init(ctx: *mut T, callback: fn(*mut T, *mut C)) -> AnyTaskWithExtraContext {
         AnyTaskWithExtraContext {
             // SAFETY: `fn(*mut T, *mut C)` and `fn(*mut (), *mut ())` have identical
-            // ABI (single code pointer, two pointer-sized args). This is the moral
-            // equivalent of Zig's `wrap` thunk that `@ptrCast`/`@alignCast`s the args.
+            // ABI (single code pointer, two pointer-sized args).
             callback: unsafe {
                 bun_ptr::cast_fn_ptr::<fn(*mut T, *mut C), fn(*mut (), *mut ())>(callback)
             },
@@ -117,12 +102,4 @@ impl<T, C> New<T, C> {
             next: bun_threading::Link::new(),
         }
     }
-
-    // Zig's `New(...).wrap(this: ?*anyopaque, extra: ?*anyopaque)` was the
-    // type-erasing thunk stored in `.callback = wrap`. Because stable Rust
-    // can't take `Callback` as a const generic, `init` erases the typed fn
-    // pointer directly instead — `wrap` is folded into that cast and
-    // intentionally omitted here.
 }
-
-// ported from: src/event_loop/AnyTaskWithExtraContext.zig

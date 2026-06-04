@@ -543,7 +543,6 @@ pub(crate) fn dispatch_frame(
 /// Feed an orphaned (untracked-stream) header block through the HPACK
 /// decoder purely to keep the dynamic table in sync, then discard.
 pub fn decode_discard_orphan(session: &mut ClientSession) {
-    // Reshaped from the Zig original for borrowck (was `defer .clearRetainingCapacity()`).
     let mut offset: usize = 0;
     while offset < session.orphan_header_block.len() {
         // Disjoint field borrows: `hpack` (mut) vs `orphan_header_block` (shared).
@@ -565,8 +564,7 @@ pub fn decode_discard_orphan(session: &mut ClientSession) {
 /// HEADERS frames arrive in one read. 1xx and trailers are decoded then
 /// dropped; the final response is stored on the stream for delivery.
 pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
-    // Reshaped from the Zig original for borrowck (was `defer stream.header_block.clearRetainingCapacity()`)
-    // — `.clear()` is inlined before each return below.
+    // `stream.header_block.clear()` is inlined before each return below.
     let mut status: u32 = 0;
     let mut bounds: Vec<[u32; 3]> = Vec::new();
     let start_len = stream.decoded_bytes.len();
@@ -715,7 +713,6 @@ pub fn decode_header_block(session: &mut ClientSession, stream: &mut Stream) {
         // SAFETY: b[1] <= b[2] <= decoded_bytes.len(); bytes is decoded_bytes.as_ptr() with no realloc since.
         let value =
             unsafe { bun_core::ffi::slice(bytes.add(b[1] as usize), (b[2] - b[1]) as usize) };
-        // PERF(port): was appendAssumeCapacity.
         stream
             .decoded_headers
             .push(picohttp::Header::new(name, value));
@@ -798,5 +795,3 @@ pub fn error_code_for(err: bun_core::Error) -> wire::ErrorCode {
         _ => wire::ErrorCode::INTERNAL_ERROR,
     }
 }
-
-// ported from: src/http/h2_client/dispatch.zig

@@ -126,5 +126,3 @@ impl JSModuleLoader {
         .ok_or(JsError::Thrown)
     }
 }
-
-// ported from: src/jsc/JSModuleLoader.zig

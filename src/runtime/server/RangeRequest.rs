@@ -116,7 +116,7 @@ pub fn parse(header: &[u8], total: u64) -> Result {
 }
 
 // `bun_uws::AnyRequest::header` borrows `&self` and returns `&[u8]` tied to
-// it, so take `&AnyRequest` here (the Zig original passed `req` by value).
+// it, so take `&AnyRequest` here.
 pub(crate) fn from_request(req: &AnyRequest, total: u64) -> Result {
     let Some(h) = req.header(b"range") else {
         return Result::None;
@@ -161,5 +161,3 @@ pub(crate) fn format_content_range(buf: &mut [u8], range: Result, total: Option<
         },
     }
 }
-
-// ported from: src/runtime/server/RangeRequest.zig

@@ -16,8 +16,8 @@ use bun_threading::Mutex;
 bun_core::declare_scope!(S3, hidden);
 
 pub struct S3HttpDownloadStreamingTask {
-    // `MaybeUninit` because `AsyncHTTP` contains non-null references, so the Zig
-    // `= undefined`-then-init pattern can't use `mem::zeroed()` here (mirrors `S3HttpSimpleTask`).
+    // `MaybeUninit` because `AsyncHTTP` contains non-null references, so
+    // `mem::zeroed()` can't be used here (mirrors `S3HttpSimpleTask`).
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
     /// the inert `Default` placeholder (overwritten before the task escapes).
@@ -41,17 +41,17 @@ pub struct S3HttpDownloadStreamingTask {
     pub proxy_url: Box<[u8]>,
 }
 
-// Hot-dispatch tag for `ConcurrentTask::from` (Zig: variant of `jsc.Task` TaggedPointerUnion).
+// Hot-dispatch tag for `ConcurrentTask::from`.
 impl Taskable for S3HttpDownloadStreamingTask {
     const TAG: TaskTag = task_tag::S3HttpDownloadStreamingTask;
 }
 
 impl Default for S3HttpDownloadStreamingTask {
     fn default() -> Self {
-        // only the Zig-defaulted fields (`has_schedule_callback` .. `concurrent_task`)
+        // only the fields `has_schedule_callback` .. `concurrent_task`
         // are observed via this path; the rest are placeholders that the caller (client.rs
-        // `..Default::default()`) overwrites before the task pointer escapes. `http` is zeroed
-        // to mirror Zig's `= undefined` + later overwrite (see S3HttpSimpleTask in simple_request.rs).
+        // `..Default::default()`) overwrites before the task pointer escapes
+        // (see S3HttpSimpleTask in simple_request.rs).
         Self {
             // never read — fully overwritten by `AsyncHTTP::init` before first use.
             http: core::mem::MaybeUninit::uninit(),
@@ -62,7 +62,6 @@ impl Default for S3HttpDownloadStreamingTask {
             callback: |_, _, _, _| {},
             range: None,
             proxy_url: Box::default(),
-            // — Zig field defaults —
             has_schedule_callback: AtomicBool::new(false),
             signal_store: bun_http::signals::Store::default(),
             signals: Signals::default(),
@@ -77,7 +76,6 @@ impl Default for S3HttpDownloadStreamingTask {
 }
 
 impl S3HttpDownloadStreamingTask {
-    // Zig: `pub const new = bun.TrivialNew(@This());`
     pub fn new(init: Self) -> Box<Self> {
         Box::new(init)
     }
@@ -146,10 +144,8 @@ impl S3HttpDownloadStreamingTask {
                 }
                 break 'brk MutableString::default();
             } else {
-                // Zig copies the MutableString struct by value here (shallow copy of
-                // ptr+len+cap), then `.reset()` zeros the source — i.e. an ownership transfer.
-                // `core::mem::take` gives the same observable semantics in Rust without the
-                // transient aliasing the Zig code relied on.
+                // `core::mem::take` transfers ownership of the buffer, leaving an
+                // empty MutableString behind.
                 let buffer = core::mem::take(&mut self.reported_response_buffer);
                 break 'brk buffer;
             }
@@ -194,8 +190,8 @@ impl S3HttpDownloadStreamingTask {
         // the state is atomic let's load it once
         let state = self_.get_state();
         let has_more = state.has_more();
-        // Zig `defer { this.mutex.unlock(); if (!has_more) this.deinit(); }` — keep as a scopeguard
-        // so any future early-exit / unwind through `report_progress` still unlocks + deinits.
+        // Use a scopeguard so any future early-exit / unwind through
+        // `report_progress` still unlocks + deinits.
         let this_ptr = this;
         scopeguard::defer! {
             // SAFETY: `this_ptr` was allocated via `Box::new` in `Self::new`; once
@@ -221,8 +217,8 @@ impl S3HttpDownloadStreamingTask {
     fn update_state(
         &mut self,
         async_http: &mut AsyncHTTP<'static>,
-        // reshaped for borrowck — Zig passed `result` by value; Rust borrows so the
-        // caller (process_http_callback) can still read `result.body` afterward.
+        // borrowed so the caller (process_http_callback) can still read
+        // `result.body` afterward.
         result: &HTTPClientResult,
         state: &mut State,
     ) -> bool {
@@ -238,10 +234,8 @@ impl S3HttpDownloadStreamingTask {
                 0
             });
             if state.status_code() == 0 {
-                // Zig explicitly `deinit()`s `certificate_info` / `metadata` here.
-                // In the Rust port both types free their owned buffers via `Drop`, and
-                // `HTTPClientResult` is dropped by the caller after this returns, so the
-                // explicit-free calls become no-ops.
+                // `certificate_info` / `metadata` free their owned buffers via `Drop`
+                // when `HTTPClientResult` is dropped by the caller after this returns.
                 if let Some(m) = &result.metadata {
                     state.set_status_code(m.response.status_code);
                 }
@@ -252,9 +246,11 @@ impl S3HttpDownloadStreamingTask {
             }
             // store the new state
             self.set_state(*state);
-            // SAFETY: `async_http` points to a live AsyncHTTP owned by the HTTP thread; Zig does a
-            // plain struct copy (`this.http = async_http.*`) — bitwise read+write matches that.
-            // `self.http` was previously initialised in `execute_s3_streaming_download`.
+            // SAFETY: `async_http` points to a live AsyncHTTP owned by the HTTP thread; a
+            // bitwise read+write copies its current state into `self.http` without running
+            // destructors (the HTTP thread retains ownership of the source until the request
+            // completes). `self.http` was previously initialised in
+            // `execute_s3_streaming_download`.
             unsafe { core::ptr::write(self.http.as_mut_ptr(), core::ptr::read(async_http)) };
         }
         wait_until_done
@@ -268,7 +264,7 @@ impl S3HttpDownloadStreamingTask {
         result: HTTPClientResult,
     ) -> bool {
         // lets lock and unlock to be safe we know the state is not in the middle of a callback when locked
-        // Zig `defer this.mutex.unlock();` — the RAII guard unlocks on every
+        // The RAII guard unlocks on every
         // return path. The guard holds the mutex by raw pointer (see
         // `Mutex::lock_guard`), so `&mut self` stays freely usable while
         // locked, and it drops before this fn returns — strictly before the
@@ -277,7 +273,7 @@ impl S3HttpDownloadStreamingTask {
 
         // remember the state is atomic load it once, and store it again
         let mut state = self.get_state();
-        // old state should have more otherwise its a http.zig bug
+        // old state should have more otherwise it's an HTTP-client bug
         debug_assert!(state.has_more());
         let is_done = !result.has_more;
         let wait_until_done = self.update_state(async_http, &result, &mut state);
@@ -293,13 +289,12 @@ impl S3HttpDownloadStreamingTask {
 
         if should_enqueue {
             if let Some(body) = result.body {
-                // .zig:207 does `this.response_buffer = body.*;`, but `body` is
-                // `&this.response_buffer` (see http/client.zig:600), so that line is a no-op
-                // self-assign in Zig. In Rust, a `ptr::read` + assign here would run Drop on the
-                // old `self.response_buffer`, freeing the Vec allocation that `body` (and the
-                // freshly-stored value) still point at — a use-after-free / double-free. The net
-                // effect of .zig:207-211 is: append `body`'s bytes to `reported_response_buffer`,
-                // then reset the buffer. Do exactly that, operating on `body` directly.
+                // `body` is `&this.response_buffer`, so a `ptr::read` + assign here would
+                // run Drop on the old `self.response_buffer`, freeing the Vec allocation
+                // that `body` (and the freshly-stored value) still point at — a
+                // use-after-free / double-free. Instead, append `body`'s bytes to
+                // `reported_response_buffer`, then reset the buffer, operating on `body`
+                // directly.
                 if !body.list.as_slice().is_empty() {
                     let _ = self.reported_response_buffer.write(body.list.as_slice());
                 }
@@ -325,7 +320,7 @@ impl S3HttpDownloadStreamingTask {
         false
     }
 
-    /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
+    /// this is the AsyncHTTP callback and is always called from the HTTPThread
     ///
     /// # Safety
     /// `this` must be a live heap pointer produced by `Self::new`, valid for the duration of the
@@ -372,16 +367,15 @@ impl Drop for S3HttpDownloadStreamingTask {
         // SAFETY: `http` is always initialised before the task is scheduled / dropped.
         let http = unsafe { self.http.assume_init_mut() };
         http.clear_data();
-        // Zig shared one EntryList allocation between task.headers / request_headers /
-        // client.header_entries; Rust `init` clones, so free the two copies clear_data() skips.
+        // `init` clones the EntryList into task.headers / request_headers /
+        // client.header_entries, so free the two copies clear_data() skips.
         // (Same fix as `S3HttpSimpleTask::drop` in simple_request.rs.)
         http.request_headers = Default::default();
         http.client.header_entries = Default::default();
     }
 }
 
-/// Zig: `packed struct(u64)` — not all-bool, so manual bitfield over a transparent u64.
-/// Layout (LSB-first, matching Zig packed-struct bit order):
+/// Manual bitfield over a transparent u64. Layout (LSB-first):
 ///   bits  0..32 : status_code (u32)
 ///   bits 32..48 : request_error (u16)
 ///   bit  48     : has_more (bool)
@@ -430,5 +424,3 @@ impl Default for State {
         State(1u64 << State::HAS_MORE_SHIFT)
     }
 }
-
-// ported from: src/runtime/webcore/s3/download_stream.zig

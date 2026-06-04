@@ -18,7 +18,7 @@ const UNICODE_REPLACEMENT_U16: u16 = strings::UNICODE_REPLACEMENT as u16;
 #[derive(Default, Clone, Copy)]
 pub struct Buffered {
     pub buf: [u8; 3],
-    pub len: u8, // Zig: u2
+    pub len: u8,
 }
 
 impl Buffered {
@@ -240,7 +240,7 @@ impl TextDecoder {
             )));
         };
 
-        // switch (!stream) { inline else => |flush| ... } — runtime bool → comptime dispatch
+        // Dispatch the runtime `stream` bool to a const-generic flush parameter.
         if !stream {
             self.decode_slice::<true>(global_this, input_slice)
         } else {
@@ -278,7 +278,7 @@ impl TextDecoder {
                 let mut bytes = vec![0u16; out_length].into_boxed_slice();
 
                 let out = strings::copy_cp1252_into_utf16(&mut bytes, buffer_slice);
-                // PERF(port): heap::alloc transfers a tight allocation (no excess capacity).
+                // The boxed slice is a tight allocation (no excess capacity).
                 // SAFETY: `bytes` was allocated by the global allocator; `into_raw`
                 // transfers ownership of the buffer to JSC's external-string finalizer.
                 Ok(unsafe {
@@ -318,7 +318,7 @@ impl TextDecoder {
                     deinit = false;
                 }
 
-                // switch (this.fatal) { inline else => |fail_if_invalid| ... }
+                // Dispatch the runtime `fatal` bool to a const-generic parameter.
                 let maybe_decode_result = if self.fatal {
                     strings::to_utf16_alloc_maybe_buffered::<true, FLUSH>(input)
                 } else {
@@ -368,7 +368,7 @@ impl TextDecoder {
                         drop(decoded);
                         return Ok(ZigString::EMPTY.to_js(global_this));
                     }
-                    // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile if it shows up on a hot path.
+                    // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
                     let ptr = decoded.leak().as_mut_ptr();
                     // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
                     // ownership transfers to JSC's external-string finalizer.
@@ -406,8 +406,8 @@ impl TextDecoder {
                     return Err(global_this
                         .err(
                             jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                            // Zig: `@tagName(utf16_encoding)` → "UTF-16LE" / "UTF-16BE"
-                            // (NOT `get_label()`, which is lowercase "utf-16le"/"utf-16be").
+                            // "UTF-16LE" / "UTF-16BE" (NOT `get_label()`,
+                            // which is lowercase "utf-16le"/"utf-16be").
                             format_args!(
                                 "The encoded data was not valid {} data",
                                 if big_endian { "UTF-16BE" } else { "UTF-16LE" }
@@ -424,7 +424,7 @@ impl TextDecoder {
                 // Transfer ownership of the backing allocation to JSC; freed via
                 // free_global_string -> mi_free when the string is collected.
                 let len = decoded.len();
-                // PERF(port): Vec::leak may retain excess capacity vs Zig's items.ptr — profile if it shows up on a hot path.
+                // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
                 let ptr = decoded.leak().as_mut_ptr();
                 // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
                 // ownership transfers to JSC's external-string finalizer.
@@ -464,7 +464,7 @@ impl TextDecoder {
                 let result = codec.decode(buffer_slice, FLUSH, self.fatal);
                 // `bun_core::String` is `#[derive(Copy)]` with NO `Drop` impl, and
                 // `DecodeResult` has none either — wrap the +1 ref in `OwnedString`
-                // so it derefs on scope exit (matches Zig `defer result.result.deref()`).
+                // so it derefs on scope exit.
                 let result_str = OwnedString::new(result.result);
 
                 // A flushing decode ends the stream. Per WHATWG Encoding the
@@ -560,5 +560,3 @@ impl TextDecoder {
         Ok(bun_core::heap::into_raw(TextDecoder::new(decoder)))
     }
 }
-
-// ported from: src/runtime/webcore/TextDecoder.zig

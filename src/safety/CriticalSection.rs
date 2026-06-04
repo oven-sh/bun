@@ -43,7 +43,7 @@ use super::thread_id::{
 pub struct CriticalSection {
     #[cfg(debug_assertions)]
     internal_state: State,
-    // When not enabled, this is a zero-sized type (Zig: `void`).
+    // When not enabled, this is a zero-sized type.
 }
 
 #[cfg(debug_assertions)]
@@ -80,7 +80,7 @@ struct State {
     /// the owner).
     #[cfg(debug_assertions)]
     owner_trace: StoredTrace,
-    // When traces are disabled, this is a zero-sized type (Zig: `void`).
+    // When traces are disabled, this is a zero-sized type.
     /// Number of nested calls to `lockShared`/`lockExclusive` performed on the owner thread.
     /// Only accessed on the owner thread.
     owned_count: u32,
@@ -122,8 +122,7 @@ impl State {
             Ok(_) => {
                 #[cfg(debug_assertions)]
                 {
-                    // Zig passes `@returnAddress()` here; no stable Rust
-                    // equivalent. `None` lets capture() use the current frame.
+                    // `None` lets capture() use the current frame.
                     self.owner_trace = StoredTrace::capture(None);
                 }
                 current_id
@@ -259,5 +258,3 @@ impl CriticalSection {
         self.internal_state.unlock();
     }
 }
-
-// ported from: src/safety/CriticalSection.zig

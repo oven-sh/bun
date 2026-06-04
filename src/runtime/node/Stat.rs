@@ -24,8 +24,7 @@ pub struct StatType<const BIG: bool> {
 type StatTimespec = Timespec;
 
 impl<const BIG: bool> StatType<BIG> {
-    // Zig: `pub const new = bun.TrivialNew(@This());` / `bun.TrivialDeinit(@This())`.
-    // In Rust the default `Box::new` / `Drop` give identical semantics (mimalloc-backed
+    // The default `Box::new` / `Drop` give the needed semantics (mimalloc-backed
     // via the global allocator), so no explicit `new`/`deinit` methods are needed.
 
     #[inline]
@@ -251,5 +250,3 @@ impl Stats {
     // `to_js_newly_created` — misuse is a hard "no method named `to_js`"
     // compile error.
 }
-
-// ported from: src/runtime/node/Stat.zig

@@ -28,9 +28,6 @@ impl Default for SSLRequest {
 }
 
 impl SSLRequest {
-    // Zig: pub fn deinit(_: *SSLRequest) void {}
-    // Empty deinit → no Drop impl needed.
-
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &mut self,
         writer: &mut NewWriter<Context>,
@@ -61,8 +58,4 @@ impl SSLRequest {
         packet.end()?;
         Ok(())
     }
-
-    // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
 }
-
-// ported from: src/sql/mysql/protocol/SSLRequest.zig

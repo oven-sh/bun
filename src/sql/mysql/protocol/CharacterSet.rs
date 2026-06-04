@@ -1,6 +1,5 @@
-// MySQL collation/character-set id. Zig models this as a NON-exhaustive
-// `enum(u8)` (trailing `_`): any wire byte is a legal value, named or not.
-// A `#[repr(transparent)]` newtype over `u8` matches those semantics exactly —
+// MySQL collation/character-set id. Any wire byte is a legal value, named or
+// not, so this is a `#[repr(transparent)]` newtype over `u8` —
 // unknown ids coming off the wire are preserved instead of being collapsed to
 // a known variant, and constructing one is never UB.
 #[repr(transparent)]
@@ -237,20 +236,19 @@ impl CharacterSet {
 impl CharacterSet {
     pub const DEFAULT: CharacterSet = CharacterSet::utf8mb4_general_ci;
 
-    /// Construct from a raw protocol byte. Mirrors Zig's `@enumFromInt` on the
-    /// non-exhaustive `enum(u8)`: every byte is valid and unknown ids are kept
+    /// Construct from a raw protocol byte: every byte is valid and unknown
+    /// ids are kept
     /// as-is (they round-trip back onto the wire unchanged).
     pub const fn from_raw(b: u8) -> Self {
         Self(b)
     }
 
-    /// The raw wire byte (Zig `@intFromEnum`).
+    /// The raw wire byte.
     pub const fn to_int(self) -> u8 {
         self.0
     }
 
     pub fn label(self) -> &'static str {
-        // Zig: `if (@intFromEnum(this) < 100 and @intFromEnum(this) > 0) return @tagName(this);`
         match self.0 {
             1 => "big5_chinese_ci",
             2 => "latin2_czech_cs",
@@ -360,5 +358,3 @@ impl Default for CharacterSet {
         Self::DEFAULT
     }
 }
-
-// ported from: src/sql/mysql/protocol/CharacterSet.zig

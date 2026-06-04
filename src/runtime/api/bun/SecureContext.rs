@@ -21,8 +21,8 @@ use bun_jsc::JsClass as _;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_uws as uws;
 
-/// Mirrors Zig's `pub const js = jsc.Codegen.JSSecureContext`. Re-export the
-/// codegen-emitted module so `$zig(SecureContext.zig, js.getConstructor)` in
+/// Re-export the codegen-emitted module so
+/// `$zig(SecureContext.zig, js.getConstructor)` in
 /// `generated_js2native.rs` resolves as `secure_context::js::get_constructor`.
 pub use crate::generated_classes::js_SecureContext as js;
 
@@ -79,7 +79,7 @@ impl SecureContext {
     /// digest so identical configs return the same `JSSecureContext` cell while
     /// it's alive; falls through to `create()` (which itself hits the native
     /// `SSLContextCache`) on miss. Returning the same cell is what makes
-    /// `secureContext === createSecureContext(opts)` hold and lets `Listener.zig`
+    /// `secureContext === createSecureContext(opts)` hold and lets `Listener`
     /// pointer-compare without a JS-side WeakRef map.
     // Note: codegen (`generated_classes.rs::SecureContextClass__intern`)
     // wraps this in `host_fn_result` and exports the C-ABI shim, so no
@@ -218,5 +218,3 @@ mod cpp {
         );
     }
 }
-
-// ported from: src/runtime/api/bun/SecureContext.zig

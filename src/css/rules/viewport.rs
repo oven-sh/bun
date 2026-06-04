@@ -35,4 +35,3 @@ impl ViewportRule {
     }
 }
 
-// ported from: src/css/rules/viewport.zig

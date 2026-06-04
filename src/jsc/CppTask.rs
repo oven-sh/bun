@@ -97,5 +97,3 @@ pub(crate) extern "C" fn ConcurrentCppTask__createAndRun(cpp_task: *mut EventLoo
         workpool_task: WorkPoolTask::default(),
     });
 }
-
-// ported from: src/jsc/CppTask.zig

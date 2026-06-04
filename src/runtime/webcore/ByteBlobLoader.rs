@@ -18,9 +18,8 @@ pub struct ByteBlobLoader {
     /// https://github.com/oven-sh/bun/issues/14988
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
     /// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
-    // Zig stored either an owned dupe or a borrowed slice from `blob` gated by
-    // `content_type_allocated`. Collapsed to always-owned `Box<[u8]>`; the flag is kept for
-    // structural parity (transferred to Blob in to_any_blob).
+    // Always-owned `Box<[u8]>`; the flag is kept because it is
+    // transferred to Blob in to_any_blob.
     pub content_type: Box<[u8]>,
     pub content_type_allocated: bool,
 }
@@ -40,9 +39,7 @@ impl Default for ByteBlobLoader {
     }
 }
 
-// Zig `NewSource(@This(), "Blob", onStart, onPull, onCancel, deinit, null, drain,
-// memoryCost, toBufferedValue)` is a comptime type-returning fn that wires callbacks. In Rust
-// this becomes a generic `ReadableStreamSource<Ctx>` where `Ctx` impls `SourceContext`.
+// A generic `ReadableStreamSource<Ctx>` where `Ctx` impls `SourceContext`.
 pub type Source = readable_stream::NewSource<ByteBlobLoader>;
 
 impl readable_stream::SourceContext for ByteBlobLoader {
@@ -84,12 +81,9 @@ impl ByteBlobLoader {
     pub fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
         // In-place init — `self` is a pre-allocated slot inside `Source`.
         let store = blob.store.get().as_ref().unwrap().clone();
-        // Zig did `var blobe = blob.*; blobe.resolveSize();` — `Blob` is not
-        // `Clone` in Rust, so use the non-mutating `resolved_size()` helper instead.
+        // `Blob` is not `Clone`, so use the non-mutating `resolved_size()` helper.
         let (offset, size) = blob.resolved_size();
-        // Zig borrowed `blob.content_type` when `!blob.content_type_allocated`
-        // and tracked ownership via the flag. The Rust port collapsed
-        // `content_type` to an always-owned `Box<[u8]>` (we dupe in both
+        // `content_type` is an always-owned `Box<[u8]>` (we dupe in both
         // arms), so the flag must be `true` whenever the box is non-empty —
         // it's later transferred verbatim to a `Blob` in `to_any_blob`, and a
         // `false` there strands the `into_raw`'d allocation behind
@@ -164,8 +158,7 @@ impl ByteBlobLoader {
     }
 
     pub fn to_any_blob(&mut self, global: &JSGlobalObject) -> Option<blob::Any> {
-        // reshaped for borrowck — Zig captured `store` then called detachStore();
-        // here we take ownership via detach_store() up front.
+        // Take ownership via detach_store() up front.
         let store = self.detach_store()?;
         if self.offset == 0 && self.remain == store.size() && self.content_type.is_empty() {
             // SAFETY: `StoreRef` deref is `&Store`; `to_any_blob` needs `&mut` to move bytes out.
@@ -238,8 +231,7 @@ impl ByteBlobLoader {
         let take = 16384usize.min(temporary.len().min(self.remain as usize));
         let temporary = &temporary[..take];
 
-        // Zig: `Vec<u8>.fromBorrowedSliceDangerous(temporary).clone(allocator)` — collapse to a
-        // single owning copy (avoids the `ManuallyDrop` borrow dance).
+        // A single owning copy (avoids a `ManuallyDrop` borrow dance).
         let cloned = Vec::<u8>::from_slice(temporary);
         self.offset = self.offset.saturating_add(cloned.len() as blob::SizeType);
         self.remain = self.remain.saturating_sub(cloned.len() as blob::SizeType);
@@ -275,5 +267,3 @@ impl ByteBlobLoader {
         0
     }
 }
-
-// ported from: src/runtime/webcore/ByteBlobLoader.zig

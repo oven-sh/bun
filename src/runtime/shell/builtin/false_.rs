@@ -20,4 +20,3 @@ impl False {
     }
 }
 
-// ported from: src/shell/builtin/false_.zig

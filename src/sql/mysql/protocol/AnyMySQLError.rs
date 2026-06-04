@@ -1,6 +1,6 @@
 // NOTE: not `thiserror::Error` — that derive requires a per-variant `#[error("...")]`
-// attr. We hand-roll Display via `IntoStaticStr` so the message == the variant name
-// (matching Zig `@errorName`), and impl `std::error::Error` manually below.
+// attr. We hand-roll Display via `IntoStaticStr` so the message == the variant name,
+// and impl `std::error::Error` manually below.
 #[derive(strum::IntoStaticStr, strum::EnumString, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Error {
     ConnectionClosed,
@@ -47,8 +47,8 @@ pub enum Error {
 
 bun_core::impl_tag_error!(Error);
 
-/// Zig callers name this `AnyMySQLError` (the file basename); the Rust enum is
-/// `Error` per convention. Re-export both spellings so cross-crate `use` lines
+/// The Rust enum is `Error` per convention; re-export the `AnyMySQLError`
+/// spelling as well so cross-crate `use` lines
 /// (`bun_sql::mysql::protocol::any_mysql_error::AnyMySQLError`) resolve.
 pub type AnyMySQLError = Error;
 
@@ -64,8 +64,5 @@ impl From<bun_core::Error> for Error {
     }
 }
 
-// NOTE: `pub const mysqlErrorToJS = @import("../../../sql_jsc/...").mysqlErrorToJS;`
-// is a *_jsc alias — deleted per PORTING.md. `mysql_error_to_js` lives in
+// NOTE: `mysql_error_to_js` lives in
 // `bun_sql_jsc::mysql::protocol::any_mysql_error_jsc` as an extension fn.
-
-// ported from: src/sql/mysql/protocol/AnyMySQLError.zig

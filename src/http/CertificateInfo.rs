@@ -8,5 +8,3 @@ pub struct CertificateInfo {
 
 // All owned fields are `Box<[u8]>` (here and in `HTTPCertError`) and drop
 // automatically — no explicit `Drop` impl needed.
-
-// ported from: src/http/CertificateInfo.zig

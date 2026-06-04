@@ -7,14 +7,12 @@ use crate::jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMach
 #[repr(C)]
 #[derive(Default)]
 pub struct PostgresSQLContext {
-    // Zig: `Strong.Optional = .empty` → `StrongOptional::empty()` (Default).
     pub on_query_resolve_fn: StrongOptional,
     pub on_query_reject_fn: StrongOptional,
 }
 
 impl PostgresSQLContext {
-    // The Zig exported this as `PostgresSQLContext__init` for C++ to bind; the
-    // Rust port registers it directly as `init` via `put_host_functions!` in
+    // Registered directly as `init` via `put_host_functions!` in
     // `postgres.rs`, so no exported symbol is needed.
     pub fn init(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
         // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton);
@@ -28,4 +26,3 @@ impl PostgresSQLContext {
     }
 }
 
-// ported from: src/sql_jsc/postgres/PostgresSQLContext.zig

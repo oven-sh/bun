@@ -5,9 +5,6 @@ use core::ptr::NonNull;
 
 use crate::JSValue;
 
-// In Zig this file-level struct is referenced as `jsc.Strong.Deprecated`;
-// ported here as `DeprecatedStrong`. Zig `deinit` → `impl Drop`.
-//
 // Refcount contract (load-bearing): `ref()`/`unref()` calls must be balanced
 // in pairs; Drop is the release for the `init()` protect. In debug builds a
 // final `unref()` (ref_count 1 → 0) additionally frees the canary, zeroes
@@ -17,7 +14,6 @@ use crate::JSValue;
 // (Audited 2026-06: the only user is test_runner/Collection.rs, which uses
 // `init` + Drop and never calls `ref`/`unref`.)
 
-// Zig: `enable_safety = bun.Environment.ci_assert`.
 #[cfg(debug_assertions)]
 macro_rules! enable_safety {
     () => {
@@ -44,7 +40,6 @@ struct SafetyData {
     // so freeing does NOT run DeprecatedStrong::drop on the sentinel value; the
     // pointer is stored cast to the inner type for ergonomic field access.
     ptr: NonNull<DeprecatedStrong>,
-    // Zig's `gpa: std.mem.Allocator` field dropped — global mimalloc.
     ref_count: u32,
 }
 
@@ -97,8 +92,7 @@ impl DeprecatedStrong {
 
     pub fn swap(&mut self, next: JSValue) -> JSValue {
         let prev = self.raw;
-        // `*self = ...` drops the old value in place (runs Drop),
-        // matching Zig's explicit `this.deinit(); this.* = .init(next);`.
+        // `*self = ...` drops the old value in place (runs Drop).
         *self = Self::init(next);
         prev
     }
@@ -170,8 +164,8 @@ pub struct Optional {
 }
 
 impl Optional {
-    // Zig `pub const empty = .initNonCell(null)` — inlined as a struct
-    // literal so it can be `const` (init_non_cell debug_asserts, which is non-const).
+    // Inlined as a struct literal so it can be `const` (init_non_cell
+    // debug_asserts, which is non-const).
     pub const EMPTY: Optional = Optional {
         backing: DeprecatedStrong {
             raw: JSValue::ZERO,
@@ -191,7 +185,7 @@ impl Optional {
         }
     }
 
-    // Zig `deinit` dropped — `backing: DeprecatedStrong` is dropped
+    // No explicit teardown — `backing: DeprecatedStrong` is dropped
     // automatically (its Drop impl runs `unprotect` + canary free).
 
     pub fn get(&self) -> Option<JSValue> {
@@ -231,5 +225,3 @@ impl Optional {
 
 // suppress unused warning in release builds
 const _: bool = enable_safety!();
-
-// ported from: src/jsc/DeprecatedStrong.zig

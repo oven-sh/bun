@@ -107,7 +107,6 @@ impl All {
                     )
                 }
             }
-            // std.fmt gives us "nan" but Node.js wants "NaN".
             TimeoutWarning::TimeoutNaNWarning => {
                 debug_assert!(countdown.is_nan());
                 BunString::ascii(const_format::concatcp!("NaN is not a number", SUFFIX).as_bytes())
@@ -154,18 +153,17 @@ impl All {
         overflow_behavior: CountdownOverflowBehavior,
         warn: bool,
     ) -> JsResult<u32> {
-        // Zig's return type was `u31`; here it's `u32`, but both match arms below
-        // enforce the [0, i32::MAX] range (Clamp saturates to i32::MAX; OneMs
-        // yields either 1 or a value already validated to be <= i32::MAX), so
-        // callers always receive a value in the u31 range.
+        // Both match arms below enforce the [0, i32::MAX] range (Clamp
+        // saturates to i32::MAX; OneMs yields either 1 or a value already
+        // validated to be <= i32::MAX), so callers always receive a value
+        // in that range.
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
         let countdown_double = countdown.to_number(global_this)?;
         let countdown_int: u32 = match overflow_behavior {
             CountdownOverflowBehavior::Clamp => {
-                // std.math.lossyCast(u31, countdown_double): saturating cast to [0, i32::MAX].
-                // Rust `as` saturates float→int and maps NaN→0, exactly matching
-                // lossyCast (which clamps to the int range and returns 0 for NaN),
+                // Saturating cast to [0, i32::MAX]: Rust `as` saturates
+                // float→int and maps NaN→0,
                 // so `setTimeout(fn, NaN)` behaves like `setTimeout(fn, 0)`.
                 (countdown_double as u32).min(i32::MAX as u32)
             }
@@ -306,8 +304,6 @@ impl All {
     }
 
     fn remove_timer_by_id(&mut self, id: i32) -> Option<*mut TimeoutObject> {
-        // Zig `fetchSwapRemove` returns the entry; ArrayHashMap
-        // exposes `get_index` + `swap_remove_at`, so combine them.
         let value: *mut EventLoopTimer = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
             self.maps.set_timeout.swap_remove_at(idx).1
         } else {
@@ -342,8 +338,8 @@ impl All {
                 // Primitive string only (JSType::String) — boxed `new String(..)`
                 // must fall through to `from_js` below and be a no-op, matching
                 // Node.js array-index semantics.
-                // RAII for Zig's `defer string.deref()` — `to_bun_string` returns
-                // a +1 ref and there are several early `return Ok(())` exits below.
+                // RAII deref on drop — `to_bun_string` returns a +1 ref
+                // and there are several early `return Ok(())` exits below.
                 let string = bun_core::OwnedString::new(timer_id_value.to_bun_string(global_this)?);
                 // Custom parseInt logic. I've done this because Node.js is very strict about string
                 // parameters to this function: they can't have leading whitespace, trailing
@@ -448,13 +444,11 @@ impl All {
 
 // ════════════════════════════════════════════════════════════════════════════
 // Method bodies on canonical sibling types (`mod.rs` definitions).
-// Ported from DateHeaderTimer.zig.
 // ════════════════════════════════════════════════════════════════════════════
 
 // `TimeoutObject::{init, from_js}` and `ImmediateObject::{init, from_js}` now
-// live in `super::{timeout_object, immediate_object}` (canonical ports of
-// `TimeoutObject.zig` / `ImmediateObject.zig`); the inherent `init` constructor
-// and the `JsClass`-derived `from_js` are re-exported via
+// live in `super::{timeout_object, immediate_object}`; the inherent `init`
+// constructor and the `JsClass`-derived `from_js` are re-exported via
 // `super::{TimeoutObject, ImmediateObject}`.
 
 impl DateHeaderTimer {
@@ -516,10 +510,7 @@ pub fn drain_timers_export(vm: *mut VirtualMachine) {
     unsafe { (*all).drain_timers(vm.cast::<()>()) };
 }
 
-// Zig used `jsc.host_fn.wrapN(...)` + `@export` to generate these C-ABI shims.
-// `wrapN` reflects on the Zig fn signature and emits an `extern "C" fn` that
-// forwards through `toJSHostCall` (ExceptionValidationScope + JsResult→JSValue
-// normalization). Rust has no signature reflection; `generate-host-exports.ts`
+// `generate-host-exports.ts`
 // scrapes the `// HOST_EXPORT` markers below and emits the seven thunks into
 // `generated_host_exports.rs`, each routing through `host_fn::host_fn_result`.
 //
@@ -606,5 +597,3 @@ pub mod internal_bindings {
         Ok(JSValue::js_number(now as f64))
     }
 }
-
-// ported from: src/runtime/timer/Timer.zig

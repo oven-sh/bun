@@ -18,9 +18,8 @@ use bun_io::{BufferedReader, ReadState};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_sys as sys;
 
-// In Zig several of the `[]const u8` fields below are leaked (the program exits).
-// Here they are owned boxes, except `combined` which is interned in the
-// process-lifetime CLI arena.
+// The string fields below are owned boxes, except `combined` which is interned
+// in the process-lifetime CLI arena.
 struct ScriptConfig {
     package_json_path: Box<[u8]>,
     package_name: Box<[u8]>,
@@ -41,17 +40,16 @@ struct ScriptConfig {
     elide_count: Option<usize>,
 }
 
-// Anonymous struct in Zig: `process: ?struct { ptr, status }`
 struct ProcessInfo {
     // Intrusive ref-counted (`ThreadSafeRefCount<Process>`); raw `*mut` matches
-    // `to_process()` and `set_exit_handler` callers (Zig: `*Process`).
+    // `to_process()` and `set_exit_handler` callers.
     ptr: *mut Process,
     status: Status,
 }
 
 // `state` is a backref into the owning `State` (which holds `handles: []ProcessHandle`),
-// and `dependents` holds raw pointers into that same `handles` slice. This is self-referential in
-// Zig; kept as raw pointers per LIFETIMES.tsv (BACKREF).
+// and `dependents` holds raw pointers into that same `handles` slice. This is
+// self-referential; kept as raw pointers per LIFETIMES.tsv (BACKREF).
 pub(crate) struct ProcessHandle<'a> {
     config: &'a ScriptConfig,
     state: bun_ptr::BackRef<State<'a>>,
@@ -74,8 +72,7 @@ pub(crate) struct ProcessHandle<'a> {
 
 impl<'a> ProcessHandle<'a> {
     fn start(&mut self) -> Result<(), bun_core::Error> {
-        // Copy the BackRef out so the `&mut State` borrow is detached from `self`
-        // (matches Zig's free aliasing of `*State` alongside `*ProcessHandle`).
+        // Copy the BackRef out so the `&mut State` borrow is detached from `self`.
         let mut state_ref = self.state;
         // SAFETY: state backref is valid for the lifetime of the run loop (State outlives all handles).
         let state = unsafe { state_ref.get_mut() };
@@ -97,17 +94,16 @@ impl<'a> ProcessHandle<'a> {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
             // instead of creating a new one for each process
-            // PERF(port): was arena bulk-free (std.heap.ArenaAllocator) — profile if it shows up on a hot path.
             let env_ptr = state.env;
             // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
             let env = unsafe { &mut *env_ptr };
             // Copy to owned — `original_path` borrows env.map which is
-            // mutated by put() below (Zig aliased freely).
+            // mutated by put() below.
             let original_path: Box<[u8]> = env.map.get(b"PATH").unwrap_or(b"").into();
             let _ = env.map.put(b"PATH", &handle.config.PATH);
-            // Zig: `defer { ... env.map.put("PATH", original_path); }` — restores PATH
-            // unconditionally at block exit (success OR error). Keep the guard armed for the
-            // whole block so `?` early-returns also restore.
+            // Restores PATH unconditionally at block exit (success OR error).
+            // Keep the guard armed for the whole block so `?` early-returns also
+            // restore.
             scopeguard::defer! {
                 // SAFETY: env_ptr valid for the run loop lifetime (see above).
                 let _ = unsafe { (*env_ptr).map.put(b"PATH", &original_path) };
@@ -123,7 +119,7 @@ impl<'a> ProcessHandle<'a> {
                     envp.as_ptr().cast::<*const c_char>(),
                 )
             }??;
-            // `_guard` drops here (or on `?` above), restoring PATH — matches Zig `defer`.
+            // `_guard` drops here (or on `?` above), restoring PATH.
         };
         #[cfg(unix)]
         let (stdout_fd, stderr_fd) = (spawned.stdout, spawned.stderr);
@@ -253,7 +249,7 @@ bun_io::impl_buffered_reader_parent! {
     event_loop      = |this| (*(*this).state.as_ptr()).event_loop_handle.as_event_loop_ctx();
 }
 
-/// `Output.prettyFmt(str, true)` — comptime ANSI-tag expansion in Zig.
+/// Compile-time ANSI-tag expansion.
 macro_rules! fmt {
     ($s:literal) => {
         bun_core::Output::pretty_fmt!($s, true)
@@ -262,7 +258,7 @@ macro_rules! fmt {
 
 struct State<'a> {
     handles: Box<[ProcessHandle<'a>]>,
-    // Raw `*mut` (Zig: `*MiniEventLoop`) — `init_global` returns the
+    // Raw `*mut` — `init_global` returns the
     // thread-local singleton pointer; aliasing &mut would be UB.
     event_loop: *mut MiniEventLoop<'static>,
     /// Typed enum mirror of `event_loop` for the io-layer FilePoll vtable
@@ -273,9 +269,9 @@ struct State<'a> {
     draw_buf: Vec<u8>,
     last_lines_written: usize,
     pretty_output: bool,
-    shell_bin: &'static ZStr, // intentionally leaked (process exits), as in Zig findShell/selfExePath
+    shell_bin: &'static ZStr, // intentionally leaked (process exits)
     aborted: bool,
-    // Raw `*mut` (Zig: `*bun.DotEnv.Loader`) — process-lifetime singleton owned
+    // Raw `*mut` — process-lifetime singleton owned
     // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
     // shared borrow won't do, and `&'a mut` would conflict with the Transpiler's
     // own raw-ptr field. Reborrow `&mut *env` at use sites.
@@ -617,8 +613,7 @@ impl<'a> State<'a> {
 struct AbortHandler;
 
 static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
-// Zig used a non-atomic `var should_abort = false` set from a signal handler;
-// Rust requires atomics for signal-handler-safe access.
+// Atomic because it is set from a signal handler.
 
 impl AbortHandler {
     #[cfg(unix)]
@@ -689,7 +684,7 @@ fn windows_is_terminal() -> bool {
 pub(crate) fn run_scripts_with_filter(
     ctx: Command::Context,
 ) -> Result<core::convert::Infallible, bun_core::Error> {
-    // Zig's return type was `!noreturn`; using Result<Infallible, _> for `?` support.
+    // Never returns normally; Result<Infallible, _> keeps `?` support.
     // Own the slice — `ctx` is reborrowed `&mut` for
     // `configure_env_for_run` below while `script_name` is still live.
     let script_name_owned: Box<[u8]> = if ctx.positionals.len() > 1 {
@@ -738,8 +733,8 @@ pub(crate) fn run_scripts_with_filter(
         &mut root_buf,
     )?;
 
-    // TODO(refactor): out-param init — Zig used `var this_transpiler: Transpiler = undefined` and
-    // `configureEnvForRun` writes through it. Per PORTING.md this should be reshaped to
+    // TODO(refactor): out-param init — `configureEnvForRun` writes through the
+    // out-param. Per PORTING.md this should be reshaped to
     // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
     // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
     let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
@@ -826,8 +821,7 @@ pub(crate) fn run_scripts_with_filter(
             }
             copy_script.push(0);
 
-            // In Zig, `script_content` and `combined` both alias
-            // `copy_script.items`. Route through the process-lifetime CLI arena
+            // Route through the process-lifetime CLI arena
             // and derive the `ZStr` from the arena slice.
             let interned: &'static [u8] = crate::cli::cli_dupe(&copy_script);
             let combined_len = interned.len() - 1;
@@ -904,7 +898,6 @@ pub(crate) fn run_scripts_with_filter(
     };
 
     let handles: Box<[ProcessHandle]> = Vec::with_capacity(scripts.len()).into();
-    // Reshaped for borrowck — Zig allocates uninit slice then writes each element.
     // We build into a Vec first, but need stable addresses for `&state` backref and `&mut handles[i]`
     // pointers stored in `map`. This is self-referential; raw pointers used below.
 
@@ -1085,5 +1078,3 @@ fn has_cycle(current: &mut ProcessHandle) -> bool {
     current.visiting = false;
     false
 }
-
-// ported from: src/cli/filter_run.zig

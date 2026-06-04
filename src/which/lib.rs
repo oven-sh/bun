@@ -131,7 +131,7 @@ pub fn ends_with_extension(str: &[u8]) -> bool {
     }
     let file_ext = &str[str.len() - 3..];
     for ext in WIN_EXTENSIONS {
-        // comptime assert ext.len == 3 — all literals above are 3 bytes
+        // all WIN_EXTENSIONS literals are 3 bytes
         if strings::eql_case_insensitive_asciii_check_length(file_ext, ext) {
             return true;
         }
@@ -348,4 +348,3 @@ pub fn which_win<'a>(
     None
 }
 
-// ported from: src/which/which.zig

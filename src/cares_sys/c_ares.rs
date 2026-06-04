@@ -32,7 +32,7 @@ bun_opaque::opaque_ffi! {
     pub struct struct_apattern;
 }
 
-/// Mirror of `std.posix.AF` in Zig — only the address families c-ares
+/// Only the address families c-ares
 /// actually uses. Kept local so this `*_sys` crate stays leaf-level
 /// (no dependency on `bun_sys`). Canonical: `bun_sys::posix::AF`.
 pub mod AF {
@@ -50,7 +50,7 @@ pub mod AF {
     pub const INET6: c_int = libc::AF_INET6;
 }
 
-/// Mirror of `std.posix.system.EAI` in Zig. The `libc` crate is missing
+/// `EAI_*` getaddrinfo error codes. The `libc` crate is missing
 /// `EAI_ADDRFAMILY` and the glibc-only async-getaddrinfo extensions, so we
 /// hardcode those raw values from `<netdb.h>`.
 #[cfg(not(windows))]
@@ -118,7 +118,7 @@ pub enum NSClass {
     ns_c_max = 65536,
 }
 
-// Zig: `enum(c_int) { ..., _ }` (non-exhaustive). Values are only ever
+// Values are only ever
 // constructed in Rust and passed *to* C, so a plain repr(i32) enum is sound.
 // If c-ares ever returns an NSType, this must become a transparent newtype.
 #[repr(i32)]
@@ -305,13 +305,9 @@ pub struct struct_hostent {
     pub h_addr_list: *mut *mut c_char, // NUL-terminated array
 }
 
-// ─── callback-wrapper reshaping note ──────────────────────────────────────
-// Zig: each reply type defines
-//   pub fn Callback(comptime Type) type = fn(*Type, ?Error, i32, ?*Reply) void
-//   pub fn callbackWrapper(comptime lookup_name, comptime Type, comptime fn) ares_callback
-// which monomorphizes a unique `extern "C"` thunk per (Type, fn) pair via the
-// anonymous-struct trick. Rust cannot take a fn pointer as a const generic on
-// stable, so the wrappers below are reshaped to a trait: the implementing
+// ─── callback-wrapper note ─────────────────────────────────────────────────
+// Rust cannot take a fn pointer as a const generic on
+// stable, so the wrappers below are expressed as a trait: the implementing
 // type provides the callback as a trait method, and the `extern "C"` thunk is
 // monomorphized per `T: Trait`.
 // ──────────────────────────────────────────────────────────────────────────
@@ -338,7 +334,7 @@ impl struct_hostent {
         this.on_hostent(None, timeouts, hostent);
     }
 
-    // Zig branched on `comptime lookup_name`; split into one thunk per name.
+    // One `extern "C"` thunk per lookup name.
     pub unsafe extern "C" fn callback_wrapper_cname<T: HostentHandler>(
         ctx: *mut c_void,
         status: c_int,
@@ -450,8 +446,7 @@ impl Default for hostent_with_ttls {
 
 pub trait HostentWithTtlsHandler: Sized {
     /// `hostent_with_ttls::parse_a` or `parse_aaaa` — selects the c-ares reply
-    /// parser for [`hostent_with_ttls::callback_wrapper`]. Mirrors the Zig
-    /// `callbackWrapper(comptime lookup_name, ...)` parameterization.
+    /// parser for [`hostent_with_ttls::callback_wrapper`].
     const PARSE: fn(&[u8]) -> Result<Box<hostent_with_ttls>, Error>;
 
     fn on_hostent_with_ttls(
@@ -464,11 +459,6 @@ pub trait HostentWithTtlsHandler: Sized {
 
 impl hostent_with_ttls {
     // toJSResponse alias deleted — lives in bun_runtime::dns_jsc.
-
-    // Zig also declared a `hostCallbackWrapper` here whose 4th arg was
-    // `?*hostent_with_ttls`, force-cast to `ares_host_callback` (which passes
-    // `?*struct_hostent`) — type-confused and never registered with c-ares.
-    // It is not ported.
 
     pub unsafe extern "C" fn callback_wrapper<T: HostentWithTtlsHandler>(
         ctx: *mut c_void,
@@ -559,9 +549,8 @@ impl Drop for hostent_with_ttls {
     }
 }
 
-// Per-record-type newtype aliases. Zig instantiated the resolve machinery over
-// the same `struct_hostent` / `hostent_with_ttls` with a comptime `type_name`
-// string; Rust callers (`dns.rs`) need distinct type names to monomorphise the
+// Per-record-type newtype aliases.
+// Callers (`dns.rs`) need distinct type names to monomorphise the
 // `CAresRecordType` cache-field constant per record. For now these are plain
 // aliases — the trait impls live downstream.
 pub type NsHostent = struct_hostent;
@@ -660,10 +649,7 @@ impl AddrInfo {
         unsafe { core::ffi::CStr::from_ptr(self.name_) }.to_bytes()
     }
 
-    // Zig also exposed `cnames()`, which called `bun.span` on a
-    // `[*c]AddrInfo_cname` (a linked list, not a sentinel-terminated array)
-    // and returned `[]const AddrInfo_node` — type-confused and unused. It is
-    // not ported; consumers walk `cnames_` / `node` pointer chains directly.
+    // Consumers walk `cnames_` / `node` pointer chains directly.
 
     pub unsafe extern "C" fn callback_wrapper<T: AddrInfoHandler>(
         ctx: *mut c_void,
@@ -719,7 +705,7 @@ bun_opaque::opaque_ffi! {
 const _: () = assert!(core::mem::size_of::<Channel>() == 0);
 
 /// Implemented by the type that owns a `*mut Channel` and receives socket-
-/// state callbacks. Zig: `Container.onDNSSocketState` + `this.channel = ch`.
+/// state callbacks.
 ///
 /// R-2: methods take `&self`. The c-ares `sock_state_cb` re-enters the
 /// container while a `&self` borrow may already be live in `on_dns_poll`;
@@ -731,9 +717,7 @@ pub trait ChannelContainer: Sized {
 
 /// Trait for `Channel::resolve`: ties a lookup-name string to its NSType and
 /// the `extern "C"` parse-thunk used as the ares_callback.
-/// Zig dispatched via `@field(NSType, "ns_t_" ++ lookup_name)` and
-/// `cares_type.callbackWrapper(lookup_name, Type, callback)`. This trait is the
-/// Rust-side reshaping; the dns_jsc consumer impls it per (T, record-type).
+/// The dns_jsc consumer impls it per (T, record-type).
 pub trait ResolveHandler: Sized {
     const LOOKUP_NAME: &'static [u8];
     const NS_TYPE: NSType;
@@ -819,7 +803,7 @@ impl Channel {
         unsafe { ares_destroy(this) };
     }
 
-    /// See c-ares `ares_getaddrinfo` documentation (mirrored in the Zig source).
+    /// See c-ares `ares_getaddrinfo` documentation.
     pub fn get_addr_info<T: AddrInfoHandler>(
         &mut self,
         host: &[u8],
@@ -1236,7 +1220,7 @@ pub struct struct_ares_addr6ttl {
 }
 
 // SAFETY: `#[repr(C)]` POD — 16-byte byte-array union + `c_int`. All-zero is a
-// valid bit pattern (matches Zig `std.mem.zeroes`) (S021).
+// valid bit pattern (S021).
 unsafe impl bun_core::ffi::Zeroable for struct_ares_addr6ttl {}
 impl Default for struct_ares_addr6ttl {
     #[inline]
@@ -1633,7 +1617,6 @@ impl struct_any_reply {
 
 impl Drop for struct_any_reply {
     fn drop(&mut self) {
-        // Zig: `inline for (@typeInfo(..).fields)` — written out by hand.
         // a_reply / aaaa_reply are Box<hostent_with_ttls>; their Drop frees the
         // inner hostent via ares_free_hostent.
         // SAFETY: each field is either null or a c-ares allocation matching its free fn.
@@ -2199,17 +2182,8 @@ pub fn get_sockaddr(addr: &[u8], port: u16, sa: &mut sockaddr) -> c_int {
 
 /// The C `struct in_addr` (4-byte IPv4 address), as c-ares' `ares_options.servers`
 /// and the `ares_addr_node`/`ares_addr_port_node` unions declare it.
-///
-/// Zig aliased this to `std.posix.sockaddr.in` (the full 16-byte sockaddr_in) —
-/// a misnomer that never bit because the only uses are behind pointers
-/// (`Options.servers`, never dereferenced; Bun never sets `ARES_OPT_SERVERS`)
-/// or as the smaller arm of a union whose size/alignment are pinned by the
-/// 16-byte `addr6` arm and whose contents are only accessed through type-erased
-/// pointers (`addr_ptr`/`addr_mut_ptr`). Defined correctly here.
 #[repr(C)]
 #[derive(Copy, Clone)]
 pub struct in_addr {
     pub s_addr: u32,
 }
-
-// ported from: src/cares_sys/c_ares.zig

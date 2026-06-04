@@ -30,7 +30,7 @@ pub struct HPACK {
 }
 
 pub struct DecodeResult {
-    // TODO(port): lifetime — name/value point into an FFI thread_local shared buffer,
+    // TODO: lifetime — name/value point into an FFI thread_local shared buffer,
     // valid only until the next decode/encode call. Consider `DecodeResult<'a>`.
     pub name: &'static [u8],
     pub value: &'static [u8],
@@ -116,7 +116,6 @@ impl HPACK {
                 dst_buffer_offset,
             )
         };
-        // Zig compared `offset <= 0` on a usize; only `== 0` is reachable.
         if offset == 0 {
             return Err(HpackError::UnableToEncode);
         }
@@ -131,8 +130,8 @@ impl HPACK {
         lshpack_wrapper_enc_set_max_capacity(self, max_capacity as c_uint);
     }
 
-    // Zig `destroy` (raw `*mut HPACK` teardown) is subsumed by the
-    // safe [`HpackHandle`] RAII wrapper below — every Rust owner holds an
+    // Raw `*mut HPACK` teardown is subsumed by the
+    // safe [`HpackHandle`] RAII wrapper below — every owner holds an
     // `HpackHandle`, so the raw destructor is private to `HpackHandle::drop`.
 }
 
@@ -241,5 +240,3 @@ unsafe extern "C" {
         buffer_offset: usize,
     ) -> usize;
 }
-
-// ported from: src/http/lshpack.zig

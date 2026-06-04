@@ -95,5 +95,3 @@ impl TextCodec {
         Some(unsafe { bun_core::ffi::slice(name.as_ptr(), len) })
     }
 }
-
-// ported from: src/jsc/TextCodec.zig

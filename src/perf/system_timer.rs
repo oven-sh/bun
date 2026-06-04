@@ -1,7 +1,5 @@
-// Zig's `fn NewTimer() type { ... }` is a comptime type-returning fn that
-// selects between a WASM stub and `std.time.Timer`. In Rust we collapse the
-// type-fn + `pub const Timer = NewTimer();` into cfg-gated definitions of
-// `Timer` directly.
+// Selects between a WASM stub and an `Instant`-backed timer via cfg-gated
+// definitions of `Timer`.
 
 #[cfg(target_family = "wasm")]
 pub struct Timer;
@@ -12,9 +10,8 @@ impl Timer {
         Ok(Self)
     }
 
-    // Zig used `@compileError` here, which fires lazily only if the fn is
-    // referenced. Rust's `compile_error!` fires unconditionally, so we keep
-    // the fn signatures for structural parity and trap at runtime instead.
+    // Tracing is never enabled in WASM; keep the fn signatures and trap at
+    // runtime instead of using `compile_error!` (which fires unconditionally).
     pub fn read(&self) -> u64 {
         unreachable!("FeatureFlags.tracing should be disabled in WASM");
     }
@@ -28,9 +25,8 @@ impl Timer {
     }
 }
 
-// Non-WASM: Zig used `std.time.Timer` directly. Rust has no identical type, so
-// wrap `std::time::Instant` with the same method surface (`start`/`read`/`lap`/
-// `reset`, ns as u64).
+// Non-WASM: wrap `std::time::Instant` behind a small monotonic-timer surface
+// (`start`/`read`/`lap`/`reset`, ns as u64).
 #[cfg(not(target_family = "wasm"))]
 pub struct Timer {
     started: std::time::Instant,
@@ -39,9 +35,8 @@ pub struct Timer {
 #[cfg(not(target_family = "wasm"))]
 impl Timer {
     pub fn start() -> Result<Self, bun_core::Error> {
-        // Infallible here, but kept fallible to mirror Zig's
-        // `std.time.Timer.start()` (`error{TimerUnsupported}!Timer`) signature
-        // that callers already handle.
+        // Infallible here, but kept fallible to match the `Result` signature
+        // callers already handle.
         Ok(Self {
             started: std::time::Instant::now(),
         })
@@ -62,5 +57,3 @@ impl Timer {
         self.started = std::time::Instant::now();
     }
 }
-
-// ported from: src/perf/system_timer.zig

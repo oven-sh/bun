@@ -116,5 +116,3 @@ pub(crate) fn to_be_type_of(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toBeTypeOf.zig

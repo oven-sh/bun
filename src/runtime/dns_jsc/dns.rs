@@ -1,5 +1,4 @@
 //! DNS resolver — JSC bindings.
-//! Port of `src/runtime/dns_jsc/dns.zig`.
 
 use core::cell::Cell;
 use core::ffi::{c_char, c_int, c_void};
@@ -54,7 +53,7 @@ pub(crate) mod netc {
 pub(crate) mod netc {
     /// `AI_ADDRCONFIG` (`ws2def.h`). Only consulted when
     /// `BUN_FEATURE_FLAG_DISABLE_ADDRCONFIG` is set; default hints on Windows
-    /// leave `ai_flags = 0` (matches dns.zig — `addrconfig = is_posix`).
+    /// leave `ai_flags = 0`.
     pub(crate) use bun_dns::AI_ADDRCONFIG;
     pub(crate) use bun_libuv_sys::{
         addrinfo, sockaddr, sockaddr_in, sockaddr_in6, sockaddr_storage,
@@ -207,7 +206,7 @@ pub(super) mod lib_info {
             return unsafe { (*dns_lookup).promise.value() };
         }
 
-        // PERF(port): was StackFallbackAllocator(1024) — profile if it shows up on a hot path.
+        // PERF: a stack-fallback buffer could avoid this heap allocation — profile if it shows up on a hot path.
         let name_z = bun::ZBox::from_bytes(query.name.as_ref());
 
         let request = GetAddrInfoRequest::init(
@@ -294,7 +293,7 @@ pub(super) mod lib_info {
             unsafe { ctx.platform_event_loop() },
             Async::PollKind::Machport,
             Async::posix_event_loop::OneShotFlag::OneShot,
-            // bitcast u32 mach_port → i32 fd, matches Zig @bitCast
+            // bitcast u32 mach_port → i32 fd
             sys::Fd::from_native(machport as i32),
         );
         debug_assert!(matches!(rc, sys::Result::Ok(_)));
@@ -393,7 +392,7 @@ pub(super) mod lib_uv_backend {
 
         let holder = bun_core::heap::into_raw(Box::new(Holder {
             uv_info,
-            // Zig: `.task = undefined`. `AnyTask.callback` is a non-nullable
+            // `AnyTask.callback` is a non-nullable
             // `fn` pointer, so `MaybeUninit::zeroed().assume_init()` would be
             // instant UB regardless of the overwrite below; use the trapping
             // Default and overwrite in place.
@@ -568,19 +567,17 @@ impl CacheConfig {
 // ResolveInfoRequest<T> — generic c-ares record request (SRV/SOA/TXT/…)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Trait standing in for Zig's `(comptime cares_type: type, comptime type_name: []const u8)` pair.
 /// Each c-ares reply struct implements this with its record-type tag.
 pub trait CAresRecordType: Sized {
     const TYPE_NAME: &'static str;
-    /// `"query" ++ ucfirst(TYPE_NAME)` — Zig built this at comptime; each impl
-    /// carries the precomputed literal so error paths report the right syscall.
+    /// `"query" + ucfirst(TYPE_NAME)` — each impl carries the precomputed
+    /// literal so error paths report the right syscall.
     const SYSCALL: &'static str;
     /// `"pending_{TYPE_NAME}_cache_cares"` — used to reach the matching HiveArray on `Resolver`.
     const CACHE_FIELD: PendingCacheField;
-    /// `@field(NSType, "ns_t_" ++ TYPE_NAME)` — the DNS RR type passed to `ares_query`.
+    /// The DNS RR type passed to `ares_query`.
     const NS_TYPE: c_ares::NSType;
-    /// `cares_type.callbackWrapper(TYPE_NAME, ResolveInfoRequest(..), onCaresComplete)` —
-    /// the `ares_callback` thunk that parses raw reply bytes for this record type
+    /// The `ares_callback` thunk that parses raw reply bytes for this record type
     /// and forwards to `ResolveInfoRequest<Self>::on_cares_complete`. Used as
     /// `ResolveHandler::raw_callback` for the generic `Channel::resolve` dispatch.
     const RAW_CALLBACK: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int);
@@ -595,7 +592,7 @@ pub trait CAresRecordType: Sized {
 }
 
 pub struct ResolveInfoRequest<T: CAresRecordType> {
-    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver> (struct gets <'a>); raw ptr until reconciled with intrusive RC
+    // TODO: should be Option<&'a Resolver> (struct gets <'a>); raw ptr until reconciled with intrusive RC
     pub resolver_for_caching: Option<*mut Resolver>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -713,8 +710,7 @@ impl<T: CAresRecordType> ResolveInfoRequest<T> {
 
 // Wires `ResolveInfoRequest<T>` into `Channel::resolve` — the per-record
 // `T::RAW_CALLBACK` parses the raw DNS reply and calls back into
-// `on_cares_complete`. Zig: `channel.resolve(name, type_name, ResolveInfoRequest(..),
-// request, cares_type, onCaresComplete)`.
+// `on_cares_complete`.
 impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
     const LOOKUP_NAME: &'static [u8] = T::TYPE_NAME.as_bytes();
     const NS_TYPE: c_ares::NSType = T::NS_TYPE;
@@ -736,7 +732,7 @@ impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GetHostByAddrInfoRequest {
-    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
+    // TODO: should be Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -884,7 +880,7 @@ impl CAresNameInfo {
     /// SAFETY: `global_this` is a JSC_BORROW backref set at construction (both
     /// `init()` and the inline `head` of `GetNameInfoRequest::init()`) from a
     /// live `&JSGlobalObject`; never null, and the JSGlobalObject outlives every
-    /// in-flight DNS request (Zig spec: `*jsc.JSGlobalObject`, non-optional).
+    /// in-flight DNS request.
     #[inline]
     pub(crate) fn global_this(&self) -> &JSGlobalObject {
         self.global_this.get()
@@ -987,7 +983,7 @@ impl Drop for CAresNameInfo {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct GetNameInfoRequest {
-    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
+    // TODO: should be Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -1129,7 +1125,7 @@ impl c_ares::NameinfoHandler for GetNameInfoRequest {
 
 pub struct GetAddrInfoRequest {
     pub backend: get_addr_info_request::Backend,
-    // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
+    // TODO: should be Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
     pub hash: u64,
     pub cache: CacheConfig,
@@ -1175,7 +1171,7 @@ pub mod get_addr_info_request {
     #[derive(Default)]
     pub struct BackendLibInfo {
         /// OWNED hive slot from `FilePoll::init` (returned via `FilePoll::deinit`,
-        /// not `Box`/global-alloc — Zig: `?*bun.Async.FilePoll`).
+        /// not `Box`/global-alloc).
         pub file_poll: Option<NonNull<FilePoll>>,
         pub machport: mach_port,
     }
@@ -1280,8 +1276,8 @@ pub mod get_addr_info_request {
                 return;
             }
 
-            // do not free addrinfo when err != 0
-            // https://github.com/ziglang/zig/pull/14242
+            // do not free addrinfo when err != 0: getaddrinfo only allocates the
+            // result list on success, so the out-pointer is unspecified on error.
             let _free = scopeguard::guard(addrinfo, |a| {
                 // SAFETY: `a` was returned by libc::getaddrinfo (non-null per the check above).
                 unsafe { bun_dns::freeaddrinfo(a) }
@@ -1393,7 +1389,7 @@ impl GetAddrInfoRequest {
                 next: None,
             },
             tail: ptr::null_mut(),
-            // Zig: `task: bun.ThreadPool.Task = undefined`. The callback is
+            // The callback is
             // overwritten before scheduling; use a trapping stub so the
             // non-null fn-pointer invariant holds without `mem::zeroed()` UB.
             task: thread_pool::Task {
@@ -1504,13 +1500,10 @@ impl GetAddrInfoRequest {
                 get_addr_info_request::Backend::Libc(
                     get_addr_info_request::LibcBackend::Success(result),
                 ) => {
-                    // `ResultAny` impls `Drop` (frees the list); Zig's `defer any.deinit()`
-                    // is the by-value drop at the end of whichever callee receives `any`.
+                    // `ResultAny` impls `Drop` (frees the list) — the by-value drop
+                    // at the end of whichever callee receives `any`.
                     let any = GetAddrInfoResultAny::List(result);
                     if let Some(resolver) = (*this).resolver_for_caching {
-                        // if (this.cache.entry_cache and result != null and result.?.node != null) {
-                        //     resolver.putEntryInCache(this.hash, this.cache.name_len, result.?);
-                        // }
                         if (*this).cache.pending_cache() {
                             (*resolver).drain_pending_host_native(
                                 (*this).cache.pos_in_pending(),
@@ -1560,9 +1553,6 @@ impl GetAddrInfoRequest {
         // `resolver` (if set) is the live intrusive-RC ctx stored at init time.
         unsafe {
             if let Some(resolver) = (*this).resolver_for_caching {
-                // if (this.cache.entry_cache and result != null and result.?.node != null) {
-                //     resolver.putEntryInCache(this.hash, this.cache.name_len, result.?);
-                // }
                 if (*this).cache.pending_cache() {
                     (*resolver).drain_pending_host_cares(
                         (*this).cache.pos_in_pending(),
@@ -1603,8 +1593,7 @@ impl GetAddrInfoRequest {
             // `uv__malloc`; that block must be released with `uv_freeaddrinfo`
             // (== `uv__free`). `GetAddrInfoResultAny::Addrinfo`'s `Drop` calls
             // `ws2_32!freeaddrinfo`, which is the wrong allocator here and
-            // would corrupt the heap. The Zig spec never frees it on this path
-            // (leak). Convert to an owned `List` immediately, free the libuv
+            // would corrupt the heap. Convert to an owned `List` immediately, free the libuv
             // buffer with the correct deallocator, and pass `List` downstream
             // so `ResultAny::Drop` never sees libuv-owned memory.
             let addrinfo = (*uv_info).addrinfo;
@@ -1644,9 +1633,7 @@ impl GetAddrInfoRequest {
     }
 }
 
-// Wires `GetAddrInfoRequest` into `Channel::get_addr_info`. Zig:
-// `channel.getAddrInfo(query.name, query.port, hints_buf, GetAddrInfoRequest,
-// request, GetAddrInfoRequest.onCaresComplete)`.
+// Wires `GetAddrInfoRequest` into `Channel::get_addr_info`.
 impl c_ares::AddrInfoHandler for GetAddrInfoRequest {
     fn on_addr_info(
         &mut self,
@@ -1682,9 +1669,8 @@ impl CAresReverse {
     ///
     /// SAFETY: `global_this` is a JSC_BORROW backref set from a live
     /// `&JSGlobalObject` in `init()` / `GetHostByAddrInfoRequest::init()`; the
-    /// global outlives every DNS request hung off of it (Zig spec:
-    /// `*jsc.JSGlobalObject`, non-optional), so the pointer is always non-null
-    /// and valid for the lifetime of `self`.
+    /// global outlives every DNS request hung off of it, so the pointer is
+    /// always non-null and valid for the lifetime of `self`.
     #[inline]
     pub(crate) fn global_this(&self) -> &JSGlobalObject {
         self.global_this.get()
@@ -1838,7 +1824,7 @@ impl<T: CAresRecordType> CAresLookup<T> {
     /// SAFETY: `global_this` is a JSC_BORROW backref set at construction (both
     /// `init()` and the inline `head` of `ResolveInfoRequest::init()`) from a
     /// live `&JSGlobalObject`; never null, and the JSGlobalObject outlives every
-    /// in-flight DNS request (Zig spec: `*jsc.JSGlobalObject`, non-optional).
+    /// in-flight DNS request.
     #[inline]
     pub(crate) fn global_this(&self) -> &JSGlobalObject {
         self.global_this.get()
@@ -1853,8 +1839,8 @@ impl<T: CAresRecordType> CAresLookup<T> {
         _timeout: i32,
         result: Option<*mut T>,
     ) {
-        // syscall = "query" + ucfirst(TYPE_NAME) — Zig built this at comptime;
-        // each `CAresRecordType` impl carries the precomputed literal.
+        // syscall = "query" + ucfirst(TYPE_NAME); each `CAresRecordType` impl
+        // carries the precomputed literal.
         let syscall = T::SYSCALL; // e.g. "querySrv"
         // This path is reached when the pending cache is full (`.disabled`),
         // so we own the c-ares result here. The cached path frees it in
@@ -2159,24 +2145,21 @@ impl Drop for GlobalData {
 pub mod internal {
     use super::*;
 
-    // PORTING.md §Global mutable state: lazy env-var memo. Zig comments it as
-    // "racy, but it's okay because the number won't be invalid, just stale" —
-    // that's exactly an `OnceLock<u32>` (idempotent init, safe concurrent read).
+    // PORTING.md §Global mutable state: lazy env-var memo — an `OnceLock<u32>`
+    // (idempotent init, safe concurrent read).
     static MAX_DNS_TIME_TO_LIVE_SECONDS: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
 
     pub(crate) fn get_max_dns_time_to_live_seconds() -> u32 {
         *MAX_DNS_TIME_TO_LIVE_SECONDS.get_or_init(|| {
             let value = env_var::BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS.get();
-            // Zig default for BUN_CONFIG_DNS_TIME_TO_LIVE_SECONDS is 30.
             value.unwrap_or(30) as u32
         })
     }
 
     // ───────────── Request ─────────────
 
-    // Zig stored a borrowed `[:0]const u8` here and only allocated in
-    // `toOwned()`. Same shape here: the stack key borrows the caller's host
-    // string and `to_owned()` copies before storing on the heap `Request`.
+    // The stack key borrows the caller's host string; `to_owned()` copies
+    // before storing on the heap `Request`.
     pub struct RequestKey<'a> {
         pub host: Option<&'a ZStr>,
         /// Used for getaddrinfo() to avoid glibc UDP port 0 bug, but NOT included in hash
@@ -2244,8 +2227,8 @@ pub mod internal {
         }
     }
 
-    // Crosses FFI to usockets via `Bun__addrinfo_getRequestResult` — layout MUST match
-    // Zig's `extern struct { info: ?[*]ResultEntry, err: c_int }` (8-byte thin ptr).
+    // Crosses FFI to usockets via `Bun__addrinfo_getRequestResult` — layout MUST
+    // stay `{ info: ?*ResultEntry, err: c_int }` (8-byte thin ptr).
     #[repr(C)]
     pub struct RequestResult {
         pub info: Option<NonNull<ResultEntry>>, // thin ptr; head of intrusive `ai_next` chain
@@ -2374,8 +2357,8 @@ pub mod internal {
 
     const MAX_ENTRIES: usize = 256;
 
-    /// The cache data guarded by `GLOBAL_CACHE`. The Zig code stored a `bun.Mutex`
-    /// adjacent to `cache`/`len`; in Rust the lock owns the data (PORTING.md §Concurrency).
+    /// The cache data guarded by `GLOBAL_CACHE`; the lock owns the data
+    /// (PORTING.md §Concurrency).
     pub(crate) struct GlobalCache {
         pub cache: [*mut Request; MAX_ENTRIES],
         pub len: usize,
@@ -2431,7 +2414,7 @@ pub mod internal {
 
         fn is_nearly_full(&self) -> bool {
             // 80% full (value is kind of arbitrary)
-            // Caller already holds GLOBAL_CACHE; the Zig @atomicLoad was redundant.
+            // Caller already holds GLOBAL_CACHE; no atomic load needed.
             self.len * 5 >= self.cache.len() * 4
         }
 
@@ -2687,8 +2670,6 @@ pub mod internal {
                     };
                 }
             }
-            // Zig's inner `for ... else { break }` has no `break` in its body,
-            // so the else fires unconditionally — mirrored exactly.
             // the rest of the list is all one address family
             break 'outer;
         }
@@ -2848,7 +2829,7 @@ pub mod internal {
 
         let poll = FilePoll::init(
             crate::api::bun::process::event_loop_handle_to_ctx(loop_),
-            // bitcast u32 mach_port → i32 fd, matches Zig @bitCast
+            // bitcast u32 mach_port → i32 fd
             sys::Fd::from_native(machport as i32),
             Default::default(),
             Async::Owner::new(Async::posix_event_loop::poll_tag::REQUEST, req.cast::<()>()),
@@ -2944,7 +2925,7 @@ pub mod internal {
                         (*req).libinfo.machport = machport;
                         // SAFETY: file_poll was set in lookup_libinfo before the first callback fires.
                         let poll = (*req).libinfo.file_poll.unwrap().as_mut();
-                        // Zig: `@bitCast(machport)` — `as i32` is the same-width bitcast.
+                        // `as i32` is the same-width bitcast of the u32 mach port.
                         poll.fd = sys::Fd::from_native(machport as i32);
                         match poll.register(&mut *Loop::get(), Async::PollKind::Machport, true) {
                             sys::Result::Err(_) => {
@@ -3279,7 +3260,7 @@ pub mod internal {
         unsafe { std::ptr::from_mut::<RequestResult>((*req).result.as_mut().unwrap()) }
     }
 
-    // FFI exports — Zig used `@export` in a `comptime { }` block.
+    // FFI exports.
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn Bun__addrinfo_set(
         request: *mut Request,
@@ -3334,8 +3315,8 @@ pub use internal::Request as InternalDNSRequest;
 // Resolver — JSC-exposed `dns.Resolver` (m_ctx payload of JSDNSResolver)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Field selector standing in for Zig's `comptime cache_field: []const u8` /
-/// `std.meta.FieldEnum(Resolver)` — Rust cannot index struct fields by name string.
+/// Field selector for the `pending_*` cache fields on `Resolver` — Rust
+/// cannot index struct fields by name string.
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum PendingCacheField {
     PendingHostCacheCares,
@@ -3357,8 +3338,7 @@ pub enum PendingCacheField {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// CAresRecordType impls — Zig instantiated `ResolveInfoRequest(cares_type, type_name)`
-// per (struct, "tag") pair via comptime; Rust models the (struct, tag) tuple as a
+// CAresRecordType impls — each (struct, tag) pair is modeled as a
 // trait impl. ns/ptr/cname share `struct_hostent` and a/aaaa share
 // `hostent_with_ttls`, so those get `#[repr(transparent)]` newtype wrappers to
 // keep the per-record monomorphizations (and pending caches) distinct.
@@ -3390,8 +3370,7 @@ macro_rules! impl_cares_record_type {
                 unsafe { c_ares::ares_free_data(this.cast::<core::ffi::c_void>()) }
             }
         }
-        // Generic reply handler — forwards to `on_cares_complete`. Zig
-        // monomorphized this via `cares_type.Callback(ResolveInfoRequest(..))`.
+        // Generic reply handler — forwards to `on_cares_complete`.
         impl c_ares::ReplyHandler<$ty> for ResolveInfoRequest<$ty> {
             fn on_reply(
                 &mut self,
@@ -3497,7 +3476,7 @@ impl c_ares::AnyHandler for ResolveInfoRequest<c_ares::struct_any_reply> {
     }
 }
 
-/// Transparent newtype over `struct_hostent` carrying the comptime `type_name` tag.
+/// Transparent newtype over `struct_hostent` carrying the per-record-type `type_name` tag.
 macro_rules! hostent_newtype {
     ($name:ident, $tag:literal, $syscall:literal, $field:ident, $ns_type:ident, $wrapper:ident) => {
         #[repr(transparent)]
@@ -3698,7 +3677,7 @@ pub struct Resolver {
 
 bun_event_loop::impl_timer_owner!(Resolver; from_timer_ptr => event_loop_timer);
 
-/// RAII owner for a scoped `Resolver` refcount bump (Zig: `this.ref(); defer this.deref();`).
+/// RAII owner for a scoped `Resolver` refcount bump.
 /// Constructed via [`Resolver::ref_scope`]; releases the ref on Drop.
 #[must_use = "dropping immediately releases the scoped ref"]
 struct ResolverRefGuard(*mut Resolver);
@@ -3726,8 +3705,8 @@ impl bun_ptr::RefCounted for Resolver {
 
 #[cfg(windows)]
 pub struct UvDnsPoll {
-    // BACKREF — Zig: `parent: *Resolver` (mutable). Stored mut because the poll
-    // callback hands it to `Resolver::deref`, which may write/free `*this`.
+    // BACKREF — stored mut because the poll callback hands it to
+    // `Resolver::deref`, which may write/free `*this`.
     pub parent: *mut Resolver,
     pub socket: c_ares::ares_socket_t,
     pub poll: libuv::uv_poll_t,
@@ -3761,8 +3740,8 @@ pub enum CacheHit {
 }
 
 pub enum LookupCacheHit<R: HasPendingCacheKey> {
-    // Zig's `LookupCacheHit(request_type)` referenced `request_type.PendingCacheKey`.
-    // We thread the request type via `R` and resolve `PendingCacheKey` through `HasPendingCacheKey`.
+    // The request type is threaded via `R`; `PendingCacheKey` resolves
+    // through `HasPendingCacheKey`.
     Inflight(*mut R::PendingCacheKey), // BORROW_FIELD
     New(*mut R::PendingCacheKey),      // BORROW_FIELD
     Disabled,
@@ -3776,13 +3755,12 @@ impl<R: HasPendingCacheKey> Clone for LookupCacheHit<R> {
 impl<R: HasPendingCacheKey> Copy for LookupCacheHit<R> {}
 
 /// Associates a request type with its `PendingCacheKey` and the matching `HiveArray`
-/// field on `Resolver`. Stands in for Zig's `request_type.PendingCacheKey` projection
-/// and `@field(resolver, comptime cache_name)` reflection.
+/// field on `Resolver`.
 pub trait HasPendingCacheKey {
     type PendingCacheKey;
 
-    /// Return `&mut @field(resolver, cache_name)` — the per-request-type pending HiveArray.
-    /// `field` is the runtime tag of the comptime field name (some request types are reachable
+    /// Return the per-request-type pending HiveArray field on `Resolver`.
+    /// `field` is the runtime tag selecting which field (some request types are reachable
     /// via more than one field, e.g. `pending_host_cache_{cares,native}`).
     ///
     /// R-2: takes `&Resolver` and projects `&mut` via the field's `JsCell`.
@@ -3913,7 +3891,7 @@ impl HasPendingCacheKey for GetNameInfoRequest {
 
 pub enum ChannelResult<'a> {
     Err(c_ares::Error),
-    Result(&'a mut c_ares::Channel), // BORROW_FIELD — returns this.channel.?
+    Result(&'a mut c_ares::Channel), // BORROW_FIELD — borrows the resolver's `channel` field
 }
 
 // Canonical enum + parser live in `bun_dns` (lower tier so `cli` can parse
@@ -3996,8 +3974,7 @@ impl Resolver {
     /// Takes a raw `*mut Self` (not `&self`) because the final deref must write
     /// through / deallocate `*this`; deriving a `*mut` from a `&self` borrow
     /// and writing through it is UB under Stacked/Tree Borrows. Matches the
-    /// Zig `RefCount.deref(*@This())` signature and the codebase pattern in
-    /// `bun_ptr::RefCount::deref(self_: *mut T)`.
+    /// codebase pattern in `bun_ptr::RefCount::deref(self_: *mut T)`.
     ///
     /// # Safety
     /// `this` must point to a live heap-allocated `Resolver` originating from
@@ -4009,9 +3986,9 @@ impl Resolver {
         unsafe { bun_ptr::RefCount::<Self>::deref(this) };
     }
 
-    /// RAII bracket: bump the intrusive refcount now, drop it on guard Drop.
-    /// Mirrors Zig's `this.ref(); defer this.deref();` so re-entrant c-ares
-    /// callbacks that release their own refs cannot free `*this` mid-call.
+    /// RAII bracket: bump the intrusive refcount now, drop it on guard Drop,
+    /// so re-entrant c-ares callbacks that release their own refs cannot free
+    /// `*this` mid-call.
     ///
     /// Captures a raw `*mut` (not `&self`) so the guard does not borrow the
     /// resolver — gives `deref` proper write provenance for the final
@@ -4137,8 +4114,8 @@ impl Resolver {
     }
 
     fn any_requests_pending(&self) -> bool {
-        // Zig used `@typeInfo` to iterate all `pending_*` fields; Rust has no
-        // field reflection, so keep this list in sync with `Resolver`'s `pending_*` fields.
+        // Rust has no field reflection; keep this list in sync with
+        // `Resolver`'s `pending_*` fields.
         macro_rules! check { ($($f:ident),*) => { $( if self.$f.get().used.find_first_set().is_some() { return true; } )* } }
         check!(
             pending_host_cache_cares,
@@ -4252,8 +4229,7 @@ impl Resolver {
     }
 
     /// Dispatch to a typed ResolveInfoRequest cache by record type.
-    // Zig used `@field(this, "pending_{TYPE_NAME}_cache_cares")` with a comptime
-    // string. Each per-record cache is a distinct monomorphization of
+    // Each per-record cache is a distinct monomorphization of
     // `HiveArray<resolve_info_request::PendingCacheKey<_>, 32>`; `PendingCacheKey<T>` is
     // layout-identical for all `T` (only the `*mut ResolveInfoRequest<T>` payload's pointee
     // type differs), so reinterpreting the field reference at the caller's `T` is sound when
@@ -4452,7 +4428,6 @@ impl Resolver {
             drop(bun_core::heap::take(key.lookup));
 
             array.ensure_still_alive();
-            // std.c.addrinfo
 
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
@@ -4523,8 +4498,6 @@ impl Resolver {
                 drop(bun_core::heap::take(key.lookup));
                 array.ensure_still_alive();
             }
-
-            // std.c.addrinfo
 
             while let Some(value) = pending {
                 let new_global = (*value.as_ptr()).global_this();
@@ -4676,8 +4649,8 @@ impl Resolver {
         key: &R::PendingCacheKey,
         field: PendingCacheField,
     ) -> LookupCacheHit<R> {
-        // Zig used `@field(this, field)` over a comptime string. We dispatch via
-        // `HasPendingCacheKey::pending_cache`; the body is identical across all `R`.
+        // Dispatch via `HasPendingCacheKey::pending_cache`; the body is
+        // identical across all `R`.
         let cache = R::pending_cache(self, field);
         let mut inflight_iter = cache.used.iter_set();
 
@@ -4845,8 +4818,7 @@ impl Resolver {
         {
             use libuv as uv;
             if !readable && !writable {
-                // cleanup — Zig: `fetchOrderedRemove`; our `remove` is the
-                // ordered, value-returning variant.
+                // cleanup — `remove` is the ordered, value-returning variant.
                 if let Some(entry) = self.polls.with_mut(|p| p.remove(&fd)) {
                     // SAFETY: `entry` is the heap `UvDnsPoll` we inserted below;
                     // libuv takes ownership of the handle until `on_close_uv`
@@ -5277,7 +5249,7 @@ impl Resolver {
     }
 
     // ───────── per-record-type global+instance resolve fns ─────────
-    // These are mechanically identical; Zig had one per record type.
+    // These are mechanically identical across record types.
 }
 
 macro_rules! resolve_record_fn {
@@ -5460,7 +5432,7 @@ impl Resolver {
             ChannelResult::Err(err) => {
                 let syscall = bun_core::String::create_atom(&query.name);
                 // SystemError has no Default impl upstream; spell out
-                // the Zig field defaults (.empty strings, fd = c_int::MIN).
+                // the field defaults (empty strings, fd = c_int::MIN).
                 let system_error = SystemError {
                     errno: -1,
                     code: bun_core::String::static_(err.code()),
@@ -5696,7 +5668,7 @@ impl Resolver {
     ) -> JsResult<c_int> {
         let str_ = value.to_slice(global_this)?;
         // ZigStringSlice has no `into_owned_slice_z`; build the
-        // NUL-terminated buffer inline (Zig: `toOwnedSliceZ`).
+        // NUL-terminated buffer inline.
         let bytes = str_.slice();
         let mut slice = bytes.to_vec();
         slice.push(0);
@@ -6055,7 +6027,7 @@ impl Resolver {
     }
 }
 
-// ───────── JS host-fn FFI exports (Zig: comptime { @export(...) }) ─────────
+// ───────── JS host-fn FFI exports ─────────
 // The #[host_fn] attribute emits the JSC-ABI shim under the Rust function name;
 // re-export each under its `Bun__DNS__*` link name. Mirrors the proc-macro's
 // shim body (see `bun_jsc_macros::host_fn`, `HostFnKind::Free`).
@@ -6112,5 +6084,3 @@ export_host_fn!(
     Resolver::get_runtime_default_result_order_option,
     "JS2Zig___src_runtime_dns_jsc_dns_zig__Resolver_getRuntimeDefaultResultOrderOption"
 );
-
-// ported from: src/runtime/dns_jsc/dns.zig

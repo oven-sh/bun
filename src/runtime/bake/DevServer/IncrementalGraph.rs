@@ -1,4 +1,4 @@
-//! `DevServer.IncrementalGraph(side)` — port of `IncrementalGraph.zig`.
+//! `DevServer.IncrementalGraph(side)`.
 //!
 //! An earlier draft formerly defined a *second*, layout-incompatible
 //! `IncrementalGraph<S: GraphSide>` struct here (trait-param `Client`/`Server`

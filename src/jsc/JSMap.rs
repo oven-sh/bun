@@ -62,7 +62,7 @@ impl JSMap {
     ///
     /// Returns `None` if the value is not a Map.
     ///
-    /// Returns a raw `NonNull<JSMap>` (mirrors Zig's `?*JSMap`). The pointee is a
+    /// Returns a raw `NonNull<JSMap>`. The pointee is a
     /// GC-heap cell; callers must dereference unsafely at use-site and ensure the
     /// underlying `JSValue` is kept alive across GC.
     pub fn from_js(value: JSValue) -> Option<NonNull<JSMap>> {
@@ -74,5 +74,3 @@ impl JSMap {
         None
     }
 }
-
-// ported from: src/jsc/JSMap.zig

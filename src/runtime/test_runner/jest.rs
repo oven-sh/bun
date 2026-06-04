@@ -50,8 +50,7 @@ impl CurrentFile {
             return;
         }
         if reporter.reporters.dots || reporter.reporters.only_failures {
-            // Zig's freeAndClear() freed the old allocations; in Rust,
-            // assigning into the Box<[u8]> fields below drops the previous values.
+            // Assigning into the Box<[u8]> fields below drops the previous values.
             self.title = Box::<[u8]>::from(title);
             self.prefix = Box::<[u8]>::from(prefix);
             self.repeat_info.count = repeat_count;
@@ -130,7 +129,6 @@ pub struct TestRunner<'a> {
     pub bail: u32,
     pub max_concurrency: u32,
 
-    // `std.mem.Allocator param` field deleted — global mimalloc.
     pub drainer: jsc::AnyTask::AnyTask,
 
     pub has_pending_tests: bool,
@@ -291,22 +289,21 @@ bun_collections::multi_array_columns! {
         log: bun_ast::Log,
     }
 }
-// Zig used ArrayIdentityContext; u32 keys hash as identity in bun_collections.
+// u32 keys hash as identity in bun_collections.
 pub(crate) type FileMap = ArrayHashMap<u32, u32>;
 
 #[allow(non_snake_case)]
 pub mod Jest {
     use super::*;
 
-    // Zig `pub var runner: ?*TestRunner = null`.
-    // PORTING.md §Global mutable state: JS-VM-thread-only singleton; RacyCell
+    // JS-VM-thread-only singleton; RacyCell
     // over `Option<NonNull<_>>` so direct `.read()` projections in
     // `snapshot.rs` etc. keep their shape.
     pub(crate) static RUNNER: bun_core::RacyCell<Option<NonNull<TestRunner<'static>>>> =
         bun_core::RacyCell::new(None);
 
     pub(crate) fn runner() -> Option<&'static mut TestRunner<'static>> {
-        // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
+        // SAFETY: RUNNER is only ever accessed from the single JS VM thread.
         unsafe { RUNNER.read().map(|p| &mut *p.as_ptr()) }
     }
 
@@ -315,7 +312,7 @@ pub mod Jest {
     /// `&BunTestRoot`, `&mut BunTest`) is already live — see
     /// `BunTestRoot::on_before_print` / `BunTest::enter_file`.
     pub(crate) fn runner_ptr() -> Option<NonNull<TestRunner<'static>>> {
-        // SAFETY: single-threaded JS VM; matches Zig's unguarded global access.
+        // SAFETY: RUNNER is only ever accessed from the single JS VM thread.
         unsafe { RUNNER.read() }
     }
 
@@ -523,7 +520,7 @@ pub mod on_unhandled_rejection {
         rejection: JSValue,
     ) {
         if let Some(buntest_strong) = bun_test::clone_active_strong() {
-            // `defer buntest_strong.deinit()` — Rc::drop handles this.
+            // `buntest_strong` released by Rc drop.
             // SAFETY: single-threaded JS VM; `buntest_strong` is the only handle
             // dereferenced for this scope and is dropped before `BunTest::run`
             // re-borrows. Const→mut projection is centralized in `buntest_as_mut`
@@ -550,9 +547,8 @@ pub mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.add_result(current_state_data);
-            // Zig: `catch |e| globalObject.reportUncaughtExceptionFromError(e)`.
-            // `report_unhandled` is that call plus a guard for `Terminated`
-            // (which carries no pending exception to take).
+            // `report_unhandled` reports the uncaught exception, with a guard
+            // for `Terminated` (which carries no pending exception to take).
             use bun_jsc::JsResultExt as _;
             bun_test::BunTest::run(&buntest_strong, global_object).report_unhandled(global_object);
             return;
@@ -643,7 +639,7 @@ pub(crate) fn format_label(
                         list.extend_from_slice(owned_slice.slice());
                     } else {
                         let mut formatter = crate::test_runner::expect::make_formatter(global_this);
-                        // `defer formatter.deinit()` — Drop handles this.
+                        // formatter cleanup handled by Drop.
                         write!(&mut list, "{}", value.to_fmt(&mut formatter)).unwrap();
                     }
                     idx = var_end;
@@ -711,7 +707,7 @@ pub(crate) fn format_label(
                 }
                 b'j' | b'o' => {
                     let mut str = bun_core::String::empty();
-                    // `defer str.deref()` — Drop handles this.
+                    // `str` released by Drop.
                     // Use jsonStringifyFast for SIMD-optimized serialization
                     current_arg.json_stringify_fast(global_this, &mut str)?;
                     let owned_slice = str.to_owned_slice();
@@ -762,6 +758,3 @@ pub(crate) fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGl
     }
     0
 }
-
-
-// ported from: src/test_runner/jest.zig

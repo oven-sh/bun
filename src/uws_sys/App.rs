@@ -52,7 +52,7 @@ pub struct App<const SSL: bool> {
     _m: PhantomData<(*mut u8, PhantomPinned)>,
 }
 
-/// Zig name compatibility (`uws.NewApp(ssl)`).
+/// Legacy name alias.
 pub type NewApp<const SSL: bool> = App<SSL>;
 
 /// Stamps one `pub fn $name(&mut self, pattern, handler, user_data)` per HTTP
@@ -164,12 +164,7 @@ impl<const SSL: bool> App<SSL> {
     // ─────────────────────────────────────────────────────────────────────
     // RouteHandler
     //
-    // Zig's `RouteHandler(comptime UserDataType, comptime handler)` generated a
-    // unique `extern "C" fn handle(...)` per (UserDataType, handler) pair at
-    // comptime, downcasting `user_data: ?*anyopaque` and calling `handler` with
-    // `.always_inline`.
-    //
-    // Rust cannot accept a `fn` as a const-generic parameter, so the type-safe
+    // Rust cannot accept a `fn` as a const-generic parameter, so a type-safe
     // shim cannot be monomorphized here without a macro. We expose the raw
     // C handler type directly; callers supply their own `extern "C" fn` (or a
     // future `route_handler!` macro generates one). The shape of that shim is:
@@ -182,8 +177,6 @@ impl<const SSL: bool> App<SSL> {
     //       let user_data = unsafe { &mut *(user_data as *mut U) };
     //       HANDLER(user_data, unsafe { &mut *req }, unsafe { &mut *(res as *mut Response<SSL>) });
     //   }
-    //
-    // PERF(port): was @call(.always_inline) on the user handler — profile if hot.
     // ─────────────────────────────────────────────────────────────────────
 
     uws_app_route_methods! {
@@ -248,8 +241,7 @@ impl<const SSL: bool> App<SSL> {
         handler: extern "C" fn(*mut UwsListenSocket, *mut c_void),
         user_data: *mut c_void,
     ) {
-        // Zig generated a type-safe Wrapper.handle per (UserData, handler) at comptime;
-        // Rust callers supply the C-ABI shim directly (see the RouteHandler note above).
+        // Callers supply the C-ABI shim directly (see the RouteHandler note above).
         c::uws_app_listen(
             Self::SSL_FLAG,
             self.as_raw(),
@@ -264,8 +256,7 @@ impl<const SSL: bool> App<SSL> {
         handler: extern "C" fn(*mut c_void, c_int, *mut us_socket_t, u8, *mut u8, c_int),
         user_data: *mut c_void,
     ) {
-        // Zig wrapped the C callback to slice raw_packet[0..max(len,0)] and pass a typed
-        // UserData; Rust callers receive the raw C args and slice manually.
+        // Callers receive the raw C args and slice raw_packet manually.
         c::uws_app_set_on_clienterror(Self::SSL_FLAG, self.as_raw(), handler, user_data)
     }
 
@@ -275,8 +266,7 @@ impl<const SSL: bool> App<SSL> {
         user_data: *mut c_void,
         config: c::uws_app_listen_config_t,
     ) {
-        // Zig generated a type-safe Wrapper.handle per (UserData, handler) at comptime;
-        // Rust callers supply the C-ABI shim directly.
+        // Callers supply the C-ABI shim directly.
         // SAFETY: self is a valid app; config.host (if non-null) is NUL-terminated and outlives the call.
         unsafe {
             c::uws_app_listen_with_config(
@@ -298,8 +288,7 @@ impl<const SSL: bool> App<SSL> {
         domain_name: &ZStr,
         flags: i32,
     ) {
-        // Zig generated a type-safe Wrapper.handle per (UserData, handler) at comptime
-        // (ignoring domain/flags args, casting socket); Rust callers supply the shim.
+        // Callers supply the C-ABI shim directly.
         // SAFETY: self is a valid app; domain_name is NUL-terminated.
         unsafe {
             c::uws_app_listen_domain_with_options(
@@ -448,8 +437,7 @@ impl<const SSL: bool> App<SSL> {
     // - Cork/uncork functionality for efficient batched writes
     // - Automatic handling of Connection: close semantics
     //
-    // Zig exposed `Response` and `WebSocket` as nested associated types
-    // (App<SSL>::Response). Rust inherent associated types are unstable; callers name
+    // Rust inherent associated types are unstable; callers name
     // `crate::response::Response<{SSL as i32}>` / `crate::web_socket::WebSocket<{SSL as i32}>`
     // directly.
 }
@@ -479,7 +467,7 @@ impl<const SSL: bool> ListenSocket<SSL> {
 
     pub fn socket(&mut self) -> crate::socket::NewSocketHandler<SSL> {
         // SAFETY: ListenSocket<SSL> is layout-identical to us_socket_t on the C side
-        // (a listen socket IS a us_socket_t); Zig does `.from(@ptrCast(this))`.
+        // (a listen socket IS a us_socket_t).
         crate::socket::NewSocketHandler::<SSL>::from(std::ptr::from_mut::<Self>(self).cast())
     }
 }
@@ -703,7 +691,6 @@ pub mod c {
     }
 
     impl uws_app_listen_config_t {
-        // Zig has no default for `port` (only `host = null`, `options = 0`); `.{}` is illegal there.
         // Provide a required-port constructor instead of `Default` to avoid inventing port=0.
         pub const fn new(port: c_int) -> Self {
             Self {
@@ -714,5 +701,3 @@ pub mod c {
         }
     }
 }
-
-// ported from: src/uws_sys/App.zig

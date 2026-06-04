@@ -36,9 +36,9 @@ pub fn add(global: &JSGlobalObject, a: i32, b: i32) -> JsResult<i32> {
     match a.checked_add(b) {
         Some(v) => Ok(v),
         None => {
-            // Binding functions can return `error.OutOfMemory` and `error.JSError`.
-            // Others like `error.Overflow` from `std.math.add` must be converted.
-            // Remember to be descriptive.
+            // Binding functions can propagate out-of-memory and JS exceptions
+            // directly; other failures (like this integer overflow) must be
+            // converted into a thrown error. Remember to be descriptive.
             Err(global.throw_pretty(format_args!("Integer overflow while adding")))
         }
     }
@@ -50,9 +50,6 @@ pub fn required_and_optional_arg(a: bool, b: Option<usize>, c: i32, d: Option<u8
             .wrapping_add(c)
             .wrapping_add(i32::from(d.unwrap_or(0)));
     };
-    // Zig: @truncate(@as(isize, @as(u53, @truncate(
-    //     (b_nonnull +% @as(usize, @abs(c))) *% (d orelse 1),
-    // ))))
     let inner: usize = b_nonnull
         .wrapping_add(c.unsigned_abs() as usize)
         .wrapping_mul(usize::from(d.unwrap_or(1)));
@@ -64,5 +61,3 @@ pub fn required_and_optional_arg(a: bool, b: Option<usize>, c: i32, d: Option<u8
     }
     math_result
 }
-
-// ported from: src/jsc/bindgen_test.zig

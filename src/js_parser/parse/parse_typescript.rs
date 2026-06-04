@@ -31,10 +31,6 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
     }
 }
 
-// Zig: `pub fn ParseTypescript(comptime ...) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block.
-
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
         let p = self;
@@ -52,7 +48,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //   @Identifier.member
                 //   @Identifier.member(args)
                 //   @(Expression)
-                // PERF(port): was ensureUnusedCapacity + unusedCapacitySlice — profile if it shows up on a hot path
                 decorators.push(p.parse_standard_decorator()?);
             } else {
                 // Parse a new/call expression with "exprFlagTSDecorator" so we ignore
@@ -63,8 +58,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //   }
                 //
                 // This matches the behavior of the TypeScript compiler.
-                // PERF(port): was ensureUnusedCapacity + unusedCapacitySlice — profile if it shows up on a hot path
-                // Zig `parseExprWithFlags` takes an out-param slot; preserved here.
                 let mut expr = Expr::EMPTY;
                 p.parse_expr_with_flags(Level::New, EFlags::TsDecorator, &mut expr)?;
                 decorators.push(expr);
@@ -185,7 +178,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
 
         // Generate the namespace object
-        // Arena-owned `StoreRef<TSNamespaceScope>` (Zig held a pointer into the arena).
+        // Arena-owned `StoreRef<TSNamespaceScope>`.
         let mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
             p.get_or_create_exported_namespace_members(name_text, opts.is_export, false);
         let mut exported_members: js_ast::StoreRef<TSNamespaceMemberMap> =
@@ -277,7 +270,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .insert(ref_, TSNamespaceMemberData::Property);
                     }
                 }
-                // Zig: `inline .s_namespace, .s_enum => |ns|` — written out per-variant.
                 StmtData::SNamespace(ns) => {
                     if ns.is_export {
                         let ref_ = ns.name.ref_.expect("infallible: ref bound");
@@ -395,7 +387,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //
                 //   namespace m { class m {} class _m {} }
                 //
-                // Candidates are built in the parse arena (Zig: `p.allocator`); the
+                // Candidates are built in the parse arena; the
                 // chosen one becomes the symbol's original name and is freed together
                 // with the rest of the AST arena.
                 let mut underscores: usize = 1;
@@ -520,7 +512,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let ref_ = p
             .declare_symbol(SymbolKind::Constant, default_name_loc, default_name)
             .expect("unreachable");
-        // PERF(port): was `arena.alloc(Decl, 1)` into arena slice — profile if it shows up on a hot path
         let binding = p.b(B::Identifier { r#ref: ref_ }, default_name_loc);
         let decls = G::DeclList::init_one(G::Decl {
             binding,
@@ -566,7 +557,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             name.ref_ = Some(p.declare_symbol(SymbolKind::TsEnum, name_loc, name_text)?);
             let _ = p.push_scope_for_parse_pass(ScopeKind::Entry, loc)?;
             p.current_scope_mut().ts_namespace = Some(ts_namespace);
-            // Zig: putNoClobber — debug-assert no prior entry.
+            // debug-assert no prior entry.
             let prev = p.ref_to_ts_namespace_member.insert(
                 name.ref_.expect("infallible: ref bound"),
                 TSNamespaceMemberData::Namespace(exported_members),
@@ -670,7 +661,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // Add a "_" to make tests easier to read, since non-bundler tests don't
                 // run the renamer. For external-facing things the renamer will avoid
                 // collisions automatically so this isn't important for correctness.
-                // PERF(port): strings::cat heap-allocates; Zig allocated into p.arena.
+                // PERF: strings::cat heap-allocates — could allocate into p.arena.
                 let prefixed = strings::cat(b"_", name_text).expect("unreachable");
                 let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
                 arg_ref = p
@@ -720,7 +711,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             break 'scope_order_clone items.into_bump_slice();
         };
-        // Zig: putNoClobber — debug-assert no prior entry.
+        // debug-assert no prior entry.
         // Stored as `&'a [ScopeOrder]`; the visit pass only reads these, so
         // `scope_order_to_visit` may alias the same arena slice freely.
         let prev = p.scopes_in_order_for_enum.insert(loc, scope_order_clone);
@@ -737,5 +728,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 }
-
-// ported from: src/js_parser/ast/parseTypescript.zig

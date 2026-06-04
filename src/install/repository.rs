@@ -13,12 +13,12 @@ use crate::dependency as Dependency;
 use crate::hosted_git_info;
 use crate::install::{self as Install, ExtractData, PackageManager};
 
-// bun.ThreadlocalBuffers — Zig returns a raw pointer into thread-local storage so
-// callers can return slices that outlive the access (`try_ssh`/`try_https` hand a
-// slice straight to `download`). Rust `thread_local!` closures cannot express that
-// without unsafe, so this mirrors the Zig scheme: a leaked per-thread allocation
-// with per-field projection accessors and a documented single-use-per-field
-// invariant (see `tl_bufs()` / the `TlBufs` accessor docs below).
+// Thread-local scratch buffers. Callers return slices that outlive the access
+// (`try_ssh`/`try_https` hand a slice straight to `download`). `thread_local!`
+// closures cannot express that without unsafe, so this is a leaked per-thread
+// allocation with per-field projection accessors and a documented
+// single-use-per-field invariant (see `tl_bufs()` / the `TlBufs` accessor docs
+// below).
 struct TlBufs {
     final_path_buf: PathBuffer,
     ssh_path_buf: PathBuffer,
@@ -39,22 +39,20 @@ fn tl_bufs() -> *mut TlBufs {
     // - `TL_BUFS` is thread-local `Cell<*mut TlBufs>`: no cross-thread sharing; the
     //   pointer is `Copy` so `.get()/.set()` are zero-unsafe. The payload itself is a
     //   leaked heap alloc (lazy-init below), so the `*mut` stays valid for thread life.
-    // - Zig's `bun.ThreadlocalBuffers(T).get()` returns `*T` (a freely-aliasing raw
-    //   ptr), and `&tl_bufs.get().folder_name_buf` in Zig is raw-ptr field projection
-    //   that never asserts uniqueness over sibling buffers. We mirror that exactly:
-    //   this function returns `*mut TlBufs`, and call sites project a SINGLE field via
+    // - This function returns `*mut TlBufs` (a freely-aliasing raw ptr) and never
+    //   asserts uniqueness over sibling buffers: call sites project a SINGLE field via
     //   raw-ptr place expr `unsafe { &mut (*tl_bufs()).<field> }` so only that one
     //   field is retagged Unique under Stacked Borrows.
-    // - This is load-bearing: per the .zig spec callers (PackageManagerTask.zig:179,206),
-    //   `try_https`/`try_ssh` return a slice into `final_path_buf`/`ssh_path_buf` which
-    //   is then passed straight into `download(..., url, ...)`. `download` itself
+    // - This is load-bearing: `try_https`/`try_ssh` return a slice into
+    //   `final_path_buf`/`ssh_path_buf` which is then passed straight into
+    //   `download(..., url, ...)`. `download` itself
     //   borrows `folder_name_buf`. Materializing `&mut TlBufs` over the WHOLE struct
     //   here would create a fresh Unique tag that invalidates the live `url` slice — UB.
     //   The invariant is therefore disjoint-FIELD access, not whole-struct uniqueness.
     // - The raw pointer is valid for the lifetime of the current thread (thread-local
     //   outlives all in-thread borrows; `TlBufs` has no `Drop`). Callers reborrow into
     //   a raw `*mut PathBuffer` per field as a deliberate escape hatch so
-    //   `try_ssh`/`try_https` can return slices into the buffer, mirroring the Zig API.
+    //   `try_ssh`/`try_https` can return slices into the buffer.
     //   Callers must not retain a slice into a given field across a subsequent reborrow
     //   of that SAME field.
     TL_BUFS.with(|c| {
@@ -126,7 +124,6 @@ impl SloppyGlobalGitConfig {
         let config_file_path = bun_paths::resolve_path::join_abs_string_buf_z::<
             bun_paths::platform::Auto,
         >(home_dir, &mut config_file_path_buf, &[b".gitconfig"]);
-        // PERF(port): was stack-fallback alloc (4096)
         // MOVE_DOWN: `File::toSource` lives in `bun_logger` (T1→T2 cyclebreak).
         let Ok(source) = bun_ast::to_source(
             config_file_path,
@@ -139,7 +136,7 @@ impl SloppyGlobalGitConfig {
         let mut remaining = strings::split(source.contents(), b"\n");
         let mut found_askpass = false;
         let mut found_ssh_command = false;
-        let mut in_core = false; // Zig: `@"[core]"`
+        let mut in_core = false;
         while let Some(line_) = remaining.next() {
             if found_askpass && found_ssh_command {
                 break;
@@ -231,23 +228,21 @@ pub(crate) struct SharedEnv {
     env: Option<bun_dotenv::Map>,
 }
 
-// Zig's `pub var shared_env` is a process-global anon-struct whose
-// `get()` lazily clones `other.map` once and returns the `DotEnv.Map` handle by
-// value (Zig struct copy — both copies alias the same backing storage). Rust's
-// `Map` owns its storage and is not `Copy`, so we hand out a `&'static Map` into
-// the global instead; callers (`GitCloneRequest.env`, `GitCheckoutRequest.env`)
-// store the reference. The map is written exactly once on first call from the
-// main install thread and never freed, matching Zig's lifetime.
-// PORTING.md §Global mutable state: lazy-init on the install main thread,
-// then `&'static`-read from worker threads. RacyCell — the install enqueue
-// path is single-threaded at the write point (Zig parity).
+// Process-global env map. `get()` lazily clones `other.map` once; `Map` owns
+// its storage and is not `Copy`, so we hand out a `&'static Map` into the
+// global; callers (`GitCloneRequest.env`, `GitCheckoutRequest.env`) store the
+// reference. The map is written exactly once on first call from the main
+// install thread and never freed.
+// Lazy-init on the install main thread, then `&'static`-read from worker
+// threads. RacyCell — the install enqueue path is single-threaded at the
+// write point.
 pub(crate) static SHARED_ENV: bun_core::RacyCell<SharedEnv> =
     bun_core::RacyCell::new(SharedEnv { env: None });
 
 impl SharedEnv {
     pub(crate) fn get(other: &mut bun_dotenv::Loader) -> &'static bun_dotenv::Map {
         // SAFETY: `SHARED_ENV` is only initialised from the main install thread
-        // during enqueue (single-threaded at that point in Zig too). Once
+        // during enqueue (single-threaded at that point). Once
         // `env` is `Some` it is never reassigned, so the returned `&'static`
         // remains valid for the program lifetime.
         unsafe {
@@ -285,7 +280,7 @@ impl SharedEnv {
     }
 }
 
-/// Zig: `Repository.Hosts` (a `ComptimeStringMap`). Length-gated match beats
+/// Length-gated match beats
 /// `phf::Map` for 3 entries — phf hashes the full key + does a confirming
 /// memcmp; this rejects on a single `usize` compare for everything that isn't
 /// 6 or 9 bytes (the common case: real hostnames like `git.company.io`).
@@ -366,18 +361,15 @@ pub trait RepositoryExt: Sized {
     ) -> Result<ExtractData, Error>;
 }
 
-/// Zig: `Repository.exec` (private associated fn). Lifted to a module-level
-/// free fn because trait methods cannot be private; called only from this
-/// file's `download`/`find_commit`/`checkout`.
+/// A module-level free fn because trait methods cannot be private; called only
+/// from this file's `download`/`find_commit`/`checkout`.
 fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
-    // Zig passed `DotEnv.Map` by struct-copy (shallow). Rust's
     // `Map` is move-only; clone via `clone_with_allocator` so callers can
     // hand us a shared `&Map` (matches `PackageManagerTask` call sites).
     let mut env = bun_core::handle_oom(env.clone_with_allocator());
     let std_map = env.std_env_map()?;
 
-    // Zig used `std.process.Child.run` on both Windows and POSIX (identical
-    // arms). `bun_spawn::run` is its Rust port — POSIX argv/envp marshalling
+    // `bun_spawn::run` does POSIX argv/envp marshalling
     // + `process::sync::spawn`. On Windows it supplies the thread's
     // `MiniEventLoop` (idempotent `init_global` — same handle PackageManager
     // already published) so `spawn_process_windows` has a real `uv_loop_t*`.
@@ -491,8 +483,7 @@ impl RepositoryExt for Repository {
         string_buf: &[u8],
         dep: &Install::Dependency,
     ) -> Vec<u8> {
-        // Zig took `*Lockfile` and indexed `buffers.dependencies[dep_id]`
-        // / `string_bytes`. Callers (`parse_with_json`) hold a split `StringBuilder`
+        // Callers (`parse_with_json`) hold a split `StringBuilder`
         // borrow on `string_bytes`, so accept the two pieces directly.
         let buf = string_buf;
         let repo_name = repository.repo;
@@ -690,8 +681,9 @@ impl RepositoryExt for Repository {
         bun_analytics::features::git_dependencies
             .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         // Per-field accessor — retags only `folder_name_buf`, leaving any live
-        // shared borrow of `final_path_buf`/`ssh_path_buf` (the `url` argument,
-        // per PackageManagerTask.zig:179,206) valid under Stacked Borrows.
+        // shared borrow of `final_path_buf`/`ssh_path_buf` (the `url` argument
+        // handed over by `try_https`/`try_ssh` callers) valid under Stacked
+        // Borrows.
         let folder_name_buf = TlBufs::folder_name_buf();
         let folder_name = {
             use std::io::Write;
@@ -826,8 +818,7 @@ impl RepositoryExt for Repository {
             }
         };
 
-        // Zig returned a (possibly interior) slice into `exec`'s allocation; here the
-        // trimmed bytes are copied so the return value owns its storage.
+        // The trimmed bytes are copied so the return value owns its storage.
         Ok(strings::trim(&out, b" \t\r\n").to_vec())
     }
 
@@ -945,7 +936,7 @@ impl RepositoryExt for Repository {
                         if git_tag.write_all(resolved).is_err() {
                             let _ = dir.delete_file_z(bun_core::zstr!(".bun-tag"));
                         }
-                        let _ = git_tag.close(); // close error is non-actionable (Zig parity: discarded)
+                        let _ = git_tag.close(); // close error is non-actionable
                     }
                 }
 
@@ -993,18 +984,17 @@ impl RepositoryExt for Repository {
                         err.name()
                     ),
                 );
-                let _ = json_file.close(); // close error is non-actionable (Zig parity: discarded)
+                let _ = json_file.close(); // close error is non-actionable
                 package_dir.close();
                 return Err(err!("InstallFailed"));
             }
         };
 
-        // Zig defers `json_file.close()` / `package_dir.close()` across the
-        // `try ...append(json_path)` below. `json_path` lives in the thread-local
+        // `json_path` lives in the thread-local
         // `json_path_buf` (not in `json_file`), and `json_buf` is an owned alloc,
         // so both fds are dead here — close before the fallible append so the
         // `?`-propagation path doesn't leak them.
-        let _ = json_file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = json_file.close(); // close error is non-actionable
         package_dir.close();
 
         let ret_json_path = bun_resolver::fs::FileSystem::instance()
@@ -1110,5 +1100,3 @@ impl<'a> fmt::Display for Formatter<'a> {
         Ok(())
     }
 }
-
-// ported from: src/install/repository.zig

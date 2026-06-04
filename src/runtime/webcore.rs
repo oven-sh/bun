@@ -2,9 +2,6 @@
 
 use core::ptr::NonNull;
 
-// NOTE(port): the Zig `comptime { _ = @import("./webcore/prompt.zig"); _ = @import("./webcore/TextEncoder.zig"); }`
-// force-reference block is dropped — Rust links what's `pub`. (See PORTING.md §Don't translate.)
-
 // ─── submodules under ./webcore/ ─────────────────────────────────────────────
 // `#[path]` is relative to the dir containing this file (`src/runtime/`).
 
@@ -33,7 +30,7 @@ pub mod text_encoder;
 #[path = "webcore/TextEncoderStreamEncoder.rs"]
 pub mod text_encoder_stream_encoder;
 
-// ─── flat re-exports (mirror Zig `pub const X = @import(...)`) ───────────────
+// ─── flat re-exports ─────────────────────────────────────────────────────────
 pub use bun_jsc::js_error_code::DOMExceptionCode;
 pub use bun_jsc::web_worker;
 pub use s3_stat::S3Stat;
@@ -114,13 +111,9 @@ pub mod node_types {
 pub use crate::jsc::AbortSignal;
 
 // ─── AutoFlusher (webcore tier) ──────────────────────────────────────────────
-// `bun.jsc.WebCore.AutoFlusher` — port of `src/event_loop/AutoFlusher.zig`.
-//
 // The lower-tier `bun_event_loop::auto_flusher` takes a `&mut DeferredTaskQueue`
-// directly to avoid an event_loop→jsc upward dependency. This tier restores the
-// original Zig signature (`vm: *jsc.VirtualMachine`) and reaches the queue via
-// `vm.event_loop().deferred_tasks`, so call sites in `FileSink` /
-// `HTTPServerWritable` keep their Zig shape.
+// directly to avoid an event_loop→jsc upward dependency. This tier takes a
+// `&VirtualMachine` and reaches the queue via `vm.event_loop().deferred_tasks`.
 pub use bun_event_loop::auto_flusher;
 use bun_event_loop::deferred_task_queue::DeferredRepeatingTask;
 
@@ -131,8 +124,7 @@ pub struct AutoFlusher {
     pub registered: core::cell::Cell<bool>,
 }
 
-/// Zig duck-types on `this.auto_flusher` + `Type.onAutoFlush`; modeled as a
-/// trait. Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
+/// Implemented below for `FileSink` and `HTTPServerWritable<_, _>`.
 pub trait HasAutoFlusher: Sized {
     fn auto_flusher(&self) -> &AutoFlusher;
     /// `Type.onAutoFlush` — `DeferredRepeatingTask` ABI after `@ptrCast`
@@ -160,8 +152,7 @@ impl AutoFlusher {
 
     #[inline]
     fn erased_cb<T: HasAutoFlusher>() -> DeferredRepeatingTask {
-        // Zig `@ptrCast(&Type.onAutoFlush)` — modeled as a monomorphic
-        // `extern "C"` trampoline (no fn-ptr transmute across ABIs).
+        // A monomorphic `extern "C"` trampoline (no fn-ptr transmute across ABIs).
         unsafe extern "C" fn trampoline<T: HasAutoFlusher>(ctx: *mut core::ffi::c_void) -> bool {
             // SAFETY: `ctx` is exactly the `*mut T` registered via
             // `erased_ctx` below; `DeferredTaskQueue::run` feeds it back
@@ -199,9 +190,8 @@ impl AutoFlusher {
         vm: &jsc::VirtualMachine,
     ) {
         debug_assert!(this.auto_flusher().registered.get());
-        // Note: Zig `bun.assert(expr)` evaluates `expr` unconditionally;
-        // only the *check* is debug-gated. Do not wrap the side-effecting call
-        // in `debug_assert!`.
+        // Do not wrap the side-effecting call in `debug_assert!`;
+        // only the *check* is debug-gated.
         let removed = vm
             .event_loop_ref()
             .deferred_tasks
@@ -317,18 +307,14 @@ pub use byte_blob_loader::ByteBlobLoader;
 pub use byte_stream::ByteStream;
 
 // TODO: make this pool per-JSGlobalObject so recycled buffers are not shared
-// across realms (process-global behavior carried over from Zig, which has the
-// same TODO).
-// Zig: `bun.ObjectPool(bun.ByteList, null, true, 8)` — `null` init goes on
-// `ObjectPoolType` (already impl'd for `Vec<u8>` in bun_collections), `true`
-// is THREADSAFE, `8` is MAX_COUNT. `object_pool!` wires the per-monomorphization
+// across realms (the pool is process-global).
+// `object_pool!` wires the per-monomorphization
 // thread-local storage; the bare `ObjectPool<Vec<u8>, true, 8>` alias used to
 // default to `UnwiredStorage` and panic on first `get_if_exists()`/`full()`
 // from `streams::HTTPSServerWritable::send`.
 bun_collections::object_pool!(pub ByteListPool: Vec<u8>, threadsafe, 8);
 
 // ─── compiling submodules ────────────────────────────────────────────────────
-// Zig: `pub const FetchHeaders = @import("../jsc/FetchHeaders.zig").FetchHeaders;` (opaque {}).
 // Re-export the crate-local jsc shim's opaque type until `bun_jsc::fetch_headers`
 // is green; the shim's `#[repr(transparent)] struct FetchHeaders(usize)` matches the
 // opaque-handle ABI used by the `WebCore__FetchHeaders__*` extern fns.
@@ -398,8 +384,7 @@ pub mod s3 {
         StorageClass,
     };
 
-    // Note: `client` is the umbrella re-export hub (matches Zig's `s3/client.zig`
-    // which `pub const X = @import(...)`-s every sibling). It pulls in `simple_request`
+    // Note: `client` is the umbrella re-export hub. It pulls in `simple_request`
     // / `download_stream` / `list_objects` / `multipart` transitively.
     pub use super::__s3_client as client;
     pub use super::__s3_credentials_jsc as credentials_jsc;
@@ -413,19 +398,10 @@ pub mod s3 {
 #[path = "webcore/streams.rs"]
 pub mod streams;
 
-// NOTE(port): the Zig `comptime { WebSocketClient.exportAll(); ... }` block forces export of
-// `extern "C"` symbols from `src/http/websocket_http_client.zig`. In Rust, those become
-// `#[unsafe(no_mangle)] pub extern "C" fn` in `bun_http::websocket_http_client` and need no
-// force-reference here. Dropped per PORTING.md §Don't translate.
-
 pub enum PathOrFileDescriptor {
-    // Note: `jsc.ZigString.Slice` → `bun_core::zig_string::Slice` (= `ZigStringSlice`).
     Path(bun_core::zig_string::Slice),
     Fd(bun_sys::Fd),
 }
-
-// NOTE(port): Zig `deinit` only called `this.path.deinit()` for the `.path` arm. In Rust the
-// variant payload's `Drop` runs automatically, so no explicit `impl Drop` is needed.
 
 #[derive(Default)]
 pub struct Pipe {
@@ -442,10 +418,8 @@ impl Pipe {
 
 pub type Function = fn(ctx: NonNull<()>, stream: streams::Result);
 
-// Zig `Wrap(comptime Type, comptime function)` takes a *comptime fn pointer* as a
-// generic argument, which stable Rust cannot express. Reshaped: callers implement `PipeHandler`
-// for their type instead of passing a free fn (`Wrap(Foo, Foo.onPipe).init(self)` →
-// `Wrap::<Foo>::init(self)`).
+// Callers implement `PipeHandler` for their type instead of passing a free fn
+// (`Wrap::<Foo>::init(self)`).
 pub(crate) trait PipeHandler {
     fn on_pipe(&mut self, stream: streams::Result);
 }
@@ -483,5 +457,3 @@ pub enum Lifetime {
     /// When reading from a fifo like STDIN/STDERR
     Temporary,
 }
-
-// ported from: src/runtime/webcore.zig

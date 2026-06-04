@@ -1,4 +1,3 @@
-//  zig translate-c -I${VCPKG_ROOT}/installed/x64-windows/include/  ${VCPKG_ROOT}/current/installed/x64-windows/include/zlib.h -target x86_64-windows-msvc -lc > src/zlib_sys/win32.zig
 #![allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 
 use core::ffi::{c_char, c_int, c_long, c_uint, c_ulong, c_ushort, c_void};
@@ -310,4 +309,3 @@ pub unsafe fn inflate_back_init(
 
 pub type gz_header_s = struct_gz_header_s;
 
-// ported from: src/zlib_sys/win32.zig

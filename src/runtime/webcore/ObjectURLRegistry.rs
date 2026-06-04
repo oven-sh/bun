@@ -9,9 +9,7 @@ use bun_threading::Guarded;
 use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
 
-// Zig had separate `lock: bun.Mutex` and `map: AutoHashMap` fields with manual
-// lock()/unlock() around every access. In Rust the map is wrapped in a
-// `Guarded` (mutex + value).
+// The map is wrapped in a `Guarded` (mutex + value).
 //
 // Key is `[u8; 16]` (the UUID bytes) rather than `UUID` directly because
 // upstream `bun_jsc::UUID` does not yet derive `Hash + Eq`; using the raw
@@ -49,9 +47,8 @@ impl Entry {
 
 impl Drop for Entry {
     fn drop(&mut self) {
-        // Zig `Entry.deinit`: `this.blob.deinit(); bun.destroy(this);`.
         self.blob.deinit();
-        // `bun.destroy(this)` ↔ `Box<Entry>` drop.
+        // The allocation itself is freed by the `Box<Entry>` drop.
     }
 }
 
@@ -90,7 +87,7 @@ impl ObjectURLRegistry {
         let Some(uuid) = uuid_from_pathname(pathname) else {
             return;
         };
-        // Box<Entry> dropped here (was `entry.value.deinit()` in Zig)
+        // Box<Entry> dropped here
         let _ = self.map.lock().remove(&uuid.bytes);
     }
 
@@ -141,7 +138,7 @@ pub(crate) fn bun_revoke_object_url(
         );
     }
     // `to_bun_string` returns a +1 ref; `bun_core::String` is `Copy` (no Drop),
-    // so wrap in `OwnedString` for scope-exit `deref()` — Zig's `defer str.deref()`.
+    // so wrap in `OwnedString` for scope-exit `deref()`.
     let str = bun_core::OwnedString::new(
         arguments.ptr[0]
             .to_bun_string(global_object)
@@ -152,7 +149,7 @@ pub(crate) fn bun_revoke_object_url(
     }
 
     let slice = str.to_utf8_without_ref();
-    // `defer slice.deinit()` → ZigStringSlice Drop
+    // released by ZigStringSlice Drop
 
     let sliced = slice.slice();
     if sliced.len() < b"blob:".len() + UUID::STRING_LENGTH {
@@ -176,8 +173,7 @@ pub(crate) fn js_function_resolve_object_url(
         return Ok(JSValue::UNDEFINED);
     }
     // `to_bun_string` returns a +1 ref; wrap in `OwnedString` so every exit
-    // path (exception, non-blob prefix, success) releases it — Zig's
-    // `defer str.deref()`.
+    // path (exception, non-blob prefix, success) releases it.
     let str = bun_core::OwnedString::new(arguments.ptr[0].to_bun_string(global_object)?);
 
     if global_object.has_exception() {
@@ -201,5 +197,3 @@ pub(crate) const SPECIFIER_LEN: usize = b"blob:".len() + UUID::STRING_LENGTH;
 pub(crate) fn is_blob_url(url: &[u8]) -> bool {
     url.len() >= SPECIFIER_LEN && strings::has_prefix_comptime(url, b"blob:")
 }
-
-// ported from: src/runtime/webcore/ObjectURLRegistry.zig

@@ -132,9 +132,8 @@ where
 }
 
 /// Field reflection for `Diff<T>` so [`JSObject::create_null_proto`] can
-/// marshal it. Mirrors Zig's `inline for` over `@typeInfo(Diff(T))`:
-/// `kind` is a fieldless enum → `jsNumber(@intFromEnum)`; `value` routes
-/// through `JSValue::from_any` per `T`.
+/// marshal it: `kind` is a fieldless enum marshalled as its discriminant;
+/// `value` routes through `JSValue::from_any` per `T`.
 impl<T: FromAny + Copy> PojoFields for Diff<T> {
     const FIELD_COUNT: usize = 2;
     fn put_fields(
@@ -161,11 +160,9 @@ fn map_diff_error(global: &JSGlobalObject, err: MyersDiff::Error) -> JsError {
 }
 
 // Ensure `DiffKind`'s discriminants match the JS-side `DiffType` enum
-// (Insert=0, Delete=1, Equal=2). Zig's `@intFromEnum` uses declaration order.
+// (Insert=0, Delete=1, Equal=2).
 const _: () = {
     assert!(DiffKind::Insert as i32 == 0);
     assert!(DiffKind::Delete as i32 == 1);
     assert!(DiffKind::Equal as i32 == 2);
 };
-
-// ported from: src/runtime/node/node_assert.zig

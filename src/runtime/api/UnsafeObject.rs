@@ -83,9 +83,8 @@ fn memory_footprint(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JS
 
 #[bun_jsc::host_fn]
 fn dump_mimalloc(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-    // Zig: `globalObject.bunVM().arena.dumpStats()` — `MimallocArena.dumpStats`
-    // ignores its receiver and prints the process-wide mimalloc stats to stderr,
-    // so call `mi_stats_print_out` directly here.
+    // Print the process-wide mimalloc stats to stderr via
+    // `mi_stats_print_out` directly.
     extern "C" fn dump(text: *const core::ffi::c_char, _arg: *mut core::ffi::c_void) {
         // SAFETY: mimalloc passes a valid NUL-terminated string.
         let text = unsafe { core::ffi::CStr::from_ptr(text) };
@@ -99,5 +98,3 @@ fn dump_mimalloc(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSVal
     }
     Ok(JSValue::UNDEFINED)
 }
-
-// ported from: src/runtime/api/UnsafeObject.zig

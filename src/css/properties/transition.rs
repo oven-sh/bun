@@ -33,13 +33,11 @@ pub struct Transition {
 
 impl Transition {
     pub(crate) fn eql(&self, rhs: &Self) -> bool {
-        // Zig: css.implementEql(@This(), lhs, rhs) — field-by-field reflection.
         self == rhs
     }
 
     pub(crate) fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-        // Zig: css.implementDeepClone(@This(), this, arena) — field-by-field
-        // reflection. All four fields deep-clone via `#[derive(Clone)]` with no
+        // All four fields deep-clone via `#[derive(Clone)]` with no
         // arena indirections (any heap-carrying variants of `PropertyId`/
         // `EasingFunction` clone deeply onto the global heap), so Clone is exact.
         self.clone()
@@ -120,11 +118,9 @@ pub struct TransitionHandler {
     pub has_any: bool,
 }
 
-// Zig's `property`/`maybeFlush` took `comptime prop: []const u8` and used
-// `@field(this, prop)` + `val: anytype` for comptime field dispatch. Rust has no
-// `@field`, and passing both `&mut self` and `&mut self.<field>` to a generic fn
-// trips borrowck (because `flush` needs `&mut self`). Macros expand at the call
-// site exactly like the Zig comptime dispatch did.
+// Passing both `&mut self` and `&mut self.<field>` to a generic fn trips
+// borrowck (because `flush` needs `&mut self`), so macros expand the field
+// dispatch at the call site instead.
 macro_rules! handler_maybe_flush {
     ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr) => {{
         // If two vendor prefixes for the same property have different
@@ -483,12 +479,8 @@ mod transition_handler_body {
             };
             let prefix_to_iter = property_id.prefix().or_none();
             // Expand vendor prefixes into multiple transitions.
-            // Zig used `inline for (VendorPrefix.FIELDS)` over packed-struct
-            // bool fields; with bitflags, iterate the individual flag bits.
-            // PERF(port): was comptime-unrolled inline-for — profile if it shows up on a hot path.
-            // Zig moved `transition` into the first matching iteration and
-            // deep-cloned for the rest; cloning for every iteration is
-            // observably identical (one extra clone of a small value).
+            // Cloning for every iteration costs at most one extra clone of a
+            // small value.
             for &prefix_flag in VendorPrefix::FIELDS {
                 if prefix_to_iter.contains(prefix_flag) {
                     let mut t = transition.deep_clone(arena);
@@ -824,5 +816,4 @@ mod transition_handler_body {
         )
     }
 
-    // ported from: src/css/properties/transition.zig
 } // mod transition_handler_body

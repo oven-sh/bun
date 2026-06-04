@@ -61,7 +61,6 @@ pub(crate) fn extracted_split_new_lines_fast_path_strings_only(
     let str = OwnedString::new(value.to_bun_string(global)?);
 
     match str.encoding() {
-        // `inline .utf16, .latin1 => |encoding| split(encoding, ...)` — runtime → comptime dispatch
         EncodingNonAscii::Utf16 => split(EncodingNonAscii::Utf16, global, &str),
         EncodingNonAscii::Latin1 => split(EncodingNonAscii::Latin1, global, &str),
         EncodingNonAscii::Utf8 => {
@@ -74,7 +73,7 @@ pub(crate) fn extracted_split_new_lines_fast_path_strings_only(
     }
 }
 
-// PERF(port): `encoding` was a comptime parameter (Zig); demoted to runtime
+// PERF: `encoding` is a runtime parameter
 // because `EncodingNonAscii` doesn't derive `ConstParamTy` (would need nightly
 // `adt_const_params`). The hot u8/u16 split is still type-dispatched below.
 fn split(
@@ -82,19 +81,14 @@ fn split(
     global: &JSGlobalObject,
     str: &BunString,
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback (std.heap.stackFallback(1024)).
-    // Allocator param dropped (non-AST crate uses global mimalloc).
-
-    // `defer { for (lines.items) |out| out.deref(); lines.deinit(alloc); }`
-    // — `Vec<OwnedString>`'s Drop runs `deref()` on every element (covers both
+    // `Vec<OwnedString>`'s Drop runs `deref()` on every element (covers both
     // the success path after `to_js_array` and any `?` early-return). Raw
     // `bun_core::String` is `Copy` and has NO Drop, so a `Vec<BunString>` would
-    // leak; `OwnedString` is the RAII wrapper that mirrors Zig's defer loop.
+    // leak; `OwnedString` is the RAII wrapper that releases each ref.
     let mut lines: Vec<OwnedString> = Vec::new();
 
-    // Zig: `const Char = switch (encoding) { .utf8, .latin1 => u8, .utf16 => u16 };`
-    // A comptime enum cannot select an associated type in
-    // stable Rust; split into two arms over the buffer's element type.
+    // Split into two arms over the buffer's element type (u8 for
+    // utf8/latin1, u16 for utf16).
     match encoding {
         EncodingNonAscii::Utf16 => {
             let buffer: &[u16] = str.utf16();
@@ -174,9 +168,6 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     let content = frame.argument(0);
     validators::validate_string(global, content, "content")?;
 
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator).
-    // Non-AST crate: arena dropped; Map/Loader use global allocator and Drop.
-
     // `validate_string` above guarantees `content.is_string()`, so
     // `as_string()` returns a non-null live JSString*. `JSString` is an
     // `opaque_ffi!` ZST handle; `opaque_ref` is the centralised deref proof.
@@ -197,5 +188,3 @@ pub fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     }
     Ok(obj)
 }
-
-// ported from: src/runtime/node/node_util_binding.zig

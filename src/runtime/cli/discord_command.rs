@@ -11,5 +11,3 @@ impl DiscordCommand {
         Ok(())
     }
 }
-
-// ported from: src/cli/discord_command.zig

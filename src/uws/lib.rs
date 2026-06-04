@@ -56,7 +56,6 @@ pub enum ResponseKind {
 }
 
 impl ResponseKind {
-    // PERF(port): was comptime monomorphization — profile if hot.
     pub const fn from(ssl: bool, http3: bool) -> ResponseKind {
         if http3 {
             ResponseKind::H3
@@ -90,8 +89,8 @@ pub use bun_uws_sys::{
 };
 
 // Re-export the `_sys` definitions so higher tiers see one type. `to_js`
-// (Zig: `@import("../runtime/socket/uws_jsc.zig").createBunSocketErrorToJS` and
-// `verifyErrorToJS`) live as extension traits in the *_jsc crate per PORTING.md.
+// (`createBunSocketErrorToJS` / `verifyErrorToJS`) live as extension traits
+// in the *_jsc crate.
 pub use bun_uws_sys::{Opcode, SendStatus, create_bun_socket_error_t, us_bun_verify_error_t};
 
 /// Owned socket-address shape (boxed IP). Distinct from the sys type by
@@ -145,7 +144,6 @@ pub fn get_default_ciphers() -> &'static ZStr {
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MOVE-IN: ssl_wrapper (MOVE_DOWN bun_runtime::socket::ssl_wrapper → bun_uws)
-// Ground truth: src/runtime/socket/ssl_wrapper.zig
 // Requested by: http_jsc
 // ═══════════════════════════════════════════════════════════════════════════
 // `bun_boringssl_sys` is currently empty (bindgen not yet run), so every fn
@@ -224,8 +222,8 @@ pub mod ssl_wrapper {
         pub renegotiation_window_start: Option<std::time::Instant>,
     }
 
-    /// CamelCase alias for callers that imported the Zig name through the
-    /// snake_case→CamelCase rewriter (e.g. `http_jsc`).
+    /// CamelCase alias for callers that use the alternate spelling
+    /// (e.g. `http_jsc`).
     pub type SslWrapper<T> = SSLWrapper<T>;
 
     /// `Cell`-backed bitfield so the R-2 noalias-laundered self-backref (see
@@ -239,7 +237,7 @@ pub mod ssl_wrapper {
     #[derive(Default)]
     pub struct Flags(core::cell::Cell<u8>);
 
-    // packed struct(u8) layout (Zig packs LSB-first):
+    // Bit layout (LSB-first):
     //   bits 0-1: handshake_state (u2)
     //   bit  2:   received_ssl_shutdown
     //   bit  3:   sent_ssl_shutdown
@@ -269,9 +267,8 @@ pub mod ssl_wrapper {
         #[inline]
         pub fn handshake_state(&self) -> HandshakeState {
             // bits 0-1 are always written via set_handshake_state with a valid
-            // discriminant in range 0..=2; the 4th bit-state traps (matches
-            // Zig's safety-checked `@enumFromInt`) rather than silently
-            // folding bitfield corruption to a valid variant.
+            // discriminant in range 0..=2; the 4th bit-state traps rather than
+            // silently folding bitfield corruption to a valid variant.
             match self.bits() & Self::HANDSHAKE_MASK {
                 0 => HandshakeState::HandshakePending,
                 1 => HandshakeState::HandshakeCompleted,
@@ -494,7 +491,7 @@ pub mod ssl_wrapper {
             })
         }
 
-        /// Tier-neutral form of Zig `init(ssl_options: jsc.API.ServerConfig.SSLConfig, ...)`.
+        /// Tier-neutral constructor.
         /// Higher-tier callers convert their `SSLConfig` via `.as_usockets()` and pass the
         /// resulting `BunSocketContextOptions` here, so this crate stays free of the
         /// `jsc`/`http_types` dependency. The original `SSLConfig`-taking `init` lives as
@@ -1113,7 +1110,7 @@ pub mod ssl_wrapper {
             // always handle the handshake first
             if Self::r(this).update_handshake_state() {
                 // shared stack buffer for reading and writing
-                // PERF(port): 64KiB on-stack array — was Zig stack array; verify Rust stack-size headroom.
+                // PERF: 64KiB on-stack array — verify stack-size headroom.
                 let mut buffer = [0u8; BUFFER_SIZE];
                 // drain the input BIO first
                 Self::r(this).handle_writing(&mut buffer);
@@ -1151,12 +1148,11 @@ pub mod ssl_wrapper {
         /// CTX. Returns null if root loading fails (treated as "no roots").
         // safe: no args; idempotent lazy init reading a process global — no preconditions.
         safe fn us_get_shared_default_ca_store() -> *mut boring_sys::X509_STORE;
-        /// Zig `BoringSSL.SSL.getVerifyError` — implemented in uSockets C; reads
+        /// Implemented in uSockets C; reads
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
     }
 
-    // ported from: src/runtime/socket/ssl_wrapper.zig
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -1191,7 +1187,7 @@ pub trait InternalLoopDataExt {
 }
 
 impl InternalLoopDataExt for InternalLoopData {
-    /// Zig: `setParentEventLoop(this, parent: jsc.EventLoopHandle)`. Tag 1 = JS
+    /// Tag 1 = JS
     /// event loop, tag 2 = mini event loop. Generic over the handle so this
     /// crate stays free of the `jsc` dependency.
     #[inline]
@@ -1200,7 +1196,7 @@ impl InternalLoopDataExt for InternalLoopData {
         self.set_parent_raw(tag, ptr);
     }
 
-    /// Zig: `getParent() jsc.EventLoopHandle`. Low tier returns the (tag, ptr)
+    /// Low tier returns the (tag, ptr)
     /// pair; the typed enum wrapper lives in the higher-tier crate that can
     /// name `jsc::EventLoop` / `jsc::MiniEventLoop`.
     #[inline]
@@ -1232,7 +1228,7 @@ pub mod SocketContext {
     /// (callers in higher tiers pass values to `_sys` constructors directly).
     pub use bun_uws_sys::BunSocketContextOptions;
 }
-/// Snake-case module alias for the porting tooling that lowercases Zig namespaces.
+/// Snake-case module alias.
 pub use SocketContext as socket_context;
 
 /// C-name alias for `SocketContext::BunSocketContextOptions` — what
@@ -1245,7 +1241,7 @@ pub type us_bun_socket_context_options_t = SocketContext::BunSocketContextOption
 // ═══════════════════════════════════════════════════════════════════════════
 
 /// Re-exported from `bun_uws_sys` so dispatch tables in both crates agree on
-/// one `#[repr(u8)]` enum. Source of truth: `src/uws_sys/SocketKind.zig`.
+/// one `#[repr(u8)]` enum.
 pub use bun_uws_sys::SocketKind;
 
 /// Alias used by some callers (`websocket_client`, `sql_jsc`) that named
@@ -1261,8 +1257,8 @@ pub type CloseKind = CloseCode;
 // ═══════════════════════════════════════════════════════════════════════════
 // Socket handlers (NewSocketHandler / SocketHandler / AnySocket)
 // ═══════════════════════════════════════════════════════════════════════════
-// Re-exported from `bun_uws_sys::socket` — that is the ONE canonical port of
-// `socket.zig`. Do NOT add a parallel `InternalSocket` / `NewSocketHandler`
+// Re-exported from `bun_uws_sys::socket` — that is the ONE canonical
+// definition. Do NOT add a parallel `InternalSocket` / `NewSocketHandler`
 // here again; an earlier "thin placeholder" that grew full bodies has been
 // deleted.
 pub use bun_uws_sys::socket::{
@@ -1342,5 +1338,3 @@ pub type Response<const SSL: bool> = bun_uws_sys::response::Response<SSL>;
 pub use bun_uws_sys::AnyResponse;
 
 pub use bun_uws_sys::response::WriteResult;
-
-// ported from: src/uws/uws.zig

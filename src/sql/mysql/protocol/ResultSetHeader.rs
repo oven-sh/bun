@@ -16,7 +16,6 @@ impl ResultSetHeader {
         Ok(())
     }
 
-    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub fn decode<Context: ReaderContext>(
         &mut self,
         context: Context,
@@ -24,5 +23,3 @@ impl ResultSetHeader {
         self.decode_internal(NewReader { wrapped: context })
     }
 }
-
-// ported from: src/sql/mysql/protocol/ResultSetHeader.zig

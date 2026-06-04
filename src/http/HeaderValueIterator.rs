@@ -10,7 +10,6 @@ pub struct HeaderValueIterator<'a> {
 impl<'a> HeaderValueIterator<'a> {
     pub fn init(input: &'a [u8]) -> HeaderValueIterator<'a> {
         HeaderValueIterator {
-            // std.mem.tokenizeScalar(u8, std.mem.trim(u8, input, " \t"), ',')
             remaining: strings::trim(input, b" \t"),
         }
     }
@@ -39,5 +38,3 @@ impl<'a> HeaderValueIterator<'a> {
         Some(slice)
     }
 }
-
-// ported from: src/http/HeaderValueIterator.zig

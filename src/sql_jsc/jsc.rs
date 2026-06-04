@@ -83,8 +83,7 @@ pub use bun_jsc::system_error::verify_error_to_js;
 // `bun_runtime::socket::uws_jsc::create_bun_socket_error_to_js`, but importing
 // it would cycle (`bun_runtime` depends on this crate). The body only needs
 // `bun_uws` + `bun_boringssl_sys` + `bun_jsc` (all lower-tier), so it is hosted
-// here for the SQL connection `createInstance` paths. Matches
-// `src/runtime/socket/uws_jsc.zig`.
+// here for the SQL connection `createInstance` paths.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `BoringSSL.ERR_toJS` — formats the packed error code into a JS Error with
@@ -262,8 +261,8 @@ fn hooks() -> &'static SqlRuntimeHooks {
 }
 
 /// Per-VM SQL state — the concrete crate::mysql::MySQLContext /
-/// crate::postgres::PostgresSQLContext that the Zig RareData carried as
-/// value fields. The bun_jsc::rare_data::RareData slots for these are opaque
+/// crate::postgres::PostgresSQLContext.
+/// The bun_jsc::rare_data::RareData slots for these are opaque
 /// (cycle break: bun_jsc cannot name bun_sql_jsc types), so the storage lives
 /// in bun_runtime::jsc_hooks::RuntimeState.sql_rare and is reached via
 /// [VirtualMachineSqlExt::sql_state].
@@ -393,8 +392,7 @@ impl TimerHeap {
 
 // ──────────────────────────────────────────────────────────────────────────
 // AutoFlusher — thin VM-taking wrapper over
-// bun_jsc::event_loop::EventLoop::deferred_tasks (Zig
-// AutoFlusher.registerDeferredMicrotaskWithType).
+// bun_jsc::event_loop::EventLoop::deferred_tasks.
 // ──────────────────────────────────────────────────────────────────────────
 
 #[derive(Default, Debug)]
@@ -402,8 +400,7 @@ pub struct AutoFlusher {
     pub registered: bool,
 }
 
-/// Zig's free fns take (comptime Type: type, this: *Type) and duck-type on
-/// this.auto_flusher + Type.onAutoFlush. SQL connection types implement this.
+/// SQL connection types implement this to participate in deferred flushing.
 pub trait HasAutoFlush: Sized {
     fn on_auto_flush(this: *mut Self) -> bool;
 }
@@ -452,7 +449,7 @@ pub mod api {
         use super::*;
 
         /// Owning handle to a `Box<bun_runtime::socket::SSLConfig>`. `None` =
-        /// the default-constructed config (Zig: `.{}`) — callers that pass
+        /// the default-constructed config — callers that pass
         /// `tls: true` get an SSLConfig with no overrides.
         #[derive(Default)]
         pub struct SSLConfig(Option<NonNull<c_void>>);
@@ -495,9 +492,8 @@ pub mod api {
                 }
             }
 
-            /// `SSLConfig.fromJS(vm, global, value)` — VM is accepted for API
-            /// parity with the Zig signature but unused (the hook recovers it
-            /// from `global`).
+            /// `SSLConfig.fromJS(vm, global, value)` — VM is accepted but
+            /// unused (the hook recovers it from `global`).
             pub fn from_js<V>(
                 _vm: V,
                 global: &JSGlobalObject,
@@ -530,10 +526,9 @@ pub mod api {
                 }
             }
         }
-        // Zig-style PascalCase alias.
         pub use SSLConfig as SslConfig;
     }
-    /// Zig: `jsc.API.ServerConfig.SSLConfig` — PascalCase namespace alias.
+    /// PascalCase namespace alias.
     #[allow(non_snake_case)]
     pub mod ServerConfig {
         pub use super::server_config::SSLConfig;
@@ -824,7 +819,7 @@ macro_rules! put_host_functions {
 impl JSFunction {
     /// Accepts either a raw [`JSHostFn`] (C-ABI) or a safe Rust
     /// `fn(&JSGlobalObject, &CallFrame) -> JSValue` / `-> JsResult<JSValue>`
-    /// via [`IntoJSHostFn`] (Zig: `jsc.toJSHostFn(fn)`).
+    /// via [`IntoJSHostFn`].
     pub(crate) fn create<M, F: IntoJSHostFn<M>>(
         global: &JSGlobalObject,
         name: &str,
@@ -853,7 +848,7 @@ impl JSFunction {
 
 pub mod call_frame {
     use super::*;
-    /// `Node.ArgumentsSlice` — cursor over a `&[JSValue]` (CallFrame.zig:289).
+    /// Cursor over a `&[JSValue]`.
     pub(crate) struct ArgumentsSlice<'a> {
         remaining: &'a [JSValue],
         _vm: *const c_void,
@@ -862,15 +857,14 @@ pub mod call_frame {
         /// Generic over the VM handle so it accepts both the local
         /// [`VirtualMachine`] and `bun_jsc`'s (callers pass `global.bun_vm()`,
         /// which returns a raw `*mut VirtualMachineRef`). The VM is not
-        /// dereferenced — it's only carried for API parity with the Zig
-        /// `Node.ArgumentsSlice` shape — so it's accepted by-value and dropped.
+        /// dereferenced, so it's accepted by-value and dropped.
         pub(crate) fn init<V>(_vm: V, slice: &'a [JSValue]) -> Self {
             Self {
                 remaining: slice,
                 _vm: core::ptr::null(),
             }
         }
-        /// Zig `nextEat` (CallFrame.zig) — return the head **and** advance.
+        /// Return the head **and** advance.
         #[inline]
         pub(crate) fn next_eat(&mut self) -> Option<JSValue> {
             let (first, rest) = self.remaining.split_first()?;

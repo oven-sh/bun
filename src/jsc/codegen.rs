@@ -3,14 +3,12 @@ use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 // These fn pointers carry no caller-side preconditions: `JSValue` is a value
 // type (`#[repr(transparent)]` over an encoded i64), and the C++ codegen'd
 // getters/setters they point to only read/write a JS field — so the fn-pointer
-// type is safe-to-call (Zig spec: plain `fn (JSValue) callconv(.c) JSValue`).
+// type is safe-to-call.
 pub(crate) type CallbackGetterFn = extern "C" fn(JSValue) -> JSValue;
 pub(crate) type CallbackSetterFn = extern "C" fn(JSValue, JSValue);
 
-// Zig: `fn CallbackWrapper(comptime Getter, comptime Setter) type { return struct { ... } }`
 // Rust const generics cannot carry function pointers, so the getter/setter are stored as
 // runtime fields instead of monomorphized type parameters.
-// PERF(port): was comptime monomorphization (Getter/Setter were comptime fn ptrs) — profile if hot.
 #[derive(Copy, Clone)]
 pub struct CallbackWrapper {
     get_fn: CallbackGetterFn,
@@ -54,9 +52,8 @@ impl CallbackWrapper {
         global_object: &JSGlobalObject,
         args: &[JSValue],
     ) -> JsResult<Option<JSValue>> {
-        // codegen.zig's `callback.call(globalObject, args)` is dead Zig (never
-        // instantiated, predates the 3-arg JSValue.call signature); `call_with_global_this`
-        // is the intended semantics. The JS exception is propagated rather than swallowed.
+        // `call_with_global_this` is the intended semantics here. The JS
+        // exception is propagated rather than swallowed.
         if let Some(callback) = self.get() {
             return Ok(Some(callback.call_with_global_this(global_object, args)?));
         }
@@ -64,4 +61,3 @@ impl CallbackWrapper {
     }
 }
 
-// ported from: src/jsc/codegen.zig

@@ -229,7 +229,6 @@ pub fn decode(
             },
         );
     }
-    // PERF(port): was uninitialized `allocator.alloc(u8, n)` — zero-init here; profile if hot.
     let mut out = vec![0u8; w as usize * ht as usize * 4];
     // SAFETY: `h` is live; src ptr/len come from a valid `&[u8]`; dst is the
     // exclusive `out` buffer sized `w*ht*4` and the explicit pitch + cropping
@@ -369,5 +368,3 @@ pub(crate) fn encode(
         free: encoded_wrap_free!(tj3Free),
     })
 }
-
-// ported from: src/runtime/image/codec_jpeg.zig

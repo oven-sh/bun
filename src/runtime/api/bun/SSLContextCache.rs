@@ -277,5 +277,3 @@ pub mod c {
         pub safe fn us_ssl_ctx_cache_ex_idx() -> c_int;
     }
 }
-
-// ported from: src/runtime/api/bun/SSLContextCache.zig

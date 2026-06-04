@@ -129,12 +129,10 @@ impl GarbageCollectionController {
             }
         }
 
-        // In the Zig spec `vm.transpiler` is fully constructed
-        // before `JSGlobalObject.create` → `ensureWaker` → this `init`. The
-        // Rust port defers `Transpiler::init` to the high-tier
-        // `init_runtime_state` hook (which runs *after* `ensure_waker`), so
-        // `vm.transpiler.env` is still the zeroed null ptr here on the main
-        // boot path. Fall back to defaults when null — these are debug/tuning
+        // `Transpiler::init` is deferred to the high-tier
+        // `init_runtime_state` hook (which runs *after* `ensure_waker` →
+        // this `init`), so `vm.transpiler.env` is still the zeroed null ptr
+        // here on the main boot path. Fall back to defaults when null — these are debug/tuning
         // knobs (BUN_GC_TIMER_INTERVAL / BUN_GC_TIMER_DISABLE /
         // BUN_GC_RUNS_UNTIL_SKIP_RELEASE_ACCESS) and the dot_env loader would
         // just be reading process env anyway.
@@ -187,7 +185,7 @@ impl GarbageCollectionController {
         VirtualMachine::get().as_mut()
     }
 
-    /// Explicit teardown (Zig `deinit`). Idempotent — `Drop` forwards here.
+    /// Explicit teardown. Idempotent — `Drop` forwards here.
     /// Kept as an inherent method because callers (web_worker, VM exit path)
     /// need to release the uws timers before the owning VM storage is freed.
     pub fn deinit(&mut self) {
@@ -214,7 +212,6 @@ impl GarbageCollectionController {
     //
     // When the heap size is increasing, we always switch to fast mode
     // When the heap size has been the same or less for 30 seconds, we switch to slow mode
-    // PERF(port): was comptime enum-literal monomorphization — profile if hot.
     pub fn update_gc_repeat_timer(&mut self, setting: GcRepeatSetting) {
         if setting == GcRepeatSetting::Fast && !self.gc_repeating_timer_fast {
             self.gc_repeating_timer_fast = true;
@@ -326,5 +323,3 @@ pub enum GCTimerState {
     Scheduled,
     RunOnNextTick,
 }
-
-// ported from: src/jsc/GarbageCollectionController.zig

@@ -11,5 +11,3 @@ pub use int_types::short as PostgresShort;
 pub use int_types::{Int4, Int8, Short, int4, int8, short};
 
 use super::types::int_types;
-
-// ported from: src/sql/postgres/PostgresTypes.zig

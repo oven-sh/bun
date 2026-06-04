@@ -36,8 +36,6 @@ pub struct Background {
 }
 
 impl Background {
-    // Zig `deinit` was a no-op (all allocations in CSS parser are in arena) — Drop handles it.
-
     pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         let mut color: Option<CssColor> = None;
         let mut position: Option<BackgroundPosition> = None;
@@ -597,18 +595,16 @@ pub struct BackgroundHandler {
     pub attachments: Option<SmallList<BackgroundAttachment, 1>>,
     pub origins: Option<SmallList<BackgroundOrigin, 1>>,
     pub clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)>,
-    // TODO(perf): arena Vec — Zig is `ArrayListUnmanaged(Property)` fed `context.arena`
-    // (CSS arena). Should be `bun_alloc::ArenaVec<'bump, Property>`; threading `'bump`
-    // through BackgroundHandler would avoid the heap alloc.
+    // TODO(perf): should be `bun_alloc::ArenaVec<'bump, Property>`; threading
+    // `'bump` through BackgroundHandler would avoid the heap alloc.
     pub decls: Vec<Property>,
     pub flushed_properties: BackgroundProperty,
     pub has_any: bool,
 }
 
-// The Zig uses comptime field-name strings + @field for `flushHelper` /
-// `initSmallListHelper` / `push`. Rust cannot index struct fields by string at runtime;
-// these helpers are expanded into small per-field macros below. A derive macro
-// could replace them.
+// Struct fields cannot be indexed by string at runtime; the `flushHelper` /
+// `initSmallListHelper` / `push` helpers are expanded into small per-field
+// macros below. A derive macro could replace them.
 
 macro_rules! init_small_list_helper {
     ($this:expr, $field:ident, $length:expr) => {{
@@ -698,8 +694,8 @@ impl BackgroundHandler {
             Property::BackgroundClip(x) => {
                 let val: &SmallList<BackgroundClip, 1> = &x.0;
                 let vendor_prefix: VendorPrefix = x.1;
-                // Reshaped for borrowck: Zig held &mut into self.clips
-                // across self.flush(). Compute the predicate first, then dispatch.
+                // Compute the predicate first, then dispatch (avoids holding
+                // &mut self.clips across self.flush()).
                 let needs_flush = if let Some((clips, vp)) = &self.clips {
                     vendor_prefix != *vp && !SmallList::eql(val, clips)
                 } else {
@@ -851,7 +847,6 @@ impl BackgroundHandler {
         let mut maybe_origins: Option<SmallList<BackgroundOrigin, 1>> = self.origins.take();
         let mut maybe_clips: Option<(SmallList<BackgroundClip, 1>, VendorPrefix)> =
             self.clips.take();
-        // Zig had `defer { ... deinit }` here — Drop handles cleanup at scope exit.
 
         if let (
             Some(color),
@@ -904,8 +899,7 @@ impl BackgroundHandler {
                 };
 
                 let mut backgrounds: SmallList<Background, 1> = SmallList::init_capacity(len);
-                // Reshaped for borrowck: Zig zipped 8 slices by value; here we
-                // index by `i` and clone each element to avoid 8 simultaneous borrows.
+                // Index by `i` and clone each element to avoid 8 simultaneous borrows.
                 for i in 0..(len as usize) {
                     backgrounds.append_assume_capacity(Background {
                         color: if i == (len as usize) - 1 {
@@ -929,21 +923,17 @@ impl BackgroundHandler {
                         },
                     });
                 }
-                // Zig: defer { clearRetainingCapacity on each list } — values were moved
-                // by-value into `backgrounds` above, so clearing prevents double-free.
-                // In Rust we cloned, so the originals will Drop normally; no explicit clear
-                // needed for correctness. Leaving as-is.
-                // PERF(port): was arena bulk-free / move-then-clear — profile if hot.
+                // The elements were cloned into `backgrounds` above, so the
+                // originals Drop normally; no explicit clear needed.
+                // PERF: profile the clones if hot.
 
                 if self.flushed_properties.is_empty() {
                     let mut fallbacks =
                         crate::small_list::get_fallbacks(&mut backgrounds, arena, &context.targets);
                     // Pop in reverse then re-reverse via a temp Vec to
-                    // preserve order while consuming the list. Shape kept from
-                    // the Zig port, where the fallback list was an arena
-                    // SmallList with no owning iterator; `fallbacks` is a plain
-                    // Vec here, so a direct `for fb in fallbacks` would also
-                    // work.
+                    // preserve order while consuming the list. `fallbacks` is
+                    // a plain Vec, so a direct `for fb in fallbacks` would
+                    // also work.
                     let mut tmp: Vec<SmallList<Background, 1>> =
                         Vec::with_capacity(fallbacks.len());
                     while let Some(fb) = fallbacks.pop() {
@@ -1005,10 +995,8 @@ impl BackgroundHandler {
                 let mut fallbacks =
                     crate::small_list::get_fallbacks(&mut images, arena, &context.targets);
                 // Pop in reverse then re-reverse via a temp Vec to preserve
-                // order while consuming the list. Shape kept from the Zig
-                // port, where the fallback list was an arena SmallList with no
-                // owning iterator; `fallbacks` is a plain Vec here, so a
-                // direct `for fb in fallbacks` would also work.
+                // order while consuming the list. `fallbacks` is a plain Vec,
+                // so a direct `for fb in fallbacks` would also work.
                 let mut tmp: Vec<SmallList<Image, 1>> = Vec::with_capacity(fallbacks.len());
                 while let Some(fb) = fallbacks.pop() {
                     tmp.push(fb);
@@ -1048,7 +1036,6 @@ impl BackgroundHandler {
                     y: y.clone(),
                 });
             }
-            // Zig: clearRetainingCapacity on xs/ys after moving values out — Drop handles it.
             push_property!(
                 self,
                 dest,
@@ -1136,7 +1123,7 @@ impl BackgroundHandler {
     }
 
     fn reset(&mut self) {
-        // Zig deinit'd each field then set to null — Drop on assignment handles both.
+        // Drop on assignment frees each field's old value.
         self.color = None;
         self.images = None;
         self.x_positions = None;
@@ -1162,8 +1149,7 @@ impl BackgroundHandler {
 
         let arena = dest.bump();
         for decl in self.decls.drain(..) {
-            // Zig was `appendSlice` (bitwise copy of arena-backed
-            // values). `Property` is not `Clone` here, so move out via drain.
+            // `Property` is not `Clone` here, so move out via drain.
             let _ = arena;
             dest.push(decl);
         }
@@ -1173,8 +1159,8 @@ impl BackgroundHandler {
     }
 }
 
-// `Background` participates in `SmallList::get_fallbacks` via the duck-typed
-// `ImageFallback` protocol (Zig dispatched on `@hasDecl(T, "getImage")`).
+// `Background` participates in `SmallList::get_fallbacks` via the
+// `ImageFallback` trait.
 impl crate::small_list::ImageFallback for Background {
     #[inline]
     fn get_image(&self) -> &Image {
@@ -1210,5 +1196,3 @@ fn is_background_property(property_id: PropertyId) -> bool {
             | PropertyId::Background
     )
 }
-
-// ported from: src/css/properties/background.zig

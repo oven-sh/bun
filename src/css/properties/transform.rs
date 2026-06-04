@@ -28,7 +28,7 @@ impl TransformList {
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // `Transform`/`TransformList` deep-clone via `#[derive(Clone)]`: payloads
         // with heap variants (`LengthPercentage`/`Length` `Calc(Box<..>)`) clone
-        // deeply onto the global heap, matching Zig's `css.implementDeepClone`.
+        // deeply onto the global heap.
         self.clone()
     }
 }
@@ -64,10 +64,7 @@ impl TransformList {
 
         // TODO: Re-enable with a better solution
         //       See: https://github.com/parcel-bundler/lightningcss/issues/288
-        // Zig's minify branch built a sub-`Printer` writing into a temp
-        // buffer then `dest.writeStr(base)` — observably identical to writing
-        // directly into `dest` while `dest.minify` is set (the original
-        // lightningcss size-comparison was already disabled upstream). Collapsed.
+        // (The original lightningcss size-comparison was already disabled upstream.)
         self.to_css_base(dest)
     }
 
@@ -240,8 +237,7 @@ impl Transform {
                         let y = NumberOrPercentage::parse(i)?;
                         Ok(Transform::Scale { x, y })
                     } else {
-                        // `NumberOrPercentage` is POD; `clone()` matches Zig's
-                        // `x.deepClone(arena)` exactly.
+                        // `NumberOrPercentage` is POD.
                         let y = x.clone();
                         Ok(Transform::Scale { x, y })
                     }
@@ -575,7 +571,7 @@ impl Transform {
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
         // All payload types deep-clone via `#[derive(Clone)]` — `Calc` variants
         // of `LengthPercentage`/`Length` are `Box`ed and clone deeply onto the
-        // global heap — matching Zig's `css.implementDeepClone`.
+        // global heap.
         self.clone()
     }
 }
@@ -744,8 +740,7 @@ impl Translate {
     }
 
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
-        // `LengthPercentage` is `Clone`-via-derive; a plain clone matches
-        // Zig's `css.implementDeepClone`.
+        // `LengthPercentage` is `Clone`-via-derive; a plain clone suffices.
         self.clone()
     }
 }
@@ -985,7 +980,6 @@ impl TransformHandler {
         context: &mut PropertyHandlerContext,
     ) -> bool {
         let bump = dest.bump();
-        // Zig used a local fn with `comptime field: []const u8` + `@field(self, field)`.
         // Rust cannot index struct fields by string at runtime; use a macro to paste the ident.
         macro_rules! individual_property {
             ($field:ident, $val:expr) => {{
@@ -1005,8 +999,8 @@ impl TransformHandler {
 
                 // If two vendor prefixes for the same property have different
                 // values, we need to flush what we have immediately to preserve order.
-                // Reshaped for borrowck — Zig held &self.transform across
-                // self.flush(); compute the predicate first, then act.
+                // Compute the predicate first, then act, so no borrow of
+                // self.transform is held across self.flush().
                 let needs_flush = if let Some(current) = &self.transform {
                     current.0 != *transform_val && !current.1.contains(vp)
                 } else {
@@ -1047,8 +1041,7 @@ impl TransformHandler {
                             prefixes::Feature::Transform,
                         ))
                     } else {
-                        // Zig pushed `property.deepClone(arena)`; the matched
-                        // payload is `Unparsed`, so reconstruct directly.
+                        // The matched payload is `Unparsed`, so reconstruct directly.
                         Property::Unparsed(unparsed.deep_clone(bump))
                     };
                     dest.push(prop);
@@ -1101,4 +1094,3 @@ impl TransformHandler {
     }
 }
 
-// ported from: src/css/properties/transform.zig

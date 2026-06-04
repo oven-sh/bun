@@ -12,7 +12,7 @@ pub struct PageSelector {
     /// An optional named page type.
     // Arena-owned slice borrowed from parser input; `&'static` per the
     // rules/mod.rs lifetime-erasure note.
-    // TODO(port): re-thread `'bump`.
+    // TODO: re-thread `'bump`.
     pub name: Option<&'static [u8]>,
     /// A list of page pseudo classes.
     pub pseudo_classes: ArrayList<PagePseudoClass>,
@@ -253,7 +253,7 @@ pub enum PagePseudoClass {
 impl PagePseudoClass {
     #[inline]
     pub(crate) fn deep_clone(self, _bump: &bun_alloc::Arena) -> Self {
-        // `Copy` enum (generics.zig "simple copy types" → identity).
+        // `Copy` enum → identity.
         self
     }
 }
@@ -406,4 +406,3 @@ const _: () = {
     }
 };
 
-// ported from: src/css/rules/page.zig

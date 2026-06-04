@@ -235,7 +235,6 @@ impl FileResponseStream {
             return false;
         }
 
-        // Borrowck: Zig captured `*max` mutably across the block.
         let (chunk, state) = 'brk: {
             if let Some(max) = self.max_size.as_mut() {
                 let c = &chunk_[..chunk_
@@ -566,10 +565,9 @@ impl FileResponseStream {
     // hand-rolled `ref_guard`/`DerefOnDrop` pair is now `bun_ptr::ScopedRef<Self>`.
 }
 
-// `bun.io.BufferedReader.init(@This())` — vtable parent. Maps the Zig
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
+// BufferedReader vtable parent.
 // `loop_` delegates to the inherent `r#loop()` which already does the
-// cfg(windows) `.uv_loop` projection (Zig spec: FileResponseStream.zig `loop()`).
+// cfg(windows) `.uv_loop` projection.
 bun_io::impl_buffered_reader_parent! {
     FileResponseStream for FileResponseStream;
     has_on_read_chunk = true;
@@ -616,5 +614,3 @@ fn can_sendfile(resp: AnyResponse, file_type: FileType, length: Option<u64>) -> 
         len >= (1 << 20)
     }
 }
-
-// ported from: src/runtime/server/FileResponseStream.zig

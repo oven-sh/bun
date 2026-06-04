@@ -13,7 +13,7 @@ type Slice = bun_core::ZigStringSlice;
 // `byte_length()`).
 type BlobOrStringOrBuffer = crate::node::types::BlobOrStringOrBuffer;
 
-// Note: `Command` is a transient view struct (Zig `deinit` is a no-op); fields
+// Note: `Command` is a transient view struct; fields
 // borrow caller-owned data for the duration of serialization.
 #[derive(Copy, Clone)]
 pub struct Command<'a> {
@@ -91,7 +91,7 @@ impl<'a> Command<'a> {
     }
 
     pub fn byte_length(&self) -> usize {
-        // Zig: std.fmt.count — DiscardingWriter is bun_io's byte-counting null sink.
+        // DiscardingWriter is bun_io's byte-counting null sink.
         let mut counter = bun_io::DiscardingWriter::default();
         self.write(&mut counter).expect("unreachable");
         counter.count
@@ -111,7 +111,7 @@ pub struct Entry {
     pub promise: Promise,
 }
 
-// Zig: `pub const Queue = bun.LinearFifo(Entry, .Dynamic);` — inherent associated
+// Inherent associated
 // types are unstable on stable Rust, so expose as a sibling module alias instead.
 pub mod entry {
     pub(crate) type Queue = super::LinearFifo<super::Entry, super::DynamicBuffer<super::Entry>>;
@@ -130,8 +130,6 @@ impl Entry {
     }
 }
 
-// Zig `Entry.deinit` only freed `serialized_data`; `Box<[u8]>` drops automatically.
-
 bitflags::bitflags! {
     #[repr(transparent)]
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -146,13 +144,13 @@ bitflags::bitflags! {
 
 impl Default for Meta {
     fn default() -> Self {
-        // Zig field defaults: supports_auto_pipelining = true, rest false.
+        // supports_auto_pipelining defaults to true, rest false.
         Meta::SUPPORTS_AUTO_PIPELINING
     }
 }
 
-// PERF(port): was `phf::Set<&[u8]>`. 16 entries spread across 9 distinct
-// lengths (max 4 per bucket), so a length-gated match beats the phf hash:
+// PERF: 16 entries spread across 9 distinct
+// lengths (max 4 per bucket), so a length-gated match beats a phf hash set:
 // the outer `usize` compare rejects almost everything before any byte
 // compare, and within a bucket the known-equal-length lets LLVM lower the
 // `==` to a single wide load/compare. See clap::find_param (12577e958d71)
@@ -226,15 +224,13 @@ impl Promise {
     }
 }
 
-// Zig `Promise.deinit` only called `self.promise.deinit()`; JSPromiseStrong's Drop handles it.
-
 // Command+Promise pair for tracking which command corresponds to which promise
 pub struct PromisePair {
     pub meta: Meta,
     pub promise: Promise,
 }
 
-// Zig: `pub const Queue = bun.LinearFifo(PromisePair, .Dynamic);` — see `entry` note above.
+// See `entry` note above.
 pub mod promise_pair {
     pub(crate) type Queue =
         super::LinearFifo<super::PromisePair, super::DynamicBuffer<super::PromisePair>>;
@@ -250,5 +246,3 @@ impl PromisePair {
         Ok(())
     }
 }
-
-// ported from: src/runtime/valkey_jsc/ValkeyCommand.zig

@@ -7,8 +7,6 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     use bun_install::Subcommand;
     use bun_install::package_manager::update_request::{self, UpdateRequest};
 
-    // PERF(port): was arena bulk-free — profile if hot
-    // PERF(port): was stack-fallback — profile if hot
     // `to_slice_clone` returns `ZigStringSlice`; convert to owned `Vec<u8>`
     // via `.into_vec()` since there is no arena backing the slices here.
     let mut all_positionals: Vec<Vec<u8>> = Vec::new();
@@ -91,5 +89,3 @@ pub fn from_js(global: &JSGlobalObject, input: JSValue) -> JsResult<JSValue> {
     );
     Ok(object)
 }
-
-// ported from: src/install_jsc/update_request_jsc.zig

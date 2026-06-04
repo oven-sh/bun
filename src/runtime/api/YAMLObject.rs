@@ -75,8 +75,7 @@ pub(crate) struct Stringifier {
 pub(crate) enum Space {
     Minified,
     Number(u32),
-    /// +1 WTF ref owned for the lifetime of the `Stringifier` (Zig:
-    /// `Space.deinit() → str.deref()`).
+    /// +1 WTF ref owned for the lifetime of the `Stringifier`.
     Str(OwnedString),
 }
 
@@ -239,7 +238,6 @@ impl Stringifier {
             return Ok(());
         }
 
-        // Zig: `bun.assertWithLocation(cond, @src())` gated on `bun.Environment.ci_assert`.
         debug_assert!(unwrapped.is_object());
 
         let object_entry = self.known_collections.get_or_put(unwrapped)?;
@@ -379,7 +377,6 @@ impl Stringifier {
             return Ok(());
         }
 
-        // Zig: `bun.assertWithLocation(cond, @src())` gated on `bun.Environment.ci_assert`.
         debug_assert!(unwrapped.is_object());
 
         let has_anchor: Option<&mut AnchorAlias> = 'has_anchor: {
@@ -1219,4 +1216,3 @@ impl<'a> ParserCtx<'a> {
     }
 }
 
-// ported from: src/runtime/api/YAMLObject.zig

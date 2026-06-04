@@ -8,7 +8,6 @@ pub struct BackendKeyData {
 }
 
 impl BackendKeyData {
-    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         context: Container,
     ) -> Result<Self, AnyPostgresError> {
@@ -23,11 +22,9 @@ impl BackendKeyData {
         }
 
         Ok(Self {
-            // @bitCast i32 -> u32: same-width signed→unsigned `as` cast preserves bits.
+            // i32 -> u32: same-width signed→unsigned `as` cast preserves bits.
             process_id: reader.int4()?,
             secret_key: reader.int4()?,
         })
     }
 }
-
-// ported from: src/sql/postgres/protocol/BackendKeyData.zig

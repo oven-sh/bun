@@ -46,11 +46,9 @@ macro_rules! format_bytes {
 pub(crate) const DEFAULT_SCALE_UP_AFTER_MS: i64 = 5;
 
 /// Owns the coordinator-side per-run worker temp directory path bytes;
-/// recursively removes it on drop. Mirrors the Zig
-/// `defer if (worker_tmpdir) |d| bun.FD.cwd().deleteTree(d) catch {}`.
-/// Zig stored a `[:0]const u8` whose `.len` excludes the sentinel; here we
-/// store the bare path with no trailing NUL so `path()`/Drop hand the exact
-/// same bytes to `delete_tree` that `make_path` created.
+/// recursively removes it on drop. Stores the bare path with no trailing NUL
+/// so `path()`/Drop hand the exact same bytes to `delete_tree` that
+/// `make_path` created.
 struct WorkerTmpdir(Option<Box<[u8]>>);
 
 impl WorkerTmpdir {
@@ -96,12 +94,10 @@ pub fn run_as_coordinator(
         return Ok(false);
     }
 
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator).
 
-    // Owned path bytes (Zig: `[:0]const u8` from allocPrintSentinel — the
-    // sentinel was for C interop only, `.len` excluded it). ZStr is a borrow
-    // header; we must own the backing storage here. Drop recursively removes
-    // the directory once the run finishes.
+    // Owned path bytes. ZStr is a borrow header; we must own the backing
+    // storage here. Drop recursively removes the directory once the run
+    // finishes.
     let mut worker_tmpdir = WorkerTmpdir(None);
     // Workers' stderr is a pipe; have them format with ANSI when we will be
     // rendering to a color terminal so streamed lines match serial output.
@@ -305,9 +301,8 @@ pub fn run_as_coordinator(
 fn build_worker_argv(
     ctx: &Command::ContextData,
 ) -> Result<Box<[bun_spawn::CStrPtr]>, bun_core::Error> {
-    // Zig `[:null]?[*:0]const u8` — null-sentinel slice of C-string pointers.
-    // String storage was arena-owned in Zig; route through the process-lifetime
-    // CLI arena (bulk-freed on exit).
+    // Null-sentinel slice of C-string pointers. String storage routes through
+    // the process-lifetime CLI arena (bulk-freed on exit).
     let mut argv: Vec<bun_spawn::CStrPtr> = Vec::new();
     let opts = &ctx.test_options;
 
@@ -359,7 +354,7 @@ fn build_worker_argv(
         argv.push(print_z(format_args!("--seed={}", seed))?);
     }
     // --bail is intentionally NOT forwarded: workers Global.exit(1) on bail
-    // (test_command.zig handleTestCompleted), which the coordinator would
+    // (see test_command.rs handle_test_completed), which the coordinator would
     // misread as a crash. Cross-worker bail is handled at file granularity by
     // the coordinator instead.
     if opts.repeat_count > 0 {
@@ -475,9 +470,7 @@ fn build_worker_argv(
     }
 
     argv.push(core::ptr::null());
-    // Zig: `argv.items[0 .. argv.items.len - 1 :null]` — sentinel slice excluding
-    // the trailing null from len but keeping it as sentinel. Rust callers index
-    // by .len() so we keep the None in the boxed slice.
+    // Callers index by .len(), so keep the trailing null in the boxed slice.
     Ok(argv.into_boxed_slice())
 }
 
@@ -634,8 +627,6 @@ impl<'a> WorkerLoop<'a> {
 
             let after = *self.reporter.summary();
             wf.begin(frame::Kind::FileDone);
-            // Was `inline for (.{...}) |v| worker_frame.u32_(v)` —
-            // all elements are u32, so a plain array + for loop is equivalent.
             for v in [
                 idx,
                 after.pass - before.pass,
@@ -675,11 +666,9 @@ pub fn run_as_worker(
     vm_ref.test_isolation_enabled = true;
     vm_ref.auto_killer.enabled = true;
 
-    // `vm.arena` is currently a write-only backref kept for Zig shape parity:
-    // the `MimallocArena.gc()` reader was dropped from the GC path (see
-    // web_worker.rs, which wires its own arena the same way and notes the
-    // dropped read). The Zig `vm.allocator = arena.allocator()` half is also
-    // dropped (no per-VM allocator handle in the Rust port).
+    // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
+    // reader was dropped from the GC path (see web_worker.rs, which wires its
+    // own arena the same way and notes the dropped read).
     let mut arena = bun_alloc::MimallocArena::new();
     // SAFETY: event_loop pointer is valid while vm lives.
     unsafe { (*vm_ref.event_loop()).ensure_waker() };
@@ -839,4 +828,3 @@ pub fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
     cmds.send(wf.finish());
 }
 
-// ported from: src/cli/test/parallel/runner.zig

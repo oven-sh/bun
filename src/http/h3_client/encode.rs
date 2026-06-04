@@ -54,7 +54,6 @@ pub fn write_request(
         );
     }
 
-    // PERF(port): was stack-fallback (std.heap.stackFallback(2048)).
     let mut headers: Vec<quic::Header> = Vec::with_capacity(request.headers.len() + 4);
 
     // Names not in the QPACK static table get lowercased into one
@@ -212,5 +211,3 @@ pub(crate) fn drain_send_body(stream: &mut Stream, qs: &mut quic::Stream) {
         qs.want_write(true);
     }
 }
-
-// ported from: src/http/h3_client/encode.zig

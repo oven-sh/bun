@@ -22,17 +22,13 @@ impl Default for ErrorPacket {
     }
 }
 
-// Zig `deinit` only freed `error_message`; `Data: Drop` handles that automatically.
-
 pub struct MySQLErrorOptions {
-    // Zig `[]const u8` with no deinit; every constructor (error_packet_jsc.rs,
-    // any_mysql_error_jsc.rs) passes a `b"ERR_..."` literal, so `'static` holds.
+    // Every constructor (error_packet_jsc.rs, any_mysql_error_jsc.rs) passes a
+    // `b"ERR_..."` literal, so `'static` holds.
     pub code: &'static [u8],
     pub errno: Option<u16>,
     pub sql_state: Option<[u8; 5]>,
 }
-
-// No `impl Default` — Zig `code: []const u8` has no default, so `.{}` is invalid there too.
 
 // `createMySQLError` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
 
@@ -72,7 +68,6 @@ impl ErrorPacket {
     }
 }
 
-// Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
 pub fn decode<Context: ReaderContext>(
     this: &mut ErrorPacket,
     reader: NewReader<Context>,
@@ -81,5 +76,3 @@ pub fn decode<Context: ReaderContext>(
 }
 
 // `toJS` lives in bun_sql_jsc::mysql::protocol::error_packet_jsc — *_jsc alias deleted.
-
-// ported from: src/sql/mysql/protocol/ErrorPacket.zig

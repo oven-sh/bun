@@ -336,5 +336,3 @@ pub(crate) fn encode(
         free: encoded_wrap_free!(WebPFree),
     })
 }
-
-// ported from: src/runtime/image/codec_webp.zig

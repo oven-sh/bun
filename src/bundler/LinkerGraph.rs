@@ -199,7 +199,7 @@ pub struct LinkerGraph<'a> {
     pub entry_points: entry_point::List,
     pub symbols: symbol::Map,
 
-    // Note: lifetime-erased. Zig stores `std.mem.Allocator`; the Rust
+    // Note: lifetime-erased. The
     // arena is owned by `BundleV2` and outlives every `LinkerGraph` — kept as
     // a raw pointer (matching `LinkerContext.parse_graph: *mut Graph`) so the
     // struct stays `'static`-ish and `LinkerContext`/`Chunk` callers don't
@@ -235,7 +235,7 @@ pub struct LinkerGraph<'a> {
 }
 
 // SAFETY: `LinkerGraph` is shared read-mostly across worker threads during
-// linking (matches Zig, which has no Send/Sync). What makes `&LinkerGraph`
+// linking. What makes `&LinkerGraph`
 // sound to hold concurrently:
 //
 // - `bump: *const Arena` is a backref into `BundleV2`; the arena is frozen
@@ -303,7 +303,7 @@ impl Default for LinkerGraph<'_> {
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
             // Note: `bump` is a backref assigned in `init`/`LinkerContext::load`;
-            // dangling sentinel mirrors Zig's `undefined` (never read before assignment).
+            // dangling sentinel (never read before assignment).
             bump: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
             code_splitting: false,
             ast: MultiArrayList::default(),
@@ -343,12 +343,9 @@ pub fn generate_new_symbol(
 ) -> Ref {
     let source_symbols = &mut symbols.symbols_for_source.slice_mut()[source_index as usize];
 
-    // Note: Zig built `Ref.init(..)` then assigned `ref.tag = .symbol`.
-    // The Rust `Ref` is a packed `u64` with no public `tag` field, so use
-    // the `Ref::new` constructor that takes the tag explicitly.
     let ref_ = Ref::new(
-        source_symbols.len() as u32, // @truncate (u32 → u31 in pack())
-        source_index,                // @truncate
+        source_symbols.len() as u32, // narrows to u31 in pack()
+        source_index,
         RefTag::Symbol,
     );
 
@@ -356,8 +353,8 @@ pub fn generate_new_symbol(
     source_symbols.push(Symbol {
         kind,
         // Note: `Symbol.original_name` is a `StoreStr` —
-        // arena-owned slice whose lifetime is erased (matches the Zig
-        // `[]const u8`); caller guarantees it outlives the symbol table.
+        // arena-owned slice whose lifetime is erased;
+        // caller guarantees it outlives the symbol table.
         original_name: bun_ast::StoreStr::new(original_name),
         ..Default::default()
     });
@@ -388,18 +385,11 @@ pub(crate) fn add_part_to_file(
     id: u32,
     part: Part,
 ) -> Result<u32, bun_alloc::AllocError> {
-    let part_id = parts[id as usize].len() as u32; // @truncate (u32)
+    let part_id = parts[id as usize].len() as u32;
     parts[id as usize].push(part);
 
-    // Note: borrowck reshape. The Zig closure simultaneously holds
-    //   * `&mut parts[part_id].declared_symbols`   (column `parts` of `ast`)
-    //   * `&meta.top_level_symbol_to_parts_overlay[id]` (`meta`)
-    //   * `&ast.top_level_symbols_to_parts[id]`    (another `ast` column)
-    // and additionally caches `*?*TopLevelSymbolToParts` across calls.
-    // The two `ast` columns now arrive pre-split, so no detach/reattach is
-    // needed. The overlay-pointer cache is dropped — re-index `meta` each
-    // call (O(1); the cache was a Zig micro-opt that does not survive
-    // Stacked Borrows).
+    // Note: the two `ast` columns arrive pre-split, so no detach/reattach is
+    // needed; re-index `meta` on each call (O(1)).
     let declared_symbols: &mut DeclaredSymbolList =
         &mut parts[id as usize][part_id as usize].declared_symbols;
 
@@ -516,7 +506,7 @@ pub fn generate_symbol_import_and_use(
             // identical `bun_ast::Index`; convert by value until the
             // two `Index` newtypes unify.
             source_index: bun_ast::Index::init(source_index_to_import_from.get()),
-            part_index: *part_id, // @truncate (already u32)
+            part_index: *part_id, // already u32
         };
     }
     Ok(())
@@ -687,9 +677,9 @@ impl<'a> LinkerGraph<'a> {
             // SAFETY: capacity reserved; columns initialized below.
             unsafe { self.entry_points.set_len(entry_points.len()) };
 
-            // Note: borrowck reshape — Zig held `source_indices` /
-            // `path_strings` / `output_path_was_auto_generated` simultaneously
-            // (disjoint columns of the same `MultiArrayList`). `split_mut()`
+            // Note: `source_indices` / `path_strings` /
+            // `output_path_was_auto_generated` are disjoint columns of the
+            // same `MultiArrayList`. `split_mut()`
             // hands out all three at once; `self.entry_points` is not
             // reallocated until after `path_strings`/`source_indices` are done
             // with (the next `append_assume_capacity` is within the
@@ -743,12 +733,7 @@ impl<'a> LinkerGraph<'a> {
 
             let import_records_len = self.ast.items_import_records().len();
             self.meta.set_capacity(import_records_len)?;
-            // Note: Zig does `meta.len = ast.len; meta.zero()` — a raw
-            // memset(0) is the valid empty state for Zig's unmanaged
-            // containers. Rust `Vec`/`Box` require a non-null dangling
-            // pointer when empty, so zeroed bytes violate their invariants
-            // (`slice::from_raw_parts` null-check trips on first read). Fill
-            // each slot with `Default` instead.
+            // Fill each slot with `Default`.
             let ast_len = self.ast.len();
             debug_assert!(ast_len <= import_records_len);
             for _ in 0..ast_len {
@@ -820,8 +805,7 @@ impl<'a> LinkerGraph<'a> {
         // Setup files
         {
             // set it to max value so that if we access an invalid one, it crashes
-            // Note: Zig used `@memset(sliceAsBytes(...), 255)` to fill raw
-            // bytes; here we fill with `Index::INVALID` whose bytes are all
+            // Note: fill with `Index::INVALID` whose bytes are all
             // 0xFF (`#[repr(transparent)]` over `u32::MAX`).
             let stable_source_indices = self
                 .arena()
@@ -839,9 +823,7 @@ impl<'a> LinkerGraph<'a> {
         }
 
         {
-            // Note: Zig built a borrowed `Symbol.NestedList` over the
-            // `ast.items(.symbols)` column then `clone`d it (memcpy). The Rust
-            // `Vec::clone` requires `T: Clone` which `Symbol` does not
+            // Note: `Vec::clone` requires `T: Clone` which `Symbol` does not
             // derive (it carries a raw `*const [u8]`), so spell out the
             // bitwise copy explicitly — `Symbol` has no `Drop` impl.
             let src_symbols: &[symbol::List] = self.ast.items_symbols();
@@ -861,25 +843,6 @@ impl<'a> LinkerGraph<'a> {
         }
 
         // TODO: const_values
-        // {
-        //     var const_values = this.const_values;
-        //     var count: usize = 0;
-        //
-        //     for (this.ast.items(.const_values)) |const_value| {
-        //         count += const_value.count();
-        //     }
-        //
-        //     if (count > 0) {
-        //         try const_values.ensureTotalCapacity(this.arena, count);
-        //         for (this.ast.items(.const_values)) |const_value| {
-        //             for (const_value.keys(), const_value.values()) |key, value| {
-        //                 const_values.putAssumeCapacityNoClobber(key, value);
-        //             }
-        //         }
-        //     }
-        //
-        //     this.const_values = const_values;
-        // }
 
         {
             let mut count: usize = 0;
@@ -891,10 +854,7 @@ impl<'a> LinkerGraph<'a> {
                 for ts_enums in self.ast.items_ts_enums().iter() {
                     debug_assert_eq!(ts_enums.keys().len(), ts_enums.values().len());
                     for (key, value) in ts_enums.keys().iter().zip(ts_enums.values().iter()) {
-                        // PERF(port): was assume_capacity_no_clobber
-                        // Note: Zig copied the inner `StringHashMap` by
-                        // value (shallow struct copy). Rust clones the backing
-                        // `HashMap`; the per-file maps are not mutated after
+                        // Note: the per-file maps are not mutated after
                         // this point so aliasing is not required.
                         self.ts_enums.put_assume_capacity(*key, value.clone());
                     }
@@ -916,7 +876,6 @@ impl<'a> LinkerGraph<'a> {
                 .expect("unreachable");
             debug_assert_eq!(src.keys().len(), src.values().len());
             for (key, value) in src.keys().iter().zip(src.values().iter()) {
-                // PERF(port): was assume_capacity_no_clobber
                 resolved.put_assume_capacity(
                     key,
                     js_meta::ResolvedExport {
@@ -934,7 +893,7 @@ impl<'a> LinkerGraph<'a> {
         Ok(())
     }
 
-    /// Port of `LinkerGraph.zig:takeAstOwnership`. `clone_ast` left each
+    /// `clone_ast` left each
     /// `PartList`/import-record list with its allocator handle pointing at
     /// the per-worker `mi_heap` that built it; re-tag to `heap` (the
     /// bundle-thread arena) so linker-side `add_part_to_file` pushes call
@@ -942,13 +901,12 @@ impl<'a> LinkerGraph<'a> {
     /// owns `heap`. Zero-copy: only files the linker actually grows pay a
     /// (lazy, mimalloc-internal) cross-heap migration on first realloc.
     ///
-    /// Zig is a release no-op because `BabyList` passes the allocator at each
-    /// `append` call site; the Rust `Vec<T, &Arena>` stores it, so swap here.
-    /// Zig also transfers `part.dependencies` and `symbols`; the Rust port's
+    /// `Vec<T, &Arena>` stores its allocator, so swap it here.
+    /// `part.dependencies` and `symbols` need no transfer:
     /// `DependencyList` is `Vec<_, AstAlloc>` (linker-side grows just route
     /// through whichever thread's `AstAlloc` state is active — `AstAlloc` is a
     /// ZST, so there is nothing to retag) and new symbols feed through
-    /// `self.symbols: symbol::Map` (global) — neither needs transfer here.
+    /// `self.symbols: symbol::Map` (global).
     pub fn take_ast_ownership(&mut self, heap: &'a Arena) {
         for v in self.ast.items_import_records_mut() {
             bun_alloc::transfer_arena(v, heap);
@@ -1072,8 +1030,7 @@ impl File {
 impl Default for File {
     fn default() -> Self {
         Self {
-            // Note: Zig had `entry_bits: AutoBitSet = undefined` — using an
-            // empty static-arm bitset here; load() overwrites before any read.
+            // Note: empty static-arm bitset; load() overwrites before any read.
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             input_file: Index::source(0u32),
             distance_from_entry_point: u32::MAX,
@@ -1098,5 +1055,3 @@ bun_collections::multi_array_columns! {
         quoted_source_contents: Option<bun_alloc::AstVec<u8>>,
     }
 }
-
-// ported from: src/bundler/LinkerGraph.zig

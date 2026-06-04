@@ -10,14 +10,13 @@
 // Scope name distinct from the macro-generated `struct Store`.
 ::bun_core::declare_scope!(STORE_LOG, hidden);
 
-/// Zig: `fn supportsType(T: type) bool` — compile-time membership check for
+/// Compile-time membership check for
 /// the type list of a `new_store!`-generated store.
 ///
 /// `new_store!` implements this for every `$T` in its list (with `S` = the
 /// generated `Store` type), and bounds `Store::allocate`/`Store::append` (and
 /// the `thread_local_ast_store!` front-end `append`) on it. Allocating a type
-/// the store was not declared with is therefore a compile error, mirroring
-/// Zig's `comptime if (!supportsType(T)) @compileError(...)`.
+/// the store was not declared with is therefore a compile error.
 pub trait StoredIn<S>: sealed::Sealed<S> {}
 
 #[doc(hidden)]
@@ -26,8 +25,6 @@ pub mod sealed {
     pub trait Sealed<S> {}
 }
 
-/// Zig: `pub fn NewStore(comptime types: []const type, comptime count: usize) type`
-///
 /// Rust cannot take a slice of types as a generic parameter, and the body
 /// derives array sizes and alignment from that list (which would require
 /// `generic_const_exprs`). Per PORTING.md this falls under the
@@ -45,13 +42,11 @@ macro_rules! new_store {
             use ::core::mem::{align_of, size_of, MaybeUninit};
             use ::core::ptr::{addr_of_mut, NonNull};
 
-            // Zig: `const largest_size, const largest_align = brk: { ... }`
             const LARGEST_SIZE: usize = {
                 let sizes = [$(size_of::<$T>()),+];
                 let mut largest_size = 0;
                 let mut i = 0;
                 while i < sizes.len() {
-                    // Zig: `@compileError("NewStore does not support 0 size type: " ++ @typeName(T))`
                     assert!(sizes[i] > 0, "NewStore does not support 0 size type");
                     if sizes[i] > largest_size { largest_size = sizes[i]; }
                     i += 1;
@@ -69,19 +64,18 @@ macro_rules! new_store {
                 largest_align
             };
 
-            // Zig: `const backing_allocator = bun.default_allocator;`
-            // (deleted — global mimalloc via #[global_allocator]; Box/alloc use it.)
-
-            // Zig: `const log = Output.scoped(.Store, .hidden);`
-            // (declared once at crate level: `bun_output::declare_scope!(Store, hidden);`)
+            // Allocation goes through the global mimalloc allocator
+            // (#[global_allocator]); Box/alloc use it.
+            // The log scope is declared once at crate level:
+            // `bun_output::declare_scope!(Store, hidden);`
 
             pub struct Store {
                 /// Lazily-allocated head of the block chain — `None` until the
                 /// first [`Store::allocate`]. Owns the entire `Box<Block>`
                 /// `next`-linked list; `Store`'s `Drop` walks it iteratively.
                 ///
-                /// PERF(port): Zig co-allocated `Store` + the first `Block` in a
-                /// single `PreAlloc` so `create()` always paid one `~BLOCK_SIZE`
+                /// An earlier design co-allocated `Store` + the first
+                /// `Block` so `create()` always paid one `~BLOCK_SIZE`
                 /// malloc. Splitting them lets a store that is `create()`d but
                 /// never written to (e.g. the `Stmt` store during
                 /// `Transpiler::configure_defines`, which only emits `E::String`
@@ -97,14 +91,12 @@ macro_rules! new_store {
                 debug_lock: ::core::cell::Cell<bool>,
             }
 
-            /// Zig: `pub const Block = struct { ... }`
             // `buffer` needs `align(LARGEST_ALIGN)` but `#[repr(align(N))]`
             // requires a literal. Over-approximate with align(16) — every AST payload
             // type is `<= 16` aligned (asserted below). Switch to a
             // `#[repr(C)] union AlignUnion { $($T),+ }` element type if a >16-aligned
             // payload is ever introduced.
             const _: () = assert!(LARGEST_ALIGN <= 16, "NewStore payload type with align>16; bump Block repr(align)");
-            /// Zig: `pub const size = largest_size * count * 2;`
             pub(crate) const BLOCK_SIZE: usize = LARGEST_SIZE * $count * 2;
             #[repr(C, align(16))]
             pub struct Block {
@@ -113,9 +105,7 @@ macro_rules! new_store {
                 next: Option<Box<Block>>,
             }
 
-            // Zig: `fn supportsType(T: type) bool` + the
-            // `comptime if (!supportsType(T)) @compileError(...)` guard in
-            // `allocate` — only the types listed in this `new_store!`
+            // Only the types listed in this `new_store!`
             // invocation may be allocated from this store. `allocate`/`append`
             // are bounded on `StoredIn<Store>`, so an unsupported type is a
             // compile error.
@@ -127,8 +117,7 @@ macro_rules! new_store {
             impl Block {
                 pub const SIZE: usize = BLOCK_SIZE;
 
-                // Zig: `pub const Size = std.math.IntFittingRange(0, size + largest_size);`
-                // PERF(port): was IntFittingRange — picks smallest uN; using u32 (Block::SIZE
+                // PERF: could pick the smallest uN that fits; using u32 (Block::SIZE
                 // for AST node stores fits comfortably). Profile.
 
                 /// Initialize the non-buffer fields without touching the (large,
@@ -146,7 +135,7 @@ macro_rules! new_store {
                 }
 
                 pub fn try_alloc<T>(block: &mut Block) -> Option<NonNull<T>> {
-                    // Zig: `std.mem.alignForward(usize, block.bytes_used, @alignOf(T))`
+                    // Align `bytes_used` forward to `align_of::<T>()`.
                     let start = ((block.bytes_used as usize) + align_of::<T>() - 1)
                         & !(align_of::<T>() - 1);
                     if start + size_of::<T>() > block.buffer.len() {
@@ -160,7 +149,6 @@ macro_rules! new_store {
                         let _ = &block.buffer[block.bytes_used as usize..][..size_of::<T>()];
                     }
 
-                    // Zig: `defer block.bytes_used = @intCast(start + @sizeOf(T));`
                     block.bytes_used =
                         BlockSize::try_from(start + size_of::<T>()).unwrap();
 
@@ -177,7 +165,6 @@ macro_rules! new_store {
 
                 /// Heap-allocate a Block without placing the (large) buffer on the stack.
                 fn new_boxed() -> Box<Block> {
-                    // Zig: `backing_allocator.create(Block)` then `.zero()`
                     let mut b: Box<MaybeUninit<Block>> = Box::new_uninit();
                     Block::zero(&mut b);
                     // SAFETY: `zero` initialized every non-buffer field; `buffer` is
@@ -186,7 +173,6 @@ macro_rules! new_store {
                 }
             }
 
-            // Zig: `pub const Size = std.math.IntFittingRange(0, size + largest_size);`
             type BlockSize = u32;
 
             /// `Store` owns its `Box<Block>` chain (`head` → `next` → …). The
@@ -199,7 +185,6 @@ macro_rules! new_store {
                     while let Some(mut block) = it {
                         #[cfg(debug_assertions)]
                         {
-                            // Zig: `@memset(block.buffer, undefined);`
                             // SAFETY: poisoning a buffer that is being freed.
                             unsafe {
                                 ::core::ptr::write_bytes(
@@ -218,11 +203,10 @@ macro_rules! new_store {
             impl Store {
                 pub fn init() -> *mut Store {
                     /* scoped_log elided — debug_logs feature only */
-                    // PERF(port): the first `Block`'s ~`BLOCK_SIZE` heap buffer
+                    // The first `Block`'s ~`BLOCK_SIZE` heap buffer
                     // is *not* allocated here — only the small `Store` header.
                     // `allocate()` lazily mallocs the first `Block` on the first
-                    // `append()` (see the `head` field doc). Box aborts on OOM
-                    // (matches Zig `bun.handleOom`).
+                    // `append()` (see the `head` field doc). Box aborts on OOM.
                     bun_core::heap::into_raw(Box::new(Store {
                         head: None,
                         current: ::core::ptr::null_mut(),
@@ -258,7 +242,6 @@ macro_rules! new_store {
                         // singly-linked list; walk it via `&mut` reborrows.
                         let mut it: Option<&mut Block> = store.head.as_deref_mut();
                         while let Some(block) = it {
-                            // Zig: `block.bytes_used = undefined; @memset(&block.buffer, undefined);`
                             // SAFETY: poisoning; buffer is MaybeUninit<u8>.
                             unsafe {
                                 ::core::ptr::write_bytes(
@@ -361,7 +344,7 @@ macro_rules! new_store {
                     let _ = store;
                 }
 
-                // Zig: `fn supportsType(T: type) bool` — see the
+                // Type-list membership is enforced by the
                 // `StoredIn<Store>` impls generated above `impl Block`.
             }
         }
@@ -376,8 +359,7 @@ macro_rules! new_store {
 // optional `ASTMemoryAllocator` override, `disable_reset` flag) plus the
 // twelve identical accessor/lifecycle fns. The two hand-written copies in
 // expr.rs / stmt.rs were byte-for-byte twins modulo the backing type and the
-// "Expr"/"Stmt" panic-string label — and so are the Zig originals
-// (expr.zig:3117-3196 vs stmt.zig:300-382). This macro stamps out one
+// "Expr"/"Stmt" panic-string label. This macro stamps out one
 // `pub mod Store { … }` per call site so the duplication lives here once.
 //
 // Why a macro and not a generic struct: `#[thread_local] static` cannot be
@@ -403,7 +385,7 @@ macro_rules! thread_local_ast_store {
             // read on every node `alloc` (the hottest TLS in the parser), and
             // the `thread_local!` macro's `LocalKey` wrapper showed up in
             // next-lint profiles. All three are `Cell<ptr|bool>` (no destructor,
-            // const init); matches Zig `threadlocal var`.
+            // const init).
             #[thread_local]
             pub(crate) static INSTANCE: Cell<*mut Backing> = Cell::new(::core::ptr::null_mut());
             /// Back-reference to the `ASTMemoryAllocator` installed by the
@@ -429,8 +411,9 @@ macro_rules! thread_local_ast_store {
             #[inline]
             fn instance_mut<'a>() -> Option<&'a mut Backing> {
                 // SAFETY: `INSTANCE` is thread-local; the `*mut Backing` it holds
-                // is either null or was returned by `Backing::init()` (leaked
-                // `PreAlloc`) and remains valid until `deinit()` clears it.
+                // is either null or was returned by `Backing::init()` (a `Box`
+                // leaked via `bun_core::heap::into_raw`) and remains valid
+                // until `deinit()` clears it.
                 // Single-threaded access — no other `&mut` to the slab is live.
                 unsafe { INSTANCE.get().as_mut() }
             }
@@ -477,7 +460,7 @@ macro_rules! thread_local_ast_store {
                 );
             }
 
-            /// Zig: `Data.Store.disable_reset = b;` — toggled by long-lived
+            /// Toggled by long-lived
             /// callers (transpiler, bundler) that want the Store to persist
             /// across multiple parse calls.
             #[inline]
@@ -527,5 +510,3 @@ macro_rules! thread_local_ast_store {
         }
     };
 }
-
-// ported from: src/js_parser/ast/NewStore.zig

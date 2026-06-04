@@ -42,4 +42,3 @@ unsafe extern "C" {
     ) -> ReturnCode;
 }
 
-// ported from: src/zlib_sys/posix.zig

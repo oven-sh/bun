@@ -105,8 +105,8 @@ pub(crate) fn to_contain_equal(
     }
 
     // handle failure
-    // Zig shared one Formatter for both `toFmt` calls; Rust borrowck forbids two
-    // live `&mut formatter` borrows, so allocate a second Formatter for the expected value.
+    // Two live `&mut formatter` borrows cannot coexist, so allocate a second
+    // Formatter for the expected value.
     let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);
     let value_fmt = value.to_fmt(&mut formatter);
@@ -133,5 +133,3 @@ pub(crate) fn to_contain_equal(
         format_args!("{}{}", expected_fmt, value_fmt),
     )
 }
-
-// ported from: src/test_runner/expect/toContainEqual.zig

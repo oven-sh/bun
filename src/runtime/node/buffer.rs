@@ -63,7 +63,6 @@ mod _impl {
                 // SAFETY: caller (`extern "C"` fill) guarantees `s`/`buf` are valid disjoint buffers per the Buffer.fill contract.
                 }, |E| unsafe { encoder::write_u8::<E>(s.as_ptr(), s.len(), buf.as_mut_ptr(), buf.len()) })
             };
-            // Zig writeU8/writeU16 return `!usize`; Rust port returns `Result<usize, _>` so `written` is already usize.
             let Ok(written) = result else {
                 return false;
             };
@@ -123,7 +122,6 @@ mod _impl {
 
             // `contents` and the fill destination share the same underlying buffer,
             // so track offsets and use copy_within (src/dst overlap within `buf`).
-            // PERF(port): was memcpy (non-overlapping) — profile if memmove-vs-memcpy matters here.
             let mut contents_len = written;
             let mut buf_offset = written;
 
@@ -142,5 +140,3 @@ mod _impl {
         }
     }
 } // mod _impl
-
-// ported from: src/runtime/node/buffer.zig

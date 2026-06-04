@@ -47,7 +47,7 @@ pub struct ParsedSourceMap {
 
 impl Drop for ParsedSourceMap {
     fn drop(&mut self) {
-        // Spec ParsedSourceMap.zig:105 `deinit`: when the mappings are backed
+        // When the mappings are backed
         // by an `InternalSourceMap` blob the blob is *owned* (allocated by
         // `SavedSourceMap::put_mappings`) unless this is the
         // standalone-module-graph case where the bytes live in the embedded
@@ -79,7 +79,7 @@ impl Default for ParsedSourceMap {
     }
 }
 
-#[repr(u8)] // Zig: enum(u2) — Rust has no u2; packed into SourceContentPtr by shift below
+#[repr(u8)] // packed into 2 bits of SourceContentPtr by shift below
 #[derive(Copy, Clone, Eq, PartialEq)]
 enum SourceProviderKind {
     Zig = 0,
@@ -131,8 +131,7 @@ impl AnySourceProvider {
     }
 }
 
-/// Zig: `packed struct(u64) { load_hint: SourceMapLoadHint, kind: SourceProviderKind, data: u60 }`
-/// Field order is low-bit-first: bits 0..2 = load_hint, bits 2..4 = kind, bits 4..64 = data.
+/// Bit-packed, low-bit-first: bits 0..2 = load_hint, bits 2..4 = kind, bits 4..64 = data.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct SourceContentPtr(u64);
@@ -218,8 +217,8 @@ impl SourceContentPtr {
     }
 
     pub fn provider(self) -> Option<AnySourceProvider> {
-        // Zig returns `?AnySourceProvider` but every match arm yields a value; the
-        // optionality is implicit (data == 0 ⇒ null pointer). Preserve that here.
+        // Every match arm yields a value; the
+        // optionality is implicit (data == 0 ⇒ null pointer).
         let data = self.data() as usize;
         match self.kind() {
             SourceProviderKind::Zig => Some(AnySourceProvider::Zig(data as *mut SourceProviderMap)),
@@ -234,18 +233,17 @@ impl SourceContentPtr {
 }
 
 impl ParsedSourceMap {
-    /// Thread-safe ref-count helpers (Zig: `ThreadSafeRefCount.ref/deref`).
+    /// Thread-safe ref-count helpers.
     ///
-    /// Zig uses an *intrusive* count (`bun.new` + embedded
-    /// `ref_count`, freed via `bun.destroy`). The Rust port allocates every
-    /// table-stored `ParsedSourceMap` via `Arc::into_raw` (see
+    /// Every
+    /// table-stored `ParsedSourceMap` is allocated via `Arc::into_raw` (see
     /// `SavedSourceMap::get_with_content` and `ParseUrl.map:
     /// Option<Arc<ParsedSourceMap>>`), so the strong count lives in the `Arc`
     /// header *before* the data pointer. Reconstituting that pointer with
     /// `heap::take` would free an interior offset and trips
     /// `mi_validate_block_from_ptr` (mimalloc free.c:123). Route through
     /// `Arc::{increment,decrement}_strong_count` instead — same observable
-    /// `ref()`/`deref()` semantics as the Zig spec, with the allocator that
+    /// `ref()`/`deref()` semantics, with the allocator that
     /// actually owns the bytes. The embedded `ref_count` field is kept for
     /// layout/ABI parity but is NOT the live counter.
     ///
@@ -275,9 +273,6 @@ impl ParsedSourceMap {
     /// `mapping::List`. Ownership of the blob transfers to the returned value
     /// (freed in `Drop`) unless the caller subsequently sets
     /// [`Self::is_standalone_module_graph`].
-    ///
-    /// Mirrors Zig `SourceMap.ParsedSourceMap{ .internal = ism, .input_line_count
-    /// = ism.inputLineCount() }` struct-init at the standalone-graph load site.
     pub fn from_internal(internal: InternalSourceMap) -> Self {
         Self {
             ref_count: AtomicU32::new(1),
@@ -375,15 +370,6 @@ impl ParsedSourceMap {
     }
 }
 
-// Zig `deinit` conditionally skipped freeing `internal` when
-// `is_standalone_module_graph` (the blob borrows bytes from the standalone
-// module graph section). The current `InternalSourceMap` stub has no Drop, so
-// the conditional is a no-op. When `InternalSourceMap.rs` is un-gated, retype
-// the field to `Option<core::mem::ManuallyDrop<InternalSourceMap>>` and drop
-// it explicitly only when `!is_standalone_module_graph` — do NOT use
-// `mem::forget` (PORTING.md §Forbidden).
-// `mappings` and `external_source_names` are dropped automatically.
-
 pub struct VlqsFmt<'a>(&'a ParsedSourceMap);
 
 impl<'a> fmt::Display for VlqsFmt<'a> {
@@ -392,5 +378,3 @@ impl<'a> fmt::Display for VlqsFmt<'a> {
         self.0.write_vlqs(&mut adapter).map_err(|_| fmt::Error)
     }
 }
-
-// ported from: src/sourcemap/ParsedSourceMap.zig

@@ -521,7 +521,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
             let mut sb = this.string_buf();
             let appended = sb.append(k)?;
             this.workspace_paths.insert(name_hash, appended);
-            // PERF(port): was assume_capacity
 
             if let Some(version_string) = &v.version {
                 let sliced_version = SlicedString::init(version_string, version_string);
@@ -529,7 +528,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                 if result.valid && result.wildcard == Wildcard::None {
                     this.workspace_versions
                         .insert(name_hash, result.version.min());
-                    // PERF(port): was assume_capacity
                 }
             }
         }
@@ -705,7 +703,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                     let ev = sb.append_external(script_value)?;
                     this.buffers.extern_strings.push(ek);
                     this.buffers.extern_strings.push(ev);
-                    // PERF(port): was assume_capacity
                 }
 
                 #[cfg(debug_assertions)]
@@ -838,11 +835,8 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         debug_assert!(this.packages.len() == package_idx as usize);
     }
 
-    // Zig pre-allocated both buffers, wrote through raw cursor pointers, and
-    // assigned the final length at the very end. The Rust port pushes into the
-    // pre-reserved Vecs instead: capacity for `num_deps` was reserved above so
-    // pushes never reallocate, every cursor bump in the Zig code immediately
-    // followed a write (so `len()` tracks the cursor exactly), and no raw
+    // Both buffers are filled by pushing into the pre-reserved Vecs: capacity
+    // for `num_deps` was reserved above so pushes never reallocate, and no raw
     // pointers are held across `&mut self` calls.
 
     // MultiArrayList column access — re-borrow the (disjoint) `resolution`,
@@ -904,9 +898,9 @@ pub(crate) fn migrate_npm_lockfile<'a>(
         let dependencies_start = this.buffers.dependencies.len();
         let resolutions_start = this.buffers.resolutions.len();
 
-        // Zig used `defer` here to write dependencies_list/resolution_list and
-        // increment package_idx at every loop exit. Reshaped for borrowck — inlined as
-        // `finalize_pkg!` at the one early-continue and at natural end-of-loop.
+        // `finalize_pkg!` writes dependencies_list/resolution_list and
+        // increments package_idx; invoked at the one early-continue and at
+        // natural end-of-loop.
         macro_rules! finalize_pkg {
             () => {{
                 // package_idx < pkg_count; columns re-borrowed disjointly per statement.
@@ -1126,11 +1120,9 @@ pub(crate) fn migrate_npm_lockfile<'a>(
                             let behavior = dep_key.behavior;
 
                             // Capture tag and git/github owner before moving
-                            // `version` into the buffer (Zig copies the struct by value; Rust
-                            // moves it). The owner is needed when `version.tag` is git/github
-                            // but the package's `resolved` URL infers as something else, in
-                            // which case Zig reads `res_version.value.{git,github}.owner` from
-                            // the original parsed dependency version.
+                            // `version` into the buffer. The owner is needed when
+                            // `version.tag` is git/github but the package's `resolved`
+                            // URL infers as something else.
                             let version_tag = version.tag;
                             let version_git_owner = match version_tag {
                                 DepTag::Git => version.git().owner,
@@ -1525,12 +1517,6 @@ pub(crate) fn migrate_npm_lockfile<'a>(
 
     this.resolve(log)?;
 
-    // if (Environment.isDebug) {
-    //     const dump_file = try std.fs.cwd().createFileZ("after-clean.json", .{});
-    //     defer dump_file.close();
-    //     try std.json.stringify(this, .{ .whitespace = .indent_2 }, dump_file.writer());
-    // }
-
     #[cfg(debug_assertions)]
     {
         this.verify_data()?;
@@ -1581,5 +1567,3 @@ fn package_name_from_path(pkg_path: &[u8]) -> &[u8] {
 fn string_hash(s: &[u8]) -> u64 {
     Semver::semver_string::Builder::string_hash(s)
 }
-
-// ported from: src/install/migration.zig

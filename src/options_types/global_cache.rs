@@ -57,5 +57,3 @@ impl GlobalCache {
         )
     }
 }
-
-// ported from: src/options_types/GlobalCache.zig

@@ -37,9 +37,8 @@ use crate::e::String as EString;
 /// hierarchical scope-based identifier lookup in JavaScript. Lookup now needs
 /// to search sibling scopes in addition to parent scopes. This is accomplished
 /// by sharing the map of exported members between all matching sibling scopes.
-// The Zig 'arena lifetime is dropped here — the `EnumString` payload is a
-// `StoreRef<EString>` (AST-store back-pointer) rather than an arena-borrowed
-// reference, matching the rest of the AST crate.
+// The `EnumString` payload is a `StoreRef<EString>` (AST-store back-pointer)
+// rather than an arena-borrowed reference, matching the rest of the AST crate.
 pub struct TSNamespaceScope {
     /// This is specific to this namespace block. It's the argument of the
     /// immediately-invoked function expression that the namespace block is
@@ -139,8 +138,6 @@ pub enum Data {
 
 impl Data {
     pub fn is_enum(&self) -> bool {
-        // Zig used `inline else` + comptime `@tagName` prefix check ("enum_");
-        // expanded to an explicit match over the enum_* variants.
         matches!(
             self,
             Data::EnumNumber(_) | Data::EnumString(_) | Data::EnumProperty
@@ -174,9 +171,8 @@ pub enum Metadata {
     MSymbol,
     MPromise,
     MIdentifier(Ref),
-    // Zig used `std.ArrayListUnmanaged(Ref)` (parser-arena-backed); a heap
-    // `Vec` is used here because `Metadata` is lifetime-free. Decorator
-    // metadata is rare and the lists are tiny.
+    // A heap `Vec` is used here because `Metadata` is lifetime-free.
+    // Decorator metadata is rare and the lists are tiny.
     MDot(Vec<Ref>),
 }
 
@@ -302,7 +298,4 @@ impl Metadata {
     }
 }
 
-// Zig file ends with `pub const Class = G.Class;` — re-export.
 pub use crate::g::Class;
-
-// ported from: src/js_parser/ast/TS.zig

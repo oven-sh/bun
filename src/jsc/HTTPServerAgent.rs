@@ -46,8 +46,7 @@ impl HTTPServerAgent {
     // dep). The C++ side only needs `Bun__HTTPServerAgent__setEnabled` for
     // linkage; the per-event notifiers are called from Rust → C++ (FFI decls
     // below) and are wired from `bun_runtime` once that tier un-gates. The
-    // event-body Zig ports are preserved in HTTPServerAgent.zig and will land
-    // when `AnyServer` is reachable.
+    // event bodies will land when `AnyServer` is reachable.
 
     // #endregion
 }
@@ -118,7 +117,7 @@ impl Drop for Route {
 
 // #endregion
 
-// #region C++ agent reference type for Zig
+// #region C++ agent reference type
 
 bun_opaque::opaque_ffi! {
     /// Opaque handle to the C++ `InspectorHTTPServerAgent`.
@@ -253,7 +252,7 @@ impl InspectorHTTPServerAgent {
 
 // #endregion
 
-// #region Zig -> C++
+// #region C++ entry points
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__HTTPServerAgent__setEnabled(agent: *mut InspectorHTTPServerAgent) {
@@ -272,5 +271,3 @@ pub type RequestId = i32;
 pub type RouteId = i32;
 pub type HotReloadId = i32;
 pub type HTTPMethod = bun_http::Method;
-
-// ported from: src/jsc/HTTPServerAgent.zig

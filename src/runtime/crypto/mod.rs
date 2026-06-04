@@ -25,8 +25,6 @@ pub(crate) fn create_crypto_error(global_this: &JSGlobalObject, err_code: u32) -
     boringssl_jsc::err_to_js(global_this, err_code)
 }
 
-/// For usage in Rust (`src/runtime/crypto/PBKDF2.zig` `pub fn pbkdf2`).
-///
 /// Returns `Some(output)` on success, `None` on BoringSSL error.
 // Stable Rust has no inherent associated types, so `pbkdf2`/`Algorithm` cannot
 // nest inside the `EVP` struct; callers reach them via the `evp` module
@@ -86,13 +84,8 @@ pub use crypto_hasher::SHA384;
 pub use crypto_hasher::SHA512;
 pub use crypto_hasher::SHA512_256;
 
-// Zig nests `Algorithm`/`pbkdf2`/`PBKDF2` inside the `EVP` struct; stable Rust
-// has no inherent associated types, so re-export the module under the struct
-// name. `crypto::EVP::pbkdf2` / `crypto::EVP::Algorithm` resolve via the module,
-// and the struct itself is reachable as `crypto::EVP::EVP` if ever needed.
+// Stable Rust has no inherent associated types, so re-export the module under
+// the struct name. `crypto::EVP::pbkdf2` / `crypto::EVP::Algorithm` resolve via
+// the module, and the struct itself is reachable as `crypto::EVP::EVP` if ever needed.
 pub use evp as EVP;
 pub use hmac::HMAC;
-
-// `comptime { CryptoHasher.Extern.@"export"(); }` — dropped; Rust links what's `pub`.
-
-// ported from: src/runtime/crypto/crypto.zig

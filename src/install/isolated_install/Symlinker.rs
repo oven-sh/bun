@@ -9,7 +9,7 @@ pub struct Symlinker {
 }
 
 impl Symlinker {
-    // `&mut self` (vs Zig `*const`) because `Path::slice_z()` writes
+    // `&mut self` because `Path::slice_z()` writes
     // the trailing NUL into its pooled buffer and so requires `&mut`.
     pub fn symlink(&mut self) -> bun_sys::Result<()> {
         #[cfg(windows)]
@@ -170,5 +170,3 @@ pub enum Strategy {
     ExpectMissing,
     IgnoreFailure,
 }
-
-// ported from: src/install/isolated_install/Symlinker.zig

@@ -76,5 +76,3 @@ impl From<FieldType> for u8 {
         t.0
     }
 }
-
-// ported from: src/sql/postgres/protocol/FieldType.zig

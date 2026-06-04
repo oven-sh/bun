@@ -1,5 +1,4 @@
-//! Port of `src/runtime/cli/Arguments.zig` — bunfig-loading subset.
-//!
+//! Bunfig-loading subset of CLI argument handling: these functions
 //! and their private helpers were lifted out of `bun_runtime::cli::Arguments`
 //! so that mid-tier crates (`bun_install`) can call them directly. The
 //! `bun_runtime` crate re-exports these for its own callers.
@@ -62,8 +61,8 @@ fn load_bunfig(
     bun_ast::expr::data::Store::create();
     let _store_reset = bun_ast::StoreResetGuard::new();
 
-    // Reshaped for borrowck: Zig's `defer { ctx.log.level = original }`
-    // would capture `&mut *ctx.log` past the `Bunfig::parse(.., ctx)` reborrow.
+    // A drop-guard borrowing `&mut *ctx.log` would conflict with the
+    // `Bunfig::parse(.., ctx)` reborrow.
     // Route through the raw `*mut Log` (process-lifetime, set in
     // `create_context_data()`); the guard restores `level` on unwind/return.
     let log_ptr: *mut bun_ast::Log = ctx.log;
@@ -100,7 +99,7 @@ pub fn load_config_path(
     config_path: &ZStr,
     ctx: Context<'_>,
 ) -> Result<(), bun_core::Error> {
-    // Zig's `comptime cmd.readGlobalConfig()` is demoted to runtime here (see
+    // `cmd.read_global_config()` is evaluated at runtime (see
     // the note on `Parser::parse` in src/bunfig/bunfig.rs);
     // `Tag::read_global_config` is a const-ish
     // lookup so the dead arm is still a single branch.

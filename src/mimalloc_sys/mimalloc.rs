@@ -282,8 +282,8 @@ bun_opaque::opaque_ffi! {
     /// `THeap` directly and skip that lookup.
     ///
     /// **Do not cache across `Send`**: a `mi_theap_t*` is per-OS-thread, while
-    /// the `mi_heap_t*` it belongs to is `Send`. Zig parity is plain
-    /// `mi_heap_*`; see `MimallocArena.rs` PERF NOTE. The entry points below
+    /// the `mi_heap_t*` it belongs to is `Send`.
+    /// See `MimallocArena.rs` PERF NOTE. The entry points below
     /// are `#[deprecated]` for this reason.
     pub struct THeap;
 }
@@ -588,5 +588,3 @@ unsafe extern "C" {
         arena_id: mi_arena_id_t,
     ) -> *mut Heap;
 }
-
-// ported from: src/mimalloc_sys/mimalloc.zig

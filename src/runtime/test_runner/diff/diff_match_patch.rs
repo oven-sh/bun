@@ -99,7 +99,6 @@ impl fmt::Display for Diff<u8> {
     }
 }
 
-/// Zig: `pub fn DMP(comptime Unit: type) type { return struct { ... } }`
 #[derive(Clone, Copy)]
 pub(crate) struct DiffMatchPatch<Unit: DiffUnit> {
     pub config: Config,
@@ -108,10 +107,8 @@ pub(crate) struct DiffMatchPatch<Unit: DiffUnit> {
 
 pub(crate) type DiffList<Unit> = Vec<Diff<Unit>>;
 
-/// Zig: `pub const DiffError = error{OutOfMemory};`
 pub(crate) type DiffError = AllocError;
 
-/// Zig: `const DMPUsize = DMP(usize);`
 pub(crate) type DmpUsize = DiffMatchPatch<usize>;
 
 impl<Unit: DiffUnit> Default for DiffMatchPatch<Unit> {
@@ -148,9 +145,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         self.diff_internal(before, after, check_lines, deadline)
     }
 
-    // Zig `deinitDiffList` / `freeRangeDiffList` deleted: bodies only freed owned
-    // `Box<[Unit]>` fields (now handled by `Drop`); range-free callsites inlined as `drain`.
-
     fn diff_internal(
         &self,
         before: &[Unit],
@@ -165,7 +159,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
                 let mut diffs: DiffList<Unit> = Vec::new();
                 if !before.is_empty() {
                     diffs.reserve(1);
-                    // PERF(port): was assume_capacity
                     diffs.push(Diff {
                         operation: Operation::Equal,
                         text: dupe(before),
@@ -193,7 +186,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
 
         if !common_prefix.is_empty() {
             diffs.reserve(1);
-            // PERF(port): was insertAssumeCapacity
             diffs.insert(
                 0,
                 Diff {
@@ -204,7 +196,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
         }
         if !common_suffix.is_empty() {
             diffs.reserve(1);
-            // PERF(port): was assume_capacity
             diffs.push(Diff {
                 operation: Operation::Equal,
                 text: dupe(common_suffix),
@@ -266,7 +257,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
             } else {
                 Operation::Insert
             };
-            // PERF(port): was assume_capacity
             diffs.push(Diff {
                 operation: op,
                 text: dupe(&long_text[0..index]),
@@ -316,7 +306,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
 
             // Merge the results.
             diffs.reserve(1);
-            // PERF(port): was assume_capacity
             diffs.push(Diff {
                 operation: Operation::Equal,
                 text: half_match.common_middle,
@@ -507,7 +496,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
             }
 
             // Walk the front path one step.
-            // PERF(port): @intCast — bare `as usize` kept for v1/v2/before/after indexing
+            // Bare `as usize` kept for v1/v2/before/after indexing
             // in this hot Myers inner loop.
             let mut k1 = -d + k1start;
             while k1 <= d - k1end {
@@ -550,7 +539,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
             }
 
             // Walk the reverse path one step.
-            // PERF(port): @intCast — bare `as usize` kept for v1/v2/before/after indexing
+            // Bare `as usize` kept for v1/v2/before/after indexing
             // in this hot Myers inner loop.
             let mut k2: isize = -d + k2start;
             while k2 <= d - k2end {
@@ -699,7 +688,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
                     // Upon reaching an equality, check for prior redundancies.
                     if count_delete >= 1 && count_insert >= 1 {
                         // Delete the offending records and add the merged ones.
-                        // Zig freeRangeDiffList + replaceRangeAssumeCapacity → drain
                         diffs.drain(
                             pointer - count_delete - count_insert
                                 ..pointer - count_delete - count_insert
@@ -710,7 +698,6 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
                         let sub_diff =
                             self.diff_internal(&text_delete, &text_insert, false, deadline)?;
                         let sub_len = sub_diff.len();
-                        // PERF(port): was ensureUnusedCapacity + addManyAtAssumeCapacity + @memcpy
                         diffs.splice(pointer..pointer, sub_diff);
                         pointer += sub_len;
                     }
@@ -757,8 +744,7 @@ pub(crate) fn diff_lines_to_chars<'a, Unit: DiffUnit>(
     text2: &'a [Unit],
 ) -> Result<LinesToCharsResult<'a, Unit>, DiffError> {
     let mut line_array: Vec<&'a [Unit]> = Vec::new();
-    // Zig's `bun.StringHashMapUnmanaged(usize)` keyed the map with borrowed
-    // slices; `bun_collections::StringHashMap` copies each key into an owned
+    // `bun_collections::StringHashMap` copies each key into an owned
     // `Box<[u8]>` (one allocation per unique line).
     let mut line_hash: StringHashMap<usize> = StringHashMap::default();
     // e.g. line_array[4] == "Hello\n"
@@ -823,8 +809,7 @@ fn diff_lines_to_chars_munge<'a, Unit: DiffUnit>(
             line_array.push(line);
             // Unit == u8 verified above; bytemuck statically checks the layout.
             let line_u8: &[u8] = bytemuck::cast_slice::<Unit, u8>(line);
-            // `put_assume_capacity` copies the key into an owned `Box<[u8]>`
-            // (Zig stored a borrowed slice; see `diff_lines_to_chars`).
+            // `put_assume_capacity` copies the key into an owned `Box<[u8]>`.
             line_hash.put_assume_capacity(line_u8, line_array.len() - 1);
             chars.push(line_array.len() - 1);
         }
@@ -850,7 +835,6 @@ pub(crate) fn diff_chars_to_lines<Unit: DiffUnit>(
             text.extend_from_slice(line_array[d.text[j]]);
             j += 1;
         }
-        // PERF(port): was assume_capacity
         diffs.push(Diff {
             operation: d.operation,
             text: core::mem::take(&mut text).into_boxed_slice(),
@@ -908,7 +892,6 @@ pub(crate) fn diff_cleanup_merge<Unit: DiffUnit>(
                                 nt.extend_from_slice(&text_insert[0..common_length]);
                                 diffs[ii].text = nt.into_boxed_slice();
                             } else {
-                                // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
                                 diffs.insert(
                                     0,
                                     Diff {
@@ -922,7 +905,7 @@ pub(crate) fn diff_cleanup_merge<Unit: DiffUnit>(
                             text_delete.drain(0..common_length);
                         }
                         // Factor out any common suffixies.
-                        // @ZigPort this seems very wrong
+                        // TODO: this seems very wrong
                         common_length = diff_common_suffix(&text_insert, &text_delete);
                         if common_length != 0 {
                             diffs[pointer].text = concat(&[
@@ -936,12 +919,10 @@ pub(crate) fn diff_cleanup_merge<Unit: DiffUnit>(
                     // Delete the offending records and add the merged ones.
                     pointer -= count_delete + count_insert;
                     if count_delete + count_insert > 0 {
-                        // freeRangeDiffList + replaceRangeAssumeCapacity → drain
                         diffs.drain(pointer..pointer + count_delete + count_insert);
                     }
 
                     if !text_delete.is_empty() {
-                        // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
                         diffs.insert(
                             pointer,
                             Diff {
@@ -952,7 +933,6 @@ pub(crate) fn diff_cleanup_merge<Unit: DiffUnit>(
                         pointer += 1;
                     }
                     if !text_insert.is_empty() {
-                        // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
                         diffs.insert(
                             pointer,
                             Diff {
@@ -1008,7 +988,6 @@ pub(crate) fn diff_cleanup_merge<Unit: DiffUnit>(
                 diffs[pointer].text = pt;
                 let p1t = concat(&[&diffs[pointer - 1].text, &diffs[pointer + 1].text]);
                 diffs[pointer + 1].text = p1t;
-                // freeRangeDiffList + replaceRangeAssumeCapacity → remove
                 diffs.remove(pointer - 1);
                 changes = true;
             } else if diffs[pointer].text.starts_with(&diffs[pointer + 1].text) {
@@ -1017,7 +996,6 @@ pub(crate) fn diff_cleanup_merge<Unit: DiffUnit>(
                 let next_len = diffs[pointer + 1].text.len();
                 let pt = concat(&[&diffs[pointer].text[next_len..], &diffs[pointer + 1].text]);
                 diffs[pointer].text = pt;
-                // freeRangeDiffList + replaceRangeAssumeCapacity → remove
                 diffs.remove(pointer + 1);
                 changes = true;
             }
@@ -1075,7 +1053,6 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
                 {
                     let eq_idx = usize::try_from(equalities[equalities.len() - 1]).unwrap();
                     // Duplicate record.
-                    // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
                     diffs.insert(
                         eq_idx,
                         Diff {
@@ -1134,7 +1111,6 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
                 {
                     // Overlap found.
                     // Insert an equality and trim the surrounding edits.
-                    // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
                     diffs.insert(
                         p,
                         Diff {
@@ -1146,7 +1122,7 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
                     diffs[p + 1].text = dupe(&insertion[overlap_length1..]);
                     pointer += 1;
                 } else {
-                    // restore taken values (no-op in Zig).
+                    // restore taken values.
                     diffs[p - 1].text = deletion;
                     diffs[p].text = insertion;
                 }
@@ -1156,7 +1132,6 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
                 {
                     // Reverse overlap found.
                     // Insert an equality and swap and trim the surrounding edits.
-                    // PERF(port): was ensureUnusedCapacity + insertAssumeCapacity
                     diffs.insert(
                         p,
                         Diff {
@@ -1172,7 +1147,7 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
                     diffs[p + 1].text = new_plus;
                     pointer += 1;
                 } else {
-                    // restore taken values (no-op in Zig).
+                    // restore taken values.
                     diffs[p - 1].text = deletion;
                     diffs[p].text = insertion;
                 }
@@ -1221,7 +1196,6 @@ pub(crate) fn diff_cleanup_semantic_lossless<Unit: DiffUnit>(
                 edit.extend_from_slice(&common_string);
                 edit.extend_from_slice(&not_common);
 
-                // Zig: equality_2.insertSlice(0, common_string)
                 equality_2.splice(0..0, common_string.iter().copied());
             }
 
@@ -1501,15 +1475,6 @@ mod tests {
         ); // Unicode
     }
 
-    // TODO(port): the Zig source has ~1400 lines of additional tests for
-    // diffHalfMatch, diffLinesToChars, diffCharsToLines, diffCleanupMerge,
-    // diffCleanupSemanticLossless, rebuildtexts, diffBisect, diff,
-    // diffLineMode, diffCleanupSemantic, diffCleanupEfficiency. They were
-    // wrapped in `checkAllAllocationFailures` (Zig OOM-injection harness)
-    // which has no Rust equivalent (global allocator aborts on OOM). Port
-    // the assertions directly; the test data is preserved in the
-    // .zig source.
-
     fn rebuildtexts(diffs: &DiffList<u8>) -> [Box<[u8]>; 2] {
         let mut text: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
         for my_diff in diffs.iter() {
@@ -1588,5 +1553,3 @@ mod tests {
         );
     }
 }
-
-// ported from: src/test_runner/diff/diff_match_patch.zig

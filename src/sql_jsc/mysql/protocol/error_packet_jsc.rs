@@ -57,4 +57,3 @@ impl ErrorPacketJsc for ErrorPacket {
     }
 }
 
-// ported from: src/sql_jsc/mysql/protocol/error_packet_jsc.zig

@@ -39,8 +39,7 @@ pub(crate) fn view(
             // Try our best to get the package.json name they meant
             'from_package_json: {
                 // `root_dir` is set once by `PackageManager::init()` and points
-                // into the resolver's directory cache for the process lifetime;
-                // mirrors Zig's non-optional `*DirEntry` field.
+                // into the resolver's directory cache for the process lifetime.
                 if !manager.root_dir.has_comptime_query(b"package.json") {
                     break 'from_package_json;
                 }
@@ -53,7 +52,7 @@ pub(crate) fn view(
                     Err(_) => break 'from_package_json,
                 };
                 // Note: copy into the function-scope bump so the slice
-                // outlives this block (Zig never frees this allocation either).
+                // outlives this block.
                 let str: &[u8] = bump.alloc_slice_copy(&str);
                 let source = &bun_ast::Source::init_path_string(b"package.json", str);
                 let mut pkg_log = bun_ast::Log::init();
@@ -187,7 +186,7 @@ pub(crate) fn view(
 
     let versions_len: usize;
 
-    // Note: reshaped for borrowck — Zig used a labeled block returning a tuple to reassign (version, manifest)
+    // Note: reshaped for borrowck.
     'brk: {
         'from_versions: {
             if let Some(versions_obj) = json.get_object(b"versions") {
@@ -204,7 +203,7 @@ pub(crate) fn view(
                     if let Some(result) = parsed_manifest.find_by_dist_tag(version) {
                         break 'brk2 result.version;
                     } else {
-                        // Parse as semver query and find best version - exactly like outdated_command.zig line 325
+                        // Parse as semver query and find best version
                         let sliced_literal = Semver::SlicedString::init(version, version);
                         let query = Semver::query::parse(version, sliced_literal)?;
                         // `defer query.deinit()` — handled by Drop
@@ -575,5 +574,3 @@ pub(crate) fn view(
 
     Ok(())
 }
-
-// ported from: src/cli/pm_view_command.zig

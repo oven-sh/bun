@@ -116,8 +116,8 @@ impl UntrustedCommand {
         let mut node_modules_path = AutoAbsPath::init_top_level_dir();
 
         while let Some(node_modules) = tree_iterator.next(None) {
-            // Zig `node_modules_path.save()/.restore()` — `ResetScope`
-            // exclusively borrows the path in Rust, so save/restore the length
+            // `ResetScope`
+            // exclusively borrows the path, so save/restore the length
             // explicitly. Restored at end of each iteration; the inner-loop
             // `continue`/`return` paths only need the inner `folder_saved`
             // restore (done immediately after `get_list`).
@@ -207,7 +207,7 @@ impl UntrustedCommand {
 
 pub(crate) struct TrustCommand;
 
-/// Anonymous struct from Zig: value type stored in `scripts_at_depth`.
+/// Value type stored in `scripts_at_depth`.
 struct ScriptInfo {
     package_id: PackageID,
     scripts_list: ScriptsList,
@@ -280,7 +280,6 @@ impl TrustCommand {
         for arg in &args[2..] {
             if !arg.is_empty() && arg[0] != b'-' {
                 packages_to_trust.push(arg);
-                // PERF(port): was appendAssumeCapacity.
             }
         }
         let trust_all =
@@ -462,9 +461,9 @@ impl TrustCommand {
         }
 
         // `scripts_at_depth.values()` is taken twice (run, then
-        // print). Rust can't move `scripts_list: List` out for
+        // print). We can't move `scripts_list: List` out for
         // `spawn_package_lifecycle_scripts` and still print it later, so clone
-        // the `List` per spawn (matches the by-value Zig pass).
+        // the `List` per spawn.
         for entry in scripts_at_depth.values().iter().rev() {
             for info in entry.iter() {
                 if info.skip {
@@ -539,7 +538,7 @@ impl TrustCommand {
 
         // SAFETY: `pm_raw` singleton; this scope takes over the descriptor
         // (the original `pm.root_package_json_file` is replaced with INVALID so
-        // its eventual drop is a no-op). Matches Zig's by-value `File` move.
+        // its eventual drop is a no-op).
         let root_file = unsafe {
             let fd = (*pm_raw).root_package_json_file.handle;
             (*pm_raw).root_package_json_file.handle = bun_core::Fd::INVALID;
@@ -710,5 +709,3 @@ impl TrustCommand {
         Ok(())
     }
 }
-
-// ported from: src/cli/pm_trusted_command.zig

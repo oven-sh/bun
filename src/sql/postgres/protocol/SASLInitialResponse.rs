@@ -44,8 +44,4 @@ impl SASLInitialResponse {
         writer.write(data)?;
         Ok(())
     }
-
-    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
 }
-
-// ported from: src/sql/postgres/protocol/SASLInitialResponse.zig

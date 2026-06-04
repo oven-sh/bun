@@ -4,8 +4,7 @@ use core::ptr;
 // BufferedReader
 // ──────────────────────────────────────────────────────────────────────────
 
-// Plain storage for Zig's `bun.deprecated.BufferedReader(buffer_size, ReaderType)`.
-// Zig's `ReaderType` duck-typing has no Rust trait equivalent here, and the only
+// Plain storage for a buffered reader. The only
 // in-tree consumer (`pack_command::BufferedFileReader`) supplies its own read shim
 // over `bun_sys::read`, so this stays a bare struct: no reader trait, no methods.
 // (The dedicated stdin instance lives at `output::BufferedStdin`.)
@@ -48,7 +47,6 @@ pub struct DoublyLinkedList<T> {
 }
 
 /// Node inside the linked list wrapping the actual data.
-// In Zig this is `DoublyLinkedList(T).Node`.
 pub struct DoublyLinkedNode<T> {
     pub prev: *mut DoublyLinkedNode<T>,
     pub next: *mut DoublyLinkedNode<T>,
@@ -405,5 +403,3 @@ mod tests {
 
     // RapidHash test vectors live alongside the canonical impl in `bun_hash::rapidhash`.
 }
-
-// ported from: src/bun_core/deprecated.zig

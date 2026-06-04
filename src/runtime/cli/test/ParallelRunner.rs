@@ -16,4 +16,3 @@ pub use super::parallel::runner::run_as_worker;
 pub use super::parallel::runner::worker_emit_test_done;
 pub use super::parallel::worker::Worker;
 
-// ported from: src/cli/test/ParallelRunner.zig

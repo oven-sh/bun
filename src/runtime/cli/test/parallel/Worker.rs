@@ -10,8 +10,6 @@ use bun_io as r#async;
 use bun_io;
 use bun_jsc as jsc;
 use bun_sys;
-// `bun.spawn` lives under src/runtime/api/bun/process.zig → mounted at
-// `crate::api::bun_process`, re-exported as `crate::api::bun::process`.
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
 #[cfg(unix)]
@@ -42,7 +40,7 @@ pub struct Worker {
     pub coord: *const Coordinator<'static>,
     pub idx: u32,
     // Intrusive-refcounted (`ThreadSafeRefCount`); `to_process` returns a
-    // `heap::alloc`ed `*mut Process`. Matches Zig `?*bun.spawn.Process`.
+    // `heap::alloc`ed `*mut Process`.
     pub process: Option<*mut Process>,
 
     /// Bidirectional IPC over fd 3. POSIX: usockets adopted from a socketpair.
@@ -63,7 +61,7 @@ pub struct Worker {
     /// range has the most remaining — the end is furthest from that worker's
     /// hot region.
     pub range: FileRange,
-    /// `std.time.milliTimestamp()` at the most recent dispatch; drives lazy
+    /// Millisecond timestamp at the most recent dispatch; drives lazy
     /// scale-up.
     pub dispatched_at: i64,
     /// Worker stdout+stderr since the last `test_done`. Flushed atomically
@@ -112,7 +110,7 @@ impl Worker {
             // Reset to fresh state after deinit so reapWorker's `!respawned`
             // cleanup (which can't tell whether start() ran) doesn't deinit on
             // undefined ArrayList memory.
-            // Assignment drops the old value (≡ Zig deinit + reinit). Take the
+            // Assignment drops the old value. Take the
             // backref from `&mut` so the stored `*const` keeps write provenance
             // (on_read_chunk mutates `captured` through it).
             let self_ptr: *const Worker = std::ptr::from_mut::<Worker>(this).cast_const();
@@ -145,8 +143,6 @@ impl Worker {
                 linux_pdeathsig: None,
                 ..Default::default()
             };
-            // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
-            // anyerror, inner map for the bun_sys::Result.
             // SAFETY: `coord.argv`/`coord.envps[..]` are null-terminated
             // C-string arrays with argv[0] non-null; valid for this call.
             let mut spawned = unsafe {
@@ -162,7 +158,6 @@ impl Worker {
             })?;
             let stdout = spawned.stdout;
             let stderr = spawned.stderr;
-            // (Zig `defer spawned.extra_pipes.deinit()` — handled by Drop.)
             let extra_pipes = core::mem::take(&mut spawned.extra_pipes);
             this.process = Some(spawned.to_process(
                 bun_event_loop::EventLoopHandle::init(coord.vm.event_loop().cast()),
@@ -202,7 +197,6 @@ impl Worker {
             use bun_sys::windows::libuv as uv;
 
             let ipc_pipe = bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
-            // Zig spec: `errdefer if (this.ipc.backend.pipe == null) ipc_pipe.closeAndDestroy();`
             // The guard owns the raw Box ptr; `close_and_destroy` handles both
             // never-initialized (loop_ null → free directly) and initialized
             // (uv_close + free in callback). Disarmed only after `adopt_pipe`
@@ -234,8 +228,6 @@ impl Worker {
                 stream: true,
                 ..Default::default()
             };
-            // Zig: `try (try spawnProcess(...)).unwrap()` — outer `?` for the
-            // anyerror, inner map for the bun_sys::Result.
             // SAFETY: `coord.argv`/`coord.envps[..]` are null-terminated
             // C-string arrays with argv[0] non-null; valid for this call.
             let mut spawned = unsafe {
@@ -249,11 +241,9 @@ impl Worker {
                 Output::err(e, "spawnProcess failed for test worker", ());
                 bun_core::err!("SpawnFailed")
             })?;
-            // Zig `defer spawned.extra_pipes.deinit()` only freed the ArrayList
-            // backing (items were raw `*uv.Pipe` with no destructor). The Rust
-            // port made `WindowsStdioResult::Buffer` hold `Box<uv::Pipe>`, and
+            // `WindowsStdioResult::Buffer` holds `Box<uv::Pipe>`, and
             // `spawn_process_windows` does `heap::take(ipc_pipe)` into it — so
-            // the Vec now holds a second `Box` to the SAME heap address that
+            // `extra_pipes` holds a second `Box` to the SAME heap address that
             // `ipc_pipe_guard` / `adopt_pipe` claim. Drain the Vec and release
             // each Box back to a raw ptr so the Vec drop is inert and
             // `ipc_pipe_guard` remains the sole owner across the
@@ -500,8 +490,7 @@ impl Default for WorkerPipe {
     }
 }
 
-// `bun.io.BufferedReader.init(WorkerPipe)` — vtable parent. Maps the Zig
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` decls.
+// `bun_io::BufferedReader` vtable parent.
 // Callbacks touch only fields disjoint from `reader` (worker backref / done
 // flag); worker/coord backrefs are valid for the pipe's lifetime.
 bun_io::impl_buffered_reader_parent! {
@@ -517,9 +506,7 @@ bun_io::impl_buffered_reader_parent! {
 
 impl Drop for WorkerPipe {
     fn drop(&mut self) {
-        // Body intentionally empty: Zig `deinit` only calls `reader.deinit()`,
-        // which Rust handles via `BufferedReader: Drop`.
+        // Body intentionally empty: `BufferedReader: Drop` handles cleanup.
     }
 }
 
-// ported from: src/cli/test/parallel/Worker.zig

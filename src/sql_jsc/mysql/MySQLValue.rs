@@ -1,6 +1,6 @@
-//! `Value` union + JSC bridges for MySQL type encoding. Split from
-//! `sql/mysql/MySQLTypes.zig` so the protocol layer keeps the pure
-//! `CharacterSet`/`FieldType` enums without `JSValue` references.
+//! `Value` union + JSC bridges for MySQL type encoding. Kept separate so the
+//! protocol layer keeps the pure `CharacterSet`/`FieldType` enums without
+//! `JSValue` references.
 
 use crate::jsc::{
     IntegerRange, JSGlobalObject, JSGlobalObjectSqlExt as _, JSType, JSValue, JsError, JsResult,
@@ -181,8 +181,7 @@ impl Drop for Bytes {
     }
 }
 
-// Value's Zig `deinit` only forwarded to payload deinit; Rust auto-drops enum
-// payloads (ZigStringSlice, Bytes, Data all impl Drop), so no explicit Drop.
+// No explicit Drop for Value: the enum payloads (ZigStringSlice, Bytes, Data) all impl Drop.
 
 impl Value {
     pub fn to_data(&self, field_type: FieldType) -> Result<Data, any_mysql_error::Error> {
@@ -234,9 +233,8 @@ impl Value {
             }
             // Value::Decimal(dec) => return dec.to_binary(field_type),
             Value::StringData(data) | Value::BytesData(data) => {
-                // Zig returned `data` by value (shallow copy of the Data union,
-                // aliasing the same bytes). `bun_sql::shared::Data` is not
-                // `Clone` in the Rust port, so return a `Temporary` aliasing the
+                // `bun_sql::shared::Data` is not
+                // `Clone`, so return a `Temporary` aliasing the
                 // same bytes. INVARIANT: `to_data` callers must keep `self`
                 // alive until the returned `Data` is consumed.
                 let s = data.slice();
@@ -558,7 +556,6 @@ impl DateTime {
                     ),
                 }
             }
-            // Zig: `bun.Output.panic(...)` — formatted fatal abort; `panic!` is the equivalent.
             _ => panic!("Invalid datetime length: {}", val.len()),
         }
     }
@@ -684,9 +681,6 @@ impl DateTime {
     }
 
     pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        // Zig's `DateTime.toJS` calls `toJSTimestamp()` with no args even though
-        // the fn takes a globalObject and is fallible (a latent bug there); the
-        // Rust port passes the globalObject and maps failure to NaN.
         JSValue::from_date_number(
             global_object,
             self.to_js_timestamp(global_object).unwrap_or(f64::NAN),
@@ -883,7 +877,6 @@ pub struct Decimal {
 
 impl Decimal {
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JSValue {
-        // PERF(port): was stack-fallback (std.heap.stackFallback(64, ...)) — profile if it shows up on a hot path.
         let mut str: Vec<u8> = Vec::new();
 
         if self.negative {
@@ -902,10 +895,8 @@ impl Decimal {
     }
 
     pub fn to_binary(&self, _field_type: FieldType) -> Result<Data, bun_core::Error> {
-        // Zig: `bun.todoPanic(@src(), "Decimal.toBinary not implemented", .{});`
-        // Intentional shipped runtime "feature not yet implemented" — not a
-        // porting placeholder. The `Decimal` arm of `Value` is commented out,
-        // so this is unreachable today.
+        // Intentional runtime "feature not yet implemented". The `Decimal` arm
+        // of `Value` is commented out, so this is unreachable today.
         bun_core::todo_panic!("Decimal.toBinary not implemented")
     }
 
@@ -975,4 +966,3 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-// ported from: src/sql_jsc/mysql/MySQLValue.zig

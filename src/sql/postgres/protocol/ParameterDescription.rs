@@ -8,7 +8,6 @@ pub struct ParameterDescription {
 }
 
 impl ParameterDescription {
-    // The Zig out-param constructor (`this.* = .{...}`) is reshaped to return Self.
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
@@ -31,7 +30,6 @@ impl ParameterDescription {
         Ok(Self { parameters })
     }
 
-    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         context: Container,
     ) -> Result<Self, AnyPostgresError> {
@@ -39,14 +37,12 @@ impl ParameterDescription {
     }
 }
 
-// Zig returned `[]align(1) const Int4`; Rust cannot form an unaligned `&[i32]`,
-// so we reinterpret as `&[[u8; 4]]` (align 1) and let the caller `from_ne_bytes` each element.
+// Rust cannot form an unaligned `&[i32]`, so we reinterpret as `&[[u8; 4]]`
+// (align 1) and let the caller `from_ne_bytes` each element.
 fn to_int32_slice(slice: &[u8]) -> &[[u8; core::mem::size_of::<Int4>()]] {
     // `[u8; 4]` has align 1 and is `AnyBitPattern`, so this is a safe bytemuck
-    // cast. Truncate any trailing `len % 4` bytes first to match Zig's
-    // `bytesAsSlice` semantics (cast_slice would panic on a remainder).
+    // cast. Truncate any trailing `len % 4` bytes first (cast_slice would
+    // panic on a remainder).
     let n = core::mem::size_of::<Int4>();
     bun_core::cast_slice(&slice[..slice.len() - slice.len() % n])
 }
-
-// ported from: src/sql/postgres/protocol/ParameterDescription.zig

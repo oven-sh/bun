@@ -266,4 +266,3 @@ const _: () = {
     }
 };
 
-// ported from: src/css/rules/property.zig

@@ -23,8 +23,7 @@ pub struct DecoderOptions {
     pub params: DecoderParams,
 }
 
-/// Zig: `std.enums.EnumFieldStruct(c.BrotliDecoderParameter, bool, false)` —
-/// one `bool` per `BrotliDecoderParameter` variant, default `false`.
+/// One `bool` per `BrotliDecoderParameter` variant, default `false`.
 #[derive(Default)]
 pub struct DecoderParams {
     pub large_window: bool,
@@ -48,10 +47,6 @@ impl Default for DecoderOptions {
 
 pub struct BrotliReaderArrayList<'a> {
     pub input: &'a [u8],
-    // Reshaped for borrowck — Zig kept a by-value copy of the
-    // ArrayListUnmanaged in `list` and wrote it back to `*list_ptr` on every
-    // `readAll` (defer). `Vec<u8>` is not `Copy`, so we operate on `list_ptr`
-    // directly and drop the redundant `list` + `list_allocator` fields.
     pub list_ptr: &'a mut Vec<u8>,
     pub brotli: *mut c::BrotliDecoder,
     pub state: ReaderState,
@@ -68,7 +63,6 @@ pub struct BrotliReaderArrayList<'a> {
 pub use bun_core::compress::State as ReaderState;
 
 impl<'a> BrotliReaderArrayList<'a> {
-    // Zig: `pub const new = bun.TrivialNew(BrotliReaderArrayList);`
     #[inline]
     pub fn new(value: Self) -> Box<Self> {
         Box::new(value)
@@ -163,9 +157,6 @@ impl<'a> BrotliReaderArrayList<'a> {
     }
 
     pub fn read_all(&mut self, is_done: bool) -> Result<(), Error> {
-        // Zig's `defer this.list_ptr.* = this.list;` is gone — we
-        // mutate through `list_ptr` directly (see field note above).
-
         if self.state == ReaderState::End || self.state == ReaderState::Error {
             return Ok(());
         }
@@ -262,8 +253,6 @@ impl<'a> Drop for BrotliReaderArrayList<'a> {
             // Created by BrotliDecoder::create_instance; destroyed exactly once here.
             BrotliDecoder::destroy_instance(self.brotli_mut());
         }
-        // Zig's `bun.destroy(this)` is implicit — callers hold a
-        // `Box<Self>` and dropping it frees the allocation.
     }
 }
 
@@ -362,11 +351,9 @@ impl BrotliCompressionStream {
     }
 
     pub fn end(&mut self) -> Result<&[u8], Error> {
-        // Zig: `defer this.state = .End` — runs on BOTH ok and error paths.
-        // Reshaped for borrowck — `compress_stream`'s output borrows
-        // `&mut *self.brotli`, so we set `self.state` first and inline
-        // write/write_chunk("", true). Net state matches Zig (defer overrides
-        // any intermediate `Error` back to `End`).
+        // `state` ends up `End` on both ok and error paths; set it before
+        // calling `compress_stream` because its output borrows
+        // `&mut *self.brotli`.
         if matches!(self.state, CompressionState::End | CompressionState::Error) {
             self.state = CompressionState::End;
             return Ok(b"");
@@ -387,9 +374,8 @@ impl BrotliCompressionStream {
         BrotliWriter::init(self, writable)
     }
 
-    // Zig's `writer()` returned a `std.Io.GenericWriter` adapter; in Rust the
-    // returned `BrotliWriter` implements `bun_io::Write` itself, so this is
-    // just an alias for `writer_context()`.
+    // The returned `BrotliWriter` implements `bun_io::Write` itself, so this
+    // is just an alias for `writer_context()`.
     pub fn writer<W: bun_io::Write>(&mut self, writable: W) -> BrotliWriter<'_, W> {
         self.writer_context(writable)
     }
@@ -404,17 +390,12 @@ impl Drop for BrotliCompressionStream {
     }
 }
 
-// Zig: `fn NewWriter(comptime InputWriter: type) type { return struct {...} }`
 pub struct BrotliWriter<'a, W> {
     pub compressor: &'a mut BrotliCompressionStream,
     pub input_writer: W,
 }
 
 impl<'a, W: bun_io::Write> BrotliWriter<'a, W> {
-    // Zig: `WriteError = error{BrotliCompressionError} || InputWriter.Error`
-    // — the error-set union is collapsed to `bun_core::Error` (error names
-    // are preserved through `err!`), like the rest of this file.
-
     pub fn init(compressor: &'a mut BrotliCompressionStream, input_writer: W) -> Self {
         Self {
             compressor,
@@ -429,16 +410,12 @@ impl<'a, W: bun_io::Write> BrotliWriter<'a, W> {
     }
 
     pub fn end(&mut self) -> Result<(), Error> {
-        // Zig declared `!usize` but the body has no return — the
-        // Zig fn would fail to compile if ever instantiated. Port as `()`.
         let decompressed = self.compressor.end()?;
         self.input_writer.write_all(decompressed)?;
         Ok(())
     }
 }
 
-// Zig: `std.Io.GenericWriter` adapter returned by `writer()` — in Rust the
-// `BrotliWriter` is the writer, so it implements `bun_io::Write` directly.
 impl<W: bun_io::Write> bun_io::Write for BrotliWriter<'_, W> {
     fn write_all(&mut self, buf: &[u8]) -> Result<(), Error> {
         self.write(buf).map(|_| ())
@@ -455,4 +432,3 @@ impl<W: bun_io::Write> bun_io::Write for BrotliWriter<'_, W> {
     }
 }
 
-// ported from: src/brotli/brotli.zig

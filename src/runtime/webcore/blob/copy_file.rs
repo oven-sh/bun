@@ -22,9 +22,8 @@ use core::ffi::c_int;
 use core::ffi::c_void;
 use core::marker::ConstParamTy;
 
-// Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Both mirror
-// the same Zig `jsc.SystemError` extern struct; map field-by-field because the
-// two Rust definitions order their fields differently.
+// Local conversion: `bun_sys::SystemError` -> `bun_jsc::SystemError`. Mapped
+// field-by-field because the two definitions order their fields differently.
 fn to_jsc_system_error(e: &SystemError) -> jsc::SystemError {
     jsc::SystemError {
         errno: e.errno,
@@ -45,7 +44,7 @@ fn to_jsc_system_error(e: &SystemError) -> jsc::SystemError {
 pub struct CopyFile<'a> {
     pub destination_file_store: store::File,
     pub source_file_store: store::File,
-    // `StoreRef` is the thread-safe refcounted handle (Zig `store.ref()`/`deref()`);
+    // `StoreRef` is the thread-safe refcounted handle;
     // it keeps the stores — and the path slices the `File` clones borrow — alive
     // while this task is on the work pool.
     pub store: Option<StoreRef>,
@@ -62,7 +61,7 @@ pub struct CopyFile<'a> {
     pub read_off: SizeType,
 
     // per LIFETIMES.tsv: JSC_BORROW → &JSGlobalObject
-    // TODO(port): lifetime — this struct is Box-allocated and crosses threads;
+    // TODO(refactor): lifetime — this struct is Box-allocated and crosses threads;
     // `'a` here is unsound in practice. Likely should be *const JSGlobalObject.
     pub global_this: &'a JSGlobalObject,
 
@@ -503,7 +502,7 @@ impl<'a> CopyFile<'a> {
 
                     self.system_error = Some(
                         bun_sys::Error {
-                            // @intCast is identity here (E repr == Error.Int); bare `as` matches Zig @intFromEnum.
+                            // bare `as` is lossless here (E repr == Error.Int).
                             errno: bun_sys::E::EINVAL as bun_sys::ErrorInt,
                             syscall: USE.tag(),
                             ..Default::default()
@@ -515,7 +514,7 @@ impl<'a> CopyFile<'a> {
                 errno => {
                     self.system_error = Some(
                         bun_sys::Error {
-                            // @intCast is identity here (E repr == Error.Int); bare `as` matches Zig @intFromEnum.
+                            // bare `as` is lossless here (E repr == Error.Int).
                             errno: errno as bun_sys::ErrorInt,
                             syscall: USE.tag(),
                             ..Default::default()
@@ -780,7 +779,7 @@ impl<'a> CopyFile<'a> {
                 self.destination_file_store.pathlike,
                 PathOrFileDescriptor::Fd(_)
             ) {
-                // (empty in Zig)
+                // nothing to do for the Fd case
             }
 
             let stat: Stat = match stat_ {
@@ -943,20 +942,16 @@ impl<'a> CopyFile<'a> {
     }
 }
 
-// Zig `deinit` manually freed the source path slice (when it was an owned
-// `.string` and not handed to a SystemError) and deref'd the store. In Rust
-// ownership is encoded in the types, so everything is field `Drop`:
+// Ownership is encoded in the types, so cleanup is all field `Drop`:
 // `source_file_store.pathlike` is a `PathLike` clone that is independently
 // droppable — `PathLike::clone` dupes owned string buffers (freed by the
 // clone's own `CowSlice` drop), bumps refs for WTF-backed slices, and only
 // shares the backing for borrowed-string/Buffer variants (whose owner is kept
 // alive by the `source_store` `StoreRef`). Each clone's field `Drop` frees
 // exactly what it owns; the `StoreRef`s release just their Store refcounts on
-// drop, and `bun.destroy(this)` is the `Box` drop. No explicit `Drop` impl is
-// needed.
+// drop. No explicit `Drop` impl is needed.
 
-// Port of `bun.sys.preallocate_supported` / `bun.sys.preallocate_length` (sys.zig).
-// Kept local until bun_sys exports them; values match crate::node::fs.
+// Kept local until bun_sys exports these; values match crate::node::fs.
 #[cfg(not(windows))]
 const PREALLOCATE_SUPPORTED: bool = cfg!(any(target_os = "linux", target_os = "android"));
 #[cfg(not(windows))]
@@ -997,7 +992,7 @@ pub struct CopyFileWindows<'a> {
     pub mkdirp_if_not_exists: bool,
     pub destination_mode: Option<Mode>,
     // per LIFETIMES.tsv: JSC_BORROW → &jsc::EventLoop
-    // TODO(port): lifetime — heap-allocated and re-entered from libuv callbacks;
+    // TODO(refactor): lifetime — heap-allocated and re-entered from libuv callbacks;
     // likely should be *const jsc::EventLoop.
     pub event_loop: &'a jsc::event_loop::EventLoop,
 
@@ -1034,7 +1029,6 @@ impl Default for ReadWriteLoop {
             must_close_destination_fd: false,
             written: 0,
             read_buf: Vec::new(),
-            // Zig: `.{ .base = undefined, .len = 0 }`
             uv_buf: libuv::uv_buf_t {
                 len: 0,
                 base: core::ptr::null_mut(),
@@ -1043,9 +1037,8 @@ impl Default for ReadWriteLoop {
     }
 }
 
-// Zig defines `ReadWriteLoop.start/read` taking both `*ReadWriteLoop` and
-// `*CopyFileWindows`, but in Rust the former is a subobject of the latter, so passing
-// both as `&mut` is aliasing UB. These are hoisted onto `CopyFileWindows` so the
+// `ReadWriteLoop` is a subobject of `CopyFileWindows`, so passing both as
+// `&mut` would be aliasing UB. These are hoisted onto `CopyFileWindows` so the
 // borrow checker can see `self.read_write_loop` / `self.io_request` / `self.event_loop`
 // as disjoint field accesses through a single `&mut self`.
 #[cfg(windows)]
@@ -1058,7 +1051,7 @@ impl<'a> CopyFileWindows<'a> {
 
     fn read_write_loop_read(&mut self) -> bun_sys::Result<()> {
         self.read_write_loop.read_buf.clear();
-        // reshaped for borrowck — Zig's `allocatedSlice()` is the full capacity slice.
+        // reshaped for borrowck — use the full capacity slice.
         let cap = self.read_write_loop.read_buf.capacity();
         self.read_write_loop.uv_buf = libuv::uv_buf_t {
             len: cap as libuv::ULONG,
@@ -1572,7 +1565,7 @@ impl<'a> CopyFileWindows<'a> {
         let err_instance = err.to_js_with_async_stack(global_this, promise);
 
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
-        // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
+        // calls enter() now and exit() on drop.
         let _guard = unsafe {
             jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
         };
@@ -1658,7 +1651,7 @@ impl<'a> CopyFileWindows<'a> {
         // outlives `destroy(self)` for borrowck.
         let promise = JSPromise::opaque_mut(self.promise.swap());
         // SAFETY: VM-owned event loop is valid for the process lifetime; `enter_scope`
-        // calls enter() now and exit() on drop (RAII for Zig's `loop.enter(); defer loop.exit();`).
+        // calls enter() now and exit() on drop.
         let _guard = unsafe {
             jsc::event_loop::EventLoop::enter_scope(self.event_loop as *const _ as *mut _)
         };
@@ -1736,9 +1729,8 @@ impl<'a> CopyFileWindows<'a> {
         self.event_loop.unref_concurrently();
 
         if let Some(err) = self.err.take() {
-            // Zig `var err2 = err; err2.deinit();` freed the borrowed path; in
-            // Rust `bun_sys::Error.path` is an owned `Box<[u8]>` and is dropped with `err`
-            // inside `throw`.
+            // `bun_sys::Error.path` is an owned `Box<[u8]>` and is dropped with
+            // `err` inside `throw`.
             self.throw(err);
             return;
         }
@@ -1875,12 +1867,9 @@ fn unsupported_non_regular_file_error() -> SystemError {
         ..SystemError::default()
     }
 }
-// Zig had these as `const` values; `SystemError` contains `bun.String`, which is
-// not const-constructible in Rust, so they are constructor fns instead.
+// `SystemError` contains `bun_core::String`, which is not const-constructible,
+// so these are constructor fns instead of `const` values.
 
 pub type CopyFilePromiseTask<'a> =
     jsc::concurrent_promise_task::ConcurrentPromiseTask<'a, CopyFile<'a>>;
-// Zig `CopyFilePromiseTask.EventLoopTask`.
 pub type CopyFilePromiseTaskEventLoopTask = jsc::EventLoopTask;
-
-// ported from: src/runtime/webcore/blob/copy_file.zig

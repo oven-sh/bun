@@ -20,8 +20,8 @@ pub use jsc::MarkedArrayBuffer as Buffer;
 pub use jsc::ArgumentsSlice;
 
 // LAYERING: `Fd::{from_js,from_js_validated,to_js}` are provided by the
-// canonical `bun_sys_jsc::FdJsc` extension trait (full range/type validation
-// per Zig `bun.FD.fromJSValidated`). Re-exported so existing
+// canonical `bun_sys_jsc::FdJsc` extension trait (full range/type
+// validation). Re-exported so existing
 // `crate::node::types::FdJsc` import paths keep resolving.
 pub use bun_sys_jsc::FdJsc;
 
@@ -280,7 +280,7 @@ impl Drop for StringOrBuffer {
 }
 
 impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
-    /// Zig `BlobOrStringOrBuffer.deinitAndUnprotect`, JS-side half — owned
+    /// JS-side half of cleanup — owned
     /// payloads are released by `Drop` (which runs next when held in a
     /// [`bun_jsc::ThreadSafe`]).
     #[inline]
@@ -292,7 +292,7 @@ impl bun_jsc::Unprotect for BlobOrStringOrBuffer {
 }
 
 impl bun_jsc::Unprotect for StringOrBuffer {
-    /// Zig `StringOrBuffer.deinitAndUnprotect`, JS-side half — undo the
+    /// JS-side half of cleanup — undo the
     /// `protect()` taken by [`StringOrBuffer::to_thread_safe`] /
     /// `from_js_maybe_async(.., is_async=true)`. Owned slices are released by
     /// `Drop`.
@@ -313,7 +313,6 @@ impl StringOrBuffer {
         match self {
             Self::String(s) => {
                 s.to_thread_safe();
-                // reshaped for borrowck — Zig moves the payload between variants.
                 let str = core::mem::take(s);
                 *self = Self::ThreadsafeString(str);
             }
@@ -357,7 +356,6 @@ impl StringOrBuffer {
             Self::ThreadsafeString(str) | Self::String(str) => str.transfer_to_js(ctx),
             Self::EncodedSlice(encoded_slice) => {
                 let result = jsc::bun_string_jsc::create_utf8_for_js(ctx, encoded_slice.slice());
-                // Zig: `defer { this.encoded_slice.deinit(); this.encoded_slice = .{}; }`
                 *encoded_slice = ZigStringSlice::default();
                 result
             }
@@ -370,7 +368,7 @@ impl StringOrBuffer {
         }
     }
 
-    /// Zig `StringOrBuffer.protect` — mirrors `to_thread_safe` but only
+    /// Mirrors `to_thread_safe` but only
     /// protects the JS-side buffer value (no string conversion).
     #[inline]
     pub fn protect(&self) {
@@ -390,7 +388,7 @@ impl StringOrBuffer {
     }
 
     /// Out-param core of [`from_js_maybe_async`]. Writes the decoded payload
-    /// directly into `*out` (Zig result-location semantics) and returns
+    /// directly into `*out` and returns
     /// `Ok(true)` on success, `Ok(false)` if `value` is not a string/buffer
     /// type. `*out` is left untouched on `Ok(false)` / `Err`.
     ///
@@ -633,7 +631,7 @@ impl StringOrBuffer {
     }
 }
 
-// `bun.String.encode` — see `crate::webcore::encoding::BunStringEncode`.
+// String encoding — see `crate::webcore::encoding::BunStringEncode`.
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -656,8 +654,7 @@ pub enum Encoding {
     Buffer,
 }
 
-// Zig used `ComptimeStringMap` (`fromJSCaseInsensitive` /
-// `inMapCaseInsensitive`). With only 13 short keys spread across 7 distinct
+// With only 13 short keys spread across 7 distinct
 // lengths (max 4 keys at len==6) a length-gated byte match beats a
 // `phf::Map`'s hash+probe — see `Encoding::from` below. The case-insensitive
 // entry points lowercase into a stack buffer first.
@@ -706,7 +703,7 @@ impl Encoding {
 
     /// Caller must verify the value is a string
     pub fn from(slice: &[u8]) -> Option<Encoding> {
-        // PERF(port): length-gated match in lieu of `phf::Map` — 13 keys over
+        // PERF: length-gated match in lieu of `phf::Map` — 13 keys over
         // 7 distinct lengths (3..=9, max 4 collisions at len 6). The outer
         // `match len` rejects almost every miss on a single `usize` compare;
         // the inner byte compares are at known fixed lengths so LLVM lowers
@@ -811,13 +808,8 @@ impl Encoding {
             .throw()
     }
 
-    /// Zig `encodeWithSize(comptime size, *const [size]u8)`. In Zig the two
-    /// `encodeWith*` fns differed only in their comptime stack-buffer size
-    /// (`[size*4]u8` vs `[max_size*4]u8`); in Rust both heap-allocate, so the
-    /// match-arm bodies were byte-identical for Base64url/Hex/Buffer/else and
-    /// `size` was unused past the assert. Collapsed into a thin assertion
-    /// wrapper. Kept for Zig-port symmetry; currently has no Rust callers
-    /// (CryptoHasher.rs ported all sites to `encode_with_max_size`).
+    /// Thin assertion wrapper over `encode_with_max_size`; currently has no
+    /// callers (CryptoHasher.rs uses `encode_with_max_size` directly).
     #[inline]
     pub fn encode_with_size(
         self,
@@ -829,8 +821,8 @@ impl Encoding {
         self.encode_with_max_size(global_object, size, input)
     }
 
-    /// Zig `encodeWithMaxSize(comptime max_size, []const u8)`. `max_size` is a
-    /// runtime arg (see `encode_with_size`); callers pass `EVP_MAX_MD_SIZE` etc.
+    /// `max_size` is a runtime arg (see `encode_with_size`); callers pass
+    /// `EVP_MAX_MD_SIZE` etc.
     pub fn encode_with_max_size(
         self,
         global_object: &JSGlobalObject,
@@ -843,8 +835,8 @@ impl Encoding {
             input.len(),
             max_size,
         );
-        // PERF(port): Zig used comptime-sized stack buffers; stable Rust forbids
-        // const-generic arithmetic in array lengths, so we heap-allocate.
+        // Stable Rust forbids const-generic arithmetic in array lengths, so
+        // we heap-allocate.
         match self {
             Self::Base64 => {
                 let encoded_len = bun_core::base64::encode_len(input);
@@ -862,7 +854,6 @@ impl Encoding {
                 Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
             }
             Self::Hex => {
-                // Zig used `bufPrint("{x}", input)` into a stack buffer.
                 // The byte-by-byte `write!` formatting machinery is pathologically
                 // slow in debug builds, so encode via LUT directly into the
                 // destination JS string buffer.
@@ -878,7 +869,6 @@ impl Encoding {
                 encoded.transfer_to_js(global_object)
             }
             Self::Buffer => jsc::ArrayBuffer::create_buffer(global_object, input),
-            // PERF(port): was comptime monomorphization (`inline else`) — profile if it shows up on a hot path
             enc => crate::webcore::encoding::to_string(input, global_object, enc),
         }
     }
@@ -921,8 +911,6 @@ pub enum PathOrBuffer {
 impl PathOrBuffer {
     #[inline]
     pub fn slice(&self) -> &[u8] {
-        // Zig only ever returns `self.path.slice()` here regardless of variant —
-        // preserved verbatim (likely a latent bug or this type is unused).
         match self {
             Self::Path(p) => p.slice(),
             Self::Buffer(_) => unreachable!("Zig accessed .path unconditionally"),
@@ -937,8 +925,6 @@ pub struct CallbackTask<Result> {
     pub option: CallbackTaskOption<Result>,
 }
 
-// Zig uses an untagged `union` discriminated by a separate `success: bool`
-// field; the Rust enum's own discriminant replaces it.
 pub enum CallbackTaskOption<Result> {
     Err(Box<bun_sys::SystemError>),
     Result(Result),
@@ -949,8 +935,7 @@ where
     CallbackTaskOption<Result>: Default,
 {
     fn default() -> Self {
-        // Zig only sets `success = false` and leaves the rest `undefined`;
-        // Rust requires every field initialized, so zero the callback handle
+        // Zero the callback handle
         // and lean on the `CallbackTaskOption<Result>: Default` bound.
         Self {
             callback: core::ptr::null_mut(),
@@ -973,7 +958,7 @@ pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 /// fit a `WPathBuffer` (`strings::fits_in_wide_path_buffer`). NT caps paths
 /// at `PATH_MAX_WIDE` units, so such a path cannot exist on disk — callers
 /// map this to `false`/`ENAMETOOLONG` as appropriate instead of letting the
-/// conversion overflow (mirrors the Zig-side fix in oven-sh/bun#27775).
+/// conversion overflow (oven-sh/bun#27775).
 #[derive(Debug, Clone, Copy)]
 pub struct NameTooLong;
 
@@ -1053,8 +1038,7 @@ pub(crate) trait PathOrFdExt {
 }
 
 impl PathLikeExt for PathLike {
-    // Zig's return type is `if (force) [:0]u8 else [:0]const u8`; Rust
-    // const-generics can't change return mutability, so this always returns
+    // Const-generics can't change return mutability, so this always returns
     // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
     // separate method.
     fn slice_z_with_force_copy<'a, const FORCE: bool>(
@@ -1200,8 +1184,8 @@ impl PathLikeExt for PathLike {
                     return Err(NameTooLong);
                 }
                 // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — 2-byte
-                // alignment is runtime-asserted inside `bytes_as_slice_mut`
-                // (port of Zig `@alignCast`); see PathBuffer doc comment for
+                // alignment is runtime-asserted inside `bytes_as_slice_mut`;
+                // see PathBuffer doc comment for
                 // why the buffer is always sufficiently aligned in practice.
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
                 return Ok(strings::to_kernel32_path(buf_u16, s));
@@ -1690,11 +1674,11 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 // `crate::node::types::PathOrFileDescriptorSerializeTag` paths keep resolving.
 pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
-// Zig copies these tagged unions by value freely; the Rust port adds
-// `Drop` for the path-owning variants, so an explicit `dupe()` is provided for
+// The path-owning variants have
+// `Drop`, so an explicit `dupe()` is provided for
 // callers (Blob, Store::File) that need a fresh copy. Ref-counting variants are
 // bumped where the underlying type supports it; otherwise we bitwise-copy
-// (matching Zig semantics) and leave proper ref-counting to a later pass.
+// and leave proper ref-counting to a later pass.
 
 impl PathOrFdExt for PathOrFileDescriptor {
     fn from_js(
@@ -1723,7 +1707,7 @@ impl PathOrFdExt for PathOrFileDescriptor {
 
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Non-exhaustive enum in Zig (`enum(c_int) { ... _ }`) → newtype over c_int.
+/// Non-exhaustive set of flag values; newtype over c_int.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub struct FileSystemFlags(pub c_int);
@@ -1738,7 +1722,6 @@ impl FileSystemFlags {
     // `pub type TagType = c_int;` would be an inherent associated
     // type (unstable). Dropped — callers use `c_int` directly.
 
-    // Named variants from the Zig enum:
     /// Open file for appending. The file is created if it does not exist.
     pub const A: Self = Self(O::APPEND | O::WRONLY | O::CREAT);
     /// Open file for reading. An exception occurs if the file does not exist.
@@ -1800,14 +1783,12 @@ impl FileSystemFlags {
             }
 
             let flags: Option<i32> = 'brk: {
-                // PERF(port): was comptime bool dispatch (`inline else`) — profile if it shows up on a hot path
                 if str.is_16bit() {
                     let chars = str.utf16_slice_aligned();
                     if (chars[0] as u8).is_ascii_digit() {
                         // node allows "0o644" as a string :(
                         let slice = str.to_slice();
                         // slice.deinit() on Drop
-                        // Zig: `@as(i32, @intCast(...))` — release builds wrap.
                         break 'brk strings::parse_int::<Mode>(slice.slice(), 10)
                             .ok()
                             .map(|v| v as i32);
@@ -1819,7 +1800,6 @@ impl FileSystemFlags {
                     }
                 }
 
-                // Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
                 // Convert the ZigString (≤12 bytes here) to a UTF-8 slice and
                 // dispatch through the length-gated match below.
                 let key_slice = str.to_slice();
@@ -1840,9 +1820,6 @@ impl FileSystemFlags {
     }
 
     /// Equivalent of GetValidFileMode, which is used to implement fs.access and copyFile
-    // Zig took `comptime kind: enum { access, copy_file }`; lowered to a
-    // runtime arg here so callers (`node_fs.rs`) can pass it positionally without
-    // needing `adt_const_params` const-generic dispatch.
     pub fn from_js_number_only(
         global: &JSGlobalObject,
         value: JSValue,
@@ -1871,7 +1848,6 @@ impl FileSystemFlags {
                 return Err(global
                     .err(
                         jsc::ErrorCode::OUT_OF_RANGE,
-                        // Zig: comptime std.fmt.comptimePrint — MIN/MAX are literal consts; emit as &'static str.
                         format_args!("mode is out of range: >= 0 and <= 7"),
                     )
                     .throw());
@@ -1883,7 +1859,6 @@ impl FileSystemFlags {
                 return Err(global
                     .err(
                         jsc::ErrorCode::OUT_OF_RANGE,
-                        // Zig: comptime std.fmt.comptimePrint — MIN/MAX are literal consts; emit as &'static str.
                         format_args!("mode is out of range: >= 0 and <= 7"),
                     )
                     .throw());
@@ -1893,7 +1868,6 @@ impl FileSystemFlags {
     }
 }
 
-// PERF(port): Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
 // A 44-entry `phf::Map` would work, but the keys are tiny (1..=3 bytes) and
 // cluster heavily by length (6/22/16). phf's hash+probe is dominated by the
 // SipHash of the input slice; a length-gated byte match rejects on a single
@@ -2087,5 +2061,3 @@ impl PathOrBlob {
         ))
     }
 }
-
-// ported from: src/runtime/node/types.zig

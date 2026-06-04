@@ -23,7 +23,7 @@ mod _impl {
     use crate::node::util::validators;
 
     /// Placeholder for `WorkPoolTask.callback` — overwritten before scheduling
-    /// (see `CompressionStream::write` in node_zlib_binding.rs). Zig: `.callback = undefined`.
+    /// (see `CompressionStream::write` in node_zlib_binding.rs).
     /// Safe fn: coerces to the `WorkPoolTask.callback` field type at the
     /// struct-init site; the body never dereferences the pointer.
     fn noop_task_callback(_task: *mut WorkPoolTask) {}
@@ -52,9 +52,8 @@ mod _impl {
         pub task: JsCell<WorkPoolTask>,
     }
 
-    // `const impl = CompressionStream(@This())` — Zig comptime mixin that injects
     // write / runFromJSThread / writeSync / reset / close / setOnError / getOnError /
-    // finalize onto this type. In Rust these are provided as inherent methods on
+    // finalize are provided as inherent methods on
     // `CompressionStream::<NativeZlib>` in node_zlib_binding.rs (a generic mixin
     // struct, not a trait); `__compression_stream_mixin_reexports!` re-exports the
     // same JS-exposed surface (write / writeSync / reset / close / setOnError /
@@ -229,7 +228,7 @@ mod _impl {
 
         /// RefCount destroy callback. Invoked when `ref_count` reaches zero.
         /// Not `Drop` because this is an intrusive-refcounted `m_ctx` payload whose
-        /// box is freed here (`bun.destroy(this)` in Zig).
+        /// box is freed here.
         fn deinit(this: *mut Self) {
             // SAFETY: called exactly once by IntrusiveRc when refcount hits 0; `this`
             // is the heap::alloc pointer produced at construction. `this_value`
@@ -451,8 +450,8 @@ impl Context {
     }
 
     pub fn set_flush(&mut self, flush: c_int) {
-        // Checked conversion (mirrors Zig debug-mode `@enumFromInt` panic on
-        // out-of-range); transmuting an arbitrary c_int into a Rust enum is UB.
+        // Checked conversion;
+        // transmuting an arbitrary c_int into a Rust enum is UB.
         self.flush = match flush {
             0 => c::FlushValue::NoFlush,
             1 => c::FlushValue::PartialFlush,
@@ -614,5 +613,3 @@ impl Context {
         self.mode = NONE;
     }
 }
-
-// ported from: src/runtime/node/zlib/NativeZlib.zig

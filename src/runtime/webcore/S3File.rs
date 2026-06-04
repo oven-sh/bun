@@ -114,7 +114,7 @@ pub(crate) fn presign(global: &JSGlobalObject, callframe: &CallFrame) -> JsResul
 
     // accept a path or a blob
     let path_or_blob = PathOrBlob::from_js_no_copy(global, &mut args)?;
-    // errdefer: PathOrBlob impls Drop in Rust — path variant cleaned up automatically on `?`
+    // PathOrBlob impls Drop — path variant cleaned up automatically on `?`
 
     if let PathOrBlob::Blob(blob) = &path_or_blob {
         if blob.store.get().is_none()
@@ -372,17 +372,15 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
         if aws_options.changed_credentials {
             break 'brk blob::Store::init_s3(path, None, aws_options.credentials).expect("oom");
         } else {
-            // Zig `initS3WithReferencedCredentials` bumps the
-            // intrusive ref on `default_credentials` (a `*S3Credentials`).
-            // The Rust `Store::S3` field is `Rc<S3Credentials>` (separate rc
+            // The `Store::S3` field is `Rc<S3Credentials>` (separate rc
             // layer), so we can't share the existing intrusive allocation —
             // deep-clone the value instead and let `init_s3` `Rc::new` it.
-            // PERF(port): was intrusive ref-bump (no copy) — profile if hot
-            // once Store.rs migrates `Rc<S3Credentials>` → `IntrusiveRc`.
+            // PERF: profile if hot once Store.rs migrates
+            // `Rc<S3Credentials>` → `IntrusiveRc`.
             break 'brk blob::Store::init_s3(path, None, default_credentials.clone()).expect("oom");
         }
     };
-    // errdefer store.deinit() — handled by Drop on early return
+    // store cleanup on early return is handled by Drop
     store.data.as_s3_mut().options = aws_options.options;
     store.data.as_s3_mut().acl = aws_options.acl;
     store.data.as_s3_mut().storage_class = aws_options.storage_class;
@@ -449,7 +447,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
         global,
     )?;
     let mut store = blob::Store::init_s3(path, None, aws_options.credentials).expect("oom");
-    // errdefer store.deinit() — handled by Drop on early return
+    // store cleanup on early return is handled by Drop
     store.data.as_s3_mut().options = aws_options.options;
     store.data.as_s3_mut().acl = aws_options.acl;
     store.data.as_s3_mut().storage_class = aws_options.storage_class;
@@ -704,12 +702,11 @@ impl S3BlobStatTask {
         Ok(promise)
     }
 
-    // deinit: store.deref() + promise.deinit() + bun.destroy(this) — all handled by Box<Self> Drop
+    // Teardown (store deref, promise deinit, freeing the box) is handled by Box<Self> Drop.
 }
 
 // `Method.fromJS` lives in `bun_http_jsc` so `bun_http_types` stays
-// JSC-free. Thin local alias keeps the `getPresignUrlFrom` body diff-stable
-// against the Zig.
+// JSC-free. Thin local alias for the `getPresignUrlFrom` body.
 #[inline]
 fn method_from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<Method>> {
     bun_http_jsc::method_jsc::from_js(global, value)
@@ -733,7 +730,6 @@ pub(crate) fn get_presign_url_from(
     let mut expires: usize = 86400; // 1 day default
 
     let s3 = this.store.get().as_ref().unwrap().data.as_s3();
-    // Zig: `.{ .credentials = s3.getCredentials().*, .request_payer = s3.request_payer }`.
     // `acl`/`storage_class`/`content_*` deliberately stay at their `None`
     // defaults here — they are only seeded from the store when extra_options
     // is provided (via `getCredentialsWithOptions` below).
@@ -822,7 +818,7 @@ pub(crate) fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
 
 // `#[bun_jsc::host_fn(getter|method)]` requires `Self` (impl-block
 // context). These are free fns on `*Blob` exported manually as `JSS3File__*`
-// (see `@export` block below) and called as `s3_file::get_*` from `Blob::get_*`,
+// (see the `exports` block below) and called as `s3_file::get_*` from `Blob::get_*`,
 // so the proc-macro shim is not used here — the raw ABI shim is hand-wired.
 pub(crate) fn get_bucket(this: &Blob, global: &JSGlobalObject) -> JsResult<JSValue> {
     if let Some(name) = get_bucket_name(this) {
@@ -928,7 +924,7 @@ pub(crate) fn construct_internal(
 }
 
 // Hand-written ABI shim: returns `*mut Blob` (codegen constructor contract),
-// which `#[bun_jsc::host_fn]` does not model; `@export` name handled below.
+// which `#[bun_jsc::host_fn]` does not model; the exported symbol name is wired below.
 pub(crate) fn construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
     match construct_internal(global, callframe) {
         Ok(b) => b,
@@ -949,7 +945,7 @@ pub(crate) fn has_instance(_: JSValue, _global: &JSGlobalObject, value: JSValue)
     blob.is_s3()
 }
 
-// @export block — symbols exported with C linkage and JSC calling convention.
+// Symbols exported with C linkage and JSC calling convention.
 // JSS3File__presign     -> raw shim wrapping get_presign_url (method-with-context)
 // JSS3File__construct   -> construct
 // JSS3File__hasInstance -> has_instance
@@ -959,8 +955,7 @@ pub(crate) fn has_instance(_: JSValue, _global: &JSGlobalObject, value: JSValue)
 pub mod exports {
     use super::*;
 
-    /// `@export(&hasInstance, .{ .name = "JSS3File__hasInstance" })` —
-    /// `customHasInstance` hook (`callconv(jsc.conv)`, `(EncodedJSValue,
+    /// `customHasInstance` hook (JSC calling convention, `(EncodedJSValue,
     /// *JSGlobalObject, EncodedJSValue) -> bool`).
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
@@ -972,16 +967,16 @@ pub mod exports {
         super::has_instance(this, global, value)
     }
 
-    /// `@export(&construct, .{ .name = "JSS3File__construct" })` — bare ctor,
-    /// not routed through `toJSHostFn` (returns `?*Blob`, not `JSValue`).
+    /// Bare ctor, not routed through `toJSHostFn` (returns a nullable
+    /// `*mut Blob`, not `JSValue`).
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
     pub(crate) fn JSS3File__construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
         super::construct(global, callframe)
     }
 
-    /// `@export(&getBucket, .{ .name = "JSS3File__bucket" })` — getter
-    /// (`callconv(jsc.conv)`, takes `*Blob, *JSGlobalObject`, returns JSValue).
+    /// Getter (JSC calling convention; takes `*Blob, *JSGlobalObject`,
+    /// returns JSValue).
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
     pub(crate) fn JSS3File__bucket(this: *mut Blob, global: *mut JSGlobalObject) -> JSValue {
@@ -990,7 +985,7 @@ pub mod exports {
         bun_jsc::to_js_host_call(global, || super::get_bucket(this, global))
     }
 
-    /// `@export(&jsc.toJSHostFnWithContext(Blob, getPresignUrl), ...)`.
+    /// Method-with-context shim wrapping `get_presign_url`.
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
     pub(crate) fn JSS3File__presign(
@@ -1003,8 +998,6 @@ pub mod exports {
         bun_jsc::to_js_host_call(global, || super::get_presign_url(this, global, callframe))
     }
 
-    /// `@export(&getStat, .{ .name = "JSS3File__stat" })` — direct
-    /// `callconv(jsc.conv)` method (Zig body already swallows JsError → .zero).
     #[unsafe(no_mangle)]
     #[bun_jsc::host_call]
     pub(crate) fn JSS3File__stat(
@@ -1035,5 +1028,3 @@ bun_jsc::jsc_abi_extern! {
 pub(crate) fn create_js_s3_file(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue {
     BUN__createJSS3File(global, callframe)
 }
-
-// ported from: src/runtime/webcore/S3File.zig

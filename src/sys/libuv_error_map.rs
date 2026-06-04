@@ -10,12 +10,10 @@ use crate::SystemErrno;
 // dropped: no `SystemErrno` on any target carries them.
 //
 // Built at const-eval time so the whole `[&str; N]` payload lives in `.rodata` with no `Once`
-// guard or init code on the startup path (matches Zig `std.EnumArray` comptime init).
+// guard or init code on the startup path.
 pub(crate) static LIBUV_ERROR_MAP: EnumMap<SystemErrno, &'static str> = build_libuv_error_map();
 
 const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
-    // std.EnumMap(SystemErrno, [:0]const u8).initFull("unknown error")
-    //
     // Indexing relies on `SystemErrno`'s dense `0..N` discriminants matching the `enum_map::Enum`
     // declaration-order index for every variant referenced below (true on all four targets — see
     // `bun_errno::*_errno`). The Windows `UV_*` tail variants are never written here; their slots
@@ -72,8 +70,7 @@ const fn build_libuv_error_map() -> EnumMap<SystemErrno, &'static str> {
     arr[SystemErrno::ENOTDIR as usize] = "not a directory";
     arr[SystemErrno::ENOTEMPTY as usize] = "directory not empty";
     arr[SystemErrno::ENOTSOCK as usize] = "socket operation on non-socket";
-    // FreeBSD has no real `ENOTSUP` variant (it aliases `EOPNOTSUPP` via an associated const);
-    // Zig's `@hasField` skipped it there, so match that.
+    // FreeBSD has no real `ENOTSUP` variant (it aliases `EOPNOTSUPP` via an associated const).
     #[cfg(not(target_os = "freebsd"))]
     {
         arr[SystemErrno::ENOTSUP as usize] = "operation not supported on socket";
@@ -135,5 +132,3 @@ fn enoent_label() {
         "connection timed out"
     );
 }
-
-// ported from: src/sys/libuv_error_map.zig

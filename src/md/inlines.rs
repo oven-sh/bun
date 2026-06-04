@@ -19,9 +19,9 @@ pub struct EmphDelim {
     pub close_count: usize, // total chars consumed as closer
     // Individual match sizes in order (each is 1 for em, 2 for strong)
     pub open_sizes: [u8; MAX_EMPH_MATCHES],
-    pub open_num: u8, // number of open matches (Zig: u4)
+    pub open_num: u8, // number of open matches
     pub close_sizes: [u8; MAX_EMPH_MATCHES],
-    pub close_num: u8, // number of close matches (Zig: u4)
+    pub close_num: u8, // number of close matches
     pub active: bool,  // false if deactivated between matched pairs
 }
 
@@ -145,8 +145,7 @@ impl Parser<'_> {
                 merged_len -= 1;
             }
         }
-        // reshaped for borrowck — Zig passes self.buffer.items directly into a
-        // &self method; Rust take()s the Vec out so process_inline_content (and any recursive
+        // take() the Vec out so process_inline_content (and any recursive
         // call via process_link) gets a fresh self.buffer to scribble on without
         // aliasing. Verified: nothing reachable from process_inline_content
         // (including recursive process_link -> process_inline_content calls, which
@@ -187,7 +186,6 @@ impl Parser<'_> {
         self.resolve_emphasis_delimiters();
 
         // Copy resolved delimiters locally (recursive calls may modify emph_delims)
-        // Zig dupe() catch OOM → emit plain text fallback; Rust Vec::clone aborts on OOM.
         let resolved: Vec<EmphDelim> = self.emph_delims.clone();
 
         // Phase 2: Emit content using resolved emphasis info
@@ -1169,5 +1167,3 @@ pub fn can_close_emphasis(emph_char: u8, content: &[u8], run_start: usize, run_e
     !lf || (run_end < content.len()
         && helpers::is_unicode_punctuation(helpers::decode_utf8(content, run_end).codepoint))
 }
-
-// ported from: src/md/inlines.zig

@@ -73,7 +73,6 @@ fn global_clear_exception(global: &JSGlobalObject) {
 
 #[inline]
 fn global_to_js_value(global: &JSGlobalObject) -> JSValue {
-    // Spec JSGlobalObject.zig `toJSValue` — `@enumFromInt(@intFromPtr(globalThis))`.
     JSValue::from_cell(std::ptr::from_ref::<JSGlobalObject>(global))
 }
 
@@ -88,16 +87,16 @@ fn vm_set_execution_forbidden(vm: *mut jsc::VM, forbidden: bool) {
 
 /// Reborrow `&VirtualMachine` as `&mut VirtualMachine`.
 ///
-/// SAFETY: The Zig spec passes `*JSC.VirtualMachine` (mutable, freely-aliasing)
-/// everywhere; `VirtualMachine` is single-threaded per JS thread and the REPL
-/// is the sole driver of `tick()` / `wait_for_promise()` here. The Rust port
-/// stores `&VirtualMachine` for borrowck simplicity and casts at the call site.
+/// SAFETY: `VirtualMachine` is single-threaded per JS thread and the REPL
+/// is the sole driver of `tick()` / `wait_for_promise()` here, so no other
+/// `&mut` to the VM can be live. We store `&VirtualMachine` for borrowck
+/// simplicity and cast at the call site.
 #[inline]
 #[allow(invalid_reference_casting, clippy::mut_from_ref)]
 fn vm_mut<'a>(vm: &'a VirtualMachine) -> &'a mut VirtualMachine {
     // Launder through a raw pointer; rustc's `invalid_reference_casting` lint is
-    // silenced above because the Zig spec's `*JSC.VirtualMachine` is a freely-
-    // aliasing mutable pointer and `VirtualMachine` is `!Sync` single-thread state.
+    // silenced above because `VirtualMachine` is `!Sync` single-thread state and
+    // the REPL is its sole driver here.
     let ptr: *mut VirtualMachine = core::ptr::from_ref(vm).cast_mut();
     // SAFETY: `ptr` is non-null and points to a live `VirtualMachine` (derived from
     // `&'a VirtualMachine`); the REPL is the sole driver on this single JS thread so
@@ -1718,10 +1717,8 @@ impl<'a> Repl<'a> {
         } else {
             // Has ANSI sequences - collect clean slices then encode
             let mut clean: Vec<u8> = Vec::with_capacity(text.len());
-            // PERF(port): was assume_capacity
             clean.extend_from_slice(first);
             while let Some(slice) = it.next() {
-                // PERF(port): was assume_capacity
                 clean.extend_from_slice(slice);
             }
             let encoded: Vec<u8> = bun_base64::encode_alloc(&clean);
@@ -1759,7 +1756,6 @@ impl<'a> Repl<'a> {
         };
 
         // Create arena for parsing
-        // PERF(port): was MimallocArena bulk-free — using bumpalo per AST-crate convention
         let arena = bun_alloc::Arena::new();
 
         // Set up parser options with repl_mode enabled
@@ -1772,15 +1768,14 @@ impl<'a> Repl<'a> {
         opts.features.top_level_await = true; // Enable top-level await in REPL
         // Keep `lower_using` at its default (true) here even though JavaScriptCore
         // supports `using` / `await using` natively. The REPL transform in
-        // `ast/repl_transforms.zig` rewrites every top-level `s_local` into a
+        // `js_parser/repl_transforms.rs` rewrites every top-level `s_local` into a
         // hoisted `var` + assignment for cross-input persistence, which would
         // silently discard disposal semantics if `using` declarations survived
         // until that pass. Lowering wraps the declaration in `try/finally` first,
         // which the REPL transform passes through intact.
 
-        // Initialize macro context from transpiler (required for import processing)
-        // Note: Zig spec mutates `vm.transpiler` (`*Transpiler`) here; `vm`
-        // is `&VirtualMachine` in this port, so go through `vm_mut` (see its
+        // Initialize macro context from transpiler (required for import processing).
+        // Note: `vm` is `&VirtualMachine` here, so go through `vm_mut` (see its
         // SAFETY comment) to lazily seed the macro context.
         if vm.transpiler.macro_context.is_none() {
             vm_mut(vm).transpiler.macro_context = Some(bun_js_parser::Macro::MacroContext::init(
@@ -1825,10 +1820,8 @@ impl<'a> Repl<'a> {
         let mut buffer_printer = bun_js_printer::BufferPrinter::init(buffer_writer);
 
         // Create symbol map from ast.symbols
-        // Note: Zig used `Symbol.NestedList.init(&.{ast.symbols})` (borrows
-        // a stack 1-slot slice). `Map::init_with_one_list` takes ownership of
-        // `ast.symbols` instead — see Symbol.rs note on the dangling-slice
-        // hazard.
+        // Note: `Map::init_with_one_list` takes ownership of `ast.symbols`
+        // — see Symbol.rs note on the dangling-slice hazard.
         let arena = *ast.symbols.allocator();
         let symbols_map = bun_ast::symbol::Map::init_with_one_list(
             core::mem::replace(&mut ast.symbols, bun_alloc::ArenaVec::new_in(arena))
@@ -1872,10 +1865,9 @@ impl<'a> Repl<'a> {
         writer: &mut bun_core::io::Writer,
         enable_colors: bool,
     ) {
-        // Note: Zig writes straight through `*std.Io.Writer`. The Rust
-        // `bun_core::io::Writer` vtable doesn't implement `bun_io::Write`, so
-        // buffer through a `Vec<u8>` (which does) and flush in one shot — REPL
-        // error output is tiny.
+        // Note: the `bun_core::io::Writer` vtable doesn't implement
+        // `bun_io::Write`, so buffer through a `Vec<u8>` (which does) and
+        // flush in one shot — REPL error output is tiny.
         let Some(global) = self.global else {
             return;
         };
@@ -2480,5 +2472,3 @@ fn is_incomplete_code(code: &[u8]) -> bool {
 use crate::api::js_transpiler::is_likely_object_literal;
 
 const VERSION: &str = Environment::VERSION_STRING;
-
-// ported from: src/cli/repl.zig

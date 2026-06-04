@@ -23,8 +23,7 @@ pub use bun_http_types::Method::HeaderName;
 // `bun_jsc::FetchHeaders`).
 pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryList, Headers};
 
-// Note (port): `pub const toFetchHeaders = @import("../http_jsc/headers_jsc.zig").toFetchHeaders;`
-// deleted — to_fetch_headers lives as an extension-trait method in bun_http_jsc.
+// to_fetch_headers lives as an extension-trait method in bun_http_jsc.
 
 /// Extension constructors for `Headers` that depend on T5 crates
 /// (`bun_picohttp`). Kept as a trait so callers can keep writing
@@ -34,7 +33,6 @@ pub trait HeadersExt {
 }
 
 impl HeadersExt for Headers {
-    // Note (port): was `!Headers`; all fallible calls were bun.handleOom-wrapped allocations.
     fn from_pico_http_headers(headers: &[picohttp::Header]) -> Headers {
         let header_count = headers.len();
         let mut result = Headers {
@@ -49,21 +47,19 @@ impl HeadersExt for Headers {
         result
             .entries
             .ensure_total_capacity(header_count)
-            .expect("OOM"); // Zig: bun.handleOom
+            .expect("OOM");
         result.buf.reserve_exact(buf_len);
         for header in headers {
             let name = header.name();
             let value = header.value();
-            // Note (port): Zig used `@truncate` for offsets/lengths; mirror with `as u32`
+            // Note: `as u32` truncates offsets/lengths
             // (silent wrap on >4GiB aggregate headers) rather than `try_from().unwrap()`.
             let name_offset = result.buf.len() as u32;
             result.buf.extend_from_slice(name);
             let value_offset = result.buf.len() as u32;
             result.buf.extend_from_slice(value);
 
-            // Note (port): Zig pre-set `entries.len = headers.len` then `set(i, ..)`.
-            // Rust `MultiArrayList` lacks `set_len`; capacity was reserved above
-            // so use `append_assume_capacity` which is equivalent.
+            // Capacity was reserved above so `append_assume_capacity` is safe.
             result.entries.append_assume_capacity(Entry {
                 name: api::StringPointer {
                     offset: name_offset,
@@ -79,7 +75,7 @@ impl HeadersExt for Headers {
     }
 }
 
-// Note (port): `pub fn deinit` only freed `entries` and `buf`; both are Drop types now — no explicit Drop impl needed.
+// `entries` and `buf` are both Drop types — no explicit Drop impl needed.
 
 /// Compute the ETag for `bytes` (xxhash64, hex-lowered, quoted) and append it as
 /// an `etag` header. Re-exported from `bun_http_types` now that `Headers` is
@@ -88,5 +84,3 @@ impl HeadersExt for Headers {
 pub fn append_etag(bytes: &[u8], headers: &mut Headers) {
     bun_http_types::ETag::append_to_headers(bytes, headers);
 }
-
-// ported from: src/http/Headers.zig

@@ -11,7 +11,6 @@ pub struct NegotiateProtocolVersion {
 }
 
 impl NegotiateProtocolVersion {
-    // Reshaped from the Zig out-param `fn(this: *@This(), ...) !void` to `-> Result<Self, E>`.
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
@@ -28,7 +27,6 @@ impl NegotiateProtocolVersion {
         this.unrecognized_options.reserve(
             (unrecognized_options_count as usize).saturating_sub(this.unrecognized_options.len()),
         );
-        // errdefer { for ... option.deinit(); list.deinit(allocator) } — deleted:
         // Vec<bun_core::String> drops each element on the `?` error path automatically.
         for _ in 0..unrecognized_options_count {
             let option = reader.read_z()?;
@@ -38,11 +36,8 @@ impl NegotiateProtocolVersion {
             // `defer option.deinit()` — deleted; `option` drops at end of iteration.
             this.unrecognized_options
                 .push(String::clone_utf8(option.slice()));
-            // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.
         }
 
         Ok(this)
     }
 }
-
-// ported from: src/sql/postgres/protocol/NegotiateProtocolVersion.zig

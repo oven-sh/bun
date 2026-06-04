@@ -15,22 +15,17 @@ pub struct ManagedTask {
 
 impl ManagedTask {
     pub fn task(this: *mut ManagedTask) -> Task {
-        // Zig `Task.init(this)` mapped variant type → tag at comptime.
         // Per §Dispatch (tag+ptr), name the tag explicitly.
         Task::new(crate::task_tag::ManagedTask, this.cast())
     }
 
     /// # Safety
-    /// `this` must be the live `*mut ManagedTask` returned by `heap::alloc` in
-    /// `new()`; ownership transfers — `this` is freed (via `heap::take`) before
-    /// return on both Ok and Err paths.
+    /// `this` must be the live `*mut ManagedTask` embedded in a `Task` returned
+    /// by `new()`/`new_owned()`; ownership transfers — `this` is freed (via
+    /// `heap::take`) before return on both Ok and Err paths.
     pub unsafe fn run(this: *mut ManagedTask) -> JsResult<()> {
-        // Zig: @setRuntimeSafety(false) — no Rust equivalent; bounds/overflow checks
-        // are already off in release and there is nothing to elide here.
-
-        // SAFETY: `this` was produced by `heap::alloc` in `new` (Zig:
-        // `bun.default_allocator.create`). Reconstituting the Box here mirrors
-        // Zig's `defer bun.default_allocator.destroy(this)` — it drops at scope
+        // SAFETY: `this` was produced by `heap::into_raw` in `new`/`new_owned`
+        // (caller contract). Reconstituting the Box here frees it at scope
         // exit on both the Ok and Err paths.
         let this = unsafe { bun_core::heap::take(this) };
         let callback = this.callback;
@@ -45,14 +40,8 @@ impl ManagedTask {
         self.callback = noop;
     }
 
-    // reshaped for borrowck / const-generics limitation.
-    // Zig `pub fn New(comptime Type, comptime Callback) type { return struct { init, wrap } }`
-    // cannot be expressed in stable Rust because a fn value is not a valid const-generic
-    // parameter. The `wrap` trampoline (which `@ptrCast`/`@alignCast` the opaque ctx back
-    // to `*Type` and `@call(bun.callmod_inline, Callback, ...)`) is folded away by storing
+    // A per-(Type, Callback) trampoline is folded away by storing
     // the type-erased fn pointer directly — `fn(*mut T)` and `fn(*mut c_void)` share ABI.
-    // Callers: `ManagedTask.New(T, cb).init(ctx)` → `ManagedTask::new(ctx, cb)`.
-    // PERF(port): was comptime monomorphization (callmod_inline).
     pub fn new<T>(ctx: *mut T, callback: fn(*mut T) -> JsResult<()>) -> Task {
         let managed = bun_core::heap::into_raw(Box::new(ManagedTask {
             // SAFETY: `fn(*mut T) -> R` and `fn(*mut c_void) -> R` have identical
@@ -87,5 +76,3 @@ impl ManagedTask {
         ManagedTask::task(managed)
     }
 }
-
-// ported from: src/event_loop/ManagedTask.zig

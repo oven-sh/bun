@@ -9,12 +9,8 @@ use bun_ast::op::Level;
 use bun_ast::ts::Metadata;
 use bun_core::{self, Error, err};
 
-// Zig: `fn SkipTypescript(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
-// — file-split mixin pattern, lowered to a direct `impl P` block on the const-generic parser.
-
 // Re-export so the parser-side type alias used in this file matches the
-// canonical definition in `TypeScript.rs` (the Zig original nested this
-// bitset inside `SkipTypeOptions`).
+// canonical definition in `TypeScript.rs`.
 pub(crate) type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -228,7 +224,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    // The Zig signature is `result: if (get_metadata) *TypeScript.Metadata else void`.
     // Rust cannot express a const-generic-dependent param type on stable; we use
     // `Option<&mut Metadata>` and require callers to pass `Some` iff `GET_METADATA == true`.
     // The const generic is kept so `if GET_METADATA { ... }` branches monomorphize away.
@@ -1407,10 +1402,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // ───────────────────────── Backtracking ─────────────────────────
-    // Zig defines `pub const Backtracking = struct { ... }` with comptime-reflective
-    // `lexerBacktracker` / `lexerBacktrackerWithArgs` that branch on `bun.meta.ReturnOf(func)`.
-    // Rust cannot inspect a closure's return type at compile time, so we split into two
-    // concrete helpers covering the actual call patterns:
+    // Two concrete helpers covering the actual call patterns:
     //   - `lexer_backtracker_bool`   — fn returns Result<()>/Result<bool>, helper returns bool
     //   - `lexer_backtracker_result` — fn returns Result<SkipTypeParameterResult>
 
@@ -1420,7 +1412,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         F: FnOnce(&mut Self) -> Result<R, Error>,
     {
         self.mark_type_script_only();
-        // The Zig original copies the lexer by value to backtrack; the Rust Lexer
+        // The Lexer
         // holds `&mut Log`, so backtracking goes through a POD `LexerSnapshot` + `restore()`.
         let old_lexer = self.lexer.snapshot();
         let old_log_disabled = self.lexer.is_log_disabled;
@@ -1438,9 +1430,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
         self.lexer.is_log_disabled = old_log_disabled;
 
-        // Covers both Zig branches:
-        //   FnReturnType == anyerror!bool  → !backtrack
-        //   ReturnType == bool/void        → !backtrack
         !backtrack
     }
 
@@ -1594,5 +1583,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         skipped
     }
 }
-
-// ported from: src/js_parser/ast/skipTypescript.zig

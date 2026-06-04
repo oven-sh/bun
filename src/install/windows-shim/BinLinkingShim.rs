@@ -9,7 +9,7 @@
 //! [WSTR:program][u16:0][WSTR:args][u32:bin_path_byte_len][u32:arg_byte_len]
 //! - args always ends with a trailing space
 //!
-//! See 'bun_shim_impl.zig' for more details on how this file is consumed.
+//! See `bun_shim_impl.rs` for more details on how this file is consumed.
 //!
 //! ## `shim_standalone` feature
 //!
@@ -22,8 +22,8 @@
 /// Random numbers are chosen for validation purposes
 /// These arbitrary numbers will probably not show up in the other fields.
 /// This will reveal off-by-one mistakes.
-// Zig: `enum(u13)` non-exhaustive (`_`). Rust has no `u13`, and the `_` makes it
-// open-ended, so model as a transparent u16 newtype holding a 13-bit value.
+// The encoding is an open-ended 13-bit value, so model it as a transparent u16
+// newtype rather than an exhaustive enum.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct VersionFlag(u16);
@@ -34,7 +34,7 @@ impl VersionFlag {
     /// Fixed bugs where passing arguments did not always work.
     pub(crate) const V5: VersionFlag = VersionFlag(5478);
 
-    /// std.math.maxInt(u13)
+    /// Maximum 13-bit value.
     const MAX: VersionFlag = VersionFlag((1u16 << 13) - 1);
 
     #[inline]
@@ -43,8 +43,8 @@ impl VersionFlag {
     }
 }
 
-// Zig: `packed struct(u16)` with mixed bool + u13 fields → `#[repr(transparent)]`
-// newtype with manual shift accessors matching Zig field order (LSB first).
+// Packed u16 bitfield (three bools + a 13-bit version tag): `#[repr(transparent)]`
+// newtype with manual shift accessors (LSB first).
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Flags(u16);
@@ -154,9 +154,8 @@ mod host {
     /// pool; the workspace is `panic = "unwind"`, so a `panic!()` here unwinds
     /// and kills the worker thread — the main install loop's pending-task counter
     /// never decrements and `bun install` hangs until the CI 180s timeout, then
-    /// retries forever. Zig has no equivalent guard (build.zig provides the embed
-    /// via `addAnonymousImport` so it can never be empty); until the Rust port
-    /// wires the standalone-shim build step, fail the *process* fast instead.
+    /// retries forever. Until the build wires the standalone-shim build step,
+    /// fail the *process* fast instead.
     #[inline]
     #[track_caller]
     pub fn embedded_executable_data() -> &'static [u8] {
@@ -178,10 +177,8 @@ mod host {
         RunWithPowershell,
     }
 
-    // Zig used `std.StaticStringMap` keyed by the UTF-16LE *byte* reinterpretation of
-    // each extension (via `wU8`). Here we match directly on the `&[u16]` extension
-    // using `bun_core::w!` literals — semantically identical, drops the byte cast.
-    // PERF(port): was comptime StaticStringMap (perfect hash) — profile if hot.
+    // Match directly on the `&[u16]` extension using `bun_core::w!` literals.
+    // PERF: a precomputed perfect-hash table may be faster — profile if hot.
     fn bun_extensions_get(ext: &[u16]) -> Option<ExtensionType> {
         use ExtensionType::*;
         macro_rules! w {
@@ -215,8 +212,6 @@ mod host {
     }
 
     impl<'a> Shebang<'a> {
-        // Zig declared `!Shebang` but the inferred error set is empty; return the
-        // value directly.
         pub fn init(launcher: &'a [u8], is_node_or_bun: bool) -> Shebang<'a> {
             Shebang {
                 launcher,
@@ -227,7 +222,7 @@ mod host {
             }
         }
 
-        /// std.fs.path.extension but utf16
+        /// Returns the file extension (including the dot) of a UTF-16 path.
         pub fn extension_w(path: &[u16]) -> &[u16] {
             let filename = strings::basename_windows(path);
             let Some(index) = filename.iter().rposition(|&c| c == b'.' as u16) else {
@@ -242,7 +237,7 @@ mod host {
         pub fn parse_from_bin_path(bin_path: &[u16]) -> Option<Shebang<'static>> {
             if let Some(i) = bun_extensions_get(Self::extension_w(bin_path)) {
                 return Some(match i {
-                    // `comptime Shebang.init(...) catch unreachable` → const-evaluated; the
+                    // Const-evaluated; the
                     // values below are the simdutf utf16 lengths of pure-ASCII literals
                     // (== byte length).
                     ExtensionType::RunWithBun => Shebang {
@@ -301,7 +296,7 @@ mod host {
                 break 'line &contents[2..line_i];
             };
 
-            // std.mem.tokenizeScalar(u8, line, ' ') — manual port preserving `.rest()` semantics.
+            // Manual space tokenizer preserving `.rest()` semantics.
             // Reshaped — Rust split() iterator has no `.rest()`.
             let mut idx: usize = 0;
             // skip leading delimiters, then take token
@@ -367,15 +362,14 @@ mod host {
 
         /// The buffer must be exactly the correct length given by encoded_length.
         ///
-        /// Zig declared `!void` but the inferred error set is empty; the `Result`
-        /// is kept only because the caller (`bin.rs`) treats it as fallible API —
-        /// this always returns `Ok(())`.
+        /// The `Result` is kept only because the caller (`bin.rs`) treats it as
+        /// a fallible API — this always returns `Ok(())`.
         pub fn encode_into(&self, buf: &mut [u8]) -> Result<(), bun_core::Error> {
             debug_assert!(buf.len() == self.encoded_length());
             debug_assert!(self.bin_path[0] != b'/' as u16);
 
-            // Zig used `@alignCast` here. `bytemuck::cast_slice_mut` performs the same
-            // runtime alignment + size-multiple check and panics on mismatch — no
+            // `bytemuck::cast_slice_mut` performs a runtime alignment +
+            // size-multiple check and panics on mismatch — no
             // `unsafe` needed. (The sole caller, `bin.rs`, passes a stack `[u8; 65536]`
             // whose Rust-guaranteed alignment is 1; it should be changed to a `[u16; N]`
             // buffer to make alignment a compile-time guarantee — tracked separately.)
@@ -419,7 +413,7 @@ mod host {
                 wbuf = &mut wbuf[1..];
 
                 // SAFETY: wbuf has at least 4 u16s (= 2 u32s) remaining per encoded_length();
-                // Zig wrote via `*align(1) u32` — use unaligned writes.
+                // the buffer is only 2-byte aligned, so use unaligned writes.
                 unsafe {
                     (wbuf.as_mut_ptr().cast::<u32>())
                         .write_unaligned(u32::try_from(self.bin_path.len() * 2).expect("int cast"));
@@ -454,8 +448,8 @@ mod host {
         if input.len() < FLAGS_SIZE + 2 * size_of::<u32>() + 8 {
             return None;
         }
-        // Zig read via `*align(1) const Flags`; bounds checked above so the trailing
-        // 2-byte slice is in range. `pod_read_unaligned` is the safe equivalent of
+        // Bounds checked above so the trailing 2-byte slice is in range.
+        // `pod_read_unaligned` is the safe equivalent of
         // `ptr.cast::<u16>().read_unaligned()` over a `&[u8]`.
         let flags = Flags::from_bits(bytemuck::pod_read_unaligned::<u16>(
             &input[input.len() - FLAGS_SIZE..],
@@ -494,5 +488,3 @@ mod host {
         })
     }
 } // mod host
-
-// ported from: src/install/windows-shim/BinLinkingShim.zig

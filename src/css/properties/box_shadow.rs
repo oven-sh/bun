@@ -201,9 +201,9 @@ impl BoxShadowHandler {
                     self.flush(dest, context);
                 }
 
-                // Reshaped for borrowck: Zig held simultaneous &mut into
-                // self.box_shadows across self.flush(). Compute the predicate first,
-                // then either flush+replace or update in place.
+                // Compute the predicate first, then either flush+replace or
+                // update in place (avoids holding &mut self.box_shadows
+                // across self.flush()).
                 let needs_flush = if let Some(bxs) = &self.box_shadows {
                     !SmallList::eql(&bxs.0, box_shadows) && !bxs.1.contains(prefix)
                 } else {
@@ -270,10 +270,6 @@ impl BoxShadowHandler {
                 fallbacks.insert(shadow.color.get_necessary_fallbacks(&context.targets));
             }
 
-            // Zig used `initCapacity(len)` + `setLen(len)` + per-index field
-            // writes via `inline for std.meta.fields(BoxShadow)` skipping `color`. That
-            // pattern would observe partially-uninit `BoxShadow` values in Rust, so we
-            // build each fully-formed `BoxShadow` and `append`. Behavior is identical.
             macro_rules! build_color_fallback {
                 ($conv:ident) => {{
                     let mut out: SmallList<BoxShadow, 1> =
@@ -324,5 +320,3 @@ impl BoxShadowHandler {
         self.flushed = true;
     }
 }
-
-// ported from: src/css/properties/box_shadow.zig

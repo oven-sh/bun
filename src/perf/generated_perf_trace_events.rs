@@ -1,7 +1,6 @@
-// Hand-maintained: scripts/generate-perf-trace-events.sh scans Zig sources and
-// emits only the .h and .zig outputs, so this file mirrors
-// src/perf/generated_perf_trace_events.zig manually until the generator learns
-// to emit Rust. Variants are added piecemeal as call sites un-gate; the
+// Hand-maintained: scripts/generate-perf-trace-events.sh does not emit Rust,
+// so this file mirrors the generated event list manually until the generator
+// learns to emit Rust. Variants are added piecemeal as call sites un-gate; the
 // discriminants are assigned EXPLICITLY to the canonical ids from
 // src/jsc/bindings/generated_perf_trace_events.h (the Darwin signpost path
 // passes `event as i32`, so the numeric id must match the generated header).
@@ -36,8 +35,8 @@ impl From<PerfEvent> for &'static str {
 }
 
 impl PerfEvent {
-    /// NUL-terminated tag name, mirroring Zig's `@tagName(this.event).ptr` which yields
-    /// `[*:0]const u8`. Required for FFI to `Bun__linux_trace_emit` (expects C string).
+    /// NUL-terminated tag name. Required for FFI to `Bun__linux_trace_emit`
+    /// (expects C string).
     pub fn as_cstr(self) -> &'static core::ffi::CStr {
         match self {
             PerfEvent::_Stub => c"_Stub",
@@ -53,5 +52,3 @@ impl PerfEvent {
         }
     }
 }
-
-// ported from: src/perf/generated_perf_trace_events.zig

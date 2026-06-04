@@ -33,10 +33,8 @@ impl Exit {
                 return Self::fail(interp, cmd, b"exit: too many arguments\n");
             }
         };
-        // Spec parity: exit.zig `start` also just completes the current Cmd
-        // via `bltn().done(exit_code)` — it does not unwind the whole script
-        // either. Diverging from bash's whole-script exit is upstream Bun
-        // shell behavior, not a port gap.
+        // Intentional divergence from bash: this completes only the current
+        // Cmd rather than unwinding the whole script.
         Builtin::done(interp, cmd, code)
     }
 
@@ -61,4 +59,3 @@ fn parse_exit_code(s: &[u8]) -> Option<crate::shell::ExitCode> {
     bun_core::fmt::parse_decimal::<u64>(s).map(|n| (n % 256) as crate::shell::ExitCode)
 }
 
-// ported from: src/shell/builtin/exit.zig

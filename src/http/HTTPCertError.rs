@@ -4,8 +4,8 @@ pub struct HTTPCertError {
     pub error_no: i32,
     // `code`/`reason` borrow process-lifetime static string tables (uSockets'
     // verify-error strings and BoringSSL's `X509_verify_cert_error_string`
-    // literals — see the SAFETY note in `from_verify_error`), so unlike Zig's
-    // `dupeZ` + `CertificateInfo.deinit` pair, nothing owns or frees them here.
+    // literals — see the SAFETY note in `from_verify_error`), so nothing owns
+    // or frees them here.
     pub code: &'static ZStr,
     pub reason: &'static ZStr,
 }
@@ -27,7 +27,7 @@ impl HTTPCertError {
     /// (outer-TLS in `HTTPContext::Handler::on_handshake`, inner-TLS in
     /// `ProxyTunnel::on_handshake`) doesn't repeat the raw deref.
     ///
-    /// Mirrors http.zig: `reason` is gated on `code` being non-null (the
+    /// `reason` is gated on `code` being non-null (the
     /// uSockets API populates both together or neither).
     pub fn from_verify_error(ssl_error: bun_uws::us_bun_verify_error_t) -> Self {
         /// Borrow a NUL-terminated C string from uSockets as `&'static ZStr`.
@@ -59,5 +59,3 @@ impl HTTPCertError {
         }
     }
 }
-
-// ported from: src/http/HTTPCertError.zig

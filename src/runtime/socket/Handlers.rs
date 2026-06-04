@@ -52,7 +52,6 @@ pub struct Handlers {
     /// `Strong` is never borrowed across a reentrant call.
     pub promise: JsCell<Strong>, // Strong.Optional → bun_jsc::Strong (Drop deallocates the slot)
 
-    // Zig: gated on `bun.Environment.ci_assert`.
     #[cfg(debug_assertions)]
     pub protection_count: u32,
 }
@@ -61,7 +60,6 @@ pub struct Handlers {
 // protect()/unprotect() (GC roots), not stack scanning — so this is sound.
 
 /// Expands `$body` once per callback field with `$f` bound to the field ident.
-/// Mirrors Zig `inline for (callback_fields) |field| { @field(x, field) ... }`.
 macro_rules! for_each_callback_field {
     ($self:expr, |$f:ident| $body:block) => {{
         {
@@ -229,9 +227,8 @@ impl Handlers {
                 }
             } else {
                 // Client-mode Handlers is heap-allocated per-connection
-                // (Listener::connect_inner via `heap::alloc`). Zig does
-                // `this.deinit(); vm.allocator.destroy(this);` here — match
-                // that: free in place so callers that only hold a `*mut`
+                // (Listener::connect_inner via `heap::alloc`).
+                // Free in place so callers that only hold a `*mut`
                 // (and thus can't `drop(Box)`) don't leak the allocation or
                 // its `protect()`ed JSValues. Caller must still null its
                 // field when this returns true.
@@ -400,7 +397,6 @@ impl Handlers {
 
 impl Drop for Handlers {
     fn drop(&mut self) {
-        // Zig deinit: unprotect() + promise.deinit() + this.* = undefined
         self.unprotect();
         if self.vm.is_shutting_down() {
             // `~VM` may have already torn down the HandleSet that
@@ -593,5 +589,3 @@ impl SocketConfig {
 }
 
 use bun_jsc::generated::SocketConfigTls as GeneratedTls;
-
-// ported from: src/runtime/socket/Handlers.zig

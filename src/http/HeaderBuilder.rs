@@ -39,7 +39,6 @@ impl HeaderBuilder {
             length: value.len() as u32,
         };
         let _ = self.content.append(value);
-        // PERF(port): was assume_capacity
         self.entries.append_assume_capacity(Entry {
             name: name_ptr,
             value: value_ptr,
@@ -89,7 +88,6 @@ impl HeaderBuilder {
             length: value_len as u32,
         };
 
-        // PERF(port): was assume_capacity
         self.entries.append_assume_capacity(Entry {
             name: name_ptr,
             value: value_ptr,
@@ -98,8 +96,8 @@ impl HeaderBuilder {
 
     pub fn apply(&mut self, client: &mut crate::HTTPClient) {
         client.header_entries = core::mem::take(&mut self.entries);
-        // header_buf is a non-owning slice into self.content's allocation (in
-        // Zig, a slice of the StringBuilder's buffer); the builder's owner must
+        // header_buf is a non-owning slice into self.content's
+        // allocation; the builder's owner must
         // keep `self.content` alive for as long as the client uses the slice.
         // SAFETY: content.ptr was set by allocate() and exactly content.len bytes have been written.
         // Cannot use `written_slice()` here — the borrow must outlive `&self` (`HTTPClient<'a>`
@@ -108,5 +106,3 @@ impl HeaderBuilder {
             unsafe { bun_core::ffi::slice(self.content.ptr.unwrap().as_ptr(), self.content.len) };
     }
 }
-
-// ported from: src/http/HeaderBuilder.zig

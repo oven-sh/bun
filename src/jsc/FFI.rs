@@ -1,12 +1,10 @@
-// This is zig translate-c run on ffi.h
+// Mechanical translation of ffi.h.
 // it turns out: FFI.h is faster than our implementation that calls into C++ bindings
 // so we just use this in some cases
 //
-// The original .zig is raw `zig translate-c` output. The meaningful
-// surface (EncodedJSValue + tag constants + inline coercion fns) is ported
-// below; the ~390 lines of compiler-builtin macro noise (`__clang__`,
-// `__INT_MAX__`, `__ARM_FEATURE_*`, …) emitted by translate-c are dropped —
-// they are never referenced.
+// The meaningful surface is EncodedJSValue + tag constants + inline coercion
+// fns; the compiler-builtin macro noise from ffi.h is dropped — it is never
+// referenced.
 
 #![allow(non_snake_case, non_upper_case_globals, clippy::missing_safety_doc)]
 
@@ -67,15 +65,8 @@ unsafe extern "C" {
     pub fn JSFunctionCall(globalObject: *mut c_void, callFrame: *mut c_void) -> *mut c_void;
 }
 
-// ~390 lines of translate-c compiler-builtin macro definitions
-// (`__block`, `__INTMAX_C_SUFFIX__`, `__clang_major__`, `__SIZEOF_*`,
-// `__ARM_FEATURE_*`, `__APPLE__`, …) from FFI.zig:121-509 intentionally
-// dropped — they are clang predefined-macro spew with no callers.
-
 pub(crate) const DOUBLE_ENCODE_OFFSET_BIT: c_int = 49;
 pub(crate) const DOUBLE_ENCODE_OFFSET: c_longlong = (1 as c_longlong) << DOUBLE_ENCODE_OFFSET_BIT;
 pub(crate) const OTHER_TAG: c_int = 0x2;
 pub(crate) const NOT_CELL_MASK: c_ulonglong = NUMBER_TAG | OTHER_TAG as c_ulonglong;
 pub(crate) const NUMBER_TAG: c_ulonglong = 0xfffe_0000_0000_0000;
-
-// ported from: src/jsc/FFI.zig

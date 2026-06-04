@@ -8,8 +8,7 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // Zig: `defer this.postMatch(globalThis);`
-    // reshaped for borrowck — guard owns the &mut and Derefs to it.
+    // The guard owns the &mut, Derefs to it, and runs post_match on Drop.
     let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
@@ -53,8 +52,7 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
         }
     }
 
-    // Zig: `expected_string.toSlice(default_allocator)` + `defer expected.deinit()`.
-    // Allocator param dropped; the returned slice owns its buffer and frees on Drop.
+    // The returned slice owns its buffer and frees on Drop.
     let expected = expected_string.to_slice();
 
     let expected_slice: Option<&[u8]> = if has_expected { Some(expected.slice()) } else { None };
@@ -86,5 +84,3 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
         "toThrowErrorMatchingInlineSnapshot",
     )
 }
-
-// ported from: src/test_runner/expect/toThrowErrorMatchingInlineSnapshot.zig

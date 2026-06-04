@@ -30,7 +30,7 @@ pub struct GitResolver<'a> {
     pub resolved: &'a [u8],
     pub resolution: &'a Resolution,
     pub dep_id: DependencyID,
-    /// Zig: `new_name: []u8 = ""` — owned scratch buffer that
+    /// Owned scratch buffer that
     /// `Package::parse_with_json` may assign when the package.json `name`
     /// field is missing (see `ResolverContext::set_new_name`).
     pub new_name: Vec<u8>,
@@ -52,8 +52,6 @@ impl<'a> ResolverContext for GitResolver<'a> {
         builder: &mut StringBuilder<'_>,
         _json: &Expr,
     ) -> Result<ResolutionType<u64>, bun_core::Error> {
-        // Zig: `var resolution = this.resolution.*;
-        //       resolution.value.github.resolved = builder.append(String, this.resolved);`
         // `git` and `github` share the `Repository` payload in the value union,
         // so writing through `.github` is correct for both tags.
         // SAFETY: caller guarantees `tag` is `.git` or `.github` (see
@@ -200,7 +198,6 @@ impl PackageManager {
                         let mut builder = self.lockfile.string_builder();
 
                         builder.count(&new_name);
-                        // Zig passed `undefined` for the unused `JSAst.Expr` arg.
                         resolver.count(&mut builder, &Expr::default());
 
                         bun_core::handle_oom(builder.allocate());
@@ -303,7 +300,7 @@ impl PackageManager {
                         &bun_ast::Source::init_path_string(&json.path[..], &json.buf[..]);
                     initialize_store();
                     // SAFETY: `self.log` is set once by `PackageManager::init()` and
-                    // never null while tasks run (mirrors Zig's non-optional `*logger.Log`).
+                    // never null while tasks run.
                     let log = self.log_mut();
                     let bump = bun_alloc::Arena::new();
                     let json_root = match json::parse_package_json_utf8(
@@ -425,10 +422,6 @@ impl PackageManager {
         Ok(())
     }
 
-    /// Zig: `callbacks` was `comptime anytype` with a
-    /// `@TypeOf(callbacks) != void and @TypeOf(callbacks.onResolve) != void`
-    /// check. Modeled as `Option<impl FnOnce(C)>` — only `onResolve` is ever
-    /// read, and the void path is `None`.
     pub fn process_dependency_list<C>(
         &mut self,
         dep_list: TaskCallbackList,
@@ -457,8 +450,7 @@ impl PackageManager {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface — Zig declares these at file scope with an
-// explicit `*PackageManager` first param. Thin shims over the
+// Free-function re-export surface — thin shims over the
 // `impl PackageManager` bodies above so `pub use process_dependency_list::{…}`
 // in `PackageManager.rs` resolves (matching the directories/enqueue pattern).
 // ──────────────────────────────────────────────────────────────────────────

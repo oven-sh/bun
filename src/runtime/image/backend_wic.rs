@@ -42,8 +42,8 @@ use std::sync::Once;
 use crate::image::codecs;
 use bun_sys::windows;
 
-/// `codecs::Error || error{BackendUnavailable}` — Zig flat-unions the two
-/// error sets; the variants used in this file are inlined here and `split()`
+/// `codecs::Error` plus `BackendUnavailable`; the variants used in this file
+/// are inlined here and `split()`
 /// below maps them back onto `codecs::Error` for the caller.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, thiserror::Error, strum::IntoStaticStr)]
 pub enum BackendError {
@@ -61,8 +61,8 @@ pub enum BackendError {
 use BackendError::*;
 
 impl BackendError {
-    /// Reshape Zig's `(codecs.Error || error{BackendUnavailable})!T` into the
-    /// Rust caller's `Result<Option<T>, codecs::Error>` convention used by
+    /// Reshape into the
+    /// caller's `Result<Option<T>, codecs::Error>` convention used by
     /// `codecs.rs` (`Ok(None)` = BackendUnavailable → fall through to the
     /// pure-Rust codec path).
     #[inline]
@@ -80,15 +80,13 @@ impl BackendError {
 
 bun_core::named_error_set!(BackendError);
 
-// Zig: `dupGlobal` is `error{OutOfMemory}!?[]u8`, flat-unioned into
-// `clipboard()`'s `error{BackendUnavailable, OutOfMemory}` set.
 bun_core::oom_from_alloc!(BackendError);
 
 pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendError> {
     let f = factory()?;
-    // IWICStream::InitializeFromMemory takes a DWORD count; Windows ships
-    // ReleaseSafe so the @intCast below is a process abort, not silent
-    // truncation. Drop to BackendUnavailable so codecs.decode() falls
+    // IWICStream::InitializeFromMemory takes a DWORD count; the checked cast
+    // below is a process abort, not silent truncation.
+    // Drop to BackendUnavailable so codecs.decode() falls
     // through to the static decoder (bmp/gif) or surfaces UnsupportedOn
     // Platform (tiff/heic/avif) instead of crashing on a >4 GiB input.
     if bytes.len() as u64 > u32::MAX as u64 {
@@ -138,17 +136,15 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
     scopeguard::defer! { release(conv.as_ptr()); }
 
     // Compute stride/size in u64 first: with `maxPixels` raised past ~1.07B,
-    // `w * 4` can wrap u32 (0x4000_0001×4 → 4) and Windows ships ReleaseSafe
-    // so the @intCast below is a process abort, not silent truncation.
+    // `w * 4` can wrap u32 (0x4000_0001×4 → 4); the checked cast below is a
+    // process abort, not silent truncation.
     let stride: u64 = (w as u64) * 4;
     let out_len: u64 = stride * (h as u64);
     // CopyPixels takes UINT byte-count + UINT stride — same DWORD ceiling.
     if out_len > u32::MAX as u64 {
         return Err(TooManyPixels);
     }
-    // PERF(port): was uninitialized alloc — profile if it shows up on a hot path.
     let mut out = vec![0u8; usize::try_from(out_len).expect("int cast")];
-    // (errdefer free(out) deleted — Vec drops on `?`/early return)
     if conv.copy_pixels(
         ptr::null(),
         u32::try_from(stride).expect("int cast"),
@@ -424,8 +420,7 @@ fn release<T>(p: *mut T) {
 /// method, so `decode`/`encode` read as straight-line safe code.
 ///
 /// Not an owning smart pointer — release is still explicit via
-/// `scopeguard::defer! { release(p.as_ptr()) }` at the call site, matching
-/// the Zig original's `defer release(p)` shape. `Copy` so the defer-guard
+/// `scopeguard::defer! { release(p.as_ptr()) }` at the call site. `Copy` so the defer-guard
 /// closure captures a copy and the handle stays usable afterwards.
 #[repr(transparent)]
 struct ComPtr<T>(ptr::NonNull<T>);
@@ -995,8 +990,7 @@ pub(crate) fn has_clipboard_image() -> bool {
     false
 }
 
-// Zig error set: `error{BackendUnavailable, OutOfMemory}!?[]u8` — subset of
-// BackendError; the wider type matches the macOS backend so the caller in
+// The wider `BackendError` type matches the macOS backend so the caller in
 // Image.rs handles both identically.
 pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     // hwnd=null associates the open with the current task; fine for read-only.
@@ -1027,7 +1021,7 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     //    and decoder accept it. CF_DIBV5 first (carries alpha mask). The
     //    clipboard is writable by any local process, so treat the payload as
     //    hostile: a 1-byte CF_DIB or a header with biSize≈u32::MAX must drop
-    //    the format, not panic the process (Windows ships ReleaseSafe).
+    //    the format, not panic the process.
     for cf in [CF_DIBV5, CF_DIB] {
         // SAFETY: clipboard is open.
         let h = unsafe { GetClipboardData(cf) };
@@ -1092,11 +1086,8 @@ fn dup_global<const PREFIX: usize>(
         // SAFETY: h is locked.
         let _ = unsafe { GlobalUnlock(h) };
     }
-    // PERF(port): was uninitialized alloc — profile if it shows up on a hot path.
     let mut out = vec![0u8; PREFIX + size];
     // SAFETY: ptr_ points to `size` valid bytes inside the locked HGLOBAL.
     out[PREFIX..].copy_from_slice(unsafe { bun_core::ffi::slice(ptr_, size) });
     Ok(Some(out))
 }
-
-// ported from: src/runtime/image/backend_wic.zig

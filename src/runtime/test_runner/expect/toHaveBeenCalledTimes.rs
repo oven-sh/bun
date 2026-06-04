@@ -68,5 +68,3 @@ pub(crate) fn to_have_been_called_times(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveBeenCalledTimes.zig

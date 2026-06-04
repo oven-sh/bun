@@ -16,8 +16,7 @@ pub(crate) struct FuzzilliCommand;
 impl FuzzilliCommand {
     #[cold]
     pub(crate) fn exec(_ctx: Command::Context) -> Result<(), bun_core::Error> {
-        // Zig: `if (bun.Environment.enable_fuzzilli) struct { … } else struct {}` —
-        // the dispatch site (`cli/mod.rs`) already gates on `ENABLE_FUZZILLI`, so
+        // The dispatch site (`cli/mod.rs`) already gates on `ENABLE_FUZZILLI`, so
         // this body is unreachable when the flag is off; bail loudly if a caller
         // ever invokes it anyway.
         if !Environment::ENABLE_FUZZILLI {
@@ -91,9 +90,8 @@ impl FuzzilliCommand {
 
             // Run the temp file
             let temp_path: &[u8] = b"/tmp/bun-fuzzilli-reprl.js";
-            // Zig calls `Run.boot` (src/bun_js.zig); the Rust port
-            // hosts that entry point on `RunCommand` to avoid the higher-tier
-            // crate cycle (see run_command.rs §`Run`).
+            // The `Run.boot` entry point is hosted on `RunCommand` to avoid the
+            // higher-tier crate cycle (see run_command.rs §`Run`).
             let result = RunCommand::boot(_ctx, temp_path.to_vec().into_boxed_slice(), None);
 
             // `defer fd.close()` — Fd is Copy and has no Drop; close explicitly.
@@ -106,11 +104,8 @@ impl FuzzilliCommand {
 
     #[cfg(unix)]
     fn verify_fd(fd: c_int) -> sys::Maybe<()> {
-        // Zig used `std.posix.fstat` directly; routed through `bun_sys` to
-        // preserve syscall-tagged error info.
+        // Routed through `bun_sys` to preserve syscall-tagged error info.
         let _stat = sys::fstat(Fd::from_native(fd))?;
         Ok(())
     }
 }
-
-// ported from: src/cli/fuzzilli_command.zig

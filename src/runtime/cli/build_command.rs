@@ -16,8 +16,8 @@ use bun_sys::{self, Fd};
 
 extern crate bun_standalone_graph as bun_standalone_module_graph;
 
-/// `bun.cli.start_time` accessor — Zig had a mutable global; Rust keeps the
-/// single backing `OnceLock` in `bun_core` (written once in `Cli::start`).
+/// `start_time` accessor — the
+/// single backing `OnceLock` lives in `bun_core` (written once in `Cli::start`).
 #[inline]
 fn cli_start_time() -> i128 {
     crate::cli::start_time()
@@ -62,7 +62,6 @@ impl BuildCommand {
             long_running: true,
             ..Default::default()
         });
-        // PERF(port): allocator param dropped — global mimalloc
         let log = ctx.log;
         // SAFETY: `ctx.log` is a long-lived `*mut Log` set up during CLI init
         // and never freed for the duration of the command body.
@@ -94,7 +93,6 @@ impl BuildCommand {
                     Vec::with_capacity(compile_define_keys.len() + define.keys.len());
                 keys.extend(compile_define_keys.iter().map(|s| Box::<[u8]>::from(*s)));
                 keys.append(&mut define.keys);
-                // PERF(port): was appendSliceAssumeCapacity — profile if it shows up on a hot path.
                 let mut values: Vec<Box<[u8]>> =
                     Vec::with_capacity(compile_define_values.len() + define.values.len());
                 values.extend(compile_define_values.iter().map(|s| Box::<[u8]>::from(*s)));
@@ -381,7 +379,7 @@ impl BuildCommand {
                 resolve_path::get_if_exists_longest_common_path(&entries).unwrap_or(b".")
             };
 
-            // Zig `defer dir.close()` — `bun_sys::Dir` is the owning RAII
+            // `bun_sys::Dir` is the owning RAII
             // handle; its Drop closes the fd when this block ends.
             let dir = match bun_sys::open_dir_at(Fd::cwd(), path) {
                 Ok(d) => bun_sys::Dir { fd: d },
@@ -475,11 +473,10 @@ impl BuildCommand {
         let mut client_transpiler: Option<transpiler::Transpiler> = None;
         if this_transpiler.options.server_components {
             let mut ct = transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?;
-            // Note: Zig assigned `client_transpiler.options = this_transpiler.options`
-            // (struct copy). `BundleOptions<'a>` is non-`Clone` in Rust; instead
+            // Note: `BundleOptions<'a>` is non-`Clone`;
             // `Transpiler::init` above rebuilds options from the same `ctx.args`,
             // and the divergent fields are set explicitly below. `client_transpiler`
-            // is currently unused after this block (matching the Zig), so a
+            // is currently unused after this block, so a
             // perfect field-wise copy is not load-bearing.
             ct.options.target = bun_ast::Target::Browser;
             ct.options.server_components = true;
@@ -494,7 +491,7 @@ impl BuildCommand {
             {
                 use bun_bundler::DefineDataExt as _;
                 use bun_bundler::DefineExt as _;
-                // Zig build_command.zig:273-288 — feed `--define` entries into
+                // Feed `--define` entries into
                 // the client transpiler's Define table.
                 let user_defines = match &ctx.args.define {
                     Some(input) => {
@@ -719,7 +716,7 @@ impl BuildCommand {
 
         let mut had_err = false;
         'dump: {
-            // Output::flush() runs at end of this block (defer in Zig); see explicit calls below
+            // Output::flush() runs at end of this block; see explicit calls below
             let writer = Output::writer_buffered();
             let mut output_dir: &[u8] = &opt_output_dir;
 
@@ -1126,8 +1123,7 @@ impl BuildCommand {
 
 fn exit_or_watch(code: u8, watch: bool) -> ! {
     if watch {
-        // the watcher thread will exit the process. Zig:
-        // `std.Thread.sleep(maxInt(u64) - 1)` (nanoseconds). `std::thread::sleep`
+        // the watcher thread will exit the process. `std::thread::sleep`
         // accepts arbitrarily large Durations on every supported platform
         // (the stdlib loops internally where the OS primitive is narrower),
         // so this parks the thread for ~584 years — effectively forever.
@@ -1202,5 +1198,3 @@ fn print_summary(
     Output::print_elapsed_stdout_trim(bundle_elapsed as f64);
     bun_core::prettyln!("  <green>bundle<r>  {} modules", reachable_file_count);
 }
-
-// ported from: src/cli/build_command.zig

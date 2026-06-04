@@ -103,5 +103,3 @@ impl Drop for CookieMapRef {
         CookieMap__deref(self)
     }
 }
-
-// ported from: src/runtime/webcore/CookieMap.zig

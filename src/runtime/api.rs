@@ -31,7 +31,6 @@ pub use crate::napi;
 pub use crate::node;
 
 // ─── BuildMessage / ResolveMessage ───────────────────────────────────────────
-// Zig: `pub const {Build,Resolve}Message = @import("../jsc/{Build,Resolve}Message.zig").…;`
 // Canonical defs live in `bun_jsc` (with `#[bun_jsc::JsClass]` derives wiring
 // the C++ `${T}__create`/`__fromJS`/`__finalize` symbols). `bun_runtime` already
 // depends on `bun_jsc`, so this is a plain downstream re-export — no cycle.
@@ -156,7 +155,7 @@ pub mod bun {
         // `Terminal.PtyResult`, `Winsize`, `OpenPtyFn`, `CreatePtyError` —
         // pure FFI handles with no JSC. Canonical defs live in
         // `api/bun/Terminal.rs`; re-exported here so callers can name them via
-        // `api::Terminal::*` exactly as in the Zig (`Terminal.PtyResult` etc.).
+        // `api::Terminal::*` (`Terminal.PtyResult` etc.).
         pub use crate::api::bun_terminal_body::{
             CreatePtyError, OpenPtyFn, OpenPtyTermios, PtyResult, Winsize,
         };
@@ -234,9 +233,6 @@ pub use crate::webview::host_process as WebViewHostProcess;
 // and hands `(&arena, &mut log, &source)` to a per-format closure that does the
 // format-specific parse, error match (StackOverflow / OOM / SyntaxError vs
 // log.to_js), and tail conversion.
-//
-// Zig has no shared helper (four open-coded copies); this is net-new cleanup of
-// a faithfully-ported duplication.
 pub(crate) fn with_text_format_source<R>(
     global: &bun_jsc::JSGlobalObject,
     frame: &bun_jsc::CallFrame,
@@ -247,7 +243,6 @@ pub(crate) fn with_text_format_source<R>(
 ) -> bun_jsc::JsResult<R> {
     use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
 
-    // PERF(port): was ArenaAllocator bulk-free feeding the parser + AST stores.
     let arena = bun_alloc::Arena::new();
     let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
     let _ast_scope = ast_memory_allocator.enter();
@@ -283,4 +278,3 @@ pub(crate) fn with_text_format_source<R>(
     f(&arena, &mut log, &source)
 }
 
-// ported from: src/runtime/api.zig

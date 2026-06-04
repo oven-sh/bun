@@ -33,12 +33,10 @@ use bun_ast::op::Level;
 use bun_ast::{ArrayBinding, StrictModeKind};
 use bun_ast::{B, Binding, E, Expr, ExprNodeIndex, ExprNodeList, Flags, G, LocRef, S, Stmt};
 
-// Zig: `pub fn Parse(comptime ts, comptime jsx, comptime scan) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block.
+// File-split mixin: Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`,
+// so this is a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    // Zig: `inline fn parseExprOrBindings(p, level, errors: ?*DeferredErrors, expr: *Expr) !void`
     #[inline]
     pub fn parse_expr_or_bindings(
         &mut self,
@@ -48,14 +46,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         self.parse_expr_common(level, errors, EFlags::None, expr)
     }
-    // Zig: `inline fn parseExpr(p, level) !Expr`
     #[inline]
     pub fn parse_expr(&mut self, level: Level) -> Result<Expr, Error> {
         let mut expr = Expr::EMPTY;
         self.parse_expr_common(level, None, EFlags::None, &mut expr)?;
         Ok(expr)
     }
-    // Zig: `inline fn parseExprWithFlags(p, level, flags, expr: *Expr) !void`
     #[inline]
     pub fn parse_expr_with_flags(
         &mut self,
@@ -79,8 +75,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let had_pure_comment_before =
             self.lexer.has_pure_comment_before && !self.options.ignore_dce_annotations;
         *expr = self.parse_prefix(level, errors.as_deref_mut(), flags)?;
-        // reshaped for borrowck — `errors` is reborrowed via as_deref_mut
-        // for each call site instead of Zig's single pointer pass-through.
+        // `errors` is reborrowed via as_deref_mut for each call site.
 
         // There is no formal spec for "__PURE__" comments but from reverse-
         // engineering, it looks like they apply to the next CallExpression or
@@ -199,7 +194,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 continue;
             }
 
-            // Zig hoisted `opts` above the loop; it is fully
+            // `opts` is fully
             // reinitialized here every iteration before any read, so declare
             // per-iteration.
             let mut opts = PropertyOpts {
@@ -344,7 +339,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn parse_call_args(&mut self) -> Result<ExprListLoc, Error> {
         // Allow "in" inside call arguments; restored on every exit path
-        // (Zig: `defer p.allow_in = old_allow_in`).
         let old_allow_in = self.allow_in;
         self.allow_in = true;
         let result = self.parse_call_args_inner();
@@ -439,7 +433,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = true;
 
         // Forbid "await" and "yield", but only for arrow functions
-        // Zig saved/restored via toBytes/bytesToValue; clone is equivalent.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
         p.fn_or_arrow_data_parse.arrow_arg_errors = arrow_arg_errors;
         p.fn_or_arrow_data_parse.track_arrow_arg_errors = true;
@@ -496,7 +489,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.lexer.next()?;
         }
         let items: &'a mut [Expr] = items_list.into_bump_slice_mut();
-        // Zig kept `items_list` alive and aliased `.items`; bump_slice is equivalent (arena-owned).
 
         // The parenthetical construct must end with a close parenthesis
         p.lexer.expect(T::TCloseParen)?;
@@ -763,9 +755,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // SAFETY: E::String slices are arena-owned for 'a.
                 return Ok(unsafe { bun_collections::detach_lifetime(estr.slice8()) });
             } else {
-                // Zig used toUTF8AllocWithTypeWithoutInvalidSurrogatePairs which
-                // errors on lone surrogates. The Rust port replaces them with U+FFFD; the
-                // surrogate-error diagnostic path is dropped until the strict variant lands.
+                // Lone surrogates are replaced with U+FFFD; the surrogate-error
+                // diagnostic path is dropped until the strict variant lands.
                 let alias_utf8 = strings::to_utf8_alloc_with_type(estr.slice16());
                 let leaked: &'a [u8] = p.arena.alloc_slice_copy(&alias_utf8);
                 return Ok(leaked);
@@ -973,7 +964,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             )),
             ..Default::default()
         };
-        // reshaped for borrowck — Zig mutated `result.stmt_or_expr.expr` in place.
         if let js_ast::StmtOrExpr::Expr(ref mut e) = result.stmt_or_expr {
             p.parse_suffix(e, Level::Lowest, None, EFlags::None)?;
         }
@@ -1373,7 +1363,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let supported_attribute: Option<SupportedAttribute> = 'brk: {
                     // Parse the key
                     if p.lexer.is_identifier_or_keyword() {
-                        // Zig used `inline for` over enum values + @tagName.
                         if p.lexer.identifier == b"type" {
                             break 'brk Some(SupportedAttribute::Type);
                         }
@@ -1411,7 +1400,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if let Some(attr) = supported_attribute {
                     match attr {
                         SupportedAttribute::Type => {
-                            // This logic is duplicated in js_ast.zig fn importRecordTag()
                             let type_attr = string_literal_text;
                             if type_attr == b"macro" {
                                 path.is_macro = true;
@@ -1625,7 +1613,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             needs_async_loc: args[0].binding.loc,
                             ..Default::default()
                         };
-                        // Zig: `defer p.popScope()` — pop on the error path too.
+                        // Pop the scope on the error path too.
                         let mut arrow_body = match p.parse_arrow_body(args, &mut data) {
                             Ok(body) => body,
                             Err(e) => {
@@ -1698,5 +1686,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         ))
     }
 }
-
-// ported from: src/js_parser/ast/parse.zig

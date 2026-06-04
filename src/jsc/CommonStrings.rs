@@ -44,9 +44,6 @@ impl CommonStringsForZig {
 }
 
 impl<'a> CommonStrings<'a> {
-    // Zig had both `IPv4`/`IPv6` and `ipv4`/`ipv6` methods, which collide
-    // under snake_case. The lowercase Zig methods are renamed to
-    // `ipv4_lower`/`ipv6_lower` here (matching their enum variants).
     #[inline]
     pub fn ipv4(self) -> JSValue {
         CommonStringsForZig::IPv4.to_js(self.global_object)
@@ -55,14 +52,10 @@ impl<'a> CommonStrings<'a> {
     pub fn ipv6(self) -> JSValue {
         CommonStringsForZig::IPv6.to_js(self.global_object)
     }
-    // Zig `@"127.0.0.1"` — not a valid Rust identifier; renamed to match the
-    // enum variant.
     #[inline]
     pub fn in4_loopback(self) -> JSValue {
         CommonStringsForZig::IN4Loopback.to_js(self.global_object)
     }
-    // Zig `@"::"` — not a valid Rust identifier; renamed to match the enum
-    // variant.
     #[inline]
     pub fn in6_any(self) -> JSValue {
         CommonStringsForZig::IN6Any.to_js(self.global_object)
@@ -104,5 +97,3 @@ impl<'a> CommonStrings<'a> {
         CommonStringsForZig::BinaryTypeUint8Array.to_js(self.global_object)
     }
 }
-
-// ported from: src/jsc/CommonStrings.zig

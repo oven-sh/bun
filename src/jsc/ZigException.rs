@@ -179,8 +179,6 @@ impl Holder {
     pub fn zig_exception(&mut self) -> &mut ZigException {
         if !self.loaded {
             self.zig_exception.write(ZigException {
-                // Zig: `@as(JSErrorCode, @enumFromInt(255))` — non-exhaustive
-                // enum(u8) → transparent newtype, so just construct directly.
                 r#type: JSErrorCode(255),
                 runtime_type: JSRuntimeType::NOTHING,
                 name: String::EMPTY,
@@ -226,5 +224,3 @@ impl Drop for Holder {
         }
     }
 }
-
-// ported from: src/jsc/ZigException.zig

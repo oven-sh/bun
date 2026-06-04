@@ -5,7 +5,6 @@ pub struct ErrorCodeAndMessage {
     pub message: &'static [u8],
 }
 
-// PERF(port): was `comptime err: anyerror` — demoted to runtime; profile if hot.
 pub fn get_sign_error_message(e: Error) -> &'static [u8] {
     match e {
         e if e == err!("MissingCredentials") => b"Missing S3 credentials. 'accessKeyId', 'secretAccessKey', 'bucket', and 'endpoint' are required",
@@ -59,5 +58,3 @@ pub struct S3Error<'a> {
     // `toJS` / `toJSWithAsyncStack` are implemented as extension-trait methods
     // in the `*_jsc` crate.
 }
-
-// ported from: src/s3_signing/error.zig

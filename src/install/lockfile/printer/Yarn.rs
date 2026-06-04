@@ -13,16 +13,13 @@ use bun_install::dependency::{self, Behavior, VersionExt as _};
 use bun_install::lockfile::package;
 // `lockfile.packages.slice()` returns
 // `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
-// column accessors are an extension trait (Zig's `slice.items(.field)` is
-// comptime-dispatched, Rust models it as a hand-expanded trait per Package.rs).
+// column accessors are an extension trait (hand-expanded per Package.rs).
 use crate::integrity;
 use crate::lockfile_real::Printer;
 
 pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
     // internal for debugging, print the lockfile as custom json
     // limited to debug because we don't want people to rely on this format.
-    // Zig: `std.json.Stringify.write(this.lockfile)` dispatches to Lockfile's
-    // custom `jsonStringify`; the Rust port calls it directly.
     #[cfg(debug_assertions)]
     if std::env::var_os("JSON").is_some() {
         use crate::lockfile_real::lockfile_json_stringify_for_debugging::{
@@ -61,14 +58,12 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
     let resolutions_buffer: &[PackageID] = this.lockfile.buffers.resolutions.as_slice();
     let dependencies_buffer: &[Dependency] = this.lockfile.buffers.dependencies.as_slice();
 
-    // Zig: std.HashMap(PackageID, []Dependency.Version, IdentityContext(PackageID), 80)
-    // Reshaped for borrowck — store (start, len) into
-    // `all_requested_versions_buf` instead of overlapping &mut [Version] slices.
+    // Store (start, len) into `all_requested_versions_buf` instead of
+    // overlapping &mut [Version] slices.
     let mut requested_versions: HashMap<PackageID, (usize, usize)> = HashMap::default();
 
-    // PERF(port): Zig was raw `allocator.alloc(Dependency.Version, resolutions_buffer.len)` of
-    // uninit memory + cursor slicing. We push into a pre-reserved Vec instead — set_len would
-    // drop uninit tail elements (and index-assign would drop uninit old values). Profile if hot.
+    // We push into a pre-reserved Vec — set_len would drop uninit tail elements
+    // (and index-assign would drop uninit old values). Profile if hot.
     let mut all_requested_versions_buf: Vec<dependency::Version> =
         Vec::with_capacity(resolutions_buffer.len());
 
@@ -100,7 +95,6 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
 
             let dependency_versions = &mut all_requested_versions_buf[requested_version_start..];
             if dependency_versions.len() > 1 {
-                // PERF(port): was std.sort.insertion — profile if it shows up on a hot path.
                 dependency_versions.sort_by(|a, b| {
                     if dependency::Version::is_less_than_with_tag(string_buf, a, b) {
                         Ordering::Less
@@ -123,7 +117,6 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
             buf: string_buf.into(),
             resolutions: resolved.into(),
         };
-        // PERF(port): std.sort.pdq → sort_unstable_by (Rust uses pdqsort internally)
         alphabetized_names.sort_unstable_by(|&a, &b| alphabetizer.order(a, b));
     }
 
@@ -297,5 +290,3 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
 
     Ok(())
 }
-
-// ported from: src/install/lockfile/printer/Yarn.zig

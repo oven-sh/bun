@@ -209,5 +209,3 @@ pub enum Action {
     Done(ExitCode),
     SpawnStmt(*const ast::Stmt),
 }
-
-// ported from: src/shell/states/If.zig

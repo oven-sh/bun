@@ -2,8 +2,6 @@ use core::ffi::c_void;
 
 use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
 use bun_core::ZigString;
-// `ZigString.Slice` in Zig — re-exported in Rust as `bun_core::zig_string::Slice`
-// (alias for `bun_core::ZigStringSlice`).
 use bun_core::zig_string::Slice as ZigStringSlice;
 
 bun_opaque::opaque_ffi! {
@@ -11,8 +9,8 @@ bun_opaque::opaque_ffi! {
     pub struct JSString;
 }
 
-// NOTE: Zig declares several of these params as `*JSString` / `*JSGlobalObject`
-// (mutable), but the C ABI does not distinguish `*const T` from `*mut T`. We
+// NOTE: the C++ side may mutate through several of these `*JSString` /
+// `*JSGlobalObject` params, but the C ABI does not distinguish `*const T` from `*mut T`. We
 // intentionally declare them `*const` here — matching the convention in
 // JSGlobalObject.rs / JSValue.rs — so that callers can pass `&self` / `&global`
 // directly without an `as *const _ as *mut _` cast. `JSString` and
@@ -49,7 +47,7 @@ impl JSString {
     }
 
     pub fn ensure_still_alive(&self) {
-        // SAFETY: matches Zig's std.mem.doNotOptimizeAway(this) — JSString is always a cell.
+        // Keep the cell pointer observable to the GC's conservative stack scan.
         core::hint::black_box(std::ptr::from_ref::<Self>(self));
     }
 
@@ -59,7 +57,6 @@ impl JSString {
         out
     }
 
-    // pub const view = getZigString;
     #[inline]
     pub fn view(&self, global: &JSGlobalObject) -> ZigString {
         self.get_zig_string(global)
@@ -72,7 +69,7 @@ impl JSString {
         str.to_slice()
     }
 
-    // Spec (JSString.zig:44-52): `str.toSliceClone(allocator)` always allocates
+    // `to_slice_clone` always allocates
     // an owned UTF-8 copy so the result outlives the GC'd JSString. Returning
     // `to_slice()` here (a borrow that may alias JSC-owned memory) would hand
     // callers a use-after-free once the cell is collected.
@@ -83,7 +80,7 @@ impl JSString {
         Ok(str.to_slice_clone())
     }
 
-    // Spec (JSString.zig:54-62): `str.toSliceZ(allocator)` guarantees a `[:0]`
+    // `to_slice_z` guarantees a trailing NUL
     // sentinel. `to_slice()` is not NUL-terminated; passing it to a C API that
     // expects one reads past the buffer end.
 
@@ -132,7 +129,7 @@ pub struct Iterator {
 }
 
 impl Iterator {
-    /// Raw type-erased user-data pointer (Zig: `data: ?*anyopaque`).
+    /// Raw type-erased user-data pointer.
     ///
     /// This is the sole accessor for the `data` field. A `&T`-returning
     /// accessor is intentionally **not** provided: `data` is an opaque
@@ -141,7 +138,7 @@ impl Iterator {
     /// append/write callbacks while C++ holds `*mut Iterator` re-entrantly.
     /// Callers must cast and dereference under their own `unsafe` block.
     ///
-    /// Invariant: may be null (Zig spec declares it optional). When set by
+    /// Invariant: may be null. When set by
     /// `iter()`-style constructors it points to a stack-local context struct
     /// that outlives the `JSC__JSString__iterator` call.
     #[inline]
@@ -149,5 +146,3 @@ impl Iterator {
         self.data
     }
 }
-
-// ported from: src/jsc/JSString.zig

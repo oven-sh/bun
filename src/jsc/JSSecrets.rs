@@ -77,8 +77,3 @@ pub(crate) extern "C" fn Bun__Secrets__scheduleJob(
     )
     .expect("SecretsCtx::init is infallible");
 }
-
-// Zig `fixDeadCodeElimination` + `comptime { _ = ... }` dropped:
-// #[unsafe(no_mangle)] already prevents DCE of Bun__Secrets__scheduleJob in Rust.
-
-// ported from: src/jsc/JSSecrets.zig

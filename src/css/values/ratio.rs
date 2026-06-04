@@ -51,5 +51,3 @@ impl Ratio {
         }
     }
 }
-
-// ported from: src/css/values/ratio.zig

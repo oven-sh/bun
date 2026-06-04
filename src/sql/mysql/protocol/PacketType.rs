@@ -18,5 +18,3 @@ impl PacketType {
 
     pub const AUTH_SWITCH: u8 = 0xfe;
 }
-
-// ported from: src/sql/mysql/protocol/PacketType.zig

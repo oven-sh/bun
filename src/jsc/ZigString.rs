@@ -32,8 +32,7 @@ pub use crate::ZigStringJsc;
 
 // `OpaqueJSString` / `JSStringRef` retained for type-level compatibility with
 // the JSC C API surface; the `to_js_string_ref` constructor wrappers were dead
-// code (no C++ body for `JSStringCreateStatic` in Bun's link image — Zig's
-// `toJSStringRef` is unreachable behind `@hasDecl(bun, "bindgen")`).
+// code (no C++ body for `JSStringCreateStatic` in Bun's link image).
 bun_opaque::opaque_ffi! { pub struct OpaqueJSString; }
 
 unsafe extern "C" {
@@ -44,8 +43,8 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// `ZigString.static(comptime s)` — borrow a static ASCII/Latin-1 literal.
-/// Spec (`ZigString.static`, ZigString.zig:499-506) constructs the string with
+/// `ZigString::static_` — borrow a static ASCII/Latin-1 literal.
+/// Constructs the string with
 /// the raw literal pointer and NO encoding tag. Callers who need UTF-8
 /// semantics must use `init_utf8` / `from_utf8` explicitly.
 #[inline]
@@ -53,7 +52,7 @@ pub(crate) fn static_(s: &'static [u8]) -> ZigString {
     ZigString::init(s)
 }
 
-/// `ZigString.toExternalU16` (ZigString.zig:571) — hand a globally-allocated
+/// Hand a globally-allocated
 /// UTF-16 buffer to JSC as an external string. Ownership of `ptr[0..len]`
 /// transfers to JSC on success; on the too-long path the buffer is freed
 /// here, a `STRING_TOO_LONG` error is thrown, and `.zero` is returned.
@@ -66,8 +65,7 @@ pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObje
     if len > BunString::max_length() {
         // SAFETY: caller contract — `ptr` came from the default (global) allocator.
         unsafe { bun_alloc::default_alloc::free(ptr.cast_mut().cast::<core::ffi::c_void>()) };
-        // Zig: `global.ERR(.STRING_TOO_LONG, msg).throw()`; propagation is
-        // swallowed (matches Zig's `catch {}`).
+        // Propagation of the throw is intentionally swallowed.
         let _ = global
             .err(
                 crate::ErrorCode::STRING_TOO_LONG,
@@ -92,8 +90,7 @@ pub(crate) unsafe extern "C" fn ZigString__free(
     let Some(allocator_) = core::ptr::NonNull::new(allocator_) else {
         return;
     };
-    // Zig dereferenced `*std.mem.Allocator` from the opaque pointer; on the
-    // Rust side the buffer is always owned by the global allocator. Verified:
+    // The buffer is always owned by the global allocator. Verified:
     // no C++ call site passes a non-default allocator — the only reference to
     // this symbol outside this file is the declaration in
     // headers-handwritten.h (helpers.h frees via `ZigString__freeGlobal`).
@@ -136,5 +133,3 @@ pub(crate) unsafe extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize
 // `super::Slice`). Kept for FFI surfaces that need the raw `{allocator, ptr,
 // len}` layout; the enum form is preferred for pure-Rust callers.
 // ──────────────────────────────────────────────────────────────────────────
-
-// ported from: src/jsc/ZigString.zig

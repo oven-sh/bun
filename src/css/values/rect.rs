@@ -3,11 +3,9 @@ use crate::css_parser::{CssResult as Result, PrintErr, Printer};
 use crate::targets::Browsers;
 use crate::values::protocol::{IsCompatible, Parse, ToCss};
 
-// The Zig `needsDeinit(comptime T: type) bool` switch and the
-// `deinit(this, arena)` method are dropped entirely. They existed to
-// thread per-field `arena.free` through a comptime type table; in Rust,
-// `T: Drop` on the four fields handles this automatically (and arena-owned
-// payloads in `bun_css` are bulk-freed by the bump, never per-value).
+// No `deinit` is needed: `T: Drop` on the four fields handles cleanup
+// automatically (and arena-owned payloads in `bun_css` are bulk-freed by the
+// bump, never per-value).
 
 /// A generic value that represents a value for four sides of a box,
 /// e.g. border-width, margin, padding, etc.
@@ -40,9 +38,7 @@ impl<T> Rect<T> {
     where
         T: Clone,
     {
-        // Zig branched on `comptime needs_deinit` to decide between
-        // bitwise copy and per-field `.deepClone(arena)`. In Rust this is
-        // just the `Clone` trait on `T` — the cheap-copy types
+        // The `Clone` trait on `T` covers everything — the cheap-copy types
         // (`f32`, `NumberOrPercentage`, `LineStyle`) impl it as a bit copy.
         Self {
             top: self.top.clone(),
@@ -162,5 +158,3 @@ impl<T: IsCompatible> IsCompatible for Rect<T> {
             && self.left.is_compatible(browsers)
     }
 }
-
-// ported from: src/css/values/rect.zig

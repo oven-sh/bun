@@ -169,7 +169,7 @@ pub mod c {
 
 pub enum Result {
     Success(usize),
-    // Zig `[:0]const u8` field, always assigned from ZSTD_getErrorName (static C string).
+    // Always assigned from ZSTD_getErrorName (static C string).
     Err(&'static ZStr),
 }
 
@@ -273,18 +273,15 @@ pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> 
     // 2. Reported size exceeds safety limit (to prevent malicious inputs claiming huge sizes)
     if size == ZSTD_CONTENTSIZE_UNKNOWN || size > MAX_PREALLOCATE_SIZE {
         let mut list: Vec<u8> = Vec::new();
-        // Zig's `errdefer list.deinit(allocator)` is implicit — `list` drops on `?`.
         let mut reader = ZstdReaderArrayList::init(src, &mut list)?;
 
         reader.read_all(true)?;
         drop(reader);
         return Ok(list);
-        // Zig `.toOwnedSlice()` → just return the Vec; caller owns it.
     }
 
     // Fast path: size is known and within reasonable limits
     let mut output = vec![0u8; size];
-    // `errdefer allocator.free(output)` is implicit via Vec Drop.
 
     match decompress(&mut output, src) {
         Result::Success(actual_size) => {
@@ -305,10 +302,7 @@ pub use bun_core::compress::State;
 
 pub struct ZstdReaderArrayList<'a> {
     pub input: &'a [u8],
-    // reshaped for borrowck — Zig kept a by-value copy of the
-    // ArrayListUnmanaged in `list` and wrote it back through `list_ptr` at the
-    // end of `readAll`. In Rust we operate on the caller's Vec directly via
-    // the `&mut` borrow; the redundant `list` cache field is dropped.
+    // We operate on the caller's Vec directly via the `&mut` borrow.
     pub list_ptr: &'a mut Vec<u8>,
     // `list_allocator` / `allocator` params deleted — global mimalloc.
     pub zstd: *mut c::ZSTD_DStream,
@@ -363,9 +357,6 @@ impl<'a> ZstdReaderArrayList<'a> {
     }
 
     pub fn read_all(&mut self, is_done: bool) -> core::result::Result<(), ZstdError> {
-        // Zig's `defer this.list_ptr.* = this.list;` is unnecessary —
-        // we mutate the caller's Vec through `list_ptr` directly.
-
         if self.state == State::End || self.state == State::Error {
             return Ok(());
         }
@@ -477,9 +468,7 @@ impl<'a> ZstdReaderArrayList<'a> {
 
 impl Drop for ZstdReaderArrayList<'_> {
     fn drop(&mut self) {
-        // Zig `deinit`: end() then allocator.destroy(this). Box handles the destroy.
         self.end();
     }
 }
 
-// ported from: src/zstd/zstd.zig

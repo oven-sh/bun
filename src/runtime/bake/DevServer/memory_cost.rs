@@ -33,8 +33,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     let mut source_maps: usize = 0;
     let mut assets: usize = 0;
 
-    // See https://github.com/ziglang/zig/issues/21879
-    // Exhaustiveness check (Zig: `useAllFields(DevServer, .{...})`):
+    // Exhaustiveness check:
     // destructuring without `..` fails to compile when a DevServer field is
     // added, removed, or renamed, forcing the accounting below to be updated.
     // All bindings are `_` so nothing is moved or borrowed past this block.
@@ -158,10 +157,6 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // .source_maps
     other_bytes += memory_cost_array_hash_map(&dev.source_maps.entries);
     for entry in dev.source_maps.entries.values() {
-        // Note: Zig stored `MultiArrayList(PackedMap.Shared)` and called
-        // `entry.files.memoryCost()` (capacityInBytes). The Rust port stores a
-        // plain `Vec<packed_map::Shared>` (see source_map_store.rs Note),
-        // so the SoA byte-count is replaced by `cap * size_of::<Shared>()`.
         source_maps += entry.files.capacity() * size_of::<packed_map::Shared>();
         for file in entry.files.iter() {
             source_maps += file.memory_cost();
@@ -169,7 +164,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     }
     // .incremental_result
     {
-        // Exhaustiveness check (Zig: `useAllFields`) — fails to compile when
+        // Exhaustiveness check — fails to compile when
         // an IncrementalResult field is added/removed/renamed.
         let IncrementalResult {
             framework_routes_affected: _,
@@ -220,9 +215,8 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         dev.html_router.map.capacity() * (size_of::<*const HTMLBundleRoute>() + size_of::<&[u8]>());
     // DevServer does not count the referenced HTMLBundle.HTMLBundleRoutes
     // .bundling_failures
-    // Note: Zig keys the set by `SerializedFailure` directly; the Rust port
-    // stores `OwnerPacked → SerializedFailure`, so the failure payloads live in
-    // `.values()`.
+    // The map stores `OwnerPacked → SerializedFailure`, so the failure
+    // payloads live in `.values()`.
     other_bytes += memory_cost_slice(dev.bundling_failures.values());
     for failure in dev.bundling_failures.values() {
         other_bytes += failure.data.len();
@@ -230,8 +224,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // All entries are owned by the bundler arena, not DevServer, except for `requests`
     // .current_bundle
     if let Some(bundle) = &dev.current_bundle {
-        // Note: Zig walked the intrusive list (`while (r) |req| : (r = req.next)`)
-        // only to count nodes; `SinglyLinkedList::len()` does the same O(N) walk.
+        // `SinglyLinkedList::len()` is an O(N) walk; only the node count matters.
         other_bytes += bundle.requests.len() * size_of::<deferred_request::Node>();
     }
     // .next_bundle
@@ -262,9 +255,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
 
 pub(crate) fn memory_cost(dev: &DevServer) -> usize {
     let cost = memory_cost_detailed(dev);
-    // Note: Zig iterated `@typeInfo(MemoryCost).@"struct".fields` to sum every
-    // field. Rust has no field reflection; the sum is written out explicitly. Keep this
-    // in sync with the `MemoryCost` struct definition above.
+    // Keep this in sync with the `MemoryCost` struct definition above.
     let mut acc: usize = 0;
     acc += cost.incremental_graph_client;
     acc += cost.incremental_graph_server;
@@ -284,11 +275,7 @@ pub(crate) fn memory_cost_slice<T>(slice: &[T]) -> usize {
 }
 
 pub(crate) fn memory_cost_array_hash_map<K, V, C>(map: &ArrayHashMap<K, V, C>) -> usize {
-    // Zig: `@TypeOf(map.entries).capacityInBytes(map.entries.capacity)` — the
-    // SoA byte capacity of the backing `MultiArrayList`. The Rust `ArrayHashMap`
-    // stores three separate `Vec`s (keys, values, 32-bit hashes) instead, so the
-    // equivalent footprint is `capacity * (sizeof K + sizeof V + sizeof u32)`.
+    // `ArrayHashMap` stores three separate `Vec`s (keys, values, 32-bit
+    // hashes), so the footprint is `capacity * (sizeof K + sizeof V + sizeof u32)`.
     map.capacity() * (size_of::<K>() + size_of::<V>() + size_of::<u32>())
 }
-
-// ported from: src/bake/DevServer/memory_cost.zig

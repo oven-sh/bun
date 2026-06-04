@@ -40,8 +40,7 @@ bun_output::declare_scope!(Terminal, hidden);
 
 // Generated bindings — `jsc.Codegen.JSTerminal`. The `.classes.ts` codegen
 // emits `crate::generated_classes::js_Terminal` with `from_js`/`to_js` and the
-// cached-value accessors; re-export here so callers continue to spell `js::*`
-// (matching Zig's `js.toJS`/`js.gc.set(.data, …)`).
+// cached-value accessors; re-export here so callers continue to spell `js::*`.
 pub use self::js::{from_js, from_js_direct, to_js};
 pub mod js {
     pub use crate::generated_classes::js_Terminal::{
@@ -49,7 +48,7 @@ pub mod js {
         exit_set_cached, from_js, from_js_direct, get_constructor, to_js,
     };
 
-    /// Zig: `js.gc` — typed accessor for the `values:` slots.
+    /// Typed accessor for the `values:` slots.
     pub mod gc {
         use bun_jsc::{JSGlobalObject, JSValue};
 
@@ -215,7 +214,7 @@ impl Default for Options {
     }
 }
 
-// Local extension shims for `JSValue.getOptional` (Terminal.zig). Typed
+// Local extension shims for typed optional property reads. Typed
 // `getOptional` is not yet a single inherent generic on `bun_jsc::JSValue`;
 // these wrap `get` + the per-type coercion. `withAsyncContextIfNeeded` is the
 // inherent `JSValue::with_async_context_if_needed` in `bun_jsc` — call sites
@@ -296,8 +295,8 @@ impl Options {
 
 impl Drop for Options {
     fn drop(&mut self) {
-        // term_name: ZigString::Slice has its own Drop; reset to default afterward
-        // matches Zig `this.* = .{}` but is unnecessary in Rust.
+        // term_name: ZigString::Slice has its own Drop; nothing further to
+        // clean up here.
     }
 }
 
@@ -431,7 +430,7 @@ impl Terminal {
         // doesn't double-free on the WriterStartFailed/ReaderStartFailed paths.
         options.term_name = ZigStringSlice::default();
 
-        // `bun.new(Terminal, .{...})` → heap::alloc; the intrusive ref_count
+        // Heap-allocate the Terminal; the intrusive ref_count
         // field starts at 1 (JS side's ref). Wrapped as IntrusiveRc on success.
         let terminal: *mut Terminal = bun_core::heap::into_raw(Box::new(Terminal {
             ref_count: bun_ptr::RefCount::init(),
@@ -650,8 +649,6 @@ impl Terminal {
     /// `create_from_spawn` whose subprocess never started. Downgrades the
     /// JSRef so the wrapper is GC-eligible, marks `finalized` so
     /// `on_reader_done` skips the JS exit callback, and runs `close_internal`.
-    /// Mirrors the `defer { terminal_info.? }` block in
-    /// `js_bun_spawn_bindings.zig`.
     pub(crate) fn abandon_from_spawn(&self) {
         self.this_value.with_mut(|v| v.downgrade());
         self.update_flags(|f| f.insert(Flags::FINALIZED));
@@ -906,8 +903,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
                 | libc::IXANY // Any character restarts output
                 | libc::IMAXBEL // Ring bell on input queue full
                 | libc::BRKINT; // Signal interrupt on break
-            // IUTF8: present in Linux/macOS/FreeBSD kernels but Zig std's
-            // tc_iflag_t only exposes the field on Linux/macOS, so probe for it.
+            // IUTF8: only set where the libc constant is exposed.
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             {
                 t.c_iflag |= libc::IUTF8;
@@ -1187,8 +1183,8 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     // Wrap server (overlapped) ends as libuv-owned FDs so they can be passed
     // to BufferedReader/StreamingWriter.start() which calls uv_pipe_open.
     // Do not .take() until after success — on Err the cleanup! must still see
-    // Some(h) so the HANDLE isn't leaked (matches Zig: `out_server = null` only
-    // after the fallible call succeeds).
+    // Some(h) so the HANDLE isn't leaked; clear `out_server` only after the
+    // fallible call succeeds.
     let read_fd = match Fd::from_system(out_server.unwrap()).make_libuv_owned() {
         Ok(fd) => {
             out_server = None;
@@ -1788,10 +1784,8 @@ impl Terminal {
         };
 
         let global_this = self.global();
-        // allocator.dupe(u8, chunk) — Zig recovered from OOM here (logged + `return true`
-        // to keep reading). Replicate with try_reserve so a transient OOM on a large
-        // chunk doesn't abort the process.
-        // PERF(port): was explicit dupe + MarkedArrayBuffer.fromBytes; preserving.
+        // Use try_reserve so a transient OOM on a large chunk doesn't abort
+        // the process — log and `return true` to keep reading instead.
         let mut v: Vec<u8> = Vec::new();
         if v.try_reserve_exact(chunk.len()).is_err() {
             bun_output::scoped_log!(
@@ -1867,8 +1861,8 @@ fn deinit_and_destroy(this: *mut Terminal) {
     drop(unsafe { bun_core::heap::take(this) });
 }
 
-// `bun.io.BufferedReader.init(@This())` — vtable parent. Terminal declares
-// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop` (Terminal.zig).
+// BufferedReader vtable parent: Terminal declares
+// `onReadChunk`/`onReaderDone`/`onReaderError`/`loop`/`eventLoop`.
 bun_io::buffered_reader_parent_link!(Terminal for Terminal);
 impl BufferedReaderParent for Terminal {
     const KIND: bun_io::BufferedReaderParentLinkKind =
@@ -1887,8 +1881,7 @@ impl BufferedReaderParent for Terminal {
     unsafe fn loop_(this: *mut Self) -> *mut bun_io::pipe_reader::Loop {
         // Delegate to the inherent `Terminal::loop_()` which is cfg-split:
         // on Windows it projects `.uv_loop()` (the `*mut uv_loop_t` field of
-        // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper —
-        // matching Terminal.zig `loop()` (`this.event_loop_handle.loop().uv_loop`).
+        // `WindowsLoop`), NOT a raw cast of the `bun_uws::Loop` wrapper.
         Self::from_parent_ptr(this).loop_().cast()
     }
     unsafe fn event_loop(this: *mut Self) -> bun_io::EventLoopHandle {
@@ -1962,5 +1955,3 @@ impl bun_io::pipe_writer::WindowsStreamingWriterParent for Terminal {
         Self::from_parent_ptr(this).on_writer_close()
     }
 }
-
-// ported from: src/runtime/api/bun/Terminal.zig

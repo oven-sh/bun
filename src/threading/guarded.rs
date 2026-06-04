@@ -106,12 +106,8 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
     }
 }
 
-// Zig `deinit` only calls `bun.memory.deinit` on both fields and writes `undefined`.
-// Rust drops `Value` and `M` fields automatically — no explicit `Drop` impl needed.
-
 /// RAII guard returned by [`GuardedBy::lock`]. Dereferences to the protected value and releases
-/// the underlying mutex when dropped — the Rust-native replacement for Zig's split
-/// `lock()`/`defer unlock()` pair.
+/// the underlying mutex when dropped.
 pub struct GuardedLock<'a, Value, M: RawMutex> {
     guarded: &'a GuardedBy<Value, M>,
 }
@@ -182,5 +178,3 @@ impl RawMutex for ThreadLock {
         ThreadLock::unlock(self)
     }
 }
-
-// ported from: src/threading/guarded.zig

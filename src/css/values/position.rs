@@ -417,5 +417,3 @@ impl VerticalPositionKeyword {
 
 pub(crate) type HorizontalPosition = PositionComponent<HorizontalPositionKeyword>;
 pub(crate) type VerticalPosition = PositionComponent<VerticalPositionKeyword>;
-
-// ported from: src/css/values/position.zig

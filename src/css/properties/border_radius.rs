@@ -13,7 +13,7 @@ use bun_alloc::ArenaVecExt as _;
 
 /// A value for the [border-radius](https://www.w3.org/TR/css-backgrounds-3/#border-radius) property.
 // `Size2D<T>` carries no `Clone`/`PartialEq` derives (it exposes
-// inherent `deep_clone`/`eql` instead, matching the Zig protocol surface), so
+// inherent `deep_clone`/`eql` instead), so
 // `BorderRadius` can't `#[derive]` them either. The handler below uses
 // `Size2D::deep_clone`/`Size2D::eql` directly.
 pub struct BorderRadius {
@@ -44,9 +44,7 @@ impl BorderRadius {
             && Size2D::eql(&self.bottom_left, &other.bottom_left)
     }
 
-    // Zig: `css.DefineShorthand(@This(), css.PropertyIdTag.@"border-radius", PropertyFieldMap)`
-    // consumed these anonymous-struct decl literals via comptime reflection. Kept
-    // as assoc consts for a future shorthand trait/derive to consume.
+    // Kept as assoc consts for a future shorthand trait/derive to consume.
     pub const PROPERTY_FIELD_MAP: [(&'static str, &'static str); 4] = [
         ("top_left", "border-top-left-radius"),
         ("top_right", "border-top-right-radius"),
@@ -67,7 +65,7 @@ impl BorderRadius {
             // errdefer-style cleanup of `widths` is implicit via Drop on the `?` path.
             Rect::<LengthPercentage>::parse_with(input, LengthPercentage::parse)?
         } else {
-            // Zig `widths.deepClone(arena)` — `LengthPercentage` is
+            // `LengthPercentage` is
             // `Clone`-via-derive (no arena indirection), so per-field `.clone()` is exact.
             Rect {
                 top: widths.top.clone(),
@@ -98,8 +96,7 @@ impl BorderRadius {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // Zig built `Rect(*const LengthPercentage)` and reused
-        // `Rect.toCss`. `Rect::<&T>::to_css` would need `&T: ToCss + PartialEq`;
+        // `Rect::<&T>::to_css` would need `&T: ToCss + PartialEq`;
         // inline the 4-side serialization to avoid that bound (logic is identical
         // to `values::rect::Rect::to_css`).
         #[inline]
@@ -152,8 +149,8 @@ impl BorderRadius {
         Ok(())
     }
 
-    // deepClone → #[derive(Clone)] (was css.implementDeepClone comptime field iteration)
-    // eql       → #[derive(PartialEq)] (was css.implementEql comptime field iteration)
+    // deep_clone comes from #[derive(Clone)].
+    // eql comes from #[derive(PartialEq)].
 }
 
 #[derive(Default)]
@@ -166,14 +163,13 @@ pub struct BorderRadiusHandler {
     pub start_end: Option<Property>,
     pub end_end: Option<Property>,
     pub end_start: Option<Property>,
-    // Zig: `= .physical`. derive(Default) is sound here because
+    // derive(Default) is sound here because
     // PropertyCategory::default() == Physical (see src/css/logical.rs).
     pub category: PropertyCategory,
     pub has_any: bool,
 }
 
-// The Zig helpers take `comptime prop: []const u8` and use `@field` / `@unionInit` for
-// token-level field/variant access. Rust has no field-by-name reflection, so these are
+// There is no field-by-name reflection, so these helpers are
 // macro_rules! that paste the field ident and the corresponding Property variant ident.
 
 // `Size2D::is_compatible` is bounded on `T: values::protocol::IsCompatible`,
@@ -233,7 +229,7 @@ macro_rules! logical_property_helper {
             $self.flush($d, $ctx);
         }
 
-        // Zig stored `property.deepClone(arena)`. `Property` itself
+        // `Property` itself
         // has no blanket `Clone`; callers pass an already-deep_clone'd `Property`.
         $self.$prop = Some($val);
         $self.category = PropertyCategory::Logical;
@@ -561,5 +557,3 @@ pub fn is_logical_border_radius_property(property_id: PropertyIdTag) -> bool {
             | PropertyIdTag::BorderEndStartRadius
     )
 }
-
-// ported from: src/css/properties/border_radius.zig

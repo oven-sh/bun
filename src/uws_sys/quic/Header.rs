@@ -121,7 +121,7 @@ impl Qpack {
         // key is ≤ 19 bytes, so anything longer is a guaranteed miss.
         let (buf, len) = bun_core::strings::ascii_lowercase_buf::<19>(name)?;
         let lower = &buf[..len];
-        // PERF(port): length-gated match instead of phf::Map. 34 keys spread
+        // PERF: length-gated match instead of phf::Map. 34 keys spread
         // over 14 distinct lengths (max 5 per bucket, first bytes mostly
         // unique within a bucket), so the outer length dispatch rejects most
         // misses on a single usize compare and the inner byte-slice match
@@ -341,5 +341,3 @@ mod classify_tests {
         }
     }
 }
-
-// ported from: src/uws_sys/quic/Header.zig

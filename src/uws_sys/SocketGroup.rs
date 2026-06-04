@@ -97,9 +97,7 @@ impl SocketGroup {
     /// Initialise an embedded group. `owner_ptr` is what `group.owner::<T>()`
     /// recovers inside handlers — pass the embedding struct so dispatch can
     /// find it from a raw `*us_socket_t`.
-    // Zig accepted `owner_ptr: anytype` (any single-item pointer or null) with
-    // comptime @typeInfo validation; Rust callers cast to `*mut c_void` at the
-    // call site.
+    // Callers cast to `*mut c_void` at the call site.
     pub fn init(&mut self, loop_: *mut Loop, vt: Option<&'static VTable>, owner_ptr: *mut c_void) {
         // SAFETY: C initializes all fields of `self` in-place; `self` is a valid
         // `#[repr(C)]` slot embedded in the caller.
@@ -379,5 +377,3 @@ unsafe extern "C" {
         fds: *mut [LIBUS_SOCKET_DESCRIPTOR; 2],
     ) -> *mut us_socket_t;
 }
-
-// ported from: src/uws_sys/SocketGroup.zig

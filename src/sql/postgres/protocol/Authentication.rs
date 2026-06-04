@@ -54,7 +54,6 @@ impl Drop for Authentication {
 }
 
 impl Authentication {
-    // Reshaped from out-param `fn(this: *@This(), ...) !void` to `-> Result<Self, _>`.
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         reader: &mut NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {
@@ -122,7 +121,6 @@ impl Authentication {
                     return Err(AnyPostgresError::InvalidMessageLength);
                 }
                 let bytes = reader.bytes((message_length - 8) as usize)?;
-                // errdefer { bytes.deinit(); } — `Data: Drop` frees on `?` early-return.
 
                 let mut r: Option<RawSlice<u8>> = None;
                 let mut i: Option<RawSlice<u8>> = None;
@@ -186,12 +184,9 @@ impl Authentication {
         }
     }
 
-    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         context: Container,
     ) -> Result<Self, AnyPostgresError> {
         Self::decode_internal(&mut NewReader { wrapped: context })
     }
 }
-
-// ported from: src/sql/postgres/protocol/Authentication.zig

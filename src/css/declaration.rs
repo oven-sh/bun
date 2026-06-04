@@ -47,13 +47,12 @@ pub struct DeclarationBlock<'bump> {
 
 pub struct DebugFmt<'a, 'bump>(&'a DeclarationBlock<'bump>);
 
-// blocked_on: Printer::new signature (Zig passes arena + Managed(u8) +
-// writer + options + null + null + &symbols; the Rust ctor shape is unsettled).
+// blocked_on: Printer::new signature (the ctor shape is unsettled).
 
 impl<'a, 'bump> core::fmt::Display for DebugFmt<'a, 'bump> {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         // Debug formatter: uses a throwaway local arena for the printer's
-        // scratch buffers (Zig threaded the parser arena).
+        // scratch buffers.
         let bump = Bump::new();
         let mut arraylist: Vec<u8> = Vec::new();
         let symbols = bun_ast::symbol::Map::init_list(Default::default());
@@ -105,14 +104,12 @@ impl<'bump> DeclarationBlock<'bump> {
         important_handler: &mut DeclarationHandler<'bump>,
         context: &mut css::PropertyHandlerContext,
     ) {
-        // Zig threaded `context.arena` through every append; the
-        // Rust `PropertyHandlerContext` dropped that field, so we recover the
+        // `PropertyHandlerContext` carries no arena field, so we recover the
         // arena from the handler's own bump-backed accumulator instead.
         let bump: &'bump Bump = handler.decls.bump();
 
-        // Zig used a local generic `handle` fn with comptime field
-        // name + bool. Unrolled to two calls over a shared inner fn; reshaped
-        // for borrowck (iterate via &mut, move prop out and overwrite slot).
+        // Two calls over a shared inner fn; iterate via &mut, move prop out
+        // and overwrite the slot.
         #[inline]
         fn handle<'bump>(
             decls: &mut DeclarationList<'bump>,
@@ -126,8 +123,7 @@ impl<'bump> DeclarationBlock<'bump> {
                 let handled = hndlr.handle_property(prop, ctx);
 
                 if !handled {
-                    // Zig: `hndlr.decls.append(prop.*); prop.* = .{ .all = .@"revert-layer" }`
-                    // — move the value out and overwrite the slot with a
+                    // Move the value out and overwrite the slot with a
                     // non-allocating placeholder so the source list's drop is a
                     // no-op.
                     hndlr
@@ -147,9 +143,8 @@ impl<'bump> DeclarationBlock<'bump> {
 
         handler.finalize(context);
         important_handler.finalize(context);
-        // Zig swapped old lists out, deferred their deinit, then
-        // assigned the handler accumulators. In Rust the old bumpalo Vecs drop
-        // implicitly on overwrite (arena reclaims on reset).
+        // The old bumpalo Vecs drop implicitly on overwrite (arena reclaims
+        // on reset).
         self.important_declarations =
             core::mem::replace(&mut important_handler.decls, DeclarationList::new_in(bump));
         self.declarations = core::mem::replace(&mut handler.decls, DeclarationList::new_in(bump));
@@ -157,7 +152,6 @@ impl<'bump> DeclarationBlock<'bump> {
 }
 
 /// Non-allocating placeholder used by `minify()` to overwrite moved-out slots.
-/// Zig: `css.Property{ .all = .@"revert-layer" }`.
 #[inline(always)]
 fn placeholder_property() -> css::Property {
     css::Property::All(crate::css_properties::CSSWideKeyword::RevertLayer)
@@ -256,10 +250,8 @@ impl DeclarationBlock<'static> {
                     options.warn(&e);
                     continue;
                 }
-                // errdefer doesn't fire on `return .{ .err = ... }` — Result(T) is a tagged
-                // union, not an error union. Free any declarations accumulated so far.
-                // In Rust, `declarations`/`important_declarations` are bumpalo
-                // Vec<Property> and drop on early return; deepDeinit is implicit via Drop.
+                // `declarations`/`important_declarations` are bumpalo Vec<Property> and
+                // drop on this early return; freeing them is implicit via Drop.
                 return Err(e);
             }
         }
@@ -274,8 +266,7 @@ impl DeclarationBlock<'static> {
 // ─── hash / eql / deep_clone (gated) ──────────────────────────────────────
 // blocked_on: properties_generated — `Property` lacks `DeepClone`/`CssEql`
 // derives and `PropertyId` lacks a `hash(&mut Wyhash)` method. The bodies
-// below are the real manual unrolls of Zig's comptime-reflection helpers
-// (`implementEql`/`implementDeepClone`); they un-gate the moment the
+// below un-gate the moment the
 // per-variant trait impls land in `properties_generated.rs`.
 
 impl<'bump> DeclarationBlock<'bump> {
@@ -425,10 +416,9 @@ pub fn parse_declaration<'bump>(
     )
 }
 
-// Zig's `composes_ctx: anytype` branches on
-// `comptime @TypeOf(composes_ctx) != void`. The Rust shape is a `ComposesCtx`
+// Composes handling dispatches through the `ComposesCtx`
 // trait (defined in `css_parser.rs`); `NoComposesCtx` returns
-// `DisallowEntirely` so the `void` fast-path collapses into the match's
+// `DisallowEntirely` so the no-tracking fast-path collapses into the match's
 // no-op arm.
 pub fn parse_declaration_impl<'bump, C>(
     name: &[u8],
@@ -443,8 +433,7 @@ where
 {
     let property_id = css::PropertyId::from_string(name);
     let mut delimiters = css::Delimiters::BANG;
-    // Zig: `if (property_id != .custom or property_id.custom != .custom)` —
-    // i.e. NOT (tag == .custom AND payload tag == .custom).
+    // NOT (tag == custom AND payload tag == custom).
     if !matches!(
         property_id,
         css::PropertyId::Custom(CustomPropertyName::Custom(_))
@@ -507,8 +496,7 @@ where
 ///
 /// Each `*Handler` is the real implementation from its leaf module (see the
 /// per-module status notes in properties/mod.rs for any internally-gated
-/// bodies); `Direction` is the data-only `properties::text` enum. The struct
-/// shape matches the Zig layout.
+/// bodies); `Direction` is the data-only `properties::text` enum.
 pub struct DeclarationHandler<'bump> {
     pub background: BackgroundHandler,
     pub border: BorderHandler,
@@ -630,5 +618,3 @@ impl<'bump> DeclarationHandler<'bump> {
         }
     }
 }
-
-// ported from: src/css/declaration.zig

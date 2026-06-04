@@ -679,8 +679,7 @@ fn escape_patch_filename(name: &[u8]) -> Option<Box<[u8]>> {
         }
     }
 
-    // Zig built this table via @typeInfo reflection over single-char enum field names.
-    // Rust has no equivalent; the table is filled by hand with the same entries.
+    // The table is filled by hand.
     const ESCAPE_TABLE: [EscapeVal; 256] = {
         let mut table = [EscapeVal::Other; 256];
         table[b'/' as usize] = EscapeVal::Slash;
@@ -863,7 +862,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
 
                 let name = lockfile.str(&package.name).to_vec();
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
-                    // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
                     let mut name_and_version = Vec::new();
                     write!(
                         &mut name_and_version,
@@ -921,7 +919,6 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                 let pkg_name = pkg.name.slice(strbuf).to_vec();
 
                 let existing_patchfile_hash: Option<u64> = 'existing_patchfile_hash: {
-                    // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
                     let mut name_and_version = Vec::new();
                     write!(
                         &mut name_and_version,
@@ -1143,7 +1140,7 @@ fn overwrite_package_in_node_modules_folder(
     // FileCopier's path fields are `.unit = .os` (u16 on Windows). `Path::from`
     // is generic over the *input* width and converts internally, so accepting
     // `&[u8]` and producing `Path<OSPathChar>` is intentional. `.sep = .auto`
-    // (Zig spec) is required so `/` is normalized to `\` on Windows — the inputs
+    // is required so `/` is normalized to `\` on Windows — the inputs
     // here arrive posix-normalized and are later passed to Win32 APIs.
     let dest_subpath = bun_paths::Path::<
         bun_paths::OSPathChar,
@@ -1252,7 +1249,6 @@ fn pkg_info_for_name_and_version(
     name: &[u8],
     version: Option<&[u8]>,
 ) -> (PackageID, Vec<u8>) {
-    // PERF(port): was stack-fallback alloc — profile if it shows up on a hot path.
     let mut pairs: Vec<IdPair> = Vec::with_capacity(8);
 
     let name_hash = string_hash(name);
@@ -1448,14 +1444,11 @@ impl PatchArgKind {
         if strings::contains(argument, b"node_modules/") {
             return PatchArgKind::Path;
         }
-        // spec asymmetry — Zig (patchPackage.zig:1028) uses `hasPrefix`
-        // for the Windows-backslash arm but `contains` for the posix arm above.
-        // Match the spec exactly; if this is a Zig bug, fix both sides separately.
+        // Intentional asymmetry — the Windows-backslash arm uses `has_prefix`
+        // while the posix arm above uses `contains`.
         if cfg!(windows) && strings::has_prefix(argument, b"node_modules\\") {
             return PatchArgKind::Path;
         }
         PatchArgKind::NameAndVersion
     }
 }
-
-// ported from: src/install/PackageManager/patchPackage.zig

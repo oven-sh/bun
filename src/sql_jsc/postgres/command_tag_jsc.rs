@@ -38,4 +38,3 @@ impl<'a> CommandTagJsc for CommandTag<'a> {
     }
 }
 
-// ported from: src/sql_jsc/postgres/command_tag_jsc.zig

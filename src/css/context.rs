@@ -18,8 +18,7 @@ pub struct SupportsEntry {
     pub important_declarations: Vec<css::Property>,
 }
 
-// Zig's `deinit(this, arena)` is deleted — all fields own their storage and drop
-// automatically. `css.deepDeinit` over the Vecs is handled by `Vec<Property>`'s Drop.
+// No explicit deinit — all fields own their storage and drop automatically.
 
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum DeclarationContext {
@@ -135,7 +134,6 @@ impl<'a> PropertyHandlerContext<'a> {
         let mut dest: Vec<css::CssRule<T>> = Vec::with_capacity(self.supports.len());
 
         for entry in &self.supports {
-            // PERF(port): was appendAssumeCapacity
             dest.push(css::CssRule::Supports(css::SupportsRule {
                 condition: entry.condition.deep_clone(self.arena),
                 rules: css::CssRuleList {
@@ -231,9 +229,7 @@ impl<'a> PropertyHandlerContext<'a> {
         dest
     }
 
-    // Reshaped — Zig passed `comptime dir: []const u8` and `comptime decls: []const u8`
-    // and used `@field` to select the Direction variant and the self.ltr/self.rtl Vec by name.
-    // Rust has no @field; pass the Direction value and a borrow of the decls Vec directly.
+    // Takes the Direction value and a borrow of the decls Vec directly.
     pub fn get_additional_rules_helper<T>(
         &self,
         dir: css::selector::parser::Direction,
@@ -327,13 +323,13 @@ impl<'a> PropertyHandlerContext<'a> {
         }
 
         let fallbacks = unparsed.value.get_fallbacks(bump, &self.targets);
-        // Zig `for (fallbacks.slice()) |c|` copies by value; `SmallList`
+        // `SmallList`
         // has no `IntoIterator`, so spill to a Vec to preserve P3-before-LAB order.
         for condition_and_fallback in fallbacks.to_owned_slice().into_vec() {
             self.add_conditional_property(
                 condition_and_fallback.0,
                 css::Property::Unparsed(UnparsedProperty {
-                    // `PropertyId` is `Copy`; Zig `deepClone` was identity.
+                    // `PropertyId` is `Copy`.
                     property_id: unparsed.property_id,
                     value: condition_and_fallback.1,
                 }),
@@ -341,5 +337,3 @@ impl<'a> PropertyHandlerContext<'a> {
         }
     }
 }
-
-// ported from: src/css/context.zig

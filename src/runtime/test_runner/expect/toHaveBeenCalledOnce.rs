@@ -58,5 +58,3 @@ pub(crate) fn to_have_been_called_once(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveBeenCalledOnce.zig

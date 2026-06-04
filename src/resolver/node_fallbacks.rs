@@ -72,8 +72,6 @@ macro_rules! create_source_code_getter {
 
 // PackageJSON is not const-constructible (Box<[u8]>/HashMap fields), so the
 // table is built at runtime, once, on first access.
-//
-// PERF(port): Zig used a comptime perfect-hash map; this builds at first access.
 macro_rules! fallback_module_init {
     ($name:literal, $code_path:literal) => {{
         const _VERSION: &[u8] = b"0.0.0-polyfill";
@@ -191,4 +189,3 @@ pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {
     None
 }
 
-// ported from: src/resolver/node_fallbacks.zig

@@ -9,5 +9,3 @@ impl TransactionStatusIndicator {
     /// if idle (not in a transaction block)
     pub(crate) const I: Self = Self(b'I');
 }
-
-// ported from: src/sql/postgres/protocol/TransactionStatusIndicator.zig

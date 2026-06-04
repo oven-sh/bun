@@ -3,15 +3,12 @@ use crate::jsc::{CallFrame, JSGlobalObject, JSValue, StrongOptional, VirtualMach
 #[repr(C)]
 #[derive(Default)]
 pub struct MySQLContext {
-    // Zig: `Strong.Optional = .empty` → `StrongOptional::empty()` (Default).
     pub on_query_resolve_fn: StrongOptional,
     pub on_query_reject_fn: StrongOptional,
 }
 
-// Zig exported this as `MySQLContext__init` via
-// `@export(&JSC.toJSHostFn(init), ...)` for the C++-built binding object. The
-// Rust port builds the binding object in Rust (`mysql.rs` registers this fn
-// through `put_host_functions!`/`IntoJSHostFn`), so no C symbol is needed.
+// The binding object is built in Rust (`mysql.rs` registers this fn through
+// `put_host_functions!`/`IntoJSHostFn`), so no C symbol is needed.
 pub(crate) fn init(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
     // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton); `as_mut()`
     // is the canonical safe escape hatch for the shrinking set of `&mut self`
@@ -21,5 +18,3 @@ pub(crate) fn init(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
     ctx.on_query_reject_fn.set(global, frame.argument(1));
     JSValue::UNDEFINED
 }
-
-// ported from: src/sql_jsc/mysql/MySQLContext.zig

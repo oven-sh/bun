@@ -12,8 +12,7 @@ unsafe extern "C" {
     safe fn Bun__HTTPMethod__toJS(method: Method, global_object: &JSGlobalObject) -> JSValue;
 }
 
-/// Port of Zig `Method.fromJS` (= `Map.fromJS`, the `ComptimeStringMap` JSC
-/// bridge in `src/jsc/comptime_string_map_jsc.zig`). Converts a JS string
+/// Converts a JS string
 /// value to UTF-8 and looks it up in the static method table.
 ///
 /// Lives here (not in `bun_http_types`) so the base crate stays JSC-free.
@@ -40,5 +39,3 @@ impl MethodJsc for Method {
         Bun__HTTPMethod__toJS(self, global)
     }
 }
-
-// ported from: src/http_jsc/method_jsc.zig

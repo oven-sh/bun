@@ -10,10 +10,8 @@ use super::execution::{ConcurrentGroup, ExecutionSequence};
 pub struct Order {
     pub groups: Vec<ConcurrentGroup>,
     pub sequences: Vec<ExecutionSequence>,
-    // Zig stored `arena: std.mem.Allocator` here; test_runner is not an
-    // AST/arena crate per PORTING.md, so the field is dropped and `bun.create(arena, ...)`
-    // calls below become `heap::into_raw(Box::new(...))`. In Zig these ExecutionEntry
-    // clones were bulk-freed by the arena; in Rust, `BunTest` collects them into
+    // The ExecutionEntry clones below are allocated via `heap::into_raw(Box::new(...))`;
+    // `BunTest` collects them into
     // `cloned_hook_entries` after `generate_order_describe` and reclaims the Box
     // headers (without running `Drop`) in `Drop for BunTest`.
     pub previous_group_was_concurrent: bool,
@@ -44,19 +42,18 @@ impl Order {
     pub fn generate_all_order(&mut self, entries: &[Box<ExecutionEntry>]) -> JsResult<AllOrderResult> {
         let start = self.groups.len();
         for entry_box in entries.iter() {
-            // Zig signature is `[]const *ExecutionEntry` (immutable slice of *mutable* pointers).
             // Callers (e.g. BunTestRoot.hook_scope) only hold `&` access to the Vec, so we accept
-            // `&[Box<_>]` and recover each Box's heap pointer as *mut — the Zig code mutates
-            // through the pointer, not the slice. SAFETY: each Box<ExecutionEntry> is live and
-            // uniquely owned by the DescribeScope tree; writing through *mut matches the Zig
-            // `*ExecutionEntry` mutation contract. The pointer is obtained via `box_inner_mut`
+            // `&[Box<_>]` and recover each Box's heap pointer as *mut to mutate through the
+            // pointer, not the slice. SAFETY: each Box<ExecutionEntry> is live and
+            // uniquely owned by the DescribeScope tree, and no other reference into it is live
+            // while we write, so the raw-pointer writes are sound. The pointer is obtained via `box_inner_mut`
             // (see below) so rustc's `invalid_reference_casting` lint does not see a local
             // `&T as *const T as *mut T` chain; field writes use raw deref to avoid materializing
             // a long-lived `&mut`.
             let entry: *mut ExecutionEntry = box_inner_mut(&**entry_box);
             // SAFETY: `entry` is the heap address of a live `Box<ExecutionEntry>` uniquely owned by
-            // the DescribeScope tree (see paragraph above); raw-ptr field writes uphold the Zig
-            // `*ExecutionEntry` mutation contract without materializing a long-lived `&mut`.
+            // the DescribeScope tree (see paragraph above); raw-ptr field writes avoid
+            // materializing a long-lived `&mut`.
             unsafe {
                 if bun_core::Environment::CI_ASSERT && (*entry).added_in_phase != AddedInPhase::Preload {
                     debug_assert!((*entry).next.is_none());
@@ -152,12 +149,12 @@ impl Order {
                 let mut i: usize = p.before_each.len();
                 while i > 0 {
                     let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];
-                    // PERF(port): was arena bulk-free — Zig allocated this clone in `this.arena`.
                     // Ownership: `BunTest` collects these clones into `cloned_hook_entries`
                     // (the post-`generate_order_describe` walk) and frees only the Box
                     // headers in `Drop for BunTest` — `Drop` must not run on the bitwise
                     // copy or the originals' Strong/Box fields would be freed twice.
-                    // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
+                    // SAFETY: `src` is valid for reads; `Drop` never runs on the bitwise copy
+                    // (see ownership note above), so duplicated owning fields are not double-freed.
                     let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.prepend(cloned);
                     i -= 1;
@@ -177,8 +174,8 @@ impl Order {
                 let p = unsafe { &*p_ptr };
                 for entry in p.after_each.iter() {
                     let src: *const ExecutionEntry = &raw const **entry;
-                    // PERF(port): was arena bulk-free — see note above.
-                    // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
+                    // SAFETY: `src` is valid for reads; `Drop` never runs on the bitwise copy
+                    // (see ownership note above), so duplicated owning fields are not double-freed.
                     let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.append(cloned);
                 }
@@ -225,7 +222,6 @@ impl Order {
         sequences_start: usize,
         sequences_end: usize,
     ) -> JsResult<()> {
-        // reshaped for borrowck — Zig used `defer this.previous_group_was_concurrent = concurrent;`.
         // We capture the old value first, then assign immediately so it applies on every exit path.
         let prev_was_concurrent = self.previous_group_was_concurrent;
         self.previous_group_was_concurrent = concurrent;
@@ -267,16 +263,14 @@ impl AllOrderResult {
 
 pub struct Config {
     pub always_use_hooks: bool,
-    // Zig's type-erased `std.Random` interface maps to the concrete
-    // `DefaultPrng` (xoshiro256++); the only call site seeds a DefaultPrng, so
+    // The only call site seeds a concrete `DefaultPrng` (xoshiro256++), so
     // no type-erased Random vtable is needed.
     pub randomize: Option<bun_core::rand::DefaultPrng>,
 }
 
-/// Exact port of `std.Random.shuffleWithIndex(T, buf, usize)` (vendor/zig/lib/std/Random.zig).
 /// Forward Fisher-Yates: `i` from 0 to len-2, `j = intRangeLessThan(usize, i, len)`.
-/// Must produce the identical permutation to Zig for the same xoshiro256++ state so that
-/// `bun test --randomize --seed=N` is reproducible across the Zig and Rust ports.
+/// Must produce the identical permutation for the same xoshiro256++ state across Bun
+/// versions so that `bun test --randomize --seed=N` stays reproducible.
 fn shuffle_with_index<T>(r: &mut bun_core::rand::DefaultPrng, buf: &mut [T]) {
     if buf.len() < 2 {
         return;
@@ -320,8 +314,7 @@ fn uint_less_than(r: &mut bun_core::rand::DefaultPrng, less_than: u64) -> u64 {
 
 /// Recover the heap pointer behind a `Box<T>` as `*mut T` given the inner `&T`.
 ///
-/// Zig's `[]const *T` is an immutable slice of *mutable* pointers; the closest Rust shape we
-/// can accept from callers is `&[Box<T>]`, but we still need to mutate through each element.
+/// Callers hand us `&[Box<T>]`, but we still need to mutate through each element.
 /// Going through this helper breaks the intraprocedural dataflow that the
 /// `invalid_reference_casting` deny-by-default lint tracks (it would otherwise flag the
 /// `&T -> *const T -> *mut T -> &mut T` chain at the call site). The provenance caveat is
@@ -368,5 +361,3 @@ impl EntryList {
         }
     }
 }
-
-// ported from: src/test_runner/Order.zig

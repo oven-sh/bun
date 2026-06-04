@@ -61,9 +61,8 @@ impl DOMFormData {
         })
     }
 
-    // Zig's `comptime Ctx: type, ctx: Ctx, comptime callback: fn(Ctx, ZigString)`
-    // is Zig's spelling of a monomorphized closure. Reshaped to `FnMut(ZigString)` — the
-    // closure environment IS the ctx, and the generic trampoline below is the `Wrapper.run`.
+    // The closure environment is the ctx pointer; the generic trampoline
+    // below unwraps it and invokes the closure.
     pub fn to_query_string<F>(&mut self, callback: &mut F)
     where
         F: FnMut(ZigString),
@@ -113,9 +112,6 @@ impl DOMFormData {
         WebCore__DOMFormData__count(self)
     }
 
-    // Zig's `comptime Context: type, ctx: *Context, comptime callback_wrapper`
-    // reshaped to a Rust closure; the generic `extern "C"` trampoline below is `Wrap.forEachWrapper`.
-    //
     // LAYERING: `FormDataEntry::File::blob` is a `*mut webcore::Blob`, whose
     // layout lives in `bun_runtime` (a dependent of this crate). The C++ side
     // hands it as `*mut c_void`; this fn is generic over `B` so the caller (in
@@ -134,7 +130,7 @@ impl DOMFormData {
         ) where
             F: FnMut(ZigString, FormDataEntry<'_, B>),
         {
-            // SAFETY: ctx_ptr is the `&mut F` passed below; Zig did `ctx_ptr.?` (unwrap non-null).
+            // SAFETY: ctx_ptr is the non-null `&mut F` passed below.
             let ctx_ = unsafe { bun_ptr::callback_ctx::<F>(ctx_ptr) };
             let value = if is_blob == 0 {
                 // SAFETY: when is_blob == 0, value_ptr points to a ZigString.
@@ -182,5 +178,3 @@ pub enum FormDataEntry<'a, B> {
     String(ZigString),
     File { blob: &'a B, filename: ZigString },
 }
-
-// ported from: src/jsc/DOMFormData.zig

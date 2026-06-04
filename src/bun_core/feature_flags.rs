@@ -132,4 +132,3 @@ pub fn bake() -> bool {
 /// To use them, extra flags are passed in addition to this one.
 pub const BAKE_DEBUGGING_FEATURES: bool = env::IS_CANARY || env::IS_DEBUG;
 
-// ported from: src/bun_core/feature_flags.zig

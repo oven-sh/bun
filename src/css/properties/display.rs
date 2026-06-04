@@ -11,8 +11,8 @@ pub enum Display {
     Pair(DisplayPair),
 }
 
-// Zig `DeriveParse`/`DeriveToCss` for a 2-payload union(enum) tries each
-// payload's `parse` in declaration order; `toCss` dispatches to the active payload.
+// Tries each payload's `parse` in declaration order; `to_css` dispatches to
+// the active payload.
 impl Display {
     pub(crate) fn parse(input: &mut Parser) -> css::Result<Self> {
         if let Ok(kw) = input.try_parse(DisplayKeyword::parse) {
@@ -130,7 +130,6 @@ impl DisplayPair {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
-        // Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive`.
         // 8 keys → if-chain over `eql_case_insensitive_ascii::<true>` (phf values
         // would have to be const-eval, and `VendorPrefix` bitflags are not).
         use bun_core::eql_case_insensitive_ascii as eq;
@@ -242,7 +241,6 @@ impl DisplayInside {
         let location = input.current_source_location();
         let ident = input.expect_ident_cloned()?;
 
-        // Zig used `bun.ComptimeStringMap(..).getASCIIICaseInsensitive`.
         // 10 keys → if-chain over `eql_case_insensitive_ascii::<true>`.
         use bun_core::eql_case_insensitive_ascii as eq;
         Ok(if eq(ident, b"flow", true) {
@@ -292,5 +290,3 @@ impl DisplayInside {
         }
     }
 }
-
-// ported from: src/css/properties/display.zig

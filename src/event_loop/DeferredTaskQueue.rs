@@ -57,9 +57,8 @@ impl DeferredTaskQueue {
     }
 
     pub fn unregister_task(&mut self, ctx: Option<NonNull<c_void>>) -> bool {
-        // Zig: `swapRemove(ctx) -> bool`. Order is irrelevant for this map's
-        // contract (see file doc — "order may not particularly matter"), so
-        // plain `remove().is_some()` is equivalent.
+        // Order is irrelevant for this map's contract (see file doc — "order
+        // may not particularly matter"), so plain `remove().is_some()` works.
         self.map.remove(&ctx).is_some()
     }
 
@@ -69,7 +68,7 @@ impl DeferredTaskQueue {
         // index). Keys here are `Copy` pointers, so copy the key out and
         // remove by key — semantically identical (keys are unique), just an
         // extra hash per removal.
-        // PERF(port): swap_remove(&K) re-hashes; restore swap_remove_at when
+        // PERF: swap_remove(&K) re-hashes; restore swap_remove_at when
         // bun_collections::ArrayHashMap grows it.
         let mut i: usize = 0;
         let mut last = self.map.len();
@@ -84,9 +83,9 @@ impl DeferredTaskQueue {
             // Copy the fn ptr out before calling (borrowck).
             let task = self.map.values()[i];
             // SAFETY: `nn` is the live `*mut T` registered by the caller; the
-            // callback contract (Zig `Type.onAutoFlush`) is that `task` may be
-            // invoked with exactly that pointer until it returns `false` or is
-            // explicitly unregistered.
+            // callback contract (`HasAutoFlusher::on_auto_flush`) is that
+            // `task` may be invoked with exactly that pointer until it returns
+            // `false` or is explicitly unregistered.
             if !unsafe { task(nn.as_ptr()) } {
                 self.map.swap_remove(&key);
                 last = self.map.len();
@@ -96,7 +95,3 @@ impl DeferredTaskQueue {
         }
     }
 }
-
-// Zig `deinit` only freed the map's backing storage; `ArrayHashMap: Drop` handles that.
-
-// ported from: src/event_loop/DeferredTaskQueue.zig

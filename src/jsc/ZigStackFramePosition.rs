@@ -20,8 +20,6 @@ impl ZigStackFramePosition {
     };
 
     pub fn is_invalid(&self) -> bool {
-        // Zig: std.mem.eql(u8, std.mem.asBytes(this), std.mem.asBytes(&invalid))
-        // #[repr(C)] + derived PartialEq on POD fields is equivalent.
         *self == Self::INVALID
     }
 
@@ -43,5 +41,3 @@ impl ZigStackFramePosition {
         writer.write_int(self.column.zero_based());
     }
 }
-
-// ported from: src/jsc/ZigStackFramePosition.zig

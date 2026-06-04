@@ -66,5 +66,3 @@ impl<'a> WriterContext for ArrayListCtx<'a> {
 }
 
 pub type Writer<'a> = NewWriter<ArrayListCtx<'a>>;
-
-// ported from: src/sql/postgres/protocol/ArrayList.zig

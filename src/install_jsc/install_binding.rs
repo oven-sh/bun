@@ -67,11 +67,9 @@ pub mod bun_install_js_bindings {
 
         let mut lockfile_ = Lockfile::default();
 
-        // Reshaped for borrowck — Zig walked
-        // `globalObject.bunVM().transpiler.resolver` through chained pointer
-        // dereferences. `bun_vm()` returns `*mut VirtualMachine` (raw, mirroring
-        // Zig's `*VirtualMachine`); deref locally so the env-loader fixup and the
-        // package-manager borrow are scoped independently.
+        // `bun_vm()` returns a raw `*mut VirtualMachine`; deref locally so the
+        // env-loader fixup and the package-manager borrow are scoped
+        // independently.
         // SAFETY: `bun_vm()` returns the live VM that owns `global`; this host fn
         // runs on the JS thread so no concurrent `&mut VirtualMachine` exists.
         let vm = global.bun_vm().as_mut();
@@ -102,24 +100,20 @@ pub mod bun_install_js_bindings {
             LoadResult::Ok(_) => {}
         }
 
-        // Zig: `std.fmt.allocPrint("{f}", .{ std.json.fmt(lockfile, .{...}) })` —
-        // drives `Lockfile.jsonStringify` through a `std.json.WriteStream` with
-        // the given options. Port: feed the lockfile through the in-crate
+        // Feed the lockfile through the in-crate
         // `WriteStream` (lockfile_json_stringify_for_debugging.rs) into a
-        // `Vec<u8>`. OOM is `bun.handleOom` in Zig → infallible `Vec` growth here.
+        // `Vec<u8>`.
         let mut w = WriteStream::new(WriteStreamOptions {
             indent: 2,
             emit_null_optional_fields: true,
             emit_nonportable_numbers_as_strings: true,
         });
         // `jsonStringify` only surfaces the underlying writer's error; the
-        // `Vec<u8>` writer is infallible. Zig wraps the whole `allocPrint` in
-        // `bun.handleOom` (crash on the impossible alloc failure) — mirror that
-        // with an `expect` rather than swallowing.
+        // `Vec<u8>` writer is infallible, so `expect` rather than swallowing.
         json_stringify(&lockfile_, &mut w).expect("Vec<u8> JSON writer is infallible");
         let stringified = w.into_bytes();
 
-        // Zig: `defer str.deref()`. `bun_core::String` is `Copy` (no `Drop`),
+        // `bun_core::String` is `Copy` (no `Drop`),
         // so the +1 from `clone_utf8` must be released via `OwnedString`'s RAII
         // — `to_js_by_parse_json` borrows, it does not consume.
         let mut str = OwnedString::new(BunString::clone_utf8(&stringified));
@@ -127,5 +121,3 @@ pub mod bun_install_js_bindings {
         bun_jsc::bun_string_jsc::to_js_by_parse_json(&mut str, global)
     }
 }
-
-// ported from: src/install_jsc/install_binding.zig

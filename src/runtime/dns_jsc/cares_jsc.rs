@@ -13,9 +13,7 @@ use bun_jsc::{
 
 use crate::dns_jsc::options_jsc::{address_to_js, result_to_js};
 
-/// Local shim for the missing `ZigString::to_js` extension — Zig's
-/// `ZigString.fromUTF8(slice).toJS(global)` is equivalent to creating a JS
-/// string directly from UTF-8 bytes.
+/// Create a JS string directly from UTF-8 bytes.
 #[inline]
 fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
     bun_string_jsc::create_utf8_for_js(global, bytes)
@@ -25,7 +23,7 @@ fn utf8_to_js(global: &JSGlobalObject, bytes: &[u8]) -> JsResult<JSValue> {
 pub(crate) fn hostent_to_js_response(
     this: &mut c_ares::struct_hostent,
     global_this: &JSGlobalObject,
-    lookup_name: &'static [u8], // PERF(port): was comptime monomorphization — profile if hot
+    lookup_name: &'static [u8], // PERF: could be monomorphized per lookup name — profile if hot
 ) -> JsResult<JSValue> {
     if lookup_name == b"cname" {
         // A cname lookup always returns a single record but we follow the common API here.
@@ -69,7 +67,7 @@ pub(crate) fn hostent_to_js_response(
 pub(crate) fn hostent_with_ttls_to_js_response(
     this: &mut c_ares::hostent_with_ttls,
     global_this: &JSGlobalObject,
-    lookup_name: &'static [u8], // PERF(port): was comptime monomorphization — profile if hot
+    lookup_name: &'static [u8], // PERF: could be monomorphized per lookup name — profile if hot
 ) -> JsResult<JSValue> {
     if lookup_name == b"a" || lookup_name == b"aaaa" {
         // SAFETY: this.hostent is a c-ares-owned hostent pointer (non-null on success path).
@@ -143,7 +141,7 @@ pub(crate) fn hostent_with_ttls_to_js_response(
 
         Ok(array)
     } else {
-        // Zig: @compileError — the comptime param guaranteed only "a"/"aaaa" reach here.
+        // Callers guarantee only "a"/"aaaa" reach here.
         unreachable!("Unsupported hostent_with_ttls record type");
     }
 }
@@ -222,11 +220,10 @@ pub(crate) fn addr_info_to_js_array(
 // ── shared count-then-walk → JS array helper ───────────────────────────────
 //
 // Every `struct_ares_*_reply` is an intrusive singly-linked list with a
-// `.next: *mut Self` field. Zig open-codes the same two-pass walk (count,
-// then `create_empty_array` + `put_index`) once per record type; here we do
-// it once generically. The trait is `unsafe` because impls promise `next()`
+// `.next: *mut Self` field. The two-pass walk (count, then
+// `create_empty_array` + `put_index`) is done once generically here.
+// The trait is `unsafe` because impls promise `next()`
 // is either null or a valid pointer into the same c-ares-owned list.
-// PERF(port): each Zig caller used stack-fallback + arena bulk-free — profile if hot.
 
 /// SAFETY: impls must return null or a valid pointer into the same
 /// c-ares-owned linked list.
@@ -451,7 +448,7 @@ pub(crate) fn soa_reply_to_js_response(
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback + arena bulk-free — profile if hot
+    // PERF: a stack-fallback buffer + arena bulk-free could help — profile if hot
     soa_reply_to_js(this, global_this)
 }
 
@@ -504,7 +501,7 @@ pub(crate) fn any_reply_to_js_response(
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
 ) -> JsResult<JSValue> {
-    // PERF(port): was stack-fallback + arena bulk-free — profile if hot
+    // PERF: a stack-fallback buffer + arena bulk-free could help — profile if hot
     any_reply_to_js(this, global_this)
 }
 
@@ -524,7 +521,7 @@ fn any_reply_append(
         response
     };
 
-    // PERF(port): was comptime ASCII-uppercase of lookup_name — profile if hot
+    // PERF: the ASCII-uppercase of lookup_name could be precomputed — profile if hot
     let mut upper = [0u8; 16];
     let upper = &mut upper[..lookup_name.len()];
     for (dst, &src) in upper.iter_mut().zip(lookup_name) {
@@ -697,8 +694,8 @@ impl ErrorDeferred {
             bstr::String::static_(b"DNSException").to_js(global_this)?,
         );
 
-        // `self` (and thus self.promise / self.hostname) drops at scope exit — matches
-        // Zig's `defer this.deinit()`; hostname was `take()`n above to avoid double-deref.
+        // `self` (and thus self.promise / self.hostname) drops at scope exit;
+        // hostname was `take()`n above to avoid double-deref.
         Ok(self.promise.reject(global_this, Ok(instance))?)
     }
 
@@ -738,8 +735,8 @@ impl ErrorDeferred {
     }
 }
 
-// Drop: hostname (bun_core::String) and promise (JSPromiseStrong) drop their own resources.
-// Zig's deinit() additionally did `bun.destroy(this)` — handled by Box drop at the call site.
+// Drop: hostname (bun_core::String) and promise (JSPromiseStrong) drop their own resources;
+// the allocation itself is handled by Box drop at the call site.
 
 pub(crate) fn error_to_deferred(
     this: c_ares::Error,
@@ -808,8 +805,7 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
 }
 
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────
-// Zig: `@export(&jsc.toJSHostFn(Bun__canonicalizeIP_), .{ .name = "Bun__canonicalizeIP" })`
-// — `#[bun_jsc::host_fn(export = ...)]` emits the C-ABI shim under that link name.
+// `#[bun_jsc::host_fn(export = ...)]` emits the C-ABI shim under that link name.
 #[bun_jsc::host_fn(export = "Bun__canonicalizeIP")]
 pub(crate) fn bun_canonicalize_ip(
     global_this: &JSGlobalObject,
@@ -843,5 +839,3 @@ pub(crate) fn bun_canonicalize_ip(
 
     bun_string_jsc::create_utf8_for_js(global_this, slice)
 }
-
-// ported from: src/runtime/dns_jsc/cares_jsc.zig

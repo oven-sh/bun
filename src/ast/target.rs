@@ -1,4 +1,4 @@
-//! `bundler/options.zig` `Target` — bundle target platform.
+//! Bundle target platform.
 //!
 //! Data-only enum + pure predicates. `to_api()` / `from(api::Target)` live in
 //! `bun_options_types::TargetExt` (would back-edge into the schema crate).
@@ -6,8 +6,7 @@
 use enum_map::Enum;
 use phf;
 
-/// Zig field default is `.browser` (`Target = .browser` in BundleOptions);
-/// keep `Default` so resolver can field-default it.
+/// Defaults to `Browser`; keep `Default` so resolver can field-default it.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr, Default)]
 pub enum Target {
@@ -74,8 +73,6 @@ impl Target {
     ];
 
     pub fn default_main_fields(self) -> &'static [&'static str] {
-        // Zig: `std.EnumArray(Target, []const string)` initialized at comptime.
-        // See bundler/options.zig for the rationale comments on each ordering.
         const NODE: &[&str] = &[Target::MAIN_FIELD_NAMES[2], Target::MAIN_FIELD_NAMES[1]];
         const BROWSER: &[&str] = &[
             Target::MAIN_FIELD_NAMES[0],
@@ -108,4 +105,3 @@ impl Target {
     }
 }
 
-// ported from: src/options_types/BundleEnums.zig (Target)

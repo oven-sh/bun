@@ -71,7 +71,7 @@ impl HMAC {
     pub fn r#final<'a>(&mut self, out: &'a mut [u8]) -> &'a mut [u8] {
         let mut outlen: c_uint = 0;
         // SAFETY: self.ctx is initialized; out is a valid writable buffer of at least
-        // HMAC_size(&self.ctx) bytes (caller invariant, same as Zig).
+        // HMAC_size(&self.ctx) bytes (caller invariant).
         let _ =
             unsafe { boringssl::HMAC_Final(&raw mut self.ctx, out.as_mut_ptr(), &raw mut outlen) };
         &mut out[..outlen as usize]
@@ -85,5 +85,3 @@ impl Drop for HMAC {
         // bun.destroy(this) is handled by Box<HMAC>'s own Drop.
     }
 }
-
-// ported from: src/runtime/crypto/HMAC.zig

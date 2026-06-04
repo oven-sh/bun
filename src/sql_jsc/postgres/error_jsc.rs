@@ -145,4 +145,3 @@ pub(crate) fn postgres_error_to_js(
     }
 }
 
-// ported from: src/sql_jsc/postgres/error_jsc.zig

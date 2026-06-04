@@ -27,11 +27,9 @@ impl AlphaValue {
 }
 
 impl crate::generics::CssHash for AlphaValue {
-    /// Zig `css.implementHash` — field-wise: hash the single `f32` payload.
+    /// Field-wise: hash the single `f32` payload.
     #[inline]
     fn hash(&self, hasher: &mut crate::generics::Wyhash) {
         crate::generics::CssHash::hash(&self.v, hasher);
     }
 }
-
-// ported from: src/css/values/alpha.zig

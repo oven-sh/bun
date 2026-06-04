@@ -30,5 +30,3 @@ pub(super) extern "C" fn Timer_disableEventLoopDelayMonitoring(vm: *mut VirtualM
     // SAFETY: see `Timer_enableEventLoopDelayMonitoring`.
     unsafe { (*state).timer.event_loop_delay.disable(vm) };
 }
-
-// ported from: src/runtime/timer/EventLoopDelayMonitor.zig

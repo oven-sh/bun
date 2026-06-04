@@ -90,4 +90,3 @@ pub fn log_to_js_array(this: &Log, global: &JSGlobalObject) -> JsResult<JSValue>
     JSValue::create_array_from_iter(global, msgs.iter(), |msg| msg_to_js(msg.clone(), global))
 }
 
-// ported from: src/logger_jsc/logger_jsc.zig

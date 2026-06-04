@@ -30,9 +30,8 @@ pub struct Snapshots<'a> {
 
     pub file_buf: &'a mut Vec<u8>,
     // LIFETIMES.tsv said `HashMap<usize, String>`; overridden per §Strings (data is bytes) → Box<[u8]>.
-    // Key is u64 to match `bun.hash` (Zig uses IdentityContext(usize) but hash returns u64; avoids narrowing cast).
+    // Key is u64 to match `bun.hash`'s return type (avoids a narrowing cast).
     pub values: &'a mut HashMap<u64, Box<[u8]>>,
-    // LIFETIMES.tsv said `HashMap<String, usize>`; Zig is `bun.StringHashMap(usize)` → byte-keyed wyhash map.
     pub counts: &'a mut StringHashMap<usize>,
     pub _current_file: Option<File>,
     /// Read-only backref into `Jest::RUNNER.files[..].source.path` (not owned
@@ -106,7 +105,6 @@ impl<'a> Snapshots<'a> {
     pub fn add_count(&mut self, expect: &Expect, hint: &[u8]) -> Result<(Vec<u8>, usize), Error> {
         self.total += 1;
         let snapshot_name = expect.get_snapshot_name(hint)?;
-        // reshaped for borrowck — Zig's getOrPut returns key_ptr/value_ptr together.
         // bun_collections::StringHashMap::get_or_put can't hand out `key_ptr`, so return the
         // owned `snapshot_name` (same bytes as the interned key) instead.
         let gop = self
@@ -220,8 +218,7 @@ impl<'a> Snapshots<'a> {
             vm.transpiler.options.jsx.clone(),
             bun_ast::Loader::Js,
         );
-        // PERF(port): Zig used `this.allocator` (default_allocator). Thread a per-call arena
-        // since js_parser is bump-allocated in the Rust port.
+        // Thread a per-call arena — js_parser is bump-allocated.
         let arena = bun_alloc::Arena::new();
         let mut temp_log = bun_ast::Log::init();
 
@@ -328,7 +325,6 @@ impl<'a> Snapshots<'a> {
             }
         }
 
-        // reshaped for borrowck — Zig's chained `.data == .x and .data.x.y == ...` becomes nested if-let.
         let _ = &mut ast;
         Ok(())
     }
@@ -343,7 +339,6 @@ impl<'a> Snapshots<'a> {
             self.file_buf.shrink_to_fit();
 
             self.values.clear();
-            // PERF(port): Zig clearAndFree() also releases capacity; HashMap::clear keeps it.
 
             self.counts.clear();
         }
@@ -364,15 +359,13 @@ impl<'a> Snapshots<'a> {
     }
 
     pub fn write_inline_snapshots(&mut self) -> Result<bool, Error> {
-        // PERF(port): was arena bulk-free per iteration — profile if it shows up on a hot path.
-
-        // `success` is a Cell so the per-iteration `defer if (log.errors > 0)` guard
+        // `success` is a Cell so the per-iteration error-check guard
         // closure can flip it without holding a &mut across the loop body.
         let success = core::cell::Cell::new(true);
         // SAFETY: see `parse_file` — thread-local VM singleton, short-lived reborrow.
         let vm = VirtualMachine::get().as_mut();
 
-        // PERF(port): was arena bulk-free per iteration — reset() inside the loop.
+        // The arena is reset() inside the loop, bulk-freeing per-iteration scratch.
         let mut arena = bun_alloc::Arena::new();
 
         // reshaped for borrowck — iterate by index to allow &mut access to values while reading keys.
@@ -384,8 +377,8 @@ impl<'a> Snapshots<'a> {
                 .get_mut(&file_id)
                 .expect("unreachable");
 
-            // Zig: `defer if (log.errors > 0) { log.print(...); success = false; }`
-            // Runs on every exit of the loop body (continue, fall-through, AND `?` early-return).
+            // The guard runs on every exit of the loop body (continue,
+            // fall-through, AND `?` early-return).
             let mut log = scopeguard::guard(bun_ast::Log::init(), |log| {
                 if log.errors > 0 {
                     let _ = log.print(std::ptr::from_mut::<bun_core::io::Writer>(
@@ -538,8 +531,8 @@ impl<'a> Snapshots<'a> {
                     }
                     next_start += fn_name.len();
 
-                    // Zig passed `&log` to both `Lexer.initWithoutReading` and
-                    // `TSXParser.init` (aliasing `*Log`). Rust forbids two live `&'a mut Log`;
+                    // `Lexer.initWithoutReading` and `TSXParser.init` both need the same
+                    // `Log`, but Rust forbids two live `&'a mut Log`;
                     // derive a raw pointer so borrowck doesn't track the lexer/parser borrow,
                     // matching the pattern in `js_parser::Parser::init`. The unique `&mut`
                     // logically lives inside `parser.lexer`; `log.add_error_fmt` calls below
@@ -562,14 +555,12 @@ impl<'a> Snapshots<'a> {
                         lexer.step();
                     }
                     lexer.next()?;
-                    // `ParserOptions` isn't `Clone`; rebuild per-iteration
-                    // (Zig passed by value-copy).
+                    // `ParserOptions` isn't `Clone`; rebuild per-iteration.
                     let opts = js_parser::ParserOptions::init(
                         vm.transpiler.options.jsx.clone(),
                         bun_ast::Loader::Js,
                     );
-                    // `P::init` takes an out-param (Zig:
-                    // `var p: ParserType = undefined; try ParserType.init(.., &p)`)
+                    // `P::init` takes an out-param
                     // since 9a98701c980c — `P` is ~5 KiB and the previous
                     // `let p = P::init(..)?` shape forced 2-3 by-value moves.
                     // Mirror `init_p!` from `js_parser/parse/parse_entry.rs` here
@@ -793,8 +784,7 @@ impl<'a> Snapshots<'a> {
                 result_text.extend_from_slice(b"`");
 
                 if ils.is_added {
-                    // Zig spec does `Jest.runner.?.snapshots.added += 1` (snapshot.zig:461),
-                    // but `runner.snapshots` *is* `*self`. Going back through `Jest::runner()` would
+                    // `runner.snapshots` *is* `*self`: going back through `Jest::runner()` would
                     // create a second `&mut Snapshots` aliasing `self` (UB) and invalidate `ils_info`.
                     self.added += 1;
                 }
@@ -935,5 +925,3 @@ impl<'a> Snapshots<'a> {
         Ok(bun_sys::Result::Ok(()))
     }
 }
-
-// ported from: src/test_runner/snapshot.zig

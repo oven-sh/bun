@@ -24,7 +24,6 @@ const PREFIX_MIDDLE: &[u8] = b"  \xE2\x94\x9C\xE2\x94\x80 "; // "  ├─ "
 const PREFIX_CONTINUE: &[u8] = b"  \xE2\x94\x82  "; // "  │  "
 const PREFIX_SPACE: &[u8] = b"     ";
 
-// Zig `var max_depth: usize = 100;` is a mutable container-level global.
 // Using AtomicUsize for safe interior mutability on a single-threaded CLI path.
 static MAX_DEPTH: AtomicUsize = AtomicUsize::new(100);
 
@@ -90,8 +89,7 @@ fn get_dependency_type_priority(dep_type: DependencyType) -> u8 {
     }
 }
 
-// Zig signature was `fn(void, a, b) bool` (lessThan for std.sort).
-// Kept bool-returning lessThan semantics; call sites wrap into a total Ordering
+// Bool-returning lessThan semantics; call sites wrap into a total Ordering
 // (Less if a<b, Greater if b<a, else Equal — required since Rust 1.81 sort_by
 // panics on non-total comparators).
 fn compare_dependents(a: &DependentInfo, b: &DependentInfo) -> bool {
@@ -337,9 +335,7 @@ impl WhyCommand {
         package_pattern: &[u8],
         top_only: bool,
     ) -> Result<(), bun_core::Error> {
-        // Reshaped for borrowck — Zig calls
-        // `pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true)` which aliases
-        // `*PackageManager` with `*Lockfile`. Detach the `Box<Lockfile>` from `pm`
+        // Detach the `Box<Lockfile>` from `pm`
         // so `load_from_cwd` can take `Option<&mut PackageManager>` without
         // overlapping the `&mut self` lockfile borrow. `pm.options.depth` is read
         // up front so we never need `pm` again once `lockfile` is borrowed.
@@ -374,18 +370,13 @@ impl WhyCommand {
         let pkg_res_slices = packages.items_resolutions();
         let _pkg_resolution = packages.items_resolution();
 
-        // PERF(port): was arena bulk-free — Zig used ArenaAllocator for all_dependents
-        // and per-dep string dupes. Now using global allocator + Drop.
-
         let mut target_versions: Vec<VersionInfo> = Vec::new();
-        // (defer free loop deleted — Box<[u8]> field + Vec Drop handle it)
 
         let mut all_dependents: HashMap<PackageID, Vec<DependentInfo>> = HashMap::default();
 
         let glob = GlobPattern::init(package_pattern);
 
-        // Zig `MultiArrayList<Package>.get(pkg_idx)` returns a row
-        // copy. The Rust column-backed `PackageList` exposes
+        // The column-backed `PackageList` exposes
         // `items_name()` / `items_dependencies()` / … directly, so we read
         // columns by index instead of materialising a `Package` row.
         let pkg_names = packages.items_name();
@@ -496,9 +487,8 @@ impl WhyCommand {
                     bun_core::prettyln!("<d>  └─ (deeper dependencies hidden)<r>");
                 } else {
                     let _ctx_data = TreeContext::init(&all_dependents);
-                    // Reshaped for borrowck — Zig sorted via mutable
-                    // `dependents.items` while also holding `&all_dependents` in
-                    // ctx_data. Clone the slice to sort independently.
+                    // Clone the slice so it can be sorted while `ctx_data`
+                    // still borrows `all_dependents`.
                     let mut sorted: Vec<DependentInfo> = dependents.clone();
                     sorted.sort_by(cmp_dependents);
 
@@ -605,9 +595,8 @@ fn print_dependency_tree(
     }
 
     ctx.path_tracker.insert(current_pkg_id, depth);
-    // Reshaped for borrowck — Zig used `defer path_tracker.remove(...)`.
     // All post-insert exit paths below remove explicitly. Error paths are gone
-    // (alloc failures abort under global mimalloc), so no errdefer needed.
+    // (alloc failures abort under global mimalloc).
 
     if let Some(dependents) = ctx.all_dependents.get(&current_pkg_id) {
         let mut sorted_dependents: Vec<DependentInfo> = dependents.clone();
@@ -664,5 +653,3 @@ fn print_dependency_tree(
 
     ctx.path_tracker.remove(&current_pkg_id);
 }
-
-// ported from: src/cli/why_command.zig

@@ -1,25 +1,15 @@
-//! Port of `src/jsc/generated_classes_list.zig`.
-//!
-//! LAYERING: the Zig `Classes` struct is a flat namespace of
-//! `pub const X = path.to.Y;` aliases mapping each `.classes.ts` class name to
+//! LAYERING: `Classes` is a flat namespace of
+//! `pub use` aliases mapping each `.classes.ts` class name to
 //! its native backing type. Every target lives under `bun.api`, `bun.webcore`,
 //! `bun.bake`, or `bun.SourceMap` — i.e. in the Rust crate graph, in
 //! `bun_runtime` / `bun_sql_jsc` / `bun_sourcemap_jsc`, all of which **depend
 //! on** `bun_jsc`. Re-exporting them from `bun_jsc` would create a hard cycle.
 //!
-//! Zig gets away with this because the whole tree is one lazy compilation unit
-//! and `generated_classes_list.zig` is only consumed by the **Zig** codegen
-//! output (`ZigGeneratedClasses.zig`, via `const Classes = jsc.GeneratedClassesList;`
-//! at `generate-classes.ts:3296`). The **Rust** codegen output
+//! The codegen output
 //! (`generated_classes.rs`) does **not** consume this list — it resolves each
 //! class to its Rust struct via `rustModuleResolver.resolveStruct`
 //! (`generate-classes.ts:2602`/`:3450`) and is `include!`d into `bun_runtime`
 //! where every backing type is already in scope.
-//!
-//! The single in-tree Zig consumer outside codegen
-//! (`src/runtime/node/net/BlockList.zig:255` →
-//! `bun.jsc.GeneratedClassesList.SocketAddress`) is ported as a direct
-//! `crate::socket::SocketAddress` import in `BlockList.rs`.
 //!
 //! Resolution: this file is `#[path]`-mounted from **`bun_runtime/lib.rs`**
 //! (not `bun_jsc/lib.rs`) so every alias resolves via `crate::`. The public
@@ -128,4 +118,3 @@ pub mod Classes {
     pub use bun_sql_jsc::postgres::PostgresSQLQuery;
 }
 
-// ported from: src/jsc/generated_classes_list.zig

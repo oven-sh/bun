@@ -46,10 +46,9 @@ use bun_bundler as Transpiler;
 
 // Note: `FrameworkFileSystemRouter` is declared in this file's
 // `filesystem_router.classes.ts`, so codegen looks for the backing struct here
-// (`crate::api::filesystem_router::FrameworkFileSystemRouter`). In Zig the
-// implementation lives in `bake/FrameworkRouter.zig` as `JSFrameworkRouter` and
-// is wired via `generated_classes_list.zig`. Re-export the real type so the
-// codegen-generated thunks resolve without a stub.
+// (`crate::api::filesystem_router::FrameworkFileSystemRouter`). The
+// implementation is `bake::framework_router::JSFrameworkRouter`; re-export the
+// real type so the codegen-generated thunks resolve without a stub.
 pub use crate::bake::framework_router::JSFrameworkRouter as FrameworkFileSystemRouter;
 
 pub(crate) const DEFAULT_EXTENSIONS: &[&[u8]] = &[b"tsx", b"jsx", b"ts", b"mjs", b"cjs", b"js"];
@@ -105,11 +104,10 @@ pub struct FileSystemRouter {
     pub base_dir: Option<BackRef<RefString>>,
     // Note: Router<'a> only borrows the global FileSystem singleton — `'static` is faithful.
     pub router: JsCell<Router::Router<'static>>,
-    // PERF(port): was arena bulk-free — Router borrows slices from this arena across calls;
+    // Router borrows slices from this arena across calls;
     // kept as boxed arena per LIFETIMES.tsv (OWNED). `bun_alloc::Arena` (mimalloc heap) is
     // the runtime-wide arena type, so allocations here are individually freeable too.
     pub arena: JsCell<Box<ArenaAllocator>>,
-    // Note: dropped `std.mem.Allocator param` field — it was always `arena.arena()`.
     pub asset_prefix: Option<BackRef<RefString>>,
 }
 
@@ -137,7 +135,6 @@ impl FileSystemRouter {
 
         let mut root_dir_path: ZigStringSlice =
             ZigStringSlice::from_utf8_never_free(vm.top_level_dir());
-        // `defer root_dir_path.deinit()` → Drop on ZigStringSlice
         let mut origin_str: ZigStringSlice = ZigStringSlice::default();
         let mut asset_prefix_slice: ZigStringSlice = ZigStringSlice::default();
 
@@ -182,7 +179,7 @@ impl FileSystemRouter {
                 global_this.throw_invalid_arguments(format_args!("Expected dir to be a string"))
             );
         }
-        // PERF(port): was arena bulk-free — extensions/asset_prefix/log all allocated from this.
+        // extensions/asset_prefix/log are all allocated from this arena.
         let arena = Box::new(ArenaAllocator::new());
         let mut extensions: Vec<&[u8]> = Vec::new();
         if let Some(file_extensions) = argument.get(global_this, "fileExtensions")? {
@@ -203,7 +200,6 @@ impl FileSystemRouter {
                 if val.get_length(global_this)? == 0 {
                     continue;
                 }
-                // PERF(port): was appendAssumeCapacity
                 let bytes = val.to_slice(global_this)?.into_vec();
                 // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`, so the
                 // backing allocation outlives this slice. Cast through raw ptr to detach the
@@ -320,13 +316,11 @@ impl FileSystemRouter {
         };
 
         // Note: `vm.refCountedString` is an interning cache — on a cache HIT it
-        // returns the existing `*mut RefString` WITHOUT bumping the refcount. The Zig
-        // spec gets away with this because `getScriptSrc`/`getOrigin` call `.slice()`
-        // (which leaks +1 each access) so the impl never reaches 0. The Rust port uses
-        // `.leak()` (no ref) there, which exposed the latent imbalance: N routers
-        // sharing one interned RefString → N finalizers deref a single +1 → UAF on the
-        // second deref. Claim an explicit +1 here so each `FileSystemRouter` owns its
-        // hold; `finalize` releases it. (Mirrors Zig's `fs_router.base_dir.?.ref()`.)
+        // returns the existing `*mut RefString` WITHOUT bumping the refcount.
+        // `getScriptSrc`/`getOrigin` use `.leak()` (no ref), so without an
+        // explicit hold N routers sharing one interned RefString → N finalizers
+        // deref a single +1 → UAF on the second deref. Claim an explicit +1 here
+        // so each `FileSystemRouter` owns its hold; `finalize` releases it.
         let claim = |p: *mut RefString| -> BackRef<RefString> {
             // `ref_counted_string` returns a live interned `*mut RefString`; wrap as
             // `BackRef` (owner-outlives-holder: VM intern cache + our +1).
@@ -355,9 +349,8 @@ impl FileSystemRouter {
             arena: JsCell::new(arena),
         });
 
-        // Note: `base_dir.?.ref()` — Zig borrowed the RefString bytes into
-        // `router.config.dir` and bumped the refcount. RouteConfig::dir is now an owned
-        // `Box<[u8]>`, so copy the bytes; the `claim` above already took our +1.
+        // RouteConfig::dir is an owned `Box<[u8]>`, so copy the bytes; the
+        // `claim` above already took our +1.
         // `base_dir` was just set to Some above.
         let base_dir = fs_router.base_dir.unwrap();
         fs_router
@@ -380,8 +373,8 @@ impl FileSystemRouter {
         let normalized: Vec<u8>;
         #[cfg(windows)]
         {
-            // Note: Zig used a `ThreadlocalBuffers` slot. `with_borrow_mut` can't
-            // hand back a slice that outlives the closure, so copy out (cold reload path).
+            // Note: `with_borrow_mut` can't hand back a slice that outlives
+            // the closure, so copy out (cold reload path).
             normalized = WIN32_NORMALIZE_BUF
                 .with_borrow_mut(|buf| vm.fs().normalize_buf(&mut buf[..], input_path).to_vec());
             path = normalized.as_slice();
@@ -528,7 +521,7 @@ impl FileSystemRouter {
 
         // `this.router.deinit(); this.arena.deinit(); destroy(this.arena)` — drop old values.
         // Note: order matters — old router borrows slices from old arena, so it must drop
-        // first (matches Zig teardown order).
+        // first.
         this.router.set(router);
         this.arena.set(arena);
         // `js.routesSetCached` — wired via `codegen_cached_accessors!` above.
@@ -637,8 +630,7 @@ impl FileSystemRouter {
             path = ZigStringSlice::init_owned(decoded.into_vec());
         }
 
-        // Note: Zig leaked `path` here (TODO comment in spec) and pointer-freed it
-        // in `MatchedRoute.deinit` via `mi_free(pathname.ptr)`. We instead MOVE `path`
+        // MOVE `path`
         // into `MatchedRoute` so the bytes that `route.pathname`/`query_string`/param
         // values borrow are owned by the same heap-stable Box and freed on finalize.
         let result = MatchedRoute::init(
@@ -654,8 +646,7 @@ impl FileSystemRouter {
         // at `route_holder` inside this very allocation). The trait `JsClass::to_js(self)`
         // would deref-move the value OUT of the Box and re-box it at a new address,
         // leaving the self-ref pointers dangling (ASAN use-after-poison). Hand the
-        // existing allocation straight to the C++ wrapper instead — matches Zig's
-        // `result.toJS(globalThis)` which forwards the `*MatchedRoute` as-is.
+        // existing allocation straight to the C++ wrapper instead.
         // Ownership transfers to the GC wrapper (freed via
         // `MatchedRouteClass__finalize`); the leak lives once in `to_js_boxed`.
         Ok(MatchedRoute::to_js_boxed(result, global_this))
@@ -709,8 +700,8 @@ impl FileSystemRouter {
     // false positive on that contract.
     #[allow(clippy::boxed_local)]
     pub fn finalize(mut self: Box<Self>) {
-        // Note: RefString deref()s — Zig `?.deref()` on each. `BackRef` Derefs
-        // to `&RefString`; use `.get()` to avoid resolving to `<BackRef as Deref>::deref`.
+        // Note: `BackRef` Derefs to `&RefString`; use `.get()` to avoid
+        // resolving to `<BackRef as Deref>::deref`.
         if let Some(p) = self.asset_prefix.take() {
             p.get().deref();
         }
@@ -742,8 +733,7 @@ pub struct MatchedRoute {
     pub param_map: JsCell<Option<QueryStringMap>>,
     pub params_list_holder: UnsafeCell<route_param::List<'static>>,
     /// Owns the bytes that `route_holder.pathname`/`query_string` and the param values in
-    /// `params_list_holder` borrow. Replaces the Zig leak-then-`mi_free(pathname.ptr)`
-    /// pattern with proper ownership; freed by Drop on finalize.
+    /// `params_list_holder` borrow. Freed by Drop on finalize.
     pub pathname_backing: ZigStringSlice,
     // BACKREF — interned `RefString`s; we hold +1 (bumped in `init`, released in
     // `deinit`). The interned allocation outlives every `MatchedRoute`.
@@ -851,8 +841,7 @@ impl MatchedRoute {
         this_ref.query_string_map.set(None);
         this_ref.param_map.set(None);
         if this_ref.needs_deinit {
-            // Note: Zig did `if mi_is_in_heap_region(pathname.ptr) { mi_free(pathname.ptr) }`
-            // to free the leaked `path` from `match`. We own that allocation as
+            // We own the `path` allocation from `match` as
             // `pathname_backing`; dropping it (and `params_list_holder`) here releases the
             // borrowed bytes BEFORE `route_holder`'s slices would dangle on Box drop.
             this_ref.pathname_backing = ZigStringSlice::EMPTY;
@@ -912,14 +901,13 @@ impl MatchedRoute {
         impl<'a> ObjectInitializer for QueryObjectCreator<'a> {
             fn create(&mut self, obj: &mut JSObject, global: &JSGlobalObject) -> JsResult<()> {
                 // Stack scratch — 256 × 16-byte fat ptr × 2 ≈ 8 KiB, well within Bun's
-                // JS-thread stack budget. The Zig original parked these in
-                // `threadlocal var` purely as a zero-init convenience; porting that as a
-                // `RefCell<[&'static [u8]; 256]>` TLS slot is unsound: `iter.next()`
-                // writes QueryStringMap-lifetime slices into it, and once the map drops
-                // the TLS slot is left holding dangling `&'static [u8]` — invalid-value
-                // UB the next time `with_borrow_mut` produces a `&mut` over it. A stack
-                // array lets inference tie the element lifetime to `iter` and dies with
-                // this frame.
+                // JS-thread stack budget. A `RefCell<[&'static [u8]; 256]>` TLS slot
+                // would be unsound: `iter.next()` writes QueryStringMap-lifetime
+                // slices into it, and once the map drops the TLS slot is left
+                // holding dangling `&'static [u8]` — invalid-value UB the next time
+                // `with_borrow_mut` produces a `&mut` over it. A stack array lets
+                // inference tie the element lifetime to `iter` and dies with this
+                // frame.
                 let mut values_buf: [&[u8]; 256] = [b""; 256];
                 let mut refs_buf: [ZigString; 256] = [ZigString::EMPTY; 256];
 
@@ -954,8 +942,7 @@ impl MatchedRoute {
 
     pub fn get_script_src_string(
         origin: &URL,
-        // Note: Zig used `comptime Writer: type, writer: Writer` over a fixedBufferStream of
-        // path bytes; `bun_object::get_public_path` takes `core::fmt::Write`.
+        // `bun_object::get_public_path` takes `core::fmt::Write`.
         writer: &mut impl core::fmt::Write,
         file_path: &[u8],
         client_framework_enabled: bool,
@@ -984,7 +971,6 @@ impl MatchedRoute {
 
     #[bun_jsc::host_fn(getter)]
     pub fn get_script_src(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        // Note: Zig used `std.io.fixedBufferStream` over a PathBuffer. The accessible
         // `bun_object::get_public_path_with_asset_prefix` takes `core::fmt::Write`, so write
         // into a `String` (path components are UTF-8 in practice).
         let mut writer = String::with_capacity(MAX_PATH_BYTES);
@@ -1080,5 +1066,3 @@ thread_local! {
     static WIN32_NORMALIZE_BUF: core::cell::RefCell<Box<[u8; MAX_PATH_BYTES * 2]>> =
         core::cell::RefCell::new(bun_core::boxed_zeroed());
 }
-
-// ported from: src/runtime/api/filesystem_router.zig

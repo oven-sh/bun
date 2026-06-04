@@ -68,17 +68,15 @@ impl FallbackEntryPoint {
         // self-referential — when the rendered code fits in
         // `entry.code_buffer` the Source borrows it (disjoint-field write to
         // `entry.source` while `entry.code_buffer` is shared-borrowed). On
-        // overflow the Source owns the bytes via `Cow::Owned` (Zig allocated
-        // from `transpiler.arena`; here the Source owns it directly so Drop
+        // overflow the Source owns the bytes via `Cow::Owned` (so Drop
         // frees it).
         // assemble bytes directly (not `write!`+`BStr`) so a
-        // non-UTF-8 byte in `input_path` is emitted verbatim like Zig `{s}`,
+        // non-UTF-8 byte in `input_path` is emitted verbatim,
         // not lossily replaced with U+FFFD by `BStr as Display`.
         macro_rules! render_into_entry {
             ($prefix:expr, $suffix:expr) => {{
                 let prefix: &[u8] = $prefix;
                 let suffix: &[u8] = $suffix;
-                // PERF(port): was std.fmt.count + bufPrint/allocPrint stack-fallback — profile if hot.
                 let count = prefix.len() + input_path.len() + suffix.len();
                 if count < entry.code_buffer.len() {
                     let buf = &mut entry.code_buffer;
@@ -346,7 +344,7 @@ impl ServerEntryPoint {
         };
 
         // Free the previous buffer on regenerate (hot reload) instead of
-        // leaking it. `contents` is either "" or a prior allocPrint result.
+        // leaking it. `contents` is either "" or a previously generated buffer.
         // (Handled implicitly: assigning to `Box<[u8]>` drops the old one.)
         entry.contents = code.into_boxed_slice();
         entry.generated = true;
@@ -409,7 +407,7 @@ impl MacroEntryPoint {
     }
 
     pub fn generate_id_from_specifier(specifier: &[u8]) -> i32 {
-        // Same-size bitcast u32 → i32 (matches Zig `@bitCast`).
+        // Same-size bitcast u32 → i32.
         (bun_wyhash::hash(specifier) as u32) as i32
     }
 
@@ -525,13 +523,10 @@ impl MacroEntryPoint {
     }
 }
 
-// Trait stand-in for the duck-typed `comptime TranspilerType: type` param Zig
-// used for FallbackEntryPoint/ClientEntryPoint (Rust has no comptime duck
-// typing).
+// Trait abstraction over the transpiler types used by
+// FallbackEntryPoint/ClientEntryPoint.
 pub trait TranspilerLike {
     fn options(&self) -> &crate::options::Options<'_>;
 }
 
 use crate::options::ClientCssInJs;
-
-// ported from: src/bundler/entry_points.zig

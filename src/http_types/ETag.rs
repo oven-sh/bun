@@ -45,8 +45,8 @@ pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) {
     let len = {
         use std::io::Write;
         let mut cursor = &mut etag_buf[..];
-        // Zig's `bun.fmt.hexIntLower(u64)` always emits exactly 16 hex chars
-        // (zero-padded). `{:x}` alone is variable-width.
+        // Always emit exactly 16 hex chars (zero-padded); `{:x}` alone is
+        // variable-width.
         write!(cursor, "\"{:016x}\"", hash).expect("unreachable");
         40 - cursor.len()
     };
@@ -56,7 +56,6 @@ pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) {
 
 #[inline]
 fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
-    // Zig: `std.hash.XxHash64.hash(0, bytes)`.
     bun_core::hash::xxhash64(seed, bytes)
 }
 
@@ -91,7 +90,6 @@ pub fn if_none_match(
 
 // ═══════════════════════════════════════════════════════════════════════
 // Headers — moved from bun_http.
-// Source: src/http/Headers.zig
 //
 // Core struct + tier-safe methods only. The following stay in `bun_http`
 // (T5) as they pull in higher-tier or sibling deps that http_types (T3)
@@ -116,7 +114,6 @@ pub type HeaderEntryList = bun_collections::MultiArrayList<HeaderEntry>;
 
 /// Column accessors for `HeaderEntry` MultiArrayList storage.
 ///
-/// `header_entries.slice().items_name()` was a Zig MultiArrayList convenience.
 /// Returns a normal `&self`-tied borrow; `StringPointer` is `Copy` so callers
 /// that need to mutate `header_entries` afterwards copy the index out first.
 pub trait HeaderEntryColumns {
@@ -189,7 +186,6 @@ impl Headers {
             offset,
             length: u32::try_from(name.len()).unwrap(),
         };
-        // PERF(port): was appendSliceAssumeCapacity.
         self.buf.extend_from_slice(name);
         offset = u32::try_from(self.buf.len()).unwrap();
         self.buf.extend_from_slice(value);
@@ -226,9 +222,8 @@ impl Headers {
 }
 
 // ═══════════════════════════════════════════════════════════════════════
-// wtf::writeHTTPDate — moved from bun_jsc.
-// Source: src/jsc/WTF.zig (writeHTTPDate only — the rest of `wtf` is
-// string-builder/date-parse machinery that stays jsc-side).
+// wtf::writeHTTPDate — moved from bun_jsc (writeHTTPDate only — the rest of
+// `wtf` is string-builder/date-parse machinery that stays jsc-side).
 // ═══════════════════════════════════════════════════════════════════════
 
 pub mod wtf {
@@ -259,5 +254,3 @@ pub mod wtf {
         &buffer[..res as usize]
     }
 }
-
-// ported from: src/http_types/ETag.zig

@@ -40,4 +40,3 @@ pub(crate) fn to_be_empty_object(
     )
 }
 
-// ported from: src/test_runner/expect/toBeEmptyObject.zig

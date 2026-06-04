@@ -154,10 +154,7 @@ impl InstallCompletionsCommand {
             )?;
             // SAFETY: exe_suffix_z ends in NUL
             let bunx_cmd = WStr::from_slice_with_nul(&bunx_cmd_with_z[..]);
-            // TODO: fix this zig bug, it is one line change to a few functions.
-            // const file = try std.fs.createFileAbsoluteW(bunx_cmd, .{});
             let file = File::create_w(bun_sys::Fd::cwd(), bunx_cmd.as_slice())?;
-            // zig: `defer file.close()`
             file.write_all(SCRIPT)?;
         }
         Ok(())
@@ -207,7 +204,6 @@ impl InstallCompletionsCommand {
         )?;
 
         let file = File::create_w(bun_sys::Fd::cwd(), uninstaller_path)?;
-        // zig: `defer file.close()`
         file.write_all(CONTENT)?;
         Ok(())
     }
@@ -536,7 +532,6 @@ impl InstallCompletionsCommand {
 
             debug_assert!(!completions_dir.is_empty());
 
-            // output_dir.createFileZ(filename, .{ .truncate = true })
             let output_file: File = match File::create(output_dir, filename, true) {
                 Ok(f) => f,
                 Err(err) => {
@@ -721,5 +716,3 @@ impl InstallCompletionsCommand {
 
 #[cfg(not(windows))]
 use bun_core::fmt::{buf_print_infallible as buf_print, buf_print_z_infallible as buf_print_z};
-
-// ported from: src/cli/install_completions_command.zig

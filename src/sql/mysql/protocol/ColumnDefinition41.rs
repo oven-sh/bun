@@ -44,7 +44,6 @@ impl Default for ColumnDefinition41 {
 }
 
 bitflags::bitflags! {
-    // Zig `packed struct` field order is LSB-first; `_padding: u2` rounds to 16 bits.
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
     pub struct ColumnFlags: u16 {
         const NOT_NULL         = 1 << 0;
@@ -75,9 +74,6 @@ impl ColumnFlags {
         ColumnFlags::from_bits_retain(flags)
     }
 }
-
-// Zig `deinit` only deinit'd owned `Data`/`ColumnIdentifier` fields — their `Drop` impls
-// handle that automatically in Rust, so no explicit `impl Drop` is needed here.
 
 impl ColumnDefinition41 {
     pub fn decode_internal<Context: ReaderContext>(
@@ -126,26 +122,18 @@ impl ColumnDefinition41 {
         self.fixed_length_fields_length = reader.encoded_len_int()?;
         self.character_set = reader.int::<u16>()?;
         self.column_length = reader.int::<u32>()?;
-        // Zig FieldType is a NON-exhaustive `enum(u8)` so `@enumFromInt` accepts any
-        // byte and carries it; the Rust `#[repr(u8)] enum` is exhaustive, so an unknown
-        // wire byte fails loudly here with `UnsupportedColumnType` instead of carrying
-        // an invalid discriminant (which would be UB). This is a real divergence: Zig
-        // carries the unknown byte and serves the value as a raw/string cell (the
-        // `else` arms in ResultSet.zig and DecodeBinaryValue.zig), whereas Rust
-        // currently fails the whole query here. Resolves once `FieldType` becomes a
-        // non-exhaustive newtype-over-u8 (see MySQLTypes.rs).
+        // `FieldType` is an exhaustive `#[repr(u8)]` enum, so an unknown wire byte
+        // fails the whole query with `UnsupportedColumnType` rather than being
+        // carried through and served as a raw/string cell. Resolves once
+        // `FieldType` becomes a non-exhaustive newtype-over-u8 (see MySQLTypes.rs).
         let type_byte = reader.int::<u8>()?;
         self.column_type =
             FieldType::from_raw(type_byte).ok_or(AnyMySQLError::UnsupportedColumnType)?;
         self.flags = ColumnFlags::from_int(reader.int::<u16>()?);
         self.decimals = reader.int::<u8>()?;
 
-        // Zig called `name_or_index.deinit()` before reassigning; in Rust the
-        // assignment below drops the previous value automatically.
-        // Reshaped for borrowck — Zig passed `this.name` by value; pass by ref here.
-        // `ColumnIdentifier::init` consumes its `Data` (Zig moved by-value
-        // and `errdefer name.deinit()`). We can't move `self.name` while `&mut self`
-        // is borrowed, so feed it a Temporary view of the same bytes.
+        // `ColumnIdentifier::init` consumes its `Data`. We can't move `self.name`
+        // while `&mut self` is borrowed, so feed it a Temporary view of the same bytes.
         //
         // The server re-sends column definitions on every COM_STMT_EXECUTE, so a
         // reused prepared statement re-decodes into the same slot once per query.
@@ -175,8 +163,6 @@ impl ColumnDefinition41 {
         Ok(changed)
     }
 
-    // Zig `decoderWrap(ColumnDefinition41, decodeInternal).decode` — see the Decode
-    // trait in src/sql/mysql/protocol/NewReader.rs.
     pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: &mut NewReader<Context>,
@@ -184,5 +170,3 @@ impl ColumnDefinition41 {
         self.decode_internal(reader)
     }
 }
-
-// ported from: src/sql/mysql/protocol/ColumnDefinition41.zig

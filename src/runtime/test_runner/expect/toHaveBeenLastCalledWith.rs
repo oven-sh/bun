@@ -91,5 +91,3 @@ pub(crate) fn to_have_been_last_called_with(
     };
     this.throw(global, signature, format_args!("\n\n{}\n", diff_format))
 }
-
-// ported from: src/test_runner/expect/toHaveBeenLastCalledWith.zig

@@ -148,7 +148,6 @@ where
 {
     fn get_fallbacks(&mut self, arena: &Bump, targets: &Targets) -> SmallList<Self, 2> {
         let fallbacks = self.color.get_fallbacks(arena, targets);
-        // PERF(port): was arena bulk-free (fallbacks.deinit) — profile if it shows up on a hot path
         let mut out: SmallList<Self, 2> = SmallList::init_capacity(fallbacks.len());
         for color in fallbacks.slice() {
             out.append_assume_capacity(Self {
@@ -166,11 +165,9 @@ where
     }
 
     /// Deep-clone into a `GenericBorder` with a different const-generic
-    /// discriminant `Q`. The fields are identical regardless of `P`; this is
-    /// the Rust equivalent of Zig coercing one anonymous struct literal into
-    /// multiple `Border*` aliases. Needed when one logical value must be
-    /// emitted as two distinct physical `Property` variants (e.g.
-    /// inline-start → BorderLeft + BorderRight).
+    /// discriminant `Q`. The fields are identical regardless of `P`. Needed
+    /// when one logical value must be emitted as two distinct physical
+    /// `Property` variants (e.g. inline-start → BorderLeft + BorderRight).
     pub(crate) fn clone_as<const Q: u8>(&self, arena: &Bump) -> GenericBorder<S, Q> {
         let cloned = self.deep_clone(arena);
         GenericBorder {
@@ -252,10 +249,9 @@ impl BorderSideWidth {
 crate::css_eql_partialeq!(BorderSideWidth);
 
 // ──────────────────────────────────────────────────────────────────────────
-// ImplFallbacks (Zig: `pub fn ImplFallbacks(comptime T: type) type`)
+// impl_fallbacks
 // ──────────────────────────────────────────────────────────────────────────
-// Zig used `inline for (std.meta.fields(T))` reflection; we expand the field
-// list at macro invocation instead. All fields are `CssColor`.
+// The field list is expanded at macro invocation. All fields are `CssColor`.
 // Hoisted here because `macro_rules!` is order-sensitive.
 macro_rules! impl_fallbacks {
     ($T:ty; $($field:ident),+) => {
@@ -357,15 +353,13 @@ macro_rules! define_size_shorthand {
         }
 
         impl $name {
-            // Zig: `css.DefineShorthand(@This(), PropertyIdTag.$shorthand_id)`
-            // consumed this table via comptime reflection; in Rust the table is
-            // kept as data for a future shorthand derive to consume.
+            // The table is kept as data for a future shorthand derive to consume.
             pub const PROPERTY_FIELD_MAP: &[(&str, PropertyIdTag)] = &[
                 ("start", PropertyIdTag::$start_id),
                 ("end", PropertyIdTag::$end_id),
             ];
         }
-        // Zig `css.DefineSizeShorthand(@This(), V)` — parse/to_css via `Size2D<V>`.
+        // parse/to_css via `Size2D<V>`.
         // Shared impl macro lives in `properties/mod.rs`.
         impl_size_shorthand!($name, $inner, start, end);
     };
@@ -448,7 +442,6 @@ impl BorderShorthand {
     }
 
     fn reset(&mut self, _arena: &Bump) {
-        // PERF(port): was arena bulk-free via bun.clear — profile if it shows up on a hot path
         self.width = None;
         self.style = None;
         self.color = None;
@@ -459,8 +452,7 @@ impl BorderShorthand {
     }
 
     /// Generic over the `P` const param so the same `BorderShorthand` data
-    /// can populate any of `BorderTop`/`BorderLeft`/.../`Border` (Zig used a
-    /// single anonymous struct literal that coerced to each alias).
+    /// can populate any of `BorderTop`/`BorderLeft`/.../`Border`.
     fn to_border<const P: u8>(&self, arena: &Bump) -> GenericBorder<LineStyle, P> {
         GenericBorder {
             width: css::generic::deep_clone(&self.width, arena).unwrap(),
@@ -471,7 +463,7 @@ impl BorderShorthand {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// BorderProperty bitflags (Zig: `packed struct(u32)` of all-bool fields)
+// BorderProperty bitflags
 // ──────────────────────────────────────────────────────────────────────────
 
 bitflags::bitflags! {
@@ -554,8 +546,7 @@ bitflags::bitflags! {
 // blocked_on: PropertyIdTag variant name verification (PascalCase mapping)
 impl BorderProperty {
     pub(crate) fn try_from_property_id(property_id: PropertyIdTag) -> Option<Self> {
-        // Zig used `inline for` over PropertyIdTag fields + @hasDecl. Expanded
-        // here to an explicit match over every PropertyIdTag whose name starts
+        // An explicit match over every PropertyIdTag whose name starts
         // with "border" and has a matching const above — keep in sync when new
         // Border* PropertyIdTag variants are added.
         use PropertyIdTag as P;
@@ -635,8 +626,7 @@ mod border_handler_body {
     use super::*;
     use crate::generics::{CssEql, DeepClone};
     // ──────────────────────────────────────────────────────────────────────────
-    // FlushContext + flush_category! (Zig: nested struct with inline fns and
-    // extensive comptime string-dispatch)
+    // FlushContext + flush_category!
     // ──────────────────────────────────────────────────────────────────────────
     // hoisted above `impl BorderHandler` — macro_rules! is order-
     // sensitive and the flush_category!() callsites in `flush()` need these.
@@ -658,8 +648,8 @@ mod border_handler_body {
     }
 
     struct FlushContext<'a, 'bump, 'ctx> {
-        // Zig stored `self: *BorderHandler`; we only need flushed_properties
-        // here because the per-side BorderShorthand pointers are passed separately.
+        // Only flushed_properties is needed here because the per-side
+        // BorderShorthand pointers are passed separately.
         flushed_properties: &'a mut BorderProperty,
         dest: &'a mut DeclarationList<'bump>,
         ctx: &'a mut PropertyHandlerContext<'ctx>,
@@ -715,8 +705,7 @@ mod border_handler_body {
     }
 
     // `f.push(p, val)`
-    // Zig's `@field(BorderProperty, p)` keyed both Property and BorderProperty
-    // off one kebab string. Here `$p` is the PascalCase Property/PropertyIdTag variant;
+    // `$p` is the PascalCase Property/PropertyIdTag variant;
     // the bitflags const is derived via try_from_property_id so a single ident suffices.
     macro_rules! fc_push {
         ($f:expr, $p:ident, $val:expr) => {{
@@ -747,8 +736,7 @@ mod border_handler_body {
         }};
     }
 
-    // `f.prop(prop_name, val)` — comptime string dispatch over prop_name.
-    // In Rust we dispatch on the Property variant ident.
+    // Dispatch on the Property variant ident.
     macro_rules! fc_prop {
         // border-inline-start*
         ($f:expr, BorderInlineStart, $val:expr) => {{
@@ -915,9 +903,8 @@ mod border_handler_body {
         };
     }
 
-    // `flushCategory(...)` — was a fn with comptime string params + nested `State`
-    // struct of inline fns. In Rust we expand it as a macro so the `comptime` prop
-    // names remain compile-time idents and the nested closures become local macros.
+    // `flush_category!` is a macro so the prop names remain
+    // compile-time idents and the nested closures become local macros.
     macro_rules! flush_category {
     (
         $f:expr,
@@ -1239,7 +1226,7 @@ mod border_handler_body {
             // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
             let arena = dest.bump();
 
-            // Helper macros — Zig used local comptime closures with @field string access.
+            // Helper macros.
 
             macro_rules! flush_helper {
                 ($key:ident, $prop:ident, $val:expr, $category:expr) => {{
@@ -1522,9 +1509,8 @@ mod border_handler_body {
             let logical_shorthand_supported =
                 !context.should_compile_logical(Feature::LogicalBorderShorthand);
 
-            // reshaped for borrowck — Zig stored `self: *BorderHandler` in
-            // FlushContext and accessed self.border_* through it. We instead take
-            // independent &mut borrows of each shorthand, plus &mut self.flushed_properties.
+            // Take independent &mut borrows of each shorthand, plus
+            // &mut self.flushed_properties, instead of one &mut self.
             let arena = dest.bump();
             let mut flctx = FlushContext {
                 flushed_properties: &mut self.flushed_properties,
@@ -1626,12 +1612,12 @@ mod border_handler_body {
 
             macro_rules! prop {
                 ($id:ident) => {{
-                    let _ = &dest; // autofix (matches Zig: `_ = d;`)
+                    let _ = &dest; // autofix
                     let mut upppppppppp = unparsed.with_property_id(arena, PropertyId::$id);
                     context.add_unparsed_fallbacks(arena, &mut upppppppppp);
                     self.flushed_properties
                         .insert(BorderProperty::try_from_property_id(PropertyIdTag::$id).unwrap());
-                    // Zig did NOT push to dest here (likely a bug upstream) — preserved.
+                    // Intentionally not pushed to dest (preserves existing behavior; likely a bug).
                 }};
             }
 
@@ -1739,6 +1725,4 @@ mod border_handler_body {
                 | P::Border
         )
     }
-
-    // ported from: src/css/properties/border.zig
 } // mod border_handler_body

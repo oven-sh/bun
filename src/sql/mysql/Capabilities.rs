@@ -1,7 +1,7 @@
 // MySQL capability flags
 //
 // Modeled as a plain struct of `bool` fields (NOT a `packed struct(u32)`-style
-// bitfield), matching the Zig original, with explicit bit-value constants and
+// bitfield), with explicit bit-value constants and
 // hand-unrolled field loops for `to_int`/`from_int`/`Display`. Field names stay
 // SCREAMING_SNAKE_CASE because `Display` emits them verbatim.
 // (non_snake_case / non_upper_case_globals allowed at crate root.)
@@ -265,7 +265,6 @@ impl Capabilities {
     }
 }
 
-// Zig: pub fn format(self, writer: *std.Io.Writer) !void
 impl fmt::Display for Capabilities {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut first = true;
@@ -317,5 +316,3 @@ impl fmt::Display for Capabilities {
         Ok(())
     }
 }
-
-// ported from: src/sql/mysql/Capabilities.zig

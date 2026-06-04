@@ -136,5 +136,3 @@ pub(crate) fn to_have_nth_returned_with(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveNthReturnedWith.zig

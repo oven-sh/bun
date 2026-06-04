@@ -114,7 +114,7 @@ impl CompileTarget {
     pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
         if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
             if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {
-                // Matches Zig (`return url;`): the env var slice is `&'static [u8]`,
+                // The env var slice is `&'static [u8]`,
                 // which outlives `'a`, so return it directly instead of copying into `buf`.
                 return Ok(url);
             }
@@ -133,9 +133,7 @@ impl CompileTarget {
             return Err(bun_core::err!("UnsupportedTarget"));
         }
 
-        // PERF(port): was comptime monomorphization (inline else over os/arch/libc/baseline
-        // building a comptime format string) — profile. Runtime concat is fine
-        // for a one-shot URL build.
+        // Runtime concat is fine for a one-shot URL build.
         let os = self.os.npm_name().as_bytes();
         let arch = self.arch.npm_name();
         let libc = self.libc.npm_name();
@@ -414,8 +412,7 @@ impl CompileTarget {
     }
 
     pub fn define_values(&self) -> &'static [&'static [u8]] {
-        // PERF(port): was comptime monomorphization (inline else over os/arch/libc returning
-        // anonymous struct const). Could generate static tables via macro_rules! or
+        // Could generate static tables via macro_rules! or
         // const_format::concatcp! over OperatingSystem::name_string().
         macro_rules! table {
             ($platform:literal, $arch:literal) => {{
@@ -479,5 +476,3 @@ impl fmt::Display for CompileTarget {
 
 // `fromJS` / `fromSlice` re-exports from bundler_jsc deleted — see PORTING.md §Idiom map.
 // In Rust these are extension-trait methods living in bun_bundler_jsc.
-
-// ported from: src/options_types/CompileTarget.zig

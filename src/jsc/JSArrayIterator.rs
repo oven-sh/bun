@@ -66,5 +66,3 @@ unsafe extern "C" {
         len: u32,
     ) -> bool;
 }
-
-// ported from: src/jsc/JSArrayIterator.zig

@@ -190,5 +190,3 @@ impl Specifier {
         }
     }
 }
-
-// ported from: src/css/properties/css_modules.zig

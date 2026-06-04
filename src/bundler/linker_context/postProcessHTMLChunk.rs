@@ -23,8 +23,8 @@ pub fn post_process_html_chunk(
     let compile_results = &chunk.compile_results_for_chunk;
 
     for compile_result in compile_results.iter() {
-        // Zig `j.push(.., bun.default_allocator)` — code() borrows from
-        // chunk.compile_results_for_chunk which outlives `j.done()`; arena arg dropped.
+        // code() borrows from
+        // chunk.compile_results_for_chunk which outlives `j.done()`.
         j.push_static(compile_result.code());
     }
 
@@ -42,7 +42,7 @@ pub fn post_process_html_chunk(
         alloc,
         &mut j,
         ctx.chunks.len() as u32, // @truncate
-    )); // Zig: `catch |err| bun.handleOom(err)`
+    ));
 
     // Reshaped for borrowck (compute hash before assigning into chunk)
     let isolated_hash = c.generate_isolated_hash(chunk, alloc);
@@ -51,4 +51,3 @@ pub fn post_process_html_chunk(
     Ok(())
 }
 
-// ported from: src/bundler/linker_context/postProcessHTMLChunk.zig

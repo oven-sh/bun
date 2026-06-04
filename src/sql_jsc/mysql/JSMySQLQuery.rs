@@ -236,7 +236,7 @@ impl JSMySQLQuery {
         }
 
         let mode_value = js_mode.coerce::<i32>(global_object)?;
-        // `std.meta.intToEnum` → manual range match (no `TryFrom<i32>`
+        // Manual range match (no `TryFrom<i32>`
         // on `SQLQueryResultMode`; it's a plain `#[repr(u8)]` enum).
         let mode = match mode_value {
             0 => SQLQueryResultMode::Objects,
@@ -460,9 +460,7 @@ impl JSMySQLQuery {
         {
             debug!("run failed to execute query");
             if !global_object.has_exception() {
-                // Zig `return globalObject.throwValue(...)` returns
-                // `error.JSError` into the `AnyMySQLError.Error!void` set; in
-                // Rust we throw for side-effect and map to the enum variant.
+                // Throw for side-effect and map to the enum variant.
                 let _ = global_object.throw_value(mysql_error_to_js(
                     global_object,
                     "failed to execute query",
@@ -619,10 +617,7 @@ impl JSMySQLQuery {
     }
 }
 
-// Zig exported `MySQLQuery__createInstance` for C++ to look up; in Rust, JS
-// reaches `create_instance` through `put_host_functions!` in `mysql.rs`, and
-// nothing on the C++ side references that symbol, so no extern export exists.
+// JS reaches `create_instance` through `put_host_functions!` in `mysql.rs`;
+// nothing on the C++ side references it, so no extern export exists.
 
 pub use js::{from_js, from_js_direct, to_js};
-
-// ported from: src/sql_jsc/mysql/JSMySQLQuery.zig

@@ -16,19 +16,17 @@ use bun_ptr::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptional};
 // C++ buffer with `mi_free` directly.
 
 // ──────────────────────────────────────────────────────────────────────────
-// The Zig file defines a family of "Bindgen*" comptime structs that all share
-// the same shape: associated `ZigType`/`ExternType` plus `convertFromExtern`,
-// and optionally `OptionalZigType`/`OptionalExternType`/`convertOptionalFromExtern`.
-// In Rust this is a trait. `@hasDecl(Child, "OptionalExternType")` (structural
-// duck-typing) becomes a separate trait that a `Child` may opt into.
+// A `Bindgen` adapter supplies associated `ZigType`/`ExternType` plus
+// `convert_from_extern`; a bespoke optional representation is a separate
+// trait that a `Child` may opt into.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait Bindgen {
     type ZigType;
     type ExternType;
 
-    /// `true` when `ZigType` and `ExternType` are layout-identical (Zig's
-    /// `Child.ZigType == Child.ExternType` test). Enables `BindgenArray`'s
+    /// `true` when `ZigType` and `ExternType` are layout-identical.
+    /// Enables `BindgenArray`'s
     /// allocation-reuse fast path. Defaults to `false`; override per adapter.
     const SAME_REPR: bool = false;
 
@@ -37,7 +35,6 @@ pub trait Bindgen {
 
 /// Implemented by `Bindgen` types that have a bespoke "optional" representation
 /// (e.g. a nullable pointer) instead of the default `ExternTaggedUnion` wrapper.
-/// Mirrors Zig's `@hasDecl(Child, "OptionalExternType")` checks.
 pub trait BindgenOptionalRepr: Bindgen {
     type OptionalZigType;
     type OptionalExternType;
@@ -85,7 +82,7 @@ impl Bindgen for BindgenStrongAny {
 
     fn convert_from_extern(extern_value: Self::ExternType) -> Self::ZigType {
         // SAFETY: bindgen contract — C++ passes a freshly-allocated Strong handle
-        // whose ownership is transferred to Zig/Rust here.
+        // whose ownership is transferred to Rust here.
         unsafe { Strong::adopt(extern_value.expect("non-null")) }
     }
 }
@@ -142,8 +139,7 @@ impl<Child: Bindgen> Bindgen for BindgenOptional<Child> {
     }
 }
 
-/// Explicit wrapper for children that DO define a custom optional repr
-/// (the `@hasDecl` == true branch in Zig).
+/// Explicit wrapper for children that DO define a custom optional repr.
 pub struct BindgenOptionalCustom<Child>(PhantomData<Child>);
 
 impl<Child: BindgenOptionalRepr> Bindgen for BindgenOptionalCustom<Child> {
@@ -190,9 +186,7 @@ impl BindgenOptionalRepr for BindgenString {
 // ──────────────────────────────────────────────────────────────────────────
 // BindgenUnion / ExternTaggedUnion / ExternUnion
 //
-// Zig builds these via `@typeInfo` / `@Type` over a `[]const type` slice —
-// pure comptime reflection with no Rust equivalent. The Rust side must be
-// generated per arity (or by a proc-macro from the bindgen codegen).
+// These are generated per arity (or by a proc-macro from the bindgen codegen).
 // ──────────────────────────────────────────────────────────────────────────
 
 // The bindgen TS codegen emits a concrete `enum` + `#[repr(C)]` union pair
@@ -202,8 +196,7 @@ pub struct BindgenUnion;
 
 /// `extern struct { data: ExternUnion(field_types), tag: u8 }`
 ///
-/// Zig builds the inner untagged `extern union` from a comptime type list via
-/// `@Type`. We provide fixed-arity instantiations; the 2-ary case is the only
+/// We provide fixed-arity instantiations; the 2-ary case is the only
 /// one used directly in this file (by `BindgenOptional`). Higher arities are
 /// emitted by codegen alongside their consumers.
 #[repr(C)]
@@ -364,7 +357,7 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
 
 #[repr(C)]
 pub struct ExternArrayList<Child> {
-    // Zig `?[*]Child` — single-word nullable pointer. `Option<*mut T>` has no niche
+    // Single-word nullable pointer. `Option<*mut T>` has no niche
     // (two words) and would break the C ABI; use raw `*mut T` and check `.is_null()`.
     pub data: *mut Child,
     pub length: c_uint,

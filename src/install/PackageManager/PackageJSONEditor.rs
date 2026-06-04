@@ -42,8 +42,7 @@ fn arena_dup<'a>(arena: &'a bun_alloc::Arena, bytes: &[u8]) -> &'a [u8] {
 /// Shallow-copy a `G::Property` for the JSON-editing path. Only `key`/`value`
 /// (both `Option<Expr>`, `Copy`) are populated by the JSON parser; the rest
 /// (`ts_decorators`, `class_static_block`, …) are always default for parsed
-/// `package.json` and would be discarded by Zig's bitwise `@memcpy` + arena
-/// reset anyway.
+/// `package.json`.
 #[inline]
 fn copy_property(p: &G::Property) -> G::Property {
     G::Property {
@@ -64,8 +63,7 @@ pub(crate) fn edit_patched_dependencies(
     let mut patched_dependencies = E::Object::default();
     if let Some(query) = package_json.as_property(b"patchedDependencies") {
         if let bun_ast::ExprData::EObject(obj) = &query.expr.data {
-            // Zig dereferences `query.expr.data.e_object.*` to bit-copy the whole
-            // E.Object — preserve the formatting fields so the printed
+            // Preserve the formatting fields so the printed
             // `patchedDependencies` keeps its original single-line / brace layout.
             patched_dependencies.is_single_line = obj.is_single_line;
             patched_dependencies.close_brace_loc = obj.close_brace_loc;
@@ -252,7 +250,7 @@ pub(crate) fn edit_update_no_args(
     // is to always avoid the store
     let _guard = ExprDisabler::scope();
 
-    // Zig: `const allocator = manager.allocator;` — process-lifetime arena for AST
+    // Process-lifetime arena for AST
     // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
     // `arena` is a disjoint-field borrow held across
     // the `&mut manager.updating_packages` accesses below.
@@ -535,7 +533,7 @@ pub(crate) fn edit_update_no_args(
 /// if options.add_trusted_dependencies is true, gets list from PackageManager.trusted_deps_to_add_to_package_json
 pub(crate) fn edit(
     manager: &mut PackageManager,
-    // Zig `*[]UpdateRequest` — pointer-to-slice whose `.len` is shrunk in place.
+    // Pointer-to-slice whose `.len` is shrunk in place.
     updates: &mut &mut [UpdateRequest],
     current_package_json: &mut Expr,
     dependency_list: &[u8],
@@ -546,7 +544,7 @@ pub(crate) fn edit(
     // is to always avoid the store
     let _guard = ExprDisabler::scope();
 
-    // Zig: `const allocator = manager.allocator;` — process-lifetime arena for AST
+    // Process-lifetime arena for AST
     // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
     // `arena` is a disjoint-field borrow held across
     // the `&mut manager.{updating_packages,trusted_deps_to_add_to_package_json}` accesses below.
@@ -631,13 +629,10 @@ pub(crate) fn edit(
                                                     break 'add_packages_to_update;
                                                 }
 
-                                                // The Zig original leaves `entry.value_ptr.*`
-                                                // undefined across the `npm:`-alias bailout
-                                                // below (Zig:435), which is later read by
-                                                // `fetchSwapRemove` — UB. `get_or_put` here
-                                                // already default-initializes the slot, so
-                                                // `found_existing` semantics match Zig and the
-                                                // bailout path is well-defined.
+                                                // `get_or_put` default-initializes the slot,
+                                                // so the `npm:`-alias bailout path below
+                                                // (later read by `fetchSwapRemove`) is
+                                                // well-defined.
                                                 let mut is_alias = false;
                                                 if strings::trim(
                                                     &version_literal_owned,
@@ -686,7 +681,7 @@ pub(crate) fn edit(
                                             if i < last {
                                                 updates.swap(i, last);
                                             }
-                                            // Zig: `updates.*.len -= 1;` — shrink the slice header.
+                                            // Shrink the slice header.
                                             *updates = &mut core::mem::take(updates)[..last];
                                             remaining -= 1;
                                             continue 'loop_;
@@ -845,7 +840,7 @@ pub(crate) fn edit(
                         // Duplicate dependency (e.g., "react" in both "dependencies" and
                         // "optionalDependencies"). Remove the old dependency.
                         new_dependencies[k] = G::Property::default();
-                        // Zig: `items.len -= 1` (no shift) — drop the trailing slot.
+                        // Drop the trailing slot (no shift).
                         let new_len = new_dependencies.len() - 1;
                         new_dependencies.truncate(new_len);
                     }
@@ -880,9 +875,9 @@ pub(crate) fn edit(
                 break;
             }
 
-            // Zig:545 `defer ... bun.assert(request.e_string != null)` — there are no early-exit
-            // paths between the top of this `for` body and here, so a plain post-loop assert is
-            // equivalent to the deferred one (and avoids a `scopeguard` borrow conflict on
+            // There are no early-exit
+            // paths between the top of this `for` body and here, so a plain post-loop assert
+            // suffices (and avoids a `scopeguard` borrow conflict on
             // `request.e_string`).
             #[cfg(debug_assertions)]
             debug_assert!(request.e_string.is_some());
@@ -1086,7 +1081,7 @@ pub(crate) fn edit(
             //       loop) — backed by `manager.ast_arena`, which is process-lifetime; or
             //   (b) a pre-existing slot from the parsed `current_package_json` input tree
             //       (`value.expr.data.e_string()` / `v.data.e_string()` in the earlier
-            //       dependency-group scan; Zig:447 / Zig:467) — backed by the thread-local Expr
+            //       dependency-group scan) — backed by the thread-local Expr
             //       Store, which the *caller* guarantees stays live for the duration of `edit`
             //       (it owns the parsed tree).
             // Note: `ExprDisabler::scope()` at function entry is a debug guard that *forbids*
@@ -1095,8 +1090,7 @@ pub(crate) fn edit(
             // above only overwrite a Copy `Expr` handle; they never reset either arena. The Expr
             // tree references the slot via `StoreRef` (a Copy `NonNull`) and no `&`/`&mut`
             // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
-            // so this is the sole mutable borrow — matches the Zig original which stores
-            // `?*E.String` for this deferred-write pattern.
+            // so this is the sole mutable borrow.
             let e_string = unsafe { &mut *e_string };
             if request.package_id as usize >= resolutions.len()
                 || resolutions[request.package_id as usize].tag == resolution::Tag::Uninitialized
@@ -1138,10 +1132,6 @@ pub(crate) fn edit(
                             if let Some(entry) =
                                 manager.updating_packages.fetch_swap_remove(request.name)
                             {
-                                // Zig declares `alias_at_index` here and assigns it inside the
-                                // `version_literal` block but never reads it afterwards (dead
-                                // store, vestigial from the earlier `editUpdateNoArgs` copy).
-                                // The Rust port omits the variable entirely.
                                 let new_version: Vec<u8> = 'new_version: {
                                     let version_fmt = resolutions[request.package_id as usize]
                                         .npm()
@@ -1232,7 +1222,6 @@ pub(crate) fn edit(
                                     write!(&mut v, "^{}", version_fmt)
                                         .expect("infallible: in-memory write");
                                 }
-                                // PERF(port): was comptime bool dispatch — profile if hot
                                 v
                             };
 
@@ -1270,5 +1259,3 @@ pub(crate) fn edit(
 }
 
 const TRUSTED_DEPENDENCIES_STRING: &[u8] = b"trustedDependencies";
-
-// ported from: src/install/PackageManager/PackageJSONEditor.zig

@@ -34,9 +34,8 @@ impl URLSearchParams {
     }
 
     pub fn to_string<Ctx>(&mut self, ctx: &mut Ctx, callback: fn(ctx: &mut Ctx, str: ZigString)) {
-        // Reshaped from Zig — Zig captured `callback` at comptime so the C trampoline
-        // only needed `ctx` through the void*. Rust cannot take a fn pointer as a const
-        // generic, so pack (ctx, callback) on the stack and pass that instead.
+        // A fn pointer cannot be a const generic, so pack (ctx, callback) on the
+        // stack and pass the pair through the C trampoline's void* context.
         struct Wrap<'a, Ctx> {
             ctx: &'a mut Ctx,
             callback: fn(&mut Ctx, ZigString),
@@ -58,5 +57,3 @@ impl URLSearchParams {
         URLSearchParams__toString(self, (&raw mut w).cast::<c_void>(), cb::<Ctx>);
     }
 }
-
-// ported from: src/jsc/URLSearchParams.zig

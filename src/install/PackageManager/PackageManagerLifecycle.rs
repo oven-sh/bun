@@ -35,7 +35,6 @@ pub struct LifecycleScriptTimeLog {
 }
 
 pub struct LifecycleScriptTimeLogEntry {
-    // Zig borrowed the lockfile string buffer (`string`). The Rust
     // `LifecycleScriptSubprocess.package_name` is owned (`Box<[u8]>`) and freed
     // on `destroy`, so the log entry must own its copy to avoid a dangling
     // borrow. The list is at most a few dozen entries per install.
@@ -102,11 +101,10 @@ impl PackageManager {
         let _ = offset; // resize already fills [offset..] with Unknown
     }
 
-    /// Zig `setPreinstallState(this, package_id, lockfile, value)` — the
-    /// separate `lockfile` parameter only feeds `lockfile.packages.len` into
-    /// `ensurePreinstallStateListCapacity`. Every Rust caller passes
-    /// `self.lockfile` (or an alias of it), which would alias `&mut self`; the
-    /// parameter is dropped here and `self.lockfile` is read directly to keep
+    /// A separate `lockfile` parameter would only feed `lockfile.packages.len` into
+    /// `ensurePreinstallStateListCapacity`. Every caller passes
+    /// `self.lockfile` (or an alias of it), which would alias `&mut self`;
+    /// `self.lockfile` is read directly instead to keep
     /// borrowck happy.
     pub fn set_preinstall_state(&mut self, package_id: PackageID, value: PreinstallState) {
         let count = self.lockfile.packages.len();
@@ -121,9 +119,8 @@ impl PackageManager {
         self.preinstall_state[package_id as usize]
     }
 
-    /// Zig `determinePreinstallState(manager, pkg, lockfile, …)` — the
-    /// separate `lockfile` parameter is always `manager.lockfile` at every call
-    /// site in the Rust port; collapsed onto `self.lockfile` to avoid the
+    /// A separate `lockfile` parameter would always be `manager.lockfile` at every call
+    /// site; collapsed onto `self.lockfile` to avoid the
     /// `&mut self` / `&self.lockfile` aliasing borrowck rejects.
     pub fn determine_preinstall_state(
         &mut self,
@@ -144,7 +141,6 @@ impl PackageManager {
                     if self.lockfile.patched_dependencies.len() == 0 {
                         break 'brk None;
                     }
-                    // PERF(port): was stack-fallback (std.heap.stackFallback(1024, ...))
                     let mut name_and_version: Vec<u8> = Vec::new();
                     write!(
                         &mut name_and_version,
@@ -168,8 +164,7 @@ impl PackageManager {
                     else {
                         break 'brk None;
                     };
-                    // Zig: `defer out_name_and_version_hash.* = name_and_version_hash;`
-                    // Runs on every exit path after this point.
+                    // `*out_name_and_version_hash` is set on every exit path after this point.
                     if patched_dep.patchfile_hash_is_null {
                         *out_name_and_version_hash = Some(name_and_version_hash);
                         self.set_preinstall_state(pkg.meta.id, PreinstallState::CalcPatchHash);
@@ -245,7 +240,7 @@ impl PackageManager {
                                  Bun. Please file a GitHub issue."
                             )
                         });
-                    // Zig: `allocator.dupeZ(u8, folder_path[..idx])` — owned NUL-terminated copy.
+                    // Owned NUL-terminated copy.
                     let non_patched_path = ZBox::from_bytes(&folder_path.as_bytes()[..idx]);
                     if directories::is_folder_in_cache(self, &non_patched_path) {
                         self.set_preinstall_state(pkg.meta.id, PreinstallState::ApplyPatch);
@@ -364,7 +359,7 @@ impl PackageManager {
         // need to clone because this is a copy before Lockfile.cleanWithLogger
         let name = root_package.name.slice(buf);
 
-        // Zig: `bun.AbsPath(.{ .sep = .auto })` — `AutoAbsPath` is the SEP=auto alias.
+        // `AutoAbsPath` is the SEP=auto alias.
         let mut top_level_dir = AutoAbsPath::init_top_level_dir();
         // `defer top_level_dir.deinit()` — handled by Drop
 
@@ -432,7 +427,7 @@ impl PackageManager {
         // shared borrow does not span it.
         let original_path: Vec<u8> = script_env.get(b"PATH").unwrap_or(b"").to_vec();
 
-        // Zig: `bun.EnvPath(.{})` — `EnvPathOptions` is currently fieldless.
+        // `EnvPathOptions` is currently fieldless.
         let mut path = EnvPath::init_capacity(
             original_path.len() + 1 + b"node_modules/.bin".len() + cwd.len() + 1,
         )?;
@@ -452,9 +447,7 @@ impl PackageManager {
         path.append(original_path.as_slice())?;
         script_env.put(b"PATH", path.slice())?;
 
-        // Zig: `try script_env.createNullDelimitedEnvMap(this.allocator)` —
-        // allocated with the manager-lifetime allocator and never freed in this
-        // scope; ownership transfers to `LifecycleScriptSubprocess`, which
+        // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the
         // owning `NullDelimitedEnvMap` by value so its `K=V\0` buffers outlive
         // this stack frame (freed by the subprocess's `Drop`).
@@ -571,9 +564,8 @@ fn add_dependencies_to_set(
 use bun_install::LogLevel;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Free-function re-export surface — Zig declares these at file scope with an
-// explicit `*PackageManager` first param. The `impl PackageManager` bodies
-// above are the canonical port; these thin shims keep the
+// Free-function re-export surface. The `impl PackageManager` bodies
+// above are canonical; these thin shims keep the
 // `pub use lifecycle::{...}` re-exports in `PackageManager.rs` resolving the
 // same way `PackageManagerDirectories.rs` / `PackageManagerEnqueue.rs` do.
 // ──────────────────────────────────────────────────────────────────────────
@@ -650,5 +642,3 @@ pub fn find_trusted_dependencies_from_update_requests(
 ) -> ArrayHashMap<TruncatedPackageNameHash, Box<[u8]>> {
     this.find_trusted_dependencies_from_update_requests()
 }
-
-// ported from: src/install/PackageManager/PackageManagerLifecycle.zig

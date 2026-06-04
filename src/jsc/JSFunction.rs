@@ -18,8 +18,8 @@ pub enum ImplementationVisibility {
 
 /// In WebKit: Intrinsic.h
 //
-// Zig: `enum(u8) { none, _ }` — non-exhaustive; any u8 is a valid bit pattern,
-// so a Rust `#[repr(u8)] enum` would be UB for unknown values. Use a newtype.
+// Non-exhaustive — any u8 is a valid bit pattern, so a Rust `#[repr(u8)]`
+// enum would be UB for unknown values. Use a newtype.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Intrinsic(u8);
@@ -95,5 +95,3 @@ impl JSFunction {
         }
     }
 }
-
-// ported from: src/jsc/JSFunction.zig

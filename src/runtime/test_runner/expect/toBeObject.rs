@@ -10,7 +10,7 @@ impl Expect {
         frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let this = self;
-        // Zig: `defer this.postMatch(globalThis);` — wrap the body in an inner
+        // Wrap the body in an inner
         // closure and call `post_match` after it returns, so every exit path
         // (incl. `?` early-returns) is covered without a raw `*mut Expect`.
         let result = (|| -> JsResult<JSValue> {
@@ -26,7 +26,6 @@ impl Expect {
             return Ok(this_value);
         }
 
-        // Zig: `defer formatter.deinit();` — handled by Drop.
         let mut formatter = super::make_formatter(global);
         let received = value.to_fmt(&mut formatter);
 
@@ -57,4 +56,3 @@ impl Expect {
     }
 }
 
-// ported from: src/test_runner/expect/toBeObject.zig

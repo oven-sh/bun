@@ -22,9 +22,9 @@ use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 // symbol scope assignment). `files_in_order` is the chunk's own file list;
 // without code-splitting, files are partitioned across chunks so per-row
 // writes are disjoint. With code-splitting a `source_index` may appear in
-// multiple chunks — the Zig original has the same overlap; the writes are
+// multiple chunks; the writes are
 // idempotent (`declared_symbols` flag set, scope-member sort) so the race is
-// benign there but is still a Stacked Borrows hazard here. Mitigation: never
+// benign but is still a Stacked Borrows hazard. Mitigation: never
 // materialize `&mut LinkerContext` (would assert whole-context exclusivity
 // across N tasks); take `*mut LinkerContext` raw, deref to `&LinkerContext`
 // for reads, and access SoA columns via `split_raw()` root-provenance
@@ -100,8 +100,7 @@ pub unsafe fn rename_symbols_in_chunk(
         )
     };
 
-    // `symbol::Map` is not `Clone`/`Copy`; Zig passed the struct
-    // (slice header) by value. Build a non-owning shallow view via
+    // `symbol::Map` is not `Clone`/`Copy`. Build a non-owning shallow view via
     // `from_bump_slice` so the renamer's `Map` does not free graph storage on
     // drop.
     // SAFETY: `c.graph.symbols` outlives the returned `ChunkRenamer` (both are
@@ -147,7 +146,6 @@ pub unsafe fn rename_symbols_in_chunk(
             count += item.len() as u32;
         }
 
-        // PERF(port): Zig pre-set len and filled via slice writes; using push() here
         let mut list: Vec<StableRef> = Vec::with_capacity(count as usize);
         let stable_source_indices = c.graph.stable_source_indices.slice();
         for item in imports_from_other_chunks {
@@ -280,7 +278,6 @@ pub unsafe fn rename_symbols_in_chunk(
         r.add_top_level_symbol(stable_ref.r#ref);
     }
 
-    // Zig used `r.temp_arena` for this list; arena param dropped
     let mut sorted: Vec<u32> = Vec::new();
 
     for &source_index in files_in_order {
@@ -413,7 +410,6 @@ pub unsafe fn rename_symbols_in_chunk(
                     &mut sorted,
                 );
             }
-            // Zig: `@TypeOf(r.number_scope_pool.hive.used).initEmpty()`.
             r.number_scope_pool.hive.used = bun_collections::hive_array::HiveBitSet::init_empty();
         }
     }
@@ -425,4 +421,3 @@ pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
 
-// ported from: src/bundler/linker_context/renameSymbolsInChunk.zig

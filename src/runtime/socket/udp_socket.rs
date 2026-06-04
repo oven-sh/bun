@@ -28,7 +28,7 @@ use crate::socket::socket_address::inet::{self, INET6_ADDRSTRLEN, sockaddr_in, s
 
 bun_output::declare_scope!(UdpSocket, visible);
 
-/// Local shim for Zig `bun.sys.Maybe(void).errnoSys(rc, tag)` — `bun_sys::Result`
+/// Local errno-classification shim — `bun_sys::Result`
 /// is a plain `core::result::Result` alias in Rust and has no associated
 /// `errno_sys` constructor.
 ///
@@ -37,7 +37,7 @@ bun_output::declare_scope!(UdpSocket, visible);
 /// negative EAI codes from `connect` — is "not a libc errno", so callers
 /// handle it themselves).
 ///
-/// Windows semantics (src/runtime/node.zig:227-233): for any non-NTSTATUS
+/// Windows semantics: for any non-NTSTATUS
 /// integer `rc`, `if (rc != 0) return null` — i.e. *every* non-zero rc
 /// (including `-1` / `SOCKET_ERROR`) falls through to the caller's own EAI /
 /// WSA handling rather than synthesising an errno. This matters for the
@@ -51,9 +51,8 @@ fn errno_sys(rc: c_int, tag: bun_sys::Tag) -> Option<bun_sys::Error> {
         if rc != 0 {
             return None;
         }
-        // rc == 0 → fall through to `sys.getErrno(rc)` in Zig, which on
-        // Windows reads CRT `_errno()`. Zig then matches `.SUCCESS => null`,
-        // so a zero errno must still yield `None`.
+        // rc == 0 → read the CRT `_errno()`;
+        // a zero errno must still yield `None`.
         let errno_val = bun_sys::last_errno();
         if errno_val == 0 {
             return None;
@@ -343,7 +342,7 @@ impl UDPSocketConfig {
             ..Default::default()
         };
 
-        // errdefer config.deinit() — Drop on `config` handles this on `?` paths.
+        // `config` cleanup: Drop handles this on `?` paths.
 
         if let Some(socket) = options.get_truthy(global_this, "socket")? {
             if !socket.is_object() {
@@ -436,10 +435,10 @@ struct ConnectInfo {
     port: u16,
 }
 
-/// `jsc.Codegen.JSUDPSocket` — `.classes.ts` cached accessors.
+/// `.classes.ts` codegen cached accessors.
 ///
-/// `values: ["on_data", "on_drain", "on_error"]` (GC-tracked WriteBarrier slots
-/// — Zig: `js.gc.on_*.{get,set}`) plus the `cache: true` getters
+/// `values: ["on_data", "on_drain", "on_error"]` (GC-tracked WriteBarrier slots)
+/// plus the `cache: true` getters
 /// `address` / `remoteAddress` (cleared on connect to invalidate the JS-side
 /// memo). All resolve to the C++ `UDPSocketPrototype__${prop}{Get,Set}CachedValue`
 /// shims via [`bun_jsc::codegen_cached_accessors!`].
@@ -464,7 +463,7 @@ pub struct UDPSocket {
     pub loop_: *mut uws::Loop,
 
     // Read-only back-reference to the owning JS global; the VM/global strictly
-    // outlives every socket it creates (see Zig spec: `globalThis: *JSGlobalObject`).
+    // outlives every socket it creates.
     pub global_this: BackRef<JSGlobalObject>,
     pub this_value: JsCell<JsRef>,
 
@@ -517,7 +516,7 @@ impl UDPSocket {
         // borrow — every mutated field is `Cell`/`JsCell`.
         let this = unsafe { &*this_ptr };
 
-        // errdefer { closed = true; close socket; downgrade this_value }
+        // Error-path guard: { closed = true; close socket; downgrade this_value }
         // Release the strong reference so the JS wrapper can be garbage
         // collected, which will in turn call finalize() to free this struct.
         // Without this, failed config parsing or bind would leave the wrapper
@@ -640,7 +639,7 @@ impl UDPSocket {
                 .set(Some(ConnectInfo { port: connect.port }));
         }
 
-        // Disarm errdefer.
+        // Disarm the error-path guard.
         scopeguard::ScopeGuard::into_inner(guard);
 
         this.poll_ref.with_mut(|p| p.ref_(bun_io::js_vm_ctx()));
@@ -749,9 +748,7 @@ impl UDPSocket {
         }
 
         let enabled = arguments[0].to_boolean();
-        // Spec: udp_socket.zig:424 uses bare `.?`, but the same file's
-        // `setAnyTTL` (zig:593) / `setMembership` (zig:450) guard with
-        // `orelse throw` — on Windows the Rust port can observe
+        // On Windows we can observe
         // `closed=false && socket=None` here (panic seen in
         // test-dgram-multicast-loopback.js). Throw EBADF to match the
         // `closed` branch above instead of panicking.
@@ -1011,11 +1008,10 @@ impl UDPSocket {
             )));
         }
 
-        // Zig spec uses `var addr: sockaddr.storage = undefined;`. `parse_addr`
-        // only writes the leading sockaddr_in/in6 prefix (≤28 bytes), so the
-        // remaining 100+ bytes stay uninitialized. Zig permits that (only
-        // written fields are read), but in Rust producing a `sockaddr_storage`
-        // value via `assume_init()` from a partially-initialized `MaybeUninit`
+        // `parse_addr` only writes the leading sockaddr_in/in6 prefix (≤28
+        // bytes), leaving the remaining 100+ bytes uninitialized; producing a
+        // `sockaddr_storage` value via `assume_init()` from a
+        // partially-initialized `MaybeUninit`
         // is UB. Zero-initialize instead — matches `set_membership` and is
         // semantically equivalent (the C side reads only `ss_family` + the
         // address-family-specific fields `parse_addr` populated).
@@ -1078,7 +1074,6 @@ impl UDPSocket {
         callframe: &CallFrame,
         function: fn(&mut uws::udp::Socket, i32) -> c_int,
     ) -> JsResult<JSValue> {
-        // PERF(port): was comptime monomorphization — profile if hot.
         if this.closed.get() {
             return Err(global_this.throw_value(
                 bun_sys::Error::from_code_int(
@@ -1199,7 +1194,6 @@ impl UDPSocket {
 
         let len = if connected { array_len } else { array_len / 3 };
 
-        // PERF(port): was arena bulk-free — profile if hot.
         let mut payload_vals: Vec<JSValue> = Vec::with_capacity(len);
         payload_vals.resize(len, JSValue::ZERO);
         let mut payloads: Vec<*const u8> = vec![core::ptr::null(); len];
@@ -1286,8 +1280,8 @@ impl UDPSocket {
         // pointers stay valid. An ArrayBuffer detached during phase 1 now
         // reports a zero-length slice rather than a dangling pointer.
         let empty: &'static [u8] = b"";
-        // Zig kept `ZigString.Slice` lifetimes in the arena; here we collect
-        // them into a Vec so the borrowed bytes live until `socket.send()`.
+        // Collect the slices into a Vec so the borrowed bytes live until
+        // `socket.send()`.
         let mut string_slices: Vec<ZigStringSlice> = Vec::with_capacity(len);
         for (slice_idx, val) in payload_vals.iter().enumerate() {
             // Hoisted so the returned `slice()` borrow lives past the `'brk` block
@@ -1297,7 +1291,7 @@ impl UDPSocket {
             let slice: &[u8] = 'brk: {
                 if let Some(ref array_buffer) = array_buffer {
                     // `byteSlice()` returns `&.{}` for a detached view; its
-                    // `.ptr` is Zig's zero-length sentinel which the kernel
+                    // `.ptr` is a zero-length sentinel which the kernel
                     // rejects with EFAULT even though `iov_len == 0`. Hand
                     // sendmmsg a valid static address instead.
                     if array_buffer.is_detached() {
@@ -1474,8 +1468,7 @@ impl UDPSocket {
                         #[cfg(windows)]
                         {
                             // Windows: zone identifier is a numeric scope id, not an
-                            // interface name (`fe80::1%5`). Mirrors Zig
-                            // `str.substring(percent+1).toInt32()` + `std.math.cast(u32, ..)`.
+                            // interface name (`fe80::1%5`).
                             // toInt32 → BunString__toInt32 → WTF::parseIntegerAllowingTrailingJunk<int32_t>:
                             // skip leading ASCII whitespace, optional '-' (no '+'), parse leading
                             // decimal digits, ignore trailing junk; nullopt on no-digits/overflow.
@@ -1586,7 +1579,7 @@ impl UDPSocket {
             // `s->on_close(s)`), which re-derives `&UDPSocket` from the uws
             // user pointer. R-2: with `&self` + `Cell`/`JsCell` the sibling
             // shared borrow is sound; the (idempotent) downgrade is hoisted
-            // because `on_close` repeats it. Spec: udp_socket.zig:915-920.
+            // because `on_close` repeats it.
             this.this_value.with_mut(|r| r.downgrade());
             // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
             uws::udp::Socket::opaque_mut(socket).close();
@@ -1836,8 +1829,7 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
         }
 
         if USE_WSA {
-            // Zig: `bun.windows.WSAGetLastError()` returns `?SystemErrno`; the
-            // Rust wrapper (src/sys/windows/mod.rs) already maps `SystemErrno`
+            // The wrapper (src/sys/windows/mod.rs) already maps `SystemErrno`
             // → `E` for us, so `e` is `bun_sys::E` here.
             if let Some(e) = bun_sys::windows::WSAGetLastError() {
                 if e != bun_sys::E::SUCCESS {
@@ -1859,5 +1851,3 @@ fn get_us_error<const USE_WSA: bool>(res: c_int, tag: bun_sys::Tag) -> Option<bu
         errno_sys(res, tag)
     }
 }
-
-// ported from: src/runtime/socket/udp_socket.zig

@@ -22,8 +22,8 @@ use bun_url::URL;
 use crate::webcore::s3::list_objects;
 
 // The result/options structs below carry borrowed slices that are valid only for the
-// duration of the callback invocation (Zig comments say "not owned and need to be copied if used
-// after this callback"). They take an explicit `<'a>` because they are ephemeral stack-only
+// duration of the callback invocation (not owned; they must be copied if used
+// after the callback). They take an explicit `<'a>` because they are ephemeral stack-only
 // callback payloads (never heap-stored) — the borrow lifetime accurately models ownership.
 
 #[derive(Default)]
@@ -108,11 +108,11 @@ pub enum S3PartResult<'a> {
 }
 
 pub struct S3HttpSimpleTask {
-    // `http` is `MaybeUninit` because (a) Zig initialises it as `= undefined` and
-    // overwrites it later — `AsyncHTTP` contains `&'static [u8]` and `fn(...)` fields, so a
-    // zeroed/default value would be instant UB; and (b) Zig's `deinit` only calls
-    // `http.clearData()`, never a full destructor, and `httpCallback` does a no-drop bitwise
-    // overwrite. Wrapping in `MaybeUninit` lets us match those semantics exactly: write-without-
+    // `http` is `MaybeUninit` because (a) it is initialised late —
+    // `AsyncHTTP` contains `&'static [u8]` and `fn(...)` fields, so a
+    // zeroed/default value would be instant UB; and (b) `Drop` only calls
+    // `http.clear_data()`, never a full destructor, and `http_callback` does a no-drop bitwise
+    // overwrite. Wrapping in `MaybeUninit` makes both possible: write-without-
     // drop on assignment, and `clear_data()`-only in `Drop`. Invariant: `http` is initialised by
     // `execute_simple_s3_request` before the task pointer escapes, so every later access (in
     // `http_callback` / `Drop`) may `assume_init`.
@@ -136,8 +136,7 @@ pub struct S3HttpSimpleTask {
     pub proxy_url: Box<[u8]>,
     /// Owned copy of the request body. The HTTP thread reads the body slice
     /// concurrently for the lifetime of the request, so the task owns its own
-    /// copy instead of borrowing caller memory (Zig passed the caller's slice
-    /// with an implicit keep-alive contract).
+    /// copy instead of borrowing caller memory.
     pub body: Box<[u8]>,
     pub poll_ref: KeepAlive,
 }
@@ -146,8 +145,8 @@ impl Taskable for S3HttpSimpleTask {
     const TAG: TaskTag = task_tag::S3HttpSimpleTask;
 }
 
-// Zig only defaults `response_buffer`/`result`/`concurrent_task`; Rust's
-// `..Default::default()` requires the whole struct to be Default, so the remaining fields get
+// `..Default::default()` requires the whole struct to be Default, so beyond
+// `response_buffer`/`result`/`concurrent_task` the remaining fields get
 // inert placeholders that callers always overwrite (see client.rs / execute_simple_s3_request).
 impl Default for S3HttpSimpleTask {
     fn default() -> Self {
@@ -227,8 +226,7 @@ impl Callback {
     }
 }
 
-// Zig used `comptime error_type` and an enum const-generic. Stable Rust forbids
-// enum const params (`adt_const_params` is unstable), so this is a runtime parameter — the
+// `error_type` is a runtime parameter — the
 // branch is on an error path, no perf concern.
 #[derive(PartialEq, Eq, Clone, Copy)]
 enum ErrorType {
@@ -247,7 +245,6 @@ impl S3HttpSimpleTask {
         let mut message: &[u8] = b"an unexpected error has occurred";
         let mut has_error_code = false;
         if let Some(err) = self.result.fail {
-            // Zig: `code = @errorName(err)`; `bun_core::Error::name()` is the equivalent.
             code = err.name().as_bytes();
             has_error_code = true;
         } else if let Some(body) = &self.result.body {
@@ -318,8 +315,6 @@ impl S3HttpSimpleTask {
                     }
                 }
             }
-            // Zig precedence: `!has_error and status == 200 or status == 206`
-            // is `(!has_error && status == 200) || status == 206` — preserved verbatim.
             if (!has_error && status == 200) || status == 206 {
                 return Ok(false);
             }
@@ -341,8 +336,8 @@ impl S3HttpSimpleTask {
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn on_response(this: *mut Self) -> JsTerminatedResult<()> {
         // SAFETY: `this` was produced by `S3HttpSimpleTask::new` (heap::alloc) and ownership is
-        // reclaimed here exactly once via the ConcurrentTask `.manual_deinit` contract. Dropping
-        // `this` at scope exit replaces Zig's `defer this.deinit()`.
+        // reclaimed here exactly once via the ConcurrentTask `.manual_deinit` contract;
+        // `this` is dropped at scope exit.
         let mut this = unsafe { bun_core::heap::take(this) };
 
         if !this.result.is_success() {
@@ -380,8 +375,8 @@ impl S3HttpSimpleTask {
             Callback::ListObjects(callback) => match response.status_code {
                 200 => {
                     if let Some(body) = &this.result.body {
-                        // parse_s3_list_objects_result is now infallible (alloc-only
-                        // failure modes abort in Rust), so the Zig `catch` arm is unreachable.
+                        // parse_s3_list_objects_result is infallible (alloc-only
+                        // failure modes abort).
                         let success =
                             list_objects::parse_s3_list_objects_result(body.list.as_slice());
                         callback(
@@ -440,7 +435,7 @@ impl S3HttpSimpleTask {
         Ok(())
     }
 
-    /// this is the callback from the http.zig AsyncHTTP is always called from the HTTPThread
+    /// this is the AsyncHTTP callback and is always called from the HTTPThread
     ///
     /// # Safety
     /// `this` must be a live heap pointer produced by `S3HttpSimpleTask::new` and exclusively
@@ -462,22 +457,21 @@ impl S3HttpSimpleTask {
         // SAFETY: `result.body` (the only borrowed field) points at `this.response_buffer`, which
         // lives for the task's lifetime — extending to `'static` here is sound for self-reference.
         this.result = unsafe { result.detach_lifetime() };
-        // Zig does `this.http = async_http.*` (bitwise struct overwrite, no destructor
-        // on either side). `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header
-        // `EntryList`s), so a plain Rust `=` here would (a) drop the old `this.http`, freeing heap
+        // `AsyncHTTP` transitively owns Drop types (`HTTPClient`, header
+        // `EntryList`s), so a plain `=` here would (a) drop the old `this.http`, freeing heap
         // buffers that `*async_http` (a bitwise clone created by the HTTP thread) still aliases,
         // and (b) leave the http-thread side to drop them again → double-free. We instead write
-        // through `MaybeUninit` to suppress the LHS drop and match Zig's overwrite semantics
-        // exactly. Ownership of the inner heap data conceptually transfers here; the http-thread
-        // side must free only its outer allocation (TrivialDeinit), mirroring AsyncHTTP.zig.
+        // through `MaybeUninit` to suppress the LHS drop, doing a bitwise struct overwrite
+        // with no destructor on either side. Ownership of the inner heap data conceptually
+        // transfers here; the http-thread side must free only its outer allocation
+        // (TrivialDeinit).
         // SAFETY: `async_http` is a valid live pointer for the duration of this callback;
         // `this.http` was previously initialised in `execute_simple_s3_request`.
         unsafe { core::ptr::write(this.http.as_mut_ptr(), core::ptr::read(async_http)) };
-        // Zig's `this.response_buffer = async_http.response_buffer.*` is a no-op
-        // bitwise self-copy (`async_http.response_buffer == &this.response_buffer`). In Rust the
-        // equivalent `=` would drop the live Vec before re-installing a stale bitwise duplicate
-        // (UAF + double-free), so we simply omit it — `this.response_buffer` already holds the
-        // body.
+        // `async_http.response_buffer == &this.response_buffer`, so copying it back would be
+        // a self-assignment: the `=` would drop the live Vec before re-installing a stale
+        // bitwise duplicate (UAF + double-free), so we simply omit it —
+        // `this.response_buffer` already holds the body.
         if is_done {
             // compute the raw self-pointer before borrowing `this.concurrent_task`
             // to avoid a stacked-borrows / aliasing diagnostic on `*this`.
@@ -503,7 +497,7 @@ impl Drop for S3HttpSimpleTask {
         // Side effects beyond freeing owned fields (which Rust drops automatically):
         // - poll_ref.unref(vm)
         // - http.clearData()
-        // Owned-field frees from the Zig deinit (response_buffer, headers, sign_result, range,
+        // Owned-field frees (response_buffer, headers, sign_result, range,
         // proxy_url, result.certificate_info, result.metadata) are handled by their own Drop impls.
         // KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
         // the global hook (registered by crate::init) — same pattern as
@@ -513,12 +507,12 @@ impl Drop for S3HttpSimpleTask {
         ));
         // SAFETY: `http` is always initialised before the task pointer escapes (see
         // `execute_simple_s3_request`); `Drop` only runs via `on_response` after that point.
-        // Zig's `deinit` calls only `http.clearData()` and never runs a full AsyncHTTP destructor,
+        // Only `http.clear_data()` runs here — never a full AsyncHTTP destructor —
         // so we intentionally do NOT `assume_init_drop` here.
         let http = unsafe { self.http.assume_init_mut() };
         http.clear_data();
-        // Zig shared one EntryList allocation between task.headers / request_headers /
-        // client.header_entries; Rust `init` clones, so free the two copies clear_data() skips.
+        // `init` clones the EntryList into task.headers / request_headers /
+        // client.header_entries, so free the two copies clear_data() skips.
         http.request_headers = Default::default();
         http.client.header_entries = Default::default();
     }
@@ -593,7 +587,7 @@ pub(crate) fn execute_simple_s3_request(
     ) {
         Ok(r) => r,
         Err(sign_err) => {
-            // options.range drops here automatically (Zig: bun.default_allocator.free(range_))
+            // options.range drops here automatically
             drop(options.range);
             let error_code_and_message = get_sign_error_code_and_message(sign_err.into());
             callback.fail(
@@ -626,7 +620,7 @@ pub(crate) fn execute_simple_s3_request(
     };
 
     let task_ptr = S3HttpSimpleTask::new(S3HttpSimpleTask {
-        // Zig used `= undefined`; written below via `MaybeUninit::write` before any read.
+        // written below via `MaybeUninit::write` before any read.
         http: core::mem::MaybeUninit::uninit(),
         sign_result: result,
         callback_context,
@@ -656,8 +650,7 @@ pub(crate) fn execute_simple_s3_request(
     // SAFETY: lifetime extension — `url`, `headers_buf`, and `proxy_url` borrow from
     // heap-allocated fields of `*task` (sign_result.url / headers.buf / proxy_url) which the task
     // outlives. AsyncHTTP::init wants `'static` borrows because the HTTP thread reads them
-    // concurrently; they remain valid until `task` is dropped in `on_response`. The Zig source
-    // passed raw slices with the same ownership contract.
+    // concurrently; they remain valid until `task` is dropped in `on_response`.
     let url = URL::parse(unsafe { bun_ptr::detach_lifetime_ref(&*task.sign_result.url) });
     // SAFETY: same lifetime-extension invariant as `url` above — `task.headers.buf` is heap-owned
     // by `*task` and outlives the AsyncHTTP request.
@@ -708,5 +701,3 @@ pub(crate) fn execute_simple_s3_request(
     bun_http::HTTPThread::schedule(batch);
     Ok(())
 }
-
-// ported from: src/runtime/webcore/s3/simple_request.zig

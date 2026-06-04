@@ -36,8 +36,7 @@ pub struct Theme<'a> {
     /// `collectImageUrls` + the CLI entry point) so `emitImage` can
     /// send remote images through Kitty's `t=f` path. When null, http
     /// and https URLs fall through to the alt-text fallback.
-    // LIFETIMES.tsv: BORROW_PARAM. Zig type is
-    // `bun.StringHashMapUnmanaged([]const u8)` — keys are URL bytes,
+    // LIFETIMES.tsv: BORROW_PARAM. Keys are URL bytes,
     // values are file-path bytes.
     pub remote_image_paths: Option<&'a StringHashMap<Box<[u8]>>>,
     /// Base directory used to resolve relative image `src` paths. When
@@ -270,8 +269,7 @@ impl OutputBuffer {
         if self.oom {
             return;
         }
-        // PERF(port): was appendSlice with latched OOM — Vec::extend aborts
-        // on OOM under the global mimalloc allocator.
+        // Vec::extend aborts on OOM under the global mimalloc allocator.
         self.list.extend_from_slice(data);
     }
 
@@ -2532,7 +2530,6 @@ pub fn detect_kitty_graphics() -> bool {
 /// the reply with a short timeout. Raw mode is applied + restored
 /// around the read so the bytes don't echo to the user's terminal.
 fn probe_kitty_graphics() -> bool {
-    // Zig: `if (comptime !bun.Environment.isPosix) return false;`
     #[cfg(not(unix))]
     {
         return false;
@@ -2579,7 +2576,6 @@ fn probe_kitty_graphics() -> bool {
             events: bun_sys::posix::POLL_IN,
             revents: 0,
         }];
-        // bun.sys.poll has a Maybe variant Zig flags as incomplete — keep std.posix.poll.
         let ready = match bun_sys::posix::poll(&mut pfd, 80) {
             Ok(r) => r,
             Err(_) => return false,
@@ -2738,5 +2734,3 @@ pub fn render_to_ansi<'a>(
         core::mem::take(&mut renderer.out.list).into_boxed_slice(),
     ))
 }
-
-// ported from: src/md/ansi_renderer.zig

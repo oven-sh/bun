@@ -130,9 +130,8 @@ pub(crate) mod bridge {
             // slices point only at (a) the thread-local
             // `SHARED_REQUEST_HEADERS_BUF` static and (b) `self.header_buf`,
             // which is itself `&'static [u8]` — neither is tied to the `&mut
-            // self` borrow. Erasing to `'static` matches the Zig
-            // `buildRequest` (returns slices into module-static storage) and
-            // lets `ClientSession::attach` re-borrow `client` while the
+            // self` borrow. Erasing to `'static` lets
+            // `ClientSession::attach` re-borrow `client` while the
             // `Request` is still live. Same pattern as lib.rs `on_writable`.
             unsafe { self.build_request(body_len).detach_lifetime() }
         }
@@ -145,5 +144,3 @@ pub(crate) mod bridge {
         }
     }
 }
-
-// ported from: src/http/H2Client.zig

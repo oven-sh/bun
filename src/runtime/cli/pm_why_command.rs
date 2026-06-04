@@ -10,8 +10,7 @@ impl PmWhyCommand {
         pm: &mut PackageManager,
         positionals: &[&[u8]],
     ) -> Result<(), bun_core::Error> {
-        // Note: Zig `Command.Context` is `*ContextData` (a freely-aliased
-        // raw pointer). `bun pm` dispatch threads it here as `&Command::Context`,
+        // Note: `bun pm` dispatch threads the context here as `&Command::Context`,
         // but `WhyCommand::exec_from_pm` needs `&mut Command::Context` to reach
         // `ctx.log`. Reacquire the process-global handle (same pointee,
         // single-threaded CLI startup) rather than unsafely reborrowing `_ctx`.
@@ -20,5 +19,3 @@ impl PmWhyCommand {
         Ok(())
     }
 }
-
-// ported from: src/cli/pm_why_command.zig

@@ -1,7 +1,7 @@
 use core::convert::Infallible;
 use std::borrow::Cow;
 
-/// Duck-typed arg-iterator surface (Zig used `anytype`). Implemented by
+/// Arg-iterator surface. Implemented by
 /// `OsIterator` and `SliceIterator`; `ShellIterator` does not fit (fallible,
 /// owned results) and is used standalone.
 pub trait ArgIter<'a> {
@@ -20,7 +20,7 @@ impl ExampleArgIterator {
 }
 
 /// Pop the first element of `remain`, advancing the slice. Shared body for
-/// `SliceIterator::next` / `OsIterator::next` (the .zig spec duplicates them).
+/// `SliceIterator::next` / `OsIterator::next`.
 #[inline]
 fn pop_first<'a>(remain: &mut &'a [&'a [u8]]) -> Option<&'a [u8]> {
     if remain.is_empty() {
@@ -96,10 +96,8 @@ impl ArgIter<'static> for OsIterator {
     }
 }
 
-/// Process argv as a `&'static` slice of `&'static [u8]`.
-///
-/// Zig: `bun.argv: [][:0]const u8` — the process-global view that includes
-/// `BUN_OPTIONS` injection.
+/// Process argv as a `&'static` slice of `&'static [u8]` — the process-global
+/// view that includes `BUN_OPTIONS` injection.
 ///
 /// This used to project `&ZStr → &[u8]` through a `OnceLock<Vec<&[u8]>>`,
 /// which (a) allocated a Vec on the `--version` startup path and (b) emitted a
@@ -124,8 +122,8 @@ pub enum ShellIteratorError {
     DanglingEscape,
     #[error("QuoteNotClosed")]
     QuoteNotClosed,
-    // Zig's error union also included `mem.Allocator.Error` (OutOfMemory). Vec aborts
-    // on OOM under the global mimalloc allocator, so that variant does not exist here.
+    // There is no OutOfMemory variant: Vec aborts
+    // on OOM under the global mimalloc allocator.
 }
 
 bun_core::named_error_set!(ShellIteratorError);
@@ -161,8 +159,7 @@ impl<'a> ShellIterator<'a> {
         let mut start: usize = 0;
         let mut state = State::SkipWhitespace;
 
-        // Copy the slice ref so we can reassign `self.str` before returning
-        // (Zig used `defer iter.str = ...`).
+        // Copy the slice ref so we can reassign `self.str` before returning.
         let s: &'a [u8] = self.str;
 
         for (i, &c) in s.iter().enumerate() {
@@ -278,8 +275,8 @@ impl<'a> ShellIterator<'a> {
                 // The state we end up when after the escape character (`\`). All these
                 // states do is transition back into the previous state.
                 // TODO: Are there any escape sequences that does transform the second
-                //       character into something else? For example, in Zig, `\n` is
-                //       transformed into the line feed ascii character.
+                //       character into something else (e.g. `\n` into the line feed
+                //       ascii character)?
                 State::NoQuoteEscape => {
                     state = State::NoQuote;
                 }
@@ -314,7 +311,6 @@ impl<'a> ShellIterator<'a> {
         // the rest we have to the list and return that.
         if !list.is_empty() {
             list.extend_from_slice(res);
-            // PERF(port): was arena-backed `toOwnedSlice()`.
             return Ok(Some(Cow::Owned(list)));
         }
         Ok(Some(Cow::Borrowed(res)))
@@ -337,8 +333,8 @@ mod tests {
     }
 
     fn test_shell_iterator_ok(str: &[u8], allocations: usize, expect: &[&[u8]]) {
-        // Zig used `testing.FailingAllocator` to count allocations. The Rust port
-        // has no allocator injection, but every allocating result surfaces as a
+        // There is no allocator injection to count allocations with,
+        // but every allocating result surfaces as a
         // `Cow::Owned`, so counting owned results checks the same property: the
         // borrowed (zero-copy) fast path is taken whenever possible.
         let mut owned_results: usize = 0;
@@ -433,5 +429,3 @@ mod tests {
         test_shell_iterator_err(b"a\\", ShellIteratorError::DanglingEscape);
     }
 }
-
-// ported from: src/clap/args.zig

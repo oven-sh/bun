@@ -16,4 +16,3 @@ impl AuthenticationState {
     }
 }
 
-// ported from: src/sql_jsc/postgres/AuthenticationState.zig

@@ -47,7 +47,7 @@ pub(crate) fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]
 
     // RGBA → LPQA, compositing transparent pixels onto the average so the DCT
     // doesn't see a black fringe.
-    // PERF(port): was `undefined` stack arrays — profile if it shows up on a hot path.
+    // PERF: heap-allocates the working buffers — profile if it shows up on a hot path.
     let mut l = vec![0.0f32; 100 * 100];
     let mut p = vec![0.0f32; 100 * 100];
     let mut q = vec![0.0f32; 100 * 100];
@@ -141,7 +141,6 @@ impl Default for Channel {
 /// the per-channel max so 4-bit packing is uniform across channels.
 fn dct(chan: &[f32], w: u32, h: u32, nx: u32, ny: u32) -> Channel {
     let mut c = Channel::default();
-    // PERF(port): was `undefined` stack array — profile if it shows up on a hot path.
     let mut fx = [0.0f32; 100];
     let mut cy: u32 = 0;
     while cy < ny {
@@ -238,7 +237,6 @@ pub fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
         i: off,
         hi: false,
     };
-    // PERF(port): was `undefined` stack arrays — profile if it shows up on a hot path.
     let mut l_ac = [0.0f32; 49];
     let mut p_ac = [0.0f32; 5];
     let mut q_ac = [0.0f32; 5];
@@ -368,5 +366,3 @@ impl<'a> NibbleReader<'a> {
 fn clamp8(v: f32) -> u8 {
     (v.clamp(0.0, 1.0) * 255.0) as u8
 }
-
-// ported from: src/runtime/image/thumbhash.zig

@@ -1,7 +1,7 @@
 //! The `is_fully_static(source_index)` function returns whether or not
 //! `source_index` imports a file with `"use client"`.
 //!
-//! TODO: Could we move this into the ReachableFileVisitor inside `bundle_v2.zig`?
+//! TODO: Could we move this into the ReachableFileVisitor inside `bundle_v2.rs`?
 
 use crate::mal_prelude::*;
 use bun_collections::{ArrayHashMap, AutoBitSet};
@@ -113,5 +113,3 @@ impl<'a> StaticRouteVisitor<'a> {
         result
     }
 }
-
-// ported from: src/bundler/linker_context/StaticRouteVisitor.zig

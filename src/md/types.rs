@@ -134,15 +134,14 @@ pub struct WikilinkDetail<'a> {
 
 /// Renderer interface. The parser calls these methods to produce output.
 //
-// Zig's `*anyopaque + *const VTable` manual fat-pointer is collapsed
-// into `&mut dyn RendererImpl`. LIFETIMES.tsv classified `ptr` as
+// A `&mut dyn RendererImpl` fat pointer. LIFETIMES.tsv classified `ptr` as
 // `&'a mut dyn RendererImpl` (BORROW_PARAM) and `vtable` as `&'static VTable`
 // (STATIC); the trait object encodes both.
 pub struct Renderer<'a> {
     pub ptr: &'a mut dyn RendererImpl,
 }
 
-/// Trait backing the `Renderer` fat pointer (was Zig `Renderer.VTable`).
+/// Trait backing the `Renderer` fat pointer.
 pub trait RendererImpl {
     fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()>;
     fn leave_block(&mut self, block_type: BlockType, data: u32) -> JsResult<()>;
@@ -235,8 +234,8 @@ pub struct Attribute<'a> {
     pub substr_types: &'a [SubstrType],
 }
 
-// Zig nests `SubstrType`/`SubstrOffset` inside `Attribute`; Rust has
-// no nested type defs in structs, so they are hoisted to module scope.
+// `SubstrType`/`SubstrOffset` belong conceptually to `Attribute` but Rust has
+// no nested type defs in structs, so they live at module scope.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum SubstrType {
@@ -327,8 +326,8 @@ pub struct Container {
 }
 
 /// Block flags stored in MD_BLOCK.
-// Zig `packed struct(u32)` with bool fields + u28 padding. Not every
-// field is `bool` (padding), so per PORTING.md this is a transparent newtype
+// Packed u32 with bool bits + 28 bits of padding. Not every
+// field is `bool` (padding), so this is a transparent newtype
 // with manual shift accessors rather than `bitflags!`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
@@ -433,7 +432,7 @@ pub struct Flags {
 }
 
 impl Flags {
-    // Private base mirroring the Zig field defaults so the named presets below
+    // Private base of field defaults so the named presets below
     // can use struct-update syntax in const context.
     const DEFAULTS: Flags = Flags {
         collapse_whitespace: false,
@@ -564,5 +563,3 @@ pub fn task_mark_from_data(data: u32) -> u8 {
 pub fn is_task_checked(task_mark: u8) -> bool {
     task_mark != 0 && task_mark != b' '
 }
-
-// ported from: src/md/types.zig

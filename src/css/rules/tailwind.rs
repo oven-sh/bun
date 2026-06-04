@@ -47,4 +47,3 @@ pub enum TailwindStyleName {
     Variants,
 }
 
-// ported from: src/css/rules/tailwind.zig

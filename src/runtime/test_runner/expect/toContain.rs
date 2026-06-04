@@ -27,8 +27,8 @@ impl Expect {
         expected.ensure_still_alive();
         let mut pass = false;
 
-        // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs match the Zig
-        // `*JSGlobalObject` / `*bool` fields and avoid a struct lifetime param.
+        // FFI/BACKREF: erased to *mut c_void for for_each userdata; raw ptrs
+        // avoid a struct lifetime param.
         struct ExpectedEntry {
             global: *const JSGlobalObject,
             expected: JSValue,
@@ -71,7 +71,7 @@ impl Expect {
             ) {
                 debug_assert!(!entry_.is_null());
                 // SAFETY: entry_ is &mut ExpectedEntry on the caller's stack, threaded through
-                // for_each as opaque userdata; non-null asserted above (Zig `entry_.?`).
+                // for_each as opaque userdata; non-null asserted above.
                 let entry = unsafe { bun_ptr::callback_ctx::<ExpectedEntry>(entry_) };
                 // SAFETY: entry.global was set from `std::ptr::from_ref(global)` on the caller's
                 // stack frame, which outlives the synchronous for_each this callback runs inside.
@@ -111,7 +111,6 @@ impl Expect {
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         if not {
-            // PERF(port): was comptime getSignature — would require `get_signature` to be `const fn` / use `const_format`.
             let signature = get_signature("toContain", "<green>expected<r>", true);
             return this.throw(
                 global,
@@ -127,7 +126,6 @@ impl Expect {
             );
         }
 
-        // PERF(port): was comptime getSignature — would require `get_signature` to be `const fn` / use `const_format`.
         let signature = get_signature("toContain", "<green>expected<r>", false);
         this.throw(
             global,
@@ -144,5 +142,3 @@ impl Expect {
         )
     }
 }
-
-// ported from: src/test_runner/expect/toContain.zig

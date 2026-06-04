@@ -146,8 +146,8 @@ pub(super) mod ffi {
         // ── EVP / EC ──────────────────────────────────────────────────────
         pub(crate) safe fn EVP_PKEY_id(pkey: &EVP_PKEY) -> c_int;
         pub(crate) safe fn EVP_PKEY_bits(pkey: &EVP_PKEY) -> c_int;
-        // Returns a +1 `EC_KEY*` (caller owns; the sole call site mirrors the
-        // Zig spec and intentionally leaks it). The only pointer arg is an
+        // Returns a +1 `EC_KEY*` (caller owns; the sole call site
+        // intentionally leaks it). The only pointer arg is an
         // opaque-ZST `&EVP_PKEY`, so the call itself has no precondition.
         pub(crate) safe fn EVP_PKEY_get1_EC_KEY(pkey: &EVP_PKEY) -> *mut EC_KEY;
         // Result is borrowed from `key`; opaque-ZST ref ⇒ no caller precondition.
@@ -211,7 +211,6 @@ pub(super) mod ffi {
 }
 use crate::node::StringOrBuffer;
 
-// In Zig this file is a mixin of free functions over `jsc.API.TLSSocket`.
 // The `#[bun_jsc::host_fn]` shims live on `NewSocket<SSL>` in `socket_body.rs`
 // and forward into these free helpers — keep them as plain `fn`s.
 // this file is `mod`-included from BOTH `socket/mod.rs` and
@@ -267,7 +266,7 @@ pub(super) fn set_servername(
         .get_zig_string(global)?
         .to_owned_slice()
         .into_boxed_slice();
-    // Drop replaces the old value (Zig manually freed `old`).
+    // Drop replaces the old value.
     this.server_name.set(Some(slice));
 
     let host = this.server_name.get().as_deref().unwrap();
@@ -732,7 +731,6 @@ pub(super) fn export_keying_material(
     if args.len > 2 {
         let context_arg = args.ptr[2];
 
-        // PERF(port): was arena bulk-free.
         if let Some(sb) = StringOrBuffer::from_js(global, context_arg)? {
             let context_slice = sb.slice();
 
@@ -941,7 +939,6 @@ pub(super) fn set_session(
     }
 
     let session_arg = args.ptr[0];
-    // PERF(port): was arena bulk-free.
 
     if let Some(sb) = StringOrBuffer::from_js(global, session_arg)? {
         let session_slice = sb.slice();
@@ -1115,8 +1112,7 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
     // tagged UTF-8 (`init_utf8`) so that `to_error_instance` takes the copying
     // path (`fromUTF8ReplacingInvalidSequences`); an UNTAGGED ZigString would
     // be wrapped with `StringImpl::createWithoutCopying` and the JS Error's
-    // message would dangle into this freed Vec. No leak needed (the Zig
-    // original leaked the buffer into a global-marked ZigString instead).
+    // message would dangle into this freed Vec.
     let mut formatted: Vec<u8> = Vec::new();
     let mut output_buf: [u8; 4096] = [0; 4096];
 
@@ -1201,5 +1197,3 @@ fn get_ssl_exception(global: &JSGlobalObject, default_message: &[u8]) -> JSValue
 
     exception
 }
-
-// ported from: src/runtime/socket/tls_socket_functions.zig

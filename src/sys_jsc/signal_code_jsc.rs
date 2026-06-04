@@ -47,5 +47,3 @@ pub fn from_js(arg: JSValue, global_this: &JSGlobalObject) -> JsResult<SignalCod
 
     Ok(SignalCode::DEFAULT)
 }
-
-// ported from: src/sys_jsc/signal_code_jsc.zig

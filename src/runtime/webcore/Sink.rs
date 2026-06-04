@@ -14,8 +14,7 @@ pub use crate::webcore::array_buffer_sink::ArrayBufferSink;
 crate::impl_js_sink_abi!(ArrayBufferSink, "ArrayBufferSink");
 
 impl JSSink<ArrayBufferSink> {
-    /// Port of Zig `JSSink.detach` (Sink.zig) for the `ArrayBufferSink`
-    /// instantiation. Unprotects the controller cell stashed in `signal.ptr`
+    /// Unprotects the controller cell stashed in `signal.ptr`
     /// and tells C++ to drop its back-pointer. Called from
     /// `Body::ValueBufferer` Drop / reject paths.
     // Renamed from `detach` to avoid colliding with the generic
@@ -34,7 +33,7 @@ pub use crate::webcore::file_sink::FileSink;
 
 /// A `Sink` is a hand-rolled vtable-based writable stream sink.
 pub struct Sink<'a> {
-    // LIFETIMES.tsv: BORROW_PARAM — Sink.zig:26-28 initWithType stores handler param;
+    // LIFETIMES.tsv: BORROW_PARAM — init_with_type stores the handler borrow;
     // no deinit, end() only dispatches
     pub ptr: &'a mut (),
     pub vtable: VTable,
@@ -43,8 +42,7 @@ pub struct Sink<'a> {
 }
 
 impl<'a> Sink<'a> {
-    // Zig used `@ptrFromInt(0xaaaaaaaa)` as a sentinel non-null pointer and
-    // `vtable: undefined`. `ptr` stays `&'a mut ()`: a reference to a
+    // `ptr` stays `&'a mut ()`: a reference to a
     // zero-sized type only needs a non-null, aligned address, so a dangling
     // pointer is a *valid* `&mut ()` (the same rule `Box<()>` relies on).
     pub fn pending() -> Sink<'static> {
@@ -53,12 +51,12 @@ impl<'a> Sink<'a> {
         // written through it. status == Closed gates all dispatch so neither
         // `ptr` nor `vtable` is used before being overwritten by init_with_type.
         //
-        // The Zig original used `vtable: undefined`. In Rust, both `zeroed()` and
+        // Both `zeroed()` and
         // `MaybeUninit::uninit().assume_init()` are immediate UB for a struct of
         // non-nullable `fn` pointers (niche-bearing). Instead we install a *valid*
         // sentinel vtable whose entries unconditionally panic — this keeps the value
-        // well-formed at all times and turns any accidental dispatch (the bug Zig's
-        // `undefined` would have hidden) into a loud, deterministic crash.
+        // well-formed at all times and turns any accidental dispatch
+        // into a loud, deterministic crash.
         unsafe {
             Sink {
                 ptr: &mut *core::ptr::NonNull::<()>::dangling().as_ptr(),
@@ -84,7 +82,6 @@ pub enum Data {
 }
 
 /// Trait capturing the duck-typed methods `VTable::wrap` expects on `Wrapped`.
-/// Zig used `@hasDecl`/direct method calls; Rust expresses this as a trait bound.
 pub trait SinkHandler {
     fn write(&mut self, data: &streams::Result) -> streams::result::Writable;
     fn write_latin1(&mut self, data: &streams::Result) -> streams::result::Writable;
@@ -95,12 +92,6 @@ pub trait SinkHandler {
 
 /// Generates the boilerplate `impl SinkHandler for $Ty` that forwards every
 /// trait method to the same-named **inherent** method on `$Ty`.
-///
-/// Mirrors Zig `Sink.VTable.wrap(comptime Wrapped)` (src/runtime/webcore/Sink.zig:105-146),
-/// which builds the vtable by comptime duck-typing on `Wrapped.{write,writeLatin1,
-/// writeUTF16,end,connect}` — no per-type forwarding shim exists in Zig. The
-/// five hand-written Rust impls were pure port artifacts of needing nominal
-/// trait impls; this macro restores the single-definition shape.
 ///
 /// `connect`: the inherent fn returns `()` (and may take `&self` *or* `&mut self`
 /// — `&mut → &` coerces); the trait wants `bun_sys::Result<()>`, so the macro
@@ -172,14 +163,12 @@ pub fn init_with_type<T: SinkHandler>(handler: &mut T) -> Sink<'_> {
 }
 
 pub fn init<T: SinkHandler>(handler: &mut T) -> Sink<'_> {
-    // Zig: initWithType(std.meta.Child(@TypeOf(handler)), handler) — Rust generics
-    // already name the pointee type, so this collapses to init_with_type.
     init_with_type(handler)
 }
 
 impl<'a> Sink<'a> {
     /// Associated-fn alias of the free `init<T>` so callers can write
-    /// `webcore::Sink::init(self)` (matches the Zig `Sink.init(self)` shape).
+    /// `webcore::Sink::init(self)`.
     pub fn init<T: SinkHandler>(handler: &mut T) -> Sink<'_> {
         init_with_type(handler)
     }
@@ -188,7 +177,7 @@ impl<'a> Sink<'a> {
 pub struct UTF8Fallback;
 
 // `Sink::UTF8Fallback` is referenced as `webcore::Sink::UTF8Fallback` by
-// html_rewriter (Zig nested-type style). Expose via inherent-impl associated
+// html_rewriter. Expose via inherent-impl associated
 // type alias once inherent associated types are stable; for now consumers
 // should reference `crate::webcore::sink::UTF8Fallback` directly.
 
@@ -200,7 +189,6 @@ impl UTF8Fallback {
         input: &streams::Result,
         write_fn: fn(&mut Ctx, &streams::Result) -> streams::result::Writable,
     ) -> streams::result::Writable {
-        // PERF(port): `write_fn` was `comptime anytype` (monomorphized); now a fn pointer.
         let str_ = input.slice();
         if strings::is_all_ascii(str_) {
             return write_fn(ctx, input);
@@ -223,8 +211,7 @@ impl UTF8Fallback {
         }
 
         {
-            // Zig: bun.default_allocator.alloc(u8, str.len) catch return .{ .err = Syscall.Error.oom }
-            // — allocate fallibly so memory pressure surfaces as `.err = oom`
+            // Allocate fallibly so memory pressure surfaces as `.err = oom`
             // instead of aborting the process.
             let mut slice: Vec<u8> = Vec::new();
             if slice.try_reserve_exact(str_.len()).is_err() {
@@ -254,7 +241,6 @@ impl UTF8Fallback {
         input: &streams::Result,
         write_fn: fn(&mut Ctx, &streams::Result) -> streams::result::Writable,
     ) -> streams::result::Writable {
-        // PERF(port): `write_fn` was `comptime anytype` (monomorphized); now a fn pointer.
         let bytes = input.slice();
         // input.slice() is guaranteed by caller to be u16-aligned UTF-16 bytes;
         // bytemuck checks alignment + even length at runtime.
@@ -277,7 +263,6 @@ impl UTF8Fallback {
         }
 
         {
-            // Zig: strings.toUTF8Alloc(...) catch return .{ .err = Syscall.Error.oom }.
             // UTF-8 (and the WTF-8 lone-surrogate fallback) needs at most 3
             // bytes per UTF-16 code unit; reserving that fallibly up front
             // (plus the 16-byte slack `to_utf8_append_to_list` asks for) makes
@@ -326,7 +311,7 @@ pub struct VTable {
 }
 
 impl VTable {
-    /// Sentinel vtable used for `Sink::pending()` (Zig: `vtable: undefined`).
+    /// Sentinel vtable used for `Sink::pending()`.
     ///
     /// VTable's fields are bare `fn(...)` pointers — a niche-bearing non-nullable type — so
     /// producing one via `MaybeUninit::uninit().assume_init()` or `mem::zeroed()` is
@@ -462,7 +447,7 @@ impl<'a> Sink<'a> {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// JSSink — Zig: `fn JSSink(comptime SinkType, comptime abi_name) type`
+// JSSink
 //
 // Rust cannot pass a `&str` const-generic for symbol-name concatenation in
 // `#[link_name]`, so the per-abi extern set is supplied via `JsSinkAbi`
@@ -471,10 +456,9 @@ impl<'a> Sink<'a> {
 // `@hasField` checks become associated consts on `JsSinkType`.
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `Sink.JSSink(SinkType, abi_name)` — generic sink-to-JS wrapper. In Zig this
-/// is a comptime type-generator; here it is a plain generic over
+/// Generic sink-to-JS wrapper: a plain generic over
 /// `T: JsSinkType + JsSinkAbi` with host-fn bodies in the `impl` block below.
-// `repr(transparent)`: the Zig `ThisSink = struct { sink: SinkType }` is
+// `repr(transparent)`: the value is
 // allocated as the JSSink wrapper but freed via `this.sink.destroy()` (the
 // inner address). With `transparent` the inner and outer share Layout, so
 // `heap::take` on the inner pointer (e.g. `HTTPServerWritable::destroy`)
@@ -485,10 +469,8 @@ pub struct JSSink<T> {
 }
 
 // ─── Canonical JsSinkAbi codegen ────────────────────────────────────────────
-// Rust equivalent of Zig `Sink.JSSink(comptime SinkType, comptime abi_name)`'s
-// `@extern(.{ .name = abi_name ++ "__fn" })` block (Sink.zig:253-344). Const-
-// generic `&'static str` cannot drive `#[link_name]`, so the abi name is taken
-// as a macro literal and `concat!`-ed — exactly mirroring `abi_name ++ "__…"`.
+// Const-generic `&'static str` cannot drive `#[link_name]`, so the abi name is
+// taken as a macro literal and `concat!`-ed.
 //
 // `decl_js_sink_externs!` emits the 7-fn extern set into a named submodule;
 // `impl_js_sink_abi!` wraps it in a 1:1-forwarding `JsSinkAbi` impl. The
@@ -623,7 +605,7 @@ pub trait JsSinkAbi {
 }
 
 /// `from_js_extern` encodes two distinct failure types using 0 and 1. Any other
-/// value is `*ThisSink`. (Zig non-exhaustive `enum(usize)` → matched-by-const.)
+/// value is `*ThisSink`.
 pub mod from_js_result {
     /// The sink has been closed and the wrapped type is freed.
     pub const DETACHED: usize = 0;
@@ -673,10 +655,7 @@ impl<T: JsSinkAbi> JSSink<T> {
     }
 
     /// `JSSink.detach(globalThis)` — disconnect the C++ controller cell stashed
-    /// in `signal.ptr` (a JSValue's encoded bits, see `SinkSignal::init`). Port
-    /// of `Sink.JSSink.detach` (Sink.zig) for the `HAS_SIGNAL = true` path; the
-    /// `@hasField(SinkType, "signal")` early-return is folded into the caller
-    /// by passing the `Signal` directly.
+    /// in `signal.ptr` (a JSValue's encoded bits, see `SinkSignal::init`).
     pub fn detach(signal: &mut Signal, _global: &crate::webcore::jsc::JSGlobalObject) {
         use crate::webcore::jsc::JSValue;
         let Some(ptr) = signal.ptr else { return }; // is_dead()
@@ -685,13 +664,13 @@ impl<T: JsSinkAbi> JSSink<T> {
         // encoded JSValue bits (never a real Rust pointer); bitcast back.
         let value = JSValue::from_encoded(ptr.as_ptr() as usize);
         value.unprotect();
-        // Zig: `detachPtr(globalThis, value) catch {}` — `${abi}__detachPtr`
+        // `${abi}__detachPtr`
         // calls the JS `onClose` callback via the bare `JSC::call(...)`
         // overload (no NakedPtr/TopExceptionScope of its own), so
         // `executeCallImpl`'s ThrowScope is the outermost scope and its dtor
         // `simulateThrow()` leaves `m_needExceptionCheck` set. Wrap in a
-        // TopExceptionScope (matching Zig's `fromJSHostCallGeneric`) so the
-        // verifier is satisfied; discard the result like `catch {}`.
+        // TopExceptionScope so the
+        // verifier is satisfied; discard the result.
         // TODO: properly propagate exception upwards.
         let _ = ::bun_jsc::call_check_slow(_global, || T::detach_ptr_extern(value));
     }
@@ -701,8 +680,7 @@ impl<T: JsSinkAbi> JSSink<T> {
 /// a `streams::Signal`. The pointer stored in `Signal.ptr` is the encoded
 /// JSValue bits, never dereferenced; vtable thunks bitcast back and call the
 /// generated `${abi_name}__onClose` / `__onReady` externs.
-// Zig nested-type `JSSink(SinkType, abi).SinkSignal` would be an
-// inherent associated type in Rust (unstable). Expose as a free generic and
+// Inherent associated types are unstable, so this is a free generic;
 // let each caller alias via `type SinkSignal = sink::SinkSignal<Self>;`.
 #[repr(C)]
 pub struct SinkSignal<T>(core::marker::PhantomData<T>);
@@ -712,13 +690,12 @@ impl<T: JsSinkAbi> SinkSignal<T> {
         use crate::webcore::jsc::JSValue;
         // Bypass `Signal::init_with_type` (which would form a fake
         // `&mut SinkSignal<T>` ref); build the vtable directly so `this` stays
-        // a raw bit-pattern (`@setRuntimeSafety(false)` in Zig).
+        // a raw bit-pattern.
         fn close<T: JsSinkAbi>(this: *mut c_void, _err: Option<SysError>) {
             // `this` is the JSValue bits stashed by `init`; bitcast back.
             let cpp = JSValue::from_encoded(this as usize);
-            // Zig (Sink.zig:265-268): `onClose` wraps the extern in
-            // `fromJSHostCallGeneric` so the C++ ThrowScope's `simulateThrow()`
-            // is satisfied; route through the same path here.
+            // `call_check_slow` satisfies the C++ ThrowScope's
+            // `simulateThrow()`.
             // TODO: this should be got from a parameter / properly propagate exception upwards.
             let global = ::bun_jsc::virtual_machine::VirtualMachine::get().global();
             let _ =
@@ -746,9 +723,8 @@ impl<T: JsSinkAbi> SinkSignal<T> {
 }
 
 /// Trait collecting every method `JSSink` may call on the wrapped `SinkType`.
-/// Zig used `@hasDecl(SinkType, "...")` to make most of these optional; Rust
-/// models that with default method bodies. Associated `const`s replace
-/// `@hasField` checks.
+/// Most of these are optional, modeled with default method bodies and
+/// associated `const` gates.
 pub trait JsSinkType: Sized {
     const NAME: &'static str;
     /// Mirrors `@hasDecl(SinkType, "construct")`.
@@ -795,8 +771,7 @@ pub trait JsSinkType: Sized {
     }
     fn flush_from_js(&mut self, _global: &JSGlobalObject, _wait: bool) -> sys::Result<JSValue> {
         // Guarded by `HAS_FLUSH_FROM_JS`; default impl delegates to `flush()`
-        // (returning undefined on success) so the non-override path matches
-        // Zig's `!@hasDecl(SinkType, "flushFromJS")` arm — buffered bytes are
+        // (returning undefined on success) so buffered bytes are
         // still flushed even if a caller bypasses `js_flush`.
         self.flush().map(|()| JSValue::UNDEFINED)
     }
@@ -811,22 +786,22 @@ pub trait JsSinkType: Sized {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// JSSink<T> generic host-fn glue (port of Sink.zig `JSSink(SinkType, abi)`)
+// JSSink<T> generic host-fn glue
 //
 // The codegen (`generate-jssink.ts`) emits `#[no_mangle] extern "C"` thunks
 // for `${name}__{construct,write,end,flush,start,getInternalFd,memoryCost,
 // finalize,close,endWithSink,updateRef}` that call these. Keeping the host-fn
 // validation here (instead of on each `SinkType`) avoids the inherent-method
-// name collision with the inner `write/end/flush/start` and matches Zig's
-// layering exactly: the JSSink wrapper owns the JS-facing surface, the
+// name collision with the inner `write/end/flush/start`: the JSSink
+// wrapper owns the JS-facing surface, the
 // SinkType owns the streaming logic.
 //
 // This is the SOLE implementation. The earlier `macro_rules! js_sink`
 // reference port has been deleted — it was never instantiated, half its bodies
 // no longer type-checked against the current `bun_jsc` surface, and every fn
 // it defined is superseded by this generic `impl` + `decl_js_sink_externs!` /
-// `impl_js_sink_abi!`. `write_utf8` is intentionally NOT re-added: it is
-// unexported in Zig, has no lut entry, and no C++ caller.
+// `impl_js_sink_abi!`. `write_utf8` is intentionally NOT re-added: it has
+// no lut entry and no C++ caller.
 // ──────────────────────────────────────────────────────────────────────────
 
 impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
@@ -867,7 +842,6 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             return Err(global.throw_illegal_constructor(T::NAME));
         }
 
-        // Zig: `bun.new(SinkType, undefined)` then `this.construct(allocator)`.
         let mut this: Box<core::mem::MaybeUninit<T>> = Box::new(core::mem::MaybeUninit::uninit());
         T::construct(&mut *this);
         // SAFETY: JsSinkType::construct fully initializes `*this` (contract).
@@ -876,7 +850,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         Ok(value)
     }
 
-    /// `${abi_name}__write` host-fn body. Port of `Sink.zig::JSSink.write`.
+    /// `${abi_name}__write` host-fn body.
     pub fn js_write(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
@@ -955,7 +929,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             .to_js(global))
     }
 
-    /// `${abi_name}__flush` host-fn body. Port of `Sink.zig::JSSink.flush`.
+    /// `${abi_name}__flush` host-fn body.
     pub fn js_flush(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
@@ -969,9 +943,6 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         if let Some(err) = this.sink.get_pending_error() {
             return Err(global.throw_value(err));
         }
-
-        // Zig's `defer { if (done) unprotect() }` — `unprotect` is a
-        // no-op in the current port, so the guard is folded out.
 
         if T::HAS_FLUSH_FROM_JS {
             let wait = frame.arguments_count() > 0
@@ -989,7 +960,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         }
     }
 
-    /// `${abi_name}__start` host-fn body. Port of `Sink.zig::JSSink.start`.
+    /// `${abi_name}__start` host-fn body.
     pub fn js_start(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
@@ -1005,7 +976,6 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             return Err(global.throw_value(err));
         }
 
-        // Zig: `if (@hasField(streams.Start, abi_name)) Start.fromJSWithTag(...) else Start.fromJS(...)`
         let config = if frame.arguments_count() > 0 {
             match T::START_TAG {
                 Some(tag) => {
@@ -1023,7 +993,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         }
     }
 
-    /// `${abi_name}__end` host-fn body. Port of `Sink.zig::JSSink.end`.
+    /// `${abi_name}__end` host-fn body.
     pub fn js_end(
         global: &crate::webcore::jsc::JSGlobalObject,
         frame: &crate::webcore::jsc::CallFrame,
@@ -1049,9 +1019,9 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         // sweeps.
         //
         // 13f9cff9 added an eager `detach_ptr_extern + finalize()` in the
-        // non-pending else-branch as a #53265 defense. That diverges from Zig
-        // (`JSSink.end` host-fn never detaches; only `${name}__doClose` does)
-        // and breaks Node `.end()` idempotency: child_process stdin teardown
+        // non-pending else-branch as a #53265 defense. But the `end` host-fn
+        // must not detach (only `${name}__doClose` does), and the eager detach
+        // breaks Node `.end()` idempotency: child_process stdin teardown
         // calls `.end()` → eager-detach → subsequent `.ref()`/`.unref()`/
         // `.end()` from the Writable destroy path hit `get_this` → DETACHED →
         // "already been closed" (8+ [new] in #53781). Reverted; the #53265
@@ -1065,13 +1035,13 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         result
     }
 
-    /// `${abi_name}__finalize` body. Port of `Sink.zig::JSSink.finalize`.
+    /// `${abi_name}__finalize` body.
     #[inline]
     pub fn js_finalize(this: &mut T) {
         this.finalize();
     }
 
-    /// `${abi_name}__close` body. Port of `Sink.zig::JSSink.close` — called from
+    /// `${abi_name}__close` body — called from
     /// `${controller}__close` and `${name}__doClose` in JSSink.cpp with a raw
     /// `m_sinkPtr` (not a host-fn callframe), so exceptions become `.zero`.
     pub fn js_close(
@@ -1103,7 +1073,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         }
     }
 
-    /// `${abi_name}__endWithSink` body. Port of `Sink.zig::JSSink.endWithSink` —
+    /// `${abi_name}__endWithSink` body —
     /// called from `JSReadable${name}Controller__end` with a raw `m_sinkPtr`.
     pub fn js_end_with_sink(
         this: &mut T,
@@ -1131,7 +1101,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
         }
     }
 
-    /// `${abi_name}__updateRef` body. Port of `Sink.zig::JSSink.updateRef`.
+    /// `${abi_name}__updateRef` body.
     #[inline]
     pub fn js_update_ref(this: &mut T, value: bool) {
         bun_core::mark_binding!();
@@ -1162,7 +1132,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
 // ──────────────────────────────────────────────────────────────────────────
 
 bun_opaque::opaque_ffi! {
-    /// Zig: `const Detached = opaque {};` used only as a TaggedPointerUnion type-tag.
+    /// Used only as a `TaggedPointerUnion` type-tag.
     pub struct Detached;
 }
 
@@ -1214,9 +1184,8 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
         return;
     }
 
-    // Zig matched tags via `@typeName(Detached)` / `@typeName(Subprocess)`
-    // (`@field(DestructorPtr.Tag, ...)`); here `is::<Detached>()` covers the
-    // typed member and the Subprocess arm is matched by `is_valid()` below.
+    // `is::<Detached>()` covers the typed member and the Subprocess arm is
+    // matched by `is_valid()` below.
     if ptr.is::<Detached>() {
         return;
     }
@@ -1225,8 +1194,8 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
         // it isn't part of `DestructorPtr`'s type list — cast the raw pointer
         // directly (see `destructor_ptr_subprocess`, which encodes it).
         //
-        // Spec Sink.zig:641 `ptr.as(Subprocess)` → `TaggedPointer.get`, which
-        // masks to the low 49 address bits. `DestructorPtr::ptr()` is
+        // The decoded pointer must be
+        // masked to the low 49 address bits. `DestructorPtr::ptr()` is
         // `TaggedPtr::to()` and *preserves* the tag bits (round-trip encoding),
         // so casting that would hand `on_stdin_destroyed` a pointer with
         // `0x07fe…` in the high word and ASAN SEGVs on the first field load.
@@ -1241,5 +1210,3 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
     }
     bun_core::debug_warn!("Unknown sink type");
 }
-
-// ported from: src/runtime/webcore/Sink.zig

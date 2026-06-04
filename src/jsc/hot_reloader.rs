@@ -31,7 +31,7 @@ pub enum ImportWatcher {
 }
 
 // Drift guard for the bun_watcher CYCLEBREAK `Loader` newtype: its `File`
-// constant must mirror `bun_ast::Loader::File` (Zig `options.Loader.file`) —
+// constant must mirror `bun_ast::Loader::File` —
 // the watcher stores that value for auto-watched directories. This crate sees
 // both types, so the compile-time check lives here.
 const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
@@ -73,9 +73,8 @@ impl ImportWatcher {
     /// thread can read the cached fd here while the watcher thread is between
     /// pass 1 (close) and pass 2 (remove), surfacing as `EBADF reading
     /// "<path>"` in `transpiler.rs:read_file_with_allocator` (hot.test.ts
-    /// "should work with sourcemap generation" on debian-aarch64). Zig has
-    /// the same race (`ModuleLoader.zig:173-174` reads unlocked); the port
-    /// closes it by locking the same mutex `append_file_maybe_lock<true>` and
+    /// "should work with sourcemap generation" on debian-aarch64). The race
+    /// is closed by locking the same mutex `append_file_maybe_lock<true>` and
     /// `flush_evictions` take.
     pub fn snapshot_fd_and_package_json(
         &self,
@@ -160,8 +159,7 @@ impl HotReloaderCtx for VirtualMachine {
     }
 
     fn bun_watcher_mut(&mut self) -> &mut Watcher {
-        // Zig's three-way `@TypeOf(this.ctx.bun_watcher)` reflection
-        // collapses here — `VirtualMachine.bun_watcher` is the
+        // `VirtualMachine.bun_watcher` is the
         // `*mut ImportWatcher` (see the field comment in
         // VirtualMachine.rs), and `getContext` only runs after
         // `enable_hot_module_reloading` has populated it, so the `.None` arm
@@ -177,9 +175,8 @@ impl HotReloaderCtx for VirtualMachine {
     }
 
     fn reload(&mut self, _task: &mut dyn HotReloadTaskView) {
-        // The inherent `reload` ignores its task argument (spec
-        // VirtualMachine.zig:769 takes `_: ?*HotReloader.HotReloadTask`), so
-        // pass `None` rather than threading the dyn view through.
+        // The inherent `reload` ignores its task argument, so pass `None`
+        // rather than threading the dyn view through.
         VirtualMachine::reload(self, None);
     }
 
@@ -192,7 +189,6 @@ impl HotReloaderCtx for VirtualMachine {
     }
 
     fn log_level_at_least_info(&self) -> bool {
-        // Zig: `if (@hasField(Ctx, "log")) this.log.level.atLeast(.info)`.
         // Note `Level.atLeast` is `self <= other` (Verbose=0..Err=4), so this is
         // true for Verbose/Debug/Info — i.e. "verbose enough to print info".
         self.log_ref()
@@ -201,8 +197,8 @@ impl HotReloaderCtx for VirtualMachine {
     }
 
     fn is_watcher_enabled(&self) -> bool {
-        // Zig: `this.bun_watcher != .none`. The field is a typed
-        // `*mut ImportWatcher`; a null pointer means `.none`.
+        // The field is a typed `*mut ImportWatcher`; a null pointer means no
+        // watcher is installed.
         if self.bun_watcher.is_null() {
             return false;
         }
@@ -223,8 +219,6 @@ impl HotReloaderCtx for VirtualMachine {
         watcher: Box<Watcher>,
         reload_immediately: bool,
     ) -> *mut Watcher {
-        // Zig: `this.bun_watcher = if (reload_immediately) .{ .watch = w } else .{ .hot = w }`
-        // followed by `this.transpiler.resolver.watcher = ResolveWatcher(...).init(w)`.
         let mut iw = Box::new(if reload_immediately {
             ImportWatcher::Watch(watcher)
         } else {
@@ -237,10 +231,9 @@ impl HotReloaderCtx for VirtualMachine {
         self.bun_watcher = bun_core::heap::into_raw(iw);
 
         // Wire the resolver's directory-watch callback at the same time.
-        // Zig: `ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(w)`;
-        // `Watcher::get_resolve_watcher` is the Rust-side equivalent that
-        // erases the `*mut Watcher` into the resolver's `AnyResolveWatcher`
-        // vtable (re-exported from `bun_watcher`, so it's the same type).
+        // `Watcher::get_resolve_watcher` erases the `*mut Watcher` into the
+        // resolver's `AnyResolveWatcher` vtable (re-exported from
+        // `bun_watcher`, so it's the same type).
         // SAFETY: `watcher_ptr` was just installed into `self.bun_watcher`
         // via `heap::alloc` and is live for the VM's lifetime.
         self.transpiler.resolver.watcher = Some(unsafe { (*watcher_ptr).get_resolve_watcher() });
@@ -255,19 +248,13 @@ impl HotReloaderCtx for VirtualMachine {
     }
 }
 
-/// The concrete `HotReloadTask` instance the JS event loop dispatches
-/// (`jsc.hot_reloader.HotReloader.Task` in Zig). The dyn trait of the same
-/// name below is the type-erased view used by `HotReloaderCtx::reload`.
+/// The concrete `HotReloadTask` instance the JS event loop dispatches.
+/// The dyn trait below is the type-erased view used by
+/// `HotReloaderCtx::reload`.
 pub type HotReloadTask = Task<VirtualMachine, EventLoop, false>;
 
-/// Replaces Zig's structural duck-typing on `Ctx` (`this.ctx.eventLoop()`,
-/// `this.ctx.bun_watcher`, `this.ctx.bustDirCache`, `this.ctx.getLoaders`,
-/// `this.ctx.reload`) with an explicit trait bound. Implemented by
-/// `VirtualMachine` and `bun.bake.DevServer`.
-///
-/// `bun_watcher_mut` collapses the three-way `@TypeOf(this.ctx.bun_watcher)`
-/// reflection in `getContext` (ImportWatcher / Option / bare) into one method
-/// the impl picks the right arm of.
+/// Trait bound on `Ctx` exposing the operations the reloader needs.
+/// Implemented by `VirtualMachine` and `bun.bake.DevServer`.
 pub trait HotReloaderCtx {
     type EventLoop;
 
@@ -280,42 +267,33 @@ pub trait HotReloaderCtx {
     /// `event_loop()` pointer at each site.
     fn event_loop_ref(&self) -> &Self::EventLoop;
 
-    /// Zig: `this.ctx.bun_watcher` field, with comptime `@TypeOf` reflection
-    /// to unwrap `ImportWatcher`/`Option`. Implementor returns the live
-    /// `Watcher` regardless of how it's stored.
+    /// Implementor returns the live `Watcher` regardless of how it's stored.
     fn bun_watcher_mut(&mut self) -> &mut Watcher;
 
-    /// Called from `Task::run` to perform the actual reload. Zig passed the
-    /// concrete `*HotReloadTask`; Rust erases the const-generic via the
-    /// `HotReloadTask` view so this trait isn't recursively generic.
+    /// Called from `Task::run` to perform the actual reload. The const-generic
+    /// task is erased via the `HotReloadTaskView` so this trait isn't
+    /// recursively generic.
     fn reload(&mut self, task: &mut dyn HotReloadTaskView);
 
-    /// Zig: `this.ctx.bustDirCache(path)`. Returns whether anything was busted.
+    /// Returns whether anything was busted.
     fn bust_dir_cache(&mut self, path: &[u8]) -> bool;
 
-    /// Zig: `this.ctx.getLoaders()` — `&transpiler.options.loaders`.
+    /// `&transpiler.options.loaders`.
     fn get_loaders(&self) -> &bun_ast::LoaderHashTable;
 
-    /// Zig: `if (@hasField(Ctx, "log")) this.log.level.atLeast(.info) else false`.
     fn log_level_at_least_info(&self) -> bool {
         false
     }
 
     // ── enable_hot_module_reloading accessors ────────────────────────────
-    // Zig's `enableHotModuleReloading` reaches into `ctx.bun_watcher` and
-    // `ctx.transpiler.{fs, env, resolver.watcher}` via structural duck-typing.
     // The methods below expose just enough surface for the generic body.
 
-    /// Zig: `this.bun_watcher != .none` / `this.bun_watcher != null`.
     fn is_watcher_enabled(&self) -> bool;
 
-    /// Zig: `this.transpiler.fs.top_level_dir` — the watcher only consumes the
-    /// project root path.
+    /// The watcher only consumes the project root path.
     fn watcher_top_level_dir(&self) -> &'static [u8];
 
-    /// Zig: assigns `this.bun_watcher = .{ .hot/.watch = w }` (or `= w` for
-    /// non-ImportWatcher ctxs) and `this.transpiler.resolver.watcher =
-    /// ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(w)`.
+    /// Installs the watcher and wires the resolver's watch callback.
     /// Returns the now-installed `*mut Watcher` so the caller can `start()` it.
     fn install_bun_watcher(
         &mut self,
@@ -323,12 +301,10 @@ pub trait HotReloaderCtx {
         reload_immediately: bool,
     ) -> *mut Watcher;
 
-    /// Zig: `!this.transpiler.env.hasSetNoClearTerminalOnReload(!Output.enable_ansi_colors_stdout)`.
     fn compute_clear_screen(&self) -> bool;
 }
 
-/// Replaces Zig's structural call `this.eventLoop().enqueueTaskConcurrent(task)`
-/// with a trait bound on the `EventLoopType` generic. The only concrete event
+/// Trait bound on the `EventLoopType` generic. The only concrete event
 /// loop ever instantiated is `crate::event_loop::EventLoop`.
 pub trait HotReloaderEventLoop {
     /// Forward to the inherent `enqueue_task_concurrent`. Takes `&Self` so
@@ -345,12 +321,10 @@ impl HotReloaderEventLoop for EventLoop {
     }
 }
 
-/// `bun build --watch` instantiates `NewHotReloader<BundleV2, AnyEventLoop, true>`
-/// (bundle_v2.zig:50). With `RELOAD_IMMEDIATELY = true`, `Task::enqueue` diverges
-/// via `bun_core::reload_process()` before any concurrent task is enqueued, and
-/// in the Zig spec `enqueueTaskConcurrent` is `unreachable` (hot_reloader.zig:161).
-/// `BundleV2` doesn't even define `eventLoop()` — Zig's lazy compilation never
-/// instantiates it. Match that here.
+/// `bun build --watch` instantiates `NewHotReloader<BundleV2, AnyEventLoop, true>`.
+/// With `RELOAD_IMMEDIATELY = true`, `Task::enqueue` diverges via
+/// `bun_core::reload_process()` before any concurrent task is enqueued, so
+/// this is never reached.
 impl HotReloaderEventLoop for bun_event_loop::AnyEventLoop<'static> {
     fn enqueue_task_concurrent(_this: &Self, _task: core::ptr::NonNull<ConcurrentTask>) {
         unreachable!()
@@ -386,12 +360,12 @@ impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> HotReloadTaskView
 /// would re-run every test affected by any uncommitted change, not just
 /// the one that was just edited).
 ///
-/// Set by `test_command.zig` on the main thread before the watcher thread
+/// Set by `ChangedFilesFilter` on the main thread before the watcher thread
 /// starts; after that point only the watcher thread touches it. Its
 /// contents are written to `watch_changed_trigger_file` immediately
 /// before `reload_process`; the new process reads and deletes that file.
-// Zig was `?*bun.StringSet`; written once on main thread before watcher thread
-// starts, then watcher-thread-only. `OnceLock` carries the publish.
+// Written once on main thread before watcher thread starts, then
+// watcher-thread-only. `OnceLock` carries the publish.
 pub static WATCH_CHANGED_PATHS: std::sync::OnceLock<WatchChangedPaths> = std::sync::OnceLock::new();
 
 /// `Send + Sync` newtype around the arena-allocated `StringSet` pointer so it
@@ -434,7 +408,7 @@ unsafe impl Sync for WatchChangedPaths {}
 /// the changed-path list into. The same path is exported via the
 /// `BUN_INTERNAL_TEST_CHANGED_TRIGGER_FILE` env var so the restarted
 /// process can find it. Set alongside `WATCH_CHANGED_PATHS` by
-/// `test_command.zig`; the string must outlive the process.
+/// `ChangedFilesFilter`; the string must outlive the process.
 ///
 /// Init-once-then-read-only (main thread sets, watcher thread reads), so
 /// `OnceLock` per PORTING.md §Global mutable state. `&ZStr` is a fat pointer
@@ -492,11 +466,10 @@ unsafe extern "C" {
     safe fn BunDebugger__willHotReload();
 }
 
-// In Zig this was a `pub var` inside the generic struct, giving one static per
-// monomorphization. Rust can't put a static in a generic impl, so HotReloader
-// and WatchReloader share this. That is equivalent in practice: the flag is
-// derived from the same CLI clear-screen setting and written only during
-// single-threaded reloader init, before the watcher thread starts.
+// Rust can't put a static in a generic impl, so HotReloader and WatchReloader
+// share this. That is fine in practice: the flag is derived from the same CLI
+// clear-screen setting and written only during single-threaded reloader init,
+// before the watcher thread starts.
 static CLEAR_SCREEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
@@ -577,8 +550,7 @@ impl MainFile {
 pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     pub count: u8,
     pub hashes: [u32; 8],
-    // In Zig this field's type is `[8][]const u8` only when
-    // `Ctx == bun.bake.DevServer`, else `void`. Rust can't branch a field
+    // Only meaningful for the DevServer Ctx, but Rust can't branch a field
     // type on a generic parameter without specialization, so it is stored
     // unconditionally (8 fat pointers of overhead for non-DevServer Ctx).
     pub paths: [&'static [u8]; 8],
@@ -599,8 +571,7 @@ where
         Self {
             reloader,
             hashes: [0u32; 8],
-            // Zig: `if (Ctx == bun.bake.DevServer) [_][]const u8{&.{}} ** 8` —
-            // see the `paths` field comment for why this is unconditional.
+            // See the `paths` field comment for why this is unconditional.
             paths: [b"".as_slice(); 8],
             count: 0,
             concurrent_task: None,
@@ -652,8 +623,7 @@ where
         self.count += 1;
     }
 
-    /// Spec: hot_reloader.zig `Task.deinit` → `bun.destroy(this)`. The
-    /// dispatched task was heap-allocated in [`Self::enqueue`] via
+    /// The dispatched task was heap-allocated in [`Self::enqueue`] via
     /// `heap::alloc`; the event loop calls this after `run()` to free it.
     ///
     /// # Safety
@@ -689,17 +659,6 @@ where
 
         if RELOAD_IMMEDIATELY {
             Output::flush();
-            // Zig: `if (comptime Ctx == ImportWatcher) { if (ctx.rare_data) |rare|
-            // rare.closeAllListenSocketsForWatchMode(); }`. That comptime guard is
-            // *never* true for any actual instantiation (Ctx is VirtualMachine or
-            // BundleV2, never ImportWatcher itself), so the call is dead code in
-            // the spec. Match spec literally: no-op for every Ctx.
-            //
-            // Note: this is almost certainly a Zig typo — the intent was
-            // likely `@TypeOf(ctx.bun_watcher) == ImportWatcher`, which would
-            // close listen sockets before exec()-restarting under --watch on a
-            // VirtualMachine. But fixing that here would diverge from observable
-            // Zig behaviour; revisit upstream first.
             flush_changed_paths_for_reload();
             bun_core::reload_process(
                 CLEAR_SCREEN.load(core::sync::atomic::Ordering::Relaxed),
@@ -722,15 +681,13 @@ where
         unsafe {
             // Note: `JscTask::init` requires `Taskable`, but const-generic
             // `Task<Ctx, _, _>` can't implement it (one tag per monomorphization).
-            // The Zig source tagged the concrete `HotReloader.HotReloadTask` —
-            // use the raw `(tag, ptr)` constructor.
+            // Use the raw `(tag, ptr)` constructor.
             let concurrent = (*that).concurrent_task.insert(ConcurrentTask {
                 task: JscTask::new(task_tag::HotReloadTask, that.cast::<()>()),
                 ..Default::default()
             });
             // `&that.concurrent_task` is an interior pointer into a
-            // Box-allocated Task; the event loop must not outlive `that`
-            // (matches the Zig original's layout and lifetime contract).
+            // Box-allocated Task; the event loop must not outlive `that`.
             //
             // Inlines `NewHotReloader::enqueue_task_concurrent` to avoid forming
             // a whole-struct `&NewHotReloader` (see `Self::pending_count` doc).
@@ -826,8 +783,6 @@ where
         // the reloader allocated below.
         let ctx = unsafe { &mut *this };
 
-        // Zig: `if (@TypeOf(this.bun_watcher) == ImportWatcher) { if (!= .none) return; }
-        //        else { if (!= null) return; }`
         if ctx.is_watcher_enabled() {
             return;
         }
@@ -853,9 +808,6 @@ where
             }
         };
 
-        // Zig: assigns `this.bun_watcher = .{.hot/.watch = w}` (or bare) and
-        // `this.transpiler.resolver.watcher = ResolveWatcher(...).init(w)` in one
-        // comptime-reflected block. Folded into the trait method.
         let watcher_ptr = ctx.install_bun_watcher(watcher, RELOAD_IMMEDIATELY);
 
         // SAFETY: single-threaded init; watcher thread not yet started.
@@ -881,9 +833,7 @@ where
     }
 
     pub fn on_error(_: &mut Self, err: &bun_sys::Error) {
-        // Zig: `Output.err(@as(bun.sys.E, @enumFromInt(err.errno)), ...)`.
-        // `bun_sys::Error::name()` does the same errno→tag-name lookup
-        // (with the unchecked-@enumFromInt UB folded into a checked path).
+        // `bun_sys::Error::name()` does the errno→tag-name lookup.
         Output::err(err.name(), "Watcher crashed", ());
         if cfg!(debug_assertions) {
             panic!("Watcher crash");
@@ -903,9 +853,6 @@ where
     }
 
     pub fn get_context(&mut self) -> &mut Watcher {
-        // Note: Zig branched three ways on `@TypeOf(this.ctx.bun_watcher)`
-        // (ImportWatcher / Option / bare). Folded into `HotReloaderCtx::bun_watcher_mut`;
-        // each impl picks the right unwrap.
         self.ctx_mut().bun_watcher_mut()
     }
 
@@ -919,9 +866,9 @@ where
         let slice = watchlist.slice();
         let file_paths = slice.items_file_path();
         // Note: `WatchItemColumns` doesn't expose a `count` accessor; reach
-        // through the generic SoA column directly. Zig mutates this in place
-        // (`counts[index] = update_count`) — build the &mut from the raw column
-        // pointer rather than ref-casting `&[u32]` (which is UB).
+        // through the generic SoA column directly. The loop below mutates the
+        // column in place — build the &mut from the raw column pointer rather
+        // than ref-casting `&[u32]` (which is UB).
         // SAFETY: column `Count` is `u32`; `items_raw` yields a pointer valid
         // for `slice.len()` elements; the watcher thread is the sole writer of
         // this column for the loop's duration and no other `&` to it is live.
@@ -936,13 +883,12 @@ where
         // and so the deferred `flush_evictions` doesn't hold `&mut Watcher`
         // across the loop.
         let ctx: *mut Watcher = std::ptr::from_mut(self.get_context());
-        // Zig: `defer current_task.enqueue();` — wrap the Task itself in the guard
-        // so any exit path (including future early-returns) flushes the buffered
-        // hashes. Dereferenced as `&mut *current_task` for the loop body below.
+        // Wrap the Task itself in a guard so any exit path (including future
+        // early-returns) flushes the buffered hashes via `enqueue()`.
+        // Dereferenced as `&mut *current_task` for the loop body below.
         //
-        // Note: declared *before* `_flush` (inverting the Zig defer order)
-        // so `flush_evictions()` runs **before** `enqueue()` on drop. The Zig
-        // order (`enqueue` → `Output.flush` → `flushEvictions`) opens a window
+        // Note: declared *before* `_flush` so `flush_evictions()` runs
+        // **before** `enqueue()` on drop. The reverse order opens a window
         // where the JS thread can pick up the concurrent task, look the file up
         // in the watchlist, and read the cached fd while this thread is still
         // about to `close()` + `swap_remove()` it in `flush_evictions` —
@@ -953,8 +899,7 @@ where
             Task::<Ctx, EventLoopType, RELOAD_IMMEDIATELY>::init_empty(self),
             |mut t| t.enqueue(),
         );
-        // `defer ctx.flushEvictions(); defer Output.flush();` — see the note
-        // above for why this drops *before* `current_task`.
+        // See the note above for why this drops *before* `current_task`.
         let _flush = scopeguard::guard(ctx, |ctx| {
             Output::flush();
             // SAFETY: the Watcher outlives this call (it owns the Reloader that calls us).
@@ -1048,10 +993,9 @@ where
                         let mut affected_buf: [&[u8]; 128] = [b"".as_slice(); 128];
                         let mut entries_option: Option<*mut Fs::EntriesOption> = None;
 
-                        // Note: the Zig labeled block produced a slice whose
-                        // element type differs by platform (`[]const u8` on kqueue,
-                        // `?[:0]u8` on inotify). Split into two locals; only one is
-                        // populated per cfg.
+                        // Note: the affected-name element type differs by
+                        // platform (kqueue vs inotify). Split into two locals;
+                        // only one is populated per cfg.
                         let mut affected_kqueue: &[&[u8]] = &[];
                         let mut affected_inotify: &[ChangedFilePath] = &[];
                         let _ = (&mut affected_kqueue, &mut affected_inotify);
@@ -1075,15 +1019,11 @@ where
                                     if self.main.is_waiting_for_dir_change
                                         && self.main.dir_hash == current_hash
                                     {
-                                        // Zig: `if (bun.sys.faccessat(fd, basename) == .result)`.
-                                        // That compares the Maybe(bool) *tag*, ignoring the
-                                        // payload — `.result(true)` and `.result(false)` both
-                                        // match (faccessat only yields `.err` on NAMETOOLONG).
-                                        // Match spec literally: `.is_ok()`. The comment above
-                                        // says "Verify it exists", and this is likely a latent
-                                        // Zig bug, but spec parity wins; in practice the
-                                        // branch is harmless (re-watching a missing entrypoint
-                                        // is a no-op downstream).
+                                        // `.is_ok()` only checks faccessat didn't
+                                        // error (it errs only on NAMETOOLONG), not
+                                        // that the file exists; harmless in
+                                        // practice (re-watching a missing
+                                        // entrypoint is a no-op downstream).
                                         let mut name_buf = [0u8; 256];
                                         let basename = bun_paths::basename(self.main.file);
                                         let exists = if basename.len() < name_buf.len() {
@@ -1114,7 +1054,6 @@ where
                                     for (entry_id, parent_hash) in parents.iter().enumerate() {
                                         if *parent_hash == current_hash {
                                             let affected_path: &[u8] = &file_paths[entry_id];
-                                            // Zig: `std.posix.access(affected_path, F_OK) != 0`.
                                             // bun_sys::access takes a &ZStr; build one on the
                                             // stack from the &[u8] watch-list slice.
                                             let was_deleted = {
@@ -1227,7 +1166,6 @@ where
                                 let changed_name: &[u8] = if IS_KQUEUE {
                                     affected_kqueue[i]
                                 } else {
-                                    // Zig: `bun.asByteSlice(changed_name_.?)`
                                     affected_inotify[i].unwrap().as_bytes()
                                 };
                                 if changed_name.is_empty()
@@ -1244,15 +1182,12 @@ where
                                     .get(PathName::find_extname(changed_name))
                                     .copied()
                                     .unwrap_or(bun_ast::Loader::File);
-                                // Note: Zig declares `prev_entry_id` per-iteration and
-                                // reassigns it just before `break`; the write is dead there
-                                // too (hot_reloader.zig:535/563). Keep the shape for
-                                // fidelity; the post-assignment `_ = prev_entry_id` below
-                                // documents the intentional dead store.
+                                // Note: the post-assignment `_ = prev_entry_id`
+                                // below documents the intentional dead store.
                                 let mut prev_entry_id: usize = usize::MAX;
                                 if loader != bun_ast::Loader::File {
-                                    // Zig leaves these `undefined` / overwritten; both arms
-                                    // of `'brk` assign before any read.
+                                    // Both arms of `'brk` assign these before
+                                    // any read.
                                     let path_string: bun_ptr::Interned;
                                     let file_hash: bun_watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
@@ -1305,16 +1240,12 @@ where
                                             _on_file_update_path_buf
                                                 [file_path_without_trailing_slash.len()] = SEP;
 
-                                            // Zig (hot_reloader.zig:606-608) writes the
-                                            // separator at index `len`, then memcpys
-                                            // `changed_name` starting at the same index `len`
-                                            // (overwriting the separator) and slices
-                                            // `len + changed_name.len + 1` bytes — one stale
-                                            // byte past the copy. Verified against the Zig
-                                            // source: the overlap/extra byte is exactly what
-                                            // Zig does (likely the copy was meant to start at
-                                            // `len + 1`). Ported verbatim so the resulting
-                                            // path hash matches Zig; fix upstream first.
+                                            // The separator written at index `len` is
+                                            // immediately overwritten by the
+                                            // `changed_name` copy, and the slice takes
+                                            // one stale byte past the copy. Deliberate:
+                                            // changing it would change the resulting
+                                            // path hash.
                                             _on_file_update_path_buf
                                                 [file_path_without_trailing_slash.len()
                                                     ..file_path_without_trailing_slash.len()
@@ -1365,15 +1296,12 @@ where
 
         // Drop order (LIFO): `_flush` guard → Output::flush() +
         // ctx.flush_evictions(), then `current_task` guard → enqueue(). See
-        // the note on `current_task` above for why this inverts the Zig
-        // defer order.
+        // the note on `current_task` above for why this order matters.
     }
 }
 
 /// `Watcher::init` stores the `NewHotReloader` as its opaque context and
-/// dispatches file-change/error callbacks through this trait. In Zig this
-/// was structural (`@hasDecl(T, "onFileUpdate")`); the Rust watcher uses
-/// `WatcherContext` instead.
+/// dispatches file-change/error callbacks through this trait.
 impl<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> bun_watcher::WatcherContext
     for NewHotReloader<Ctx, EventLoopType, RELOAD_IMMEDIATELY>
 where
@@ -1395,19 +1323,17 @@ where
 }
 
 // ── `bun build --watch` (Ctx = BundleV2) ─────────────────────────────────
-// Zig: `pub const Watcher = bun.jsc.hot_reloader.NewHotReloader(BundleV2,
-// EventLoop, true)` (bundle_v2.zig:50). `RELOAD_IMMEDIATELY = true` means the
-// watcher thread `execve()`s on the first change (Task::enqueue diverges), so
-// `event_loop()` / `reload()` are never reached; Zig doesn't even define
-// `BundleV2.eventLoop()` (lazy compilation prunes it). The bundler crate (T5)
-// can't name this generic, so it calls in via the `#[no_mangle]` hook below.
+// `RELOAD_IMMEDIATELY = true` means the watcher thread `execve()`s on the
+// first change (Task::enqueue diverges), so `event_loop()` / `reload()` are
+// never reached. The bundler crate (T5) can't name this generic, so it calls
+// in via the `#[no_mangle]` hook below.
 
 impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     type EventLoop = bun_event_loop::AnyEventLoop<'static>;
 
     fn event_loop(&self) -> *mut Self::EventLoop {
-        // Zig: BundleV2 has no `eventLoop()`; with RELOAD_IMMEDIATELY=true the
-        // only caller (`Task::enqueue` post-diverge) is dead code.
+        // With RELOAD_IMMEDIATELY=true the only caller
+        // (`Task::enqueue` post-diverge) is dead code.
         unreachable!()
     }
 
@@ -1417,8 +1343,6 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn bun_watcher_mut(&mut self) -> &mut Watcher {
-        // Zig: `else if (@typeInfo(@TypeOf(this.ctx.bun_watcher)) == .optional)
-        //          return this.ctx.bun_watcher.?;` (hot_reloader.zig:373).
         let handle = self
             .bun_watcher
             .expect("bun_watcher_mut on un-enabled BundleV2 reloader");
@@ -1442,13 +1366,11 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 
     fn log_level_at_least_info(&self) -> bool {
-        // Zig: `if (@hasField(Ctx, "log")) … else false` — BundleV2 has no
-        // `log` field (the log is on `transpiler`), so this arm is `false`.
+        // BundleV2 has no `log` field (the log is on `transpiler`), so `false`.
         false
     }
 
     fn is_watcher_enabled(&self) -> bool {
-        // Zig: `else { if (this.bun_watcher != null) return; }`.
         self.bun_watcher.is_some()
     }
 
@@ -1461,9 +1383,6 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
         watcher: Box<Watcher>,
         _reload_immediately: bool,
     ) -> *mut Watcher {
-        // Zig (the non-ImportWatcher arm, hot_reloader.zig:330):
-        //   this.bun_watcher = Watcher.init(...);
-        //   this.transpiler.resolver.watcher = ResolveWatcher(...).init(this.bun_watcher.?);
         // `watcher_nn` is a fresh non-null heap allocation; live for the
         // process (BundleV2 is leaked under --watch — see `generate_from_cli`).
         let watcher_nn = bun_core::heap::into_raw_nn(watcher);
@@ -1482,14 +1401,13 @@ impl<'a> HotReloaderCtx for bun_bundler::BundleV2<'a> {
     }
 }
 
-/// Zig: `bundle_v2.Watcher = NewHotReloader(BundleV2, EventLoop, true)`
-/// (bundle_v2.zig:50). `'static` because the only caller (`bun build --watch`)
+/// `'static` because the only caller (`bun build --watch`)
 /// allocates the transpiler from the process-lifetime CLI arena.
 type BundlerWatcher =
     NewHotReloader<bun_bundler::BundleV2<'static>, bun_event_loop::AnyEventLoop<'static>, true>;
 
 /// CYCLEBREAK extern hook: called from `BundleV2::init` (T5) when
-/// `cli_watch_flag` is set (bundle_v2.zig:993). Defined here (not in
+/// `cli_watch_flag` is set. Defined here (not in
 /// `bun_bundler`) because the bundler crate can't name `NewHotReloader`.
 #[unsafe(no_mangle)]
 fn __bun_jsc_enable_hot_module_reloading_for_bundler(
@@ -1502,5 +1420,3 @@ fn __bun_jsc_enable_hot_module_reloading_for_bundler(
 }
 
 pub use crate::MarkedArrayBuffer as Buffer;
-
-// ported from: src/jsc/hot_reloader.zig

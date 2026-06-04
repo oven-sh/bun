@@ -39,7 +39,7 @@ use crate::isolated_install as IsolatedInstall;
 use crate::package_manager_real::install_with_manager as InstallWithManager;
 use crate::package_manager_real::package_manager_options::Do;
 
-/// Zig `@tagName(sig)` for `bun.SignalCode` (non-exhaustive `enum(u8)`).
+/// Signal name for a raw signal byte.
 /// `Status::Signaled` carries the raw byte; named range 1..=31 maps via
 /// `SignalCode::name()`, RT/out-of-range values fall back to "UNKNOWN".
 #[inline]
@@ -72,12 +72,10 @@ pub struct SecurityScanResults {
     pub warn_count: usize,
     pub packages_scanned: usize,
     pub duration_ms: i64,
-    // Owned copy of `manager.options.security_scanner` (Zig borrows it);
+    // Owned copy of `manager.options.security_scanner`;
     // owning avoids a struct lifetime and the copy is tiny.
     pub security_scanner: Box<[u8]>,
 }
-
-// Zig `deinit` only freed owned fields; Rust drops Box fields automatically — no explicit Drop.
 
 impl SecurityScanResults {
     pub fn has_fatal_advisories(&self) -> bool {
@@ -495,8 +493,6 @@ impl<'a> PackageCollector<'a> {
         }
     }
 
-    // Zig `deinit` only freed owned fields; Rust drops them automatically.
-
     pub(crate) fn collect_all_packages(&mut self) -> Result<(), Error> {
         let pkgs = self.manager.lockfile.packages.slice();
         let pkg_dependencies = pkgs.items_dependencies();
@@ -715,7 +711,7 @@ impl<'a> JSONBuilder<'a> {
         let mut first = true;
         // `ArrayHashMap::iterator()` takes `&mut self`, but we only
         // need shared access. Iterate by index over the parallel key/value
-        // slices instead (insertion-ordered, matches Zig's `iterator()`).
+        // slices instead (insertion-ordered).
         let path_keys = self.collector.package_paths.keys();
         let path_values = self.collector.package_paths.values();
         for (i, pkg_id) in path_keys.iter().enumerate() {
@@ -901,8 +897,7 @@ fn attempt_security_scan_with_retry(
 
     scanner.spawn()?;
 
-    // Zig used a local `struct { scanner, isDone }` closure for sleepUntil.
-    // `sleep_until` now takes `*mut PackageManager` + `fn(&mut C) -> bool`; pass the
+    // `sleep_until` takes `*mut PackageManager` + `fn(&mut C) -> bool`; pass the
     // boxed scanner as the closure context and a fn pointer that probes `is_done`.
     fn scanner_is_done(scanner: &mut Box<SecurityScanSubprocess>) -> bool {
         scanner.is_done()
@@ -934,7 +929,7 @@ pub struct SecurityScanSubprocess<'a> {
     event_loop_handle: EventLoopHandle,
     code: Box<[u8]>,
     json_data: Box<[u8]>,
-    /// Intrusive `*mut Process` (Zig `?*Process`). `Process` is
+    /// Intrusive `*mut Process`. `Process` is
     /// `ThreadSafeRefCounted` and Box-allocated by `to_process`; wrapping in
     /// `Arc` would be UB (no `ArcInner` header). We hold one ref and `deref()`
     /// it in `Drop`.
@@ -946,14 +941,13 @@ pub struct SecurityScanSubprocess<'a> {
     has_received_ipc: bool,
     exit_status: Option<Status>,
     remaining_fds: i8,
-    /// Intrusive `RefPtr` (Zig `?*StaticPipeWriter`). `StaticPipeWriter<P>` is
+    /// Intrusive `RefPtr`. `StaticPipeWriter<P>` is
     /// `RefCounted`; `Rc` would double-count against the embedded refcount.
     json_writer: Option<RefPtr<StaticPipeWriter>>,
 }
 
-// Zig: `pub const StaticPipeWriter = jsc.Subprocess.NewStaticPipeWriter(@This());`
-// The comptime type generator is the generic `subprocess::StaticPipeWriter<P>`;
-// monomorphize on `'static` because the writer stores `*mut P` (raw backref —
+// The generic `subprocess::StaticPipeWriter<P>` is
+// monomorphized on `'static` because the writer stores `*mut P` (raw backref —
 // lifetime is erased anyway) and the type alias must name a concrete `P`.
 pub(crate) type StaticPipeWriter = subprocess::StaticPipeWriter<SecurityScanSubprocess<'static>>;
 
@@ -992,10 +986,9 @@ impl<'a> Drop for SecurityScanSubprocess<'a> {
             }
         }
         if let Some(w) = self.json_writer.take() {
-            // Zig `deinit` only ran via `attemptSecurityScanWithRetry`'s
-            // `defer scanner.deinit()`, which set `json_writer = null` first via
-            // `onCloseIO`. Guard for parity: `RefPtr` has no auto-`Drop`, so
-            // explicit `deref()` matches Zig `deref()`.
+            // `on_close_io` normally takes the field first; guard for the case
+            // where it didn't run. `RefPtr` has no auto-`Drop`, so the ref we
+            // hold must be released with an explicit `deref()`.
             w.deref();
         }
         // code, json_data drop automatically (Box<[u8]>)
@@ -1038,9 +1031,9 @@ impl<'a> SecurityScanSubprocess<'a> {
 
         let exec_path = bun_core::self_exe_path()?;
 
-        // Zig: `try allocator.dupeZ(u8, exec_path)` / `dupeZ(u8, code)`. Build
+        // Build
         // owned NUL-terminated buffers so the pointers stay valid across the
-        // `spawn_process` FFI boundary; `defer free` ≡ Vec drop.
+        // `spawn_process` FFI boundary.
         let mut argv0_buf: Vec<u8> = exec_path.as_bytes().to_vec();
         argv0_buf.push(0);
         let mut argv3_buf: Vec<u8> = self.code.to_vec();
@@ -1075,7 +1068,7 @@ impl<'a> SecurityScanSubprocess<'a> {
 
     /// Posix fd 4: .buffer stdio creates a nonblocking socketpair inside the
     /// spawn machinery. The child's end is dup'd to fd 4 and closed in the
-    /// parent by spawn's to_close_at_end list (process.zig:1460). The parent's
+    /// parent by spawn's to_close_at_end list. The parent's
     /// end comes back via spawned.extra_pipes.
     #[cfg(unix)]
     fn spawn_posix(
@@ -1097,7 +1090,6 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        // Zig: `try (try spawnProcess(...)).unwrap()` — propagate both layers silently.
         // SAFETY: `argv` is a local null-terminated C-string array with a
         // non-null argv[0]; `environ_ptr()` is the process environ block.
         let mut spawned = unsafe {
@@ -1123,7 +1115,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     /// Windows fd 4: .buffer stdio for extra_fds sets UV_OVERLAPPED_PIPE on the
-    /// child's handle (process.zig:1702), which breaks sync reads in the child.
+    /// child's handle, which breaks sync reads in the child.
     /// Instead, create the pipe ourselves with asymmetric flags so only the
     /// parent's write end is overlapped. Child inherits the non-overlapped read
     /// end via .pipe (inherit_fd); parent wraps the overlapped write end in a
@@ -1143,8 +1135,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // Use the translating overlay (`ReturnCodeExt::err_enum_e`) — the inherent
         // `ReturnCode::err_enum()` returns the raw |uv_code| (e.g. 4071 for
         // UV_EINVAL on Windows) without mapping to POSIX `bun.sys.E`, which would
-        // make `errno_to_zig_err` index the wrong table. Zig's `rc.errEnum()`
-        // (libuv.zig) routes through `translateUVErrorToE`; this matches it.
+        // make `errno_to_zig_err` index the wrong table.
         if let Some(e) = pipe_rc.err_enum_e() {
             ipc_output_fds[0].close();
             ipc_output_fds[1].close();
@@ -1175,7 +1166,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         // errdefer pipe.closeAndDestroy() — guard owns the raw Box ptr; libuv's
         // close callback frees the heap allocation, so do NOT re-box on the
         // cleanup path (would double-free). Disarmed only after finish_spawn
-        // succeeds, matching the Zig errdefer scope exactly: it must stay armed
+        // succeeds: it must stay armed
         // across `ipc_reader.start()` inside finish_spawn (the pre-writer error
         // window) so a registered-but-unowned uv handle is never leaked.
         let mut pipe = scopeguard::guard(pipe_ptr, |p| {
@@ -1214,7 +1205,6 @@ impl<'a> SecurityScanSubprocess<'a> {
             ..Default::default()
         };
 
-        // Zig: `try (try spawnProcess(...)).unwrap()` — propagate both layers silently.
         // SAFETY: `argv` is a local null-terminated C-string array with a
         // non-null argv[0]; `environ_ptr()` is the process environ block.
         let mut spawned = unsafe {
@@ -1239,12 +1229,11 @@ impl<'a> SecurityScanSubprocess<'a> {
         // raw `*mut uv::Pipe` (Copy, no Drop) and reconstitutes the Box at the
         // exact `StaticPipeWriter::create` call site inside `finish_spawn`. If
         // `finish_spawn` errors before that point (`ipc_reader.start()`), the
-        // closure drops as a no-op and the still-armed errdefer guard performs
-        // `close_and_destroy` — matching Zig, where `errdefer pipe.closeAndDestroy()`
-        // covers the entire `try finishSpawn(...)` call. After the writer takes
+        // closure drops as a no-op and the still-armed cleanup guard performs
+        // `close_and_destroy`. After the writer takes
         // the pipe, post-create errors leave the writer leaked at refcount >= 1
         // (RefPtr has no Drop), so the Box is never auto-freed and the guard's
-        // `close_and_destroy` remains the sole cleanup, again matching Zig.
+        // `close_and_destroy` remains the sole cleanup.
         self.finish_spawn(&mut spawned, ipc_output_fds[0], move || {
             // SAFETY: `pipe_ptr` is the same allocation produced by
             // heap::alloc above and has not been freed; ownership transfers
@@ -1264,12 +1253,9 @@ impl<'a> SecurityScanSubprocess<'a> {
     /// start the fd 4 JSON writer, and begin watching for exit.
     fn finish_spawn(
         &mut self,
-        // Zig `spawned: anytype` — concrete type is the platform-dependent
-        // SpawnResult; Rust uses the unified `spawn::SpawnResult`.
         spawned: &mut spawn::SpawnResult,
         ipc_read_fd: Fd,
-        // Deferred constructor: Zig passes `json_stdio_result` by value (a tagged
-        // union holding a raw `*uv.Pipe` on Windows — inert on drop). Rust's
+        // Deferred constructor: a by-value
         // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` would auto-free the
         // allocation without `uv_close()` if `ipc_reader.start()` below failed,
         // leaking a registered libuv handle. Taking a thunk and calling it only
@@ -1289,7 +1275,6 @@ impl<'a> SecurityScanSubprocess<'a> {
         // isDone() returns true, otherwise we risk freeing this struct while
         // StaticPipeWriter still holds a pointer to it (child crash case).
         self.remaining_fds = 2;
-        // Zig: `try this.ipc_reader.start(ipc_read_fd, true).unwrap()` — propagate silently.
         self.ipc_reader
             .start(ipc_read_fd, true)
             .map_err(|e| e.to_zig_err())?;
@@ -1314,8 +1299,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             (*parent).process = Some(process);
         }
 
-        // Zig: `this.json_writer = StaticPipeWriter.create(...)` — assign the
-        // field BEFORE `start()`. `start()` may complete the write synchronously
+        // Assign the field BEFORE `start()`. `start()` may complete the write synchronously
         // (small JSON fits the 64KB pipe buffer on POSIX) and re-enter
         // `on_close_io` via the `parent` backref; that callback must observe
         // `json_writer.is_some()` to decrement `remaining_fds`, otherwise
@@ -1328,9 +1312,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         // SAFETY: see `parent` note above.
         unsafe { (*parent).json_writer = Some(writer) };
 
-        // errdefer if (this.json_writer) |w| { w.source.detach(); w.deref(); this.json_writer = null; }
-        // guard mirrors the Zig errdefer over the FIELD (not a local),
-        // including its `if (this.json_writer)` check — `start()` may already
+        // Error-cleanup guard over the FIELD (not a local),
+        // including a presence check on it — `start()` may already
         // have re-entered and nulled it. State is the `parent` backref; disarmed
         // via `into_inner` on the success path.
         let guard = scopeguard::guard(parent, |parent| {
@@ -1414,8 +1397,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub fn get_read_buffer(&mut self) -> &mut [core::mem::MaybeUninit<u8>] {
-        // Zig returns `unusedCapacitySlice()` (uninitialized spare
-        // capacity as `[]u8`); Rust forbids `&mut [u8]` over uninit bytes, so
+        // Rust forbids `&mut [u8]` over uninit bytes, so
         // expose `&mut [MaybeUninit<u8>]`. Caller (BufferedReader) only writes
         // into this region, never reads uninit bytes.
         // Vec::reserve already amortises by doubling; the explicit cap+4096 dance is unnecessary.
@@ -1432,8 +1414,8 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
-            // Intentional divergence from Zig spec: the spec tears
-            // down `ipc_reader` here unconditionally. That races process-exit
+            // Do not tear
+            // down `ipc_reader` here unconditionally: that races process-exit
             // against fd-3-readable: `ipc_reader.start()` only registers a
             // poll on POSIX (no sync read), and `MiniEventLoop::tick_once`
             // skips the uws tick whenever a concurrent task (the WaiterThread
@@ -1479,7 +1461,7 @@ impl<'a> SecurityScanSubprocess<'a> {
                             }
                             Err(e) => match e.get_errno() {
                                 // macOS `bun_sys::read` is single-shot
-                                // (`read$NOCANCEL`, sys.zig:2138); WaiterThread
+                                // (`read$NOCANCEL`); WaiterThread
                                 // + PTY matrix arms can land signals mid-drain.
                                 bun_sys::E::EINTR => continue,
                                 bun_sys::E::EAGAIN => {
@@ -1968,5 +1950,3 @@ fn parse_security_advisories_from_expr(
 
     Ok(advisories_list.into_boxed_slice())
 }
-
-// ported from: src/install/PackageManager/security_scanner.zig

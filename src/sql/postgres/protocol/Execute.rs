@@ -34,7 +34,6 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    // Zig `WriteWrap(@This(), ...)` — see src/sql/postgres/protocol/WriteWrap.rs
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
@@ -42,5 +41,3 @@ impl<'a> Execute<'a> {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/postgres/protocol/Execute.zig

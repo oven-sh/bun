@@ -40,7 +40,7 @@ pub type List<A = Global> = MultiArrayList<LineOffsetTable<A>, A>;
 
 /// Typed SoA column accessors on [`List`] (= `MultiArrayList<LineOffsetTable>`).
 ///
-/// Mirrors Zig `list.items(.byte_offset_to_start_of_line)`. Can't be an
+/// Can't be an
 /// inherent impl (orphan rules — `MultiArrayList` lives in `bun_collections`),
 /// so it's an extension trait; same pattern as `mapping::MappingColumns`.
 pub trait LineOffsetTableColumns {
@@ -93,9 +93,6 @@ impl LineOffsetTable {
     /// (≈90-120M cycles) doing a fresh bounds-checked binary search every
     /// call; this short-circuits to a couple of compares for the common case
     /// and falls back to the binary search otherwise.
-    ///
-    /// Zig spec (`LineOffsetTable.zig:20`) only has the binary search; this is
-    /// a deliberate divergence — strictly cheaper, identical result.
     #[inline]
     pub fn find_line_with_hint(offsets: &[u32], loc: Loc, hint: u32) -> i32 {
         debug_assert!(loc.start > -1);
@@ -178,25 +175,22 @@ impl LineOffsetTable {
         // the idea here is:
         // we want to avoid re-allocating this array _most_ of the time
         // when lines _do_ have unicode characters, they probably still won't be longer than 255 much
-        // PERF(port): Zig used `std.heap.stackFallback(@sizeOf(i32)*256)` — a 256-slot stack
-        // buffer with heap spill. The direct Rust equivalent is `SmallVec<[i32; 256]>`: inline
-        // storage stays on-stack, `into_vec()` at hand-over does the same "dupe if stack-owned,
-        // move if spilled" branch Zig does, and `mem::take` resets to a fresh inline buffer
+        // PERF: `SmallVec<[i32; 256]>` is a 256-slot stack buffer with heap spill: inline
+        // storage stays on-stack, `into_vec()` at hand-over dupes if stack-owned and
+        // moves if spilled, and `mem::take` resets to a fresh inline buffer
         // (zero alloc). Previously this was a heap `Vec::with_capacity(120)` re-primed via
         // `mem::replace` per non-ASCII line, which showed up as one mi_malloc(480) per such
-        // line under `generate` (2× self-time vs Zig on lint/create-vite).
+        // line under `generate` (lint/create-vite).
         let mut columns_for_non_ascii: SmallVec<[i32; 256]> = SmallVec::new();
 
-        // Hoist the base pointer so per-iteration offset math is a single sub + truncate,
-        // matching Zig's `@truncate(@intFromPtr(remaining.ptr) - @intFromPtr(contents.ptr))`.
+        // Hoist the base pointer so per-iteration offset math is a single sub + truncate.
         let base = contents.as_ptr() as usize;
 
         let mut remaining = contents;
         while !remaining.is_empty() {
             let b0 = remaining[0];
             let len_ = strings::wtf8_byte_sequence_length_with_invalid(b0);
-            // Zig passes `remaining.ptr[0..4]` (unchecked 4-byte view) to decodeWTF8RuneT,
-            // which only reads `len_` bytes. After the SIMD skip below lands, the loop head
+            // After the SIMD skip below lands, the loop head
             // is overwhelmingly an ASCII '\r'/'\n' or a non-ASCII lead byte, so keep the
             // 1-byte path branch-only and confine the zero+min+copy pad to the cold
             // multibyte arm.
@@ -264,8 +258,7 @@ impl LineOffsetTable {
                         continue;
                     }
 
-                    // Zig used a stack-fallback allocator and duped onto `allocator` only when
-                    // stack-owned, then reset the fixed buffer. The SmallVec scratch reuses its
+                    // The SmallVec scratch reuses its
                     // inline storage across lines; copy out into an `A`-backed box only when a
                     // line had non-ASCII bytes. ASCII-only lines (almost all of them) store an
                     // empty dangling box and leave the scratch untouched.
@@ -336,5 +329,3 @@ impl LineOffsetTable {
         Ok(list)
     }
 }
-
-// ported from: src/sourcemap/LineOffsetTable.zig

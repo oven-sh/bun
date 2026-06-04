@@ -1,5 +1,3 @@
-//! Port of src/cli/create/SourceFileProjectGenerator.zig
-
 use crate::api::bun::process as bun_process;
 use crate::api::bun::process::SignalCodeExt as _;
 use crate::api::bun::process::sync as spawn_sync;
@@ -265,17 +263,12 @@ pub fn generate_files(
     }
 
     // Generate files based on template type
-    // Zig used `switch (tag) { inline else => |active| @field(Self, @tagName(active)) }`
-    // to comptime-dispatch to the per-template `files` const and stack-size the
-    // `filenames`/`created_files` arrays. Rust cannot reflect on decl names, so
-    // we route through `Tag::files()` and use heap Vecs sized at runtime.
-    // PERF(port): was comptime monomorphization + stack arrays.
+    // Route through `Tag::files()` and use heap Vecs sized at runtime.
     {
         let files: &'static [TemplateFile] = template.tag().files();
 
         let mut max_filename_len: usize = 0;
-        // Reshaped for borrowck — Zig kept parallel `[N][]const u8 filenames`
-        // + `[N]bool created_files` arrays of arena-backed slices. Here a single
+        // A single
         // Vec<Option<Vec<u8>>> owns the names; Some(_) doubles as the created flag.
         let mut filenames: Vec<Option<Vec<u8>>> = vec![None; files.len()];
 
@@ -669,10 +662,8 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
             }
 
             if filename[0] >= b'a' && filename[0] <= b'z' {
-                // Zig leaked `duped` on the success returns below
-                // (only freed on the fall-through). Route through the process-
-                // lifetime CLI arena to match the returned-slice lifetime; the
-                // fall-through `free` is a no-op (arena-backed).
+                // Route through the process-
+                // lifetime CLI arena to match the returned-slice lifetime.
                 let duped: &'static mut [u8] = crate::cli::cli_arena().alloc_slice_copy(filename);
                 duped[0] -= 32;
                 if js_lexer::is_identifier(duped) {
@@ -741,14 +732,13 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                     }
                 }
 
-                // Zig: default_allocator.free(duped) — `duped` is arena-backed here, so no free (see above).
             }
 
             let Ok(name_to_try) = MutableString::ensure_valid_identifier(filename) else {
                 return None;
             };
             if exports.contains(&name_to_try) {
-                // Zig returns an allocator-owned slice; route through the
+                // Route through the
                 // process-lifetime CLI arena.
                 return Some(crate::cli::cli_dupe(&name_to_try));
             }
@@ -971,7 +961,6 @@ impl Tag {
         }
     }
 
-    /// Replaces Zig's `@field(SourceFileProjectGenerator, @tagName(active)).files`.
     pub fn files(self) -> &'static [TemplateFile] {
         match self {
             Tag::ReactTailwindSpa => react_tailwind_spa::FILES,
@@ -1031,5 +1020,3 @@ impl Logger {
         );
     }
 }
-
-// ported from: src/cli/create/SourceFileProjectGenerator.zig

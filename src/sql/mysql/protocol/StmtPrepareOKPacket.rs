@@ -31,7 +31,6 @@ impl StmtPrepareOKPacket {
         Ok(())
     }
 
-    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
@@ -39,5 +38,3 @@ impl StmtPrepareOKPacket {
         self.decode_internal(reader)
     }
 }
-
-// ported from: src/sql/mysql/protocol/StmtPrepareOKPacket.zig

@@ -87,7 +87,7 @@ impl RawAtomicRefCount {
     }
 
     pub fn decrement(&self) -> DecrementResult {
-        // Zig: `fetchSub(1, .release)` then `if new == 0 { fence(.acquire) }`.
+        // Release decrement, acquire fence on the last reference (below).
         let old = self.raw_value.fetch_sub(1, Ordering::Release);
         if cfg!(debug_assertions) || cfg!(windows) {
             // Always-on on Windows while #53265 fs-promises-writeFile is being
@@ -119,5 +119,3 @@ impl RawAtomicRefCount {
 // cannot dispatch on the const param on stable Rust, so any such alias would
 // silently resolve to one variant regardless of the bool — a footgun. Callers
 // must pick `RawRefCount` (single-thread) vs `RawAtomicRefCount` explicitly.
-
-// ported from: src/ptr/raw_ref_count.zig

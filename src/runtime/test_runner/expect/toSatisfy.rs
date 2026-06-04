@@ -49,11 +49,10 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
         return Ok(JSValue::UNDEFINED);
     }
 
-    // `defer formatter.deinit()` dropped — Formatter impls Drop.
+    // Formatter impls Drop.
     let mut formatter = super::make_formatter(global);
 
     if not {
-        // PERF(port): was `comptime getSignature(...)` — could const-eval the signature.
         let signature = get_signature("toSatisfy", "<green>expected<r>", true);
         return this.throw(
             global,
@@ -62,11 +61,9 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
         );
     }
 
-    // PERF(port): was `comptime getSignature(...)` — could const-eval the signature.
     let signature = get_signature("toSatisfy", "<green>expected<r>", false);
 
-    // reshaped for borrowck — Zig held two `*Formatter` aliases via `toFmt`;
-    // Rust `to_fmt(&mut Formatter)` borrows exclusively, so use a second formatter for the
+    // `to_fmt(&mut Formatter)` borrows exclusively, so use a second formatter for the
     // received value (matches the toBeGreaterThan.rs pattern).
     let mut formatter2 = super::make_formatter(global);
     this.throw(
@@ -79,5 +76,3 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toSatisfy.zig

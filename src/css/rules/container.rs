@@ -65,11 +65,9 @@ pub enum ContainerSizeFeatureId {
 
 // `QueryFeature<FeatureId>` requires `FeatureId: FeatureIdTrait` at the type
 // level, so this impl must be present for `ContainerSizeFeature` to resolve.
-// `value_type` inlines the Zig `DeriveValueType` reflection; `to_css`/`from_str`
-// delegate to `enum_property_util` (driven by the `EnumProperty` derive).
+// `to_css`/`from_str` delegate to `enum_property_util` (driven by the
+// `EnumProperty` derive).
 impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
-    // Zig: pub const valueType = css.DeriveValueType(@This(), ValueTypeMap).valueType;
-    // `DeriveValueType` is comptime reflection over `ValueTypeMap`; expanded inline.
     fn value_type(&self) -> MediaFeatureType {
         match self {
             Self::Width => MediaFeatureType::Length,
@@ -103,8 +101,7 @@ pub enum StyleQuery {
         /// The operator for the conditions.
         operator: Operator,
         /// The conditions for the operator.
-        // PERF(port): was ArrayListUnmanaged fed input.arena() (parser arena);
-        // could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
+        // PERF: could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
         conditions: Vec<StyleQuery>,
     },
 }
@@ -151,8 +148,8 @@ impl QueryCondition for StyleQuery {
         let property_id = crate::properties::PropertyId::parse(input)?;
         input.expect_colon()?;
         input.skip_whitespace();
-        // Zig threaded `(input.arena(), null)` here; the arena gets re-threaded
-        // as part of the crate-wide `'bump` lifetime work (see css_parser.rs).
+        // The arena gets re-threaded as part of the crate-wide `'bump`
+        // lifetime work (see css_parser.rs).
         let opts = css::ParserOptions::default(None);
         let feature = StyleQuery::Feature(Box::new(Property::parse(property_id, input, &opts)?));
         let _ = input.try_parse(css::css_parser::parse_important);
@@ -168,7 +165,6 @@ impl QueryCondition for StyleQuery {
         }
     }
     fn parse_style_query(input: &mut css::Parser) -> css::Result<Self> {
-        // Zig: `return .{ .err = input.newErrorForNextToken() }`
         Err(input.new_error_for_next_token())
     }
     fn needs_parens(&self, parent_operator: Option<Operator>, _targets: &css::Targets) -> bool {
@@ -208,8 +204,7 @@ pub enum ContainerCondition {
         /// The operator for the conditions.
         operator: Operator,
         /// The conditions for the operator.
-        // PERF(port): was ArrayListUnmanaged fed input.arena() (parser arena);
-        // could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
+        // PERF: could use bun_alloc::ArenaVec<'bump, _> instead of global Vec — profile if hot.
         conditions: Vec<ContainerCondition>,
     },
     /// A style query.
@@ -280,7 +275,6 @@ impl QueryCondition for ContainerCondition {
     }
     fn parse_style_query(input: &mut css::Parser) -> css::Result<Self> {
         use crate::media_query::QueryConditionFlags;
-        // Zig defined a local `Fns` struct with two callbacks; in Rust pass closures.
         input.parse_nested_block(|i| {
             if let Ok(res) = i.try_parse(|i2| {
                 media_query::parse_query_condition::<StyleQuery>(i2, QueryConditionFlags::ALLOW_OR)
@@ -355,7 +349,6 @@ impl<R> ContainerRule<R> {
 
         // Don't downlevel range syntax in container queries.
         let exclude = dest.targets.exclude;
-        // Zig: bun.bits.insert(css.targets.Features, &dest.targets.exclude, .media_queries);
         dest.targets.exclude.insert(css::Features::MEDIA_QUERIES);
         self.condition.to_css(dest)?;
         dest.targets.exclude = exclude;
@@ -381,4 +374,3 @@ impl<R> ContainerRule<R> {
     }
 }
 
-// ported from: src/css/rules/container.zig

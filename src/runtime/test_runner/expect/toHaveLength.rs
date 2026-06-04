@@ -79,7 +79,6 @@ pub(crate) fn to_have_length(
 
     // handle failure
     if not {
-        // PERF(port): was comptime getSignature — const fn evaluated at compile time
         let signature: &str = get_signature("toHaveLength", "<green>expected<r>", true);
         return this.throw(
             global,
@@ -88,7 +87,6 @@ pub(crate) fn to_have_length(
         );
     }
 
-    // PERF(port): was comptime getSignature — const fn evaluated at compile time
     let signature: &str = get_signature("toHaveLength", "<green>expected<r>", false);
     this.throw(
         global,
@@ -99,5 +97,3 @@ pub(crate) fn to_have_length(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveLength.zig

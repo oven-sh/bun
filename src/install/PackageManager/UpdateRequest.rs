@@ -12,9 +12,9 @@ use bun_install::{
     Dependency, INVALID_PACKAGE_ID, Lockfile, PackageID, PackageManager, PackageNameHash,
 };
 // `lockfile.packages.items_name()` is provided by an extension trait on
-// `MultiArrayList<Package>` (Zig: `lockfile.packages.items(.name)`).
+// `MultiArrayList<Package>`.
 pub struct UpdateRequest {
-    // Zig intentionally leaks these (no deinit); CLI positionals are
+    // CLI positionals are
     // process-lifetime, hence `&'static`.
     pub name: &'static [u8],
     pub name_hash: PackageNameHash,
@@ -128,8 +128,7 @@ impl UpdateRequest {
         }
     }
 
-    // NOTE: `pub const fromJS = @import("../../install_jsc/update_request_jsc.zig").fromJS;`
-    // deleted — in Rust, `from_js` lives on an extension trait in the `*_jsc` crate.
+    // NOTE: `from_js` lives on an extension trait in the `*_jsc` crate.
 
     pub fn parse<'a>(
         pm: Option<&mut PackageManager>,
@@ -159,7 +158,7 @@ impl UpdateRequest {
                 // buffer of `input.len` bytes is always sufficient. Previously this was a
                 // fixed `[2048]u8` stack array which overflowed for longer positionals.
                 let mut temp = vec![0u8; input.len()];
-                // std.mem.replace(u8, input, "\\\\", "/", temp) — returns replacement count
+                // `strings::replace` returns the replacement count.
                 let len = strings::replace(&input, b"\\\\", b"/", &mut temp);
                 let new_len = input.len() - len;
                 let input2 = &mut temp[..new_len];
@@ -301,5 +300,3 @@ impl UpdateRequest {
 pub use super::Subcommand;
 pub use bun_install::package_manager::Options;
 pub use bun_install::package_manager::command_line_arguments as CommandLineArguments;
-
-// ported from: src/install/PackageManager/UpdateRequest.zig

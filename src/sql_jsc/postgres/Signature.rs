@@ -19,14 +19,10 @@ impl Signature {
         }
     }
 
-    // Note: Zig `deinit` only freed the four owned slices via
-    // `bun.default_allocator.free`. With `Box<[T]>` fields, Rust's `Drop`
-    // handles this automatically — no explicit `Drop` impl needed.
+    // No explicit `Drop` impl needed: the `Box<[T]>` fields free the four owned slices automatically.
 
     pub fn hash(&self) -> u64 {
-        // Zig `std.hash.Wyhash.init(0)` + `update` + `final` over two slices.
-        // `Int4` (= u32) is `NoUninit`; safe `&[u32]` → `&[u8]` view (matches
-        // Zig `std.mem.sliceAsBytes`).
+        // `Int4` (= u32) is `NoUninit`; safe `&[u32]` → `&[u8]` view.
         let fields_bytes: &[u8] = bun_core::cast_slice(&self.fields[..]);
         let mut hasher = bun_wyhash::Wyhash::init(0);
         hasher.update(&self.name);
@@ -34,9 +30,9 @@ impl Signature {
         hasher.final_()
     }
 
-    // Zig's inferred error set mixed JSError (from QueryBindingIterator /
-    // Tag::from_js), OOM, and error.InvalidQueryBinding; collapsed to the
-    // crate-wide `bun_core::Error` like the rest of the SQL port.
+    // JSError (from QueryBindingIterator /
+    // Tag::from_js), OOM, and InvalidQueryBinding are collapsed to the
+    // crate-wide `bun_core::Error`.
     pub fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],
@@ -54,9 +50,6 @@ impl Signature {
         let mut name: Vec<u8> = Vec::with_capacity(query.len());
 
         name.extend_from_slice(query);
-        // PERF(port): was appendSliceAssumeCapacity — profile if it shows up on a hot path.
-
-        // (errdefer { fields.deinit(); name.deinit(); } — handled by Drop on `?`)
 
         let mut iter = QueryBindingIterator::init(array_value, columns, global_object)
             .map_err(js_error_to_postgres)?;
@@ -134,4 +127,3 @@ impl Signature {
     }
 }
 
-// ported from: src/sql_jsc/postgres/Signature.zig

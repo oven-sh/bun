@@ -50,5 +50,3 @@ impl ConfigVersion {
         }
     }
 }
-
-// ported from: src/install/ConfigVersion.zig

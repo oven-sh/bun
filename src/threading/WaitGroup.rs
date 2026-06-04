@@ -75,5 +75,3 @@ impl WaitGroup {
         self.mutex.unlock();
     }
 }
-
-// ported from: src/threading/WaitGroup.zig

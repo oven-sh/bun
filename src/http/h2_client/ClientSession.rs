@@ -1,6 +1,5 @@
 //! One TCP+TLS connection running the HTTP/2 protocol for `fetch()`. Owns the
 //! socket, the connection-scoped HPACK tables, and a map of active `Stream`s.
-//! See `src/http/H2Client.zig` for the module-level overview.
 
 use core::cell::Cell;
 use core::ptr::NonNull;
@@ -189,7 +188,7 @@ fn drop_stream(stream: *mut Stream) {
 impl ClientSession {
     /// Bump the refcount and return a guard that releases it on Drop, so
     /// reentrant callbacks (delivering bodies, failing clients) cannot free
-    /// `*self` mid-call. Zig: `this.ref(); defer this.deref();`.
+    /// `*self` mid-call.
     ///
     /// Captures a raw pointer (not a borrow) so the guard does not borrow the
     /// session — the guarded scope may freely take fresh `&mut self`, and the
@@ -612,7 +611,7 @@ impl ClientSession {
         for (id, unacked) in updates {
             self.write_window_update(id, unacked);
         }
-        // PERF(port): Zig iterated and wrote in one pass; profile if extra Vec matters.
+        // PERF: could iterate and write in one pass; profile if extra Vec matters.
     }
 
     pub fn flush(&mut self) -> Result<bool, Error> {
@@ -982,8 +981,8 @@ impl ClientSession {
                 }
             };
             // handleResponseMetadata set is_redirect_pending. The doRedirect
-            // contract assumes the caller already detached the stream
-            // (http.zig:1062). Detach + RST here unconditionally so the
+            // contract assumes the caller already detached the stream.
+            // Detach + RST here unconditionally so the
             // header_progress path below can never re-enter doRedirect via
             // progressUpdate while the old Stream still points at this
             // client — that path would attach a second Stream to the same
@@ -1014,7 +1013,7 @@ impl ClientSession {
                 return self.finish_stream(stream, client);
             }
             client.h2_clone_metadata();
-            // Mirror the h1 path (http.zig handleOnDataHeaders): deliver headers
+            // Mirror the h1 path: deliver headers
             // to JS now so `await fetch()` resolves and `getReader()` can enable
             // response_body_streaming. Without this, a content-length response
             // buffers the entire body before the Response promise settles.
@@ -1122,5 +1121,3 @@ impl Drop for ClientSession {
         // bun.destroy(this) — handled by heap::take in `deref`.
     }
 }
-
-// ported from: src/http/h2_client/ClientSession.zig

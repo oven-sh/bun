@@ -176,7 +176,7 @@ pub fn r#match(glob: &[u8], path: &[u8]) -> MatchResult {
 
 // `glob_start` is the index where the glob pattern starts
 #[inline(always)]
-// PERF(port): Zig `inline fn` on a fn that recurses through match_brace_branch — profile if hot.
+// PERF: `inline(always)` on a fn that recurses through match_brace_branch — profile if hot.
 fn glob_match_impl(
     state: &mut State,
     glob: &[u8],
@@ -602,8 +602,6 @@ fn unescape(c: &mut u8, glob: &[u8], glob_index: &mut u32) -> bool {
 }
 
 /// Decodes the WTF-8 codepoint at `bytes[idx]`, returning `(codepoint, byte_len)`.
-///
-/// Mirrors the open-coded triple in matcher.zig (`wtf8ByteSequenceLength` + `decodeWTF8RuneT`).
 #[inline(always)]
 fn decode_wtf8_rune_at(bytes: &[u8], idx: usize) -> (u32, u8) {
     let len = strings::wtf8_byte_sequence_length(bytes[idx]);
@@ -677,5 +675,3 @@ fn skip_globstars(glob: &[u8], glob_index: &mut u32) {
 
     *glob_index -= 2;
 }
-
-// ported from: src/glob/matcher.zig

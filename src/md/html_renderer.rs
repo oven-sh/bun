@@ -689,7 +689,6 @@ fn is_disallowed_tag(content: &[u8]) -> bool {
         b"script",
         b"plaintext",
     ];
-    // PERF(port): was `inline for` (comptime unroll) — profile if it shows up on a hot path.
     for tag in DISALLOWED.iter() {
         if match_tag_name_ci(content, after_lt, tag) {
             return true;
@@ -719,5 +718,3 @@ fn match_tag_name_ci(content: &[u8], pos: usize, tag: &[u8]) -> bool {
 fn find_entity_in_text(content: &[u8], start: usize) -> Option<usize> {
     helpers::find_entity(content, start)
 }
-
-// ported from: src/md/html_renderer.zig

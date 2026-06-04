@@ -56,7 +56,7 @@ pub struct Entry<'a> {
     pub file: Option<&'a [u8]>,
     pub os: Option<Vec<&'a [u8]>>,
     pub cpu: Option<Vec<&'a [u8]>>,
-    // Owned: allocated via allocPrint/dupe in parse(); freed in deinit
+    // Owned heap allocation (unlike the borrowed fields above); created in parse()
     pub git_repo_name: Option<Box<[u8]>>,
 }
 
@@ -86,8 +86,7 @@ pub struct ParsedGitUrl<'a> {
     pub commit: Option<&'a [u8]>,
     pub owner: Option<&'a [u8]>,
     pub repo: Option<&'a [u8]>,
-    // In Zig, `url` may be either a borrow into `version` or a freshly allocPrint'd
-    // "https://github.com/{path}". Here we keep an optional owned buffer so the borrow
+    // Optional owned "https://github.com/{path}" buffer so the borrow
     // case stays zero-copy. Callers must check `owned_url` first: when it is `Some`,
     // it supersedes `url` (see `into_resolved`).
     pub owned_url: Option<Vec<u8>>,
@@ -248,7 +247,7 @@ impl<'a> Entry<'a> {
             buf.extend_from_slice(path_without_commit);
             owned_url = Some(buf);
             // `url` still borrows the stripped input; callers must prefer
-            // `owned_url` when it is Some (Zig reassigns `url` to this buffer).
+            // `owned_url` when it is Some.
         } else if strings::index_of(url, b"github.com").is_some() {
             let mut remaining = url;
             if let Some(idx) = strings::index_of(remaining, b"github.com/") {
@@ -475,9 +474,8 @@ impl<'a> YarnLock<'a> {
                             if let Some(repo_name) = git_info.repo {
                                 entry.git_repo_name = Some(Box::<[u8]>::from(repo_name));
                             }
-                            // Zig reassigns `url` to the allocPrint'd
-                            // `https://github.com/{path}` buffer for the `github:`
-                            // branch; that buffer is `owned_url` here.
+                            // For the `github:` branch the resolved URL is the
+                            // owned `https://github.com/{path}` buffer.
                             entry.resolved = Some(match git_info.owned_url {
                                 Some(owned) => Cow::Owned(owned),
                                 None => Cow::Borrowed(git_info.url),
@@ -538,9 +536,9 @@ impl<'a> YarnLock<'a> {
     }
 
     fn find_entry_by_spec(&self, spec: &[u8]) -> Option<&Entry<'a>> {
-        // Zig returns `?*Entry` (mutable ptr) but every caller only
-        // reads `.workspace` / `.specs`, so `&self` suffices and avoids the
-        // borrowck conflict with the outer `entries.iter()` loops.
+        // Every caller only reads `.workspace` / `.specs`, so `&self`
+        // suffices and avoids the borrowck conflict with the outer
+        // `entries.iter()` loops.
         for entry in self.entries.iter() {
             for entry_spec in entry.specs.iter() {
                 if *entry_spec == spec {
@@ -571,7 +569,7 @@ impl<'a> YarnLock<'a> {
                 combined_specs.extend_from_slice(&new_entry.specs);
 
                 existing_entry.specs = combined_specs;
-                // new_entry.specs dropped here (Zig: allocator.free)
+                // new_entry.specs dropped here
                 return Ok(());
             }
         }
@@ -602,7 +600,6 @@ fn process_deps(
 ) -> Result<usize, Error> {
     // Returns count instead of slice to avoid borrowck conflict with caller's bufs.
     let mut count: usize = 0;
-    // PERF(port): was stack-fallback alloc (1024 bytes) — profile if it shows up on a hot path
 
     for (dep_name_key, dep_version_ref) in deps.iter() {
         let dep_name: &[u8] = dep_name_key.as_ref();
@@ -672,7 +669,7 @@ struct RootDep {
 #[derive(Clone)]
 struct VersionInfo {
     version: Vec<u8>,
-    // Zig stores a borrow from the input; an owned Vec<u8> avoids a second
+    // Owned Vec<u8> (rather than a borrow from the input) avoids a second
     // lifetime on the local map.
     package_id: PackageID,
     yarn_idx: usize,
@@ -697,8 +694,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     install::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
 
-    // reshaped for borrowck. Zig keeps a single `var string_buf =
-    // this.stringBuf()` for the whole function, but in Rust that would hold
+    // A single `Buf` for the whole function would hold
     // `&mut this.buffers.string_bytes` + `&mut this.string_pool` for the
     // function's lifetime and lock out every other `this.*` access. Instead,
     // construct a fresh `Buf` per append via this macro so the mutable borrow
@@ -743,9 +739,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         };
         drop(package_json_fd); // close now; fd no longer needed past path resolution
 
-        // Zig passes `comptime opts: js_lexer.JSONOptions`; the Rust
-        // port spells the 8 option flags out as const generics (stable Rust has
-        // no struct const-generics). Unspecified Zig fields default to false.
+        // The 8 JSON option flags are spelled out as const generics (stable
+        // Rust has no struct const-generics).
         let json_bump = bun_alloc::Arena::new();
         let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts::<
             true,  // IS_JSON
@@ -905,8 +900,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         }
     }
 
-    // SAFETY: capacity reserved above to num_deps; Zig writes into items.ptr[0..num_deps]
-    // beyond len. We mirror with raw pointers and set len at the end.
+    // SAFETY: capacity reserved above to num_deps; we write past `len` through
+    // raw pointers into the reserved capacity and set `len` at the end.
     let dependencies_base_ptr = this.buffers.dependencies.as_mut_ptr();
     let resolutions_base_ptr = this.buffers.resolutions.as_mut_ptr();
     let mut dependencies_buf: &mut [Dependency] = unsafe {
@@ -1017,7 +1012,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     let mut package_id_to_yarn_idx: Vec<usize> = vec![usize::MAX; next_package_id as usize];
 
     let created_packages: StringHashMap<bool> = StringHashMap::new();
-    let _ = &created_packages; // unused in Zig too (only init/deinit)
+    let _ = &created_packages; // never populated
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let mut is_npm_alias = false;
@@ -1231,9 +1226,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         })?;
     }
 
-    // Zig holds two `items(.field)` slices simultaneously; the
-    // derive's `&mut self` accessors can't alias, so we re-borrow per write
-    // below via `this.packages.items_*_mut()[idx] = …` instead of caching.
+    // The derive's `&mut self` accessors can't alias, so we re-borrow per write
+    // below via `this.packages.items_*_mut()[idx] = …` instead of caching
+    // two field slices simultaneously.
 
     let mut actual_root_dep_count: u32 = 0;
 
@@ -1514,10 +1509,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         versions.sort_by_key(|a| a.package_id);
 
         let original_name_hash = string_hash(base_name);
-        // reshaped for borrowck — Zig matches on the entry only to
-        // call `existing_ids.deinit()` before `remove`; Rust's `remove` drops
-        // the value (and thus the `Ids` Vec) automatically, so the match is
-        // unnecessary and we avoid the overlapping `get_mut`/`remove` borrow.
+        // `remove` drops the value (and thus the `Ids` Vec) automatically.
         let _ = this.package_index.remove(&original_name_hash);
     }
 
@@ -2060,9 +2052,8 @@ fn string_hash(s: &[u8]) -> u64 {
     Semver::string::Builder::string_hash(s)
 }
 
-/// Port of Zig's packed-struct `Behavior { .prod = …, .dev = … }` literal.
-/// Rust's bitflags-backed `Behavior` has no named fields, so build via
-/// `with(FLAG, cond)` chaining instead.
+/// The bitflags-backed `Behavior` has no named fields, so build via
+/// `with(FLAG, cond)` chaining.
 #[inline]
 fn behavior_for(dep_type: DependencyType, workspace: bool) -> dependency::Behavior {
     dependency::Behavior::default()
@@ -2081,5 +2072,3 @@ fn behavior_for(dep_type: DependencyType, workspace: bool) -> dependency::Behavi
         .with(dependency::Behavior::PEER, dep_type == DependencyType::Peer)
         .with(dependency::Behavior::WORKSPACE, workspace)
 }
-
-// ported from: src/install/yarn.zig

@@ -52,7 +52,6 @@ use crate::websocket_client::ErrorCode;
 use bun_http::ssl_config::SSLConfig;
 
 bun_core::define_scoped_log!(log, WebSocketUpgradeClient, visible);
-// Zig: `bun.new`/`bun.destroy` log under `.alloc` (hidden, BUN_DEBUG_alloc=1).
 bun_core::declare_scope!(alloc, hidden);
 
 /// Local `VirtualMachine → EventLoopCtx` adapter for `KeepAlive::{ref,unref}`.
@@ -90,8 +89,7 @@ enum State {
 
 /// Owned +1 reference to a `us_ssl_ctx_t` (`SSL_CTX*`); releases the ref via
 /// `SSL_CTX_free` on drop (BoringSSL decrements its internal refcount).
-/// Plays the role of Zig's `SslCtxRef` for the upgrade-client lifecycle:
-/// either dropped here, or transferred to the connected `WebSocket` via
+/// Either dropped here, or transferred to the connected `WebSocket` via
 /// `into_raw()` after the upgrade completes.
 struct SslCtxOwned(*mut SslCtx);
 
@@ -112,9 +110,9 @@ impl Drop for SslCtxOwned {
     }
 }
 
-/// `NewHTTPUpgradeClient(comptime ssl: bool) type` — generic over `SSL`.
+/// WebSocket HTTP upgrade client, generic over `SSL`.
 ///
-/// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread
+/// Intrusive single-thread
 /// refcount; `ref_count` field below, `ref()`/`deref()` inherent methods, `deinit`
 /// runs when count hits 0.
 #[derive(bun_ptr::CellRefCounted)]
@@ -125,9 +123,8 @@ pub struct HTTPClient<const SSL: bool> {
     outgoing_websocket: Option<*mut CppWebSocket>,
     /// Owned request bytes. Freed via `clear_input`.
     input_body_buf: Vec<u8>,
-    // Reshaped for borrowck — Zig `to_send: []const u8` is always a
-    // suffix of `input_body_buf`; stored here as the suffix length so we don't
-    // hold a self-referential slice.
+    // The unsent bytes are always a suffix of `input_body_buf`; stored here as
+    // the suffix length so we don't hold a self-referential slice.
     to_send_len: usize,
     headers_buf: [picohttp::Header; 128],
     body: Vec<u8>,
@@ -173,7 +170,6 @@ pub struct HTTPClient<const SSL: bool> {
 // C++ callbacks. Holding a `&mut Self` function-argument across either of
 // those is UB under Stacked Borrows (argument protectors / aliased `&mut`).
 impl<const SSL: bool> HTTPClient<SSL> {
-    /// Zig: `meta.typeName(T)` keeps the full path because the name contains `(`.
     const TYPE_NAME: &'static str = if SSL {
         "http.websocket_client.WebSocketUpgradeClient.NewHTTPUpgradeClient(true)"
     } else {
@@ -288,7 +284,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Build proxy state if using proxy.
         // The CONNECT request is built using local variables for proxy_authorization and proxy_headers
         // which are freed immediately after building the request (not stored on the client).
-        // Ownership of `body` moves into the proxy (matching Zig); the CONNECT
+        // Ownership of `body` moves into the proxy; the CONNECT
         // request becomes the initial input_body_buf instead.
         let (proxy_state, input_body_buf): (Option<WebSocketProxy>, Vec<u8>) = if using_proxy {
             // Parse proxy authorization (temporary, freed after building CONNECT request)
@@ -338,7 +334,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             let mut subprotocols = StringSet::new();
             let mut it = HeaderValueIterator::init(protocol_for_subprotocols);
             while let Some(protocol) = it.next() {
-                let _ = subprotocols.insert(protocol); // OOM-only Result (Zig: catch unreachable)
+                let _ = subprotocols.insert(protocol); // OOM-only Result
             }
             subprotocols
         };
@@ -366,7 +362,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // used only for pre-connect setup and MUST NOT span any
         // `Socket::connect_*_group` call below — those install `client` as
         // socket userdata and may synchronously dispatch
-        // `handle_connect_error(*mut Self)` (see .zig:1152), which would
+        // `handle_connect_error(*mut Self)`, which would
         // alias this borrow under Stacked Borrows. A fresh `&mut *client` is
         // re-derived after each connect call returns.
         let client_ref = unsafe { &mut *client };
@@ -899,8 +895,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
         // Bumps the intrusive refcount and derefs on Drop at every return path
-        // below (Zig: `self.ref(); defer self.deref();`). No `&`/`&mut Self` is
-        // live when the guard drops.
+        // below. No `&`/`&mut Self` is live when the guard drops.
         let _guard = this.ref_guard();
 
         debug_assert!(this.is_same_socket(socket));
@@ -975,7 +970,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
         // Reshaped for borrowck — copy remain_buf out before mutating self.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // PERF(port): was zero-copy slice into self.body.
         // SAFETY: `me`'s last use is the `body` slice above (now copied out);
         // no `&mut Self` spans this call.
         unsafe { Self::process_response(this.as_ptr(), response, &remain_buf) };
@@ -1054,7 +1048,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
         // Reshaped for borrowck — copy remain_buf before clearing self.body.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // PERF(port): was zero-copy slice.
 
         // SAFETY: re-derive a fresh `&mut` after the `body` borrow above.
         let me = unsafe { &mut *this };
@@ -1285,7 +1278,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
         // Reshaped for borrowck — copy remain_buf out before mutating self.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
-        // PERF(port): was zero-copy slice.
         // SAFETY: `me`'s last use is the `body` slice above (now copied out);
         // no `&mut Self` spans this call.
         unsafe { Self::process_response(this, response, &remain_buf) };
@@ -1404,8 +1396,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                                 let mut protocol_str = BunString::clone_latin1(protocol);
                                 CppWebSocket::opaque_ref(ws).set_protocol(&mut protocol_str);
                                 // `BunString` is `Copy`; explicitly drop the
-                                // ref taken by `clone_latin1` (Zig: `defer
-                                // protocol_str.deref()`).
+                                // ref taken by `clone_latin1`.
                                 protocol_str.deref();
                             }
                             true
@@ -1584,8 +1575,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let overflow_ptr: *mut u8 = if overflow_len > 0 {
             let mut v: Vec<u8> = Vec::new();
             if v.try_reserve_exact(overflow_len).is_err() {
-                // Spec .zig:1020 — OOM here terminates with `invalid_response`
-                // rather than aborting the process.
+                // OOM here terminates with `invalid_response` rather than
+                // aborting the process.
                 // SAFETY: no `&mut Self` is live across this call.
                 unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
                 return;
@@ -1718,7 +1709,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // No `&mut Self` spans this call (handle_close reenters).
             tcp.close(uws::CloseCode::Failure);
         }
-        // Zig: `defer if (saved_secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);`
         // Any arm above that didn't transfer ownership to `did_connect` left
         // the retained ref in `saved_secure`; RAII drop releases it now.
         drop(saved_secure);
@@ -1756,7 +1746,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     return;
                 }
                 // Bumps the intrusive refcount and derefs on Drop at every
-                // return path below (Zig: `self.ref(); defer self.deref();`).
+                // return path below.
                 let _guard = this.ref_guard();
                 // SAFETY: `p` holds a live ref on `tunnel`.
                 let wrote =
@@ -1782,7 +1772,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
 
         // Bumps the intrusive refcount and derefs on Drop at every return path
-        // below (Zig: `self.ref(); defer self.deref();`).
+        // below.
         let _guard = this.ref_guard();
 
         let wrote = socket.write(this.to_send());
@@ -1847,9 +1837,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
 /// (no allocation) or allocates a UTF-8 copy. The resulting slices are stored
 /// here so build_request_body / build_connect_request can index them by &[u8].
 ///
-// Reshaped for borrowck — Zig stored parallel `name_slices` /
-// `value_slices` arrays of `[]const u8` borrowing into `slices`. That is
-// self-referential in Rust; instead store only the `Utf8Slice` array (len =
+// Storing parallel `name_slices` / `value_slices` arrays borrowing into
+// `slices` would be self-referential; instead store only the `Utf8Slice` array (len =
 // 2*count, names at even indices, values at odd) and yield pairs via `iter()`.
 struct Headers8Bit<'a> {
     slices: Vec<Utf8Slice>,
@@ -1895,7 +1884,6 @@ impl<'a> Headers8Bit<'a> {
         let mut headers = Headers::default();
         for (name, value) in self.iter() {
             headers.append(name, value);
-            // PERF(port): Zig `try headers.append` — alloc errors abort in Rust.
         }
         headers
     }
@@ -2189,7 +2177,6 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
 
 // ──────────────────────────────────────────────────────────────────────────
 // extern "C" export shims for the generic `connect`/`cancel`/`memoryCost`.
-// Zig's `exportAll()` does `@export(&connect, .{ .name = ... })` per `ssl`.
 // Rust cannot `#[no_mangle]` a generic, so monomorphize both here.
 //
 // C-ABI mapping (verified against the declarations in
@@ -2298,9 +2285,7 @@ export_http_client!(
     Bun__WebSocketHTTPSClient__memoryCost
 );
 
-/// Aliases for `WebSocketProxyTunnel` (matches Zig `HTTPClient` / `HTTPSClient`).
+/// Aliases for `WebSocketProxyTunnel`.
 pub type NewHttpUpgradeClient<const SSL: bool> = HTTPClient<SSL>;
 pub(crate) type HttpUpgradeClient = HTTPClient<false>;
 pub(crate) type HttpsUpgradeClient = HTTPClient<true>;
-
-// ported from: src/http_jsc/websocket_client/WebSocketUpgradeClient.zig

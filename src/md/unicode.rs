@@ -347,7 +347,6 @@ fn case_fold_from_map<const N: u8>(
     };
 
     // Copy the base codepoints from the data table.
-    // PERF(port): was `inline for` (compile-time unrolled) — profile if hot.
     result.codepoints[..(N as usize)]
         .copy_from_slice(&data[data_offset..data_offset + (N as usize)]);
 
@@ -522,5 +521,3 @@ mod tests {
         assert_eq!(1u8, info.n_codepoints);
     }
 }
-
-// ported from: src/md/unicode.zig

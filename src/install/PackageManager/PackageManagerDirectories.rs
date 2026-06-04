@@ -22,7 +22,7 @@ use super::options::{self, Enable, LogLevel};
 use super::{Command, Options, PackageManager, ProgressStrings, Subcommand};
 
 // ───────────────────────────── method wrappers ───────────────────────────────
-// Thin `&mut self` shims so call sites can use Zig's method-style spelling
+// Thin `&mut self` shims so call sites can use method-style spelling
 // (`pm.getCacheDirectory()` / `pm.getTemporaryDirectory()`). The bodies live
 // in the free functions below to keep them callable without an `impl` path.
 
@@ -40,12 +40,10 @@ impl PackageManager {
     /// `PackageManifestMap::by_name_hash_allow_expired`'s disk-fallback path
     /// reads. Captured by value so the loop body can hold `&mut self.manifests`
     /// alongside `&self.lockfile` / `&self.options` without aliasing the whole
-    /// `&mut self` (Stacked-Borrows UB the Zig `*PackageManager` pattern is
-    /// immune to).
+    /// `&mut self` (which would be Stacked-Borrows UB).
     ///
     /// The cache directory is opened lazily here only when
-    /// `options.enable.manifest_cache` is set (the only branch that reads it),
-    /// matching the Zig `byNameHashAllowExpired` gating.
+    /// `options.enable.manifest_cache` is set (the only branch that reads it).
     pub fn manifest_disk_cache_ctx(&mut self) -> crate::package_manifest_map::DiskCacheCtx {
         let enable_manifest_cache = self.options.enable.manifest_cache();
         crate::package_manifest_map::DiskCacheCtx {
@@ -181,7 +179,7 @@ pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPa
 
 #[inline]
 pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryDirectory {
-    // Zig used `bun.once(...)`; `bun_core::Once<T, fn(A)->T>` can't
+    // `bun_core::Once<T, fn(A)->T>` can't
     // accept a non-`'static` `&mut PackageManager` argument, so use `OnceLock`
     // directly and split get/set so the closure doesn't need to capture `this`.
     if let Some(td) = GET_TEMPORARY_DIRECTORY_ONCE.get() {
@@ -297,7 +295,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
                 Global::crash();
             }
         };
-        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = file.close(); // close error is non-actionable
 
         match sys::renameat_z(tempdir.fd(), tmpname, cache_directory.fd(), tmpname) {
             Ok(()) => {}
@@ -487,8 +485,7 @@ pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Optio
 
 // ─────────────────────── cached folder name printers ──────────────────────────
 //
-// PERF(port): the Zig originals lean on `std.fmt.bufPrint{,Z}`, which the
-// straight port mapped to `core::fmt::write` over a `format_args!` of
+// PERF: an earlier version used `core::fmt::write` over a `format_args!` of
 // `bun_fmt::s` / `CacheVersionFormatter` / `PatchHashFmt` / `hex_int_*`
 // pieces. In Rust that is *dynamic* dispatch — every `{}` argument is a
 // `&dyn Display` whose vtable lives in `.data.rel.ro`, and every
@@ -1128,7 +1125,7 @@ pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
 
 pub fn attempt_to_create_package_json() -> Result<(), Error> {
     let file = attempt_to_create_package_json_and_open()?;
-    let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+    let _ = file.close(); // close error is non-actionable
     Ok(())
 }
 
@@ -1194,10 +1191,10 @@ pub fn save_lockfile(
         return Ok(());
     }
 
-    // Zig held `*Progress.Node` across the body; `Progress::start`
+    // `Progress::start`
     // returns `&mut Node` borrowing `this.progress`, which would conflict with
-    // the `&mut this` reborrows below. Stash as a raw pointer (mirrors Zig's
-    // non-exclusive `*Node`; the node lives inside `this.progress.root`).
+    // the `&mut this` reborrows below. Stash as a raw pointer
+    // (the node lives inside `this.progress.root`).
     let mut save_node: *mut ProgressNode = core::ptr::null_mut();
 
     if log_level.show_progress() {
@@ -1258,8 +1255,7 @@ pub fn save_lockfile(
 
 pub fn update_lockfile_if_needed(
     manager: &mut PackageManager,
-    // Zig passed `Lockfile.LoadResult` by value (large structs are
-    // passed by const-ref under Zig's ABI). The Rust caller continues using
+    // The caller continues using
     // `load_result` after this call, so take it by shared reference.
     load_result: &LoadResult,
 ) -> Result<(), Error> {
@@ -1279,8 +1275,7 @@ pub fn update_lockfile_if_needed(
 pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     let mut tmpname_buf = [0u8; 512];
     tmpname_buf[0..8].copy_from_slice(b"tmplock-");
-    // `FileSystem.RealFS.Tmpfile` (fs.zig) — POSIX path never used
-    // its `*RealFS` arg; Windows opens via `get_default_temp_dir`.
+    // Windows opens via `get_default_temp_dir`.
     let mut tmpfile = bun_resolver::fs::RealFsTmpfile::default();
     let mut secret = [0u8; 32];
     secret[0..8].copy_from_slice(
@@ -1291,8 +1286,7 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
     let mut base64_bytes = [0u8; 64];
     bun_core::csprng(&mut base64_bytes);
 
-    // Zig `std.fmt.bufPrint(buf, "{x}", .{&base64_bytes})` on a `*[64]u8` formats
-    // each byte as zero-padded 2-char lower hex (128 chars total).
+    // Format each byte as zero-padded 2-char lower hex (128 chars total).
     let tmpname_len = {
         let mut cursor = &mut tmpname_buf[8..];
         let initial_len = cursor.len();
@@ -1315,12 +1309,10 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
             lockfile: &this.lockfile,
             options: &this.options,
             successfully_installed: None,
-            // Zig leaves `.updates` at its default `&.{}`. `Yarn::print`
-            // never reads `updates`, but pass an empty slice to match the spec
-            // exactly rather than `&this.update_requests`.
+            // `Yarn::print` never reads `updates`; pass an empty slice.
             updates: &[],
         };
-        // Zig used `file.writerStreaming(&[4096]u8)`. `bun_sys::File`
+        // `bun_sys::File`
         // has no `bun_io::Write` impl (and `bun_sys` ⊥ `bun_io`), so buffer the
         // entire output in a `Vec<u8>` (impls `bun_io::Write`) and flush once.
         let mut buf: Vec<u8> = Vec::with_capacity(4096);
@@ -1376,8 +1368,7 @@ impl fmt::Display for PatchHashFmt {
     }
 }
 
-// PORTING.md §Global mutable state: bool flag → AtomicBool. Set once during
-// the (Once-guarded) temp-dir probe; never read today but kept for Zig parity.
+// Set once during the (Once-guarded) temp-dir probe; never read today.
 static USING_FALLBACK_TEMP_DIR: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
@@ -1390,9 +1381,8 @@ fn verbose_install() -> bool {
     PackageManager::verbose_install()
 }
 
-/// Thread-local cached folder-name buffer accessor. Zig used a plain
-/// `threadlocal var [bun.MAX_PATH_BYTES]u8`. PORTING.md §Global mutable state:
-/// single-threaded install, non-reentrant scratch — the `&'static mut [u8]`
+/// Thread-local cached folder-name buffer accessor.
+/// Single-threaded install, non-reentrant scratch — the `&'static mut [u8]`
 /// is the unique live borrow at every call site. Callers must not hold the
 /// result across a call that re-enters this accessor (per-statement reborrow
 /// shape — same contract the prior `*mut [u8]` API imposed, now centralized
@@ -1401,7 +1391,7 @@ fn verbose_install() -> bool {
 fn cached_package_folder_name_buf() -> &'static mut [u8] {
     // SAFETY: single-threaded usage (install runs on one thread); the
     // thread-local cell outlives all callers and only one `&mut` is taken at a
-    // time per call site (Zig also reused this buffer non-reentrantly).
+    // time per call site (the buffer is reused non-reentrantly).
     unsafe { (*super::cached_package_folder_name_buf()).as_mut_slice() }
 }
 
@@ -1411,5 +1401,3 @@ const fn z_static(bytes_with_nul: &'static [u8]) -> &'static ZStr {
     // `from_static` is the const-eval-safe form of `from_slice_with_nul`.
     ZStr::from_static(bytes_with_nul)
 }
-
-// ported from: src/install/PackageManager/PackageManagerDirectories.zig

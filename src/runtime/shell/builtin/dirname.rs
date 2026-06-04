@@ -73,4 +73,3 @@ impl Dirname {
     }
 }
 
-// ported from: src/shell/builtin/dirname.zig

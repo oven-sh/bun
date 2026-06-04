@@ -12,7 +12,6 @@ impl JSCell {
     /// Use `to_object` to mutate non-objects into objects.
     #[track_caller]
     pub fn get_object(&self) -> Option<&JSObject> {
-        // Zig: `jsc.markMemberBinding(JSCell, @src())`.
         crate::mark_member_binding("JSCell", core::panic::Location::caller());
         // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
         // centralised non-null-ZST deref proof. Nullable per the C++ contract
@@ -30,7 +29,6 @@ impl JSCell {
     /// - [ECMA-262 §7.1.18 ToObject](https://tc39.es/ecma262/#sec-toobject)
     #[track_caller]
     pub fn to_object<'a>(&'a self, global: &'a JSGlobalObject) -> &'a JSObject {
-        // Zig: `jsc.markMemberBinding(JSCell, @src())`.
         crate::mark_member_binding("JSCell", core::panic::Location::caller());
         // `JSObject` is an `opaque_ffi!` ZST handle; `opaque_ref` is the
         // centralised non-null deref proof (ToObject on a cell never returns null).
@@ -39,7 +37,6 @@ impl JSCell {
 
     #[track_caller]
     pub fn get_type(&self) -> JSType {
-        // Zig: `jsc.markMemberBinding(JSCell, @src())`.
         crate::mark_member_binding("JSCell", core::panic::Location::caller());
         // `JSType` is a `#[repr(transparent)]` newtype over `u8`, so any byte
         // returned by the extern is a valid value (see the extern's NOTE).
@@ -85,8 +82,6 @@ unsafe extern "C" {
     safe fn JSC__JSCell__getType(this: &JSCell) -> u8;
 }
 
-// ported from: src/jsc/JSCell.zig
-
 // ════════════════════════════════════════════════════════════════════════════
 // JsCell<T> — single-JS-thread interior mutability
 // ════════════════════════════════════════════════════════════════════════════
@@ -101,9 +96,8 @@ unsafe extern "C" {
 /// Bun runs **one** `VirtualMachine` per JS thread. JavaScript is
 /// single-threaded and reentrant: a host function may call back into JS, which
 /// may call back into Rust, but always on the *same* OS thread. There is no
-/// true concurrent aliasing — only stacked, same-thread reentrancy. The Zig
-/// source models this with raw `*VirtualMachine` everywhere; `JsCell` is the
-/// Rust spelling of that contract.
+/// true concurrent aliasing — only stacked, same-thread reentrancy. `JsCell`
+/// is the Rust spelling of that contract.
 ///
 /// `get_mut()` is therefore *not* sound under arbitrary `Sync` semantics — the
 /// `unsafe impl Sync` below is a lie to the type system that we discharge by

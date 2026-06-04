@@ -34,8 +34,7 @@ pub mod mysql_native_password {
         }
 
         // Stage 1: SHA1(password)
-        // Zig passed `jsc.VirtualMachine.get().rareData().boringEngine()`;
-        // the engine is optional and bun_jsc is higher-tier, so pass null
+        // The boringssl engine is optional and bun_jsc is higher-tier, so pass null
         // (matches bun_install::integrity / bun_exe_format::macho precedent).
         // The engine only accelerates hardware SHA; null is functionally
         // identical.
@@ -100,7 +99,7 @@ pub mod caching_sha2_password {
         Ok(result)
     }
 
-    // Zig: `enum(u8) { success = 0x03, continue_auth = 0x04, _ }` — non-exhaustive,
+    // Any wire byte is possible (success = 0x03, continue_auth = 0x04),
     // so represent as a transparent u8 newtype rather than a closed Rust enum.
     #[repr(transparent)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -129,8 +128,8 @@ pub mod caching_sha2_password {
     }
 
     impl Response {
-        // Zig `deinit` only freed `self.data` — Data's own Drop handles that, so no
-        // explicit Drop impl needed here.
+        // `Data`'s own Drop frees `self.data`, so no explicit Drop impl is
+        // needed here.
 
         pub fn decode_internal<Context: ReaderContext>(
             &mut self,
@@ -148,7 +147,7 @@ pub mod caching_sha2_password {
             Ok(())
         }
 
-        // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
+        // See the Decode trait in src/sql/mysql/protocol/NewReader.rs
         pub fn decode<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
@@ -197,7 +196,6 @@ pub mod caching_sha2_password {
                 return Err(err!("InvalidPublicKey"));
             }
             // 1024 is overkill but lets cover all cases
-            // PERF(port): was stack-fallback (1024-byte stack buf with heap overflow path) — profile if hot.
             let needed_len = password.len() + 1;
             let mut plain_password = vec![0u8; needed_len];
             plain_password[0..password.len()].copy_from_slice(password);
@@ -267,7 +265,6 @@ pub mod caching_sha2_password {
             // SAFETY: *rsa is a valid RSA*.
             let rsa_size = unsafe { boringssl::c::RSA_size(*rsa) } as usize;
             // should never ne bigger than 4096 but lets cover all cases
-            // PERF(port): was stack-fallback (4096-byte stack buf with heap overflow path) — profile if hot.
             let mut encrypted_password = vec![0u8; rsa_size];
 
             // SAFETY: plain_password and encrypted_password are valid for the given
@@ -293,7 +290,7 @@ pub mod caching_sha2_password {
             Ok(())
         }
 
-        // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
+        // See src/sql/mysql/protocol/NewWriter.rs
         pub fn write<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
@@ -308,7 +305,7 @@ pub mod caching_sha2_password {
     }
 
     impl PublicKeyResponse {
-        // Zig `deinit` only freed `self.data` — Data's own Drop handles that.
+        // `Data`'s own Drop frees `self.data`.
 
         pub fn decode_internal<Context: ReaderContext>(
             &mut self,
@@ -341,7 +338,7 @@ pub mod caching_sha2_password {
             Ok(())
         }
 
-        // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
+        // See src/sql/mysql/protocol/NewWriter.rs
         pub fn write<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
@@ -350,5 +347,3 @@ pub mod caching_sha2_password {
         }
     }
 }
-
-// ported from: src/sql/mysql/protocol/Auth.zig

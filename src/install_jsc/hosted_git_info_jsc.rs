@@ -1,9 +1,8 @@
-//! JSC bridges for `src/install/hosted_git_info.zig`. Aliased back so call
-//! sites and `$newZigFunction("hosted_git_info.zig", …)` are unchanged.
+//! JSC bridges for `bun_install::hosted_git_info`.
 
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc};
 
-/// Extension trait providing `.to_js()` on `HostedGitInfo` (Zig: `hostedGitInfoToJS`).
+/// Extension trait providing `.to_js()` on `HostedGitInfo`.
 pub trait HostedGitInfoJsc {
     fn to_js(&self, go: &JSGlobalObject) -> JsResult<JSValue>;
 }
@@ -75,9 +74,8 @@ pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
     // TODO(markovejnovic): This feels like there's too much going on all
     // to give us a slice. Maybe there's a better way to code this up.
     let npa_str = bun_core::OwnedString::new(arg0.to_bun_string(go)?);
-    // Zig's `ZigString.Slice.mut()` gave a mutable view; Rust's `ZigStringSlice`
-    // is read-only, so take an owned copy via `into_vec()` (`parse_url` itself
-    // only needs `&[u8]`).
+    // `ZigStringSlice` is read-only, so take an owned copy via `into_vec()`
+    // (`parse_url` itself only needs `&[u8]`).
     let mut as_utf8 = npa_str.to_utf8().into_vec();
     let parsed = match hgi::parse_url(as_utf8.as_mut_slice()) {
         Ok(p) => p,
@@ -115,8 +113,8 @@ pub fn js_from_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
     // TODO(markovejnovic): This feels like there's too much going on all to give us a slice.
     // Maybe there's a better way to code this up.
     let npa_str = bun_core::OwnedString::new(arg0.to_bun_string(go)?);
-    // Zig's `ZigString.Slice.mut()` gave a mutable view; Rust's `ZigStringSlice`
-    // is read-only, so take an owned copy (`from_url` itself only needs `&[u8]`).
+    // `ZigStringSlice` is read-only, so take an owned copy
+    // (`from_url` itself only needs `&[u8]`).
     let mut as_utf8 = npa_str.to_utf8().into_vec();
     let parsed = match HostedGitInfo::from_url(as_utf8.as_mut_slice()) {
         Ok(Some(p)) => p,
@@ -131,5 +129,3 @@ pub fn js_from_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVal
 
     parsed.to_js(go)
 }
-
-// ported from: src/install_jsc/hosted_git_info_jsc.zig

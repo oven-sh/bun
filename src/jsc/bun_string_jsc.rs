@@ -172,7 +172,7 @@ fn slice_with_underlying_string_to_js_with_options(
             if let Some(utf16) =
                 strings::to_utf16_alloc(this.utf8.slice(), false, false).unwrap_or(None)
             {
-                // Drop the now-unused utf8 allocation (Zig: `this.utf8.deinit()`).
+                // Drop the now-unused utf8 allocation.
                 this.utf8 = ZigStringSlice::default();
                 // Ownership of `utf16` is transferred to JSC as an
                 // external string; do not drop it here.
@@ -227,8 +227,7 @@ pub fn js_escape_reg_exp(global: &JSGlobalObject, call_frame: &CallFrame) -> JsR
 
     let mut buf: Vec<u8> = Vec::new();
 
-    // Zig mapped `error.WriteFailed` → `error.OutOfMemory`; Vec<u8> writes can
-    // only fail on OOM.
+    // Vec<u8> writes can only fail on OOM.
     if bun_core::escape_reg_exp::escape_reg_exp(input.slice(), &mut buf).is_err() {
         return Err(JsError::OutOfMemory);
     }
@@ -254,8 +253,7 @@ pub fn js_escape_reg_exp_for_package_name_matching(
 
     let mut buf: Vec<u8> = Vec::new();
 
-    // Zig mapped `error.WriteFailed` → `error.OutOfMemory`; Vec<u8> writes can
-    // only fail on OOM.
+    // Vec<u8> writes can only fail on OOM.
     if bun_core::escape_reg_exp::escape_reg_exp_for_package_name_matching(input.slice(), &mut buf)
         .is_err()
     {
@@ -274,8 +272,8 @@ pub mod unicode_testing_apis {
 
     /// Used in JS tests, see `internal-for-testing.ts`.
     /// Exercises the `sentinel = true` path of `toUTF16AllocForReal`, which is
-    /// otherwise only reachable from Windows-only code (`bun build --compile`
-    /// metadata in `src/windows.zig`).
+    /// otherwise only reachable from Windows-only `bun build --compile`
+    /// metadata code.
     #[bun_jsc::host_fn]
     pub fn to_utf16_alloc_sentinel(
         global_this: &JSGlobalObject,
@@ -311,5 +309,3 @@ pub mod unicode_testing_apis {
         js
     }
 }
-
-// ported from: src/jsc/bun_string_jsc.zig

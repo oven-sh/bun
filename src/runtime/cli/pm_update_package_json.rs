@@ -1,10 +1,9 @@
 //! MOVE_UP from `bun_install::package_manager::update_package_json_and_install`.
 //!
-//! Zig's `updatePackageJSONAndInstall` (.zig L680-730) lives entirely in
-//! `bun_install`, but its `cli.analyze` branch constructs a
-//! `bun.bundle_v2.BundleV2.DependenciesScanner` and calls
-//! `bun.cli.BuildCommand.exec` — both of which are higher-tier than
-//! `bun_install` in the Rust crate graph (`bun_runtime` → `bun_install`;
+//! `update_package_json_and_install`'s `cli.analyze` branch constructs a
+//! `DependenciesScanner` and calls
+//! `BuildCommand::exec` — both of which are higher-tier than
+//! `bun_install` in the crate graph (`bun_runtime` → `bun_install`;
 //! `bun_runtime` → `bun_bundler`; `bun_install` ↛ `bun_bundler`). The analyze
 //! branch and the `Cli.log_` access in the catch wrapper are therefore hosted
 //! here, and the crate-local body re-enters `bun_install` via the public
@@ -39,8 +38,7 @@ pub fn update_package_json_and_install_catch_error(
 }
 
 pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> Result<(), Error> {
-    // PERF(port): Zig used `switch (subcommand) { inline else => |cmd| ... }` to monomorphize
-    // `CommandLineArguments.parse` per subcommand. Calling with runtime `subcommand` here; if
+    // Calling with runtime `subcommand` here; if
     // `parse` requires `<const CMD: Subcommand>`, expand to a `match`.
     let mut cli = CommandLineArguments::parse(subcommand)?;
 
@@ -50,8 +48,7 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
     //    typing in the dependency names
     // 3. Run the install command
     if cli.analyze {
-        // Note: hoisted from Zig fn-local `const Analyzer = struct {...}`.
-        // `ctx`/`cli` are stored as raw `*mut` (Zig: freely-aliasing `*T`) because
+        // `ctx`/`cli` are stored as raw `*mut` because
         // `BuildCommand::exec` holds `command::get()` (the same `ContextData`) across
         // the `on_fetch` callback, and `DependenciesScanner.entry_points` owns a copy
         // of `cli.positionals[1..]` for the duration of the scan; storing `&mut` here
@@ -69,10 +66,9 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
                 let this = self;
                 // TODO: add separate argument that makes it so positionals[1..] is not done and instead the positionals are passed
                 //
-                // Process-lifetime storage for the rewritten positionals. Zig:
-                // `bun.default_allocator.alloc(string, keys.len + 1)` with no matching
-                // free — `Global::exit(0)` follows immediately. `OnceLock` (not
-                // leaked) per PORTING.md §Forbidden.
+                // Process-lifetime storage for the rewritten positionals —
+                // `Global::exit(0)` follows immediately. `OnceLock` (not
+                // leaked).
                 static OWNED_KEYS: std::sync::OnceLock<Vec<Box<[u8]>>> = std::sync::OnceLock::new();
                 static POSITIONALS: std::sync::OnceLock<Vec<&'static [u8]>> =
                     std::sync::OnceLock::new();
@@ -114,8 +110,8 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
             }
         }
 
-        // Note: `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`; Zig
-        // borrowed `cli.positionals[1..]` directly. Clone the argv slices into an owned
+        // Note: `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`.
+        // Clone the argv slices into an owned
         // buffer (small one-shot list — no perf concern) so `cli` is not borrowed across
         // the `&mut analyzer` setup.
         let entry_points: Box<[Box<[u8]>]> = cli.positionals[1..]
@@ -138,5 +134,3 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
 
     update_package_json_and_install_and_cli(ctx, subcommand, cli)
 }
-
-// ported from: src/install/PackageManager/updatePackageJSONAndInstall.zig

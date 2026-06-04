@@ -218,4 +218,3 @@ pub(crate) fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
     (&s[0..midpoint], &s[midpoint..])
 }
 
-// ported from: src/css/selectors/builder.zig

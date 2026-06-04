@@ -65,7 +65,7 @@ pub struct StreamingClap<'p, 'a, Id, ArgIterator> {
     pub diagnostic: Option<&'p mut clap::Diagnostic>,
 }
 
-// ArgIterator was a comptime duck-typed param in Zig; expressed here as the
+// ArgIterator is the
 // `args::ArgIter<'a>` trait so `next()`/`remain()` resolve.
 impl<'p, 'a, Id, ArgIterator> StreamingClap<'p, 'a, Id, ArgIterator>
 where
@@ -225,7 +225,7 @@ where
             }
 
             // Before we return, we have to set the new state of the clap.
-            // (Zig did this in a `defer`; hoisting it is equivalent — every path
+            // (Hoisting this above the returns is fine — every path
             // below returns, and nothing between here and those returns reads
             // `self.state`.)
             if arg.len() <= next_index || param.takes_value != clap::Values::None {
@@ -332,7 +332,7 @@ where
 
     fn err(&mut self, arg: &[u8], short: Option<u8>, long: Option<&[u8]>, e: ArgError) -> ArgError {
         if let Some(d) = self.diagnostic.as_deref_mut() {
-            // Zig assigned borrowed `arg`/`name` slices; Rust `Diagnostic` owns
+            // `Diagnostic` owns
             // its bytes (error path only) — see lib.rs.
             d.arg = arg.to_vec();
             d.short = short;
@@ -400,10 +400,9 @@ mod tests {
                 Ok(None) => break,
                 Err(_err) => {
                     // Bun's `Diagnostic::report` deliberately ignores its writer arg
-                    // and routes through `bun_core::Output` (stderr) — exactly like
-                    // the Zig original (`report(diag, _: anytype, ...)` in clap.zig),
-                    // so the rendered message can't be captured here (and never could
-                    // be in the Zig tests either). Instead, rebuild the flag name the
+                    // and routes through `bun_core::Output` (stderr),
+                    // so the rendered message can't be captured here.
+                    // Instead, rebuild the flag name the
                     // same way `report` does from the diagnostic fields and assert
                     // the expected message names it in quotes.
                     let mut name_buf = [0u8; 1024];
@@ -815,5 +814,3 @@ mod tests {
         );
     }
 }
-
-// ported from: src/clap/streaming.zig

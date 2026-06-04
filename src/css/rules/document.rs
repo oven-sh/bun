@@ -36,4 +36,3 @@ impl<R> MozDocumentRule<R> {
     }
 }
 
-// ported from: src/css/rules/document.zig

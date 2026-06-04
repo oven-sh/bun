@@ -50,7 +50,7 @@ use core::mem::{MaybeUninit, size_of};
 
 // Standalone PE: depend ONLY on `bun_windows_sys` (leaf, no native C, no
 // `#[no_mangle]` exports) so the link has no libuv/simdutf/ICU roots and the
-// binary stays tiny — matching Zig's freestanding build. `crate::compat`
+// binary stays tiny. `crate::compat`
 // re-exports `bun_windows_sys::*` and locally declares the few items
 // (`CreateProcessW`, `STARTUPINFOW`, `TEB`/`teb()`, …) that otherwise live in
 // `bun_sys::windows`. The local `bun_core`/`bun_str` shadows bring
@@ -70,8 +70,8 @@ use super::_bin_linking_shim::Flags;
 
 const DBG: bool = cfg!(debug_assertions);
 
-/// In Zig: `@import("root") == @This()` — true when this module IS the binary root
-/// (the standalone `bun_shim_impl.exe`), false when compiled into bun.exe.
+/// True when this module IS the binary root (the standalone
+/// `bun_shim_impl.exe`), false when compiled into bun.exe.
 const IS_STANDALONE: bool = cfg!(feature = "shim_standalone");
 
 #[cfg(not(feature = "shim_standalone"))]
@@ -113,10 +113,10 @@ mod nt {
         #[link_name = "NtReadFile"]
         pub(super) fn NtReadFile(
             FileHandle: HANDLE, // [in]
-            // Zig `?w.HANDLE` is pointer-sized via null-niche. Rust
-            // `Option<*mut c_void>` is NOT (raw pointers can already be null →
-            // no niche → 16-byte tagged enum, passed by-reference under Win64
-            // ABI). Use a plain HANDLE and pass null_mut() for "no event".
+            // `Option<*mut c_void>` is not pointer-sized (raw pointers can
+            // already be null → no niche → 16-byte tagged enum, passed
+            // by-reference under Win64 ABI). Use a plain HANDLE and pass
+            // null_mut() for "no event".
             Event: HANDLE,                       // [in, optional]
             ApcRoutine: *mut c_void,             // [in, optional]
             ApcContext: PVOID,                   // [in, optional]
@@ -177,19 +177,17 @@ mod k32 {
 
 macro_rules! debug {
     ($fmt:literal $(, $arg:expr)* $(,)?) => {{
-        // Zig spec (`bun_shim_impl.zig`): `const dbg = builtin.mode == .Debug;`
-        // and every call site is `if (dbg) debug(...)`. The Rust port omits the
-        // per-call-site `if`, so gate the body here instead — release builds
-        // see an empty block (no `cfg!` const-assert, which fails E0080 in
-        // const-eval when `debug_assertions` is off).
+        // Debug-only logging: gate the body here rather than at every call
+        // site — release builds see an empty block (no `cfg!` const-assert,
+        // which fails E0080 in const-eval when `debug_assertions` is off).
         #[cfg(debug_assertions)]
         {
             #[cfg(not(feature = "shim_standalone"))]
             { bun_output::scoped_log!(bun_shim_impl, $fmt $(, $arg)*); }
             #[cfg(feature = "shim_standalone")]
             {
-                // The standalone build has no logger (Zig used `std.log.debug` there);
-                // deliberately a no-op to keep the binary tiny.
+                // The standalone build has no logger; deliberately a no-op to
+                // keep the binary tiny.
                 let _ = ($($arg,)*);
             }
         }
@@ -280,9 +278,7 @@ impl core::fmt::Display for FailReason {
         }
 
         writer.write_str("error: ")?;
-        // Zig used `switch (reason) { inline else => |r| ... }` to make `r` comptime
-        // and resolve the template at compile time. We dispatch at runtime; the template lookup
-        // is a const fn so the cost is a single match.
+        // The template lookup is a const fn so the cost is a single match.
         if IS_STANDALONE && *self == FailReason::CouldNotDirectLaunch {
             // unreachable is ok because Direct Launch is not supported in standalone mode
             unreachable!();
@@ -290,8 +286,7 @@ impl core::fmt::Display for FailReason {
 
         let template = self.get_format_template();
 
-        // The Zig `comptime std.mem.indexOf(u8, template, "{s}")` check is replaced by an
-        // explicit match on the one variant whose template contains `{s}`.
+        // Explicit match on the one variant whose template contains `{s}`.
         if matches!(self, FailReason::InterpreterNotFound) {
             // `FAILURE_REASON_LEN` is set before InterpreterNotFound is raised;
             // safe atomic load (`usize` is `Copy`, no cell-deref needed).
@@ -303,7 +298,7 @@ impl core::fmt::Display for FailReason {
             let arg_slice = unsafe {
                 bun_core::ffi::slice(FAILURE_REASON_DATA.get().cast::<u8>().cast_const(), len)
             };
-            // Zig spec writes raw bytes (`{s}`). `arg_slice` is filled by truncating
+            // `arg_slice` is filled by truncating
             // UTF-16 code units to 7 bits (`& 0x7F`) — every byte is < 0x80, hence
             // valid single-byte UTF-8. Avoids `bstr` so the standalone PE stays
             // `#![no_std]` (`bstr` pulls `alloc`).
@@ -374,7 +369,7 @@ pub fn write_to_handle(handle: HANDLE, data: &[u8]) -> usize {
     io.Information
 }
 
-/// Zig: `std.Io.GenericWriter(w.HANDLE, error{}, writeToHandle)`
+/// `core::fmt::Write` adapter over a raw NT handle.
 struct NtWriter {
     context: HANDLE,
 }
@@ -389,9 +384,9 @@ impl core::fmt::Write for NtWriter {
 // PORTING.md §Global mutable state: standalone single-threaded shim exe (or
 // just-before-exit path when linked into bun). RacyCell — no concurrency.
 static FAILURE_REASON_DATA: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0; 512]);
-// Length of the argument written into `FAILURE_REASON_DATA[..len]`. The pointer
-// half of the original Zig `?[]const u8` is always `FAILURE_REASON_DATA.as_ptr()`,
-// so storing only the `usize` length lets this be a plain `AtomicUsize` (safe
+// Length of the argument written into `FAILURE_REASON_DATA[..len]`. The data
+// pointer is always `FAILURE_REASON_DATA.as_ptr()`, so storing only the
+// `usize` length lets this be a plain `AtomicUsize` (safe
 // `.load()`/`.store()`) instead of a `RacyCell<Option<(*const u8, usize)>>`
 // requiring unsafe `read()`/`write()`. `usize::MAX` encodes `None`.
 static FAILURE_REASON_LEN: core::sync::atomic::AtomicUsize =
@@ -435,7 +430,6 @@ pub(crate) enum LauncherMode {
 }
 
 impl LauncherMode {
-    // PERF(port): comptime mode/reason demoted to runtime args — profile if it shows up on a hot path.
     #[cold]
     #[inline(never)]
     fn fail(self, reason: FailReason) -> LauncherRet {
@@ -459,7 +453,7 @@ enum LauncherRet {
 }
 
 /// Abstraction over `()` (standalone), `FromBunRunContext`, and `FromBunShellContext`
-/// for the Zig `bun_ctx: anytype` parameter.
+/// for the `bun_ctx` parameter of `launcher`.
 trait BunCtx {
     fn base_path(&self) -> *mut u16;
     fn base_path_len(&self) -> usize;
@@ -505,10 +499,10 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     let teb: *mut w::TEB = w::teb();
     // SAFETY: TEB/PEB are valid for the process lifetime.
     let peb = unsafe { (*teb).ProcessEnvironmentBlock };
-    // SAFETY: ProcessParameters is OS-owned process-global state. The Zig spec only ever reads
-    // from it (`const ProcessParameters = peb.ProcessParameters`), so we keep it as a raw pointer
-    // and perform raw field reads rather than materializing a long-lived `&mut` that would assert
-    // exclusive access across the syscalls below (and across threads in non-standalone mode).
+    // SAFETY: ProcessParameters is OS-owned process-global state that this code only ever
+    // reads, so we keep it as a raw pointer and perform raw field reads rather than
+    // materializing a long-lived `&mut` that would assert exclusive access across the
+    // syscalls below (and across threads in non-standalone mode).
     let process_parameters = unsafe { (*peb).ProcessParameters };
     // SAFETY: process_parameters is valid for the process lifetime; UNICODE_STRING is Copy.
     let command_line = unsafe { (*process_parameters).CommandLine };
@@ -557,15 +551,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     let mut buf1 = MaybeUninit::<[u16; BUF1_LEN]>::uninit();
     let mut buf2 = MaybeUninit::<[u16; BUF2_U16_LEN]>::uninit();
 
-    // The Zig source derives these views as `@as([*]u8, @ptrCast(&buf1[0]))[comptime
-    // buf1.len..]` (and `[buf1.len / 2..]` for the u16 view) — open-ended slicing of a
-    // many-item pointer, i.e. both views advanced by `buf1.len` *bytes* to the midpoint
-    // of the array. The u8 and u16 views stay mutually consistent, so all of the Zig
-    // code's relative arithmetic works; the only observable effect is that Zig used
-    // half the declared capacity (and its `read_max_len` overcounted the true
-    // remaining space). The Rust port uses true base-of-buffer pointers for both
-    // views: identical behavior for every in-bounds path, full capacity, and a
-    // correctly bounded `read_max_len`.
     // Derive each view from a single `as_mut_ptr()` call so the raw pointers share one
     // borrow tag (a second `as_mut_ptr()` would invalidate the first under Stacked Borrows).
     let buf1_u16: *mut u16 = buf1.as_mut_ptr().cast::<u16>();
@@ -576,7 +561,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
     // The NT prefix is only *functionally* required in standalone mode (NtCreateFile needs an
     // NT object path), but we write it unconditionally so that buf1[0..4] is always initialized.
-    // The Zig original gated this on `is_standalone` as a micro-optimization; in Rust that leaves
+    // Gating it on `is_standalone` as a micro-optimization would leave
     // those four u16s as uninitialized memory, and the DBG `BufferAfterRead` dump below forms a
     // `&[u16]` over buf1 starting at index 0 — reading uninit integers there is UB. Eight bytes
     // of unconditional store is negligible and keeps every later buf1 read defined.
@@ -720,9 +705,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     // if this is the end of the string then this becomes an empty slice,
                     // otherwise it is a slice of just the arguments
                     //
-                    // Zig ReleaseSmall reads one past `Length` here and hits the
-                    // PEB CommandLine NUL terminator, exiting the loop. Rust slice indexing
-                    // always bounds-checks, so we must guard the upper bound explicitly.
+                    // Slice indexing always bounds-checks, so guard the upper
+                    // bound explicitly rather than relying on the PEB
+                    // CommandLine NUL terminator.
                     while i < cmd_line_u16.len() && cmd_line_u16[i] == ' ' as u16 {
                         i += 1;
                     }
@@ -744,8 +729,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     let _ = user_arguments_u16; // only read under DBG
 
     if DBG {
-        // Zig spec: `debug("UserArgs: '{s}' ({d} bytes)", .{ user_arguments_u8, ... })`
-        // — raw byte dump of the UTF-16-LE arg tail. Display via `fmt16` on the
+        // Raw dump of the UTF-16-LE arg tail. Display via `fmt16` on the
         // u16 view to keep this `core`-only (no `bstr`).
         debug!(
             "UserArgs: '{}' ({} bytes)",
@@ -820,7 +804,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
             }
         }
         // inlined loop to do this again, because the completion case is different
-        // using `inline for` caused comptime issues that made the code much harder to read
         loop {
             if DBG {
                 debug!("2 - {}", fmt16(unsafe { bun_core::ffi::slice(ptr, 1) }));
@@ -887,8 +870,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // In the context of this program, I don't think that is possible, but I will handle it
         {
             // STATUS_END_OF_FILE on a fresh sync handle at offset 0 means zero bytes were
-            // written into buf1. The Zig source yields `read_max_len` here and lets the
-            // (uninitialized) trailing bytes fail `is_valid()`; in Rust, reading those
+            // written into buf1, and reading those
             // never-written bytes is UB. Zero the last u16 of buf1 — that is exactly where
             // the Flags read below lands when `read_len == read_max_len` — so the read is
             // defined and `is_valid()` deterministically rejects it.
@@ -925,7 +907,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
     //                               copied into buf1 above (initialized, junk-as-flags).
     //   - END_OF_FILE             → lands on buf1[BUF1_LEN-1], zeroed in that arm above.
     // The latter two yield a Flags value whose version_tag ≠ CURRENT, so `is_valid()`
-    // rejects them — same observable behavior as the Zig source, without the uninit read.
+    // rejects them.
     read_ptr = read_ptr
         .cast::<u8>()
         .wrapping_add(read_len)
@@ -942,7 +924,6 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         let flags_u16: u16 = flags.bits();
         debug!("FlagsInt: {}", flags_u16);
         debug!("Flags:");
-        // Zig: `inline for` over `std.meta.fieldNames(Flags)` — unrolled by hand.
         debug!("    is_node_or_bun: {}", flags.is_node_or_bun());
         debug!("    is_node: {}", flags.is_node());
         debug!("    has_shebang: {}", flags.has_shebang());
@@ -1054,14 +1035,14 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 debug!("args_len_bytes: {}", args_len_bytes);
             }
 
-            // magic number related to how BinLinkingShim.zig writes the metadata
+            // magic number related to how BinLinkingShim.rs writes the metadata
             // i'm sorry, i don't have a good explanation for why this number is this number. it just is.
             const VALIDATION_LENGTH_OFFSET: u64 = 14;
 
             // very careful here to not overflow u32, so that we properly error if you hijack the file
             //
             // Both lengths are byte counts of UTF-16 data written by
-            // BinLinkingShim.zig and must be even. An odd value (corrupt or
+            // BinLinkingShim.rs and must be even. An odd value (corrupt or
             // tampered shim) would later misalign `write_ptr` (used to store a
             // u16 NUL terminator) and break the even-length invariant relied on
             // by `bytemuck::cast_slice`. Reject up front.
@@ -1079,10 +1060,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                 return LauncherMode::fail(MODE, FailReason::InvalidShimBounds);
             }
 
-            // Gated on `Launch`: in Zig the `.read_without_launch` instantiation cannot reach
-            // `bun_ctx.direct_launch_with_bun_js` (FromBunShellContext lacks the field, so it
-            // is a compile error). Rust's trait abstraction defers that to a runtime
-            // `unreachable!()`, so guard explicitly to preserve the static invariant.
+            // Gated on `Launch`: the `.read_without_launch` instantiation must never reach
+            // `bun_ctx.direct_launch_with_bun_js` (FromBunShellContext's impl is a runtime
+            // `unreachable!()`), so guard explicitly to preserve the invariant.
             if MODE == LauncherMode::Launch
                 && !IS_STANDALONE
                 && flags.is_node_or_bun()
@@ -1106,7 +1086,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
                     / 2
                     - NT_OBJECT_PREFIX.len()
                     - 2 /* "\"\x00".len */;
-                // SAFETY: buf1_u16 + 4 .. + 4 + len is within buf1; the next char is '"' (asserted in Zig via sentinel slice).
+                // SAFETY: buf1_u16 + 4 .. + 4 + len is within buf1; the next char is '"' (the metadata format places '"' after the bin path).
                 let launch_slice =
                     unsafe { bun_core::ffi::slice_mut(buf1_u16.add(NT_OBJECT_PREFIX.len()), len) };
                 debug_assert_eq!(
@@ -1261,10 +1241,9 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
 
     if MODE == LauncherMode::ReadWithoutLaunch {
         // Early-return the assembled command line to the caller instead of spawning.
-        // In Zig the `read_without_launch` instantiation would compile-error at the later
-        // `bun_ctx.environment` access (FromBunShellContext has no such field), so the spawn
-        // path is provably dead there. Rust's trait abstraction defers that to a runtime
-        // `unreachable!()`, hence the explicit branch-out here.
+        // The spawn path must be dead for `ReadWithoutLaunch`
+        // (FromBunShellContext's `environment` impl is `unreachable!()`), hence
+        // the explicit branch-out here.
         //
         // Copy into the caller-provided buffer so the returned pointer outlives this stack
         // frame (covers both the buf1-backed no-shebang path and the buf2-backed shebang path).
@@ -1285,9 +1264,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         // it is likely that the c-runtime's atexit will not be called as we end the process ourselves.
         //
         // Gated on `Launch` so `ReadWithoutLaunch` does not irreversibly mutate the
-        // parent process's stdio state. In Zig the `read_without_launch` instantiation would
-        // compile-error at the later `bun_ctx.environment` access, so it never reaches here;
-        // Rust's trait abstraction defeats that comptime guard, hence the explicit mode check.
+        // parent process's stdio state.
         bun_core::output::source::stdio::restore();
         // Declared locally as `safe fn` (the `bun_sys::windows` re-export
         // forwards `bun_windows_sys::externs::windows_enable_stdio_inheritance`,
@@ -1371,8 +1348,7 @@ fn launcher<const MODE: LauncherMode, Ctx: BunCtx>(bun_ctx: Ctx) -> LauncherRet 
         },
     };
 
-    // PERF(port): Zig used `inline for (.{ 0, 1 })` to unroll this loop with comptime
-    // `attempt_number`. We use a runtime loop; the body is large enough that unrolling is
+    // PERF: the body is large enough that unrolling this two-iteration loop is
     // unlikely to matter — profile if it shows up on a hot path.
     for attempt_number in [0u32, 1] {
         'iteration: {
@@ -1559,8 +1535,7 @@ type CommandContext<'a> = bun_options_types::context::Context<'a>;
 #[cfg(feature = "shim_standalone")]
 type CommandContext<'a> = core::marker::PhantomData<&'a ()>; // unused in standalone
 
-// Zig stores `cli_context: CommandContext` where `CommandContext = *Command.Context`
-// — a raw pointer copied by value. Mirror that with `*mut ContextData` so reading
+// `cli_context` is a raw `*mut ContextData` copied by value, so reading
 // the field through `&self` (the `BunCtx` impl is on `&FromBunRunContext` and the
 // trait method takes `&self`, i.e. two layers of `&`) does not retag the pointee
 // to SharedReadOnly. Storing `&'a mut ContextData` and casting `*const→*mut` in
@@ -1639,7 +1614,7 @@ impl BunCtx for &FromBunRunContext {
     }
 }
 
-/// This is called from run_command.zig in bun.exe which allows us to skip the CreateProcessW
+/// This is called from run_command.rs in bun.exe which allows us to skip the CreateProcessW
 /// call to create bun_shim_impl.exe. Instead we invoke the logic it has from an open file handle.
 ///
 /// This saves ~5-12ms depending on the machine.
@@ -1651,7 +1626,6 @@ impl BunCtx for &FromBunRunContext {
 pub fn try_startup_from_bun_js(context: FromBunRunContext) {
     debug_assert!(!context.base_path_slice().starts_with(&NT_OBJECT_PREFIX));
     const _: () = assert!(!IS_STANDALONE);
-    // Zig: `comptime assert(bun.FeatureFlags.windows_bunx_fast_path)`.
     const _: () = assert!(bun_core::feature_flags::WINDOWS_BUNX_FAST_PATH);
     match launcher::<{ LauncherMode::Launch }, _>(&context) {
         LauncherRet::LaunchFellThrough => {}
@@ -1672,7 +1646,7 @@ pub struct FromBunShellContext {
     /// Was --bun passed?
     pub force_use_bun: bool,
     /// A pointer to memory needed to store the command line.
-    /// Matches Zig `buf: *Buf` (`*[buf2_u16_len]u16`). Kept as a raw pointer so the
+    /// Kept as a raw pointer so the
     /// `BunCtx` impl (which only sees `&Self`) can hand out a writable pointer without
     /// laundering provenance through a shared reborrow of `&mut [_; N]`.
     pub buf: *mut FromBunShellContextBuf,
@@ -1720,8 +1694,6 @@ impl BunCtx for &FromBunShellContext {
     }
 }
 
-// Zig `union` (untagged). Rust enums are tagged; the discriminant overhead is
-// negligible here and gives us safe matching.
 pub enum ReadWithoutLaunchResult {
     /// enum which has a predefined custom formatter
     Err(FailReason),
@@ -1739,7 +1711,6 @@ pub enum ReadWithoutLaunchResult {
 pub fn read_without_launch(context: FromBunShellContext) -> ReadWithoutLaunchResult {
     debug_assert!(!context.base_path_slice().starts_with(&NT_OBJECT_PREFIX));
     const _: () = assert!(!IS_STANDALONE);
-    // Zig: `comptime assert(bun.FeatureFlags.windows_bunx_fast_path)`.
     const _: () = assert!(bun_core::feature_flags::WINDOWS_BUNX_FAST_PATH);
     match launcher::<{ LauncherMode::ReadWithoutLaunch }, _>(&context) {
         LauncherRet::Read(r) => r,
@@ -1752,17 +1723,16 @@ pub fn read_without_launch(context: FromBunShellContext) -> ReadWithoutLaunchRes
 #[inline]
 pub(crate) fn main() -> ! {
     const _: () = assert!(IS_STANDALONE);
-    // Zig asserted `builtin.single_threaded` / `!link_libc` / `!link_libcpp` here.
-    // Rust has no equivalent builtins; the standalone crate enforces the same
-    // build shape structurally via `#![no_std]` / `#![no_main]` and its
-    // CRT-free link configuration (see `main.rs` and `scripts/build/rust.ts`).
+    // The standalone crate enforces the single-threaded, CRT-free build shape
+    // structurally via `#![no_std]` / `#![no_main]` and its link configuration
+    // (see `main.rs` and `scripts/build/rust.ts`).
     launcher::<{ LauncherMode::Launch }, _>(());
     unreachable!();
 }
 
 // ───── helpers ─────
 
-/// Zig `std.unicode.fmtUtf16Le`. Lossy (replacement-char) formatter — only
+/// Lossy (replacement-char) UTF-16-LE formatter — only
 /// used for debug logging under `if DBG`, so lossiness is fine.
 fn fmt16(s: &[u16]) -> impl core::fmt::Display + '_ {
     struct F<'a>(&'a [u16]);
@@ -1779,5 +1749,3 @@ fn fmt16(s: &[u16]) -> impl core::fmt::Display + '_ {
     }
     F(s)
 }
-
-// ported from: src/install/windows-shim/bun_shim_impl.zig

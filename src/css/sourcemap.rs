@@ -7,7 +7,7 @@ pub struct SourceMap {
 }
 
 pub struct SourceMapInner {
-    // PERF(port): ArrayListUnmanaged in CSS arena crate — using Vec<T>; may want bun_alloc::ArenaVec<'bump, T> if hot
+    // PERF: using Vec<T>; may want bun_alloc::ArenaVec<'bump, T> if hot
     // The `*const [u8]` elements of `sources`/`sources_content`/`names` are
     // arena-owned slices erased to raw pointers per PORTING.md §Allocators
     // (AST crates) — never dereferenced after the arena resets; they become
@@ -35,5 +35,3 @@ pub struct OriginalLocation {
     pub source: u32,
     pub name: Option<u32>,
 }
-
-// ported from: src/css/sourcemap.zig

@@ -4,14 +4,12 @@ bun_core::declare_scope!(RefCountedEnvStr, hidden);
 
 pub struct RefCountedStr {
     pub(super) refcount: Cell<u32>,
-    // Owning `Box<[u8]>` (the Zig original stored ptr+len), so
-    // `byte_slice`/`free_str` need no raw-parts rebuild.
+    // Owning `Box<[u8]>`, so `byte_slice`/`free_str` need no raw-parts rebuild.
     data: Box<[u8]>,
 }
 
 impl RefCountedStr {
-    // Takes ownership of `slice` (global mimalloc) and stores it directly —
-    // the Zig `init` likewise transferred ownership of a `bun.default_allocator` buffer.
+    // Takes ownership of `slice` (global mimalloc) and stores it directly.
     pub fn init(slice: Box<[u8]>) -> *mut RefCountedStr {
         bun_core::scoped_log!(RefCountedEnvStr, "init: {}", bstr::BStr::new(&*slice));
         // bun.handleOom(bun.default_allocator.create(...)) → Box::new (aborts on OOM)
@@ -73,5 +71,3 @@ impl Default for RefCountedStr {
         }
     }
 }
-
-// ported from: src/shell/RefCountedStr.zig

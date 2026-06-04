@@ -35,7 +35,6 @@ impl<'a> CssModule<'a> {
                 let source: &[u8] = 'source: {
                     // Make paths relative to project root so hashes are stable
                     if let Some(root) = project_root {
-                        // Zig: `bun.path.Platform.auto.isAbsolute(root)`
                         if bun_paths::is_absolute(root) {
                             alloced = true;
                             break 'source bump.alloc_slice_copy(
@@ -45,9 +44,8 @@ impl<'a> CssModule<'a> {
                     }
                     break 'source path.as_ref();
                 };
-                // Zig `defer if (alloced) arena.free(source);` — arena-allocated, bulk-freed on bump.reset()
+                // `source` is arena-allocated, bulk-freed on bump.reset()
                 let _ = alloced;
-                // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path
                 hashes.push(hash(
                     bump,
                     format_args!("{}", bstr::BStr::new(source)),
@@ -58,7 +56,6 @@ impl<'a> CssModule<'a> {
         };
         let exports_by_source_index = 'exports_by_source_index: {
             let mut exports_by_source_index = BumpVec::with_capacity_in(sources.len(), bump);
-            // PERF(port): was appendNTimesAssumeCapacity — profile if it shows up on a hot path
             for _ in 0..sources.len() {
                 exports_by_source_index.push(CssModuleExports::default());
             }
@@ -73,12 +70,9 @@ impl<'a> CssModule<'a> {
         }
     }
 
-    // Zig's `deinit` was a no-op; Drop is implicit. No `impl Drop` needed.
-
     pub fn get_reference(&mut self, bump: &'a Bump, name: &'a [u8], source_index: u32) {
-        // Zig `getOrPut` returns an uninitialized value slot;
         // bun_collections::ArrayHashMap::get_or_put requires `V: Default`
-        // (CssModuleExport can't be Default — BumpVec field). Reshaped to the
+        // (CssModuleExport can't be Default — BumpVec field), so use the
         // entry()-API instead.
         use bun_collections::array_hash_map::MapEntry;
         match self.exports_by_source_index[source_index as usize].entry(name) {
@@ -101,8 +95,7 @@ impl<'a> CssModule<'a> {
         }
     }
 
-    // Zig `referenceDashed` took `*Printer` so it could read
-    // `dest.arena` and call `dest.importRecord(idx)`. In Rust the only
+    // This does not take `&mut Printer`: the only
     // caller (`DashedIdentReference::to_css`) already holds a `&mut` borrow of
     // `dest.css_module` (which *is* `self`), so threading `&mut Printer` in
     // here would alias. The caller pre-resolves the import-record path and
@@ -133,9 +126,8 @@ impl<'a> CssModule<'a> {
             }
             None => {
                 // Local export. Mark as used.
-                // Zig `getOrPut` returns an uninitialized value
-                // slot; `CssModuleExport` cannot be `Default` (BumpVec field),
-                // so reshape to the `entry()` API like `get_reference` above.
+                // `CssModuleExport` cannot be `Default` (BumpVec field),
+                // so use the `entry()` API like `get_reference` above.
                 use bun_collections::array_hash_map::MapEntry;
                 match self.exports_by_source_index[source_index as usize].entry(name) {
                     MapEntry::Occupied(mut o) => {
@@ -172,8 +164,8 @@ impl<'a> CssModule<'a> {
             false,
         );
 
-        // std.fmt.allocPrint(arena, "--{s}", .{the_hash}) → bump Vec
-        // (bumpalo::Vec<u8> lacks io::Write; the format string was a pure concat anyway).
+        // Build `--{the_hash}` as a bump Vec — a plain concat
+        // (`bumpalo::Vec<u8>` lacks `io::Write`, and no formatting is needed).
         let mut k = BumpVec::with_capacity_in(2 + the_hash.len(), bump);
         k.extend_from_slice(b"--");
         k.extend_from_slice(the_hash);
@@ -477,10 +469,8 @@ impl<'a> CssModuleReference<'a> {
 /// (a leaf crate) so `bun_bundler::LinkerContext::mangle_local_css` can call
 /// the *same* hasher without depending on `bun_css`. Re-export here so
 /// in-crate callers (`dependencies.rs`, `rules/import.rs`) keep the
-/// `css_modules::hash` path from the Zig spec.
+/// `css_modules::hash` path.
 #[inline]
 pub fn hash<'a>(bump: &'a Bump, args: Arguments<'_>, at_start: bool) -> &'a [u8] {
     bun_base64::wyhash_url_safe(bump, args, at_start)
 }
-
-// ported from: src/css/css_modules.zig

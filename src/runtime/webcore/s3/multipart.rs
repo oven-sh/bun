@@ -148,9 +148,8 @@ pub struct MultiPartUpload {
     pub content_type: Option<Box<[u8]>>,
     pub content_disposition: Option<Box<[u8]>>,
     pub content_encoding: Option<Box<[u8]>>,
-    // In Zig this is a self-referential slice into `uploadid_buffer`; duped
-    // into an owned Box here to avoid a self-referential struct.
-    // PERF(port): was zero-copy slice into uploadid_buffer — profile if hot.
+    // Duped into an owned Box here to avoid a self-referential struct
+    // (a slice into `uploadid_buffer`).
     pub upload_id: Box<[u8]>,
     pub uploadid_buffer: MutableString,
 
@@ -257,7 +256,7 @@ impl UploadPart {
         // SAFETY: callback context — `this` is the `*mut UploadPart` passed in `perform()`
         let this = unsafe { &mut *this };
         // Copy the BackRef out so the `&mut MultiPartUpload` borrow is detached
-        // from `this` (Zig held both `*UploadPart` and `*MultiPartUpload` freely).
+        // from `this`.
         let mut ctx_ref = this.ctx;
         // SAFETY: ctx is a live BACKREF while a part is in flight (part holds a ref on ctx)
         let ctx = unsafe { ctx_ref.get_mut() };
@@ -296,7 +295,7 @@ impl UploadPart {
                         this.part_number
                     );
                     this.free_allocated_slice();
-                    // The ctx deref (Zig: `defer this.ctx.deref()`) must run after fail():
+                    // The ctx deref must run after fail():
                     let ctx_ptr = this.ctx.as_ptr();
                     // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx until deref_ below
                     let r = unsafe { (*ctx_ptr).fail(err) };
@@ -321,7 +320,7 @@ impl UploadPart {
                 this.state = PartState::NotAssigned;
                 // mark as available
                 ctx.available.set(this.index as usize);
-                // The ctx deref (Zig: `defer this.ctx.deref()`) must run after drain_enqueued_parts():
+                // The ctx deref must run after drain_enqueued_parts():
                 let ctx_ptr = this.ctx.as_ptr();
                 // drain more
                 // SAFETY: ctx_ptr is a live BACKREF; part still holds a ref on ctx until deref_ below
@@ -395,7 +394,6 @@ impl UploadPart {
 
 impl Drop for MultiPartUpload {
     fn drop(&mut self) {
-        // Zig `deinit`
         scoped_log!(S3MultiPartUpload, "deinit");
         // queue: Box<[UploadPart]> — dropped automatically (parts' raw `data` already freed during lifecycle)
         // KeepAlive::unref takes an `EventLoopCtx` (aio cycle-break vtable),
@@ -406,8 +404,7 @@ impl Drop for MultiPartUpload {
         ));
         // path, proxy, content_type, content_disposition, content_encoding — Box dropped automatically
         // `IntrusiveRc<T>` (= `RefPtr<T>`) has no `Drop` — release the +1 the
-        // constructing `writable_stream`/`upload_stream` adopted (Zig:
-        // `this.credentials.deref()`).
+        // constructing `writable_stream`/`upload_stream` adopted.
         self.credentials.deref();
         // uploadid_buffer: MutableString — Drop
         // multipart_etags: Vec<UploadPartResult> — Drop (each etag Box<[u8]> freed)
@@ -650,7 +647,7 @@ impl MultiPartUpload {
         } else if self.state == State::SinglefileStarted {
             self.state = State::Finished;
             // single file upload no need to commit
-            // The deref (Zig: `defer this.deref()`) must run after the callback:
+            // The deref must run after the callback:
             let r = (self.callback)(S3UploadResult::Success, self.callback_context);
             // SAFETY: `self` is a live heap-allocated `MultiPartUpload` (intrusive RC).
             MultiPartUpload::deref_(self);
@@ -666,7 +663,7 @@ impl MultiPartUpload {
         this: *mut c_void,
     ) -> JsTerminatedResult<()> {
         let this = this.cast::<Self>();
-        // Equivalent of Zig's `defer this.deref()` — `adopt` consumes the prior +1 on Drop.
+        // `adopt` consumes the prior +1 on Drop.
         // SAFETY: callback context — a ref was taken before the request was queued.
         let _deref_guard = unsafe { bun_ptr::ScopedRef::<Self>::adopt(this) };
         // SAFETY: callback context — `this` is live (a ref was taken before the request)
@@ -688,7 +685,7 @@ impl MultiPartUpload {
             S3DownloadResult::Success(response) => {
                 // response.body is bun.MutableString — `list` is a Vec<u8>
                 let slice = response.body.list.as_slice();
-                // PERF(port): Zig stored body and sliced upload_id into it; here we dupe upload_id
+                // PERF: upload_id is duped out of the body instead of slicing into it
                 if let Some(start) = strings::index_of(slice, b"<UploadId>") {
                     let value_start = start + b"<UploadId>".len();
                     if let Some(end) = strings::index_of(slice, b"</UploadId>") {
@@ -758,7 +755,7 @@ impl MultiPartUpload {
                     return Ok(());
                 }
                 this_ref.state = State::Finished;
-                // The deref (Zig: `defer this.deref()`) must run after the callback:
+                // The deref must run after the callback:
                 let r =
                     (this_ref.callback)(S3UploadResult::Failure(err), this_ref.callback_context);
                 // SAFETY: `this` is live (final-step ref held until this deref).
@@ -767,7 +764,7 @@ impl MultiPartUpload {
             }
             S3CommitResult::Success => {
                 this_ref.state = State::Finished;
-                // The deref (Zig: `defer this.deref()`) must run after the callback:
+                // The deref must run after the callback:
                 let r = (this_ref.callback)(S3UploadResult::Success, this_ref.callback_context);
                 // SAFETY: `this` is live (final-step ref held until this deref).
                 MultiPartUpload::deref_(this);
@@ -925,7 +922,7 @@ impl MultiPartUpload {
             return Ok(());
         }
         // need to split in multiple parts because of the size
-        // Zig's `defer if (buffered.isEmpty()) buffered.reset()` is hoisted to after the loop;
+        // The "reset buffered if empty" cleanup runs after the loop;
         // early-return paths either reset buffered to default (already empty) or leave it non-empty (no-op).
 
         while self.buffered.is_not_empty() {
@@ -962,13 +959,12 @@ impl MultiPartUpload {
 
                     // queue is not full, we can clear the buffer part now owns the data
                     // if its full we will retry later
-                    // SAFETY: ownership of buffered's allocation transferred to the part above.
-                    // The Zig spec does `this.buffered = .{}` which overwrites WITHOUT running a
-                    // destructor, releasing the allocation to the UploadPart created via
-                    // enqueue_part(..., needs_clone=false). In Rust, assigning a fresh
-                    // StreamBuffer would Drop the old one and free the Vec<u8> backing storage,
-                    // leaving UploadPart.data dangling (UAF on perform(), double-free on
-                    // free_allocated_slice). Take + forget so the part remains sole owner.
+                    // SAFETY: ownership of buffered's allocation transferred to the
+                    // UploadPart created via enqueue_part(..., needs_clone=false) above.
+                    // Assigning a fresh StreamBuffer would Drop the old one and free the
+                    // Vec<u8> backing storage, leaving UploadPart.data dangling (UAF on
+                    // perform(), double-free on free_allocated_slice). Take + forget so
+                    // the part remains sole owner.
                     let _ = core::mem::ManuallyDrop::new(core::mem::take(&mut self.buffered));
                     return Ok(());
                 }
@@ -1080,10 +1076,8 @@ impl MultiPartUpload {
         self.available.mask == IntegerBitSet::<{ Self::MAX_QUEUE_SIZE }>::init_full().mask
     }
 
-    // Zig used `comptime encoding: enum {bytes, latin1, utf16}`. Rust's
-    // adt_const_params (enum-valued const generics) is unstable, so take it as a
-    // plain runtime arg — the three thin wrappers below pass a constant, so the
-    // optimizer still specializes each branch.
+    // The encoding is a plain runtime arg — the three thin wrappers below
+    // pass a constant, so the optimizer still specializes each branch.
     fn write(
         &mut self,
         encoding: WriteEncoding,
@@ -1188,5 +1182,3 @@ pub(crate) enum WriteEncoding {
     Latin1,
     Utf16,
 }
-
-// ported from: src/runtime/webcore/s3/multipart.zig

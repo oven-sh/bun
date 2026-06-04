@@ -377,5 +377,3 @@ pub(crate) fn encode_indexed(
         free: encoded_wrap_free!(libc::free),
     })
 }
-
-// ported from: src/runtime/image/codec_png.zig

@@ -543,4 +543,3 @@ unsafe extern "C" {
     );
 }
 
-// ported from: src/libdeflate_sys/libdeflate.zig

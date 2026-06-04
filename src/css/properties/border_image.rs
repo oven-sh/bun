@@ -34,9 +34,7 @@ pub struct BorderImage {
 }
 
 impl BorderImage {
-    // Zig PropertyFieldMap / VendorPrefixMap were comptime anonymous-struct
-    // tables consumed via @field reflection by the shorthand codegen; recorded
-    // here for a future shorthand trait/derive to consume.
+    // Recorded here for a future shorthand trait/derive to consume.
     // PropertyFieldMap:
     //   source -> PropertyIdTag::BorderImageSource
     //   slice  -> PropertyIdTag::BorderImageSlice
@@ -46,12 +44,9 @@ impl BorderImage {
     // VendorPrefixMap: all fields = true
 
     pub(crate) fn parse(input: &mut css::Parser) -> Result<BorderImage> {
-        // Zig passed `{}` ctx + a no-op callback struct; collapsed to a closure.
         Self::parse_with_callback(input, |_: &mut css::Parser| false)
     }
 
-    // Zig signature was (input, ctx: anytype, comptime callback: anytype)
-    // where callback(ctx, input) -> bool. Collapsed ctx into the closure capture.
     pub(crate) fn parse_with_callback(
         input: &mut css::Parser,
         mut callback: impl FnMut(&mut css::Parser) -> bool,
@@ -203,7 +198,7 @@ impl BorderImage {
         // `defer fallbacks.deinit(arena)` dropped — SmallList drops at scope exit.
         let mut res = SmallList::<BorderImage, 6>::init_capacity(fallbacks.len());
         for fallback in fallbacks {
-            // Matches Zig: `fallback` is moved into the cloned shorthand.
+            // `fallback` is moved into the cloned shorthand.
             let mut clone = self.deep_clone(arena);
             clone.source = fallback;
             res.append(clone);
@@ -212,8 +207,7 @@ impl BorderImage {
     }
 
     pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
-        // Zig css.implementDeepClone iterated @typeInfo fields. Expanded
-        // explicitly here — keep in sync with the BorderImage field list.
+        // Keep in sync with the BorderImage field list.
         BorderImage {
             source: self.source.deep_clone(arena),
             slice: self.slice.deep_clone(arena),
@@ -304,9 +298,8 @@ pub enum BorderImageSideWidth {
 }
 
 impl BorderImageSideWidth {
-    // `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
-    // were comptime-reflected derives. Hand-expanded — declaration order matches
-    // Zig (Number → LengthPercentage → keyword `auto`).
+    // Hand-expanded — tried in declaration order
+    // (Number → LengthPercentage → keyword `auto`).
     pub(crate) fn parse(input: &mut css::Parser) -> Result<Self> {
         if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
             return Ok(BorderImageSideWidth::Number(n));
@@ -454,11 +447,7 @@ impl BorderImageProperty {
 
     pub(crate) const BORDER_IMAGE: BorderImageProperty = BorderImageProperty::all();
 
-    // bitflags provides `is_empty()` already; Zig `isEmpty` maps to it.
-
     pub(crate) fn try_from_property_id(property_id: PropertyIdTag) -> Option<BorderImageProperty> {
-        // Zig used `inline for` over struct fields + @field to match
-        // "border-image-" ++ field.name. Unrolled explicitly here.
         match property_id {
             PropertyIdTag::BorderImageSource => Some(BorderImageProperty::SOURCE),
             PropertyIdTag::BorderImageSlice => Some(BorderImageProperty::SLICE),
@@ -492,8 +481,7 @@ impl BorderImageHandler {
     ) -> bool {
         let arena = dest.bump();
 
-        // Zig defined `flushHelper`/`propertyHelper` as local struct fns
-        // using @field for comptime field access. Ported as macro_rules! to keep the
+        // `flushHelper`/`propertyHelper` are macro_rules! to keep the
         // per-field name dispatch without reflection.
         macro_rules! flush_helper {
             ($self:expr, $d:expr, $ctx:expr, $name:ident, $val:expr) => {
@@ -568,7 +556,6 @@ impl BorderImageHandler {
                             .unwrap(),
                     );
                     dest.push(Property::Unparsed(unparsed_clone));
-                    // PERF(port): was bun.handleOom(dest.append(arena, ...))
                 } else {
                     return false;
                 }
@@ -725,5 +712,3 @@ pub(crate) fn is_border_image_property(property_id: PropertyIdTag) -> bool {
 }
 
 crate::css_eql_partialeq!(BorderImageSideWidth);
-
-// ported from: src/css/properties/border_image.zig

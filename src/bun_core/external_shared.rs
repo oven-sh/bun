@@ -2,14 +2,11 @@ use core::ptr::NonNull;
 
 /// Protocol for types whose reference count is managed externally (e.g., by extern functions).
 ///
-/// In Zig this is duck-typed via `T.external_shared_descriptor = struct { ref, deref }`.
-/// In Rust the type implements this trait directly.
-///
 /// # Safety
 /// Implementors guarantee that `ext_ref`/`ext_deref` operate on a valid externally-owned
 /// reference count, and that the pointee remains alive while the count is > 0.
-// Named `ext_ref`/`ext_deref` (Zig uses `ref`/`deref`) to avoid the `ref`
-// keyword and `core::ops::Deref::deref` confusion.
+// Named `ext_ref`/`ext_deref` to avoid the `ref` keyword and
+// `core::ops::Deref::deref` confusion.
 pub unsafe trait ExternalSharedDescriptor {
     unsafe fn ext_ref(this: *mut Self);
     unsafe fn ext_deref(this: *mut Self);
@@ -17,11 +14,9 @@ pub unsafe trait ExternalSharedDescriptor {
 
 /// A shared pointer whose reference count is managed externally; e.g., by extern functions.
 ///
-/// `T` must implement [`ExternalSharedDescriptor`] (the Rust equivalent of Zig's
-/// `T.external_shared_descriptor` struct with `ref(*T)` / `deref(*T)`).
+/// `T` must implement [`ExternalSharedDescriptor`].
 #[repr(transparent)]
 pub struct ExternalShared<T: ExternalSharedDescriptor> {
-    // Zig: `#impl: *T` (private, non-null)
     ptr: NonNull<T>,
 }
 
@@ -33,7 +28,8 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
     /// ownership of is being transferred to the returned `ExternalShared`.
     pub unsafe fn adopt(incremented_raw: *mut T) -> Self {
         Self {
-            // SAFETY: Zig `*T` is non-null by construction.
+            // SAFETY: caller contract requires `incremented_raw` to be a valid
+            // (hence non-null) pointer.
             ptr: unsafe { NonNull::new_unchecked(incremented_raw) },
         }
     }
@@ -56,7 +52,8 @@ impl<T: ExternalSharedDescriptor> ExternalShared<T> {
         // SAFETY: caller contract.
         unsafe { T::ext_ref(raw) };
         Self {
-            // SAFETY: Zig `*T` is non-null.
+            // SAFETY: caller contract requires `raw` to be a valid (hence
+            // non-null) pointer.
             ptr: unsafe { NonNull::new_unchecked(raw) },
         }
     }
@@ -108,10 +105,9 @@ impl<T: ExternalSharedDescriptor> Drop for ExternalShared<T> {
     }
 }
 
-/// Optional variant of [`ExternalShared`] (Zig: `ExternalShared(T).Optional`).
+/// Optional variant of [`ExternalShared`].
 #[repr(transparent)]
 pub struct ExternalSharedOptional<T: ExternalSharedDescriptor> {
-    // Zig: `#impl: ?*T = null`
     ptr: Option<NonNull<T>>,
 }
 
@@ -205,5 +201,3 @@ unsafe impl ExternalSharedDescriptor for bun_alloc::WTFStringImplStruct {
 
 /// Behaves like `WTF::Ref<WTF::StringImpl>`.
 pub type WTFString = ExternalShared<bun_alloc::WTFStringImplStruct>;
-
-// ported from: src/ptr/external_shared.zig

@@ -3,8 +3,6 @@ use bun_ast::import_record;
 use bun_core::ZStr;
 use bun_core::zstr;
 
-// Zig: `const string = []const u8;` — in Rust we use `&'static [u8]` directly for keys.
-
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr)]
 pub enum HardcodedModule {
     #[strum(serialize = "bun")]
@@ -180,8 +178,8 @@ impl HardcodedModule {
     /// The module loader first uses `Aliases` to get a single string during
     /// resolution, then maps that single string to the actual module.
     /// Do not include aliases here; Those go in `Aliases`.
-    // Zig: `pub const map = bun.ComptimeStringMap(...)`. Associated `static` is
-    // unstable (E0658); `phf::Map` is const-constructible so use an associated const.
+    // Associated `static` is unstable (E0658); `phf::Map` is
+    // const-constructible so use an associated const.
     pub const MAP: phf::Map<&'static [u8], HardcodedModule> = phf::phf_map! {
         // Bun
         b"bun" => HardcodedModule::Bun,
@@ -275,10 +273,10 @@ impl HardcodedModule {
 /// Contains the list of built-in modules from the perspective of the module
 /// loader. This logic is duplicated for `isBuiltinModule` and the like.
 // Note: `ZStr` is a bare DST without `PartialEq`/`Debug`, so `Alias` can't
-// auto-derive them. The Zig struct doesn't define equality either.
+// auto-derive them.
 #[derive(Copy, Clone)]
 pub struct Alias {
-    // Zig: `[:0]const u8` → `&'static ZStr` per PORTING.md type map
+    // `&'static ZStr` per PORTING.md type map
     // (length-carrying NUL-terminated; module specifiers are bytes, not &str).
     pub path: &'static ZStr,
     pub tag: import_record::Tag,
@@ -298,7 +296,6 @@ impl Default for Alias {
 }
 
 /// Prepend `"node:"` to a literal at compile time iff it isn't already prefixed.
-/// Mirrors Zig: `if (path.len > 5 and std.mem.eql(u8, path[0..5], "node:")) path else "node:" ++ path`.
 macro_rules! ensure_node_prefix {
     ($path:literal) => {{
         const HAS_PREFIX: bool = {
@@ -363,11 +360,10 @@ macro_rules! entry {
     };
 }
 
-// Zig builds three `ComptimeStringMap`s by concatenating these const arrays
-// (`common ++ bun_extra ++ bun_test_extra`). `phf::phf_map!` only accepts
-// inline literal entries, so it cannot consume const slices directly; instead
-// the const tables stay the source of truth (callers like `ModuleLoader`
-// iterate them) and `lookup` goes through lazily-built hash maps.
+// `phf::phf_map!` only accepts inline literal entries, so it cannot consume
+// const slices directly; instead the const tables stay the source of truth
+// (callers like `ModuleLoader` iterate them) and `lookup` goes through
+// lazily-built hash maps.
 
 type AliasKv = (&'static [u8], Alias);
 
@@ -773,10 +769,9 @@ const BUN_TEST_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     ),
 ];
 
-// Zig: `bun.ComptimeStringMap(Alias, common_alias_kvs)` etc. — a comptime
-// perfect-hash map. The Rust equivalent here is a lazily-built `HashMap` per
-// alias table (see `lookup`); the const slice-of-tables form is kept public
-// because `ModuleLoader` iterates the raw entries.
+// A lazily-built `HashMap` per alias table (see `lookup`); the const
+// slice-of-tables form is kept public because `ModuleLoader` iterates the raw
+// entries.
 const NODE_ALIASES: &[&[AliasKv]] = &[COMMON_ALIAS_KVS];
 pub const BUN_ALIASES: &[&[AliasKv]] = &[COMMON_ALIAS_KVS, BUN_EXTRA_ALIAS_KVS];
 const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
@@ -789,8 +784,8 @@ fn build_alias_map(tables: &[&[AliasKv]]) -> std::collections::HashMap<&'static 
     let mut map = std::collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
     for table in tables {
         for (k, v) in *table {
-            // First table wins, matching the previous in-order scan (and Zig's
-            // concatenated ComptimeStringMap, whose keys are unique anyway).
+            // First table wins, matching the previous in-order scan
+            // (keys are unique across tables anyway).
             map.entry(*k).or_insert(*v);
         }
     }
@@ -835,5 +830,3 @@ impl Alias {
         None
     }
 }
-
-// ported from: src/resolve_builtins/HardcodedModule.zig

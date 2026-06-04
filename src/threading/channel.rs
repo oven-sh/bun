@@ -22,16 +22,11 @@ bun_core::oom_from_alloc!(ChannelError);
 
 bun_core::named_error_set!(ChannelError);
 
-// Reshaped for borrowck / thread-safety. In Zig all methods take
-// `*Self` and the mutex guards `buffer`/`is_closed`. In Rust we need `&self`
-// (Channel is shared across threads), so `buffer` is wrapped in `UnsafeCell`
-// and `is_closed` in `Cell`, both accessed only while `mutex` is held.
-//
-// Zig's `comptime buffer_type: LinearFifoBufferType` const-enum
-// param is unstable in Rust (`adt_const_params`). `bun_collections::LinearFifo`
-// already lowers it to a `LinearFifoBuffer<T>` trait param, so `Channel`
-// follows the same shape: `Channel<T, B: LinearFifoBuffer<T>>`. The original
-// `init` switch becomes per-buffer inherent constructors below.
+// Channel is shared across threads through `&self`, so `buffer` is wrapped in
+// `UnsafeCell` and `is_closed` in `Cell`, both accessed only while `mutex` is
+// held. The buffer strategy is a `LinearFifoBuffer<T>` trait param
+// (`Channel<T, B: LinearFifoBuffer<T>>`) with per-buffer inherent constructors
+// below.
 pub struct Channel<T, B: LinearFifoBuffer<T> = DynamicBuffer<T>> {
     mutex: Mutex,
     putters: Condition,
@@ -48,7 +43,6 @@ unsafe impl<T: Send, B: LinearFifoBuffer<T>> Send for Channel<T, B> {}
 // SAFETY: all interior-mutable state is guarded by `mutex`.
 unsafe impl<T: Send, B: LinearFifoBuffer<T>> Sync for Channel<T, B> {}
 
-// Zig: `pub const init = switch (buffer_type) { .Static => initStatic, ... }`
 // Rust cannot dispatch a single `init` ident to different signatures based on
 // a type-level discriminant. Callers pick the matching constructor directly.
 
@@ -69,15 +63,13 @@ impl<'a, T: Copy> Channel<T, SliceBuffer<'a, T>> {
 impl<T: Copy> Channel<T, DynamicBuffer<T>> {
     #[inline]
     pub fn init_dynamic() -> Self {
-        // Zig took a `std.mem.Allocator` param; dropped per
-        // §Allocators (non-AST crate uses global mimalloc).
+        // No allocator param; this non-AST crate uses the global mimalloc.
         Self::with_buffer(LinearFifo::<T, DynamicBuffer<T>>::init())
     }
 }
 
-// `T: Copy` because `LinearFifo::write`/`read` are slice-copy
-// based (mirrors Zig's `[]const T` semantics for POD payloads). All in-tree
-// channel payloads are POD; revisit if a non-`Copy` T appears.
+// `T: Copy` because `LinearFifo::write`/`read` are slice-copy based. All
+// in-tree channel payloads are POD; revisit if a non-`Copy` T appears.
 impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
     fn with_buffer(buffer: LinearFifo<T, B>) -> Self {
         Self {
@@ -88,9 +80,6 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
             is_closed: Cell::new(false),
         }
     }
-
-    // Zig `deinit` only freed `self.buffer` and poisoned `self.*`. Rust drops
-    // fields automatically, so no explicit `Drop` impl is needed.
 
     pub fn close(&self) {
         let _guard = self.mutex.lock_guard();
@@ -231,5 +220,3 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         Ok(popped)
     }
 }
-
-// ported from: src/threading/channel.zig

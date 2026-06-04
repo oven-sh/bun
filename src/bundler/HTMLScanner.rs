@@ -16,7 +16,7 @@ bun_core::declare_scope!(HTMLScanner, hidden);
 
 pub(crate) struct HTMLScanner<'a> {
     // arena field dropped — global mimalloc (see PORTING.md §Allocators).
-    pub import_records: Vec<ImportRecord>, // Zig: ImportRecord.List
+    pub import_records: Vec<ImportRecord>,
     pub log: &'a mut Log,
     pub source: &'a Source,
 }
@@ -91,8 +91,7 @@ impl<'a> HTMLScanner<'a> {
     }
 
     pub(crate) fn on_html_parse_error(&mut self, message: &[u8]) {
-        // bun.handleOom → Rust Vec/Box allocations abort on OOM; just call.
-        // Zig `Log.addError` dupes via `log.msgs.allocator`; here `IntoText for
+        // Vec/Box allocations abort on OOM; just call. `IntoText for
         // Vec<u8>` → `Cow::Owned`, so the Log owns and drops the copy.
         let _ = self
             .log
@@ -115,15 +114,13 @@ impl<'a> HTMLScanner<'a> {
     }
 }
 
-// Zig: const processor = HTMLProcessor(HTMLScanner, false);
 type Processor<'a> = HTMLProcessor<HTMLScanner<'a>, false>;
 
 // ───────────────────────────────────────────────────────────────────────────
 // HTMLProcessor — generic over visitor `T` and `VISIT_DOCUMENT_TAGS`
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Trait capturing the duck-typed methods Zig's `HTMLProcessor` calls on `T`.
-/// Zig used `anytype`-style structural calls; Rust needs an explicit bound.
+/// Trait capturing the methods `HTMLProcessor` calls on `T`.
 pub(crate) trait HTMLProcessorHandler {
     fn on_tag(
         &mut self,
@@ -135,8 +132,8 @@ pub(crate) trait HTMLProcessorHandler {
     fn on_write_html(&mut self, bytes: &[u8]);
     fn on_html_parse_error(&mut self, message: &[u8]);
 
-    // Only required when VISIT_DOCUMENT_TAGS == true; Zig only references
-    // these inside `if (visit_document_tags)`, so the defaults are never
+    // Only required when VISIT_DOCUMENT_TAGS == true; `run` only calls
+    // these when visiting document tags, so the defaults are never
     // reached for handlers that don't visit document tags.
     fn on_body_tag(&mut self, _element: &mut lol::Element) -> bool {
         unreachable!()
@@ -266,10 +263,9 @@ const SELECTOR_CAP: usize = TAG_HANDLERS.len() + 3;
 
 // ── lol-html DirectiveCallback / OutputSink adapters ──────────────────────
 // `lol_html::DirectiveCallback<Container>` allows one impl per (UserData,
-// Container) pair, but Zig registered 16 distinct comptime fn-values against
-// the same `*T`. We instead allocate one user-data record *per selector*
-// holding `(*mut T, tag_index)`; the trait body is `generateHandlerForTag`'s
-// body with `tag_info` looked up at runtime via the index.
+// Container) pair, so we allocate one user-data record *per selector*
+// holding `(*mut T, tag_index)`; the shared trait body looks up
+// `tag_info` at runtime via the index.
 
 struct TagUserData<T> {
     this: *mut T,
@@ -286,7 +282,6 @@ impl<T: HTMLProcessorHandler> lol::DirectiveCallback<lol::Element> for TagUserDa
                 .unwrap_or(false);
             if has {
                 let value = element.get_attribute(tag_info.url_attribute);
-                // Zig: defer value.deinit()
                 let _value_guard = scopeguard::guard(value, |v| v.deinit());
                 if value.len > 0 {
                     bun_core::scoped_log!(
@@ -378,7 +373,6 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         let this_ptr: *mut T = this;
 
         let builder = lol::HTMLRewriterBuilder::init();
-        // Zig: defer builder.deinit()
         let _builder_guard = scopeguard::guard(builder, |b| {
             // SAFETY: `b` came from `HTMLRewriterBuilder::init()` and has not
             // been freed.
@@ -387,7 +381,6 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
 
         let mut selectors: BoundedArray<*mut lol::HTMLSelector, SELECTOR_CAP> =
             BoundedArray::default();
-        // Zig: defer for (selectors.slice()) |s| s.deinit()
         let mut selectors_guard = scopeguard::guard(
             &mut selectors,
             |selectors: &mut BoundedArray<*mut lol::HTMLSelector, SELECTOR_CAP>| {
@@ -430,7 +423,6 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         }
 
         if VISIT_DOCUMENT_TAGS {
-            // Zig: inline for (.{ "body", "head", "html" }, &.{ T.onBodyTag, ... })
             for (i, tag) in [b"body" as &[u8], b"head", b"html"].into_iter().enumerate() {
                 let head_selector = lol::HTMLSelector::parse(tag).map_err(lol_err)?;
                 selectors.append_assume_capacity(head_selector);
@@ -454,15 +446,14 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
 
         let mut sink = Sink::<T>(this_ptr);
 
-        // Note: Zig `errdefer { ... this.onHTMLParseError(last_error) }`
-        // reshaped — fallible tail wrapped in an inner block so the side effect
-        // runs on error without a scopeguard double-borrowing `this`.
+        // The fallible tail is wrapped in an inner block so the
+        // on-error side effect (`on_html_parse_error`)
+        // runs without a scopeguard double-borrowing `this`.
         let res: Result<(), Error> = (|| {
             // SAFETY: `builder` is a live FFI handle.
             let rewriter = unsafe { &mut *builder }
                 .build(lol::Encoding::UTF8, memory_settings, false, &raw mut sink)
                 .map_err(lol_err)?;
-            // Zig: defer rewriter.deinit()
             let _rewriter_guard = scopeguard::guard(rewriter, |r| {
                 // SAFETY: `r` came from `build` and has not been freed.
                 unsafe { lol::HTMLRewriter::destroy(r) }
@@ -476,7 +467,6 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
 
         if res.is_err() {
             let last_error = lol::HTMLString::last_error();
-            // Zig: defer last_error.deinit()
             let _last_error_guard = scopeguard::guard(last_error, |e| e.deinit());
             if last_error.len > 0 {
                 // The rewriter (sole user of `this_ptr`-derived aliases) was
@@ -489,5 +479,3 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
         res
     }
 }
-
-// ported from: src/bundler/HTMLScanner.zig

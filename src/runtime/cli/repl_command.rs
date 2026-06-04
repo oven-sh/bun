@@ -60,13 +60,11 @@ impl ReplCommand {
 
         bun_ast::initialize_store();
         // The arena is threaded into VirtualMachine (vm.arena). `bun_alloc::Arena`
-        // is `MimallocArena` (a per-heap mimalloc wrapper, semantically matching
-        // Zig's `bun.allocators.MimallocArena`).
+        // is `MimallocArena` (a per-heap mimalloc wrapper).
         let arena = Arena::new();
 
-        // Validate DNS result order before VM init (matches Zig, which parsed
-        // it in the init args); wired onto the VM post-init below, like
-        // run_command.rs.
+        // Validate DNS result order before VM init; wired onto the VM
+        // post-init below, like run_command.rs.
         let dns_order = DnsOrder::from_string(&ctx.runtime_options.dns_result_order)
             .unwrap_or_else(|| {
                 bun_core::pretty_errorln!("<r><red>error<r><d>:<r> Invalid DNS result order.");
@@ -96,13 +94,11 @@ impl ReplCommand {
             // post-init like run_command.rs since InitOptions doesn't carry it.
             (*vm).dns_result_order = dns_order as u8;
         }
-        // Zig's `vm.allocator = vm.arena.allocator()` threading is intentionally dropped in
-        // Rust (no per-VM allocator handle); the `vm.arena` assignment itself happens below
+        // There is no per-VM allocator handle; the `vm.arena` assignment itself happens below
         // ReplRunner construction to avoid a move-after-borrow.
 
         // Configure bundler options
-        // Spec: `b.options.install = ctx.install` (raw `?*const Api.BunInstall`
-        // copy). `BundleOptions.install` is `Option<NonNull<_>>` so no
+        // `BundleOptions.install` is `Option<NonNull<_>>` so no
         // lifetime-extension cast is needed.
         let install_ptr = ctx.install.as_deref().map(core::ptr::NonNull::from);
         b.options.install = install_ptr;
@@ -164,7 +160,7 @@ impl ReplCommand {
             },
             eval_and_print: ctx.runtime_options.eval.eval_and_print,
         };
-        // vm.arena stores a *mut Arena pointing at runner.arena (Zig: `@constCast(&arena)`);
+        // vm.arena stores a *mut Arena pointing at runner.arena;
         // lifetime is the holdAPILock scope (globalExit() never returns so the frame never
         // unwinds). Assigned AFTER moving `arena` into `runner` — assigning from the pre-move
         // local would dangle.
@@ -172,10 +168,8 @@ impl ReplCommand {
         // stack frame for the holdAPILock scope and global_exit() (`!`) prevents unwind past it.
         unsafe { (*vm).arena = NonNull::new(&raw mut runner.arena) };
 
-        // Zig: jsc.OpaqueWrap(ReplRunner, ReplRunner.start) — comptime fn-ptr wrapper that
-        // produces an `extern "C" fn(*mut c_void)` thunk. `bun_jsc::opaque_wrap` requires a
-        // type implementing `FnTyped<Ctx>`; rather than depend on that upstream trait, write
-        // the trivial thunk locally.
+        // `bun_jsc::opaque_wrap` requires a type implementing `FnTyped<Ctx>`;
+        // rather than depend on that upstream trait, write the trivial thunk locally.
         extern "C" fn repl_runner_thunk(ctx: *mut c_void) {
             // SAFETY: caller passes `&mut ReplRunner` cast to *mut c_void.
             let runner = unsafe { bun_ptr::callback_ctx::<ReplRunner<'_, '_>>(ctx) };
@@ -312,5 +306,3 @@ unsafe extern "C" {
 
 use bun_bundler::options::EnvBehavior;
 use bun_options_types::offline_mode::OfflineMode;
-
-// ported from: src/cli/repl_command.zig

@@ -53,9 +53,9 @@ pub struct FSWatcher {
     path_watcher: Cell<Option<*mut path_watcher::PathWatcher>>,
     poll_ref: JsCell<KeepAlive>,
     global_this: GlobalRef,
-    // TODO(port): bare JSValue heap field — self-wrapper; consider JsRef.
+    // TODO: bare JSValue heap field — self-wrapper; consider JsRef.
     pub(super) js_this: Cell<JSValue>,
-    // pub(super): read directly by `win_watcher::PathWatcher::emit` (matches Zig `ctx.encoding`).
+    // pub(super): read directly by `win_watcher::PathWatcher::emit`.
     pub(super) encoding: Encoding,
 
     /// User can call close and pre-detach so we need to track this
@@ -126,11 +126,9 @@ pub type FSWatchTask = FSWatchTaskWindows;
 #[cfg(not(windows))]
 pub type FSWatchTask = FSWatchTaskPosix;
 
-// Zig only references `FSWatchTaskPosix` from posix paths, so its lazy
-// compilation never type-checks the body on Windows. Rust type-checks
-// unconditionally, and `Event::Rename`/`Change` carry `StringOrBytesToDecode`
-// on Windows which does not coerce to the `&[u8]` `emit()` expects — gate the
-// whole posix task to keep the Windows build sound.
+// `Event::Rename`/`Change` carry `StringOrBytesToDecode` on Windows, which
+// does not coerce to the `&[u8]` `emit()` expects — gate the whole posix task
+// to keep the Windows build sound.
 #[cfg(not(windows))]
 pub struct FSWatchTaskPosix {
     /// `None` only during `FSWatcher::init` two-phase construction (the task is
@@ -257,7 +255,7 @@ impl FSWatchTaskPosix {
 
 #[cfg(not(windows))]
 impl FSWatchTaskPosix {
-    /// `FSWatchTaskPosix.deinit` (node_fs_watcher.zig:61). **Not** `impl Drop`:
+    /// `FSWatchTaskPosix.deinit`. **Not** `impl Drop`:
     /// this is only ever called on heap clones produced by `enqueue()` (via the
     /// task dispatcher), never on the embedded `FSWatcher.current_task` field —
     /// the assert below enforces that. A `Drop` impl would also fire on
@@ -354,13 +352,11 @@ pub enum StringOrBytesToDecode {
     BytesToFree(Box<[u8]>),
 }
 
-// Zig: `StringOrBytesToDecode.deinit()` (node_fs_watcher.zig:199-207). The
-// `String` arm wraps `bun_core::String`, which is `#[derive(Copy)]` and has NO
-// `Drop` of its own (src/string/lib.rs), so without this impl dropping the
-// enum would silently leak the WTF::StringImpl ref taken by
+// The `String` arm wraps `bun_core::String`, which is `#[derive(Copy)]` and
+// has NO `Drop` of its own (src/string/lib.rs), so without this impl dropping
+// the enum would silently leak the WTF::StringImpl ref taken by
 // `BunString::clone_utf8` in `win_watcher.rs::emit()`. The `BytesToFree` arm's
-// `Box<[u8]>` already frees via its own `Drop`, mirroring the Zig
-// `default_allocator.free(this.bytes_to_free)`.
+// `Box<[u8]>` already frees via its own `Drop`.
 impl Drop for StringOrBytesToDecode {
     fn drop(&mut self) {
         if let Self::String(s) = self {
@@ -369,10 +365,9 @@ impl Drop for StringOrBytesToDecode {
     }
 }
 
-// Zig: `StringOrBytesToDecode{ .bytes_to_free = try default_allocator.dupe(u8, path) }`.
 // `PathWatcher::emit` and `Event::dupe` take a borrowed `&[u8]` rel-path and box
 // it into the owned `bytes_to_free` arm so the Windows task can carry it across
-// the thread hop (matches `FSWatchTaskWindows.run`'s `default_allocator.free`).
+// the thread hop.
 impl From<&[u8]> for StringOrBytesToDecode {
     #[inline]
     fn from(bytes: &[u8]) -> Self {
@@ -442,16 +437,12 @@ impl FSWatchTaskWindows {
             let StringOrBytesToDecode::String(s) = path else {
                 // Producer invariant (win_watcher::on_path_update_windows): when
                 // `ctx.encoding == Utf8` the payload is always the `String`
-                // variant, and `encoding` is immutable after init. Zig accessed
-                // `path.string` unconditionally (safety-checked union access).
+                // variant, and `encoding` is immutable after init.
                 unreachable!()
             };
-            // Spec divergence: Zig's `catch return` here
-            // (node_fs_watcher.zig:237) returns from `run()` itself, skipping
-            // `ctx.unrefTask()` at zig:256 and leaving `pending_activity_count`
-            // permanently elevated on a `transferToJS` failure. Returning from
-            // this helper instead lets `run()` fall through to `unref_task()`,
-            // which is the intended fix — the Zig behavior is a refcount leak.
+            // Returning from this helper on `transferToJS` failure lets
+            // `run()` fall through to `unref_task()`, so
+            // `pending_activity_count` is never left permanently elevated.
             let Ok(js) = s.transfer_to_js(&ctx.global_this) else {
                 return;
             };
@@ -471,7 +462,7 @@ impl FSWatchTaskWindows {
         unreachable!("FSWatchTaskWindows::run is windows-only")
     }
 
-    /// `FSWatchTaskWindows.deinit` (node_fs_watcher.zig:259). Explicit, not
+    /// `FSWatchTaskWindows.deinit`. Explicit, not
     /// `impl Drop`, to mirror `FSWatchTaskPosix::deinit` so the dispatcher can
     /// call `FSWatchTask::deinit` uniformly.
     ///
@@ -481,7 +472,7 @@ impl FSWatchTaskWindows {
     pub unsafe fn deinit(this: *mut Self) {
         // `Event` (and `StringOrBytesToDecode`, via its explicit `Drop` impl
         // above which `deref()`s the WTF string) free their payloads via Drop,
-        // so dropping the Box is `event.deinit() + bun.destroy(this)`.
+        // so dropping the Box releases everything.
         // SAFETY: paired with `heap::alloc` at the enqueue site.
         drop(unsafe { bun_core::heap::take(this) });
     }
@@ -606,8 +597,8 @@ impl<'a> Arguments<'a> {
             return Err(ctx
                 .throw_invalid_arguments(format_args!("filename must be a string or TypedArray")));
         };
-        // Zig had `defer if (should_deinit_path) path.deinit();` — `PathLike: Drop`
-        // now covers it: `?` on the error paths below drops `path` automatically.
+        // `PathLike: Drop` releases the path: `?` on the error paths below
+        // drops `path` automatically.
 
         let mut listener: JSValue = JSValue::ZERO;
         let mut signal: Option<&AbortSignal> = None;
@@ -716,14 +707,13 @@ impl AbortListener for FSWatcher {
 }
 
 impl FSWatcher {
-    /// Read access to the JS wrapper value. Exposed for `NodeFS::watch`, which
-    /// in Zig reads the `js_this` field directly off the by-value `*FSWatcher`.
+    /// Read access to the JS wrapper value. Exposed for `NodeFS::watch`.
     #[inline]
     pub fn js_this(&self) -> JSValue {
         self.js_this.get()
     }
 
-    /// `FSWatcher.initJS` (node_fs_watcher.zig:537). Takes `*mut Self` so the
+    /// `FSWatcher.initJS`. Takes `*mut Self` so the
     /// already-heap-allocated payload can be handed to `${T}__create` via
     /// `to_js_ptr` without re-boxing (see jsc_macros::JsClass).
     ///
@@ -780,15 +770,14 @@ impl FSWatcher {
     /// the wrapper's `m_ptr` — setting `closed = true` and `detach()`-ing.
     /// `Cell::get()` after the callback observes that write because
     /// `UnsafeCell` suppresses `noalias` on `&Self`; the trailing
-    /// `self.close()` then no-ops as in Zig.
+    /// `self.close()` then no-ops.
     pub fn emit_abort(&self, err: JSValue) {
         if self.closed.get() {
             return;
         }
         self.pending_activity_count.fetch_add(1, Ordering::Relaxed);
-        // Zig has `defer this.close(); defer this.unrefTask();` — defers run LIFO,
-        // so unref_task() executes before close(). No early returns below, so both calls are
-        // inlined at the end of this function.
+        // unref_task() must execute before close(). No early returns below,
+        // so both calls are inlined at the end of this function.
 
         err.ensure_still_alive();
         let js_this = self.js_this.get();
@@ -979,7 +968,7 @@ impl FSWatcher {
         } else {
             self.mutex.unlock();
         }
-        // Manual lock/unlock mirrors Zig `close()` exactly: the lock is released
+        // Manual lock/unlock: the lock is released
         // before `detach()` on the not-closed path and in the else branch — every
         // path unlocks exactly once. `ref_task`/`unref_task` use the RAII guard.
     }
@@ -1008,8 +997,7 @@ impl FSWatcher {
         }
 
         if let Some(signal) = self.signal.replace(None) {
-            // Zig `signal.detach(this)` = `cleanNativeBindings` +
-            // `unref`. `AbortSignalRef::Drop` already does the `unref`, so only
+            // `AbortSignalRef::Drop` already does the `unref`, so only
             // remove the listener here to avoid a double-unref.
             signal.clean_native_bindings(ctx_ptr);
         }
@@ -1091,11 +1079,9 @@ impl FSWatcher {
         ctx_ref
             .path_watcher
             .set(if args.signal.is_none_or(|s| !s.aborted()) {
-                // Zig passes `comptime callback` / `comptime updateEnd`
-                // and both backends `@compileError` if they aren't exactly
-                // `onPathUpdateFn` / `onUpdateEndFn`. The Windows port dropped
-                // those parameters (only one valid value each), so the call is
-                // cfg-split by arity.
+                // The two backends take different arities (the Windows
+                // backend dropped the callback parameters — only one valid
+                // value each), so the call is cfg-split.
                 #[cfg(windows)]
                 let r = path_watcher::watch(vm_ref, file_path, args.recursive, ctx as *mut c_void);
                 #[cfg(not(windows))]
@@ -1161,5 +1147,3 @@ impl Default for FSWatchTaskPosix {
         }
     }
 }
-
-// ported from: src/runtime/node/node_fs_watcher.zig

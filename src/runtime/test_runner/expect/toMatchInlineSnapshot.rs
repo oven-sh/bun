@@ -97,5 +97,3 @@ pub(crate) fn to_match_inline_snapshot(
         "toMatchInlineSnapshot",
     )
 }
-
-// ported from: src/test_runner/expect/toMatchInlineSnapshot.zig

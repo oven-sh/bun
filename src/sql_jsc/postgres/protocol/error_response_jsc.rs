@@ -13,7 +13,7 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
     let mut b = StringBuilder::default();
 
     for msg in this.messages.iter() {
-        // Zig: `switch (msg.*) { inline else => |m| m.utf8ByteLength() }` — every
+        // Every
         // FieldMessage variant carries a single bun.String payload.
         b.cap += field_message_payload(msg).utf8_byte_length() + 1;
     }
@@ -157,4 +157,3 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
     .unwrap_or_else(|e| global_object.take_error(e))
 }
 
-// ported from: src/sql_jsc/postgres/protocol/error_response_jsc.zig

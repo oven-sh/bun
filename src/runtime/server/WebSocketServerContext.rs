@@ -4,8 +4,7 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_uws as uws;
 
 pub struct WebSocketServerContext {
-    // Zig leaves this `undefined` and server.zig:2784 assigns it later; Rust
-    // sets it provisionally in `on_create` and the server overwrites it on
+    // Set provisionally in `on_create`; the server overwrites it on
     // adoption. LIFETIMES.tsv = JSC_BORROW — the global outlives the context.
     pub global_object: bun_ptr::BackRef<JSGlobalObject>,
     pub handler: Handler,
@@ -37,7 +36,7 @@ pub struct Handler {
     pub global_object: bun_ptr::BackRef<JSGlobalObject>,
     /// Mutated through `&Handler` (the field is owned by
     /// `ServerConfig.websocket` and only ever touched on the JS thread), so
-    /// it's a `Cell` — Zig mutated a plain `usize` through `*Handler`.
+    /// it's a `Cell`.
     pub active_connections: core::cell::Cell<usize>,
 
     /// used by publish()
@@ -69,14 +68,13 @@ impl Handler {
         self.vm.get()
     }
 
-    /// Zig: `handler.active_connections +|= n` through a `*Handler`.
     #[inline]
     pub fn active_connections_saturating_add(&self, n: usize) {
         self.active_connections
             .set(self.active_connections.get().saturating_add(n));
     }
 
-    /// Zig: `handler.active_connections -|= n` — see `active_connections_saturating_add`.
+    /// See `active_connections_saturating_add`.
     #[inline]
     pub fn active_connections_saturating_sub(&self, n: usize) {
         self.active_connections
@@ -97,7 +95,7 @@ impl Handler {
             return;
         }
 
-        // Zig signature is `vm: *jsc.VirtualMachine` (mutable). VirtualMachine is the
+        // VirtualMachine is the
         // process-lifetime singleton (LIFETIMES.tsv = STATIC) and is only touched on the JS
         // thread; `uncaught_exception` needs `&mut` to bump counters / set flags. Derive the
         // mutable pointer from the stored BackRef (== `vm`) rather than casting the
@@ -127,9 +125,7 @@ impl Handler {
 
         let mut valid = false;
 
-        // NOTE: Zig used `inline for` over a tuple of (key, field-name) pairs with
-        // `@field(handler, pair[1]) = cb`. Rust has no field-by-name reflection, so we
-        // iterate over (key, &mut field) pairs instead — disjoint field borrows are allowed.
+        // NOTE: iterate over (key, &mut field) pairs — disjoint field borrows are allowed.
         let pairs: [(&'static str, &mut JSValue); 7] = [
             ("error", &mut handler.on_error),
             ("message", &mut handler.on_message),
@@ -243,8 +239,7 @@ static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
 };
 
-// Zig used `.getWithEql(zig_string, ZigString.eqlComptime)`, which compares a
-// ZigString (possibly UTF-16) against the literal keys. Derive a UTF-8 view
+// The key may be a possibly-UTF-16 ZigString. Derive a UTF-8 view
 // first (`to_slice_fast` allocates only for 16-bit-backed strings) so
 // UTF-16-backed option strings like `compression: "16KB"` still match.
 fn lookup_zig_string(
@@ -259,12 +254,9 @@ pub(crate) fn on_create(
     global_object: &JSGlobalObject,
     object: JSValue,
 ) -> JsResult<WebSocketServerContext> {
-    // NOTE: Zig wrote `var server = WebSocketServerContext{};` (all field defaults,
-    // `globalObject`/`handler.vm`/`handler.globalObject` left `undefined`) and then assigned
-    // `server.handler` on the next line. Rust cannot leave `&JSGlobalObject` fields
-    // uninitialized, so we construct the struct with the handler and explicit defaults
-    // up front. The top-level `global_object` is provisionally set to the param; server.zig
-    // overwrites it after `on_create` returns anyway.
+    // Construct the struct with the handler and explicit defaults up front.
+    // The top-level `global_object` is provisionally set to the param; the
+    // server overwrites it after `on_create` returns anyway.
     let handler = Handler::from_js(global_object, object)?;
     let mut server = WebSocketServerContext {
         global_object: bun_ptr::BackRef::new(global_object),
@@ -435,5 +427,3 @@ pub(crate) fn on_create(
     server.protect();
     Ok(server)
 }
-
-// ported from: src/runtime/server/WebSocketServerContext.zig

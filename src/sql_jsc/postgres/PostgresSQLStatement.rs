@@ -35,7 +35,7 @@ pub struct PostgresSQLStatement {
 
 impl Default for PostgresSQLStatement {
     fn default() -> Self {
-        // `signature` has no default in Zig; callers must set it. This Default
+        // Callers must set `signature`. This Default
         // exists only to mirror the per-field `= ...` initializers.
         Self {
             cached_structure: PostgresCachedStructure::default(),
@@ -57,7 +57,7 @@ pub enum Error {
 }
 
 impl Error {
-    // Zig `deinit` only forwarded to `ErrorResponse.deinit()`; that is now `Drop` on
+    // Cleanup is handled by `Drop` on
     // `protocol::ErrorResponse`, so no explicit `Drop` impl is needed here.
 
     pub fn to_js(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
@@ -86,7 +86,7 @@ impl Status {
 }
 
 impl PostgresSQLStatement {
-    /// Zig `.ref_count = .initExactRefs(n)` — set the initial intrusive
+    /// Set the initial intrusive
     /// refcount at construction time, before any `ref_()`/`deref()`. The
     /// `ref_count` field is private (refcount invariant), so callers building
     /// a statement with >1 owner (query + connection-map entry) go through
@@ -117,7 +117,7 @@ impl PostgresSQLStatement {
                 ColumnIdentifier::Name(name) => {
                     // Note: reshaped for borrowck — compute `found_existing`
                     // before mutating `field.name_or_index`.
-                    // Zig `getOrPut` keys on the borrowed slice; StringHashMap
+                    // StringHashMap
                     // clones to an owned `Box<[u8]>` key. Fine for a transient
                     // dedup set.
                     let found_existing = seen_fields
@@ -151,7 +151,7 @@ impl PostgresSQLStatement {
         self.fields_flags = flags;
     }
 
-    // Note: Zig returns `CachedStructure` by value (struct copy). Returning
+    // Note: returning
     // `&CachedStructure` here to avoid moving out of `self` (CachedStructure owns
     // a `Box<[ExternColumnIdentifier]>` and a `StrongOptional`, neither `Copy`).
     pub fn structure(
@@ -186,4 +186,3 @@ impl Drop for PostgresSQLStatement {
     }
 }
 
-// ported from: src/sql_jsc/postgres/PostgresSQLStatement.zig

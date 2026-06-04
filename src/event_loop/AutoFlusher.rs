@@ -3,25 +3,23 @@ use core::ptr::NonNull;
 
 use crate::DeferredTaskQueue::{DeferredRepeatingTask, DeferredTaskQueue};
 
-/// Zig file-level struct: `src/event_loop/AutoFlusher.zig`
+/// Tracks whether a flushable type is registered with the deferred task queue.
 #[derive(Debug, Default)]
 pub struct AutoFlusher {
     pub registered: bool,
 }
 
-/// Zig's free functions take `(comptime Type: type, this: *Type)` and duck-type
-/// on `this.auto_flusher` + `Type.onAutoFlush`. In Rust that contract is a trait.
+/// Contract for types that own an [`AutoFlusher`] and can be flushed via a
+/// deferred-task callback.
 pub trait HasAutoFlusher: Sized {
     fn auto_flusher(&mut self) -> &mut AutoFlusher;
-    /// Zig: `Type.onAutoFlush` — the deferred-task callback. Signature matches
-    /// `DeferredRepeatingTask` after the `@ptrCast` erasure at `postTask`:
-    /// `fn(*anyopaque) bool` ↔ `fn(*mut c_void) -> bool`.
+    /// The deferred-task callback. Signature matches
+    /// `DeferredRepeatingTask` after erasure: `fn(*mut c_void) -> bool`.
     fn on_auto_flush(this: *mut Self) -> bool;
 }
 
 /// Erase a typed `T::on_auto_flush` to the `DeferredRepeatingTask` ABI
-/// (`unsafe extern "C" fn(*mut c_void) -> bool`). Mirrors Zig's
-/// `@ptrCast(&Type.onAutoFlush)` at the `postTask` call site, but via a
+/// (`unsafe extern "C" fn(*mut c_void) -> bool`) via a
 /// monomorphic `extern "C"` trampoline rather than a fn-ptr cast so the
 /// calling convention is honest.
 #[inline]
@@ -89,9 +87,8 @@ pub(crate) fn register_deferred_microtask_with_type_unchecked<T: HasAutoFlusher>
 }
 
 // ─── associated-fn facade ─────────────────────────────────────────────────
-// Zig call sites read `AutoFlusher.registerDeferredMicrotaskWithType(Self, this, vm)`
-// — i.e. namespaced on the struct. Mirror that as inherent associated fns so
-// callers can write `AutoFlusher::register_deferred_microtask_with_type::<T>(…)`.
+// Inherent associated fns so callers can write
+// `AutoFlusher::register_deferred_microtask_with_type::<T>(…)`.
 // These are the *lower-tier* signatures (queue passed directly); the higher-tier
 // `vm`-taking wrappers live in `bun_runtime::webcore` to avoid the
 // event_loop→jsc upward dependency.
@@ -128,5 +125,3 @@ impl AutoFlusher {
         unregister_deferred_microtask_with_type_unchecked(this, deferred);
     }
 }
-
-// ported from: src/event_loop/AutoFlusher.zig

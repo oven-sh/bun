@@ -57,16 +57,14 @@ impl Drop for Strong {
     fn drop(&mut self) {
         // SAFETY: `self.handle` came from `Impl::init` and is consumed exactly once here.
         unsafe { Impl::destroy(self.handle) };
-        // Zig: `if (Environment.isDebug) strong.* = undefined;` — Rust drop
-        // already invalidates the binding; no poison needed.
     }
 }
 
 /// Holds a strong reference to a JS value, protecting it from garbage
 /// collection. When not holding a value, the strong may still be allocated.
 // Note: field renamed from `impl` (Rust keyword) to `handle`.
-// `#[repr(transparent)]` matches the Zig layout (`?*Impl` — single nullable
-// pointer) so it stays FFI-safe when embedded in `extern "C"` structs.
+// `#[repr(transparent)]` over a single nullable pointer keeps this FFI-safe
+// when embedded in `extern "C"` structs.
 #[repr(transparent)]
 #[derive(Default)]
 pub struct Optional {
@@ -109,8 +107,6 @@ impl Optional {
         let Some(function) = self.try_swap() else {
             return JSValue::ZERO;
         };
-        // Note: Zig source (Strong.zig:71) calls `function.call(global, args)`
-        // which predates the `thisValue` param on JSValue.call; pass `.undefined`.
         function
             .call(global, JSValue::UNDEFINED, args)
             .unwrap_or(JSValue::ZERO)
@@ -159,9 +155,8 @@ impl Optional {
         Some(result)
     }
 
-    /// Explicit teardown for call sites ported from Zig that wrote
-    /// `strong.deinit()` (Strong.zig:96). Idempotent; equivalent to dropping
-    /// in place and leaving `self` empty so `Drop` is a no-op.
+    /// Explicit teardown. Idempotent; equivalent to dropping in place and
+    /// leaving `self` empty so `Drop` is a no-op.
     pub fn deinit(&mut self) {
         let Some(r) = self.handle.take() else { return };
         // SAFETY: `r` came from `Impl::init` and is consumed exactly once here.
@@ -202,7 +197,6 @@ impl Impl {
 
     pub fn get(this: NonNull<Impl>) -> JSValue {
         // `this` is actually a pointer to a `JSC::JSValue`; see Strong.cpp.
-        // Zig: `const js_value: *jsc.DecodedJSValue = @ptrCast(this); return js_value.encode();`
         // SAFETY: HandleSlot storage is a live, aligned JSC::JSValue for the
         // lifetime of the Impl handle; `DecodedJSValue` is its `#[repr(C)]`
         // ABI-compatible mirror.
@@ -258,5 +252,3 @@ unsafe extern "C" {
 }
 
 pub use crate::deprecated_strong as deprecated;
-
-// ported from: src/jsc/Strong.zig

@@ -22,13 +22,11 @@ use bun_ptr::BackRef;
 /// - Context receives a reference to the WorkTask itself in the `run` method
 pub trait WorkTaskContext: Sized {
     /// Tag this `WorkTask<Self>` carries when enqueued back onto the JS event
-    /// loop's concurrent queue (`task_tag::*`). Mirrors Zig's per-instantiation
-    /// `TaggedPointerUnion` membership (e.g. `GetAddrInfoRequestTask`).
+    /// loop's concurrent queue (`task_tag::*`).
     const TASK_TAG: TaskTag;
 
     /// Perform the work on the thread pool. `this`/`task` are raw pointers
-    /// because the context is heap-allocated, crosses threads, and is mutated
-    /// — the Zig signature is `fn run(this: *Context, task: *Task) void`.
+    /// because the context is heap-allocated, crosses threads, and is mutated.
     fn run(this: *mut Self, task: *mut WorkTask<Self>);
     fn then(this: *mut Self, global_this: &JSGlobalObject) -> Result<(), crate::JsTerminated>;
 }
@@ -142,5 +140,3 @@ impl<Context: WorkTaskContext> WorkTask<Context> {
         event_loop.enqueue_task_concurrent(task);
     }
 }
-
-// ported from: src/jsc/WorkTask.zig

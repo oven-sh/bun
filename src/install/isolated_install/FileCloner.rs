@@ -12,7 +12,7 @@ use bun_sys::{self as sys, Errno, Fd, FdDirExt, FdExt};
 pub(crate) struct FileCloner<'a> {
     pub cache_dir: Fd,
     pub cache_dir_subpath: &'a mut AutoRelPath,
-    /// `bun.Path(.{ .sep = .auto, .unit = .os })` — `.unit = .os` is `u8` on
+    /// The OS path unit is `u8` on
     /// macOS (the only platform `clonefileat` exists on), so the unit param is
     /// spelled `u8` to keep this module compiling on Windows where `OSPathChar`
     /// would be `u16` and `slice_z()` would yield a `WStr`.
@@ -59,5 +59,3 @@ impl FileCloner<'_> {
         }
     }
 }
-
-// ported from: src/install/isolated_install/FileCloner.zig

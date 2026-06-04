@@ -22,7 +22,7 @@ unsafe extern "C" {
 impl MarkedArgumentBuffer {
     /// Stack-construct a `MarkedArgumentBuffer` and pass it to `f`. There is no
     /// heap-allocated owning form (the C++ type is non-movable); `new` is a
-    /// scoped-borrow constructor like Zig's `MarkedArgumentBuffer.run`.
+    /// scoped-borrow constructor.
     pub fn new<R>(f: impl FnOnce(&mut MarkedArgumentBuffer) -> R) -> R {
         struct Ctx<F, R> {
             f: Option<F>,
@@ -52,8 +52,8 @@ impl MarkedArgumentBuffer {
     }
 
     pub fn run<T>(ctx: &mut T, func: extern "C" fn(ctx: *mut T, args: *mut MarkedArgumentBuffer)) {
-        // Mirrors Zig `@ptrCast` of both ctx and func — `MarkedArgumentBuffer__run`
-        // round-trips `ctx` opaquely back to `func`, and `func`'s ABI is identical modulo the
+        // `MarkedArgumentBuffer__run` round-trips `ctx` opaquely back to `func`,
+        // and `func`'s ABI is identical modulo the
         // pointee types (both params are thin pointers).
         MarkedArgumentBuffer__run(
             std::ptr::from_mut::<T>(ctx).cast::<c_void>(),
@@ -69,11 +69,7 @@ impl MarkedArgumentBuffer {
     }
 }
 
-/// Port of `MarkedArgumentBuffer.wrap`.
-///
-/// Zig's `wrap` is a `comptime` fn that takes a
-/// `fn(*JSGlobalObject, *CallFrame, *MarkedArgumentBuffer) bun.JSError!JSValue`
-/// and returns a `jsc.JSHostFnZig`. Rust cannot parameterize a `fn` item by a const
+/// Rust cannot parameterize a `fn` item by a const
 /// fn-pointer, so this is a macro that expands to a `#[bun_jsc::host_fn]` wrapper.
 #[macro_export]
 macro_rules! marked_argument_buffer_wrap {
@@ -103,7 +99,7 @@ macro_rules! marked_argument_buffer_wrap {
             let mut ctx = Context {
                 global_this,
                 callframe,
-                // Zig used `undefined`; init with a placeholder since `run`
+                // Placeholder; `run`
                 // unconditionally overwrites it before we read.
                 result: ::core::result::Result::Ok($crate::JSValue::ZERO),
             };
@@ -113,5 +109,3 @@ macro_rules! marked_argument_buffer_wrap {
         wrapper
     }};
 }
-
-// ported from: src/jsc/MarkedArgumentBuffer.zig

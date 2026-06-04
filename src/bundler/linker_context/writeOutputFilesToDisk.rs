@@ -25,7 +25,7 @@ use bun_sys::{
     write_file_with_path_buffer,
 };
 
-/// Zig: `bun.bytecode_extension` (".jsc"). Mirror of `src/bun.zig:bytecode_extension`.
+/// Bytecode output file extension (also defined in `generateChunksInParallel.rs`).
 const BYTECODE_EXTENSION: &str = ".jsc";
 
 pub fn write_output_files_to_disk(
@@ -66,9 +66,8 @@ pub fn write_output_files_to_disk(
         }
     };
     // Optimization: when writing to disk, we can re-use the memory
-    // PERF(port): MaxHeapAllocator reuses the largest allocation between
-    // iterations. Verify bun_alloc::MaxHeapAllocator semantics
-    // match (init/reset/deinit). DynAlloc is currently `()` so the arena
+    // between iterations: MaxHeapAllocator retains the largest allocation.
+    // DynAlloc is currently `()` so the arena
     // handles below are placeholders; allocation routes through global mimalloc.
     let mut max_heap_allocator = MaxHeapAllocator::init();
     let mut _max_heap_allocator_source_map = MaxHeapAllocator::init();
@@ -79,8 +78,8 @@ pub fn write_output_files_to_disk(
     let bv2: &mut BundleV2 =
         unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
 
-    // Zig passes `chunk` (an element of `chunks`) and `chunks`
-    // together into `code()`/`code_standalone()`. The callee now takes
+    // `code()`/`code_standalone()` take both `chunk` (an element of `chunks`)
+    // and `chunks` as
     // `&Chunk` / `&[Chunk]` (read-only), so iterate by index and reborrow
     // shared; the only per-chunk mutation is the `intermediate_output`
     // take/restore done via `chunks[i]`.
@@ -115,7 +114,7 @@ pub fn write_output_files_to_disk(
         }
 
         let _trace2 = bun_core::perf::trace("Bundler.writeChunkToDisk");
-        // PERF(port): Zig `defer max_heap_allocator.reset()` — reset the reusable
+        // Reset the reusable
         // buffer after each chunk. `MaxHeapAllocator::scope()` returns an RAII
         // guard that resets on drop and derefs to the arena, so when
         // `code_allocator` is wired up it can borrow through `_code_allocator`.
@@ -235,15 +234,11 @@ pub fn write_output_files_to_disk(
                         + a.len()
                         + b.len()
                         + b"\n".len();
-                    // PERF(port): Zig used Chunk.IntermediateOutput.allocatorForSize(total_len)
-                    // to pick a size-appropriate arena. Using Vec (global mimalloc) here.
                     let mut buf: Vec<u8> = Vec::with_capacity(total_len);
-                    // PERF(port): was appendSliceAssumeCapacity
                     buf.extend_from_slice(&code_result.buffer);
                     buf.extend_from_slice(source_map_start);
                     buf.extend_from_slice(a);
                     buf.extend_from_slice(b);
-                    // PERF(port): was appendAssumeCapacity
                     buf.push(b'\n');
                     code_result.buffer = buf.into_boxed_slice();
                 }
@@ -298,11 +293,8 @@ pub fn write_output_files_to_disk(
 
                 let source_map_start = b"//# sourceMappingURL=data:application/json;base64,";
                 let total_len = code_result.buffer.len() + source_map_start.len() + encode_len + 1;
-                // PERF(port): Zig used `code_with_inline_source_map_allocator` (MaxHeapAllocator)
-                // for this Vec to reuse across iterations.
                 let mut buf: Vec<u8> = Vec::with_capacity(total_len);
 
-                // PERF(port): was appendSliceAssumeCapacity
                 buf.extend_from_slice(&code_result.buffer);
                 buf.extend_from_slice(source_map_start);
 
@@ -310,7 +302,6 @@ pub fn write_output_files_to_disk(
                 buf.resize(old_len + encode_len, 0);
                 let _ = bun_base64::encode(&mut buf[old_len..], &output_source_map);
 
-                // PERF(port): was appendAssumeCapacity
                 buf.push(b'\n');
                 code_result.buffer = buf.into_boxed_slice();
             }
@@ -515,8 +506,7 @@ pub fn write_output_files_to_disk(
             },
             referenced_css_chunks: match &chunk.content {
                 Content::Javascript(js) => {
-                    // Zig: `@ptrCast(dupe(u32, js.css_chunks))` — `Index` is
-                    // `#[repr(transparent)]` over u32.
+                    // `Index` is `#[repr(transparent)]` over u32.
                     js.css_chunks
                         .iter()
                         .map(|&i| OutputFileIndex::init(i))
@@ -618,4 +608,3 @@ pub fn write_output_files_to_disk(
 
 pub use crate::{DeferredBatchTask, ParseTask, ThreadPool};
 
-// ported from: src/bundler/linker_context/writeOutputFilesToDisk.zig

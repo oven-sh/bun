@@ -22,10 +22,9 @@ use bun_ast::StmtNodeList;
 // are arena-owned and outlive the visit pass.
 
 // ─── arena slice ↔ BumpVec helpers ──────────────────────────────────────────
-// `StmtNodeList = StoreSlice<Stmt>` (arena-owned). Zig's `ListManaged.fromOwnedSlice`
-// adopts the existing backing storage; bumpalo Vec cannot, so we copy. The arena
+// `StmtNodeList = StoreSlice<Stmt>` (arena-owned). bumpalo Vec cannot adopt the
+// existing backing storage, so we copy. The arena
 // reclaims both at end-of-parse.
-// PERF(port): was fromOwnedSlice (no copy) — profile if hot.
 #[inline]
 fn stmts_to_list<'a>(arena: &'a bun_alloc::Arena, ptr: StmtNodeList) -> StmtList<'a> {
     bun_alloc::vec_from_iter_in(ptr.iter().copied(), arena)
@@ -35,8 +34,6 @@ fn list_to_stmts<'a>(list: StmtList<'a>) -> StmtNodeList {
     StmtNodeList::from_bump(list)
 }
 
-// Zig: `pub fn VisitStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct { ... } }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block. The 30+ per-variant `s_*` helpers are private; only
 // `visit_and_append_stmt` is surfaced. Full draft body preserved under  mod _draft below.
 
@@ -65,8 +62,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let was_after_after_const_local_prefix = p.cur_scope().is_after_const_local_prefix;
         p.cur_scope().is_after_const_local_prefix = true;
 
-        // Zig: `switch (@as(Stmt.Tag, stmt.data))` with `inline else` reflection over @tagName.
-        // reshaped for borrowck — `Stmt::Data` is `Copy` (`StoreRef<T>` is a thin
+        // Borrowck: `Stmt::Data` is `Copy` (`StoreRef<T>` is a thin
         // `NonNull`); take a copy of the enum so the StoreRef payload can be DerefMut'd
         // without aliasing the `&mut Stmt` we also pass through. The deref'd `&mut S::*`
         // points into the arena, not into `*stmt`.
@@ -90,7 +86,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Ok(())
             }
 
-            // Zig: `inline .s_enum, .s_local => |tag| return @field(visitors, @tagName(tag))(p, stmts, stmt, @field(stmt.data, @tagName(tag)), was_after_after_const_local_prefix)`
             StmtData::SEnum(mut sr) => {
                 Self::s_enum(p, stmts, stmt, &mut *sr, was_after_after_const_local_prefix)
             }
@@ -98,7 +93,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 Self::s_local(p, stmts, stmt, &mut *sr, was_after_after_const_local_prefix)
             }
 
-            // Zig: `inline else => |tag| return @field(visitors, @tagName(tag))(p, stmts, stmt, @field(stmt.data, @tagName(tag)))`
             StmtData::SImport(mut sr) => Self::s_import(p, stmts, stmt, &mut *sr),
             StmtData::SExportClause(mut sr) => Self::s_export_clause(p, stmts, stmt, &mut *sr),
             StmtData::SExportFrom(mut sr) => Self::s_export_from(p, stmts, stmt, &mut *sr),
@@ -131,8 +125,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     // ─── visitors ───────────────────────────────────────────────────────────
-    // In Zig these live on a nested `const visitors = struct { ... }`; in Rust they are private
-    // associated fns on this impl so they can see the const-generic feature params.
+    // Private associated fns on this impl so they can see the const-generic feature params.
 
     fn s_import(
         p: &mut Self,
@@ -164,8 +157,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::ExportEquals,
     ) -> Result<(), Error> {
         // "module.exports = value"
-        // Zig: p.@"module.exports"(stmt.loc) — mapped to `module_exports`
-        // Zig evaluates lhs before rhs at the call site; preserve that order
+        // Evaluate lhs before visiting the rhs
         // (`module_exports` builds via `new_expr`, `visit_expr` mutates parser state).
         let lhs = p.module_exports(stmt.loc);
         p.visit_expr(&mut data.value);
@@ -315,9 +307,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Truncate `data.items` to `j` by reslicing the arena view.
             data.items.truncate(j);
 
-            // Zig followed this with `if (j == 0 and data.items.len > 0) return;`,
-            // but `data.items.len = j;` runs first so the condition is always
-            // false — the dead branch is intentionally not ported.
         } else {
             // This is a re-export and the symbols created here are used to reference
             for item in items.iter_mut() {
@@ -380,7 +369,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         stmt: &mut Stmt,
         data: &mut S::ExportDefault,
     ) -> Result<(), Error> {
-        // Zig: defer { if (data.default_name.ref) |ref| p.recordDeclaredSymbol(ref) catch unreachable; }
         // scopeguard can't borrow `p` across the body; restructured to a tail
         // closure invoked at every return site below.
         macro_rules! record_on_exit {
@@ -402,7 +390,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Zig: defer { p.is_control_flow_dead = orig_dead; }
         macro_rules! restore_dead {
             () => {
                 p.is_control_flow_dead = orig_dead;
@@ -534,7 +521,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             value: Some(*expr),
                         },
                     );
-                    // PERF(port): was assume_capacity
                     stmts.push(p.s(
                         S::Local {
                             decls,
@@ -548,7 +534,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         name: data.default_name,
                         ..Default::default()
                     }));
-                    // PERF(port): was assume_capacity
                     stmts.push(p.s(
                         S::ExportClause {
                             items: bun_ast::StoreSlice::new_mut(items),
@@ -625,8 +610,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         // Capture the original function name before any `mem::take` below resets
-                        // `func.func` to its default. The Zig spec copies `func.func` by value into
-                        // the E.Function expr, leaving `func.func.name` intact for the
+                        // `func.func` to its default; the name is needed for the
                         // react_fast_refresh temp-var emission that follows.
                         let func_name = func.func.name;
 
@@ -774,9 +758,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             stmts.push(*stmt);
                         }
 
-                        // if (func.func.name != null and func.func.name.?.ref != null) {
-                        //     stmts.append(p.keepStmtSymbolName(func.func.name.?.loc, func.func.name.?.ref.?, name)) catch unreachable;
-                        // }
                         p.react_refresh.hook_ctx_storage = prev;
                         restore_dead!();
                         record_on_exit!();
@@ -872,9 +853,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if p.options.features.server_components.wraps_exports() {
-                            // Zig mutates `data.value` *after* pushing `stmt`; mirrored
-                            // deliberately. The pushed stmt still observes the write because
-                            // `data` is an arena backref shared with the pushed copy.
+                            // `data.value` is mutated *after* pushing `stmt`; the pushed
+                            // stmt still observes the write because `data` is an arena
+                            // backref shared with the pushed copy.
                             let class_expr =
                                 p.new_expr(core::mem::take(&mut class.class), stmt.loc);
                             data.value = js_ast::StmtOrExpr::Expr(
@@ -921,10 +902,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             p.is_control_flow_dead = true;
         }
 
-        // Spec (visitStmt.zig:517-520) unconditionally points p.react_refresh.hook_ctx_storage
-        // at this stack-local before visit_func and defer-restores it. Field is now
-        // `Option<NonNull<_>>` (Copy) matching Zig's `?*?HookContext`, so save/set/restore
-        // are trivial; no `'a` constraint to fight.
+        // Unconditionally point p.react_refresh.hook_ctx_storage at this stack-local
+        // before visit_func and restore it afterwards. Field is `Option<NonNull<_>>`
+        // (Copy), so save/set/restore are trivial; no `'a` constraint to fight.
         let mut react_hook_data: Option<crate::parser::HookContext> = None;
         let prev_hook_storage = p.react_refresh.hook_ctx_storage;
         p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
@@ -953,7 +933,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .enclosing_namespace_arg_ref
                 .expect("infallible: in namespace");
             stmts.reserve(3);
-            stmts.push(*stmt); // PERF(port): was assume_capacity
+            stmts.push(*stmt);
             let func_name = data.func.name.expect("infallible: name checked");
             stmts.push(Stmt::assign(
                 p.new_expr(
@@ -969,10 +949,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     func_name.ref_.expect("infallible: ref bound"),
                     func_name.loc,
                 ),
-            )); // PERF(port): was assume_capacity
+            ));
         } else if !mark_as_dead {
             if remove_overwritten {
-                // Zig: defer { ... } — restore on early return.
+                // restore on early return.
                 p.react_refresh.hook_ctx_storage = prev_hook_storage;
                 if mark_as_dead {
                     p.is_control_flow_dead = original_is_dead;
@@ -1048,7 +1028,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if p.current_scope == p.module_scope {
                 // defer-vs-drop-scope — restore hook_ctx_storage/is_control_flow_dead
                 // before propagating Err so the stack-local `react_hook_data` ptr is never left in
-                // p.react_refresh on the OOM path (Zig defer covers all exits).
+                // p.react_refresh on the OOM path.
                 rr = p.handle_react_refresh_register(
                     stmts,
                     original_name,
@@ -1058,9 +1038,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
-        // Zig: defer p.react_refresh.hook_ctx_storage = prev;
         p.react_refresh.hook_ctx_storage = prev_hook_storage;
-        // Zig: defer { if (mark_as_dead) p.is_control_flow_dead = original_is_dead; }
         if mark_as_dead {
             p.is_control_flow_dead = original_is_dead;
         }
@@ -1148,7 +1126,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             ));
         }
 
-        // Zig: defer { if (mark_as_dead) p.is_control_flow_dead = original_is_dead; }
         if mark_as_dead {
             p.is_control_flow_dead = original_is_dead;
         }
@@ -1175,7 +1152,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         } else {
             p.visit_decls::<true>(data.decls.slice_mut(), was_const)
         };
-        // Spec (visitStmt.zig:724-727): drop the whole statement when every decl was
+        // Drop the whole statement when every decl was
         // eliminated; otherwise we'd emit an empty `var;`/`let;`/`const;`.
         if data.decls.len_u32() > 0 && new_len == 0 {
             return Ok(());
@@ -1425,8 +1402,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.visit_expr(&mut data.value);
 
-        // Zig: defer p.stmt_expr_value = .{ .e_missing = .{} };
-        // restructured — restored at every return below.
+        // `p.stmt_expr_value` is reset to EMissing at every return below.
         macro_rules! restore_stmt_expr {
             () => {
                 p.stmt_expr_value = js_ast::ExprData::EMissing(E::Missing {});
@@ -1536,8 +1512,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
                     } else if p.commonjs_replacement_stmts.len() > 0 {
-                        // Zig directly swaps backing storage; commonjs_replacement_stmts
-                        // is `StmtNodeList = StoreSlice<Stmt>` here, so copy then clear.
+                        // `commonjs_replacement_stmts` is `StmtNodeList = StoreSlice<Stmt>`
+                        // here, so copy then clear.
                         let repl: &[Stmt] = p.commonjs_replacement_stmts.slice();
                         if stmts.is_empty() {
                             *stmts = bun_alloc::vec_from_iter_in(repl.iter().copied(), p.arena);
@@ -1924,7 +1900,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         {
             p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
                 .expect("unreachable");
-            // Zig: defer p.popScope(); — restructured: pop at end of block
             let _ = p.visit_for_loop_init(data.init, true);
             p.visit_expr(&mut data.value);
             data.body = p.visit_loop_body(data.body);
@@ -1972,7 +1947,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Block, stmt.loc)
             .expect("unreachable");
-        // Zig: defer p.popScope();
         let _ = p.visit_for_loop_init(data.init, true);
         p.visit_expr(&mut data.value);
         data.body = p.visit_loop_body(data.body);
@@ -2201,7 +2175,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         p.record_declared_symbol(data.name.ref_.expect("infallible: ref bound"));
         p.push_scope_for_visit_pass(js_ast::scope::Kind::Entry, stmt.loc)?;
-        // Zig: defer p.popScope(); — moved to end (no early returns).
         p.record_declared_symbol(data.arg);
 
         // Scan ahead for any variables inside this namespace. This must be done
@@ -2364,7 +2337,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut value_stmts: StmtList<'a> = BumpVec::with_capacity_in(value_exprs.len(), p.arena);
         // Generate statements from expressions
         for expr in value_exprs.iter() {
-            // PERF(port): was assume_capacity
             value_stmts.push(p.s(
                 S::SExpr {
                     value: *expr,

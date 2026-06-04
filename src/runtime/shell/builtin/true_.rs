@@ -19,4 +19,3 @@ impl True {
     }
 }
 
-// ported from: src/shell/builtin/true_.zig

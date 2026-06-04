@@ -35,7 +35,6 @@ impl PrepareOK {
         Ok(())
     }
 
-    // Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
     pub fn decode<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
@@ -59,8 +58,7 @@ pub struct Execute<'a> {
     pub params: ExecuteParams<'a>,
 }
 
-/// Stand-in for Zig's `params: []Value` field
-/// (`bun_sql_jsc::mysql::mysql_value::Value`): `Value` lives in the
+/// `Value` (`bun_sql_jsc::mysql::mysql_value::Value`) lives in the
 /// higher-tier `bun_sql_jsc` crate, which this crate cannot depend on. The
 /// borrowed slice is carried behind a context pointer so `len` is real;
 /// encoding goes through the `is_null` / `to_data` hooks the jsc-side caller
@@ -79,7 +77,6 @@ pub struct ExecuteParams<'a> {
     pub _marker: core::marker::PhantomData<&'a ()>,
 }
 
-// Zig `deinit` freed `params` (and each Value inside) via default_allocator.
 // Ownership of params stays with the caller (borrowed slice) — no Drop here.
 
 impl<'a> Execute<'a> {
@@ -144,7 +141,6 @@ impl<'a> Execute<'a> {
                 }
 
                 let value = (self.params.to_data)(self.params.ctx, i, param_type.r#type)?;
-                // Zig `defer value.deinit()` — handled by Drop on `value`.
                 if param_type.r#type.is_binary_format_supported() {
                     writer.write(value.slice())?;
                 } else {
@@ -155,7 +151,6 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    // Zig `writeWrap(@This(), ...)` — see src/sql/mysql/protocol/NewWriter.rs
     pub fn write<C: WriterContext>(
         &self,
         writer: NewWriter<C>,
@@ -163,5 +158,3 @@ impl<'a> Execute<'a> {
         self.write_internal(writer)
     }
 }
-
-// ported from: src/sql/mysql/protocol/PreparedStatement.zig

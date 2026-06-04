@@ -1,8 +1,7 @@
 //! `BakeSourceProvider` — the only `*SourceProvider` variant whose external
 //! sourcemap lookup needs the live `Bake::GlobalObject`. The opaque + its
 //! `get_external_data` live here so `src/sourcemap/` has no JSC types;
-//! `get_source_map_impl` calls it via a trait bound (Zig used
-//! `@hasDecl(SourceProviderKind, "getExternalData")`).
+//! `get_source_map_impl` calls it via a trait bound.
 
 use bun_core::String as BunString;
 use bun_jsc::JSGlobalObject;
@@ -106,5 +105,3 @@ impl SourceProvider for BakeSourceProvider {
         Self::get_external_data(self, source_filename)
     }
 }
-
-// ported from: src/sourcemap_jsc/source_provider.zig

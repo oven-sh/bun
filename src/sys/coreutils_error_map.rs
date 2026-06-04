@@ -31,9 +31,9 @@ pub(crate) static COREUTILS_ERROR_MAP: LazyLock<EnumMap<SystemErrno, &'static st
 /// from a real entry.
 pub(crate) const UNKNOWN: &str = "unknown error";
 
-/// Spec: Zig `coreutils_error_map.get(errno)` returns `?[]const u8`. The Rust
-/// `EnumMap` is total, so we treat the `UNKNOWN` sentinel as `None` to preserve
-/// the Zig fallthrough behaviour (callers format `"unknown error {errno}"`).
+/// The
+/// `EnumMap` is total, so we treat the `UNKNOWN` sentinel as `None` so callers
+/// can fall through (they format `"unknown error {errno}"`).
 #[inline]
 pub fn get(errno: SystemErrno) -> Option<&'static str> {
     let s = COREUTILS_ERROR_MAP[errno];
@@ -43,5 +43,3 @@ pub fn get(errno: SystemErrno) -> Option<&'static str> {
         Some(s)
     }
 }
-
-// ported from: src/sys/coreutils_error_map.zig

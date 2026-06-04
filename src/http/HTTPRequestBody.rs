@@ -40,7 +40,7 @@ impl Stream {
 
     pub fn detach(&mut self) {
         if let Some(buffer) = self.buffer.take() {
-            // matches Zig `buffer.deref()` — intrusive refcount decrement.
+            // Intrusive refcount decrement.
             // `buffer` is a live `ThreadSafeStreamBuffer::new` heap allocation;
             // this side holds the intrusive ref taken at attach, released here.
             ThreadSafeStreamBuffer::deref(buffer);
@@ -50,8 +50,8 @@ impl Stream {
 
 // No `Drop` for `Stream`: the body is bitwise-copied across threads
 // (`core::ptr::read` in `start_queued_task`), so auto-dropping the
-// JS-thread original would over-deref the shared buffer. Mirrors Zig,
-// where `HTTPRequestBody.deinit()` is explicit.
+// JS-thread original would over-deref the shared buffer;
+// `HTTPRequestBody::deinit()` is explicit instead.
 
 impl<'a> HTTPRequestBody<'a> {
     pub const EMPTY: HTTPRequestBody<'static> = HTTPRequestBody::Bytes(b"");
@@ -86,5 +86,3 @@ impl<'a> HTTPRequestBody<'a> {
         }
     }
 }
-
-// ported from: src/http/HTTPRequestBody.zig

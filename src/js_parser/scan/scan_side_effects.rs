@@ -6,7 +6,7 @@ use bun_ast::symbol;
 use bun_ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
 use bun_collections::VecExt;
 
-#[repr(u8)] // Zig: enum(u1) — Rust has no u1 repr; u8 is the smallest
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SideEffects {
     #[default]
@@ -107,7 +107,7 @@ impl SideEffects {
         }
     }
 
-    // Re-exports of ExprData methods (Zig: `pub const toNumber = Expr.Data.toNumber;`)
+    // Re-exports of ExprData methods.
     #[inline(always)]
     pub fn to_number(data: &ExprData) -> Option<f64> {
         data.to_number()
@@ -238,7 +238,6 @@ impl SideEffects {
                 }
             }
 
-            // Zig: `inline .e_call, .e_new => |call|` — written out per variant.
             ExprData::ECall(call) => {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
@@ -249,7 +248,6 @@ impl SideEffects {
                             if call.can_be_unwrapped_if_unused
                                 == CallUnwrap::IfUnusedAndToStringSafe
                             {
-                                // PERF(port): @branchHint(.unlikely)
                                 // For now, only support this for 1 argument.
                                 if j.data.is_safe_to_string() {
                                     return None;
@@ -272,7 +270,6 @@ impl SideEffects {
                             if call.can_be_unwrapped_if_unused
                                 == CallUnwrap::IfUnusedAndToStringSafe
                             {
-                                // PERF(port): @branchHint(.unlikely)
                                 // For now, only support this for 1 argument.
                                 if j.data.is_safe_to_string() {
                                     return None;
@@ -399,9 +396,8 @@ impl SideEffects {
                             }
                         }
 
-                        // G::Property is not Copy (Vec ts_decorators field). The Zig
-                        // original does an in-place struct copy; here we swap so the
-                        // kept property lands at `end` without cloning.
+                        // G::Property is not Copy (Vec ts_decorators field), so swap
+                        // so the kept property lands at `end` without cloning.
                         e_object.properties.slice_mut().swap(end, j);
                         end += 1;
                     }
@@ -532,11 +528,10 @@ impl SideEffects {
             Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma
         ));
 
-        // The Zig original threads `p.binary_expression_simplify_stack` (a reusable
-        // ArrayList on `P`) to avoid per-call allocation. The Rust `P` field is
-        // currently `ListManaged<'a, ()>` (placeholder element type — see P.rs:537),
-        // so until that's reshaped to `BinaryExpressionSimplifyVisitor` we use a
-        // local Vec. Same iteration order; only the arena differs.
+        // Ideally this would reuse `p.binary_expression_simplify_stack` to avoid
+        // per-call allocation, but that `P` field is currently `ListManaged<'a, ()>`
+        // (placeholder element type — see P.rs:537); until it's reshaped to
+        // `BinaryExpressionSimplifyVisitor` we use a local Vec.
         let mut stack: Vec<StoreRef<E::Binary>> = Vec::with_capacity(8);
         stack.push(root_bin);
 
@@ -924,8 +919,8 @@ impl SideEffects {
                 }
             }
             ExprData::EString(e) => Result {
-                // Zig: `e.isPresent()` — open-coded to dodge an ambiguous inherent
-                // `len()` while E.rs's duplicate `impl EString` blocks are being merged.
+                // Open-coded `isPresent` to dodge an ambiguous inherent `len()`
+                // while E.rs's duplicate `impl EString` blocks are being merged.
                 value: e.rope_len > 0 || !e.data.is_empty(),
                 side_effects: SideEffects::NoSideEffects,
                 ok: true,
@@ -1078,4 +1073,3 @@ impl SideEffects {
     }
 }
 
-// ported from: src/js_parser/ast/SideEffects.zig

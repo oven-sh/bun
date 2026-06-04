@@ -32,10 +32,9 @@ pub mod pending_connect;
 #[path = "h3_client/Stream.rs"]
 pub mod stream;
 
-// Single `Output.scoped(.h3_client, .hidden)` for the whole module tree. Zig
-// comptime-deduplicates per tag, so the four submodules share one
-// `really_disable`/`is_visible_once`/lock; declaring it once here and importing
-// in each child preserves that behavior.
+// Single `Output.scoped(.h3_client, .hidden)` for the whole module tree:
+// the submodules share one `really_disable`/`is_visible_once`/lock by
+// declaring it once here and importing it in each child.
 bun_core::declare_scope!(h3_client, hidden);
 
 pub use client_context::ClientContext;
@@ -56,8 +55,5 @@ pub static live_streams: AtomicU32 = AtomicU32::new(0);
 pub use live_sessions as LIVE_SESSIONS;
 pub use live_streams as LIVE_STREAMS;
 
-// Zig: pub const TestingAPIs = @import("../http_jsc/headers_jsc.zig").H3TestingAPIs;
-// Deleted per PORTING.md — *_jsc aliases are dropped; H3TestingAPIs lives in
-// bun_http_jsc and is accessed via the extension-trait pattern there.
-
-// ported from: src/http/H3Client.zig
+// H3TestingAPIs lives in bun_http_jsc and is accessed via the
+// extension-trait pattern there.

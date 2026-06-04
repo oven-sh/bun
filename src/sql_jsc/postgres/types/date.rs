@@ -9,7 +9,6 @@ pub const FROM: [Short; 3] = [1082, 1114, 1184];
 // This is a signed 64-bit integer.
 const POSTGRES_EPOCH_DATE: i64 = 946_684_800_000;
 
-// std.time.us_per_ms
 const US_PER_MS: i64 = 1000;
 
 pub fn from_binary(bytes: &[u8]) -> f64 {
@@ -50,7 +49,6 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> 
     } else if value.is_number() {
         value.as_number()
     } else if value.is_string() {
-        // Zig: `catch @panic("unreachable")` → .expect.
         let mut str =
             bun_core::OwnedString::new(value.to_bun_string(global_object).expect("unreachable"));
         crate::jsc::bun_string_jsc::parse_date(&mut str, global_object)?
@@ -62,10 +60,8 @@ pub fn from_js(global_object: &JSGlobalObject, value: JSValue) -> JsResult<i64> 
     Ok((unix_timestamp - POSTGRES_EPOCH_DATE) * US_PER_MS)
 }
 
-// Zig `toJS(value: anytype)` dispatches on `@TypeOf(value)` at comptime over a
-// closed set {i64, *Data}. Rust has no comptime type-switch; modeled as a trait
-// with per-type impls so `tag_jsc::to_js_with_type` can dispatch uniformly. The
-// `else => @compileError(...)` arm is the natural "no impl" compile error.
+// Conversion dispatches over a closed set {i64, Data}; modeled as a trait
+// with per-type impls so `tag_jsc::to_js_with_type` can dispatch uniformly.
 pub trait DateToJs {
     fn date_to_js(self, global_object: &JSGlobalObject) -> JSValue;
 }
@@ -100,4 +96,3 @@ pub fn to_js_data(global_object: &JSGlobalObject, value: &Data) -> JSValue {
     JSValue::from_date_string(global_object, cstr)
 }
 
-// ported from: src/sql_jsc/postgres/types/date.zig

@@ -1,5 +1,4 @@
-//! HTML `FormData` parsing + JS bridge. Moved from `url/url.zig` because the
-//! struct is webcore (fetch Body) and JSC-heavy; `url/` is JSC-free.
+//! HTML `FormData` parsing + JS bridge.
 
 use bun_collections::ArrayHashMap;
 use bun_core::{self, declare_scope, err, scoped_log};
@@ -42,7 +41,7 @@ pub trait AsyncFormDataExt {
 }
 
 impl AsyncFormDataExt for AsyncFormData {
-    // Zig: `bun.JSTerminated!void` — only a VM-termination error can escape
+    // Only a VM-termination error can escape
     // (JS exceptions are routed into the promise rejection above).
     fn to_js(
         &self,
@@ -144,7 +143,6 @@ impl FormData<'_> {
     }
 }
 
-// Zig: `@export(&jsc.toJSHostFn(fromMultipartData), .{ .name = "FormData__jsFunctionFromMultipartData" })`
 #[bun_jsc::host_fn(export = "FormData__jsFunctionFromMultipartData")]
 pub fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     let args = frame.arguments_old::<2>();
@@ -278,8 +276,7 @@ pub fn to_js_from_multipart_data(
                     &filename,
                 );
                 // `append_blob` dupes the content type, so the copy boxed above
-                // is solely owned by this stack-local and must be released here
-                // (Zig stored a borrowed slice and had nothing to free).
+                // is solely owned by this stack-local and must be released here.
                 blob.detach();
                 blob.free_content_type();
             } else {
@@ -464,5 +461,3 @@ pub fn for_each_multipart_entry<C>(
 
     Ok(())
 }
-
-// ported from: src/runtime/webcore/FormData.zig

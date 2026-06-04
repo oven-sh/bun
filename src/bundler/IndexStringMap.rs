@@ -1,6 +1,6 @@
 use bun_collections::ArrayHashMap;
 
-/// `Index.Int` in Zig — the underlying integer repr.
+/// The underlying integer repr of `Index`.
 pub(crate) use crate::IndexInt;
 
 #[derive(Default)]
@@ -24,5 +24,3 @@ impl IndexStringMap {
         Ok(())
     }
 }
-
-// ported from: src/bundler/IndexStringMap.zig

@@ -205,7 +205,6 @@ impl Angle {
             (Angle::Turn(a), Angle::Turn(b)) => Angle::Turn(op_fn(ctx, a, b)),
             _ => Angle::Deg(op_fn(ctx, self.to_degrees(), other.to_degrees())),
         }
-        // PERF(port): was comptime monomorphization (fn-ptr arg) — profile if it shows up on a hot path.
     }
 
     pub(crate) fn sign(self) -> f32 {
@@ -223,7 +222,6 @@ impl Angle {
 impl crate::generics::CssEql for Angle {
     #[inline]
     fn eql(&self, other: &Self) -> bool {
-        // Spec angle.zig:200-202 — `lhs.toDegrees() == rhs.toDegrees()`.
         // NOT structural variant comparison: Deg(180) eql Rad(PI) eql Turn(0.5).
         self.to_degrees() == other.to_degrees()
     }
@@ -232,5 +230,3 @@ impl crate::generics::CssEql for Angle {
 /// A CSS [`<angle-percentage>`](https://www.w3.org/TR/css-values-4/#typedef-angle-percentage) value.
 /// May be specified as either an angle or a percentage that resolves to an angle.
 pub(crate) type AnglePercentage = DimensionPercentage<Angle>;
-
-// ported from: src/css/values/angle.zig

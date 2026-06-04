@@ -1025,5 +1025,3 @@ impl Parser<'_> {
 }
 
 use crate::types::LineType;
-
-// ported from: src/md/blocks.zig

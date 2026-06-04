@@ -1,5 +1,5 @@
-//! `Command.ContextData` and its option-carrying nested structs, lifted out of
-//! `cli/cli.zig` so subsystems (install, bundler, bake, shell) can reference
+//! `Command.ContextData` and its option-carrying nested structs, kept out of
+//! the CLI crate so subsystems (install, bundler, bake, shell) can reference
 //! the parsed-options shape without importing the CLI itself.
 //!
 //! `create()` (which calls `Arguments.parse`) and the `global_cli_ctx`/
@@ -20,7 +20,7 @@ use crate::offline_mode::OfflineMode;
 pub struct ContextData {
     pub start_time: i128,
     pub args: api::TransformOptions,
-    /// Zig: `log: *Log`. Raw pointer (not `&mut`) so `Default` works and so the
+    /// Raw pointer (not `&mut`) so `Default` works and so the
     /// process-global `CONTEXT_DATA` static can be zero-initialized before
     /// `create_context_data()` writes the real `&mut Log` into it.
     // SAFETY: written exactly once in single-threaded CLI startup; thereafter
@@ -54,10 +54,10 @@ impl Default for ContextData {
     // `CompileTarget` / `CpuProf` …) sampling 31× across ≈10 distinct 4 KB
     // r-xp pages — each nested `Default` impl landed in its own CGU, so the
     // single call from `write_context_no_parse` faulted in ~40 KB of scattered
-    // `.text`. The Zig spec is `std.mem.zeroes(Context)` (one comptime blob).
+    // `.text`.
     //
-    // A literal `unsafe { core::mem::zeroed() }` would match Zig but is
-    // **unsound** in Rust: `Vec<T>` / `Box<[u8]>` carry a `NonNull` pointer
+    // A literal `unsafe { core::mem::zeroed() }` is
+    // **unsound**: `Vec<T>` / `Box<[u8]>` carry a `NonNull` pointer
     // (validity invariant — null is immediate UB regardless of len). Instead,
     // every `Default` impl in this module is `#[inline(always)]` so the entire
     // recursive chain folds into the one `write_context_no_parse` call site
@@ -92,14 +92,14 @@ impl ContextData {
     /// Deref the process-lifetime `*mut Log` set in `create_context_data()`.
     ///
     /// Takes `&mut self` (not `&self`) so the borrow checker ties the returned
-    /// `&mut Log` to an exclusive borrow of the `ContextData` — Zig's `*Log`
-    /// freely aliases, but in Rust a `&self -> &mut Log` accessor would let two
+    /// `&mut Log` to an exclusive borrow of the `ContextData` — a
+    /// `&self -> &mut Log` accessor would let two
     /// live `&mut Log` overlap (UB). Note this is *necessary but not
     /// sufficient*: the same `*Log` is borrowed (not owned) from the CLI
     /// caller and is also fanned out to and stored by the transpiler/bundler
-    /// (`bundler/options.zig`), the install pipeline (`install/migration.zig`,
-    /// `install/PackageManagerOptions.zig`), JSON parsing
-    /// (`interchange/json.zig`), etc. Exclusive `self` does NOT exclude those
+    /// options, the install pipeline (migration,
+    /// `PackageManagerOptions`), JSON parsing,
+    /// etc. Exclusive `self` does NOT exclude those
     /// aliases — see `# Safety` for the full precondition.
     ///
     /// # Safety
@@ -179,7 +179,7 @@ impl ContextData {
     }
 }
 
-// `create()` (Zig: `Command.ContextData.create`) lives in the CLI crate
+// `create()` lives in the CLI crate
 // (`bun_runtime::cli::command::create_context_data`), which depends on this
 // crate — a delegating fn here would invert the dependency.
 
@@ -378,7 +378,7 @@ pub enum MacroOptions {
     Map(MacroMap),
 }
 
-/// Re-declared from `resolver/package_json.zig` (plain hashmap aliases) so this
+/// Plain hashmap aliases re-declared here so this
 /// file does not depend on `resolver/`.
 pub type MacroImportReplacementMap = ArrayHashMap<Box<[u8]>, Box<[u8]>>;
 pub type MacroMap = ArrayHashMap<Box<[u8]>, MacroImportReplacementMap>;
@@ -471,7 +471,7 @@ impl Default for TestOptions {
     #[inline(always)]
     fn default() -> Self {
         Self {
-            // 5 * std.time.ms_per_s
+            // 5 seconds
             default_timeout_ms: 5 * 1000,
             update_snapshots: false,
             repeat_count: 0,
@@ -612,5 +612,3 @@ impl Default for RuntimeOptions {
         }
     }
 }
-
-// ported from: src/options_types/Context.zig

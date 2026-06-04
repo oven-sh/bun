@@ -86,9 +86,7 @@ struct OutdatedPackage {
     /// Snapshot of `manager.options.scope.url_hash == DEFAULT_URL_HASH &&
     /// manager.scope_for_package_name(name).url_hash == DEFAULT_URL_HASH`.
     ///
-    /// Zig stores `*PackageManager` here and reads
-    /// `pkg.manager.options.scope` / `scopeForPackageName(pkg.name)` at render
-    /// time. In Rust the caller's exclusive `&mut PackageManager` in
+    /// The caller's exclusive `&mut PackageManager` in
     /// `update_interactive` is live across the prompt loop, so any
     /// `&PackageManager` derived from a stored back-pointer would alias an
     /// outstanding `&mut` (Stacked-Borrows UB). Both reads are pure
@@ -113,8 +111,8 @@ struct PackageUpdate {
 }
 
 pub(crate) struct CatalogUpdateRequest {
-    // Zig borrowed these from the caller; owned copies keep the type
-    // lifetime-free (a few small allocations in an interactive UI).
+    // Owned copies keep the type lifetime-free (a few small allocations in
+    // an interactive UI).
     package_name: Box<[u8]>,
     new_version: Box<[u8]>,
     catalog_name: Option<Box<[u8]>>,
@@ -174,9 +172,8 @@ impl UpdateInteractiveCommand {
     }
 
     // Helper to update a catalog entry at a specific path in the package.json AST
-    // Zig threads `*PackageManager` only for `manager.allocator`;
-    // the Rust port has no per-manager allocator, so the parameter is dropped.
-    // This also avoids overlapping `&mut PackageManager` with the live
+    // No `*PackageManager` parameter: there is no per-manager allocator,
+    // and dropping it avoids overlapping `&mut PackageManager` with the live
     // `&mut MapEntry` borrow of `manager.workspace_package_json_cache` at the
     // call sites (which the previous draft laundered via raw pointers — UB
     // under Stacked Borrows).
@@ -218,8 +215,7 @@ impl UpdateInteractiveCommand {
             Box::from(package_json_writer.ctx.written_without_trailing_zero());
 
         // Write the updated package.json
-        // Zig used `std.fs.cwd().createFile(path).writeAll(..)`; the
-        // Rust port routes through `bun_sys::File::write_file` (cwd-relative
+        // Routes through `bun_sys::File::write_file` (cwd-relative
         // open + write + close) per src/CLAUDE.md.
         let mut path_zbuf = PathBuffer::uninit();
         let path_z = path::resolve_path::z(package_json_path, &mut path_zbuf);
@@ -366,10 +362,8 @@ impl UpdateInteractiveCommand {
                     preserve_version_prefix(original_version, &update.target_version)?;
 
                 // Update the version using hash map put
-                // Zig `Expr.init(E.String, …).clone(allocator)` —
-                // the `.clone(manager.allocator)` re-allocates the `E.String`
-                // *node* outside the resettable Store. `Expr::init` would put
-                // it in the Store, which `install_with_manager` resets via
+                // `Expr::init` would put the `E.String` *node*
+                // in the Store, which `install_with_manager` resets via
                 // `initialize_store()` before re-reading this cached `root`.
                 // Allocate into the entry's own `json_arena` instead so the
                 // node lives as long as the cached AST. The string *bytes* go
@@ -524,9 +518,8 @@ impl UpdateInteractiveCommand {
                 Global::crash();
             }
             LoadResult::Ok(_) => {
-                // Zig reassigns `manager.lockfile = ok.lockfile`
-                // (pointer field). `load_lockfile_from_cwd` populates
-                // `manager.lockfile` (Box) in place, so no reassignment.
+                // `load_lockfile_from_cwd` populates `manager.lockfile` (Box)
+                // in place, so no reassignment is needed.
             }
         }
 
@@ -703,9 +696,8 @@ impl UpdateInteractiveCommand {
                 // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set once during
                 // `PackageManager::init` (single-threaded CLI startup).
                 let root_pkg_json = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
-                // Zig passes `manager.root_dir.dir` (cwd dir handle);
-                // the Rust port of `install_with_manager` takes the original cwd
-                // path slice instead. Snapshot before the `&mut manager` borrow.
+                // `install_with_manager` takes the original cwd path slice.
+                // Snapshot before the `&mut manager` borrow.
                 let root_dir_path: &'static [u8] = manager.root_dir.dir;
                 install_with_manager::install_with_manager(
                     manager,
@@ -861,8 +853,8 @@ impl UpdateInteractiveCommand {
                 // Build combined workspace name
                 let mut workspace_names: Vec<u8> = Vec::new();
 
-                // Zig checks `if (catalog_packages.len > 0)` again here which is always
-                // true; preserve behavior of the true branch.
+                // `catalog_packages.len > 0` always holds here; this is the
+                // unconditional true branch of that check.
                 if let Some(catalog_name) = &first.catalog_name {
                     workspace_names.extend_from_slice(b"catalog:");
                     workspace_names.extend_from_slice(catalog_name);
@@ -896,9 +888,8 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
     ) -> Result<Vec<OutdatedPackage>, bun_core::Error> {
-        // Reshaped for borrowck — Zig threads `*PackageManager`
-        // into `manifests.byNameAllowExpired`, freely aliasing the receiver.
-        // Hoist the four scalars that path reads into a by-value
+        // Reshaped for borrowck —
+        // hoist the four scalars the manifest-lookup path reads into a by-value
         // `DiskCacheCtx` so the loop body holds only disjoint field borrows
         // (`&mut manager.manifests` against `&manager.lockfile` /
         // `&manager.options`). The returned `OutdatedPackage`s do *not*
@@ -945,8 +936,8 @@ impl UpdateInteractiveCommand {
 
                 let scope = manager.options.scope_for_package_name(package_name).clone();
                 // Snapshot for `OutdatedPackage.uses_default_registry` (see
-                // field comment) — Zig defers this to render time via
-                // `pkg.manager`, which we cannot soundly alias.
+                // field comment) — cannot be deferred to render time, since a
+                // stored manager back-pointer cannot be soundly aliased.
                 let uses_default_registry = global_uses_default_registry
                     && manager.options.scope_for_package_name(name_slice).url_hash
                         == default_url_hash;
@@ -1307,8 +1298,7 @@ impl UpdateInteractiveCommand {
         };
 
         Output::flush();
-        // Reshaped for borrowck — Zig returns the same `selected` slice via state;
-        // we clone the borrowed slice into an owned Box here.
+        // Reshaped for borrowck — clone the borrowed slice into an owned Box.
         Ok(Box::from(result))
     }
 
@@ -2227,17 +2217,16 @@ fn dep_type_priority(dep_type: &[u8]) -> u8 {
 
 /// Dupe a byte buffer into the process-lifetime CLI arena to obtain a
 /// `'static` slice for storage in `E::EString.data` (the AST `Str` alias is
-/// `&'static [u8]` until `'bump` is threaded through). Mirrors Zig's
-/// `allocator.dupe(u8, ...)` against the singleton `manager.allocator`.
+/// `&'static [u8]` until `'bump` is threaded through).
 #[inline]
 fn leak_dup(bytes: &[u8]) -> &'static [u8] {
     crate::cli::cli_dupe(bytes)
 }
 
 /// Edit catalog definitions in package.json
-// Zig threads `manager` only for `manager.allocator`; the Rust port
-// uses a local `Bump` (`E::Object::put` ignores its allocator arg), so the
-// parameter is dropped to keep `update_catalog_definitions` borrowck-clean.
+// No `manager` parameter: a local `Bump` is used instead
+// (`E::Object::put` ignores its allocator arg), which keeps
+// `update_catalog_definitions` borrowck-clean.
 pub(crate) fn edit_catalog_definitions(
     updates: &mut [CatalogUpdateRequest],
     current_package_json: &mut Expr,
@@ -2273,7 +2262,7 @@ pub(crate) fn edit_catalog_definitions(
 }
 
 /// Where `find_catalog_object` located the existing object — the lookup and
-/// the post-mutate placement use *different* predicates in Zig (see
+/// the post-mutate placement use *different* predicates (see
 /// `update_default_catalog`), so the source must be tracked.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum CatalogSource {
@@ -2314,17 +2303,14 @@ fn update_default_catalog(
 ) -> Result<(), bun_core::Error> {
     // Get or create the catalog object
     // First check if catalog is under workspaces.catalog
-    // Reshaped — Zig copies `data.e_object.*` (struct bytes,
-    // aliasing the `Vec` ptr) and writes the mutated copy back via
-    // `parent.put("catalog", Expr.allocate(obj))`. Rust `Vec<T>` has a
-    // `Drop` that frees its buffer, so a shallow copy would double-free.
-    // Instead mutate the existing `StoreRef<E::Object>` in place (`StoreRef`
-    // is `Copy + DerefMut`). Crucially, Zig's *placement* check is looser
-    // than its lookup: it puts under `workspaces.<key>` whenever that key
-    // *exists* (any type), even when the lookup fell back to the root-level
-    // object. Track the lookup source so the in-place fast path is taken only
-    // when source == placement; otherwise re-`put` the mutated arena slot at
-    // the Zig-mandated location.
+    // Mutate the existing `StoreRef<E::Object>` in place (`StoreRef` is
+    // `Copy + DerefMut`); a shallow copy of the object would double-free its
+    // `Vec` buffer. Crucially, the *placement* check is looser than the
+    // lookup: put under `workspaces.<key>` whenever that key *exists* (any
+    // type), even when the lookup fell back to the root-level object. Track
+    // the lookup source so the in-place fast path is taken only when
+    // source == placement; otherwise re-`put` the mutated arena slot at the
+    // placement-mandated location.
     let mut fresh_obj = E::Object::default();
     let (existing, source) = find_catalog_object(package_json, b"catalog");
     {
@@ -2572,4 +2558,3 @@ fn preserve_version_prefix(
     Ok(Box::from(new_version))
 }
 
-// ported from: src/cli/update_interactive_command.zig

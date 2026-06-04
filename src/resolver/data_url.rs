@@ -1,6 +1,5 @@
 use bun_core::strings;
 
-// https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
 pub(crate) struct PercentEncoding;
 
 /// possible errors for decode and encode
@@ -15,7 +14,7 @@ pub enum EncodeError {
 bun_core::named_error_set!(EncodeError);
 
 impl EncodeError {
-    /// Zig: `@errorName(e)`.
+    /// Returns the error name string.
     pub fn name(self) -> &'static str {
         self.into()
     }
@@ -31,7 +30,7 @@ pub enum ParseDataURLError {
 bun_core::named_error_set!(ParseDataURLError);
 
 impl ParseDataURLError {
-    /// Zig: `@errorName(e)`.
+    /// Returns the error name string.
     pub fn name(self) -> &'static str {
         self.into()
     }
@@ -51,7 +50,7 @@ pub enum DecodeDataError {
 bun_core::named_error_set!(DecodeDataError);
 
 impl DecodeDataError {
-    /// Zig: `@errorName(e)`.
+    /// Returns the error name string.
     pub fn name(self) -> &'static str {
         self.into()
     }
@@ -235,10 +234,8 @@ impl<'a> DataURL<'a> {
             return buf;
         }
 
-        // The Zig source has a bug here: `bufPrint("data:{s};base64,{s}", ...)`
-        // wrote `text` raw instead of base64-encoding it (despite sizing the
-        // buffer for the encoded form), producing a corrupt data URL whenever
-        // the percent-escape path bails. Encode for real.
+        // When the percent-escape path bails, the payload must be
+        // base64-encoded for real (the buffer is sized for the encoded form).
         let mut base64buf = vec![0u8; total_base64_encode_len];
         let prefix_len = b"data:".len() + mime_type.len() + b";base64,".len();
         base64buf[..b"data:".len()].copy_from_slice(b"data:");
@@ -312,9 +309,8 @@ impl<'a> DataURL<'a> {
     }
 }
 
-/// Abstraction over `Vec<u8>` and `CountingBuf` for `encode_string_as_percent_escaped_data_url`
-/// (Zig used `buf: anytype` calling `.appendSlice`/`.append`).
-// PERF(port): Zig anytype was infallible OOM-abort via Vec; trait methods are infallible here.
+/// Abstraction over `Vec<u8>` and `CountingBuf` for
+/// `encode_string_as_percent_escaped_data_url`.
 pub(crate) trait DataUrlBuf {
     fn append_slice(&mut self, slice: &[u8]);
     fn append(&mut self, c: u8);
@@ -376,8 +372,7 @@ mod tests {
     #[test]
     fn shortest_data_url_base64_fallback_invalid_utf8() {
         // Non-UTF-8 input makes the percent-escape path bail; the fallback
-        // must emit a real base64 payload (the Zig source wrote `text` raw
-        // here, producing a corrupt URL).
+        // must emit a real base64 payload.
         let text: &[u8] = &[0xff, 0xfe, 0x00, 0x01, b'a', 0x80];
         let url = DataURL::encode_string_as_shortest_data_url(b"application/octet-stream", text);
         assert!(url.starts_with(b"data:application/octet-stream;base64,"));
@@ -398,5 +393,3 @@ mod tests {
         assert!(parsed.is_base64);
     }
 }
-
-// ported from: src/resolver/data_url.zig

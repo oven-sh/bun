@@ -43,8 +43,7 @@ impl Ctx {
     }
 }
 
-// Zig callsites pair `bun.perf.trace(...)` with `defer tracer.end()`. Per
-// PORTING.md `defer <side effect>` → RAII: `Ctx` ends itself on drop so callers
+// `Ctx` ends itself on drop so callers
 // write `let _tracer = bun_perf::trace(...)` and forget about it.
 impl Drop for Ctx {
     #[inline]
@@ -109,13 +108,11 @@ pub(crate) fn is_enabled() -> bool {
 /// `scripts/generate-perf-trace-events.sh` to regenerate the list.
 pub fn trace(event: PerfEvent) -> Ctx {
     if !is_enabled() {
-        // PERF(port): @branchHint(.likely) — profile if it shows up on a hot path.
         return Ctx::Disabled(Disabled);
     }
 
     #[cfg(target_os = "macos")]
     {
-        // PERF(port): was comptime monomorphization (event id was comptime i32) — profile if it shows up on a hot path.
         return Ctx::Enabled(Darwin::init(event as i32));
     }
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -146,11 +143,10 @@ mod darwin_impl {
     }
 
     impl Darwin {
-        // PERF(port): was `comptime name: i32` — profile if it shows up on a hot path.
         pub fn init(name: i32) -> Self {
             Self {
                 // SAFETY: `is_enabled()` returned true, which implies `Darwin::get()` is Some
-                // (see `is_enabled_once`). Zig used `os_log.?` (unchecked unwrap).
+                // (see `is_enabled_once`).
                 interval: Self::get()
                     .expect("unreachable")
                     .signpost(name)
@@ -218,8 +214,7 @@ impl Linux {
             .ns()
             .saturating_sub(self.start_time);
 
-        // Zig's `@tagName(this.event).ptr` yields `[*:0]const u8` (NUL-terminated).
-        // `PerfEvent::as_cstr()` provides the equivalent `&'static CStr` so the C side's
+        // `PerfEvent::as_cstr()` provides a `&'static CStr` so the C side's
         // `snprintf("C|%d|%s|%lld", ...)` reads a properly terminated string.
         // SAFETY: FFI call; pointer is 'static and NUL-terminated.
         let _ = unsafe {
@@ -238,5 +233,3 @@ static INIT_ONCE: Once = Once::new();
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::perf::sys::{Bun__linux_trace_emit, Bun__linux_trace_init};
-
-// ported from: src/perf/perf.zig

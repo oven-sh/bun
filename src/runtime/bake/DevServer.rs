@@ -9,7 +9,7 @@
 //! Theorized and designed over 2 years out of pure love —— paper clover <3
 //! For questions about its core philosophy, email `devserver@paperclover.net`
 
-#![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` mirrors Zig `bun.FeatureFlags.bake_debugging_features`; not yet a declared cargo feature.
+#![allow(unexpected_cfgs)] // `feature = "bake_debugging_features"` is not yet a declared cargo feature.
 
 use ::core::ffi::c_void;
 use bun_bundler::mal_prelude::*;
@@ -80,15 +80,14 @@ pub(super) use crate::bake::dev_server::memory_cost_body::MemoryCost;
 
 impl DevServer {
     /// `DevServer.memoryCost` — sums the per-category breakdown from
-    /// `memory_cost_detailed`. Body lives in `dev_server::memory_cost_body`
-    /// (mirrors Zig `pub const memoryCost = MemoryCost.memoryCost;`).
+    /// `memory_cost_detailed`. Body lives in `dev_server::memory_cost_body`.
     #[inline]
     pub fn memory_cost(&self) -> usize {
         crate::bake::dev_server::memory_cost_body::memory_cost(self)
     }
 
     /// `DevServer.memoryCostDetailed` — body lives in
-    /// `dev_server::memory_cost_body` (free fn ported from `memory_cost.zig`).
+    /// `dev_server::memory_cost_body`.
     #[inline]
     pub fn memory_cost_detailed(&self) -> MemoryCost {
         crate::bake::dev_server::memory_cost_body::memory_cost_detailed(self)
@@ -96,7 +95,7 @@ impl DevServer {
 
     /// Recover `&VirtualMachine` from the JSC_BORROW `vm` back-reference.
     /// Safe `Deref` via [`BackRef`](bun_ptr::BackRef): vm is valid for
-    /// DevServer's entire lifetime (DevServer.zig:315).
+    /// DevServer's entire lifetime.
     #[inline]
     pub(crate) fn vm(&self) -> &VirtualMachine {
         self.vm.get()
@@ -184,15 +183,13 @@ pub struct Options<'a> {
     pub dump_state_on_crash: Option<bool>,
 }
 
-// Note: Zig `Options` only had field-level defaults for `dump_sources`
-// (`if (Environment.isDebug) ".bake-debug" else null`) and `dump_state_on_crash`
-// (`null`). The remaining fields (`arena`, `root`, `vm`, `framework`,
+// Note: the fields (`arena`, `root`, `vm`, `framework`,
 // `bundler_options`, `broadcast_console_log_from_browser_to_server`) are
 // required with no sensible zero value, so `Default` is intentionally NOT
 // implemented. Callers construct `Options` via struct-literal at the call site
 // (see `bake_body.rs::UserOptions::into_dev_server_options`).
 impl<'a> Options<'a> {
-    /// Zig field default: `if (Environment.isDebug) ".bake-debug" else null`.
+    /// Debug builds dump bundled sources to `.bake-debug` by default.
     pub const DEFAULT_DUMP_SOURCES: Option<&'static [u8]> = if cfg!(debug_assertions) {
         Some(b".bake-debug")
     } else {
@@ -323,7 +320,7 @@ pub struct DevServer {
     /// lifetime-generic — it is `Box`-owned by `ServerInstance` which outlives
     /// the VM anyway. The back-reference invariant (pointee outlives holder)
     /// is the JSC_BORROW guarantee: vm is valid for DevServer's entire
-    /// lifetime (DevServer.zig:315).
+    /// lifetime.
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     /// May be `None` if not attached to an HTTP server yet. When no server is
     /// available, functions taking in requests and responses are unavailable.
@@ -366,10 +363,7 @@ pub struct DevServer {
     /// All bundling failures are stored until a file is saved and rebuilt.
     /// They are stored in the wire format the HMR runtime expects so that
     /// serialization only happens once.
-    /// Zig: `AutoArrayHashMapUnmanaged(SerializedFailure, void,
-    /// SerializedFailure.ArrayHashContextViaOwner, false)` — keyed by
-    /// `failure.owner`. Port stores `OwnerPacked → SerializedFailure` so the
-    /// custom context is unnecessary.
+    /// Keyed by `failure.owner`, stored as `OwnerPacked → SerializedFailure`.
     pub bundling_failures: ArrayHashMap<serialized_failure::OwnerPacked, SerializedFailure>,
     /// When set, nothing is ever bundled for the server-side,
     /// and DevSever acts purely as a frontend bundler.
@@ -385,9 +379,8 @@ pub struct DevServer {
     pub server_register_update_callback: jsc::StrongOptional,
 
     // Watching
-    // Note: Zig stores `*bun.Watcher` and calls `deinit(true)` in
-    // `DevServer.deinit`, which *transfers* ownership to the watcher thread
-    // (the thread frees the allocation in `threadMain`). Auto-dropping a
+    // Note: the watcher thread owns this allocation at shutdown (it frees it
+    // in `thread_main` once `running` flips false). Auto-dropping a
     // `Box<Watcher>` here would free the heap block while the watcher thread
     // is still blocked in `GetQueuedCompletionStatus`/`read()` holding a
     // `*mut Watcher` into it (and on Windows the kernel still has a pending
@@ -397,7 +390,6 @@ pub struct DevServer {
     pub bun_watcher: ::core::mem::ManuallyDrop<Box<Watcher>>,
     pub directory_watchers: DirectoryWatchStore,
     pub watcher_atomics: WatcherAtomics,
-    /// See doc comment in Zig source.
     pub testing_batch_events: TestingBatchEvents,
 
     /// Number of bundles that have been executed. This is currently not read, but
@@ -449,7 +441,6 @@ pub struct DevServer {
     pub memory_visualizer_timer: EventLoopTimer,
 
     pub has_pre_crash_handler: bool,
-    /// See doc comment in Zig source.
     pub assume_perfect_incremental_bundling: bool,
 
     /// If true, console logs from the browser will be echoed to the server console.
@@ -525,13 +516,13 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         .map(|sc| sc.separate_ssr_graph)
         .unwrap_or(false);
 
-    // Note: Zig used `bun.new(DevServer, .{ ... = undefined })` then assigned
-    // `server_transpiler` / `client_transpiler` / `ssr_transpiler` / `bun_watcher` /
-    // `router` / `watcher_atomics` after the heap address was stable. Rust forbids
-    // partial struct literals and `mem::zeroed()` here is UB (`Box<Watcher>` is
-    // `NonNull`-backed; `Transpiler<'a>` carries `&'a Arena`). The faithful port is
-    // `Box::new_uninit()` + per-field `addr_of_mut!().write()`, leaving the
-    // `undefined` fields uninitialized until their real values are computed against
+    // Note: `server_transpiler` / `client_transpiler` / `ssr_transpiler` /
+    // `bun_watcher` / `router` / `watcher_atomics` must be assigned after the
+    // heap address is stable. Rust forbids partial struct literals and
+    // `mem::zeroed()` here is UB (`Box<Watcher>` is `NonNull`-backed;
+    // `Transpiler<'a>` carries `&'a Arena`), so use
+    // `Box::new_uninit()` + per-field `addr_of_mut!().write()`, leaving those
+    // fields uninitialized until their real values are computed against
     // the stable `*mut DevServer`, then `assume_init()` once every field is written.
     use ::core::mem::MaybeUninit;
     use ::core::ptr::addr_of_mut;
@@ -706,7 +697,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // individually via `addr_of_mut!` is sound because no `&mut DevServer` exists.
     // Note: `Transpiler<'static>` erases the arena lifetime — `options.arena`
     // is the `UserOptions.arena` which is moved into / outlives the `DevServer`
-    // box (Zig had no lifetime). Widen `'a → 'static` here once.
+    // box. Widen `'a → 'static` here once.
     // SAFETY: `options.arena` outlives every `Transpiler` field it backs (see
     // `Options::arena` doc — "must live until DevServer drops").
     let arena: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(options.arena) };
@@ -755,9 +746,9 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
                 Err(err) => return Err(global.throw_error(err, generic_action)),
             }
         } else {
-            // Note: Zig left `ssr_transpiler` `undefined` when
-            // `!separate_ssr_graph` and never read it. Rust must still write a
-            // valid value before `assume_init()`. Bitwise-alias the server
+            // Note: when `!separate_ssr_graph`, `ssr_transpiler` is never
+            // read, but a valid value must still be written before
+            // `assume_init()`. Bitwise-alias the server
             // transpiler. This is sound only because `Drop for DevServer` gates
             // `ssr_transpiler.assume_init_drop()` behind the same
             // `separate_ssr_graph` check (see Drop impl): in the `!separate`
@@ -785,9 +776,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     let mut dev: Box<DevServer> = unsafe { dev_uninit.assume_init() };
     let dev_ptr: *mut DevServer = &raw mut *dev;
 
-    // Note: Zig asserted `*.owner() == dev` (intrusive parent-ptr derived
-    // via `container_of`). The Rust port stores these by value; `owner()`
-    // is provided on `IncrementalGraph` via `offset_of!` so the invariant is
+    // Note: the graphs are stored by value; `owner()` is provided on
+    // `IncrementalGraph` via `offset_of!` so the parent-pointer invariant is
     // structural. Retain the field touches so the addresses are stable for
     // `container_of` consumers below.
     let _ = (
@@ -845,12 +835,10 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         )?));
     }
 
-    // Spec DevServer.zig:425 — Zig stores `transpiler.options.framework` as a
-    // `?*bake.Framework` aliasing `dev.framework`, so the post-`resolve`
-    // assignment retroactively gives every transpiler the resolved
-    // `server_runtime_import` / `react_fast_refresh.import_source`. The Rust
-    // port arena-snapshots that projection inside `init_transpiler`, breaking
-    // the alias; re-project after resolve so parser-generated imports (e.g.
+    // `init_transpiler` arena-snapshots the framework projection, so the
+    // transpilers do not see the resolved
+    // `server_runtime_import` / `react_fast_refresh.import_source`;
+    // re-project after resolve so parser-generated imports (e.g.
     // `serverRuntimeImportSource` in `wrap_exports_for_client_reference`) see
     // absolute paths instead of the user's relative `"./framework/server.ts"`.
     {
@@ -945,8 +933,8 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         {
             h.update(k);
             h.update(&[0]);
-            // Zig: `@intFromEnum(v)` for the active tag, then `switch (v) { inline else => |data| data }`
-            // for the payload. `bun_bundler::bake_types::BuiltInModule` has no `.tag()`/`.data_slice()`;
+            // Hash the active tag, then the payload.
+            // `bun_bundler::bake_types::BuiltInModule` has no `.tag()`/`.data_slice()`;
             // shim locally with a match (upstream type — cannot add inherent methods).
             let (tag, data): (u8, &[u8]) = match v {
                 bun_bundler::bake_types::BuiltInModule::Import(d) => (0, &d[..]),
@@ -966,11 +954,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
     // Add react fast refresh if needed. This is the first file on the client side,
     // as it will be referred to by index.
     if let Some(rfr) = &dev.framework.react_fast_refresh {
-        // Spec (DevServer.zig:511): `bun.assert` always evaluates its argument;
-        // `debug_assert!` does not in release. Hoist the side-effecting `insert_stale`
+        // `debug_assert!` does not evaluate its argument in release. Hoist
+        // the side-effecting `insert_stale`
         // out so the refresh runtime is registered at index 0 in all builds.
         let idx = dev.client_graph.insert_stale(&rfr.import_source, false)?;
-        debug_assert!(idx == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0)); // Zig: react_refresh_index = .init(0)
+        debug_assert!(idx == incremental_graph::FileIndex::<{ bake::Side::Client }>::init(0));
     }
 
     if !dev.frontend_only {
@@ -1078,12 +1066,11 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
 impl Drop for DevServer {
     fn drop(&mut self) {
         debug_log!("deinit");
-        // Zig used `+|= 1` (saturating add); for a usize test counter, wrapping
-        // at usize::MAX is unreachable in practice, so a plain fetch_add is fine.
+        // For a usize test counter, wrapping at usize::MAX is unreachable in
+        // practice, so a plain fetch_add is fine.
         DEV_SERVER_DEINIT_COUNT_FOR_TESTING.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 
-        // Exhaustiveness check (Zig: `useAllFields(DevServer, .{...})`):
-        // destructuring without `..` fails to compile when a field is added,
+        // Exhaustiveness check: destructuring without `..` fails to compile when a field is added,
         // removed, or renamed, forcing this Drop to be reviewed. All bindings
         // are `_` so nothing is moved; cleanup not done explicitly below
         // happens via the implicit field drops after this body returns.
@@ -1164,8 +1151,7 @@ impl Drop for DevServer {
             self.timer_heap().remove(timer_ptr);
         }
         self.graph_safety_lock.lock();
-        // Zig: `.bun_watcher = dev.bun_watcher.deinit(true),` — hand ownership of
-        // the heap allocation to the watcher thread (which frees it in
+        // Hand ownership of the heap allocation to the watcher thread (which frees it in
         // `thread_main` once `running` flips false). Auto-dropping the `Box`
         // here would free the allocation out from under the still-running
         // thread; on Windows the kernel additionally retains a pending
@@ -1188,9 +1174,7 @@ impl Drop for DevServer {
             bun_crash_handler::remove_pre_crash_handler(std::ptr::from_mut(self).cast::<c_void>());
         }
 
-        // Note: Zig looped `failure.deinit()` then `clearAndFree`. The
-        // map's `Drop` runs `SerializedFailure::drop` for each value, so the
-        // explicit loop is folded into field drop.
+        // The map's `Drop` runs `SerializedFailure::drop` for each value.
 
         if self.current_bundle.is_some() {
             debug_assert!(false); // impossible to de-initialize this state correctly.
@@ -1272,9 +1256,8 @@ impl Drop for DevServer {
 }
 
 impl DevServer {
-    /// Zig threaded a borrowed debug allocator handle through DevServer; in
-    /// the Rust port everything is `Box`/`Vec` on the global mimalloc, so this
-    /// just returns the default `StdAllocator`. Kept for the few call sites
+    /// Everything is `Box`/`Vec` on the global mimalloc, so this just
+    /// returns the default `StdAllocator`. Kept for the few call sites
     /// that still want a `StdAllocator` handle.
     #[inline]
     pub fn allocator(&self) -> bun_alloc::StdAllocator {
@@ -1342,10 +1325,8 @@ impl DevServer {
 
     /// Deferred one tick so that the server can be up faster
     fn scan_initial_routes(&mut self) -> Result<(), bun_core::Error> {
-        // Note: reshaped for borrowck — Zig passed `dev` as the
-        // `InsertionContext` while also borrowing `&mut dev.router` and
-        // `&mut dev.server_transpiler.resolver`. Reborrow each via the raw
-        // self-ptr (the three are disjoint fields of the heap-stable `*self`).
+        // Reborrow `self`, `self.router`, and `self.server_transpiler.resolver`
+        // via the raw self-ptr (the three are disjoint fields of the heap-stable `*self`).
         let self_ptr = std::ptr::from_mut::<Self>(self);
         // SAFETY: `router`, `server_transpiler.resolver`, and the
         // `InsertionHandler` callbacks (touch `server_graph`/`route_lookup`)
@@ -1373,10 +1354,8 @@ impl DevServer {
         let app = unsafe { &mut *server.app.unwrap() };
         let dev = std::ptr::from_mut::<Self>(self).cast::<c_void>();
 
-        // Note: Zig's `wrapGenericRequestHandler(fn, is_ssl)` produced a
-        // monomorphized `extern fn(*DevServer, *Response, *Request)` per
-        // handler. The Rust equivalent is the ZST-fn-item trampoline pattern
-        // used by `server::server_body::AppRouteExt`: a generic `extern "C"`
+        // The ZST-fn-item trampoline pattern used by
+        // `server::server_body::AppRouteExt`: a generic `extern "C"`
         // shim parameterized on the handler type `H` (which is zero-sized for
         // a fn-item), so each `tramp::<H, SSL>` lowers to a distinct C
         // function pointer with the handler baked in.
@@ -1445,9 +1424,8 @@ impl DevServer {
     }
 }
 
-/// Handler dispatch for `dev_route_tramp`. Zig used a comptime fn-ptr param to
-/// monomorphize one `extern "C"` trampoline per handler; Rust can't take a fn
-/// pointer as a const generic, so use a `ConstParamTy` enum instead and
+/// Handler dispatch for `dev_route_tramp`. A fn pointer cannot be a const
+/// generic, so use a `ConstParamTy` enum instead and
 /// `match` inside the trampoline (the optimizer folds the constant `match`).
 #[derive(Copy, Clone, Eq, PartialEq, ::core::marker::ConstParamTy)]
 pub(super) enum DevHandlerId {
@@ -1652,12 +1630,11 @@ fn hmr_socket_behavior<const SSL: bool>() -> bun_uws_sys::WebSocketBehavior {
 
 // `WebSocketBehavior.Wrap(ServerType, Type, ssl)` requires `Type` (= `HmrSocket`)
 // to be a `WebSocketHandler` and `ServerType` (= `DevServer`) to be a
-// `WebSocketUpgradeServer<SSL>`. The Zig used `@hasDecl` duck-typing; in Rust
-// we wire the trait explicitly and forward to the inherent method bodies in
+// `WebSocketUpgradeServer<SSL>`. The trait is wired explicitly and forward to the inherent method bodies in
 // `dev_server::hmr_socket_body`.
 impl bun_uws_sys::web_socket::WebSocketHandler for HmrSocket {
-    // Zig HmrSocket has no `onDrain`/`onPing`/`onPong` decls — `Wrap.apply`
-    // leaves those C callbacks `null` when `HAS_ON_* == false`.
+    // `Wrap.apply` leaves the drain/ping/pong C callbacks `null` when
+    // `HAS_ON_* == false`.
     const HAS_ON_DRAIN: bool = false;
     const HAS_ON_PING: bool = false;
     const HAS_ON_PONG: bool = false;
@@ -1727,7 +1704,7 @@ impl<const SSL: bool> bun_uws_sys::web_socket::WebSocketUpgradeServer<SSL> for D
 }
 
 // `ResponseLike` for the concrete `Response<SSL>` so `HmrSocket::new` can be
-// called from `on_websocket_upgrade` (Zig: `res: anytype`).
+// called from `on_websocket_upgrade`.
 impl<const SSL: bool> ResponseLike for bun_uws_sys::response::Response<SSL> {
     fn write_status(&mut self, status: &[u8]) {
         bun_uws_sys::response::Response::<SSL>::write_status(self, status)
@@ -1826,7 +1803,6 @@ fn on_js_request(dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
             return not_found(resp);
         };
         let entry_ptr: *const source_map_store::Entry = &raw const *entry;
-        // PERF(port): was ArenaAllocator scratch
         // SAFETY: `entry_ptr` points into `dev.source_maps.entries` storage,
         // which is not reallocated by `render_json`.
         let json_bytes =
@@ -1902,7 +1878,6 @@ fn on_src_request(_dev: &mut DevServer, req: &mut Request, resp: AnyResponse) {
     }
 
     // TODO: better editor detection. on chloe's dev env, this opens apple terminal + vim
-    // This is already done in Next.js. we have to port this to Zig so we can use.
     resp.write_status(b"501 Not Implemented");
     resp.end(b"TODO", false);
 }
@@ -1932,8 +1907,8 @@ fn on_memory_visualizer_corked(resp: AnyResponse) {
 }
 
 struct RequestEnsureRouteBundledCtx {
-    // Note: erased to raw pointer — the Zig code freely re-borrowed `dev`
-    // across the ctx; a `&mut DevServer` field would alias the caller's borrow.
+    // Note: erased to raw pointer — a `&mut DevServer` field would alias the
+    // caller's borrow.
     dev: *mut DevServer,
     req: ReqOrSaved,
     resp: AnyResponse,
@@ -1986,8 +1961,7 @@ impl RequestEnsureRouteBundledCtx {
             deferred_request::HandlerKind::ServerHandler => {
                 let route_bundle_index = self.route_bundle_index;
                 let resp = self.resp;
-                // Note: Zig copied `SavedRequest` by value (POD); Rust's
-                // `Strong` field is move-only. Take ownership out of `self.req`
+                // The `Strong` field is move-only. Take ownership out of `self.req`
                 // (it is consumed by `on_framework_request_with_bundle`).
                 let req = match ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted) {
                     ReqOrSaved::Req(r) => {
@@ -2012,8 +1986,7 @@ impl RequestEnsureRouteBundledCtx {
     }
 
     fn on_failure(&mut self) -> JsResult<()> {
-        // Note: Zig held two `*DevServer`-derived borrows at once
-        // (route_bundle slot + send_serialized_failures). Reborrow via raw
+        // Reborrow via raw
         // pointer so the failure slice and the `&mut DevServer` don't alias.
         let route_bundle_index = self.route_bundle_index;
         let failure = std::ptr::from_ref::<SerializedFailure>(
@@ -2170,7 +2143,6 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                 }
 
                 // Prepare a bundle with just this route.
-                // PERF(port): was stack-fallback alloc
                 let mut entry_points = EntryPointList::empty();
                 dev.append_route_entry_points_if_not_stale(&mut entry_points, route_bundle_index)?;
 
@@ -2335,7 +2307,7 @@ impl DevServer {
                                     Some(method),
                                 )? {
                                 Some(saved) => saved,
-                                // Zig: `catch return` — abort the deferral on failure.
+                                // Abort the deferral on failure.
                                 // `deferred_slot` drops here, releasing the
                                 // still-uninitialized slot without `drop_in_place`.
                                 None => return Ok(()),
@@ -2400,11 +2372,9 @@ fn check_route_failures(
     route_bundle_index: route_bundle::Index,
     resp: DevResponse,
 ) -> Result<CheckResult, bun_core::Error> {
-    // PERF(port): was stack-fallback (65536)
     let mut gts = dev.init_graph_trace_state(0)?;
     // Note: erase to a raw pointer so the deferred cleanup only fires on
-    // scope exit when no other borrow of `dev` is live (Zig `defer` had no
-    // aliasing check).
+    // scope exit when no other borrow of `dev` is live.
     let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
     scopeguard::defer! {
         // SAFETY: see Note above.
@@ -2541,9 +2511,8 @@ struct FrameworkRequestArgs {
 }
 
 impl DevServer {
-    /// Note: raw-pointer receiver. Zig freely held aliasing `*DevServer` /
-    /// `*RouteBundle` / `*Router.Type` heap pointers across this body; the
-    /// previous Rust port bound long-lived `&mut RouteBundle` / `&mut Type` from
+    /// Note: raw-pointer receiver. A previous version of this body bound
+    /// long-lived `&mut RouteBundle` / `&mut Type` from
     /// `&mut *self_ptr` and then reborrowed `&mut *self_ptr` again — overlapping
     /// `&mut` UB. Per docs/PORTING.md §Global mutable state we instead stay in
     /// raw-ptr land: hold `*mut Self` / `*mut Type` and deref per-access via
@@ -2684,8 +2653,7 @@ impl DevServer {
                 None => 'str: {
                     let bundle_index: u32 = route_bundle_index.get();
                     let generation: u32 = client_script_generation;
-                    // Zig: `"{x}{x}", .{ asBytes(&u32), asBytes(&u32) }` → fixed
-                    // 8-char native-endian byte hex per u32; `on_js_request`
+                    // Fixed 8-char native-endian byte hex per u32; `on_js_request`
                     // slices exactly 16 chars and decodes via `parse_hex_to_int`.
                     let mut hex = [0u8; 16];
                     bun_core::fmt::bytes_to_hex_lower(&bundle_index.to_ne_bytes(), &mut hex[..8]);
@@ -2750,8 +2718,7 @@ impl DevServer {
         resp: AnyResponse,
     ) -> JsResult<()> {
         // Note: erase the `&mut RouteBundle` to a raw pointer so subsequent
-        // `&self` accesses (vm/router/callback) don't trip borrowck — Zig freely
-        // aliased `dev` across this scope.
+        // `&self` accesses (vm/router/callback) don't trip borrowck.
         let route_bundle: *mut RouteBundle = self.route_bundle_ptr(route_bundle_index);
         debug_assert!(matches!(
             // SAFETY: `route_bundle` points into `self.route_bundles`, not resized in this fn.
@@ -2838,8 +2805,7 @@ impl DevServer {
         method: Method,
     ) {
         // Note: erase `self` to a raw pointer so the `route_bundle` borrow
-        // doesn't conflict with the `&mut self` calls below (Zig held these as
-        // plain heap pointers). Per docs/PORTING.md §Global mutable state: hold
+        // doesn't conflict with the `&mut self` calls below. Per docs/PORTING.md §Global mutable state: hold
         // `*mut T` and deref per-access; do not bind a long-lived `&mut`.
         let self_ptr = std::ptr::from_mut::<Self>(self);
         // SAFETY: `route_bundles` is not reallocated for the duration of this fn.
@@ -2907,8 +2873,7 @@ impl DevServer {
         route_bundle_index: route_bundle::Index,
         route_bundle: &RouteBundle,
     ) -> Result<Vec<u8>, bun_core::Error> {
-        // Note: Zig passed `*RouteBundle` and `*RouteBundle.HTML` separately
-        // (overlapping); re-derive `html` here from `route_bundle.data` so the
+        // Re-derive `html` here from `route_bundle.data` so the
         // caller never holds two `&mut` into the same allocation. `route_bundle`
         // is read-only in this fn — `&RouteBundle` suffices.
         let html = route_bundle.data.html();
@@ -2940,7 +2905,6 @@ impl DevServer {
         let _lock = self.graph_safety_lock.guard();
 
         // Prepare bitsets for tracing
-        // PERF(port): was stack-fallback (65536)
         let mut gts = self.init_graph_trace_state(0)?;
         // Run tracing
         self.client_graph.reset();
@@ -2962,7 +2926,6 @@ impl DevServer {
             + SCRIPT_UNREF_PAYLOAD.len();
 
         let mut array: Vec<u8> = Vec::with_capacity(payload_size);
-        // PERF(port): was appendSliceAssumeCapacity throughout
         array.extend_from_slice(before_head_end);
 
         // Insert all link tags before "</head>"
@@ -3007,7 +2970,6 @@ impl DevServer {
         input_file_sources: &[bun_ast::Source],
         loaders: &[Loader],
     ) -> Result<Box<[u8]>, bun_core::Error> {
-        // PERF(port): was stack-fallback (65536)
         let mut array: Vec<u8> = Vec::with_capacity(65536);
         let w = &mut array;
 
@@ -3049,7 +3011,6 @@ impl DevServer {
         w.extend_from_slice(b"], [], [], () => {}, false],\n");
 
         // Avoid-recloning if it is was moved to the heap
-        // PERF(port): Zig checked if buffer was on stack vs heap; Vec always heap
         Ok(array.into_boxed_slice())
     }
 
@@ -3234,8 +3195,7 @@ impl DeferredRequest {
         // Note: the pool stores `MaybeUninit<DeferredRequest>` (no `Drop`),
         // so the `Handler` payload must be torn down explicitly here. Swap to
         // `Aborted` (zero-payload) and let the moved-out value drop — for
-        // `ServerHandler` this releases `saved.js_request: Strong` (the GC
-        // handle Zig freed via `js_request.deinit()`).
+        // `ServerHandler` this releases `saved.js_request: Strong`.
         let handler = ::core::mem::replace(&mut self.handler, Handler::Aborted);
         match handler {
             Handler::ServerHandler(mut saved) => {
@@ -3294,7 +3254,6 @@ impl DevServer {
         // Notify inspector about bundle start
         // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
         if let Some(agent) = unsafe { self.inspector() } {
-            // PERF(port): was stack-fallback
             let mut trigger_files: Vec<BunString> = Vec::with_capacity(entry_points.set.len());
             for key in entry_points.set.keys() {
                 trigger_files.push(BunString::clone_utf8(key));
@@ -3316,7 +3275,7 @@ impl DevServer {
         // borrows it (self-ref via `CurrentBundle`, see Note on
         // `CurrentBundle.bv2`).
         let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
-        // Borrows `heap` (Zig parity), so AST nodes built during bundle setup
+        // Borrows `heap`, so AST nodes built during bundle setup
         // live exactly as long as the bundle. The arena-allocated allocator
         // never runs `Drop`; the `AstAllocState` is taken into `CurrentBundle`
         // on success and recycled by the guard below on error paths.
@@ -3337,8 +3296,7 @@ impl DevServer {
         // `current_bundle` below.
         let ast_scope = unsafe { &mut *ast_memory_store }.enter();
 
-        // Zig: `.{ .js = dev.vm.eventLoop() }` constructed an `AnyEventLoop`
-        // by value; the Rust bundler instead stores
+        // The bundler stores
         // `Option<NonNull<AnyEventLoop<'static>>>`. Park the value in `heap`
         // — bumpalo chunks are heap-allocated, so the address is stable across
         // the move of `heap` into `bv2.graph.heap` and lives exactly as long
@@ -3386,7 +3344,6 @@ impl DevServer {
         )?;
         bv2.bun_watcher = Some(::core::ptr::NonNull::from(&mut **self.bun_watcher));
         bv2.asynchronous = true;
-        // Zig: `linker.dev_server = transpiler.options.dev_server` inside init.
         let dev_handle = self.bundler_handle();
         bv2.dev_server = Some(dev_handle);
         bv2.linker.dev_server = Some(dev_handle);
@@ -3482,7 +3439,6 @@ impl DevServer {
 
     fn index_failures(&mut self) -> Result<(), bun_core::Error> {
         // After inserting failures into the IncrementalGraphs, they are traced to their routes.
-        // PERF(port): was stack-fallback (65536)
 
         if !self.incremental_result.failures_added.is_empty() {
             let mut total_len: usize =
@@ -3499,7 +3455,6 @@ impl DevServer {
 
             let mut payload: Vec<u8> = Vec::with_capacity(total_len);
             payload.push(MessageId::Errors.char());
-            // PERF(port): was assume_capacity
 
             payload.extend_from_slice(
                 &u32::try_from(self.incremental_result.failures_removed.len())
@@ -3603,11 +3558,10 @@ impl DevServer {
 
         let _lock = self.graph_safety_lock.guard();
         // Note: scopeguard closures capture `self` by ref, wedging borrowck for
-        // the rest of the fn. Erase to a raw pointer (Zig `defer` had no aliasing check).
+        // the rest of the fn. Erase to a raw pointer.
         let self_ptr: *mut Self = self;
 
         // Prepare bitsets
-        // PERF(port): was stack-fallback (65536)
         let mut gts = self.init_graph_trace_state(0)?;
 
         // Run tracing
@@ -3668,7 +3622,6 @@ impl DevServer {
                     (*self_ptr).source_maps.unref(id)
                 });
                 gts.clear_and_free();
-                // PERF(port): was ArenaAllocator scratch — `take_source_map`
                 // allocates internally with the global allocator in the port.
                 // SAFETY: see `self_ptr` SAFETY above; `client_graph` is a
                 // disjoint field from `source_maps`.
@@ -3712,7 +3665,6 @@ impl DevServer {
         let _lock = self.graph_safety_lock.guard();
 
         // Prepare bitsets
-        // PERF(port): was stack-fallback (65536)
         let mut gts = self.init_graph_trace_state(0)?;
 
         // Run tracing
@@ -3750,7 +3702,6 @@ impl DevServer {
         Ok(arr)
     }
 
-    // PERF(port): was comptime monomorphization (`comptime goal: TraceImportGoal`) — profile in Phase B
     fn trace_all_route_imports(
         &mut self,
         route_bundle: &RouteBundle,
@@ -3856,9 +3807,8 @@ pub struct HotUpdateContext<'a> {
 }
 
 /// Sentinel-encoded `Option<FileIndex>` packed into a `u32` (`u32::MAX` == none).
-/// Mirrors Zig `IncrementalGraph(side).FileIndex.Optional`. Side-erased so the
-/// `resolved_index_cache` backing slice stores it directly (Zig stored `[]u32`
-/// and bit-cast); callers re-tag with the correct `FileIndex<SIDE>` on `unwrap`.
+/// Side-erased so the `resolved_index_cache` backing slice stores it directly;
+/// callers re-tag with the correct `FileIndex<SIDE>` on `unwrap`.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct CachedFileIndex(pub u32);
@@ -3916,18 +3866,13 @@ pub(super) fn finalize_bundle(
     // (shared), letting the body keep writing through `.set()`.
     let had_sent_hmr_event = ::core::cell::Cell::new(false);
 
-    // The giant `defer` block at the start of Zig finalizeBundle is a
-    // scopeguard here. Ordering relative to `?`-returns verified against
-    // DevServer.zig:2247-2290: both Zig defers (outer cleanup, then
-    // current_bundle request drain) are registered before the first fallible
-    // operation, as are both `defer!`s below — the only statements in between
-    // are infallible (raw-pointer copies and the `expect` on an invariant Zig
-    // also asserts). Guards run LIFO (drain → outer), matching Zig, and the
-    // `graph_safety_lock` guard declared after them drops first, matching
-    // Zig's `defer unlock`.
+    // Both `defer!`s below (outer cleanup, then current_bundle request
+    // drain) are registered before the first fallible operation — the only
+    // statements in between are infallible (raw-pointer copies and the
+    // `expect` on an invariant). Guards run LIFO (drain → outer), and the
+    // `graph_safety_lock` guard declared after them drops first.
     // Note: erase `dev`/`bv2` to raw pointers inside the guard so the
-    // long-lived closure capture doesn't lock borrowck for the entire fn body
-    // (Zig `defer` had no aliasing analysis).
+    // long-lived closure capture doesn't lock borrowck for the entire fn body.
     let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
     let bv2_ptr = std::ptr::from_mut::<BundleV2>(bv2);
     // Note: copy the raw ptrs into closure-only locals so `defer!`'s by-ref
@@ -3978,7 +3923,7 @@ pub(super) fn finalize_bundle(
 
     // Note: holding `&mut CurrentBundle` for the rest of the fn locks `*dev`
     // mutably. Erase to a raw pointer and reborrow at each use site via the
-    // `current_bundle!()` macro (Zig freely re-aliased `dev.current_bundle.?`).
+    // `current_bundle!()` macro.
     let current_bundle_ptr: *mut CurrentBundle = dev
         .current_bundle
         .as_mut()
@@ -4046,7 +3991,6 @@ pub(super) fn finalize_bundle(
     let targets = bv2.graph.ast.items_target();
     let scbs = bv2.graph.server_component_boundaries.slice();
 
-    // PERF(port): was stack-fallback (65536) on bv2.arena()
     let mut scb_bitset = DynamicBitSet::init_empty(input_file_sources.len())?;
     for ((source_index, ssr_index), ref_index) in scbs
         .list
@@ -4064,8 +4008,8 @@ pub(super) fn finalize_bundle(
 
     let mut resolved_index_cache = vec![CachedFileIndex::NONE; input_file_sources.len() * 2];
 
-    // Note: ctx fields `server_seen_bit_set`/`gts` were `undefined` in Zig then
-    // assigned AFTER Pass 1 (receive_chunk grows `bundled_files`, so the trace bitsets
+    // Note: ctx fields `server_seen_bit_set`/`gts` are seeded with
+    // placeholders and assigned AFTER Pass 1 (receive_chunk grows `bundled_files`, so the trace bitsets
     // must be sized post-Pass-1). Seed with empty placeholders; real init below.
     let mut gts_storage = GraphTraceState {
         server_bits: DynamicBitSet::default(),
@@ -4165,7 +4109,7 @@ pub(super) fn finalize_bundle(
         // Note: `IntermediateOutput::code` takes `&mut self` (a field of
         // `*chunk`) plus `chunk: &Chunk` and `chunks: &[Chunk]`; borrowck still
         // rejects the overlap (`&mut chunk.intermediate_output` aliases the
-        // shared `&chunk` / `&chunks[..]`). Zig aliased freely. Split via raw
+        // shared `&chunk` / `&chunks[..]`). Split via raw
         // pointers — the callee never reborrows `chunk.intermediate_output`
         // through the `chunk`/`chunks` params (it reads metadata only).
         let code = {
@@ -4181,9 +4125,9 @@ pub(super) fn finalize_bundle(
                 // SAFETY: see above; shared reborrow of the same allocation,
                 // disjoint from the `&mut intermediate_output` receiver.
                 unsafe { &*chunk_ptr },
-                // SAFETY: `result.chunks` outlives this loop body; Zig passed
-                // the same slice while iterating it. `chunks_ptr/len` were
-                // snapshotted before `split_at_mut`; `code()` only reads.
+                // SAFETY: `result.chunks` outlives this loop body;
+                // `chunks_ptr/len` were snapshotted before `split_at_mut`,
+                // and `code()` only reads.
                 unsafe { ::core::slice::from_raw_parts(chunks_ptr, chunks_len) },
                 None,
                 false,
@@ -4199,8 +4143,7 @@ pub(super) fn finalize_bundle(
         let h = hash(key);
         // Track css files that look like tailwind files.
         // Note: hoisted before `replace_path` because that consumes
-        // `code.buffer`; same observable order as Zig (buffer is identical
-        // pre- and post-asset-registration there).
+        // `code.buffer`.
         let looks_like_tailwind = dev.has_tailwind_plugin_hack.is_some() && {
             let first_1024 = &code.buffer[..code.buffer.len().min(1024)];
             strings::index_of(first_1024, b"tailwind").is_some()
@@ -4292,9 +4235,8 @@ pub(super) fn finalize_bundle(
             route_bundle::Data::Html(h) => h,
             _ => unreachable!(),
         };
-        // Drops the previous text (Zig: `allocator.free(slice)`) and transfers
-        // ownership of the chunk's compile-result code (Zig:
-        // `html.bundled_html_text = compile_result.code`), leaving an empty
+        // Drops the previous text and transfers ownership of the chunk's
+        // compile-result code, leaving an empty
         // boxed slice behind in the chunk — nothing reads it after this.
         html.bundled_html_text = Some(std::mem::take(compile_result_code));
         html.script_injection_offset = Some(route_bundle::ByteOffset::init(compile_result_offset));
@@ -4304,7 +4246,7 @@ pub(super) fn finalize_bundle(
             .set_entry_point_id(route_bundle_index.get());
     }
 
-    // Zig: `var gts = try dev.initGraphTraceState(...); ctx.gts = &gts;` — sized AFTER
+    // Sized AFTER
     // Pass 1 so server/client bitsets cover files just inserted by `receive_chunk`.
     *ctx.gts = dev.init_graph_trace_state(if n_css > 0 {
         input_file_sources.len()
@@ -4388,10 +4330,9 @@ pub(super) fn finalize_bundle(
                 };
 
                 // Fill the source map entry
-                // PERF(port): was ArenaAllocator
                 dev.server_graph.take_source_map(&mut source_map_entry)?;
                 // Note: erase to raw ptr so `render_json` can borrow the entry
-                // while the cleanup guard is armed (Zig `defer` had no aliasing check).
+                // while the cleanup guard is armed.
                 let entry_ptr: *mut source_map_store::Entry = &raw mut source_map_entry;
                 scopeguard::defer! {
                     // SAFETY: `source_map_entry` is a stack local that outlives this guard.
@@ -4433,8 +4374,8 @@ pub(super) fn finalize_bundle(
                     // `print_error_like_object_to_console` needs `&mut`.
                     dev.vm_mut()
                         .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: Zig `@panic` aborts; Rust `panic!()` would unwind
-                    // through the `extern "C"` boundary above (`nounwind` UB).
+                    // Note: `panic!()` would unwind through the
+                    // `extern "C"` boundary above (`nounwind` UB), so abort.
                     bun_core::Output::panic(format_args!(
                         "Error thrown while evaluating server code. This is always a bug in the bundler."
                     ));
@@ -4448,8 +4389,8 @@ pub(super) fn finalize_bundle(
                     // `print_error_like_object_to_console` needs `&mut`.
                     dev.vm_mut()
                         .print_error_like_object_to_console(global.take_exception(err));
-                    // Note: Zig `@panic` aborts; Rust `panic!()` would unwind
-                    // through the `extern "C"` boundary above (`nounwind` UB).
+                    // Note: `panic!()` would unwind through the
+                    // `extern "C"` boundary above (`nounwind` UB), so abort.
                     bun_core::Output::panic(format_args!(
                         "Error thrown while evaluating server code. This is always a bug in the bundler."
                     ));
@@ -4496,7 +4437,6 @@ pub(super) fn finalize_bundle(
 
     let mut has_route_bits_set = false;
 
-    // PERF(port): was stack-fallback (65536)
     let mut hot_update_payload: Vec<u8> = Vec::with_capacity(65536);
     hot_update_payload.push(MessageId::HotUpdate.char());
 
@@ -4694,7 +4634,7 @@ pub(super) fn finalize_bundle(
             // Send the JS chunk
             if dev.client_graph.current_chunk_len > 0 {
                 let script_id = 'h: {
-                    // `bundler.ContentHasher.Hash` = `std.hash.XxHash64`.
+                    // Matches the bundler's `ContentHasher` hash (XxHash64).
                     let mut source_map_hash = bun_hash::XxHash64Streaming::new(0x4b12);
                     let keys = dev.client_graph.bundled_files.keys();
                     let values = dev.client_graph.bundled_files.values();
@@ -4763,7 +4703,7 @@ pub(super) fn finalize_bundle(
         // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
         // Note: erase the agent borrow to a raw pointer so it can be passed
         // through `send_serialized_failures` (which also borrows `dev`) and then
-        // re-used below — Zig passed the optional pointer by value.
+        // re-used below.
         let mut inspector_agent_ptr: Option<*mut BunFrontendDevServerAgent> =
             unsafe { dev.inspector() }.map(std::ptr::from_mut);
         if current_bundle!().promise.strong.has_value() {
@@ -4781,8 +4721,7 @@ pub(super) fn finalize_bundle(
             let global = dev.global();
             // Note: `bundling_failures` lives on `*dev` but
             // `send_serialized_failures` needs `&mut self`; reborrow the keys
-            // through `dev_ptr` (Zig passed `dev.bundling_failures.keys()` by
-            // value with no aliasing check). The callee never touches
+            // through `dev_ptr`. The callee never touches
             // `bundling_failures`.
             // SAFETY: `dev_ptr` is live for the entire fn body (see line 3133).
             let failures = unsafe { (*dev_ptr).bundling_failures.values() };
@@ -5018,10 +4957,7 @@ pub(super) fn finalize_bundle(
             Handler::ServerHandler(saved) => {
                 let response = saved.response;
                 let ctx = saved.ctx;
-                // Note: Zig copied `saved` by value into the call and let
-                // `defer req.deref()` → `__deinit` → `saved.deinit()` release
-                // the original (`js_request.deinit()` + `ctx.deref()`). The
-                // Rust port moves `saved` out (so `__deinit` sees `Aborted`);
+                // Note: `saved` is moved out (so `__deinit` sees `Aborted`);
                 // `js_request: StrongOptional` releases on Drop, but
                 // `ctx: AnyRequestContext` is `Copy` — explicitly balance the
                 // `ctx.ref_()` from `defer_request` here so the request
@@ -5056,7 +4992,6 @@ impl DevServer {
             || !self.next_bundle.requests.first.is_null()
             || self.next_bundle.promise.strong.has_value()
         {
-            // PERF(port): was stack-fallback (4096)
             let mut entry_points = EntryPointList::empty();
 
             let (is_reload, timer) = if let Some(event) = self.next_bundle.reload_event.take() {
@@ -5420,7 +5355,6 @@ impl DevServer {
             route_bundle::Index::init(u32::try_from(self.route_bundles.len()).expect("int cast"));
 
         self.route_bundles.reserve(1);
-        // PERF(port): was assume_capacity
         self.route_bundles.push(RouteBundle {
             data: match route {
                 route_bundle::UnresolvedIndex::Framework(route_index) => {
@@ -5442,10 +5376,8 @@ impl DevServer {
                             .insert_stale_extra(&html_ref.bundle.path, false, true)?;
                     let file = &mut self.client_graph.bundled_files.values_mut()
                         [incremental_graph_index.get() as usize];
-                    // Note: Zig packs/unpacks; the un-gated `incremental_graph::File`
-                    // is unpacked already.
                     file.html_route_bundle_index = Some(bundle_index);
-                    // Zig `.initRef(html)` — bump intrusive refcount; matched by
+                    // Bump the intrusive refcount; matched by
                     // `RouteBundle::deinit`'s deref of `html_bundle`.
                     // SAFETY: `html` is a live IntrusiveRc-managed allocation.
                     unsafe { bun_ptr::RefCount::<HTMLBundleRoute>::ref_(html) };
@@ -5495,7 +5427,6 @@ impl DevServer {
         let mut all_failures: Vec<u8> = Vec::with_capacity(all_failures_len);
         for fail in failures {
             all_failures.extend_from_slice(&fail.data);
-            // PERF(port): was assume_capacity
         }
 
         let failures_start_buf_pos = buf.len();
@@ -5512,8 +5443,7 @@ impl DevServer {
         if let Some(agent) = inspector_agent {
             debug_assert!(agent.is_enabled());
             let failures_encoded = &buf[failures_start_buf_pos..];
-            // base64 output is pure ASCII so a UTF-8 borrow is byte-identical to
-            // Zig's `BunString.initLatin1OrASCIIView`.
+            // base64 output is pure ASCII so a UTF-8 borrow is safe.
             let mut s = BunString::borrow_utf8(failures_encoded);
             agent.notify_bundle_failed(self.inspector_server_id, &mut s);
         }
@@ -5772,7 +5702,7 @@ impl DevServer {
         #[cfg(feature = "bake_debugging_features")]
         {
             // Note: erase `self` to a raw ptr so the `defer!` doesn't pin a
-            // unique borrow for the rest of the fn (Zig `defer` had no aliasing).
+            // unique borrow for the rest of the fn.
             let self_ptr: *mut Self = self;
             // SAFETY: `self_ptr` points to `*self`, live for the fn body.
             scopeguard::defer! { unsafe { (*self_ptr).emit_memory_visualizer_message_if_needed() } };
@@ -5780,7 +5710,6 @@ impl DevServer {
                 return;
             }
 
-            // PERF(port): was stack-fallback (65536)
             let mut payload: Vec<u8> = Vec::with_capacity(65536);
 
             if self.write_visualizer_message(&mut payload).is_err() {
@@ -5825,7 +5754,6 @@ impl DevServer {
         debug_assert!(cfg!(feature = "bake_debugging_features"));
         debug_assert!(self.emit_memory_visualizer_events > 0);
 
-        // PERF(port): was stack-fallback (65536)
         let mut payload: Vec<u8> = Vec::with_capacity(65536);
         payload.push(MessageId::MemoryVisualizer.char());
         if self.write_memory_visualizer_message(&mut payload).is_err() {
@@ -5840,9 +5768,8 @@ impl DevServer {
     ) -> Result<(), bun_core::Error> {
         let cost = self.memory_cost_detailed();
         let system_total = crate::node::os::totalmem();
-        // Wire format: 10 contiguous native-endian u32s — the Zig side declared
-        // a packed `Fields` struct, but a `[u32; 10]` has the identical layout
-        // (no padding) and is `bytemuck::Pod`, so the byte view is safe.
+        // Wire format: 10 contiguous native-endian u32s. `[u32; 10]` has no
+        // padding and is `bytemuck::Pod`, so the byte view is safe.
         let fields: [u32; 10] = [
             /* incremental_graph_client */ cost.incremental_graph_client as u32,
             /* incremental_graph_server */ cost.incremental_graph_server as u32,
@@ -5850,8 +5777,7 @@ impl DevServer {
             /* source_maps */ cost.source_maps as u32,
             /* assets */ cost.assets as u32,
             /* other */ cost.other as u32,
-            // Note: Zig populated this from a debug allocation-scope
-            // tracker; Rust ownership has no equivalent runtime counter.
+            // No runtime allocation-scope tracker exists; report 0.
             /* devserver_tracked */
             0,
             /* process_used */ sys::self_process_memory_usage().unwrap_or(0) as u32,
@@ -5888,7 +5814,6 @@ impl DevServer {
 
     pub fn write_visualizer_message(&self, payload: &mut Vec<u8>) -> Result<(), bun_core::Error> {
         payload.push(MessageId::Visualizer.char());
-        // PERF(port): was assume_capacity
 
         macro_rules! emit_files {
             ($side:expr, $g:expr) => {{
@@ -5940,9 +5865,8 @@ impl DevServer {
         emit_files!(bake::Side::Client, &self.client_graph);
         emit_files!(bake::Side::Server, &self.server_graph);
 
-        // Note: Zig used `inline for` over a `[2]bake.Side` tuple — written
-        // out as a small macro to avoid duplicating the per-side body while
-        // still monomorphizing on the const-generic graph type.
+        // A small macro avoids duplicating the per-side body while still
+        // monomorphizing on the const-generic graph type.
         macro_rules! emit_edges {
             ($g:expr) => {{
                 let g = $g;
@@ -6068,7 +5992,6 @@ mod c {
     }
 }
 
-// PERF(port): was comptime monomorphization (`comptime n: comptime_int, bits: [n]*DynamicBitSetUnmanaged`) — profile in Phase B
 fn mark_all_route_children(
     router: &FrameworkRouter,
     bits: &mut [&mut DynamicBitSet],
@@ -6112,8 +6035,7 @@ impl DevServer {
         if let Some(debugger) = self.vm().debugger.as_ref() {
             bun_core::hint::cold();
             // SAFETY: `frontend_dev_server_agent` is `UnsafeCell`-wrapped for
-            // interior mutability (Zig spec returns `*Agent` from `*const
-            // DevServer`). JS-thread only; caller upholds the no-alias
+            // interior mutability. JS-thread only; caller upholds the no-alias
             // contract documented above.
             let agent = unsafe { &mut *debugger.frontend_dev_server_agent.get() };
             if agent.is_enabled() {
@@ -6156,8 +6078,7 @@ impl DevServer {
         // into `self.watcher_atomics.events`; exclusive on the watcher thread.
         let ev = unsafe { &mut *ev_ptr };
         // Note: erase `self` to a raw ptr in the deferred closures so the
-        // loop body can keep using `self.bun_watcher` (Zig `defer` had no
-        // aliasing check).
+        // loop body can keep using `self.bun_watcher`.
         let self_ptr: *mut Self = self;
         scopeguard::defer! {
             // SAFETY: `self_ptr` is live for the entire fn body; guard runs at scope exit.
@@ -6205,10 +6126,8 @@ impl DevServer {
                     ev.append_file(file_path);
                 }
                 bun_watcher::Kind::Directory => {
-                    // Note: Zig's `Environment.isLinux` is `os.tag == .linux`,
-                    // which is *true* on Android (Zig encodes Android via the ABI
-                    // tag, not the OS tag). Rust's `target_os = "linux"` is false
-                    // on Android, so include `target_os = "android"` explicitly to
+                    // Note: `target_os = "linux"` is false on Android, so
+                    // include `target_os = "android"` explicitly to
                     // keep forwarding inotify sub-path names there.
                     #[cfg(any(target_os = "linux", target_os = "android"))]
                     {
@@ -6468,8 +6387,7 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
         }
     };
 
-    // Zig did this split at comptime (`comptime brk: { @setEvalBranchQuota;
-    // @embedFile; lastIndexOf }`); const-evaluate the lastIndexOf here so a
+    // Const-evaluate the lastIndexOf here so a
     // missing `<script>` tag fails the build instead of panicking at
     // crash-dump time.
     const VISUALIZER: &[u8] = include_bytes!("incremental_visualizer.html");
@@ -6505,7 +6423,6 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
     file.write_all(start)?;
     file.write_all(b"\nlet inlinedData = Uint8Array.from(atob(\"")?;
 
-    // PERF(port): was stack-fallback (4096)
     let mut payload: Vec<u8> = Vec::with_capacity(4096);
     dev.write_visualizer_message(&mut payload)?;
 
@@ -6606,7 +6523,6 @@ impl EntryPointList {
 
 /// This structure does not increment the reference count of its contents, as
 /// the lifetime of them are all tied to the underling Bun.serve instance.
-/// Zig stores `*HTMLBundle.HTMLBundleRoute` (BACKREF — DevServer.zig:4364);
 /// `<'a>` retained only for the owning `DevServer<'a>`'s `Transpiler` borrows.
 #[derive(Default)]
 pub struct HTMLRouter {
@@ -6784,7 +6700,7 @@ impl UnrefSourceMapRequest {
 
 #[derive(Default)]
 pub struct TestingBatch {
-    /// Keys are borrowed. See doc comment in Zig source.
+    /// Keys are borrowed.
     pub entry_points: EntryPointList,
 }
 
@@ -6818,8 +6734,8 @@ pub(crate) fn get_deinit_count_for_testing() -> usize {
 }
 
 struct PromiseEnsureRouteBundledCtx<'a> {
-    // Note: raw ptr — the Zig code freely re-borrowed `dev` across the ctx
-    // while also passing `&mut dev` into `ensure_route_is_bundled`.
+    // Note: raw ptr — `dev` is re-borrowed across the ctx while also passed
+    // as `&mut` into `ensure_route_is_bundled`.
     dev: *mut DevServer,
     global: &'a JSGlobalObject,
     promise: Option<jsc::JSPromiseStrong>,
@@ -6858,9 +6774,8 @@ impl<'a> PromiseEnsureRouteBundledCtx<'a> {
             self.p = Some(std::ptr::from_mut(strong.get()));
             self.promise = Some(strong);
         }
-        // Note: Zig returned the `Strong` by bitwise copy (shared
-        // HandleSlot). Rust `Strong` owns its slot, so allocate a second
-        // handle to the same JSPromise instead — both `self.promise` and the
+        // Note: `Strong` owns its slot, so allocate a second
+        // handle to the same JSPromise — both `self.promise` and the
         // returned value root the same cell.
         let value = self.promise.as_ref().unwrap().value();
         jsc::JSPromiseStrong::from_value(value, self.global)
@@ -7064,8 +6979,8 @@ fn bundle_new_route_js_function_impl(
     };
 
     let rbi = ctx.route_bundle_index;
-    // SAFETY: `ctx.dev` aliases the same DevServer; Zig passed both freely.
-    // Reborrow via raw ptr to satisfy borrowck while ctx is also &mut-borrowed.
+    // SAFETY: `ctx.dev` aliases the same DevServer. Reborrow via raw ptr to
+    // satisfy borrowck while ctx is also &mut-borrowed.
     ensure_route_is_bundled(unsafe { &mut *dev_ptr }, rbi, &mut ctx)?;
 
     let array = JSValue::create_empty_array(global, 2)?;
@@ -7181,8 +7096,7 @@ fn new_route_params_for_bundle_promise(
     url: &[u8],
 ) -> JsResult<JSValue> {
     // Note: erase `dev` so the `route_bundle` / `framework_bundle`
-    // borrows don't conflict with `dev.router` / `dev.compute_arguments_...`
-    // (Zig held these as plain heap pointers).
+    // borrows don't conflict with `dev.router` / `dev.compute_arguments_...`.
     let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
     // SAFETY: `dev_ptr` accesses below touch disjoint fields of `*dev`.
     let route_bundle = unsafe { &mut *dev_ptr }.route_bundle_ptr(route_bundle_index);
@@ -7265,5 +7179,3 @@ use crate::bake::dev_server::serialized_failure;
 use crate::bake::dev_server::source_map_store;
 type DebuggerId = jsc::debugger::DebuggerId;
 type BunFrontendDevServerAgent = jsc::debugger::BunFrontendDevServerAgent;
-
-// ported from: src/bake/DevServer.zig

@@ -24,7 +24,6 @@ pub(crate) trait FileJsc {
 impl FileJsc for File {
     fn file_blob(&mut self, global: &JSGlobalObject) -> &mut Blob {
         if self.cached_blob.is_none() {
-            // Spec: `Store.init(@constCast(this.contents), bun.default_allocator)`.
             // `contents` is a `'static` slice into the embedded executable
             // section — borrow it directly (no copy) and hand it to a `Bytes`
             // store with the default allocator. The leaked extra `ref_()` below
@@ -32,7 +31,7 @@ impl FileJsc for File {
             // the (otherwise UB) free of a static slice is unreachable.
             let contents = self.contents.as_bytes();
             // SAFETY: `contents` is `'static` and never freed (see above);
-            // `@constCast` mirrors Zig — Blob consumers only read via
+            // the const-cast is sound because Blob consumers only read via
             // `shared_view()`.
             let bytes = unsafe {
                 Bytes::from_raw_parts(
@@ -54,8 +53,8 @@ impl FileJsc for File {
             store.ref_();
 
             // Hold the raw pointer so we can keep mutating the store after
-            // `init_with_store` consumes the `StoreRef` (Zig freely aliases the
-            // `*Store` across both). The store outlives this fn (leaked above).
+            // `init_with_store` consumes the `StoreRef`. The store outlives
+            // this fn (leaked above).
             let store_ptr = store.as_ptr();
 
             let b = Blob::init_with_store(store, global);
@@ -92,8 +91,7 @@ impl FileJsc for File {
                 b.name.set(bstring::String::clone_utf8(self.name));
             }
 
-            // Zig: `Blob{...}.new()` — heap-promote and stash the raw pointer.
-            // The standalone graph (and thus this Blob) lives for the process.
+            // Heap-promote and stash the raw pointer. The standalone graph (and thus this Blob) lives for the process.
             // `cached_blob` is typed against the lower crate's opaque `Blob`
             // newtype (it cannot name `webcore::Blob` without a dep cycle), so
             // erase via `.cast()` here and back below.
@@ -110,5 +108,3 @@ impl FileJsc for File {
         unsafe { self.cached_blob.unwrap().cast::<Blob>().as_mut() }
     }
 }
-
-// ported from: src/runtime/api/standalone_graph_jsc.zig

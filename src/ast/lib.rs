@@ -2,20 +2,16 @@
 // `#[thread_local]` for the per-node-allocation hot-path TLS
 // (`DATA_STORE_OVERRIDE`, `Expr/Stmt::data::Store::{INSTANCE,
 // MEMORY_ALLOCATOR, DISABLE_RESET}`, `store_ast_alloc_heap::ARENA`): bare
-// `__thread` slot like Zig's `threadlocal var`, vs the `thread_local!`
+// `__thread` slot, vs the `thread_local!`
 // macro's `LocalKey` wrapper. All are `Cell<*mut _>` / `Cell<bool>` (no
 // destructor, const init).
 #![feature(thread_local)]
-//! Port of `src/logger/logger.zig`.
-//!
-//! TODO(port): OWNERSHIP — almost every `[]const u8` field in this module has
-//! mixed/ambiguous ownership in the Zig original (see the comment on
-//! `Location::deinit`: "don't really know what's safe to deinit here!"). Strings
-//! are sometimes literals, sometimes `allocator.dupe` results, sometimes slices
-//! into `Source.contents` or a `StringBuilder` arena. They are kept as
-//! `&'static [u8]` to mirror the Zig `[]const u8` shape without lifetime params;
-//! a real ownership story (likely `bun_core::String` or a `'source` lifetime
-//! threaded through `Location`/`Data`/`Msg`) is still needed.
+//! TODO: OWNERSHIP — almost every byte-slice field in this module has
+//! mixed/ambiguous ownership. Strings are sometimes literals, sometimes heap
+//! copies, sometimes slices into `Source.contents` or a `StringBuilder` arena.
+//! They are kept as `&'static [u8]` to avoid lifetime params; a real ownership
+//! story (likely `bun_core::String` or a `'source` lifetime threaded through
+//! `Location`/`Data`/`Msg`) is still needed.
 
 use core::fmt;
 use std::borrow::Cow;
@@ -24,7 +20,7 @@ use std::borrow::Cow;
 // infallible (`Vec::push` / `io::Write` on `Vec<u8>` cannot fail in Rust).
 use bun_core::Output;
 
-// TODO(port): swap to `bun_core::StringBuilder` once `clone_with_builder` is
+// TODO: swap to `bun_core::StringBuilder` once `clone_with_builder` is
 // reshaped to use `append_raw` (canonical's `append` borrows `&mut self`, which
 // breaks the `'static` slice pass-through this stub fakes).
 #[derive(Default)]
@@ -39,8 +35,7 @@ impl StringBuilder {
     pub fn allocate(&mut self) {}
 }
 
-// Variants mirror src/options_types/import_record.zig:1-25 exactly
-// (discriminants are wire-stable for serialization).
+// Discriminants are wire-stable for serialization.
 #[repr(u8)]
 #[derive(
     Clone, Copy, PartialEq, Eq, Hash, Debug, Default, enum_map::Enum, strum::IntoStaticStr,
@@ -83,9 +78,8 @@ pub enum ImportKind {
     Internal = 11,
 }
 
-// E0015: EnumMap indexing isn't const; Zig's `comptime brk: { ... }` initializer
-// is folded into match arms inside label()/error_label() below — same lookup
-// table, zero runtime init (PORTING.md §Concurrency: prefer no-lock over OnceLock
+// E0015: EnumMap indexing isn't const; the lookup table is folded into match
+// arms inside label()/error_label() below — zero runtime init (PORTING.md §Concurrency: prefer no-lock over OnceLock
 // when the data is pure const).
 //
 // If these are changed, make sure to update
@@ -147,10 +141,9 @@ impl ImportKind {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Ref / Symbol
-// Zig: src/js_parser/ast/{base,Symbol,G}.zig + js_parser.zig (ImportItemStatus).
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Tag bits of `Ref` (Zig: anonymous `enum(u2)` field).
+/// Tag bits of `Ref`.
 #[repr(u8)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::IntoStaticStr)]
 #[strum(serialize_all = "snake_case")]
@@ -163,14 +156,11 @@ pub enum RefTag {
 
 /// Packed-u64 symbol reference: `{inner_index: u28, user: u3, tag: u2, source_index: u31}`.
 ///
-/// Layout matches `src/js_parser/ast/base.zig:Ref` LSB-first packing for the
-/// `tag`/`source_index` fields so `as_u64()` hashes identically to the Zig
-/// original for all normally-constructed refs (user bits = 0). The Rust port
-/// steals 3 bits from `inner_index` (Zig u31 → u28, max 268M symbols/file —
+/// LSB-first packing for the `tag`/`source_index` fields, with 3 bits stolen
+/// from `inner_index` (31 → 28 bits, max 268M symbols/file —
 /// three.js peaks at ~50K) so that `E::Identifier` / `E::ImportIdentifier` /
 /// `E::CommonJSExportIdentifier` can pack their boolean side-flags inline,
-/// shrinking `expr::Data` from 24→16 bytes and `Expr` from 32→24. This is the
-/// structural noalias-shrink advantage Rust has over the Zig layout: the
+/// shrinking `expr::Data` from 24→16 bytes and `Expr` from 32→24. The
 /// rarely-set flags (`with`-stmt guard, known-pure-global hints) ride in
 /// otherwise-dead bits instead of forcing 8 bytes of struct padding on every
 /// identifier node.
@@ -185,12 +175,12 @@ pub enum RefTag {
 #[derive(Clone, Copy)]
 pub struct Ref(u64);
 
-/// Zig `Ref.Int = u31`; we mask to 31 bits for `source_index`, 28 for `inner_index`.
+/// We mask to 31 bits for `source_index`, 28 for `inner_index`.
 pub type RefInt = u32;
 
 impl Ref {
     const INNER_MASK: u64 = (1u64 << 31) - 1;
-    /// `inner_index` width — Zig u31, narrowed to u28 to free 3 user bits.
+    /// `inner_index` width — 28 bits, leaving 3 user bits.
     /// `debug_assert!` in `pack()` catches any source large enough to overflow
     /// (would require >268M symbols or a >268MB source-contents-slice offset).
     const INNER_BITS: u64 = (1u64 << 28) - 1;
@@ -306,7 +296,6 @@ impl Ref {
     }
     #[inline]
     pub fn hash64(self) -> u64 {
-        // Zig: `bun.hash(&@as([8]u8, @bitCast(key.asU64())))` — wyhash of the 8 bytes.
         bun_wyhash::hash(&self.as_u64().to_ne_bytes())
     }
 
@@ -346,9 +335,8 @@ impl Ref {
     }
     /// Replace the identity bits with those of `self` while keeping `src`'s
     /// user-bit lane. Used by `handle_identifier`'s `id_clone.ref_ = result.ref`
-    /// port — in Zig the flags are separate struct fields and survive the ref
-    /// assignment; here they ride in `ref_` and would be silently zeroed by a
-    /// whole-word write.
+    /// assignment — the flags ride in `ref_` and would otherwise be silently
+    /// zeroed by a whole-word write.
     #[inline]
     pub const fn with_user_bits_from(self, src: Ref) -> Ref {
         Ref((self.0 & !Self::USER_BITS_MASK) | (src.0 & Self::USER_BITS_MASK))
@@ -415,7 +403,7 @@ impl fmt::Debug for Ref {
 // Local mirror of `bun_resolver::fs`'s path+contents pair (canonical home would
 // be `bun_paths`); defined here so init_file / init_recycled_file resolve.
 // `pub` so `bun_bundler::Transpiler::parse_maybe` can construct it for
-// `Source::init_recycled_file` (transpiler.zig:852).
+// `Source::init_recycled_file`.
 /// A [`Source`]'s path paired with its raw bytes (used by virtual-module
 /// injection: `BundleV2`'s `additional_files`, `Bun.build` inputs).
 #[derive(Clone, Copy)]
@@ -424,19 +412,18 @@ pub struct PathContentsPair {
     pub contents: &'static [u8],
 }
 
-// In Zig: `const string = []const u8;`
 type Str = &'static [u8];
-// `Str` is a lifetime-erased stand-in for the Zig `[]const u8` struct-field
-// pattern; see the module-level OWNERSHIP note for the real ownership story.
+// `Str` is a lifetime-erased byte-slice alias; see the module-level OWNERSHIP
+// note for the real ownership story.
 
 // ───────────────────────────────────────────────────────────────────────────
-// api — hand-ported slice of `bun.schema.api` (src/options_types/schema.zig
-// :2295–2509) consumed by `Kind/Location/Data/Msg/Log::to_api`. The full
+// api — hand-written slice of `bun.schema.api` consumed by
+// `Kind/Location/Data/Msg/Log::to_api`. The full
 // peechy → .rs codegen (`bun_api`) will supersede this; field shapes are kept
 // faithful so the generated diff stays reviewable. Lives here (not `bun_api`)
 // ───────────────────────────────────────────────────────────────────────────
 pub mod api {
-    /// schema.zig:2295 `MessageLevel` (u32 enum, 1-based; `_none` = 0).
+    /// `MessageLevel` — u32 enum, 1-based; `None` = 0.
     #[repr(u32)]
     #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
     pub enum MessageLevel {
@@ -449,7 +436,6 @@ pub mod api {
         Debug = 5,
     }
 
-    /// schema.zig:2319 `Location`.
     #[derive(Clone, Default, Debug)]
     pub struct Location {
         pub file: Vec<u8>,
@@ -460,21 +446,18 @@ pub mod api {
         pub offset: u32,
     }
 
-    /// schema.zig:2360 `MessageData`.
     #[derive(Clone, Default, Debug)]
     pub struct MessageData {
         pub text: Option<Vec<u8>>,
         pub location: Option<Location>,
     }
 
-    /// schema.zig:2403 `MessageMeta`.
     #[derive(Clone, Default, Debug)]
     pub struct MessageMeta {
         pub resolve: Option<Vec<u8>>,
         pub build: Option<bool>,
     }
 
-    /// schema.zig:2446 `Message`.
     #[derive(Clone, Default, Debug)]
     pub struct Message {
         pub level: MessageLevel,
@@ -483,7 +466,6 @@ pub mod api {
         pub on: MessageMeta,
     }
 
-    /// schema.zig:2477 `Log`.
     #[derive(Clone, Default, Debug)]
     pub struct Log {
         pub warnings: u32,
@@ -494,7 +476,7 @@ pub mod api {
 
 /// `[]const u8` parameter shim — accepts `&str` / `&[u8]` (any lifetime)
 /// and erases to the crate-wide `Str` (`&'static [u8]`) lie so callers in either
-/// string flavour compile against the same Zig-shaped signatures.
+/// string flavour compile against the same signatures.
 /// Removable together with `Str` once a `'source` lifetime is threaded through
 /// (see the module-level OWNERSHIP note).
 pub trait IntoStr {
@@ -658,8 +640,6 @@ impl Kind {
 // Loc
 // ───────────────────────────────────────────────────────────────────────────
 
-// Do not mark these as packed
-// https://github.com/ziglang/zig/issues/15715
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Hash)]
 pub struct Loc {
     pub start: i32,
@@ -679,7 +659,6 @@ impl Loc {
         if self.start == -1 { None } else { Some(self) }
     }
 
-    // Zig: `pub const toUsize = i;`
     #[inline]
     pub fn to_usize(self) -> usize {
         self.i()
@@ -713,8 +692,8 @@ pub struct Location {
     // This eliminates padding between differently-sized fields.
     //
     // `file` / `line_text` are `Cow` (not `Str`) because
-    // `Location::clone()` must deep-dupe them (Zig: `allocator.dupe(u8, ..)`,
-    // logger.zig:113) so a `BuildMessage`/`ResolveMessage` that outlives the
+    // `Location::clone()` must deep-dupe them so a
+    // `BuildMessage`/`ResolveMessage` that outlives the
     // `Source.contents` it borrowed from doesn't read poisoned memory. The
     // borrowed arm covers the common case where the slice points into
     // arena-owned source text.
@@ -743,8 +722,7 @@ pub struct Location {
 // into `Source.contents` (see `init_or_null`, `css_parser.rs`, `error.rs`,
 // `JSBundler.rs`). The derived `Cow::clone` would re-borrow that pointer, so a
 // `BuildMessage` cloned via `Option<Location>::clone()` / `Vec<Data>::clone()`
-// could outlive the source buffer and read poisoned memory. Mirror the Zig
-// `Location.clone` (`allocator.dupe`, logger.zig:113) for the trait impl too —
+// could outlive the source buffer and read poisoned memory. Instead,
 // every `Clone` of a `Location` deep-dupes its borrowed bytes.
 impl Clone for Location {
     fn clone(&self) -> Self {
@@ -794,16 +772,14 @@ impl Location {
     }
 
     pub fn clone(&self) -> Location {
-        // Zig (logger.zig:113): `allocator.dupe(u8, this.file)` /
-        // `allocator.dupe(u8, this.line_text.?)` — the duped bytes outlive the
-        // original `Source.contents`. The trait `Clone` impl above does the
-        // deep-dupe; this inherent shim forwards to it.
+        // The trait `Clone` impl above does the deep-dupe (so the duped bytes
+        // outlive the original `Source.contents`); this inherent shim forwards
+        // to it.
         <Self as Clone>::clone(self)
     }
 
     pub fn clone_with_builder(&self, _string_builder: &mut StringBuilder) -> Location {
-        // Zig's `string_builder.append` copies into a buffer owned
-        // by the destination `Log`'s allocator (StringBuilder.zig). The local
+        // The local
         // `StringBuilder` stub above is a no-op that returns its input, so a
         // `Cow::Borrowed(append(s))` would alias `self`'s storage and dangle
         // after `self.msgs.clear()` in `append_to_with_recycled`. Deep-copy
@@ -831,9 +807,7 @@ impl Location {
         }
     }
 
-    // don't really know what's safe to deinit here!
-    // Zig: `pub fn deinit(_: *Location, _: std.mem.Allocator) void {}`
-    // → no Drop impl needed.
+    // No Drop impl needed.
 
     pub fn init(
         file: Str,
@@ -906,14 +880,12 @@ impl Location {
                 } else {
                     1
                 },
-                // Zig borrows `source.contents` here and relies on the
-                // arena outliving the `Log` (transpiler.zig:853 — `entry.contents`
-                // is arena-allocated and never explicitly freed on `return null`).
-                // Rust's `source_backing` in `Transpiler::parse_*` is RAII and
+                // `source_backing` in `Transpiler::parse_*` is RAII and
                 // drops on the parse-error path *before* `process_fetch_log`
                 // clones the `Msg` into a `BuildMessage`, so own the bytes here
-                // instead. `full_line` is bounded (≤ ~120 bytes) and only
-                // materialized on diagnostic paths.
+                // instead of borrowing `source.contents`. `full_line` is
+                // bounded (≤ ~120 bytes) and only materialized on diagnostic
+                // paths.
                 line_text: Some(Cow::Owned(bun_core::trim_left(full_line, b"\n\r").to_vec())),
                 offset: usize::try_from(r.loc.start.max(0)).expect("int cast"),
             });
@@ -951,10 +923,8 @@ impl Data {
         cost
     }
 
-    // Zig `deinit` frees `text` and calls `location.deinit()` (no-op).
-    // `text` is `Cow<'static, [u8]>`: `Owned` frees on `Drop` (matches Zig
-    // `allocator.free(d.text)`), `Borrowed` is a `&'static` literal — nothing to
-    // free. No explicit `Drop` body needed.
+    // `text` is `Cow<'static, [u8]>`: `Owned` frees on `Drop`, `Borrowed` is a
+    // `&'static` literal — nothing to free. No explicit `Drop` body needed.
 
     pub fn clone_line_text(&self, should: bool) -> Data {
         if !should || self.location.is_none() || self.location.as_ref().unwrap().line_text.is_none()
@@ -962,7 +932,6 @@ impl Data {
             return self.clone();
         }
 
-        // Zig (logger.zig:217): `allocator.dupe(u8, this.location.?.line_text.?)`.
         let new_line_text = self
             .location
             .as_ref()
@@ -982,7 +951,6 @@ impl Data {
     pub fn clone(&self) -> Data {
         Data {
             text: if !self.text.is_empty() {
-                // Zig (logger.zig:231): `try allocator.dupe(u8, this.text)`.
                 // `Cow::clone` only deep-copies the `Owned` arm; force the dupe
                 // so a `Borrowed` `text` (rare today, but the type permits it)
                 // can't alias recycled storage in the cloned `Msg`.
@@ -997,8 +965,7 @@ impl Data {
     pub fn clone_with_builder(&self, builder: &mut StringBuilder) -> Data {
         Data {
             text: if !self.text.is_empty() {
-                // Zig: `builder.append(this.text)` copies into the destination
-                // `Log`'s arena (StringBuilder.zig). The local `StringBuilder`
+                // The local `StringBuilder`
                 // is a no-op stub (returns its input), so a bare `Cow::clone`
                 // would leave a `Borrowed` arm aliasing `self`'s storage and
                 // dangle after `self.msgs.clear()` in
@@ -1040,9 +1007,8 @@ impl Data {
         }
 
         // Local wrapper around `bun_core::pretty_fmt!` so the const-generic
-        // `ENABLE_ANSI_COLORS` selects the right comptime template at each call
+        // `ENABLE_ANSI_COLORS` selects the right compile-time template at each call
         // site (the macro pattern-matches a literal `true`/`false` token).
-        // PERF(port): was comptime bool dispatch — profile.
         macro_rules! pretty_write {
             ($fmt:literal $(, $arg:expr)* $(,)?) => {
                 if ENABLE_ANSI_COLORS {
@@ -1079,7 +1045,6 @@ impl Data {
                     if location.line > -1 {
                         let bold = matches!(kind, Kind::Err | Kind::Warn);
                         // bold the line number for error but dim for the attached note
-                        // PERF(port): was comptime bool dispatch on `bold` — profile
                         if bold {
                             pretty_write!("<b>{} | <r>", location.line)?;
                         } else {
@@ -1151,11 +1116,6 @@ impl Data {
                     pretty_write!("<d>:<r><yellow>{}<r>", location.line)?;
                 }
 
-                // Zig appends a debug-only ` byte={offset}` suffix here, gated on
-                // comptime reflection over the writer's type name (`@typeName`
-                // contains "fs.file" — i.e. a real file writer, not Bun.inspect).
-                // Rust has no writer-type-name reflection and no caller plumbs an
-                // equivalent flag, so the suffix is intentionally not emitted.
             }
         }
 
@@ -1163,7 +1123,6 @@ impl Data {
     }
 }
 
-// Helper: Zig `to.splatByteAll(b, n)`
 fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
     for _ in 0..n {
         to.write_char(b as char)?;
@@ -1175,7 +1134,6 @@ fn write_n_bytes(to: &mut impl fmt::Write, b: u8, n: usize) -> fmt::Result {
 // BabyString
 // ───────────────────────────────────────────────────────────────────────────
 
-// Zig: `packed struct(u32) { offset: u16, len: u16 }`
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct BabyString(u32);
@@ -1183,7 +1141,7 @@ pub struct BabyString(u32);
 impl BabyString {
     #[inline]
     pub const fn new(offset: u16, len: u16) -> Self {
-        // Zig packed-struct field order is LSB-first: offset = low 16, len = high 16.
+        // LSB-first packing: offset = low 16 bits, len = high 16.
         BabyString((offset as u32) | ((len as u32) << 16))
     }
 
@@ -1198,11 +1156,9 @@ impl BabyString {
     }
 
     pub fn r#in(parent: &[u8], text: &[u8]) -> BabyString {
-        // Zig's BabyString.in uses std.mem.indexOf, which returns 0 for an empty
-        // needle; bun_core::strings::index_of (a port of bun.strings.indexOf)
-        // deliberately returns None for an empty needle. An empty `text` reaches
-        // this path via resolve errors for `import ""`, so short-circuit it here
-        // to preserve std.mem.indexOf semantics.
+        // bun_core::strings::index_of deliberately returns None for an empty
+        // needle, but an empty `text` reaches this path via resolve errors for
+        // `import ""`, so short-circuit it here to offset 0.
         if text.is_empty() {
             return BabyString::new(0, 0);
         }
@@ -1250,8 +1206,7 @@ impl Msg {
         cost
     }
 
-    // Zig: `pub const fromJS/toJS = @import("../logger_jsc/...")`
-    // → deleted; `to_js`/`from_js` live as extension-trait methods in `bun_logger_jsc`.
+    // `to_js`/`from_js` live as extension-trait methods in `bun_logger_jsc`.
 
     pub fn count(&self, builder: &mut StringBuilder) {
         self.data.count(builder);
@@ -1284,9 +1239,6 @@ impl Msg {
                     for (i, note) in self.notes.iter().enumerate() {
                         notes[i] = note.clone_with_builder(builder);
                     }
-                    // Zig returns a sub-slice of the caller-provided `notes`
-                    // buffer; with `Box<[Data]>` ownership we copy (perf-only
-                    // deviation).
                     break 'brk notes[0..self.notes.len()].to_vec().into_boxed_slice();
                 }
             } else {
@@ -1309,10 +1261,9 @@ impl Msg {
                 resolve: if let Metadata::Resolve(r) = &self.metadata {
                     Some(r.specifier.slice(&self.data.text).to_vec())
                 } else {
-                    // Zig (logger.zig:457): `else ""` — coerces to a NON-NULL
-                    // `?[]const u8`, so peechy `MessageMeta.encode` still emits
-                    // field-ID 1 with an empty string. `None` would skip the
-                    // field entirely on the wire.
+                    // NON-NULL empty string so peechy `MessageMeta.encode`
+                    // still emits field-ID 1; `None` would skip the field
+                    // entirely on the wire.
                     Some(Vec::new())
                 },
                 build: Some(matches!(self.metadata, Metadata::Build)),
@@ -1321,8 +1272,6 @@ impl Msg {
     }
 
     pub fn to_api_from_list(list: &[Msg]) -> Box<[api::Message]> {
-        // Zig took `comptime ListType: type, list: ListType` and read
-        // `list.items`; collapsed to `&[Msg]`.
         let mut out_list = Vec::with_capacity(list.len());
         for item in list {
             out_list.push(item.to_api());
@@ -1330,8 +1279,7 @@ impl Msg {
         out_list.into_boxed_slice()
     }
 
-    // Zig `deinit` frees `data`, each `note`, and `notes` slice — all handled by Drop
-    // once ownership is real. No explicit Drop body needed beyond field drops.
+    // No explicit Drop body needed beyond field drops.
 
     pub fn write_format<const ENABLE_ANSI_COLORS: bool>(
         &self,
@@ -1359,7 +1307,6 @@ impl Msg {
     }
 
     pub fn format_writer(&self, writer: &mut impl fmt::Write) -> fmt::Result {
-        // Zig had an unused `comptime _: bool` param; dropped.
         if let Some(location) = &self.data.location {
             write!(
                 writer,
@@ -1424,8 +1371,6 @@ impl Default for MetadataResolve {
 // Range
 // ───────────────────────────────────────────────────────────────────────────
 
-// Do not mark these as packed
-// https://github.com/ziglang/zig/issues/15715
 #[derive(Copy, Clone, PartialEq, Eq, Debug)]
 pub struct Range {
     pub loc: Loc,
@@ -1442,9 +1387,9 @@ impl Default for Range {
 }
 
 /// Was `bun_js_parser::lexer::rangeOfIdentifier`.
-/// Moved into logger to break logger→js_parser. Mirrors lexer.zig:3113-3160,
-/// including the full Unicode `isIdentifierStart/Continue` tables (via
-/// `bun_core::identifier`) and `\u{...}` escape skipping.
+/// Moved into logger to break logger→js_parser. Includes the full Unicode
+/// `isIdentifierStart/Continue` tables (via `bun_core::identifier`) and
+/// `\u{...}` escape skipping.
 pub fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
     if loc.start < 0 || (loc.start as usize) >= contents.len() {
         return Range::NONE;
@@ -1493,8 +1438,8 @@ pub fn range_of_identifier(contents: &[u8], loc: Loc) -> Range {
             }
         }
 
-        // EOF inside the identifier: Zig also reports `cursor.i` (the byte
-        // offset of the last codepoint read), matching lexer.zig:3160.
+        // EOF inside the identifier: report `cursor.i` (the byte offset of
+        // the last codepoint read).
         r.len = i32::try_from(cursor.i).expect("int cast");
     }
 
@@ -1533,7 +1478,7 @@ impl Range {
     }
 
     pub fn end_i(self) -> usize {
-        // std.math.lossyCast(usize, ...) — saturates negatives to 0.
+        // Saturates negatives to 0.
         (self.loc.start + self.len).max(0) as usize
     }
 }
@@ -1551,10 +1496,7 @@ pub struct Log {
     pub clone_line_text: bool,
 
     /// Owned backing storage for `Location.{file,line_text}` (and similar)
-    /// that came from transient buffers (e.g. native-plugin C strings). Zig
-    /// `log.msgs.allocator.dupe(u8, …)` allocates from the Log's allocator and
-    /// stores a raw slice in `Location` (logger.zig `Location.deinit` is a
-    /// no-op, so the bytes live as long as the Log). Rust models that as a
+    /// that came from transient buffers (e.g. native-plugin C strings): a
     /// side-vector of `Box<[u8]>` owned by the `Log`; [`Log::dupe`] returns a
     /// lifetime-erased borrow into the just-pushed box. The borrow is valid
     /// for the life of `self` because `Box<[u8]>` is heap-stable across `Vec`
@@ -1589,7 +1531,7 @@ impl Default for Log {
 }
 
 impl Log {
-    /// Port of Zig's `log.msgs.allocator.dupe(u8, s)` pattern: copy `s` into
+    /// Copy `s` into
     /// storage owned by this `Log` and return a `&'static [u8]` view. The
     /// returned slice is valid for as long as `self` lives (the box is never
     /// moved out of `owned_strings`); `'static` is a lifetime erasure matching
@@ -1628,7 +1570,6 @@ impl Level {
         (self as i8) <= (other as i8)
     }
 
-    // Zig: `pub const label: std.EnumArray(Level, string)`
     pub const LABEL: std::sync::LazyLock<enum_map::EnumMap<Level, &'static [u8]>> =
         std::sync::LazyLock::new(|| {
             enum_map::EnumMap::from_fn(|k| match k {
@@ -1640,7 +1581,6 @@ impl Level {
             })
         });
 
-    // Zig: `pub const Map = bun.ComptimeStringMap(Level, ...)`
     pub const MAP: phf::Map<&'static [u8], Level> = phf::phf_map! {
         b"verbose" => Level::Verbose,
         b"debug" => Level::Debug,
@@ -1649,11 +1589,9 @@ impl Level {
         b"error" => Level::Err,
     };
 
-    // Zig: `pub const fromJS = @import("../logger_jsc/...")`
-    // → deleted; lives in `bun_logger_jsc`.
+    // `from_js` lives in `bun_logger_jsc`.
 }
 
-// Zig: `pub var default_log_level = Level.warn;`
 // PORTING.md §Global mutable state: written by CLI startup, read by every
 // `Log::init()` (including from bundler worker threads). `AtomicCell<Level>`
 // — Acquire/Release, no `unsafe` at call sites.
@@ -1735,8 +1673,7 @@ impl Log {
         }
     }
 
-    /// Zig: `pub fn init(std.mem.Allocator param) Log` — Rust callers spell
-    /// this `Log::new()`; the allocator parameter is dropped (global allocator).
+    /// Alias of [`Log::init`].
     #[inline]
     pub fn new() -> Log {
         Log::init()
@@ -1788,8 +1725,7 @@ impl Log {
         }
     }
 
-    // Zig: `pub const toJS/toJSAggregateError/toJSArray = @import("../logger_jsc/...")`
-    // → deleted; live in `bun_logger_jsc`.
+    // `to_js`/`to_js_aggregate_error`/`to_js_array` live in `bun_logger_jsc`.
 
     pub fn clone_to(&mut self, other: &mut Log) {
         let mut notes_count: usize = 0;
@@ -1801,17 +1737,14 @@ impl Log {
         }
 
         if notes_count > 0 {
-            // Zig allocates one shared `[Data; notes_count]` buffer in `other`'s
-            // allocator and re-slices each `msg.notes` into it. With `Box<[Data]>`
-            // per-Msg we instead deep-copy each notes slice (perf-only deviation).
+            // Deep-copy each notes slice (per-Msg `Box<[Data]>` ownership).
             for msg in &mut self.msgs {
                 msg.notes = msg.notes.to_vec().into_boxed_slice();
             }
         }
 
         other.msgs.extend(self.msgs.iter().map(Msg::clone));
-        // Reshaped for borrowck — Zig appendSlice moves the (now
-        // re-sliced) Msgs; here we clone since `self` retains them.
+        // Clone rather than move — `self` retains its msgs.
         other.warnings += self.warnings;
         other.errors += self.errors;
     }
@@ -1846,8 +1779,8 @@ impl Log {
             let mut notes_buf = vec![Data::default(); notes_count];
             let mut note_i: usize = 0;
 
-            // Reshaped for borrowck — Zig zips `self.msgs` with the
-            // tail of `other.msgs`; index instead.
+            // Index instead of zipping `self.msgs` with the tail of
+            // `other.msgs` to satisfy borrowck.
             for (k, msg) in self.msgs.iter().enumerate() {
                 let j = dest_start + k;
                 other.msgs[j] =
@@ -1882,9 +1815,8 @@ impl Log {
     }
 }
 
-// Zig `Log.deinit` only does `msgs.clearAndFree()` — field-free-only,
-// so per PORTING.md no `impl Drop` is emitted (Vec<Msg> drops automatically).
-// The mid-life semantic operation is exposed as `clear_and_free` above.
+// No `impl Drop` is needed (Vec<Msg> drops automatically). The mid-life
+// semantic operation is exposed as `clear_and_free` above.
 
 impl Log {
     #[cold]
@@ -1916,7 +1848,7 @@ impl Log {
     }
 
     /// Shared, non-generic tail for the `add*Fmt` family. The public wrappers
-    /// are `inline` and only do the per-call-site `allocPrint(fmt, args)`; the
+    /// are `inline` and only do the per-call-site formatting; the
     /// rest (counter bump, rangeData, cloneLineText, addMsg) lives here so it
     /// isn't re-stamped for every distinct format string. ~165 callers of
     /// `addErrorFmt` alone used to duplicate this body.
@@ -1961,9 +1893,8 @@ impl Log {
         err: bun_core::Error,
     ) {
         let text = alloc_print(args);
-        // TODO: fix this. this is stupid, it should be returned in allocPrint.
-        // Zig reads `args.@"0"` (first tuple element) for the
-        // specifier; with `fmt::Arguments` that's opaque, so callers must pass
+        // TODO: fix this. this is stupid, the specifier should be returned by
+        // `alloc_print`. `fmt::Arguments` is opaque, so callers must pass
         // `specifier_arg` explicitly.
         let specifier = BabyString::r#in(&text, specifier_arg);
         if IS_ERR {
@@ -1977,7 +1908,6 @@ impl Log {
                 let mut _data = self.tracked_range_data(source, r, text);
                 if let Some(loc) = &mut _data.location {
                     if let Some(_line) = loc.line_text.as_deref() {
-                        // Zig: `try log.msgs.allocator.dupe(u8, line)`.
                         loc.line_text = Some(Cow::Owned(_line.to_vec()));
                     }
                 }
@@ -1988,7 +1918,6 @@ impl Log {
         };
 
         let msg = Msg {
-            // .kind = if (comptime error_type == .err) Kind.err else Kind.warn,
             kind: if IS_ERR { Kind::Err } else { Kind::Warn },
             data,
             metadata: Metadata::Resolve(MetadataResolve {
@@ -2225,8 +2154,6 @@ impl Log {
         })
     }
 
-    // (Zig has a large commented-out `addWarningFmtLineColWithNote` here — omitted.)
-
     #[inline]
     pub fn add_range_warning_fmt(
         &mut self,
@@ -2423,8 +2350,6 @@ impl Log {
         self.warnings += 1;
         let data = self.tracked_range_data(source, r, text);
         self.add_msg(Msg {
-            // Zig has `.kind = .warning` here which doesn't exist in
-            // `Kind`; presumed dead code / typo for `.warn`.
             kind: Kind::Warn,
             data,
             notes,
@@ -2570,12 +2495,11 @@ pub struct AddErrorOptions<'a> {
 }
 
 /// Downstream-compat alias: some callers (`bunfig.rs`, `PnpmMatcher.rs`) spell
-/// the option-struct as `bun_ast::ErrorOpts { .. }` (Zig: `Log.addError*` opts
-/// param). Same layout as `AddErrorOptions`; the canonical name is kept while
-/// the Zig side still calls it `addErrorOpts`.
+/// the option-struct as `bun_ast::ErrorOpts { .. }`. Same layout as
+/// `AddErrorOptions`.
 pub type ErrorOpts<'a> = AddErrorOptions<'a>;
 
-/// Call-site helper that mirrors Zig `allocPrint`: rewrites `<red>..<r>` markup
+/// Call-site helper: rewrites `<red>..<r>` markup
 /// in the *literal* format string via `bun_core::pretty_fmt!` (compile-time),
 /// then formats. Expands to a `fmt::Arguments` so it drops in wherever a
 /// pre-built `fmt::Arguments` was previously passed to `alloc_print`.
@@ -2604,8 +2528,8 @@ macro_rules! alloc_print {
     };
 }
 
-/// `add_error_pretty!(log, source, loc, "<red>...<r>", args..)` — call-site form
-/// of Zig `addErrorFmt`: rewrites `<tag>` markup in the *literal* format string
+/// `add_error_pretty!(log, source, loc, "<red>...<r>", args..)` — call-site
+/// helper that rewrites `<tag>` markup in the *literal* format string
 /// at compile time (via `bun_core::pretty_fmt!`) before interpolation, then
 /// calls `Log::add_error_fmt`. Use this instead of
 /// `add_error_fmt(.., format_args!("<red>..."))` so markup is converted/stripped
@@ -2656,9 +2580,8 @@ macro_rules! add_warning_pretty {
 
 #[inline]
 pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
-    // Zig `allocPrint` runs `Output.prettyFmt(fmt, enable_ansi_colors)` at
-    // comptime over the *format-string literal only*, then interpolates args
-    // afterward — interpolated values are never inspected for `<..>` markup.
+    // Markup conversion happens over the *format-string literal only*;
+    // interpolated values are never inspected for `<..>` markup.
     // With `fmt::Arguments` the literal is opaque, so callers that need markup
     // conversion must go through `pretty_format_args!` / `alloc_print!` above
     // (which do the rewrite at the macro call site). The function form here
@@ -2668,9 +2591,8 @@ pub fn alloc_print(args: fmt::Arguments<'_>) -> Cow<'static, [u8]> {
     use std::io::Write;
     let mut v = Vec::new();
     let _ = write!(&mut v, "{}", args);
-    // Zig returns an allocator-owned slice that the Log takes ownership of via
-    // `Data.text` and frees in `Data.deinit`. `Cow::Owned` gives the same
-    // ownership: `Data` (via `Drop`) frees it.
+    // `Cow::Owned`: the `Log` takes ownership via `Data.text` and `Data`'s
+    // `Drop` frees it.
     Cow::Owned(v)
 }
 
@@ -2691,8 +2613,8 @@ pub struct Source {
 
     /// `Cow` so `source_from_file` / `File::to_source_at` can hand
     /// back a heap buffer without leaking (PORTING.md §Forbidden). Borrowed
-    /// arm covers the Zig `[]const u8`-field default (parser/transpiler feed
-    /// arena slices via `IntoStr`). Prefer the `.contents()` accessor at
+    /// arm covers parser/transpiler-fed
+    /// arena slices (via `IntoStr`). Prefer the `.contents()` accessor at
     /// call-sites — it derefs to `&[u8]` regardless of arm.
     pub contents: Cow<'static, [u8]>,
     pub contents_is_recycled: bool,
@@ -2701,9 +2623,8 @@ pub struct Source {
     /// Avoid accessing this directly most of the  time
     ///
     /// `Cow` because the cached value is produced by
-    /// `MutableString::ensure_valid_identifier` (owned `Box<[u8]>`); the Zig
-    /// freed it in `deinit`, so per PORTING.md §Forbidden this cannot be
-    /// `&'static [u8]` + leak.
+    /// `MutableString::ensure_valid_identifier` (owned `Box<[u8]>`); per
+    /// PORTING.md §Forbidden this cannot be `&'static [u8]` + leak.
     pub identifier_name: Cow<'static, [u8]>,
 
     pub index: Index,
@@ -2929,8 +2850,7 @@ impl Source {
         &self.contents
     }
 
-    /// Owned copy of the source bytes. Mirrors the Zig pattern of
-    /// `allocator.dupe(u8, source.contents)` at call-sites that need to retain
+    /// Owned copy of the source bytes, for call-sites that need to retain
     /// the bytes past the `Source`'s lifetime.
     #[inline]
     pub fn contents_owned(&self) -> Vec<u8> {
@@ -2955,8 +2875,7 @@ impl Source {
     }
 
     pub fn range_of_identifier(&self, loc: Loc) -> Range {
-        // Local impl mirrors src/js_parser/lexer.zig:range_of_identifier — scan from `loc`
-        // while bytes are JS identifier-part.
+        // Scan from `loc` while bytes are JS identifier-part.
         range_of_identifier(&self.contents, loc)
     }
 
@@ -3172,7 +3091,7 @@ pub fn range_data(source: Option<&Source>, r: Range, text: impl IntoText) -> Dat
 
 // ───────────────────────────────────────────────────────────────────────────
 // File → Source helpers — `bun_sys` (T1) cannot name `Source` (this crate),
-// so the body of `src/sys/File.zig:toSourceAt/toSource` lives here as free fns.
+// so the file→Source conversions live here as free fns.
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Default, Clone, Copy)]
@@ -3186,16 +3105,14 @@ pub type ToSourceOpts = ToSourceOptions;
 
 /// Read `path` (rooted at cwd) into memory and wrap it in a `Source`.
 ///
-/// MOVE_DOWN from `bun_sys::File::to_source` (T1 cannot name T2). Zig source:
-/// `src/sys/File.zig:toSource`.
+/// MOVE_DOWN from `bun_sys::File::to_source` (T1 cannot name T2).
 pub fn source_from_file(path: &bun_core::ZStr, opts: ToSourceOptions) -> bun_sys::Maybe<Source> {
     source_from_file_at(bun_sys::Fd::cwd(), path, opts)
 }
 
 /// Read `path` (relative to `dir_fd`) into memory and wrap it in a `Source`.
 ///
-/// MOVE_DOWN from `bun_sys::File::to_source_at`. Zig source:
-/// `src/sys/File.zig:toSourceAt`.
+/// MOVE_DOWN from `bun_sys::File::to_source_at` (T1 cannot name T2).
 pub(crate) fn source_from_file_at(
     dir_fd: bun_sys::Fd,
     path: &bun_core::ZStr,
@@ -3301,7 +3218,7 @@ pub use ts::{TSNamespaceMember, TSNamespaceMemberMap, TSNamespaceScope};
 pub use use_directive::UseDirective;
 
 /// `Part.{SymbolUseMap, SymbolPropertyUseMap, List}` — module-style alias so
-/// `crate::part::{SymbolUseMap, List}` resolves at the Zig nested-decl path.
+/// `crate::part::{SymbolUseMap, List}` resolves.
 pub mod part {
     pub use crate::nodes::{
         Part, PartList as List, PartSymbolPropertyUseMap as SymbolPropertyUseMap,
@@ -3355,8 +3272,6 @@ pub mod flags {
 /// Detected indentation of a [`Source`] (tab vs N-space). The JSON/TOML lexers
 /// record this so a `package.json` round-trip preserves the user's formatting;
 /// `bun_js_printer::Options.indent` consumes it. Default: 2 spaces.
-///
-/// Zig: `src/js_printer/js_printer.zig:434` `Options.Indentation`.
 #[derive(Clone, Copy)]
 pub struct Indentation {
     pub scalar: usize,
@@ -3380,22 +3295,19 @@ pub enum IndentationCharacter {
     Space,
 }
 
-// ported from: src/logger/logger.zig
-
 // ───────────────────────────────────────────────────────────────────────────
 // Store helpers — debug guards + thread-local side-arena lifecycle for the
 // AST `NewStore` slabs.
 // ───────────────────────────────────────────────────────────────────────────
 
-/// `bun.DebugOnlyDisabler(T)` — debug-build re-entrancy guard around Store
+/// `DebugOnlyDisabler<T>` — debug-build re-entrancy guard around Store
 /// access. No-op in release; in debug, `assert()` panics while the per-type
-/// disable count is non-zero (bun.zig:1473 `disable_create_in_debug`).
+/// disable count is non-zero.
 ///
-/// Zig monomorphises a `threadlocal var disable_create_in_debug: usize` per
-/// `T`; Rust cannot declare a generic `#[thread_local]` static, so the debug
-/// build keeps one thread-local `TypeId` multiset instead (each `disable()`
-/// pushes `TypeId::of::<T>()`, each `enable()` pops one occurrence; membership
-/// count == Zig's counter).
+/// Rust cannot declare a generic `#[thread_local]` static, so the debug
+/// build keeps one thread-local `TypeId` multiset (each `disable()`
+/// pushes `TypeId::of::<T>()`, each `enable()` pops one occurrence; the
+/// membership count is the per-type counter).
 pub struct DebugOnlyDisabler<T>(core::marker::PhantomData<T>);
 
 #[cfg(debug_assertions)]
@@ -3437,8 +3349,7 @@ impl<T: 'static> DebugOnlyDisabler<T> {
             v.remove(pos);
         });
     }
-    /// RAII scope: `disable()` now, `enable()` on drop. Replaces the Zig idiom
-    /// `Disabler.disable(); defer Disabler.enable();`.
+    /// RAII scope: `disable()` now, `enable()` on drop.
     #[inline]
     pub fn scope() -> DebugOnlyDisablerScope<T> {
         Self::disable();
@@ -3531,7 +3442,7 @@ pub mod store_ast_alloc_heap {
 // ── DATA_STORE_OVERRIDE ────────────────────────────────────────────────────
 // Thread-local override arena for `Expr`/`Stmt` boxed payloads.
 //
-// Zig: `Expr.Data.Store.memory_allocator` — when non-null, `Expr::init`
+// When non-null, `Expr::init`
 // allocates boxed payloads into this arena instead of the long-lived block
 // store, so a scoped caller (YAML/TOML/JSONC parse) can bulk-free the whole
 // tree by dropping the arena. Set/restored by `ASTMemoryAllocator::Scope`.
@@ -3550,8 +3461,7 @@ pub(crate) fn set_data_store_override(p: *const bun_alloc::Arena) {
 
 /// Copy `bytes` into the active AST arena so the slice shares the same
 /// lifetime as the `StoreRef`-backed `Expr` nodes that reference it
-/// (bulk-freed on Store reset). Mirrors Zig call sites that write
-/// `Expr.init(E.String, .{ .data = try allocator.dupe(u8, …) }, …)`: callers
+/// (bulk-freed on Store reset). Callers
 /// building an `EString` from a scratch buffer must intern the bytes here, not
 /// into a function-local bump, or `EString.data` dangles when that bump drops.
 /// The lifetime is erased per the `StoreStr` convention — arena ownership, not
@@ -3627,9 +3537,6 @@ impl Drop for StoreResetGuard {
 /// no-op once the slab (or an `ASTMemoryAllocator` override) is installed,
 /// so no `Once` guard is needed (and a process-global `Once` would be wrong
 /// anyway: the backing `INSTANCE` is `#[thread_local]`).
-///
-/// Zig: open-coded `Expr.Data.Store.create(); Stmt.Data.Store.create();`
-/// at every CLI entry point (transpiler.zig, run_command.zig, …).
 #[inline]
 pub fn initialize_store() {
     expr::data::Store::create();
@@ -3640,8 +3547,6 @@ pub fn initialize_store() {
 /// subsequent call. Maps to `Store::begin()` (create-or-reset) on each
 /// slab, so callers that re-enter — e.g. the install pipeline parsing many
 /// `package.json`s — get a fresh arena each time without re-allocating.
-///
-/// Zig: install.zig `initializeStore()` (`if (initialized_store) reset else create`).
 #[inline]
 pub fn initialize_store_or_reset() {
     expr::data::Store::begin();

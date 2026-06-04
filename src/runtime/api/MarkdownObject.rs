@@ -2,7 +2,7 @@
 
 use bun_core::StackCheck;
 use bun_jsc::{ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
-// Note: Zig's `bun.md` is `src/md/root.zig`; the Rust crate's lib.rs is a
+// Note: the `bun_md` crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
 use crate::node::StringOrBuffer;
@@ -16,7 +16,6 @@ fn create_utf8_for_js(global: &JSGlobalObject, utf8: &[u8]) -> JsResult<JSValue>
     bun_jsc::bun_string_jsc::create_utf8_for_js(global, utf8)
 }
 
-/// `JSValue.push` (JSValue.zig:404).
 #[inline]
 fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResult<()> {
     arr.push(global, item)
@@ -83,7 +82,6 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    // PERF(port): was arena bulk-free — profile if hot
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
@@ -157,7 +155,6 @@ pub(crate) fn render_to_html(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    // PERF(port): was arena bulk-free — profile if hot
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
@@ -221,7 +218,7 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
         // Handle remaining boolean options (autolinks/headings are only settable via
         // compound options above). `md::Options::BOOL_FIELD_SETTERS` is a hand-maintained
         // table in bun_md that carries each bool field's snake_case and camelCase names
-        // plus a setter, replacing Zig's comptime field reflection.
+        // plus a setter.
         for (snake, camel, set) in md::Options::BOOL_FIELD_SETTERS {
             // skip the compound-only fields
             if matches!(
@@ -247,10 +244,6 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
     Ok(options)
 }
 
-// Zig's `camelCaseOf` comptime helper is intentionally omitted: the option loop
-// above uses `md::Options::BOOL_FIELD_SETTERS`, a precomputed table that already
-// carries each field's camelCase form.
-
 /// `Bun.markdown.render(text, callbacks, options?)` — render markdown with custom callbacks.
 ///
 /// Each callback receives the accumulated children as a string plus an optional
@@ -265,7 +258,6 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    // PERF(port): was arena bulk-free — profile if hot
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
@@ -310,8 +302,7 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
 /// `Bun.markdown.react(text, components?, options?)` — returns a React Fragment element
 /// containing the parsed markdown as children.
-// Hand-rolled equivalent of Zig's `jsc.MarkedArgumentBuffer.wrap(renderReactImpl)`:
-// the closure scopes a MarkedArgumentBuffer around the impl so every JSValue it
+// The closure scopes a MarkedArgumentBuffer around the impl so every JSValue it
 // accumulates stays GC-visible for the duration of the call.
 #[bun_jsc::host_fn]
 pub(crate) fn render_react(
@@ -368,7 +359,6 @@ fn render_ast(
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
     }
 
-    // PERF(port): was arena bulk-free — profile if hot
     let Some(buffer) = StringOrBuffer::from_js(global_this, input_value)? else {
         return Err(global_this
             .throw_invalid_arguments(format_args!("Expected a string or buffer to render")));
@@ -479,7 +469,7 @@ struct Components {
     u: JSValue,
     br: JSValue,
 }
-// Note: `Default` for JSValue must be `JSValue::ZERO` (encoded 0), matching Zig's `.zero` initializers.
+// Note: `Default` for JSValue must be `JSValue::ZERO` (encoded 0).
 
 struct ParseStackEntry {
     children: JSValue,
@@ -503,10 +493,9 @@ impl Default for ParseStackEntry {
     }
 }
 
-// Note: Zig used a hand-rolled `*anyopaque + VTable`; the Rust `bun_md`
-// `Renderer` is `&mut dyn RendererImpl`, so the trait already gives us
-// `&mut self` — the `*_impl` bodies below are plain methods, no pointer
-// round-trip needed.
+// Note: the `bun_md` `Renderer` is `&mut dyn RendererImpl`, so the trait
+// already gives us `&mut self` — the `*_impl` bodies below are plain methods,
+// no pointer round-trip needed.
 impl<'a> md::types::RendererImpl for ParseRenderer<'a> {
     fn enter_block(
         &mut self,
@@ -713,8 +702,7 @@ impl<'a> ParseRenderer<'a> {
 
         // For headings, compute slug before counting props
         // Note: own the slug bytes — leave_heading() borrows the tracker mutably,
-        // and we need self again below for get_block_component(). Mirrors the Zig
-        // path which allocator-allocated the slug.
+        // and we need self again below for get_block_component().
         let slug: Option<Vec<u8>> = if block_type == md::BlockType::H {
             self.heading_tracker.leave_heading().map(|s| s.to_vec())
         } else {

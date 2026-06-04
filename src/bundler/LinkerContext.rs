@@ -1,5 +1,3 @@
-//! Port of src/bundler/LinkerContext.zig
-
 use crate::mal_prelude::*;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -41,7 +39,7 @@ use crate::{
     LinkerGraph, MangledProps, PartRange, StableRef, WrapKind,
 };
 
-/// `bun.jsc.AnyEventLoop` (LinkerContext.zig:28). `bun_event_loop` is a
+/// `bun_event_loop` is a
 /// lower-tier crate, so the bundler can name the real enum (the `Js` arm
 /// holds an erased `*mut jsc::EventLoop` driven through a vtable). Stored as
 /// a pointer because the linker borrows the loop owned by the
@@ -55,7 +53,7 @@ bun_core::declare_scope!(TreeShake, hidden);
 // CYCLEBREAK(b0): vtable instance for `bun_crash_handler::BundleGenerateChunkVTable`
 // (cold-path §Dispatch — crash trace only). crash_handler (T1) holds erased
 // `(*const LinkerContext, *const Chunk, *const PartRange)`; bundler supplies
-// the formatter that knows their layout. Mirrors src/crash_handler/crash_handler.zig:135.
+// the formatter that knows their layout.
 // ══════════════════════════════════════════════════════════════════════════
 #[cfg(feature = "show_crash_trace")]
 bun_crash_handler::link_impl_BundleGenerateChunkCtx! {
@@ -89,7 +87,7 @@ bun_crash_handler::link_impl_BundleGenerateChunkCtx! {
     }
 }
 
-/// Helper for call-sites that previously wrote `Action::BundleGenerateChunk(.{...})`.
+/// Helper for constructing a crash-trace `Action::BundleGenerateChunk`.
 #[cfg(feature = "show_crash_trace")]
 #[inline]
 pub(crate) fn bundle_generate_chunk_action(
@@ -110,7 +108,7 @@ pub(crate) fn bundle_generate_chunk_action(
     })
 }
 
-// Scoped-log wrappers (LinkerContext.zig:2, :2705); re-exported so `linker_context/*` submodules import directly.
+// Scoped-log wrappers; re-exported so `linker_context/*` submodules import directly.
 bun_core::define_scoped_log!(debug, crate::linker_context_mod::LinkerCtx);
 pub(crate) use debug;
 bun_core::define_scoped_log!(debug_tree_shake, crate::linker_context_mod::TreeShake);
@@ -214,8 +212,7 @@ pub struct LinkerContext<'a> {
 // `SourceMapDataTask`. The raw-pointer fields (`parse_graph`, `resolver`,
 // `r#loop`, `framework`) are backrefs into `BundleV2`/`Transpiler` whose
 // lifetimes strictly outlive every parallel section, and per-thread writes go
-// to disjoint SoA slots (see `compute_line_offsets`). This mirrors Zig's
-// freely-aliased `*LinkerContext`.
+// to disjoint SoA slots (see `compute_line_offsets`).
 unsafe impl<'a> Send for LinkerContext<'a> {}
 // SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for LinkerContext<'a> {}
@@ -248,7 +245,7 @@ impl<'a> Default for LinkerContext<'a> {
 
 impl<'a> LinkerContext<'a> {
     /// container_of: `*LinkerContext` → `*BundleV2` via the embedded `.linker`
-    /// field. Mirrors Zig `@fieldParentPtr("linker", c)`. Returns raw; caller
+    /// field. Returns raw; caller
     /// decides `&*` vs `&mut *` per local aliasing rules (several callers run
     /// on worker-pool threads and MUST NOT materialize `&mut BundleV2`).
     ///
@@ -397,7 +394,6 @@ impl<'a> LinkerContext<'a> {
     }
 
     pub fn mark_pending_task_done(&self) {
-        // Zig: `.monotonic` → Rust `Relaxed` (LLVM `monotonic` == C11 `relaxed`).
         self.pending_task_count.fetch_sub(1, Ordering::Relaxed);
     }
 
@@ -410,10 +406,8 @@ impl<'a> LinkerContext<'a> {
             && record.source_index.get() != source_index
     }
 
-    /// Spec: `LinkerContext.zig:checkForMemoryCorruption`.
-    ///
-    /// Note: the Zig body calls `parse_graph.heap.helpCatchMemoryIssues()`
-    /// (a `MimallocArena` debug hook). `Graph.heap` is currently
+    /// Note: this should call a `MimallocArena` debug hook
+    /// (`helpCatchMemoryIssues`), but `Graph.heap` is currently
     /// `bun_alloc::Arena = bumpalo::Bump`, which has no such hook, so this is a
     /// no-op until the arena type is swapped to the real `MimallocArena`. The
     /// call sites are already gated on `FeatureFlags::HELP_CATCH_MEMORY_ISSUES`.
@@ -428,8 +422,7 @@ impl<'a> LinkerContext<'a> {
 }
 
 // Local re-exports for the tree-shaking impl below. `EntryPoint::Kind`
-// and `SideEffects` live in sibling modules; code here used to reference them
-// via Zig-style nested paths. Re-export so `EntryPoint::Kind` here is the
+// and `SideEffects` live in sibling modules. Re-export so `EntryPoint::Kind` here is the
 // *same type* `items_entry_point_kind()` returns.
 #[allow(non_snake_case)]
 pub mod EntryPoint {
@@ -482,7 +475,7 @@ impl<'a> LinkerContext<'a> {
     }
 
     /// `bundle` is taken as a raw `*mut` because the caller invokes this as
-    /// `self.linker.load(self, …)` (Zig spec bundle_v2.zig:2574) — `self` *is*
+    /// `self.linker.load(self, …)` — `self` *is*
     /// `(*bundle).linker`, so a `&mut BundleV2` here would alias the receiver
     /// under Stacked Borrows. This body only reaches into fields of `*bundle`
     /// that are disjoint from `linker` (`graph`, `transpiler`,
@@ -511,7 +504,7 @@ impl<'a> LinkerContext<'a> {
         // the bundle's lifetime; `resolver`/`log`/`options` are stable fields.
         let transpiler = unsafe { &mut *(*bundle).transpiler };
         self.graph.code_splitting = transpiler.options.code_splitting;
-        // Mirrors Zig's pointer assignment; `transpiler.log` is the canonical
+        // `transpiler.log` is the canonical
         // `*mut Log` (same value aliased into `linker.log` / `resolver.log`).
         self.log = transpiler.log;
 
@@ -528,8 +521,7 @@ impl<'a> LinkerContext<'a> {
         self.cycle_detector = Vec::new();
 
         // Note: `reachable_files` is `Vec<Index>`; clone the
-        // caller-owned slice into the linker arena. PERF(port): Zig pointed at
-        // the slice in-place; revisit once Vec grows a borrowed-view ctor.
+        // caller-owned slice into the linker arena.
         self.graph.reachable_files = reachable.to_vec();
 
         // SAFETY: parse_graph is valid backref just assigned above
@@ -543,8 +535,6 @@ impl<'a> LinkerContext<'a> {
             // SAFETY: parse_graph backref
             unsafe { &(*self.parse_graph).entry_point_original_names },
         )?;
-        // PERF(port): was arena bulk-free — `dynamic_import_entry_points` is
-        // now a global-alloc `ArrayHashMap`; clearing drops it.
         dyn_entry_points.clear_retaining_capacity();
 
         let runtime_named_exports =
@@ -612,8 +602,6 @@ impl<'a> LinkerContext<'a> {
         debug_assert!(self.options.source_maps != SourceMapOption::None);
         self.source_maps.line_offset_wait_group = WaitGroup::init_with_count(reachable.len());
         self.source_maps.quoted_contents_wait_group = WaitGroup::init_with_count(reachable.len());
-        // Zig arena-allocated the task arrays; boxed slices on the global
-        // allocator are equivalent here (freed when `source_maps` is replaced).
         // Note: `SourceMapDataTask` is not `Clone` (embeds an intrusive
         // `ThreadPoolLib::Task` node); build via iterator instead of `vec![x;n]`.
         self.source_maps.line_offset_tasks = (0..reachable.len())
@@ -682,9 +670,9 @@ impl<'a> LinkerContext<'a> {
         // field of `BundleV2.linker` (= `*self`). The two are disjoint, and no
         // other `&`/`&mut` to `BundleV2.graph` is live for this scope —
         // `self.graph` below is `LinkerGraph`, a distinct allocation.
-        // Note: reshaped for borrowck — Zig held overlapping `&`/`&mut`
-        // into `parse_graph.html_imports` and `parse_graph.input_files`; here
-        // we go through raw pointers and reborrow per use.
+        // Note: go through raw pointers and reborrow per use to avoid holding
+        // overlapping `&`/`&mut` into `parse_graph.html_imports` and
+        // `parse_graph.input_files`.
         let parse_graph: *mut Graph<'a> = self.parse_graph;
         // SAFETY: see above; sole accessor of `html_imports` for this scope.
         let server_len = unsafe { (*parse_graph).html_imports.server_source_indices.len() };
@@ -720,8 +708,7 @@ impl<'a> LinkerContext<'a> {
                 };
 
                 // S.LazyExport is a call to __jsonParse. Each accessor returns
-                // `Option`; `.unwrap()` mirrors Zig's untagged-union field
-                // reads (panic on shape mismatch).
+                // `Option`; `.unwrap()` panics on shape mismatch.
                 let original_ref = (*self.graph.ast.items_parts()[html_import as usize][1].stmts)
                     [0]
                 .data
@@ -916,8 +903,8 @@ impl<'a> LinkerContext<'a> {
             self.graph.parts_live = parts_live;
         }
 
-        // Note: reshaped for borrowck — these slices alias into self.graph;
-        // Zig held them simultaneously. The SoA columns are physically disjoint
+        // Note: these slices alias into self.graph.
+        // The SoA columns are physically disjoint
         // and the underlying slabs don't reallocate during tree-shaking, so we
         // cache raw column base pointers and reborrow at each recursive call.
         let parts: *mut [bun_ast::PartList<'a>] = self.graph.ast.items_parts_mut();
@@ -1101,9 +1088,6 @@ impl<'a> LinkerContext<'a> {
     ) -> Result<SourceMapPieces, BunError> {
         let _trace = bun::perf::trace("Bundler.generateSourceMapForChunk");
 
-        // PERF(port): Zig threaded `worker.arena` through StringJoiner /
-        // MutableString; the Rust ports use the global mimalloc, so the joiner
-        // is arena-free here. Revisit when arena threading lands.
         let mut j = StringJoiner::default();
 
         let sources = self.parse_graph().input_files.items_source();
@@ -1119,7 +1103,6 @@ impl<'a> LinkerContext<'a> {
         //    Which source index in the generated sourcemap, referred to
         //    as the "mapping source index" within this function to be distinct.
         let mut source_id_map: ArrayHashMap<u32, i32> = ArrayHashMap::new();
-        // PERF(port): was arena bulk-free — source_id_map drops at scope exit
 
         let source_indices = results.items_source_index();
 
@@ -1130,11 +1113,8 @@ impl<'a> LinkerContext<'a> {
                 let path = &sources[index as usize].path;
                 source_id_map.put_no_clobber(index, 0)?;
 
-                // Note: Zig mutated a local copy's `path.pretty` from the
-                // worker arena; we keep the relative path in a local owned
-                // buffer instead (drops at scope exit — same lifetime as the
-                // arena slice).
-                //
+                // Note: the relative path lives in a local owned buffer
+                // (drops at scope exit).
                 let rel_path_storage;
                 let pretty: &[u8] = if path.is_file() {
                     rel_path_storage =
@@ -1146,8 +1126,8 @@ impl<'a> LinkerContext<'a> {
 
                 let mut quote_buf = MutableString::init(pretty.len() + 2)?;
                 js_printer::quote_for_json(pretty, &mut quote_buf, false)?;
-                // PERF(port): was arena-backed; `to_default_owned` moves the
-                // buffer into the joiner (joiner owns it until `done`).
+                // `to_default_owned` moves the buffer into the joiner
+                // (joiner owns it until `done`).
                 j.push_owned(quote_buf.to_default_owned());
             }
 
@@ -1173,7 +1153,7 @@ impl<'a> LinkerContext<'a> {
                 };
 
                 let mut quote_buf = MutableString::init(pretty.len() + ", ".len() + 2)?;
-                quote_buf.append_assume_capacity(b", "); // PERF(port): was assume_capacity
+                quote_buf.append_assume_capacity(b", ");
                 js_printer::quote_for_json(pretty, &mut quote_buf, false)?;
                 j.push_owned(quote_buf.to_default_owned());
             }
@@ -1248,8 +1228,6 @@ impl<'a> LinkerContext<'a> {
 
         if FeatureFlags::SOURCE_MAP_DEBUG_ID {
             j.push_static(b"\",\n  \"debugId\": \"");
-            // Zig used `allocPrint` into the arena; a tiny owned buffer the
-            // joiner frees is equivalent (one 33-byte debug-id per chunk map).
             let mut buf = Vec::<u8>::new();
             use std::io::Write;
             write!(&mut buf, "{}", DebugIDFormatter { id: isolated_hash })
@@ -1301,9 +1279,8 @@ pub enum LinkError {
 bun_core::oom_from_alloc!(LinkError);
 impl From<BunError> for LinkError {
     fn from(e: BunError) -> Self {
-        // Mirror Zig's `LinkError = OOM || error{BuildFailed, ImportResolutionFailed}`
-        // (LinkerContext.zig): `error.OutOfMemory` keeps its identity through
-        // `try this.load()`, so OOMs travelling as `bun_core::Error` must not be
+        // OOM keeps its identity through
+        // `load()`, so OOMs travelling as `bun_core::Error` must not be
         // misreported as build failures. Everything else collapses to
         // `BuildFailed`; user-facing diagnostics flow through the bundler `Log`,
         // not this variant.
@@ -1405,7 +1382,6 @@ impl Default for SourceMapDataTask {
         Self {
             ctx: None,
             source_index: 0,
-            // Spec `LinkerContext.zig:101`: default task callback is `&runLineOffset`.
             thread_task: ThreadPoolLib::Task {
                 node: ThreadPoolLib::Node::default(),
                 callback: Self::run_line_offset,
@@ -1485,11 +1461,8 @@ impl SourceMapDataTask {
         // stack traces can show the source code, even after incremental
         // rebuilds occur.
         //
-        // Note: Zig branched on `worker.ctx.transpiler.options.dev_server`
-        // to pick `dev.arena()` vs `worker.arena`, but
-        // `computeQuotedSourceContents` discards the arena parameter
-        // (`_: std.mem.Allocator`) — it always allocates via
-        // `bun.default_allocator` internally. The branch is a no-op, so we
+        // Note: `compute_quoted_source_contents` ignores which arena it is
+        // handed (it allocates via the default allocator internally), so we
         // pass the worker arena unconditionally; `DevServerHandle` does not
         // expose an arena accessor (§Dispatch).
         SourceMapData::compute_quoted_source_contents(ctx, worker.arena(), task.source_index);
@@ -1500,9 +1473,8 @@ impl SourceMapDataTask {
 impl SourceMapData {
     /// Runs concurrently across the worker pool (one task per `source_index`).
     /// Takes [`ParentRef<LinkerContext>`](bun_ptr::ParentRef) (not `&mut`)
-    /// because Zig's `*LinkerContext` freely aliases across threads —
-    /// materializing `&mut LinkerContext` here while peer tasks hold the same
-    /// pointer would be aliased-mut UB. `ParentRef::Deref` yields
+    /// because peer tasks on other threads hold the same pointer —
+    /// materializing `&mut LinkerContext` here would be aliased-mut UB. `ParentRef::Deref` yields
     /// `&LinkerContext` (SharedReadOnly) for all SoA-header reads; each task
     /// writes only `graph.files[source_index].line_offset_table` (disjoint by
     /// `source_index`) via a raw column pointer.
@@ -1555,7 +1527,7 @@ impl SourceMapData {
             *line_offset_table = LineOffsetTable::generate_in::<bun_alloc::AstAlloc>(
                 &source.contents,
                 // We don't support sourcemaps for source files with more than 2^31 lines
-                (approximate_line_count as u32 & 0x7FFF_FFFF) as i32, // @intCast(@truncate to u31)
+                (approximate_line_count as u32 & 0x7FFF_FFFF) as i32,
             )
             .expect("OOM");
         }
@@ -1614,7 +1586,7 @@ impl SourceMapData {
 // other fields are POD.
 #[derive(Clone, Default)]
 pub struct MatchImport {
-    alias: bun_ast::StoreStr, // Zig string borrowed from AST arena
+    alias: bun_ast::StoreStr, // string borrowed from AST arena
     kind: MatchImportKind,
     namespace_ref: Ref,
     source_index: u32,
@@ -1654,7 +1626,7 @@ pub(crate) type ChunkMetaMap = ArrayHashMap<Ref, ()>;
 /// Note: raw-pointer fields (was `&'a mut`) because `each_ptr` requires
 /// `Ctx: Sync + Copy` and the same context is observed from every worker
 /// thread. Each task only writes to its own `*mut Chunk` slot; reads of
-/// `c`/`chunks` are disjoint or read-only per the Zig spec.
+/// `c`/`chunks` are disjoint or read-only.
 #[derive(Clone, Copy)]
 pub struct GenerateChunkCtx<'a> {
     pub c: bun_ptr::ParentRef<LinkerContext<'a>>,
@@ -1671,7 +1643,8 @@ pub struct GenerateChunkCtx<'a> {
     /// [`bun_ptr::BackRef::as_ptr`], shared reads go through safe `Deref`.
     pub chunk: bun_ptr::BackRef<Chunk>,
 }
-// SAFETY: see note above — mirrors Zig's freely-aliased `*LinkerContext`.
+// SAFETY: see note above — each task writes only its own `*mut Chunk` slot;
+// shared reads are read-only.
 unsafe impl<'a> Send for GenerateChunkCtx<'a> {}
 // SAFETY: see the `Send` impl above — same backref-lifetime / disjoint-write invariants.
 unsafe impl<'a> Sync for GenerateChunkCtx<'a> {}
@@ -1718,13 +1691,12 @@ pub struct PendingPartRange<'a> {
 /// callbacks: recover the intrusive [`PendingPartRange`] from `task`, extract
 /// the raw `*mut LinkerContext` / `*mut Chunk` from its [`GenerateChunkCtx`],
 /// and acquire the per-thread [`Worker`](crate::thread_pool::Worker) (returned
-/// as a scopeguard that calls `unget()` on drop — Zig: `defer worker.unget()`).
+/// as a scopeguard that calls `unget()` on drop).
 ///
 /// `GenerateChunkCtx.{c, chunk}` are raw `*mut T` (Copy), so reading them
 /// through `&GenerateChunkCtx` preserves the mutable provenance they were
-/// constructed with in `generate_chunks_in_parallel`. This mirrors Zig's
-/// `*LinkerContext` / `*Chunk` semantics where many `PendingPartRange` tasks
-/// share one `chunk_ctx` across worker threads.
+/// constructed with in `generate_chunks_in_parallel` — many `PendingPartRange`
+/// tasks share one `chunk_ctx` across worker threads.
 ///
 /// # Safety
 /// `task` must point to the `task` field of a live `PendingPartRange` scheduled
@@ -1911,8 +1883,7 @@ impl<'a> LinkerContext<'a> {
         meta_flags: &mut [crate::js_meta::Flags],
         ast_import_records: &[bun_ast::import_record::List<'a>],
     ) -> Result<TlaCheck, AllocError> {
-        // Note: reshaped for borrowck — Zig held &mut tla_checks[source_index] across recursive
-        // calls that also mutate tla_checks. We re-index after each recursion.
+        // Note: re-index `tla_checks` after each recursion — recursive calls also mutate it.
         if tla_checks[source_index as usize].depth == 0 {
             tla_checks[source_index as usize].depth = 1;
             if tla_keywords[source_index as usize].len > 0 {
@@ -2216,11 +2187,6 @@ impl<'a> LinkerContext<'a> {
         // across `RequireOrImportMetaCallback::init(self)` (`&mut self`) below.
         let parse_graph = unsafe { &*self.parse_graph };
 
-        // Note: `Options.arena` / `source_map_allocator` were removed in
-        // the Rust port (printer uses global mimalloc + the explicit `bump`
-        // argument to `print_with_writer`), so Zig's dev-server-specific
-        // source-map-allocator selection has no Rust equivalent.
-
         // Note: reshaped for borrowck — `Options` borrows `ts_enums` /
         // `line_offset_tables` / `mangled_props` from `self.graph`, but the
         // `require_or_import_meta_for_source_callback` field below needs
@@ -2294,20 +2260,16 @@ impl<'a> LinkerContext<'a> {
         };
 
         writer.buffer.reset();
-        // Note: Zig moved `*writer` into the printer by value and wrote it
-        // back via `defer writer.* = printer.ctx;`. `BufferWriter` isn't
-        // `Clone`/`Default` in Rust; move it through `mem::replace` with a
-        // freshly-initialized writer instead.
+        // Note: `BufferWriter` isn't `Clone`/`Default`; move it through
+        // `mem::replace` with a freshly-initialized writer.
         let mut printer = js_printer::BufferPrinter::init(core::mem::replace(
             writer,
             js_printer::BufferWriter::init(),
         ));
 
-        // Note: Zig's `ast.toAST()` bitwise-copies every field of
-        // `*const BundledAst` into a stack `Ast` that is never deinit'd. The
-        // Rust collections aren't `Copy`, so mirror the Zig shallow copy via
-        // `ptr::read` + `ManuallyDrop` (the resulting `Ast` aliases `ast`'s
-        // storage; dropping it would double-free).
+        // Note: shallow bitwise copy via `ptr::read` + `ManuallyDrop` — the
+        // resulting `Ast` aliases `ast`'s storage; dropping it would
+        // double-free.
         // SAFETY: `ast` is a valid `&BundledAst` for the duration of this call;
         // the read is a bitwise copy whose result is never dropped.
         let printer_ast = core::mem::ManuallyDrop::new(unsafe { core::ptr::read(ast) }.to_ast());
@@ -2316,7 +2278,7 @@ impl<'a> LinkerContext<'a> {
         // printer struct stores it with a single lifetime), but `Renamer`'s
         // `'src` is invariant behind `&mut`, so the caller's `Renamer<'r,'src>`
         // cannot unify with the local `'a` picked from `alloc`/`mangled_props`.
-        // Zig threads it as a raw pointer (no lifetimes). Rebind via a
+        // Rebind via a
         // lifetime-only cast — sound because the renamer's borrowed data
         // (symbol map, source) strictly outlives this call.
         // SAFETY: lifetime-only erase; layout identical across instantiations.
@@ -2326,7 +2288,6 @@ impl<'a> LinkerContext<'a> {
 
         let enable_source_maps =
             self.options.source_maps != SourceMapOption::None && !source_index.is_runtime();
-        // PERF(port): was comptime bool dispatch — profile if it shows up on a hot path.
         let result = if enable_source_maps {
             js_printer::print_with_writer::<&mut js_printer::BufferPrinter, true>(
                 &mut printer,
@@ -2395,7 +2356,6 @@ impl<'a> LinkerContext<'a> {
         let all_sources: &[Source] = unsafe { (*self.parse_graph).input_files.items_source() };
 
         // Collect all local css names
-        // PERF(port): was stack-fallback alloc
         let mut local_css_names: HashMap<Ref, ()> = HashMap::new();
 
         for (source_index, maybe_css_ast) in all_css_asts.iter().enumerate() {
@@ -2408,8 +2368,6 @@ impl<'a> LinkerContext<'a> {
                     let mut symbol = symbol_;
                     if symbol.kind == bun_ast::symbol::Kind::LocalCss {
                         let r#ref = 'follow: {
-                            // Note: Zig set `.tag = .symbol` after `init`;
-                            // `Ref` is packed in Rust — construct via `new`.
                             let mut r#ref = Ref::new(
                                 u32::try_from(inner_index).expect("int cast"),
                                 u32::try_from(source_index).expect("int cast"),
@@ -2433,8 +2391,7 @@ impl<'a> LinkerContext<'a> {
                         // SAFETY: `Symbol.original_name` is a `*const [u8]` arena
                         // pointer; valid for the link step.
                         let original_name: &[u8] = symbol.original_name.slice();
-                        // PERF(port): was stack-fallback alloc. The hash itself
-                        // is short-lived; use a scratch bump.
+                        // The hash itself is short-lived; use a scratch bump.
                         let scratch = ::bun_alloc::Arena::new();
                         let path_hash = ::bun_base64::wyhash_url_safe(
                             &scratch,
@@ -2452,8 +2409,7 @@ impl<'a> LinkerContext<'a> {
                             bstr::BStr::new(path_hash)
                         )
                         .expect("infallible: in-memory write");
-                        // Zig dupes the name into the arena; the Rust map owns
-                        // its boxed values instead (freed with `mangled_props`).
+                        // The map owns its boxed values (freed with `mangled_props`).
                         self.mangled_props
                             .put(r#ref, final_generated_name.into_boxed_slice())
                             .expect("OOM");
@@ -2570,7 +2526,6 @@ impl<'a> LinkerContext<'a> {
 
         // Mix in the hash for this chunk
         let chunk = &chunks[index as usize];
-        // Note: Zig `std.mem.asBytes(&u64)` → native-endian byte view.
         hash.write(&chunk.isolated_hash.to_ne_bytes());
     }
 
@@ -2582,7 +2537,6 @@ impl<'a> LinkerContext<'a> {
     ) {
         list.clear();
         list.reserve(export_refs.count());
-        // Note: Zig set .items.len = count() then indexed; Rust pushes
         for &export_ref in export_refs.keys() {
             #[cfg(debug_assertions)]
             {
@@ -2653,8 +2607,6 @@ pub struct TreeShakeCtx<'a, 'r> {
 
 pub struct CodeSplitCtx<'a, 'r> {
     pub distances: &'r mut [u32],
-    // Spec (LinkerContext.zig:1579) passes `parts: []Vec(Part)` and only
-    // reads it.
     pub parts: &'r [bun_ast::PartList<'a>],
     pub import_records: &'r [bun_ast::import_record::List<'a>],
     pub file_entry_bits: &'r mut [AutoBitSet],
@@ -2778,8 +2730,7 @@ impl<'a> LinkerContext<'a> {
                         .path
                         .pretty
                 ),
-                // Note: Zig printed `target.bakeGraph()` (a `bake.Graph` tag);
-                // `bake_graph()` lives in `bun_bake` (tier-6 — would back-edge).
+                // Note: `bake_graph()` lives in `bun_bake` (tier-6 — would back-edge).
                 // The debug log only needs a stable label, so print the `Target`
                 // tag directly via its `IntoStaticStr` derive.
                 <&'static str>::from(parse_graph.ast.items_target()[source_index as usize]),
@@ -2844,8 +2795,7 @@ impl<'a> LinkerContext<'a> {
             // Also include any statement-level imports. Iterate by index so we
             // don't hold a borrow of `part`/`parts` across the recursive call —
             // the recursion never resizes this part's `import_record_indices`,
-            // so re-slicing each iteration is sound and matches Zig's plain
-            // `for (part.import_record_indices.slice())`.
+            // so re-slicing each iteration is sound.
             let import_indices_len = part.import_record_indices.len();
             for ii in 0..import_indices_len {
                 let import_index = ctx.parts[source_index as usize].as_slice()[part_index]
@@ -2939,8 +2889,6 @@ impl<'a> LinkerContext<'a> {
                 } else {
                     Loc::EMPTY.start
                 },
-                // Zig used `@tagName(stmts[0].data)`. `StmtData::tag()` → `StmtTag` which
-                // derives `strum::IntoStaticStr`.
                 if !stmts.is_empty() {
                     <&'static str>::from(stmts[0].data.tag())
                 } else {
@@ -2999,9 +2947,7 @@ impl<'a> LinkerContext<'a> {
 // `scanImportsAndExports.rs` callees.
 //
 // `linker_context/scanImportsAndExports.rs` calls these `LinkerContext`
-// methods inherently. Real ports of the `LinkerContext.zig` /
-// `linker_context/doStep5.zig` / `linker_context/generateCodeForLazyExport.zig`
-// bodies.
+// methods inherently.
 // ══════════════════════════════════════════════════════════════════════════
 
 // Local imports. `AstFlags` / `DeclaredSymbolList`
@@ -3009,13 +2955,13 @@ impl<'a> LinkerContext<'a> {
 use bun_ast::symbol::Use as SymbolUse;
 use bun_ast::{DependencyList, ImportItemStatus, PartSymbolUseMap};
 
-// `bundle_v2.zig:ImportTracker.{Status,Iterator}` — canonical definition lives
-// in `bundle_v2.rs` (matches Zig spec location). Re-exported here so the 30+
+// `ImportTracker::{Status,Iterator}`'s canonical definition lives
+// in `bundle_v2.rs`. Re-exported here so the 30+
 // unqualified uses in `advance_import_tracker` / `match_import_with_export`
 // below resolve unchanged.
 pub use crate::bundle_v2::{ImportTrackerIterator, ImportTrackerStatus};
 
-/// Field-wise eq for `ImportTracker`, matching Zig's `eql(ImportTracker)` shape.
+/// Field-wise eq for `ImportTracker`.
 #[inline]
 fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
     a.source_index.get() == b.source_index.get()
@@ -3024,32 +2970,32 @@ fn import_tracker_eq(a: &ImportTracker, b: &ImportTracker) -> bool {
 }
 
 impl<'a> LinkerContext<'a> {
-    /// Spec: `LinkerContext.zig:1298 runtimeFunction`.
+    /// Looks up the symbol `Ref` for a named export of the runtime module.
     #[inline]
     pub fn runtime_function(&self, name: &[u8]) -> Ref {
         self.graph.runtime_function(name)
     }
 
-    /// Spec: `LinkerContext.zig:2150 topLevelSymbolsToParts`.
+    /// Returns the part indices within file `id` that declare the
+    /// top-level symbol `ref`.
     #[inline]
     pub fn top_level_symbols_to_parts(&self, id: u32, r#ref: Ref) -> &[u32] {
         self.graph.top_level_symbol_to_parts(id, r#ref)
     }
 
-    /// Spec: `LinkerContext.zig:2154 topLevelSymbolsToPartsForRuntime`.
+    /// Returns the part indices in the runtime module that declare the
+    /// top-level symbol `ref`.
     #[inline]
     pub fn top_level_symbols_to_parts_for_runtime(&self, r#ref: Ref) -> &[u32] {
         self.top_level_symbols_to_parts(Index::RUNTIME.get(), r#ref)
     }
 
-    /// Spec: `LinkerContext.zig:489 source_`.
-    ///
     /// Note: returns `'static` so callers can hold the source across a
     /// `&mut self.log` borrow; the underlying `parse_graph.input_files` slab
     /// is append-only and outlives the link step (LIFETIMES.tsv: GRAPHBACKED).
     #[inline]
     pub fn get_source<I: TryInto<usize>>(&self, index: I) -> &'static Source {
-        // Note: Zig spec is `index: anytype`; callers pass both `u32` and
+        // Note: callers pass both `u32` and
         // `usize`. Route through `TryInto<usize>` so the SoA index works for
         // either width without forcing `as`-casts at every call site.
         let index: usize = match index.try_into() {
@@ -3063,8 +3009,6 @@ impl<'a> LinkerContext<'a> {
         unsafe { &*core::ptr::from_ref(&(*self.parse_graph).input_files.items_source()[index]) }
     }
 
-    /// Spec: `LinkerContext.zig:496 scanCSSImports`.
-    ///
     /// `log` is an explicit parameter (not `self.log`) because the dev-server
     /// caller (`finish_from_bake_dev_server`) runs this *before* `load()` has
     /// initialized `self.log`, passing a stack-local `Log` instead.
@@ -3128,7 +3072,8 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// Spec: `LinkerContext.zig:2158 createWrapperForFile`.
+    /// Creates the synthetic wrapper part (CommonJS or ESM) for a wrapped
+    /// file and records its part index in `wrapper_part_index`.
     pub fn create_wrapper_for_file(
         &mut self,
         wrap: WrapKind,
@@ -3158,10 +3103,8 @@ impl<'a> LinkerContext<'a> {
                 let common_js_parts =
                     self.top_level_symbols_to_parts_for_runtime(self.cjs_runtime_ref);
 
-                // Note: reshaped for borrowck — Zig held `runtime_parts`
-                // simultaneously with the mutable graph borrows below; the inner
-                // loop is empty (`if r#ref.eql(...) continue;` only) so it's a
-                // no-op kept for parity with the original.
+                // Note: the inner loop is intentionally a no-op
+                // (`if r#ref.eql(...) continue;` only).
                 for &part_id in common_js_parts {
                     let runtime_parts =
                         self.graph.ast.items_parts()[Index::RUNTIME.get() as usize].as_slice();
@@ -3357,12 +3300,11 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// Spec: `LinkerContext.zig:1710 advanceImportTracker`.
+    /// Follows one step of an import chain: resolves what `tracker`'s import
+    /// points to in the target file and reports the match status.
     pub fn advance_import_tracker(&mut self, tracker: &ImportTracker) -> ImportTrackerIterator {
         let id = tracker.source_index.get();
-        // Note: reshaped for borrowck — Zig held `&mut named_imports[id]`
-        // and `&import_records[id]` simultaneously; here we read `named_import`
-        // out first, then borrow the rest.
+        // Note: read `named_import` out first, then borrow the rest.
         let named_import: &NamedImport =
             match self.graph.ast.items_named_imports()[id as usize].get(&tracker.import_ref) {
                 Some(ni) => ni,
@@ -3536,15 +3478,17 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// Spec: `LinkerContext.zig:1443 matchImportWithExport`.
+    /// Walks an import chain (through re-exports) to its final target and
+    /// returns how the import should be bound, collecting any re-export
+    /// dependencies along the way.
     pub fn match_import_with_export(
         &mut self,
         init_tracker: ImportTracker,
         re_exports: &mut bun_alloc::AstVec<Dependency>,
     ) -> MatchImport {
         let cycle_detector_top = self.cycle_detector.len();
-        // Note: Zig's `defer cycle_detector.shrinkRetainingCapacity` is
-        // lowered to an explicit `truncate` after the `'loop_` below — the only
+        // Note: `cycle_detector` is restored by an explicit
+        // `truncate` after the `'loop_` below — the only
         // exits are the three `return`s that follow it, so a single post-loop
         // truncate covers every path. A scopeguard holding a raw `*mut` into
         // `self.cycle_detector` would be invalidated by the `&mut self`
@@ -3849,7 +3793,6 @@ impl<'a> LinkerContext<'a> {
                                 part_index: dep,
                                 source_index: bun_ast::Index::init(tracker.source_index.get()),
                             });
-                            // PERF(port): was assume_capacity
                         }
                     }
 
@@ -3900,25 +3843,24 @@ impl<'a> LinkerContext<'a> {
         result
     }
 
-    /// Spec: `LinkerContext.zig:2471 matchImportsWithExportsForFile`.
+    /// Resolves every named import in one file to its matching export,
+    /// recording the bindings in `imports_to_bind`.
     pub(crate) fn match_imports_with_exports_for_file(
         &mut self,
         named_imports_ptr: *const crate::bundled_ast::NamedImports,
         imports_to_bind: &mut crate::RefImportData,
         source_index: crate::IndexInt,
     ) {
-        // Note: Zig clones into a local, sorts, iterates, then writes back.
-        // `ArrayHashMap` has no in-place key sort and `NamedImport` is non-Clone
-        // (owns a `Vec`), so we sort an index vector over the live
+        // Note: `ArrayHashMap` has no in-place key sort and `NamedImport` is
+        // non-Clone (owns a `Vec`), so we sort an index vector over the live
         // keys/values instead — same observable iteration order (ascending
-        // `inner_index`). The write-back is a no-op here since we never mutate
-        // the map.
+        // `inner_index`). We never mutate the map.
         //
-        // The Zig clone existed to break the alias between this parameter and
+        // This parameter aliases
         // `self.graph.ast.named_imports[source_index]`, which
         // `match_import_with_export` re-reads via the SoA column. Taking the
         // parameter as a raw `*const` (no uniqueness assertion) and reading
-        // through it preserves that alias-safety without the clone: no live
+        // through it preserves that alias-safety: no live
         // `&`/`&mut` to the column element spans the `&mut self` call below.
         //
         // SAFETY: `named_imports_ptr` points into the `graph.ast.named_imports`
@@ -4072,11 +4014,8 @@ impl<'a> LinkerContext<'a> {
         }
     }
 
-    /// Spec: `linker_context/generateCodeForLazyExport.zig`.
-    ///
     /// Thin inherent-method shim so callers can write
-    /// `this.generate_code_for_lazy_export(id)` (matches Zig's
-    /// `pub const generateCodeForLazyExport = @import(...)`). The full body —
+    /// `this.generate_code_for_lazy_export(id)`. The full body —
     /// including the CSS-modules `composes`/`local_scope` Visitor — lives in
     /// `linker_context/generateCodeForLazyExport.rs`.
     #[inline]
@@ -4090,7 +4029,8 @@ impl<'a> LinkerContext<'a> {
         )
     }
 
-    /// Spec: `LinkerContext.zig:503 generateNamedExportInFile`.
+    /// Synthesizes a named export symbol in a file (creating a new part for
+    /// it) and returns the symbol's `Ref` and the part index.
     pub fn generate_named_export_in_file(
         &mut self,
         source_index: crate::IndexInt,
@@ -4161,11 +4101,8 @@ impl<'a> LinkerContext<'a> {
             return Ok(crate::chunk::IntermediateOutput::Joiner(core::mem::take(j)));
         }
 
-        // Note: Zig had `errdefer j.deinit()` around the initCapacity — Drop handles it.
         let mut pieces: Vec<OutputPiece> = Vec::with_capacity(count as usize);
-        // errdefer pieces.deinit() — Drop handles it
-        // Note: Zig used `j.done(alloc)` (worker arena), so the joined
-        // buffer outlived this function. The Rust `StringJoiner::done()`
+        // Note: `StringJoiner::done()`
         // returns a `Box<[u8]>`; we must keep it alive alongside the pieces
         // (each `OutputPiece` stores a raw `*const u8` into it). It is moved
         // into the returned `OutputPieces` below.
@@ -4257,11 +4194,11 @@ impl<'a> LinkerContext<'a> {
     }
 }
 
-// PartialEq for MatchImport (needed for std.meta.eql in match_import_with_export)
+// PartialEq for MatchImport (used by match_import_with_export)
 impl PartialEq for MatchImport {
     fn eq(&self, other: &Self) -> bool {
-        // Note: Zig `std.meta.eql` on a slice compares ptr+len, not contents —
-        // compare the raw fat pointer (address + length metadata).
+        // Note: intentionally compares the raw fat pointer
+        // (address + length metadata), not contents.
         std::ptr::eq(self.alias.as_raw(), other.alias.as_raw())
             && self.kind == other.kind
             && self.namespace_ref == other.namespace_ref
@@ -4278,9 +4215,8 @@ impl PartialEq for MatchImport {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct StmtList {
-    // Zig threaded a generic arena param; these are temporary scratch buffers,
-    // so plain `Vec`s on the global allocator are equivalent (cleared/reused
-    // per chunk, freed by Drop).
+    // Temporary scratch buffers: plain `Vec`s on the global allocator
+    // (cleared/reused per chunk, freed by Drop).
     pub inside_wrapper_prefix: InsideWrapperPrefix,
     pub outside_wrapper_prefix: Vec<Stmt>,
     pub inside_wrapper_suffix: Vec<Stmt>,
@@ -4359,8 +4295,8 @@ impl InsideWrapperPrefix {
         }
 
         // Note: deep AST mutation chain — `s_expr_mut`/`e_await_mut`/
-        // `e_call_mut`/`e_array_mut` return `Option`; `.unwrap()` mirrors Zig's
-        // untagged-union field reads (panic on shape mismatch).
+        // `e_call_mut`/`e_array_mut` return `Option`; `.unwrap()` panics on
+        // shape mismatch.
         let mut first_dep_call_expr = self.stmts[self.sync_dependencies_end]
             .data
             .s_expr_mut()
@@ -4404,7 +4340,6 @@ impl InsideWrapperPrefix {
 
             let mut items = bun_ast::ExprNodeList::init_capacity(2);
             items.append_slice_assume_capacity(&[first_dep_call_expr, call_expr]);
-            // PERF(port): was assume_capacity
 
             let mut args = bun_ast::ExprNodeList::init_capacity(1);
             args.append_assume_capacity(Expr::init(
@@ -4414,7 +4349,6 @@ impl InsideWrapperPrefix {
                 },
                 Loc::EMPTY,
             ));
-            // PERF(port): was assume_capacity
 
             let promise_all_call = Expr::init(
                 E::Call {
@@ -4489,5 +4423,3 @@ pub enum StmtListWhich {
     InsideWrapperSuffix,
     AllStmts,
 }
-
-// ported from: src/bundler/LinkerContext.zig

@@ -14,7 +14,6 @@ pub enum Method {
     HEAD = 7,
     LINK = 8,
     LOCK = 9,
-    /// Zig: `@"M-SEARCH"`
     M_SEARCH = 10,
     MERGE = 11,
     MKACTIVITY = 12,
@@ -44,15 +43,13 @@ pub enum Method {
     UNSUBSCRIBE = 35,
 }
 
-// Zig: `pub const fromJS = Map.fromJS;` and `pub const toJS = @import("../http_jsc/method_jsc.zig").toJS;`
-// Deleted per PORTING.md — to_js/from_js live as extension-trait methods in the `bun_http_jsc` crate.
+// Per PORTING.md, to_js/from_js live as extension-trait methods in the `bun_http_jsc` crate.
 
 pub type Set = EnumSet<Method>;
 
 impl Method {
-    /// Port of Zig `@tagName(method)` — uppercase HTTP method token. `M_SEARCH`
-    /// renders as `"M-SEARCH"` (the wire form, matching the Zig enum name
-    /// `@"M-SEARCH"`).
+    /// Uppercase HTTP method token. `M_SEARCH` renders as `"M-SEARCH"` (the
+    /// wire form).
     pub const fn as_str(self) -> &'static str {
         match self {
             Method::ACL => "ACL",
@@ -126,17 +123,15 @@ impl Method {
         Self::which(str)
     }
 
-    /// Port of Zig `bun.ComptimeStringMap(Method, …).get`: length-gated, then a
-    /// flat byte-pattern match on the entries of that exact length. Zig builds
-    /// the dispatch at `comptime`; the previous Rust port used a `phf::Map`,
+    /// Length-gated, then a flat byte-pattern match on the entries of that
+    /// exact length. The previous implementation used a `phf::Map`,
     /// which costs a SipHash13 round per lookup (`phf_shared::hash` ≈ 0.6 %
     /// self-time in a Bun.serve hello-world profile, called twice per request).
     /// The wire form is RFC 9110 case-sensitive uppercase, so the per-request
     /// hot path takes the upper arm; the all-lower entries exist only for
-    /// `new Request("get", …)` JS-side convenience and match the Zig table
-    /// exactly (mixed-case still rejects).
+    /// `new Request("get", …)` JS-side convenience (mixed-case still rejects).
     ///
-    /// `#[inline]`: the Zig `ComptimeStringMapWithKeyType` lookup is fully
+    /// `#[inline]`: this lookup should be fully
     /// inlined into `NodeHTTPResponse.createForJS` (no separate symbol in the
     /// release binary). Without the hint LLVM keeps this as a ~600-byte
     /// out-of-line call because the full match tree looks heavy, even though
@@ -261,8 +256,7 @@ impl Optional {
 /// `str` must point to `len` initialised bytes for the duration of the call.
 pub(crate) unsafe extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize) -> i16 {
     // SAFETY: genuine FFI boundary — C++ caller passes a non-null, byte-aligned
-    // pointer to `len` initialised bytes (Zig signature `[*]const u8`, which is
-    // non-null by construction). The (ptr,len) pair cannot be a `&[u8]` across
+    // pointer to `len` initialised bytes. The (ptr,len) pair cannot be a `&[u8]` across
     // the C ABI, so `from_raw_parts` is irreducible here; the borrow does not
     // outlive this stack frame.
     let slice = unsafe { core::slice::from_raw_parts(str, len) };
@@ -272,11 +266,8 @@ pub(crate) unsafe extern "C" fn Bun__HTTPMethod__from(str: *const u8, len: usize
     method as i16
 }
 
-// Zig `comptime { _ = Bun__HTTPMethod__from; }` force-reference dropped — Rust links what's `pub`.
-
 // ═══════════════════════════════════════════════════════════════════════
 // HTTPHeaderName — moved from bun_runtime::webcore::FetchHeaders.
-// Source: src/jsc/FetchHeaders.zig
 //
 // `enum(u8)` discriminant crosses the FFI boundary to
 // `WebCore__FetchHeaders__put`/`fastHas`/`fastGet` — order MUST match
@@ -383,8 +374,6 @@ pub enum HeaderName {
     XXSSProtection,
 }
 
-// ported from: src/http_types/Method.zig
-
 #[cfg(test)]
 mod tests {
     use super::Method;
@@ -402,7 +391,7 @@ mod tests {
             let lower = upper.to_ascii_lowercase();
             assert_eq!(Method::which(lower.as_bytes()), Some(m), "lower {lower}");
         }
-        // Mixed case must reject (Zig table has only all-upper / all-lower).
+        // Mixed case must reject (only all-upper / all-lower are accepted).
         assert_eq!(Method::which(b"Get"), None);
         assert_eq!(Method::which(b"OPtions"), None);
         // Out-of-range lengths and unknown tokens.

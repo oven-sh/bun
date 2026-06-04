@@ -10,5 +10,3 @@ impl AddCommand {
         Ok(())
     }
 }
-
-// ported from: src/cli/add_command.zig

@@ -33,7 +33,7 @@ impl Export {
                 Some(eq) => (&s[..eq], &s[eq + 1..]),
                 None => (s, &b""[..]),
             };
-            // Spec (export.zig): argv backing is freed when the Cmd retires,
+            // The argv backing is freed when the Cmd retires,
             // so the key/value MUST be duplicated into ref-counted storage —
             // `init_slice` here would leave dangling EnvStr in `export_env`.
             let label = EnvStr::dupe_ref_counted(name);
@@ -85,4 +85,3 @@ impl Export {
     }
 }
 
-// ported from: src/shell/builtin/export.zig

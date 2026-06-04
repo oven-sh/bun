@@ -26,10 +26,6 @@ use crate::bake::dev_server::route_bundle::IndexOptional as RouteBundleIndexOpti
 /// where it is an entrypoint index.
 pub enum OpaqueFileIdMarker {}
 pub type OpaqueFileId = bun_core::GenericIndex<u32, OpaqueFileIdMarker>;
-// Zig's `bun.GenericIndex.Optional` is a packed maxInt-sentinel optional (4
-// bytes); `Option<OpaqueFileId>` is the idiomatic Rust spelling and is 8 bytes
-// — a deliberate, accepted layout divergence (`bun_core::GenericIndexOptional`
-// exists if the size ever matters).
 pub type OpaqueFileIdOptional = Option<OpaqueFileId>;
 
 pub struct FrameworkRouter {
@@ -73,9 +69,6 @@ pub struct FrameworkRouter {
     ///    this arena to ensure that everything gets freed.
     pub pattern_string_arena: Arena,
 
-    /// Dead-code in the Zig source (`newEdge` references `fr.edges`/`fr.freed_edges`/`Route.Edge`
-    /// which are never otherwise defined or used). Ported as a free-list pair so the body of
-    /// `new_edge` matches the spec verbatim.
     pub edges: Vec<RouteEdge>,
     pub freed_edges: Vec<RouteEdgeIndex>,
 }
@@ -128,11 +121,9 @@ pub enum FileKind {
 }
 
 pub enum RouteMarker {}
-pub type RouteIndex = bun_core::GenericIndex<u32, RouteMarker>; // Zig: u31 (loses u31 range debug-assert)
+pub type RouteIndex = bun_core::GenericIndex<u32, RouteMarker>;
 
-/// Zig: `Route.Edge` — referenced only by the dead `newEdge` free-list helper in the spec.
-/// The struct body is never defined upstream; ported as an opaque unit so `new_edge` compiles
-/// with its real body.
+/// Referenced only by the dead `new_edge` free-list helper.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct RouteEdge;
 
@@ -196,7 +187,6 @@ impl FrameworkRouter {
             ty.abs_root = strings::paths::without_trailing_slash_windows_path(&ty.abs_root).into();
             debug_assert!(strings::has_prefix(&ty.abs_root, root));
 
-            // PERF(port): was appendAssumeCapacity
             routes.push(Route {
                 part: Part::Text(b""),
                 r#type: TypeIndex::init(u8::try_from(type_index).expect("int cast")),
@@ -227,10 +217,8 @@ impl FrameworkRouter {
     pub fn memory_cost(&self) -> usize {
         let mut cost: usize = size_of::<FrameworkRouter>();
         cost += self.routes.capacity() * size_of::<Route>();
-        // Zig: `DataList.capacityInBytes(entries.capacity)` — the SoA byte
-        // capacity of the backing `MultiArrayList`. The Rust `ArrayHashMap`
-        // stores three column `Vec`s (keys, values, 32-bit hashes), so the
-        // equivalent footprint is `capacity * (sizeof K + sizeof V + sizeof u32)`.
+        // The `ArrayHashMap` stores three column `Vec`s (keys, values, 32-bit
+        // hashes), so the footprint is `capacity * (sizeof K + sizeof V + sizeof u32)`.
         cost += self.static_routes.capacity()
             * (size_of::<Box<[u8]>>() + size_of::<RouteIndex>() + size_of::<u32>());
         cost += self.dynamic_routes.capacity()
@@ -654,14 +642,10 @@ pub enum Style {
     JavascriptDefined(Strong),
 }
 
-// Note: Zig copies `Style` by value (bitwise), which for the
-// `.javascript_defined` arm shallow-copies the `jsc.Strong.Optional` pointer —
-// both copies alias the same C++ StrongRef and only one `deinit()` is ever
-// called. In Rust `Strong` has `Drop`, so a bitwise copy would double-free.
-// The built-in styles are trivially copyable; the JS-defined arm is an
-// unimplemented feature in the Zig source as well (`Style.parse` does
-// `@panic("TODO: customizable Style")`), so cloning it is unreachable today.
-// Mirror the Zig `@panic` message instead of inventing unsafe aliasing.
+// The built-in styles are trivially copyable; the `JavascriptDefined` arm owns
+// a `Strong` (Drop type), so a shallow copy would double-free. That arm is an
+// unimplemented feature (`Style::from_js` never produces it), so cloning it is
+// unreachable today.
 impl Clone for Style {
     fn clone(&self) -> Self {
         match self {
@@ -669,7 +653,6 @@ impl Clone for Style {
             Style::NextjsAppUi => Style::NextjsAppUi,
             Style::NextjsAppRoutes => Style::NextjsAppRoutes,
             Style::JavascriptDefined(_) => {
-                // Matches Zig `Style.parse`: `@panic("TODO: customizable Style")`.
                 panic!("TODO: customizable Style")
             }
         }
@@ -688,7 +671,6 @@ impl Style {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Style> {
         if value.is_string() {
             let bun_string = bun_core::OwnedString::new(value.to_bun_string(global)?);
-            // PERF(port): was stack-fallback allocator
             let utf8 = bun_string.to_utf8();
             if let Some(style) = STYLE_MAP.get(utf8.slice()) {
                 return Ok(style());
@@ -1057,8 +1039,7 @@ pub enum InsertError {
 }
 bun_core::oom_from_alloc!(InsertError);
 
-// PERF(port): Zig used `comptime insertion_kind` with dependent type `insertion_kind.Pattern()`.
-// Rust models this as a runtime enum carrying both pattern shapes; profile if hot.
+// Runtime enum carrying both pattern shapes; profile if hot.
 pub enum InsertPattern {
     Static(StaticPattern),
     Dynamic(EncodedPattern),
@@ -1108,7 +1089,6 @@ impl FrameworkRouter {
             };
 
             let mut route_index = root_route;
-            // Note: reshaped for borrowck — Zig held `route: *Route`; we re-fetch via index.
             'outer: loop {
                 let mut next = self.route_ptr(route_index).first_child;
                 while let Some(current) = next {
@@ -1212,9 +1192,9 @@ impl FrameworkRouter {
     }
 }
 
-// `Part` stored in `Route` borrows from the router's own `pattern_string_arena`
-// (Zig stored plain borrowed slices). Rust cannot express that self-referential
-// borrow, so `to_owned_part` detaches the lifetime when storing into `Route`.
+// `Part` stored in `Route` borrows from the router's own `pattern_string_arena`.
+// Rust cannot express that self-referential borrow, so `to_owned_part` detaches
+// the lifetime when storing into `Route`.
 impl<'a> Part<'a> {
     /// Detach the borrow lifetime so this `Part` can be stored in `Route`.
     ///
@@ -1254,7 +1234,7 @@ pub struct MatchedParams {
 #[derive(Copy, Clone)]
 pub struct MatchedParamEntry {
     // Borrow from the input `path`/`pattern` buffers; both outlive the
-    // `MatchedParams` stack frame (Zig: `[]const u8`). See `RawSlice` invariant.
+    // `MatchedParams` stack frame. See `RawSlice` invariant.
     pub key: bun_ptr::RawSlice<u8>,
     pub value: bun_ptr::RawSlice<u8>,
 }
@@ -1448,9 +1428,7 @@ impl TinyLog {
     }
 }
 
-/// Local shim — `bun_core::io::Writer` exposes only `write_all`/`print`; the
-/// Zig writer interface had `splatByteAll`/`splatBytesAll`. Implement here so
-/// `TinyLog::print` keeps its body verbatim.
+/// Local shim — `bun_core::io::Writer` exposes only `write_all`/`print`.
 fn writer_splat_byte_all(
     w: &mut bun_core::io::Writer,
     byte: u8,
@@ -1478,9 +1456,6 @@ fn writer_splat_bytes_all(
 }
 
 /// Interface for connecting FrameworkRouter to another codebase
-// Note: Zig's `InsertionContext` was an `*anyopaque` + `*const VTable` pair, with `wrap()`
-// generating a comptime vtable per concrete type. Per LIFETIMES.tsv this is BORROW_PARAM →
-// `&mut dyn InsertionHandler`. The trait below replaces the manual vtable.
 pub trait InsertionHandler {
     fn get_file_id_for_router(
         &mut self,
@@ -1499,21 +1474,19 @@ pub trait InsertionHandler {
     ) -> Result<(), AllocError>;
 }
 
-/// Port of Zig `bun.StringHashMapContext` (`std.hash.Wyhash` final4, seed 0).
+/// Hash context (wyhash final4, seed 0) for the `zig_hash_map` rebuild below.
 ///
 /// `scan_inner` walks `DirEntry.data` to discover routes; the resulting child
-/// order is the map's iteration order. In Zig that map is a
-/// `std.HashMapUnmanaged([]const u8, *Entry, StringHashMapContext, 80)`, whose
-/// linear-probe bucket walk is what `test/bake/framework-router.test.ts`
-/// snapshots. The Rust `EntryMap` is a `std::collections::HashMap`, which has
-/// a different layout, so we rebuild into a `zig_hash_map` keyed/hashed
-/// identically before iterating.
+/// order is the map's iteration order, and the linear-probe bucket walk is
+/// what `test/bake/framework-router.test.ts` snapshots. `EntryMap` is a
+/// `std::collections::HashMap`, which has a different layout, so we rebuild
+/// into a `zig_hash_map` keyed/hashed deterministically before iterating.
 struct ZigStringHashContext;
 impl bun_collections::zig_hash_map::HashContext<Box<[u8]>> for ZigStringHashContext {
     #[inline]
     fn ctx_hash(key: &Box<[u8]>) -> u64 {
-        // Zig: `std.hash.Wyhash.hash(0, s)` — `bun_wyhash::hash` is the final4
-        // variant with seed 0. (Don't route through `auto_hash`/`OneShotHasher`
+        // `bun_wyhash::hash` is the wyhash final4 variant with seed 0.
+        // (Don't route through `auto_hash`/`OneShotHasher`
         // here: Rust's `<[u8] as Hash>` mixes in a length prefix, which would
         // shift the bucket layout the snapshot below depends on.)
         bun_wyhash::hash(key)
@@ -1531,7 +1504,6 @@ impl FrameworkRouter {
         r: &mut Resolver,
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
-        // Note: reshaped for borrowck — Zig held `t: *const Type`; we re-fetch via index.
         let abs_root: Box<[u8]> = self.types[ty.get() as usize].abs_root.clone();
         debug_assert!(!abs_root.ends_with(b"/"));
         debug_assert!(paths::is_absolute(&abs_root));
@@ -1561,14 +1533,13 @@ impl FrameworkRouter {
 
         if let Some(entries) = dir_info.get_entries_const() {
             // Note: `entries.data` is backed by `std::collections::HashMap`,
-            // whose iteration order differs from Zig's `std.HashMapUnmanaged`.
-            // The route-tree child order is this iteration order (see `insert`),
-            // and `test/bake/framework-router.test.ts` snapshots it. Rebuild into
-            // a Zig-layout map (same wyhash/seed/probe) so the walk matches the
-            // spec. Absent hash collisions (the common case for small dirs) the
-            // bucket order is fully determined by the hash, so re-insertion order
-            // is irrelevant; with collisions it may diverge from Zig's readdir-
-            // order placement, but no test exercises that today.
+            // whose iteration order is unspecified. The route-tree child order
+            // is this iteration order (see `insert`), and
+            // `test/bake/framework-router.test.ts` snapshots it. Rebuild into a
+            // `zig_hash_map` (fixed wyhash/seed/probe) so the walk order is
+            // deterministic. Absent hash collisions (the common case for small
+            // dirs) the bucket order is fully determined by the hash, so
+            // re-insertion order is irrelevant.
             let mut zig_order: bun_collections::zig_hash_map::HashMap<
                 Box<[u8]>,
                 *mut bun_resolver::fs::Entry,
@@ -1654,11 +1625,10 @@ impl FrameworkRouter {
                         };
 
                         let mut log = TinyLog::empty();
-                        // Spec FrameworkRouter.zig: `defer arena_state.reset(
-                        // .retain_capacity)`. Handled at the end of every arm
-                        // via `reset_retain_with_limit(8M)` — keep the
-                        // `mi_heap` warm between directory entries instead of
-                        // paying `mi_heap_destroy + mi_heap_new` per file.
+                        // The arena is reset at the end of every arm via
+                        // `reset_retain_with_limit(8M)` — keep the `mi_heap`
+                        // warm between directory entries instead of paying
+                        // `mi_heap_destroy + mi_heap_new` per file.
                         let parse_result =
                             t.style
                                 .parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
@@ -1714,7 +1684,6 @@ impl FrameworkRouter {
                             }
                         };
 
-                        // PERF(port): was comptime bool dispatch on `param_count > 0` — profile if hot
                         let result = if param_count > 0 {
                             let pattern = EncodedPattern::init_from_parts(
                                 parsed.parts,
@@ -1804,8 +1773,6 @@ pub struct StoredParseError {
 
 impl JSFrameworkRouter {
     pub fn get_bindings(global: &JSGlobalObject) -> JsResult<JSValue> {
-        // Zig used `jsc.JSObject.create` with a struct literal; the Rust
-        // spelling is `create_empty_object` + `put`.
         let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
@@ -1844,8 +1811,8 @@ impl JSFrameworkRouter {
             opts.get(global, "style")?.unwrap_or(JSValue::UNDEFINED),
             global,
         )?;
-        // Zig's `errdefer style.deinit()` is implicit: `Style` owns a `Strong` (Drop type),
-        // so `?` on any error path below drops it automatically.
+        // `Style` owns a `Strong` (Drop type), so `?` on any error path below
+        // drops it automatically.
 
         let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
             paths::platform::Auto,
@@ -1881,9 +1848,8 @@ impl JSFrameworkRouter {
         });
 
         let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-        // Note: reshaped for borrowck — Zig passes `jsfr` as both the router owner and the
-        // insertion-context. The handler only touches `files`/`stored_parse_errors`, so
-        // split-borrow those two fields into a dedicated context (see `JSFrameworkRouterScanCtx`).
+        // The handler only touches `files`/`stored_parse_errors`, so split-borrow
+        // those two fields into a dedicated context (see `JSFrameworkRouterScanCtx`).
         {
             let JSFrameworkRouter {
                 router,
@@ -1924,7 +1890,6 @@ impl JSFrameworkRouter {
             params: BoundedArray::default(),
         };
         if let Some(index) = self.router.match_slow(path.slice(), &mut params_out) {
-            // PERF(port): was stack-fallback allocator
             let obj = JSValue::create_empty_object(global, 2);
             obj.put(
                 global,
@@ -1951,7 +1916,6 @@ impl JSFrameworkRouter {
 
     #[bun_jsc::host_fn(method)]
     pub fn to_json(&self, global: &JSGlobalObject, _callframe: &CallFrame) -> JsResult<JSValue> {
-        // PERF(port): was stack-fallback allocator
         self.route_to_json(global, RouteIndex::init(0))
     }
 
@@ -2027,7 +1991,6 @@ impl JSFrameworkRouter {
     }
 
     pub fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        // PERF(port): was arena bulk-free
         let arena = Arena::new();
 
         if frame.arguments_count() < 2 {
@@ -2107,11 +2070,10 @@ pub(crate) fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) ->
 
 use bun_core::fmt::VecWriter as ByteFmtWriter;
 
-// Note: reshaped for borrowck. Zig's `InsertionContext.wrap(JSFrameworkRouter, jsfr)`
-// needs `&mut jsfr.router` (for `scan`) and `&mut *jsfr` (as the handler) simultaneously.
-// The handler only touches `files` / `stored_parse_errors`, so we split-borrow those two
-// fields into a dedicated context struct instead of implementing the trait on
-// `JSFrameworkRouter` itself.
+// `scan` needs `&mut jsfr.router` and the insertion handler simultaneously.
+// The handler only touches `files` / `stored_parse_errors`, so we split-borrow
+// those two fields into a dedicated context struct instead of implementing the
+// trait on `JSFrameworkRouter` itself.
 struct JSFrameworkRouterScanCtx<'a> {
     files: &'a mut Vec<bun_core::String>,
     stored_parse_errors: &'a mut Vec<StoredParseError>,
@@ -2145,10 +2107,6 @@ impl InsertionHandler for JSFrameworkRouterScanCtx<'_> {
         _other_id: OpaqueFileId,
         _file_kind: FileKind,
     ) -> Result<(), AllocError> {
-        // Zig's `InsertionContext.wrap()` emits `@panic("TODO: onRouterCollisionError for " ++ @typeName(T))`
-        // when `T` does not declare `onRouterCollisionError`. JSFrameworkRouter does not declare it.
         panic!("TODO: onRouterCollisionError for JSFrameworkRouter")
     }
 }
-
-// ported from: src/bake/FrameworkRouter.zig

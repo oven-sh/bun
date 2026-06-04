@@ -7,7 +7,7 @@ use core::marker::PhantomData;
 use bun_alloc::AllocError;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Context trait — models Zig's `Context: type` with `.hash(k)` / `.eql(a, b)`
+// Context trait — `.hash(k)` / `.eql(a, b)`
 // ──────────────────────────────────────────────────────────────────────────
 
 // Canonical definitions live in `crate::zig_hash_map`; re-exported here so the
@@ -16,7 +16,7 @@ use bun_alloc::AllocError;
 pub use crate::zig_hash_map::{AutoHashContext as AutoContext, HashContext};
 
 // ──────────────────────────────────────────────────────────────────────────
-// Type aliases (Zig: AutoHashMap)
+// Type aliases
 // ──────────────────────────────────────────────────────────────────────────
 
 pub type AutoHashMap<K, V, const MAX_LOAD_PERCENTAGE: u64> =
@@ -47,12 +47,11 @@ impl<K, V> Entry<K, V> {
         K: Copy + Default,
         V: Copy + Default,
     {
-        // Zig used `std.mem.zeroes(K)` / `undefined` — key/value of
-        // an empty entry (hash == EMPTY_HASH) are never read. Rust cannot use
-        // `mem::zeroed()` here: K may be `&[u8]` (or any `Copy` type with a
-        // niche), for which all-zero bytes violate the validity invariant
-        // regardless of whether the value is later read. Use `Default` for the
-        // unread placeholder instead.
+        // Key/value of an empty entry (hash == EMPTY_HASH) are never read.
+        // `mem::zeroed()` cannot be used here: K may be `&[u8]` (or any `Copy`
+        // type with a niche), for which all-zero bytes violate the validity
+        // invariant regardless of whether the value is later read. Use
+        // `Default` for the unread placeholder instead.
         Self {
             hash: EMPTY_HASH,
             key: K::default(),
@@ -74,23 +73,20 @@ impl<K: fmt::Debug, V: fmt::Debug> fmt::Display for Entry<K, V> {
 pub use crate::hash_map::GetOrPutResult;
 
 // ──────────────────────────────────────────────────────────────────────────
-// comptime helpers (Zig top-of-fn const expressions)
+// const helpers
 // ──────────────────────────────────────────────────────────────────────────
 
 #[inline]
 const fn compute_shift(capacity: u64) -> u8 {
-    // Zig: 63 - math.log2_int(u64, capacity) + 1
     (63 - capacity.ilog2() + 1) as u8
 }
 
 #[inline]
 const fn compute_overflow(capacity: u64, shift: u8) -> u64 {
-    // Zig: capacity / 10 + (63 - @as(u64, shift) + 1) << 1
-    // Zig precedence: `+` binds tighter than `<<`, so this is (a + b) << 1.
     (capacity / 10 + (63 - shift as u64 + 1)) << 1
 }
 
-/// Checked u64→usize narrowing for table indices (Zig indexes by u64 directly).
+/// Checked u64→usize narrowing for table indices.
 #[inline]
 fn to_idx(x: u64) -> usize {
     usize::try_from(x).expect("int cast")
@@ -121,7 +117,7 @@ pub struct StaticHashMap<
 > {
     pub entries: [Entry<K, V>; SLOTS],
     pub len: usize,
-    /// Zig `u6`; stored as u8.
+    /// Hash shift; always < 64, stored as u8.
     pub shift: u8,
     // put_probe_count: usize,
     // get_probe_count: usize,
@@ -177,7 +173,7 @@ impl<K: 'static, V: 'static, Ctx, const CAPACITY: usize, const SLOTS: usize> Has
 pub struct HashMap<K, V, Ctx, const MAX_LOAD_PERCENTAGE: u64> {
     pub entries: Box<[Entry<K, V>]>,
     pub len: usize,
-    /// Zig `u6`; stored as u8.
+    /// Hash shift; always < 64, stored as u8.
     pub shift: u8,
     // put_probe_count: usize,
     // get_probe_count: usize,
@@ -220,7 +216,6 @@ impl<
         let overflow = compute_overflow(capacity, shift);
 
         let n = usize::try_from(capacity + overflow).expect("int cast");
-        // Zig: gpa.alloc + @memset(.{})
         let entries = vec![Entry::<K, V>::empty(); n].into_boxed_slice();
 
         Ok(Self {
@@ -255,9 +250,6 @@ impl<
 
         let mut map = Self::init_capacity(capacity * 2)?;
 
-        // Zig walks raw `[*]Entry` pointers (`src`, `dst`, `end`); here we
-        // iterate by index over the old slice and index into the new boxed
-        // slice.
         let mut dst: usize = 0;
         let mut src: usize = 0;
         while src != end {
@@ -268,7 +260,6 @@ impl<
             } else {
                 0
             };
-            // Zig: dst = if (@intFromPtr(p) >= @intFromPtr(dst)) p else dst;
             if i >= dst {
                 dst = i;
             }
@@ -278,7 +269,7 @@ impl<
             dst += 1;
         }
 
-        // Zig: self.deinit(gpa); — old Box drops on assignment below.
+        // Old Box drops on assignment below.
         self.entries = map.entries;
         self.shift = map.shift;
         Ok(())
@@ -312,8 +303,8 @@ impl<
 // HashMapMixin — shared method bodies for StaticHashMap & HashMap
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Mirrors Zig's `fn HashMapMixin(Self, K, V, Context) type`. Implementors
-/// supply the backing storage; default methods provide the Robin-Hood logic.
+/// Implementors supply the backing storage; default methods provide the
+/// Robin-Hood logic.
 pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
     fn storage(&self) -> &[Entry<K, V>];
     fn storage_mut(&mut self) -> &mut [Entry<K, V>];
@@ -329,11 +320,10 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         *self.len_mut() = 0;
     }
 
-    /// Full backing slice (capacity + overflow). Matches Zig's `slice()`.
+    /// Full backing slice (capacity + overflow).
     fn slice(&mut self) -> &mut [Entry<K, V>] {
-        // Zig recomputes `capacity + overflow` from `shift`; with Box<[T]>/[T; N]
-        // the storage already carries its exact length, so just return it.
-        // The assert is kept for parity with Zig's implicit invariant.
+        // The storage carries its exact length; the assert checks it stays
+        // consistent with the `shift`-derived `capacity + overflow` size.
         let capacity = 1u64 << (63 - self.shift() + 1);
         let overflow = compute_overflow(capacity, self.shift());
         debug_assert_eq!(
@@ -379,9 +369,8 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
         V: Copy + Default,
         Ctx: HashContext<K>,
     {
-        // Zig left `value = undefined` (never read until the caller writes via
-        // `value_ptr`). Use `Default` for the placeholder — V may not be
-        // zero-valid.
+        // `value` is never read until the caller writes via `value_ptr`. Use
+        // `Default` for the placeholder — V may not be zero-valid.
         let mut it: Entry<K, V> = Entry {
             hash: Ctx::ctx_hash(&key),
             key,
@@ -552,16 +541,12 @@ pub trait HashMapMixin<K: 'static, V: 'static, Ctx> {
 mod tests {
     use super::*;
 
-    /// Zig's `std.rand.DefaultPrng`: xoshiro256++ with the state seeded by
-    /// splitmix64. Key sequences are byte-identical to the Zig tests, so the
-    /// key-only expectations (duplicate-free keys, len- and count-driven
-    /// shift progression) carry over exactly. Hash values do NOT carry over:
-    /// `AutoHashContext` routes through `bun_wyhash::auto_hash` (mum-mix),
-    /// not Zig's `Wyhash.hash(0, asBytes)`, so probe displacement is a fresh
-    /// draw. The 100%-load probe bound of the static test was re-validated
-    /// for this hash by exact simulation of all 128 seeds: max slot index
-    /// touched (incl. delete's `i + 1` backshift read) is 548 of 632, with
-    /// no 64-bit hash collisions among any seed's 512 keys.
+    /// xoshiro256++ with the state seeded by splitmix64. `AutoHashContext`
+    /// routes through `bun_wyhash::auto_hash` (mum-mix). The 100%-load probe
+    /// bound of the static test was validated for this hash by exact
+    /// simulation of all 128 seeds: max slot index touched (incl. delete's
+    /// `i + 1` backshift read) is 548 of 632, with no 64-bit hash collisions
+    /// among any seed's 512 keys.
     struct Xoshiro256PlusPlus {
         s: [u64; 4],
     }
@@ -676,5 +661,3 @@ mod tests {
         }
     }
 }
-
-// ported from: src/collections/StaticHashMap.zig

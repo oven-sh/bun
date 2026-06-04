@@ -97,7 +97,7 @@ impl Meta {
     }
 
     /// Named `clone_into` (not `clone`) to avoid shadowing `Clone::clone` now
-    /// that `Meta: Clone + Copy`. Mirrors Zig `Meta.clone(id, buf, Builder, builder)`.
+    /// that `Meta: Clone + Copy`.
     pub fn clone_into(
         &self,
         id: PackageID,
@@ -116,5 +116,3 @@ impl Meta {
         }
     }
 }
-
-// ported from: src/install/lockfile/Package/Meta.zig

@@ -14,15 +14,13 @@ use super::{StringBuilder, package::Package};
 // LAYERING NOTE: package.json is parsed by `bun_parsers::json` which
 // produces the T2 value-shaped `bun_ast::Expr` (aliased as
 // `crate::bun_json::Expr`), NOT the full T4 `bun_ast::Expr`. JSON parse
-// is always UTF-8, so `as_utf8_string_literal()` is the allocator-free port of
-// Zig's `asString(lockfile.allocator)`.
+// is always UTF-8, so `as_utf8_string_literal()` needs no allocator.
 use crate::bun_json::{Expr, ExprData};
 
 declare_scope!(OverrideMap, visible);
 
 #[derive(Default)]
 pub struct OverrideMap {
-    // Zig used ArrayIdentityContext.U64 (identity hash on u64 key); the Rust
     // `ArrayHashMap` defaults to identity hashing for integer keys.
     pub map: ArrayHashMap<PackageNameHash, Dependency>,
 }
@@ -75,7 +73,6 @@ impl OverrideMap {
         new.map.ensure_total_capacity(self.map.count())?;
 
         for (k, v) in self.map.keys().iter().zip(self.map.values()) {
-            // PERF(port): was ensureTotalCapacity + putAssumeCapacity — profile if hot
             new.map
                 .put_assume_capacity(*k, v.clone_in(pm, old_string_bytes, new_builder)?);
         }
@@ -418,8 +415,8 @@ impl OverrideMap {
     }
 }
 
-// PERF(port): was comptime monomorphization (`comptime field: []const u8`).
-// Only used in warning-message formatting, so runtime &'static str is fine.
+// `field` is only used in warning-message
+// formatting, so a runtime `&'static str` is fine.
 pub fn parse_override_value(
     field: &'static str,
     // Callers hold a live `StringBuilder` (which owns `&mut string_bytes`), so
@@ -506,5 +503,3 @@ pub fn parse_override_value(
         behavior: Behavior::default(),
     }))
 }
-
-// ported from: src/install/lockfile/OverrideMap.zig

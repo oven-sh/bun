@@ -101,8 +101,7 @@ pub(crate) fn to_have_been_called_with(
     }
 
     // If there are multiple calls, list them all to help debugging.
-    // reshaped for borrowck — Zig shares one `&formatter` between to_fmt and
-    // list_formatter; in Rust the AllCallsWithArgsFormatter holds an exclusive borrow, so
+    // The AllCallsWithArgsFormatter holds an exclusive borrow of the formatter, so
     // we allocate a second ConsoleObject formatter for the list.
     let mut list_fmt = super::make_formatter(global);
     let list_formatter = mock::AllCallsWithArgsFormatter {
@@ -122,5 +121,3 @@ pub(crate) fn to_have_been_called_with(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveBeenCalledWith.zig

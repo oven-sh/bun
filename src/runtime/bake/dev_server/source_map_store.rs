@@ -5,8 +5,6 @@
 //! maps that aren't reachable from IncrementalGraph can still be reached by
 //! a browser tab if it has a callback to a previously loaded chunk; so DevServer
 //! should be aware of it.
-//!
-//! Spec: src/runtime/bake/DevServer/SourceMapStore.zig
 
 use bun_collections::{ArrayHashMap, LinearFifo, linear_fifo::StaticBuffer};
 use bun_core::string_joiner::StringJoiner;
@@ -63,9 +61,6 @@ pub(crate) const WEAK_REF_ENTRY_MAX: usize = 16;
 /// IncrementalGraph stores partial source maps for each file. A
 /// `SourceMapStore.Entry` is the information + refcount holder to
 /// construct the actual JSON file associated with a bundle/hot update.
-// The Zig spec's `dev_arena` allocator-handle field is intentionally absent —
-// its sole reader fed `paths`/`files` frees in `deinit`; here those are
-// `Box`/`Vec` backed by the global mimalloc.
 #[derive(Default)]
 pub struct Entry {
     /// Sum of:
@@ -73,10 +68,9 @@ pub struct Entry {
     /// - For route bundle client scripts, +1 until invalidation.
     pub ref_count: u32,
     /// Indexes are off by one because this excludes the HMR Runtime.
-    // The Zig original borrowed inner slices from `IncrementalGraph
-    // .bundled_files.keys()`; that is self-referential w.r.t. `DevServer`, so
-    // owned copies are stored instead. See PERF(port) in
-    // `IncrementalGraph::take_source_map`.
+    // Borrowing inner slices from `IncrementalGraph.bundled_files.keys()`
+    // would be self-referential w.r.t. `DevServer`, so owned copies are
+    // stored instead. See `IncrementalGraph::take_source_map`.
     pub paths: Box<[Box<[u8]>]>,
     /// Indexes are off by one because this excludes the HMR Runtime.
     // An SoA column split buys nothing for a 2-word payload (and
@@ -89,10 +83,6 @@ pub struct Entry {
 }
 
 impl Entry {
-    // The Zig spec's `sourceContents()` is deliberately unported: it was dead
-    // code (lazy compilation, no callers) indexing `source_contents`/`file_paths`,
-    // fields removed in 67f0c3e016a in favor of `paths` + `files`.
-
     /// `SourceMapStore.Entry.renderMappings`.
     pub fn render_mappings(&self, kind: ChunkKind) -> Result<Vec<u8>, bun_core::Error> {
         let mut j = StringJoiner::default();
@@ -116,7 +106,6 @@ impl Entry {
         j.push_static(br#"{"version":3,"sources":["bun://Bun/Bun HMR Runtime""#);
 
         // This buffer is temporary, holding the quoted source paths, joined with commas.
-        // PERF(port): was arena-backed ArrayList; using global Vec since
         // `percent_encode_write` takes `&mut Vec<u8>`.
         let mut source_map_strings: Vec<u8> = Vec::new();
 
@@ -357,10 +346,9 @@ impl Entry {
         Ok(())
     }
 
-    /// `SourceMapStore.Entry.deinit` — Rust drop handles `files` (each
-    /// `Shared` decrements its `Rc<PackedMap>`) and `paths` (both the outer
-    /// box and the owned inner `Box<[u8]>` path copies; unlike Zig, the inner
-    /// slices are not borrowed from IncrementalGraph).
+    /// Drop handles `files` (each `Shared` decrements its `Rc<PackedMap>`)
+    /// and `paths` (both the outer box and the owned inner `Box<[u8]>` path
+    /// copies).
     ///
     /// Deliberately not `impl Drop` — the `ref_count == 0` assertion belongs
     /// only on the explicit `unrefAtIndex` release path. Whole-store teardown and
@@ -484,7 +472,6 @@ impl Default for SourceMapStore {
 bun_core::impl_field_parent! { SourceMapStore => DevServer.source_maps; pub fn mut owner; }
 
 impl SourceMapStore {
-    /// `SourceMapStore.empty` (Zig: `pub const empty: Self = .{ ... }`).
     /// ArrayHashMap/LinearFifo have no `const fn` ctors; callers use
     /// this in lieu of a `const`.
     #[inline]
@@ -507,14 +494,13 @@ impl SourceMapStore {
             debug_assert!(ref_count > 0); // invalid state
             *gop.value_ptr = Entry {
                 ref_count,
-                // Zig left these `undefined`; caller fills them.
+                // Caller fills these.
                 overlapping_memory_cost: 0,
                 paths: Box::default(),
                 files: Vec::new(),
             };
             Ok(PutOrIncrementRefCount::Uninitialized(gop.value_ptr))
         } else {
-            // Zig: `bun.debugAssert(ref_count >= 0)` — always true for u32.
             gop.value_ptr.ref_count += ref_count;
             Ok(PutOrIncrementRefCount::Shared(gop.value_ptr))
         }
@@ -541,7 +527,6 @@ impl SourceMapStore {
             map_log!("dec {:x}, {} | {} -> {}", key, count, rc + count, rc);
         }
         if self.entries.values()[index].ref_count == 0 {
-            // Zig: e.deinit(); store.entries.swapRemoveAt(index);
             // `swap_remove_at` drops the Entry, freeing `files`/`paths`;
             // the `ref_count == 0` invariant is the branch condition itself.
             self.entries.swap_remove_at(index);
@@ -621,7 +606,6 @@ impl SourceMapStore {
             }
         }
         if !found {
-            // Zig `for { ... } else { entry.ref_count += @intFromEnum(mode); }`
             let entry = self.entries.get_mut(&key).unwrap();
             entry.ref_count += mode as u32;
         }
@@ -647,8 +631,7 @@ impl SourceMapStore {
 
     /// `SourceMapStore.sweepWeakRefs` — pop expired weak-refs, decrement,
     /// reschedule. Called from the high-tier `EventLoopTimer` dispatch with
-    /// the raw `*EventLoopTimer` (Zig recovers the store via
-    /// `@fieldParentPtr("weak_ref_sweep_timer", t)`).
+    /// the raw `*EventLoopTimer`.
     ///
     /// # Safety
     /// `timer` must point to the `weak_ref_sweep_timer` field of a live
@@ -713,8 +696,8 @@ impl SourceMapStore {
         let vlq_bytes = entry
             .render_mappings(script_id_decoded.kind())
             .expect("OOM");
-        // PERF(port): Zig used arena for both `arena` and `gpa` here;
-        // render_mappings now returns Vec<u8> (global alloc).
+        // PERF: `render_mappings` returns `Vec<u8>` (global alloc); could
+        // use an arena.
 
         match source_map::mapping::parse(
             &vlq_bytes,

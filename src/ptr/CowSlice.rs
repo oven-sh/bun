@@ -31,11 +31,8 @@ pub type CowSlice<T> = CowSliceZ<T, false>;
 /// (the sentinel value is assumed to be the zero value of `T`, produced via
 /// `T::default()`).
 ///
-/// Zig's `comptime sentinel: ?T` allowed an arbitrary sentinel value; Rust
-/// const generics cannot express `Option<T>` for generic `T`, so this port
-/// uses a `bool` and assumes sentinel == 0 when `Z`. For `Z = true`, owned
-/// allocations are physically `len + 1` elements (logical `len` plus the
-/// sentinel), matching Zig's `dupeZ`/sentinel-aware `free`.
+/// For `Z = true`, owned allocations are physically `len + 1` elements
+/// (logical `len` plus the sentinel).
 pub struct CowSliceZ<T: 'static, const Z: bool> {
     /// Pointer to the underlying data. Do not access this directly.
     ///
@@ -109,14 +106,10 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
         self.debug.map(|d| unsafe { d.as_ref() })
     }
 
-    // Zig exposed `Slice` / `SliceMut` type aliases (`[:z]const T` vs
-    // `[]const T`); callers here use `&[T]` / `&mut [T]` directly. For
-    // `Z = true` the sentinel is at `slice()[len]` in the backing storage.
+    // For `Z = true` the sentinel is at `slice()[len]` in the backing storage.
 
     /// Number of elements physically backing an owned allocation of logical
-    /// length `len`: for `Z = true` the trailing sentinel adds one element
-    /// (Zig's `[:z]T` slices carried this in the type; `allocator.free` of a
-    /// sentinel slice freed `len + 1`).
+    /// length `len`: for `Z = true` the trailing sentinel adds one element.
     #[inline]
     const fn physical_len(len: usize) -> usize {
         len + Z as usize
@@ -130,8 +123,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     /// For `Z = true`, `data` must include the trailing sentinel as its final
     /// element; the logical length is `data.len() - 1`.
     pub fn init_owned(data: Box<[T]>) -> Self {
-        // Zig asserted ownership at runtime via a debug allocator wrapper; in
-        // Rust the `Box<[T]>` type already proves unique ownership. The
+        // The `Box<[T]>` type already proves unique ownership. The
         // `checked_sub` enforces the sentinel contract even in release builds:
         // an empty box for `Z = true` would otherwise underflow to a near-max
         // length and make `slice()` instant UB.
@@ -150,9 +142,8 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
 
     /// Create a new Cow that copies `data` into a new allocation.
     ///
-    /// For `Z = true` this is Zig's `allocator.dupeZ(T, data)`: the new
-    /// allocation holds `data.len() + 1` elements with a trailing zero
-    /// (`T::default()`) sentinel.
+    /// For `Z = true`, the new allocation holds `data.len() + 1` elements
+    /// with a trailing zero (`T::default()`) sentinel.
     pub fn init_dupe(data: &[T]) -> Result<Self, AllocError>
     where
         T: Clone + Default,
@@ -256,7 +247,6 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
                 drop(unsafe { bun_core::heap::take(d.as_ptr()) });
             }
         }
-        // Zig: `defer str.* = Self.empty` — a *bitwise* overwrite. In Rust,
         // `*self = Self::EMPTY` would run `Drop` on the old value first and
         // free the very `ptr[..len]` allocation we are about to hand back.
         // `ManuallyDrop::new(mem::replace(..))` resets `self` without dropping.
@@ -299,8 +289,7 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     /// assertions get performed.
     pub fn borrow_subslice(&self, start: usize, end: Option<usize>) -> Self {
         let end_ = end.unwrap_or(self.flags.len());
-        // Zig's sentinel-aware re-slice `str.ptr[start..end_ :s]` asserted the
-        // sentinel is present at `end_`; checking that here would force a
+        // Asserting the sentinel is present at `end_` would force a
         // `PartialEq + Default` bound on every caller, so the `Z = true` path
         // skips that debug assertion.
         let mut result = self.borrow();
@@ -331,8 +320,8 @@ impl<T: 'static, const Z: bool> CowSliceZ<T, Z> {
     {
         debug_assert!(!self.is_owned());
 
-        // Zig `allocator.dupeZ` for `Z = true`: the duplicate gets a fresh
-        // trailing zero sentinel (see `dupe_maybe_z`).
+        // For `Z = true` the duplicate gets a fresh trailing zero sentinel
+        // (see `dupe_maybe_z`).
         let bytes: Box<[T]> = Self::dupe_maybe_z(self.slice());
         self.ptr = bun_core::heap::into_raw(bytes).cast::<T>();
         // flags.len already correct (unchanged)
@@ -377,8 +366,6 @@ impl<T: 'static, const Z: bool> Drop for CowSliceZ<T, Z> {
     fn drop(&mut self) {
         #[cfg(debug_assertions)]
         if let Some(dbg) = self.debug_data() {
-            // Zig asserted `debug.allocator.vtable == allocator.vtable`
-            // here. With a single global allocator that check is moot.
             if self.is_owned() {
                 let borrows = dbg.mutex.lock();
                 // active borrows become invalid data
@@ -410,7 +397,6 @@ impl<T: 'static, const Z: bool> Drop for CowSliceZ<T, Z> {
 
 impl<const Z: bool> core::fmt::Display for CowSliceZ<u8, Z> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // Zig `writer.writeAll(str.slice())` wrote raw bytes.
         // `BStr` gives lossy Display over `[u8]` without UTF-8 validation.
         core::fmt::Display::fmt(bstr::BStr::new(self.slice()), f)
     }
@@ -419,9 +405,8 @@ impl<const Z: bool> core::fmt::Display for CowSliceZ<u8, Z> {
 #[cfg(debug_assertions)]
 struct DebugData {
     /// Guards `borrows` (number of active borrows).
-    // Zig used `bun.Mutex` with `borrows` as a separate field;
-    // folded into the mutex payload here. `bun_core::Mutex` (poison-free
-    // `std::sync` wrapper) is used because `bun_ptr` sits below `bun_threading`.
+    // `bun_core::Mutex` (poison-free `std::sync` wrapper) is used because
+    // `bun_ptr` sits below `bun_threading`.
     mutex: bun_core::Mutex<usize>,
 }
 
@@ -434,7 +419,7 @@ impl DebugData {
     }
 }
 
-// `comptime` size assertion: CowSlice should be the same size as a native slice
+// Compile-time size assertion: CowSlice should be the same size as a native slice
 // (modulo the debug pointer).
 #[cfg(not(debug_assertions))]
 const _: () = assert!(
@@ -477,7 +462,7 @@ mod tests {
     /// and run — there are no other in-tree instantiations of `Z = true`.
     #[test]
     fn cow_slice_z_sentinel() {
-        // init_dupe = Zig dupeZ: physical len + 1 with trailing 0 sentinel.
+        // init_dupe: physical len + 1 with trailing 0 sentinel.
         let mut str = CowSliceZ::<u8, true>::init_dupe(b"hello").unwrap();
         assert!(str.is_owned());
         assert_eq!(str.length(), 5);
@@ -513,5 +498,3 @@ mod tests {
         drop(owned);
     }
 }
-
-// ported from: src/ptr/CowSlice.zig

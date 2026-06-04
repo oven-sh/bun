@@ -47,5 +47,3 @@ impl ZigStackFrameCode {
         }
     }
 }
-
-// ported from: src/jsc/ZigStackFrameCode.zig

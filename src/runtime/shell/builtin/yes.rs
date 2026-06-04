@@ -25,7 +25,7 @@ pub struct Yes {
     /// out to ~BUFSIZ.
     pub buffer: Vec<u8>,
     pub buffer_used: usize,
-    /// Zig: `task: YesTask = undefined` — populated in `start()`.
+    /// Populated in `start()`.
     pub task: Option<YesTask>,
 }
 
@@ -88,15 +88,11 @@ impl Yes {
     }
 
     /// Write 4 chunks then bounce to the event loop so we don't hog the main
-    /// thread. Spec: yes.zig `writeNoIO`.
+    /// thread.
     fn write_no_io_loop(interp: &Interpreter, cmd: NodeId) -> Yield {
-        // Spec: yes.zig `writeOnceNoIO` — `.err` arm formats via
-        // `fmtErrorArena(.yes, "{s}\n", .{e.name()})` and routes through
-        // `writeFailingError`.
-        //
         // Split-borrow the Cmd so the tiled buffer (in `impl_`) and `stdout`
-        // are accessible simultaneously — Zig passes `this.buffer[0..]`
-        // zero-copy, and matching that matters for `yes` throughput.
+        // are accessible simultaneously — the buffer is written zero-copy,
+        // which matters for `yes` throughput.
         let err = {
             let cmd_node = interp.as_cmd_mut(cmd);
             let shell = cmd_node.base.shell;
@@ -146,7 +142,7 @@ impl Yes {
     ) -> Yield {
         let child = ChildPtr::new(cmd, WriterTag::Builtin);
         // `stdout` and `impl_` are disjoint fields of `Builtin` — split-borrow
-        // so the tiled buffer is enqueued zero-copy (Zig passes a slice).
+        // so the tiled buffer is enqueued zero-copy.
         let (stdout, yes) = Self::split_stdout_state(Builtin::of_mut(interp, cmd));
         stdout.enqueue(child, &yes.buffer[..yes.buffer_used], safeguard)
     }
@@ -168,8 +164,8 @@ impl Yes {
         e: Option<bun_sys::SystemError>,
     ) -> Yield {
         if let Some(e) = e {
-            // Spec: yes.zig `defer e.deref()` — release the SystemError's
-            // owned BunString fields (no `Drop` impl on `bun_sys::SystemError`).
+            // Release the SystemError's owned BunString fields (no `Drop`
+            // impl on `bun_sys::SystemError`).
             e.deref();
             Self::state_mut(interp, cmd).state = State::Err;
             return Builtin::done(interp, cmd, 1);
@@ -196,11 +192,10 @@ impl Yes {
 // needed (PORTING.md §Allocators).
 
 /// Re-queues `yes` onto the event loop after a burst of no-IO writes so we
-/// don't block the main thread forever. Spec: yes.zig `YesTask`.
+/// don't block the main thread forever.
 #[repr(C)]
 pub struct YesTask {
-    /// Back-ref to the owning [`Interpreter`] (NodeId-arena port replaces
-    /// Zig's `container_of` chain).
+    /// Back-ref to the owning [`Interpreter`].
     pub interp: *mut Interpreter,
     pub cmd: NodeId,
     pub evtloop: EventLoopHandle,
@@ -212,8 +207,6 @@ impl Taskable for YesTask {
 }
 
 impl YesTask {
-    /// Spec: yes.zig `YesTask.enqueue`.
-    ///
     /// # Safety
     /// `this` must point to a live `YesTask` whose storage is stable until the
     /// enqueued task fires (it lives inside `Box<Yes>` in the interpreter
@@ -248,8 +241,6 @@ impl YesTask {
         }
     }
 
-    /// Spec: yes.zig `YesTask.runFromMainThread`.
-    ///
     /// `this` must be a live `YesTask` whose storage is stable inside
     /// `Box<Yes>` in the interpreter arena, with `interp` initialised by
     /// [`Yes::start`]. Reached only via the concurrent-task dispatch installed
@@ -260,7 +251,7 @@ impl YesTask {
         Yes::write_no_io_loop(interp, cmd).run(interp);
     }
 
-    /// Spec: yes.zig `YesTask.runFromMainThreadMini`. Signature matches
+    /// Signature matches
     /// [`AnyTaskWithExtraContext::from`](bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from)'s
     /// callback shape (`fn(*mut T, *mut ())`).
     fn run_from_main_thread_mini(this: *mut Self, _: *mut ()) {
@@ -269,5 +260,3 @@ impl YesTask {
         Self::run_from_main_thread(unsafe { &*this })
     }
 }
-
-// ported from: src/shell/builtin/yes.zig

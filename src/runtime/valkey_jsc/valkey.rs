@@ -25,8 +25,6 @@ pub use super::valkey_context as ValkeyContext;
 /// spelling here so the generated `pub use` and prototype thunks resolve.
 pub use super::js_valkey_body::JSValkeyClient as RedisClient;
 
-// Zig `bun.JSTerminated!T` is `error{ Terminated }!T`; this uses the crate-wide
-// unified `JsResult<T>` (Thrown | OutOfMemory | Terminated) instead.
 type JsTerminated<T> = bun_jsc::JsResult<T>;
 
 bun_output::define_scoped_log!(debug, Redis, visible);
@@ -91,9 +89,6 @@ impl Status {
 }
 
 pub use super::valkey_command_body as Command_;
-// Note: Zig `pub const Command = @import("./ValkeyCommand.zig");` re-exports the module
-// AND uses `Command` as the struct type (file-as-struct). In Rust the type lives at
-// `super::valkey_command_body::Command`.
 
 /// Valkey protocol types (standalone, TLS, Unix socket)
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -138,9 +133,6 @@ pub enum TLS {
 }
 
 impl TLS {
-    // Note: Zig `deinit` only called `ssl_config.deinit()`. SSLConfig should impl Drop,
-    // making this enum's Drop automatic. (No explicit Drop impl needed if SSLConfig: Drop.)
-
     pub(crate) fn reject_unauthorized(&self, vm: &VirtualMachine) -> bool {
         match self {
             TLS::Custom(ssl_config) => ssl_config.reject_unauthorized != 0,
@@ -151,8 +143,7 @@ impl TLS {
 }
 
 // Call sites only ever compare against `TLS::None` / `TLS::Enabled`; `SSLConfig`
-// doesn't (and shouldn't) implement `PartialEq`, so compare by discriminant —
-// matches Zig's tagged-union `==` semantics for tag checks.
+// doesn't (and shouldn't) implement `PartialEq`, so compare by discriminant.
 impl PartialEq for TLS {
     fn eq(&self, other: &Self) -> bool {
         core::mem::discriminant(self) == core::mem::discriminant(other)
@@ -188,8 +179,6 @@ impl Default for Options {
 }
 
 pub enum Address {
-    // In Zig these slices borrow from `ValkeyClient.connection_strings`
-    // (self-referential, inexpressible in safe Rust). Uses owned Box<[u8]> instead.
     Unix(Box<[u8]>),
     Host { host: Box<[u8]>, port: u16 },
 }
@@ -202,7 +191,7 @@ impl Address {
         }
     }
 
-    /// Spec valkey.zig `Address.connect` — open a TCP/TLS/Unix socket via
+    /// Open a TCP/TLS/Unix socket via
     /// `uws::Socket{TLS,TCP}::connect_*_group`.
     ///
     /// `Owner` is the userdata pointer stashed in the socket ext (the
@@ -216,9 +205,6 @@ impl Address {
         ssl_ctx: Option<*mut SslCtx>,
         is_tls: bool,
     ) -> Result<AnySocket, bun_core::Error> {
-        // Note: Zig used `switch (is_tls) { inline else => |tls| ... }` to comptime-dispatch
-        // SocketTLS vs SocketTCP. Expanded to runtime if/else.
-        // PERF(port): was comptime bool dispatch — profile if hot
         if is_tls {
             let kind = SocketKind::ValkeyTls;
             let sock = match self {
@@ -275,8 +261,6 @@ pub struct ValkeyClient {
     pub queue: command::entry::Queue,
 
     // Connection parameters
-    // In Zig, password/username/address.hostname are views into `connection_strings`
-    // (self-referential, inexpressible in safe Rust). Uses owned Box<[u8]> instead;
     // `connection_strings` is retained because `js_valkey.rs` still slices it
     // when constructing/duplicating clients.
     pub password: Box<[u8]>,
@@ -297,7 +281,6 @@ pub struct ValkeyClient {
     pub max_retries: u32, // Maximum retry attempts
 
     pub flags: ConnectionFlags,
-    // Note: `std.mem.Allocator param` deleted (non-AST crate; global mimalloc).
 
     // Auto-pipelining
     pub auto_flusher: AutoFlusher,
@@ -321,7 +304,6 @@ pub(crate) struct DeferredFailure {
 
 impl DeferredFailure {
     pub(crate) fn run(self) -> JsTerminated<()> {
-        // Note: Zig `defer { free(message); destroy(this) }` — both handled by Box<Self> drop.
         debug!("running deferred failure");
         let mut this = self;
         let err = valkey_error_to_js(&this.global_this, &*this.message, this.err);
@@ -335,10 +317,7 @@ impl DeferredFailure {
 
     pub(crate) fn enqueue(self: Box<Self>) {
         debug!("enqueueing deferred failure");
-        // Note: Zig `jsc.ManagedTask.New(DeferredFailure, run).init(this)` collapses to
-        // `ManagedTask::new(ptr, cb)` per src/event_loop/ManagedTask.rs. The Box is leaked into
-        // a raw pointer here and reconstituted inside the trampoline (mirrors Zig's
-        // `default_allocator.create`/`destroy` pair).
+        // The Box is leaked into a raw pointer here and reconstituted inside the trampoline.
         fn run_raw(ptr: *mut DeferredFailure) -> bun_event_loop::JsResult<()> {
             // SAFETY: `ptr` was produced by `heap::alloc` below; we are the sole owner.
             let this = unsafe { bun_core::heap::take(ptr) };
@@ -352,8 +331,7 @@ impl DeferredFailure {
     }
 }
 
-/// Read the parser's current byte offset. Mirrors direct `reader.pos` field
-/// access in the Zig implementation (Zig struct fields are public).
+/// Read the parser's current byte offset.
 #[inline]
 fn reader_pos(reader: &protocol::ValkeyReader<'_>) -> usize {
     reader.pos()
@@ -368,7 +346,6 @@ bun_core::impl_field_parent! { ValkeyClient => JSValkeyClient.client; fn parent;
 impl ValkeyClient {
     /// Clean up resources used by the Valkey client
     // Cannot be `Drop` — takes a JSGlobalObject param and has JS side effects.
-    // Renamed from Zig `deinit` per PORTING.md (never expose `pub fn deinit(&mut self)`).
     pub fn shutdown(&mut self, global_object_or_finalizing: Option<&JSGlobalObject>) {
         let mut pending =
             core::mem::replace(&mut self.in_flight, command::promise_pair::Queue::init());
@@ -381,7 +358,7 @@ impl ValkeyClient {
                 RedisError::ConnectionClosed,
             );
             while let Some(mut pair) = pending.read_item() {
-                // Any exception from the reject is swallowed (Zig: `catch {}`) so
+                // Any exception from the reject is swallowed so
                 // every remaining pending command still gets rejected at shutdown.
                 let _ = pair.reject_command(global_this, object);
             }
@@ -408,8 +385,6 @@ impl ValkeyClient {
         // Note: `allocator.free(connection_strings)` and `write_buffer/read_buffer.deinit()`
         // and `tls.deinit()` are handled by Drop on the owning fields. Only the side-effecting
         // unregister remains explicit.
-        // Note there is no need to deallocate username, password and hostname since they are
-        // within the connection_strings buffer (in Zig; see note on field decls).
         drop(pending);
         drop(commands);
         self.unregister_auto_flusher();
@@ -439,14 +414,11 @@ impl ValkeyClient {
         }
 
         self.ref_();
-        // Zig's `defer this.deref()` is reshaped to the explicit `deref()` at the
-        // end of this fn (a scopeguard closure would alias `&mut self`).
 
         // Start draining the command queue
         let mut total_bytelength: usize = 0;
 
-        // Note: reshaped for borrowck — Zig held `to_process` slice while mutating
-        // `in_flight`. We compute the count first, then drain by `read_item`.
+        // We compute the count first, then drain by `read_item`.
         let pipelineable_count: usize = {
             let to_process = self.queue.readable_slice(0);
             let mut total: usize = 0;
@@ -1346,8 +1318,6 @@ impl ValkeyClient {
 
     pub fn on_writable(&mut self) {
         self.ref_();
-        // Zig's `defer this.deref()` is reshaped to plain ref/deref bracketing
-        // (a scopeguard closure would alias the `&mut self` in `send_next_command`).
         self.send_next_command();
         self.deref();
     }
@@ -1489,8 +1459,7 @@ impl ValkeyClient {
     }
 
     /// Get a writer for the connected socket
-    // Zig returned `std.Io.GenericWriter(*ValkeyClient, RedisError, write)`;
-    // in Rust, ValkeyClient itself serves as the writer (see `write` below).
+    // ValkeyClient itself serves as the writer (see `write` below).
     pub fn writer(&mut self) -> &mut Self {
         self
     }
@@ -1592,9 +1561,8 @@ impl bun_io::Write for WriteBufWriter<'_> {
 }
 
 // Local extension trait providing `.unwrap_or_oom()` on `Result<T, E>`.
-// Zig: `catch bun.outOfMemory()` / `bun.handleOom(expr)`. No shared `UnwrapOrOom`
-// trait exists yet (bun_alloc has none); delegate to `bun_core::handle_oom` so
-// every call site keeps its method-chain shape.
+// No shared `UnwrapOrOom` trait exists yet (bun_alloc has none); delegate to
+// `bun_core::handle_oom` so every call site keeps its method-chain shape.
 trait UnwrapOrOom {
     type Output;
     fn unwrap_or_oom(self) -> Self::Output;
@@ -1607,5 +1575,3 @@ impl<T, E> UnwrapOrOom for core::result::Result<T, E> {
         bun_core::handle_oom(self)
     }
 }
-
-// ported from: src/runtime/valkey_jsc/valkey.zig

@@ -20,8 +20,7 @@ pub struct Execute<'a> {
     pub param_types: &'a [Param],
 }
 
-// Zig `deinit` iterated `params` and called `param.deinit()` on each.
-// In Rust, `Data` owns its resources via `Drop`, and `Execute` only borrows the
+// `Data` owns its resources via `Drop`, and `Execute` only borrows the
 // slice, so the slice owner is responsible for cleanup (each `Data`'s `Drop`
 // runs when the owning slice is dropped after `write`).
 
@@ -75,8 +74,6 @@ impl<'a> Execute<'a> {
                     "Write param type {} len {} hex {:02x?}",
                     <&'static str>::from(param_type.r#type),
                     value.len(),
-                    // Zig `{x}` hex-dumps contiguously ("deadbeef"); `{:02x?}` is
-                    // bracketed ("[de, ad, ...]"). Debug-log only; divergence accepted.
                     value,
                 );
                 if param_type.r#type.is_binary_format_supported() {
@@ -90,17 +87,12 @@ impl<'a> Execute<'a> {
         Ok(())
     }
 
-    // Zig: `pub const write = writeWrap(Execute, writeInternal).write;`
-    // Zig's `writeWrap` constructs a `NewWriter` around a raw context and calls
-    // `write_internal`. Here `writer` is already wrapped, so forward directly —
-    // `write_wrap`'s only job (the wrapping) is done by the caller.
+    // `writer` is already wrapped, so forward directly.
     pub fn write<C: WriterContext>(&self, writer: NewWriter<C>) -> Result<(), AnyMySQLError> {
         self.write_internal(writer)
     }
 }
 
-// Zig: `writer: anytype` — body calls .start/.int1/.write. Bound on the
-// concrete `NewWriter<C>` shape (the only `anytype` instantiation in-tree).
 pub fn execute<C: WriterContext>(query: &[u8], writer: NewWriter<C>) -> Result<(), AnyMySQLError> {
     let mut packet = writer.start(0)?;
     writer.int1(CommandType::COM_QUERY as u8)?;
@@ -108,5 +100,3 @@ pub fn execute<C: WriterContext>(query: &[u8], writer: NewWriter<C>) -> Result<(
     packet.end()?;
     Ok(())
 }
-
-// ported from: src/sql/mysql/protocol/Query.zig

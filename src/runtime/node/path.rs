@@ -8,14 +8,13 @@ use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_paths::{self, MAX_PATH_BYTES, Platform};
 use bun_sys;
 
-/// Local shim for `bun.String.createUTF8ForJS` over `[T]` (T = u8 | u16).
+/// Create a JS string from a `[T]` slice (T = u8 | u16).
 ///
-/// Zig's `createUTF8ForJS` only accepts `[]const u8`, but the `*JS_T` wrappers
-/// in path.zig are `comptime T`-generic. In practice every JS entry point
-/// converts to UTF-8 first (via `ZigString.toSlice`) and instantiates with
+/// In practice every JS entry point converts to UTF-8 first (via
+/// `ZigString.toSlice`) and instantiates with
 /// `T = u8`, so the `u16` arm is never reached at runtime — but it must still
 /// type-check. Dispatch on `T::IS_U16` and route the cold u16 arm through
-/// `bun.String.cloneUTF16(...).toJS(...)` so the generic body unifies.
+/// a UTF-16 `BunString` clone + `to_js` so the generic body unifies.
 #[inline]
 fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsResult<JSValue> {
     use crate::jsc::{StringJsc as _, bun_string_jsc};
@@ -35,7 +34,7 @@ fn create_js_string_t<T: PathCharCwd>(global: &JSGlobalObject, s: &[T]) -> JsRes
 
 // ── Local extension shims for upstream types missing methods (cannot edit upstream crates).
 
-/// `ZigString.trunc(n)` — clamp `len` to `n` (ZigString.zig:580).
+/// `ZigString.trunc(n)` — clamp `len` to `n`.
 trait ZigStringTruncExt {
     fn trunc(&self, len: usize) -> ZigString;
 }
@@ -48,8 +47,7 @@ impl ZigStringTruncExt for ZigString {
     }
 }
 
-/// Pooled path scratch carved from the per-VM [`RarePathBuf`] (mirrors Zig's
-/// `RareData.path_buf.get(min_len, fallback)` `StackFallbackAllocator`).
+/// Pooled path scratch carved from the per-VM [`RarePathBuf`].
 ///
 /// JS is single-threaded, so re-using the lazily-allocated tier across calls is
 /// sound. When the request exceeds the largest tier (32 × `MAX_PATH_BYTES`) —
@@ -117,15 +115,12 @@ impl PathCharCwd for u16 {
     }
 }
 
-/// `bun.strings.literal(T, "...")` — yields a `&'static [T]` for the ASCII literal.
+/// Yields a `&'static [T]` for an ASCII literal.
 #[inline]
 fn l<T: PathCharCwd>(s: &'static [u8]) -> &'static [T] {
     T::lit(s)
 }
 
-/// Taken from Zig 0.11.0 zig/src/resinator/rc.zig
-/// https://github.com/ziglang/zig/blob/776cd673f206099012d789fd5d05d49dd72b9faa/src/resinator/rc.zig#L266
-///
 /// Compares ASCII values case-insensitively, non-ASCII values are compared directly
 fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
     if !T::IS_U16 {
@@ -134,8 +129,8 @@ fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
         let b8: &[u8] = bytemuck::cast_slice::<T, u8>(b);
         return strings::eql_case_insensitive_ascii(a8, b8, true);
     }
-    // Zig's `eqlIgnoreCaseT` body for `T == u16` falls through with no return (UB if reached);
-    // in practice the only callers instantiate with `T == u8`. Provide a sound u16 compare so
+    // In practice the only callers instantiate with `T == u8`; provide a sound
+    // u16 compare so
     // the generic body type-checks and behaves correctly if ever exercised.
     if a.len() != b.len() {
         return false;
@@ -145,9 +140,6 @@ fn eql_ignore_case_t<T: PathCharCwd>(a: &[T], b: &[T]) -> bool {
         .all(|(x, y)| to_lower_t(*x) == to_lower_t(*y))
 }
 
-/// Taken from Zig 0.11.0 zig/src/resinator/rc.zig
-/// https://github.com/ziglang/zig/blob/776cd673f206099012d789fd5d05d49dd72b9faa/src/resinator/rc.zig#L266
-///
 /// Lowers ASCII values, non-ASCII values are returned directly
 #[inline]
 fn to_lower_t<T: PathCharCwd>(a_c: T) -> T {
@@ -200,7 +192,6 @@ pub struct PathParsed<'a, T: PathCharCwd> {
     pub name: &'a [T],
 }
 
-// path.zig:2750 — `extern "c" fn PathParsedObject__create(*jsc.JSGlobalObject, jsc.JSValue × 5) jsc.JSValue;`
 // `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params are
 // by-value `JSValue`, so no caller-side preconditions remain.
 unsafe extern "C" {
@@ -216,9 +207,6 @@ unsafe extern "C" {
 
 impl<'a, T: PathCharCwd> PathParsed<'a, T> {
     pub(crate) fn to_js_object(&self, global_object: &JSGlobalObject) -> JsResult<JSValue> {
-        // Alias the free-fn module so the Zig-mirrored
-        // `BunString::create_utf8_for_js(...)` call shape resolves (same pattern
-        // as the per-submodule imports below).
         let root = create_js_string_t::<T>(global_object, self.root)?;
         let dir = create_js_string_t::<T>(global_object, self.dir)?;
         let base = create_js_string_t::<T>(global_object, self.base)?;
@@ -245,7 +233,7 @@ pub(crate) const fn max_path_size<T: PathCharCwd>() -> usize {
 
 /// Upper bound of `max_path_size::<T>()` across both `T = u8` and `T = u16` on
 /// the current target. Used for sizing stack buffers where the `T`-dependent
-/// array length can't be expressed as a const-generic (Zig's `[MAX_PATH_SIZE(T):0]T`).
+/// array length can't be expressed as a const-generic.
 const MAX_PATH_SIZE_UPPER: usize = if MAX_PATH_BYTES > bun_paths::PATH_MAX_WIDE {
     MAX_PATH_BYTES
 } else {
@@ -260,7 +248,7 @@ pub(crate) const fn path_size<T: PathCharCwd>() -> usize {
     }
 }
 
-/// Helper: `bun.memmove(dst, src)` — equal-length copy.
+/// Helper: equal-length copy.
 /// (Rust's borrow rules forbid `&mut [T]`/`&[T]` overlap, so memmove ⇒ memcpy.)
 #[inline]
 fn memmove<T: Copy>(dst: &mut [T], src: &[T]) {
@@ -590,7 +578,6 @@ pub fn basename(
     };
 
     if let Some(_suffix_ptr) = suffix_ptr {
-        // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
         validate_string(global_object, _suffix_ptr, format_args!("ext"))?;
     }
 
@@ -599,7 +586,6 @@ pub fn basename(
     } else {
         JSValue::UNDEFINED
     };
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
@@ -607,7 +593,6 @@ pub fn basename(
         return Ok(path_ptr);
     }
 
-    // PERF(port): was stack-fallback — profile if hot
     let path_zslice = path_zstr.to_slice();
 
     let mut suffix_zslice: Option<bun_core::ZigStringSlice> = None;
@@ -816,7 +801,6 @@ pub(crate) fn dirname(
     } else {
         JSValue::UNDEFINED
     };
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
@@ -824,7 +808,6 @@ pub(crate) fn dirname(
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
 
-    // PERF(port): was stack-fallback — profile if hot
     let path_zslice = path_zstr.to_slice();
     dirname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
@@ -1061,7 +1044,6 @@ pub(crate) fn extname(
     } else {
         JSValue::UNDEFINED
     };
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
@@ -1069,7 +1051,6 @@ pub(crate) fn extname(
         return Ok(path_ptr);
     }
 
-    // PERF(port): was stack-fallback — profile if hot
     let path_zslice = path_zstr.to_slice();
     extname_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
@@ -1091,8 +1072,7 @@ fn _format_t<'a, T: PathCharCwd>(
 
     // Translated from the following JS code:
     //   const dir = pathObject.dir || pathObject.root;
-    // Zig used `std.mem.eql(u8, dir, root)` (hard-coded u8) which is a latent bug
-    // for `T == u16`; compare as `&[T]` here.
+    // Compare as `&[T]` so the comparison is correct for `T == u16` too.
     let dir_is_root = dir.is_empty() || dir == root;
     let dir_or_root = if dir_is_root { root } else { dir };
     let dir_len = dir_or_root.len();
@@ -1234,15 +1214,12 @@ pub(crate) fn format(
     } else {
         JSValue::UNDEFINED
     };
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_object(
         global_object,
         path_object_ptr,
         format_args!("pathObject"),
         Default::default(),
     )?;
-
-    // PERF(port): was stack-fallback — profile if hot
 
     let mut root: &[u8] = b"";
     let root_slice = if let Some(js_value) = path_object_ptr.get_truthy(global_object, "root")? {
@@ -1337,7 +1314,6 @@ pub(crate) fn is_absolute(
     } else {
         JSValue::UNDEFINED
     };
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
@@ -1585,9 +1561,9 @@ pub fn join(
         return BunString::create_utf8_for_js(global_object, CHAR_STR_DOT);
     }
 
-    // Zig leaks each per-arg `toSlice()` into the arena and bulk-frees at the end;
-    // here the `ZigStringSlice` RAII guards live inline in `owned` for the same
-    // effect. ASCII-only inputs (the common case) borrow the WTF backing without
+    // The `ZigStringSlice` RAII guards live inline in `owned` so every
+    // per-arg `toSlice()` is released at scope exit.
+    // ASCII-only inputs (the common case) borrow the WTF backing without
     // allocating; only non-ASCII triggers a transcode allocation.
     let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::with_capacity(args_len);
 
@@ -1612,7 +1588,7 @@ pub fn join(
     // Derive the `&[u8]` views in a second pass once `owned` is fully built —
     // borrowck then sees `paths` as a plain reborrow of `owned` with no
     // intervening mutation, so no raw-pointer detach is needed. Empty entries
-    // are skipped both here and inside `join_*_t`, matching Zig.
+    // are skipped both here and inside `join_*_t`.
     let paths: SmallVec<[&[u8]; 8]> = owned.iter().map(ZigStringSlice::slice).collect();
     let pool = &mut global_object.bun_vm().as_mut().rare_data().path_buf;
     join_js_t::<u8>(global_object, pool, is_windows, &paths)
@@ -2034,7 +2010,6 @@ pub(crate) fn normalize(
     } else {
         JSValue::UNDEFINED
     };
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validate_string(global_object, path_ptr, format_args!("path"))?;
     let path_zstr = path_ptr.get_zig_string(global_object)?;
     let len = path_zstr.len;
@@ -2404,7 +2379,6 @@ pub fn parse(
     } else {
         JSValue::UNDEFINED
     };
-    // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     crate::node::validators_impl::validate_string(global_object, path_ptr, format_args!("path"))?;
 
     let path_zstr = path_ptr.get_zig_string(global_object)?;
@@ -2412,7 +2386,6 @@ pub fn parse(
         return PathParsed::<u8>::default().to_js_object(global_object);
     }
 
-    // PERF(port): was stack-fallback — profile if hot
     let path_zslice = path_zstr.to_slice();
     parse_js_t::<u8>(global_object, is_windows, path_zslice.slice())
 }
@@ -2439,7 +2412,7 @@ pub(crate) fn relative_posix_t<'a, T: PathCharCwd>(
     // Borrowck: resolve into buf, then operate via raw indices.
     // resolve_*_t may return a 'static literal (".") instead of a sub-slice of
     // buf; copy it in so indexing `buf[..to_orig_len]` below observes the
-    // resolved value (matches Zig, which captures the returned slice itself).
+    // resolved value.
     let to_orig_len = {
         let (ptr, len) = {
             let r = resolve_posix_t(&[to], buf, buf3)?;
@@ -2584,7 +2557,7 @@ pub(crate) fn relative_windows_t<'a, T: PathCharCwd>(
     // Borrowck: resolve into buf, then operate via raw indices.
     // resolve_*_t may return a 'static literal (".") instead of a sub-slice of
     // buf; copy it in so indexing `buf[..to_orig_len]` below observes the
-    // resolved value (matches Zig, which captures the returned slice itself).
+    // resolved value.
     let to_orig_len = {
         let (ptr, len) = {
             let r = resolve_windows_t(&[to], buf, buf3)?;
@@ -2864,7 +2837,7 @@ pub(crate) fn resolve_posix_t<'a, T: PathCharCwd>(
     while i_i64 > -2 && !resolved_absolute {
         // Borrowck: `path` may borrow from tmp_buf which lives
         // in this scope; copy into buf2 before reusing.
-        // Zig: `[MAX_PATH_SIZE(T):0]T` — sized to the larger of the two T variants.
+        // Sized to the larger of the two T variants.
         let mut tmp_buf: [T; MAX_PATH_SIZE_UPPER];
         let path: &[T] = if i_i64 >= 0 {
             paths[usize::try_from(i_i64).expect("int cast")]
@@ -2950,7 +2923,7 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
     buf2: &mut [T],
 ) -> MaybeSlice<'a, T> {
     let is_sep_t = is_sep_windows_t::<T>;
-    // Zig: `[MAX_PATH_SIZE(T):0]T` — sized to the larger of the two T variants.
+    // Sized to the larger of the two T variants.
     let mut tmp_buf = [T::default(); MAX_PATH_SIZE_UPPER + 1];
 
     // Backed by tmpBuf.
@@ -2977,8 +2950,8 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
         // Borrowck: `path` may alias paths[], tmp_buf, or buf2,
         // and the loop body subsequently mutates tmp_buf/buf2 while still indexing
         // `path`. Store as raw (ptr, len) and materialize short-lived slices at use
-        // sites; all overlapping moves go through `ptr::copy` (memmove semantics),
-        // matching the Zig original.
+        // sites; all overlapping moves go through `ptr::copy` (memmove
+        // semantics).
         let mut path_ptr: *const T;
         let mut path_len: usize;
         macro_rules! path { () => {
@@ -3014,9 +2987,7 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                 // `'brk:` block) so the slice it backs stays live across `getenv_w`.
                 // 4 elements (not 3) so the wchar immediately following the 3-char
                 // key is a guaranteed NUL — `getenv_w` forwards `name.as_ptr()` to
-                // `GetEnvironmentVariableW`, which reads an LPCWSTR until NUL. The
-                // Zig spec uses `&[3:0]u16{...}` (sentinel-terminated) for the same
-                // reason.
+                // `GetEnvironmentVariableW`, which reads an LPCWSTR until NUL.
                 let fast_key: [u16; 4];
                 // Windows has the concept of drive-specific current working
                 // directories. If we've resolved a drive letter but not yet an
@@ -3054,26 +3025,21 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                         // `getenv_w` requires the NUL be addressable via the slice's
                         // pointer (it forwards `.as_ptr()` as LPCWSTR). `buf2` is a
                         // reused arena buffer with arbitrary prior contents past
-                        // `buf_size`, so write the terminator explicitly. Zig spec:
-                        // path.zig declares `key_w: [*:0]const u16` and the sentinel
-                        // is part of the object.
+                        // `buf_size`, so write the terminator explicitly.
                         buf2[buf_size] = T::from_u8(0);
                         // T == u16 when IS_U16; bytemuck statically checks the layout.
                         break 'brk bytemuck::cast_slice::<T, u16>(&buf2[..=buf_size]);
                     }
                     // T == u8 when !IS_U16; bytemuck statically checks the layout.
                     let key8: &[u8] = bytemuck::cast_slice::<T, u8>(&buf2[..buf_size]);
-                    // Zig spec (path.zig:2480-2482) writes `u16Buf[bufSize] = 0;`
-                    // after widening so the LPCWSTR is properly terminated regardless
-                    // of `WPathBuffer::uninit()`'s init state. Do the same here —
-                    // don't rely on `uninit()` happening to zero-fill today.
+                    // Write the NUL after widening so the LPCWSTR is properly
+                    // terminated regardless of `WPathBuffer::uninit()`'s init
+                    // state — don't rely on `uninit()` happening to zero-fill
+                    // today.
                     let n = strings::convert_utf8_to_utf16_in_buffer(&mut u16_buf[..], key8).len();
                     u16_buf[n] = 0;
                     &u16_buf[..=n]
                 };
-                // Zig's std.posix.getenvW has logic to support keys like `=${resolvedDevice}`:
-                // https://github.com/ziglang/zig/blob/7bd8b35a3dfe61e59ffea39d464e84fbcdead29a/lib/std/os.zig#L2126-L2130
-                //
                 // TODO: Enable test once spawnResult.stdout works on Windows.
                 // test/js/node/path/resolve.test.js
                 if let Some(r) = bun_sys::windows::getenv_w(key_w) {
@@ -3194,8 +3160,8 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
                             //   device =
                             //     `\\\\${firstPart}\\${StringPrototypeSlice(path, last, j)}`;
                             //   rootEnd = j;
-                            // path may alias tmp_buf (cwd branch). The Zig original
-                            // relies on memmove + non-overlapping ranges; use ptr::copy here.
+                            // path may alias tmp_buf (cwd branch); use
+                            // ptr::copy (memmove semantics).
                             buf_size = 2;
                             tmp_buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
                             tmp_buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
@@ -3328,8 +3294,7 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
     }
 
     // At this point, the path should be resolved to a full absolute path,
-    // but handle relative paths to be safe (might happen when std.process.cwdAlloc()
-    // fails)
+    // but handle relative paths to be safe (can happen if reading the cwd fails).
 
     // Normalize the tail path
     let normalized_len = normalize_string_t::<T, { Platform::Windows }>(
@@ -3373,7 +3338,6 @@ pub(crate) fn resolve_windows_t<'a, T: PathCharCwd>(
     Ok(l::<T>(CHAR_STR_DOT))
 }
 
-// path.zig:2749 — `extern "c" fn Process__getCachedCwd(*jsc.JSGlobalObject) jsc.JSValue;`
 #[cfg(unix)]
 unsafe extern "C" {
     safe fn Process__getCachedCwd(global: &JSGlobalObject) -> JSValue;
@@ -3423,7 +3387,7 @@ pub(crate) fn resolve_js_t<T: PathCharCwd>(
     buf_len += max_path_size::<T>() + 1;
     buf_len = buf_len.max(path_size::<T>());
     // +2 to account for separator and null terminator during path resolution.
-    // Carve buf/buf2 from one pooled slab (mirrors Zig's RareData path_buf).
+    // Carve buf/buf2 from one pooled slab.
     let mut scratch = PathScratch::<T>::new(pool, (buf_len + 2) * 2);
     let (buf, buf2) = scratch.slice().split_at_mut(buf_len + 2);
     if is_windows {
@@ -3445,7 +3409,7 @@ pub(crate) fn resolve(
     // Borrow each argument's WTF backing as a `ZigStringSlice` (no per-arg
     // `to_owned_slice()` heap copy — ASCII inputs borrow in place, only
     // non-ASCII transcodes). Inline-8 keeps the typical call alloc-free.
-    // Walk back-to-front to preserve Zig's early-out on the first absolute
+    // Walk back-to-front to early-out on the first absolute
     // POSIX path; reverse the borrowed views before handing to `resolve_*_t`.
     let mut owned: SmallVec<[ZigStringSlice; 8]> = SmallVec::new();
     let mut resolved_root = false;
@@ -3534,8 +3498,6 @@ pub(crate) fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
                 // overwritten by "\\\\?\\UNC\\" which is 8 bytes long.
                 // Use copy_within because resolvedPath and buf overlap.
                 buf.copy_within(0..len, buf_offset);
-                // Equiv to std.os.windows.NamespacePrefix.verbatim
-                // https://github.com/ziglang/zig/blob/dcaf43674e35372e1d28ab12c4c4ff9af9f3d646/lib/std/os/windows.zig#L2358-L2374
                 buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
                 buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
                 buf[2] = T::from_u8(CHAR_QUESTION_MARK);
@@ -3561,8 +3523,6 @@ pub(crate) fn to_namespaced_path_windows_t<'a, T: PathCharCwd>(
         // Move all bytes to the right by 4
         // Use copy_within because resolvedPath and buf overlap.
         buf.copy_within(0..len, buf_offset);
-        // Equiv to std.os.windows.NamespacePrefix.verbatim
-        // https://github.com/ziglang/zig/blob/dcaf43674e35372e1d28ab12c4c4ff9af9f3d646/lib/std/os/windows.zig#L2358-L2374
         buf[0] = T::from_u8(CHAR_BACKWARD_SLASH);
         buf[1] = T::from_u8(CHAR_BACKWARD_SLASH);
         buf[2] = T::from_u8(CHAR_QUESTION_MARK);
@@ -3632,13 +3592,11 @@ pub(crate) fn to_namespaced_path(
     to_namespaced_path_js_t::<u8>(global_object, pool, is_windows, path_zslice.slice())
 }
 
-// Zig used `bun.jsc.host_fn.wrap4v(...)` to generate the C-ABI shims. The Rust
-// proc-macro for `wrap4v` is not yet wired, so emit the SYSV-ABI thunks locally.
+// Emit the SYSV-ABI thunks locally.
 // Each wrapper forwards `(global, is_windows, args_ptr, args_len)` and routes the
-// `JsResult<JSValue>` through `host_fn::to_js_host_call` (== Zig `toJSHostCall`).
+// `JsResult<JSValue>` through `host_fn::to_js_host_call`.
 //
-// ABI: `jsc.conv` (src/jsc/jsc.zig) is `.x86_64_sysv` on Windows-x64 and `.c`
-// everywhere else. The C++ side (src/jsc/bindings/Path.cpp) declares these as
+// ABI: The C++ side (src/jsc/bindings/Path.cpp) declares these as
 // `SYSV_ABI`, so on Windows-x64 the wrapper MUST be `extern "sysv64"` — using
 // `extern "C"` there would be the Win64 ABI (RCX/RDX/R8/R9 + shadow space) and
 // would mis-read every argument.
@@ -3697,5 +3655,3 @@ export_path_host_fn! {
     "Bun__Path__resolve" => resolve,
     "Bun__Path__toNamespacedPath" => to_namespaced_path,
 }
-
-// ported from: src/runtime/node/path.zig

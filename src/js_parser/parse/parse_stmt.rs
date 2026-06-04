@@ -22,11 +22,7 @@ use js_ast::expr::EFlags;
 
 type Result<T> = core::result::Result<T, bun_core::Error>;
 
-// Zig: `pub fn ParseStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block. The 25+ per-token `t_*` helpers are private; only `parse_stmt` is
-// surfaced. Round-G un-gated the simpler `t_*` bodies; phase-d ported the remaining
-// `t_export`/`t_import`/fallthrough bodies inline (the `_draft_heavy` staging mod is gone).
+// The 25+ per-token `t_*` helpers are private; only `parse_stmt` is surfaced.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     // Note on `#[inline]` / `#[inline(never)]` / `#[cold]` annotations across the `t_*` arms:
@@ -342,7 +338,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let body_loc = p.lexer.loc();
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, body_loc)?;
-        // Zig: `defer p.popScope()`. Wrap the body in an inner closure so `pop_scope` runs once on
+        // Wrap the body in an inner closure so `pop_scope` runs once on
         // its `Result`, covering every `?` early-exit as well as explicit returns.
         let result: Result<Stmt> = (|| {
             p.lexer.expect(T::TOpenBrace)?;
@@ -350,8 +346,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut found_default = false;
             while p.lexer.token != T::TCloseBrace {
                 let mut body = StmtList::new_in(p.arena);
-                // Zig hoisted `value`/`stmt_opts` above the loop;
-                // both are reinitialized every iteration before any read, so
+                // `value`/`stmt_opts` are reinitialized every iteration before any read, so
                 // declare per-iteration.
                 let mut value: Option<js_ast::Expr> = None;
                 if p.lexer.token == T::TDefault {
@@ -493,7 +488,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     #[inline(never)]
     fn t_for(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
-        // Zig: `defer p.popScope()`. Wrap the body in an inner closure so `pop_scope` runs once on
+        // Wrap the body in an inner closure so `pop_scope` runs once on
         // its `Result`, covering every `?` early-exit as well as explicit returns.
         let result: Result<Stmt> = (|| {
             p.lexer.next()?;
@@ -776,7 +771,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
     ) -> Result<Stmt> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Block, loc)?;
-        // Zig: `defer p.popScope()`. Wrap the body in an inner closure so `pop_scope` runs once on
+        // Wrap the body in an inner closure so `pop_scope` runs once on
         // its `Result`, covering every `?` early-exit.
         let result: Result<Stmt> = (|| {
             p.lexer.next()?;
@@ -1191,8 +1186,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // "export * from 'path'"
                     p.lexer.expect_contextual_keyword(b"from")?;
                     path = p.parse_path()?;
-                    // Zig: `fs.PathName.init(path.text).nonUniqueNameString(arena)` —
-                    // sanitize the basename into an identifier and copy into the arena.
+                    // Sanitize the basename into an identifier and copy into the arena.
                     let name: &'a [u8] = {
                         use std::io::Write as _;
                         let base = fs::PathName::init(path.text).non_unique_name_string_base();
@@ -1286,7 +1280,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let import_record_index =
                         p.add_import_record(ImportKind::Stmt, parsed_path.loc, parsed_path.text);
                     let path_name = fs::PathName::init(parsed_path.text);
-                    // PERF(port): was arena allocPrint — profile if hot.
                     let namespace_ref = {
                         use std::io::Write as _;
                         let mut buf: Vec<u8> = Vec::new();
@@ -1644,8 +1637,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         label_ref: Ref,
     ) -> Result<Stmt> {
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::Label, loc)?;
-        // Zig: `defer p.popScope();` — pop after parsing the labeled body.
-        // Hand-roll the defer so we can keep `p` exclusively borrowed.
+        // Pop after parsing the labeled body; done explicitly so we can keep
+        // `p` exclusively borrowed.
 
         // Parse a labeled statement
         p.lexer.next()?;
@@ -1899,8 +1892,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             return Err(err!("StackOverflow"));
         }
 
-        // Zig used `inline ... => |function| @field(@This(), @tagName(function))(...)` to dispatch
-        // by token name via comptime reflection. Rust has no `@field`/`@tagName`; expand the arms.
         let loc = self.lexer.loc();
         match self.lexer.token {
             T::TSemicolon => Self::t_semicolon(self),

@@ -60,21 +60,18 @@ unsafe extern "C" {
         call: extern "C" fn(*mut c_void, *mut JSGlobalObject) -> JSValue,
     ) -> JSValue;
 
-    // Referenced via `bun.cpp.*` in the Zig — declared directly here.
     safe fn JSC__JSPromise__status(this: &JSPromise) -> u32;
     safe fn JSC__JSPromise__result(this: &mut JSPromise, vm: &VM) -> JSValue;
     safe fn JSC__JSPromise__isHandled(this: &JSPromise) -> bool;
     safe fn JSC__JSPromise__setHandled(this: &mut JSPromise);
-    // These three are `void` on the C side (bindings.cpp). The Zig `bun.cpp.*`
-    // wrappers (build/debug/codegen/cpp.zig) call the void extern and then do
-    // `Bun__RETURN_IF_EXCEPTION(global)` to surface `error.JSError` — there is
-    // no bool sentinel on the wire. Mirror that by checking `global.has_exception()`
-    // after the call.
+    // The resolve/reject/rejectAsHandled shims are `void` on the C side
+    // (bindings.cpp) — there is no bool sentinel on the wire; a pending
+    // exception is surfaced by checking `global.has_exception()` after the
+    // call.
 }
 
 // ───────────────────────────── JSPromise.Weak(T) ─────────────────────────────
 
-/// Zig: `pub fn Weak(comptime T: type) type { return struct { ... } }`
 pub struct Weak<T> {
     weak: JscWeak<T>,
 }
@@ -94,8 +91,8 @@ impl<T> Weak<T> {
 
     /// Like `reject`, except it drains microtasks at the end of the current event loop iteration.
     pub fn reject_task(&mut self, global: &JSGlobalObject, val: JSValue) {
-        // RAII for Zig's `loop.enter(); defer loop.exit();` — the safe wrapper
-        // funnels through the single audited deref in `enter_event_loop_scope`.
+        // The safe wrapper funnels through the single audited deref in
+        // `enter_event_loop_scope`.
         let _guard = VirtualMachine::get().enter_event_loop_scope();
         self.reject(global, val);
     }
@@ -116,9 +113,8 @@ impl<T> Weak<T> {
         ref_type: WeakRefType,
         ctx: &mut T,
     ) -> Self {
-        // Zig threaded a `comptime finalizer` fn-ptr; the Rust
-        // `Weak<T>` encodes that via `WeakRefType` (one variant per finalizer
-        // — see Weak.rs). PERF(port): was comptime monomorphization.
+        // `Weak<T>` encodes the finalizer via `WeakRefType` (one variant per
+        // finalizer — see Weak.rs).
         Self {
             weak: JscWeak::<T>::create(promise, global, ref_type, ctx),
         }
@@ -152,7 +148,7 @@ impl<T> Weak<T> {
 
     pub fn swap(&mut self) -> &mut JSPromise {
         let prom = self.weak.swap().as_promise().unwrap();
-        // Zig: `this.weak.deinit()` — drop the underlying weak handle now.
+        // Drop the underlying weak handle now.
         self.weak = JscWeak::default();
         // `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell;
         // GC-owned, so the resulting `&mut` is a resolver-style accessor (see `get`).
@@ -160,8 +156,7 @@ impl<T> Weak<T> {
     }
 }
 
-// Zig `deinit` only does `this.weak.clear(); this.weak.deinit();` — both are
-// subsumed by `Drop` on `JscWeak<T>`. No explicit `Drop` impl needed.
+// Cleanup is subsumed by `Drop` on `JscWeak<T>`; no explicit `Drop` impl needed.
 
 // ───────────────────────────── JSPromise.Strong ──────────────────────────────
 
@@ -219,13 +214,11 @@ impl Strong {
         global: &JSGlobalObject,
         val: JSValue,
     ) -> Result<(), JsTerminated> {
-        // RAII for Zig's `loop.enter(); defer loop.exit();` — the safe wrapper
-        // funnels through the single audited deref in `enter_event_loop_scope`.
+        // The safe wrapper funnels through the single audited deref in
+        // `enter_event_loop_scope`.
         let _guard = VirtualMachine::get().enter_event_loop_scope();
         self.reject(global, Ok(val))
     }
-
-    // Zig: `pub const rejectOnNextTick = @compileError("...")`
 
     pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
         self.swap().resolve(global, val)
@@ -256,8 +249,7 @@ impl Strong {
     }
 
     /// Wrap an existing promise `JSValue` in a fresh Strong handle.
-    /// Zig copies `JSPromise.Strong` by value (HandleSlot ptr is
-    /// shared); Rust `Strong` owns its slot, so a literal copy would
+    /// `Strong` owns its slot, so a literal copy would
     /// double-free. Callers that need a second owner of the same promise
     /// (e.g. `bake::DevServer::PromiseEnsureRouteBundledCtx::ensurePromise`)
     /// allocate a second slot here instead.
@@ -302,7 +294,7 @@ impl Strong {
 
     pub fn swap(&mut self) -> &mut JSPromise {
         let prom = self.strong.swap().as_promise().unwrap();
-        // Zig: `this.strong.deinit()` — release the handle slot now.
+        // Release the handle slot now.
         self.strong = JscStrong::empty();
         // `as_promise()` returns a non-null `*mut JSPromise` for a live promise cell;
         // GC-owned, so the resulting `&mut` is a resolver-style accessor (see `get`).
@@ -314,7 +306,7 @@ impl Strong {
     }
 }
 
-// Zig `deinit` only does `this.strong.deinit()` — subsumed by `Drop` on `JscStrong`.
+// Cleanup is subsumed by `Drop` on `JscStrong`; no explicit `Drop` impl needed.
 
 // ───────────────────────────── JSPromise methods ─────────────────────────────
 
@@ -326,17 +318,10 @@ impl JSPromise {
 
     /// Wrap a fallible host call in a Promise: if `f` throws, the promise is
     /// rejected; otherwise it resolves with the returned value.
-    ///
-    /// Zig signature took `comptime Function: anytype` + `args: ArgsTuple(@TypeOf(Function))`
-    /// and built a `callconv(.c)` trampoline via `jsc.toJSHostCall`. That is the
-    /// host-fn reflection pattern — in Rust it collapses to a monomorphized closure
-    /// + extern-C trampoline.
     //
-    // The closure form below is equivalent to Zig's (JSPromise.zig:187-209):
-    // the trampoline routes through `crate::to_js_host_call` (= `jsc.toJSHostCall`,
-    // with `#[track_caller]` standing in for `@src()`), and the surrounding
-    // `top_scope!` + `assert_no_exception_except_termination` match the Zig
-    // exception-scope plumbing exactly.
+    // The trampoline routes through `crate::to_js_host_call`, and the
+    // surrounding `top_scope!` + `assert_no_exception_except_termination`
+    // handle the exception-scope plumbing.
     pub fn wrap<F>(global: &JSGlobalObject, f: F) -> Result<JSValue, JsTerminated>
     where
         F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,
@@ -354,12 +339,9 @@ impl JSPromise {
             // `g` is a live JSGlobalObject; safe ZST-handle deref (panics on null).
             let g = JSGlobalObject::opaque_ref(g);
             let f = this.f.take().unwrap();
-            // Zig: `jsc.toJSHostCall(g, @src(), Fn, this.args)` — `@src()` mapped to
-            // `Location::caller()` (resolves to this trampoline's call site).
             crate::to_js_host_call(g, move || f(g))
         }
 
-        // Zig: `var scope: jsc.TopExceptionScope = undefined; scope.init(global, @src()); defer scope.deinit();`
         crate::top_scope!(scope, global);
 
         let mut ctx = Wrapper { f: Some(f) };
@@ -368,7 +350,7 @@ impl JSPromise {
         let promise = JSC__JSPromise__wrap(global, (&raw mut ctx).cast::<c_void>(), call::<F>);
         // JSC__JSPromise__wrap converts any thrown exception into a rejected promise,
         // so a pending non-termination exception here indicates a bug; assert and
-        // surface termination as JsTerminated (matching JSPromise.zig:202-207).
+        // surface termination as JsTerminated.
         scope
             .assert_no_exception_except_termination()
             .map_err(|_| JsTerminated::JSTerminated)?;
@@ -478,7 +460,7 @@ impl JSPromise {
             }
         }
 
-        // `[[ZIG_EXPORT(check_slow)]]` — `bun.cpp.JSC__JSPromise__resolve(...) catch return error.JSTerminated`.
+        // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__resolve(self, global, value)
             .map_err(|_| JsTerminated::JSTerminated)
     }
@@ -516,7 +498,7 @@ impl JSPromise {
             }
         };
 
-        // `[[ZIG_EXPORT(check_slow)]]` — `bun.cpp.JSC__JSPromise__reject(...) catch return error.JSTerminated`.
+        // `[[ZIG_EXPORT(check_slow)]]`
         crate::cpp::JSC__JSPromise__reject(self, global, err)
             .map_err(|_| JsTerminated::JSTerminated)
     }
@@ -587,5 +569,3 @@ pub enum UnwrapMode {
     MarkHandled,
     LeaveUnhandled,
 }
-
-// ported from: src/jsc/JSPromise.zig

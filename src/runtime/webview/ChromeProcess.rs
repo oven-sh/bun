@@ -3,7 +3,7 @@
 //! host process — Chrome IS the IPC peer. One fewer hop than WKWebView.
 //!
 //! Parent death → Chrome's pipe read EOFs → Chrome exits. Same lifetime
-//! coupling as HostProcess.zig's socket EOF path.
+//! coupling as HostProcess.rs's socket EOF path.
 //!
 //! fd layout (child):
 //!   3 = Chrome reads CDP commands from us  (parent writes → child reads)
@@ -47,15 +47,15 @@ use bun_which::which;
 declare_scope!(Chrome, hidden);
 
 pub struct ChromeProcess {
-    // Intrusive refcount (`.deref()` called in on_process_exit); kept raw to
-    // match Zig `*bun.spawn.Process`.
+    // Intrusive refcount (`.deref()` called in on_process_exit); kept raw
+    // because the refcount, not this struct, owns the allocation.
     process: NonNull<Process>,
 }
 
 // PORTING.md §Global mutable state: JS-thread-only singleton ptr → AtomicPtr.
 // Only accessed from the JS thread (exported fns are called from C++ on the
 // mutator thread; on_process_exit runs on the event loop thread which is the
-// same thread). Relaxed ordering matches the Zig non-atomic var.
+// same thread), so Relaxed ordering suffices.
 static INSTANCE: core::sync::atomic::AtomicPtr<ChromeProcess> =
     core::sync::atomic::AtomicPtr::new(ptr::null_mut());
 
@@ -324,7 +324,7 @@ fn find_playwright_shell() -> Option<ZBox> {
         if entry.kind != bun_sys::EntryKind::Directory {
             continue;
         }
-        // Zig spec: `bun.DirIterator.iterate(fd, .u8)` — request UTF-8 names
+        // The iterator requests UTF-8 names
         // even on Windows. `slice_u8()` is the cross-platform `&[u8]` borrow.
         let name = entry.name.slice_u8();
         if !name.starts_with(PREFIX) {
@@ -403,7 +403,6 @@ fn spawn(
     stderr_inherit: bool,
 ) -> Result<Fd, bun_core::Error> {
     {
-        // PERF(port): was arena bulk-free — all temp strings now individually heap-allocated.
 
         let chrome = find_chrome(explicit_path).ok_or_else(|| bun_core::err!("ChromeNotFound"))?;
         scoped_log!(
@@ -534,10 +533,9 @@ fn spawn(
         let spawned =
             unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
 
-        // Reshaped for borrowck — Zig's errdefer stays armed past this point,
-        // which would re-close the already-closed fds[1] on the WatchFailed
-        // path below; we disarm here and close each fd exactly once on that
-        // path instead.
+        // Disarm the cleanup guard here and close each fd exactly once on the
+        // WatchFailed path below; keeping it armed would re-close the
+        // already-closed fds[1] there.
         let fds = scopeguard::ScopeGuard::into_inner(fds);
 
         // Parent doesn't need the child's end. POSIX_SPAWN_CLOEXEC_DEFAULT
@@ -568,8 +566,7 @@ fn spawn(
             }
             Err(e) => {
                 scoped_log!(Chrome, "watch failed: {}", e);
-                // SAFETY: drop the strong ref we hold (Zig: `process.deref()`),
-                // then reclaim the Box (Zig: `bun.destroy(self)`).
+                // SAFETY: drop the strong ref we hold, then reclaim the Box.
                 unsafe {
                     Process::deref(process.as_ptr());
                     drop(bun_core::heap::take(self_ptr));
@@ -720,5 +717,3 @@ pub(crate) unsafe extern "C" fn Bun__Chrome__autoDetect(out_buf: *mut u8, out_ca
     }
     0
 }
-
-// ported from: src/runtime/webview/ChromeProcess.zig

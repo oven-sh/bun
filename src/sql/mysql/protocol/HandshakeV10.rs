@@ -35,9 +35,6 @@ impl Default for HandshakeV10 {
     }
 }
 
-// Zig `deinit` only frees owned fields (`server_version`, `auth_plugin_name`); Rust drops
-// `Data` / `Box<[u8]>` fields automatically, so no explicit `impl Drop` is needed.
-
 impl HandshakeV10 {
     pub fn decode_internal<Context: ReaderContext>(
         &mut self,
@@ -66,8 +63,7 @@ impl HandshakeV10 {
         // Capability flags (lower 2 bytes)
         let capabilities_lower = reader.int::<u16>()?;
 
-        // Character set — like Zig's non-exhaustive `enum(u8)`, any byte is valid
-        // and unknown collation ids are preserved.
+        // Character set — any byte is valid; unknown collation ids are preserved.
         self.character_set = CharacterSet::from_raw(reader.int::<u8>()?);
 
         // Status flags
@@ -102,7 +98,4 @@ impl HandshakeV10 {
     }
 }
 
-// Zig `decoderWrap(@This(), ...)` — see Decode trait in src/sql/mysql/protocol/NewReader.rs
 pub use self::HandshakeV10 as _DecoderWrapTarget;
-
-// ported from: src/sql/mysql/protocol/HandshakeV10.zig

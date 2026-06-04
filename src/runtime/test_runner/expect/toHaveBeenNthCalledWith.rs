@@ -111,5 +111,3 @@ pub(crate) fn to_have_been_nth_called_with(
         format_args!("\n\nCall #{}:\n{}\n", nth_call_num, diff_format),
     )
 }
-
-// ported from: src/test_runner/expect/toHaveBeenNthCalledWith.zig

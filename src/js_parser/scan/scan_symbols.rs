@@ -71,9 +71,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 // If this is an identifier from a sibling TypeScript namespace, then we're
                                 // going to have to generate a property access instead of a simple reference.
                                 // Lazily-generate an identifier that represents this property access.
-                                // The Zig original used getOrPut, which returns key/value pointers
-                                // while we also call self.new_symbol (&mut self). Split into
-                                // get-then-insert so the &mut self borrow does not overlap the map borrow.
+                                // Split into get-then-insert so the &mut self borrow
+                                // (self.new_symbol) does not overlap the map borrow.
                                 if let Some(existing) = ts.property_accesses.get(name) {
                                     break 'brk *existing;
                                 }
@@ -154,5 +153,3 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         })
     }
 }
-
-// ported from: src/js_parser/ast/symbols.zig

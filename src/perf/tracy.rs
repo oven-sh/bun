@@ -1,9 +1,6 @@
 //! https://github.com/wolfpld/tracy
 //! To use this module, you must have Tracy installed on your system.
 //! On macOS, you can install it with `brew install tracy`.
-//!
-//! This file is based on the code from Zig's transpiler source.
-//! Thank you to the Zig team
 
 use core::ffi::{c_char, c_int, c_void};
 use core::ptr;
@@ -14,9 +11,8 @@ use bun_core::env_var;
 pub const ENABLE_ALLOCATION: bool = false;
 pub const ENABLE_CALLSTACK: bool = false;
 
-// Zig used a plain `pub var enable = false;`; an AtomicBool keeps reads safe
-// from any thread without `unsafe`. All loads/stores are Relaxed (matches Zig's
-// unsynchronized plain global).
+// An AtomicBool keeps reads safe from any thread without `unsafe`. All
+// loads/stores are Relaxed.
 static ENABLE: AtomicBool = AtomicBool::new(false);
 
 #[inline(always)]
@@ -80,10 +76,9 @@ impl ___tracy_c_zone_context {
 
 pub type Ctx = ___tracy_c_zone_context;
 
-/// Begin a Tracy zone. Zig's `trace(comptime src: std.builtin.SourceLocation)`
-/// synthesized a per-monomorphization static source location; in Rust the
-/// per-callsite static is emitted by the `tracy_trace!` macro, which calls
-/// this with the already-built static.
+/// Begin a Tracy zone. The
+/// per-callsite static source location is emitted by the `tracy_trace!`
+/// macro, which calls this with the already-built static.
 #[inline]
 pub fn trace(srcloc: &'static ___tracy_source_location_data) -> Ctx {
     if !enable() {
@@ -97,8 +92,7 @@ pub fn trace(srcloc: &'static ___tracy_source_location_data) -> Ctx {
     }
 }
 
-/// Begin a named Tracy zone. Zig's `traceNamed(comptime src, comptime name)`
-/// folded the name into a per-monomorphization static; in Rust the
+/// Begin a named Tracy zone. The
 /// per-callsite static (with `name` set) is emitted by the
 /// `tracy_trace_named!` macro, which calls this with the already-built
 /// static.
@@ -115,8 +109,8 @@ pub fn trace_named(srcloc: &'static ___tracy_source_location_data) -> Ctx {
     }
 }
 
-/// Begin a Tracy zone with a per-callsite static source location, mirroring
-/// Zig's `tracy.trace(@src())`. Expands to a fresh `static SRCLOC` per
+/// Begin a Tracy zone with a per-callsite static source location.
+/// Expands to a fresh `static SRCLOC` per
 /// callsite (no intermediate `SourceLocation` struct) and calls
 /// `tracy::trace`.
 #[macro_export]
@@ -138,8 +132,8 @@ macro_rules! tracy_trace {
     }};
 }
 
-/// Begin a named Tracy zone with a per-callsite static source location,
-/// mirroring Zig's `tracy.traceNamed(@src(), name)`. The name must be a
+/// Begin a named Tracy zone with a per-callsite static source location.
+/// The name must be a
 /// string literal; it is NUL-terminated and stored in the per-callsite
 /// static, then passed to `tracy::trace_named`.
 #[macro_export]
@@ -165,15 +159,12 @@ pub fn tracy_allocator() -> TracyAllocator {
     TracyAllocator::init()
 }
 
-/// Zig: `fn TracyAllocator(comptime name: ?[:0]const u8) type { return struct { ... } }`
-///
-/// In Zig this is a `std.mem.Allocator` vtable wrapper around a parent allocator.
-/// Per PORTING.md §Allocators, `src/perf/` is not an AST crate, so the
-/// `std.mem.Allocator` parameter is deleted and the parent is implicitly the
+/// Per PORTING.md §Allocators, `src/perf/` is not an AST crate, so there is
+/// no allocator parameter; the parent is implicitly the
 /// global mimalloc (`#[global_allocator]`).
 // The tracy alloc/free hooks (`___tracy_emit_memory_alloc` etc.) are not
-// wired up: `ENABLE_ALLOCATION` is `false` (matching Zig's
-// `enable_allocation = false`), so allocation tracking is intentionally dead.
+// wired up: `ENABLE_ALLOCATION` is `false`,
+// so allocation tracking is intentionally dead.
 // If it is ever flipped on, express it as a `core::alloc::GlobalAlloc` shim
 // over the global mimalloc that emits the tracy hooks.
 pub struct TracyAllocator {}
@@ -184,7 +175,7 @@ impl TracyAllocator {
     }
 }
 
-/// This function only accepts comptime-known strings, see `message_copy` for runtime strings
+/// This function only accepts `'static` strings, see `message_copy` for runtime strings
 #[inline]
 pub fn message(msg: &'static core::ffi::CStr) {
     if !enable() {
@@ -196,7 +187,7 @@ pub fn message(msg: &'static core::ffi::CStr) {
     );
 }
 
-/// This function only accepts comptime-known strings, see `message_color_copy` for runtime strings
+/// This function only accepts `'static` strings, see `message_color_copy` for runtime strings
 #[inline]
 pub fn message_color(msg: &'static core::ffi::CStr, color: u32) {
     if !enable() {
@@ -256,9 +247,8 @@ pub fn named_frame(name: &'static core::ffi::CStr) -> Frame {
     Frame { name }
 }
 
-/// Zig: `fn Frame(comptime name: [:0]const u8) type`
-// PERF(port): was comptime monomorphization (zero-sized struct per name) —
-// store name as a field instead.
+/// Tracy frame span; `name` is stored as a field (one struct serves all
+/// names).
 pub struct Frame {
     name: &'static core::ffi::CStr,
 }
@@ -548,11 +538,9 @@ impl Default for ___tracy_source_location_data {
     }
 }
 
-// Zig defined `Handle` as a per-instantiation local struct inside
-// `dlsym`, giving each (Type, symbol) pair its own static handle. That is
-// wasteful (re-dlopens libtracy per symbol) and not expressible in Rust without
-// const-generic strings. Use a single shared handle instead — dlopen on the
-// same path is refcounted so behavior is equivalent.
+// A single shared handle serves all symbols (a per-(Type, symbol) handle
+// would wastefully re-dlopen libtracy per symbol; dlopen on the same path is
+// refcounted anyway).
 static HANDLE: AtomicPtr<c_void> = AtomicPtr::new(ptr::null_mut());
 
 fn handle_getter() -> Option<*mut c_void> {
@@ -628,16 +616,15 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
                 )))]
                 const PATHS_TO_TRY: &[&core::ffi::CStr] = &[];
 
-                // RTLD flags passed straight through to dlopen: Zig used
-                // `@bitCast(@as(i32, -2))` on macOS and the default `.{}` (0)
-                // elsewhere; the same raw values are kept here.
+                // RTLD flags passed straight through to dlopen as raw values:
+                // -2 on macOS, 0 elsewhere.
                 #[cfg(target_os = "macos")]
                 let rtld: i32 = -2;
                 #[cfg(not(target_os = "macos"))]
                 let rtld: i32 = 0;
 
                 if let Some(path) = env_var::BUN_TRACY_PATH.get() {
-                    // std.posix.toPosixPath — copy into a NUL-terminated PathBuffer.
+                    // Copy into a NUL-terminated PathBuffer.
                     let mut buf = bun_paths::PathBuffer::uninit();
                     let zpath = bun_paths::resolve_path::z(path, &mut buf);
                     if let Some(handle) = bun_sys::dlopen(zpath, rtld) {
@@ -658,18 +645,14 @@ fn dlsym<T: Copy>(symbol: &'static core::ffi::CStr) -> Option<T> {
             }
         }
 
-        // Zig `bun.C.dlsymWithHandle` cached per-(Type,symbol) via a comptime
-        // local static. Rust has no const-generic-string statics; do an uncached lookup
-        // through the shared handle. PERF(port): per-symbol OnceLock cache — profile if it shows up on a hot path.
+        // Uncached lookup through the shared handle. PERF: a per-symbol
+        // OnceLock cache is possible — profile if it shows up on a hot path.
         let p = bun_sys::dlsym_impl(handle_getter(), sym_z)?;
-        // SAFETY: caller asserts `T` is fn-pointer-shaped matching the symbol's ABI
-        // (same contract as Zig `bun.cast(Type, ptr)`).
+        // SAFETY: caller asserts `T` is fn-pointer-shaped matching the symbol's ABI.
         Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&p) })
     }
 }
 
-// Zig pulled this from `build_options.tracy_callstack_depth`; that build
-// option no longer exists anywhere in the tree, so the value is fixed here.
 // Only consulted when `ENABLE_CALLSTACK` is true.
 const CALLSTACK_DEPTH: c_int = 10;
 
@@ -687,5 +670,3 @@ mod tests {
         named.end();
     }
 }
-
-// ported from: src/perf/tracy.zig

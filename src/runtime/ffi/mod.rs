@@ -1,4 +1,4 @@
-//! Port of `src/runtime/ffi/FFI.zig` — `Bun.FFI` / `bun:ffi`.
+//! `Bun.FFI` / `bun:ffi`.
 //!
 //! `ABIType` (CType) enum, `FFI`/`Function`/`Step`/`Compiled` structs,
 //! formatters, dlopen data path, and the JSC host-fn entry points
@@ -17,14 +17,14 @@ use crate::jsc::{JSGlobalObject, JSValue};
 mod host_fns;
 pub use host_fns::{generate_symbol_for_function, generate_symbols};
 
-// ─── FFI.zig / FFIObject.zig port modules ────────────────────────────────────
+// ─── implementation modules ──────────────────────────────────────────────────
 
 #[path = "ffi_body.rs"]
-mod ffi_body; // port of FFI.zig
+mod ffi_body;
 
 /// `js2native` codegen resolves `$zig(ffi.zig, Bun__FFI__cc)` to
 /// `crate::ffi::ffi::bun__ffi__cc`; the module name maps the `.zig` basename.
-/// `FFI::bun_ffi_cc` lives in `ffi_body` (the full port) — re-export it under
+/// `FFI::bun_ffi_cc` lives in `ffi_body` — re-export it under
 /// the codegen-expected path so the dispatch table links without forcing the
 /// generator to special-case `ffi/ffi.zig`.
 pub mod ffi {
@@ -34,18 +34,16 @@ pub mod ffi {
 #[path = "FFIObject.rs"]
 pub mod ffi_object_draft;
 
-// Canonical name for the `FFIObject.zig` port (re-exported by `runtime::api`
+// Canonical name (re-exported by `runtime::api`
 // as `FFIObject`); the module itself still lives under the draft name because
 // `api/BunObject.rs` references `crate::ffi::ffi_object_draft::getter`.
 pub use ffi_object_draft as ffi_object;
 
 // ─── DOMCall slowpath C-ABI exports ──────────────────────────────────────────
-// Zig: `host_fn.DOMCall(class, Container, fn, effect)` emits a `comptime
-// @export(&slowpath, .{ .name = class ++ "__" ++ fn ++ "__slowpath" })` where
-// `slowpath(global, this, args_ptr, args_len)` calls `toJSHostCall(global,
-// @src(), Container.fn, .{ global, this, args[0..len] })`. The bodies live in
-// `ffi_object_draft::reader::*` / `ffi_object_draft::ptr` (already ported);
-// these shims are the missing `@export` wrappers.
+// The C++ DOMJIT side expects a `<class>__<fn>__slowpath` export with
+// signature `slowpath(global, this, args_ptr, args_len)`. The bodies live in
+// `ffi_object_draft::reader::*` / `ffi_object_draft::ptr`;
+// these shims are the exported wrappers.
 mod dom_call_slowpath {
     use super::ffi_object_draft as ffi_object;
     use crate::jsc::{JSGlobalObject, JSValue};
@@ -117,9 +115,8 @@ use bun_tcc_sys as TCC;
 /// Returns an owned byte string (heap-copied since `dlerror()`'s storage is
 /// not stable across calls).
 ///
-/// Note: never fails — the Zig `![]const u8` was allocator-fallible only;
-/// `Vec` write! is infallible and the POSIX path is unconditional, so the
-/// `Result` wrapper has been dropped.
+/// Note: never fails — `Vec` write! is infallible and the POSIX path is
+/// unconditional.
 pub(crate) fn get_dl_error() -> Box<[u8]> {
     #[cfg(windows)]
     {
@@ -231,7 +228,7 @@ impl Function {
     }
 
     pub fn ffi_header() -> &'static [u8] {
-        // Port of `Function.ffiHeader` (ffi.zig:1517) — embedded under
+        // Embedded under
         // `codegen_embed`, reloaded from disk otherwise (dev fast iteration).
         bun_core::runtime_embed_file!(Src, "runtime/ffi/FFI.h").as_bytes()
     }
@@ -280,5 +277,3 @@ impl Step {
 // ═════════════════════════════════════════════════════════════════════════════
 mod abi_type;
 pub use abi_type::{ABI_TYPE_LABEL, ABIType, EnumMapFormatter, ToCFormatter, ToJSFormatter};
-
-// ported from: src/runtime/ffi/FFI.zig

@@ -6,9 +6,8 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue};
 
 use crate::JsResult;
 
-// PORTING.md §Dispatch: Zig used `comptime test_kind: enum {...}` — Rust
-// `adt_const_params` is unstable, so the enum is passed as a runtime value
-// (the bodies branch on it anyway; no codegen difference for this fn).
+// `adt_const_params` is unstable, so the test kind is passed as a runtime
+// value (the bodies branch on it anyway; no codegen difference for this fn).
 #[derive(PartialEq, Eq, Clone, Copy)]
 pub(crate) enum TestKind {
     Normal,
@@ -99,7 +98,7 @@ pub(crate) fn testing_impl(
     use bun_jsc::{LogJsc as _, StringJsc as _};
 
     let arena = Arena::new();
-    // PERF(port): was arena bulk-free — CSS parser allocates into this bump
+    // The CSS parser allocates into this bump arena; freed when it drops.
     //
     // SAFETY: `StyleSheet::parse` requires `&'static Bump` / `ParserOptions<'static>`
     // because the rule tree stores lifetime-erased refs (see the css_parser.rs
@@ -240,7 +239,7 @@ fn parser_options_from_js(
         if val.is_array() {
             let mut iter = val.array_iterator(global)?;
             while let Some(item) = iter.next()? {
-                // Zig: `defer bunstr.deref()` — release the +1 ref each iteration.
+                // `OwnedString` releases the +1 ref at the end of each iteration.
                 let bunstr = OwnedString::new(item.to_bun_string(global)?);
                 let str = bunstr.to_utf8();
                 if str.slice() == b"DEEP_SELECTOR_COMBINATOR" {
@@ -274,9 +273,8 @@ fn parser_options_from_js(
 fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers> {
     let mut targets = Browsers::default();
 
-    // Zig spec (css_internals.zig:188-256) unrolls this 9×; collapse to a
-    // table-driven loop. Key order preserved so JS getter/exception ordering
-    // matches the spec exactly.
+    // Table-driven loop. Key order matters: it determines JS getter/exception
+    // ordering.
     for (key, slot) in [
         ("android", &mut targets.android),
         ("chrome", &mut targets.chrome),
@@ -291,7 +289,7 @@ fn targets_from_js(global: &JSGlobalObject, jsobj: JSValue) -> JsResult<Browsers
         if let Some(val) = jsobj.get_truthy(global, key)? {
             if val.is_int32() {
                 if let Some(value) = val.get_number() {
-                    // note: Rust `as` saturates on overflow/NaN where Zig is UB
+                    // `as` saturates on overflow/NaN
                     *slot = Some(value as u32);
                 }
             }
@@ -309,7 +307,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     use bun_jsc::{LogJsc as _, StringJsc as _};
 
     let arena = Arena::new();
-    // PERF(port): was arena bulk-free — StyleAttribute::parse allocates its
+    // StyleAttribute::parse allocates its
     // AST into this bump; freed when `arena` drops at end of scope.
     //
     // SAFETY: `StyleAttribute` stores `DeclarationBlock<'static>` (lifetime
@@ -373,9 +371,7 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
             ) {
                 Ok(r) => r,
                 Err(_e) => {
-                    // Zig: bun.handleErrorReturnTrace(e, @errorReturnTrace()); return .js_undefined;
-                    // (handleErrorReturnTrace was a Zig debug-only trace dump with no
-                    // Rust equivalent — the error is intentionally swallowed here.)
+                    // The error is intentionally swallowed here.
                     return Ok(JSValue::UNDEFINED);
                 }
             };
@@ -390,5 +386,3 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
         }
     }
 }
-
-// ported from: src/css_jsc/css_internals.zig

@@ -13,7 +13,7 @@ use crate::{PackageManager, PackageNameHash};
 // NpmAliasRegistry — exposes only the one `PackageManager` method `parse`
 // actually touches (`known_npm_aliases.put`) so `parse_with_tag` can take an
 // `Option<&mut dyn NpmAliasRegistry>` and stay decoupled from the full
-// `PackageManager` surface (Zig threads `*PackageManager` directly).
+// `PackageManager` surface.
 // ──────────────────────────────────────────────────────────────────────────
 
 pub trait NpmAliasRegistry {
@@ -23,7 +23,6 @@ pub trait NpmAliasRegistry {
 impl NpmAliasRegistry for PackageManager {
     #[inline]
     fn record_npm_alias(&mut self, hash: PackageNameHash, version: &Version) {
-        // Zig: `pm.known_npm_aliases.put(hash, result)`.
         self.known_npm_aliases.insert(hash, Clone::clone(version));
     }
 }
@@ -110,20 +109,19 @@ pub trait DependencyExt {
 }
 
 impl DependencyExt for Dependency {
-    /// Forwards to the module-level `is_tarball` (Zig: `Dependency.isTarball`).
+    /// Forwards to the module-level `is_tarball`.
     #[inline]
     fn is_tarball(dependency: &[u8]) -> bool {
         is_tarball(dependency)
     }
 
-    /// Forwards to the module-level free fn (Zig file-struct method:
-    /// `Dependency.splitNameAndMaybeVersion`).
+    /// Forwards to the module-level `split_name_and_maybe_version`.
     #[inline]
     fn split_name_and_maybe_version(str: &[u8]) -> (&[u8], Option<&[u8]>) {
         split_name_and_maybe_version(str)
     }
 
-    /// Zig: `Dependency.unscopedPackageName`. Strips a leading `@scope/` if present.
+    /// Strips a leading `@scope/` if present.
     fn unscoped_package_name(name: &[u8]) -> &[u8] {
         if name.is_empty() || name[0] != b'@' {
             return name;
@@ -135,13 +133,11 @@ impl DependencyExt for Dependency {
         }
     }
 
-    /// Forwards to the module-level `parse_with_optional_tag`
-    /// (Zig: `Dependency.parseWithOptionalTag`).
+    /// Forwards to the module-level `parse_with_optional_tag`.
     ///
     /// `alias_hash`, `log`, and `package_manager` accept either the bare value
-    /// (`u64` / `&mut Log` / `&mut PackageManager`) or `Option<_>` — Zig callers
-    /// pass both forms (`null` vs pointer) and the port keeps that ergonomics
-    /// via `impl Into<Option<_>>`.
+    /// (`u64` / `&mut Log` / `&mut PackageManager`) or `Option<_>` via
+    /// `impl Into<Option<_>>`.
     #[inline]
     fn parse_with_optional_tag<'a, 'b>(
         alias: String,
@@ -179,9 +175,8 @@ impl DependencyExt for Dependency {
         strings::cmp_strings_asc((), lhs_name, rhs_name)
     }
 
-    /// Total-order comparator for `slice::sort_by` (Zig's `std.sort.pdq`
-    /// accepts a strict-weak `lessThan`; Rust's sort requires a full
-    /// `Ordering`). Same key as `is_less_than`: behavior group, then name ASC.
+    /// Total-order comparator for `slice::sort_by`. Same key as
+    /// `is_less_than`: behavior group, then name ASC.
     fn cmp(string_buf: &[u8], lhs: &Dependency, rhs: &Dependency) -> Ordering {
         let behavior = lhs.behavior.cmp(rhs.behavior);
         if behavior != Ordering::Equal {
@@ -204,7 +199,7 @@ impl DependencyExt for Dependency {
         self.count_with_different_buffers(buf, buf, builder);
     }
 
-    /// Zig: `Dependency.clone`. Renamed to `clone_in` so it doesn't shadow
+    /// Named `clone_in` so it doesn't shadow
     /// `std::clone::Clone::clone` (callers in `migration.rs` / `PackageManager.rs`
     /// rely on the trait method for shallow copy).
     fn clone_in<SB: StringBuilderLike, PM: NpmAliasRegistry>(
@@ -223,9 +218,8 @@ impl DependencyExt for Dependency {
         version_buf: &[u8],
         builder: &mut SB,
     ) -> Result<Dependency, bun_core::Error> {
-        // reshaped for borrowck — Zig captured `out_slice` first, but
-        // `append_string` may reallocate `string_bytes`, invalidating the slice.
-        // Append first, then borrow the (now-stable) buffer.
+        // `append_string` may reallocate `string_bytes`, invalidating any
+        // prior slice. Append first, then borrow the (now-stable) buffer.
         let new_literal = builder.append_string(self.version.literal.slice(version_buf));
         let new_name = builder.append_string(self.name.slice(name_buf));
         let out_slice = builder.string_bytes();
@@ -290,7 +284,7 @@ impl DependencyExt for Dependency {
     /// (`bun_install_jsc`) keep type-checking.
     ///
     /// `alias_hash`, `log`, and `manager` accept either bare values or
-    /// `Option<_>` (Zig callers pass both `null` and concrete pointers).
+    /// `Option<_>`.
     #[inline]
     fn parse<'a, 'b>(
         alias: String,
@@ -304,22 +298,19 @@ impl DependencyExt for Dependency {
     }
 }
 
-// `comptime StringBuilder: type` param maps onto `bun_semver::StringBuilder`
+// Uses the `bun_semver::StringBuilder` trait
 // (count / append<T> / append_string). The only extra method needed here is
-// access to the FULL backing buffer (Zig: `builder.lockfile.buffers
-// .string_bytes.items`), which is intentionally NOT on the base trait since
+// access to the FULL backing buffer, which is intentionally NOT on the base trait since
 // `semver_string::Builder`'s isolated Box<[u8]> would be wrong for callers
 // that need the lockfile's full string_bytes.
 pub trait StringBuilderLike: bun_semver::StringBuilder {
-    /// Full backing string buffer (Zig: `builder.lockfile.buffers.string_bytes.items`).
+    /// Full backing string buffer.
     fn string_bytes(&self) -> &[u8];
 }
 
-// single-impl monomorphization is intentional. Every Zig call site
-// of `Dependency.count`/`clone`/`*WithDifferentBuffers` passes
-// `*Lockfile.StringBuilder` (Package.zig, OverrideMap.zig, CatalogMap.zig,
-// install_with_manager.zig) — `semver_string::Builder` is never used here, and
-// its isolated Box<[u8]> can't satisfy `builder.lockfile.buffers.string_bytes`.
+// single-impl monomorphization is intentional — `semver_string::Builder` is
+// never used here, and its isolated Box<[u8]> can't satisfy
+// `builder.lockfile.buffers.string_bytes`.
 impl<'a> StringBuilderLike for crate::lockfile_real::StringBuilder<'a> {
     #[inline]
     fn string_bytes(&self) -> &[u8] {
@@ -461,8 +452,8 @@ pub(crate) fn is_remote_tarball(dependency: &[u8]) -> bool {
 // ──────────────────────────────────────────────────────────────────────────
 // Compat aliases: dependents reference `dependency::version::Tag`,
 // `dependency::VersionTag`, `Dependency::is_remote_tarball`, and a `tarball`
-// submodule. The Zig nests `Tag` under `Dependency.Version`, but here it's
-// flattened to top-level — keep both paths so dependents type-check.
+// submodule. `Tag` lives at top level here — keep both paths so dependents
+// type-check.
 // ──────────────────────────────────────────────────────────────────────────
 pub use Tag as VersionTag;
 pub mod version {
@@ -632,16 +623,12 @@ pub trait VersionExt {
 }
 
 impl VersionExt for Version {
-    // Zig: `pub const zeroed = Version{};` — a const value. Rust can't const-init
-    // (Default::default() isn't const), so callers should use `Version::zeroed()`
-    // or `Version::default()` instead.
     #[inline]
     fn zeroed() -> Version {
         Version::default()
     }
 
-    /// Zig: `Version.clone`. Renamed to `clone_in` so it doesn't shadow
-    /// `std::clone::Clone::clone`.
+    /// Named `clone_in` so it doesn't shadow `std::clone::Clone::clone`.
     fn clone_in<SB: StringBuilderLike>(
         &self,
         buf: &[u8],
@@ -768,7 +755,7 @@ impl VersionExt for Version {
 // Version::Tag
 // ──────────────────────────────────────────────────────────────────────────
 
-// Zig `Tag.map = bun.ComptimeStringMap(Tag, ...)`. Was a `phf::Map`
+// Was a `phf::Map`
 // in an earlier draft; rewritten as a length-gated match (cf. 12577e958d71
 // clap::find_param) — 9 entries with near-unique lengths, so a single `usize`
 // compare rejects almost every miss before touching bytes, and hits resolve in
@@ -822,8 +809,8 @@ impl TagExt for Tag {
         }
 
         if strings::starts_with_windows_drive_letter_t(dependency)
-            // Zig `std.fs.path.isSep` — platform-native separator only
-            // (`/` on POSIX, `/` or `\` on Windows). NOT `isSepAny`.
+            // Platform-native separator only
+            // (`/` on POSIX, `/` or `\` on Windows).
             && {
                 #[cfg(windows)]
                 { matches!(dependency[2], b'/' | b'\\') }
@@ -837,7 +824,6 @@ impl TagExt for Tag {
             return Tag::Folder;
         }
 
-        // PERF(port): was stack-fallback allocator (1024B); now uses global mimalloc — profile if it shows up on a hot path.
 
         match dependency[0] {
             // =1
@@ -916,7 +902,7 @@ impl TagExt for Tag {
                         match url[0] {
                             b':' => {
                                 // TODO(markovejnovic): This check for testing whether the URL
-                                // is a Git URL shall be moved to npm_package_arg.zig when that
+                                // is a Git URL shall be moved to npm_package_arg when that
                                 // is implemented.
                                 if url.starts_with(b"://") {
                                     url = &url[b"://".len()..];
@@ -1046,7 +1032,7 @@ impl TagExt for Tag {
                             url = &url[b"git@".len()..];
                         }
 
-                        let _ = url; // Zig mutates `url` but doesn't use it after this point
+                        let _ = url; // not used after this point
 
                         if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency)
                         {
@@ -1331,7 +1317,6 @@ pub fn parse_with_tag(
 
             if is_alias {
                 if let Some(pm) = package_manager {
-                    // Zig: `pm.known_npm_aliases.put(alias_hash.?, result)`.
                     pm.record_npm_alias(alias_hash.unwrap(), &result);
                 }
             }
@@ -1721,5 +1706,3 @@ fn hgi_to_tag(info: &hosted_git_info::HostedGitInfo) -> Tag {
         | hosted_git_info::HostProvider::Sourcehut => Tag::Git,
     }
 }
-
-// ported from: src/install/dependency.zig

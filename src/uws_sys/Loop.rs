@@ -96,8 +96,8 @@ pub type EventType = libc::kevent;
 #[cfg(windows)]
 pub type EventType = *mut c_void;
 
-/// Trait replacing Zig's `comptime Handler: anytype` with `@hasDecl` checks for
-/// optional `pre`/`post`. Implementors override `PRE`/`POST` if they have them.
+/// Loop handler trait with optional `pre`/`post` hooks. Implementors override
+/// `PRE`/`POST` if they have them.
 pub trait LoopHandler {
     const WAKEUP: unsafe extern "C" fn(*mut Loop);
     const PRE: Option<unsafe extern "C" fn(*mut Loop)> = None;
@@ -280,8 +280,6 @@ impl PosixLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
-    // Zig `nextTick` took a `comptime deferCallback: fn(UserType) void` and
-    // synthesized a per-callsite `extern "C"` trampoline that casts `*anyopaque` → `UserType`.
     // Rust cannot monomorphize an `extern "C"` fn over a fn-pointer const generic on stable,
     // so callers provide the C-ABI trampoline directly.
     pub fn next_tick(
@@ -300,7 +298,7 @@ impl PosixLoop {
     // long-lived raw-pointer provenance from `us_create_loop`/`uws_get_loop`. Routing through
     // a `&mut self` reborrow would bound the stored pointer's provenance to this call, and any
     // subsequent `&mut`/`&` to the C-owned singleton would invalidate it under Stacked Borrows,
-    // making the later FFI write in `Handler::remove_*` UB. Mirrors Zig's `this: *PosixLoop`.
+    // making the later FFI write in `Handler::remove_*` UB.
     /// # Safety
     /// `this` must be the live C-allocated loop pointer returned by
     /// `us_create_loop`/`uws_get_loop` (not derived from a `&mut` reborrow).
@@ -357,10 +355,9 @@ impl PosixLoop {
     }
 }
 
-/// Replaces Zig `fn NewHandler(comptime UserType, comptime callback_fn) type`.
 /// Stores the loop ref and the C-ABI callback so it can be unregistered later.
 ///
-/// Stores `*mut Loop` (not `&Loop`) to mirror Zig's freely-aliasing `loop: *Loop`
+/// Stores `*mut Loop` (not `&Loop`)
 /// — the loop is C-owned/heap-allocated and the FFI remove calls mutate it, so a
 /// shared `&Loop` would make the `*const → *mut` cast UB when written through.
 pub struct Handler {
@@ -378,8 +375,8 @@ impl Handler {
     }
 
     pub fn remove_pre(&self) {
-        // Zig also called `uws_loop_removePostHandler` here (likely a bug
-        // upstream); preserving behavior verbatim.
+        // Intentionally calls `uws_loop_removePostHandler` here (likely an
+        // upstream bug); preserving longstanding behavior verbatim.
         // SAFETY: `loop_` is the original C-allocated raw pointer (from
         // `us_create_loop`/`uws_get_loop`) stored by `add_*_handler`, with provenance
         // that outlives this Handler and permits mutation; callback was previously registered.
@@ -565,7 +562,7 @@ impl WindowsLoop {
     // Takes `this: *mut Self` (not `&mut self`) so the stored `Handler.loop_` inherits the
     // long-lived raw-pointer provenance from `us_create_loop`/`uws_get_loop_with_native`
     // rather than a transient `&mut` reborrow (which Stacked Borrows would invalidate on the
-    // next access to the C-owned singleton). Mirrors Zig's `this: *WindowsLoop`.
+    // next access to the C-owned singleton).
     /// # Safety
     /// `this` must be the live C-allocated loop pointer returned by
     /// `us_create_loop`/`uws_get_loop_with_native` (not derived from a `&mut` reborrow).
@@ -673,5 +670,3 @@ unsafe extern "C" {
 pub fn on_thread_exit() {
     bun_clear_loop_at_thread_exit()
 }
-
-// ported from: src/uws_sys/Loop.zig

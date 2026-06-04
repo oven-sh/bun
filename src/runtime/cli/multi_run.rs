@@ -17,7 +17,7 @@ use crate::filter_arg as FilterArg;
 use crate::run_command::RunCommand;
 
 // `bun.spawn` (Process/Status/SpawnOptions/Rusage/spawnProcess) —
-// lives under src/runtime/api/bun/process.zig → crate::api::bun::process.
+// lives under crate::api::bun::process.
 #[cfg(unix)]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{
@@ -56,7 +56,7 @@ pub struct PipeReader<'a> {
 impl<'a> PipeReader<'a> {
     fn new(is_stderr: bool) -> Self {
         Self {
-            // BufferedReader::init(This) — Zig passes the parent type for vtable.
+            // BufferedReader::init(This) — the parent type fills the vtable.
             reader: BufferedReader::init::<Self>(),
             handle: ptr::null(),
             is_stderr,
@@ -137,8 +137,6 @@ impl<'a> ProcessHandle<'a> {
         ];
 
         self.start_time = Instant::now().into();
-        // PERF(port): was arena bulk-free — envp built into a temporary arena freed at scope
-        // end; allocates on heap here. Profile if it shows up on a hot path.
         let envp;
         let env_ptr = state.env;
         let spawned: SpawnProcessResult = {
@@ -188,8 +186,7 @@ impl<'a> ProcessHandle<'a> {
 
         #[cfg(windows)]
         {
-            // Zig: `this.stdout_reader.reader.source = .{ .pipe = this.options.stdout.buffer }`.
-            // In the Rust port `spawn_process_windows` has *already* reclaimed
+            // `spawn_process_windows` has *already* reclaimed
             // sole ownership of that heap pipe into
             // `WindowsStdioResult::Buffer(Box<uv::Pipe>)` (see
             // src/spawn/process.rs WindowsStdio::Buffer doc). Reconstructing a
@@ -754,7 +751,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     Ok(())
 }
 
-// Zig's return type was `!noreturn` — it returns either an error or diverges. Using
+// Returns either an error or diverges:
 // `Result<Infallible, Error>` so callers can `?` it; all Ok paths call Global::exit.
 pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
     // Validate flags
@@ -794,7 +791,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     // Set up the transpiler/environment
     let _ = bun_resolver::fs::FileSystem::init(None)?;
-    // Out-param init pattern — Zig writes into `var this_transpiler: Transpiler = undefined;`
+    // Out-param init pattern.
     let mut this_transpiler_slot =
         ::core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
     let _ = RunCommand::configure_env_for_run(ctx, &mut this_transpiler_slot, None, true, false)?;
@@ -1232,5 +1229,3 @@ fn has_runnable_extension(name: &[u8]) -> bool {
     };
     loader.can_be_run_by_bun()
 }
-
-// ported from: src/cli/multi_run.zig

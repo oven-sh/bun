@@ -196,9 +196,8 @@ impl CppWebSocket {
 /// RAII owner of one pending-activity ref on a C++ `WebCore::WebSocket`.
 ///
 /// Construction calls [`CppWebSocket::r#ref`]; `Drop` calls
-/// [`CppWebSocket::unref`]. Replaces the Zig `ws.ref(); defer ws.unref();`
-/// pattern when the ref must outlive the constructing scope (e.g. stored on a
-/// queued task).
+/// [`CppWebSocket::unref`]. For when the ref must outlive the constructing
+/// scope (e.g. stored on a queued task).
 pub struct CppWebSocketRef(core::ptr::NonNull<CppWebSocket>);
 
 impl CppWebSocketRef {
@@ -218,5 +217,3 @@ impl Drop for CppWebSocketRef {
         CppWebSocket::opaque_ref(self.0.as_ptr()).unref();
     }
 }
-
-// ported from: src/http_jsc/websocket_client/CppWebSocket.zig

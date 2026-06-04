@@ -20,11 +20,9 @@ pub enum Value {
 }
 
 impl Value {
-    // Zig: `entry.value_ptr.manifest` field projection on the `.manifest` arm.
     bun_core::enum_unwrap!(pub Value, Manifest => fn manifest / manifest_mut -> npm::PackageManifest);
 }
 
-// Zig: `std.HashMap(PackageNameHash, Value, IdentityContext(PackageNameHash), 80)`.
 type ManifestHashMap =
     HashMap<PackageNameHash, Value, bun_collections::IdentityContext<PackageNameHash>>;
 
@@ -37,7 +35,7 @@ pub enum CacheBehavior {
 /// By-value snapshot of the `PackageManager` fields the disk-fallback path of
 /// [`PackageManifestMap::by_name_hash_allow_expired`] reads.
 ///
-/// Zig threads `pm: *PackageManager` and reads these directly. In Rust every
+/// Every
 /// caller is `pm.manifests.by_name…(pm, …)`, so accepting `&mut PackageManager`
 /// (or `&mut *raw`) would alias the `&mut self` receiver — Stacked-Borrows UB
 /// regardless of which fields the body touches. Capturing the four scalars by
@@ -113,10 +111,9 @@ impl PackageManifestMap {
         )
     }
 
-    /// Memory-only lookup — equivalent to Zig
-    /// `byNameHash(this, pm, scope, hash, .load_from_memory, _)` with
-    /// `is_expired = null`, but without the `ctx`/`scope` parameters: the
-    /// `.load_from_memory` arm never reads them. Exposed separately so callers
+    /// Memory-only lookup — equivalent to `by_name_hash` with
+    /// `CacheBehavior::LoadFromMemory`, but without the `ctx`/`scope`
+    /// parameters: the memory-only arm never reads them. Exposed separately so callers
     /// holding `&mut PackageManager` can borrow only the disjoint
     /// `pm.manifests` field.
     pub fn by_name_hash_in_memory(
@@ -148,8 +145,6 @@ impl PackageManifestMap {
         )
     }
 
-    /// Zig: `byNameHashAllowExpired(this, pm: *PackageManager, ...)`.
-    ///
     /// The `PackageManager` scalars read on the disk-fallback arm
     /// (`options.enable.*`, the cache directory, and
     /// `timestamp_for_manifest_cache_control`) are hoisted into
@@ -262,5 +257,3 @@ impl PackageManifestMap {
         }
     }
 }
-
-// ported from: src/install/PackageManifestMap.zig

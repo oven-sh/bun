@@ -178,7 +178,6 @@ pub fn convert_stmts_for_chunk(
                             // Prefix this module with "__reExport(exports, ns, module.exports)"
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
-                            // PERF(port): was arena alloc of [Expr; N] — using Vec→Box
                             let mut args: Vec<Expr> = Vec::with_capacity(args_len);
                             args.push(Expr::init(
                                 E::Identifier {
@@ -196,11 +195,9 @@ pub fn convert_stmts_for_chunk(
                             ));
 
                             if let Some(mod_) = module_exports_for_export {
-                                // The Zig source wrote `args[3]`, out of bounds
-                                // for the len-3 slice it allocated; the intent —
-                                // per the "__reExport(exports, ns, module.exports)"
-                                // call shape above — is the third argument, so
-                                // append at index 2.
+                                // Per the "__reExport(exports, ns, module.exports)"
+                                // call shape above, this is the third argument,
+                                // so append at index 2.
                                 args.push(mod_);
                             }
 
@@ -298,7 +295,6 @@ pub fn convert_stmts_for_chunk(
                             // Prefix this module with "__reExport(exports, require(path), module.exports)"
                             let export_star_ref = c.runtime_function(b"__reExport");
                             let args_len = 2 + usize::from(module_exports_for_export.is_some());
-                            // PERF(port): was arena alloc of [Expr; N] — using Vec→Box
                             let mut args: Vec<Expr> = Vec::with_capacity(args_len);
                             args.push(Expr::init(
                                 E::Identifier {
@@ -412,7 +408,7 @@ pub fn convert_stmts_for_chunk(
                         // Be c areful to not modify the original statement
                         stmt = Stmt::alloc(
                             S::Function {
-                                // SAFETY: shallow bitwise copy of arena-backed G::Fn (matches Zig `s.func`).
+                                // SAFETY: shallow bitwise copy of arena-backed G::Fn.
                                 func: unsafe { core::ptr::read(&raw const s.func) },
                             },
                             stmt.loc,
@@ -432,7 +428,7 @@ pub fn convert_stmts_for_chunk(
                         // Be careful to not modify the original statement
                         stmt = Stmt::alloc(
                             S::Class {
-                                // SAFETY: shallow bitwise copy of arena-backed E::Class (matches Zig `s.class`).
+                                // SAFETY: shallow bitwise copy of arena-backed E::Class.
                                 class: unsafe { core::ptr::read(&raw const s.class) },
                                 is_export: false,
                             },
@@ -445,7 +441,7 @@ pub fn convert_stmts_for_chunk(
                     // Strip the "export" keyword while bundling
                     if should_strip_exports && s.is_export {
                         // Be careful to not modify the original statement
-                        // SAFETY: shallow bitwise copy of arena-backed S::Local (matches Zig `s.*`).
+                        // SAFETY: shallow bitwise copy of arena-backed S::Local.
                         let copied: S::Local = unsafe { core::ptr::read(s.as_ptr()) };
                         stmt = Stmt::alloc(copied, stmt.loc);
                         stmt.data.s_local_mut().unwrap().is_export = false;
@@ -522,7 +518,7 @@ pub fn convert_stmts_for_chunk(
                                         // Be careful to not modify the original statement
                                         stmt = Stmt::alloc(
                                             S::Function {
-                                                // SAFETY: shallow bitwise copy of arena-backed G::Fn (matches Zig `s2.func`).
+                                                // SAFETY: shallow bitwise copy of arena-backed G::Fn.
                                                 func: unsafe {
                                                     core::ptr::read(&raw const s2.func)
                                                 },
@@ -540,7 +536,7 @@ pub fn convert_stmts_for_chunk(
                                         // Be careful to not modify the original statement
                                         stmt = Stmt::alloc(
                                             S::Class {
-                                                // SAFETY: shallow bitwise copy of arena-backed E::Class (matches Zig `s2.class`).
+                                                // SAFETY: shallow bitwise copy of arena-backed E::Class.
                                                 class: unsafe {
                                                     core::ptr::read(&raw const s2.class)
                                                 },
@@ -610,5 +606,3 @@ pub fn convert_stmts_for_chunk(
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
-
-// ported from: src/bundler/linker_context/convertStmtsForChunk.zig

@@ -23,5 +23,3 @@ impl Exception {
         JSC__Exception__asJSValue(self)
     }
 }
-
-// ported from: src/jsc/Exception.zig

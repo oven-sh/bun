@@ -11,8 +11,7 @@ use bun_threading::Mutex;
 use crate::Loader;
 use crate::watcher_trace as WatcherTrace;
 
-// Android: same kernel inotify ABI as glibc/musl Linux. Zig kept these under
-// `Environment.isLinux`; Rust splits `target_os`, so list both.
+// Android: same kernel inotify ABI as glibc/musl Linux, so list both.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use crate::inotify_watcher as platform;
 #[cfg(any(target_os = "macos", target_os = "freebsd"))]
@@ -66,7 +65,6 @@ pub struct PackageJSON {
 /// Manual vtable for resolver→watcher directory-watch callbacks.
 /// Was `bun_resolver::AnyResolveWatcher` (T5); defined here so the low-tier
 /// crate owns the shape and `bun_resolver` re-imports it (move-in pass).
-// PERF(port): was inline switch (Zig comptime ResolveWatcher generator).
 #[derive(Clone, Copy)]
 pub struct AnyResolveWatcher {
     pub context: *mut (),
@@ -110,8 +108,7 @@ pub struct Watcher {
     pub watched_count: usize,
     pub mutex: Mutex,
 
-    // Zig stored `fs: *Fs.FileSystem` but only ever read
-    // `fs.top_level_dir`. Storing the slice directly avoids a forward-decl
+    // Storing the `top_level_dir` slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
     // allocator field dropped — global mimalloc (see §Allocators)
     /// Whether `thread_main` is running. Written by the watcher thread, read
@@ -138,8 +135,7 @@ pub struct Watcher {
 }
 
 /// Context types passed to `Watcher::init` implement this trait.
-/// Replaces Zig's `@hasDecl(T, "onWatchError")` structural check with a
-/// trait bound; the default `on_watch_error` forwards to `on_error`.
+/// The default `on_watch_error` forwards to `on_error`.
 pub trait WatcherContext {
     fn on_file_update(
         &mut self,
@@ -225,8 +221,8 @@ impl Watcher {
 
     pub fn start(&mut self) -> Result<(), bun_core::Error> {
         debug_assert!(!self.watchloop_handle.load());
-        // TODO(port): thread spawn — Watcher must be Send across the spawned
-        // thread boundary; Zig passed *Watcher. Using raw ptr + manual safety.
+        // Watcher must be Send across the spawned thread boundary; we pass a
+        // raw pointer (as usize) and uphold the safety contract manually.
         let this = std::ptr::from_mut::<Watcher>(self) as usize;
         // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
         // via `running`/`close_descriptors` and the thread frees the Box.
@@ -246,8 +242,7 @@ impl Watcher {
     // Per PORTING.md, `pub fn deinit` is never the public name; renamed to
     // `shutdown` (not `close(self)` because ownership may transfer to the
     // watcher thread instead of dropping here).
-    // TODO(port): ownership model — Zig allocator.destroy(this); Rust needs
-    // heap::take or an Arc to make this sound.
+    // TODO: ownership model — needs heap::take or an Arc to make this sound.
     /// # Safety
     /// `this` must be the unique heap pointer returned from `init()`; ownership
     /// transfers here on the no-thread path (the Box is reclaimed).
@@ -327,8 +322,8 @@ impl Watcher {
 
         // SAFETY: `this` is the heap allocation from init(); the watcher thread
         // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
-        // `me` above has ended). Matches Zig's `allocator.destroy(this)`.
-        // TODO(port): ownership model — see shutdown()
+        // `me` above has ended).
+        // TODO: ownership model — see shutdown()
         drop(unsafe { bun_core::heap::take(this) });
         Ok(())
     }
@@ -440,8 +435,7 @@ impl Watcher {
     /// Does not propagate kevent registration errors.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub fn add_file_descriptor_to_kqueue_without_checks(&mut self, fd: Fd, watchlist_id: usize) {
-        // Raw libc::kevent on purpose, matching the Zig sibling (Watcher.zig
-        // calls raw std.posix.system.kevent here and discards the result):
+        // Raw libc::kevent on purpose:
         // this is a registration-only call (nevents = 0) whose return value
         // is intentionally ignored.
         use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE, kevent as KEvent};
@@ -509,16 +503,15 @@ impl Watcher {
         #[cfg(any(target_os = "macos", target_os = "freebsd"))]
         let watchlist_id = self.watchlist.len();
 
-        // Zig: `if (clone_file_path) bun.asByteSlice(bun.handleOom(allocator.dupeZ(u8, file_path))) else file_path`.
-        // `WatchItem.file_path` is now an owning `Cow<'static, [u8]>` column so the
-        // CLONE_FILE_PATH=true arm heap-dups (matching Zig's `dupeZ`) instead of
+        // `WatchItem.file_path` is an owning `Cow<'static, [u8]>` column so the
+        // CLONE_FILE_PATH=true arm heap-dups instead of
         // dangling once the caller's buffer is freed.
         let file_path_: Cow<'static, [u8]> = if CLONE_FILE_PATH {
             Cow::Owned(file_path.to_vec())
         } else {
             // SAFETY: when CLONE_FILE_PATH is false the caller passes a path
             // interned in `bun.fs.FileSystem` (process-lifetime); the borrow is
-            // truly `'static`. Matches Zig's `else file_path` arm.
+            // truly `'static`.
             Cow::Borrowed(unsafe { bun_collections::detach_lifetime(file_path) })
         };
 
@@ -526,8 +519,7 @@ impl Watcher {
         self.add_file_descriptor_to_kqueue_without_checks(fd, watchlist_id);
         #[cfg(any(target_os = "linux", target_os = "android"))]
         let eventlist_index = {
-            // Zig builds the `[:0]const u8` from `file_path_` (the dupeZ'd copy when
-            // clone_file_path=true), guaranteeing a trailing NUL for inotify. When
+            // inotify needs a trailing NUL. When
             // CLONE_FILE_PATH is true the caller's `file_path` is NOT NUL-terminated,
             // so we must copy into a NUL-terminated scratch buffer (mirrors the
             // directory branch below) instead of pointing at the caller's slice.
@@ -539,14 +531,12 @@ impl Watcher {
                 ZStr::from_buf(&buf[..], file_path.len())
             } else {
                 // SAFETY: when CLONE_FILE_PATH is false the caller passes a path
-                // interned in `bun.fs.FileSystem` with a NUL sentinel at [len];
-                // Zig's `buf[0..file_path_.len :0]` assumed the same.
+                // interned in `bun.fs.FileSystem` with a NUL sentinel at [len].
                 unsafe { ZStr::from_raw(file_path.as_ptr(), file_path.len()) }
             };
             self.platform.watch_path(slice)?
         };
 
-        // PERF(port): was assume_capacity
         self.watchlist.append_assume_capacity(WatchItem {
             file_path: file_path_,
             fd,
@@ -586,16 +576,15 @@ impl Watcher {
             bun_sys::open_a(file_path, 0, 0)?
         };
 
-        // Zig: `if (clone_file_path) bun.asByteSlice(bun.handleOom(allocator.dupeZ(u8, file_path))) else file_path`.
-        // `WatchItem.file_path` is now an owning `Cow<'static, [u8]>` column so the
-        // CLONE_FILE_PATH=true arm heap-dups (matching Zig's `dupeZ`) instead of
+        // `WatchItem.file_path` is an owning `Cow<'static, [u8]>` column so the
+        // CLONE_FILE_PATH=true arm heap-dups instead of
         // dangling once the caller's buffer is freed.
         let file_path_: Cow<'static, [u8]> = if CLONE_FILE_PATH {
             Cow::Owned(file_path.to_vec())
         } else {
             // SAFETY: when CLONE_FILE_PATH is false the caller passes a path
             // interned in `bun.fs.FileSystem` (process-lifetime); the borrow is
-            // truly `'static`. Matches Zig's `else file_path` arm.
+            // truly `'static`.
             Cow::Borrowed(unsafe { bun_collections::detach_lifetime(file_path) })
         };
 
@@ -633,7 +622,6 @@ impl Watcher {
                 .map_err(|e| e.with_path(file_path))?
         };
 
-        // PERF(port): was assume_capacity
         self.watchlist.append_assume_capacity(WatchItem {
             file_path: file_path_,
             fd,
@@ -660,7 +648,7 @@ impl Watcher {
         dir_fd: Fd,
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<()> {
-        // RAII guard (Zig: `lock(); defer unlock()`): `lock_guard()` holds the
+        // RAII guard: `lock_guard()` holds the
         // mutex by `BackRef`, not a borrow of `self`, so the `&mut self` calls
         // below are fine and every return path unlocks.
         let _guard = LOCK.then(|| self.mutex.lock_guard());
@@ -691,7 +679,7 @@ impl Watcher {
                 }
             }
         }
-        // Zig: `bun.handleOom(this.watchlist.ensureUnusedCapacity(...))` — abort on OOM.
+        // Abort on OOM:
         // `MultiArrayList::ensure_unused_capacity` returns `Err(AllocError)` on
         // allocation failure (does NOT abort), so discarding it would let the
         // following `append_assume_capacity` write past capacity.
@@ -786,12 +774,11 @@ impl Watcher {
         file_path: &[u8],
         hash: HashType,
     ) -> sys::Result<WatchItemIndex> {
-        // RAII guard (Zig: `lock(); defer unlock()`); see append_file_maybe_lock.
+        // RAII guard; see append_file_maybe_lock.
         let _guard = self.mutex.lock_guard();
         if let Some(idx) = self.index_of(hash) {
             return Ok(idx as WatchItemIndex);
         }
-        // Zig: `bun.handleOom(this.watchlist.ensureUnusedCapacity(this.allocator, 1))`.
         self.watchlist
             .ensure_unused_capacity(1)
             .unwrap_or_else(|_| bun_core::out_of_memory());
@@ -927,7 +914,7 @@ impl Watcher {
         self.mutex.unlock();
     }
 
-    // Zig used a comptime `kind: Kind` param. Rust const-generic
+    // Const-generic
     // enum params need `adt_const_params` (nightly); the value is only
     // compared to `.Directory`, so a plain runtime parameter is fine.
     pub fn remove_at_index(
@@ -1025,7 +1012,7 @@ impl Op {
     }
 }
 
-/// Lowercase Zig-field-name mapping for `Op` (matches `std.meta.fields(Op)` output).
+/// Lowercase name mapping for `Op` flags (used for trace output).
 pub(crate) const OP_NAMES: &[(Op, &str)] = &[
     (Op::DELETE, "delete"),
     (Op::METADATA, "metadata"),
@@ -1138,5 +1125,3 @@ impl WatchItemColumns for bun_collections::multi_array_list::Slice<WatchItem> {
         self.items::<"eventlist_index", platform::EventListIndex>()
     }
 }
-
-// ported from: src/watcher/Watcher.zig

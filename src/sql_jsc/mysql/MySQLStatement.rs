@@ -41,9 +41,7 @@ pub struct MySQLStatement {
 }
 
 impl MySQLStatement {
-    /// Zig: `bun.new(MySQLStatement, .{ .signature = ..., .status = ...,
-    /// .ref_count = .initExactRefs(1) })` — callers supply the signature and
-    /// status; every other field takes its Zig per-field default.
+    /// Callers supply the signature and status; every other field takes its default.
     pub fn new(signature: Signature, status: Status) -> Self {
         Self {
             cached_structure: CachedStructure::default(),
@@ -81,13 +79,11 @@ bitflags::bitflags! {
         /// been consumed. This prevents the intermediate EOF from being mistakenly
         /// treated as end-of-result-set.
         const COLUMNS_EOF_RECEIVED = 1 << 3;
-        // _: u4 padding in Zig — unused high bits.
     }
 }
 
 impl Default for ExecutionFlags {
     fn default() -> Self {
-        // Zig: header_received=false, needs_duplicate_check=true, need_to_send_params=true, columns_eof_received=false
         ExecutionFlags::NEEDS_DUPLICATE_CHECK | ExecutionFlags::NEED_TO_SEND_PARAMS
     }
 }
@@ -101,7 +97,7 @@ pub enum Status {
 }
 
 impl MySQLStatement {
-    /// Zig `.ref_count = .initExactRefs(n)` — set the initial intrusive
+    /// Set the initial intrusive
     /// refcount at construction time, before any `ref_()`/`deref()`. The
     /// `ref_count` field is private (refcount invariant), so callers building
     /// a statement with >1 owner (query + connection-map entry) go through
@@ -147,7 +143,6 @@ impl MySQLStatement {
                         .expect("OOM")
                         .found_existing;
                     if found_existing {
-                        // Zig: field.name_or_index.deinit(); — Drop on assignment handles this.
                         field.name_or_index = ColumnIdentifier::Duplicate;
                         flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
                     }
@@ -174,8 +169,8 @@ impl MySQLStatement {
         self.fields_flags = flags;
     }
 
-    // Zig returns `CachedStructure` by value (struct copy). Returning `&CachedStructure`
-    // here to avoid moving out of `self`; callers may need `.clone()` if they require
+    // Returning `&CachedStructure`
+    // to avoid moving out of `self`; callers may need `.clone()` if they require
     // an owned copy.
     pub(crate) fn structure(
         &mut self,
@@ -198,14 +193,6 @@ impl MySQLStatement {
 impl Drop for MySQLStatement {
     fn drop(&mut self) {
         bun_core::scoped_log!(MySQLStatement, "MySQLStatement deinit");
-        // Zig deinit body:
-        //   - per-column deinit + free(columns)  → Vec<ColumnDefinition41> Drop
-        //   - free(params)                       → Vec<Param> Drop
-        //   - cached_structure.deinit()          → field Drop
-        //   - error_response.deinit()            → field Drop
-        //   - signature.deinit()                 → field Drop
-        //   - bun.destroy(this)                  → handled by IntrusiveRc when refcount hits 0
     }
 }
 
-// ported from: src/sql_jsc/mysql/MySQLStatement.zig

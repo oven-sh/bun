@@ -234,5 +234,3 @@ impl<'a> Interval<'a> {
 }
 
 use core::ffi::CStr;
-
-// ported from: src/platform/darwin.zig

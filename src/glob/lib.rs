@@ -1,4 +1,3 @@
-// Port of src/glob/glob.zig
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 #[path = "GlobWalker.rs"]
@@ -28,7 +27,6 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
     // In descending order of how popular the token is
     const SPECIAL_SYNTAX: [u8; 4] = *b"*{[?";
 
-    // PERF(port): was `inline for` (unrolled at comptime).
     for &token in SPECIAL_SYNTAX.iter() {
         let mut slice = potential_pattern;
         while !slice.is_empty() {
@@ -55,5 +53,3 @@ pub fn detect_glob_syntax(potential_pattern: &[u8]) -> bool {
 
     false
 }
-
-// ported from: src/glob/glob.zig

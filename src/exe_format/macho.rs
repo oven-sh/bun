@@ -40,8 +40,7 @@ pub struct MachoFile {
     pub section: macho::section_64,
 }
 
-/// Port of Zig `Shifter.shift(value, comptime fields)` — `inline for` + `@field` over a
-/// comptime field-name list. Expands to one `shift_one` call per named field.
+/// Expands to one `shift_one` call per named field.
 macro_rules! shift_fields {
     ($shifter:expr, $value:expr, $($field:ident),+ $(,)?) => {{
         $( $shifter.shift_one(&mut $value.$field)?; )+
@@ -71,7 +70,6 @@ impl MachoFile {
         }))
     }
 
-    // Zig `deinit` only frees `data` and destroys self — both handled by Drop on Vec/Box.
 
     pub fn write_section(&mut self, data: &[u8]) -> Result<(), MachoError> {
         let blob_alignment: u64 = 16 * 1024;
@@ -473,8 +471,6 @@ impl MachoFile {
     }
 
     pub fn build(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // Zig used `writer: anytype`; std::io::Write is the canonical
-        // Rust equivalent (bun_io has no Write trait).
         writer.write_all(&self.data)?;
         Ok(())
     }
@@ -643,7 +639,6 @@ impl MachoSigner {
         }))
     }
 
-    // Zig `deinit` only frees `data` and destroys self — both handled by Drop on Vec/Box.
 
     const IDENTIFIER: &'static [u8] = b"a.out\x00";
     const SIGNATURE_PAGE_SIZE: usize = 1 << 12;
@@ -741,8 +736,7 @@ impl MachoSigner {
             b.write(0);
         }
 
-        // Position writer at signature offset
-        // (Zig used `self.data.writer()`; here we extend the Vec directly.)
+        // Position writer at signature offset; extend the Vec directly.
 
         // Write signature components — SuperBlob / BlobIndex / CodeDirectory are
         // `NoUninit` (#[repr(C)] POD, no padding); byte-serialized verbatim into
@@ -821,5 +815,3 @@ fn sha256_hash(bytes: &[u8], out: &mut [u8; 32]) {
     // SAFETY: engine is null (default).
     unsafe { bun_sha_hmac::sha::SHA256::hash(bytes, out, core::ptr::null_mut()) };
 }
-
-// ported from: src/exe_format/macho.zig

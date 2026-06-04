@@ -77,8 +77,6 @@ impl Targets {
         {
             let mut browsers = Browsers::default();
             let mut has_any = false;
-            // Zig used `inline for (std.meta.fields(Browsers))` reflection;
-            // expanded manually per field.
             macro_rules! check_field {
                 ($field:ident, $env:literal) => {
                     if let Some(val) = bun_core::getenv_z_any_case(bun_core::zstr!($env)) {
@@ -137,9 +135,8 @@ impl Targets {
     }
 
     pub fn should_compile_same(&self, compat_feature: css::compat::Feature) -> bool {
-        // PERF(port): was comptime enum param — demoted to runtime (const-generic
+        // PERF: runtime dispatch (a const-generic param
         // would need #[derive(ConstParamTy)] on compat::Feature).
-        // Zig: comptime construct a Features with @field(feature, @tagName(compat_feature)) = true.
         let target_feature: Features = Features::from_compat(compat_feature);
         self.should_compile(compat_feature, target_feature)
     }
@@ -185,8 +182,7 @@ pub struct Browsers {
     pub samsung: Option<u32>,
 }
 
-// Zig: `pub const browserDefault = convertFromString(&.{...}) catch unreachable;`
-// convert_from_string is not const-evaluable in Rust; compute once lazily.
+// convert_from_string is not const-evaluable; compute once lazily.
 static BROWSER_DEFAULT: std::sync::LazyLock<Browsers> = std::sync::LazyLock::new(|| {
     Browsers::convert_from_string(&[
         b"es2020", // support import.meta.url
@@ -213,9 +209,8 @@ impl Browsers {
                 }
 
                 let number_part = &str[2..];
-                // Zig: `try std.fmt.parseInt(u16, number_part, 10)` — propagates
-                // error.InvalidCharacter / error.Overflow. Preserve the tag for
-                // @errorName snapshot compat (do NOT collapse to UnsupportedCSSTarget).
+                // Propagates InvalidCharacter / Overflow. Preserve the tag for
+                // error-name snapshot compat (do NOT collapse to UnsupportedCSSTarget).
                 let year = strings::parse_int::<u16>(number_part, 10).map_err(|e| match e {
                     strings::ParseIntError::Overflow => bun_core::err!("Overflow"),
                     strings::ParseIntError::InvalidCharacter => {
@@ -322,7 +317,6 @@ impl Browsers {
                         break 'entries_without_es &entries_buf[0..4];
                     }
                     _ => {
-                        // Zig had `if (@inComptime()) @compileLog(...)` here — no equivalent.
                         return Err(bun_core::err!("UnsupportedCSSTarget"));
                     }
                 }
@@ -392,8 +386,6 @@ impl Browsers {
                     };
 
                     let version: u32 = ((major as u32) << 16) | ((minor as u32) << 8);
-                    // Zig: `switch (browser.?) { inline else => |b| @field(browsers, @tagName(b)) ... }`
-                    // — reflection expanded into a direct match yielding a field ref.
                     let slot: &mut Option<u32> = match browser {
                         Browser::Chrome => &mut browsers.chrome,
                         Browser::Edge => &mut browsers.edge,
@@ -441,7 +433,6 @@ bitflags::bitflags! {
         const DOUBLE_POSITION_GRADIENTS      = 1 << 17;
         const VENDOR_PREFIXES                = 1 << 18;
         const LOGICAL_PROPERTIES             = 1 << 19;
-        // __unused: u12 padding in Zig
 
         const SELECTORS = Self::NESTING.bits()
             | Self::NOT_SELECTOR_LIST.bits()
@@ -471,9 +462,7 @@ impl Default for Features {
 impl Features {
     /// Map a `compat::Feature` enum variant to the same-named `Features` bitflag.
     ///
-    /// Zig did this via `@field(feature, @tagName(compat_feature)) = true` reflection
-    /// inside `shouldCompileSame` (a `comptime` parameter, so a non-matching variant
-    /// was a compile error). Rust takes the variant at runtime, so the table is
+    /// The variant is taken at runtime, so the table is
     /// hand-written: every `compat::Feature` whose snake_case tag matches a
     /// `Features` field gets an arm; any other variant is a programmer error.
     pub fn from_compat(compat_feature: css::compat::Feature) -> Features {
@@ -497,9 +486,8 @@ impl Features {
             Feature::SpaceSeparatedColorNotation => Features::SPACE_SEPARATED_COLOR_NOTATION,
             Feature::FontFamilySystemUi => Features::FONT_FAMILY_SYSTEM_UI,
             Feature::DoublePositionGradients => Features::DOUBLE_POSITION_GRADIENTS,
-            // Zig: `@field` on a tag with no matching `Features` field is a
-            // *compile* error; in Rust the equivalent guard is a runtime
-            // unreachable since `compat_feature` is no longer `comptime`.
+            // A tag with no matching `Features` field is a programmer error,
+            // guarded by a runtime unreachable.
             _ => unreachable!(
                 "compat::Feature::{:?} has no same-named targets::Features flag",
                 compat_feature
@@ -507,5 +495,3 @@ impl Features {
         }
     }
 }
-
-// ported from: src/css/targets.zig

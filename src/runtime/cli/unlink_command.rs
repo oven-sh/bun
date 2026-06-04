@@ -31,8 +31,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         Err(e) if e == err!(MissingPackageJSON) => {
             attempt_to_create_package_json()?;
             // Re-parse argv: `CommandLineArguments` is not `Clone`, and `parse`
-            // is deterministic over process argv. Mirrors Zig passing the
-            // by-value `cli` struct to both `init` calls.
+            // is deterministic over process argv.
             let cli = CommandLineArguments::parse(Subcommand::Unlink)?;
             pm::init(&mut *ctx, cli, Subcommand::Unlink)?
         }
@@ -173,11 +172,10 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             let mut link_dest_buf = PathBuffer::uninit();
             let mut link_rel_buf = PathBuffer::uninit();
 
-            // Zig passed `&node_modules_path` for both
-            // `target_node_modules_path` (`*const`) and `node_modules_path`
-            // (`*mut`). Rust forbids `&` + `&mut` to the same value, so resolve
-            // the fd path twice (cheap: one `getFdPath` syscall) into two
-            // independent `AbsPath` buffers.
+            // `target_node_modules_path` (`&`) and `node_modules_path` (`&mut`)
+            // cannot alias the same value, so resolve the fd path twice
+            // (cheap: one `getFdPath` syscall) into two independent `AbsPath`
+            // buffers.
             let mut node_modules_path =
                 match <AbsPath>::init_fd_path(Fd::from_std_dir(&node_modules)) {
                     Ok(p) => p,
@@ -240,4 +238,3 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
     }
 }
 
-// ported from: src/cli/unlink_command.zig

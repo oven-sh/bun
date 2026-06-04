@@ -48,7 +48,7 @@ pub use watcher_impl::{
 #[derive(Clone, Copy, Default)]
 pub struct Loader(pub u8);
 impl Loader {
-    /// Mirrors `bun_ast::Loader::File as u8` (Zig `options.Loader.file`);
+    /// Mirrors `bun_ast::Loader::File as u8`;
     /// keep the discriminant in sync with `src/ast/loader.rs`. A compile-time
     /// drift guard lives in `src/jsc/hot_reloader.rs` (a crate that sees both
     /// types).

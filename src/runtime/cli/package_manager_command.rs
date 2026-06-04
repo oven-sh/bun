@@ -87,7 +87,7 @@ impl PackageManagerCommand {
         };
 
         let log_level = pm.options.log_level;
-        // Reshaped for borrowck — Zig `pm.lockfile.loadFromBytes(pm, …)`
+        // Reshaped for borrowck — `pm.lockfile.load_from_bytes(pm, …)`
         // is a self-referential split borrow. Derive both halves through `pm`
         // (not the raw `pm_ptr`) so the outer borrow stays on the stack.
         let pm_raw: *mut PackageManager = pm;
@@ -111,8 +111,7 @@ impl PackageManagerCommand {
     }
 
     fn get_subcommand(args_ptr: &mut &'static [&'static [u8]]) -> &'static [u8] {
-        // Reshaped for borrowck — Zig copied `*args_ptr` to a local,
-        // mutated it, and `defer`-wrote it back. We mutate through `args_ptr`
+        // Mutates through `args_ptr`
         // directly so the reslice persists into `pm.options.positionals`.
         let mut subcommand: &[u8] = if !args_ptr.is_empty() {
             args_ptr[0]
@@ -226,14 +225,14 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         };
 
         // Reshaped for borrowck — `pm: &mut PackageManager`;
-        // many Zig call sites alias `pm` and `pm.lockfile` simultaneously. Hold a
-        // raw pointer for those re-entry points (Zig's `*PackageManager` is raw).
+        // several call sites need `pm` and `pm.lockfile` simultaneously. Hold a
+        // raw pointer for those re-entry points.
         let pm_ptr: *mut PackageManager = pm;
 
         let mut subcommand: &[u8] = if is_direct_whoami {
             b"whoami"
         } else {
-            // Zig `getSubcommand(&pm.options.positionals)` defer-writes the
+            // `get_subcommand` writes the
             // advanced slice back into the field; downstream branches (cache rm, view,
             // version/why/pkg) index `positionals[1]/[2]` *after* that advance. Pass the
             // field itself by `&mut` so the reslice persists.
@@ -311,8 +310,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 'warner: {
                     if Output::enable_ansi_colors_stderr() {
                         if let Some(path) = env_var::PATH.get() {
-                            // `std.mem.tokenizeScalar` skips empty
-                            // segments; mirror with `split` + `filter`.
+                            // skip empty segments
                             let mut path_iter = path
                                 .split(|b| *b == bun_paths::DELIMITER)
                                 .filter(|s| !s.is_empty());
@@ -573,8 +571,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     dependencies,
                     buf: string_bytes,
                 };
-                // PERF(port): Zig `std.sort.pdq` (unstable pdqsort) — Rust
-                // `sort_unstable_by` is the matching pdqsort; names are
+                // `sort_unstable_by` is pdqsort; names are
                 // unique so stability is irrelevant.
                 sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
 
@@ -624,8 +621,8 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 }
             }
             let log_level = pm.options.log_level;
-            // Reshaped for borrowck — Zig
-            // `migration.detectAndLoadOtherLockfile(&pm.lockfile, .cwd(), pm, ctx.log)`
+            // Reshaped for borrowck —
+            // `detect_and_load_other_lockfile(&pm.lockfile, .cwd(), pm, ctx.log)`
             // is a self-referential split borrow. Derive both halves through
             // `pm` (not the raw `pm_ptr`) so the outer borrow stays on the
             // Stacked-Borrows stack.
@@ -775,8 +772,7 @@ fn print_node_modules_folder_structure(
         dependencies,
         buf: string_bytes,
     };
-    // PERF(port): Zig `std.sort.pdq` (unstable pdqsort) — Rust
-    // `sort_unstable_by` is the matching pdqsort; names are unique so
+    // `sort_unstable_by` is pdqsort; names are unique so
     // stability is irrelevant.
     sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
 
@@ -879,5 +875,3 @@ fn print_node_modules_folder_structure(
 }
 
 use bun_core::fmt::buf_print_infallible as buf_print;
-
-// ported from: src/cli/package_manager_command.zig

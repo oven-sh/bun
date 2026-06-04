@@ -1,10 +1,10 @@
 use phf::phf_map;
 
-// The Zig original is `enum(u8) { ..., _ }`, which is non-exhaustive — it can hold any u8
-// value, not just the named tags. A plain `#[repr(u8)] enum` cannot express
-// that (Rust enums are exhaustive; transmuting an unnamed discriminant is UB).
-// Modeled as a transparent u8 newtype with associated consts so the `else`
-// arm in `label()` remains reachable, matching Zig control flow.
+// This type can hold any u8 value, not just the named tags. A plain
+// `#[repr(u8)] enum` cannot express that (Rust enums are exhaustive;
+// transmuting an unnamed discriminant is UB). Modeled as a transparent u8
+// newtype with associated consts so the fallback arm in `label()` remains
+// reachable.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash)]
 pub struct EventType(pub u8);
@@ -37,5 +37,3 @@ impl EventType {
         }
     }
 }
-
-// ported from: src/jsc/EventType.zig

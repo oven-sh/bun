@@ -42,7 +42,7 @@ use bun_core::ZStr;
 use bun_io::pipe_reader::BufferedReaderParent;
 #[cfg(target_os = "macos")]
 use bun_sys::FdDirExt as _;
-// Owned NUL-terminated string (Zig `[:0]u8` allocation) — `bun_str` exposes the
+// Owned NUL-terminated string — `bun_str` exposes the
 // borrowed `ZStr` only; the heap-backed counterpart is `bun_core::ZBox`.
 use bun_core::ZBox as ZString;
 use bun_sys::{self as sys, Fd, File};
@@ -65,10 +65,8 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 // ============================================================================
 
 /// Shared base for [`CronRegisterJob`] and [`CronRemoveJob`].
-// Zig: `fn CronJobBase(comptime Self: type) type { return struct { ... } }`
-//
 // Note: every method on the path to `finish()` (which `heap::take`-
-// drops `this`) takes a raw `*mut Self` receiver, mirroring the Zig `*Self`.
+// drops `this`) takes a raw `*mut Self` receiver.
 // A `&mut self` *parameter* would carry a Stacked Borrows FnEntry protector,
 // making the in-flight dealloc UB; a *local* `let s = &mut *this` reborrow
 // has no protector and ends at last use under NLL, so field access via `s`
@@ -369,9 +367,8 @@ impl CronRegisterJob {
                 .promise
                 .resolve(&this_ref.global, JSValue::UNDEFINED);
         }
-        // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
-        // INSIDE the enter/exit scope so Process detach/deref and reader
-        // teardown observe the entered event-loop state.
+        // Drop runs INSIDE the enter/exit scope so Process detach/deref and
+        // reader teardown observe the entered event-loop state.
         // SAFETY: `this` was created via heap::alloc in cron_register.
         unsafe { drop(bun_core::heap::take(this)) };
         ev.exit();
@@ -465,12 +462,12 @@ impl CronRegisterJob {
             }
         };
         if file.write_all(&result).is_err() {
-            let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+            let _ = file.close(); // close error is non-actionable
             s.set_err(format_args!("Failed to write temp file"));
             // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
-        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = file.close(); // close error is non-actionable
 
         s.state = RegisterState::InstallingCrontab;
         // Note: explicit deinit of old reader before reassign — Drop handles it.
@@ -607,12 +604,12 @@ impl CronRegisterJob {
             }
         };
         if file.write_all(&plist).is_err() {
-            let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+            let _ = file.close(); // close error is non-actionable
             s.set_err(format_args!("Failed to write plist"));
             // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
-        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = file.close(); // close error is non-actionable
 
         // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
         unsafe { Self::spawn_bootout(this) };
@@ -898,12 +895,12 @@ impl CronRegisterJob {
             }
         };
         if file.write_all(&xml).is_err() {
-            let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+            let _ = file.close(); // close error is non-actionable
             s.set_err(format_args!("Failed to write temp XML file"));
             // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
-        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = file.close(); // close error is non-actionable
 
         let mut argv: [*const c_char; 9] = [
             b"schtasks\0".as_ptr().cast(),
@@ -1165,9 +1162,8 @@ impl CronRemoveJob {
                 .promise
                 .resolve(&this_ref.global, JSValue::UNDEFINED);
         }
-        // Match Zig ordering: `defer ev.exit(); …; this.deinit();` — Drop runs
-        // INSIDE the enter/exit scope so Process detach/deref and reader
-        // teardown observe the entered event-loop state.
+        // Drop runs INSIDE the enter/exit scope so Process detach/deref and
+        // reader teardown observe the entered event-loop state.
         // SAFETY: `this` was created via heap::alloc in cron_remove.
         unsafe { drop(bun_core::heap::take(this)) };
         ev.exit();
@@ -1241,12 +1237,12 @@ impl CronRemoveJob {
             }
         };
         if file.write_all(&result).is_err() {
-            let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+            let _ = file.close(); // close error is non-actionable
             s.set_err(format_args!("Failed to write temp file"));
             // SAFETY: local reborrow `s` has ended; `this` is the live heap job.
             return unsafe { Self::finish(this) };
         }
-        let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
+        let _ = file.close(); // close error is non-actionable
 
         s.state = RemoveState::InstallingCrontab;
         s.stdout_reader = OutputReader::init::<CronRemoveJob>();
@@ -1513,9 +1509,8 @@ impl CronJob {
     }
 
     /// RAII pair for `ref_()` / `deref()`: bumps the intrusive refcount now and
-    /// releases it on drop. Replaces the Zig `this.ref(); defer this.deref();`
-    /// idiom. The guard holds a raw pointer (not `&mut Self`) so no Rust
-    /// reference is live across the potential free in `deref()`.
+    /// releases it on drop. The guard holds a raw pointer (not `&mut Self`) so
+    /// no Rust reference is live across the potential free in `deref()`.
     ///
     /// Safe under the same module-private invariant as [`from_ctx_ptr`]: every
     /// call site (private to this module) passes the intrusively-refcounted
@@ -1766,10 +1761,9 @@ impl CronJob {
                         Bun__CronJob__onPromiseResolve,
                         Bun__CronJob__onPromiseReject,
                     );
-                    // Zig's `then()` is `TopExceptionScope`-wrapped and only fails
-                    // on termination. The Rust `then()` returns `()`, so re-check
-                    // the VM status and run the same recovery the Zig `catch`
-                    // ran — otherwise `pending_ref` and the `ref_()` above leak.
+                    // `then()` returns `()`, so re-check the VM status and
+                    // recover on termination — otherwise `pending_ref` and the
+                    // `ref_()` above leak.
                     if vm.script_execution_status() != jsc::ScriptExecutionStatus::Running {
                         js::pending_promise_set_cached(
                             js_this,
@@ -2190,7 +2184,6 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
             }
         }
     }
-    // PERF(port): was arena bulk-free for envp on Windows
     #[cfg(unix)]
     let envp: *const *const c_char = bun_core::c_environ();
     #[cfg(windows)]
@@ -2216,9 +2209,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         }
     };
 
-    // Ownership note: Zig stashes the heap libuv pipe in
-    // `stderr_reader.source.?.pipe` and reuses the same pointer for
-    // `SpawnOptions.stderr = .{ .buffer = pipe }`. In the Rust port BOTH
+    // Ownership note: BOTH
     // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,
     // and `spawn_process_windows` `heap::take`s the raw `Stdio::Buffer`
     // pointer into `WindowsStdioResult::Buffer` on success. Pre-stashing the
@@ -2381,7 +2372,6 @@ fn find_crontab() -> Option<*const c_char> {
     }
     #[cfg(not(windows))]
     {
-        // Zig: `const static = struct { var buf: bun.PathBuffer = undefined; };`
         // The returned `*const c_char` borrows this buffer, so it must outlive
         // the call. `Bun.cron` is exposed on every `BunObject`, so this is
         // reachable from the main JS thread *and* any Worker thread
@@ -2577,7 +2567,6 @@ pub fn cron_to_calendar_interval(schedule: &[u8]) -> Result<Vec<u8>, CalendarErr
         }
         let mut vals: Vec<i32> = Vec::new();
         for part in field.split(|&b| b == b',') {
-            // Zig: std.fmt.parseInt(i32, part, 10) on raw []const u8.
             // parse_unsigned (not parse_int) keeps '-5' → InvalidCron.
             let val: i32 =
                 bun_core::parse_unsigned(part, 10).map_err(|_| CalendarError::InvalidCron)?;
@@ -3119,5 +3108,3 @@ fn compute_step_interval<T: StepBits>(bits: T, _min: u8, max: u8) -> Option<u32>
 }
 
 use bun_core::fmt::buf_print;
-
-// ported from: src/runtime/api/cron.zig

@@ -1,6 +1,4 @@
 // This file is the old linker, used by Bun.Transpiler.
-//
-// Port of `src/bundler/linker.zig`.
 
 use std::io::Write as _;
 
@@ -11,7 +9,7 @@ use bun_paths::{self, SEP};
 // two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
 // the `Path`/`PathName` value types that `ImportRecord.path` is typed against.
-// Both port `src/resolver/fs.zig`; B-3 collapses them. Until then, construct
+// B-3 collapses them. Until then, construct
 // `import_record.path` via `PFs::Path` so the field assignment unifies.
 use bun_core::strings;
 use bun_paths::fs as PFs;
@@ -36,19 +34,18 @@ bun_core::named_error_set!(CSSResolveError);
 type HashedFileNameMap = HashMap<u64, &'static [u8]>;
 
 // `_transpiler.Transpiler.isCacheEnabled` is gated in the draft body
-// (`transpiler.rs:1111`). The Zig value is a hard `false` (`const isCacheEnabled
-// = false;`); inline it here so `get_hashed_filename` compiles without depending
+// (`transpiler.rs:1111`). The value is a hard `false`;
+// inline it here so `get_hashed_filename` compiles without depending
 // on the gated `Transpiler` impl.
 const IS_CACHE_ENABLED: bool = false;
 
 pub struct Linker {
     // arena field dropped — global mimalloc (callers pass `bun.default_allocator`)
-    // Zig stored borrowed `*BundleOptions` / `*Log` / `*Resolver` /
-    // `*ResolveQueue` / `*ResolveResults` / `*FileSystem`. The un-gated
-    // `Transpiler` struct owns those values directly and also owns `linker:
-    // crate::Linker` by value, so storing Rust references here would alias
+    // The un-gated
+    // `Transpiler` struct owns these values directly and also owns `linker:
+    // crate::Linker` by value, so storing references here would alias
     // `&mut self` on every `transpiler.linker.link(...)` call. Use raw
-    // pointers (matching Zig's `*T`) and dereference at use-site; same
+    // pointers and dereference at use-site; same
     // contract as `transpiler::set_log`'s `linker.log = log as *mut _`.
     pub options: *mut BundleOptions<'static>,
     pub fs: *mut Fs::FileSystem,
@@ -77,10 +74,7 @@ pub struct TaggedResolution {
 }
 
 // ── relative_paths_list singleton ────────────────────────────────────────
-// Zig: `const ImportPathsList = allocators.BSSStringList(512, 128);
-//        pub var relative_paths_list: *ImportPathsList = undefined;`
-//
-// `bun_alloc::BSSStringList<COUNT, ITEM_LENGTH>` encodes the Zig generics as
+// `bun_alloc::BSSStringList<COUNT, ITEM_LENGTH>` encodes the parameters as
 // `COUNT = _COUNT * 2`, `ITEM_LENGTH = _ITEM_LENGTH + 1` (see `bun_alloc/lib.rs`).
 // `bss_string_list!` would be the canonical declare-site macro but
 // expands to `core::cell::SyncUnsafeCell`, and `bun_bundler` does not (yet)
@@ -94,7 +88,7 @@ pub(crate) type ImportPathsList = bun_alloc::BSSStringList<{ 512 * 2 }, { 128 + 
 /// it can sit inside a `LazyLock`. The underlying list serializes its own
 /// mutation through an internal `Mutex` (see `BSSStringList::append`), so
 /// sharing the raw pointer across threads is sound; the `&mut self` receiver
-/// on `append` is a Zig-port artifact, not an exclusivity requirement.
+/// on `append` is not an exclusivity requirement.
 struct ImportPathsListPtr(core::ptr::NonNull<ImportPathsList>);
 // SAFETY: `BSSStringList` guards every mutating method with `self.mutex`, and
 // the allocation is process-lifetime (never freed). The pointer is therefore
@@ -146,8 +140,7 @@ mod hardcoded_module {
 /// Intern a byte buffer into the process-lifetime `relative_paths_list`
 /// `BSSStringList` singleton.
 ///
-/// Zig used `linker.arena.dupe(u8, ...)` / `allocPrint` with
-/// `bun.default_allocator` and never frees the result — the linker is a
+/// The linker is a
 /// per-transpile singleton whose output paths flow into `ImportRecord.path:
 /// Path<'static>`. PORTING.md §Forbidden bans `Vec::leak`/`Box::leak` for
 /// fabricating `&'static [u8]`; route through the `relative_paths_list`
@@ -271,10 +264,9 @@ impl Linker {
         resolve_results: *mut ResolveResults,
         fs: *mut Fs::FileSystem,
     ) -> Self {
-        // Zig wrote `relative_paths_list = ImportPathsList.init(arena);`
-        // here; the `LazyLock` accessor handles that lazily on first
-        // `intern_path()` / `relative_paths_list()` call, so no eager poke
-        // is needed (it was startup overhead for non-bundling code paths).
+        // The `LazyLock` accessor initializes `relative_paths_list` lazily on
+        // first `intern_path()` / `relative_paths_list()` call, so no eager
+        // poke is needed (it would be startup overhead for non-bundling code paths).
         Self {
             options,
             fs,
@@ -292,11 +284,10 @@ impl Linker {
     }
 
     /// Re-seat the self-referential back-pointers after the owning
-    /// `Transpiler` has been moved to its final address. Port of the
-    /// post-copy fixups in ThreadPool.zig:310 / bundle_v2.zig:230 — those
-    /// only re-assign the pointer fields and do NOT reset
+    /// `Transpiler` has been moved to its final address. Only re-assigns the
+    /// pointer fields; does NOT reset
     /// `import_counter` / `plugin_runner` / `tagged_resolutions` /
-    /// `any_needs_runtime`, so neither does this. Use instead of `init` from
+    /// `any_needs_runtime`. Use instead of `init` from
     /// `Transpiler::wire_after_move`.
     pub fn reseat_self_refs(
         &mut self,
@@ -315,22 +306,19 @@ impl Linker {
         self.fs = fs;
     }
 
-    /// Accessor for the `relative_paths_list` singleton (Zig:
-    /// `Linker.relative_paths_list`). Returns `*mut` because the Zig contract
-    /// is a global `*Self` pointer — fabricating `&'static mut` here would
-    /// alias on every call.
+    /// Accessor for the `relative_paths_list` singleton. Returns `*mut`
+    /// because the contract is a global pointer — fabricating `&'static mut`
+    /// here would alias on every call.
     #[inline]
     pub fn relative_paths_list() -> *mut ImportPathsList {
         relative_paths_list_ptr()
     }
 
     // ── getModKey / getHashedFilename ────────────────────────────────────
-    // Zig's `Fs.FileSystem.RealFS.ModKey` is a nested decl; the
-    // Rust port hoists `ModKey` to module scope (`bun_resolver::fs::ModKey`)
+    // `ModKey` lives at module scope (`bun_resolver::fs::ModKey`)
     // alongside `RealFS`. `file_path` is typed `PFs::Path` (not `Fs::Path`)
     // so `get_hashed_filename` — whose callers all build `PFs::Path` — can
-    // forward directly; only `.text` is read, and both ports define it as
-    // `&[u8]`.
+    // forward directly; only `.text` (a `&[u8]`) is read.
     pub fn get_mod_key(
         &mut self,
         file_path: &PFs::Path<'_>,
@@ -374,9 +362,8 @@ impl Linker {
         }
 
         let modkey = self.get_mod_key(file_path, fd)?;
-        // `ModKey::hash_name` writes into a caller-supplied buffer (1 KiB,
-        // matching the capacity of the threadlocal Zig's `hash_name_buf`
-        // used) and returns a borrow of it; `dupe` copies the bytes into the
+        // `ModKey::hash_name` writes into a caller-supplied buffer (1 KiB)
+        // and returns a borrow of it; `dupe` copies the bytes into the
         // process-lifetime interner to satisfy this fn's `'static` return.
         // Note: `IS_CACHE_ENABLED` is a hard `const false` (see above), so
         // the `hashed_filenames` cache never dedups — every call interns a
@@ -401,7 +388,7 @@ impl Linker {
     /// This modifies the Ast in-place! It resolves import records and
     /// generates paths.
     ///
-    /// `comptime import_path_format` demoted to a runtime arg —
+    /// `import_path_format` is a runtime arg rather than a const generic —
     /// `options::ImportPathFormat` doesn't derive `ConstParamTy`, and the
     /// crate doesn't enable `adt_const_params`. All callers pass a literal,
     /// and the inner `generate_import_path` body is a single `match` either
@@ -433,10 +420,7 @@ impl Linker {
             | options::Loader::Js
             | options::Loader::Ts
             | options::Loader::Tsx => {
-                // reshaped for borrowck — Zig iterated
-                // `result.ast.import_records.slice()` while also reading other
-                // `result.*` fields and (in the not-found branch) borrowing
-                // `&result.source`. Iterate by index, take field-disjoint
+                // Iterate by index, take field-disjoint
                 // borrows (`&result.source` + `&mut result.ast.*`) where
                 // needed, and hoist `is_pending_import` (which borrows the
                 // whole `result`) before any `ast` mut borrow.
@@ -538,8 +522,7 @@ impl Linker {
                             // by the owning `Transpiler` to a live JSC-heap
                             // `PluginRunner`; the transpiler is single-threaded
                             // and holds no other borrow of it for the duration
-                            // of `on_resolve`. Shared access here matches Zig
-                            // `*PluginRunner` (linker.zig:176-193).
+                            // of `on_resolve`, so shared access is sound.
                             let runner = unsafe { &*runner };
                             if let Some(path) = runner.on_resolve(
                                 import_record.path.text,
@@ -577,15 +560,14 @@ impl Linker {
         if had_resolve_errors {
             return Err(bun_core::err!("ResolveMessage"));
         }
-        // PERF(port): Zig clearAndFree; Vec drop at scope end frees.
+        // Vec drop at scope end frees.
         externals.clear();
         let _ = externals;
         Ok(())
     }
 
-    // reshaped for borrowck — Zig passed `&mut self` + `&mut
-    // ImportRecord` (a sub-borrow of `result.ast`) + `&mut ParseResult`. In
-    // Rust those overlap; pass the disjoint pieces explicitly.
+    // Takes the disjoint pieces explicitly rather than `&mut self` plus
+    // overlapping sub-borrows of `result`.
     fn when_module_not_found<const IS_BUN: bool>(
         log: &mut Log,
         target: BundleTarget,
@@ -674,7 +656,7 @@ impl Linker {
                     // `bun.path.relative`; the inline `bun_resolver::fs`
                     // module doesn't expose it yet, so call the path layer
                     // directly. The threadlocal-buffer result must be
-                    // dup'd to outlive this call (Zig leaked into Path).
+                    // dup'd to outlive this call.
                     let relative_name =
                         dupe(bun_paths::resolve_path::relative(source_dir, source_path));
                     Ok(PFs::Path::init_with_pretty(source_path, relative_name))
@@ -739,8 +721,6 @@ impl Linker {
                         }
                     }
 
-                    // `fs.relativeTo(source_path)` ==
-                    // `relative(fs.top_level_dir, source_path)` in Zig.
                     let top_level_dir = self.fs().top_level_dir;
                     let mut base: &[u8] =
                         bun_paths::resolve_path::relative(top_level_dir, source_path);
@@ -790,10 +770,7 @@ impl Linker {
     ) -> Result<bool, bun_core::Error> {
         let hash_key = self.resolve_result_hash_key(&resolve_result);
 
-        // Zig `getOrPut` → `HashMap::entry`; `found_existing` is
-        // whether the key was already present. Matches Zig
-        // `linker.resolve_results.getOrPut` / `linker.resolve_queue.writeItem`
-        // (linker.zig:387-390).
+        // `found_existing` is whether the key was already present.
         let found_existing = self.resolve_results_mut().contains_key(&hash_key);
         if !found_existing {
             self.resolve_results_mut().insert(hash_key, ());
@@ -803,5 +780,3 @@ impl Linker {
         Ok(!found_existing)
     }
 }
-
-// ported from: src/bundler/linker.zig

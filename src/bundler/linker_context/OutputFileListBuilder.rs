@@ -55,7 +55,6 @@ impl OutputFileList {
         let (length, supplementary_file_count) =
             OutputFileList::calculate_output_file_list_capacity(c, chunks);
         let mut output_files: Vec<options::OutputFile> = Vec::with_capacity(length as usize);
-        // PERF(port): was appendNTimesAssumeCapacity.
         output_files.resize_with(length as usize, OutputFile::zero_value);
 
         Ok(Self {
@@ -64,7 +63,7 @@ impl OutputFileList {
             index_for_sourcemaps_and_bytecode: if supplementary_file_count == 0 {
                 None
             } else {
-                Some(chunks.len() as u32) // @truncate
+                Some(chunks.len() as u32)
             },
             additional_output_files_start: u32::try_from(chunks.len()).expect("int cast")
                 + supplementary_file_count,
@@ -221,5 +220,3 @@ impl OutputFileList {
         Some(result)
     }
 }
-
-// ported from: src/bundler/linker_context/OutputFileListBuilder.zig

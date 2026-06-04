@@ -21,7 +21,6 @@ use crate::test_command;
 use crate::test_runner::jest::Summary;
 
 fn attr_value(head: &[u8], name: &'static [u8]) -> u32 {
-    // PERF(port): was comptime `" " ++ name ++ "=\""` concat.
     let needle = [b" ", name, b"=\""].concat();
     let Some(idx) = strings::index_of(head, &needle) else {
         return 0;
@@ -155,7 +154,6 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     paths: &[&[u8]],
     opts: &mut CodeCoverageOptions,
 ) {
-    // PERF(port): was arena bulk-free (std.heap.ArenaAllocator).
 
     let mut by_file: StringArrayHashMap<FileCoverage> = StringArrayHashMap::default();
 
@@ -217,8 +215,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         return;
     }
 
-    // Stable output order. Zig's `ArrayHashMap.sort` reorders entries in place;
-    // reshaped — ArrayHashMap has no in-place sort yet, so build a
+    // Stable output order. ArrayHashMap has no in-place sort yet, so build a
     // permutation and iterate via `order` everywhere below.
     let mut order: Vec<usize> = (0..by_file.count()).collect();
     {
@@ -253,8 +250,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 (e,),
             ),
             bun_sys::Result::Ok(f) => {
-                // Zig used a 64KiB-buffered writer adapter; building the whole
-                // report in a Vec then issuing one write_all is equivalent.
+                // Build the whole report in a Vec, then issue one write_all.
                 let mut w: Vec<u8> = Vec::with_capacity(64 * 1024);
                 for &i in &order {
                     let fc = &by_file.values()[i];
@@ -328,7 +324,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         let console = Output::error_writer();
         fn sep<const COLORS: bool>(c: &mut bun_core::io::Writer, n: usize) {
             let _ = c.write_all(Output::pretty_fmt::<COLORS>("<r><d>").as_ref());
-            // Zig `splatByteAll`: repeat the byte without a heap allocation.
+            // Repeat the byte without a heap allocation.
             const DASHES: [u8; 64] = [b'-'; 64];
             let mut left = n + 2;
             while left > 0 {
@@ -432,4 +428,3 @@ fn write_range<const COLORS: bool>(w: &mut impl std::io::Write, first: &mut bool
     }
 }
 
-// ported from: src/cli/test/parallel/aggregate.zig

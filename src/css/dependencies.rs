@@ -1,7 +1,6 @@
 //! CSS dependency tracking — `@import` and `url()` references collected during printing.
 
 use crate::SourceLocation;
-// const Location = css.Location; — shadowed by the local `Location` below in Zig too.
 
 /// Options for `analyze_dependencies` in `PrinterOptions`.
 pub struct DependencyOptions {
@@ -127,7 +126,7 @@ impl ImportDependency {
                 },
                 // Assumes the `@import "url"` form: 8 = len of `@import `, +2 for the
                 // quotes. The `@import url(...)` form yields a slightly-off range —
-                // a limitation inherited from lightningcss (and the Zig port).
+                // a limitation inherited from lightningcss.
                 8,
                 rule.url.len() + 2,
             ),
@@ -194,5 +193,3 @@ impl SourceRange {
         }
     }
 }
-
-// ported from: src/css/dependencies.zig

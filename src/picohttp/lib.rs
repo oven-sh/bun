@@ -9,8 +9,7 @@ use bun_core::pretty_fmt;
 
 // `Header::clone` / `Request::clone` / `Response::clone` need the
 // unbound-lifetime `append_raw` so they can interleave appends and stash the
-// raw ptr/len pairs — the Zig original returns aliasing `[]const u8` with no
-// lifetime tracking. The buffer is heap-owned; callers keep the builder (or
+// raw ptr/len pairs. The buffer is heap-owned; callers keep the builder (or
 // its moved-out buffer) alive while the returned slices are in use.
 pub use bun_core::StringBuilder;
 
@@ -87,8 +86,7 @@ use bun_core::strings;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// NOTE: layout MUST match `c::phr_header` exactly (see static asserts below).
-/// Zig used `name: []const u8` / `value: []const u8` and relied on Zig's slice
-/// ABI being `{ptr, len}`. Rust `&[u8]` has no guaranteed field order in
+/// Rust `&[u8]` has no guaranteed field order in
 /// `#[repr(C)]`, so we spell the fields out and expose `.name()` / `.value()`.
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -111,9 +109,8 @@ impl Header {
     /// initialize fixed-size header arrays before filling them.
     ///
     /// Uses `null()` (not `b"".as_ptr()`) so the const evaluates to all-zero
-    /// bytes — `[Header::ZERO; N]` statics land in `.bss` instead of `.data`,
-    /// matching Zig's `var buf: [N]Header = undefined`. `name()`/`value()` go
-    /// through `ffi::slice`, which tolerates `(null, 0)`.
+    /// bytes — `[Header::ZERO; N]` statics land in `.bss` instead of `.data`.
+    /// `name()`/`value()` go through `ffi::slice`, which tolerates `(null, 0)`.
     pub const ZERO: Self = Self {
         name_ptr: core::ptr::null(),
         name_len: 0,
@@ -123,7 +120,7 @@ impl Header {
 
     /// Construct a `Header` from borrowed name/value slices. The caller is
     /// responsible for keeping the backing storage alive for as long as the
-    /// `Header` is read (matches the Zig `[]const u8` field semantics).
+    /// `Header` is read.
     #[inline]
     pub const fn new(name: &[u8], value: &[u8]) -> Self {
         Self {
@@ -182,7 +179,7 @@ impl Header {
 
 impl fmt::Display for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // NOTE: pretty_fmt! is the comptime ANSI-tag expander (`<r><cyan>` → escape
+        // NOTE: pretty_fmt! is the compile-time ANSI-tag expander (`<r><cyan>` → escape
         // codes).
         if enable_ansi_colors_stderr() {
             if self.is_multiline() {
@@ -244,8 +241,6 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
 #[derive(Clone, Copy, Default)]
 pub struct HeaderList<'a> {
     pub list: &'a [Header],
-    // Zig's field was `[]Header` (mutable slice) but it is only ever read
-    // through `*const List`, so a shared `&'a [Header]` is sufficient here.
 }
 
 impl<'a> HeaderList<'a> {
@@ -377,7 +372,7 @@ impl<'a> Request<'a> {
         if rc > -1 {
             // SAFETY: path_ptr points into buf; the byte after the path is the
             // space before "HTTP/1.x" which picohttpparser has already consumed,
-            // so writing a NUL there is in-bounds. Zig casts away const here too.
+            // so writing a NUL there is in-bounds.
             unsafe { path_ptr.cast_mut().add(path_len).write(0) };
         }
 
@@ -480,9 +475,9 @@ impl fmt::Display for RequestCurlFormatter<'_> {
 
         if !self.body.is_empty() && Self::is_printable_body(content_type) {
             f.write_str(" --data-raw ")?;
-            // Zig: bun.js_printer.writeJSONString — bun_core re-exports the
-            // tier-0 minimal impl as `js_printer::write_json_string`; the full
-            // encoding-aware printer in bun_js_printer overrides at link time.
+            // bun_core re-exports the tier-0 minimal impl as
+            // `js_printer::write_json_string`; the full encoding-aware printer
+            // in bun_js_printer overrides at link time.
             bun_core::js_printer::write_json_string(
                 self.body,
                 f,
@@ -746,5 +741,3 @@ pub use c::phr_parse_request;
 pub use c::phr_parse_response;
 pub use c::struct_phr_chunked_decoder;
 pub use c::struct_phr_header;
-
-// ported from: src/picohttp/picohttp.zig

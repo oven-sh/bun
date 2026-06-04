@@ -35,4 +35,3 @@ impl CustomMediaRule {
     }
 }
 
-// ported from: src/css/rules/custom_media.zig

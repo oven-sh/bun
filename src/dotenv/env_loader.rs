@@ -26,15 +26,14 @@ pub enum DotEnvFileSuffix {
 pub type Kind = DotEnvFileSuffix;
 pub type Mode = DotEnvFileSuffix;
 
-/// Port of the `*FileSystem.DirEntry` parameter to `Loader::load`
-/// (env_loader.zig). `bun_dotenv` sits below `bun_resolver` in the crate
-/// graph, so the concrete `bun_resolver::fs::DirEntry` is taken generically;
-/// the only operation `load_default_files` performs is `hasComptimeQuery`
-/// (fs.zig:305) — fast O(1) lookup of a known-at-compile-time filename in the
-/// directory's entry map. Implemented for `bun_resolver::fs::DirEntry`.
+/// Directory-entry probe used by `Loader::load`. `bun_dotenv` sits below
+/// `bun_resolver` in the crate graph, so the concrete
+/// `bun_resolver::fs::DirEntry` is taken generically; the only operation
+/// `load_default_files` performs is a fast O(1) lookup of a
+/// known-at-compile-time filename in the directory's entry map. Implemented
+/// for `bun_resolver::fs::DirEntry`.
 pub trait DirEntryProbe {
-    /// Zig: `DirEntry.hasComptimeQuery(comptime query)`. The argument MUST
-    /// already be ASCII-lowercase (Zig lowercases at comptime; fs.zig:305-310).
+    /// The argument MUST already be ASCII-lowercase.
     fn has_comptime_query(&self, query_lower: &'static [u8]) -> bool;
 }
 
@@ -43,7 +42,7 @@ pub trait DirEntryProbe {
 // is provided there — see src/resolver/lib.rs. No impl here; that would be a
 // dep-cycle.
 
-/// schema.peechy / schema.zig:1172 — `enum(u32)`. Canonical definition; re-exported as
+/// schema.peechy — `enum(u32)`. Canonical definition; re-exported as
 /// `bun_options_types::schema::api::DotEnvBehavior` for higher tiers.
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
@@ -68,8 +67,8 @@ impl DotEnvBehavior {
     pub const LoadAll: Self = Self::load_all;
     pub const LoadAllWithoutInlining: Self = Self::load_all_without_inlining;
 
-    /// String-branch classifier shared by `bunfig.zig:988-1018` (serve.env) and
-    /// `JSBundler.zig:603-630` (Bun.build env). Only the *string* arm is common to
+    /// String-branch classifier shared by bunfig (serve.env) and
+    /// JSBundler (Bun.build env). Only the *string* arm is common to
     /// both specs — the surrounding null/bool/number dispatch and the error
     /// reporting intentionally diverge per call site, so they stay inline there.
     ///
@@ -134,21 +133,18 @@ pub struct Loader<'a> {
     aws_credentials: Option<S3Credentials>,
 }
 
-// Module-level mutable statics from the Zig (`var` decls inside `Loader`).
 static DID_LOAD_CCACHE_PATH: AtomicBool = AtomicBool::new(false);
-// Zig: `var node_path_to_use_set_once: []const u8 = ""` — overwritten on every
-// `loadNodeJSConfig` call (env_loader.zig:344). NOT set-once despite the name,
-// so RwLock<Option> (not OnceLock) — a 2nd call with an override must update the cache.
+// Overwritten on every `load_node_js_config` call. NOT set-once despite the
+// name, so RwLock<Option> (not OnceLock) — a 2nd call with an override must update the cache.
 static NODE_PATH_TO_USE_SET_ONCE: bun_core::RwLock<Option<Box<[u8]>>> = bun_core::RwLock::new(None);
 
-// Zig: `pub var has_no_clear_screen_cli_flag: ?bool = null;`
 // PORTING.md §Concurrency: OnceLock — set once from CLI flag, read many.
 pub static HAS_NO_CLEAR_SCREEN_CLI_FLAG: OnceLock<bool> = OnceLock::new();
 
 impl<'a> Loader<'a> {
     /// Shared "empty-ish" predicate for proxy env vars: an unset/empty value,
     /// or a literal empty-quote pair left over from shell `export FOO=""` /
-    /// `export FOO=''`. Mirrors Zig env_loader.zig getHttpProxy/getNoProxy.
+    /// `export FOO=''`.
     #[inline]
     fn is_emptyish(v: &[u8]) -> bool {
         v.is_empty() || v == b"\"\"" || v == b"''"
@@ -175,13 +171,13 @@ impl<'a> Loader<'a> {
         let Some(value) = self.get(input) else {
             return false;
         };
-        // NOTE: intentionally stricter than `is_emptyish` — also rejects "0"/"false"
-        // per Zig `Loader.has` spec; do not collapse the extra terms.
+        // NOTE: intentionally stricter than `is_emptyish` — also rejects
+        // "0"/"false"; do not collapse the extra terms.
         !Self::is_emptyish(value) && value != b"0" && value != b"false"
     }
 
     /// `BUN_ENV` with fallback to `NODE_ENV` — Bun's env precedence for
-    /// production/test detection. Mirrors Zig `isProduction`/`isTest` lookup.
+    /// production/test detection.
     pub fn get_node_env(&self) -> Option<&[u8]> {
         self.get(b"BUN_ENV").or_else(|| self.get(b"NODE_ENV"))
     }
@@ -238,10 +234,9 @@ impl<'a> Loader<'a> {
 
     pub fn get_s3_credentials(&mut self) -> &S3Credentials {
         if self.aws_credentials.is_none() {
-            // reshaped for borrowck — Zig stored borrowed `[]const u8` slices into
-            // the env map; here we copy to `Box<[u8]>` so the cached struct owns its bytes and
-            // we can release the `&self` borrow before writing `&mut self.aws_credentials`.
-            // PERF(port): one-shot, cached — copies are negligible.
+            // Copy to `Box<[u8]>` so the cached struct owns its bytes and we
+            // can release the `&self` borrow before writing `&mut self.aws_credentials`.
+            // One-shot and cached — copies are negligible.
             let access_key_id: Box<[u8]> = self
                 .get(b"S3_ACCESS_KEY_ID")
                 .or_else(|| self.get(b"AWS_ACCESS_KEY_ID"))
@@ -342,11 +337,9 @@ impl<'a> Loader<'a> {
         // `Box<[u8]>`-owned by `*self.map: Map`, which is borrowed for `'a`
         // (`map: &'a mut Map`). The boxed allocations are address-stable
         // across rehashes and Bun never removes/overwrites the proxy env vars
-        // after they are read here, so the slices are valid for `'a`. This is
-        // the same contract Zig `getHttpProxy` (env_loader.zig:174) relies on
-        // by returning `[]const u8` borrowing the loader's map. Encapsulating
-        // the extension here keeps every caller (PackageManager, fetch,
-        // upgrade, create) free of `transmute` (PORTING.md §Forbidden).
+        // after they are read here, so the slices are valid for `'a`.
+        // Encapsulating the extension here keeps every caller (PackageManager,
+        // fetch, upgrade, create) free of `transmute` (PORTING.md §Forbidden).
         let extend = |s: &[u8]| -> &'a [u8] {
             // SAFETY: `s` points into a `Box<[u8]>` owned by `*self.map`, which is
             // borrowed for `'a`; the boxed allocation is address-stable and never
@@ -503,7 +496,7 @@ impl<'a> Loader<'a> {
         Ok(())
     }
 
-    /// Port of `loadNodeJSConfig` (env_loader.zig:332). Populates `NODE` /
+    /// Populates `NODE` /
     /// `npm_node_execpath` with the resolved node binary path. Returns `false`
     /// only when no node could be discovered and no override was supplied.
     pub fn load_node_js_config(
@@ -527,13 +520,11 @@ impl<'a> Loader<'a> {
                 let Some(node) = self.get_node_path(fs, &mut buf) else {
                     return Ok(false);
                 };
-                // Zig used `fs.dirname_store.append` (interning arena
-                // returning 'static slice). RwLock owns a Box; just box here.
                 Box::from(node.as_bytes())
             }
         };
-        // Zig order (env_loader.zig:344-346): cache to `node_path_to_use_set_once`
-        // first, then `map.put` (which dupes the bytes).
+        // Cache to `NODE_PATH_TO_USE_SET_ONCE` first, then `map.put` (which
+        // dupes the bytes).
         *NODE_PATH_TO_USE_SET_ONCE.write() = Some(node_path_to_use.clone());
         self.map.put(b"NODE", &node_path_to_use)?;
         self.map.put(b"npm_node_execpath", &node_path_to_use)?;
@@ -646,8 +637,7 @@ impl<'a> Loader<'a> {
         &mut self,
         str: &[u8],
     ) -> Result<(), AllocError> {
-        // Zig built a `logger.Source` here; the only field `Parser`
-        // reads is `.contents`, so go straight to `parse_bytes` and avoid the
+        // Go straight to `parse_bytes` to avoid the
         // `Source.contents: &'static [u8]` lifetime constraint (callers like
         // `node:util.parseEnv` pass JS-owned non-'static buffers).
         let mut value_buffer: Vec<u8> = Vec::new();
@@ -661,14 +651,10 @@ impl<'a> Loader<'a> {
         suffix: DotEnvFileSuffix,
         skip_default_env: bool,
     ) -> Result<(), bun_core::Error> {
-        // PERF(port): SUFFIX was `comptime DotEnvFileSuffix` — demoted to runtime arg
-        // (avoids unstable adt_const_params; cold path). Argument order matches the Zig
-        // signature (`dir, env_files, comptime suffix, skip_default_env`) so high-tier
-        // callers (transpiler/install/lockfile) need no shim.
+        // `suffix` is a runtime arg (avoids unstable adt_const_params; cold path).
         let start = bun_core::time::nano_timestamp();
 
         // Create a reusable buffer for parsing multiple files.
-        // PERF(port): Zig used a 4 KiB stack-fallback allocator; plain Vec here.
         let mut value_buffer: Vec<u8> = Vec::new();
 
         if !env_files.is_empty() {
@@ -727,10 +713,9 @@ impl<'a> Loader<'a> {
     ) -> Result<(), bun_core::Error> {
         let dir_handle = bun_sys::Fd::cwd();
 
-        // Zig calls `dir.hasComptimeQuery(...)` on a
-        // `*FileSystem.DirEntry` (env_loader.zig). `bun_dotenv` sits below
-        // `bun_resolver` in the crate graph, so the directory entry is taken
-        // generically — `bun_resolver::fs::DirEntry` impls `DirEntryProbe`.
+        // `bun_dotenv` sits below `bun_resolver` in the crate graph, so the
+        // directory entry is taken generically — `bun_resolver::fs::DirEntry`
+        // impls `DirEntryProbe`.
         match suffix {
             DotEnvFileSuffix::Development => {
                 self.try_load_default(dir, dir_handle, b".env.development.local", value_buffer)?
@@ -764,8 +749,7 @@ impl<'a> Loader<'a> {
 
     /// Probe `dir` for a known `.env*` filename and, if present, load it into
     /// its dedicated slot and bump the analytics counter. Shared body for the
-    /// eight unrolled call sites in `load_default_files` (Zig unrolled them for
-    /// `hasComptimeQuery`'s comptime-string requirement, which Rust lacks).
+    /// eight call sites in `load_default_files`.
     #[inline]
     fn try_load_default<D: DirEntryProbe + ?Sized>(
         &mut self,
@@ -847,8 +831,7 @@ impl<'a> Loader<'a> {
         Output::flush();
     }
 
-    /// Helper: maps a comptime `.env*` filename to its `Option<Source>` field.
-    /// Replaces Zig `@field(this, base)`.
+    /// Helper: maps a known `.env*` filename to its `Option<Source>` field.
     fn default_file_slot(&mut self, base: &'static [u8]) -> &mut Option<bun_ast::Source> {
         match base {
             b".env.local" => &mut self.env_local,
@@ -873,11 +856,8 @@ impl<'a> Loader<'a> {
             return Ok(());
         }
 
-        // Zig used `std.fs.Dir.openFile` whose error set names
-        // (`error.FileNotFound`, `error.FileBusy`, …) don't map 1:1 to errno.
-        // `bun_sys` is errno-based, so the match arms below approximate the Zig
-        // error groups by errno. Any errno not listed propagates (matches the
-        // Zig `else => return err`).
+        // `bun_sys` is errno-based; the match arms below group the recoverable
+        // errnos. Any errno not listed propagates.
         let file =
             match bun_sys::File::openat(dir, base, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0) {
                 Ok(file) => file,
@@ -924,11 +904,10 @@ impl<'a> Loader<'a> {
             }
         }
 
-        // Zig retained the file buffer in `Source.contents`; here we drop it
-        // after parsing because `bun_ast::Source.contents` is `&'static [u8]`
-        // and §Forbidden bans `Box::leak`. The stored `Source` is only ever
-        // checked for `.is_some()` / its path printed, so dropping the bytes
-        // is observationally identical.
+        // The file buffer is dropped after parsing because
+        // `bun_ast::Source.contents` is `&'static [u8]` and §Forbidden bans
+        // `Box::leak`. The stored `Source` is only ever checked for
+        // `.is_some()` / its path printed, so dropping the bytes is fine.
         *self.default_file_slot(base) = Some(bun_ast::Source::init_path_string(base, b""));
         Ok(())
     }
@@ -983,8 +962,8 @@ impl<'a> Loader<'a> {
 /// Shared post-open tail of `load_env_file` / `load_env_file_dynamic`:
 /// `File::read_to_end` (fstat-presized) with the recoverable-errno filter.
 /// The two callers differ in their open path, open-error handling, and the
-/// memo slot they write — those stay in the callers (see env_loader.zig
-/// :784 vs :874). Only the byte-identical read tail is factored here.
+/// memo slot they write — those stay in the callers. Only the shared read
+/// tail is factored here.
 enum ReadEnvFile {
     /// Zero-length — caller marks the slot and returns.
     Empty,
@@ -1147,7 +1126,7 @@ impl<'a> Parser<'a> {
                         return Ok(Some(self.value_buffer.as_slice()));
                     }
                     self.pos = start;
-                    // fallthrough to outer loop's `end += 1` (Zig switch fallthrough)
+                    // fallthrough to outer loop's `end += 1`
                 }
                 _ => {}
             }
@@ -1204,7 +1183,7 @@ impl<'a> Parser<'a> {
         loop {
             if value[pos] == b'$' {
                 if pos > 0 && value[pos - 1] == b'\\' {
-                    // PERF(port): insertSlice(0, ..) is O(n); same as Zig
+                    // PERF: splice at the front is O(n)
                     self.value_buffer
                         .splice(0..0, value[pos..last].iter().copied());
                     pos -= 1;
@@ -1296,10 +1275,10 @@ impl<'a> Parser<'a> {
             };
         }
         if !IS_PROCESS && EXPAND {
-            // borrowck — Zig iterates `map` while calling `map.get` inside expandValue.
-            // Reshaped to index-based iteration: clone the value bytes, run expansion against an
-            // immutable `&Map`, then write back via `values_mut()`. The clone matches the Zig:
-            // values are dupe'd by `_parse` above, so length is bounded by file size.
+            // borrowck — index-based iteration: clone the value bytes, run
+            // expansion against an immutable `&Map`, then write back via
+            // `values_mut()`. Values are dupe'd by `_parse` above, so length
+            // is bounded by file size.
             let total = map.map.count();
             let mut idx = count;
             while idx < total {
@@ -1321,8 +1300,6 @@ impl<'a> Parser<'a> {
     /// Same as [`parse`] but takes the source bytes directly. Exists so
     /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
     /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
-    // Zig built a `logger.Source` and passed `&source` — the only
-    // field `Parser` reads is `.contents`, so this is observationally identical.
     pub(crate) fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
         map: &mut Map,
@@ -1345,9 +1322,8 @@ pub type Value = HashTableValue;
 
 #[derive(Default, Clone)]
 pub struct HashTableValue {
-    // Zig stored borrowed `[]const u8` (sometimes allocator.dupe'd, sometimes
-    // borrowed from environ); `Box<[u8]>` is owned-by-default, trading some
-    // copies for uniform ownership.
+    // `Box<[u8]>` is owned-by-default, trading some copies for uniform
+    // ownership.
     pub value: Box<[u8]>,
     pub conditional: bool,
 }
@@ -1356,7 +1332,6 @@ pub struct HashTableValue {
 // An issue with this exact implementation is unicode characters can technically appear in these
 // keys, and we use a simple toLowercase function that only applies to ascii, so this will make
 // some strings collide.
-// Spec: env_loader.zig:1220 — `bun.CaseInsensitiveASCIIStringArrayHashMap` on Windows.
 #[cfg(not(windows))]
 pub type HashTable = bun_collections::StringArrayHashMap<HashTableValue>;
 #[cfg(windows)]
@@ -1375,7 +1350,6 @@ impl Default for Map {
 impl Map {
     /// Builds a NULL-terminated `K=V\0` envp array. Returns an owning struct so
     /// dropping it frees the joined buffers (PORTING.md §Forbidden: no Box::leak).
-    /// Zig used an arena; here the struct *is* the arena.
     pub fn create_null_delimited_env_map(&mut self) -> Result<NullDelimitedEnvMap, AllocError> {
         let envp_count = self.map.count();
         let mut storage: Vec<Box<[u8]>> = Vec::with_capacity(envp_count);
@@ -1402,11 +1376,10 @@ impl Map {
         })
     }
 
-    /// Returns a wrapper around the std.process.EnvMap that does not duplicate the memory of
+    /// Returns a wrapper around the env map that does not duplicate the memory of
     /// the keys and values, but instead points into the memory of the bun env map.
     // `bun_sys::EnvMap` is `HashMap<String, String>`, which copies and is
-    // UTF-8-lossy (Zig's `std.process.EnvMap` stored `[]const u8` borrows);
-    // the lossy round-trip is accepted here.
+    // UTF-8-lossy; the lossy round-trip is accepted here.
     #[allow(clippy::disallowed_methods)] // lossy round-trip documented above
     pub fn std_env_map(&mut self) -> Result<StdEnvMapWrapper, AllocError> {
         let mut env_map = bun_sys::EnvMap::default();
@@ -1467,9 +1440,8 @@ impl Map {
     }
 
     /// Shared-borrow iteration over `(key, value)` pairs in insertion order.
-    /// Zig: `pub fn iterator(this: *const Map) HashTable.Iterator` — Zig's
-    /// iterator does not require exclusive access; this is the `&self`
-    /// surface for callers (e.g. shell `EnvMapIter`) that only read entries.
+    /// This is the `&self` surface for callers (e.g. shell `EnvMapIter`) that
+    /// only read entries.
     #[inline]
     pub fn iter(
         &self,
@@ -1478,7 +1450,7 @@ impl Map {
         self.map.iter()
     }
 
-    /// Zig: `this.map.map.unmanaged.entries.len`.
+    /// Number of entries in the env map.
     #[inline]
     pub fn count(&self) -> usize {
         self.map.count()
@@ -1515,7 +1487,6 @@ impl Map {
         {
             debug_assert!(strings::index_of_char(key, b'\x00').is_none());
         }
-        // PERF(port): was assume_capacity
         self.map.put_assume_capacity(
             key,
             HashTableValue {
@@ -1540,16 +1511,14 @@ impl Map {
 
     #[inline]
     pub fn put_alloc_key(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        // Zig stored borrowed `value` here without dupe; `Box<[u8]>` storage
-        // forces a copy, making this equivalent to `put_alloc_key_and_value`
-        // (which dupes both key and value).
+        // `Box<[u8]>` storage forces a copy, making this equivalent to
+        // `put_alloc_key_and_value` (which dupes both key and value).
         self.put_alloc_key_and_value(key, value)
     }
 
     #[inline]
     pub fn put_alloc_value(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        // Zig diverged from `put` only by `allocator.dupe(value)` vs borrowed; the Rust
-        // `HashTableValue { value: Box<[u8]> }` storage forces a copy either way, so this is
+        // `HashTableValue { value: Box<[u8]> }` storage forces a copy, so this is
         // equivalent to `put`. Kept as a thin wrapper to preserve call-site alloc intent
         // should storage ever change to `Cow`/borrowed.
         self.put(key, value)
@@ -1604,7 +1573,7 @@ impl Map {
 
     #[inline]
     pub fn get_or_put(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        // Spec-level alias of `put_default` (env_loader.zig:1393/1400 both call `getOrPutValue`).
+        // Alias of `put_default`.
         self.put_default(key, value)
     }
 
@@ -1620,9 +1589,8 @@ impl Map {
     }
 }
 
-/// Owns the `K=V\0` strings backing a `[*:null]?[*:0]const u8` envp array.
-/// Replaces the Zig arena passed to `createNullDelimitedEnvMap`; dropping this
-/// frees every entry (PORTING.md §Forbidden: no Box::leak).
+/// Owns the `K=V\0` strings backing a NULL-terminated envp array.
+/// Dropping this frees every entry (PORTING.md §Forbidden: no Box::leak).
 ///
 /// LAYOUT NOTE: `envp` stores raw `*const c_char` (with a trailing
 /// `ptr::null()` sentinel), **not** `Option<*const c_char>`. Raw pointers are
@@ -1630,8 +1598,8 @@ impl Map {
 /// 2-word `(tag, ptr)` pair. Casting `*const Option<*const c_char>` to
 /// `*const *const c_char` for `execve()` interleaves `Some`-discriminant
 /// `0x1` words between the real pointers and the kernel faults with `EFAULT`.
-/// Zig's `?[*:0]const u8` *is* a single nullable thin pointer; the Rust
-/// equivalent for FFI is `*const c_char`, not `Option<*const c_char>`.
+/// The correct FFI representation is `*const c_char`, not
+/// `Option<*const c_char>`.
 pub struct NullDelimitedEnvMap {
     _storage: Vec<Box<[u8]>>,
     envp: Box<[*const c_char]>,
@@ -1662,9 +1630,9 @@ impl StdEnvMapWrapper {
 
 // Drop replaces deinit (only frees hash_map storage; Rust does this automatically)
 
-// Zig: `pub var instance: ?*Loader = null;` — global mutable raw pointer, freely re-assignable.
-// Loader is !Sync (holds `&mut Map`); same single-thread invariant the Zig had.
-// We store a raw `*mut` in an AtomicPtr (overwritable, matches `pub var` semantics) and hand
+// Global singleton. Loader is !Sync (holds `&mut Map`); it is only installed
+// and used under a single-thread (CLI-init) invariant.
+// We store a raw `*mut` in an AtomicPtr (overwritable) and hand
 // the raw pointer back to callers so the no-alias `&mut` proof obligation lives at the *call
 // site*, not here — manufacturing `&'static mut` inside an accessor is aliased-&mut UB the
 // moment two callers hold results simultaneously (PORTING.md §Forbidden: lifetime-extension
@@ -1672,19 +1640,18 @@ impl StdEnvMapWrapper {
 pub static INSTANCE: AtomicPtr<Loader<'static>> = AtomicPtr::new(core::ptr::null_mut());
 
 /// Read the global singleton as a raw pointer — `Some(ptr)` once `set_instance` has been called.
-/// Callers must `unsafe { &mut *ptr }` at point of use under the same single-thread CLI-init
-/// invariant the Zig `var instance: ?*Loader` had (mirrors raw `*Loader` deref in Zig).
+/// Callers must `unsafe { &mut *ptr }` at point of use under the single-thread
+/// CLI-init invariant: the loader is only installed and dereferenced on the
+/// main thread, so no two `&mut` borrows can be live at once.
 #[inline]
 pub fn instance() -> Option<*mut Loader<'static>> {
     let ptr = INSTANCE.load(Ordering::Acquire);
     if ptr.is_null() { None } else { Some(ptr) }
 }
 
-/// Install the global singleton. Overwrites any previous value (matches Zig `pub var` re-assign
-/// semantics — test harnesses / worker re-init may call this more than once).
+/// Install the global singleton. Overwrites any previous value (test harnesses
+/// / worker re-init may call this more than once).
 #[inline]
 pub fn set_instance(loader: *mut Loader<'static>) {
     INSTANCE.store(loader, Ordering::Release);
 }
-
-// ported from: src/dotenv/env_loader.zig

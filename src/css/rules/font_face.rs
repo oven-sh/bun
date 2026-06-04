@@ -40,7 +40,6 @@ pub enum FontFaceProperty {
 
 impl FontFaceProperty {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // Local helpers mirroring the Zig `Helpers.writeProperty` with `comptime multi: bool`.
         macro_rules! write_property_single {
             ($d:expr, $prop:expr, $value:expr) => {{
                 $d.write_str($prop)?;
@@ -89,7 +88,6 @@ impl FontFaceProperty {
     }
 
     pub(crate) fn deep_clone(&self, arena: &bun_alloc::Arena) -> Self {
-        // Zig `css.implementDeepClone` field-walk, hand-expanded.
         match self {
             FontFaceProperty::Source(v) => {
                 FontFaceProperty::Source(v.iter().map(|s| s.deep_clone(arena)).collect())
@@ -228,8 +226,7 @@ impl UnicodeRange {
 
     fn parse_tokens(input: &mut css::Parser) -> css::Result<()> {
         let tok = input.next_including_whitespace()?.clone();
-        // Matches Zig `parseTokens` (font_face.zig): tag-only matches on
-        // `.dimension`/`.number` — payloads are never inspected.
+        // Tag-only matches on `Dimension`/`Number` — payloads are never inspected.
         match tok {
             css::Token::Dimension { .. } => return Self::parse_question_marks(input),
             css::Token::Number { .. } => {
@@ -280,7 +277,6 @@ impl UnicodeRange {
         }
     }
 
-    // Zig `css.Maybe(UnicodeRange, void)` carries no error payload → `Option<UnicodeRange>`.
     fn parse_concatenated(text_: &[u8]) -> Option<UnicodeRange> {
         let mut text = if !text_.is_empty() && text_[0] == b'+' {
             &text_[1..]
@@ -335,8 +331,8 @@ impl UnicodeRange {
     }
 
     fn consume_hex(text: &mut &[u8]) -> (u32, usize) {
-        // Cap at 8: caller validates `<= 6` post-hoc; the unbounded Zig original
-        // panic-overflows u32 in debug on >8 hex chars (malformed input).
+        // Cap at 8: caller validates `<= 6` post-hoc; an unbounded parse
+        // would overflow u32 on >8 hex chars (malformed input).
         let (value, n) = bun_core::fmt::parse_hex_prefix(text, 8);
         *text = &text[n..];
         (value, n)
@@ -502,7 +498,6 @@ impl Source {
         match input.try_parse(UrlSource::parse) {
             Ok(url) => return Ok(Source::Url(url)),
             Err(e) => {
-                // Zig: `e.kind == .basic and e.kind.basic == .at_rule_body_invalid`
                 if matches!(
                     e.kind,
                     css::ParseErrorKind::basic(css::BasicParseErrorKind::at_rule_body_invalid)
@@ -701,11 +696,6 @@ impl FontFaceRule {
 
 pub(crate) struct FontFaceDeclarationParser;
 
-// Zig modeled `AtRuleParser` / `QualifiedRuleParser` /
-// `DeclarationParser` / `RuleBodyItemParser` as nested namespaces with
-// associated consts + fns. In Rust these are trait impls on
-// `FontFaceDeclarationParser`.
-//
 // blocked_on: css::{AtRuleParser,QualifiedRuleParser,DeclarationParser,
 // RuleBodyItemParser} trait signatures, properties::font::* +
 // properties::custom::CustomProperty, Size2D::parse, Parser surface,
@@ -833,4 +823,3 @@ const _: () = {
     }
 };
 
-// ported from: src/css/rules/font_face.zig

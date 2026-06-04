@@ -1,12 +1,11 @@
-//! Raw Win32 extern fn declarations + tier-0 Win32 typedefs split from
-//! sys/windows/windows.zig. `bun_sys::windows` re-exports FROM here (see
-//! the layering doc). This crate is a tier-0 leaf: it depends on nothing above
+//! Raw Win32 extern fn declarations + tier-0 Win32 typedefs.
+//! `bun_sys::windows` re-exports FROM here (see the layering doc). This crate is a tier-0 leaf: it depends on nothing above
 //! `libuv_sys`.
 
 use core::ffi::{c_char, c_int, c_long, c_short, c_uint, c_ulong, c_ushort, c_void};
 
 // ──────────────────────────────────────────────────────────────────────────
-// Basic Win32 typedefs (owned here; mirror std.os.windows / winnt.h)
+// Basic Win32 typedefs (owned here; mirror winnt.h)
 // ──────────────────────────────────────────────────────────────────────────
 
 pub type BOOL = c_int;
@@ -75,7 +74,7 @@ pub struct FILETIME {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Win32 POD structs shared by `bun_libuv_sys` (uv/win.h embeds) and
-// `bun_sys::windows`. Single source of truth ≙ Zig's `std.os.windows`.
+// `bun_sys::windows`. Single source of truth.
 // All derive Clone+Copy: libuv embeds them in `uv_req_s`/`uv_tty_s`/
 // `uv_fs_s` which themselves derive Copy, so non-Copy here would break
 // the derive chain.
@@ -228,7 +227,7 @@ pub type GET_FILEEX_INFO_LEVELS = u32;
 pub const GetFileExInfoStandard: GET_FILEEX_INFO_LEVELS = 0;
 pub const GetFileExMaxInfoLevel: GET_FILEEX_INFO_LEVELS = 1;
 
-/// Mirrors `std.os.windows.FILE_INFO_BY_HANDLE_CLASS` (`enum(u32)`).
+/// `FILE_INFO_BY_HANDLE_CLASS` (`winbase.h`), as a bare `u32`.
 pub type FILE_INFO_BY_HANDLE_CLASS = u32;
 
 #[repr(C)]
@@ -261,7 +260,7 @@ pub struct IO_STATUS_BLOCK {
     pub Information: usize,
 }
 
-// `std.os.windows` path-length constants.
+// Path-length constants.
 pub const MAX_PATH: usize = 260;
 pub const PATH_MAX_WIDE: usize = 32767;
 
@@ -381,8 +380,7 @@ pub struct FILE_DIRECTORY_INFORMATION {
 }
 
 /// `FILE_INFORMATION_CLASS` (`wdm.h`) — selector for `NtQuery*` /
-/// `NtSetInformationFile`. Newtype-over-u32 to keep parity with Zig's
-/// non-exhaustive enum.
+/// `NtSetInformationFile`. Newtype-over-u32 so unmapped values round-trip.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct FILE_INFORMATION_CLASS(pub u32);
@@ -402,7 +400,7 @@ pub struct FILE_END_OF_FILE_INFORMATION {
     pub EndOfFile: LARGE_INTEGER,
 }
 
-/// Zig spells it `FileInformationClass` (camel) at use sites; alias.
+/// CamelCase alias used at some call sites.
 pub type FileInformationClass = FILE_INFORMATION_CLASS;
 
 /// `FILE_DISPOSITION_INFORMATION` (`ntifs.h`).
@@ -445,7 +443,6 @@ pub const VOLUME_NAME_GUID: DWORD = 0x1;
 pub const VOLUME_NAME_NT: DWORD = 0x2;
 pub const VOLUME_NAME_NONE: DWORD = 0x4;
 
-/// Zig `std.os.windows.GetFinalPathNameByHandleOptions.VolumeName`.
 #[derive(Copy, Clone, PartialEq, Eq, Debug, Default)]
 pub enum VolumeName {
     #[default]
@@ -453,7 +450,6 @@ pub enum VolumeName {
     Nt,
 }
 
-/// Zig `std.os.windows.GetFinalPathNameByHandleOptions`.
 #[derive(Copy, Clone, Debug, Default)]
 pub struct GetFinalPathNameByHandleFormat {
     pub volume_name: VolumeName,
@@ -464,7 +460,7 @@ impl FILE_INFORMATION_CLASS {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// ntdll namespace (subset). Zig: `pub const ntdll = std.os.windows.ntdll`
+// ntdll namespace (subset).
 // ──────────────────────────────────────────────────────────────────────────
 pub mod ntdll {
     use super::*;
@@ -570,9 +566,9 @@ pub mod ntdll {
 }
 pub use ntdll::NtClose;
 
-/// `std.os.windows.user32` (subset placeholder; fill in as needed).
+/// `user32` namespace (subset placeholder; fill in as needed).
 pub mod user32 {}
-/// `std.os.windows.advapi32` (subset placeholder; fill in as needed).
+/// `advapi32` namespace (subset placeholder; fill in as needed).
 pub mod advapi32 {}
 
 // `bun.windows.libuv` is exposed from the higher-tier `bun_sys::windows`
@@ -580,7 +576,7 @@ pub mod advapi32 {}
 // must not depend on `bun_libuv_sys` (would invert the tier ordering).
 
 // ──────────────────────────────────────────────────────────────────────────
-// kernel32 namespace (subset). Zig: `pub const kernel32 = windows.kernel32`
+// kernel32 namespace (subset).
 // ──────────────────────────────────────────────────────────────────────────
 pub mod kernel32 {
     use super::*;
@@ -718,8 +714,7 @@ pub mod kernel32 {
         /// `RemoveVectoredExceptionHandler` (`errhandlingapi.h`).
         pub fn RemoveVectoredExceptionHandler(Handle: *mut c_void) -> u32;
     }
-    // Re-export externs declared at the crate root so `kernel32::Foo` resolves
-    // for callers porting Zig's `std.os.windows.kernel32.*` 1:1.
+    // Re-export externs declared at the crate root so `kernel32::Foo` resolves.
     pub use super::{
         CreateFileW, GetCurrentDirectoryW, GetFileAttributesW, GetSystemInfo, SYSTEM_INFO,
         SetCurrentDirectoryW, SetFilePointerEx,
@@ -731,8 +726,6 @@ pub mod kernel32 {
 }
 pub use kernel32::{GetCurrentProcess, GetExitCodeProcess, GetLastError};
 
-// `std.os.windows.WaitForSingleObject` — Zig's wrapper returns `error.WaitFailed`
-// on `WAIT_FAILED`; provide that shape so `if let Err(..)` callers compile.
 pub const INFINITE: DWORD = 0xFFFF_FFFF;
 pub const WAIT_OBJECT_0: DWORD = 0;
 pub const WAIT_TIMEOUT: DWORD = 258;
@@ -757,8 +750,7 @@ pub unsafe fn WaitForSingleObject(handle: HANDLE, ms: DWORD) -> Result<DWORD, Wi
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// NTSTATUS — Zig `std.os.windows.NTSTATUS` is `enum(u32) { ..., _ }`.
-// Ported as a transparent newtype so unmapped codes round-trip.
+// NTSTATUS — a transparent newtype so unmapped codes round-trip.
 // ──────────────────────────────────────────────────────────────────────────
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]
@@ -812,12 +804,11 @@ pub const STATUS_SUCCESS: NTSTATUS = NTSTATUS::SUCCESS;
 
 #[link(name = "ntdll")]
 unsafe extern "system" {
-    /// Zig: `pub extern "ntdll" fn RtlNtStatusToDosError(win32.NTSTATUS) callconv(.winapi) Win32Error`
     /// Total over `NTSTATUS`; no preconditions.
     pub safe fn RtlNtStatusToDosError(status: NTSTATUS) -> DWORD;
 }
 
-/// `std.os.windows.ws2_32` — Winsock2 surface (subset).
+/// `ws2_32` — Winsock2 surface (subset).
 pub mod ws2_32 {
     use super::*;
 
@@ -926,9 +917,9 @@ pub mod ws2_32 {
         pub s6_addr: [u8; 16],
     }
 
-    /// `std.os.windows.ws2_32.WinsockError` — `WSAE*` codes (`WSABASEERR` = 10000).
-    /// Newtype so `bun_sys::windows::winsock_error_to_zig_err` can `match` on
-    /// associated consts. Values from `winsock2.h` / Zig `lib/std/os/windows/ws2_32.zig`.
+    /// Winsock error codes — `WSAE*` (`WSABASEERR` = 10000).
+    /// Newtype so `bun_sys::windows::win_sock_error_to_zig_error` can `match` on
+    /// associated consts. Values from `winsock2.h`.
     #[repr(transparent)]
     #[derive(Copy, Clone, PartialEq, Eq, Debug)]
     pub struct WinsockError(pub u16);
@@ -1036,7 +1027,7 @@ pub mod ws2_32 {
 
     #[link(name = "ws2_32")]
     unsafe extern "system" {
-        /// Raw `WSAGetLastError`. The Zig wrapper (`?SystemErrno`) lives in `errno`
+        /// Raw `WSAGetLastError`. The `Option<SystemErrno>` wrapper lives in `errno`
         /// because `SystemErrno` is a higher-tier type. No preconditions; reads
         /// thread-local Winsock error slot.
         pub safe fn WSAGetLastError() -> c_int;
@@ -1059,15 +1050,14 @@ pub mod ws2_32 {
         pub revents: i16,
     }
     pub const SOCKET_ERROR: c_int = -1;
-    /// `POLLWRNORM` (`winsock2.h`) — `std.posix.POLL.WRNORM` on Windows.
+    /// `POLLWRNORM` (`winsock2.h`).
     pub const POLLWRNORM: i16 = 0x0010;
 }
 pub use ws2_32::WSAGetLastError;
 
 // ──────────────────────────────────────────────────────────────────────────
-// Win32Error — Zig `enum(u16) { ..., _ }`. Ported as a transparent newtype
-// with associated consts so unmapped codes round-trip and `match` on consts
-// works (structural equality). Only the subset referenced by lower-tier
+// Win32Error — a transparent newtype with associated consts so unmapped
+// codes round-trip and `match` on consts works (structural equality). Only the subset referenced by lower-tier
 // crates (errno) is named here; the full 1188-variant table can be extended
 // without ABI change.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1076,7 +1066,7 @@ pub use ws2_32::WSAGetLastError;
 pub struct Win32Error(pub u16);
 
 impl Win32Error {
-    // — core enum variants (values from MS-ERREF / std.os.windows.Win32Error) —
+    // — core enum variants (values from MS-ERREF) —
     pub const SUCCESS: Win32Error = Win32Error(0);
     pub const INVALID_FUNCTION: Win32Error = Win32Error(1);
     pub const FILE_NOT_FOUND: Win32Error = Win32Error(2);
@@ -1157,7 +1147,7 @@ impl Win32Error {
     pub const IO_REISSUE_AS_CACHED: Win32Error = Win32Error(3950);
     pub const INVALID_REPARSE_DATA: Win32Error = Win32Error(4392);
 
-    // — WSA pseudo-variants (Zig: `pub const WSAE*: Win32Error = @enumFromInt(N)`) —
+    // — WSA pseudo-variants —
     pub const WSA_INVALID_HANDLE: Win32Error = Win32Error(6);
     pub const WSA_NOT_ENOUGH_MEMORY: Win32Error = Win32Error(8);
     pub const WSA_INVALID_PARAMETER: Win32Error = Win32Error(87);
@@ -1228,7 +1218,6 @@ impl Win32Error {
     pub const WSANO_DATA: Win32Error = Win32Error(11004);
     pub const WSA_QOS_RESERVED_PETYPE: Win32Error = Win32Error(11031);
 
-    /// Zig: `pub fn get() Win32Error { @enumFromInt(@intFromEnum(kernel32.GetLastError())) }`
     #[inline]
     pub fn get() -> Win32Error {
         Win32Error(kernel32::GetLastError() as u16)
@@ -1244,7 +1233,6 @@ impl Win32Error {
         self.0
     }
 
-    /// Zig: `pub fn fromNTStatus(status) Win32Error { RtlNtStatusToDosError(status) }`
     #[inline]
     pub fn from_ntstatus(status: NTSTATUS) -> Win32Error {
         Win32Error(RtlNtStatusToDosError(status) as u16)
@@ -1454,7 +1442,7 @@ pub struct JOBOBJECT_EXTENDED_LIMIT_INFORMATION {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Process creation POD (`processthreadsapi.h`). Mirrors std.os.windows.
+// Process creation POD (`processthreadsapi.h`).
 // ──────────────────────────────────────────────────────────────────────────
 
 /// `STARTUPINFOW` (`processthreadsapi.h`).
@@ -1498,8 +1486,8 @@ pub struct PROCESS_INFORMATION {
 
 // ──────────────────────────────────────────────────────────────────────────
 // TEB → PEB → RTL_USER_PROCESS_PARAMETERS chain (`winternl.h` / phnt).
-// Mirrors `std.os.windows.{teb, peb, TEB, PEB, RTL_USER_PROCESS_PARAMETERS,
-// CURDIR}` so the three former duplicators (`bun_core::windows_sys`,
+// `teb`/`peb` accessors plus the `TEB`, `PEB`, `RTL_USER_PROCESS_PARAMETERS`,
+// and `CURDIR` structs live here so the three former duplicators (`bun_core::windows_sys`,
 // `bun_sys::windows`, the freestanding `bun_shim_impl` shim) all re-export
 // from this tier-0 leaf. Only fields actually dereferenced by Bun are
 // modelled; `offset_of!` asserts pin them to the documented x64 offsets so a
@@ -1512,7 +1500,7 @@ pub struct CURDIR {
     pub DosPath: UNICODE_STRING,
     pub Handle: HANDLE,
 }
-/// Zig-style camelCase alias (`bun_core` callers).
+/// CamelCase alias (`bun_core` callers).
 pub type Curdir = CURDIR;
 
 /// `RTL_USER_PROCESS_PARAMETERS` (`winternl.h`) — minimal view.
@@ -1525,17 +1513,16 @@ pub struct RTL_USER_PROCESS_PARAMETERS {
     pub hStdInput: HANDLE,
     pub hStdOutput: HANDLE,
     pub hStdError: HANDLE,
-    /// `CURDIR` — `{ UNICODE_STRING DosPath; HANDLE Handle; }`. The handle
-    /// is what Zig's `std.fs.cwd().fd` returns on Windows; `Fd::cwd()` reads
-    /// it so `openat(Fd::cwd(), …)` resolves relative paths against the live
-    /// process cwd via `NtCreateFile`'s `RootDirectory`.
+    /// `CURDIR` — `{ UNICODE_STRING DosPath; HANDLE Handle; }`. `Fd::cwd()`
+    /// reads the handle so `openat(Fd::cwd(), …)` resolves relative paths
+    /// against the live process cwd via `NtCreateFile`'s `RootDirectory`.
     pub CurrentDirectory: CURDIR,
     pub DllPath: UNICODE_STRING,
     pub ImagePathName: UNICODE_STRING,
     pub CommandLine: UNICODE_STRING,
     // (fields beyond CommandLine are not read by Bun)
 }
-/// Zig-style camelCase alias (`bun_core` callers).
+/// CamelCase alias (`bun_core` callers).
 pub type ProcessParameters = RTL_USER_PROCESS_PARAMETERS;
 // `RTL_USER_PROCESS_PARAMETERS` places `StandardInput` at 0x20,
 // `CurrentDirectory.Handle` at 0x48, and `ImagePathName` at 0x60 on x64.
@@ -1584,7 +1571,7 @@ pub struct TEB {
 #[cfg(target_pointer_width = "64")]
 const _: () = assert!(core::mem::offset_of!(TEB, ProcessEnvironmentBlock) == 0x60);
 
-/// `std.os.windows.teb()` — `gs:[0x30]` (x64) / `x18` (ARM64).
+/// Reads the TEB pointer — `gs:[0x30]` (x64) / `x18` (ARM64).
 ///
 /// Safe fn: the only precondition — that the segment register / `x18`
 /// reservation is the OS thread-block pointer — is guaranteed by the Windows
@@ -1610,7 +1597,7 @@ pub fn teb() -> *mut TEB {
     }
 }
 
-/// `std.os.windows.peb()` — reads `gs:[0x60]` (x64) / `TEB+0x60` (ARM64).
+/// Reads the PEB pointer — `gs:[0x60]` (x64) / `TEB+0x60` (ARM64).
 ///
 /// Returns a raw pointer (NOT `&'static PEB`): the PEB is owned and mutated
 /// by the OS/CRT behind Rust's back (`SetStdHandle`, debugger toggling
@@ -1771,4 +1758,3 @@ unsafe extern "C" {
     pub fn windows_enable_stdio_inheritance();
 }
 
-// ported from: src/windows_sys/externs.zig

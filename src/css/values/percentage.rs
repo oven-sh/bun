@@ -30,7 +30,6 @@ impl Percentage {
     pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         let x = self.v * 100.0;
         let int_value: Option<i32> = if (x - x.trunc()) == 0.0 {
-            // Rust `as` saturates on overflow/NaN where Zig is UB.
             Some(self.v as i32)
         } else {
             None
@@ -152,9 +151,9 @@ impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
 }
 
 // `Zero`/`MulF32`/`TryAdd`/`Parse` protocol traits live in
-// `crate::values::protocol`. The Zig comptime-method surface on `D` is
-// expressed via per-method `where` clauses, so plain
-// `DimensionPercentage<D>` (no behavior) needs no bounds at all.
+// `crate::values::protocol`. Bounds on `D` are expressed via per-method
+// `where` clauses, so plain `DimensionPercentage<D>` (no behavior) needs no
+// bounds at all.
 impl<D> DimensionPercentage<D> {
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self>
     where
@@ -165,7 +164,6 @@ impl<D> DimensionPercentage<D> {
             if let Calc::Value(v) = calc_value {
                 return Ok(*v);
             }
-            // PERF(port): was arena alloc (bun.create with input.arena()) — profile if hot.
             return Ok(Self::Calc(Box::new(calc_value)));
         }
 
@@ -209,17 +207,15 @@ impl<D> DimensionPercentage<D> {
         D: Clone,
     {
         match self {
-            // Zig branched on `comptime needs_deepclone` to avoid cloning POD types.
-            // In Rust, D: Clone covers both — Copy types' clone is a bitwise copy.
+            // D: Clone covers POD types too — Copy types' clone is a bitwise copy.
             Self::Dimension(d) => Self::Dimension(d.clone()),
             Self::Percentage(p) => Self::Percentage(*p),
-            // PERF(port): was arena alloc (bun.create) — profile if hot.
             Self::Calc(calc) => Self::Calc(Box::new(calc.deep_clone())),
         }
     }
 
-    // `deinit` dropped — Box<Calc<...>> frees via Drop; D's Drop (if any) runs
-    // automatically. Zig body only freed owned fields, so no explicit `impl Drop` needed.
+    // No explicit `impl Drop` needed — Box<Calc<...>> frees via Drop; D's Drop
+    // (if any) runs automatically.
 
     pub(crate) fn zero() -> Self
     where
@@ -254,7 +250,6 @@ impl<D> DimensionPercentage<D> {
         match self {
             Self::Dimension(d) => Self::Dimension(Self::mul_value_f32(d, other)),
             Self::Percentage(p) => Self::Percentage(p.mul_f32(other)),
-            // PERF(port): was arena alloc (bun.create) — profile if hot.
             Self::Calc(c) => Self::Calc(Box::new(c.mul_f32(other))),
         }
     }
@@ -287,11 +282,9 @@ impl<D> DimensionPercentage<D> {
             (Self::Calc(this_calc), _) => match this_calc.as_ref() {
                 Calc::Value(v) => return v.add_recursive(other),
                 Calc::Sum { left, right } => {
-                    // Reshaped for borrowck — Zig wrapped sum.left/right (raw ptrs)
-                    // directly in This{.calc = ...} (aliasing the same heap nodes);
-                    // with owning Boxes we deep_clone instead. The values are only
-                    // read during this computation, so the clone is semantically
-                    // equivalent (just extra allocation).
+                    // With owning Boxes we deep_clone the sum operands. The values
+                    // are only read during this computation, so the clone is
+                    // semantically equivalent (just extra allocation).
                     let left_calc = Self::Calc(left.deep_clone_boxed());
                     if let Some(res) = left_calc.add_recursive(other) {
                         return Some(res.add_impl(Self::Calc(right.deep_clone_boxed())));
@@ -362,7 +355,6 @@ impl<D> DimensionPercentage<D> {
                 a.add_impl(*v)
             }
             (a, b) => {
-                // PERF(port): was arena alloc (bun.create) — profile if hot.
                 Self::Calc(Box::new(Calc::Sum {
                     left: Box::new(a.into_calc()),
                     right: Box::new(b.into_calc()),
@@ -438,7 +430,6 @@ impl<D> DimensionPercentage<D> {
     pub(crate) fn into_calc(self) -> Calc<DimensionPercentage<D>> {
         match self {
             Self::Calc(calc) => *calc,
-            // PERF(port): was arena alloc (bun.create) — profile if hot.
             other => Calc::Value(Box::new(other)),
         }
     }
@@ -454,9 +445,8 @@ pub enum NumberOrPercentage {
 }
 
 impl NumberOrPercentage {
-    // Zig used `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
-    // (comptime reflection derives). Hand-rolled here as the trivial two-variant
-    // try-parse cascade so `AlphaValue::parse` doesn't panic at runtime.
+    // Hand-rolled as the trivial two-variant try-parse cascade so
+    // `AlphaValue::parse` doesn't panic at runtime.
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<NumberOrPercentage> {
         if let Ok(n) = input.try_parse(crate::values::number::CSSNumberFns::parse) {
             return Ok(NumberOrPercentage::Number(n));
@@ -497,5 +487,3 @@ impl PartialEq for Percentage {
 }
 
 crate::css_eql_partialeq!(NumberOrPercentage);
-
-// ported from: src/css/values/percentage.zig

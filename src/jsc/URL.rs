@@ -70,13 +70,11 @@ impl URL {
     /// If it fails, the tag is marked Dead
     #[track_caller]
     pub fn href_from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<String> {
-        // Zig (URL.zig): `fromJSHostCallGeneric` (== `call_check_slow`).
         crate::call_check_slow(global, || URL__getHrefFromJS(value, global))
     }
 
     #[track_caller]
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<NonNull<URL>>> {
-        // Zig (URL.zig): `fromJSHostCallGeneric` (== `call_check_slow`).
         crate::call_check_slow(global, || URL__fromJS(value, global)).map(NonNull::new)
     }
 
@@ -152,5 +150,3 @@ impl URL {
         URL__pathname(self)
     }
 }
-
-// ported from: src/jsc/URL.zig

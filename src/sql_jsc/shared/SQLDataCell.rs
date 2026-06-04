@@ -3,11 +3,9 @@ use core::slice;
 
 use crate::jsc::{ExternColumnIdentifier, JSGlobalObject, JSType, JSValue, JsError, JsResult};
 use bun_sql::shared::Data;
-// `?bun.WTF.StringImpl` in Zig is a nullable thin pointer; the Rust port
-// re-exports it as `WTFStringImpl = *mut WTFStringImplStruct`.
 use bun_core::wtf::WTFStringImpl;
 
-// Note: This entire type is `extern struct` in Zig and is passed by pointer
+// Note: This entire type is passed by pointer
 // across FFI to C++ (`JSC__constructObjectFromDataCell`). Field layout is
 // load-bearing. LIFETIMES.tsv classifies several pointer fields as owned/shared/
 // borrowed (Vec / RefPtr / &[u8]), but those Rust types either change size
@@ -84,7 +82,7 @@ pub union Value {
 }
 
 // Clone/Copy: bitwise — `ptr` is logically OWNED (freed by `deinit`), but the
-// type is `#[repr(C)]` POD passed across FFI by value (Zig pattern). Ownership
+// type is `#[repr(C)]` POD passed across FFI by value. Ownership
 // is single-writer by convention; never call `deinit` on more than one copy.
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -125,11 +123,17 @@ impl Array {
             return &mut [];
         }
         // SAFETY: ptr is non-null and the backing allocation spans `cap`
-        // `SQLDataCell`s. Producers (DataCell.zig:461 ArrayList) zero-init the
-        // full capacity before handing it across FFI, so every element — not
-        // just `[..len]` — carries a valid `Tag` discriminant. Genuine FFI:
-        // ptr/len/cap are thin C fields read directly by C++ (SQLClient.cpp),
-        // so this cannot be a `Vec` without breaking ABI.
+        // `SQLDataCell`s, so the pointer arithmetic stays in-bounds. CAUTION:
+        // the only producer (postgres/DataCell.rs `parse_array`) decomposes a
+        // plain `Vec` and does NOT initialize spare capacity, so only
+        // `[..len]` is guaranteed initialized — elements in `len..cap` may be
+        // uninitialized, and materializing `&mut [SQLDataCell]` over them is
+        // UB. This method currently has no callers; before using it, either
+        // restrict the view to `len` (use `slice()`), return
+        // `&mut [MaybeUninit<SQLDataCell>]`, or make every producer init the
+        // full capacity. Genuine FFI: ptr/len/cap are thin C fields read
+        // directly by C++ (SQLClient.cpp), so this cannot be a `Vec` without
+        // breaking ABI.
         unsafe { slice::from_raw_parts_mut(self.ptr, self.cap as usize) }
     }
 
@@ -142,9 +146,9 @@ impl Array {
         if p.is_null() {
             return;
         }
-        // SAFETY: LIFETIMES.tsv evidence — ptr/len/cap originate from
-        // `ArrayList.items.ptr` (DataCell.zig:461), i.e. a Vec-shaped allocation
-        // from the global (mimalloc) allocator. Reconstruct and drop.
+        // SAFETY: ptr/len/cap originate from a `Vec<SQLDataCell>` decomposed
+        // by the producer (postgres/DataCell.rs `parse_array`), i.e. a
+        // Vec-shaped allocation from the global allocator. Reconstruct and drop.
         // Elements were already deinit'd by the caller; SQLDataCell has no Drop.
         unsafe { drop(Vec::from_raw_parts(p, 0, cap)) };
     }
@@ -181,12 +185,11 @@ pub struct TypedArray {
     pub type_: JSType, // `type` is a Rust keyword
 }
 
-// Note: Zig's `slice()`/`byteSlice()` accessors are intentionally not
-// ported as `&mut [u8]` getters. `len` is the typed-array *element* count
-// (consumed by SQLClient.cpp), not a byte length, so a `&mut [u8; len]` view
-// would be wrong for elements wider than u8; and the only Rust caller of
-// `byteSlice()` was `deinit`, which now builds the fat pointer with the safe
-// `ptr::slice_from_raw_parts_mut` directly (no intermediate `&mut` reference).
+// Note: no `&mut [u8]` slice getters are provided. `len` is the typed-array
+// *element* count (consumed by SQLClient.cpp), not a byte length, so a
+// `&mut [u8; len]` view would be wrong for elements wider than u8; `deinit`
+// builds the fat pointer with the safe `ptr::slice_from_raw_parts_mut`
+// directly (no intermediate `&mut` reference).
 
 impl SQLDataCell {
     // Note: kept as an explicit method, not `impl Drop` — this type is
@@ -221,8 +224,8 @@ impl SQLDataCell {
                 // Build the fat pointer with the safe `ptr::slice_from_raw_parts_mut`
                 // (no `&mut` reference materialized); only `Box::from_raw` is unsafe.
                 // SAFETY: bytea[0]/bytea[1] are ptr/len of a buffer allocated
-                // via the global allocator (Zig: bun.default_allocator). The
-                // only `free_value=1` Bytea producer is `parse_bytea`
+                // via the global allocator. The only `free_value=1` Bytea
+                // producer is `parse_bytea`
                 // (postgres/DataCell.rs), which allocates exactly `hex.len()/2`
                 // bytes and stores `decode_hex_to_bytes`'s return. With that
                 // call-site invariant (`source.len() >= 2 * dest.len()`), the
@@ -249,12 +252,11 @@ impl SQLDataCell {
                     // Build the fat pointer with the safe
                     // `ptr::slice_from_raw_parts_mut` (no `&mut` reference
                     // materialized); only `Box::from_raw` is unsafe.
-                    // Zig's spec uses `self.len`, but `len` is the *element*
-                    // count (consumed by SQLClient.cpp as the typed-array
-                    // length); for any element wider than u8 that under-reports
-                    // the allocation size. Mimalloc's `free` ignores size so
-                    // Zig got away with it; Rust's `Box::<[u8]>::from_raw`
-                    // layout must match the allocation, hence `byte_len`.
+                    // `len` is the *element* count (consumed by SQLClient.cpp
+                    // as the typed-array length); for any element wider than u8
+                    // that under-reports the allocation size, and
+                    // `Box::<[u8]>::from_raw`'s layout must match the
+                    // allocation, hence `byte_len`.
                     // SAFETY: head_ptr was allocated via the global allocator
                     // when free_value != 0. This branch is live: the postgres
                     // binary-array path (DataCell.rs `from_bytes_typed_array`)
@@ -305,21 +307,18 @@ impl SQLDataCell {
         count: u32,
         flags: Flags,
         result_mode: u8,
-        // Zig: `?[*]ExternColumnIdentifier` — nullable many-pointer. Accepts
-        // both a raw `*mut` (null == None) and an explicit `Option<*mut _>` so
-        // callers can mirror the Zig optional directly; collapsed to a raw
-        // pointer for the FFI call below.
+        // Accepts both a raw `*mut` (null == None) and an explicit
+        // `Option<*mut _>`; collapsed to a raw pointer for the FFI call below.
         names_ptr: impl Into<Option<*mut ExternColumnIdentifier>>,
         names_count: u32,
     ) -> JsResult<JSValue> {
         let names_ptr: *mut ExternColumnIdentifier = names_ptr.into().unwrap_or(ptr::null_mut());
-        // Zig spec gates this on `bun.Environment.ci_assert`: open an
-        // `ExceptionValidationScope` so the C++ `DECLARE_THROW_SCOPE` inside
+        // Open an `ExceptionValidationScope` so the C++
+        // `DECLARE_THROW_SCOPE` inside
         // SQLClient.cpp's `toJS` (depth 0 → depth 1) has its post-call
         // `m_needExceptionCheck` satisfied here instead of tripping the next
         // `DECLARE_TOP_EXCEPTION_SCOPE` constructor's verifier. The macro is a
-        // no-op in release (matches the Zig non-ci_assert branch) and a real
-        // C++ scope under debug/ASAN.
+        // no-op in release and a real C++ scope under debug/ASAN.
         bun_jsc::validation_scope!(scope, global_object);
 
         let value = JSC__constructObjectFromDataCell(
@@ -341,8 +340,7 @@ impl SQLDataCell {
     }
 }
 
-/// Coercion helper mirroring Zig's implicit `*const Data` → `?*const Data`
-/// promotion at `raw()` call sites. Lets callers pass `&Data`, `&mut Data`,
+/// Coercion helper for `raw()` call sites. Lets callers pass `&Data`, `&mut Data`,
 /// `Option<&Data>`, or `Option<&mut Data>` without wrapping.
 pub trait IntoOptionalData<'a> {
     fn into_optional_data(self) -> Option<&'a Data>;
@@ -379,7 +377,7 @@ bitflags::bitflags! {
         const HAS_INDEXED_COLUMNS   = 1 << 0;
         const HAS_NAMED_COLUMNS     = 1 << 1;
         const HAS_DUPLICATE_COLUMNS = 1 << 2;
-        // remaining 29 bits: padding (`_: u29 = 0` in Zig)
+        // remaining 29 bits: padding
     }
 }
 
@@ -404,5 +402,3 @@ unsafe extern "C" {
         names_count: u32,
     ) -> JSValue;
 }
-
-// ported from: src/sql_jsc/shared/SQLDataCell.zig

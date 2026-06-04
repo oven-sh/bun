@@ -159,8 +159,7 @@ fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, To
     }
 }
 
-/// `E.String.toJS` (src/js_parser_jsc/expr_jsc.zig:79).
-///
+/// `E.String` → JS string conversion.
 /// Stamps the body for both `EString` nominal types: the full T4
 /// `bun_ast::E::String` (used by `data_to_js` / macros) and the
 /// value-subset T2 `bun_ast::E::EString` (used by the YAML / JSON5
@@ -170,8 +169,7 @@ fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, To
 macro_rules! impl_string_to_js {
     ($name:ident, $ty:ty) => {
         pub fn $name(s: &$ty, global: &JSGlobalObject) -> Result<JSValue, ToJSError> {
-            // Zig resolves ropes in place via `resolveRopeIfNeeded(allocator)`;
-            // callers here only have `&s` and no bump arena, so flatten the
+            // Callers here only have `&s` and no bump arena, so flatten the
             // rope into a temporary heap buffer and serialize from that
             // instead. Ropes are only ever built from UTF-8 parts
             // (`resolve_rope_if_needed` is a no-op for UTF-16).
@@ -205,5 +203,3 @@ macro_rules! impl_string_to_js {
 }
 impl_string_to_js!(string_to_js, E::String);
 impl_string_to_js!(value_string_to_js, bun_ast::E::EString);
-
-// ported from: src/js_parser_jsc/expr_jsc.zig

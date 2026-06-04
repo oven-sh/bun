@@ -76,8 +76,7 @@ bun_event_loop::impl_timer_owner!(StatWatcherScheduler; from_timer_ptr => event_
 
 type WatcherQueue = UnboundedQueue<StatWatcher>;
 
-// Intrusive `next`-link accessors for `UnboundedQueue<StatWatcher>` (Zig:
-// `UnboundedQueue(StatWatcher, .next)` reflected on `@field(item, "next")`).
+// Intrusive `next`-link accessors for `UnboundedQueue<StatWatcher>`.
 //
 // SAFETY: all four route through the same `next: *mut StatWatcher` field; the
 // atomic variants reinterpret it as `AtomicPtr<StatWatcher>` (same size/align,
@@ -92,7 +91,7 @@ unsafe impl bun_threading::Linked for StatWatcher {
 
 /// RAII owner of one outstanding [`StatWatcherScheduler`] ref. Adopts the
 /// "task in flight" ref taken in [`StatWatcherScheduler::timer_callback`] and
-/// releases it on Drop. Replaces Zig `defer this.deref()`.
+/// releases it on Drop.
 #[must_use = "dropping immediately releases the adopted ref"]
 struct SchedulerRefGuard(*mut StatWatcherScheduler);
 
@@ -118,8 +117,8 @@ impl Drop for SchedulerRefGuard {
 
 /// RAII owner of one outstanding [`StatWatcher`] ref. Adopts a ref taken
 /// elsewhere (e.g. by `InitialStatTask::create_and_schedule` or
-/// [`StatWatcher::restat`]) and releases it on Drop. Replaces Zig
-/// `defer this.deref()`. Holds a raw pointer so no `&`/`&mut StatWatcher` is
+/// [`StatWatcher::restat`]) and releases it on Drop.
+/// Holds a raw pointer so no `&`/`&mut StatWatcher` is
 /// live across the potential free in `deref`.
 #[must_use = "dropping immediately releases the adopted ref"]
 struct WatcherRefGuard(*mut StatWatcher);
@@ -207,7 +206,8 @@ impl StatWatcherScheduler {
             this_ref.watchers.is_empty(),
             "destroying StatWatcherScheduler while it still has watchers",
         );
-        // SAFETY: matches Zig `bun.destroy(this)` — heap::take drops the allocation.
+        // SAFETY: refcount reached zero, so `this` is the sole remaining
+        // reference; heap::take reclaims and drops the allocation.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
@@ -539,7 +539,7 @@ pub struct StatWatcher {
 
     poll_ref: JsCell<KeepAlive>,
 
-    last_stat: Guarded<PosixStat>, // private field (#last_stat in Zig)
+    last_stat: Guarded<PosixStat>,
 
     scheduler: RefPtr<StatWatcherScheduler>,
 }
@@ -621,7 +621,7 @@ impl StatWatcher {
             Some(p) => p.as_ptr().cast::<StatWatcherScheduler>(),
             None => {
                 let arc = StatWatcherScheduler::init(vm);
-                let raw = arc.into_raw(); // VM owns this ref forever (Zig: never deref'd)
+                let raw = arc.into_raw(); // VM owns this ref forever (never deref'd)
                 // SAFETY: `vm` is live; reborrow rare_data after `init` to avoid
                 // an aliasing `&mut RareData` across the call.
                 *unsafe { (*vm).rare_data() }.node_fs_stat_watcher_scheduler_slot() =
@@ -734,12 +734,14 @@ impl StatWatcher {
         let el_ctx = this_ref.ctx_el_ctx();
         this_ref.poll_ref.with_mut(|p| p.unref(el_ctx));
         this_ref.closed.store(true, Ordering::Relaxed);
-        // `this_value.deinit()` handled by JsRef Drop below; explicit reset for
-        // parity with the Zig (drops the Strong before dealloc).
+        // `this_value.deinit()` handled by JsRef Drop below; explicit reset
+        // drops the Strong before dealloc.
         this_ref.this_value.set(JsRef::empty());
         // `path` freed by ZBox Drop below.
 
-        // SAFETY: matches Zig `bun.default_allocator.destroy(this)`.
+        // SAFETY: the caller is the sole owner (refcount hit zero, or the
+        // error-path scopeguard in `do_watch` holds the only reference);
+        // heap::take reclaims and drops the allocation.
         drop(unsafe { bun_core::heap::take(this) });
     }
 
@@ -1156,10 +1158,9 @@ impl Arguments {
 }
 
 pub(crate) struct InitialStatTask {
-    // Zig: `watcher: *StatWatcher`. StatWatcher is intrusively ref-counted
-    // (ThreadSafeRefCount m_ctx payload). We hold the strong ref via
-    // `ref_()`/`deref()` and keep the raw `*mut`, mirroring Zig's
-    // `*StatWatcher` aliasing intent.
+    // StatWatcher is intrusively ref-counted (ThreadSafeRefCount m_ctx
+    // payload). We hold the strong ref via `ref_()`/`deref()` and keep the
+    // raw `*mut`.
     watcher: *mut StatWatcher,
     task: WorkPoolTask,
 }
@@ -1185,7 +1186,7 @@ impl InitialStatTask {
     #[allow(clippy::boxed_local)]
     fn run_owned(self: Box<Self>) {
         // `watcher` is a raw `*mut` (Copy), so dropping the Box does not touch
-        // the refcount; matches Zig `bun.destroy(initial_stat_task)`.
+        // the refcount.
         let this: *mut StatWatcher = self.watcher;
         // BACKREF — `this` is kept alive by the intrusive ref taken in
         // `create_and_schedule`. We only need shared access here — `closed` is
@@ -1230,5 +1231,3 @@ impl InitialStatTask {
         // `watcher` is a raw pointer.
     }
 }
-
-// ported from: src/runtime/node/node_fs_stat_watcher.zig

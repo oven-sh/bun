@@ -100,7 +100,6 @@ pub fn generate_code_for_lazy_export(
 
             struct Visitor<'a> {
                 inner_visited: &'a mut BitSet,
-                // Zig: `std.AutoArrayHashMap(Ref, void)` → `ArrayHashMap` per collections map.
                 composes_visited: &'a mut ArrayHashMap<Ref, ()>,
                 parts: &'a mut Vec<E::TemplatePart>,
                 all_import_records: &'a [bun_ast::import_record::List<'a>],
@@ -111,7 +110,6 @@ pub fn generate_code_for_lazy_export(
                 source_index: IndexInt,
                 log: &'a mut Log,
                 loc: Loc,
-                // PERF(port): was `std.mem.Allocator` (arena) — bundler is an AST crate; thread `&'bump Bump`.
                 arena: &'a Arena,
             }
 
@@ -132,7 +130,6 @@ pub fn generate_code_for_lazy_export(
                     }
 
                     self.visit_composes(ast, ref_, idx);
-                    // PERF(port): was assume-OOM `catch |err| bun.handleOom(err)`; Vec::push aborts on OOM.
                     self.parts.push(E::TemplatePart {
                         value: Expr::init(
                             E::NameOfSymbol {
@@ -305,9 +302,8 @@ pub fn generate_code_for_lazy_export(
                 }
             }
 
-            // Zig left `parts: undefined` and rebound per-iteration; Rust
-            // forbids uninit refs, so the Visitor is constructed inside the loop with
-            // a fresh `parts` borrow each time (reshaped for borrowck).
+            // The Visitor is constructed inside the loop with a fresh `parts`
+            // borrow each time (reshaped for borrowck).
             let all_symbols = this.graph.ast.items_symbols();
             // SAFETY: `LinkerContext::arena()` returns a stable `&Arena` valid for the
             // link pass; detach via raw-pointer round-trip so it doesn't hold a `&self`
@@ -318,7 +314,6 @@ pub fn generate_code_for_lazy_export(
                 let ref_ = entry.ref_;
                 debug_assert!(ref_.inner_index() < symbols.len() as u32);
 
-                // PERF(port): was arena-backed ArrayList (no deinit; `.items` moved into E.Template).
                 let mut template_parts: Vec<E::TemplatePart> = Vec::new();
                 let mut value = Expr::init(
                     E::NameOfSymbol {
@@ -354,8 +349,7 @@ pub fn generate_code_for_lazy_export(
                         tail_loc: stmt.loc,
                         tail: E::TemplateContents::Cooked(E::String::init(b"")),
                     });
-                    // Zig used an arena-backed ArrayList and moved `.items`
-                    // into `E.Template`; mirror that by moving into the linker arena
+                    // Move the parts into the linker arena
                     // (freed when the linker arena drops).
                     let parts_slice =
                         bun_ast::StoreSlice::new_mut(arena.alloc_slice_fill_iter(template_parts));
@@ -436,8 +430,7 @@ pub fn generate_code_for_lazy_export(
                     let _: &G::Property = property;
                     // `Expr`/`ExprData`/`StoreRef<_>` are `Copy`. Copy `key` out so
                     // `key_str: StoreRef<E::EString>` is a mutable local — `slice()` resolves
-                    // the rope in-place via `DerefMut` into the arena slot (matches Zig's
-                    // `property.key.?.data.e_string.slice(...)` which takes `*String`).
+                    // the rope in-place via `DerefMut` into the arena slot.
                     let Some(key) = property.key else { continue };
                     let ExprData::EString(mut key_str) = key.data else {
                         continue;
@@ -474,7 +467,6 @@ pub fn generate_code_for_lazy_export(
                     // happened yet). So we need to wait until after tree shaking happens.
                     let generated =
                         this.generate_named_export_in_file(source_index, module_ref, name, name)?;
-                    // PERF(port): was `this.arena().alloc(Stmt, 1)` (arena).
                     let new_stmts: &mut [Stmt] =
                         alloc.alloc_slice_fill_iter(core::iter::once(Stmt::alloc(
                             S::Local {
@@ -499,7 +491,6 @@ pub fn generate_code_for_lazy_export(
             }
 
             {
-                // PERF(port): was `std.fmt.allocPrint` into arena; building into Vec<u8> then arena-dupe.
                 let mut name_buf: Vec<u8> = Vec::new();
                 write!(
                     &mut name_buf,
@@ -541,4 +532,3 @@ pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
 
-// ported from: src/bundler/linker_context/generateCodeForLazyExport.zig

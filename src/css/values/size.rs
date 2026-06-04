@@ -10,11 +10,9 @@ pub struct Size2D<T> {
     pub b: T,
 }
 
-// Zig's `switch (T) { f32 => ..., LengthPercentage => ..., else => T.parse }`
-// is comptime type dispatch. In Rust this is expressed via trait bounds — `f32` and
+// Per-type dispatch is expressed via trait bounds — `f32` and
 // `LengthPercentage` impl the same `Parse`/`ToCss` traits as other CSS value
-// types (the `f32` impls delegate to `CSSNumberFns`). The per-type `switch` arms are
-// therefore collapsed into trait method calls below.
+// types (the `f32` impls delegate to `CSSNumberFns`).
 impl<T> Size2D<T>
 where
     T: Clone + PartialEq,
@@ -63,8 +61,7 @@ where
     }
 
     pub(crate) fn deep_clone(&self, _bump: &Arena) -> Self {
-        // Zig's `css.implementDeepClone` was @typeInfo-based reflection;
-        // `T: Clone` covers it (Box payloads deep-clone via their Clone impls).
+        // `T: Clone` covers this (Box payloads deep-clone via their Clone impls).
         Size2D {
             a: self.a.clone(),
             b: self.b.clone(),
@@ -79,13 +76,10 @@ where
 
     #[inline]
     pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // Preserved verbatim from Zig — compares lhs.a against rhs.b only
-        // (not a/a && b/b). Suspect upstream bug, but ported faithfully.
+        // Note: compares lhs.a against rhs.b only (not a/a && b/b).
         lhs.a == rhs.b
     }
 }
 
 // Keep references to the f32/LengthPercentage special-case helpers so trait
 // impls can be wired up later if they don't already exist.
-
-// ported from: src/css/values/size.zig

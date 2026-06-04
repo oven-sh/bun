@@ -48,8 +48,6 @@ impl ScanCommand {
             Global::exit(1);
         }
 
-        // Zig: `Output.prettyError(comptime Output.prettyFmt(..., true), .{})` — the
-        // comptime ANSI expansion is folded into `pretty_error`'s runtime tag rewrite.
         bun_core::pretty_error!(
             "<r><b>bun pm scan <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
@@ -69,7 +67,7 @@ impl ScanCommand {
             let lockfile: &mut Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
             match lockfile.load_from_cwd::<true>(
                 // SAFETY: see comment above — `load_from_cwd` accesses `manager`
-                // fields disjoint from `lockfile` (Zig invariant).
+                // fields disjoint from `lockfile`.
                 Some(unsafe { &mut *pm_ptr }),
                 log,
             ) {
@@ -113,5 +111,3 @@ impl ScanCommand {
         Global::exit(0);
     }
 }
-
-// ported from: src/cli/scan_command.zig

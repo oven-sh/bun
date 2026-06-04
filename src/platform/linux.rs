@@ -5,14 +5,13 @@
 
 use core::ffi::c_long;
 
-// Zig: `pub const MemFdAllocator = bun.allocators.LinuxMemFdAllocator;`
 // LAYERING: `LinuxMemFdAllocator` lives in `bun_runtime::allocators` (it pulls in
 // `bun_core`/`bun_sys`/`bun_ptr`); `bun_platform` is below `bun_runtime` so cannot
-// re-export it. The alias has no consumers — `Blob`/`Store` already path through
-// `crate::allocators::linux_mem_fd_allocator` directly.
+// re-export it. A re-export here would have no consumers — `Blob`/`Store` already
+// path through `crate::allocators::linux_mem_fd_allocator` directly.
 
-/// Re-encode a glibc `syscall(2)` wrapper return into the raw-kernel convention used by
-/// Zig's `std.os.linux.syscallN`: on error the kernel returns `-errno` in the result
+/// Re-encode a glibc `syscall(2)` wrapper return into the raw-kernel
+/// convention: on error the kernel returns `-errno` in the result
 /// register (i.e. a value in `-4095..=-1`), whereas glibc's wrapper translates that to
 /// `-1` and stashes the code in thread-local `errno`. The caller (the C
 /// `epoll_kqueue.c` loop) decodes errno *from the return value*, so we must put it
@@ -44,14 +43,13 @@ pub(crate) extern "C" fn sys_epoll_pwait2(
             timeout as usize,
             sigmask as usize,
             // This is the correct value. glibc claims to pass `sizeof sigset_t` for this argument,
-            // which would be 128, but they actually pass 8 which is what the kernel expects.
-            // https://github.com/ziglang/zig/issues/12715
+            // which would be 128, but they actually pass 8 which is what the kernel expects:
+            // the raw syscall validates sigsetsize against the kernel's sigset_t (sizeof(u64)),
+            // not glibc's 128-byte userspace sigset_t. See epoll_pwait2(2).
             8usize,
         )
     };
     // The C caller (epoll_kqueue.c) checks `ret == -EINTR` / `ret != -ENOSYS` against the
-    // raw kernel return; mirror `@bitCast(std.os.linux.syscall6(...))` semantics.
+    // raw kernel return, so encode errno back in-band.
     encode_raw_errno(rc)
 }
-
-// ported from: src/platform/linux.zig

@@ -288,12 +288,12 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     Some(result)
 }
 
-// Zig accepted `[]align(1) const u16` (unaligned); Rust `&[u16]` requires
+// `&[u16]` requires
 // 2-byte alignment. Callers with unaligned data must go through the raw extern.
 #[inline(always)]
 pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
     // SAFETY: input.ptr/len readable, output.ptr writable for at least input.len() bytes
-    // (caller contract matches Zig: output.len >= input.len()).
+    // (caller contract: output.len() >= input.len()).
     unsafe { highway_copy_u16_to_u8(input.as_ptr(), input.len(), output.as_mut_ptr()) }
 }
 
@@ -394,11 +394,10 @@ pub fn fill_with_skip_mask(mask: [u8; 4], output: &mut [u8], input: &[u8], skip_
 
 /// In-place variant of [`fill_with_skip_mask`] for `output == input`.
 ///
-/// The Zig caller (`Mask.fill`) routinely passes the same buffer for both;
-/// the safe wrapper above can't express that without violating `&mut`/`&`
-/// aliasing. The C++ kernel reads-before-writes per lane (it's `dst[i] =
-/// src[i] ^ mask[i&3]`), so feeding it `src == dst` is sound — that's exactly
-/// what the Zig build does.
+/// Callers routinely pass the same buffer for both; the safe wrapper above
+/// can't express that without violating `&mut`/`&` aliasing. The C++ kernel
+/// reads-before-writes per lane (it's `dst[i] = src[i] ^ mask[i&3]`), so
+/// feeding it `src == dst` is sound.
 #[inline(always)]
 pub fn fill_with_skip_mask_inplace(mask: [u8; 4], buf: &mut [u8], skip_mask: bool) {
     if buf.is_empty() {
@@ -480,8 +479,8 @@ pub fn xxhash3_64(seed: u64, input: &[u8]) -> u64 {
     unsafe { highway_xxhash3_64(input.as_ptr(), input.len(), seed) }
 }
 
-/// XxHash32 one-shot. Bit-identical to the xxHash reference / Zig
-/// `std.hash.XxHash32`. Scalar (XXH32 has no SIMD form); lives in the same C++
+/// XxHash32 one-shot. Bit-identical to the xxHash reference.
+/// Scalar (XXH32 has no SIMD form); lives in the same C++
 /// TU as the XXH3 kernel.
 #[inline(always)]
 pub fn xxhash32(seed: u32, input: &[u8]) -> u32 {
@@ -490,8 +489,7 @@ pub fn xxhash32(seed: u32, input: &[u8]) -> u32 {
     unsafe { highway_xxhash32(input.as_ptr(), input.len(), seed) }
 }
 
-/// XxHash64 one-shot. Bit-identical to the xxHash reference / Zig
-/// `std.hash.XxHash64`.
+/// XxHash64 one-shot. Bit-identical to the xxHash reference.
 #[inline(always)]
 pub fn xxhash64(seed: u64, input: &[u8]) -> u64 {
     // SAFETY: `input.ptr/len` are a valid readable range; read-only, and the
@@ -502,8 +500,8 @@ pub fn xxhash64(seed: u64, input: &[u8]) -> u64 {
 /// Streaming XxHash64 state. Mirrors the C++ `XXH64State` POD (80 bytes,
 /// 8-aligned; a compile-time `static_assert` on the C++ side keeps them in
 /// sync). `reset` → any number of `update(chunk)` → `digest()`; the result
-/// equals `xxhash64` of the concatenation. Bit-identical to Zig
-/// `std.hash.XxHash64` streaming.
+/// equals `xxhash64` of the concatenation. Bit-identical to the xxHash
+/// reference streaming API.
 #[repr(C, align(8))]
 pub struct XxHash64State {
     // 10 u64 == 80 bytes. Opaque storage; only the C kernel interprets it.
@@ -539,5 +537,3 @@ impl XxHash64State {
         unsafe { highway_xxhash64_digest(self._storage.as_ptr().cast()) }
     }
 }
-
-// ported from: src/highway/highway.zig

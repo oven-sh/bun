@@ -3,10 +3,7 @@ use crate::postgres::types::int_types::{PostgresInt32, PostgresShort};
 use crate::shared::Data;
 use bun_core::String as BunString;
 
-/// Trait capturing the methods `NewReaderWrap` expected as comptime fn params.
-/// Zig passed these as `comptime fn(ctx: Context) ...` arguments and `NewReader`
-/// filled them in from `Context.markMessageStart`, `Context.peek`, etc. — i.e.
-/// structural duck-typing. In Rust the trait bound IS that check.
+/// Trait capturing the methods `NewReaderWrap` requires of its wrapped context.
 pub trait ReaderContext {
     fn mark_message_start(&mut self);
     fn peek(&self) -> &[u8];
@@ -16,9 +13,9 @@ pub trait ReaderContext {
     fn read_z(&mut self) -> Result<Data, AnyPostgresError>;
 }
 
-/// Helper trait for `int<Int>()` / `peek_int<Int>()` — Zig used `@sizeOf(Int)`,
-/// `@bitCast`, and `@byteSwap` to read a big-endian integer of arbitrary width.
-/// Rust has no std trait for `from_be_bytes`, so we mint a tiny one.
+/// Helper trait for `int<Int>()` / `peek_int<Int>()` — reads a big-endian
+/// integer of arbitrary width. Rust has no std trait for `from_be_bytes`,
+/// so we mint a tiny one.
 pub trait ProtocolInt: Sized + Copy + Eq {
     const SIZE: usize;
     fn from_be_slice(bytes: &[u8]) -> Self;
@@ -39,9 +36,8 @@ macro_rules! impl_protocol_int {
 }
 impl_protocol_int!(u8, i8, u16, i16, u32, i32, u64, i64);
 
-// Blanket impl so `NewReaderWrap<&mut C>` works — Zig passed the wrapped struct
-// by-value (implicit copy) through the dispatch loop; in Rust the inner
-// `Context` is non-`Copy` (holds `&mut usize`), so callers reborrow instead.
+// Blanket impl so `NewReaderWrap<&mut C>` works — the inner `Context` is
+// non-`Copy` (holds `&mut usize`), so callers reborrow instead.
 impl<C: ReaderContext + ?Sized> ReaderContext for &mut C {
     #[inline]
     fn mark_message_start(&mut self) {
@@ -69,8 +65,6 @@ impl<C: ReaderContext + ?Sized> ReaderContext for &mut C {
     }
 }
 
-// Zig: `fn NewReaderWrap(comptime Context: type, comptime markMessageStartFn_, ...) type { return struct { wrapped: Context, ... } }`
-// The fn-pointer params collapse into the `ReaderContext` trait bound.
 pub struct NewReaderWrap<Context: ReaderContext> {
     pub wrapped: Context,
 }
@@ -79,8 +73,7 @@ pub type Ctx<Context> = Context;
 
 impl<Context: ReaderContext> NewReaderWrap<Context> {
     /// Reborrow as `NewReaderWrap<&mut Context>` so the same reader can be
-    /// passed by-value into per-message handlers across loop iterations
-    /// (Zig relied on implicit struct copy of the pointer-carrying wrapper).
+    /// passed by-value into per-message handlers across loop iterations.
     #[inline]
     pub fn reborrow(&mut self) -> NewReaderWrap<&mut Context> {
         NewReaderWrap {
@@ -138,8 +131,6 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         if slice.len() < Int::SIZE {
             return Err(AnyPostgresError::ShortRead);
         }
-        // Zig special-cased `Int == u8` to skip the byte-swap; `from_be_slice`
-        // for a 1-byte int is already a no-op swap, so no branch needed here.
         Ok(Int::from_be_slice(&slice[0..Int::SIZE]))
     }
 
@@ -152,7 +143,6 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     }
 
     pub fn expect_int<Int: ProtocolInt>(&mut self, value: Int) -> Result<bool, AnyPostgresError> {
-        // PERF(port): `value` was `comptime comptime_int` — profile if it shows up on a hot path.
         let actual = self.int::<Int>()?;
         Ok(actual == value)
     }
@@ -167,14 +157,13 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
 
     pub fn length(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
         let expected = self.int::<PostgresInt32>()?;
-        // Zig `expected > -1` — `int4` is u32 so always nonnegative; preserved
-        // as the saturating sub guarding underflow when len < 4.
+        // `int4` is u32 so always nonnegative; the saturating sub guards
+        // underflow when len < 4.
         self.ensure_capacity(expected.saturating_sub(4) as usize)?;
 
         Ok(expected)
     }
 
-    // Zig: `pub const bytes = read;`
     #[inline]
     pub fn bytes(&mut self, count: usize) -> Result<Data, AnyPostgresError> {
         self.read(count)
@@ -185,9 +174,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
     /// Invariant: callers must not hold the returned `BunString` past the next
     /// buffer fill — `borrow_utf8` stores a raw pointer with no lifetime, so
     /// the string is only valid until more data is read into the buffer.
-    /// (Zig `borrowUTF8` had the same contract: it borrowed `result.slice()`
-    /// and dropped the `Temporary` `Data` wrapper via `defer result.deinit()`;
-    /// the bytes live in the connection buffer, not the wrapper.)
+    /// (The bytes live in the connection buffer, not the `Data` wrapper.)
     pub fn string(&mut self) -> Result<BunString, AnyPostgresError> {
         let result = self.read_z()?;
         Ok(BunString::borrow_utf8(result.slice()))
@@ -196,8 +183,5 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
 
 // (duplicate blanket impl + reborrow removed — defined above at L47/L69)
 
-// Zig: `pub fn NewReader(comptime Context: type) type { return NewReaderWrap(Context, Context.markMessageStart, ...); }`
 // The trait bound on `NewReaderWrap` already enforces the method set, so this is a plain alias.
 pub type NewReader<Context> = NewReaderWrap<Context>;
-
-// ported from: src/sql/postgres/protocol/NewReader.zig

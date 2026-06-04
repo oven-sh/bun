@@ -14,7 +14,6 @@ bun_opaque::opaque_ffi! {
 unsafe extern "C" {
     safe fn WebCore__DOMURL__cast_(value: JSValue, vm: &VM) -> *mut DOMURL;
     safe fn WebCore__DOMURL__fileSystemPath(this: &DOMURL, error_code: &mut c_int) -> bstr::String;
-    // These two are referenced via `bun.cpp.*` in the Zig source.
     safe fn WebCore__DOMURL__href_(this: &DOMURL, out: &mut ZigString);
     safe fn WebCore__DOMURL__pathname_(this: &DOMURL, out: &mut ZigString);
 }
@@ -83,5 +82,3 @@ impl DOMURL {
         out
     }
 }
-
-// ported from: src/jsc/DOMURL.zig

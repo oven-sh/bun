@@ -36,7 +36,6 @@ impl TriState {
     }
 }
 
-// Zig: `pub var enabled: enum { yes, no, unknown } = .unknown;`
 static ENABLED: AtomicU8 = AtomicU8::new(TriState::Unknown as u8);
 
 pub(crate) fn enabled() -> TriState {
@@ -52,9 +51,9 @@ pub fn is_enabled() -> bool {
         TriState::No => false,
         TriState::Unknown => {
             let detected = 'detect: {
-                // Note (port): `env_var::*.get()` returns `Option<ValueType>` in
-                // the Rust port even when a default exists; `DO_NOT_TRACK` has
-                // `default: false` so `.unwrap_or(false)` matches Zig semantics.
+                // `env_var::*.get()` returns `Option<ValueType>` even when a
+                // default exists; `DO_NOT_TRACK` has `default: false`, hence
+                // `.unwrap_or(false)`.
                 if env_var::DO_NOT_TRACK.get().unwrap_or(false) {
                     break 'detect TriState::No;
                 }
@@ -79,33 +78,28 @@ pub fn is_enabled() -> bool {
 
 /// This answers, "What parts of bun are people actually using?"
 ///
-/// Note (port): In Zig this is a `struct` used purely as a namespace of `pub var`
-/// decls, iterated via `@typeInfo` reflection. Rust has no decl reflection, so
-/// the feature list is declared once via `define_features!` and that macro
+/// The feature list is declared once via `define_features!` and that macro
 /// generates the statics, `PACKED_FEATURES_LIST`, `PackedFeatures`,
 /// `packed_features()`, and the `Display` body.
 pub mod features {
     use super::*;
 
-    // Note (port, cyclebreak): the Zig original is
-    // `EnumSet(bun.jsc.ModuleLoader.HardcodedModule)`. That enum lives in
+    // Note (cyclebreak): `bun.jsc.ModuleLoader.HardcodedModule` lives in
     // `bun_resolve_builtins` (T5) and pulling it here would create a forward
     // dep (analytics is T1). The only operations we need are `insert` and
     // ordered iteration of the module *names* for the crash-report formatter,
     // so store the `&'static str` name (= `@tagName(HardcodedModule)`) instead
     // of the enum value. Writers (`runtime/jsc_hooks.rs`) call
     // `BUILTIN_MODULES.lock().insert(<&'static str>::from(hardcoded))`.
-    // PERF(port): Zig used a packed `EnumSet` (bitset); BTreeSet is O(log n)
-    // insert — fine for ≤~80 entries written once each at module-load time.
+    // PERF: BTreeSet is O(log n) insert — fine for ≤~80 entries written once
+    // each at module-load time.
     pub(crate) static BUILTIN_MODULES: bun_core::Mutex<std::collections::BTreeSet<&'static str>> =
         bun_core::Mutex::new(std::collections::BTreeSet::new());
 
-    /// Record a builtin-module load (Zig: `Features.builtin_modules.insert(hardcoded)`).
+    /// Record a builtin-module load.
     pub fn insert_builtin_module(name: &'static str) {
         BUILTIN_MODULES.lock().insert(name);
     }
-    // Note (port): Zig used a plain mutable global; wrapped in a Mutex here
-    // because the set is not a single atomic word.
 
     macro_rules! define_features {
         // Storage for one feature counter. Entries tagged `core = IDENT` alias
@@ -130,7 +124,6 @@ pub mod features {
                 define_features! { @storage $(#[$doc])* $ident $(, $core)? }
             )*
 
-            // Zig: `validateFeatureName(decl.name)` per entry at comptime.
             $(
                 const _: () = assert!(
                     super::validate_feature_name($name.as_bytes()),
@@ -138,12 +131,10 @@ pub mod features {
                 );
             )*
 
-            /// Zig: `pub const packed_features_list = brk: { ... }`
             pub const PACKED_FEATURES_LIST: &[&str] = &[ $( $name ),* ];
 
-            // Zig: `pub const PackedFeatures = @Type(.{ .@"struct" = .{ .layout = .@"packed", .backing_integer = u64, ... } })`
             // All fields are `bool` → bitflags over u64.
-            // Note (port): nightly `${index()}` (macro_metavar_expr) is unavailable
+            // Note: nightly `${index()}` (macro_metavar_expr) is unavailable
             // on stable, so each feature carries an explicit `$idx` literal at the
             // call site. The dense-index assertion below catches gaps/duplicates.
             ::bitflags::bitflags! {
@@ -168,7 +159,8 @@ pub mod features {
                 "feature indices must be dense 0..N with no gaps or duplicates"
             );
 
-            /// Zig: `pub fn packedFeatures() PackedFeatures`
+            /// Snapshot of all feature counters as a `PackedFeatures` bitset
+            /// (bit set iff the feature was used at least once).
             pub fn packed_features() -> PackedFeatures {
                 let mut bits = PackedFeatures::empty();
                 $(
@@ -234,9 +226,7 @@ pub mod features {
         };
     }
 
-    // Note (port): Zig identifiers `@"Bun.stderr"` etc. cannot be Rust idents;
-    // renamed to `bun_stderr` etc. The string literal preserves the original
-    // name for output / `PACKED_FEATURES_LIST` (matches `@tagName` semantics).
+    // The string literal is the name used for output / `PACKED_FEATURES_LIST`.
     // The leading integer is the bit index in `PackedFeatures` (must be dense
     // 0..N — asserted at compile time inside the macro).
     define_features! {
@@ -310,8 +300,7 @@ pub mod features {
         57 => (webview_webkit, "webview_webkit"),
     }
 
-    // Zig: `comptime { @export(&napi_module_register, .{ .name = "Bun__napi_module_register_count" }); ... }`
-    // Note (port): C++ declares these as `extern "C" size_t Bun__...;` and
+    // C++ declares these as `extern "C" size_t Bun__...;` and
     // reads/increments the value directly, so the exported symbol must BE the
     // `usize` storage (not a pointer to it). `AtomicUsize` is `#[repr(C)]
     // usize`-layout-compatible. Handled via `#[unsafe(export_name = "...")]`
@@ -320,13 +309,11 @@ pub mod features {
     // attached to the single definition.
 }
 
-// Re-exports to mirror Zig's `Features.packedFeatures()` etc. at module scope.
 pub use features::{
     Formatter as FeaturesFormatter, PACKED_FEATURES_LIST, PackedFeatures, packed_features,
 };
 
-/// Zig: `pub fn validateFeatureName(name: []const u8) void` (comptime-only).
-/// In Rust this is enforced at the macro definition site; kept as a `const fn`
+/// Enforced at the macro definition site; kept as a `const fn`
 /// for documentation / debug assertions.
 pub(crate) const fn validate_feature_name(name: &[u8]) -> bool {
     if name.len() > 64 {
@@ -355,11 +342,6 @@ pub enum EventName {
     http_start,
     http_build,
 }
-
-// Zig: `var random: std.rand.DefaultPrng = undefined;`
-// Note (port): declared but never read in analytics.zig — dead code. Dropped
-// rather than gated; if a future schema-encode path needs a PRNG, seed one
-// locally (PORTING.md §Concurrency: OnceLock<...>, no `static mut`).
 
 const PLATFORM_ARCH: analytics::Architecture = {
     #[cfg(target_arch = "aarch64")]
@@ -429,11 +411,8 @@ pub mod generate_header {
         // Linux / Android
         // ──────────────────────────────────────────────────────────────────
 
-        // Zig: `pub var linux_os_name: std.c.utsname = undefined;`
-        // Note (port): Zig's `Environment.isLinux` is true on Android (it checks
-        // the kernel, not the libc target), so all Linux-gated items below are
-        // `any(linux, android)` — `for_linux()` itself branches on Android.
-        // The cached `utsname` itself now lives in T1 at
+        // All Linux-gated items below are `any(linux, android)` —
+        // `for_linux()` itself branches on Android. The cached `utsname` itself now lives in T1 at
         // `bun_core::ffi::cached_uname()` so `bun_sys` feature probes share the
         // same single `uname(2)` syscall.
 
@@ -532,7 +511,6 @@ pub mod generate_header {
         }
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         pub fn kernel_version() -> semver::Version {
-            // Zig: @compileError("This function is only implemented on Linux")
             unreachable!("kernel_version() is only implemented on Linux");
         }
 
@@ -598,9 +576,6 @@ pub mod generate_header {
         // FreeBSD
         // ──────────────────────────────────────────────────────────────────
 
-        // Zig std's `std.c.utsname` has no FreeBSD branch; use translate-c's.
-        // Note (port): Rust's `libc` crate does provide `utsname`/`uname` on
-        // FreeBSD, so the translate-c indirection is unnecessary here.
         #[cfg(target_os = "freebsd")]
         fn for_freebsd() -> analytics::Platform {
             let name = bun_core::ffi::cached_uname();
@@ -617,5 +592,3 @@ pub use generate_header as GenerateHeader;
 
 pub mod schema;
 pub use schema::{BufReader, Reader, SchemaInt};
-
-// ported from: src/analytics/analytics.zig

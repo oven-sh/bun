@@ -183,7 +183,6 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                             },
                             default_value: None,
                         });
-                        // PERF(port): was assume_capacity-adjacent (arena append)
                         esm_callbacks.push(Expr::init(E::Arrow::NOOP_RETURN_UNDEFINED, Loc::EMPTY));
                     } else {
                         let binding = Binding::alloc(
@@ -317,5 +316,3 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
-
-// ported from: src/bundler/linker_context/convertStmtsForChunkForDevServer.zig

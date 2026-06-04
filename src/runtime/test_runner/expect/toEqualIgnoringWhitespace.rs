@@ -1,8 +1,8 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 
-// std.ascii.isWhitespace includes VT (0x0B); Rust's u8::is_ascii_whitespace does not.
-// Zig matches ' ' and '\t'..'\r' (0x09–0x0D).
+// Matches ' ' and '\t'..'\r' (0x09–0x0D) — includes VT (0x0B), which Rust's
+// u8::is_ascii_whitespace does not.
 #[inline]
 fn is_zig_whitespace(b: u8) -> bool {
     matches!(b, b' ' | b'\t' | b'\n' | 0x0B | 0x0C | b'\r')
@@ -37,7 +37,6 @@ pub(crate) fn to_equal_ignoring_whitespace(
     let mut pass = value.is_string() && expected.is_string();
 
     if pass {
-        // Zig passed `default_allocator`; drop per §Allocators.
         let value_slice = value.to_slice(global)?;
         let expected_slice = expected.to_slice(global)?;
         // `defer ….deinit()` deleted — Drop handles it.
@@ -121,5 +120,3 @@ pub(crate) fn to_equal_ignoring_whitespace(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toEqualIgnoringWhitespace.zig

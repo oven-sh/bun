@@ -22,7 +22,7 @@ pub(super) const OPENER: &[u8] = b"xdg-open";
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, strum::IntoStaticStr, enum_map::Enum)]
-#[strum(serialize_all = "snake_case")] // match Zig @tagName: .vscode → "vscode"
+#[strum(serialize_all = "snake_case")] // Vscode → "vscode"
 pub enum Editor {
     None,
     Sublime,
@@ -37,9 +37,8 @@ pub enum Editor {
     Other,
 }
 
-// Note: Zig's `std.EnumMap(Editor, string)` / `std.EnumMap(Editor, []const [:0]const u8)`
-// were comptime-initialized sparse maps. `bin_name` ported per PORTING.md as
-// `enum_map::EnumMap<E, Option<V>>`; `bin_path` kept as a match-fn because of `#[cfg]` gating.
+// Note: `bin_name` is an `enum_map::EnumMap<E, Option<V>>` (sparse map);
+// `bin_path` is a match-fn because of `#[cfg]` gating.
 
 static NAME_MAP: phf::Map<&'static [u8], Editor> = phf::phf_map! {
     b"sublime" => Editor::Sublime,
@@ -133,7 +132,7 @@ impl Editor {
             for path in paths {
                 match bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) {
                     bun_sys::Result::Ok(opened) => {
-                        let _ = opened.close(); // close error is non-actionable (Zig parity: discarded)
+                        let _ = opened.close(); // close error is non-actionable
                         if let Some(out) = out {
                             *out = path.as_bytes();
                         }
@@ -185,7 +184,6 @@ impl Editor {
         column: Option<&[u8]>,
     ) -> Result<(), bun_core::Error> {
         let mut spawned = Box::new(SpawnedEditorContext::default());
-        // errdefer default_allocator.destroy(spawned) — handled by Box Drop on `?`.
 
         let mut cursor = std::io::Cursor::new(&mut spawned.file_path_buf[..]);
         // Note: `args_buf` entries borrow both static strings and `file_path_buf`
@@ -290,9 +288,8 @@ impl Editor {
 
         spawned.argc = i;
         let spawned_ptr = bun_core::heap::into_raw(spawned);
-        // Note: Zig used `std.Thread.spawn(.{}, autoClose, .{spawned})` then `.detach()`.
-        // bun_threading has no detached-spawn helper; std::thread::spawn matches semantics
-        // (the JoinHandle is dropped, detaching the thread).
+        // bun_threading has no detached-spawn helper; std::thread::spawn is used
+        // and the JoinHandle is dropped, detaching the thread.
         // SAFETY: `spawned_ptr` is a uniquely-owned Box raw pointer; ownership is
         // transferred to the spawned thread which reconstitutes it via heap::take.
         // Smuggled across the thread boundary as `usize` (`*mut T: !Send`).
@@ -300,8 +297,7 @@ impl Editor {
         std::thread::Builder::new()
             .spawn(move || auto_close(spawned_addr as *mut SpawnedEditorContext))
             .map_err(|_| {
-                // Zig parity: `errdefer default_allocator.destroy(spawned)` (open.zig:234)
-                // covers `try std.Thread.spawn`. After `into_raw`, Box's Drop guard is gone,
+                // After `into_raw`, Box's Drop guard is gone,
                 // so reclaim explicitly on the spawn-failure path.
                 // SAFETY: closure never ran, so we are still the sole owner of `spawned_ptr`.
                 drop(unsafe { bun_core::heap::take(spawned_addr as *mut SpawnedEditorContext) });
@@ -322,7 +318,6 @@ pub(super) const DEFAULT_PREFERENCE_LIST: [Editor; 8] = [
     Editor::Vim,
 ];
 
-// Note: was `pub const bin_name: std.EnumMap(Editor, string)` built in a comptime block.
 pub(super) static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'static [u8]>>> =
     std::sync::LazyLock::new(|| {
         enum_map::EnumMap::from_fn(|k| match k {
@@ -340,7 +335,6 @@ pub(super) static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option
         })
     });
 
-// Note: was `pub const bin_path: std.EnumMap(Editor, []const [:0]const u8)`.
 pub(super) fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
     #[cfg(target_os = "macos")]
     {
@@ -419,8 +413,7 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
         argv[j] = unsafe { bun_core::ffi::slice(p, l) };
     }
 
-    // FIXME(windows-leak): Zig's autoClose (open.zig:329-335) used std.process.Child
-    // directly (CreateProcessW) and never created a uv loop. The sync::spawn substitution
+    // FIXME(windows-leak): the sync::spawn path
     // requires a `WindowsOptions.loop_`; `MiniEventLoop::init_global` heap-allocates a
     // MiniEventLoop + uv_loop_t into a thread-local that is NEVER torn down. Because this
     // runs on a fresh detached std::thread per `Editor::open()` call, every editor-open on
@@ -453,7 +446,7 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
 
 pub struct EditorContext {
     pub editor: Option<Editor>,
-    // Note: `name`/`path` are never freed in Zig; `path` is backed by
+    // Note: `name`/`path` are never freed; `path` is backed by
     // `Fs.FileSystem.instance.dirname_store` (process-lifetime arena) or aliases `name`.
     pub name: &'static [u8],
     pub path: &'static [u8],
@@ -630,5 +623,3 @@ impl EditorContext {
         self.editor = Some(Editor::None);
     }
 }
-
-// ported from: src/cli/open.zig

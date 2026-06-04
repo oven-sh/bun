@@ -15,7 +15,7 @@ use css_values::ident::DashedIdent;
 
 pub use css::Error;
 
-// Byte-oriented writer (writeAll/writeByte/print equivalents); Zig used *std.Io.Writer.
+// Byte-oriented writer (writeAll/writeByte/print equivalents).
 use bun_io::Write;
 
 /// Options that control how CSS is serialized to a string.
@@ -220,10 +220,8 @@ impl<'a> Printer<'a> {
         self.lookup_symbol(ident.as_ref().unwrap())
     }
 
-    // Zig checked vtable identity against std.Io.Writer.Allocating and recovered the
-    // backing buffer length via `container_of`; in Rust the trait exposes `written_len()`
-    // directly (Vec<u8> / MutableString / counting sinks override it, others panic — same
-    // contract as Zig's `@panic("css: got bad writer type")` fallthrough).
+    // The `Write` trait exposes `written_len()` directly
+    // (Vec<u8> / MutableString / counting sinks override it, others panic).
     #[inline]
     fn get_written_amt(writer: &dyn Write) -> usize {
         writer.written_len()
@@ -340,7 +338,6 @@ impl<'a> Printer<'a> {
                 column: 1,
             },
             symbols,
-            // defaults for fields not set by Zig's `.{}` initializer
             indent_amt: 0,
             line: 0,
             col: 0,
@@ -356,9 +353,8 @@ impl<'a> Printer<'a> {
     }
 
     /// Construct a `Printer` that writes into an in-memory `Vec<u8>` buffer
-    /// using default `PrinterOptions`. Mirrors the Zig pattern of pairing
-    /// `std.Io.Writer.Allocating` with `Printer.new(..., PrinterOptions.default(), ...)`
-    /// for sub-serialization (e.g. `PseudoClass::toCss`, `Selector` debug fmt).
+    /// using default `PrinterOptions`. Used for sub-serialization
+    /// (e.g. `PseudoClass::toCss`, `Selector` debug fmt).
     pub fn new_buffered(
         arena: &'a Bump,
         dest: &'a mut Vec<u8>,
@@ -393,7 +389,7 @@ impl<'a> Printer<'a> {
             // Reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
             let a = a.to_vec();
             let b = b.to_vec();
-            // PERF(port): two small heap copies above; Zig borrowed directly. Profile if it shows up on a hot path.
+            // PERF: two small heap copies above; profile if it shows up on a hot path.
             self.write_str(&a)?;
             self.write_str(&b)?;
             return Ok(());
@@ -596,10 +592,8 @@ impl<'a> Printer<'a> {
     pub fn write_ident(&mut self, ident: &'a [u8], handle_css_module: bool) -> PrintResult<()> {
         if handle_css_module {
             if self.css_module.is_some() {
-                // Borrowck reshape — Zig captured `&mut self` inside the closure
-                // while `css_module` (a field of self) was simultaneously borrowed. We instead
-                // copy the `'a`-lifetime references out of `css_module` up front so the
-                // closure can hold the sole `&mut self`.
+                // Copy the `'a`-lifetime references out of `css_module` up front so
+                // the closure can hold the sole `&mut self`.
                 let source_index = self.loc.source_index as usize;
                 let arena = self.arena;
                 let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
@@ -844,7 +838,7 @@ impl<'a> Printer<'a> {
 
         let ctx = css::StyleContext { selectors, parent };
 
-        // `&ctx` is stack-local but the field type is `&'a StyleContext<'a>`; like Zig,
+        // `&ctx` is stack-local but the field type is `&'a StyleContext<'a>`;
         // soundness relies on restoring `parent` before this frame returns.
         // SAFETY: ctx outlives the call to func; self.ctx is restored to `parent` before return.
         // Inner-lifetime variance cast via raw pointer (`StyleContext<'x>` and
@@ -899,5 +893,3 @@ impl<'a> Printer<'a> {
 
 // bun.ast.Symbol.Map — lives in bun_logger.
 type SymbolMap = bun_ast::symbol::Map;
-
-// ported from: src/css/printer.zig

@@ -3,8 +3,7 @@ use bun_alloc::AllocError;
 use bun_sys::FdDirExt;
 use bun_sys::walker_skippable::Walker;
 use bun_sys::{self as sys, EntryKind, Fd, FdExt};
-// `bun.AbsPath(.{ .sep = .auto, .unit = .os })` / `bun.Path(.{ .sep = .auto, .unit = .os })`
-// take a comptime config struct in Zig. `.unit = .os` means u8 on POSIX, u16
+// OS-unit paths are u8 on POSIX, u16
 // on Windows — encoded here via the `OSPathChar` type alias so the struct's
 // `slice()`/`slice_z()` produce the platform-native width without per-field
 // `#[cfg]` divergence.
@@ -105,8 +104,8 @@ impl Hardlinker {
                 // so the truncation happens on every exit.
                 let src_saved_len = self.src.len();
                 // `OsAbsPath`/`OsPath` use `CheckLength::ASSUME`, so `append`'s
-                // `Err(MaxPathExceeded)` arm is statically unreachable (Zig returns
-                // `void` here) -- see `path_options::AssumeOk`.
+                // `Err(MaxPathExceeded)` arm is statically unreachable -- see
+                // `path_options::AssumeOk`.
                 self.src.append(entry.path.as_slice()).assume_ok();
 
                 let dest_saved_len = self.dest.len();
@@ -148,9 +147,6 @@ impl Hardlinker {
                                 &mut destfile_path_buf2[..],
                                 joined,
                             );
-
-                            // Zig allocated `srcfile_path_buf` here but never used it;
-                            // dropped in the port (dead code in the original).
 
                             match sys::link_w(self.src.slice_z(), destfile_path) {
                                 sys::Result::Ok(()) => {}
@@ -252,7 +248,7 @@ impl Hardlinker {
                 // `len()` and restore via `set_length()` after the body so the
                 // truncation runs on every exit.
                 let dest_saved_len = self.dest.len();
-                let _ = self.dest.append(entry.path.as_bytes()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
+                let _ = self.dest.append(entry.path.as_bytes()); // OOM/capacity: fire-and-forget
 
                 let err: Option<sys::Error> = 'body: {
                     match entry.kind {
@@ -320,5 +316,3 @@ impl Hardlinker {
         }
     }
 }
-
-// ported from: src/install/isolated_install/Hardlinker.zig

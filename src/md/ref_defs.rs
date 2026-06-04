@@ -39,8 +39,6 @@ impl Parser<'_> {
     /// strip leading/trailing whitespace, case-fold.
     pub fn normalize_label(&mut self, raw: &[u8]) -> Vec<u8> {
         // Collapse whitespace and apply Unicode case folding (per CommonMark §6.7)
-        // The Zig original returned `raw` on alloc failure; Rust Vec aborts on
-        // OOM, so those fallback paths are dropped.
         let mut result: Vec<u8> = Vec::new();
         let mut in_ws = true; // skip leading whitespace
         let mut i: usize = 0;
@@ -86,8 +84,7 @@ impl Parser<'_> {
     }
 
     /// Look up a reference definition by label (case-insensitive, whitespace-normalized).
-    // Returns `Option<&RefDef>` instead of a by-value copy: the Zig RefDef was
-    // three borrowed slices (Copy), the Rust RefDef owns its buffers.
+    // Returns `Option<&RefDef>` instead of a by-value copy: RefDef owns its buffers.
     pub fn lookup_ref_def(&mut self, raw_label: &[u8]) -> Option<&RefDef> {
         if raw_label.is_empty() || self.ref_defs.is_empty() {
             return None;
@@ -339,8 +336,7 @@ impl Parser<'_> {
         let mut off: usize = 0;
         // Take a raw pointer to block_bytes so we can call &mut self methods
         // (normalize_label, parse_ref_def via self.buffer) while iterating the
-        // byte buffer. The Zig code mutates headers in-place via pointer
-        // casts; we preserve that with raw pointer arithmetic.
+        // byte buffer. Headers are mutated in-place via raw pointer arithmetic.
         let bytes_ptr = self.block_bytes.as_mut_ptr();
         let bytes_len = self.block_bytes.len();
 
@@ -430,7 +426,6 @@ impl Parser<'_> {
                         dest: dest_dupe,
                         title: title_dupe,
                     });
-                    // PERF(port): was assume_capacity / arena alloc — profile if hot.
                 }
 
                 // Count how many newlines were consumed to track lines
@@ -494,5 +489,3 @@ impl Parser<'_> {
         Ok(())
     }
 }
-
-// ported from: src/md/ref_defs.zig

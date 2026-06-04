@@ -144,5 +144,3 @@ impl Drop for OwnedResolvedSource {
         self.0.bytecode_origin_path.deref();
     }
 }
-
-// ported from: src/jsc/ResolvedSource.zig

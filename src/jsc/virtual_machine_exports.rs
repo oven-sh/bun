@@ -11,8 +11,8 @@ use bun_core::String as BunString;
 use bun_event_loop::ManagedTask::ManagedTask;
 use bun_sourcemap::{BakeSourceProvider, DevServerSourceProvider};
 
-// Zig: comptime { if (Environment.isWindows) @export(&Bun__ZigGlobalObject__uvLoop, ...) }
-// Handled below by `#[cfg(windows)]` on the fn definition itself.
+// `Bun__ZigGlobalObject__uvLoop` is Windows-only: `#[cfg(windows)]` on the fn
+// definition itself.
 //
 // `#[unsafe(no_mangle)] extern "C"` thunks for everything below are emitted by
 // `src/codegen/generate-host-exports.ts` from the `// HOST_EXPORT(Sym, c)`
@@ -285,7 +285,6 @@ pub fn add_bake_source_provider_source_map(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings.put_bake_source_provider(
         opaque_source_provider.cast::<BakeSourceProvider>(),
@@ -299,7 +298,6 @@ pub fn add_dev_server_source_provider(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings.put_dev_server_source_provider(
         opaque_source_provider.cast::<DevServerSourceProvider>(),
@@ -313,7 +311,6 @@ pub fn remove_dev_server_source_provider(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings
         .remove_dev_server_source_provider(opaque_source_provider, slice.slice());
@@ -325,7 +322,6 @@ pub fn add_source_provider_source_map(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings
         .put_zig_source_provider(opaque_source_provider, slice.slice());
@@ -337,7 +333,6 @@ pub fn remove_source_provider_source_map(
     opaque_source_provider: *mut c_void,
     specifier: &BunString,
 ) {
-    // PERF(port): was stack-fallback alloc — profile if hot
     let slice = specifier.to_utf8();
     vm.source_mappings
         .remove_zig_source_provider(opaque_source_provider, slice.slice());
@@ -372,4 +367,3 @@ pub fn Bun__setSyntheticAllocationLimitForTesting(
     Ok(JSValue::js_number(prev as f64))
 }
 
-// ported from: src/jsc/virtual_machine_exports.zig

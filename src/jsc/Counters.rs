@@ -9,8 +9,6 @@ pub struct Counters {
 
 impl Counters {
     pub fn mark(&mut self, tag: Field) {
-        // Zig used `comptime tag` + `@field(this, @tagName(tag))` reflection;
-        // Rust dispatches via match on a runtime arg.
         let slot = match tag {
             Field::SpawnSyncBlocking => &mut self.spawn_sync_blocking,
             Field::SpawnMemfd => &mut self.spawn_memfd,
@@ -19,8 +17,6 @@ impl Counters {
     }
 
     pub fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // Zig used `JSObject::create(struct_value, global)` (field reflection
-        // builds an object with one property per struct field). Hand-rolled `put` calls here.
         let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
@@ -44,7 +40,6 @@ pub fn create_counters_object(global: &JSGlobalObject, _frame: &CallFrame) -> Js
     global.bun_vm().counters.to_js(global)
 }
 
-// Zig: `const Field = std.meta.FieldEnum(Counters);`
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Field {
     #[strum(serialize = "spawnSync_blocking")]
@@ -52,5 +47,3 @@ pub enum Field {
     #[strum(serialize = "spawn_memfd")]
     SpawnMemfd,
 }
-
-// ported from: src/jsc/Counters.zig

@@ -1,7 +1,7 @@
 //! macOS ImageIO/CoreGraphics backend.
 //!
 //! All framework calls live in `src/jsc/bindings/image_coregraphics_shim.cpp`
-//! — see the header comment there for why (Zig→dlsym'd-function-pointer calls
+//! — see the header comment there for why (dlsym'd-function-pointer calls
 //! into CG segfaulted on x86_64 even after thunking the obvious by-value
 //! struct, so the whole dispatch is in C++ where clang owns the ABI). This
 //! file just allocates the RGBA/output buffers in the global allocator and
@@ -9,7 +9,6 @@
 
 use super::codecs;
 
-/// Zig: `pub const BackendError = codecs.Error || error{BackendUnavailable};`
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Copy, Clone, Eq, PartialEq)]
 pub enum BackendError {
     #[error("BackendUnavailable")]
@@ -45,8 +44,8 @@ impl From<codecs::Error> for BackendError {
 bun_core::named_error_set!(BackendError);
 
 impl BackendError {
-    /// Reshape Zig's `(codecs.Error || error{BackendUnavailable})!T` into the
-    /// Rust caller's `Result<Option<T>, codecs::Error>` convention used by
+    /// Reshape into the
+    /// caller's `Result<Option<T>, codecs::Error>` convention used by
     /// `codecs.rs` (`Ok(None)` = BackendUnavailable → fall through to the
     /// pure-Rust codec path).
     #[inline]
@@ -122,7 +121,7 @@ pub fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, BackendE
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
-    // PERF(port): Zig used uninitialized alloc; vec![0u8; n] zero-fills — profile if hot.
+    // PERF: vec![0u8; n] zero-fills — profile if hot.
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
     // Phase 2: render. The C side re-creates the CGImageSource (cheap — the
     // header parse is the only repeated work) so we don't have to thread an
@@ -178,7 +177,7 @@ pub(crate) fn encode(
         CG_OK => {}
         rc => return Err(map_err(rc)),
     }
-    // PERF(port): Zig used uninitialized alloc — profile if hot.
+    // PERF: zero-fill alloc — profile if hot.
     let mut out = vec![0u8; len];
     // Phase 2: copy out and release the CFData.
     // SAFETY: out has `len` bytes; shim writes ≤ len and updates `len`.
@@ -248,7 +247,7 @@ pub(crate) fn scale(
     if filter != codecs::Filter::Lanczos3 {
         return Err(BackendError::BackendUnavailable);
     }
-    // PERF(port): Zig used uninitialized alloc — profile if hot.
+    // PERF: zero-fill alloc — profile if hot.
     let mut out = vec![0u8; (dw as usize) * (dh as usize) * 4];
     // SAFETY: src has sw*sh*4 bytes (caller invariant); out has dw*dh*4 bytes.
     if unsafe { bun_coregraphics_scale(src.as_ptr(), sw, sh, out.as_mut_ptr(), dw, dh) } != CG_OK {
@@ -259,7 +258,7 @@ pub(crate) fn scale(
 
 #[allow(dead_code)]
 pub(crate) fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8>, BackendError> {
-    // PERF(port): Zig used uninitialized alloc — profile if hot.
+    // PERF: zero-fill alloc — profile if hot.
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
     // SAFETY: src and out both have w*h*4 bytes.
     if unsafe { bun_coregraphics_rotate90(src.as_ptr(), w, h, out.as_mut_ptr(), quarters) } != CG_OK
@@ -271,7 +270,7 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8
 
 #[allow(dead_code)]
 pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, BackendError> {
-    // PERF(port): Zig used uninitialized alloc — profile if hot.
+    // PERF: zero-fill alloc — profile if hot.
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
     // SAFETY: src and out both have w*h*4 bytes.
     if unsafe { bun_coregraphics_reflect(src.as_ptr(), w, h, out.as_mut_ptr(), horizontal as i32) }
@@ -294,7 +293,6 @@ unsafe extern "C" {
 
 /// `None` ⇔ no image on the pasteboard. Returned bytes are an opaque container
 /// (PNG/TIFF/HEIC/…); feed straight to `new Bun.Image(…)`.
-// Zig error set: `error{BackendUnavailable, OutOfMemory}` — subset of BackendError.
 #[allow(dead_code)]
 pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     let mut len: usize = 0;
@@ -305,7 +303,7 @@ pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     if len == 0 {
         return Ok(None);
     }
-    // PERF(port): Zig used uninitialized alloc — profile if hot.
+    // PERF: zero-fill alloc — profile if hot.
     let mut out = vec![0u8; len];
     // SAFETY: out has `len` bytes; shim writes ≤ len and updates `len`.
     if unsafe { bun_coregraphics_clipboard(out.as_mut_ptr(), &raw mut len, 0) } != CG_OK {
@@ -328,11 +326,8 @@ unsafe extern "C" {
     #[allow(dead_code)]
     fn bun_coregraphics_clipboard_change_count() -> i64;
 }
-// Zig: `pub const clipboardChangeCount = bun_coregraphics_clipboard_change_count;`
 #[allow(dead_code)]
 pub(crate) fn clipboard_change_count() -> i64 {
     // SAFETY: pure getter, no preconditions.
     unsafe { bun_coregraphics_clipboard_change_count() }
 }
-
-// ported from: src/runtime/image/backend_coregraphics.zig

@@ -26,7 +26,6 @@ pub enum Time {
     Milliseconds(CSSNumber) = 2,
 }
 
-// Mirrors Zig's nested `Tag = enum(u8) { seconds = 1, milliseconds = 2 }`.
 const TAG_SECONDS: u16 = 1;
 const TAG_MILLISECONDS: u16 = 2;
 
@@ -54,8 +53,6 @@ impl Time {
             Ok(vv) => match vv {
                 Calc::Value(v) => {
                     let ret: Time = *v;
-                    // redundant allocation
-                    // Zig: vvv.deinit(input.arena()) — Drop handles this; line deleted.
                     return Ok(ret);
                 }
                 // Time is always compatible, so they will always compute to a value.
@@ -139,7 +136,6 @@ impl Time {
     }
 
     pub fn mul_f32(self, other: f32) -> Time {
-        // Zig arena param dropped (unused).
         match self {
             Time::Seconds(s) => Time::Seconds(s * other),
             Time::Milliseconds(ms) => Time::Milliseconds(ms * other),
@@ -147,12 +143,10 @@ impl Time {
     }
 
     pub fn add_internal(self, other: Time) -> Time {
-        // Zig arena param dropped (forwarded but ultimately unused).
         self.add(other)
     }
 
     pub fn into_calc(self) -> Calc<Time> {
-        // PERF(port): was arena alloc (bun.create) — Calc<V>::Value now owns Box<V>.
         Calc::Value(Box::new(self))
     }
 
@@ -165,7 +159,6 @@ impl Time {
     }
 
     pub fn map(self, map_fn: impl Fn(f32) -> f32) -> Time {
-        // PERF(port): was comptime fn-pointer monomorphization — profile if hot.
         match self {
             Time::Seconds(s) => Time::Seconds(map_fn(s)),
             Time::Milliseconds(ms) => Time::Milliseconds(map_fn(ms)),
@@ -198,5 +191,3 @@ impl Time {
         }
     }
 }
-
-// ported from: src/css/values/time.zig

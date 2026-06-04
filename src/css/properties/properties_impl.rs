@@ -15,8 +15,8 @@ impl Property {
     /// an `Unparsed` declaration always returns `PropertyIdTag::Unparsed`, and
     /// a `Custom` declaration always returns `PropertyIdTag::Custom`.
     ///
-    /// This mirrors Zig's `@as(PropertyIdTag, property.*)` (a raw union-tag
-    /// coercion). Handlers that switch on the discriminant to project a parsed
+    /// This is a raw discriminant lookup.
+    /// Handlers that switch on the discriminant to project a parsed
     /// payload — e.g. `SizeHandler` in `margin_padding.rs` — must use this so
     /// an unparsed `margin-top: var(--x)` does not route into the parsed
     /// `MarginTop` arm and panic in `extract_top`.
@@ -32,9 +32,8 @@ impl Property {
     }
 }
 
-/// Ordered single-bit prefix flags for the `inline for (VendorPrefix.FIELDS)`
-/// Zig idiom. The crate-root `VendorPrefix::FIELDS` is a
-/// `&'static [VendorPrefix]` with the same values in the same declaration
+/// Ordered single-bit prefix flags. The crate-root `VendorPrefix::FIELDS` is
+/// a `&'static [VendorPrefix]` with the same values in the same declaration
 /// order (webkit, moz, ms, o, none); kept duplicated here as a fixed-size
 /// array for the to_css loops.
 pub(super) const PREFIX_FLAGS: [VendorPrefix; 5] = [
@@ -52,7 +51,7 @@ pub(super) mod property_id_mixin {
         let name = this.name();
         let prefix_value = this.prefix().or_none();
 
-        // `PREFIX_FLAGS` mirrors Zig's `VendorPrefix.FIELDS` — same set, same
+        // `PREFIX_FLAGS` matches `VendorPrefix::FIELDS` — same set, same
         // order; serialization order of prefixed names depends on it.
         dest.write_comma_separated(
             PREFIX_FLAGS
@@ -119,5 +118,3 @@ pub(super) mod property_mixin {
         )
     }
 }
-
-// ported from: src/css/properties/properties_impl.zig

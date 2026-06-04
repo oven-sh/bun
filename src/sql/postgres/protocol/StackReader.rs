@@ -99,5 +99,3 @@ impl<'a> ReaderContext for StackReader<'a> {
         Self::read_z(self)
     }
 }
-
-// ported from: src/sql/postgres/protocol/StackReader.zig

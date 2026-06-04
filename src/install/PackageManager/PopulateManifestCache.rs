@@ -10,7 +10,7 @@ use crate::PackageID;
 use crate::Resolution;
 use crate::dependency::Behavior;
 use crate::invalid_package_id;
-// `Task::Id` is a namespaced type in Zig (`PackageManagerTask.Id`); import the
+// Import the
 // *module* under the `Task` name so `Task::Id` resolves as a path (matches
 // `runTasks.rs` / `PackageManagerEnqueue.rs`).
 use super::PackageManager;
@@ -51,7 +51,7 @@ fn start_manifest_task(
     needs_extended_manifest: bool,
 ) -> Result<(), StartManifestTaskError> {
     let task_id = Task::Id::for_manifest(pkg_name);
-    // Zig passes the *raw packed-struct bit* `dep.behavior.optional`
+    // Read the *raw* OPTIONAL bit
     // — not `Behavior.isOptional()` (which is `optional && !peer`). For
     // optional-peer deps the raw bit is `true` but `is_optional()` is `false`,
     // which would flip both the dedupe-map `is_required` bookkeeping and
@@ -63,8 +63,7 @@ fn start_manifest_task(
     }
     manager.start_progress_bar_if_none();
 
-    // reshaped for borrowck — Zig writes the whole struct via `.* = .{}`
-    // and reads `manager` again for `scopeForPackageName`. `get_network_task()`
+    // reshaped for borrowck — `get_network_task()`
     // borrows `&mut manager.preallocated_network_tasks`, so compute everything
     // that needs `&manager` *before* taking that borrow, then populate the pool
     // slot through a raw pointer (matches `runTasks::generate_network_task_for_tarball`).
@@ -75,11 +74,9 @@ fn start_manifest_task(
     // Take the pool slot as a raw pointer so borrowck releases `manager` for the
     // `enqueue_network_task` tail.
     let net_ptr: *mut NetworkTask = run_tasks::get_network_task(manager);
-    // Zig: `task.* = .{ .package_manager = manager, .callback = undefined,
-    //                   .task_id = task_id, .allocator = manager.allocator };`
-    // — full struct overwrite that resets every other field to its struct
-    // default. The slot may be uninitialized (heap fallback) or stale (reused
-    // hive slot).
+    // `write_init` is a full struct overwrite that resets every other field to
+    // its struct default. The slot may be uninitialized (heap fallback) or
+    // stale (reused hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we hand it to `enqueue_network_task`.
     unsafe { NetworkTask::write_init(net_ptr, task_id, manager_backref, None) };
@@ -107,7 +104,7 @@ pub enum Packages<'a> {
 }
 
 /// `RunTasksCallbacks` impl for the void-callback `runTasks` call in
-/// `populateManifestCache` (Zig passed an anonymous struct with `void` hooks).
+/// `populateManifestCache`.
 struct ManifestsOnlyCallbacks;
 impl RunTasksCallbacks for ManifestsOnlyCallbacks {
     type Ctx = ();
@@ -124,8 +121,8 @@ pub fn populate_manifest_cache(
 ) -> Result<(), bun_core::Error> {
     let log_level = manager.options.log_level;
 
-    // heavy borrowck overlap — Zig holds slices into
-    // `manager.lockfile` while the loop body calls `&mut`-taking methods on
+    // heavy borrowck overlap — slices into
+    // `manager.lockfile` are held while the loop body calls `&mut`-taking methods on
     // `manager`. The lockfile lives in `Box<Lockfile>` (stable address) and is
     // not resized by anything below, so derive the slices through a raw
     // provenance root and reborrow `manager` per-call.
@@ -281,7 +278,6 @@ pub fn populate_manifest_cache(
 
     if run_tasks::pending_task_count(manager) > 0 {
         struct RunClosure {
-            // Zig stores `*PackageManager` non-exclusively;
             // `sleep_until` also receives this raw pointer, so storing
             // `&mut PackageManager` here would alias under Stacked Borrows.
             manager: *mut PackageManager,
@@ -295,9 +291,8 @@ pub fn populate_manifest_cache(
                 let manager = unsafe { &mut *closure.manager };
                 let log_level = manager.options.log_level;
                 // void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass
-                // `manager` as both receiver and ctx (aliased &mut). Zig passed
-                // `(comptime *PackageManager, closure.manager)`; the generic context
-                // pair collapses to `&mut ()` in Rust.
+                // `manager` as both receiver and ctx (aliased &mut); the generic
+                // context collapses to `&mut ()`.
                 if let Err(err) = run_tasks::run_tasks::<ManifestsOnlyCallbacks>(
                     manager,
                     &mut (),
@@ -339,5 +334,3 @@ pub fn populate_manifest_cache(
 
     Ok(())
 }
-
-// ported from: src/install/PackageManager/PopulateManifestCache.zig

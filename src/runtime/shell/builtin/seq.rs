@@ -162,9 +162,8 @@ impl Seq {
 
     fn do_(interp: &Interpreter, cmd: NodeId) -> Yield {
         let needs_io = Builtin::of(interp, cmd).stdout.needs_io().is_some();
-        // NOTE: reshaped for borrowck — render entirely into a local
-        // Vec, then either enqueue it or write_no_io it. Zig wrote each
-        // number directly when !needs_io; we buffer once for simplicity.
+        // Render entirely into a local Vec, then either enqueue it or
+        // write_no_io it; we buffer once for simplicity.
         let (start, end, incr, sep, term) = {
             let me = Self::state_mut(interp, cmd);
             (me.start, me.end, me.increment, me.separator, me.terminator)
@@ -177,11 +176,7 @@ impl Seq {
             current >= end
         } {
             // Rust `{}` for f32 prints the shortest decimal that round-trips
-            // (no exponent, no trailing ".0"), the same contract as Zig
-            // `{d}` (std.fmt decimal mode, shortest round-trip digits) for
-            // all finite values. Non-finite casing differs: Rust prints
-            // "NaN" where Zig prints "nan" (reachable only via inputs like
-            // `seq nan`; "inf" matches). Cosmetic.
+            // (no exponent, no trailing ".0").
             let _ = write!(&mut out, "{}", current);
             out.extend_from_slice(sep.slice());
             let next = current + incr;
@@ -238,4 +233,3 @@ fn parse_f32(bytes: &[u8]) -> Option<f32> {
     bun_core::fmt::parse_f32(bytes)
 }
 
-// ported from: src/shell/builtin/seq.zig

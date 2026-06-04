@@ -25,16 +25,14 @@ impl Signature {
     pub fn hash(&self) -> u64 {
         // Hash `name` followed by each param's `(type, flags)` field-by-field.
         //
-        // This intentionally does NOT reinterpret `&[Param]` as `&[u8]` (the Zig
-        // port originally mirrored `std.mem.sliceAsBytes`): `Param` has default
+        // This intentionally does NOT reinterpret `&[Param]` as `&[u8]`:
+        // `Param` has default
         // `repr(Rust)` with a `u8` enum + `u16` bitflags, leaving one padding
         // byte. Exposing padding through `&[u8]` reads uninitialized memory and
         // is UB. The hash is a process-local prepared-statement cache key, so it
-        // only needs to be self-consistent — byte-for-byte layout parity with Zig
-        // is not required.
+        // only needs to be self-consistent.
         //
-        // Zig fed two slices into a streaming `std.hash.Wyhash`; stream the
-        // same bytes (minus padding, see above) through `bun_wyhash::Wyhash`.
+        // Stream the bytes (minus padding, see above) through `bun_wyhash::Wyhash`.
         let mut hasher = bun_wyhash::Wyhash::init(0);
         hasher.update(&self.name);
         for p in self.fields.iter() {
@@ -44,8 +42,7 @@ impl Signature {
         hasher.final_()
     }
 
-    // Zig used an inferred error set (JS errors, alloc, InvalidQueryBinding);
-    // collapsed into the crate-wide `bun_core::Error` currency.
+    // Errors are collapsed into the crate-wide `bun_core::Error` currency.
     pub fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],
@@ -58,7 +55,6 @@ impl Signature {
         let mut fields: Vec<Param> = Vec::new();
         let mut name: Vec<u8> = Vec::with_capacity(query.len());
 
-        // PERF(port): was appendSliceAssumeCapacity — profile if it shows up on a hot path.
         name.extend_from_slice(query);
 
         // errdefer { fields.deinit(); name.deinit(); } — deleted: `Vec` drops on `?`.
@@ -81,11 +77,6 @@ impl Signature {
                 crate::mysql::my_sql_value::field_type_from_js(global_object, value, &mut unsigned)
                     .map_err(js_error_to_mysql)?;
             if unsigned {
-                // 128 is more than enought right now
-                // reshaped — Zig used `std.fmt.bufPrint` into a 128-byte
-                // stack buffer with a `catch @tagName(tag)` fallback on overflow.
-                // "U" + tag name can never exceed 128 bytes, so a direct append is
-                // equivalent and avoids the intermediate buffer.
                 name.push(b'U');
                 name.extend_from_slice(<&'static str>::from(tag).as_bytes());
             } else {
@@ -114,4 +105,3 @@ impl Signature {
     }
 }
 
-// ported from: src/sql_jsc/mysql/protocol/Signature.zig

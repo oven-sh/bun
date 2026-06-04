@@ -8,8 +8,8 @@ pub struct EnvMap {
 
 pub(crate) type Iterator<'a> = Iter<'a, EnvStr, EnvStr>;
 
-// Zig calls this `MapType`. Renamed to avoid rustc confusing it with the
-// unrelated mmap `sys::c::MapType` / `sys::posix::MapType` in diagnostic suggestions.
+// Named `EnvMapInner` to avoid rustc confusing it with the unrelated mmap
+// `sys::c::MapType` / `sys::posix::MapType` in diagnostic suggestions.
 type EnvMapInner = ArrayHashMap<EnvStr, EnvStr, EnvMapContext>;
 
 #[derive(Default)]
@@ -19,7 +19,6 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
     fn hash(&self, s: &EnvStr) -> u32 {
         #[cfg(windows)]
         {
-            // Zig: `bun.CaseInsensitiveASCIIStringContext.hash(undefined, s.slice())`.
             return <array_hash_map::CaseInsensitiveAsciiStringContext as ArrayHashContext<[u8]>>::hash(
                 &array_hash_map::CaseInsensitiveAsciiStringContext::default(),
                 s.slice(),
@@ -34,7 +33,6 @@ impl ArrayHashContext<EnvStr> for EnvMapContext {
     fn eql(&self, a: &EnvStr, b: &EnvStr, _b_index: usize) -> bool {
         #[cfg(windows)]
         {
-            // Zig: `bun.CaseInsensitiveASCIIStringContext.eql` → `eqlCaseInsensitiveASCIIICheckLength`.
             // Must be length-checked: "PATH" must NOT match "PATHEXT".
             return bun_core::strings::eql_case_insensitive_asciii_check_length(
                 a.slice(),
@@ -118,8 +116,7 @@ impl EnvMap {
         new
     }
 
-    // The Zig version's allocator param has no Rust equivalent (global mimalloc),
-    // so this is identical to `clone`.
+    // With a single global allocator (mimalloc), this is identical to `clone`.
     pub fn clone_with_allocator(&self) -> EnvMap {
         self.clone()
     }
@@ -145,5 +142,3 @@ impl Drop for EnvMap {
         // map storage freed by its own Drop
     }
 }
-
-// ported from: src/shell/EnvMap.zig

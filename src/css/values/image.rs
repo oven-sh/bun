@@ -19,14 +19,12 @@ pub enum Image {
     /// A `url()`.
     Url(Url),
     /// A gradient.
-    // PERF(port): arena-allocated in Zig (bun.create); LIFETIMES.tsv → Box<Gradient>
     Gradient(Box<Gradient>),
     /// An `image-set()`.
     ImageSet(ImageSet),
 }
 
 impl Image {
-    // NOTE: `pub fn deinit` was a no-op in Zig (all CSS parser memory is arena-owned).
     // No `Drop` impl needed — Box/Vec fields drop automatically.
 
     pub fn is_compatible(&self, browsers: &css::targets::Browsers) -> bool {
@@ -65,7 +63,6 @@ impl Image {
 
     pub fn get_prefixed(&self, arena: &Arena, prefix: css::VendorPrefix) -> Image {
         match self {
-            // PERF(port): was arena bulk-free — profile if hot
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_prefixed(arena, prefix))),
             Image::ImageSet(image_set) => Image::ImageSet(image_set.get_prefixed(arena, prefix)),
             _ => self.deep_clone(arena),
@@ -134,7 +131,6 @@ impl Image {
     pub fn get_legacy_webkit(&self, arena: &Arena) -> Option<Image> {
         match self {
             Image::Gradient(gradient) => {
-                // PERF(port): was arena bulk-free — profile if hot
                 Some(Image::Gradient(Box::new(
                     gradient.get_legacy_webkit(arena)?,
                 )))
@@ -164,8 +160,8 @@ impl Image {
         let prefix_image: &Image = if let Some(r) = &rgb { r } else { &*self };
 
         // Legacy -webkit-gradient()
-        // Zig's `and`/`if-else` precedence here is preserved verbatim:
-        // `if (targets.browsers) |b| isWebkitGradient(b) else (false and prefix_image.* == .gradient)`
+        // The `false && ...` else branch is intentional (sic) — kept for
+        // behavioral compatibility.
         if prefixes.contains(VendorPrefix::WEBKIT)
             && if let Some(browsers) = targets.browsers {
                 css::prefixes::Feature::is_webkit_gradient(&browsers)
@@ -218,7 +214,6 @@ impl Image {
 
     pub fn get_fallback(&self, arena: &Arena, kind: ColorFallbackKind) -> Image {
         match self {
-            // PERF(port): was arena bulk-free — profile if hot
             Image::Gradient(grad) => Image::Gradient(Box::new(grad.get_fallback(arena, kind))),
             _ => self.deep_clone(arena),
         }
@@ -283,7 +278,6 @@ impl crate::small_list::ImageFallback for Image {
 /// display the most appropriate resolution or file type that it supports.
 pub struct ImageSet {
     /// The image options to choose from.
-    // PERF(port): was ArrayListUnmanaged fed arena — profile if hot
     pub options: Vec<ImageSetOption>,
 
     /// The vendor prefix for the `image-set()` function.
@@ -401,7 +395,6 @@ impl ImageSetOption {
                 loc: css::dependencies::Location::from_source_location(loc),
             })
         } else {
-            // For some reason, `Image.parse` made zls crash; the Zig used `@call(.auto, ...)`.
             Image::parse(input)?
         };
 
@@ -452,7 +445,7 @@ impl ImageSetOption {
                 let placeholder = unsafe { crate::arena_str(dep.placeholder) };
                 dest.serialize_string(placeholder)?;
                 if let Some(dependencies) = &mut dest.dependencies {
-                    // PERF(port): was `catch |err| bun.handleOom(err)` — Vec::push aborts on OOM by default
+                    // Vec::push aborts on OOM by default.
                     dependencies.push(css::Dependency::Url(dep));
                 }
             } else {
@@ -521,5 +514,3 @@ fn parse_file_type(input: &mut css::Parser) -> Result<*const [u8]> {
         i.expect_string().map(std::ptr::from_ref::<[u8]>)
     })
 }
-
-// ported from: src/css/values/image.zig

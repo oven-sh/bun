@@ -17,11 +17,7 @@ bun_core::declare_scope!(watcher, visible);
 
 pub(crate) type Platform = WindowsWatcher;
 
-#[allow(dead_code)]
-pub(crate) type EventListIndex = core::ffi::c_int;
-
 pub struct WindowsWatcher {
-    #[allow(dead_code)]
     pub mutex: Mutex,
     pub iocp: HANDLE,
     pub watcher: DirWatcher,
@@ -224,8 +220,8 @@ impl EventIterator {
 }
 
 impl WindowsWatcher {
-    // TODO(port): in-place init — `self` is the pre-allocated `platform` slot inside
-    // crate::Watcher (64KB+ buffers; avoid moving). Zig sig: `fn init(this, root) !void`.
+    // `self` is the pre-allocated `platform` slot inside crate::Watcher
+    // (64KB+ buffers; avoid moving).
     pub(crate) fn init(&mut self, root: &[u8]) -> Result<(), bun_core::Error> {
         use bun_paths::string_paths as paths;
         let mut pathbuf = WPathBuffer::uninit();
@@ -401,8 +397,6 @@ impl WindowsWatcher {
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum Timeout {
     Infinite = w::INFINITE,
-    #[allow(dead_code)]
-    Minimal = 1,
     None = 0,
 }
 

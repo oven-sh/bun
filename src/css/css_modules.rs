@@ -413,7 +413,6 @@ pub enum Segment {
 }
 
 /// A map of exported names to values.
-// TODO(port): std.StringArrayHashMapUnmanaged → bun_collections::ArrayHashMap; key is arena &[u8]
 pub type CssModuleExports<'a> = ArrayHashMap<&'a [u8], CssModuleExport<'a>>;
 
 /// A map of placeholders to references.

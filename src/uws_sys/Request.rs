@@ -1,6 +1,5 @@
 use core::ffi::c_ushort;
 
-// TODO(port): verify module path for H3 request opaque (h3.zig:19 — H3.Request = opaque{})
 use crate::h3::Request as H3Request;
 
 // PORT NOTE: `dateForHeader` (Request.zig:62) is NOT ported here. Parsing an

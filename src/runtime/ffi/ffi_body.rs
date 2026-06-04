@@ -201,7 +201,7 @@ impl Offsets {
 // shim materialises from `m_ctx`, which is the systemic R-2 guarantee.
 #[bun_jsc::JsClass(no_constructor)]
 pub struct FFI {
-    pub dylib: JsCell<Option<bun_sys::DynLib>>, // TODO(port): std.DynLib equivalent
+    pub dylib: JsCell<Option<bun_sys::DynLib>>,
     pub functions: JsCell<StringArrayHashMap<Function>>,
     pub closed: Cell<bool>,
     pub shared_state: Cell<Option<NonNull<TCC::State>>>,
@@ -386,7 +386,6 @@ mod stdarg {
     }
 
     pub(super) fn inject(state: &mut TCC::State) {
-        // TODO(port): TCC::State::add_symbols API — Zig used addSymbolsComptime over a struct literal
         state
             .add_symbols(&[
                 // printf family
@@ -2503,7 +2502,6 @@ impl Function {
             let ptr = context_ptr.map(|p| p as usize).unwrap_or(0);
             let fmt = bun_fmt::hex_int_upper::<16>(ptr as u64);
 
-            // TODO(port): std.fmt.bufPrint → write!-into-slice
             let written = if !self.arg_types.is_empty() {
                 let mut cursor = std::io::Cursor::new(&mut inner_buf_[1..]);
                 write!(
@@ -2568,11 +2566,7 @@ unsafe extern "C" {
 pub enum Step {
     Pending,
     Compiled(Compiled),
-    #[allow(dead_code)]
-    Failed {
-        msg: Box<[u8]>,
-        allocated: bool,
-    },
+    Failed { msg: Box<[u8]>, allocated: bool },
 }
 
 pub struct Compiled {
@@ -2581,7 +2575,6 @@ pub struct Compiled {
     pub js_function: JSValue,
     // Zig: `?*anyopaque` — opaque storage, never dereferenced. NonNull avoids
     // a &T → *mut T cast at the assignment site in compile_callback().
-    #[allow(dead_code)]
     pub js_context: Option<NonNull<JSGlobalObject>>,
     pub ffi_callback_function_wrapper: Option<NonNull<c_void>>,
 }
@@ -2702,9 +2695,7 @@ impl CompilerRT {
             }
         }
 
-        // TODO(port): @import("../../jsc/sizes.zig") → bun_jsc::sizes
         let offsets = Offsets::get();
-        // TODO(port): TCC::State::define_symbols_comptime API — Zig used struct literal with int values
         state.define_symbols(&[
             (
                 "Bun_FFI_PointerOffsetToArgumentsList",
@@ -2797,7 +2788,6 @@ struct MyFunctionSStructWorkAround {
     uint64_to_jsvalue: unsafe extern "C" fn(*mut JSGlobalObject, u64) -> JSValue,
 }
 
-// TODO(port): JSValue.exposed_to_ffi — these are static fn ptrs from headers
 static WORKAROUND: MyFunctionSStructWorkAround = MyFunctionSStructWorkAround {
     jsvalue_to_int64: exposed_to_ffi::JSVALUE_TO_INT64,
     jsvalue_to_uint64: exposed_to_ffi::JSVALUE_TO_UINT64,

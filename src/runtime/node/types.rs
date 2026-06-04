@@ -970,6 +970,15 @@ where
 // `PathLikeExt` / `PathOrFdExt` extension traits.
 pub use bun_jsc::node_path::{PathLike, PathOrFileDescriptor};
 
+/// Returned by [`PathLikeExt::slice_w`] / [`PathLikeExt::os_path`] /
+/// [`PathLikeExt::os_path_kernel32`] when the path's UTF-16 form would not
+/// fit a `WPathBuffer` (`strings::fits_in_wide_path_buffer`). NT caps paths
+/// at `PATH_MAX_WIDE` units, so such a path cannot exist on disk — callers
+/// map this to `false`/`ENAMETOOLONG` as appropriate instead of letting the
+/// conversion overflow (mirrors the Zig-side fix in oven-sh/bun#27775).
+#[derive(Debug, Clone, Copy)]
+pub struct NameTooLong;
+
 /// `bun_runtime`-tier behaviour layered on `bun_jsc::node_path::PathLike`.
 ///
 /// `to_thread_safe` / `into_thread_safe` / `slice` / `estimated_size` are
@@ -986,13 +995,16 @@ pub trait PathLikeExt {
     fn slice_z<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a ZStr
     where
         Self: Sized;
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> &'a WStr
+    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong>
     where
         Self: Sized;
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> &'a OSPathSliceZ
+    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
-    fn os_path_kernel32<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a OSPathSliceZ
+    fn os_path_kernel32<'a>(
+        &'a self,
+        buf: &'a mut PathBuffer,
+    ) -> Result<&'a OSPathSliceZ, NameTooLong>
     where
         Self: Sized;
     fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Option<PathLike>>
@@ -1054,7 +1066,16 @@ impl PathLikeExt for PathLike {
 
         #[cfg(windows)]
         {
-            if bun_paths::is_absolute(sliced) {
+            // Only take the fast path for paths that can exist on NT at
+            // all (≤ ~32757 UTF-16 units). That bounds the `\\?\`-prefixed
+            // copy below in bytes too (≤ 3×32757 + 5 < MAX_PATH_BYTES);
+            // the cwd-join branch of `resolve_cwd_with_external_buf_z`
+            // prepends the cwd's filesystem root — arbitrarily long for UNC
+            // cwds — and bounds-checks internally, surfacing NameTooLong.
+            // Anything over-long falls through to the plain copy at the
+            // bottom, which fits without the prefix (or takes the too-long
+            // fallback) and fails at the syscall.
+            if bun_paths::is_absolute(sliced) && strings::fits_in_wide_path_buffer(sliced) {
                 if sliced.len() > 2
                     && bun_paths::is_drive_letter(sliced[0])
                     && sliced[1] == b':'
@@ -1075,8 +1096,21 @@ impl PathLikeExt for PathLike {
                     // SAFETY: buf[4+n] == 0 written above.
                     return ZStr::from_buf(&buf[..], 4 + n);
                 }
-                return bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced)
-                    .unwrap_or_else(|_| panic!("Error while resolving path."));
+                // PORT NOTE: reshaped for borrowck — capture the length so
+                // the `Ok` borrow ends at the match, then re-derive.
+                let resolved_len = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced) {
+                    Ok(res) => Some(res.len()),
+                    // The cwd root + path don't fit `buf` (UNC cwds can push
+                    // a near-MAX_PATH_BYTES path over); fall through to the
+                    // plain copy / too-long handling below.
+                    Err(e) if e == bun_core::err!("NameTooLong") => None,
+                    Err(e) => panic!("Error while resolving path: {e:?}"),
+                };
+                if let Some(len) = resolved_len {
+                    // SAFETY: `resolve_cwd_with_external_buf_z` wrote the NUL
+                    // at `buf[len]`.
+                    return ZStr::from_buf(&buf[..], len);
+                }
             }
         }
 
@@ -1124,24 +1158,31 @@ impl PathLikeExt for PathLike {
     }
 
     #[inline]
-    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> &'a WStr {
-        strings::paths::to_w_path(buf, self.slice())
+    fn slice_w<'a>(&'a self, buf: &'a mut WPathBuffer) -> Result<&'a WStr, NameTooLong> {
+        let sliced = self.slice();
+        if !strings::fits_in_wide_path_buffer(sliced) {
+            return Err(NameTooLong);
+        }
+        Ok(strings::paths::to_w_path(buf, sliced))
     }
 
     #[inline]
-    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> &'a OSPathSliceZ {
+    fn os_path<'a>(&'a self, buf: &'a mut OSPathBuffer) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
         {
             return self.slice_w(buf);
         }
         #[cfg(not(windows))]
         {
-            self.slice_z_with_force_copy::<false>(buf)
+            Ok(self.slice_z_with_force_copy::<false>(buf))
         }
     }
 
     #[inline]
-    fn os_path_kernel32<'a>(&'a self, buf: &'a mut PathBuffer) -> &'a OSPathSliceZ {
+    fn os_path_kernel32<'a>(
+        &'a self,
+        buf: &'a mut PathBuffer,
+    ) -> Result<&'a OSPathSliceZ, NameTooLong> {
         #[cfg(windows)]
         {
             let s = self.slice();
@@ -1156,49 +1197,71 @@ impl PathLikeExt for PathLike {
                 && (s[2] == b'.' || s[2] == b'?')
                 && bun_paths::is_sep_any(s[3])
             {
+                if !strings::fits_in_wide_path_buffer(s) {
+                    return Err(NameTooLong);
+                }
                 // SAFETY: reinterpreting PathBuffer ([u8; N]) as [u16] — 2-byte
                 // alignment is runtime-asserted inside `bytes_as_slice_mut`
                 // (port of Zig `@alignCast`); see PathBuffer doc comment for
                 // why the buffer is always sufficiently aligned in practice.
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return strings::to_kernel32_path(buf_u16, s);
+                return Ok(strings::to_kernel32_path(buf_u16, s));
             }
             if !s.is_empty() && bun_paths::is_sep_any(s[0]) {
+                // Bail before the cwd resolution + normalization below write
+                // into fixed u8 buffers: UNC-shaped inputs pass through the
+                // resolver untouched and can reach `normalize_buf` at full
+                // MAX_PATH_BYTES length, whose root handling writes one past
+                // the input length.
+                if !strings::fits_in_wide_path_buffer(s) {
+                    return Err(NameTooLong);
+                }
                 // `buf` is the scratch for cwd-resolution; `b` is the pooled
                 // scratch for normalisation; final wide path lands back in `buf`.
-                let resolve =
-                    bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(
-                        buf, s,
-                    )
-                    .unwrap_or_else(|_| panic!("Error while resolving path."));
+                let resolve = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf(
+                    buf, s,
+                ) {
+                    Ok(r) => r,
+                    // The cwd root + path don't fit the resolution buffer
+                    // (UNC cwds can push a near-MAX_PATH_BYTES path over) —
+                    // such a path can't exist on NT.
+                    Err(e) if e == bun_core::err!("NameTooLong") => return Err(NameTooLong),
+                    Err(e) => panic!("Error while resolving path: {e:?}"),
+                };
                 let normal = bun_paths::resolve_path::normalize_buf::<bun_paths::platform::Windows>(
                     resolve,
                     &mut b[..],
                 );
+                if !strings::fits_in_wide_path_buffer(normal) {
+                    return Err(NameTooLong);
+                }
                 // `resolve`'s borrow of `buf` ended at the line above (NLL).
                 // SAFETY: same alignment note as above.
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return strings::to_kernel32_path(buf_u16, normal);
+                return Ok(strings::to_kernel32_path(buf_u16, normal));
             }
             // Handle "." specially since normalizeStringBuf strips it to an empty string
             if s.len() == 1 && s[0] == b'.' {
                 // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
                 let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-                return strings::to_kernel32_path(buf_u16, b".");
+                return Ok(strings::to_kernel32_path(buf_u16, b"."));
             }
             let normal = bun_paths::resolve_path::normalize_string_buf::<
                 true,
                 bun_paths::platform::Windows,
                 false,
             >(s, &mut b[..]);
+            if !strings::fits_in_wide_path_buffer(normal) {
+                return Err(NameTooLong);
+            }
             // SAFETY: see alignment note above (PathBuffer reinterpreted as [u16]).
             let buf_u16 = unsafe { bun_core::bytes_as_slice_mut::<u16>(&mut buf[..]) };
-            return strings::to_kernel32_path(buf_u16, normal);
+            return Ok(strings::to_kernel32_path(buf_u16, normal));
         }
 
         #[cfg(not(windows))]
         {
-            self.slice_z_with_force_copy::<false>(buf)
+            Ok(self.slice_z_with_force_copy::<false>(buf))
         }
     }
 
@@ -1599,7 +1662,6 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
             slice = &slice[2..];
         }
 
-        // TODO(port): std.fmt.parseInt over &[u8] — need byte-slice radix parser in bun_core
         match strings::parse_int::<Mode>(slice, 8) {
             Ok(v) => v as u32,
             Err(_) => {
@@ -1923,7 +1985,6 @@ pub struct Dirent {
     pub kind: DirentKind,
 }
 
-// TODO(port): Zig used `std.fs.File.Kind`. std::fs is banned; map to bun_sys::FileKind.
 pub type DirentKind = bun_sys::FileKind;
 
 // TODO(port): move to runtime_sys

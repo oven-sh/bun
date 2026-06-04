@@ -840,7 +840,6 @@ pub mod js_bundler {
                     }
 
                     if entry_points.len() == 1 {
-                        // TODO(port): std.fs.path.dirname → bun_paths::dirname
                         let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             &entry_points[0],
                         );
@@ -861,7 +860,6 @@ pub mod js_bundler {
                     );
                 };
 
-                // TODO(port): std.fs.cwd().openDir — banned std::fs; use bun_sys
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
                     Ok(d) => d,
                     Err(err) => {

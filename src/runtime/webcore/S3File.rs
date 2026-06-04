@@ -643,7 +643,6 @@ impl S3BlobStatTask {
         s3::stat(
             credentials,
             path,
-            // TODO(port): @ptrCast fn pointer — verify s3::stat callback signature matches
             S3BlobStatTask::on_s3_exists_resolved,
             this.cast::<core::ffi::c_void>(),
             env.get_http_proxy(true, None, None).map(|proxy| proxy.href),

@@ -303,7 +303,6 @@ struct InstallDirState {
 
 impl Default for InstallDirState {
     fn default() -> Self {
-        // TODO(port): Zig used `undefined` for most fields; we need a sentinel.
         Self {
             cached_package_dir: Dir::from_fd(Fd::INVALID),
             walker: None,
@@ -493,7 +492,6 @@ impl<TaskType> NewTaskQueue<TaskType> {
     }
 }
 
-// TODO(port): helper trait so `NewTaskQueue::push` can reach the intrusive `.task` field generically.
 pub trait HasWorkPoolTask {
     fn task(&mut self) -> &mut WorkPoolTask;
 }

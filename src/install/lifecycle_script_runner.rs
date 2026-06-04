@@ -363,7 +363,6 @@ use bun_sys::windows::libuv as uv;
 
 pub type OutputReader = BufferedReader;
 
-// TODO(port): `std.time.Timer` — replace with bun_core monotonic timer wrapper.
 pub(crate) type Timer = bun_core::time::Timer;
 
 impl<'a> LifecycleScriptSubprocess<'a> {
@@ -708,8 +707,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             ) {
                 Ok(Ok(s)) => s,
                 res => {
-                    // TODO(port): Zig was `try (try spawnProcess(...)).unwrap()` — outer
-                    // `!Maybe(Spawned)`. Modeled here as `Result<bun_sys::Result<Spawned>, _>`.
                     #[cfg(windows)]
                     {
                         // `spawn_process_windows` only `heap::take`s the `Stdio::Buffer`

@@ -541,7 +541,6 @@ impl<'a> Loader<'a> {
         Ok(true)
     }
 
-    // TODO(port): Zig `getAs(comptime T: type)` only implements `bool`; expose as concrete fn.
     pub fn get_as_bool(&self, key: &[u8]) -> Option<bool> {
         let value = self.get(key)?;
         if value == b"" {

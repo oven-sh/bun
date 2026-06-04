@@ -43,6 +43,69 @@ test.concurrent("RedisClient survives GC after a command throws during argument 
   expect(exitCode).toBe(0);
 });
 
+// Fuzzer found heap corruption (zapped cell during GC marking) when a custom
+// setter on a generated class was invoked with a receiver that is not an
+// instance of that class (e.g. through a Proxy wrapping the instance, or an
+// extracted setter function). The generated setter wrapper downcast the
+// receiver without a type check and wrote an internal field into whatever
+// object the receiver happened to be.
+test.concurrent("custom setter with a foreign receiver throws instead of corrupting the heap", async () => {
+  const src = `
+    const client = new Bun.RedisClient();
+
+    // Receiver is a Proxy wrapping the instance.
+    try {
+      const proxy = new Proxy(client, {});
+      proxy.onconnect = function () {};
+      throw new Error("expected TypeError");
+    } catch (e) {
+      if (!(e instanceof TypeError)) throw e;
+    }
+
+    // Receiver is a plain object with the instance on its prototype chain.
+    try {
+      Object.create(client).onconnect = function () {};
+      throw new Error("expected TypeError");
+    } catch (e) {
+      if (!(e instanceof TypeError)) throw e;
+    }
+
+    // Extracted setter function called with a foreign this value.
+    const desc = Object.getOwnPropertyDescriptor(Bun.RedisClient.prototype, "onconnect");
+    for (const thisValue of [{}, null, 42, new Proxy(client, {})]) {
+      try {
+        desc.set.call(thisValue, function () {});
+        throw new Error("expected TypeError");
+      } catch (e) {
+        if (!(e instanceof TypeError)) throw e;
+      }
+    }
+
+    // Setting on a real instance still works.
+    const fn = function () {};
+    client.onconnect = fn;
+    if (client.onconnect !== fn) throw new Error("expected onconnect to be set");
+
+    Bun.gc(true);
+    await 1;
+    Bun.gc(true);
+    console.log("OK");
+  `;
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", src],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+  expect(stdout.trim()).toBe("OK");
+  expect(proc.signalCode).toBeNull();
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("RedisClient survives GC across many short-lived instances", async () => {
   const src = `
     for (let i = 0; i < 1000; i++) {

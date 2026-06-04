@@ -105,7 +105,6 @@ pub(crate) fn version_to_js(
     Ok(object)
 }
 
-// TODO(port): proc-macro — `#[bun_jsc::host_fn]` ABI wrapper.
 pub fn tag_infer_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_core::String as BunString;
     use bun_install::dependency::{TagExt, version::Tag};
@@ -134,7 +133,6 @@ pub(crate) fn log_to_js(
     bun_ast_jsc::log_to_js(log, global, msg)
 }
 
-// TODO(port): proc-macro — `#[bun_jsc::host_fn]` ABI wrapper.
 pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
     use bun_ast::Log;
     use bun_install::dependency;

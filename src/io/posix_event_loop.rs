@@ -30,18 +30,17 @@ fn loop_sub_active(loop_: &mut Loop, value: u32) {
 
 bun_core::declare_scope!(KeepAlive, visible);
 
-// TODO(port): bun_sys::syslog — macro not exported from bun_sys yet.
-// Local no-op shim so debug log call sites compile. All call sites live in
-// `#[cfg(not(windows))] impl FilePoll`, so gate the definition to match.
 #[cfg(not(windows))]
-macro_rules! syslog {
-    ($($arg:tt)*) => {{ let _ = ::core::format_args!($($arg)*); }};
-}
+use bun_sys::syslog;
 
 /// Local port of `Maybe(T).errnoSys` (Zig: src/runtime/node.zig). `bun_sys`
 /// does not yet expose this helper on `Result<T>`; once it does, drop this and
 /// call `sys::Result::<()>::errno_sys` directly.
-#[cfg(not(windows))]
+///
+/// Decodes the -1-sentinel *return-code* convention (the thread-local errno is
+/// only read when `rc` is the all-ones failure value). Do NOT feed it a value
+/// that already is an errno — use [`kevent_change_error`] for those.
+#[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 #[inline]
 fn errno_sys<R>(rc: R, syscall: sys::Tag) -> Option<sys::Result<()>>
 where
@@ -51,6 +50,22 @@ where
         sys::E::SUCCESS => None,
         e => Some(sys::Result::Err(sys::Error::from_code(e, syscall))),
     }
+}
+
+/// Error for a kevent changelist entry that came back with `EV_ERROR` set:
+/// the kernel stores the errno *value* in `data`. That is not the -1-sentinel
+/// return-code convention `errno_sys` decodes — feeding `data` through it
+/// yields `None` for every real errno. `EV_DELETE` reports EBADF/ENOENT here
+/// when the knote is already gone (e.g. the fd was closed while the poll was
+/// still registered, which removes its kevents); the deinit path tolerates
+/// that race by discarding the returned error.
+#[cfg(any(target_os = "macos", all(test, not(windows))))]
+#[inline]
+fn kevent_change_error(data: i64) -> sys::Result<()> {
+    sys::Result::Err(sys::Error::from_code(
+        sys::SystemErrno::init(data).unwrap_or(sys::E::EINVAL),
+        sys::Tag::kevent,
+    ))
 }
 
 pub use crate::{EventLoopCtx, EventLoopCtxKind, EventLoopKind, OpaqueCallback};
@@ -561,8 +576,6 @@ impl FilePoll {
 
     #[inline]
     pub fn can_ref(&self) -> bool {
-        // TODO(port): Zig checks `.disable` flag, but no such variant exists in Flags enum —
-        // dead code in Zig? Preserving as no-op false check.
         !self.flags.contains(Flags::HasIncrementedPollCount)
     }
 
@@ -804,7 +817,7 @@ impl FilePoll {
             // with EV_ERROR set in flags and the system error in data. xnu ORs
             // EV_ERROR into the existing action bits, so test the bit.
             if (changelist[0].flags & EV::ERROR) != 0 && changelist[0].data != 0 {
-                return errno_sys(changelist[0].data, sys::Tag::kevent).unwrap();
+                return kevent_change_error(changelist[0].data);
                 // Otherwise, -1 will be returned, and errno will be set to
                 // indicate the error condition.
             }
@@ -1112,10 +1125,10 @@ impl FilePoll {
             // which change failed. xnu ORs EV_ERROR into the existing action
             // bits (EV_DELETE|EV_ERROR = 0x4002), so test the bit, not equality.
             if rc >= 1 && (changelist[0].flags & EV::ERROR) != 0 && changelist[0].data != 0 {
-                return errno_sys(changelist[0].data, sys::Tag::kevent).unwrap();
+                return kevent_change_error(changelist[0].data);
             }
             if rc >= 2 && (changelist[1].flags & EV::ERROR) != 0 && changelist[1].data != 0 {
-                return errno_sys(changelist[1].data, sys::Tag::kevent).unwrap();
+                return kevent_change_error(changelist[1].data);
             }
         }
         #[cfg(target_os = "freebsd")]
@@ -1237,7 +1250,6 @@ pub enum Flags {
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
-#[allow(dead_code)]
 pub type FlagsStruct = FlagsSet;
 
 impl Flags {
@@ -1407,7 +1419,6 @@ impl Store {
         self.pending_free_tail = poll;
 
         let callback: OpaqueCallback = Self::process_deferred_frees_thunk;
-        // TODO(port): Zig asserts the callback slot is empty or already this fn.
         debug_assert!(
             vm.after_event_loop_callback().is_none()
                 || vm.after_event_loop_callback().map(|f| f as usize) == Some(callback as usize)
@@ -1560,5 +1571,31 @@ pub use crate::closer::Closer;
 pub use crate::waker::KEventWaker;
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 pub use crate::waker::Waker;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// kevent `EV_ERROR` entries carry the errno value itself in `data`.
+    /// These used to be round-tripped through `errno_sys`, which decodes the
+    /// -1-sentinel return-code convention and therefore returned `None` for
+    /// every real errno — panicking at the `.unwrap()` call sites whenever an
+    /// `EV_DELETE` failed (e.g. EBADF/ENOENT from a pipe fd closed while its
+    /// `FilePoll` was still registered).
+    #[cfg(not(windows))]
+    #[test]
+    fn kevent_change_error_decodes_errno_value_not_return_code() {
+        let err = kevent_change_error(sys::E::EBADF as i64).unwrap_err();
+        assert_eq!(err.get_errno(), sys::E::EBADF);
+        assert_eq!(err.syscall, sys::Tag::kevent);
+
+        let err = kevent_change_error(sys::E::ENOENT as i64).unwrap_err();
+        assert_eq!(err.get_errno(), sys::E::ENOENT);
+
+        // Out-of-range data must not panic either.
+        let err = kevent_change_error(i64::MAX).unwrap_err();
+        assert_eq!(err.get_errno(), sys::E::EINVAL);
+    }
+}
 
 // ported from: src/aio/posix_event_loop.zig

@@ -43,7 +43,6 @@ pub struct INotifyWatcher {
     pub loaded: bool,
 
     // Avoid statically allocating because it increases the binary size.
-    // TODO(port): lifetime — owned heap allocation; Box matches `default_allocator.alignedAlloc` in init()
     pub eventlist_bytes: Box<EventListBytes>,
     /// pointers into the next chunk of events
     // BACKREF: raw pointers into `eventlist_bytes`; self-referential, never freed individually.
@@ -183,13 +182,6 @@ impl INotifyWatcher {
             Futex::wake(&self.watch_count, 10);
         }
         result
-    }
-
-    #[allow(dead_code)]
-    pub(crate) fn unwatch(&mut self, wd: EventListIndex) {
-        debug_assert!(self.loaded);
-        let _ = self.watch_count.fetch_sub(1, Ordering::Release);
-        let _ = bun_sys::linux::inotify_rm_watch(self.fd.native(), wd);
     }
 
     // PORT NOTE: kept as in-place &mut self init (not `-> Result<Self, _>`) because

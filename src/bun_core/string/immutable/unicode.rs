@@ -944,20 +944,16 @@ use crate::strings::u16_get_supplementary;
 pub use crate::strings::{u16_is_lead, u16_is_trail};
 
 pub fn convert_utf8_to_utf16_in_buffer_z<'a>(buf: &'a mut [u16], input: &[u8]) -> &'a WStr {
-    // TODO: see convert_utf8_to_utf16_in_buffer
-    if input.is_empty() {
-        buf[0] = 0;
-        return wstr_in_buf(buf, 0);
-    }
-    assert!(
-        input.len() < buf.len() || element_length_utf8_into_utf16(input) < buf.len(),
-        "convert_utf8_to_utf16_in_buffer_z: buf too small (have {} u16 for {} input bytes)",
-        buf.len(),
-        input.len(),
-    );
-    let result = simdutf::convert::utf8::to::utf16::le(input, buf);
-    buf[result] = 0;
-    wstr_in_buf(buf, result)
+    // Checked conversion (see `try_convert_utf8_to_utf16_in_buffer`): the
+    // NUL reserves one slot, and over-long input fails safe to "" — which
+    // the consuming syscall rejects — instead of letting simdutf (which
+    // never bounds-checks its output) write past `buf`.
+    let cap = buf.len().saturating_sub(1);
+    let len = crate::string::immutable::try_convert_utf8_to_utf16_in_buffer(&mut buf[..cap], input)
+        .map(|converted| converted.len())
+        .unwrap_or(0);
+    buf[len] = 0;
+    wstr_in_buf(buf, len)
 }
 
 #[rustfmt::skip]

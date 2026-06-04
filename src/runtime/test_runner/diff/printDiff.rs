@@ -273,9 +273,6 @@ mod base_styles {
     };
 }
 
-// TODO(port): Zig selects this namespace via `switch (mode)` at comptime. Since MODE is const
-// Mode::BgDiffOnly, only that arm is materialized here. The .bg_always and .fg_diff arms differ
-// only in inserted_equal/removed_equal; .fg omits inserted_diff/removed_diff entirely.
 mod styles {
     use super::{Style, base_styles};
     pub(super) const INSERTED_LINE: Style = base_styles::RED_FG_INSERTED;

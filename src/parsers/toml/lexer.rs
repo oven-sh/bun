@@ -62,8 +62,6 @@ pub struct Lexer<'a> {
     pub bump: &'a Arena,
 
     pub code_point: CodePoint,
-    // TODO(port): lifetime — borrows from `source.contents` (and arena for decoded strings);
-    // may be self-referential depending on how bun_ast::Source owns `contents` in Rust.
     pub identifier: &'a [u8],
     pub number: f64,
     pub prev_error_loc: bun_ast::Loc,

@@ -132,7 +132,6 @@ impl Drop for MutexGuard {
 
 // Zig: `pub const deinit = void;` — no-op; Drop is implicit and there is nothing to free.
 
-// TODO(port): Zig also gates on `!builtin.single_threaded`; Rust has no direct equivalent.
 #[cfg(debug_assertions)]
 type Impl = DebugImpl;
 #[cfg(not(debug_assertions))]
@@ -144,13 +143,6 @@ pub type ReleaseImpl = WindowsImpl;
 pub type ReleaseImpl = DarwinImpl;
 #[cfg(not(any(windows, target_vendor = "apple")))]
 pub type ReleaseImpl = FutexImpl;
-
-#[cfg(windows)]
-#[allow(dead_code)]
-pub(crate) type ExternImpl = bun_sys::windows::SRWLOCK;
-#[cfg(not(any(windows, target_vendor = "apple")))]
-#[allow(dead_code)]
-pub(crate) type ExternImpl = u32;
 
 #[cfg(debug_assertions)]
 type ThreadId = u64;
@@ -407,10 +399,6 @@ impl FutexImpl {
         }
     }
 }
-
-// PORT NOTE: Zig had `pub const Type` inside each impl as an associated alias.
-// Inherent associated types are unstable in Rust; the per-platform alias is
-// already exposed as the module-level `ExternImpl` type above.
 
 // These have to be a size known to C.
 #[unsafe(no_mangle)]

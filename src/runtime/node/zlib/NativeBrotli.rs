@@ -70,7 +70,6 @@ mod _impl {
     // In Rust the handle type is `bun_ptr::IntrusiveRc<NativeBrotli>`; the
     // `ref_count` field below is read/written by that wrapper, and `deinit` is the
     // drop body invoked when the count reaches zero.
-    // TODO(port): wire `ref`/`deref` via `bun_ptr::IntrusiveRc` impl.
 
     // `.classes.ts`-backed: the C++ JSCell wrapper (JSNativeBrotli) is generated;
     // this struct is the `m_ctx` payload. Codegen provides toJS/fromJS/fromJSDirect.
@@ -99,7 +98,6 @@ mod _impl {
     // write / runFromJSThread / writeSync / reset / close / setOnError /
     // getOnError / finalize / emitError. In Rust these are generic associated
     // fns on `CompressionStream::<NativeBrotli>` (see node_zlib_binding.rs).
-    // TODO(port): expose via inherent-looking methods so .classes.ts codegen can resolve them.
 
     impl NativeBrotli {
         // PORT NOTE: no `#[bun_jsc::host_fn]` — the free-fn shim it emits calls

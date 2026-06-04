@@ -768,7 +768,7 @@ impl FetchTasklet {
         // JS thread with no HTTP-side writer left: `get_mut` (re-borrowed per
         // statement) proves exclusive access without taking the lock.
         if let Some(certificate) = self.shared.get_mut().result.certificate_info.take() {
-            drop(certificate); // TODO(port): CertificateInfo::deinit(allocator) -> Drop
+            drop(certificate);
         }
 
         // PORT NOTE: Zig `entries.deinit()` + `buf.deinit()`; Rust drop on
@@ -780,7 +780,7 @@ impl FetchTasklet {
         }
 
         if let Some(metadata) = self.shared.get_mut().metadata.take() {
-            drop(metadata); // TODO(port): HTTPResponseMetadata::deinit(allocator) -> Drop
+            drop(metadata);
         }
 
         self.response_buffer = MutableString::default();
@@ -1954,7 +1954,7 @@ impl FetchTasklet {
             js: JsState {
                 global_this: GlobalRef::from(global_this),
                 sink: None,
-                request_body: fetch_options.body, // TODO(port): move semantics; FetchOptions consumed
+                request_body: fetch_options.body,
                 response: jsc::Weak::default(),
                 native_response: None,
                 readable_stream_ref: ReadableStreamStrong::default(),

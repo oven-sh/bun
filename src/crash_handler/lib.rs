@@ -402,7 +402,7 @@ pub mod debug {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Byte-writer trait — D101: deduped to canonical `bun_io::Write`.
-// The local stub (TODO(port)) predated `bun_io` compiling; it carried a
+// The local stub predated `bun_io` compiling; it carried a
 // `core::fmt::Write` supertrait so `write!(…)` returned `fmt::Result`. The
 // canonical trait instead provides its own `write_fmt` returning
 // `Result<(), bun_core::Error>`, so `write!` on `impl Write` now yields the
@@ -1024,7 +1024,6 @@ mod draft {
                         } else {
                             #[cfg(windows)]
                             {
-                                // TODO(port): bun_sys::windows::GetThreadDescription / PWSTR / HRESULT_CODE
                                 {
                                     let mut name: bun_sys::windows::PWSTR = core::ptr::null_mut();
                                     // SAFETY: GetCurrentThread/GetThreadDescription are valid Win32 calls
@@ -1574,7 +1573,6 @@ mod draft {
         "x64"
     };
 
-    // TODO(port): std.fmt.comptimePrint — use const_format::formatcp!
     const METADATA_VERSION_LINE: &str = const_format::formatcp!(
         "Bun {}v{} {} {}{}\n",
         if cfg!(debug_assertions) {
@@ -2171,7 +2169,6 @@ mod draft {
                 }
                 #[cfg(windows)]
                 {
-                    // TODO(port): std.zig.system.windows.detectRuntimeVersion()
                     write!(
                         writer,
                         "Windows v{}\n",
@@ -2212,7 +2209,6 @@ mod draft {
             }
         }
 
-        // TODO(port): bun_analytics::Features::formatter
         {
             write!(writer, "\n{}", bun_analytics::features::formatter()).map_err(fmt_err)?;
         }
@@ -2309,7 +2305,6 @@ mod draft {
     struct Platform;
 
     impl Platform {
-        // TODO(port): Zig builds this via @tagName(os) ++ "_" ++ @tagName(arch) ++ baseline.
         // Rust cannot concat ident names at const time without a proc-macro; spell out the cfg matrix.
         const CURRENT: u8 = {
             // Android folds into the Linux variants — Zig's `@tagName(Environment.os)`
@@ -2785,8 +2780,6 @@ mod draft {
         }
         #[cfg(windows)]
         {
-            // TODO(port): bun_sys::windows::PROCESS_INFORMATION / STARTUPINFOW / CreateProcessW
-            // TODO(port): bun_core::w! / strings::convert_utf8_to_utf16_in_buffer
             use bun_sys::windows;
             let mut process: windows::PROCESS_INFORMATION = bun_core::ffi::zeroed();
             let mut startup_info = windows::STARTUPINFOW {
@@ -3337,9 +3330,6 @@ mod draft {
     // `@returnAddress()` intrinsic, apply that improvement in bun_core's
     // `StoredTrace::capture()` instead — this crate no longer owns the type.
     pub use bun_core::StoredTrace;
-
-    // TODO(port): move to *_jsc — `pub const js_bindings = @import("../runtime/api/crash_handler_jsc.zig").js_bindings;`
-    // Per PORTING.md this *_jsc alias is deleted; the bindings live as an extension trait in bun_runtime.
 
     /// For large codebases such as bun.bake.DevServer, it may be helpful
     /// to dump a large amount of state to a file to aid debugging a crash.

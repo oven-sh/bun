@@ -193,7 +193,6 @@ pub fn enqueue_tarball_for_download(
     }
 
     task_queue.value_ptr.push(task_context);
-    // TODO(port): narrow error set
 
     if task_queue.found_existing {
         return Ok(());
@@ -375,7 +374,6 @@ pub unsafe fn enqueue_parse_npm_package(
                 ),
             },
             id: task_id,
-            // TODO(port): `data: undefined` — Task::data left uninitialized in Zig
             ..Task::uninit()
         }
     };
@@ -1686,7 +1684,6 @@ fn init_extract_task(
                 }),
             },
             id: (*network_task).task_id,
-            // TODO(port): `data: undefined`
             ..Task::uninit()
         }
     };
@@ -1795,7 +1792,6 @@ fn enqueue_git_clone(
         } else {
             None
         },
-        // TODO(port): `data: undefined`
         ..Task::uninit()
     };
     let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
@@ -1881,7 +1877,6 @@ pub fn enqueue_git_checkout(
                 None
             },
             id: task_id,
-            // TODO(port): `data: undefined`
             ..Task::uninit()
         }
     };
@@ -1977,7 +1972,6 @@ fn enqueue_local_tarball(
             }),
         },
         id: task_id,
-        // TODO(port): `data: undefined`
         ..Task::uninit()
     };
     let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();

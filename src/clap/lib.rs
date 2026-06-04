@@ -367,9 +367,6 @@ impl Diagnostic {
         };
 
         let name = bstr::BStr::new(name);
-        // TODO(port): bun_core::err! — `from_name` is a tier-0 stub returning a
-        // sentinel, so these equality checks all collapse. Restore once the interning
-        // table lands; meanwhile the `else` arm covers all cases.
         if err == bun_core::err!("DoesntTakeValue") {
             bun_core::pretty_errorln!(
                 "<red>error<r><d>:<r> The argument '{}' does not take a value.",
@@ -597,8 +594,6 @@ where
     let max_spacing: usize = 'blk: {
         let mut res: usize = 0;
         for param in params {
-            // TODO(port): std.io.countingWriter(io.null_writer) — using a local
-            // CountingWriter that discards output and counts bytes.
             let mut cs = CountingWriter::null();
             print_param(&mut cs, param, context, value_text)?;
             if res < cs.count {
@@ -616,7 +611,6 @@ where
         let ht = help_text(context, param).map_err(Into::into)?;
         // only print flag if description is defined
         if !ht.is_empty() {
-            // TODO(port): std.io.countingWriter(stream) — wrapping `stream`
             let mut cs = CountingWriter::wrap(stream);
             write!(cs.inner(), "\t")?;
             print_param(&mut cs, param, context, value_text)?;
@@ -908,7 +902,6 @@ where
     E: Into<bun_core::Error>,
 {
     // TODO(port): narrow error set
-    // TODO(port): std.io.countingWriter(stream)
     let mut cos = CountingWriter::wrap(stream);
     for param in params {
         let Some(name) = param.names.short else {

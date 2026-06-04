@@ -501,7 +501,6 @@ impl Drop for S3HttpSimpleTask {
         // - http.clearData()
         // Owned-field frees from the Zig deinit (response_buffer, headers, sign_result, range,
         // proxy_url, result.certificate_info, result.metadata) are handled by their own Drop impls.
-        // TODO(port): verify HTTPClientResult's Drop frees certificate_info/metadata.
         // PORT NOTE: KeepAlive::unref takes an aio EventLoopCtx; the JS-loop ctx is fetched via
         // the global hook (registered by crate::init) — same pattern as
         // `event_loop_handle_to_ctx` in process.rs.

@@ -45,8 +45,6 @@ impl PrepareOK {
     }
 }
 
-// TODO(port): lifetime — Execute is a transient builder borrowing params/param_types
-// from the caller for one write() call (BORROW_PARAM, matches Query::Execute<'a>).
 pub struct Execute<'a> {
     /// ID of the prepared statement to execute, returned from COM_STMT_PREPARE
     pub statement_id: u32,

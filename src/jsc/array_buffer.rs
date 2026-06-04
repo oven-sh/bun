@@ -899,15 +899,10 @@ impl TypedArrayType {
 #[derive(Default)]
 pub struct MarkedArrayBuffer {
     pub buffer: ArrayBuffer,
-    // TODO(port): Zig stores `?std.mem.Allocator` to track ownership of the byte buffer.
-    // In Rust the global allocator is implicit; we keep a bool flag so `destroy` knows
-    // whether to mi_free the backing storage.
     pub owns_buffer: bool,
     pub pinned: bool,
 }
 
-// TODO(port): Zig `ArrayBuffer.Stream = std.io.FixedBufferStream([]u8)`.
-// `std::io::Cursor<&mut [u8]>` is the closest in-memory equivalent.
 // Hoisted to module scope (inherent associated type aliases are unstable).
 pub(crate) type ArrayBufferStream<'a> = std::io::Cursor<&'a mut [u8]>;
 

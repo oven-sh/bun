@@ -131,8 +131,6 @@ impl Editor {
     pub fn by_fallback_path_for_editor(editor: Editor, out: Option<&mut &'static [u8]>) -> bool {
         if let Some(paths) = bin_path(editor) {
             for path in paths {
-                // TODO(port): replace std.fs.cwd().openFile with bun_sys equivalent
-                // (bun_sys::File::open / bun_sys::access). Zig used std.fs directly here.
                 match bun_sys::File::open_at(bun_sys::Fd::cwd(), path, bun_sys::O::RDONLY, 0) {
                     bun_sys::Result::Ok(opened) => {
                         let _ = opened.close(); // close error is non-actionable (Zig parity: discarded)
@@ -165,7 +163,6 @@ impl Editor {
 
             // PORT NOTE: reshaped for borrowck — by_fallback_path_for_editor writes a
             // 'static slice; we widen `out` to accept it via a temporary.
-            // TODO(port): lifetime — `out` may need to be `&mut &[u8]` with caller-chosen lifetime.
             let mut static_out: &'static [u8] = b"";
             if Self::by_fallback_path_for_editor(editor, Some(&mut static_out)) {
                 *out = static_out;
@@ -293,11 +290,6 @@ impl Editor {
         }
 
         spawned.argc = i;
-        // TODO(port): std.process.Child is banned (PORTING.md: no std::process).
-        // Zig stored `std.process.Child.init(args_buf[0..i], default_allocator)` here and
-        // spawned a detached std.Thread to run it. TODO(port): replace with
-        // crate::process::spawn (async) or a bun_threading worker that owns
-        // SpawnedEditorContext and calls bun.spawnSync.
         let spawned_ptr = bun_core::heap::into_raw(spawned);
         // PORT NOTE: Zig used `std.Thread.spawn(.{}, autoClose, .{spawned})` then `.detach()`.
         // bun_threading has no detached-spawn helper; std::thread::spawn matches semantics
@@ -350,8 +342,6 @@ pub(super) static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option
     });
 
 // PORT NOTE: was `pub const bin_path: std.EnumMap(Editor, []const [:0]const u8)`.
-// TODO(port): EnumMap — kept as match-fn because entries are `#[cfg(target_os)]`-gated
-// and `enum_map!{}` cannot host per-arm `#[cfg]` attrs cleanly.
 pub(super) fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
     #[cfg(target_os = "macos")]
     {
@@ -402,7 +392,6 @@ pub(super) struct SpawnedEditorContext {
     pub file_path_buf: [u8; 1024 + MAX_PATH_BYTES],
     pub buf: [(*const u8, usize); 10],
     pub argc: usize,
-    // TODO(port): was `std.process.Child` — replace with a bun spawn handle.
 }
 
 impl Default for SpawnedEditorContext {
@@ -431,8 +420,6 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
         argv[j] = unsafe { bun_core::ffi::slice(p, l) };
     }
 
-    // TODO(port): Zig called `child_process.spawn()` then `.wait()` via std.process.Child.
-    // Mapped to sync::spawn (bun.spawnSync) per src/CLAUDE.md guidance.
     // FIXME(windows-leak): Zig's autoClose (open.zig:329-335) used std.process.Child
     // directly (CreateProcessW) and never created a uv loop. The sync::spawn substitution
     // requires a `WindowsOptions.loop_`; `MiniEventLoop::init_global` heap-allocates a
@@ -524,7 +511,6 @@ impl EditorContext {
             basename = &basename_buf[0..basename.len() + 3];
         }
 
-        // TODO(port): Zig used std.fs.Dir.writeFile / openFile. Map to bun_sys::File.
         // `write_file` wants a `&ZStr`; NUL-terminate `basename` into a path buffer.
         let mut basename_zbuf = PathBuffer::uninit();
         let basename_z = bun_paths::resolve_path::z(basename, &mut basename_zbuf);

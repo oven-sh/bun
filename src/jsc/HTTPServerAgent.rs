@@ -6,7 +6,6 @@ use bun_core::String as BunString;
 
 pub struct HTTPServerAgent {
     /// Underlying C++ agent. Set to null when not enabled.
-    // TODO(port): lifetime — FFI-owned C++ opaque; raw ptr is correct here
     pub agent: Option<NonNull<InspectorHTTPServerAgent>>,
 
     /// This becomes the "server ID" field.

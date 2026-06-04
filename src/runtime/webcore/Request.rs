@@ -35,8 +35,6 @@ use bun_ptr::weak_ptr::WeakPtrData;
 use bun_uws as uws;
 use core::mem::ManuallyDrop;
 
-// TODO(port): WeakRef = bun.ptr.WeakPtr(Request, "weak_ptr_data") — intrusive weak-ptr;
-// keep raw *mut Request + embedded WeakPtrData. See PORTING.md §Pointers.
 impl bun_ptr::weak_ptr::HasWeakPtrData for Request {
     unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
@@ -1550,7 +1548,6 @@ impl Request {
         let this_value = callframe.this();
         let cloned = self.clone(global_this)?;
 
-        // TODO(port): cloned is Box<Request>; to_js consumes via heap::alloc inside codegen.
         let cloned_ptr = bun_core::heap::into_raw(cloned);
         // SAFETY: cloned_ptr was just created via heap::alloc above; toJS adopts ownership.
         let js_wrapper = unsafe { (*cloned_ptr).to_js(global_this) };

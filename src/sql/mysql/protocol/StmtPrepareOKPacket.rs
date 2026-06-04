@@ -7,7 +7,6 @@ pub struct StmtPrepareOKPacket {
     pub num_columns: u16,
     pub num_params: u16,
     pub warning_count: u16,
-    // TODO(port): Zig type is u24; Rust has no native u24. Value is bounded to 24 bits.
     pub packet_length: u32,
 }
 

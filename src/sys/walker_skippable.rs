@@ -11,8 +11,6 @@ fn hash_with_seed(seed: u64, bytes: &[u8]) -> u64 {
     Wyhash11::hash(seed, bytes)
 }
 
-// TODO(port): `DirIterator.NewWrappedIterator(if (Environment.isWindows) .u16 else .u8)` —
-// `dir_iterator::WrappedIterator` is parameterized on the native OS path char in Zig.
 type WrappedIterator = dir_iterator::WrappedIterator;
 
 type NameBufferList = Vec<OSPathChar>;
@@ -70,7 +68,6 @@ impl Walker {
                             && self.resolve_unknown_entry_types
                         {
                             let dir_fd = self.stack[top_idx].iter.dir();
-                            // TODO(port): `base.name.sliceAssumeZ()` — assumed `.as_zstr()`
                             match sys::lstatat(dir_fd, base.name.as_zstr()) {
                                 Ok(stat_buf) => sys::kind_from_mode(stat_buf.st_mode as sys::Mode),
                                 Err(_) => continue, // skip entries we can't stat
@@ -153,8 +150,6 @@ impl Walker {
                             )?;
                             {
                                 self.stack.push(StackItem {
-                                    // TODO(port): Zig passed encoding `if windows .u16 else .u8`;
-                                    // assumed native-encoding overload.
                                     iter: dir_iterator::iterate(new_dir),
                                     dirname_len: cur_len,
                                 });
@@ -231,7 +226,6 @@ pub fn walk(
     }
 
     stack.push(StackItem {
-        // TODO(port): Zig passed encoding `if windows .u16 else .u8`; assumed native-encoding overload.
         iter: dir_iterator::iterate(self_),
         dirname_len: 0,
     });

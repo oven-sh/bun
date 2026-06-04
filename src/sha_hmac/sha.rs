@@ -353,9 +353,4 @@ pub mod hashers {
     );
 }
 
-// TODO(port): `boring`, `zig`, `evp` below were Zig `[_]type{...}` comptime type
-// lists (with `void` sentinels) used for ad-hoc benchmarking against Zig's
-// `std.crypto.hash`. Rust has no type-list value equivalent and no `std.crypto`
-// counterpart; they are private and unreferenced in the Zig source.
-
 // ported from: src/sha_hmac/sha.zig

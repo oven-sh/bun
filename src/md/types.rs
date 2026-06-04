@@ -522,9 +522,6 @@ pub const CODESPAN_MARK_MAXLEN: u32 = 255;
 pub const TABLE_MAXCOLCOUNT: u32 = 128;
 
 /// Reference definition used for link resolution.
-// TODO(port): `label_needs_free`/`title_needs_free` indicate sometimes-owned
-// data (normalized label vs. source slice). Consider `Cow<'a, [u8]>` and drop
-// the bool flags.
 pub struct RefDef<'a> {
     pub label: &'a [u8],
     pub title: Attribute<'a>,

@@ -159,9 +159,6 @@ pub type NewWriter<C> = NewWriterWrap<C>;
 /// that auto-wraps a raw context into `NewWriterWrap` before forwarding to
 /// `writeFn`. In Rust this is a free helper that the per-packet `write` impls
 /// call directly.
-// TODO(port): Zig used @hasDecl to detect already-wrapped contexts at the call
-// site. Rust callers should pass `impl WriterContext` and let this helper wrap
-// unconditionally; already-wrapped values go straight to `write_fn`.
 #[inline]
 pub fn write_wrap<Container, C, F>(
     this: &mut Container,

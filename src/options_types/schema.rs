@@ -62,8 +62,8 @@ pub mod api {
     pub use bun_dotenv::DotEnvBehavior;
 
     /// schema.zig:711 — `enum(u8)` (open). Kept closed.
-    /// Variants PascalCased to match the only downstream writers
-    /// (`jsc/config.rs`, `runtime/cli/Arguments.rs` → `api::ResolveMode::Lazy`).
+    /// Variants PascalCased to match the only downstream writer
+    /// (`runtime/cli/Arguments.rs` → `api::ResolveMode::Lazy`).
     #[repr(u8)]
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
     pub enum ResolveMode {
@@ -125,8 +125,7 @@ pub mod api {
     ///   `?[]const u8`         → `Option<Box<[u8]>>`
     ///   `[]const []const u8`  → `Vec<Box<[u8]>>`
     ///   `?[:0]const u8`       → `Option<Box<[u8]>>`   (sentinel re-derived
-    ///                            at use-site; see Context.rs `// TODO(port):
-    ///                            owned ZStr repr` precedent)
+    ///                            at use-site)
     ///
     /// `Default` ⇔ `std.mem.zeroes(TransformOptions)` — every Option `None`,
     /// every slice empty, every scalar `0`/`false`.

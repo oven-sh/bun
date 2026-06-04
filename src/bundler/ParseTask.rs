@@ -544,7 +544,6 @@ pub mod parse_worker {
         // extra match matters (it shouldn't — called once).
 
         let parse_task = ParseTask {
-            // TODO(port): Zig used `undefined` for ctx; using None.
             ctx: None,
             path: Fs::Path::init_with_namespace(b"runtime", b"bun:runtime"),
             side_effects: bun_ast::SideEffects::NoSideEffectsPureData,

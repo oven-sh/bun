@@ -303,9 +303,12 @@ function installExitTracing(): void {
     installEnvTracing();
   }
 
-  // CLI-driven tracing is main-thread only for now; worker trace aggregation
-  // (shared file, per-worker tid) lands in a later phase.
-  if (catString !== null && Bun.isMainThread) {
+  // CLI-driven tracing runs in worker VMs too (workers inherit the parent's
+  // execArgv): each worker buffers its own events and flushes them to a
+  // `<file>.<tid>.part` file at worker exit; the main thread merges parts.
+  // (`require('node:trace_events')` still throws in workers — only the
+  // module API is main-thread-only, not CLI-driven tracing.)
+  if (catString !== null) {
     require("internal/trace_events").initFromCli(catString, filePattern);
   }
 }

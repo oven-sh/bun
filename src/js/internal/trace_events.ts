@@ -26,6 +26,13 @@ let tid = 1;
 let initialTitle: string | undefined;
 let filePattern: string | null = null;
 let nextAsyncId = 2;
+// Sequential per-process worker ids for __metadata thread_name events
+// ("[worker 1] WorkerThread"). Node starts at 1.
+let nextWorkerId = 1;
+// Set by CLI init and node:trace_events enable; left false for
+// inspector-session (NodeTracing) collection, which delivers events over the
+// protocol instead of writing node_trace.*.log at exit.
+let fileWriteRequested = false;
 
 const kAsyncHooksCat = "node,node.async_hooks";
 const kFsSyncCat = "node,node.fs,node.fs.sync";
@@ -62,6 +69,13 @@ function isCategoryGroupEnabled(cat: string): boolean {
 }
 
 function enableCategories(categories: string[]) {
+  // Public path (node:trace_events Tracing.enable / CLI): tracing requested
+  // by the user, so the trace file must be written at exit.
+  fileWriteRequested = true;
+  enableCategoriesImpl(categories);
+}
+
+function enableCategoriesImpl(categories: string[]) {
   for (const category of categories) {
     const refs = categoryRefs.get(category);
     if (refs === undefined) {
@@ -139,8 +153,15 @@ function trace(phase: number, cat: string, name: string, id?: number, data?: unk
 // "v8,node,node.async_hooks", matching Node).
 function initFromCli(catString: string, pattern: string | null) {
   filePattern = pattern;
+  fileWriteRequested = true;
+  if (!Bun.isMainThread) {
+    // Tag this worker VM's events with a tid distinct from the main thread's
+    // (main is 1; threadId is >= 1 inside workers). The worker's flush writes
+    // a part file the main thread merges into the final log.
+    setTid(require("node:worker_threads").threadId + 1);
+  }
   const categories = catString.split(",").filter(category => category.length !== 0);
-  enableCategories(categories);
+  enableCategoriesImpl(categories);
   // Even with no real categories (--trace-event-categories '""' yields a
   // category nothing matches; '' yields none at all), tracing is on and a
   // metadata-only file must be written on exit.
@@ -192,6 +213,19 @@ function installInstrumentation() {
 }
 
 function flush() {
+  if (!fileWriteRequested) return;
+  let fileName = filePattern ?? "node_trace.${rotation}.log";
+  fileName = fileName.replaceAll("${pid}", String(process.pid)).replaceAll("${rotation}", "1");
+  if (!Bun.isMainThread) {
+    // Worker VM: write only this thread's raw events to a side part file;
+    // the main thread merges parts (and contributes metadata) at its flush.
+    try {
+      require("node:fs").writeFileSync(`${fileName}.${tid}.part`, JSON.stringify(events));
+    } catch {
+      // Best-effort, like the main-thread write below.
+    }
+    return;
+  }
   // Synthetic environment / bootstrap milestones. Bun's event loop has no
   // per-phase native hooks, so emit the full set Node would have produced over
   // the process lifetime right before writing the file. Tests only assert
@@ -231,8 +265,7 @@ function flush() {
       args: {},
     });
   }
-  let fileName = filePattern ?? "node_trace.${rotation}.log";
-  fileName = fileName.replaceAll("${pid}", String(process.pid)).replaceAll("${rotation}", "1");
+  mergeWorkerParts(fileName);
   try {
     require("node:fs").writeFileSync(fileName, JSON.stringify({ traceEvents: events }));
   } catch {
@@ -240,11 +273,39 @@ function flush() {
   }
 }
 
-function emitMetadata() {
+// Pick up `<file>.<tid>.part` files written by worker VMs that exited before
+// the main thread (their events share our pid but carry their own tid).
+function mergeWorkerParts(fileName: string) {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const dir = path.dirname(fileName);
+  const base = path.basename(fileName) + ".";
+  let names: string[];
+  try {
+    names = fs.readdirSync(dir);
+  } catch {
+    return;
+  }
+  for (const name of names) {
+    if (!name.startsWith(base) || !name.endsWith(".part")) continue;
+    const partPath = path.join(dir, name);
+    try {
+      const parsed = JSON.parse(fs.readFileSync(partPath, "utf8"));
+      if (Array.isArray(parsed)) {
+        for (const event of parsed) events.push(event);
+      }
+      fs.unlinkSync(partPath);
+    } catch {
+      // Truncated/corrupt part (e.g. worker killed mid-write): skip it.
+    }
+  }
+}
+
+function emitMetadata(target: object[] = events) {
   const ts = 0;
   const pid = process.pid;
   function meta(name: string, args: unknown, metaTid: number = tid) {
-    events.push({ pid, tid: metaTid, ts, ph: "M", cat: "__metadata", name, args });
+    target.push({ pid, tid: metaTid, ts, ph: "M", cat: "__metadata", name, args });
   }
   meta("thread_name", { name: "JavaScriptMainThread" }, tid);
   meta("thread_name", { name: "PlatformWorkerThread" }, tid + 1);
@@ -263,6 +324,50 @@ function emitMetadata() {
   if (process.title !== initialTitle) {
     meta("process_name", { name: process.title });
   }
+}
+
+// Called from the node:worker_threads Worker constructor: when tracing is
+// active, record the Node-style worker thread-name metadata event
+// (`[worker N] <name || 'WorkerThread'>`). No-op (and no id consumed) while
+// tracing is off, so untraced worker spawns stay free.
+function emitWorkerThreadName(name: unknown) {
+  if (!activated) return;
+  const id = nextWorkerId++;
+  events.push({
+    pid: process.pid,
+    tid: tid + id,
+    ts: 0,
+    ph: "M",
+    cat: "__metadata",
+    name: "thread_name",
+    args: { name: `[worker ${id}] ${typeof name === "string" && name.length !== 0 ? name : "WorkerThread"}` },
+  });
+}
+
+// inspector NodeTracing domain (dynamic enable over the protocol). Events
+// recorded while the session window is open are handed back to the session
+// at stop (removed from the file buffer) instead of being written at exit.
+let inspectorCategories: string[] | null = null;
+let inspectorStartIndex = 0;
+
+function inspectorStart(categories: string[]): boolean {
+  if (inspectorCategories !== null) return false;
+  inspectorCategories = categories.slice();
+  enableCategoriesImpl(inspectorCategories);
+  inspectorStartIndex = events.length;
+  return true;
+}
+
+function inspectorStop(): { collected: object[]; metadata: object[] } {
+  let collected: object[] = [];
+  if (inspectorCategories !== null) {
+    disableCategories(inspectorCategories);
+    inspectorCategories = null;
+    collected = events.splice(inspectorStartIndex, events.length - inspectorStartIndex);
+  }
+  const metadata: object[] = [];
+  emitMetadata(metadata);
+  return { collected, metadata };
 }
 
 // Timeout init/destroy events under "node,node.async_hooks". Bun's
@@ -593,4 +698,7 @@ export default {
   trace,
   initFromCli,
   setTid,
+  emitWorkerThreadName,
+  inspectorStart,
+  inspectorStop,
 };

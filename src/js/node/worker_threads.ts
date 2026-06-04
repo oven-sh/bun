@@ -231,6 +231,11 @@ class Worker extends EventEmitter {
   // either is the exit code if exited, a promise resolving to the exit code, or undefined if we haven't sent .terminate() yet
   #onExitPromise: Promise<number> | number | undefined = undefined;
   #urlToRevoke = "";
+  // Created only when `options.stdout`/`options.stderr` request capture; the
+  // worker's output is not yet routed into them (TODO), but the streams exist
+  // and end on worker exit, matching Node's API shape.
+  #stdout: InstanceType<typeof Readable> | null = null;
+  #stderr: InstanceType<typeof Readable> | null = null;
 
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
@@ -256,6 +261,12 @@ class Worker extends EventEmitter {
       }
       throw e;
     }
+    if (options.stdout) this.#stdout = new Readable({ read() {} });
+    if (options.stderr) this.#stderr = new Readable({ read() {} });
+    // Tracing active (CLI flag or dynamic enable): record the Node-style
+    // `[worker N] <name>` thread-name metadata event. No-op when tracing is
+    // off — the agent module is a tiny one-time load.
+    require("internal/trace_events").emitWorkerThreadName(options.name);
     this.#worker.addEventListener("close", this.#onClose.bind(this), { once: true });
     this.#worker.addEventListener("error", this.#onError.bind(this));
     this.#worker.addEventListener("message", this.#onMessage.bind(this));
@@ -290,13 +301,13 @@ class Worker extends EventEmitter {
   }
 
   get stdout() {
-    // TODO:
-    return null;
+    // TODO: route the worker's actual stdout into this stream.
+    return this.#stdout;
   }
 
   get stderr() {
-    // TODO:
-    return null;
+    // TODO: route the worker's actual stderr into this stream.
+    return this.#stderr;
   }
 
   get performance() {
@@ -351,6 +362,8 @@ class Worker extends EventEmitter {
 
   #onClose(e) {
     this.#onExitPromise = e.code;
+    this.#stdout?.push(null);
+    this.#stderr?.push(null);
     this.emit("exit", e.code);
   }
 

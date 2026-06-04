@@ -594,7 +594,7 @@ impl ErrorCode {
     /// `ERR_ZLIB_INITIALIZATION_FAILED` (instanceof Error)
     pub const ZLIB_INITIALIZATION_FAILED: ErrorCode = ErrorCode(267);
     /// `MODULE_NOT_FOUND` (instanceof Error)
-    pub const MODULE_NOT_FOUND: ErrorCode = ErrorCode(155);
+    pub const MODULE_NOT_FOUND: ErrorCode = ErrorCode(268);
     /// `ERR_INTERNAL_ASSERTION` (instanceof Error)
     pub const INTERNAL_ASSERTION: ErrorCode = ErrorCode(269);
     /// `ERR_OSSL_EVP_INVALID_DIGEST` (instanceof Error)

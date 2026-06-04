@@ -1979,3 +1979,78 @@ test.skipIf(!isASAN)(
     }
   },
 );
+
+// Sibling of the abort case above, triggered by the server instead: an
+// RST_STREAM on the held stream makes the deliver loop run the terminal
+// callback while the stream is still in the session map. The callback tears
+// down the last client of the evicted custom context, whose Drop force-closes
+// the session socket; onClose used to free that very stream, and the deliver
+// loop then read and double-freed it when control unwound. Only observable
+// under ASAN. Serial for the same cache-eviction reason as above.
+test.skipIf(!isASAN)(
+  "server RST on an h2 stream after its custom TLS context is evicted does not double-free the stream",
+  async () => {
+    let heldStream: http2.ServerHttp2Stream | undefined;
+    const server = makeH2Server();
+    server.on("sessionError", () => {});
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      if (headers[":path"] === "/hold") {
+        stream.respond({ ":status": 200 });
+        stream.write("chunk");
+        heldStream = stream;
+        return;
+      }
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnFetch(`
+        const url = "https://localhost:${port}";
+        const held = await fetch(url + "/hold", {
+          protocol: "http2",
+          tls: { serverName: "localhost", rejectUnauthorized: false },
+        });
+        const reader = held.body.getReader();
+        await reader.read(); // first chunk — the h2 stream is attached and live
+        for (let i = 0; i < 61; i += 8) {
+          const batch = [];
+          for (let j = i; j < Math.min(i + 8, 61); j++) {
+            batch.push(
+              fetch(url, { tls: { serverName: "evict-" + j + ".test", rejectUnauthorized: false } })
+                .then(r => r.arrayBuffer())
+                .catch(() => {}),
+            );
+          }
+          await Promise.all(batch);
+        }
+        // Tell the test to RST the held stream server-side, then wait for the
+        // failure to arrive through the deliver loop.
+        process.stderr.write("evicted\\n");
+        await reader.read().catch(() => {});
+        // Prove the HTTP thread survived delivering the reset.
+        const after = await fetch(url, { tls: { rejectUnauthorized: false } });
+        await after.arrayBuffer();
+        console.log("rst-ok");
+        process.exit(0);
+      `);
+      // Gate the server-side RST on the subprocess having finished eviction.
+      let stderrHead = "";
+      for await (const chunk of proc.stderr) {
+        stderrHead += Buffer.from(chunk).toString();
+        if (stderrHead.includes("evicted")) break;
+      }
+      expect(stderrHead).toContain("evicted");
+      heldStream!.close(http2.constants.NGHTTP2_CANCEL);
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout.trim()).toBe("rst-ok");
+      expect(exitCode).toBe(0);
+    } finally {
+      heldStream?.destroy();
+      server.close();
+    }
+  },
+);

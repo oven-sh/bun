@@ -1,23 +1,20 @@
 export function initializeCompressionStream(this, format) {
-  const zlib = require("node:zlib");
-
-  const builders = {
-    "deflate": zlib.createDeflate,
-    "deflate-raw": zlib.createDeflateRaw,
-    "gzip": zlib.createGzip,
-    "brotli": zlib.createBrotliCompress,
-    "zstd": zlib.createZstdCompress,
+  // node:zlib NodeMode values (DEFLATE, GZIP, DEFLATERAW, BROTLI_ENCODE,
+  // ZSTD_COMPRESS) — the native transformer initializes the matching engine
+  // with node:zlib's defaults, so output bytes match the node-backed
+  // implementation this replaced.
+  const modes = {
+    "deflate": 1,
+    "deflate-raw": 5,
+    "gzip": 3,
+    "brotli": 9,
+    "zstd": 10,
   };
 
-  if (!(format in builders))
-    throw $ERR_INVALID_ARG_VALUE("format", format, "must be one of: " + Object.keys(builders).join(", "));
+  if (!(format in modes))
+    throw $ERR_INVALID_ARG_VALUE("format", format, "must be one of: " + Object.keys(modes).join(", "));
 
-  // The engine is a node:zlib stream, but its Duplex surface is never used:
-  // the native handle is driven synchronously in $createCompressionTransform,
-  // which avoids the per-chunk threadpool round-trip and the
-  // Readable/Writable.toWeb adapter machinery (and the extra output copy the
-  // Readable adapter makes).
-  const transform = $createCompressionTransform(builders[format]());
+  const transform = $createCompressionTransform(modes[format]);
 
   $putByIdDirectPrivate(this, "readable", transform.readable);
   $putByIdDirectPrivate(this, "writable", transform.writable);

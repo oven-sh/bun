@@ -628,3 +628,67 @@ describe("CompressionStream Node.js compatibility", () => {
     });
   });
 });
+
+describe("engine lifecycle", () => {
+  // The native transformer holds a zlib/brotli/zstd context (~256KB for
+  // deflate). These loops create far more streams than would fit in memory
+  // if any teardown path leaked the context: completed, cancelled
+  // mid-stream, aborted, and abandoned-to-GC streams must all release it.
+  const RSS_BUDGET_MB = 256;
+
+  async function rssGrowthMB(fn: () => Promise<void>): Promise<number> {
+    Bun.gc(true);
+    const before = process.memoryUsage.rss();
+    await fn();
+    Bun.gc(true);
+    return (process.memoryUsage.rss() - before) / 1024 / 1024;
+  }
+
+  test("completed streams release the engine", async () => {
+    const growth = await rssGrowthMB(async () => {
+      for (let i = 0; i < 500; i++) {
+        const cs = new CompressionStream("gzip");
+        const writer = cs.writable.getWriter();
+        const reads = (async () => {
+          for await (const _ of cs.readable as unknown as AsyncIterable<Uint8Array>) {
+          }
+        })();
+        await writer.write(new Uint8Array(1024));
+        await writer.close();
+        await reads;
+      }
+    });
+    expect(growth).toBeLessThan(RSS_BUDGET_MB);
+  });
+
+  test("cancelled and aborted streams release the engine", async () => {
+    const growth = await rssGrowthMB(async () => {
+      for (let i = 0; i < 500; i++) {
+        const cs = new CompressionStream(i % 2 ? "gzip" : "zstd");
+        const writer = cs.writable.getWriter();
+        await writer.write(new Uint8Array(1024)).catch(() => {});
+        if (i % 2) {
+          await cs.readable.cancel("done");
+          await writer.abort("done").catch(() => {});
+        } else {
+          await writer.abort("done").catch(() => {});
+          await cs.readable.cancel("done").catch(() => {});
+        }
+      }
+    });
+    expect(growth).toBeLessThan(RSS_BUDGET_MB);
+  });
+
+  test("abandoned streams release the engine via GC", async () => {
+    const growth = await rssGrowthMB(async () => {
+      for (let i = 0; i < 1000; i++) {
+        // No flush, no cancel — the only release path is finalization.
+        const cs = new CompressionStream("deflate");
+        const writer = cs.writable.getWriter();
+        await writer.write(new Uint8Array(64)).catch(() => {});
+        if (i % 100 === 99) Bun.gc(true);
+      }
+    });
+    expect(growth).toBeLessThan(RSS_BUDGET_MB);
+  });
+});

@@ -475,29 +475,28 @@ export function transformStreamDefaultSourceCancelAlgorithm(stream, reason) {
   return promiseCapability.promise;
 }
 
-export function createCompressionTransform(engine) {
+export function createCompressionTransform(mode) {
   const { Buffer } = require("node:buffer");
 
-  const handle = engine._handle;
-  const state = engine._writeState;
-  const chunkSize = engine._chunkSize;
-  // The ZlibBase constructor already allocated one output buffer for the
-  // (unused) Duplex write path — start with it instead of allocating another.
+  const handle = new $CompressionStreamTransformer(mode);
+  const state = new Uint32Array(2);
+  const chunkSize = 16384; // node:zlib Z_DEFAULT_CHUNK
+  // Flush operations are per-family ints: zlib Z_NO_FLUSH(0)/Z_FINISH(4),
+  // brotli BROTLI_OPERATION_PROCESS(0)/FINISH(2), zstd ZSTD_e_continue(0)/
+  // ZSTD_e_end(2). Modes 8-11 are brotli/zstd.
+  const defaultFlushFlag = 0;
+  const finishFlushFlag = mode >= 8 ? 2 : 4;
   // Output buffers must be zero-filled: chunks are enqueued as views, and a
   // consumer reaching past the view through chunk.buffer must see stream
   // output or zeros, never recycled heap memory (allocUnsafe).
-  let outBuffer = engine._outBuffer.fill(0);
+  let outBuffer = Buffer.alloc(chunkSize);
   let outOffset = 0;
   let closed = false;
-  // The native handle reports errors by synchronously destroying the engine
-  // (zlibOnError); the 'error' emit itself is deferred. Swallow the deferred
-  // emit — drive() below surfaces the error synchronously via engine.errored.
-  engine.on("error", () => {});
 
   function close() {
     if (!closed) {
       closed = true;
-      engine.close();
+      handle.close();
     }
   }
 
@@ -517,30 +516,26 @@ export function createCompressionTransform(engine) {
     let inOff = 0;
 
     while (true) {
-      handle.writeSync(
-        flushFlag,
-        chunk, // in
-        inOff, // in_off
-        availInBefore, // in_len
-        outBuffer, // out
-        outOffset, // out_off
-        availOutBefore, // out_len
-      );
-      {
-        // Synchronous error check (the equivalent of processChunkSync's
-        // kError check): a failed writeSync destroys the engine without
-        // advancing the stream state, so continuing would loop forever.
-        const error = engine.errored;
-        if (error != null) {
-          // node surfaces engine failures as a TypeError carrying the error
-          // code (its webstreams adapter wraps them); match the class and
-          // code but keep the engine's message, which the adapter dropped.
-          const wrapped = $makeTypeError(error.message);
-          wrapped.code = error.code;
-          wrapped.errno = error.errno;
-          wrapped.cause = error;
-          throw wrapped;
-        }
+      try {
+        handle.write(
+          flushFlag,
+          chunk, // in
+          inOff, // in_off
+          availInBefore, // in_len
+          outBuffer, // out
+          outOffset, // out_off
+          availOutBefore, // out_len
+          state, // [availOut, availIn] result
+        );
+      } catch (error) {
+        // node surfaces engine failures as a TypeError carrying the error
+        // code (its webstreams adapter wraps them); match the class and
+        // code but keep the engine's message, which the adapter dropped.
+        const wrapped = $makeTypeError(error.message);
+        wrapped.code = error.code;
+        wrapped.errno = error.errno;
+        wrapped.cause = error;
+        throw wrapped;
       }
 
       const availOutAfter = state[0];
@@ -579,7 +574,7 @@ export function createCompressionTransform(engine) {
       // again, so release the native handle on the way out.
       transform(chunk, controller) {
         try {
-          drive(chunk, engine._defaultFlushFlag, controller);
+          drive(chunk, defaultFlushFlag, controller);
         } catch (e) {
           close();
           throw e;
@@ -587,7 +582,7 @@ export function createCompressionTransform(engine) {
       },
       flush(controller) {
         try {
-          drive(Buffer.alloc(0), engine._finishFlushFlag, controller);
+          drive(Buffer.alloc(0), finishFlushFlag, controller);
         } catch (e) {
           close();
           throw e;

@@ -32,6 +32,7 @@ using namespace JSC;
     macro(ReadableStreamDefaultController) \
     macro(ReadableStreamDefaultReader) \
     macro(SQL) \
+    macro(CompressionStreamTransformer) \
     macro(TextEncoderStreamEncoder) \
     macro(TransformStream) \
     macro(TransformStreamDefaultController) \

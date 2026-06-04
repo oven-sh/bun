@@ -32,6 +32,8 @@ pub mod s3_stat;
 pub mod text_encoder;
 #[path = "webcore/TextEncoderStreamEncoder.rs"]
 pub mod text_encoder_stream_encoder;
+#[path = "webcore/CompressionStreamTransformer.rs"]
+pub mod compression_stream_transformer;
 
 // ─── flat re-exports (mirror Zig `pub const X = @import(...)`) ───────────────
 pub use bun_jsc::js_error_code::DOMExceptionCode;

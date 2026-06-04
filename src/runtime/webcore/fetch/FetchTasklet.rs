@@ -723,38 +723,52 @@ impl FetchTasklet {
     }
 
     /// Sink ref taken in `start_request_stream`; released once per
-    /// `write_end_request` exit. JS thread both sides (plus
-    /// `release_at_shutdown`'s balancing drop when the JS thread is parked —
-    /// that path derefs raw and relies on this clearing `sink_ref_held`
-    /// before the count can drop).
+    /// `write_end_request` exit (JS thread), or claimed by an exit path via
+    /// `take_streaming_refs_for_exit`. Claim-checked: during `global_exit`
+    /// cleanup the JS thread can still reach this synchronously (server
+    /// socket teardown firing user abort listeners → `sink.cancel`, or a
+    /// microtask drain resuming a parked sink continuation), racing an exit
+    /// take — whoever swaps the marker first releases, the loser skips.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub(crate) fn release_sink_ref(this: *mut FetchTasklet) {
-        // SAFETY: the caller holds the sink ref being released, so `this` is
-        // live for the store; clear the marker before the deref below can
-        // free the allocation.
-        unsafe { (*this).sink_ref_held.store(false, Ordering::Release) };
-        Self::deref(this);
+        // SAFETY: either the caller still holds the sink ref (marker set) or
+        // an exit taker claimed it — and in that window the taker's
+        // `deref_from_thread` parks the box instead of freeing it, so `this`
+        // is live for the swap either way.
+        if unsafe { (*this).sink_ref_held.swap(false, Ordering::AcqRel) } {
+            Self::deref(this);
+        }
     }
 
     /// Drain-task ref taken on the HTTP thread in `on_write_request_data_drain`;
-    /// released on the JS thread in `resume_request_data_stream` (or balanced
+    /// released on the JS thread in `resume_request_data_stream`, or claimed
     /// at exit via `take_streaming_refs_for_exit` when the queued node is
-    /// dropped unrun).
+    /// dropped unrun. Claiming decrement: deref only if the counter was still
+    /// nonzero, so a release racing an exit take cannot double-release (or
+    /// wrap the counter and "release" 2³²−1 refs).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub(crate) fn release_drain_task_ref(this: *mut FetchTasklet) {
-        // SAFETY: the caller holds the drain-task ref being released, so
-        // `this` is live for the store; decrement before the deref below can
-        // free the allocation.
-        unsafe { (*this).queued_drain_tasks.fetch_sub(1, Ordering::Release) };
-        Self::deref(this);
+        // SAFETY: as in `release_sink_ref` — the marker swap/RMW is on live
+        // memory even if an exit taker already claimed the refs, because the
+        // taker only parks the box in that window.
+        let claimed = unsafe {
+            (*this)
+                .queued_drain_tasks
+                .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1))
+        };
+        if claimed.is_ok() {
+            Self::deref(this);
+        }
     }
 
     /// Atomically take the streaming-upload ref markers (`sink_ref_held`,
     /// `queued_drain_tasks`) and return how many refs the caller must now
-    /// release. Their JS-thread release sites can never run once the VM is
-    /// exiting, and a final `callback` in the exit window removes the entry
+    /// release. The JS-thread release sites are claim-checked (skip the deref
+    /// when the marker was already taken), so even a synchronous JS-side
+    /// release during `global_exit` cleanup cannot double-release against a
+    /// take. A final `callback` in the exit window removes the entry
     /// from `in_flight`, so four exit paths can each be the one that reaches
     /// a given tasklet: `release_at_shutdown`, `callback`'s shutdown branch,
     /// `__bun_release_task_at_shutdown`'s FetchTasklet arm (dispatch.rs, for
@@ -2643,10 +2657,13 @@ impl FetchTasklet {
                 // ⇄ sink chain leaks at exit. The invariant is weaker than
                 // `release_at_shutdown`'s: the JS thread is not parked yet
                 // (it is running `global_exit` cleanup between
-                // `is_shutting_down = true` and `shutdown_for_exit`), but it
-                // never ticks the event loop again, so the JS-side release
-                // sites (`release_sink_ref`, `release_drain_task_ref`) cannot
-                // race the take.
+                // `is_shutting_down = true` and `shutdown_for_exit`) and can
+                // still hit the JS-side release sites synchronously — socket
+                // teardown fires user abort listeners, microtask drains can
+                // resume a sink continuation. That race is settled by the
+                // claim checks in `release_sink_ref` /
+                // `release_drain_task_ref`: whoever swaps a marker first
+                // releases that ref, the loser skips.
                 for _ in 0..FetchTasklet::take_streaming_refs_for_exit(task) {
                     // SAFETY: `task` is the live heap tasklet; refs still held.
                     FetchTasklet::deref_from_thread(task);

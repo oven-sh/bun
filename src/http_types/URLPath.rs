@@ -93,11 +93,13 @@ impl URLPath {
 /// out of the single `decoded_pathname` buffer).
 #[inline]
 fn span_of(parent: &[u8], sub: &[u8]) -> Span {
-    debug_assert!(sub.is_empty() || {
-        let p = parent.as_ptr() as usize;
-        let s = sub.as_ptr() as usize;
-        s >= p && s + sub.len() <= p + parent.len()
-    });
+    debug_assert!(
+        sub.is_empty() || {
+            let p = parent.as_ptr() as usize;
+            let s = sub.as_ptr() as usize;
+            s >= p && s + sub.len() <= p + parent.len()
+        }
+    );
     if sub.is_empty() {
         return Span::default();
     }
@@ -113,8 +115,7 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
 
     // Own the bytes up front: either a percent-decoded copy or a plain copy
     // of the input. All spans below index into this one allocation.
-    let backing: Box<[u8]> = if strings::index_of_char(possibly_encoded_pathname_, b'%').is_some()
-    {
+    let backing: Box<[u8]> = if strings::index_of_char(possibly_encoded_pathname_, b'%').is_some() {
         // The in-place decode buffer is capped at 16384 bytes of input.
         let capped = &possibly_encoded_pathname_[..possibly_encoded_pathname_.len().min(16384)];
 
@@ -214,7 +215,11 @@ pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::Deco
     Ok(URLPath {
         extname: span_of(
             decoded_pathname,
-            if !is_source_map { extname } else { backup_extname },
+            if !is_source_map {
+                extname
+            } else {
+                backup_extname
+            },
         ),
         is_source_map,
         pathname: span_of(decoded_pathname, decoded_pathname),

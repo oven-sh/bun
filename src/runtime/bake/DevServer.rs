@@ -5377,9 +5377,7 @@ impl DevServer {
                         // teardown loop in `deinit` (explicit `.deref()` — RefPtr
                         // has no Drop).
                         // SAFETY: caller guarantees `html` is a live allocation.
-                        html_bundle: unsafe {
-                            bun_ptr::RefPtr::<HTMLBundleRoute>::init_ref(html)
-                        },
+                        html_bundle: unsafe { bun_ptr::RefPtr::<HTMLBundleRoute>::init_ref(html) },
                         bundled_file: incremental_graph_index,
                         script_injection_offset: None,
                         cached_response: None,

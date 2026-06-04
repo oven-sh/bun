@@ -22,6 +22,14 @@ import { expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { join } from "node:path";
 
+// Explicit per-test timeout (exception to the "no timeouts" convention):
+// in the failing mode the child's LeakSanitizer symbolizes a large leak
+// report under the ASAN debug build, which takes longer than the default
+// per-test timeout on loaded CI runners — without the headroom, the clean
+// exit-code assertion failure (with the leaked chain in the diff) degrades
+// into an opaque timeout.
+const FIXTURE_TIMEOUT_MS = 60_000;
+
 async function runFixture(code: string) {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", code],
@@ -78,7 +86,7 @@ test.concurrent(
     expect(stdout.trim()).toBe("OK: body streaming, exiting mid-download");
     expect(exitCode).toBe(42);
   },
-  60_000,
+  FIXTURE_TIMEOUT_MS,
 );
 
 test.concurrent(
@@ -110,7 +118,7 @@ test.concurrent(
     expect(stdout.trim()).toBe("OK: request in flight with no response, exiting");
     expect(exitCode).toBe(42);
   },
-  60_000,
+  FIXTURE_TIMEOUT_MS,
 );
 
 test.concurrent(
@@ -164,5 +172,5 @@ test.concurrent(
     expect(stdout.trim()).toBe("OK: upload in flight, exiting");
     expect(exitCode).toBe(42);
   },
-  60_000,
+  FIXTURE_TIMEOUT_MS,
 );

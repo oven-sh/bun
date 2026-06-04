@@ -306,7 +306,11 @@ function installExitTracing(): void {
   }
 
   if (traceExit || traceEnv || traceEnvJsStack) {
-    writeSync = require("node:fs").writeSync;
+    // The agent's raw binding capture, NOT node:fs — loading node:fs here
+    // would freeze unwrapped natives into its bound exports and a later
+    // dynamic createTracing(...).enable() of fs categories would miss events;
+    // it also keeps our own stderr writes out of fs.sync traces.
+    writeSync = require("internal/trace_events").rawWriteSync;
   }
   if (traceExit) installExitTracing();
   if (traceEnv || traceEnvJsStack) {

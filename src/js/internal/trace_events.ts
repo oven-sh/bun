@@ -37,6 +37,12 @@ let fileWriteRequested = false;
 // flush): the fs wrappers check it so the writer's own readdir/read/unlink
 // calls don't pollute the user's trace.
 let suppressFsEvents = false;
+// writeSync captured at module load, before installFsInstrumentation can
+// shadow the binding's methods — pre_execution prints --trace-env/--trace-exit
+// output through this so node:fs is never evaluated pre-user-code and the
+// agent's own stderr writes never show up as fs.sync.write trace events.
+const fsBinding = require("internal/fs/binding");
+const rawWriteSync = fsBinding.writeSync.bind(fsBinding);
 
 const kAsyncHooksCat = "node,node.async_hooks";
 const kFsSyncCat = "node,node.fs,node.fs.sync";
@@ -237,8 +243,18 @@ function installInstrumentation() {
 function flush() {
   if (!fileWriteRequested) return;
   // Everything below is the agent's own fs work — keep it out of the trace.
-  // No reset: flush runs once, at process/worker exit.
+  // Restored on the way out so fs activity from later 'exit' listeners still
+  // traces normally (it lands in events[] post-write, but isn't dropped).
+  const prevSuppress = suppressFsEvents;
   suppressFsEvents = true;
+  try {
+    flushImpl();
+  } finally {
+    suppressFsEvents = prevSuppress;
+  }
+}
+
+function flushImpl() {
   let fileName = filePattern ?? "node_trace.${rotation}.log";
   fileName = fileName.replaceAll("${pid}", String(process.pid)).replaceAll("${rotation}", "1");
   if (!Bun.isMainThread) {
@@ -404,36 +420,70 @@ function inspectorStop(): { collected: object[]; metadata: object[] } {
 // 'b' at init with args.data.{executionAsyncId,triggerAsyncId} and 'e' at
 // destroy, both carrying the async id.
 let timersInstrumented = false;
+// Open Timeout span stashed on the returned timer so clearTimeout /
+// clearInterval can close it (Node emits the 'e' from the destroy hook).
+const kTimerSpan = Symbol("traceTimerSpan");
 function installTimerInstrumentation() {
   if (timersInstrumented) return;
   timersInstrumented = true;
   globalThis.setTimeout = wrapTimerFunction(globalThis.setTimeout, false);
   globalThis.setInterval = wrapTimerFunction(globalThis.setInterval, true);
+  globalThis.clearTimeout = wrapClearFunction(globalThis.clearTimeout);
+  globalThis.clearInterval = wrapClearFunction(globalThis.clearInterval);
 }
 
 function wrapTimerFunction(original, isInterval: boolean) {
   function wrapped(callback, delay, ...args) {
+    let span: { id: number; open: boolean } | null = null;
     if (typeof callback === "function" && isCategoryGroupEnabled(kAsyncHooksCat)) {
       const asyncId = nextAsyncId++;
+      span = { id: asyncId, open: true };
       emitEvent("b", kAsyncHooksCat, "Timeout", asyncId, {
         executionAsyncId: 1,
         triggerAsyncId: 1,
       });
       const inner = callback;
+      const capturedSpan = span;
       callback = function (...callbackArgs) {
         try {
           return inner.$apply(this, callbackArgs);
         } finally {
-          if (!isInterval) emitEvent("e", kAsyncHooksCat, "Timeout", asyncId);
+          if (!isInterval && capturedSpan.open) {
+            capturedSpan.open = false;
+            emitEvent("e", kAsyncHooksCat, "Timeout", capturedSpan.id);
+          }
         }
       };
     }
-    return original(callback, delay, ...args);
+    const timer = original(callback, delay, ...args);
+    if (span !== null && typeof timer === "object" && timer !== null) {
+      timer[kTimerSpan] = span;
+    }
+    return timer;
   }
   // Preserve the original's own properties — name/length (writable:false but
   // configurable:true, so defineProperty works) and extras like the promisify
   // custom symbol. Only `prototype` is skipped: it can be non-configurable,
   // and the wrapper deliberately keeps its own.
+  for (const key of Reflect.ownKeys(original)) {
+    if (key === "prototype") continue;
+    const desc = Object.getOwnPropertyDescriptor(original, key);
+    if (desc) Object.defineProperty(wrapped, key, desc);
+  }
+  return wrapped;
+}
+
+function wrapClearFunction(original) {
+  function wrapped(timer) {
+    if (typeof timer === "object" && timer !== null) {
+      const span = timer[kTimerSpan];
+      if (span !== undefined && span.open) {
+        span.open = false;
+        emitEvent("e", kAsyncHooksCat, "Timeout", span.id);
+      }
+    }
+    return original(timer);
+  }
   for (const key of Reflect.ownKeys(original)) {
     if (key === "prototype") continue;
     const desc = Object.getOwnPropertyDescriptor(original, key);
@@ -743,4 +793,5 @@ export default {
   emitWorkerThreadName,
   inspectorStart,
   inspectorStop,
+  rawWriteSync,
 };

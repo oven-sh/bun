@@ -106,6 +106,13 @@ test("Bun.inspect maxArrayLength counts holes at the truncation boundary", () =>
   `);
 });
 
+test("Bun.inspect maxArrayLength elides a leading hole without a dangling comma", () => {
+  // When the array starts with a hole and the cap truncates immediately,
+  // nothing precedes the elision, so no leading `,` should be emitted.
+  expect(Bun.inspect([, 1, 2], { maxArrayLength: 1 })).toBe("[ ... 3 more items ]");
+  expect(Bun.inspect([, , , 1], { maxArrayLength: 1 })).toBe("[ ... 4 more items ]");
+});
+
 test.concurrent("console.dir honors maxArrayLength", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", "const a = Array.from({length:200}, (_,i)=>i); console.dir(a, {maxArrayLength: 5});"],

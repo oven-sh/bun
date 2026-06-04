@@ -4670,10 +4670,18 @@ pub mod formatter {
                         let elided_from = u64::from(empty_start.unwrap_or(i));
                         let remaining = len - elided_from;
                         empty_start = None;
-                        writer.print_comma::<C>();
-                        writer.write_all(b"\n"); // we want the line break to be unconditional here
-                        *writer.estimated_line_length = 0;
-                        writer.write_indent(self.indent);
+                        // Only emit the separator if something was already
+                        // printed inside the brackets. When the array starts
+                        // with an elided hole (`elided_from == 0`) nothing
+                        // precedes the elision, so a comma would dangle after
+                        // `[` — mirror the `if empty > 0` guard used by the
+                        // hole-flush path below.
+                        if elided_from > 0 {
+                            writer.print_comma::<C>();
+                            writer.write_all(b"\n"); // we want the line break to be unconditional here
+                            *writer.estimated_line_length = 0;
+                            writer.write_indent(self.indent);
+                        }
                         writer.pretty::<C>(
                             "... N more items".len(),
                             format_args!(

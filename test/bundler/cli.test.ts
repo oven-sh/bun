@@ -420,3 +420,59 @@ test("log case 2", async () => {
     "
   `);
 });
+
+// The output directory descriptor is owned by the bundler's options and must
+// be closed exactly once. These are forward regression guards for the
+// owning-handle semantics (double-close -> EBADF, premature close -> failed
+// writes); they do not fail on older binaries, where the descriptor merely
+// leaked until process exit.
+test("--outdir build succeeds when the output directory already exists with prior output", async () => {
+  // Pre-existing dist/ with stale content exercises the mkdir-EEXIST ->
+  // reopen arm of the output-directory open path; the build must reopen the
+  // directory, write through the owning handle, and replace the stale file.
+  using dir = tempDir("build-outdir-reuse", {
+    "entry.ts": `export const x: number = 1;\nconsole.log("built", x);`,
+    "dist/entry.js": `console.log("stale");`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "entry.ts", "--outdir", "dist"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("EBADF");
+  expect(stderr).not.toContain("could not open output directory");
+  expect(exitCode).toBe(0);
+
+  const out = await Bun.file(path.join(String(dir), "dist", "entry.js")).text();
+  expect(out).toContain("built");
+  expect(out).not.toContain("stale");
+});
+
+// Exercises the owning output-directory handle with multiple entry points
+// writing into the same --outdir.
+test("multi-entry build writes each entry point into the output directory", async () => {
+  using dir = tempDir("build-multi-entry-outdir", {
+    "a.ts": `export const a: number = 1;\nconsole.log("A" + a);`,
+    "b.ts": `export const b: number = 2;\nconsole.log("B" + b);`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "build", "a.ts", "b.ts", "--outdir", "dist"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("EBADF");
+  expect(exitCode).toBe(0);
+
+  const a = await Bun.file(path.join(String(dir), "dist", "a.js")).text();
+  const b = await Bun.file(path.join(String(dir), "dist", "b.js")).text();
+  expect(a).toContain('"A"');
+  expect(b).toContain('"B"');
+});

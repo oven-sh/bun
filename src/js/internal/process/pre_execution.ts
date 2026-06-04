@@ -285,6 +285,21 @@ function installExitTracing(): void {
     if (Number.isFinite(limit)) Error.stackTraceLimit = limit;
   }
 
+  // CLI-driven tracing runs in worker VMs too (workers inherit the parent's
+  // execArgv): each worker buffers its own events and flushes them to a
+  // `<file>.<tid>.part` file at worker exit; the main thread merges parts.
+  // (`require('node:trace_events')` still throws in workers — only the
+  // module API is main-thread-only, not CLI-driven tracing.)
+  //
+  // ORDER MATTERS: this must run before anything below evaluates node:fs.
+  // node:fs captures the shared fs-binding methods via `.bind()` at
+  // module-eval time, so requiring it before installFsInstrumentation would
+  // freeze the unwrapped natives into the bound exports and fs.sync/fs.async
+  // trace events would silently go missing.
+  if (catString !== null) {
+    require("internal/trace_events").initFromCli(catString, filePattern);
+  }
+
   if (traceExit || traceEnv || traceEnvJsStack) {
     writeSync = require("node:fs").writeSync;
   }
@@ -293,15 +308,6 @@ function installExitTracing(): void {
     envTracePrintMessage = traceEnv;
     envTracePrintJsStack = traceEnvJsStack;
     installEnvTracing();
-  }
-
-  // CLI-driven tracing runs in worker VMs too (workers inherit the parent's
-  // execArgv): each worker buffers its own events and flushes them to a
-  // `<file>.<tid>.part` file at worker exit; the main thread merges parts.
-  // (`require('node:trace_events')` still throws in workers — only the
-  // module API is main-thread-only, not CLI-driven tracing.)
-  if (catString !== null) {
-    require("internal/trace_events").initFromCli(catString, filePattern);
   }
 }
 

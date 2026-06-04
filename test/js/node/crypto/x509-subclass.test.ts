@@ -130,19 +130,26 @@ describe("X509Certificate.prototype accessor enumerability", () => {
   ];
 
   test("accessors are non-enumerable", () => {
-    const enumerable = accessors.filter(name => {
-      const desc = Object.getOwnPropertyDescriptor(X509Certificate.prototype, name);
-      return desc?.enumerable;
-    });
-    expect(enumerable).toEqual([]);
+    // Map each property to its enumerable flag, or "missing" when the property is
+    // absent, so the assertion fails loudly if an accessor is dropped (rather than
+    // silently passing on an undefined descriptor).
+    const state = Object.fromEntries(
+      accessors.map(name => {
+        const desc = Object.getOwnPropertyDescriptor(X509Certificate.prototype, name);
+        return [name, desc ? desc.enumerable : "missing"];
+      }),
+    );
+    expect(state).toEqual(Object.fromEntries(accessors.map(name => [name, false])));
   });
 
   test("methods are non-enumerable", () => {
-    const enumerable = methods.filter(name => {
-      const desc = Object.getOwnPropertyDescriptor(X509Certificate.prototype, name);
-      return desc?.enumerable;
-    });
-    expect(enumerable).toEqual([]);
+    const state = Object.fromEntries(
+      methods.map(name => {
+        const desc = Object.getOwnPropertyDescriptor(X509Certificate.prototype, name);
+        return [name, desc ? desc.enumerable : "missing"];
+      }),
+    );
+    expect(state).toEqual(Object.fromEntries(methods.map(name => [name, false])));
   });
 
   test("Object.keys(prototype) is empty, matching Node", () => {

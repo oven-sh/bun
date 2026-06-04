@@ -11,8 +11,8 @@ use bun_io::KeepAlive;
 use bun_jsc::ConcurrentTask::{ConcurrentTask, Task};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _,
-    StrongOptional, WorkPoolTask,
+    self as jsc, CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
+    StringJsc as _, WorkPoolTask,
 };
 use bun_threading::work_pool::WorkPool;
 use bun_zlib;
@@ -249,7 +249,13 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     }
 
     fn poll_ref(&self) -> &JsCell<CountedKeepAlive>;
-    fn this_value(&self) -> &JsCell<StrongOptional>;
+    /// Back-ref to the class's own JS wrapper. Upgraded to a strong ref only
+    /// while an async write is in flight (see [`CompressionStream::write`]):
+    /// the wrapper has no pending-activity hook, so this is the sole GC
+    /// liveness source for the wrapper — and the cached `pendingInput` /
+    /// `pendingOutput` buffers it roots — across the work-pool hop. Cleared
+    /// when the write completes back on the JS thread.
+    fn this_value(&self) -> &JsCell<JsRef>;
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
     fn pending_close(&self) -> &Cell<bool>;
@@ -434,10 +440,12 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
             s.set_flush(i32::try_from(flush).expect("int cast"));
         });
 
-        // Only create the strong handle when we have a pending write
-        // And make sure to clear it when we are done.
+        // Root the wrapper only while a write is pending: removing the strong
+        // ref here would let GC collect the wrapper (and the pinned pending
+        // buffers it caches) mid-write — a use-after-free, since nothing else
+        // keeps it alive. `run_from_js_thread` clears it on completion.
         this.this_value()
-            .with_mut(|v| v.set(global_this, this_value));
+            .with_mut(|v| v.set_strong(this_value, global_this));
 
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let vm = global_this.bun_vm();
@@ -514,8 +522,14 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this.write_in_progress().set(false);
 
-        // Clear the strong handle before we call any callbacks.
-        let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) else {
+        // Take the rooted wrapper ref and clear it before we call any
+        // callbacks. `this_value` stays valid for the rest of this frame (it
+        // lives on the native stack + `ensure_still_alive` below).
+        let Some(this_value) = this.this_value().with_mut(|v| {
+            let value = v.try_get()?;
+            *v = JsRef::empty();
+            Some(value)
+        }) else {
             bun_output::scoped_log!(zlib, "this_value is null in runFromJSThread");
             this.poll_ref().with_mut(|p| p.unref(vm));
             // SAFETY: matching `ref_()` in `write()`; `this_ptr` is the heap
@@ -753,7 +767,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         }
         this.pending_close().set(false);
         this.closed().set(true);
-        this.this_value().with_mut(|v| v.deinit());
+        this.this_value().with_mut(|v| *v = JsRef::empty());
         this.stream().with_mut(|s| s.close());
     }
 
@@ -1008,7 +1022,7 @@ macro_rules! __impl_compression_stream {
             #[inline] fn global_this(&self) -> &::bun_jsc::JSGlobalObject { self.global_this.get() }
             #[inline] fn stream(&self) -> &::bun_jsc::JsCell<Self::Stream> { &self.stream }
             #[inline] fn poll_ref(&self) -> &::bun_jsc::JsCell<$crate::node::node_zlib_binding::CountedKeepAlive> { &self.poll_ref }
-            #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }
+            #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::JsRef> { &self.this_value }
             #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }

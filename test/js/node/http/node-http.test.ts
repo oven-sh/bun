@@ -24,10 +24,10 @@ import http, {
 import https, { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
-import tunnel from "tunnel";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { PassThrough } from "node:stream";
+import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
 
@@ -854,13 +854,10 @@ describe("node:http", () => {
         status?: number;
         error?: string;
       }>();
-      const req = https.request(
-        { host: "example.com", port: 443, path: "/", method: "GET", agent },
-        res => {
-          res.resume();
-          requestResolve({ status: res.statusCode });
-        },
-      );
+      const req = https.request({ host: "example.com", port: 443, path: "/", method: "GET", agent }, res => {
+        res.resume();
+        requestResolve({ status: res.statusCode });
+      });
       req.on("error", err => requestResolve({ error: (err as Error).message }));
       req.end();
 
@@ -904,15 +901,12 @@ describe("node:http", () => {
       const agent = tunnel.httpOverHttp({ proxy: { host: "127.0.0.1", port: proxyPort } });
 
       const { promise, resolve, reject } = Promise.withResolvers<{ status: number; header?: string; body: string }>();
-      const req = http.request(
-        { host: "127.0.0.1", port: targetPort, path: "/", method: "GET", agent },
-        res => {
-          let body = "";
-          res.setEncoding("utf8");
-          res.on("data", c => (body += c));
-          res.on("end", () => resolve({ status: res.statusCode as number, header: res.headers["x-tunneled"], body }));
-        },
-      );
+      const req = http.request({ host: "127.0.0.1", port: targetPort, path: "/", method: "GET", agent }, res => {
+        let body = "";
+        res.setEncoding("utf8");
+        res.on("data", c => (body += c));
+        res.on("end", () => resolve({ status: res.statusCode as number, header: res.headers["x-tunneled"], body }));
+      });
       req.on("error", reject);
       req.end();
 

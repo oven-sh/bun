@@ -821,6 +821,19 @@ it("should throw on empty unix path from truthy non-string value", () => {
   expect(() => Bun.connect({ unix: [] as any, socket })).toThrow("SocketOptions.unix must be a string");
 });
 
+it("should throw on invalid socket handlers, not crash", () => {
+  // Handler validation errors fire after the callback JSValues were read but
+  // before they were GC-protected; the error path must not unprotect them
+  for (const api of [Bun.listen, Bun.connect] as any[]) {
+    expect(() => api({ hostname: "localhost", port: 0, socket: { open() {} } })).toThrow(
+      'Expected at least "data" or "drain" callback',
+    );
+    expect(() => api({ hostname: "localhost", port: 0, socket: { open() {}, data: 123 } })).toThrow(
+      'Expected "onData" callback to be a function',
+    );
+  }
+});
+
 it("reading .listener on a closed client socket does not use-after-free handlers", async () => {
   // Client-mode Handlers is heap-allocated per-connect and freed in
   // markInactive once the socket closes. `socket.listener` read

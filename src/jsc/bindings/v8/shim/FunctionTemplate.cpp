@@ -62,8 +62,6 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     auto* isolate = uncheckedDowncast<Zig::GlobalObject>(globalObject)->V8GlobalInternals()->isolate();
     auto& vm = JSC::getVM(globalObject);
 
-    WTF::Vector<TaggedPointer, 8> args(callFrame->argumentCount() + 1);
-
     HandleScope hs(isolate);
 
     // V8 function calls always run in "sloppy mode," even if the JS side is in strict mode. So if
@@ -75,36 +73,58 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
         jscThis = callFrame->thisValue().toObject(globalObject);
     }
     Local<Object> thisObject = hs.createLocal<Object>(vm, jscThis);
-    args[0] = thisObject.tagged();
-
-    for (size_t i = 0; i < callFrame->argumentCount(); i++) {
-        Local<Value> argValue = hs.createLocal<Value>(vm, callFrame->argument(i));
-        args[i + 1] = argValue.tagged();
-    }
 
     // In V8, the target is the function being called
     Local<Value> target = hs.createLocal<Value>(vm, callee);
 
-    ImplicitArgs implicit_args = {
-        .unused = nullptr,
-        .isolate = isolate,
-        // Context is always a reinterpret pointer to Zig::GlobalObject
-        .context = reinterpret_cast<void*>(globalObject),
-        .return_value = TaggedPointer(),
-        // target holds the Function being called, which contains the FunctionTemplate
-        .target = target.tagged(),
-        .new_target = nullptr,
+    // Build a synthetic ApiCallbackExitFrame: one contiguous array of
+    // pointer-sized slots that V8's inline FunctionCallbackInfo accessors index
+    // relative to the argc slot. The view starts one slot into the array so
+    // that kNewTargetIndex (-1) stays in bounds.
+    using Info = FunctionCallbackInfo<Value>;
+    constexpr size_t viewOffset = 1;
+    const size_t argc = callFrame->argumentCount();
+    WTF::Vector<TaggedPointer, 27> frame(viewOffset + Info::kFirstJSArgumentIndex + argc);
+    auto slot = [&](ptrdiff_t index) -> TaggedPointer& {
+        return frame[viewOffset + index];
     };
 
-    FunctionCallbackInfo<Value> info(&implicit_args, args.begin() + 1, callFrame->argumentCount());
+    // Bun never reports a construct call here, so V8's NewTarget() always
+    // returns undefined without reading this slot
+    slot(Info::kNewTargetIndex) = TaggedPointer();
+    // Length() reads this as a raw integer, not a Smi
+    slot(Info::kArgcIndex) = TaggedPointer::fromRaw(argc);
+    // SP/FP/PC are only used by V8's stack walker, which never sees this frame
+    slot(Info::kFrameSPIndex) = TaggedPointer::fromRaw(0);
+    // IsConstructCall() compares this Smi against kFrameTypeApiConstructExit
+    slot(Info::kFrameTypeIndex) = TaggedPointer(Info::kFrameTypeApiCallExit);
+    slot(Info::kFrameFPIndex) = TaggedPointer::fromRaw(0);
+    slot(Info::kFramePCIndex) = TaggedPointer::fromRaw(0);
+    // GetIsolate() reads this slot as a raw, untagged pointer
+    slot(Info::kIsolateIndex) = TaggedPointer::fromRaw(reinterpret_cast<uintptr_t>(isolate));
+    slot(Info::kReturnValueIndex) = TaggedPointer();
+    // Context is always a reinterpret pointer to Zig::GlobalObject
+    slot(Info::kContextIndex) = TaggedPointer::fromRaw(reinterpret_cast<uintptr_t>(globalObject));
+    // target holds the Function being called, which contains the FunctionTemplate
+    slot(Info::kTargetIndex) = target.tagged();
+    slot(Info::kReceiverIndex) = thisObject.tagged();
+
+    for (size_t i = 0; i < argc; i++) {
+        Local<Value> argValue = hs.createLocal<Value>(vm, callFrame->argument(i));
+        slot(Info::kFirstJSArgumentIndex + i) = argValue.tagged();
+    }
+
+    // The FunctionCallbackInfo object is a view located at the argc slot
+    const auto& info = *reinterpret_cast<const Info*>(&slot(Info::kArgcIndex));
 
     functionTemplate->m_callback(info);
 
-    if (implicit_args.return_value.isEmpty()) {
+    TaggedPointer& return_value = slot(Info::kReturnValueIndex);
+    if (return_value.isEmpty()) {
         // callback forgot to set a return value, so return undefined
         return JSValue::encode(JSC::jsUndefined());
     } else {
-        Local<Data> local_ret(&implicit_args.return_value);
+        Local<Data> local_ret(&return_value);
         return JSValue::encode(local_ret->localToJSValue());
     }
 }

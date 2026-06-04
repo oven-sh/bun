@@ -751,8 +751,11 @@ describe.concurrent("napi", () => {
       expect(bunStderr).toContain("FATAL ERROR");
       expect(bunStdout + bunStderr).toContain("TEST PASSED: Process crashed as expected");
 
-      // The error message should NOT contain "Did not crash"
-      expect(bunStdout + bunStderr).not.toContain("ERROR: Did not crash");
+      // The marker must NOT have actually been printed. Only check stdout: the
+      // fixture prints the marker via console.log (stdout), while stderr contains
+      // the debug-build panic report whose "Args:" line echoes the full -e script
+      // source, including the literal "ERROR: Did not crash! Test failed!".
+      expect(bunStdout).not.toContain("ERROR: Did not crash");
     },
     25_000,
   );

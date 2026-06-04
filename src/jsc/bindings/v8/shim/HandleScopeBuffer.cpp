@@ -69,6 +69,34 @@ TaggedPointer* HandleScopeBuffer::createDoubleHandle(double value)
     return handle.slot();
 }
 
+TaggedPointer* HandleScopeBuffer::createRawHandleSlot()
+{
+    auto& handle = createEmptyHandle();
+    TaggedPointer* slot = handle.slot();
+    {
+        WTF::Locker locker { m_gcLock };
+        m_rawGrants.append({ slot, m_storage.size() - 1 });
+    }
+    return slot;
+}
+
+void HandleScopeBuffer::deleteGrantsBack(const uintptr_t* limit)
+{
+    WTF::Locker locker { m_gcLock };
+    // Pop grants (and every handle created after each, which V8 semantics also
+    // scope to the closing inline HandleScope) until the newest remaining grant
+    // is the one the restored limit points one past — i.e. the last grant made
+    // before the closing scope opened. A null/foreign limit pops all grants.
+    while (!m_rawGrants.isEmpty() && m_rawGrants.last().first->asRawPtrLocation() + 1 != limit) {
+        size_t position = m_rawGrants.last().second;
+        m_rawGrants.removeLast();
+        while (m_storage.size() > position) {
+            m_storage.last() = Handle();
+            m_storage.removeLast();
+        }
+    }
+}
+
 TaggedPointer* HandleScopeBuffer::createHandleFromExistingObject(TaggedPointer address, Isolate* isolate, Handle* reuseHandle)
 {
     int32_t smi;
@@ -115,6 +143,7 @@ void HandleScopeBuffer::clear()
         handle = Handle();
     }
     m_storage.clear();
+    m_rawGrants.clear();
 }
 
 } // namespace shim

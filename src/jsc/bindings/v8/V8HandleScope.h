@@ -44,6 +44,11 @@ public:
     friend class EscapableHandleScopeBase;
 
 protected:
+    // Used by EscapableHandleScopeBase, whose constructor must initialize the fields itself
+    // (V8-style, without pushing a Bun handle scope). Mirrors V8's protected
+    // `HandleScope() = default`.
+    HandleScope() = default;
+
     // must be 24 bytes to match V8 layout
     Isolate* m_isolate;
     HandleScope* m_previousHandleScope;
@@ -51,6 +56,18 @@ protected:
 
     // is protected in v8, which matters on windows
     BUN_EXPORT static uintptr_t* CreateHandle(internal::Isolate* isolate, uintptr_t value);
+
+private:
+    // Out-of-line slow path of V8 14's fully-inline HandleScope (v8-local-handle.h). The inline
+    // CreateHandle calls Extend whenever HandleScopeData::next == HandleScopeData::limit, and the
+    // inline destructor calls DeleteExtensions whenever the scope changed HandleScopeData::limit.
+    // Private to match V8's declarations, which affects the mangled name on MSVC.
+    //
+    // Note that when these are called, `this` (for DeleteExtensions) is a V8-layout HandleScope
+    // living in the addon's stack frame -- not one of ours -- so they must not touch our members
+    // through `this`.
+    BUN_EXPORT static uintptr_t* Extend(Isolate* isolate);
+    BUN_EXPORT void DeleteExtensions(Isolate* isolate);
 };
 
 static_assert(sizeof(HandleScope) == 24, "HandleScope has wrong layout");

@@ -1468,8 +1468,16 @@ unsafe fn release_runtime_state_js_handles(_vm: *mut VirtualMachine) {
     let state = unsafe { &mut *state };
     state.sql_rare.mysql_context.on_query_resolve_fn.deinit();
     state.sql_rare.mysql_context.on_query_reject_fn.deinit();
-    state.sql_rare.postgresql_context.on_query_resolve_fn.deinit();
-    state.sql_rare.postgresql_context.on_query_reject_fn.deinit();
+    state
+        .sql_rare
+        .postgresql_context
+        .on_query_resolve_fn
+        .deinit();
+    state
+        .sql_rare
+        .postgresql_context
+        .on_query_reject_fn
+        .deinit();
 }
 
 /// The static `RuntimeHooks` instance handed to `bun_jsc`.

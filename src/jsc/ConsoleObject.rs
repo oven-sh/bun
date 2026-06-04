@@ -4591,12 +4591,22 @@ pub mod formatter {
                     // `[ ... N more items` and fall through to the
                     // named-property pass (Node: `[ ... N more items, foo: 1 ]`).
                     if self.max_array_length == 0 {
-                        // Nothing is printed, so keep the brackets inline
-                        // regardless of the element count (`len > 10` would
-                        // otherwise force a multi-line close).
+                        // Nothing is printed, so the element-count heuristic
+                        // (`len > 10`) should not force a multi-line close.
                         was_good_time = false;
-                        writer.write_all(b"[ ");
-                        writer.add_for_new_line(2);
+                        // Mirror the normal first-element opener (below): when
+                        // `sorted`/`ordered_properties` is set the close goes
+                        // multi-line, so the opener must match to stay
+                        // symmetric. Otherwise keep it inline.
+                        if !self.single_line && self.ordered_properties {
+                            writer.reset_line(self.indent);
+                            writer.write_all(b"[\n");
+                            writer.write_indent(self.indent);
+                            writer.add_for_new_line(1);
+                        } else {
+                            writer.write_all(b"[ ");
+                            writer.add_for_new_line(2);
+                        }
                         writer.pretty::<C>(
                             "... N more items".len(),
                             format_args!(

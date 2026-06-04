@@ -113,6 +113,17 @@ test("Bun.inspect maxArrayLength elides a leading hole without a dangling comma"
   expect(Bun.inspect([, , , 1], { maxArrayLength: 1 })).toBe("[ ... 4 more items ]");
 });
 
+test("Bun.inspect maxArrayLength: 0 keeps brackets symmetric with sorted", () => {
+  // The all-elided opener must mirror the close: `sorted` opens and closes
+  // multi-line, plain stays inline — never inline-open/multi-line-close.
+  expect(Bun.inspect([1, 2, 3], { maxArrayLength: 0, sorted: true })).toMatchInlineSnapshot(`
+    "[
+      ... 3 more items
+    ]"
+  `);
+  expect(Bun.inspect([1, 2, 3], { maxArrayLength: 0 })).toBe("[ ... 3 more items ]");
+});
+
 test.concurrent("console.dir honors maxArrayLength", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", "const a = Array.from({length:200}, (_,i)=>i); console.dir(a, {maxArrayLength: 5});"],

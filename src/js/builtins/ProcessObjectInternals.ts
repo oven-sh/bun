@@ -478,3 +478,164 @@ export function getChannel() {
     }
   })();
 }
+
+export function rawDebug() {
+  // process._rawDebug: util.format the arguments and write straight to fd 2,
+  // bypassing the process.stderr stream (which may be hijacked or broken).
+  // No rest parameter: builtins are strict functions and the parser rejects
+  // non-simple parameter lists.
+  const { formatWithOptions } = require("node:util");
+  const { writeSync } = require("node:fs");
+  writeSync(2, formatWithOptions({}, ...arguments) + "\n");
+}
+
+export function loadEnvFile(path) {
+  // process.loadEnvFile(path = ".env"): parse a dotenv file and apply it to
+  // process.env. Reading with fs gives the Node-shaped ENOENT error
+  // ({ code, syscall: "open", path }) for missing files.
+  if (path === undefined) {
+    path = ".env";
+  } else {
+    const { validateString } = require("internal/validators");
+    validateString(path, "path");
+  }
+  const content = require("node:fs").readFileSync(path, "utf8");
+  const parsed = require("node:util").parseEnv(content);
+  for (const key of Object.keys(parsed)) {
+    process.env[key] = parsed[key];
+  }
+}
+
+export function createProcessFinalization(process) {
+  const { validateObject, validateFunction } = require("internal/validators");
+  let entries: Array<{ ref: WeakRef<object>; fn: Function; evt: string }> = [];
+  let installed = false;
+
+  function runFinalization(event) {
+    for (const entry of entries.slice()) {
+      if (entry.evt !== event) continue;
+      const obj = entry.ref.deref();
+      if (obj === undefined) continue;
+      if (event === "exit") {
+        const index = entries.indexOf(entry);
+        if (index !== -1) entries.splice(index, 1);
+      }
+      entry.fn(obj, event);
+    }
+  }
+
+  function ensureInstalled() {
+    if (installed) return;
+    installed = true;
+    process.prependListener("exit", () => runFinalization("exit"));
+    process.prependListener("beforeExit", () => runFinalization("beforeExit"));
+  }
+
+  function registerWithEvent(ref, fn, evt) {
+    validateObject(ref, "ref");
+    validateFunction(fn, "fn");
+    ensureInstalled();
+    entries.push({ ref: new WeakRef(ref), fn, evt });
+  }
+
+  return {
+    register(ref, fn) {
+      registerWithEvent(ref, fn, "exit");
+    },
+    registerBeforeExit(ref, fn) {
+      registerWithEvent(ref, fn, "beforeExit");
+    },
+    unregister(ref) {
+      validateObject(ref, "ref");
+      entries = entries.filter(entry => entry.ref.deref() !== ref);
+    },
+  };
+}
+
+export function buildAllowedNodeEnvironmentFlags() {
+  // Node's process.allowedNodeEnvironmentFlags: a frozen Set whose has()
+  // normalizes underscores to dashes, tolerates missing leading dashes, and
+  // strips "=value" suffixes. The canonical entries are kept in a closure so
+  // Set.prototype.add.call(...) cannot make new entries observable.
+  const canonical = [
+    "--conditions",
+    "--diagnostic-dir",
+    "--disable-warning",
+    "--dns-result-order",
+    "--enable-source-maps",
+    "--import",
+    "--inspect",
+    "--inspect-brk",
+    "--inspect-port",
+    "--max-http-header-size",
+    "--no-addons",
+    "--no-deprecation",
+    "--no-warnings",
+    "--pending-deprecation",
+    "--perf-basic-prof",
+    "--perf-basic-prof-only-functions",
+    "--perf-prof",
+    "--perf-prof-unwinding-info",
+    "--preserve-symlinks",
+    "--preserve-symlinks-main",
+    "--redirect-warnings",
+    "--require",
+    "-r",
+    "--stack-trace-limit",
+    "--throw-deprecation",
+    "--title",
+    "--trace-deprecation",
+    "--trace-warnings",
+    "--use-bundled-ca",
+    "--use-openssl-ca",
+    "--use-system-ca",
+    "--zero-fill-buffers",
+  ];
+  const canonicalSet = new Set(canonical);
+
+  class NodeEnvironmentFlagsSet extends Set {
+    add() {
+      return this;
+    }
+    delete() {
+      return false;
+    }
+    clear() {}
+    has(key) {
+      if (typeof key === "string") {
+        key = key.replaceAll("_", "-");
+        if (/^--?[^-]/.test(key)) {
+          key = key.replace(/=.*$/, "");
+          return canonicalSet.has(key);
+        }
+        if (!key.startsWith("-")) {
+          if (canonicalSet.has(`--${key}`)) return true;
+          return canonicalSet.has(`-${key}`);
+        }
+      }
+      return false;
+    }
+    forEach(callback, thisArg) {
+      for (const flag of canonical) {
+        callback.$call(thisArg, flag, flag, this);
+      }
+    }
+    get size() {
+      return canonicalSet.size;
+    }
+    *[Symbol.iterator]() {
+      yield* canonical;
+    }
+    *values() {
+      yield* canonical;
+    }
+    *keys() {
+      yield* canonical;
+    }
+    *entries() {
+      for (const flag of canonical) yield [flag, flag];
+    }
+  }
+
+  return Object.freeze(new NodeEnvironmentFlagsSet());
+}

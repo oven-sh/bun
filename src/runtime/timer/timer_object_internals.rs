@@ -301,6 +301,16 @@ impl TimerObjectInternals {
             this_value: JsCell::new(JsRef::empty()),
         };
 
+        // Track for process.getActiveResourcesInfo(). Removed in `finalize`.
+        // SAFETY: `state` is the boxed per-thread `RuntimeState` (asserted
+        // non-null above); single-threaded JS heap.
+        unsafe {
+            (*state)
+                .timer
+                .live_timer_internals
+                .insert(self as *const Self as usize);
+        }
+
         if kind == Kind::SetImmediate {
             JSImmediate::arguments_set_cached(timer, global, arguments);
             JSImmediate::callback_set_cached(timer, global, callback);
@@ -1008,6 +1018,17 @@ impl TimerObjectInternals {
     /// Runs on the mutator thread during lazy sweep; do not touch any
     /// `JSValue`/`Strong` content here.
     pub fn finalize(&self) {
+        let state = crate::jsc_hooks::runtime_state();
+        if !state.is_null() {
+            // SAFETY: per-thread RuntimeState; finalizers run on the mutator
+            // thread.
+            unsafe {
+                (*state)
+                    .timer
+                    .live_timer_internals
+                    .remove(&(self as *const Self as usize));
+            }
+        }
         self.this_value.with_mut(|r| r.finalize());
         self.deref();
     }

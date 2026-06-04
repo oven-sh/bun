@@ -1510,8 +1510,12 @@ impl Run {
                     // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
                     let result = promise.result(unsafe { &mut *vm.jsc_vm });
                     let global = vm.global;
+                    // A CJS entry runs synchronously in Node, so its top-level
+                    // throw is an uncaughtException; only an ESM entry
+                    // rejection reports origin "unhandledRejection".
+                    let is_rejection = !vm.entry_evaluated_as_cjs;
                     // SAFETY: `global` valid for VM lifetime.
-                    let handled = vm.uncaught_exception(unsafe { &*global }, result, true);
+                    let handled = vm.uncaught_exception(unsafe { &*global }, result, is_rejection);
                     promise.set_handled();
                     vm.pending_internal_promise_reported_at = vm.hot_reload_counter;
 

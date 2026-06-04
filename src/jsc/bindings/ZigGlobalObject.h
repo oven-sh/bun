@@ -684,6 +684,15 @@ public:
     WTF::String m_moduleWrapperStart;
     WTF::String m_moduleWrapperEnd;
 
+    // Native synthetic modules (node:buffer, node:constants, ...) evaluate
+    // once per registry (ESM import vs require), but Node guarantees
+    // require(id) === (await import(id)).default === process.getBuiltinModule(id).
+    // Cache the default-export object per module key so every evaluation
+    // shares one instance. JSC::Strong roots the objects (no visitChildren
+    // wiring needed); builtins live for the global's lifetime anyway.
+    WTF::HashMap<WTF::String, JSC::Strong<JSC::JSObject>> m_nativeModuleDefaultObjects;
+    WTF::HashMap<WTF::String, JSC::Strong<JSC::JSObject>>& nativeModuleDefaultObjects() { return m_nativeModuleDefaultObjects; }
+
     // This is the result of dlopen()ing a napi module.
     // We will add it to the resulting napi value.
     void* m_pendingNapiModuleDlopenHandle = nullptr;

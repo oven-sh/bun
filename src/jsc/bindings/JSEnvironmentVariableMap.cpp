@@ -2,6 +2,7 @@
 #include "ZigGlobalObject.h"
 
 #include "helpers.h"
+#include "JSEnvironmentVariableMap.h"
 
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
@@ -9,8 +10,15 @@
 #include <JavaScriptCore/JSArrayInlines.h>
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/JSStringInlines.h>
+#include <JavaScriptCore/DateInstance.h>
+#include <JavaScriptCore/DateInstanceCache.h>
+#include <JavaScriptCore/JSCast.h>
+#include <JavaScriptCore/HeapIterationScope.h>
+#include <JavaScriptCore/MarkedSpaceInlines.h>
 
 #include "BunClientData.h"
+#include "BunProcess.h"
+#include "ErrorCode.h"
 #include "wtf/Compiler.h"
 #include "wtf/Forward.h"
 #include "WebCoreJSBuiltins.h"
@@ -23,10 +31,98 @@ extern "C" size_t Bun__getEnvKey(void* list, size_t index, unsigned char** out);
 extern "C" bool Bun__getEnvValue(JSGlobalObject* globalObject, const ZigString* name, ZigString* value);
 extern "C" bool Bun__getEnvValueBunString(JSGlobalObject* globalObject, const BunString* name, BunString* value);
 extern "C" void Bun__setEnvValue(JSGlobalObject* globalObject, const BunString* name, const BunString* value);
+extern "C" bool Bun__Node__ProcessPendingDeprecation;
 
 namespace Bun {
 
 using namespace WebCore;
+
+void invalidateLiveDateInstanceCaches(JSC::VM& vm)
+{
+    JSC::HeapIterationScope iterationScope(vm.heap);
+    vm.heap.objectSpace().forEachLiveCell(iterationScope, [](JSC::HeapCell* cell, JSC::HeapCell::Kind kind) -> IterationStatus {
+        if (!JSC::isJSCellKind(kind))
+            return IterationStatus::Continue;
+        auto* jsCell = static_cast<JSC::JSCell*>(cell);
+        if (auto* date = dynamicDowncast<JSC::DateInstance>(jsCell)) {
+            // m_data is private, but its offset is exported for the JIT.
+            auto& dataSlot = *reinterpret_cast<RefPtr<JSC::DateInstanceData>*>(reinterpret_cast<uint8_t*>(date) + JSC::DateInstance::offsetOfData());
+            if (dataSlot)
+                dataSlot->m_gregorianDateTimeCachedForMS = PNaN;
+        }
+        return IterationStatus::Continue;
+    });
+}
+
+const JSC::ClassInfo JSEnvironmentVariableMap::s_info = { "ProcessEnv"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSEnvironmentVariableMap) };
+
+bool JSEnvironmentVariableMap::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto* uid = propertyName.uid();
+    if (uid && uid->isSymbol()) {
+        throwTypeError(globalObject, scope, "Cannot convert a symbol to a string"_s);
+        return false;
+    }
+
+    // Node silently ignores assignments to an empty variable name
+    // (https://github.com/nodejs/node/issues/32920).
+    if (propertyName.publicName() && propertyName.publicName()->isEmpty())
+        return true;
+
+    // DEP0104: under --pending-deprecation, assigning a non-string,
+    // non-number, non-boolean value warns before being coerced.
+    if (Bun__Node__ProcessPendingDeprecation && !value.isString() && !value.isNumber() && !value.isBoolean()) [[unlikely]] {
+        Bun::Process::emitWarning(globalObject,
+            jsString(vm, String("Assigning any value other than a string, number, or boolean to a process.env property is deprecated. Please make sure to convert the value to a string before setting process.env with it."_s)),
+            jsString(vm, String("DeprecationWarning"_s)),
+            jsString(vm, String("DEP0104"_s)),
+            jsUndefined());
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+
+    JSString* string = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, string, slot));
+}
+
+bool JSEnvironmentVariableMap::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSString* string = value.toString(globalObject);
+    RETURN_IF_EXCEPTION(scope, false);
+    RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, index, string, shouldThrow));
+}
+
+bool JSEnvironmentVariableMap::defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (descriptor.isAccessorDescriptor()) {
+        throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' does not accept an accessor(getter/setter) descriptor"_s);
+        return false;
+    }
+
+    if (!(descriptor.configurablePresent() && descriptor.configurable()
+            && descriptor.writablePresent() && descriptor.writable()
+            && descriptor.enumerablePresent() && descriptor.enumerable())) {
+        throwError(globalObject, scope, ErrorCode::ERR_INVALID_OBJECT_DEFINE_PROPERTY, "'process.env' only accepts a configurable, writable, and enumerable data descriptor"_s);
+        return false;
+    }
+
+    PropertyDescriptor coerced = descriptor;
+    if (descriptor.value()) {
+        JSString* string = descriptor.value().toString(globalObject);
+        RETURN_IF_EXCEPTION(scope, false);
+        coerced.setValue(string);
+    }
+    RELEASE_AND_RETURN(scope, Base::defineOwnProperty(object, globalObject, propertyName, coerced, shouldThrow));
+}
 
 JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
@@ -175,6 +271,7 @@ JSC_DEFINE_CUSTOM_SETTER(jsTimeZoneEnvironmentVariableSetter, (JSGlobalObject * 
         if (timeZoneName.length() < 32) {
             if (WTF::setTimeZoneOverride(timeZoneName)) {
                 vm.dateCache.resetIfNecessarySlow();
+                invalidateLiveDateInstanceCaches(vm);
             }
         }
     }
@@ -351,12 +448,8 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
 
     void* list;
     size_t count = Bun__getEnvCount(globalObject, &list);
-    JSC::JSObject* object = nullptr;
-    if (count < 63) {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype(), count);
-    } else {
-        object = constructEmptyObject(globalObject, globalObject->objectPrototype());
-    }
+    auto* structure = JSEnvironmentVariableMap::createStructure(vm, globalObject, globalObject->objectPrototype());
+    JSC::JSObject* object = JSEnvironmentVariableMap::create(vm, structure);
 
 #if OS(WINDOWS)
     JSArray* keyArray = constructEmptyArray(globalObject, nullptr, count);

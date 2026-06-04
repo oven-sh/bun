@@ -41,6 +41,7 @@ public:
 
     DECLARE_EXPORT_INFO;
     bool m_reportOnUncaughtException = false;
+    bool m_dispatchedExitEvent = false;
 
     static void destroy(JSC::JSCell* cell)
     {

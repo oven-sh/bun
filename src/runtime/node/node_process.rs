@@ -69,6 +69,73 @@ pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
     feature_flag::NODE_NO_WARNINGS.get().unwrap_or(false)
 }
 
+/// Live user-timer counts for process.getActiveResourcesInfo():
+/// "Timeout" covers setTimeout + setInterval, "Immediate" covers
+/// setImmediate. Per-thread (workers have their own RuntimeState).
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Timer__getActiveTimerCounts(timeouts: *mut usize, immediates: *mut usize) {
+    let state = crate::jsc_hooks::runtime_state();
+    // SAFETY: out-params are valid pointers from the C++ caller; `state` is
+    // the live per-thread RuntimeState (null before runtime init).
+    unsafe {
+        if state.is_null() {
+            *timeouts = 0;
+            *immediates = 0;
+            return;
+        }
+        let timer = &(*state).timer;
+        let mut n_timeouts = 0usize;
+        let mut n_immediates = 0usize;
+        for &address in timer.live_timer_internals.iter() {
+            let internals = &*(address as *const crate::timer::TimerObjectInternals);
+            if internals.get_destroyed() {
+                continue;
+            }
+            let flags = internals.flags.get();
+            if flags.kind() == crate::timer::Kind::SetImmediate {
+                // Node counts an Immediate as already-gone while its own
+                // callback runs (unlike a Timeout, which stays visible until
+                // the callback returns).
+                if !flags.in_callback() {
+                    n_immediates += 1;
+                }
+            } else {
+                n_timeouts += 1;
+            }
+        }
+        *timeouts = n_timeouts;
+        *immediates = n_immediates;
+    }
+}
+
+/// `--redirect-warnings=<path>` value, if set. Returns false when unset.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Node__getRedirectWarnings(out: *mut bun_core::String) -> bool {
+    let guard = crate::cli::Bun__Node__RedirectWarnings.lock();
+    let Some(path) = guard.as_deref() else {
+        return false;
+    };
+    // SAFETY: out is a valid out-param provided by the C++ caller.
+    unsafe { *out = bun_core::String::clone_utf8(path) };
+    true
+}
+
+/// Whether `--disable-warning=<entry>` suppresses a warning with the given
+/// name or code (utf8 bytes).
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__Node__isWarningDisabled(ptr: *const u8, len: usize) -> bool {
+    if ptr.is_null() || len == 0 {
+        return false;
+    }
+    let guard = crate::cli::Bun__Node__DisabledWarnings.lock();
+    if guard.is_empty() {
+        return false;
+    }
+    // SAFETY: caller passes a live utf8 buffer of `len` bytes.
+    let needle = unsafe { core::slice::from_raw_parts(ptr, len) };
+    guard.iter().any(|entry| &**entry == needle)
+}
+
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
     if feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_PROCESS_KILL_SELF
@@ -145,7 +212,13 @@ mod _impl {
     #[unsafe(export_name = "Bun__Process__getTitle")]
     pub(super) extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();
-        let str_ = guard.as_deref().unwrap_or(b"bun");
+        // Node's default process.title is argv[0] as invoked
+        // (uv_setup_args/uv_get_process_title semantics), not a fixed name.
+        let argv = bun_core::argv();
+        let str_ = guard
+            .as_deref()
+            .or_else(|| argv.get(0).map(|z| z.as_bytes()))
+            .unwrap_or(b"bun");
         // SAFETY: title is a valid out-param provided by C++ caller
         unsafe {
             *title = BunString::clone_utf8(str_);

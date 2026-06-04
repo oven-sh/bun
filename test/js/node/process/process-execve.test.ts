@@ -79,7 +79,7 @@ describe.concurrent("process.execve", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.skipIf(isWindows)("aborts with ENOENT when the path does not exist", async () => {
+  test.skipIf(isWindows)("throws ENOENT when the path does not exist", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -93,7 +93,10 @@ describe.concurrent("process.execve", () => {
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-    expect(stderr).toContain("process.execve failed with error code ENOENT");
+    // Node >= 26 throws a SystemError from process.execve instead of
+    // printing and aborting.
+    expect(stderr).toContain("execve() failed: ENOENT");
+    expect(stderr).toContain('syscall: "execve"');
     expect(exitCode).not.toBe(0);
   });
 

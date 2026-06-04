@@ -566,7 +566,15 @@ function wrapFsAsyncMethod(original, names: string[]) {
   return function (...args) {
     if (suppressFsEvents || !isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, args);
     for (let i = 0; i < names.length; i++) emitEvent("b", kFsAsyncCat, names[i]);
-    const result = original.$apply(this, args);
+    let result;
+    try {
+      result = original.$apply(this, args);
+    } catch (err) {
+      // Balance the 'b' events when the binding throws synchronously
+      // (e.g. argument validation), mirroring wrapFsSyncMethod's finally.
+      emitFsAsyncEnd(names);
+      throw err;
+    }
     if (result && typeof result.then === "function") {
       // Chain (rather than tap) so rejections stay unhandled if the caller
       // never handles the returned promise.

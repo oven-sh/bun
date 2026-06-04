@@ -171,13 +171,14 @@ async function spawnCapped(options: Parameters<typeof Bun.spawn>[0]) {
   return proc;
 }
 
-function spawnFetch(script: string) {
+function spawnFetch(script: string, envExtra: Record<string, string> = {}) {
   return spawnCapped({
     cmd: [bunExe(), "--no-warnings", "-e", script],
     env: {
       ...bunEnv,
       BUN_FEATURE_FLAG_EXPERIMENTAL_HTTP2_CLIENT: "1",
       NODE_TLS_REJECT_UNAUTHORIZED: "0",
+      ...envExtra,
     },
     stdout: "pipe",
     stderr: "pipe",
@@ -2053,4 +2054,66 @@ test.skipIf(!isASAN)(
       server.close();
     }
   },
+);
+
+// Idle-timeout sibling of the two cases above (the field profile of
+// oven-sh/bun#31660): pooled h2 connections on custom TLS contexts go idle,
+// the HTTP thread's long-timeout sweep tears them down (onLongTimeout ->
+// onClose -> fail -> context teardown), and traffic afterwards re-registers
+// the same interned configs. Every cycle also coalesces a second request
+// onto the first's in-flight connect, so PendingConnect entries are
+// registered, resolved, and torn down repeatedly. Any reintroduced lifecycle
+// bug in that loop - a stranded PendingConnect entry, a pending list freed
+// with live waiters, a context torn down re-entrantly - trips the teardown
+// assertions or ASAN in this lane.
+test.skipIf(!isASAN)(
+  "idle-timeout teardown of pooled h2 connections with custom TLS contexts stays sound across reuse cycles",
+  async () => {
+    const server = makeH2Server();
+    server.on("sessionError", () => {});
+    server.on("stream", stream => {
+      stream.on("error", () => {});
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+
+    try {
+      await using proc = await spawnFetch(
+        `
+        const url = "https://localhost:${port}/";
+        for (let cycle = 0; cycle < 3; cycle++) {
+          const inflight = [];
+          for (let i = 0; i < 4; i++) {
+            // Same interned config for both requests: the second coalesces
+            // as a waiter onto the first's in-flight connect.
+            const tls = { serverName: "idle-" + i + ".test", rejectUnauthorized: false };
+            inflight.push(fetch(url, { protocol: "http2", tls }));
+            inflight.push(fetch(url, { protocol: "http2", tls }));
+          }
+          const responses = await Promise.all(inflight);
+          for (const res of responses) {
+            if (res.status !== 200) throw new Error("bad status " + res.status);
+            await res.text();
+          }
+          // Cross the 1s idle timeout so the HTTP thread tears the pooled
+          // connections down before the next cycle reuses their configs.
+          await new Promise(r => setTimeout(r, 1600));
+        }
+        console.log("idle-cycles-ok");
+        process.exit(0);
+        `,
+        { BUN_CONFIG_HTTP_IDLE_TIMEOUT: "1" },
+      );
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("AddressSanitizer");
+      expect(stdout.trim()).toBe("idle-cycles-ok");
+      expect(exitCode).toBe(0);
+    } finally {
+      server.close();
+    }
+  },
+  30_000,
 );

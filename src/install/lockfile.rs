@@ -1731,7 +1731,6 @@ impl<'a> Printer<'a> {
         input_lockfile_path: &[u8],
         format: PrinterFormat,
     ) -> Result<(), BunError> {
-
         // We truncate longer than allowed paths. We should probably throw an error instead.
         let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES)];
 

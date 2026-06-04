@@ -1277,7 +1277,6 @@ pub fn update_lockfile_if_needed(
 }
 
 pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
-
     let mut tmpname_buf = [0u8; 512];
     tmpname_buf[0..8].copy_from_slice(b"tmplock-");
     // `FileSystem.RealFS.Tmpfile` (fs.zig) — POSIX path never used

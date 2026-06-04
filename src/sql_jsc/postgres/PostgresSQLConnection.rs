@@ -2498,8 +2498,7 @@ impl PostgresSQLConnection {
                 let _ = free_cells; // heap_cells dropped at scope end; defer! above runs cell.deinit()
             }
             MessageType::CopyData => {
-                let copy_data =
-                    protocol::CopyData::decode_internal(reader.reborrow())?;
+                let copy_data = protocol::CopyData::decode_internal(reader.reborrow())?;
                 drop(copy_data);
             }
             MessageType::ParameterStatus => {
@@ -2516,8 +2515,7 @@ impl PostgresSQLConnection {
                 // parameter_status dropped at scope end
             }
             MessageType::ReadyForQuery => {
-                let _ready_for_query =
-                    protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
+                let _ready_for_query = protocol::ReadyForQuery::decode_internal(reader.reborrow())?;
 
                 self.set_status(Status::Connected);
                 self.update_flags(|f| {
@@ -2607,8 +2605,7 @@ impl PostgresSQLConnection {
                 }
             }
             MessageType::RowDescription => {
-                let description =
-                    protocol::RowDescription::decode_internal(reader.reborrow())?;
+                let description = protocol::RowDescription::decode_internal(reader.reborrow())?;
                 // errdefer description.deinit();
                 let request = match self.current() {
                     Some(r) => r,
@@ -2631,8 +2628,7 @@ impl PostgresSQLConnection {
                 statement.fields_flags = Default::default();
             }
             MessageType::Authentication => {
-                let auth =
-                    protocol::Authentication::decode_internal(&mut reader)?;
+                let auth = protocol::Authentication::decode_internal(&mut reader)?;
 
                 match &auth {
                     protocol::Authentication::SASL => {
@@ -2941,13 +2937,13 @@ impl PostgresSQLConnection {
                 }
             }
             MessageType::BackendKeyData => {
-                self.backend_key_data.set(
-                    protocol::BackendKeyData::decode_internal(reader.reborrow())?,
-                );
+                self.backend_key_data
+                    .set(protocol::BackendKeyData::decode_internal(
+                        reader.reborrow(),
+                    )?);
             }
             MessageType::ErrorResponse => {
-                let err =
-                    protocol::ErrorResponse::decode_internal(reader.reborrow())?;
+                let err = protocol::ErrorResponse::decode_internal(reader.reborrow())?;
 
                 if matches!(
                     self.status.get(),

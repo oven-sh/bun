@@ -853,8 +853,8 @@ impl TimerObjectInternals {
                 // large, shrink it back down. Keys are i32, values are one
                 // pointer (~12 bytes per entry), so 21,000 timers accessed by
                 // ID ≈ 252 KiB; reclaim once the slack exceeds 256 KiB.
-                const ENTRY_SIZE: usize = core::mem::size_of::<i32>()
-                    + core::mem::size_of::<*mut EventLoopTimer>();
+                const ENTRY_SIZE: usize =
+                    core::mem::size_of::<i32>() + core::mem::size_of::<*mut EventLoopTimer>();
                 let allocated_bytes = map.capacity() * ENTRY_SIZE;
                 let used_bytes = map.count() * ENTRY_SIZE;
                 if allocated_bytes - used_bytes > 256 * 1024 {

@@ -207,8 +207,7 @@ impl bun_collections::array_hash_map::ArrayHashContext<DashedIdent> for DashedId
 
 /// Zig `pub fn HashMap(comptime V: type) type` — inherent assoc type aliases
 /// are unstable in Rust, so this is a free type alias instead.
-pub type DashedIdentHashMap<V> =
-    bun_collections::ArrayHashMap<DashedIdent, V, DashedIdentContext>;
+pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V, DashedIdentContext>;
 
 impl DashedIdent {
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {

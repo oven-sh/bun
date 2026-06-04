@@ -55,8 +55,7 @@ impl<'a> Execute<'a> {
                 let param_name = {
                     use std::io::Write;
                     let mut cursor = std::io::Cursor::new(&mut param_name_buf[..]);
-                    write!(&mut cursor, ":p{}", i)
-                        .map_err(|_| AnyMySQLError::TooManyParameters)?;
+                    write!(&mut cursor, ":p{}", i).map_err(|_| AnyMySQLError::TooManyParameters)?;
                     let len = usize::try_from(cursor.position()).expect("int cast");
                     &param_name_buf[..len]
                 };
@@ -102,10 +101,7 @@ impl<'a> Execute<'a> {
 
 // Zig: `writer: anytype` — body calls .start/.int1/.write. Bound on the
 // concrete `NewWriter<C>` shape (the only `anytype` instantiation in-tree).
-pub fn execute<C: WriterContext>(
-    query: &[u8],
-    writer: NewWriter<C>,
-) -> Result<(), AnyMySQLError> {
+pub fn execute<C: WriterContext>(query: &[u8], writer: NewWriter<C>) -> Result<(), AnyMySQLError> {
     let mut packet = writer.start(0)?;
     writer.int1(CommandType::COM_QUERY as u8)?;
     writer.write(query)?;

@@ -907,18 +907,17 @@ impl Framework {
                     }
                 };
 
-                let value: BuiltInModule = if let Some(str) =
-                    get_optional_string(file, global, b"path", refs)?
-                {
-                    BuiltInModule::Import(str)
-                } else if let Some(str) = get_optional_string(file, global, b"code", refs)? {
-                    BuiltInModule::Code(str)
-                } else {
-                    return Err(global.throw_invalid_arguments(format_args!(
-                        "'builtInModules[{}]' needs either 'path' or 'code'",
-                        i
-                    )));
-                };
+                let value: BuiltInModule =
+                    if let Some(str) = get_optional_string(file, global, b"path", refs)? {
+                        BuiltInModule::Import(str)
+                    } else if let Some(str) = get_optional_string(file, global, b"code", refs)? {
+                        BuiltInModule::Code(str)
+                    } else {
+                        return Err(global.throw_invalid_arguments(format_args!(
+                            "'builtInModules[{}]' needs either 'path' or 'code'",
+                            i
+                        )));
+                    };
 
                 // PERF(port): was assume_capacity
                 files.put_assume_capacity(path, value);
@@ -963,14 +962,14 @@ impl Framework {
                 };
                 let server_entry_point =
                     match get_optional_string(fsr_opts, global, b"serverEntryPoint", refs)? {
-                    Some(s) => s,
-                    None => {
-                        return Err(global.throw_invalid_arguments(format_args!(
-                            "'fileSystemRouterTypes[{}]' is missing 'serverEntryPoint'",
-                            i
-                        )));
-                    }
-                };
+                        Some(s) => s,
+                        None => {
+                            return Err(global.throw_invalid_arguments(format_args!(
+                                "'fileSystemRouterTypes[{}]' is missing 'serverEntryPoint'",
+                                i
+                            )));
+                        }
+                    };
                 let client_entry_point =
                     get_optional_string(fsr_opts, global, b"clientEntryPoint", refs)?;
                 let prefix =

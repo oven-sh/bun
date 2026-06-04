@@ -871,9 +871,8 @@ impl<'a> Parser<'a> {
         // Zig sets `current_action = .{ .visit = ... }` here (parse_entry.zig:443)
         // and relies on the function-scope `defer` above to restore the previous
         // action; a second guard dropped at end of `_parse` is equivalent.
-        let _visit_action_guard = bun_crash_handler::scoped_action(
-            bun_crash_handler::Action::Visit(source.path.text),
-        );
+        let _visit_action_guard =
+            bun_crash_handler::scoped_action(bun_crash_handler::Action::Visit(source.path.text));
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;

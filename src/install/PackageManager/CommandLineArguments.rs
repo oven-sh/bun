@@ -11,13 +11,13 @@
 //! - bun audit
 
 use crate::package_install;
+use crate::package_manager_real::PackageManagerCommand;
 use crate::package_manager_real::Subcommand;
 use bun_clap as clap;
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::npm as Npm;
 use bun_paths::{self as Path, PathBuffer};
-use crate::package_manager_real::PackageManagerCommand;
 
 use std::sync::OnceLock;
 

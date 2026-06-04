@@ -2,14 +2,14 @@ use bun_collections::{DynamicBitSet, HashMap};
 use bun_io::Write;
 use bun_semver as semver;
 
+use crate::lockfile_real::package::PackageColumns as _;
+use crate::package_manager_real::TrackInstalledBin;
 use bun_core::fmt::PathSep;
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
 use bun_install::{
     self as install, Bin, Dependency, DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager,
     PackageNameHash, Resolution, bin, resolution,
 };
-use crate::lockfile_real::package::PackageColumns as _;
-use crate::package_manager_real::TrackInstalledBin;
 use bun_sys::Fd;
 
 type Bitset = DynamicBitSet;

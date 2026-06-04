@@ -1625,16 +1625,15 @@ mod border_handler_body {
             }
 
             macro_rules! prop {
-            ($id:ident) => {{
-                let _ = &dest; // autofix (matches Zig: `_ = d;`)
-                let mut upppppppppp =
-                    unparsed.with_property_id(arena, PropertyId::$id);
-                context.add_unparsed_fallbacks(arena, &mut upppppppppp);
-                self.flushed_properties
-                    .insert(BorderProperty::try_from_property_id(PropertyIdTag::$id).unwrap());
-                // Zig did NOT push to dest here (likely a bug upstream) — preserved.
-            }};
-        }
+                ($id:ident) => {{
+                    let _ = &dest; // autofix (matches Zig: `_ = d;`)
+                    let mut upppppppppp = unparsed.with_property_id(arena, PropertyId::$id);
+                    context.add_unparsed_fallbacks(arena, &mut upppppppppp);
+                    self.flushed_properties
+                        .insert(BorderProperty::try_from_property_id(PropertyIdTag::$id).unwrap());
+                    // Zig did NOT push to dest here (likely a bug upstream) — preserved.
+                }};
+            }
 
             macro_rules! logical_prop {
                 ($ltr:ident, $rtl:ident) => {{

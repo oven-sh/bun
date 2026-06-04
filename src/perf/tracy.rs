@@ -128,7 +128,9 @@ macro_rules! tracy_trace {
                 function: concat!(module_path!(), "\0")
                     .as_ptr()
                     .cast::<::core::ffi::c_char>(),
-                file: concat!(file!(), "\0").as_ptr().cast::<::core::ffi::c_char>(),
+                file: concat!(file!(), "\0")
+                    .as_ptr()
+                    .cast::<::core::ffi::c_char>(),
                 line: line!(),
                 color: 0,
             };
@@ -149,7 +151,9 @@ macro_rules! tracy_trace_named {
                 function: concat!(module_path!(), "\0")
                     .as_ptr()
                     .cast::<::core::ffi::c_char>(),
-                file: concat!(file!(), "\0").as_ptr().cast::<::core::ffi::c_char>(),
+                file: concat!(file!(), "\0")
+                    .as_ptr()
+                    .cast::<::core::ffi::c_char>(),
                 line: line!(),
                 color: 0,
             };

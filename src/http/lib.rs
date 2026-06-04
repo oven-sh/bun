@@ -775,8 +775,8 @@ use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output, err};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, immutable as strings};
-use bun_uws as uws;
 use bun_http_types::ETag::StringPointer;
+use bun_uws as uws;
 // spec http.zig:829 uses `std.hash.Wyhash` (the std algorithm, not Wyhash11).
 use bun_wyhash::Wyhash;
 

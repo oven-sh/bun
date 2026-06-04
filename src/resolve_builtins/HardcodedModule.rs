@@ -785,11 +785,8 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
     BUN_TEST_EXTRA_ALIAS_KVS,
 ];
 
-fn build_alias_map(
-    tables: &[&[AliasKv]],
-) -> std::collections::HashMap<&'static [u8], Alias> {
-    let mut map =
-        std::collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
+fn build_alias_map(tables: &[&[AliasKv]]) -> std::collections::HashMap<&'static [u8], Alias> {
+    let mut map = std::collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
     for table in tables {
         for (k, v) in *table {
             // First table wins, matching the previous in-order scan (and Zig's

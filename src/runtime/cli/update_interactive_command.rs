@@ -1179,9 +1179,7 @@ impl UpdateInteractiveCommand {
         #[cfg(unix)]
         {
             // TIOCGWINSZ on stdout, routed through the output sink (bun_sys).
-            if let Some(size) =
-                bun_core::output::File::from(bun_core::Fd::stdout()).winsize()
-            {
+            if let Some(size) = bun_core::output::File::from(bun_core::Fd::stdout()).winsize() {
                 // Reserve space for prompt (1 line) + scroll indicators (2 lines) + some buffer
                 let usable_height = if size.row > 6 { size.row - 4 } else { 20 };
                 return TerminalSize {

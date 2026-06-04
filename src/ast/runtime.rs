@@ -36,7 +36,10 @@ pub enum ReplaceableExport {
     /// Zig's `name: string` borrowed a transpiler-owned buffer; the Rust
     /// variant owns the bytes (constructed from an owned slice in
     /// `JSTranspiler`; the parser copies into its bump arena when consuming).
-    Inject { name: Box<[u8]>, value: Expr },
+    Inject {
+        name: Box<[u8]>,
+        value: Expr,
+    },
 }
 
 impl ReplaceableExport {

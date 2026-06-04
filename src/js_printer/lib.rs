@@ -1922,9 +1922,7 @@ pub mod __gated_printer {
                 err: None,
             };
             if core::fmt::write(&mut adapter, args).is_err() {
-                return Err(adapter
-                    .err
-                    .unwrap_or_else(|| bun_core::err!("WriteFailed")));
+                return Err(adapter.err.unwrap_or_else(|| bun_core::err!("WriteFailed")));
             }
             Ok(())
         }

@@ -62,8 +62,10 @@ pub mod js_printer {
         // in JSON mode every non-printable scalar (including lone surrogates)
         // is emitted as an ASCII escape.
         let mut buf: Vec<u8> = Vec::with_capacity(input.len() + 8);
-        crate::string::printer::write_pre_quoted_string(input, &mut buf, quote, ascii_only, true, enc)
-            .map_err(|_| fmt::Error)?;
+        crate::string::printer::write_pre_quoted_string(
+            input, &mut buf, quote, ascii_only, true, enc,
+        )
+        .map_err(|_| fmt::Error)?;
         f.write_str(&String::from_utf8_lossy(&buf))
     }
 }
@@ -1960,10 +1962,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     text = &text[i..];
                                     i = 0;
                                     if !text.is_empty() && text[0] == char_ {
-                                        write!(
-                                            writer,
-                                            crate::pretty_fmt!("<r><green>`<r>", true)
-                                        )?;
+                                        write!(writer, crate::pretty_fmt!("<r><green>`<r>", true))?;
                                         text = &text[1..];
                                         continue 'outer;
                                     }
@@ -1985,7 +1984,11 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             should_redact_value = false;
                             if i > 2 && text[i - 1] == char_ {
                                 let len = i - 2;
-                                write!(writer, crate::pretty_fmt!("<r><green>{s}", true), char_ as char)?;
+                                write!(
+                                    writer,
+                                    crate::pretty_fmt!("<r><green>{s}", true),
+                                    char_ as char
+                                )?;
                                 splat_byte_all(writer, b'*', len)?;
                                 write!(writer, "{}{}", char_ as char, Output::RESET)?;
                             } else {

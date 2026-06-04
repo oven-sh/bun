@@ -14,7 +14,9 @@ use phf;
 /// - bun-native-bundler-plugin-api/bundler_plugin.h
 /// - src/jsc/bindings/headers-handwritten.h
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr, strum::VariantNames)]
+#[derive(
+    Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr, strum::VariantNames,
+)]
 // Zig field names are lower_snake — `@tagName` is exposed to JS (HTMLImportManifest
 // `"loader":`, BuildArtifact.loader) so the strum serialization must match exactly.
 #[strum(serialize_all = "snake_case")]

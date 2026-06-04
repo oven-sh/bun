@@ -2,8 +2,8 @@
 
 use crate::mysql::Capabilities;
 use crate::mysql::StatusFlags;
-use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::CharacterSet;
+use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
 

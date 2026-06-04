@@ -3423,8 +3423,7 @@ impl<T: 'static> DebugOnlyDisabler<T> {
     #[inline]
     pub fn disable() {
         #[cfg(debug_assertions)]
-        debug_disabler_state::DISABLED
-            .with(|d| d.borrow_mut().push(core::any::TypeId::of::<T>()));
+        debug_disabler_state::DISABLED.with(|d| d.borrow_mut().push(core::any::TypeId::of::<T>()));
     }
     #[inline]
     pub fn enable() {

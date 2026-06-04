@@ -4903,9 +4903,7 @@ enum StdinBehavior {
 /// wait. Port of Zig `std.process.Child` with `stdin_behavior = .Ignore`,
 /// `stdout_behavior = .Inherit`, `stderr_behavior = .Inherit` (e.g.
 /// init_command.zig:1211-1222).
-pub fn spawn_sync_inherit_no_stdin(
-    argv: &[impl AsRef<[u8]>],
-) -> Result<SpawnStatus, crate::Error> {
+pub fn spawn_sync_inherit_no_stdin(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
     spawn_sync_inherit_impl(argv, StdinBehavior::Ignore)
 }
 

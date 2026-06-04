@@ -177,7 +177,6 @@ impl ContextData {
         // live `&mut Log` overlapping this.
         unsafe { &*self.log }
     }
-
 }
 
 // `create()` (Zig: `Command.ContextData.create`) lives in the CLI crate

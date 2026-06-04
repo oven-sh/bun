@@ -345,6 +345,7 @@ pub mod bv2_impl {
     use crate::{bun_css, import_record};
     use bun_alloc::{AllocError, Arena as ThreadLocalArena};
 
+    use self::bake_types as bake;
     use bun_ast::server_component_boundary;
     use bun_ast::{Binding, E, Expr, G, S};
     use bun_ast::{ImportKind, ImportRecord};
@@ -355,7 +356,6 @@ pub mod bv2_impl {
     use bun_resolver::fs::PathResolverExt as _;
     use bun_resolver::{self as _resolver, is_package_path};
     use bun_threading::ThreadPool as ThreadPoolLib;
-    use self::bake_types as bake;
 
     /// CYCLEBREAK(b0) TYPE_ONLY: pure value types from bake that bundler needs without
     /// depending on the full DevServer. Move-in pass keeps these as the canonical defs;

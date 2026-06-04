@@ -216,13 +216,12 @@ impl Browsers {
                 // Zig: `try std.fmt.parseInt(u16, number_part, 10)` — propagates
                 // error.InvalidCharacter / error.Overflow. Preserve the tag for
                 // @errorName snapshot compat (do NOT collapse to UnsupportedCSSTarget).
-                let year =
-                    strings::parse_int::<u16>(number_part, 10).map_err(|e| match e {
-                        strings::ParseIntError::Overflow => bun_core::err!("Overflow"),
-                        strings::ParseIntError::InvalidCharacter => {
-                            bun_core::err!("InvalidCharacter")
-                        }
-                    })?;
+                let year = strings::parse_int::<u16>(number_part, 10).map_err(|e| match e {
+                    strings::ParseIntError::Overflow => bun_core::err!("Overflow"),
+                    strings::ParseIntError::InvalidCharacter => {
+                        bun_core::err!("InvalidCharacter")
+                    }
+                })?;
                 match year {
                     // https://caniuse.com/?search=es2015
                     2015 => {

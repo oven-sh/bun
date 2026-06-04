@@ -989,10 +989,8 @@ impl MySQLConnection {
                         error_code: statement.error_response.error_code,
                         sql_state_marker: statement.error_response.sql_state_marker,
                         sql_state: statement.error_response.sql_state,
-                        error_message: Data::create(
-                            statement.error_response.error_message.slice(),
-                        )
-                        .unwrap_or(Data::Empty),
+                        error_message: Data::create(statement.error_response.error_message.slice())
+                            .unwrap_or(Data::Empty),
                     };
                     // Reshaped for borrowck — Zig `defer this.flushQueue()`
                     // moved to explicit call after `on_error_packet` below.

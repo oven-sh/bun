@@ -3129,8 +3129,7 @@ impl PackageManifest {
                                     < all_extern_strings.len()
                             );
 
-                            let name_dependencies =
-                                dependencies_list.name.get(&all_extern_strings);
+                            let name_dependencies = dependencies_list.name.get(&all_extern_strings);
                             let value_dependencies =
                                 dependencies_list.value.get(&version_extern_strings);
 

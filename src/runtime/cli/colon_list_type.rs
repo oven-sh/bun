@@ -58,19 +58,20 @@ impl<T: ColonListValue> ColonListType<T> {
             }
 
             self.keys.push(&str[0..midpoint]);
-            self.values.push(match T::resolve_value(&str[midpoint + 1..str.len()]) {
-                Ok(v) => v,
-                Err(e) if e == err!("InvalidLoader") => {
-                    // Mirrors Zig `bun.fmt.enumTagList(bun.options.Loader, .dash)`.
-                    pretty_errorln!(
-                        "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of:{}",
-                        bun_fmt::quote(&str[midpoint + 1..str.len()]),
-                        bun_fmt::enum_tag_list::<bun_ast::Loader, { bun_fmt::SEP_DASH }>(),
-                    );
-                    Global::exit(1);
-                }
-                Err(e) => return Err(e),
-            });
+            self.values
+                .push(match T::resolve_value(&str[midpoint + 1..str.len()]) {
+                    Ok(v) => v,
+                    Err(e) if e == err!("InvalidLoader") => {
+                        // Mirrors Zig `bun.fmt.enumTagList(bun.options.Loader, .dash)`.
+                        pretty_errorln!(
+                            "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of:{}",
+                            bun_fmt::quote(&str[midpoint + 1..str.len()]),
+                            bun_fmt::enum_tag_list::<bun_ast::Loader, { bun_fmt::SEP_DASH }>(),
+                        );
+                        Global::exit(1);
+                    }
+                    Err(e) => return Err(e),
+                });
         }
         Ok(())
     }

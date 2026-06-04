@@ -24,10 +24,10 @@
 use bun_alloc::AllocError;
 use bun_collections::AutoBitSet;
 use bun_core::Error;
+use bun_core::ZStr;
 use bun_core::define_scoped_log;
 use bun_core::env::IS_WINDOWS;
 use bun_core::strings;
-use bun_core::ZStr;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, resolve_path};
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self as Syscall, E, Error as SysError, Fd, FdExt, O, Result as Maybe, S, Stat};

@@ -376,9 +376,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                     other => other.into_srgb(),
                                 },
                                 CssColor::Rgba(rgba) => rgba.into_srgb(),
-                                CssColor::Lab(lab) => {
-                                    lab.into_srgb()
-                                }
+                                CssColor::Lab(lab) => lab.into_srgb(),
                                 _ => break 'formatted,
                             };
                             let rgba = srgba.into_rgba();
@@ -547,9 +545,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                                     other => other.into_hsl(),
                                 },
                                 CssColor::Rgba(rgba) => rgba.into_hsl(),
-                                CssColor::Lab(lab) => {
-                                    lab.into_hsl()
-                                }
+                                CssColor::Lab(lab) => lab.into_hsl(),
                                 _ => break 'formatted,
                             };
 
@@ -560,9 +556,7 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                         }
                         OutputColorFormat::Lab => {
                             let lab: LAB = match &result {
-                                CssColor::Float(float) => {
-                                    float.into_lab()
-                                }
+                                CssColor::Float(float) => float.into_lab(),
                                 CssColor::Lab(lab) => match &**lab {
                                     css::LabColor::Lab(lab_) => *lab_,
                                     other => other.into_lab(),

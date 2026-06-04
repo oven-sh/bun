@@ -1040,11 +1040,7 @@ impl JSValkeyClient {
         if second_arg.is_object() && !second_arg.is_array() {
             // Pattern 1: Object/Record - hset(key, {field: value, ...})
             let Some(obj) = second_arg.get_object() else {
-                return Err(global.throw_invalid_argument_type(
-                    bname(command),
-                    "fields",
-                    "object",
-                ));
+                return Err(global.throw_invalid_argument_type(bname(command), "fields", "object"));
             };
 
             let mut object_iter = JSPropertyIterator::init(

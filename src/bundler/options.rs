@@ -1180,7 +1180,6 @@ pub fn loaders_from_transform_options(
     Ok(loaders)
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SourceMapOption {
     #[default]

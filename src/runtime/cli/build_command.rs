@@ -503,8 +503,7 @@ impl BuildCommand {
                         for (key, value) in input.keys.iter().zip(input.values.iter()) {
                             raw.insert(key.as_ref(), value.clone());
                         }
-                        let drop: Vec<&[u8]> =
-                            ctx.args.drop.iter().map(|d| d.as_ref()).collect();
+                        let drop: Vec<&[u8]> = ctx.args.drop.iter().map(|d| d.as_ref()).collect();
                         Some(bun_bundler::defines::DefineData::from_input(
                             &raw, &drop, log_ref, arena,
                         )?)

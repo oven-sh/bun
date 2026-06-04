@@ -135,18 +135,16 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
         ..Default::default()
     };
 
-    let maybe_package_manifest = match npm::package_manifest::Serializer::load_by_file(
-        &scope,
-        &manifest_file,
-    ) {
-        Ok(m) => m,
-        Err(err) => {
-            return Err(global.throw(format_args!(
-                "failed to load manifest file: {}",
-                BStr::new(err.name())
-            )));
-        }
-    };
+    let maybe_package_manifest =
+        match npm::package_manifest::Serializer::load_by_file(&scope, &manifest_file) {
+            Ok(m) => m,
+            Err(err) => {
+                return Err(global.throw(format_args!(
+                    "failed to load manifest file: {}",
+                    BStr::new(err.name())
+                )));
+            }
+        };
 
     let package_manifest: npm::PackageManifest = match maybe_package_manifest {
         Some(m) => m,

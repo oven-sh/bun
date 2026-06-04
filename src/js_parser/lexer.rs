@@ -13,8 +13,8 @@ use bun_core::strings::CodepointIterator;
 use bun_core::{Environment, feature_flags as FeatureFlags};
 use identifier as js_identifier;
 // MOVE-IN: Indentation now lives in this crate (was bun_js_printer::Options::Indentation).
-use bun_ast::{Indentation, IndentationCharacter};
 use bun_alloc::Arena;
+use bun_ast::{Indentation, IndentationCharacter};
 
 // Unicode ID-Start/ID-Continue tables moved DOWN to `bun_core` (pure data;
 // no upward deps) so `bun_core::lexer` / `MutableString` get full coverage

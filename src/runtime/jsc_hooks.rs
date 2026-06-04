@@ -920,7 +920,11 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // `All::insert`/`update` inside `DateHeaderTimer::enable` touches only
         // fields disjoint from `date_header_timer` (raw-ptr-per-field pattern,
         // same as `Bun__internal_ensureDateHeaderTimerIsEnabled`).
-        unsafe { (*state).timer.update_date_header_timer_if_necessary(&*loop_, vm) };
+        unsafe {
+            (*state)
+                .timer
+                .update_date_header_timer_if_necessary(&*loop_, vm)
+        };
     }
     // SAFETY: `el` is the live per-thread event loop.
     unsafe { (*el).run_imminent_gc_timer() };
@@ -1058,7 +1062,11 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     // Spec event_loop.zig:477 — `ctx.timer.updateDateHeaderTimerIfNecessary(loop, ctx)`.
     if !state.is_null() {
         // SAFETY: see the matching call in `auto_tick` above.
-        unsafe { (*state).timer.update_date_header_timer_if_necessary(&*loop_, vm) };
+        unsafe {
+            (*state)
+                .timer
+                .update_date_header_timer_if_necessary(&*loop_, vm)
+        };
     }
 
     if state.is_null() {
@@ -2982,8 +2990,9 @@ fn transpile_source_code_inner(
                 // as *mut _`, which is Stacked-Borrows UB). The borrow ends
                 // here; the raw pointer stays valid until `module_info` is
                 // moved/touched again (after `print_with_source_map`).
-                let module_info_ptr: Option<*mut bun_bundler::analyze_transpiled_module::ModuleInfo> =
-                    module_info.as_deref_mut().map(core::ptr::from_mut);
+                let module_info_ptr: Option<
+                    *mut bun_bundler::analyze_transpiled_module::ModuleInfo,
+                > = module_info.as_deref_mut().map(core::ptr::from_mut);
 
                 // ── js_printer::print ───────────────────────────────────────
                 // Spec :525-539.
@@ -3251,8 +3260,8 @@ fn transpile_source_code_inner(
             // the real `HotReload` enum discriminant (`!= 0` would also match
             // `.watch`, which is wrong).
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            let hot = unsafe { &*jsc_vm }.hot_reload
-                == bun_options_types::context::HotReload::Hot as u8;
+            let hot =
+                unsafe { &*jsc_vm }.hot_reload == bun_options_types::context::HotReload::Hot as u8;
             let sqlite_module_source_code_string: &'static [u8] = if hot {
                 SQLITE_MODULE_SOURCE_HOT
             } else {

@@ -387,7 +387,10 @@ impl<T: RefCounted> RefCount<T> {
         {
             // SAFETY: self is the `ref_count` field of a live T
             let ptr: *mut T = unsafe {
-                bun_core::container_of::<T, Self>(std::ptr::from_mut(self), offset_of_ref_count::<T>())
+                bun_core::container_of::<T, Self>(
+                    std::ptr::from_mut(self),
+                    offset_of_ref_count::<T>(),
+                )
             };
             self.debug.dump(
                 Some(core::any::type_name::<T>().as_bytes()),

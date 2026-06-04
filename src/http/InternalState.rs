@@ -3,10 +3,7 @@ use core::ptr::NonNull;
 use bun_core::MutableString;
 use bun_core::{Error, Output};
 
-use crate::{
-    CertificateInfo, Decompressor, Encoding, HTTPRequestBody,
-    HTTPResponseMetadata,
-};
+use crate::{CertificateInfo, Decompressor, Encoding, HTTPRequestBody, HTTPResponseMetadata};
 
 bun_core::define_scoped_log!(log, HTTPInternalState, hidden);
 

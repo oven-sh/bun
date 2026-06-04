@@ -1,7 +1,7 @@
+use crate::bun_schema::api as Api;
 use bun_core::ZStr;
 use bun_core::{Output, env_var};
 use bun_paths::PathBuffer;
-use crate::bun_schema::api as Api;
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};

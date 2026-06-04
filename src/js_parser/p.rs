@@ -4014,7 +4014,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         loc: bun_ast::Loc,
         was_originally_bare_import: bool,
     ) -> Result<Stmt, bun_core::Error> {
-        let is_macro = Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
+        let is_macro =
+            Self::ALLOW_MACROS && (path.is_macro || crate::Macro::is_macro_path(path.text));
         let mut stmt = stmt_;
         if is_macro {
             let id = self.add_import_record(ImportKind::Stmt, path.loc, path.text);

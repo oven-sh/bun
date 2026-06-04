@@ -283,11 +283,7 @@ impl UTF8Fallback {
             // (plus the 16-byte slack `to_utf8_append_to_list` asks for) makes
             // the append below allocation-free, so memory pressure surfaces
             // as `.err = oom` instead of aborting the process.
-            let Some(worst_case) = str_
-                .len()
-                .checked_mul(3)
-                .and_then(|n| n.checked_add(16))
-            else {
+            let Some(worst_case) = str_.len().checked_mul(3).and_then(|n| n.checked_add(16)) else {
                 return streams::result::Writable::Err(SysError::oom());
             };
             let mut allocated: Vec<u8> = Vec::new();

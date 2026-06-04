@@ -13,9 +13,9 @@ use bun_sourcemap::{
 };
 // Note: alias the *module* (not the `ThreadPool` struct) so
 // `ThreadPoolLib::Task` / `ThreadPoolLib::Batch` resolve as nested items.
+use crate::bake_types as bake;
 use bun_ast::{ImportKind, ImportRecord};
 use bun_threading::{WaitGroup, thread_pool as ThreadPoolLib};
-use crate::bake_types as bake;
 
 use crate::BundledAst as JSAst;
 use bun_ast::{

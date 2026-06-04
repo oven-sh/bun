@@ -30,10 +30,7 @@ pub(crate) trait RadioChoice: Copy + Sized {
 pub(crate) struct InitCommand;
 
 impl InitCommand {
-    pub(crate) fn prompt(
-        label: &'static str,
-        default: &[u8],
-    ) -> Result<Vec<u8>, Error> {
+    pub(crate) fn prompt(label: &'static str, default: &[u8]) -> Result<Vec<u8>, Error> {
         #[allow(clippy::disallowed_methods)]
         // label is a runtime parameter that may contain <tag> markup
         Output::pretty(format_args!("{}", label));

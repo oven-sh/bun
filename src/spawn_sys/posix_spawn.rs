@@ -47,9 +47,9 @@ mod darwin_spawn_np {
 // widens.
 #[cfg(unix)]
 use self::posix_compat::{Errno, errno};
-use self::posix_compat::{fd_t, pid_t, to_posix_path};
 #[cfg(target_os = "macos")]
 use self::posix_compat::{errno_from_posix_spawn, mode_t, unexpected_errno};
+use self::posix_compat::{fd_t, pid_t, to_posix_path};
 
 #[allow(non_camel_case_types)]
 mod posix_compat {

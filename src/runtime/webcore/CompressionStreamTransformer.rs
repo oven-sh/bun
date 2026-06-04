@@ -80,19 +80,22 @@ impl CompressionStreamTransformer {
             | NodeMode::DEFLATERAW
             | NodeMode::INFLATERAW
             | NodeMode::UNZIP => {
-                let mut ctx = crate::node::native_zlib_impl::Context::default();
-                ctx.mode = mode;
-                Engine::Zlib(ctx)
+                Engine::Zlib(crate::node::native_zlib_impl::Context {
+                    mode,
+                    ..Default::default()
+                })
             }
             NodeMode::BROTLI_ENCODE | NodeMode::BROTLI_DECODE => {
-                let mut ctx = crate::node::native_brotli_impl::Context::default();
-                ctx.mode = mode;
-                Engine::Brotli(ctx)
+                Engine::Brotli(crate::node::native_brotli_impl::Context {
+                    mode,
+                    ..Default::default()
+                })
             }
             NodeMode::ZSTD_COMPRESS | NodeMode::ZSTD_DECOMPRESS => {
-                let mut ctx = crate::node::native_zstd_impl::Context::default();
-                ctx.mode = mode;
-                Engine::Zstd(ctx)
+                Engine::Zstd(crate::node::native_zstd_impl::Context {
+                    mode,
+                    ..Default::default()
+                })
             }
             NodeMode::NONE => unreachable!("range-checked above"),
         };

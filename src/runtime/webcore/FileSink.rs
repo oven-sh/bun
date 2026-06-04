@@ -268,6 +268,9 @@ bun_io::impl_streaming_writer_parent! {
 pub struct Options {
     pub chunk_size: webcore::BlobSizeType,
     pub input_path: PathOrFileDescriptor,
+    /// `O_TRUNC` the destination when opening a path. Off by default —
+    /// `.writer()` keeps its open-in-place semantics; `Bun.write`
+    /// destinations opt in to match the buffered path they replace.
     pub truncate: bool,
     pub close: bool,
     pub mode: bun_sys::Mode,
@@ -282,7 +285,7 @@ impl Default for Options {
         Self {
             chunk_size: 1024,
             input_path: PathOrFileDescriptor::Fd(Fd::INVALID),
-            truncate: true,
+            truncate: false,
             close: false,
             mode: 0o664,
             mkdirp: false,
@@ -292,8 +295,12 @@ impl Default for Options {
 
 impl Options {
     pub fn flags(&self) -> i32 {
-        let _ = self;
-        bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY
+        let base =
+            bun_sys::O::NONBLOCK | bun_sys::O::CLOEXEC | bun_sys::O::CREAT | bun_sys::O::WRONLY;
+        if self.truncate {
+            return base | bun_sys::O::TRUNC;
+        }
+        base
     }
 }
 
@@ -741,9 +748,9 @@ impl FileSink {
                         let mut node_fs = crate::node::fs::NodeFS::default();
                         if node_fs
                             .mkdir_recursive(&crate::node::fs::args::Mkdir {
-                                path: crate::node::PathLike::String(bun_core::PathString::init(
-                                    dirname,
-                                )),
+                                path: crate::node::PathLike::String(
+                                    bun_ptr::cow_slice::CowSlice::init_unchecked(dirname, false),
+                                ),
                                 recursive: true,
                                 always_return_none: true,
                                 ..Default::default()

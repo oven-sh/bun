@@ -1499,13 +1499,45 @@ impl BlobExt for Blob {
                 let fd: Fd = if let PathOrFileDescriptor::Fd(fd) = pathlike {
                     *fd
                 } else {
+                    // `Bun.write` semantics: replace the file's contents
+                    // (`O_TRUNC`, like the buffered `WriteFileWindows` path)
+                    // and honor `createPath`.
+                    let open_flags = bun_sys::O::WRONLY
+                        | bun_sys::O::CREAT
+                        | bun_sys::O::NONBLOCK
+                        | bun_sys::O::TRUNC;
                     let mut file_path = bun_paths::PathBuffer::uninit();
                     let path = pathlike.path().slice_z(&mut file_path);
-                    match bun_sys::open(
-                        path,
-                        bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::NONBLOCK,
-                        WRITE_PERMISSIONS,
-                    ) {
+                    let mut open_result = bun_sys::open(path, open_flags, WRITE_PERMISSIONS);
+                    if mkdirp_if_not_exists {
+                        if let bun_sys::Result::Err(err) = &open_result {
+                            if err.get_errno() == bun_sys::E::ENOENT {
+                                // Create the missing parent directories and
+                                // retry once (the same recovery the buffered
+                                // path performs via `mkdir_if_not_exists`).
+                                if let Some(dirname) = bun_core::dirname(path.as_bytes()) {
+                                    let mut node_fs = node::fs::NodeFS::default();
+                                    if node_fs
+                                        .mkdir_recursive(&node::fs::args::Mkdir {
+                                            path: node::PathLike::String(
+                                                bun_ptr::cow_slice::CowSlice::init_unchecked(
+                                                    dirname, false,
+                                                ),
+                                            ),
+                                            recursive: true,
+                                            always_return_none: true,
+                                            ..Default::default()
+                                        })
+                                        .is_ok()
+                                    {
+                                        open_result =
+                                            bun_sys::open(path, open_flags, WRITE_PERMISSIONS);
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    match open_result {
                         bun_sys::Result::Ok(result) => result,
                         bun_sys::Result::Err(err) => {
                             return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
@@ -1612,6 +1644,10 @@ impl BlobExt for Blob {
                 let stream_start = streams::Start::FileSink(streams::FileSinkOptions {
                     input_path,
                     chunk_size: 0,
+                    // `Bun.write` semantics: replace the file's contents
+                    // (`O_TRUNC`, like the buffered `WriteFile` path) and
+                    // honor `createPath`.
+                    truncate: true,
                     mkdirp: mkdirp_if_not_exists,
                     ..Default::default()
                 });

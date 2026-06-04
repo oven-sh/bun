@@ -874,8 +874,8 @@ function getTartPilotStep(options, buildId, arch) {
     soft_fail: true,
     retry: getRetry(),
     cancel_on_build_failing: isMergeQueue(),
-    parallelism: 2,
-    timeout_in_minutes: 30,
+    parallelism: 1,
+    timeout_in_minutes: 60,
     command: `./scripts/runner.node.mjs ${args.join(" ")}`,
   };
 }

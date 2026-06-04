@@ -630,6 +630,9 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
         }
 
         setCloseCallback(http_res, onClose);
+        // Node traces every parsed request before Expect/limit routing
+        // (parserOnIncoming); upgrades never reach that path.
+        if (!is_upgrade) traceServerRequestStart(http_res);
         if (reachedRequestsLimit) {
           server.emit("dropRequest", http_req, socket);
           http_res.writeHead(503);
@@ -651,7 +654,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
               server.emit("checkContinue", http_req, http_res);
             } else {
               http_res.writeContinue();
-              traceServerRequestStart(http_res);
               server.emit("request", http_req, http_res);
             }
           } else if (server.listenerCount("checkExpectation") > 0) {
@@ -661,7 +663,6 @@ Server.prototype[kRealListen] = function (tls, port, host, socketPath, reusePort
             http_res.end();
           }
         } else {
-          traceServerRequestStart(http_res);
           server.emit("request", http_req, http_res);
         }
 

@@ -780,7 +780,7 @@ install_common_software() {
 }
 
 nodejs_version_exact() {
-	print "24.3.0"
+	print "26.3.0"
 }
 
 nodejs_version() {

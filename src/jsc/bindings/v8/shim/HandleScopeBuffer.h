@@ -43,6 +43,19 @@ public:
     TaggedPointer* createSmiHandle(int32_t smi);
     TaggedPointer* createDoubleHandle(double value);
 
+    // Reserve a slot whose value will be written directly by V8's inline CreateHandle code after
+    // HandleScope::Extend returns it. The written value is either a Smi or a pointer to an
+    // ObjectLayout owned by some other handle, so the handle backing this slot does not own (or
+    // visit) anything itself (see Handle::isCell).
+    TaggedPointer* createRawHandleSlot();
+
+    // Free every handle created after the raw slot whose address + 1 equals `limit` (the
+    // HandleScopeData::limit value V8's inline ~HandleScope just restored). Called from
+    // HandleScope::DeleteExtensions so per-iteration inline v8::HandleScopes inside a single
+    // native call reclaim their handles instead of accumulating until the enclosing Bun scope
+    // closes.
+    void deleteGrantsBack(const uintptr_t* limit);
+
     // Given a tagged pointer from V8, create a handle around the same object or the same
     // numeric value
     //
@@ -62,6 +75,12 @@ public:
 private:
     WTF::Lock m_gcLock;
     WTF::SegmentedVector<Handle, 16> m_storage;
+    // (slot, index in m_storage) for every createRawHandleSlot grant, in creation order.
+    // No inline capacity: in-cell inline Vector storage would leave stale ASAN
+    // container annotations behind (this cell type is swept without running
+    // C++ destructors), tripping container-overflow on cell reuse. The heap
+    // buffer is released in clear().
+    WTF::Vector<std::pair<TaggedPointer*, size_t>> m_rawGrants;
 
     Handle& createEmptyHandle();
 

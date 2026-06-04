@@ -45,15 +45,15 @@ static std::string describe(Isolate *isolate, Local<Value> value) {
     return "false";
   } else if (value->IsString()) {
     char buf[1024] = {0};
-    value.As<String>()->WriteUtf8(isolate, buf, sizeof(buf) - 1);
+    value.As<String>()->WriteUtf8V2(isolate, buf, sizeof(buf) - 1);
     std::string result = "\"";
     result += buf;
     result += "\"";
     return result;
   } else if (value->IsFunction()) {
     char buf[1024] = {0};
-    value.As<Function>()->GetName().As<String>()->WriteUtf8(isolate, buf,
-                                                            sizeof(buf) - 1);
+    value.As<Function>()->GetName().As<String>()->WriteUtf8V2(
+        isolate, buf, sizeof(buf) - 1);
     std::string result = "function ";
     result += buf;
     result += "()";
@@ -131,36 +131,45 @@ static void perform_string_test(const FunctionCallbackInfo<Value> &info,
                                 Local<String> v8_string) {
   Isolate *isolate = info.GetIsolate();
   char buf[256] = {0x7f};
-  int retval;
-  int nchars;
+  size_t retval;
+  size_t nchars;
 
   LOG_VALUE_KIND(v8_string);
   LOG_EXPR(v8_string->Length());
-  LOG_EXPR(v8_string->Utf8Length(isolate));
+  LOG_EXPR(v8_string->Utf8LengthV2(isolate));
   LOG_EXPR(v8_string->IsOneByte());
   LOG_EXPR(v8_string->ContainsOnlyOneByte());
   LOG_EXPR(v8_string->IsExternal());
   LOG_EXPR(v8_string->IsExternalTwoByte());
   LOG_EXPR(v8_string->IsExternalOneByte());
 
-  // check string has the right contents
-  LOG_EXPR(retval = v8_string->WriteUtf8(isolate, buf, sizeof buf, &nchars));
+  // check string has the right contents. The legacy WriteUtf8 null-terminated
+  // by default; with WriteUtf8V2 that behavior is requested explicitly via
+  // kNullTerminate so the buffer contents stay the same.
+  LOG_EXPR(retval = v8_string->WriteUtf8V2(isolate, buf, sizeof buf,
+                                           String::WriteFlags::kNullTerminate,
+                                           &nchars));
   LOG_EXPR(nchars);
-  log_buffer(buf, retval + 1);
+  log_buffer(buf, static_cast<int>(retval) + 1);
 
   memset(buf, 0x7f, sizeof buf);
 
-  // try with assuming the buffer is large enough
-  LOG_EXPR(retval = v8_string->WriteUtf8(isolate, buf, -1, &nchars));
+  // legacy WriteUtf8 accepted length = -1 to assume the buffer is large
+  // enough; WriteUtf8V2 always takes an explicit capacity
+  LOG_EXPR(retval = v8_string->WriteUtf8V2(isolate, buf, sizeof buf,
+                                           String::WriteFlags::kNullTerminate,
+                                           &nchars));
   LOG_EXPR(nchars);
-  log_buffer(buf, retval + 1);
+  log_buffer(buf, static_cast<int>(retval) + 1);
 
   memset(buf, 0x7f, sizeof buf);
 
   // try with ignoring nchars (it should not try to store anything in a
   // nullptr)
-  LOG_EXPR(retval = v8_string->WriteUtf8(isolate, buf, sizeof buf, nullptr));
-  log_buffer(buf, retval + 1);
+  LOG_EXPR(retval = v8_string->WriteUtf8V2(isolate, buf, sizeof buf,
+                                           String::WriteFlags::kNullTerminate,
+                                           nullptr));
+  log_buffer(buf, static_cast<int>(retval) + 1);
 
   memset(buf, 0x7f, sizeof buf);
 
@@ -232,10 +241,16 @@ void test_v8_string_write_utf8(const FunctionCallbackInfo<Value> &info) {
   Local<String> s = String::NewFromUtf8(isolate, utf8_data).ToLocalChecked();
   for (int i = buf_size; i >= 0; i--) {
     memset(buf, 0xaa, buf_size);
-    int nchars;
-    int retval = s->WriteUtf8(isolate, buf, i, &nchars);
-    printf("buffer size = %2d, nchars = %2d, returned = %2d, data =", i, nchars,
-           retval);
+    size_t nchars;
+    // WriteUtf8V2 requires capacity >= 1 when null termination is requested,
+    // so only ask for it when the buffer is non-empty (legacy WriteUtf8 also
+    // wrote nothing for a zero-sized buffer).
+    size_t retval = s->WriteUtf8V2(isolate, buf, static_cast<size_t>(i),
+                                   i > 0 ? String::WriteFlags::kNullTerminate
+                                         : String::WriteFlags::kNone,
+                                   &nchars);
+    printf("buffer size = %2d, nchars = %2zu, returned = %2zu, data =", i,
+           nchars, retval);
     for (int j = 0; j < buf_size; j++) {
       printf("%c%02x", j == i ? '|' : ' ',
              reinterpret_cast<unsigned char *>(buf)[j]);
@@ -245,10 +260,11 @@ void test_v8_string_write_utf8(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
-// Regression test for WriteUtf8 when a valid surrogate pair (astral character)
-// does not fit in the remaining buffer. V8's legacy WriteUtf8 encodes the
-// unpaired lead surrogate as WTF-8 (3 bytes, 0xED 0xA0-0xAF ...) in that case
-// rather than leaving the buffer untouched. The encoder that backs this on Bun
+// Regression test for writing UTF-8 when a valid surrogate pair (astral
+// character) does not fit in the remaining buffer. V8's legacy WriteUtf8
+// encoded the unpaired lead surrogate as WTF-8 (3 bytes, 0xED 0xA0-0xAF ...)
+// in that case; WriteUtf8V2 instead refuses to write partial sequences and
+// stops before the astral character. The encoder that backs this on Bun
 // previously wrote U+FFFD (0xEF 0xBF 0xBD) here, diverging from V8.
 void test_v8_string_write_utf8_surrogate(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
@@ -269,10 +285,13 @@ void test_v8_string_write_utf8_surrogate(const FunctionCallbackInfo<Value> &info
     Local<String> s = String::NewFromUtf8(isolate, in.utf8).ToLocalChecked();
     for (int i = total; i >= 0; i--) {
       memset(buf, 0xaa, total);
-      int nchars;
-      int retval = s->WriteUtf8(isolate, buf, i, &nchars);
-      printf("%-7s size = %d, nchars = %d, returned = %d, data =", in.label, i,
-             nchars, retval);
+      size_t nchars;
+      size_t retval = s->WriteUtf8V2(isolate, buf, static_cast<size_t>(i),
+                                     i > 0 ? String::WriteFlags::kNullTerminate
+                                           : String::WriteFlags::kNone,
+                                     &nchars);
+      printf("%-7s size = %d, nchars = %zu, returned = %zu, data =", in.label,
+             i, nchars, retval);
       for (int j = 0; j < total; j++) {
         printf("%c%02x", j == i ? '|' : ' ',
                reinterpret_cast<unsigned char *>(buf)[j]);
@@ -479,12 +498,14 @@ static void examine_object_fields(Isolate *isolate, Local<Object> o,
                                   int expected_field0, int expected_field1) {
   char buf[16];
   HandleScope hs(isolate);
-  o->GetInternalField(0).As<String>()->WriteUtf8(isolate, buf);
+  o->GetInternalField(0).As<String>()->WriteUtf8V2(
+      isolate, buf, sizeof buf, String::WriteFlags::kNullTerminate);
   assert(atoi(buf) == expected_field0);
 
   Local<Value> field1 = o->GetInternalField(1).As<Value>();
   if (field1->IsString()) {
-    field1.As<String>()->WriteUtf8(isolate, buf);
+    field1.As<String>()->WriteUtf8V2(isolate, buf, sizeof buf,
+                                     String::WriteFlags::kNullTerminate);
     assert(atoi(buf) == expected_field1);
   } else {
     assert(field1->IsUndefined());
@@ -542,7 +563,8 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
     // try to use all mini strings
     for (size_t j = 0; j < num_small_allocs; j++) {
       char buf[16];
-      mini_strings[j]->WriteUtf8(isolate, buf);
+      mini_strings[j]->WriteUtf8V2(isolate, buf, sizeof buf,
+                                   String::WriteFlags::kNullTerminate);
       assert(atoi(buf) == (int)j);
     }
 
@@ -569,7 +591,8 @@ void test_handle_scope_gc(const FunctionCallbackInfo<Value> &info) {
 
   memset(string_data, 0, string_size);
   for (size_t i = 0; i < num_strings; i++) {
-    huge_strings[i]->WriteUtf8(isolate, string_data);
+    huge_strings[i]->WriteUtf8V2(isolate, string_data, string_size,
+                                 String::WriteFlags::kNullTerminate);
     for (size_t j = 0; j < string_size - 1; j++) {
       assert(string_data[j] == (char)(i + 1));
     }
@@ -611,7 +634,7 @@ void test_v8_escapable_handle_scope(const FunctionCallbackInfo<Value> &info) {
   LOG_VALUE_KIND(t);
 
   char buf[16];
-  s->WriteUtf8(isolate, buf);
+  s->WriteUtf8V2(isolate, buf, sizeof buf, String::WriteFlags::kNullTerminate);
   LOG_EXPR(buf);
   LOG_EXPR(n->Value());
 }
@@ -1233,7 +1256,9 @@ void initialize(Local<Object> exports, Local<Value> module,
                   test_v8_value_type_checks);
 
   // without this, node hits a UAF deleting the Global
-  node::AddEnvironmentCleanupHook(context->GetIsolate(),
+  // (Context::GetIsolate was removed in V8 14.6; the module initializer runs
+  // with the isolate entered, so take the current one)
+  node::AddEnvironmentCleanupHook(Isolate::GetCurrent(),
                                   GlobalTestWrapper::cleanup, nullptr);
 }
 

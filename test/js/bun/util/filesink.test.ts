@@ -313,32 +313,26 @@ describe("truncation", () => {
   // Options.truncate (default true) was ignored by the open path: writing a
   // shorter payload over a longer existing file left the old tail in place.
   it("Bun.file(path).writer() truncates an existing longer file", async () => {
-    const path = `${require("node:os").tmpdir()}/filesink-truncate-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`;
-    const fs = require("node:fs");
-    fs.writeFileSync(path, "X".repeat(1024));
+    const filePath = join(tmpdirSync(), "filesink-truncate.txt");
+    fs.writeFileSync(filePath, Buffer.alloc(1024, "X").toString());
 
-    const writer = Bun.file(path).writer();
+    const writer = Bun.file(filePath).writer();
     writer.write("short");
     await writer.end();
 
-    expect(await Bun.file(path).text()).toBe("short");
-    fs.unlinkSync(path);
+    expect(await Bun.file(filePath).text()).toBe("short");
   });
 
-  it("streamed Bun.write to an existing longer file truncates", async () => {
-    // S3 → local file goes through the same FileSink open (issue #31682's
-    // shape); a plain ReadableStream consumer exercises the identical path.
-    const path = `${require("node:os").tmpdir()}/filesink-truncate-stream-${Date.now()}-${Math.random().toString(36).slice(2)}.bin`;
-    const fs = require("node:fs");
-    fs.writeFileSync(path, Buffer.alloc(64 * 1024, 0xee));
+  it("binary writes over an existing longer file truncate", async () => {
+    const filePath = join(tmpdirSync(), "filesink-truncate-binary.bin");
+    fs.writeFileSync(filePath, Buffer.alloc(64 * 1024, 0xee));
 
-    const writer = Bun.file(path).writer();
+    const writer = Bun.file(filePath).writer();
     writer.write(Buffer.alloc(1000, 0x42));
     await writer.end();
 
-    const got = fs.readFileSync(path);
+    const got = fs.readFileSync(filePath);
     expect(got.length).toBe(1000);
     expect(got.every((b: number) => b === 0x42)).toBe(true);
-    fs.unlinkSync(path);
   });
 });

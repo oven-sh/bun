@@ -647,6 +647,22 @@ it("read", () => {
   delete globalThis.buffer;
 });
 
+it("read.* throws on a negative byte offset instead of aborting", () => {
+  globalThis.buffer = new Uint8Array(16);
+  const addr = ptr(buffer);
+  // Every reader shares the same offset-validation path. A negative offset must
+  // throw the validation error, not abort the process (and not surface a downstream
+  // access fault as some other throw).
+  for (const name of ["u8", "u16", "u32", "u64", "i8", "i16", "i32", "i64", "intptr", "ptr", "f32", "f64"]) {
+    const read_negative = () => read[name](addr, -1);
+    expect(read_negative).toThrow(TypeError);
+    expect(read_negative).toThrow(/non-negative/);
+  }
+  // A valid non-negative offset still works.
+  expect(read.u8(addr, 0)).toBe(0);
+  delete globalThis.buffer;
+});
+
 if (ok) {
   describe("run ffi", () => {
     ffiRunner(false);

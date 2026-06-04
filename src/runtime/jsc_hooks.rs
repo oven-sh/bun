@@ -2775,7 +2775,24 @@ fn transpile_source_code_inner(
                             list: core::mem::take(&mut entry.sourcemap).into_vec(),
                         },
                     );
-                    // TODO(b2-blocked): `ModuleInfoDeserialized::create_from_cached_record`.
+                    // Spec :423-428 — under --isolate, attach the cached ESM
+                    // record so the C++ side caches a `BunTranspiledModule`
+                    // SourceProvider and later files rebuild the module record
+                    // from it instead of re-parsing the transpiled source in
+                    // every fresh global (mirrors RuntimeTranspilerStore.rs).
+                    // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                    let module_info: *mut c_void = if unsafe { &*jsc_vm }
+                        .use_isolation_source_provider_cache()
+                        && entry.metadata.module_type != CacheModuleType::Cjs
+                        && !entry.esm_record.is_empty()
+                    {
+                        bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
+                            ::create_from_cached_record(&entry.esm_record)
+                            .map(|b| bun_core::heap::into_raw(b).cast())
+                            .unwrap_or(core::ptr::null_mut())
+                    } else {
+                        core::ptr::null_mut()
+                    };
                     let source_code = match &mut entry.output_code {
                         OutputCode::String(s) => *s,
                         OutputCode::Utf8(utf8) => {
@@ -2841,7 +2858,7 @@ fn transpile_source_code_inner(
                         specifier: input_specifier.dupe_ref(),
                         source_url: create_if_different(input_specifier, path.text),
                         is_commonjs_module,
-                        // TODO(b2-blocked): `module_info` (:423-428).
+                        module_info,
                         tag,
                         ..Default::default()
                     }));
@@ -2932,7 +2949,36 @@ fn transpile_source_code_inner(
                 // Spec :516-523.
                 let is_commonjs_module = parse_result.ast.has_commonjs_export_names
                     || parse_result.ast.exports_kind == bun_ast::ExportsKind::Cjs;
-                // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
+                // Under --isolate, collect the printer's ESM-record analysis so
+                // the cached SourceProvider becomes a `BunTranspiledModule` and
+                // later files rebuild the module record without re-parsing
+                // (mirrors RuntimeTranspilerStore.rs).
+                // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
+                let mut module_info: Option<
+                    Box<bun_bundler::analyze_transpiled_module::ModuleInfo>,
+                > = if unsafe { &*jsc_vm }.use_isolation_source_provider_cache()
+                    && !is_commonjs_module
+                    && loader.is_java_script_like()
+                {
+                    Some(bun_bundler::analyze_transpiled_module::ModuleInfo::create(
+                        loader.is_type_script(),
+                    ))
+                } else {
+                    None
+                };
+                // Spec ModuleLoader.zig:523 — the printer doesn't record
+                // top-level-await; propagate it so the cached record keeps the
+                // module's evaluation-promise semantics.
+                if let Some(mi) = module_info.as_deref_mut() {
+                    mi.flags.has_tla = !parse_result.ast.top_level_await_keyword.is_empty();
+                }
+                // PORT NOTE: derive `*mut` from a `&mut` borrow (not `&x as
+                // *const _ as *mut _`, which is Stacked-Borrows UB). The
+                // `&mut` borrow ends here; the raw pointer stays valid until
+                // `module_info` is moved/touched again (after the print call).
+                let module_info_ptr: Option<
+                    *mut bun_bundler::analyze_transpiled_module::ModuleInfo,
+                > = module_info.as_deref_mut().map(std::ptr::from_mut);
 
                 // ── js_printer::print ───────────────────────────────────────
                 // Spec :525-539.
@@ -2977,7 +3023,7 @@ fn transpile_source_code_inner(
                         unsafe { (*jsc_vm).source_map_handler((*extra).source_code_printer) };
                     // SAFETY: per fn contract — `jsc_vm` / `extra.source_code_printer`
                     // are live; the printer borrow is scoped to this call.
-                    unsafe {
+                    let print_result = unsafe {
                         (*jsc_vm).transpiler.print_with_source_map(
                             // Same per-call arena that `parse_options.arena`
                             // built `parse_result.ast` from — the printer's
@@ -2988,12 +3034,17 @@ fn transpile_source_code_inner(
                             &mut *(*extra).source_code_printer,
                             bun_js_printer::Format::EsmAscii,
                             mapper.get(),
-                            // TODO(b2-blocked): `analyze_transpiled_module::
-                            // ModuleInfo::create` (spec :516-523) — pass it
-                            // through once the create-side above is un-gated.
-                            None,
-                        )?;
+                            module_info_ptr,
+                        )
+                    };
+                    // Spec :524 `errdefer module_info.destroy()` — explicit
+                    // destroy (not Drop) mirrors the async-path error arm.
+                    if print_result.is_err() {
+                        if let Some(mi) = module_info.take() {
+                            mi.destroy();
+                        }
                     }
+                    print_result?;
                 }
 
                 if is_main {
@@ -3020,8 +3071,12 @@ fn transpile_source_code_inner(
                         )
                     };
                     resolved_source.is_commonjs_module = is_commonjs_module;
-                    // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
-                    resolved_source.module_info = core::ptr::null_mut();
+                    resolved_source.module_info = module_info
+                        .map(|mi| {
+                            use bun_bundler::analyze_transpiled_module::ModuleInfoExt;
+                            bun_core::heap::into_raw(mi.into_deserialized()).cast()
+                        })
+                        .unwrap_or(core::ptr::null_mut());
                     return Ok(OwnedResolvedSource::from(resolved_source));
                 }
 
@@ -3104,8 +3159,15 @@ fn transpile_source_code_inner(
                     specifier: input_specifier.dupe_ref(),
                     source_url: create_if_different(input_specifier, path.text),
                     is_commonjs_module,
-                    // TODO(b2-blocked): `analyze_transpiled_module::ModuleInfo::create`.
-                    module_info: core::ptr::null_mut(),
+                    // Spec :551 — `module_info.asDeserialized()`; ownership
+                    // transfers to the `ResolvedSource` (the C++ SourceProvider
+                    // frees it via `zig__ModuleInfoDeserialized__deinit`).
+                    module_info: module_info
+                        .map(|mi| {
+                            use bun_bundler::analyze_transpiled_module::ModuleInfoExt;
+                            bun_core::heap::into_raw(mi.into_deserialized()).cast()
+                        })
+                        .unwrap_or(core::ptr::null_mut()),
                     tag,
                     ..Default::default()
                 }));

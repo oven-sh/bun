@@ -751,3 +751,58 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
   }, 60_000);
 });
+
+// The synchronous module-load path (require(esm), importSync) must attach the
+// transpiler's ESM-record analysis (module_info) to the ResolvedSource under
+// --isolate, exactly like the async path does. module_info is what turns the
+// cached SourceProvider into a BunTranspiledModule, letting every later file
+// rebuild the module record from the cache instead of re-running JSC's parser
+// over the transpiled source in its fresh global (CPU + transient allocations
+// per file; ~1.2s/file for a 3000-export module in a debug build). Run 1
+// exercises the fresh-transpile branch; run 2 hits the on-disk
+// RuntimeTranspilerCache entry (esm_record branch).
+test.concurrent(
+  "--isolate: require(esm) caches a BunTranspiledModule SourceProvider",
+  async () => {
+    // Wide enough to clear the RuntimeTranspilerCache minimum size (4KB).
+    let big = "";
+    for (let i = 0; i < 500; i++) big += `export function f${i}(x){return x+${i};}\n`;
+    big += `export const COUNT = 500;\n`;
+
+    using dir = tempDir("isolate-sync-provider", {
+      "big.mjs": big,
+      "a.test.ts": `
+      import { test, expect } from "bun:test";
+      import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
+
+      test("require(esm) provider carries module_info", () => {
+        const path = require.resolve("./big.mjs");
+        const m = require("./big.mjs");
+        expect(m.COUNT).toBe(500);
+        expect(m.f42(1)).toBe(43);
+        expect(isolatedModuleCacheSourceType(path)).toBe("BunTranspiledModule");
+      });
+    `,
+    });
+
+    const cacheDir = `${String(dir)}/transpiler-cache`;
+    for (const run of [1, 2]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--isolate", "./a.test.ts"],
+        env: {
+          ...bunEnv,
+          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+          BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
+        },
+        cwd: String(dir),
+        stderr: "pipe",
+        stdout: "pipe",
+      });
+      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr, `run ${run}`).toContain("1 pass");
+      expect(stderr, `run ${run}`).toContain("0 fail");
+      expect(exitCode, `run ${run}`).toBe(0);
+    }
+  },
+  60_000,
+);

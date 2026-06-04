@@ -747,7 +747,8 @@ deflate_decompress_bmi2            [BMI2]
 # memchr::arch::x86_64::memchr::*_raw::detect / avx2::packedpair::Finder::new.
 # PDB DBI records carry demangled Rust names for the directly-linked crate;
 # the older v0-mangled detect entries are kept for toolchain drift.
-# (14 symbols)
+# count_raw comes via oxc_parser/oxc_semantic (bun_react_compiler).
+# (16 symbols)
 # ----------------------------------------------------------------------------
 memchr::arch::x86_64::avx2::memchr::One::find_raw_avx2             [AVX, AVX2]
 memchr::arch::x86_64::avx2::memchr::One::rfind_raw_avx2            [AVX, AVX2]
@@ -760,9 +761,11 @@ memchr::arch::x86_64::memchr::memchr_raw::find_avx2                [AVX, AVX2]
 memchr::arch::x86_64::memchr::memchr2_raw::find_avx2               [AVX, AVX2]
 memchr::arch::x86_64::memchr::memchr3_raw::find_avx2               [AVX, AVX2]
 memchr::arch::x86_64::memchr::memrchr_raw::find_avx2               [AVX, AVX2]
+memchr::arch::x86_64::memchr::count_raw::find_avx2                 [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr10memchr_raw6detect   [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr2_raw6detect  [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw6detect  [AVX, AVX2]
+_RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr9count_raw6detect    [AVX, AVX2]
 
 
 # ----------------------------------------------------------------------------

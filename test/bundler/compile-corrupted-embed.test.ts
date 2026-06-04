@@ -260,8 +260,11 @@ test.if(isMacOS)(
     const corrupted = corruptedCopy(exe, "lenbad", machoStompLength);
     // Editing the file invalidates the ad-hoc code signature and the kernel
     // would kill the process before it runs; re-sign so startup is reached.
+    // --no-strict: newer codesign strict-validates the Mach-O layout at
+    // signing time and rejects bun's compiled output ("main executable
+    // failed strict validation") even though the kernel runs it fine.
     await using codesign = Bun.spawn({
-      cmd: ["codesign", "--force", "--sign", "-", corrupted],
+      cmd: ["codesign", "--force", "--no-strict", "--sign", "-", corrupted],
       env: bunEnv,
       stdout: "inherit",
       stderr: "inherit",

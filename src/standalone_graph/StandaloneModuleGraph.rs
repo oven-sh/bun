@@ -371,15 +371,20 @@ mod elf {
             };
             if query.addr >= seg_start && query.addr < seg_end {
                 query.segment_end = Some(seg_end);
+                // Stop iterating: mapped segments are disjoint, so no other
+                // object can also contain `addr`. In practice this returns on
+                // the first object — the main executable, which glibc, musl,
+                // and FreeBSD all visit first.
+                return 1;
             }
         }
-        // The first object visited is the main executable; the standalone
-        // payload can only live there, so stop after one object.
-        1
+        0
     }
 
-    /// Returns the end address of the main executable's `PT_LOAD` segment
-    /// containing `addr`, or `None` when `addr` is not mapped by one.
+    /// Returns the end address of the `PT_LOAD` segment containing `addr`,
+    /// or `None` when `addr` is not mapped by one. Mapped segments are
+    /// disjoint, so a hit can only come from the object that actually maps
+    /// `addr` — for the standalone payload, the main executable.
     fn containing_load_segment_end(addr: u64) -> Option<u64> {
         let mut query = PhdrQuery {
             addr,

@@ -155,6 +155,55 @@ describe("_destroyed", () => {
   });
 });
 
+// https://github.com/oven-sh/bun/issues/31801
+describe("_onImmediate", () => {
+  it("exposes the scheduled callback", () => {
+    const fn = () => {};
+    const immediate = setImmediate(fn) as any;
+    try {
+      expect(typeof immediate._onImmediate).toBe("function");
+      expect(immediate._onImmediate).toBe(fn);
+    } finally {
+      clearImmediate(immediate);
+    }
+  });
+
+  it("is a prototype accessor, like Timeout._onTimeout", () => {
+    const immediate = setImmediate(() => {}) as any;
+    try {
+      const descriptor = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(immediate), "_onImmediate");
+      expect(typeof descriptor?.get).toBe("function");
+      expect(typeof descriptor?.set).toBe("function");
+    } finally {
+      clearImmediate(immediate);
+    }
+  });
+
+  it("is writable", () => {
+    const replacement = () => {};
+    const immediate = setImmediate(() => {}) as any;
+    try {
+      immediate._onImmediate = replacement;
+      expect(immediate._onImmediate).toBe(replacement);
+    } finally {
+      clearImmediate(immediate);
+    }
+  });
+
+  it("mirrors Timeout's _onTimeout", () => {
+    const fn = () => {};
+    const timeout = setTimeout(fn, 0) as any;
+    const immediate = setImmediate(fn) as any;
+    try {
+      expect(immediate._onImmediate).toBe(timeout._onTimeout);
+      expect(immediate._onImmediate).toBe(fn);
+    } finally {
+      clearTimeout(timeout);
+      clearImmediate(immediate);
+    }
+  });
+});
+
 describe("clear", () => {
   it("can clear the other kind of timer", async () => {
     const timeout1 = setTimeout(() => {

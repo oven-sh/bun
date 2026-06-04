@@ -129,7 +129,8 @@ function addAbortListener(signal, listener) {
 
 const BuiltinModule = {
   getSchemeOnlyModuleNames() {
-    return ["node:test"];
+    // Bare names; completion.js prefixes them with "node:" itself.
+    return ["test"];
   },
   exists(id) {
     return Module.isBuiltin(id);
@@ -159,7 +160,12 @@ const extensionFormatMap = {
 const cascadedLoader = {
   kEvaluationPhase: "evaluation",
   kSourcePhase: "source",
-  import(specifier, _parentURL, _importAttributes, _phase) {
+  import(specifier, parentURL, _importAttributes, _phase) {
+    // Relative specifiers resolve against the referrer the REPL threads
+    // through (cwd/repl), not against this bundled module.
+    if (parentURL && (specifier.startsWith("./") || specifier.startsWith("../"))) {
+      return import(new URL(specifier, parentURL).href);
+    }
     return import(specifier);
   },
 };
@@ -363,7 +369,10 @@ function addUncaughtExceptionCaptureCallback(cb) {
       for (const fn of captureCallbacks) {
         if (fn(err)) return;
       }
-      // No callback claimed the error: emulate the default fatal handler.
+      // No callback claimed the error: Node's additive API falls through to
+      // the regular 'uncaughtException' flow, and only then to the fatal
+      // handler.
+      if (process.emit("uncaughtException", err)) return;
       try {
         process.stderr.write(`Uncaught ${util.inspect(err)}\n`);
       } catch {}

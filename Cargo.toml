@@ -150,10 +150,12 @@ panic = "abort"
 # The vendored React Compiler (`bun_react_compiler` → `vendor/react-compiler`
 # crates + their oxc/serde closure) is build-time-only code: it runs as
 # a bundler source transform, never on a hot runtime path. At the default
-# `opt-level = 3` this closure contributes ~7 MB of machine code to the
-# stripped release binary; `opt-level = "z"` cuts that roughly in half. The
-# functions carry `minsize`/`optsize` attributes into the fat-LTO link, so the
-# override survives whole-program optimization.
+# `opt-level = 3` this closure added +6.3 MB to the stripped release binary
+# (bun-linux-x64, CI size check); with these overrides (plus the vendored
+# regex removal in patches/react-compiler/) the measured delta is +2.6 MB
+# (+1.9–2.8 MB across targets). The functions carry `minsize`/`optsize`
+# attributes into the fat-LTO link, so the override survives whole-program
+# optimization.
 #
 # Every package listed here is used EXCLUSIVELY by the React Compiler stack
 # (the list is exactly the set of packages this dependency added to

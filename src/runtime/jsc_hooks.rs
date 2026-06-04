@@ -1661,6 +1661,9 @@ pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
         match kv.key {
             // SAFETY: live until it unregisters in `detach`.
             IsolationHandle::FsWatcher(w) => unsafe { w.as_ref() }.close_for_isolation(),
+            // Live until it unregisters in `close()` (JS thread, us) — a
+            // registered entry implies `close()` has not run, and `deinit`
+            // cannot fire before `close()` drops the wrapper's Strong ref.
             IsolationHandle::StatWatcher(w) => bun_ptr::ParentRef::from(w).close(),
             IsolationHandle::Server(mut s) => s.stop(true),
         }

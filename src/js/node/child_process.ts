@@ -1221,7 +1221,13 @@ class ChildProcess extends EventEmitter {
               return stream;
             }
 
-            const pipe = require("internal/streams/native-readable").constructNativeReadable(value, { encoding });
+            // Use the guarded adapter: after the child exits (lazy spawn),
+            // the native stream may no longer carry $bunNativePtr, and
+            // constructNativeReadable asserts on it. The adapter transfers
+            // natively when possible and falls back to ReadableFromWeb.
+            const pipe = require("internal/webstreams_adapters").newStreamReadableFromReadableStream(value, {
+              encoding,
+            });
             this.#closesNeeded++;
             pipe.once("close", () => this.#maybeClose());
             if (autoResume) pipe.resume();

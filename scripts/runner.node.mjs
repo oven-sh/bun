@@ -82,6 +82,7 @@ function getNodeParallelTestTimeout(testPath) {
   if (testPath.includes("test-cluster-")) return 60_000; // cluster IPC + socket-handle passing is process-heavy under runner concurrency
   if (testPath.includes("-docker-")) return 60_000;
   if (testPath.includes("test-stdin-pipe-large")) return 60_000; // pipes 1MB stdin->stdout through an extra child process; slow under runner concurrency
+  if (testPath.includes("test-require-builtins")) return 120_000; // requires every builtin module; ~60s alone under local ASAN debug builds
   if (!isCI) return 60_000; // everything slower in debug mode
   if (options["step"]?.includes("-asan-")) return 60_000;
   return 20_000;
@@ -624,7 +625,7 @@ async function runTests() {
     }
 
     await Promise.all(
-      tests.map(testPath =>
+      tests.map((testPath, testIndex) =>
         limit(() => {
           const absoluteTestPath = join(testsPath, testPath);
           const title = relative(cwd, absoluteTestPath).replaceAll(sep, "/");
@@ -640,7 +641,18 @@ async function runTests() {
               FORCE_COLOR: "0",
               NO_COLOR: "1",
               BUN_DEBUG_QUIET_LOGS: "1",
+              // common/tmpdir.js derives its directory from this; without it
+              // every test shares `.tmp.0` and --parallel runs race each
+              // other's tmpdir.refresh() (rm -rf) against open() calls.
+              TEST_THREAD_ID: String(testIndex),
             };
+            if (isMacOS) {
+              // ASAN debug builds resolve asan-dyld-shim.dylib via @rpath
+              // relative to the binary. Tests that copy process.execPath
+              // elsewhere (fork-exec-path, stdin-from-file-spawn, ...) lose
+              // that anchor; DYLD_LIBRARY_PATH is dyld's documented fallback.
+              env.DYLD_LIBRARY_PATH = dirname(realpathSync(execPath));
+            }
             if ((basename(execPath).includes("asan") || !isCI) && shouldValidateExceptions(testPath)) {
               env.BUN_JSC_validateExceptionChecks = "1";
               env.BUN_JSC_dumpSimulatedThrows = "1";

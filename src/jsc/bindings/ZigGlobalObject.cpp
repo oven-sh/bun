@@ -1065,7 +1065,12 @@ void GlobalObject::promiseRejectionTracker(JSGlobalObject* obj, JSC::JSPromise* 
 
 void GlobalObject::setConsole(void* console)
 {
-    this->setConsoleClient(new Bun::ConsoleObject(console));
+    // JSGlobalObject::setConsoleClient only stores a WeakPtr — keep the
+    // owning pointer on this global so the ConsoleObject (and its buffered
+    // messages) is freed when the global is destroyed (ShadowRealm globals
+    // are created and destroyed many times per process).
+    m_ownedConsoleClient = std::unique_ptr<JSC::ConsoleClient>(new Bun::ConsoleObject(console));
+    this->setConsoleClient(m_ownedConsoleClient.get());
 }
 
 JSC_DEFINE_CUSTOM_GETTER(errorConstructorPrepareStackTraceGetter,

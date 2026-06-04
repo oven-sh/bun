@@ -431,6 +431,7 @@ unsafe extern "C" {
     pub fn X509_NAME_get_entry(name: *const X509_NAME, loc: c_int) -> *mut X509_NAME_ENTRY;
     pub fn X509_NAME_ENTRY_get_data(entry: *const X509_NAME_ENTRY) -> *mut ASN1_STRING;
     pub fn X509V3_EXT_d2i(ext: *mut X509_EXTENSION) -> *mut c_void;
+    pub fn GENERAL_NAME_free(name: *mut GENERAL_NAME);
     pub fn X509V3_EXT_get(ext: *mut X509_EXTENSION) -> *const X509V3_EXT_METHOD;
     pub safe fn X509V3_EXT_get_nid(nid: c_int) -> *const X509V3_EXT_METHOD;
 }
@@ -474,6 +475,18 @@ pub unsafe fn sk_GENERAL_NAME_value(
     // return is narrowed from `sk_value`'s own `*mut c_void` result (C-heap
     // provenance), not derived from `sk`. No const→mut on a single value.
     unsafe { sk_value(sk.cast::<OPENSSL_STACK>(), i).cast::<GENERAL_NAME>() }
+}
+
+/// Element destructor for `sk_GENERAL_NAME_pop_free`: frees one
+/// `GENERAL_NAME` and its nested ASN1 values. The parameter is spelled as the
+/// erased stack alias so it matches `sk_GENERAL_NAME_free_func`, but the
+/// pointer is a stack *element* (`GENERAL_NAME*`). Passing the container free
+/// (`sk_GENERAL_NAME_free`) here instead leaks every nested ASN1_STRING.
+pub unsafe extern "C" fn sk_GENERAL_NAME_element_free(name: *mut struct_stack_st_GENERAL_NAME) {
+    // SAFETY: per fn doc — `name` is a `GENERAL_NAME*` erased through the
+    // stack-typed callback signature; restore the element type for the
+    // exported BoringSSL destructor.
+    unsafe { GENERAL_NAME_free(name.cast::<GENERAL_NAME>()) }
 }
 
 #[inline]

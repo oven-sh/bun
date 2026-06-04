@@ -562,7 +562,9 @@ impl JSValkeyClient {
         let parsed_url = bun_ptr::BackRef::from(parsed_url);
 
         // Extract protocol string
-        let protocol_str = parsed_url.protocol();
+        // URL component getters return +1 `BunString`s (no `Drop`); wrap in
+        // `OwnedString` for scope-exit deref or each one leaks its StringImpl.
+        let protocol_str = bun_core::OwnedString::new(parsed_url.protocol());
         let protocol_utf8 = protocol_str.to_utf8();
         // Remove the trailing ':' from protocol (e.g., "redis:" -> "redis")
         let p = protocol_utf8.slice();
@@ -584,16 +586,16 @@ impl JSValkeyClient {
         };
 
         // Extract all URL components
-        let username_str = parsed_url.username();
+        let username_str = bun_core::OwnedString::new(parsed_url.username());
         let username_utf8 = username_str.to_utf8();
 
-        let password_str = parsed_url.password();
+        let password_str = bun_core::OwnedString::new(parsed_url.password());
         let password_utf8 = password_str.to_utf8();
 
-        let hostname_str = parsed_url.host();
+        let hostname_str = bun_core::OwnedString::new(parsed_url.host());
         let hostname_utf8 = hostname_str.to_utf8();
 
-        let pathname_str = parsed_url.pathname();
+        let pathname_str = bun_core::OwnedString::new(parsed_url.pathname());
         let pathname_utf8 = pathname_str.to_utf8();
 
         // Determine hostname based on protocol type

@@ -17,6 +17,7 @@ leak:JSC::ScriptExecutable::newCodeBlockFor
 leak:JSC::Parser<JSC::Lexer<unsigned char>>::parseFunctionExpression
 leak:JSC::Parser<JSC::Lexer<unsigned char>>::parsePrimaryExpression
 leak:JSC::Parser<JSC::Lexer<unsigned char>>::parseStatement
+leak:JSC::Parser<JSC::Lexer<unsigned char>>::parseImportDeclaration
 leak:JSCInitialize
 leak:getaddrinfo_send_reply
 leak:start_wqthread
@@ -121,3 +122,52 @@ leak:WebCore::jsSQLStatementOpenStatementFunction
 # is called before firing (WaiterListManager::clearTimer on notify/unregister),
 # the DispatchTimer and its Bun-side WTFTimer Box leak. JSC-owned ref-cycle.
 leak:WTF::RunLoop::dispatchAfter
+leak:WTF::ParkingLot::parkConditionallyImpl
+# Parser-arena identifiers pinned in the atom table at VM-destroy exit —
+# covers all JSC::Parser parse productions (same family as the parse* entries above).
+leak:JSC::IdentifierArena::makeIdentifier
+# Live-thread TLS at exit: RunLoop holder of the vm watchdog/aux threads (same class as ParkingLot above).
+leak:WTF::RunLoop::currentSingleton
+# ASCIILiteral StringImpl wrapper for internal module names; pinned for process lifetime.
+leak:Bun::InternalModuleRegistry::createInternalModuleById
+# macOS libdispatch/XPC continuation cached inside dns_configuration_free while
+# c-ares reads the system resolver config — OS-internal, not reachable by us.
+leak:ares_init_sysconfig_macos
+# FSEvents watcher thread (std::thread spawn block) still running at exit.
+leak:FSEventsLoop
+# Apple CoreAnalytics XPC telemetry triggered inside SecTrustCopyAnchorCertificates /
+# system CA reads — OS-internal dispatch continuation.
+leak:CoreAnalytics
+# ASCIILiteral StringImpl wrapper created while formatting a stack frame's source
+# URL on the exit path; same class as the InternalModuleRegistry entry above.
+leak:Zig::sourceURL
+# Apple Security.framework keychain internals reached from our run_once system
+# root-CA load — cached for process lifetime by design.
+leak:us_get_root_system_cert_instances
+# JSC structure-heap bookkeeping (BitVector in StructureMemoryManager); grows
+# once per structure block and lives for the VM's lifetime.
+leak:JSC::StructureMemoryManager::tryMallocStructureBlock
+# libsystem_info per-thread user-info cache (getpwuid via CFPreferences inside
+# Security.framework) — OS-internal thread-local storage.
+leak:LI_get_thread_info
+# backtrace_symbols() buffer malloc'd inside debug-only stack-trace dumps
+# (fd-UAF warning path); diagnostics memory, never freed by design.
+leak:backtrace_symbols
+# Per-VM JSON atom cache entry pinned in the atom table at VM-destroy exit
+# (same family as IdentifierArena::makeIdentifier above).
+leak:JSC::JSONAtomStringCache
+# Inspector/debugger server thread (bun_jsc::debugger::Debugger::create) still
+# parked at exit — live-thread allocation. Matches the Rust v0-mangled symbol.
+leak:bun_jsc8debugger
+# Per-worker WebCore::EventNames not reclaimed when a Worker thread exits —
+# bounded by live worker count at exit; needs a ThreadGlobalData teardown
+# follow-up rather than blocking every worker test locally.
+leak:WebCore::EventNames::operator new
+# `selectors` crate global caches (hashbrown tables) — process-lifetime statics.
+leak:9selectors
+# crypto.subtle lazy property: SubtleCrypto impl pinned by its JS wrapper at
+# VM-destroy exit. Same JSC-owned ref-cycle class as RunLoop::dispatchAfter.
+leak:WebCore::SubtleCrypto::create
+# Rust std lazily-allocated pthread mutex storage (sys::sync::once_box) —
+# intentionally never freed; one block per static mutex.
+leak:8once_box

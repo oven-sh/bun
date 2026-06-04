@@ -2252,3 +2252,176 @@ it("http.request rejects an options.port that is not a valid port number", async
     server.close();
   }
 });
+
+// Node.js v26 removed res.writeHeader (DEP0063 end-of-life, nodejs/node#60635).
+it("ServerResponse.prototype.writeHeader was removed (DEP0063 EOL)", () => {
+  expect("writeHeader" in ServerResponse.prototype).toBe(false);
+});
+
+it("setHeaders stores an empty set-cookie array (nodejs/node#59734)", () => {
+  const msg = new OutgoingMessage();
+  msg.setHeaders(new Map([["set-cookie", []]]));
+  expect(msg.getHeader("set-cookie")).toEqual([]);
+  expect(msg.hasHeader("set-cookie")).toBe(true);
+  expect(msg.getHeaders()["set-cookie"]).toEqual([]);
+  expect(msg.getHeaderNames()).toContain("set-cookie");
+  msg.removeHeader("set-cookie");
+  expect(msg.getHeader("set-cookie")).toBeUndefined();
+  expect(msg.hasHeader("set-cookie")).toBe(false);
+
+  // Headers without a set-cookie entry never call setHeader("set-cookie", ...)
+  const msg2 = new OutgoingMessage();
+  msg2.setHeaders(new Map([["x-test", "1"]]));
+  expect(msg2.getHeader("set-cookie")).toBeUndefined();
+  expect(msg2.getHeader("x-test")).toBe("1");
+});
+
+it("https.Agent applies defaultPort/protocol through options (nodejs/node#58980)", () => {
+  const a = new https.Agent();
+  try {
+    expect(a.defaultPort).toBe(443);
+    expect(a.protocol).toBe("https:");
+    // v26 sets the defaults on the (null-prototype) options object before
+    // calling the base constructor.
+    expect(a.options.defaultPort).toBe(443);
+    expect(a.options.protocol).toBe("https:");
+    expect(Object.getPrototypeOf(a.options)).toBe(null);
+  } finally {
+    a.destroy();
+  }
+
+  const b = new https.Agent({ defaultPort: 8443 });
+  try {
+    expect(b.defaultPort).toBe(8443);
+    expect(b.protocol).toBe("https:");
+  } finally {
+    b.destroy();
+  }
+});
+
+it("upgrade request with no 'upgrade' listener falls through to 'request'", async () => {
+  // Mirrors Node.js behavior (see Node's _http_server.js shouldUpgradeCallback
+  // default): when the server has no 'upgrade' listener, an Upgrade request is
+  // handled as a regular request instead of disappearing.
+  const server = createServer((req, res) => {
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("regular response");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const result = await new Promise<string>((resolve, reject) => {
+      const socket = connect(port, "127.0.0.1", () => {
+        socket.write("GET / HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n");
+      });
+      let data = "";
+      socket.setEncoding("utf8");
+      socket.on("data", chunk => {
+        data += chunk;
+        if (data.includes("regular response")) {
+          socket.destroy();
+          resolve(data);
+        }
+      });
+      socket.on("error", reject);
+      socket.on("close", () => resolve(data));
+    });
+
+    expect(result).toContain("HTTP/1.1 200");
+    expect(result).toContain("regular response");
+  } finally {
+    server.close();
+  }
+});
+
+it("ServerResponse does not emit 'drain' after a successful (non-backpressured) write", async () => {
+  // Node.js only emits 'drain' after a write() that returned false.
+  let drains = 0;
+  let writeReturned: boolean | undefined;
+  const server = createServer((req, res) => {
+    res.on("drain", () => drains++);
+    writeReturned = res.write("hello");
+    // Give a synchronously-emitted 'drain' a chance to fire before ending.
+    process.nextTick(() => {
+      res.end(" world");
+    });
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const body = await new Promise<string>((resolve, reject) => {
+      const req = http.request({ host: "127.0.0.1", port }, res => {
+        let data = "";
+        res.setEncoding("utf8");
+        res.on("data", chunk => (data += chunk));
+        res.on("end", () => resolve(data));
+      });
+      req.on("error", reject);
+      req.end();
+    });
+
+    expect(body).toBe("hello world");
+    expect(writeReturned).toBe(true);
+    expect(drains).toBe(0);
+  } finally {
+    server.close();
+  }
+});
+
+it("https.Agent.prototype.createConnection creates a TLS connection", async () => {
+  expect(typeof https.Agent.prototype.createConnection).toBe("function");
+
+  const server = createHttpsServer({ key: tlsCert.key, cert: tlsCert.cert }, (req, res) => {
+    res.end("secure");
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const { port } = server.address() as AddressInfo;
+
+    const socket: any = https.globalAgent.createConnection({
+      host: "127.0.0.1",
+      port,
+      rejectUnauthorized: false,
+    });
+    try {
+      await once(socket, "secureConnect");
+      // It's a TLS socket, not a plain net.Socket.
+      expect(socket.encrypted).toBe(true);
+    } finally {
+      socket.destroy();
+    }
+  } finally {
+    server.close();
+  }
+});
+
+it("http.Agent with proxyEnv does not write to a literal 'undefined' property", () => {
+  // Regression: the kProxyConfig symbol destructured from internal/http was
+  // undefined, so the proxy config was stored as agent["undefined"].
+  const agent = new Agent({ proxyEnv: { http_proxy: "http://localhost:4873" } } as any);
+  try {
+    expect(Object.hasOwn(agent, "undefined")).toBe(false);
+  } finally {
+    agent.destroy();
+  }
+});
+
+it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () => {
+  expect(typeof OutgoingMessage.prototype._flushOutput).toBe("function");
+
+  const a = new OutgoingMessage();
+  const b = new OutgoingMessage();
+  expect(a.outputData).not.toBe(b.outputData);
+
+  // Buffered writes on one message must not leak into other instances
+  // (outputData used to be a shared array on the prototype).
+  a.outputData.push({ data: "x", encoding: "utf8", callback: null });
+  expect(a.outputData.length).toBe(1);
+  expect(b.outputData.length).toBe(0);
+  expect(new OutgoingMessage().outputData.length).toBe(0);
+});

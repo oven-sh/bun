@@ -49,11 +49,11 @@ pub struct ThreadPool {
     // `wake_for_idle_events`) take `&self` — so the safe `Deref` projection is
     // sufficient and the per-read `unsafe { p.as_ref() }` disappears.
     pub io_pool: Option<bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>>,
-    // Conditionally owned via `worker_pool_is_owned`; kept raw so callers
-    // (bundle_v2.rs) can dereference for `wake_for_idle_events()` without a
-    // borrow on `ThreadPool`.
-    pub worker_pool: *mut ThreadPoolLib::ThreadPool,
-    pub worker_pool_is_owned: bool,
+    // Owned-vs-borrowed is encoded in the variant (no `is_owned` flag to keep
+    // in sync). All driver methods (`schedule`, `warm`, `wake_for_idle_events`)
+    // take `&self`, so callers go through the safe [`Self::worker_pool`]
+    // accessor. Private: the only out-of-module reader uses the accessor.
+    worker_pool: WorkerPool,
     // Per PORTING.md §Concurrency ("Mutex<T> owns T"), the lock is folded into
     // the field so `get_worker` can take `&self` — `Worker::get` is entered
     // concurrently from arbitrary worker-pool threads, and a `&mut self` here
@@ -67,6 +67,27 @@ pub struct ThreadPool {
     // BACKREF (LIFETIMES.tsv row 170: ThreadPool.v2). `BundleV2` is generic
     // over `'a`; erase to `'static` behind the raw pointer like ParseTask.ctx.
     pub v2: *const BundleV2<'static>,
+}
+
+/// Maybe-owned wrapper for the bundler's worker pool. Mirrors the `io_pool`
+/// field's move to a safe projection: ownership is explicit in the variant
+/// instead of a raw pointer + `worker_pool_is_owned` flag.
+///
+/// `ThreadPool` is arena-allocated and the arena runs no `Drop`, so the
+/// `Owned` box is freed explicitly in [`ThreadPool::deinit`] (which replaces
+/// the variant with `Unset`), never by drop glue.
+enum WorkerPool {
+    /// Placeholder for `ThreadPool::default()` before `init` overwrites it,
+    /// and the post-`deinit` state. Reaching [`ThreadPool::worker_pool`] in
+    /// this state is a logic bug.
+    Unset,
+    /// Pool created by this `ThreadPool` in `init`; shut down and freed in
+    /// `deinit`.
+    Owned(Box<ThreadPoolLib::ThreadPool>),
+    /// Caller-provided pool (e.g. the process-wide `WorkPool` singleton, or
+    /// the runtime's pool for in-process `Bun.build()`); strictly outlives
+    /// this `ThreadPool` and is never freed here.
+    Borrowed(bun_ptr::ParentRef<ThreadPoolLib::ThreadPool>),
 }
 
 // SAFETY: `ThreadPool` is shared across worker threads; the only mutated
@@ -87,8 +108,7 @@ impl Default for ThreadPool {
     fn default() -> Self {
         Self {
             io_pool: None,
-            worker_pool: ptr::null_mut(),
-            worker_pool_is_owned: false,
+            worker_pool: WorkerPool::Unset,
             workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
             generation: POOL_GENERATION.fetch_add(1, Ordering::Relaxed),
             v2: ptr::null(),
@@ -213,38 +233,23 @@ impl ThreadPool {
         // `Option<NonNull<_>>` (not `Option<&mut _>`): callers pass the
         // process-wide `WorkPool` singleton (`OnceLock`-backed, shared across
         // worker threads). Materializing `&mut` from that provenance is UB
-        // under Stacked Borrows even if the body never writes through it; the
-        // pool is stored as `*mut` in the struct anyway, so keep it raw
-        // end-to-end.
+        // under Stacked Borrows even if the body never writes through it;
+        // `ParentRef` keeps it a shared projection end-to-end.
         worker_pool: Option<NonNull<ThreadPoolLib::ThreadPool>>,
     ) -> Result<ThreadPool, bun_alloc::AllocError> {
-        // The pool is `heap::alloc`'d (global
-        // heap), so `deinit()` must `heap::take` it back; record ownership.
-        let owned = worker_pool.is_none();
-        let pool: *mut ThreadPoolLib::ThreadPool = match worker_pool {
-            Some(p) => p.as_ptr(),
+        let worker_pool = match worker_pool {
+            Some(p) => WorkerPool::Borrowed(bun_ptr::ParentRef::from(p)),
             None => {
                 let cpu_count = bun_core::get_thread_count();
-                let pool = bun_core::heap::into_raw(Box::new(ThreadPoolLib::ThreadPool::init(
-                    ThreadPoolLib::Config {
-                        max_threads: u32::from(cpu_count),
-                        ..Default::default()
-                    },
-                )));
+                let pool = Box::new(ThreadPoolLib::ThreadPool::init(ThreadPoolLib::Config {
+                    max_threads: u32::from(cpu_count),
+                    ..Default::default()
+                }));
                 bun_core::scoped_log!(ThreadPool, "{} workers", cpu_count);
-                pool
+                WorkerPool::Owned(pool)
             }
         };
-        let mut this = Self::init_with_pool(v2, pool);
-        this.worker_pool_is_owned = owned;
-        Ok(this)
-    }
-
-    pub fn init_with_pool(
-        v2: &BundleV2<'_>,
-        worker_pool: *mut ThreadPoolLib::ThreadPool,
-    ) -> ThreadPool {
-        ThreadPool {
+        Ok(ThreadPool {
             worker_pool,
             io_pool: if Self::uses_io_pool() {
                 Some(io_thread_pool::acquire().into())
@@ -253,20 +258,20 @@ impl ThreadPool {
             },
             // BACKREF: lifetime erased behind the raw pointer.
             v2: std::ptr::from_ref(v2).cast::<BundleV2<'static>>(),
-            worker_pool_is_owned: false,
             workers_assignments: bun_threading::Guarded::new(ArrayHashMap::default()),
             generation: POOL_GENERATION.fetch_add(1, Ordering::Relaxed),
-        }
+        })
     }
 
     /// Explicit teardown (no Drop on
     /// `ThreadPool` because `Graph.pool` is `NonNull<ThreadPool>` and the arena
-    /// owns the storage).
+    /// owns the storage — arena reset runs no drop glue, so the `Owned` box
+    /// must be freed here). Borrowed pools are left untouched: the runtime
+    /// still owns them.
     pub fn deinit(&mut self) {
-        if self.worker_pool_is_owned {
-            // SAFETY: worker_pool was heap-allocated in `init()` when owned.
-            unsafe { drop(bun_core::heap::take(self.worker_pool)) };
-            self.worker_pool = ptr::null_mut();
+        if let WorkerPool::Owned(pool) = core::mem::replace(&mut self.worker_pool, WorkerPool::Unset)
+        {
+            drop(pool);
         }
         if Self::uses_io_pool() {
             io_thread_pool::release();
@@ -274,14 +279,20 @@ impl ThreadPool {
     }
 
     /// Safe accessor for the underlying `bun_threading::ThreadPool`. The
-    /// pointer is set in `init`/`init_with_pool` and never null while `self`
-    /// is observable; encapsulating the deref keeps callers out of `unsafe`.
+    /// variant is set in `init` before any caller can observe `self`; all
+    /// driver methods take `&self`, so no caller needs more than this shared
+    /// projection.
     #[inline]
     pub fn worker_pool(&self) -> &ThreadPoolLib::ThreadPool {
-        debug_assert!(!self.worker_pool.is_null());
-        // SAFETY: `worker_pool` is initialized before any caller can observe
-        // `self` and lives until `deinit_v2`; all driver methods take `&self`.
-        unsafe { &*self.worker_pool }
+        match &self.worker_pool {
+            WorkerPool::Owned(pool) => &**pool,
+            // `ParentRef` derefs to the caller-owned pool, which strictly
+            // outlives this `ThreadPool`.
+            WorkerPool::Borrowed(pool) => &**pool,
+            WorkerPool::Unset => {
+                unreachable!("bundler ThreadPool worker_pool read before init / after deinit")
+            }
+        }
     }
 
     /// Safe accessor for the IO pool. `Some` only when `uses_io_pool()`; the
@@ -336,19 +347,19 @@ impl ThreadPool {
         if matches!(parse_task.contents_or_fd, ContentsOrFd::Contents(_))
             && matches!(parse_task.stage, ParseTaskStage::NeedsSourceCode)
         {
-            let ContentsOrFd::Contents(contents) = parse_task.contents_or_fd else {
+            let ContentsOrFd::Contents(backing) = parse_task.contents_or_fd else {
                 unreachable!()
             };
-            // `cache::Contents` has no borrowed-slice variant; the
-            // contract (see ParseTask.rs `run_with_source_code` defer) is that
-            // `entry.deinit()` is *skipped* when `contents_or_fd == .contents`,
-            // so an `External` provenance tag (no-op deinit) is the correct
-            // mapping for these unowned bytes.
+            // Both `ContentsBacking` arms are caller-kept-alive borrows
+            // (static or bundle-owned), so map to the `SharedBuffer`
+            // provenance tag — `Entry::deinit` never frees it. This matches
+            // the mapping in `get_code_for_parse_task_without_plugins`.
+            let contents = backing.as_slice();
             parse_task.stage = ParseTaskStage::NeedsParse(CacheEntry {
                 contents: if contents.is_empty() {
                     Contents::Empty
                 } else {
-                    Contents::External {
+                    Contents::SharedBuffer {
                         ptr: contents.as_ptr(),
                         len: contents.len(),
                     }

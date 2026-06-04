@@ -510,16 +510,15 @@ impl JavaScript {
 
         let result = match parser.parse() {
             Ok(r) => r,
-            Err(err) => {
+            Err(failure) => {
                 // `Parser::parse` consumes `self`, so `parser` is gone in this
                 // arm. The `&'a mut temp_log` it held is released, so read
-                // `temp_log.errors` directly. The lexer range is lost; fall
-                // back to `Range::None`.
-                // TODO: thread the failing token range through the `Err`
-                // payload (make `_parse` return a `(Error, Range)` pair) so the
+                // `temp_log.errors` directly. The failing token's range was
+                // captured inside the parser (while the lexer was still
+                // alive) and travels here in `ParseFailure`, so the
                 // diagnostic points at the failing token.
                 if temp_log.errors == 0 {
-                    log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
+                    log.add_range_error(Some(source), failure.range, failure.err.name().as_bytes());
                 }
                 let _ = temp_log.append_to_maybe_recycled(log, source);
                 return Ok(None);

@@ -1391,3 +1391,127 @@ test("Bun.build can be called thousands of times in one process without crashing
   expect(stdout.trim()).toBe("OK 400");
   expect(exitCode).toBe(0);
 }, 180_000);
+
+describe("bundler worker pool ownership", () => {
+  // Exercise test for an internal ownership refactor (no user-visible
+  // behavior change): it cannot fail on the pre-refactor code, but a
+  // regression in pool ownership shows up here as a crash/double-free,
+  // especially under ASAN.
+  // In-process `Bun.build()` borrows the process-wide worker pool, while the
+  // CLI `bun build` path creates — and must tear down — its own pool. Run both
+  // repeatedly: a double-free or leaked-ownership bug in the bundler
+  // ThreadPool's owned-vs-borrowed pool handling crashes or corrupts the
+  // following build instead of completing it.
+  test("repeated in-process builds (borrowed pool) stay healthy", async () => {
+    const dir = tempDirWithFiles("build-pool-borrowed", {
+      "entry.js": `import { value } from "./dep.js";\nconsole.log(value);`,
+      "dep.js": `export const value = "pool-ok";`,
+    });
+
+    for (let i = 0; i < 8; i++) {
+      const build = await Bun.build({
+        entrypoints: [join(dir, "entry.js")],
+      });
+      expect(build.success).toBe(true);
+      expect(await build.outputs[0].text()).toContain("pool-ok");
+    }
+  });
+
+  test("CLI build (owned pool) completes and exits cleanly", async () => {
+    const dir = tempDirWithFiles("build-pool-owned", {
+      "entry.js": `import { value } from "./dep.js";\nconsole.log(value);`,
+      "dep.js": `export const value = "pool-ok";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", join(dir, "entry.js")],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toContain("pool-ok");
+    expect(exitCode).toBe(0);
+  });
+});
+
+describe("bundle-owned parse-task contents", () => {
+  // Exercise test for an internal ownership refactor (no user-visible
+  // behavior change): it cannot fail on the pre-refactor code, but a stale
+  // or freed borrow on a worker thread shows up here as corrupted output or
+  // a crash, especially under ASAN.
+  // `data:` URL bodies live in the bundle's free list, and JS onLoad plugin
+  // buffers live in the graph's input-file storage; parse tasks running on
+  // worker threads only borrow them. Build repeatedly with both kinds of
+  // contents (one large enough that a stale borrow crashes loudly or produces
+  // corrupt output) and execute the result.
+  test("data: URL and onLoad plugin contents stay alive for the bundle pass", async () => {
+    const SIZE = 256 * 1024;
+    const big = `"${"x".repeat(SIZE)}"`;
+    const dir = tempDirWithFiles("build-contents-provenance", {
+      "entry.js": `
+        import "data:text/javascript,globalThis.fromDataURL=1;";
+        import { size } from "virtual:big";
+        console.log("size=" + size, "data=" + globalThis.fromDataURL);
+      `,
+    });
+
+    for (let i = 0; i < 4; i++) {
+      const build = await Bun.build({
+        entrypoints: [join(dir, "entry.js")],
+        plugins: [
+          {
+            name: "virtual-big",
+            setup(builder) {
+              builder.onResolve({ filter: /^virtual:big$/ }, args => ({
+                path: args.path,
+                namespace: "virt",
+              }));
+              builder.onLoad({ filter: /.*/, namespace: "virt" }, () => ({
+                contents: `const data = ${big}; export const size = data.length;`,
+                loader: "js",
+              }));
+            },
+          },
+        ],
+      });
+      expect(build.success).toBe(true);
+
+      const outFile = join(dir, `out-${i}.js`);
+      await Bun.write(outFile, await build.outputs[0].text());
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), outFile],
+        env: bunEnv,
+        cwd: dir,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stdout.trim()).toBe(`size=${SIZE} data=1`);
+      expect(exitCode).toBe(0);
+    }
+  });
+});
+
+test("syntax error diagnostics point at the failing token", async () => {
+  // Pins the pre-existing contract that a plain syntax error produces a
+  // BuildMessage with a real position (the lexer logs a ranged diagnostic
+  // before the parser bails). NOTE: this does NOT cover the rarer
+  // parse-failed-with-zero-logged-errors fallback path (where the diagnostic
+  // range comes from the parse failure payload instead of a logged lexer
+  // error) — a plain syntax error like this one always logs a ranged lexer
+  // error first, so that fallback never fires here.
+  const dir = tempDirWithFiles("syntax-error-position", {
+    "bad.ts": `const ok = 1;\nconst broken = {;\n`,
+  });
+  const x = await buildNoThrow({
+    entrypoints: [join(dir, "bad.ts")],
+    outdir: join(dir, "out"),
+  });
+  expect(x.success).toBe(false);
+  expect(x.logs.length).toBeGreaterThanOrEqual(1);
+  const withPosition = x.logs.find(l => l.position);
+  expect(withPosition).toBeTruthy();
+  expect(withPosition!.position!.lineText).toContain("broken");
+});

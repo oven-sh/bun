@@ -1,5 +1,6 @@
 import { escapeHTML } from "bun" assert { type: "macro" };
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import defaultMacro, {
   addStrings,
   addStringsUTF16,
@@ -128,4 +129,59 @@ test("namespace import", () => {
 
 test("ireturnapromise", async () => {
   expect(await ireturnapromise()).toEqual("aaa");
+});
+
+test("macro entry points stay valid across GC and repeated imports", async () => {
+  // Exercise test for an internal ownership refactor (no user-visible
+  // behavior change): it cannot fail on the pre-refactor code, but a dangling
+  // entry-point label or contents shows up here as a crash or corrupted
+  // module text, especially under ASAN.
+  // Each (module, export) macro pair generates a synthetic macro entry-point
+  // source that is cached for the VM lifetime; its generated code and its
+  // label (the entry's module-path text) must stay readable while JSC loads
+  // the entry and after later garbage collections. Use a deeply nested import
+  // path (long label), several distinct macros, and forced GC between
+  // transpiles — a dangling entry-point source crashes or corrupts the output
+  // instead of printing the expected lines.
+  const deep = "deep/".repeat(16);
+  const macroModule = `
+    export function one() { return 1; }
+    export function two() { return "two"; }
+    export function three() { return { n: 3 }; }
+  `;
+  const files: Record<string, string> = {
+    [`${deep}macros.ts`]: macroModule,
+    "main.ts": `
+      for (let i = 0; i < 3; i++) {
+        Bun.gc(true);
+        const m = await import("./fixture-" + i + ".ts");
+        console.log(m.result);
+        Bun.gc(true);
+      }
+    `,
+  };
+  for (let i = 0; i < 3; i++) {
+    files[`fixture-${i}.ts`] = `
+      import { one, two, three } from "./${deep}macros.ts" assert { type: "macro" };
+      export const result = JSON.stringify([one(), two(), three()]);
+    `;
+  }
+  using dir = tempDir("macro-entry-points", files);
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "main.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  // Debug builds print unscoped "[macro] call <name>" logger lines; drop them
+  // before comparing.
+  const lines = stdout
+    .trim()
+    .split("\n")
+    .filter(line => !line.startsWith("[macro]"));
+  expect(lines.join("\n")).toBe(Array(3).fill('[1,"two",{"n":3}]').join("\n"));
+  expect(exitCode).toBe(0);
 });

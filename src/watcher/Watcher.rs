@@ -221,16 +221,45 @@ impl Watcher {
 
     pub fn start(&mut self) -> Result<(), bun_core::Error> {
         debug_assert!(!self.watchloop_handle.load());
-        // Watcher must be Send across the spawned thread boundary; we pass a
-        // raw pointer (as usize) and uphold the safety contract manually.
-        let this = std::ptr::from_mut::<Watcher>(self) as usize;
-        // SAFETY: Watcher outlives the thread; shutdown() coordinates teardown
-        // via `running`/`close_descriptors` and the thread frees the Box.
+        /// The heap `Watcher` pointer handed to the spawned watcher thread.
+        ///
+        /// `Watcher` itself is not `Send` (raw `ctx` pointer), so the crossing
+        /// is made explicit with this newtype instead of laundering the
+        /// pointer through `usize`.
+        struct WatcherThreadPtr(*mut Watcher);
+        impl WatcherThreadPtr {
+            /// Consume the wrapper for the inner pointer. A method (rather
+            /// than field destructuring inside the spawned closure) so the
+            /// closure captures the whole `Send` newtype — precise closure
+            /// capture would otherwise capture the raw `.0` field directly
+            /// and lose the `unsafe impl Send`.
+            fn into_inner(self) -> *mut Watcher {
+                self.0
+            }
+        }
+        // SAFETY: ownership invariant (see `shutdown`): exactly one of
+        // {watcher thread, `shutdown` caller} reclaims the heap `Watcher`,
+        // decided by `watchloop_handle`. Until `thread_main` reclaims the Box
+        // the allocation stays live. This invariant covers only *who frees
+        // the Box* — it does NOT make the crossing fully sound. Known gaps,
+        // deferred to the fix in progress for issue #30644:
+        // - `thread_main` holds `&mut Watcher` for the whole watch loop while
+        //   the main thread derives `&mut Watcher` for `add_file`/
+        //   `append_file`; `mutex` guards the watchlist data but not the
+        //   whole-struct `&mut` aliasing.
+        // - A thread that was spawned but has not yet stored
+        //   `watchloop_handle = true` races `shutdown`'s no-thread free path.
+        unsafe impl Send for WatcherThreadPtr {}
+        let this = WatcherThreadPtr(std::ptr::from_mut::<Watcher>(self));
         self.thread = Some(
             std::thread::Builder::new()
                 .name("FileWatcher".into())
-                .spawn(move || unsafe {
-                    let _ = Watcher::thread_main(this as *mut Watcher);
+                .spawn(move || {
+                    let this = this.into_inner();
+                    // SAFETY: `this` is the unique heap pointer produced by
+                    // `init()`; the spawned thread takes ownership and
+                    // `thread_main` reclaims the Box after the loop exits.
+                    let _ = unsafe { Watcher::thread_main(this) };
                 })
                 .expect("spawn FileWatcher thread"),
         );
@@ -242,10 +271,23 @@ impl Watcher {
     // Per PORTING.md, `pub fn deinit` is never the public name; renamed to
     // `shutdown` (not `close(self)` because ownership may transfer to the
     // watcher thread instead of dropping here).
-    // TODO: ownership model — needs heap::take or an Arc to make this sound.
+    //
+    // Ownership invariant: exactly one of {watcher thread, shutdown caller}
+    // reclaims the heap `Watcher`, decided by `watchloop_handle`. Once
+    // `thread_main` has stored `true`, the thread owns the Box and frees it
+    // after `watch_loop` exits; this function only signals it via
+    // `running`/`close_descriptors`. Otherwise the Box is reclaimed inline
+    // here.
     /// # Safety
     /// `this` must be the unique heap pointer returned from `init()`; ownership
-    /// transfers here on the no-thread path (the Box is reclaimed).
+    /// transfers here on the no-thread path (the Box is reclaimed). Must not
+    /// be called after the watcher thread may already have freed the Box
+    /// (i.e. call it at most once, before dropping the last reference to the
+    /// watcher), and must not be called concurrently with a freshly spawned
+    /// watcher thread that has not yet stored `watchloop_handle = true` — in
+    /// that window this function takes the no-thread free path while the
+    /// thread still holds the pointer (known race, deferred to the fix in
+    /// progress for issue #30644).
     pub unsafe fn shutdown(this: *mut Self, close_descriptors: bool) {
         // SAFETY: caller passes the unique heap pointer returned from init()
         let me = unsafe { &mut *this };
@@ -321,9 +363,8 @@ impl Watcher {
         Output::flush();
 
         // SAFETY: `this` is the heap allocation from init(); the watcher thread
-        // owns it now and no `&`/`&mut` borrow of it remains live (the scoped
-        // `me` above has ended).
-        // TODO: ownership model — see shutdown()
+        // owns it now (ownership invariant — see `shutdown`) and no `&`/`&mut`
+        // borrow of it remains live (the scoped `me` above has ended).
         drop(unsafe { bun_core::heap::take(this) });
         Ok(())
     }

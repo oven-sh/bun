@@ -286,12 +286,18 @@ describe("CompressionStream write/read ordering", () => {
     const writer = ds.writable.getWriter();
     await writer.write(big);
     for (let i = 0; i < 8; i++) await writer.write(small);
-    writer.close().catch(() => {});
+    // close() cannot settle until the reader drains the buffered output, so
+    // capture its settlement and assert it after the drain loop.
+    const closed = writer.close().then(
+      () => "resolved",
+      e => `rejected: ${e}`,
+    );
     const out: Uint8Array[] = [];
     for await (const chunk of ds.readable as unknown as AsyncIterable<Uint8Array>) out.push(chunk);
     const total = Buffer.concat(out);
     expect(total.length).toBe(64 * 1024 + 8 * 5);
-    expect(total.subarray(64 * 1024).toString()).toBe("hello".repeat(8));
+    expect(total.subarray(64 * 1024).toString()).toBe(Buffer.alloc(8 * 5, "hello").toString());
+    expect(await closed).toBe("resolved");
   });
 
   test("corrupt input rejects with Z_DATA_ERROR", async () => {

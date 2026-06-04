@@ -1437,6 +1437,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(path)
     }
 
+    /// Returns true when the statement at `loc` begins with a string-literal quote
+    /// (`"` or `'`). A bare string-literal statement starts at the quote; a
+    /// parenthesized expression like `("use strict")` starts at `(`. Only a bare
+    /// string literal is a Directive Prologue entry.
+    fn stmt_starts_with_quote(source: &bun_ast::Source, loc: bun_ast::Loc) -> bool {
+        matches!(source.contents().get(loc.i()), Some(b'"') | Some(b'\''))
+    }
+
     /// Returns true when the string-literal statement at `loc` has a raw source
     /// form — the bytes between the quotes, before escape sequences are decoded —
     /// exactly equal to `directive`. ECMA-262 requires a Directive Prologue entry
@@ -1495,8 +1503,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             if is_directive_prologue {
                 is_directive_prologue = false;
                 if let js_ast::stmt::Data::SExpr(expr) = &stmt.data {
+                    // A Directive Prologue entry must "consist entirely of a
+                    // StringLiteral token" (ECMA-262). A template literal or a
+                    // parenthesized string (e.g. `("use strict")`) is not such a token,
+                    // so it ends the prologue and is never itself a directive. The
+                    // statement begins at the opening quote only when it is a bare string
+                    // literal; for a parenthesized expression it begins at `(`.
                     if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        if !str_.prefer_template {
+                        if !str_.prefer_template && Self::stmt_starts_with_quote(p.source, stmt.loc) {
                             is_directive_prologue = true;
 
                             // A directive's raw source form must contain no escape

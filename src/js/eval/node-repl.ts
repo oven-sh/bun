@@ -1,4 +1,4 @@
-// Entry script for `bun -i` / `bun --interactive`: starts the Node.js-compatible
+// Entry script for `bun --interactive` (`-i` is taken by `--install=fallback`): starts the Node.js-compatible
 // REPL (the ported node:repl) the way Node's internal/main/repl.js does, using
 // only public node:repl APIs (this file runs as a regular entrypoint, so it
 // cannot require internal modules).

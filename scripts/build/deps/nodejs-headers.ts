@@ -14,7 +14,7 @@ import type { Dependency } from "../source.ts";
  * download URL, and passed to zig as -Dreported_nodejs_version.
  * Override via `--nodejs-version=X.Y.Z` to test a bump.
  */
-export const NODEJS_VERSION = "24.3.0";
+export const NODEJS_VERSION = "24.16.0";
 
 /** Node.js NODE_MODULE_VERSION — for native addon ABI compat. */
 export const NODEJS_ABI_VERSION = "137";

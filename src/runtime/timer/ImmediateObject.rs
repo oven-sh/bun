@@ -35,7 +35,11 @@ impl ImmediateObject {
     // wrapper) so the cached `WriteBarrier` slot on the C++ side can be read/written.
     // Mirrors `Timeout::get_on_timeout`/`set_on_timeout` (see `TimeoutObject.rs`).
 
-    pub fn get_on_immediate(_this: &Self, this_value: JSValue, _global: &JSGlobalObject) -> JSValue {
+    pub fn get_on_immediate(
+        _this: &Self,
+        this_value: JSValue,
+        _global: &JSGlobalObject,
+    ) -> JSValue {
         js::callback_get_cached(this_value).unwrap()
     }
 

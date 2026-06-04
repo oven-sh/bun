@@ -796,11 +796,21 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
     BUN_TEST_EXTRA_ALIAS_KVS,
 ];
 
+static STREAM_ITER_ENABLED: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
 /// `--experimental-stream-iter` (node parity): `stream/iter` resolves as a
-/// builtin only when the flag was passed on the CLI.
+/// builtin only when the flag was passed on the CLI as an exec argument.
+/// Set once during CLI parsing (`cli/Arguments.rs`), which owns the
+/// exec-arg/script-positional distinction — a raw argv scan here would also
+/// match the flag appearing after the script name, where node treats it as
+/// a script argument.
 pub fn stream_iter_enabled() -> bool {
-    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ENABLED.get_or_init(|| std::env::args().any(|a| a == "--experimental-stream-iter"))
+    STREAM_ITER_ENABLED.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+pub fn set_stream_iter_enabled(enabled: bool) {
+    STREAM_ITER_ENABLED.store(enabled, std::sync::atomic::Ordering::Relaxed);
 }
 
 fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {

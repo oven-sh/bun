@@ -146,6 +146,89 @@ debug = "line-tables-only"
 strip = "none"
 panic = "abort"
 
+# ─── React Compiler dependency closure: optimize for size ──────────────────
+# The vendored React Compiler (`bun_react_compiler` → `vendor/react-compiler`
+# crates + their oxc/serde/regex closure) is build-time-only code: it runs as
+# a bundler source transform, never on a hot runtime path. At the default
+# `opt-level = 3` this closure contributes ~7 MB of machine code to the
+# stripped release binary; `opt-level = "z"` cuts that roughly in half. The
+# functions carry `minsize`/`optsize` attributes into the fat-LTO link, so the
+# override survives whole-program optimization.
+#
+# Every package listed here is used EXCLUSIVELY by the React Compiler stack
+# (the list is exactly the set of packages this dependency added to
+# `cargo tree --workspace -e normal`). Profile overrides match by package
+# name across the whole graph — if another part of Bun starts depending on
+# one of these crates (e.g. `indexmap`, `either`), remove it from this list
+# so hot-path code keeps full optimization.
+[profile.release.package]
+bun_react_compiler = { opt-level = "z" }
+castaway = { opt-level = "z" }
+compact_str = { opt-level = "z" }
+cow-utils = { opt-level = "z" }
+cpufeatures = { opt-level = "z" }
+dragonbox_ecma = { opt-level = "z" }
+either = { opt-level = "z" }
+hmac = { opt-level = "z" }
+indexmap = { opt-level = "z" }
+itertools = { opt-level = "z" }
+nonmax = { opt-level = "z" }
+num-bigint = { opt-level = "z" }
+num-integer = { opt-level = "z" }
+num-traits = { opt-level = "z" }
+owo-colors = { opt-level = "z" }
+oxc-miette = { opt-level = "z" }
+oxc-miette-derive = { opt-level = "z" }
+oxc_allocator = { opt-level = "z" }
+oxc_ast = { opt-level = "z" }
+oxc_ast_macros = { opt-level = "z" }
+oxc_ast_visit = { opt-level = "z" }
+oxc_codegen = { opt-level = "z" }
+oxc_data_structures = { opt-level = "z" }
+oxc_diagnostics = { opt-level = "z" }
+oxc_ecmascript = { opt-level = "z" }
+oxc_estree = { opt-level = "z" }
+oxc_index = { opt-level = "z" }
+oxc_parser = { opt-level = "z" }
+oxc_regular_expression = { opt-level = "z" }
+oxc_semantic = { opt-level = "z" }
+oxc_span = { opt-level = "z" }
+oxc_str = { opt-level = "z" }
+oxc_syntax = { opt-level = "z" }
+percent-encoding = { opt-level = "z" }
+react_compiler = { opt-level = "z" }
+react_compiler_ast = { opt-level = "z" }
+react_compiler_diagnostics = { opt-level = "z" }
+react_compiler_hir = { opt-level = "z" }
+react_compiler_inference = { opt-level = "z" }
+react_compiler_lowering = { opt-level = "z" }
+react_compiler_optimization = { opt-level = "z" }
+react_compiler_oxc = { opt-level = "z" }
+react_compiler_reactive_scopes = { opt-level = "z" }
+react_compiler_ssa = { opt-level = "z" }
+react_compiler_typeinference = { opt-level = "z" }
+react_compiler_utils = { opt-level = "z" }
+react_compiler_validation = { opt-level = "z" }
+regex = { opt-level = "z" }
+regex-automata = { opt-level = "z" }
+regex-syntax = { opt-level = "z" }
+ryu = { opt-level = "z" }
+self_cell = { opt-level = "z" }
+seq-macro = { opt-level = "z" }
+serde = { opt-level = "z" }
+serde_core = { opt-level = "z" }
+serde_derive = { opt-level = "z" }
+serde_json = { opt-level = "z" }
+sha2 = { opt-level = "z" }
+smawk = { opt-level = "z" }
+static_assertions = { opt-level = "z" }
+textwrap = { opt-level = "z" }
+unicode-id-start = { opt-level = "z" }
+unicode-linebreak = { opt-level = "z" }
+unicode-segmentation = { opt-level = "z" }
+unicode-width = { opt-level = "z" }
+zmij = { opt-level = "z" }
+
 [profile.dev]
 panic = "abort"
 

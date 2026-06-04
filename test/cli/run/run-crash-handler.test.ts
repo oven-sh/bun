@@ -1,6 +1,7 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, isLinux, isPosix, mergeWindowEnvs } from "harness";
+import { existsSync } from "fs";
+import { bunEnv, bunExe, isDebug, isLinux, isPosix, isWindows, mergeWindowEnvs } from "harness";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 
@@ -35,6 +36,36 @@ test.if(isDebug && isLinux && hasSymbolizer)(
     expect(stdout).not.toContain("capture_stack_trace");
   },
   60_000, // symbolizing the debug binary takes several seconds
+);
+
+// On Windows, debug builds symbolize crash traces in-process via dbghelp.dll,
+// which needs the PDB produced next to the executable. Skip if the binary was
+// copied around without it.
+const hasPdb = isWindows && existsSync(bunExe().replace(/\.exe$/i, ".pdb"));
+
+test.if(isDebug && isWindows && hasPdb)(
+  "windows crash trace resolves symbol names and line info from the PDB",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "panic"],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain("panic(main thread): invoked crashByPanic() handler");
+
+    // The in-process symbolizer prints frames to stderr as
+    // `file:line:col: 0x... in <symbol> (<module>)`. Before the dbghelp lookup
+    // was implemented, every Windows frame printed `???` for the symbol name
+    // (and the trace fell through to bare addresses), even with a PDB shipped.
+    const output = stdout + stderr;
+    expect(output).toContain("js_panic");
+    // SymGetLineFromAddrW64 must produce file:line for Bun's own frames.
+    expect(output).toMatch(/\.rs:\d+:/);
+    expect(exitCode).not.toBe(0);
+  },
+  60_000, // loading symbols for the debug binary takes several seconds
 );
 
 // The crash handler's final trap raises SIGILL on x86_64 (ud2) but SIGTRAP on

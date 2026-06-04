@@ -12,8 +12,10 @@ use bun_paths::resolve_path::{self as path_handler, platform};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer, SEP};
 use bun_resolver::fs::{FileSystem, Path as FsPath};
 use bun_sys::{self as sys, Fd, FdExt as _};
-// Wyhash (final4 variant). Must stay stable so on-disk
-// `.pile` filenames/hashes remain interchangeable across versions.
+// Wyhash (final4 variant). Must stay stable so on-disk `.pile2`
+// filenames/hashes remain interchangeable across Rust-line versions.
+// Interchange with the Zig line's `.pile` caches is deliberately
+// impossible; see `EXPECTED_VERSION`.
 use bun_wyhash::Wyhash;
 
 bun_core::declare_scope!(cache, visible);
@@ -41,22 +43,25 @@ bun_core::declare_scope!(cache, visible);
 /// Version 22: Serialize `has_tla` in the cached ESM record flags byte. Entries
 /// written before #30888 carried `has_tla=false` for every module; the cache-HIT
 /// path reinstates the bug for any previously-cached TLA module (#30887).
-/// Version 23: moved into the Rust-line namespace (`RUST_VERSION_NAMESPACE`).
+/// Version 23: cache filename suffix moved from `.pile` to `.pile2`.
 ///
-/// The Zig 1.3.x maintenance line shares this cache's directory, filename
-/// scheme, metadata layout, and feature-hash inputs, but transpiles with a
-/// different implementation and bumps its own `expected_version`
-/// independently (18 in bun-v1.3.12, 20 in bun-v1.3.13/1.3.14). Whenever both
-/// lines use the same number — as happened for version 20 between the
-/// May 2026 canaries and bun-v1.3.13/1.3.14 — each implementation loads
-/// entries written by the other: every stored hash verifies (they hash the
-/// entry's own payload), so a foreign entry is served indefinitely, is never
-/// unlinked, and keeps being served across version up/downgrades within the
-/// line that trusts it. Offsetting the Rust-line version numbers guarantees a
-/// `cache_version` mismatch instead, so entries written by the other line are
-/// treated as stale, unlinked, and rewritten.
-const RUST_VERSION_NAMESPACE: u32 = 1_000_000;
-const EXPECTED_VERSION: u32 = RUST_VERSION_NAMESPACE + 23;
+/// The Zig 1.3.x maintenance line shares this cache's directory and hashing,
+/// but transpiles with a different implementation and bumps its own
+/// `expected_version` independently (18 in bun-v1.3.12, 20 in
+/// bun-v1.3.13/1.3.14). While both lines wrote `<hash>.pile` files, a
+/// version-number collision — as happened for version 20 between the May 2026
+/// canaries and bun-v1.3.13/1.3.14 — made each implementation load entries
+/// written by the other: every stored hash verifies (they hash the entry's
+/// own payload), so a foreign entry was served indefinitely and survived
+/// version up/downgrades within the line that trusted it. And when the
+/// numbers did differ, alternating implementations unlinked and rewrote each
+/// other's entries on every run, so neither line's cache could persist.
+/// Disjoint `.pile2` filenames fix both: an entry only ever loads in the
+/// implementation line that wrote it, both caches coexist when installed bun
+/// versions alternate, and this version number only has to stay consistent
+/// with the Rust implementation. `.pile` files are never read, trusted, or
+/// deleted.
+const EXPECTED_VERSION: u32 = 23;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a
@@ -657,10 +662,12 @@ impl RuntimeTranspilerCache {
     pub fn write_cache_filename(buf: &mut [u8], input_hash: u64) -> Result<usize, bun_core::Error> {
         // Hex-encode the 8 native-endian bytes of `input_hash`.
         let bytes = input_hash.to_ne_bytes();
+        // `.pile2`, not `.pile`: the Zig 1.3.x line owns the `.pile` namespace
+        // and versions it independently — see `EXPECTED_VERSION`.
         let suffix: &[u8] = if cfg!(debug_assertions) {
-            b".debug.pile"
+            b".debug.pile2"
         } else {
-            b".pile"
+            b".pile2"
         };
         let needed = bytes.len() * 2 + suffix.len();
         if buf.len() < needed {

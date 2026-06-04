@@ -158,8 +158,8 @@ preload = ["./preload.ts"]
   expect(first.stderr).toContain("1 pass");
   expect(first.exitCode).toBe(0);
 
-  // Locate the written `.pile` file(s) (covers `.debug.pile` on debug builds
-  // and `.pile` on release builds). Read the current cache version from the
+  // Locate the written cache file(s) (covers `.debug.pile2` on debug builds
+  // and `.pile2` on release builds). Read the current cache version from the
   // first file, then downgrade every entry's 4-byte LE version header to
   // `current - 1`. A binary that reverted the #30888 bump (back to 20)
   // would accept a `has_tla=false` entry verbatim; the fix requires the
@@ -168,7 +168,7 @@ preload = ["./preload.ts"]
   // than hardcoding 21) means this test doesn't need editing on every
   // future `EXPECTED_VERSION` bump — it still fails iff the version is
   // ever reverted to ≤ 20.
-  const entries = readdirSync(cachePath).filter(n => n.endsWith(".pile"));
+  const entries = readdirSync(cachePath).filter(n => n.includes(".pile"));
   expect(entries.length).toBeGreaterThan(0);
   const firstBytes = readFileSync(join(cachePath, entries[0]));
   expect(firstBytes.length).toBeGreaterThan(4);

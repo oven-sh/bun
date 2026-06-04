@@ -503,8 +503,15 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
 
 it.concurrent("should handle package that requires node 24", async () => {
   const { x_dir, env } = setup();
+  // Pinned on purpose. @angular/cli's bin checks process.version at runtime
+  // and exits 3 when it's too old, which is what this test guards against
+  // (bun used to report node 22.6.0 and failed this check). The `latest` tag
+  // is a moving target: 22.0.0 started requiring ^22.22.3 || ^24.15.0 ||
+  // >=26.0.0, which bun's reported node version (24.3.0) does not satisfy,
+  // so tracking `latest` broke CI on every PR. 21.1.3 requires ^20.19.0 ||
+  // ^22.12.0 || >=24.0.0 and stays satisfied after future version bumps.
   const subprocess = spawn({
-    cmd: [bunExe(), "x", "--bun", "@angular/cli@latest", "--help"],
+    cmd: [bunExe(), "x", "--bun", "@angular/cli@21.1.3", "--help"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "inherit",
@@ -514,6 +521,7 @@ it.concurrent("should handle package that requires node 24", async () => {
 
   let [err, out, exited] = await Promise.all([subprocess.stderr.text(), subprocess.stdout.text(), subprocess.exited]);
   expect(err).not.toContain("error:");
+  expect(err).not.toContain("requires a minimum Node.js version");
   expect(out.trim()).not.toContain(Bun.version);
   expect(exited).toBe(0);
 });

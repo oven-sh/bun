@@ -86,8 +86,7 @@ test("Bun.inspect maxArrayLength still prints named own properties", () => {
     '[ ... 3 more items, foo: "bar" ]',
   );
   // Truncating mid-array keeps trailing named properties too.
-  expect(Bun.inspect(Object.assign([1, 2, 3, 4, 5], { foo: "bar" }), { maxArrayLength: 2 }))
-    .toMatchInlineSnapshot(`
+  expect(Bun.inspect(Object.assign([1, 2, 3, 4, 5], { foo: "bar" }), { maxArrayLength: 2 })).toMatchInlineSnapshot(`
     "[ 1, 2,
       ... 3 more items, foo: "bar" ]"
   `);

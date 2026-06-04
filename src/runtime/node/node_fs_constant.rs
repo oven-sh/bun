@@ -58,10 +58,6 @@ pub const O_NOATIME: i32 = O::NOATIME;
 pub const O_DSYNC: i32 = O::DSYNC;
 /// Constant for fs.open(). Flag indicating to open the symbolic link itself rather than the resource it is pointing to.
 pub const O_SYMLINK: i32 = O::SYMLINK;
-/// Constant for fs.open(). When set, an attempt will be made to minimize caching effects of file I/O.
-#[cfg(any(target_os = "linux", target_os = "android"))]
-#[allow(dead_code)]
-pub(crate) const O_DIRECT: i32 = libc::O_DIRECT;
 
 // File Type Constants
 /// Constant for fs.Stats mode property for determining a file's type. Bit mask used to extract the file type code.

@@ -778,9 +778,7 @@ impl PlaceSelf {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A [`<self-position>`](https://www.w3.org/TR/css-align-3/#typedef-self-position) value.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-// TODO(port): css.DefineEnumProperty — derive-based eql/hash/parse/toCss/deepClone for plain enums.
-#[derive(css::DefineEnumProperty)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum SelfPosition {
     /// Item is centered within the container.
     #[css(name = "center")]
@@ -886,9 +884,7 @@ impl PlaceContent {
 // ──────────────────────────────────────────────────────────────────────────────
 
 /// A [`<content-distribution>`](https://www.w3.org/TR/css-align-3/#typedef-content-distribution) value.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-// TODO(port): css.DefineEnumProperty
-#[derive(css::DefineEnumProperty)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum ContentDistribution {
     /// Items are spaced evenly, with the first and last items against the edge of the container.
     #[css(name = "space-between")]
@@ -905,9 +901,7 @@ pub enum ContentDistribution {
 }
 
 /// An [`<overflow-position>`](https://www.w3.org/TR/css-align-3/#typedef-overflow-position) value.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-// TODO(port): css.DefineEnumProperty
-#[derive(css::DefineEnumProperty)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum OverflowPosition {
     /// If the size of the alignment subject overflows the alignment container,
     /// the alignment subject is instead aligned as if the alignment mode were start.
@@ -920,9 +914,7 @@ pub enum OverflowPosition {
 }
 
 /// A [`<content-position>`](https://www.w3.org/TR/css-align-3/#typedef-content-position) value.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-// TODO(port): css.DefineEnumProperty
-#[derive(css::DefineEnumProperty)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum ContentPosition {
     /// Content is centered within the container.
     #[css(name = "center")]

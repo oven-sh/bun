@@ -54,7 +54,7 @@ pub enum Promise {
     Rejects = 2,
 }
 
-#[repr(u8)] // TODO(port): Zig used u5; encoded inside Flags packed repr
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum AsymmetricMatcherConstructorType {
     #[default]
@@ -277,26 +277,42 @@ impl Expect {
     ) -> JsError {
         // PERF(port): was comptime bool dispatch on Output.enable_ansi_colors_stderr — profile if hot.
         let colors = Output::enable_ansi_colors_stderr();
-        let chain = match flags.promise() {
+        let chain: &'static str = match flags.promise() {
             Promise::Resolves => {
                 if flags.not() {
-                    Output::pretty_fmt_rt("resolves<d>.<r>not<d>.<r>", colors)
+                    if colors {
+                        bun_core::pretty_fmt!("resolves<d>.<r>not<d>.<r>", true)
+                    } else {
+                        bun_core::pretty_fmt!("resolves<d>.<r>not<d>.<r>", false)
+                    }
+                } else if colors {
+                    bun_core::pretty_fmt!("resolves<d>.<r>", true)
                 } else {
-                    Output::pretty_fmt_rt("resolves<d>.<r>", colors)
+                    bun_core::pretty_fmt!("resolves<d>.<r>", false)
                 }
             }
             Promise::Rejects => {
                 if flags.not() {
-                    Output::pretty_fmt_rt("rejects<d>.<r>not<d>.<r>", colors)
+                    if colors {
+                        bun_core::pretty_fmt!("rejects<d>.<r>not<d>.<r>", true)
+                    } else {
+                        bun_core::pretty_fmt!("rejects<d>.<r>not<d>.<r>", false)
+                    }
+                } else if colors {
+                    bun_core::pretty_fmt!("rejects<d>.<r>", true)
                 } else {
-                    Output::pretty_fmt_rt("rejects<d>.<r>", colors)
+                    bun_core::pretty_fmt!("rejects<d>.<r>", false)
                 }
             }
             Promise::None => {
                 if flags.not() {
-                    Output::pretty_fmt_rt("not<d>.<r>", colors)
+                    if colors {
+                        bun_core::pretty_fmt!("not<d>.<r>", true)
+                    } else {
+                        bun_core::pretty_fmt!("not<d>.<r>", false)
+                    }
                 } else {
-                    bun_core::output::PrettyBuf(Vec::new())
+                    ""
                 }
             }
         };
@@ -373,6 +389,7 @@ impl Expect {
         value.ensure_still_alive();
 
         // PERF(port): was comptime bool dispatch — profile if hot.
+        #[allow(clippy::disallowed_methods)] // template is a runtime parameter (Zig comptime param)
         let matcher_params = Output::pretty_fmt_rt(matcher_params_fmt, Output::enable_ansi_colors_stderr());
         Self::process_promise(
             self.custom_label.clone(),
@@ -1852,8 +1869,7 @@ impl fmt::Display for CustomMatcherParamsFormatter<'_> {
         }
 
         // fallback
-        // PERF(port): was comptime bool dispatch — profile if hot.
-        write!(writer, "{}", Output::pretty_fmt_rt("<green>...args<r>", self.colors))
+        bun_core::write_pretty!(writer, self.colors, "<green>...args<r>")
     }
 }
 
@@ -2946,16 +2962,32 @@ impl ExpectMatcherUtils {
         // .zig:1948-1955 builds `getSignature("{f}", "<green>expected<r>", is_not) ++ "\n\n{f}\n"`
         // and substitutes `(matcher_name, diff_formatter)` into the two `{f}`
         // slots, then runs `Output.prettyFmt` over the *template* before
-        // substitution. `pretty_fmt_rt` rewrites only the `<tag>` markers in
+        // substitution. `pretty_fmt!` rewrites only the `<tag>` markers in
         // the static `RECEIVED`/`expected` literals — `matcher_name` and
         // `diff_formatter` are spliced in afterwards (matches `throw_pretty`'s
         // render-then-rewrite ordering, since Display output here contains no
         // `<tag>` literals).
         // PERF(port): Zig used a 2048-byte stack-fallback MutableString — profile if hot.
         let colors = Output::enable_ansi_colors_stderr();
-        let head = Output::pretty_fmt_rt("<d>expect(<r><red>received<r><d>).<r>", colors);
-        let not = if is_not { Output::pretty_fmt_rt("not<d>.<r>", colors) } else { bun_core::output::PrettyBuf(Vec::new()) };
-        let expected_hint = Output::pretty_fmt_rt("<d>(<r><green>expected<r><d>)<r>", colors);
+        let head: &'static str = if colors {
+            bun_core::pretty_fmt!("<d>expect(<r><red>received<r><d>).<r>", true)
+        } else {
+            bun_core::pretty_fmt!("<d>expect(<r><red>received<r><d>).<r>", false)
+        };
+        let not: &'static str = if is_not {
+            if colors {
+                bun_core::pretty_fmt!("not<d>.<r>", true)
+            } else {
+                bun_core::pretty_fmt!("not<d>.<r>", false)
+            }
+        } else {
+            ""
+        };
+        let expected_hint: &'static str = if colors {
+            bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", true)
+        } else {
+            bun_core::pretty_fmt!("<d>(<r><green>expected<r><d>)<r>", false)
+        };
         let buf = format!("{head}{not}{matcher_name}{expected_hint}\n\n{diff_formatter}\n");
         bun_jsc::bun_string_jsc::create_utf8_for_js(global_this, buf.as_bytes())
     }

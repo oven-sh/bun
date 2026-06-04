@@ -231,8 +231,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 is_typescript_declare: opts.is_typescript_declare,
                 ..ParseStatementOptions::default()
             };
-            // TODO(port): Zig `ListManaged.fromOwnedSlice` adopts the slice in-place;
-            // `parse_stmts_up_to` already returns a BumpVec<'a, Stmt> so just take it.
             stmts = p.parse_stmts_up_to(T::TCloseBrace, &mut _opts)?;
             p.lexer.next()?;
         }
@@ -558,8 +556,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         };
 
         // Generate the namespace object
-        // TODO(port): Zig `var arg_ref: Ref = undefined;` — initialized to NONE here; only read on
-        // paths where it has been assigned below.
         let mut arg_ref: Ref = Ref::NONE;
         let mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
             p.get_or_create_exported_namespace_members(name_text, opts.is_export, true);
@@ -585,8 +581,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Parse the body
         let mut values: BumpVec<'_, EnumValue> = BumpVec::new_in(p.arena);
         while p.lexer.token != T::TCloseBrace {
-            // TODO(port): Zig `name = undefined` — placeholder empty slice; always overwritten or
-            // we return SyntaxError before use.
             let mut value = EnumValue {
                 loc: p.lexer.loc(),
                 ref_: Ref::NONE,

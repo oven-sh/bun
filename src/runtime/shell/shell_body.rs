@@ -7,7 +7,6 @@ use core::fmt;
 use std::io::Write as _;
 
 use bun_alloc::Arena as Bump;
-use bun_core::{self, Output};
 use bun_jsc::{
     self as jsc, CallFrame, JSArrayIterator, JSGlobalObject, JSValue, JsResult,
     MarkedArgumentBuffer, PlatformEventLoop,
@@ -117,30 +116,31 @@ impl ShellErr {
     pub fn throw_mini(self) -> ! {
         match self {
             ShellErr::Sys(err) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: Failed due to error: <b>bunsh: {}: {}<r>",
-                    err.message, err.path
-                ));
+                    err.message,
+                    err.path
+                );
                 // Zig: `defer this.deinit()` → `.sys => this.sys.deref()`.
                 err.deref();
             }
             ShellErr::Custom(custom) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: Failed due to error: <b>{}<r>",
                     bstr::BStr::new(&*custom)
-                ));
+                );
             }
             ShellErr::InvalidArguments { val } => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: Failed due to error: <b>bunsh: invalid arguments: {}<r>",
                     bstr::BStr::new(&*val)
-                ));
+                );
             }
             ShellErr::Todo(todo) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: Failed due to error: <b>TODO: {}<r>",
                     bstr::BStr::new(&*todo)
-                ));
+                );
             }
         }
         bun_core::Global::exit(1)
@@ -274,7 +274,6 @@ impl<'a> GlobalJS<'a> {
     #[inline]
     pub fn create_null_delimited_env_map(
         self,
-        // TODO(port): allocator param dropped (global mimalloc)
     ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
         // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.env` is a
         // long-lived `*mut Loader` owned by the VM.
@@ -457,7 +456,6 @@ impl<'a> GlobalMini<'a> {
 
 pub struct CmdEnvIter<'a> {
     pub env: &'a mut bun_collections::StringArrayHashMap<Box<ZStr>>,
-    // TODO(port): Zig `[:0]const u8` value — confirm map value type.
     pub iter: bun_collections::array_hash_map::Iter<'a, Box<[u8]>, Box<ZStr>>,
 }
 

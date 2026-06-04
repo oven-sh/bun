@@ -303,7 +303,6 @@ struct InstallDirState {
 
 impl Default for InstallDirState {
     fn default() -> Self {
-        // TODO(port): Zig used `undefined` for most fields; we need a sentinel.
         Self {
             cached_package_dir: Dir::from_fd(Fd::INVALID),
             walker: None,
@@ -493,7 +492,6 @@ impl<TaskType> NewTaskQueue<TaskType> {
     }
 }
 
-// TODO(port): helper trait so `NewTaskQueue::push` can reach the intrusive `.task` field generically.
 pub trait HasWorkPoolTask {
     fn task(&mut self) -> &mut WorkPoolTask;
 }
@@ -679,11 +677,11 @@ impl HardLinkWindowsInstallTask {
 
         if PackageManager::verbose_install() {
             bun_core::run_once! {{
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
                     bun_core::fmt::fmt_os_path(src, Default::default()),
                     bun_core::fmt::fmt_os_path(&dest[..dest_len], Default::default()),
-                ));
+                );
             }}
         }
 
@@ -731,10 +729,10 @@ impl UninstallTask {
         let dirname =
             path::resolve_path::dirname::<path::platform::Auto>(&uninstall_task.absolute_path);
         if dirname.is_empty() {
-            Output::debug_warn(format_args!(
+            bun_core::debug_warn!(
                 "Unexpectedly failed to get dirname of {}",
                 bstr::BStr::new(&uninstall_task.absolute_path)
-            ));
+            );
             return;
         }
         let basename = bun_paths::basename(&uninstall_task.absolute_path);
@@ -743,23 +741,23 @@ impl UninstallTask {
             Ok(d) => d,
             Err(err) => {
                 if bun_core::Environment::IS_DEBUG || bun_core::Environment::ENABLE_ASAN {
-                    Output::debug_warn(format_args!(
+                    bun_core::debug_warn!(
                         "Failed to delete {}: {}",
                         bstr::BStr::new(&uninstall_task.absolute_path),
                         bstr::BStr::new(err.name())
-                    ));
+                    );
                 }
                 return;
             }
         };
         if let Err(err) = dir.delete_tree(basename) {
             if bun_core::Environment::IS_DEBUG || bun_core::Environment::ENABLE_ASAN {
-                Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "Failed to delete {} in {}: {}",
                     bstr::BStr::new(basename),
                     bstr::BStr::new(dirname),
                     bstr::BStr::new(err.name())
-                ));
+                );
             }
         }
 
@@ -1456,22 +1454,22 @@ impl<'a> PackageInstall<'a> {
                                 }
 
                                 if let Some(err) = windows::Win32Error::get().to_system_errno() {
-                                    Output::pretty_errorln(format_args!(
+                                    bun_core::pretty_errorln!(
                                         "<r><red>{}<r>: copying file {}",
                                         <&'static str>::from(err),
                                         bun_core::fmt::fmt_os_path(
                                             entry.path.as_slice(),
                                             Default::default()
                                         )
-                                    ));
+                                    );
                                 } else {
-                                    Output::pretty_errorln(format_args!(
+                                    bun_core::pretty_errorln!(
                                         "<r><red>error<r> copying file {}",
                                         bun_core::fmt::fmt_os_path(
                                             entry.path.as_slice(),
                                             Default::default()
                                         )
-                                    ));
+                                    );
                                 }
 
                                 Global::crash();
@@ -1526,14 +1524,14 @@ impl<'a> PackageInstall<'a> {
                                         progress.refresh();
                                     }
 
-                                    Output::pretty_errorln(format_args!(
+                                    bun_core::pretty_errorln!(
                                         "<r><red>{}<r>: copying file {}",
                                         bstr::BStr::new(err.name()),
                                         bun_core::fmt::fmt_os_path(
                                             entry.path.as_bytes(),
                                             Default::default()
                                         )
-                                    ));
+                                    );
                                     Global::crash();
                                 }
                             }
@@ -1562,11 +1560,11 @@ impl<'a> PackageInstall<'a> {
                             progress.refresh();
                         }
 
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>{}<r>: copying file {}",
                             bstr::BStr::new(err.name()),
                             bun_core::fmt::fmt_os_path(entry.path.as_bytes(), Default::default())
-                        ));
+                        );
                         Global::crash();
                     }
                 }
@@ -1954,11 +1952,11 @@ impl<'a> PackageInstall<'a> {
 
                                 if PackageManager::verbose_install() {
                                     bun_core::run_once! {{
-                                        Output::warn(format_args!(
+                                        bun_core::warn!(
                                             "CreateHardLinkW failed, falling back to CopyFileW: {} -> {}\n",
                                             bun_core::fmt::fmt_os_path(src.as_slice(), Default::default()),
                                             bun_core::fmt::fmt_os_path(dest.as_slice(), Default::default()),
-                                        ));
+                                        );
                                     }}
                                 }
 

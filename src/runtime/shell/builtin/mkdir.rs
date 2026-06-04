@@ -316,7 +316,10 @@ impl ShellMkdirTask {
 
         let mut node_fs = NodeFS::default();
         let args = fs_args::Mkdir {
-            path: PathLike::String(bun_core::PathString::init(filepath.as_bytes())),
+            path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                filepath.as_bytes(),
+                false,
+            )),
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,
             always_return_none: true,

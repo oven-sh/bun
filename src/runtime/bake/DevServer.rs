@@ -265,7 +265,7 @@ pub struct CurrentBundle {
     /// Information BundleV2 needs to finalize the bundle
     pub start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
-    pub timer: Instant, // TODO(port): std.time.Timer → Instant; .read() becomes .elapsed()
+    pub timer: Instant,
     /// If any files in this bundle were due to hot-reloading, some extra work
     /// must be done to inform clients to reload routes. When this is false,
     /// all entry points do not have bundles yet.
@@ -439,7 +439,7 @@ pub struct DevServer {
 
     // Debugging
     #[cfg(feature = "bake_debugging_features")]
-    pub dump_dir: Option<sys::Dir>, // TODO(port): std.fs.Dir → bun_sys equivalent
+    pub dump_dir: Option<sys::Dir>,
     #[cfg(not(feature = "bake_debugging_features"))]
     pub dump_dir: (),
     /// Reference count to number of active sockets with the incremental_visualizer enabled.
@@ -508,10 +508,7 @@ pub fn init(options: Options) -> JsResult<Box<DevServer>> {
         match sys::Dir::cwd().make_open_path(dir, Default::default()) {
             Ok(d) => Some(d),
             Err(err) => {
-                Output::warn(format_args!(
-                    "Could not open directory for dumping sources: {}",
-                    err
-                ));
+                bun_core::warn!("Could not open directory for dumping sources: {}", err);
                 None
             }
         }
@@ -1311,9 +1308,6 @@ impl DevServer {
     }
 
     /// Returns true if a catch-all handler was attached.
-    // TODO(port): `server: anytype` -- monomorphized over NewServer<SSL,DEBUG> so
-    // the SSL flag is a real const-generic (associated consts can't appear in
-    // const-generic position on stable).
     pub fn set_routes<const SSL: bool, const DEBUG: bool>(
         &mut self,
         server: &mut crate::server::NewServer<SSL, DEBUG>,
@@ -1908,7 +1902,7 @@ impl RequestEnsureRouteBundledCtx {
         // PORT NOTE: reshaped for borrowck — captured args before re-borrowing dev
         let route_bundle_index = self.route_bundle_index;
         let kind = self.kind;
-        let req = ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted); // TODO(port): ReqOrSaved moved into deferRequest
+        let req = ::core::mem::replace(&mut self.req, ReqOrSaved::Aborted);
         let resp = self.resp;
         let dev = self.dev_mut();
         let requests_array: *mut deferred_request::List = match bundle_field {
@@ -2023,8 +2017,6 @@ enum BundleQueueType {
     CurrentBundle,
 }
 
-// TODO(port): `ensureRouteIsBundled` is a comptime-generic over `Ctx` with @field
-// duck-typing. In Rust we use a trait.
 trait EnsureRouteCtx {
     fn on_defer(&mut self, bundle_field: BundleQueueType) -> JsResult<()>;
     fn on_loaded(&mut self) -> JsResult<()>;
@@ -2149,12 +2141,8 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                 dev.route_bundle_ptr(route_bundle_index).server_state =
                     route_bundle::State::Bundling;
 
-                dev.start_async_bundle(
-                    entry_points,
-                    false,
-                    Instant::now(), // TODO(port): std.time.Timer.start()
-                )
-                .expect("oom");
+                dev.start_async_bundle(entry_points, false, Instant::now())
+                    .expect("oom");
                 return Ok(());
             }
             route_bundle::State::DeferredToNextBundle => {
@@ -2205,7 +2193,7 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
 enum ReqOrSaved {
     Req(*mut Request), // FFI: uws C request ptr from handler callback
     Saved(SavedRequest),
-    Aborted, // TODO(port): added for take()-style move; not in Zig
+    Aborted,
 }
 
 impl ReqOrSaved {
@@ -2382,7 +2370,6 @@ fn check_route_failures(
         // See comment on this field for information
         if !dev.assume_perfect_incremental_bundling {
             // Cache bust EVERYTHING reachable
-            // TODO(port): inline for over .{ {graph, bits}, ... } — unrolled
             {
                 let mut it = gts.client_bits.iterator::<true, true>();
                 while let Some(file_index) = it.next() {
@@ -3432,7 +3419,7 @@ impl DevServer {
         // Theoretically, it shouldn't be possible for errors to leak into dev.log
         if self.log.has_errors() && !self.log.msgs.is_empty() {
             if cfg!(debug_assertions) {
-                Output::debug_warn("dev.log should not be written into when using DevServer");
+                bun_core::debug_warn!("dev.log should not be written into when using DevServer");
             }
             let _ = self.log.print(std::ptr::from_mut(Output::error_writer()));
         }
@@ -3954,7 +3941,7 @@ pub(super) fn finalize_bundle(
         let current_bundle = unsafe { &mut *current_bundle_ptr_defer };
         if !current_bundle.requests.first.is_null() {
             // cannot be an assertion because in the case of OOM, the request list was not drained.
-            Output::debug(
+            bun_core::debug!(
                 "current_bundle.requests.first != null. this leaves pending requests without an error page!",
             );
         }
@@ -4809,10 +4796,7 @@ pub(super) fn finalize_bundle(
 
             dev.bundles_since_last_error += 1;
             if dev.bundles_since_last_error > 1 {
-                Output::pretty_error(format_args!(
-                    "<cyan>[x{}]<r> ",
-                    dev.bundles_since_last_error
-                ));
+                bun_core::pretty_error!("<cyan>[x{}]<r> ", dev.bundles_since_last_error);
             }
         } else {
             dev.bundles_since_last_error = 0;
@@ -4821,7 +4805,7 @@ pub(super) fn finalize_bundle(
 
         let ms_elapsed = u64::try_from(current_bundle!().timer.elapsed().as_millis()).unwrap();
 
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "<green>{} in {}ms<r>",
             if current_bundle!().had_reload_event {
                 "Reloaded"
@@ -4829,7 +4813,7 @@ pub(super) fn finalize_bundle(
                 "Bundled page"
             },
             ms_elapsed,
-        ));
+        );
 
         // Intentionally creating a new scope here so we can limit the lifetime
         // of the `relative_path_buf`
@@ -4895,13 +4879,13 @@ pub(super) fn finalize_bundle(
 
             let total_count = bv2.graph.entry_points.len();
             if let Some(name) = file_name {
-                Output::pretty_error(format_args!("<d>:<r> {}", bstr::BStr::new(name)));
+                bun_core::pretty_error!("<d>:<r> {}", bstr::BStr::new(name));
                 if total_count > 1 {
-                    Output::pretty_error(format_args!(" <d>+ {} more<r>", total_count - 1));
+                    bun_core::pretty_error!(" <d>+ {} more<r>", total_count - 1);
                 }
             }
         }
-        Output::pretty_error("\n");
+        bun_core::pretty_error!("\n");
         Output::flush();
 
         // SAFETY: JS-thread only; sole `&mut` agent borrow in this scope.
@@ -5122,7 +5106,6 @@ impl DevServer {
 
         let _g = self.graph_safety_lock.guard();
 
-        // TODO(port): `switch (graph == .client) { inline else => |is_client| ... }` — unrolled
         let owner: serialized_failure::OwnerPacked = if graph == bake::Graph::Client {
             let idx = self.client_graph.insert_stale(abs_path, false)?;
             serialized_failure::OwnerPacked::new(bake::Side::Client, idx.get())
@@ -5167,7 +5150,6 @@ impl DevServer {
 
         let _g = self.graph_safety_lock.guard();
 
-        // TODO(port): switch (side) { inline else => |side_comptime| ... } — unrolled
         macro_rules! check {
             ($g:expr) => {{
                 let g = $g;
@@ -5196,7 +5178,6 @@ impl DevServer {
         entry_points: &mut EntryPointList,
         optional_id: impl Into<OpaqueFileIdOrOptional>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): Zig used `anytype` and matched on @TypeOf; using From/Into.
         let file = match optional_id.into() {
             OpaqueFileIdOrOptional::Optional(o) => match o {
                 Some(f) => f,
@@ -5227,7 +5208,6 @@ impl DevServer {
     }
 }
 
-// TODO(port): helper enum for `optional_id: anytype` in append_opaque_entry_point
 pub(super) enum OpaqueFileIdOrOptional {
     Id(OpaqueFileId),
     Optional(framework_router::OpaqueFileIdOptional),
@@ -5491,8 +5471,6 @@ impl DevServer {
     ) -> Result<(), bun_core::Error> {
         let mut buf: Vec<u8> = Vec::with_capacity(2048);
 
-        // TODO(port): switch (kind) { inline else => |k| std.fmt.comptimePrint(...) }
-        // → const_format would need const enum-dependent string; using match on runtime kind.
         let page_title = match kind {
             ErrorPageKind::Bundler => "Build Failed",
             ErrorPageKind::Evaluation => "Runtime Error",
@@ -5590,14 +5568,14 @@ impl DevServer {
         if !bun_output::scope_is_visible!(DevServer) {
             return;
         }
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "<d>DevServer tracked {}, process: {}<r>",
             bun_core::fmt::size(self.memory_cost(), Default::default()),
             bun_core::fmt::size(
                 sys::self_process_memory_usage().unwrap_or(0),
                 Default::default()
             ),
-        ));
+        );
     }
 }
 
@@ -5654,7 +5632,6 @@ pub fn dump_bundle(
         &mut *buf,
         &[<&'static str>::from(graph).as_bytes(), rel_path],
     )[1..];
-    // TODO(port): std.fs.Dir.makeOpenPath / createFile — use bun_sys
     let inner_dir = dump_dir.make_open_path(
         paths::resolve_path::dirname::<paths::platform::Auto>(name),
         Default::default(),
@@ -5728,7 +5705,7 @@ pub fn dump_bundle_for_chunk(
         code,
         wrap,
     ) {
-        Output::warn(format_args!("Could not dump bundle: {}", err));
+        bun_core::warn!("Could not dump bundle: {}", err);
     }
 }
 
@@ -5855,7 +5832,6 @@ impl DevServer {
         payload.push(MessageId::Visualizer.char());
         // PERF(port): was assume_capacity
 
-        // TODO(port): inline for over [2]bake.Side + .{client_graph, server_graph} — unrolled
         macro_rules! emit_files {
             ($side:expr, $g:expr) => {{
                 let g = $g;
@@ -5940,7 +5916,6 @@ impl DevServer {
 pub(super) use crate::bake::dev_server::{HmrTopic, MessageId};
 
 bitflags::bitflags! {
-    // TODO(port): Zig generated `Bits` via @Type from HmrTopic enum fields.
     // bitflags! requires explicit power-of-two values; field names match enum variants.
     #[derive(Default, Copy, Clone)]
     pub struct HmrTopicBits: u8 {
@@ -6211,7 +6186,7 @@ impl DevServer {
         } else {
             Output::err(err, "failed to watch files for hot-reloading", ());
         }
-        Output::warn(
+        bun_core::warn!(
             "The development server is still running, but hot-reloading is disabled until a restart.",
         );
         // TODO: attempt to automatically restart the watcher thread, perhaps wait for next request.
@@ -6232,7 +6207,6 @@ impl DevServer {
     }
 }
 
-// TODO(port): packed struct(u32) with non-bool fields → repr(transparent) + manual accessors
 #[repr(transparent)]
 #[derive(Copy, Clone)]
 struct SafeFileId(u32);
@@ -6298,16 +6272,16 @@ impl DevServer {
                 framework_router::FileKind::Layout => "layout",
             },),
         );
-        Output::pretty_errorln(format_args!("  - <blue>{}<r>", bstr::BStr::new(rel_path)));
+        bun_core::pretty_errorln!("  - <blue>{}<r>", bstr::BStr::new(rel_path));
         let mut buf = paths::path_buffer_pool::get();
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "  - <blue>{}<r>",
             bstr::BStr::new(self.relative_path(
                 &mut *buf,
                 &self.server_graph.bundled_files.keys()
                     [from_opaque_file_id::<{ bake::Side::Server }>(other_id).get() as usize]
             ))
-        ));
+        );
         Output::flush();
         Ok(())
     }
@@ -6428,14 +6402,10 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
         );
         bun_core::slice_to_nul(&filepath_buf)
     };
-    // TODO(port): std.fs.cwd().createFileZ — use bun_sys
     let file = match sys::File::create(sys::Fd::cwd(), filepath, true) {
         Ok(f) => f,
         Err(err) => {
-            Output::warn(format_args!(
-                "Could not open file for dumping incremental graph: {}",
-                err
-            ));
+            bun_core::warn!("Could not open file for dumping incremental graph: {}", err);
             return Ok(());
         }
     };
@@ -6463,14 +6433,13 @@ fn dump_state_due_to_crash(dev: &mut DevServer) -> Result<(), bun_core::Error> {
     file.write_all(b"\"), c => c.charCodeAt(0));\n")?;
     file.write_all(end)?;
 
-    Output::note(format_args!(
+    bun_core::note!(
         "Dumped incremental bundler graph to {}",
         bun_core::fmt::quote(filepath)
-    ));
+    );
     Ok(())
 }
 
-// TODO(port): packed struct(u32) — Route.Index is 31 bits + 1 bool bit
 #[repr(transparent)]
 #[derive(Copy, Clone)]
 pub struct RouteIndexAndRecurseFlag(pub u32);
@@ -6490,9 +6459,6 @@ impl RouteIndexAndRecurseFlag {
         (self.0 >> 31) != 0
     }
 }
-// TODO(port): Zig field-init `.{ .route_index = .., .should_recurse_when_visiting = .. }`
-// is used throughout; Phase B should add a `new()` and update callsites.
-
 /// Bake needs to specify which graph (client/server/ssr) each entry point is.
 #[derive(Default)]
 pub struct EntryPointList {
@@ -6642,7 +6608,7 @@ struct UnrefSourceMapRequest {
     // BACKREF: DevServer outlives the request; raw ptr avoids the `'static`
     // bound on `BodyReaderHandler` that a borrowed `&mut DevServer` would violate.
     dev: *mut DevServer,
-    body: uws::BodyReaderMixin<Self>, // TODO(port): BodyReaderMixin(@This(), "body", runWithBody, finalize)
+    body: uws::BodyReaderMixin<Self>,
 }
 
 bun_core::intrusive_field!(UnrefSourceMapRequest, body: uws::BodyReaderMixin<UnrefSourceMapRequest>);

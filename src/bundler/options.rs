@@ -431,8 +431,6 @@ pub trait LoaderExt: Copy {
     // cross-crate callers (bun_jsc / bun_runtime) resolve them without a trait
     // import.
 
-    // TODO(port): `obj: anytype` — Zig duck-typed `.get(ext) -> Option<Loader>`.
-    // Monomorphized to the only concrete map type callers pass (`LoaderHashTable`).
     fn for_file_name(filename: &[u8], obj: &LoaderHashTable) -> Option<Loader> {
         let ext = bun_paths::extension(filename);
         if ext.is_empty() || (ext.len() == 1 && ext[0] == b'.') {
@@ -2533,7 +2531,6 @@ pub enum PlaceholderField {
 // Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
 #[inline]
 pub(crate) fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
-    // TODO(port): Zig used comptime @tagName concatenation; here we match explicitly.
     let needle: &[u8] = match field {
         PlaceholderField::Dir => b"[dir]",
         PlaceholderField::Name => b"[name]",
@@ -2729,8 +2726,7 @@ pub static PLACEHOLDER_MAP: phf::Map<&'static [u8], PlaceholderField> = phf::phf
     b"target" => PlaceholderField::Target,
 };
 
-// TODO(port): Zig PathTemplate constants used &'static str fields; Rust struct uses Box<[u8]>.
-// PathTemplateConst is a const-friendly mirror; convert to PathTemplate at use sites.
+// PathTemplateConst is a const-friendly mirror of PathTemplate; convert to PathTemplate at use sites.
 #[derive(Debug, Clone, Copy)]
 pub struct PathTemplateConst {
     pub data: &'static [u8],
@@ -2780,24 +2776,17 @@ impl PathTemplateConst {
 
 impl core::fmt::Display for PathTemplateConst {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // PORT NOTE: Zig `format` writes raw bytes; route through a Vec then
-        // emit via `write_str` (paths are UTF-8 in practice; lossy fallback
-        // mirrors `bstr::BStr` Display semantics).
         let mut buf = Vec::<u8>::new();
         self.print(&mut buf).map_err(|_| core::fmt::Error)?;
-        f.write_str(&String::from_utf8_lossy(&buf))
+        write!(f, "{}", bstr::BStr::new(&buf))
     }
 }
 
 impl core::fmt::Display for PathTemplate {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // PORT NOTE: Zig `PathTemplate.format` writes raw path bytes via
-        // `writer.writeAll`; route through a Vec then emit via `write_str`
-        // (paths are UTF-8 in practice; lossy fallback mirrors `bstr::BStr`
-        // Display semantics). Mirrors `PathTemplateConst` Display above.
         let mut buf = Vec::<u8>::new();
         self.print(&mut buf).map_err(|_| core::fmt::Error)?;
-        f.write_str(&String::from_utf8_lossy(&buf))
+        write!(f, "{}", bstr::BStr::new(&buf))
     }
 }
 

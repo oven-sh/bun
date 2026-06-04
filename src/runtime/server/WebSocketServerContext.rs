@@ -50,10 +50,6 @@ bitflags::bitflags! {
     }
 }
 
-// JS callback bodies — gated until bun_jsc method surface (JSValue::call,
-// get_truthy, protect, JSGlobalObject::throw_*) is available.
-// TODO(port): bun_jsc::{JSValue, JSGlobalObject} methods.
-
 impl Handler {
     /// Deref the raw `global_object` pointer.
     /// SAFETY: `global_object` is set by the server before any websocket
@@ -266,9 +262,6 @@ fn lookup_zig_string(
 ) -> Option<i32> {
     table.get(key.slice()).copied()
 }
-
-// TODO(port): bun_jsc::JSValue::{get, get_truthy, to_boolean, is_string,
-// get_zig_string, to_int64, is_any_int}.
 
 pub(crate) fn on_create(
     global_object: &JSGlobalObject,

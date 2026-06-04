@@ -20,8 +20,6 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 
 use bun_collections::VecExt;
-#[cfg(windows)]
-use bun_core::Output;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_sys::Fd;
 #[cfg(not(windows))]
@@ -101,7 +99,6 @@ pub type Socket = uws::NewSocketHandler<false>;
 #[cfg(windows)]
 pub type Socket = ();
 
-#[allow(dead_code)]
 pub struct PosixBackend {
     pub socket: Socket,
 }
@@ -207,19 +204,19 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 .init(uv::Loop::get(), true)
                 .to_error(bun_sys::Tag::pipe)
             {
-                Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "Channel.adopt: uv_pipe_init failed: {}",
                     e.name().escape_ascii(),
-                ));
+                );
                 drop(pipe);
                 return false;
             }
             if let Some(e) = pipe.open(fd.uv()).to_error(bun_sys::Tag::open) {
-                Output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "Channel.adopt: uv_pipe_open({}) failed: {}",
                     fd.uv(),
                     e.name().escape_ascii(),
-                ));
+                );
                 // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
                 unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(pipe)) };
                 return false;
@@ -275,10 +272,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // caller; we only borrow it to start reading.
         let rc = unsafe { (*pipe).read_start_ctx::<Self>(core::ptr::from_mut(self)) };
         if let Some(e) = rc.to_error(bun_sys::Tag::listen) {
-            Output::debug_warn(format_args!(
+            bun_core::debug_warn!(
                 "Channel.adoptPipe: readStart failed: {}",
                 e.name().escape_ascii(),
-            ));
+            );
             // Caller still owns `pipe` on failure (Zig spec) and is responsible
             // for `close_and_destroy`.
             return false;
@@ -482,8 +479,6 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 break;
             }
             let Ok(kind) = frame::Kind::try_from(self.r#in[head + 4]) else {
-                // TODO(port): Zig used std.meta.intToEnum; ensure Kind impls
-                // TryFrom<u8> in frame.rs.
                 head += 5usize + len as usize;
                 continue;
             };
@@ -632,10 +627,6 @@ impl<Owner: ChannelOwner> WindowsHandlers<Owner> {
     pub(crate) fn on_alloc(self_: &mut Channel<Owner>, suggested: usize) -> &mut [u8] {
         let _ = suggested;
         &mut self_.backend.read_chunk[..]
-    }
-    #[allow(dead_code)]
-    pub(crate) fn on_read(self_: &mut Channel<Owner>, data: &[u8]) {
-        self_.ingest(data);
     }
     pub(crate) fn on_error(self_: &mut Channel<Owner>, _err: bun_sys::E) {
         // Mirror the POSIX on_close path: detach the transport before

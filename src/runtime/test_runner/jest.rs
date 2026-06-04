@@ -71,25 +71,25 @@ impl CurrentFile {
 
         if repeat_count > 0 {
             if repeat_count > 1 {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "{}{}: <d>(run #{})<r>\n",
                     bstr::BStr::new(prefix),
                     bstr::BStr::new(title),
                     repeat_index + 1
-                ));
+                );
             } else {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "{}{}:\n",
                     bstr::BStr::new(prefix),
                     bstr::BStr::new(title)
-                ));
+                );
             }
         } else {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "{}{}:\n",
                 bstr::BStr::new(prefix),
                 bstr::BStr::new(title)
-            ));
+            );
         }
 
         Output::flush();
@@ -117,7 +117,6 @@ pub struct TestRunner<'a> {
     pub only: bool,
     pub run_todo: bool,
     pub concurrent: bool,
-    // TODO(port): std.Random has no direct Rust equivalent; using xoshiro256++ handle.
     pub randomize: Option<bun_core::rand::DefaultPrng>,
     /// The --seed value when --randomize is on. Used to derive a per-file
     /// shuffle PRNG from hash(seed, file_path) so within-file test order is
@@ -130,7 +129,6 @@ pub struct TestRunner<'a> {
     pub max_concurrency: u32,
 
     // PORT NOTE: `std.mem.Allocator param` field deleted — global mimalloc.
-    // TODO(port): `drainer` had `= undefined` default in Zig
     pub drainer: jsc::AnyTask::AnyTask,
 
     pub has_pending_tests: bool,
@@ -208,7 +206,6 @@ impl<'a> TestRunner<'a> {
             return false;
         }
         let file_path = self.files.items_source()[file_id as usize].path.text();
-        // TODO(port): MultiArrayList column accessor name (`items(.source)` in Zig)
 
         // Check if the file path matches any of the glob patterns
         for pattern in glob_patterns {

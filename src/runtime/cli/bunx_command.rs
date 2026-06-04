@@ -173,9 +173,9 @@ impl Options {
                         "When using --package, you must specify the binary to run",
                         format_args!(""),
                     );
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>"
-                    ));
+                    );
                     Global::exit(1);
                 }
             } else {
@@ -183,9 +183,9 @@ impl Options {
                     "When using --package, you must specify the binary to run",
                     format_args!(""),
                 );
-                Output::prettyln(format_args!(
+                bun_core::prettyln!(
                     "  <d>usage: bunx --package=\\<package-name\\> \\<binary-name\\> [args...]<r>"
-                ));
+                );
                 Global::exit(1);
             }
             opts.binary_name = maybe_package_name;
@@ -483,7 +483,6 @@ impl BunxCommand {
             if is_stale {
                 let _ = target_package_json.close();
                 // If delete fails, oh well. Hope installation takes care of it.
-                // TODO(port): Zig used std.fs.cwd().deleteTree; map to bun_sys recursive rm.
                 let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
                 return Err(bun_core::err!("NeedToInstall"));
             }
@@ -900,7 +899,6 @@ impl BunxCommand {
         path = {
             let mut v = Vec::new();
             let path_is_nonzero = !path.is_empty();
-            // TODO(port): bun.pathLiteral() applied platform separator at comptime.
             write!(
                 &mut v,
                 "{tmp}{sep}bunx-{uid}-{pkg}{sep}node_modules{sep}.bin",
@@ -1093,10 +1091,10 @@ impl BunxCommand {
                             bun_output::scoped_log!(bunx, "found stale binary: {}", BStr::new(out));
                             do_cache_bust = true;
                             if opts.no_install {
-                                Output::warn(format_args!(
+                                bun_core::warn!(
                                     "Using a stale installation of <b>{}<r> because --no-install was passed. Run `bunx` without --no-install to use a fresh binary.",
                                     BStr::new(&update_request.name),
-                                ));
+                                );
                             } else {
                                 break 'try_run_existing;
                             }
@@ -1255,7 +1253,6 @@ impl BunxCommand {
             Global::exit(1);
         }
 
-        // TODO(port): Zig used std.fs.cwd().makeOpenPath; map to bun_sys recursive mkdir + open.
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
         'create_package_json: {
@@ -1348,12 +1345,11 @@ impl BunxCommand {
             ..Default::default()
         }) {
             Err(err) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: bunx failed to install <b>{}<r> due to error <b>{}<r>",
                     BStr::new(&install_param),
                     err.name(),
-                ));
-                // TODO(port): @errorName(err) → err.name()
+                );
                 Global::exit(1);
             }
             Ok(maybe) => match maybe {
@@ -1400,11 +1396,11 @@ impl BunxCommand {
                 Global::raise_ignoring_panic_handler_raw(core::ffi::c_int::from(*sig));
             }
             SpawnStatus::Err(err) => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: bunx failed to install <b>{}<r> due to error:\n{}",
                     BStr::new(&install_param),
                     err,
-                ));
+                );
                 Global::exit(1);
             }
             _ => {}
@@ -1534,10 +1530,10 @@ impl BunxCommand {
                 "Package <b>{}<r> does not provide a binary named <b>{}<r>",
                 (BStr::new(&update_request.name), BStr::new(binary_name)),
             );
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "  <d>hint: try running without --package to install and run {} directly<r>",
                 BStr::new(binary_name),
-            ));
+            );
         } else {
             Output::err_generic(
                 "could not determine executable to run for package <b>{}<r>",

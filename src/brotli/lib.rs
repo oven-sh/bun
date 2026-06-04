@@ -224,10 +224,7 @@ impl<'a> BrotliReaderArrayList<'a> {
                     self.state = ReaderState::Error;
                     if cfg!(debug_assertions) {
                         let code = BrotliDecoder::get_error_code(self.brotli());
-                        bun_core::Output::debug_warn(format_args!(
-                            "Brotli error: {:?} ({})",
-                            code, code as i32
-                        ));
+                        bun_core::debug_warn!("Brotli error: {:?} ({})", code, code as i32);
                     }
 
                     return Err(err!("BrotliDecompressionError"));

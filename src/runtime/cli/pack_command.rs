@@ -149,23 +149,20 @@ impl<'a> Context<'a> {
         log_level: LogLevel,
     ) {
         if log_level != LogLevel::Silent && log_level != LogLevel::Quiet {
-            Output::prettyln(format_args!(
-                "\n<r><b><blue>Total files<r>: {}",
-                stats.total_files
-            ));
+            bun_core::prettyln!("\n<r><b><blue>Total files<r>: {}", stats.total_files);
             if let Some(shasum) = maybe_shasum {
-                Output::prettyln(format_args!(
+                bun_core::prettyln!(
                     "<b><blue>Shasum<r>: {}",
                     bun_fmt::bytes_to_hex_lower_string(shasum),
-                ));
+                );
             }
             if let Some(integrity) = maybe_integrity {
-                Output::prettyln(format_args!(
+                bun_core::prettyln!(
                     "<b><blue>Integrity<r>: {}",
                     bun_fmt::integrity::<true>(*integrity),
-                ));
+                );
             }
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<b><blue>Unpacked size<r>: {}",
                 bun_fmt::size(
                     stats.unpacked_size,
@@ -173,9 +170,9 @@ impl<'a> Context<'a> {
                         space_between_number_and_unit: false
                     }
                 ),
-            ));
+            );
             if stats.packed_size > 0 {
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "<b><blue>Packed size<r>: {}\n",
                     bun_fmt::size(
                         stats.packed_size,
@@ -183,13 +180,10 @@ impl<'a> Context<'a> {
                             space_between_number_and_unit: false
                         }
                     ),
-                ));
+                );
             }
             if stats.bundled_deps > 0 {
-                Output::pretty(format_args!(
-                    "<b><blue>Bundled deps<r>: {}\n",
-                    stats.bundled_deps
-                ));
+                bun_core::pretty!("<b><blue>Bundled deps<r>: {}\n", stats.bundled_deps);
             }
         }
     }
@@ -216,10 +210,10 @@ impl PackCommand {
         if manager.options.log_level != LogLevel::Silent
             && manager.options.log_level != LogLevel::Quiet
         {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<r><b>bun pack <r><d>v{}<r>",
                 Global::package_json_version_with_sha,
-            ));
+            );
             Output::flush();
         }
 
@@ -495,8 +489,6 @@ fn new_pack_queue() -> PackQueue {
 
 /// (dir, dir_subpath, dir_depth)
 struct DirInfo(Dir, Box<[u8]>, usize);
-// TODO(port): Zig used `string` (borrowed) for the subpath; here owned because
-// values are pushed onto a Vec stack and outlive the producing iteration.
 
 // ───────────────────────────────────────────────────────────────────────────
 // tree iteration (includes / excludes)
@@ -788,7 +780,7 @@ fn add_entire_tree(
             if let Some((pattern, kind)) = is_excluded(&entry, &entry_subpath, dir_depth, &ignores)
             {
                 if log_level.is_verbose() {
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
                         <&str>::from(kind),
                         bstr::BStr::new(pattern),
@@ -798,7 +790,7 @@ fn add_entire_tree(
                         } else {
                             ""
                         },
-                    ));
+                    );
                     Output::flush();
                 }
                 continue;
@@ -1256,7 +1248,7 @@ fn add_bundled_dep(
 
             if let Some((pattern, kind)) = is_excluded(&entry, &entry_subpath_, dir_depth, &[]) {
                 if log_level.is_verbose() {
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
                         <&str>::from(kind),
                         bstr::BStr::new(pattern),
@@ -1266,7 +1258,7 @@ fn add_bundled_dep(
                         } else {
                             ""
                         },
-                    ));
+                    );
                     Output::flush();
                 }
                 continue;
@@ -1367,7 +1359,7 @@ fn iterate_project_tree(
             if let Some((pattern, kind)) = is_excluded(&entry, &entry_subpath_, dir_depth, &ignores)
             {
                 if log_level.is_verbose() {
-                    Output::prettyln(format_args!(
+                    bun_core::prettyln!(
                         "<r><blue>ignore<r> <d>[{}:{}]<r> {}{}",
                         <&str>::from(kind),
                         bstr::BStr::new(pattern),
@@ -1377,7 +1369,7 @@ fn iterate_project_tree(
                         } else {
                             ""
                         },
-                    ));
+                    );
                     Output::flush();
                 }
                 continue;
@@ -2330,7 +2322,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     path: ZBox::from_bytes(bin.path.as_bytes()),
                     optional: true,
                 })?;
-                // TODO(port): Zig pushed a borrowed slice; cloning here
             }
             BinType::Dir => {
                 let bin_dir = match dir_open_dir_z(
@@ -2438,14 +2429,14 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
         if !FOR_PUBLISH {
             if opt_pack_destination(manager).is_empty() && opt_pack_filename(manager).is_empty() {
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "\n{}\n",
                     fmt_tarball_filename(
                         package_name,
                         package_version,
                         TarballNameStyle::Normalize
                     )
-                ));
+                );
             } else {
                 let mut dest_buf = PathBuffer::uninit();
                 let (abs_tarball_dest, _) = tarball_destination(
@@ -2456,10 +2447,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     package_version,
                     &mut dest_buf[..],
                 );
-                Output::pretty(format_args!(
-                    "\n{}\n",
-                    bstr::BStr::new(abs_tarball_dest.as_bytes())
-                ));
+                bun_core::pretty!("\n{}\n", bstr::BStr::new(abs_tarball_dest.as_bytes()));
             }
         }
 
@@ -2937,15 +2925,12 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
     if !FOR_PUBLISH {
         if opt_pack_destination(manager).is_empty() && opt_pack_filename(manager).is_empty() {
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "\n{}\n",
                 fmt_tarball_filename(package_name, package_version, TarballNameStyle::Normalize)
-            ));
+            );
         } else {
-            Output::pretty(format_args!(
-                "\n{}\n",
-                bstr::BStr::new(abs_tarball_dest.as_bytes())
-            ));
+            bun_core::pretty!("\n{}\n", bstr::BStr::new(abs_tarball_dest.as_bytes()));
         }
     }
 
@@ -2956,7 +2941,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     }
 
     if let Some(postpack_script_str) = &postpack_script {
-        Output::pretty(format_args!("\n"));
+        bun_core::pretty!("\n");
         run_lifecycle_script(
             ctx,
             postpack_script_str,
@@ -3036,8 +3021,6 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
             if err == bun_core::err!("OutOfMemory") {
                 return Err(PackError::OutOfMemory);
             }
-            // TODO(port): Zig's error set is exactly {MissingShell, OutOfMemory};
-            // unreachable here.
             unreachable!()
         }
     }
@@ -3226,7 +3209,6 @@ fn archive_package_json(
     };
 
     entry.set_pathname(bun_core::zstr!("package/package.json"));
-    // TODO(port): PACKAGE_PREFIX ++ "package.json" comptime concat
     entry.set_size(i64::try_from(edited_package_json.len()).expect("int cast"));
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
@@ -3372,7 +3354,6 @@ fn edit_root_package_json(
         if let Some(dependencies_expr) = json.root.get(dependency_group) {
             if let ExprData::EObject(mut dependencies) = dependencies_expr.data {
                 for dependency in dependencies.properties.slice_mut() {
-                    // TODO(port): Zig iterated `slice()` of `*dependency`; need mutable iter
                     if dependency.key.is_none() {
                         continue;
                     }
@@ -3560,7 +3541,6 @@ fn edit_root_package_json(
         .buffer
         .list
         .reserve(json.source.contents.len() + 1);
-    // TODO(port): ensureTotalCapacity → reserve(n - len) per guide; len==0 here
     buffer_writer.append_newline = has_trailing_newline;
     let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
 
@@ -3593,8 +3573,6 @@ fn edit_root_package_json(
         .ctx
         .written_without_trailing_zero()
         .into())
-    // TODO(port): return type ownership — Zig returned a borrowed slice into
-    // package_json_writer's internal buffer; here boxed.
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -3884,8 +3862,6 @@ impl IgnorePatterns {
 // printArchivedFilesAndPackages
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig used `comptime is_dry_run: bool` to vary the param type
-// (`*PackQueue` vs `PackList`). Using a small enum wrapper.
 enum PackListOrQueue<'a> {
     Queue(&'a mut PackQueue),
     List(&'a PackList),
@@ -3922,7 +3898,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
 
         ctx.stats.unpacked_size += usize::try_from(package_json_stat.st_size).expect("int cast");
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "\n<r><b><cyan>packed<r> {} {}",
             bun_fmt::size(
                 usize::try_from(package_json_stat.st_size).expect("int cast"),
@@ -3931,7 +3907,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
                 }
             ),
             "package.json",
-        ));
+        );
 
         while let Some(item) = pack_queue.remove_or_null() {
             let stat = match bun_sys::fstatat(root_dir, &item.path) {
@@ -3952,7 +3928,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
 
             ctx.stats.unpacked_size += usize::try_from(stat.st_size).expect("int cast");
 
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<r><b><cyan>packed<r> {} {}",
                 bun_fmt::size(
                     usize::try_from(stat.st_size).expect("int cast"),
@@ -3961,17 +3937,14 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
                     }
                 ),
                 bstr::BStr::new(item.path.as_bytes()),
-            ));
+            );
         }
 
         for dep in &ctx.bundled_deps {
             if !dep.was_packed {
                 continue;
             }
-            Output::prettyln(format_args!(
-                "<r><b><green>bundled<r> {}",
-                bstr::BStr::new(&dep.name)
-            ));
+            bun_core::prettyln!("<r><b><green>bundled<r> {}", bstr::BStr::new(&dep.name));
         }
 
         Output::flush();
@@ -3982,7 +3955,7 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
         unreachable!()
     };
 
-    Output::prettyln(format_args!(
+    bun_core::prettyln!(
         "\n<r><b><cyan>packed<r> {} {}",
         bun_fmt::size(
             package_json_len,
@@ -3991,10 +3964,10 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
             }
         ),
         "package.json",
-    ));
+    );
 
     for entry in pack_list.iter() {
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b><cyan>packed<r> {} {}",
             bun_fmt::size(
                 entry.size,
@@ -4003,17 +3976,14 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
                 }
             ),
             bstr::BStr::new(entry.subpath.as_bytes()),
-        ));
+        );
     }
 
     for dep in &ctx.bundled_deps {
         if !dep.was_packed {
             continue;
         }
-        Output::prettyln(format_args!(
-            "<r><b><green>bundled<r> {}",
-            bstr::BStr::new(&dep.name)
-        ));
+        bun_core::prettyln!("<r><b><green>bundled<r> {}", bstr::BStr::new(&dep.name));
     }
 
     Output::flush();

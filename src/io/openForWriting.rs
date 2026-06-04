@@ -19,7 +19,7 @@ pub trait OpenForWritingInput {
     ) -> bun_sys::Result<Fd>;
 }
 
-impl OpenForWritingInput for crate::PathOrFileDescriptor {
+impl OpenForWritingInput for crate::PathOrFileDescriptor<'_> {
     fn open_for_writing_result(
         &self,
         dir: Fd,
@@ -32,7 +32,7 @@ impl OpenForWritingInput for crate::PathOrFileDescriptor {
         match self {
             Path(path) => {
                 *is_nonblocking = true;
-                bun_sys::openat_a(dir, path.slice(), input_flags, mode)
+                bun_sys::openat_a(dir, path, input_flags, mode)
             }
             Fd(fd_) => bun_sys::dup_with_flags(*fd_, 0),
         }
@@ -189,7 +189,6 @@ where
 
     #[cfg(windows)]
     {
-        // TODO(port): bun_sys::windows::GetFileType
         *pollable = (bun_sys::windows::GetFileType(fd.native()) & bun_sys::windows::FILE_TYPE_PIPE)
             != 0
             && !force_sync;

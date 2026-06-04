@@ -68,7 +68,6 @@ pub struct ScopeFunctions {
 
 pub mod strings {
     use bun_core::String as BunString;
-    // TODO(port): `bun.String.static("...")` — assumes a const-capable `BunString::static_str`.
     #[allow(non_snake_case)] #[inline] pub fn DESCRIBE() -> BunString { BunString::static_str("describe") }
     #[allow(non_snake_case)] #[inline] pub fn XDESCRIBE() -> BunString { BunString::static_str("xdescribe") }
     #[allow(non_snake_case)] #[inline] pub fn TEST() -> BunString { BunString::static_str("test") }
@@ -357,7 +356,6 @@ impl ScopeFunctions {
             if debugger.test_reporter_agent.is_enabled() {
                 // Zig: fn-local `struct { var max_test_id_for_debugger: i32 = 0; }` — process-global static.
                 static MAX_TEST_ID_FOR_DEBUGGER: AtomicI32 = AtomicI32::new(0);
-                // TODO(port): Zig used non-atomic `+= 1` (single JS thread). Relaxed fetch_add preserves semantics.
                 let id = MAX_TEST_ID_FOR_DEBUGGER.fetch_add(1, Ordering::Relaxed) + 1;
                 let mut name = BunString::init(description.unwrap_or(b"(unnamed)"));
                 let parent: &DescribeScope = bun_test.collection.active_scope();

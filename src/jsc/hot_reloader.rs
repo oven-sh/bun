@@ -790,7 +790,6 @@ where
         if cfg!(feature = "debug_logs") {
             bun_core::scoped_log!(hot_reloader, "{}", args);
         } else {
-            // TODO(port): Output.prettyErrorln with color tags
             bun_core::pretty_errorln!("<cyan>watcher<r><d>:<r> {}", args);
         }
     }
@@ -1247,7 +1246,7 @@ where
                                 if loader != bun_ast::Loader::File {
                                     // Zig leaves these `undefined` / overwritten; both arms
                                     // of `'brk` assign before any read.
-                                    let path_string: bun_core::PathString;
+                                    let path_string: bun_ptr::Interned;
                                     let file_hash: bun_watcher::HashType;
                                     let abs_path: &[u8] = 'brk: {
                                         if let Some(file_ent) = dir_ent.entries().get(changed_name)
@@ -1257,20 +1256,20 @@ where
                                             ent.set_cache_fd(Fd::INVALID);
                                             ent.need_stat.set(true);
                                             path_string = ent.abs_path;
-                                            file_hash = Watcher::get_hash(path_string.slice());
+                                            file_hash = Watcher::get_hash(path_string.as_bytes());
                                             for (entry_id, hash) in hashes.iter().enumerate() {
                                                 if *hash == file_hash {
                                                     if file_descriptors[entry_id].is_valid() {
                                                         if prev_entry_id != entry_id {
                                                             record_changed_path(
-                                                                path_string.slice(),
+                                                                path_string.as_bytes(),
                                                             );
                                                             current_task.append(hashes[entry_id]);
                                                             if self.verbose {
                                                                 Self::debug(format_args!(
                                                                     "Removing file: {}",
                                                                     bstr::BStr::new(
-                                                                        path_string.slice()
+                                                                        path_string.as_bytes()
                                                                     )
                                                                 ));
                                                             }
@@ -1289,7 +1288,7 @@ where
                                                 }
                                             }
 
-                                            break 'brk path_string.slice();
+                                            break 'brk path_string.as_bytes();
                                         } else {
                                             let file_path_without_trailing_slash =
                                                 strings::trim_right(file_path, &[SEP]);

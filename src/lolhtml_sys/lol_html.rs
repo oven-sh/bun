@@ -24,7 +24,6 @@ pub struct SourceLocationBytes {
 
 #[inline(always)]
 fn auto_disable() {
-    // TODO(port): bun_core::feature_flags::DISABLE_LOLHTML — comptime flag in Zig
     if bun_core::feature_flags::DISABLE_LOLHTML {
         unreachable!();
     }
@@ -222,8 +221,6 @@ impl HTMLRewriterBuilder {
     ///
     /// WARNING: Pointers passed to handlers are valid only during the
     /// handler execution. So they should never be leaked outside of handlers.
-    // TODO(port): Zig used comptime fn-value params to monomorphize trampolines per callback.
-    // Rust cannot take const fn pointers as const generics; modeled via DirectiveCallback trait.
     // PORT NOTE: handler-data params are `Option<NonNull<H>>`, not
     // `Option<&mut H>` — callers routinely pass the SAME allocation for
     // multiple slots (one `DocumentHandler` services doctype/comment/text/end),
@@ -285,7 +282,6 @@ impl HTMLRewriterBuilder {
     ///
     /// WARNING: Pointers passed to handlers are valid only during the
     /// handler execution. So they should never be leaked outside of handlers.
-    // TODO(port): comptime fn-value params → trait-based trampolines (see add_document_content_handlers)
     // PORT NOTE: Zig also checked `handler != null` (in addition to `handler_data != null`); the trait
     // model assumes the handler is always present when data is Some, so (handler=null, data=non-null)
     // is unrepresentable here.
@@ -327,8 +323,6 @@ impl HTMLRewriterBuilder {
         }
     }
 
-    // TODO(port): Zig took comptime Writer/Done fn-values; modeled via OutputSink trait
-    //
     // PORT NOTE: takes `*mut S` (not `&mut S`) so the userdata pointer stored
     // in the C rewriter retains the caller's raw-pointer provenance (typically
     // a `heap::alloc` root). If we took `&mut S`, the userdata would carry a
@@ -1091,6 +1085,12 @@ unsafe extern "C" {
         content_len: usize,
         is_html: bool,
     ) -> c_int;
+    fn lol_html_comment_replace(
+        comment: *mut Comment,
+        content: *const u8,
+        content_len: usize,
+        is_html: bool,
+    ) -> c_int;
     safe fn lol_html_comment_remove(comment: &mut Comment);
     safe fn lol_html_comment_is_removed(comment: &Comment) -> bool;
     safe fn lol_html_comment_source_location_bytes(comment: &Comment) -> SourceLocationBytes;
@@ -1126,10 +1126,9 @@ impl Comment {
 
     pub fn replace(&mut self, content: &[u8], is_html: bool) -> Result<(), Error> {
         auto_disable();
-        // PORT NOTE: Zig source calls lol_html_comment_before here (likely an upstream bug); ported faithfully
         // SAFETY: content ptr/len describe a valid slice
         match unsafe {
-            lol_html_comment_before(self, ptr_without_panic(content), content.len(), is_html)
+            lol_html_comment_replace(self, ptr_without_panic(content), content.len(), is_html)
         } {
             0 => Ok(()),
             -1 => Err(Error::Fail),

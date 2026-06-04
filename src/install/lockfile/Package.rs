@@ -817,7 +817,6 @@ impl Package<u64> {
             total_dependencies_count = 0;
             // PERF(port): was `inline for` — profile if hot.
             for group in dependency_groups {
-                // TODO(port): @field reflection — see note above
                 let map: ExternalStringMap = package_version.dep_group(group.field);
                 let keys = map.name.get(&manifest.external_strings);
                 let version_strings = map.value.get(&manifest.external_strings_for_versions);
@@ -1065,7 +1064,7 @@ impl Diff {
             summary.overrides_changed = true;
 
             if PackageManager::verbose_install() {
-                Output::pretty_errorln(format_args!("Overrides changed since last install"));
+                bun_core::pretty_errorln!("Overrides changed since last install");
             }
         } else {
             // PORT NOTE: reshaped for borrowck — Zig passed `from_lockfile`
@@ -1103,9 +1102,7 @@ impl Diff {
                 {
                     summary.overrides_changed = true;
                     if PackageManager::verbose_install() {
-                        Output::pretty_errorln(format_args!(
-                            "Overrides changed since last install"
-                        ));
+                        bun_core::pretty_errorln!("Overrides changed since last install");
                     }
                     break;
                 }
@@ -1536,7 +1533,7 @@ impl Diff {
                         if pm.options.log_level.is_verbose()
                             && (diff.add + diff.remove + diff.update) > 0
                         {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "Workspace package \"{}\" has added <green>{}<r> dependencies, removed <red>{}<r> dependencies, and updated <cyan>{}<r> dependencies",
                                 bstr::BStr::new(
                                     workspace_path
@@ -1545,7 +1542,7 @@ impl Diff {
                                 diff.add,
                                 diff.remove,
                                 diff.update,
-                            ));
+                            );
                         }
 
                         !diff.has_diffs()
@@ -1667,11 +1664,11 @@ impl Package<u64> {
             Ok(j) => j,
             Err(err) => {
                 let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                     err.name(),
                     bstr::BStr::new(source.path.pretty_dir()),
-                ));
+                );
                 Global::crash();
             }
         };

@@ -1297,7 +1297,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             bun_core::fmt::fmt_identifier(path_name.non_unique_name_string_base())
                         )
                         .expect("unreachable");
-                        // TODO(port): store_name_in_ref expects arena-owned slice; verify lifetime
                         p.store_name_in_ref(p.arena.alloc_slice_copy(&buf))?
                     };
 

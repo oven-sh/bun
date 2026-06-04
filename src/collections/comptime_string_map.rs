@@ -18,7 +18,6 @@
 // prefer `phf::phf_map!` directly when they only need `.get()`/`.has()`. This struct exists
 // for the call sites that need `get_with_eql` / `get_any_case` / `index_of` / `get_key`.
 
-// TODO(port): `strings` arrives in bun_core via move-in (was bun_core::strings — same-tier cycle).
 use bun_core::strings;
 
 #[derive(Copy, Clone)]

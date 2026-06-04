@@ -229,11 +229,7 @@ impl BoxShadowHandler {
                     self.flush(dest, context);
 
                     let mut unparsed = unp.deep_clone(arena);
-                    // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
-                    // un-gates (blocked on `SupportsCondition::eql` in context.rs).
-
                     context.add_unparsed_fallbacks(arena, &mut unparsed);
-                    let _ = &mut unparsed;
                     dest.push(Property::Unparsed(unparsed));
                     self.flushed = true;
                 } else {

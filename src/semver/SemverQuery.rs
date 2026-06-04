@@ -442,7 +442,6 @@ impl Group {
     }
 
     pub fn json_stringify(&self, writer: &mut impl core::fmt::Write) -> fmt::Result {
-        // TODO(port): Zig called `this.fmt()` with no buf arg (looks like a latent bug upstream).
         // TODO(port): std.json.encodeJsonString — needs a JSON string encoder in bun_core/serde.
         let temp = {
             use std::io::Write as _;

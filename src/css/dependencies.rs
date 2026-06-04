@@ -156,8 +156,6 @@ impl UrlDependency {
         filename: &[u8],
         import_records: &[bun_ast::ImportRecord],
     ) -> UrlDependency {
-        // TODO(port): `bun_paths::fs::Path::pretty` is currently `&'static str`;
-        // should become `&[u8]` per PORTING.md §Strings. Until then, `.as_bytes()`.
         let theurl: &[u8] = import_records[url.import_record_idx as usize].path.pretty;
         let placeholder = crate::css_modules::hash(
             bump,

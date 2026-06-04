@@ -1048,7 +1048,6 @@ impl JSValkeyClient {
                 ));
             };
 
-            // TODO(port): JSPropertyIterator comptime config struct → options arg
             let mut object_iter = JSPropertyIterator::init(
                 global,
                 obj,
@@ -1872,7 +1871,6 @@ impl JSValkeyClient {
                     ));
                 }
                 Err(_) => {
-                    // TODO(port): {f} format spec on ZigString
                     return Err(global.throw(format_args!(
                         "Failed to remove handler for channel {}",
                         // `JSString` is an `opaque_ffi!` ZST — safe deref.

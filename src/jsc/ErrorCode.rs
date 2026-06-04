@@ -1374,9 +1374,6 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
 // Legacy anyerror-wrapper sentinels (src/jsc/ErrorCode.zig).
 // ──────────────────────────────────────────────────────────────────────────
 impl ErrorCode {
-    // TODO(port): bun_core::Error::as_u16 — bun_core::Error is currently the
-    // wide errno-carrying struct, not the NonZeroU16 anyerror code. Use errno as a
-    // stand-in until the interning table lands.
     pub const PARSER_ERROR: ErrorCodeInt = 0xFFFE;
     pub const JS_ERROR_OBJECT: ErrorCodeInt = 0xFFFD;
 

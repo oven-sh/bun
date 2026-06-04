@@ -153,7 +153,6 @@ pub use crate::linker_context::prepare_css_asts_for_chunk::{
 pub use crate::linker_context::rename_symbols_in_chunk::rename_symbols_in_chunk;
 pub use crate::linker_context::write_output_files_to_disk::write_output_files_to_disk;
 
-// TODO(port): DeferredBatchTask, ParseTask re-exports — Zig re-exports from bundle_v2
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 
@@ -440,24 +439,25 @@ use crate::bundled_ast::Flags as AstFlags;
 use crate::generic_path_with_pretty_initialized;
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
 
-// TODO(port): method bodies depend on `LinkerGraph` SoA accessors
-// (`graph.files.items_*()`, `graph.ast.items_*()`, `graph.meta.items_*()`),
-// `crate::thread_pool::Worker`, `generic_path_with_pretty_initialized`, and the gated
-// `linker_context/` submodules. The struct + LinkerOptions + SourceMapData
-// above are real; this impl block un-gates with `LinkerGraph.rs`.
-
 impl<'a> LinkerContext<'a> {
     pub fn arena(&self) -> &Bump {
         // TODO(port): bundler is an AST crate; LinkerGraph owns the arena
         self.graph.arena()
     }
 
+    /// `arena` must be the arena owned by the thread making this call — on
+    /// worker threads (chunk post-processing) that is `worker.arena()`, NOT
+    /// `self.arena()` (the bundle-thread graph arena). `generic_path_with_pretty_initialized`
+    /// allocates the duped display path from it, and `MimallocArena` asserts
+    /// single-thread ownership, so passing the wrong arena is a cross-thread
+    /// allocation (debug panic / release heap corruption).
     pub fn path_with_pretty_initialized(
         &mut self,
         path: &bun_paths::fs::Path<'static>,
+        arena: &Bump,
     ) -> Result<bun_paths::fs::Path<'static>, BunError> {
         let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, self.arena())
+        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, arena)
     }
 
     pub fn should_include_part(&self, source_index: crate::IndexInt, part: &Part) -> bool {
@@ -1771,14 +1771,8 @@ pub(crate) fn crash_guard_for_part_range(
     bun_crash_handler::scoped_action(bundle_generate_chunk_action(c, chunk, part_range))
 }
 
-// TODO(port): scan/tree-shake/link method bodies. These reach into
-// `LinkerGraph` SoA fields (`graph.files`, `graph.meta`, `graph.ast`), the
-// gated `linker_context/scanImportsAndExports.rs`, `bun_resolve_builtins`,
-// and `css::css_modules`. The bodies are real ports of `LinkerContext.zig`
-// and un-gate together with `LinkerGraph.rs`.
-
 impl<'a> LinkerContext<'a> {
-    pub fn generate_isolated_hash(&mut self, chunk: &Chunk) -> u64 {
+    pub fn generate_isolated_hash(&mut self, chunk: &Chunk, arena: &Bump) -> u64 {
         let _trace = bun::perf::trace("Bundler.generateIsolatedHash");
 
         let mut hasher = ContentHasher::default();
@@ -1799,7 +1793,7 @@ impl<'a> LinkerContext<'a> {
                         // independent (relative paths and the "/" path separator)
                         if source.path.text.as_ptr() == source.path.pretty.as_ptr() {
                             source.path = self
-                                .path_with_pretty_initialized(&source.path)
+                                .path_with_pretty_initialized(&source.path, arena)
                                 .expect("OOM");
                         }
                         // PORT NOTE: `Path::assert_pretty_is_valid` lives on the
@@ -4188,7 +4182,7 @@ impl<'a> LinkerContext<'a> {
 
             let Some(kind) = crate::chunk::QueryKind::from_letter(output[start]) else {
                 if cfg!(debug_assertions) {
-                    Output::debug_warn(format_args!("Invalid output piece boundary"));
+                    bun_core::debug_warn!("Invalid output piece boundary");
                 }
                 break;
             };
@@ -4201,7 +4195,7 @@ impl<'a> LinkerContext<'a> {
             for char in digits {
                 if char < b'0' || char > b'9' {
                     if cfg!(debug_assertions) {
-                        Output::debug_warn(format_args!("Invalid output piece boundary"));
+                        bun_core::debug_warn!("Invalid output piece boundary");
                     }
                     break 'outer;
                 }
@@ -4214,7 +4208,7 @@ impl<'a> LinkerContext<'a> {
                 crate::chunk::QueryKind::Asset | crate::chunk::QueryKind::Scb => {
                     if index >= self.graph.files.len() {
                         if cfg!(debug_assertions) {
-                            Output::debug_warn(format_args!("Invalid output piece boundary"));
+                            bun_core::debug_warn!("Invalid output piece boundary");
                         }
                         break;
                     }
@@ -4222,7 +4216,7 @@ impl<'a> LinkerContext<'a> {
                 crate::chunk::QueryKind::Chunk => {
                     if index >= count as usize {
                         if cfg!(debug_assertions) {
-                            Output::debug_warn(format_args!("Invalid output piece boundary"));
+                            bun_core::debug_warn!("Invalid output piece boundary");
                         }
                         break;
                     }
@@ -4231,7 +4225,7 @@ impl<'a> LinkerContext<'a> {
                     if index >= self.parse_graph().html_imports.server_source_indices.len() as usize
                     {
                         if cfg!(debug_assertions) {
-                            Output::debug_warn(format_args!("Invalid output piece boundary"));
+                            bun_core::debug_warn!("Invalid output piece boundary");
                         }
                         break;
                     }

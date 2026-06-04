@@ -331,10 +331,6 @@ pub trait DefineShorthand: Sized {
 pub mod enum_property_util {
     use super::*;
 
-    // TODO(port): `as_str` / `parse` / `to_css` here used Zig
-    // `bun.ComptimeEnumMap` + `@tagName`. In Rust this is
-    // `strum::IntoStaticStr` + `strum::EnumString` (case-insensitive). Callers
-    // should `#[derive(EnumProperty)]` and use the trait below.
     pub fn as_str<T: Into<&'static str> + Copy>(this: &T) -> &'static str {
         (*this).into()
     }
@@ -4559,8 +4555,6 @@ pub struct Tokenizer<'a> {
     pub source_map_url: Option<&'a [u8]>,
     pub current_line_start_position: usize,
     pub current_line_number: u32,
-    // TODO(port): AST crate — keep arena. Zig threaded `Allocator`; in Rust
-    // this is `&'a Bump`.
     pub arena: &'a Bump,
     var_or_env_functions: SeenStatus,
     pub current: Token,
@@ -5413,8 +5407,6 @@ impl<'a> Tokenizer<'a> {
     pub fn consume_escape_and_write(&mut self, bytes: &mut CopyOnWriteStr<'a>) {
         let val = self.consume_escape();
         let mut utf8bytes = [0u8; 4];
-        // TODO(port): Zig used std.unicode.utf8Encode; route through char's
-        // UTF-8 encoder (val is guaranteed a valid scalar by consume_escape).
         let c = char::from_u32(val).unwrap_or('\u{FFFD}');
         let len = c.encode_utf8(&mut utf8bytes).len();
         bytes.append(self.arena, &utf8bytes[..len]);
@@ -5717,9 +5709,6 @@ pub enum TokenKind {
 
 impl TokenKind {
     pub fn to_string(self) -> &'static str {
-        // TODO(port): Zig switch had stale variant names (close_bracket, hash,
-        // string) and pattern-matched `delim` payload — which TokenKind has
-        // none of. Preserved best-effort.
         match self {
             TokenKind::AtKeyword => "@-keyword",
             TokenKind::BadString => "bad string token",

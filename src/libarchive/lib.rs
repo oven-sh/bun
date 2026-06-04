@@ -280,7 +280,7 @@ pub mod lib {
                         match file.pwrite_all(data, block.offset) {
                             Err(_) => {
                                 *can_use_pwrite = false;
-                                bun_core::output::debug_warn(
+                                bun_core::debug_warn!(
                                     "libarchive: falling back to write() after pwrite() failure",
                                 );
                                 // Fall through to lseek+write path
@@ -1077,9 +1077,6 @@ pub enum Seek {
 }
 
 pub struct BufferReadStream {
-    // TODO(port): lifetime — `buf` is borrowed for the stream's lifetime (callers
-    // construct on stack, init, defer deinit). Stored as raw fat ptr to avoid
-    // a struct lifetime param.
     buf: *const [u8],
     pos: usize,
 
@@ -1505,9 +1502,6 @@ pub mod archiver {
 
 pub use archiver::{Context, ExtractOptions, Plucker};
 
-// TODO(port): Zig used `comptime FilePathAppender: type` + `@hasDecl` duck-typing
-// for `onFirstDirectoryName` / `appendMutable` / `append`. Model as a trait with
-// default no-op impls; the `void` ContextType becomes `()` which uses the defaults.
 pub trait ArchiveAppender {
     /// Mirrors `@hasDecl(Child, "onFirstDirectoryName")`.
     const HAS_ON_FIRST_DIRECTORY_NAME: bool = false;
@@ -1664,10 +1658,6 @@ impl Archiver {
 
                             let overwrite_entry = ctx.overwrite_list.get_or_put(path_to_use)?;
                             if !overwrite_entry.found_existing {
-                                // TODO(port): key ownership semantics — Zig stored the
-                                // appender-owned slice as the map key. StringArrayHashMap
-                                // already boxed `path_to_use` on insert; overwrite with the
-                                // appender-owned bytes to match Zig lifetime intent.
                                 *overwrite_entry.key_ptr = Box::from(appender.append(path_to_use)?);
                             }
                         }
@@ -1772,7 +1762,6 @@ impl Archiver {
                     }
 
                     // strip and normalize the path
-                    // TODO(port): std.mem.tokenizeScalar(OSPathChar, pathname, '/') + .rest()
                     // `pathname_z` is `&ZStr` on POSIX (`as_bytes() → &[u8]`)
                     // and `&WStr` on Windows (`as_slice() → &[u16]`); both
                     // deref to `&[OSPathChar]`.
@@ -1813,10 +1802,10 @@ impl Archiver {
 
                     if pathname.len() >= normalized_buf.len() {
                         if options.log {
-                            Output::warn(format_args!(
+                            bun_core::warn!(
                                 "Skipping entry with a path longer than the maximum path length: {}\n",
                                 bun_core::fmt::fmt_os_path(pathname, Default::default()),
-                            ));
+                            );
                         }
                         continue;
                     }
@@ -1829,7 +1818,6 @@ impl Archiver {
                     normalized_buf[normalized_len] = 0;
                     // SAFETY: we just wrote a NUL at normalized_buf[normalized_len]
                     let path: &mut [OSPathChar] = &mut normalized_buf[..normalized_len];
-                    // TODO(port): Zig had `[:0]OSPathChar` here; the NUL is at path.len()
                     if path.is_empty() || (path.len() == 1 && path[0] == b'.' as OSPathChar) {
                         continue;
                     }
@@ -1879,10 +1867,10 @@ impl Archiver {
                     #[cfg(unix)]
                     if path_traverses_created_symlink(path_slice, &created_symlinks) {
                         if options.log {
-                            Output::warn(format_args!(
+                            bun_core::warn!(
                                 "Skipping entry that traverses a previously extracted symlink: {}\n",
                                 bun_core::fmt::fmt_os_path(path_slice, Default::default()),
-                            ));
+                            );
                         }
                         continue;
                     }
@@ -1967,14 +1955,14 @@ impl Archiver {
                                 ) {
                                     // Skip symlinks that would escape the extraction directory
                                     if options.log {
-                                        Output::warn(format_args!(
+                                        bun_core::warn!(
                                             "Skipping symlink with unsafe target: {} -> {}\n",
                                             bun_core::fmt::fmt_os_path(
                                                 path_slice,
                                                 Default::default(),
                                             ),
                                             bstr::BStr::new(link_target.as_bytes()),
-                                        ));
+                                        );
                                     }
                                     continue;
                                 }
@@ -2253,8 +2241,6 @@ impl Archiver {
         appender: &mut A,
         options: ExtractOptions,
     ) -> Result<u32, bun_core::Error> {
-        // TODO(port): `options` was `comptime` in Zig — not used in a type position,
-        // so demoted to runtime. // PERF(port): was comptime monomorphization
         // TODO(port): narrow error set
         let dir: Fd = 'brk: {
             let cwd = Fd::cwd();

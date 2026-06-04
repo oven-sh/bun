@@ -216,15 +216,14 @@ pub(crate) mod ci_info_generated {
 pub mod add_completions;
 #[path = "colon_list_type.rs"]
 pub mod colon_list_type;
-#[path = "shell_completions.rs"]
-pub mod shell_completions;
-#[path = "which_npm_client.rs"]
-pub mod which_npm_client;
-// TODO(port): list-of-yarn-commands.rs has duplicate phf_set! keys.
 #[path = "discord_command.rs"]
 pub mod discord_command;
 #[path = "list-of-yarn-commands.rs"]
 pub mod list_of_yarn_commands;
+#[path = "shell_completions.rs"]
+pub mod shell_completions;
+#[path = "which_npm_client.rs"]
+pub mod which_npm_client;
 
 // ─── open (minimal open_url; full Editor/EditorContext stays gated) ──────────
 // TODO(port): full `open.rs` (Editor detection/spawn) needs
@@ -246,7 +245,7 @@ pub mod open {
     pub(crate) const OPENER: &[u8] = b"xdg-open";
 
     fn fallback(url: &[u8]) {
-        Output::prettyln(format_args!("-> {}", bstr::BStr::new(url)));
+        bun_core::prettyln!("-> {}", bstr::BStr::new(url));
         Output::flush();
     }
 
@@ -1546,7 +1545,7 @@ pub mod command {
             pretty_errorln!(
                 "<r><red>error<r>: Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash."
             );
-            Output::note("To manually output completions, run 'bun getcompletes'");
+            bun_core::note!("To manually output completions, run 'bun getcompletes'");
             Output::flush();
             Global::exit(1);
         }

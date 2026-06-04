@@ -127,9 +127,6 @@ impl TableSymbols {
 // Table
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig `column_color` was a comptime `[]const u8` param spliced into the
-// format string at compile time. Rust const generics don't accept `&'static str`, so
-// it is stored as a runtime field and the format string is built at print time.
 pub struct Table<
     'a,
     const COLUMN_LEFT_PAD: usize,
@@ -190,40 +187,37 @@ impl<'a, const L: usize, const R: usize, const C: bool> Table<'a, L, R, C> {
     ) {
         for (i, &column_inside_length) in self.column_inside_lengths.iter().enumerate() {
             if i == 0 {
-                Output::pretty(format_args!("{}", left_edge_separator));
+                crate::pretty!("{}", left_edge_separator);
             } else {
-                Output::pretty(format_args!("{}", column_separator));
+                crate::pretty!("{}", column_separator);
             }
 
             for _ in 0..(L + column_inside_length + R) {
-                Output::pretty(format_args!("{}", Self::SYMBOLS.horizontal_edge()));
+                crate::pretty!("{}", Self::SYMBOLS.horizontal_edge());
             }
 
             if i == self.column_inside_lengths.len() - 1 {
-                Output::pretty(format_args!("{}\n", right_edge_separator));
+                crate::pretty!("{}\n", right_edge_separator);
             }
         }
     }
 
     pub fn print_column_names(&self) {
         for (i, &column_inside_length) in self.column_inside_lengths.iter().enumerate() {
-            Output::pretty(format_args!("{}", Self::SYMBOLS.vertical_edge()));
+            crate::pretty!("{}", Self::SYMBOLS.vertical_edge());
             for _ in 0..L {
-                Output::pretty(format_args!(" "));
+                crate::pretty!(" ");
             }
-            // TODO(port): Zig spliced `column_color` into the comptime format string
-            // ("<b><" ++ column_color ++ ">{s}<r>"). Replicate via Output::pretty's
-            // runtime tag handling.
             Output::pretty(format_args!(
                 "<b><{}>{}<r>",
                 self.column_color,
                 bstr::BStr::new(self.column_names[i]),
             ));
             for _ in self.column_names[i].len()..(column_inside_length + R) {
-                Output::pretty(format_args!(" "));
+                crate::pretty!(" ");
             }
             if i == self.column_inside_lengths.len() - 1 {
-                Output::pretty(format_args!("{}\n", Self::SYMBOLS.vertical_edge()));
+                crate::pretty!("{}\n", Self::SYMBOLS.vertical_edge());
             }
         }
     }
@@ -703,9 +697,6 @@ pub fn fmt_os_path(buf: crate::OSPathSlice<'_>, options: PathFormatOptions) -> F
     }
 }
 
-// TODO(port): Zig `fmtPath` dispatches on `comptime T: type` returning either FormatUTF8
-// or FormatUTF16. In Rust, callers should call `fmt_path_u8` / `fmt_path_u16` directly,
-// or use a small trait. Providing both monomorphizations here.
 pub fn fmt_path_u8(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
     FormatUTF8 {
         buf: path,
@@ -1866,7 +1857,15 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                         text = &text[1..];
                     }
 
-                    if !text.is_empty() && (text[0] == b'=' || text[0] == b':') {
+                    // A redacted keyword followed by nothing but whitespace:
+                    // the loop above consumed the rest of the input, so there
+                    // is no value left to redact (`text[0]` below would be out
+                    // of bounds).
+                    if text.is_empty() {
+                        return Ok(());
+                    }
+
+                    if text[0] == b'=' || text[0] == b':' {
                         writer.write_char(text[0] as char)?;
                         text = &text[1..];
                         while !text.is_empty() && text[0].is_ascii_whitespace() {
@@ -2021,6 +2020,14 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             continue;
                         } else if self.opts.redact_sensitive_information {
                             'try_redact: {
+                                // `i == 0` happens when a `${...}` interpolation ended
+                                // exactly at the end of the input: the scan loop above
+                                // resets `i` to 0 and exits with `text` empty, so there
+                                // is no quoted content to inspect (`text[1..0]` would
+                                // be out of range).
+                                if i == 0 {
+                                    break 'try_redact;
+                                }
                                 let mut inner = &text[1..i];
                                 if !inner.is_empty() && inner[inner.len() - 1] == char_ {
                                     inner = &inner[..inner.len() - 1];
@@ -3540,10 +3547,6 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
 // OutOfRangeFormatter — Equivalent to ERR_OUT_OF_RANGE
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig `NewOutOfRangeFormatter(comptime T: type)` branches on `@typeName(T)`
-// and `std.meta.hasFn(T, "format")` for the "Received" tail. The `@typeName(T)` fallback
-// path is debug-only (Zig panics if field_name unset in debug). Represent as a trait so
-// each `T` controls how it prints "Received <value>".
 pub trait OutOfRangeValue {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result;
     fn type_name() -> &'static str;

@@ -305,13 +305,16 @@ impl BlockList {
                 }
                 Rule::Subnet { network, prefix } => {
                     if let Some(ip_addr) = address.as_v4() {
-                        if let Some(subnet_addr) = network.as_v4() {
+                        if let Some(subnet_addr) = network.as_sin().map(|s| s.addr) {
                             if *prefix == 32 {
                                 if ip_addr == subnet_addr {
                                     return Ok(JSValue::TRUE);
                                 } else {
                                     continue;
                                 }
+                            }
+                            if *prefix == 0 {
+                                return Ok(JSValue::TRUE);
                             }
                             let one: u32 = 1;
                             let mask_addr: u32 =
@@ -323,8 +326,18 @@ impl BlockList {
                             }
                         }
                     }
-                    if let (Some(addr6), Some(net6)) = (address.as_sin6(), network.as_sin6()) {
-                        let ip_addr: u128 = u128::from_ne_bytes(addr6.addr);
+                    if let Some(net6) = network.as_sin6() {
+                        let ip_addr: u128 = if let Some(addr6) = address.as_sin6() {
+                            u128::from_ne_bytes(addr6.addr)
+                        } else if let Some(ip4) = address.as_v4() {
+                            let mut mapped = [0u8; 16];
+                            mapped[10] = 255;
+                            mapped[11] = 255;
+                            mapped[12..16].copy_from_slice(&ip4.to_ne_bytes());
+                            u128::from_ne_bytes(mapped)
+                        } else {
+                            continue;
+                        };
                         let subnet_addr: u128 = u128::from_ne_bytes(net6.addr);
                         if *prefix == 128 {
                             if ip_addr == subnet_addr {
@@ -332,6 +345,9 @@ impl BlockList {
                             } else {
                                 continue;
                             }
+                        }
+                        if *prefix == 0 {
+                            return Ok(JSValue::TRUE);
                         }
                         let one: u128 = 1;
                         let mask_addr = ((one << (*prefix as u32)) - 1) << (128 - *prefix as u32);

@@ -18,7 +18,6 @@ pub struct SSLRequest {
 impl Default for SSLRequest {
     fn default() -> Self {
         Self {
-            // TODO(port): capability_flags has no Zig default; caller must set it
             capability_flags: Capabilities::default(),
             max_packet_size: 0xFFFFFF, // 16MB default
             character_set: CharacterSet::default(),

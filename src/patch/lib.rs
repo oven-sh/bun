@@ -7,7 +7,7 @@
 use core::mem;
 
 use bun_collections::bit_set::ArrayBitSet;
-use bun_core::{PathString, strings};
+use bun_core::strings;
 use bun_core::{ZBox, ZStr};
 use bun_paths::{self as paths, PathBuffer};
 use bun_sys::{self as sys, Fd, FdExt};
@@ -52,9 +52,6 @@ pub struct PatchFile<'a> {
 #[cfg_attr(unix, allow(dead_code))]
 struct ApplyState {
     pathbuf: PathBuffer,
-    // TODO(port): lifetime — `patch_dir_abs_path` is a self-referential slice
-    // into `self.pathbuf`. Model as (len) and reconstruct on demand to avoid
-    // a self-ref borrow.
     patch_dir_abs_path: Option<usize>,
 }
 
@@ -135,8 +132,7 @@ impl<'a> PatchFile<'a> {
                         return Some(sys::Error::from_code(sys::E::EINVAL, sys::Tag::open));
                     }
                     let filepath_z = ZBox::from_vec_with_nul(file_creation.path.to_vec());
-                    let filepath = PathString::init(filepath_z.as_bytes());
-                    let filedir = paths::dirname_simple(filepath.slice());
+                    let filedir = paths::dirname_simple(filepath_z.as_bytes());
                     let mode = file_creation.mode;
 
                     if !filedir.is_empty() {
@@ -303,7 +299,6 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     // to use the arena
     // PERF(port): was arena vs default_allocator selection — profile if hot.
     let _use_arena: bool = stat.st_size as usize <= PAGE_SIZE;
-    // TODO(port): Zig used `patch_dir.stdDir().readFileAlloc(...)` (std.fs). Replace with bun_sys::File::read_from.
     let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
         Ok(b) => b,
         Err(_) => {

@@ -78,7 +78,6 @@ pub struct FrameworkRouter {
 }
 
 pub type StaticRouteMap = StringArrayHashMap<RouteIndex>;
-// TODO(port): ArrayHashMap with custom context (EffectiveURLContext) — needs custom Hash/Eq adapter
 pub type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrlContext>;
 
 /// A logical route, for which layouts are looked up on after resolving a route.
@@ -1413,7 +1412,7 @@ impl TinyLog {
         }
         if Output::enable_ansi_colors_stderr() {
             let symbols = bun_core::fmt::TableSymbols::UNICODE;
-            Output::pretty_error(format_args!("<blue>{}", symbols.top_column_sep()));
+            bun_core::pretty_error!("<blue>{}", symbols.top_column_sep());
             if cursor_len > 1 {
                 if writer_splat_bytes_all(w, symbols.horizontal_edge(), cursor_len - 1).is_err() {
                     return;
@@ -1439,7 +1438,7 @@ impl TinyLog {
         if w.write_all(self.msg.const_slice()).is_err() {
             return;
         }
-        Output::pretty_error(format_args!("<r>\n"));
+        bun_core::pretty_error!("<r>\n");
         Output::flush();
     }
 }
@@ -2060,7 +2059,6 @@ impl JSFrameworkRouter {
 
         let mut rendered: Vec<u8> = Vec::with_capacity(filepath.slice().len());
         for part in parsed.parts {
-            // TODO(port): writing fmt into Vec<u8> — needs adapter (bstr or io::Write)
             part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
                 .expect("ByteFmtWriter is infallible");
         }

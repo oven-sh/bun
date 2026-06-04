@@ -73,8 +73,6 @@ unsafe extern "C" {
 
 /// Trait expressing the Zig `comptime cb: *const fn (*Context, JSValue) void`
 /// monomorphization for `listen`. Implement on your context type.
-// TODO(port): Zig used a comptime fn-pointer param; Rust has no const fn-ptr
-// generics, so callers implement this trait instead.
 pub trait AbortListener {
     fn on_abort(&mut self, reason: JSValue);
 }

@@ -1084,10 +1084,6 @@ impl FileReader {
     }
 }
 
-// TODO(port): `ReadableStream.NewSource(@This(), "File", onStart, onPull, onCancel, deinit,
-// setRefOrUnref, drain, memoryCost, null)` is a comptime type-generator that builds a
-// vtable-backed Source struct embedding `context: FileReader`. In Rust this becomes a
-// generic `NewSource<C>` + a `SourceContext` trait impl.
 pub type Source = readable_stream::NewSource<FileReader>;
 
 // Intrusive backref: `self` is always the `context` field of a heap-allocated

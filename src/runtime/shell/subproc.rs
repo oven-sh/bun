@@ -277,8 +277,6 @@ pub struct ShellSubprocess {
     pub event_loop: EventLoopHandle,
 
     pub closed: EnumSet<StdioKind>,
-    // TODO(port): this_jsvalue was always .zero in Zig (never assigned) — dropped.
-    // A bare JSValue field on a Box-allocated struct is a UAF per PORTING.md §JSC.
     pub flags: Flags,
 }
 
@@ -1869,8 +1867,6 @@ impl CapturedWriter {
     }
 
     pub fn on_error(&mut self, err: &bun_sys::Error) {
-        // TODO(port): Zig assigns bun.sys.Error to ?jsc.SystemError field — type mismatch
-        // in original (dead code under lazy compilation).
         self.err = Some(err.to_system_error());
     }
 

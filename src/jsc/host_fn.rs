@@ -104,14 +104,12 @@ pub use {
 // const fn pointer without a proc-macro (no `const fn` ABI thunks). Callers use
 // `#[bun_jsc::host_fn]` instead, which emits the shim and calls
 // `to_js_host_fn_result` for the body.
-// TODO(port): proc-macro — `#[bun_jsc::host_fn]` replaces `toJSHostFn`.
 #[doc(hidden)]
 pub const fn to_js_host_fn(_function_to_wrap: JsHostFnZig) -> ! {
     panic!("use #[bun_jsc::host_fn] instead of to_js_host_fn()");
 }
 
 // Zig: `pub fn toJSHostFnWithContext(comptime ContextType: type, comptime Function: ...) ...`
-// TODO(port): proc-macro — `#[bun_jsc::host_fn(method)]` replaces `toJSHostFnWithContext`.
 #[doc(hidden)]
 pub const fn to_js_host_fn_with_context<C>(_function: JsHostFnZigWithContext<C>) -> ! {
     panic!("use #[bun_jsc::host_fn(method)] instead of to_js_host_fn_with_context()");
@@ -860,7 +858,6 @@ pub fn new_function_with_data(
     jsc::mark_binding();
     // Zig: `toJSHostFn(function)` wrapped a `comptime JSHostFnZig` here. In Rust the
     // caller passes an already-wrapped `JsHostFn` (produced by `#[bun_jsc::host_fn]`).
-    // TODO(port): proc-macro — callers must apply `#[bun_jsc::host_fn]` themselves.
     private::Bun__CreateFFIFunctionWithDataValue(
         global_object,
         symbol_name,

@@ -435,7 +435,6 @@ impl Source {
                 errno: bun_sys::E::NOTSUP as _,
                 syscall: bun_sys::Tag::uv_tty_set_mode,
                 fd: self.get_fd(),
-                // TODO(port): bun_sys::Error remaining fields default
                 ..Default::default()
             }),
         }

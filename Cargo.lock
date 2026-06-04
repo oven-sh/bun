@@ -263,6 +263,7 @@ dependencies = [
 name = "bun_bin"
 version = "0.0.0"
 dependencies = [
+ "bstr",
  "bun_alloc",
  "bun_core",
  "bun_crash_handler",
@@ -1498,6 +1499,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_core",
+ "bun_simdutf_sys",
  "bytemuck",
  "const_format",
  "enum-map",
@@ -1655,6 +1657,7 @@ dependencies = [
  "bun_js_parser",
  "bun_options_types",
  "bun_paths",
+ "bun_ptr",
  "bun_resolver",
  "bun_sys",
  "bun_url",

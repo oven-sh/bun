@@ -160,7 +160,7 @@ pub(super) mod lib_info {
             sys::RTLD::LAZY | sys::RTLD::LOCAL,
         );
         if handle.is_none() {
-            Output::debug("libinfo.dylib not found");
+            bun_core::debug!("libinfo.dylib not found");
         }
         HANDLE.store(handle.unwrap_or(core::ptr::null_mut()), Relaxed);
         handle
@@ -600,7 +600,6 @@ pub trait CAresRecordType: Sized {
 pub struct ResolveInfoRequest<T: CAresRecordType> {
     // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver> (struct gets <'a>); raw ptr until reconciled with intrusive RC
     pub resolver_for_caching: Option<*mut Resolver>,
-    #[allow(dead_code)]
     pub hash: u64,
     pub cache: CacheConfig,
     pub head: CAresLookup<T>,
@@ -742,7 +741,6 @@ impl<T: CAresRecordType> c_ares::ResolveHandler for ResolveInfoRequest<T> {
 pub struct GetHostByAddrInfoRequest {
     // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
-    #[allow(dead_code)]
     pub hash: u64,
     pub cache: CacheConfig,
     pub head: CAresReverse,
@@ -995,7 +993,6 @@ impl Drop for CAresNameInfo {
 pub struct GetNameInfoRequest {
     // TODO(port): lifetime — TSV says BORROW_PARAM → Option<&'a Resolver>; raw ptr for now
     pub resolver_for_caching: Option<*mut Resolver>,
-    #[allow(dead_code)]
     pub hash: u64,
     pub cache: CacheConfig,
     pub head: CAresNameInfo,
@@ -1184,7 +1181,6 @@ pub mod get_addr_info_request {
         /// OWNED hive slot from `FilePoll::init` (returned via `FilePoll::deinit`,
         /// not `Box`/global-alloc — Zig: `?*bun.Async.FilePoll`).
         pub file_poll: Option<NonNull<FilePoll>>,
-        #[allow(dead_code)]
         pub machport: mach_port,
     }
 
@@ -1322,7 +1318,6 @@ pub mod get_addr_info_request {
     }
     pub enum Backend {
         CAres,
-        #[allow(dead_code)]
         Libinfo(BackendLibInfo),
         Libc(LibcBackend),
     }
@@ -2273,7 +2268,6 @@ pub mod internal {
     // this field.
 
     #[derive(Default)]
-    #[allow(dead_code)]
     pub struct MacAsyncDNS {
         pub file_poll: Option<NonNull<FilePoll>>, // OWNED hive slot (FilePoll::init)
         pub machport: mach_port,
@@ -2304,11 +2298,6 @@ pub mod internal {
                     );
                 }
             }
-        }
-        #[cfg(not(target_os = "macos"))]
-        #[allow(dead_code)]
-        pub(crate) fn on_machport_change(_this: *mut Request) {
-            // libinfo machport DNS is macOS-only.
         }
     }
 
@@ -5041,7 +5030,7 @@ impl Resolver {
                     break 'brk RecordType::DEFAULT;
                 }
                 // TODO(port): phf custom hasher — Zig used getWithEql with ZigString.eqlComptime
-                match RECORD_TYPE_MAP.get(record_type_str.get_zig_string(global_this).slice()) {
+                match RECORD_TYPE_MAP.get(record_type_str.to_slice(global_this).slice()) {
                     Some(r) => *r,
                     None => {
                         return Err(global_this.throw_invalid_argument_property_value(
@@ -5994,8 +5983,8 @@ impl Resolver {
                 "non-empty string",
             ));
         }
-        let addr_zigstr = addr_str.get_zig_string(global_this);
-        let addr_s = addr_zigstr.slice();
+        let addr_slice = addr_str.to_slice(global_this);
+        let addr_s = addr_slice.slice();
 
         let port_value = arguments.ptr[1];
         let port: u16 = port_value.to_port_number(global_this)?;

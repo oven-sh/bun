@@ -52,7 +52,7 @@ pub unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Tas
             [part_range.part_range.source_index.get() as usize]
             .path;
         if bun_core::debug_flags::has_print_breakpoint(&path.pretty, &path.text) {
-            // TODO(port): @breakpoint() — no stable Rust equivalent; left as no-op (see resolver/lib.rs:4573)
+            // @breakpoint() in Zig — no stable Rust equivalent; left as no-op
         }
     }
 

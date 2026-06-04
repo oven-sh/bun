@@ -32,9 +32,6 @@ unsafe impl bun_core::ffi::Zeroable for PosixStat {}
 
 /// C's implicit integer → `uint64_t` conversion, i.e. what libuv does
 /// when copying platform `struct stat` fields into `uv_stat_t`.
-//
-// TODO(port): Zig used `@typeInfo(@TypeOf(value)).int.signedness` reflection.
-// Rust has no equivalent; expressed here as a trait impl'd per primitive int.
 #[cfg(not(windows))]
 mod to_u64_impl {
     pub(super) trait ToU64: Copy {

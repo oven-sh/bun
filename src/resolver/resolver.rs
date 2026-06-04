@@ -265,15 +265,13 @@ impl FdZero for ::bun_sys::Fd {
 
 use self::bun_paths as ResolvePath;
 use ::bun_ast::import_record as ast;
-#[cfg(debug_assertions)]
-use ::bun_core::Output;
 use ::bun_core::{FeatureFlags, Generation};
 use bun_ast::Msg;
 use bun_collections::BoundedArray;
-use bun_core::PathString;
 use bun_dotenv::env_loader as DotEnv;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
 use bun_perf::system_timer::Timer;
+use bun_ptr::Interned;
 use bun_sys::Fd as FD;
 use bun_threading::Mutex;
 
@@ -400,8 +398,7 @@ pub struct Bufs {
     #[cfg(not(windows))]
     pub win32_normalized_dir_info_cache: (),
 }
-// TODO(port): bun.ThreadlocalBuffers(Bufs) — lazily-allocated threadlocal Box<Bufs>.
-// In Rust we model it as a `thread_local! { static BUFS_PTR: BufsSlot }` caching a
+// `Bufs` is modeled as a `thread_local! { static BUFS_PTR: BufsSlot }` caching a
 // leaked `Box<Bufs>` pointer. `BufsSlot`'s `Drop` reclaims that box when a
 // worker/transpiler-pool thread exits; the main thread's lives process-lifetime
 // (as in Zig, which never freed it). The `bufs!()` macro hands out `&mut` to a
@@ -1157,18 +1154,17 @@ impl<'a> Resolver<'a> {
 
         // Only setting 'current_action' in debug mode because module resolution
         // is done very often, and has a very low crash rate.
-        // TODO(port): bun.crash_handler.current_action save/restore (Environment.show_crash_trace gated)
         #[cfg(debug_assertions)]
         let _crash_guard =
             ::bun_crash_handler::set_current_action_resolver(source_dir, import_path, kind);
 
         #[cfg(debug_assertions)]
         if bun_core::debug_flags::has_resolve_breakpoint(import_path) {
-            bun_core::Output::debug(format_args!(
+            bun_core::debug!(
                 "Resolving <green>{}<r> from <blue>{}<r>",
                 bstr::BStr::new(import_path),
                 bstr::BStr::new(source_dir),
-            ));
+            );
             // @breakpoint() — no Rust equiv; left as TODO(port)
         }
 
@@ -1796,7 +1792,9 @@ impl<'a> Resolver<'a> {
                                 bstr::BStr::new(path.text())
                             ));
                         }
-                        query.entry().set_cache_symlink(PathString::init(symlink));
+                        query
+                            .entry()
+                            .set_cache_symlink(Interned::from_static(symlink));
                         if !result.file_fd.is_valid() && store_fd {
                             result.file_fd = query.entry().cache().fd;
                         }
@@ -3862,14 +3860,14 @@ impl<'a> Resolver<'a> {
                     if entry_query.entry().abs_path.is_empty() {
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
-                        unsafe { &mut *entry_query.entry }.abs_path = PathString::init(
+                        unsafe { &mut *entry_query.entry }.abs_path = Interned::from_static(
                             self.fs_ref()
                                 .dirname_store
                                 .append_slice(abs_esm_path)
                                 .expect("unreachable"),
                         );
                     }
-                    entry_query.entry().abs_path.slice()
+                    entry_query.entry().abs_path.as_bytes()
                 };
                 let module_type = if let Some(pkg) = resolved_dir_info.package_json() {
                     pkg.module_type
@@ -4397,7 +4395,6 @@ impl<'a> Resolver<'a> {
 
                     #[cfg(unix)]
                     let open_req: core::result::Result<FD, bun_core::Error> = {
-                        // TODO(port): std.fs.openDirAbsoluteZ — using bun_sys equivalent
                         bun_sys::open_dir_absolute_z(
                             sentinel,
                             bun_sys::OpenDirOptions {
@@ -5250,14 +5247,14 @@ impl<'a> Resolver<'a> {
                             let out_buf_ = self.fs_ref().abs_buf(&parts, bufs!(index));
                             // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                             // evaluated before LHS `&mut Entry` is materialized.
-                            unsafe { &mut *lookup.entry }.abs_path = PathString::init(
+                            unsafe { &mut *lookup.entry }.abs_path = Interned::from_static(
                                 self.fs_ref()
                                     .dirname_store
                                     .append_slice(out_buf_)
                                     .expect("unreachable"),
                             );
                         }
-                        lookup.entry().abs_path.slice()
+                        lookup.entry().abs_path.as_bytes()
                     };
 
                     if let Some(debug) = self.debug_logs.as_mut() {
@@ -5476,11 +5473,11 @@ impl<'a> Resolver<'a> {
             Ok(None) => dec_ret!(MatchStatus::NotFound),
             Err(_err) => {
                 #[cfg(debug_assertions)]
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "err: {} reading {}",
                     bstr::BStr::new(_err.name()),
                     bstr::BStr::new(path)
-                ));
+                );
                 dec_ret!(MatchStatus::NotFound);
             }
         };
@@ -5752,14 +5749,14 @@ impl<'a> Resolver<'a> {
                         let joined = self.fs_ref().abs_buf(&abs_path_parts, bufs!(load_as_file));
                         // SAFETY: EntryStore-owned slot; resolver mutex held. RHS fully
                         // evaluated before LHS `&mut Entry` is materialized.
-                        unsafe { &mut *query.entry }.abs_path = PathString::init(
+                        unsafe { &mut *query.entry }.abs_path = Interned::from_static(
                             self.fs_ref()
                                 .dirname_store
                                 .append_slice(joined)
                                 .expect("unreachable"),
                         );
                     }
-                    crate::path_string_static(&query.entry().abs_path)
+                    query.entry().abs_path.as_bytes()
                 };
 
                 dec_ret!(Some(LoadResult {
@@ -5863,7 +5860,7 @@ impl<'a> Resolver<'a> {
                                             && entry_dir[entry_dir.len() - 1] == SEP
                                         {
                                             let parts: [&[u8]; 2] = [entry_dir, &buffer[..]];
-                                            PathString::init(
+                                            Interned::from_static(
                                                 self.fs_ref()
                                                     .filename_store
                                                     .append_parts(&parts)
@@ -5873,7 +5870,7 @@ impl<'a> Resolver<'a> {
                                         } else {
                                             let parts: [&[u8]; 3] =
                                                 [entry_dir, SEP_STR.as_bytes(), &buffer[..]];
-                                            PathString::init(
+                                            Interned::from_static(
                                                 self.fs_ref()
                                                     .filename_store
                                                     .append_parts(&parts)
@@ -5884,7 +5881,7 @@ impl<'a> Resolver<'a> {
                                         // fully evaluated above — sole `&mut Entry` for this write.
                                         unsafe { &mut *query.entry }.abs_path = new_abs;
                                     }
-                                    crate::path_string_static(&query.entry().abs_path)
+                                    query.entry().abs_path.as_bytes()
                                 },
                                 diff_case: query.diff_case,
                                 dirname_fd: entries!().fd,
@@ -5966,7 +5963,7 @@ impl<'a> Resolver<'a> {
                         // materialized for the write — no overlapping unique borrow.
                         unsafe { &mut *query.entry }.abs_path = if query.entry().abs_path.is_empty()
                         {
-                            PathString::init(
+                            Interned::from_static(
                                 self.fs_ref()
                                     .dirname_store
                                     .append_slice(&buffer[..])
@@ -5975,7 +5972,7 @@ impl<'a> Resolver<'a> {
                         } else {
                             query.entry().abs_path
                         };
-                        crate::path_string_static(&query.entry().abs_path)
+                        query.entry().abs_path.as_bytes()
                     },
                     diff_case: query.diff_case,
                     dirname_fd: entries.fd,
@@ -6082,7 +6079,6 @@ impl<'a> Resolver<'a> {
                             BIN_FOLDERS_LOADED.store(true, core::sync::atomic::Ordering::Release);
                         }
 
-                        // TODO(port): std.fs.Dir.openDirZ → bun_sys
                         let Ok(file) = bun_sys::open_dir_z(
                             fd,
                             bun_paths::path_literal!(b"node_modules/.bin"),
@@ -6250,7 +6246,9 @@ impl<'a> Resolver<'a> {
                                 .ok();
                                 logs.add_note(buf);
                             }
-                            lookup.entry().set_cache_symlink(PathString::init(symlink));
+                            lookup
+                                .entry()
+                                .set_cache_symlink(Interned::from_static(symlink));
                             info.abs_real_path = symlink;
                         }
                     }

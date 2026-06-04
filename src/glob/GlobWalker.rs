@@ -193,7 +193,6 @@ impl Accessor for SyscallAccessor {
     }
 
     fn close(handle: SyscallHandle) -> Option<SysError> {
-        // TODO(port): @returnAddress() — Rust has no stable equivalent; pass None.
         handle.value.close_allowing_bad_file_descriptor(None)
     }
 
@@ -771,7 +770,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             // kernel filter could hide entries needed by other indices,
             // so skip it. The filter is purely an optimization;
             // matchPatternImpl still runs for correctness.
-            // TODO(port): @hasDecl(Accessor.DirIter, "setNameFilter") — trait default method covers this
             let filter: Option<&[u16]> = if active.count() == 1 {
                 self.compute_nt_filter(
                     u32::try_from(active.find_first_set().unwrap()).expect("int cast"),

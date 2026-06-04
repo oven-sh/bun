@@ -2090,9 +2090,6 @@ impl Log {
         let Some((tag_name, sys_errno)) = e.get_error_code_tag_name() else {
             return self.add_error_fmt(None, Loc::EMPTY, args);
         };
-        // TODO(port): Zig does comptime fmt-string concat `"{s}: " ++ fmt` and
-        // tuple concat `.{x} ++ args`. With `fmt::Arguments` we compose at the
-        // value level instead.
         let prefix = bun_sys::coreutils_error_map::get(sys_errno).unwrap_or(tag_name);
         self.add_error_fmt(None, Loc::EMPTY, format_args!("{}: {}", prefix, args))
     }

@@ -10,7 +10,6 @@ use crate::node::node_zlib_binding::Error;
 // `#[bun_jsc::host_fn]`s; field types (`Strong`, `WorkPoolTask`) are not yet
 // exported with the expected shapes. The pure-FFI `Context` (zlib state
 // machine) is hoisted below as the non-JSC body.
-// TODO(port): un-gate once bun_jsc Strong/JsClass + bun_threading::WorkPoolTask land.
 
 mod _impl {
     use super::*;
@@ -44,7 +43,6 @@ mod _impl {
         // centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
-        pub write_result: Cell<Option<*mut u32>>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
@@ -97,7 +95,6 @@ mod _impl {
                 // JSC_BORROW backref — the global outlives this m_ctx payload.
                 global_this: bun_ptr::BackRef::new(global),
                 stream: JsCell::new(stream),
-                write_result: Cell::new(None),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
@@ -141,8 +138,7 @@ mod _impl {
                 validators::validate_int32(global, arguments.ptr[2], "memLevel", None, None)?;
             let strategy =
                 validators::validate_int32(global, arguments.ptr[3], "strategy", None, None)?;
-            // this does not get gc'd because it is stored in the JS object's `this._writeState`. and the JS object is tied to the native handle as `_handle[owner_symbol]`.
-            // `flush_write_result` writes two u32s through this pointer, so the
+            // `flush_write_result` writes two u32s into this array, so the
             // caller-supplied array must hold at least 2 elements.
             let write_result_value = arguments.ptr[4];
             let Some(mut write_result_buf) = write_result_value.as_array_buffer(global) else {
@@ -168,7 +164,6 @@ mod _impl {
                     )
                     .throw());
             }
-            let write_result = write_result_slice.as_mut_ptr();
             let write_callback =
                 validators::validate_function(global, "writeCallback", arguments.ptr[5])?;
             // Bind the ArrayBuffer view to a local so the borrowed byte_slice() outlives
@@ -191,7 +186,7 @@ mod _impl {
                 Some(dictionary_buf.byte_slice())
             };
 
-            self.write_result.set(Some(write_result));
+            js::write_result_set_cached(this_value, global, write_result_value);
             js::write_callback_set_cached(
                 this_value,
                 global,

@@ -840,7 +840,6 @@ pub mod js_bundler {
                     }
 
                     if entry_points.len() == 1 {
-                        // TODO(port): std.fs.path.dirname → bun_paths::dirname
                         let d = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(
                             &entry_points[0],
                         );
@@ -861,7 +860,6 @@ pub mod js_bundler {
                     );
                 };
 
-                // TODO(port): std.fs.cwd().openDir — banned std::fs; use bun_sys
                 let dir = match bun_sys::open_dir_at(bun_sys::Fd::cwd(), path.slice()) {
                     Ok(d) => d,
                     Err(err) => {
@@ -1997,14 +1995,11 @@ impl BuildArtifact {
             Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>BuildArtifact "),
         )?;
 
-        write!(
+        bun_core::write_pretty!(
             writer,
-            "{}",
-            Output::pretty_fmt_args(
-                "(<blue>{}<r>) {{\n",
-                ENABLE_ANSI_COLORS,
-                (<&'static str>::from(self.output_kind),),
-            ),
+            ENABLE_ANSI_COLORS,
+            "(<blue>{s}<r>) {{\n",
+            <&'static str>::from(self.output_kind),
         )?;
 
         {
@@ -2014,14 +2009,11 @@ impl BuildArtifact {
             // after the block instead.
 
             formatter.write_indent(writer)?;
-            write!(
+            bun_core::write_pretty!(
                 writer,
-                "{}",
-                Output::pretty_fmt_args(
-                    "<r>path<r>: <green>\"{}\"<r>",
-                    ENABLE_ANSI_COLORS,
-                    (bstr::BStr::new(&self.path),),
-                ),
+                ENABLE_ANSI_COLORS,
+                "<r>path<r>: <green>\"{s}\"<r>",
+                bstr::BStr::new(&self.path),
             )?;
             formatter
                 .print_comma::<W, ENABLE_ANSI_COLORS>(writer)
@@ -2029,14 +2021,11 @@ impl BuildArtifact {
             writer.write_str("\n")?;
 
             formatter.write_indent(writer)?;
-            write!(
+            bun_core::write_pretty!(
                 writer,
-                "{}",
-                Output::pretty_fmt_args(
-                    "<r>loader<r>: <green>\"{}\"<r>",
-                    ENABLE_ANSI_COLORS,
-                    (<&'static str>::from(self.loader),),
-                ),
+                ENABLE_ANSI_COLORS,
+                "<r>loader<r>: <green>\"{s}\"<r>",
+                <&'static str>::from(self.loader),
             )?;
 
             formatter
@@ -2046,14 +2035,11 @@ impl BuildArtifact {
 
             formatter.write_indent(writer)?;
 
-            write!(
+            bun_core::write_pretty!(
                 writer,
-                "{}",
-                Output::pretty_fmt_args(
-                    "<r>kind<r>: <green>\"{}\"<r>",
-                    ENABLE_ANSI_COLORS,
-                    (<&'static str>::from(self.output_kind),),
-                ),
+                ENABLE_ANSI_COLORS,
+                "<r>kind<r>: <green>\"{s}\"<r>",
+                <&'static str>::from(self.output_kind),
             )?;
 
             if self.hash != 0 {
@@ -2063,14 +2049,11 @@ impl BuildArtifact {
                 writer.write_str("\n")?;
 
                 formatter.write_indent(writer)?;
-                write!(
+                bun_core::write_pretty!(
                     writer,
-                    "{}",
-                    Output::pretty_fmt_args(
-                        "<r>hash<r>: <green>\"{}\"<r>",
-                        ENABLE_ANSI_COLORS,
-                        (bun_core::fmt::truncated_hash32(self.hash),),
-                    ),
+                    ENABLE_ANSI_COLORS,
+                    "<r>hash<r>: <green>\"{f}\"<r>",
+                    bun_core::fmt::truncated_hash32(self.hash),
                 )?;
             }
 

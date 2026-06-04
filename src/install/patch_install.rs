@@ -888,8 +888,6 @@ impl PatchTask {
     }
 }
 
-// TODO(port): these enum/type references are placeholders for cross-file types that live in
-// `bun_install`. Replace with the real paths once those modules are ported.
 use crate::PreinstallState;
 use crate::network_task::Authorization;
 use crate::package_install::{InstallResult, Method as InstallMethod};

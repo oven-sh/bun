@@ -203,7 +203,10 @@ impl PackageManagerCommand {
 Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.
 ";
 
+        #[allow(clippy::disallowed_methods)]
+        // help-text consts contain <tag> markup that must be tag-walked
         Output::pretty(format_args!("{}", intro_text));
+        #[allow(clippy::disallowed_methods)]
         Output::pretty(format_args!("{}", outro_text));
         Output::flush();
     }
@@ -350,8 +353,8 @@ bun_output::declare_scope!(PackageManager, hidden);
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct PackageManager {
-    pub cache_directory_: Option<bun_sys::Dir>, // TODO(port): std.fs.Dir → bun_sys::Dir
-    pub cache_directory_path: ZBox,             // TODO(port): lifetime — singleton-leaked
+    pub cache_directory_: Option<bun_sys::Dir>,
+    pub cache_directory_path: ZBox, // owned; process lifetime via the leaked singleton
     pub root_dir: &'static mut fs::DirEntry,
     // allocator dropped per §Allocators (was `bun.default_allocator`). For the
     // handful of sites that allocated AST nodes via `Expr.allocate(manager.allocator, …)`
@@ -392,7 +395,7 @@ pub struct PackageManager {
     /// Only set in `bun pm`
     pub root_package_json_name_at_time_of_init: Box<[u8]>,
 
-    pub root_package_json_file: bun_sys::File, // TODO(port): std.fs.File → bun_sys::File
+    pub root_package_json_file: bun_sys::File,
 
     /// The package id corresponding to the workspace the install is happening in. Could be root, or
     /// could be any of the workspaces.
@@ -444,12 +447,12 @@ pub struct PackageManager {
     pub preinstall_state: Vec<PreinstallState>,
     pub postinstall_optimizer: crate::postinstall_optimizer::List,
 
-    pub global_link_dir: Option<bun_sys::Dir>, // TODO(port): std.fs.Dir
-    pub global_dir: Option<bun_sys::Dir>,      // TODO(port): std.fs.Dir
+    pub global_link_dir: Option<bun_sys::Dir>,
+    pub global_dir: Option<bun_sys::Dir>,
     pub global_link_dir_path: Box<[u8]>,
 
     pub on_wake: WakeHandler,
-    pub ci_mode: LazyBool<fn(&PackageManager) -> bool>, // TODO(port): bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode")
+    pub ci_mode: LazyBool<fn(&PackageManager) -> bool>,
 
     pub peer_dependencies: LinearFifo<DependencyID, DynamicBuffer<DependencyID>>,
 
@@ -467,7 +470,7 @@ pub struct PackageManager {
     // When adding a `file:` dependency in a workspace package, we want to install it
     // relative to the workspace root, but the path provided is relative to the
     // workspace package. We keep track of the original here.
-    pub original_package_json_path: ZBox, // TODO(port): owned [:0]const u8
+    pub original_package_json_path: ZBox,
 
     // null means root. Used during `cleanWithLogger` to identifier which
     // workspace is adding/removing packages
@@ -849,7 +852,7 @@ mod holder {
 static CWD_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 static ROOT_PACKAGE_JSON_PATH_BUF: bun_core::RacyCell<PathBuffer> =
     bun_core::RacyCell::new(PathBuffer::ZEROED);
-pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCell::new(ZStr::EMPTY); // TODO(port): [:0]const u8 static slice into ROOT_PACKAGE_JSON_PATH_BUF
+pub static ROOT_PACKAGE_JSON_PATH: bun_core::RacyCell<&ZStr> = bun_core::RacyCell::new(ZStr::EMPTY);
 
 // ──────────────────────────────────────────────────────────────────────────
 // impl PackageManager
@@ -1125,8 +1128,7 @@ impl PackageManager {
 // bun.once wrappers
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): bun.once returns a struct whose .call() runs the closure exactly once
-// and caches the result. `Transpiler` is non-`Copy` and self-referential, so cache
+// `Transpiler` is non-`Copy` and self-referential, so cache
 // a process-static raw pointer (mirrors Zig `var ..: Transpiler = undefined;`).
 // PORTING.md §Global mutable state: init-once ptr → AtomicPtr.
 static CONFIGURE_ENV_FOR_SCRIPTS_ONCE: core::sync::atomic::AtomicPtr<
@@ -1244,14 +1246,14 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
         Ok(d) => d,
         Err(e) if e == bun_core::err!(EEXIST) => {
             // it should not exist
-            Output::pretty_errorln("<r><red>error<r>: node-gyp tempdir already exists");
+            bun_core::pretty_errorln!("<r><red>error<r>: node-gyp tempdir already exists");
             Global::crash();
         }
         Err(e) => {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
                 e.name(),
-            ));
+            );
             Global::crash();
         }
     };
@@ -1277,10 +1279,10 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
     ) {
         Ok(f) => f,
         Err(e) => {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>error<r>: <b><red>{}<r> creating node-gyp tempdir",
                 bstr::BStr::new(e.name()),
-            ));
+            );
             Global::crash();
         }
     };
@@ -1308,11 +1310,11 @@ fn ensure_temp_node_gyp_script_run(manager: &mut PackageManager) -> Result<(), E
 
     if let Err(e) = node_gyp_file.write_all(CONTENT.as_bytes()) {
         // Zig: "..." ++ file_name ++ " file" — comptime concat, no runtime alloc
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "<r><red>error<r>: <b><red>{}<r> writing to {} file",
             bstr::BStr::new(e.name()),
             FILE_NAME,
-        ));
+        );
         Global::crash();
     }
 
@@ -1604,10 +1606,10 @@ pub fn init(
                             &[&bstr::BStr::new(package_json_path.as_bytes())],
                         );
                         if need_write {
-                            Output::note("package.json must be writable to add packages");
+                            bun_core::note!("package.json must be writable to add packages");
                         } else {
-                            Output::note(
-                                "package.json is missing read permissions, or is owned by another user",
+                            bun_core::note!(
+                                "package.json is missing read permissions, or is owned by another user"
                             );
                         }
                         Global::crash();
@@ -1945,10 +1947,7 @@ pub fn init(
 
     // SAFETY: main-thread init
     if PackageManager::verbose_install() {
-        Output::pretty_errorln(format_args!(
-            "Cache Dir: {}",
-            bstr::BStr::new(&options.cache_directory),
-        ));
+        bun_core::pretty_errorln!("Cache Dir: {}", bstr::BStr::new(&options.cache_directory));
         Output::flush();
     }
 
@@ -1988,7 +1987,7 @@ pub fn init(
         ));
 
         wr!(cache_directory_, None);
-        wr!(cache_directory_path, ZBox::from_bytes(b"")); // TODO(port): default ""
+        wr!(cache_directory_path, ZBox::from_bytes(b""));
         wr!(options, options);
         wr!(
             active_lifecycle_scripts,
@@ -2034,7 +2033,6 @@ pub fn init(
             original_package_json_path,
             ZBox::from_vec_with_nul(original_package_json_path_buf)
         );
-        // TODO(port): owned [:0]const u8 conversion
         wr!(workspace_package_json_cache, workspace_package_json_cache);
         wr!(workspace_name_hash, workspace_name_hash);
         wr!(subcommand, subcommand);
@@ -2303,7 +2301,6 @@ pub fn init(
 
     let timestamp_for_manifest_cache_control: u32 = 'brk: {
         if cfg!(debug_assertions) {
-            // TODO(port): bun.Environment.allow_assert
             if let Some(cache_control) = env.get(b"BUN_CONFIG_MANIFEST_CACHE_CONTROL_TIMESTAMP") {
                 // env-var bytes are not guaranteed UTF-8; parse on bytes directly (Zig: std.fmt.parseInt)
                 if let Ok(int) = bun_core::parse_int::<u32>(cache_control, 10) {
@@ -2440,7 +2437,7 @@ pub(crate) fn init_with_runtime_once(
         ));
 
         wr!(cache_directory_, None);
-        wr!(cache_directory_path, ZBox::from_bytes(b"")); // TODO(port): default
+        wr!(cache_directory_path, ZBox::from_bytes(b""));
         wr!(
             options,
             Options {

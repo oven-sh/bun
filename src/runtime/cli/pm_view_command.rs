@@ -80,7 +80,6 @@ pub(crate) fn view(
     let scope = manager.scope_for_package_name(name).clone();
 
     let mut url_buf = PathBuffer::uninit();
-    // TODO(port): std.fmt.bufPrint — `buf_print` returns the written slice
     let encoded_name = buf_print(
         url_buf.0.as_mut_slice(),
         format_args!("{}", bun_fmt::dependency_url(name)),
@@ -264,16 +263,13 @@ pub(crate) fn view(
             versions_to_display =
                 &versions_to_display[..versions_to_display.len().min(max_versions_to_display)];
             if !versions_to_display.is_empty() {
-                Output::pretty_errorln("\nRecent versions:<r>");
+                bun_core::pretty_errorln!("\nRecent versions:<r>");
                 for v in versions_to_display {
-                    Output::pretty_errorln(format_args!(
-                        "<d>-<r> {}",
-                        v.fmt(&parsed_manifest.string_buf)
-                    ));
+                    bun_core::pretty_errorln!("<d>-<r> {}", v.fmt(&parsed_manifest.string_buf));
                 }
 
                 if start_index > 0 {
-                    Output::pretty_errorln(format_args!("  <d>... and {} more<r>", start_index));
+                    bun_core::pretty_errorln!("  <d>... and {} more<r>", start_index);
                 }
             }
         }

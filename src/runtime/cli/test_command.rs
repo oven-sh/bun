@@ -14,12 +14,13 @@ use bun_jsc::{self as jsc};
 // `ZigString` (repr(C)-identical to `bun_core::ZigString`, but with the
 // JSGlobalObject FFI methods); import that one so the call sites type-check.
 use bun_core::ZigStringSlice;
-use bun_core::{PathString, strings};
+use bun_core::strings;
 use bun_jsc::zig_string::ZigString;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
 use bun_paths::{self as bun_path, PathBuffer};
+use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
 
@@ -954,27 +955,21 @@ impl CommandLineReporter {
 
             // Print attempt count if test was retried (attempts > 1)
             if attempts > 1 {
-                let _ = write!(
+                let _ = bun_core::write_pretty!(
                     writer,
-                    "{}",
-                    Output::pretty_fmt_args(
-                        " <d>(attempt {d})<r>",
-                        Output::enable_ansi_colors_stderr(),
-                        (attempts,)
-                    ),
+                    Output::enable_ansi_colors_stderr(),
+                    " <d>(attempt {d})<r>",
+                    attempts,
                 );
             }
 
             // Print repeat count if test failed on a repeat (repeats > 1)
             if repeats > 1 {
-                let _ = write!(
+                let _ = bun_core::write_pretty!(
                     writer,
-                    "{}",
-                    Output::pretty_fmt_args(
-                        " <d>(run {d})<r>",
-                        Output::enable_ansi_colors_stderr(),
-                        (repeats,)
-                    ),
+                    Output::enable_ansi_colors_stderr(),
+                    " <d>(run {d})<r>",
+                    repeats,
                 );
             }
 
@@ -992,48 +987,54 @@ impl CommandLineReporter {
             let _ = writer.write_all(b"\n");
 
             let colors = Output::enable_ansi_colors_stderr();
-            // PERF(port): was comptime bool dispatch — profile if it shows up on a hot path.
             use bun_test::Execution::Result as R;
             match status {
                 R::Pending | R::Pass | R::Skip | R::SkippedBecauseLabel | R::Todo | R::Fail => {}
 
                 R::FailBecauseFailingTestPassed => {
-                    let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n", colors));
+                    let _ = bun_core::write_pretty!(
+                        writer,
+                        colors,
+                        "  <d>^<r> <red>this test is marked as failing but it passed.<r> <d>Remove `.failing` if tested behavior now works<r>\n"
+                    );
                 }
                 R::FailBecauseTodoPassed => {
-                    let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n", colors));
+                    let _ = bun_core::write_pretty!(
+                        writer,
+                        colors,
+                        "  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` if tested behavior now works<r>\n"
+                    );
                 }
                 R::FailBecauseExpectedAssertionCount | R::FailBecauseExpectedHasAssertions => {} // printed above
                 R::FailBecauseTimeout => {
-                    let _ = write!(
+                    let _ = bun_core::write_pretty!(
                         writer,
-                        "{}",
-                        Output::pretty_fmt_args(
-                            "  <d>^<r> <red>this test timed out after {}ms.<r>\n",
-                            colors,
-                            (test_entry.timeout,)
-                        )
+                        colors,
+                        "  <d>^<r> <red>this test timed out after {d}ms.<r>\n",
+                        test_entry.timeout
                     );
                 }
                 R::FailBecauseHookTimeout => {
-                    let _ = writer.write_all(&Output::pretty_fmt_rt(
-                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n",
+                    let _ = bun_core::write_pretty!(
+                        writer,
                         colors,
-                    ));
+                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out for this test.<r>\n"
+                    );
                 }
                 R::FailBecauseTimeoutWithDoneCallback => {
-                    let _ = write!(
+                    let _ = bun_core::write_pretty!(
                         writer,
-                        "{}",
-                        Output::pretty_fmt_args(
-                            "  <d>^<r> <red>this test timed out after {}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n",
-                            colors,
-                            (test_entry.timeout,)
-                        )
+                        colors,
+                        "  <d>^<r> <red>this test timed out after {d}ms, before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the test callback function<r>\n",
+                        test_entry.timeout
                     );
                 }
                 R::FailBecauseHookTimeoutWithDoneCallback => {
-                    let _ = writer.write_all(&Output::pretty_fmt_rt("  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n", colors));
+                    let _ = bun_core::write_pretty!(
+                        writer,
+                        colors,
+                        "  <d>^<r> <red>a beforeEach/afterEach hook timed out before its done callback was called.<r> <d>If a done callback was not intended, remove the last parameter from the hook callback function<r>\n"
+                    );
                 }
             }
         }
@@ -1285,23 +1286,21 @@ impl CommandLineReporter {
                 );
             if dots_branch {
                 let colors = Output::enable_ansi_colors_stderr();
-                // PERF(port): was comptime bool dispatch — profile if it shows up on a hot path.
                 match basic {
                     bun_test::BasicResult::Pass => {
-                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><green>.<r>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><green>.<r>");
                     }
                     bun_test::BasicResult::Skip => {
-                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><yellow>.<d>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><yellow>.<d>");
                     }
                     bun_test::BasicResult::Todo => {
-                        let _ =
-                            writer.write_all(&Output::pretty_fmt_rt("<r><magenta>.<r>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><magenta>.<r>");
                     }
                     bun_test::BasicResult::Pending => {
-                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><d>.<r>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><d>.<r>");
                     }
                     bun_test::BasicResult::Fail => {
-                        let _ = writer.write_all(&Output::pretty_fmt_rt("<r><red>.<r>", colors));
+                        let _ = bun_core::write_pretty!(writer, colors, "<r><red>.<r>");
                     }
                 }
                 reporter_ref.unwrap().last_printed_dot.set(true);
@@ -1698,7 +1697,6 @@ impl CommandLineReporter {
         }
 
         let mut console_buffer: Vec<u8> = Vec::new();
-        // TODO(port): std.Io.Writer.Allocating → Vec<u8> + adapter
         let console_writer = &mut console_buffer;
 
         let mut avg = Fraction {
@@ -1712,9 +1710,6 @@ impl CommandLineReporter {
 
         // --- LCOV ---
         let mut lcov_name_buf = PathBuffer::uninit();
-        // TODO(port): the Zig code uses tuple destructuring with comptime branching to make
-        // lcov_file/lcov_name/lcov_buffered_writer be `void` when !REPORTERS_LCOV. We use
-        // Option here.
         let mut lcov_state: Option<(File, &bun_core::ZStr, /*buffered*/ Vec<u8>)> =
             if REPORTERS_LCOV {
                 'brk: {
@@ -1783,7 +1778,6 @@ impl CommandLineReporter {
             } else {
                 None
             };
-        // TODO(port): errdefer lcov cleanup — using scopeguard with disarm on success
         let mut lcov_guard = scopeguard::guard(
             &mut lcov_state,
             |s: &mut Option<(File, &bun_core::ZStr, Vec<u8>)>| {
@@ -1895,7 +1889,6 @@ impl CommandLineReporter {
                 console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d> |<r>\n"))?;
             }
 
-            // TODO(port): console_writer.flush() — Vec<u8> has nothing to flush
             console.write_all(&console_buffer)?;
             console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>"))?;
             // Spec uses `catch return` (NOT `try`) — Zig's `errdefer` does not
@@ -1973,7 +1966,6 @@ pub(crate) extern "C" fn BunTest__shouldGenerateCodeCoverage(
     }
 
     let ext = bun_path::extension(slice);
-    // TODO(port): std.fs.path.extension — using bun_path equivalent
     // SAFETY: `VirtualMachine::get()` returns the process-lifetime VM pointer; only
     // called from the JS thread once a VM exists.
     let loader_by_ext = VirtualMachine::get()
@@ -2482,8 +2474,7 @@ impl TestCommand {
         let mut pass_with_no_tests_from_filter = false;
         let mut changed_module_graph_files: Vec<Box<[u8]>> = Vec::new();
         // PORT NOTE: defer free handled by Drop.
-        let mut test_files: &mut [PathString] = if let Some(changed_since) =
-            &ctx.test_options.changed
+        let mut test_files: &mut [Interned] = if let Some(changed_since) = &ctx.test_options.changed
         {
             'brk: {
                 // If the Scanner found nothing, fall through to the existing
@@ -2534,7 +2525,7 @@ impl TestCommand {
             &mut all_test_files[..]
         };
         // TODO(port): test_files type — Zig is `[]PathString` slice into all_test_files or
-        // result.test_files; ownership in Rust needs reshaping. Using &mut [PathString] here.
+        // result.test_files; ownership in Rust needs reshaping. Using &mut [Interned] here.
 
         // --shard=M/N: sort the test files for determinism, then keep only
         // every Nth file starting at M-1. This round-robin distribution
@@ -2548,7 +2539,7 @@ impl TestCommand {
         // printing a confusing "running 0/0 test files".
         if let Some(shard) = &ctx.test_options.shard {
             if !test_files.is_empty() {
-                test_files.sort_by(|a, b| strings::order(a.slice(), b.slice()));
+                test_files.sort_by(|a, b| strings::order(a.as_bytes(), b.as_bytes()));
 
                 let mut write: usize = 0;
                 let total = test_files.len();
@@ -3041,12 +3032,12 @@ impl TestCommand {
     pub(crate) fn run_all_tests(
         reporter_: &mut CommandLineReporter,
         vm_: &mut VirtualMachine,
-        files_: &[PathString],
+        files_: &[Interned],
     ) {
         struct Context<'a> {
             reporter: &'a mut CommandLineReporter,
             vm: &'a mut VirtualMachine,
-            files: &'a [PathString],
+            files: &'a [Interned],
         }
         impl<'a> Context<'a> {
             pub(crate) fn begin(&mut self) {
@@ -3062,7 +3053,7 @@ impl TestCommand {
                         if let Err(err) = TestCommand::run(
                             reporter,
                             vm,
-                            file_name.slice(),
+                            file_name.as_bytes(),
                             bun_test::FirstLast {
                                 first: isolate || i == 0,
                                 last: isolate,
@@ -3085,7 +3076,7 @@ impl TestCommand {
                 if let Err(err) = TestCommand::run(
                     reporter,
                     vm,
-                    files[files.len() - 1].slice(),
+                    files[files.len() - 1].as_bytes(),
                     bun_test::FirstLast {
                         first: isolate || files.len() == 1,
                         last: true,

@@ -88,16 +88,6 @@ impl CurrentTime {
     }
 }
 
-#[derive(Copy, Clone)]
-enum AssertMode {
-    Locked,
-    // PORT NOTE: `.unlocked` callers (`execute_*`/`fire`) were converted to
-    // associated fns with no `self` (noalias re-entrancy — see below); the
-    // Zig `.unlocked` arm was a no-op anyway.
-    #[allow(dead_code)]
-    Unlocked,
-}
-
 use crate::jsc_hooks::timer_all;
 
 /// RAII `lock()`/`unlock()` for the per-thread `timer::All.lock`. Centralises
@@ -120,7 +110,7 @@ fn from_el_timespec(t: &ElTimespec) -> Timespec {
 }
 
 impl FakeTimers {
-    fn assert_valid(&self, mode: AssertMode) {
+    fn assert_locked(&self) {
         if !Environment::CI_ASSERT {
             return;
         }
@@ -128,41 +118,37 @@ impl FakeTimers {
         let owner: &timer::All = unsafe {
             &*(bun_core::from_field_ptr!(timer::All, fake_timers, std::ptr::from_ref::<Self>(self)))
         };
-        match mode {
-            AssertMode::Locked => debug_assert!(!owner.lock.try_lock()),
-            // can't assert unlocked because another thread could be holding the lock
-            AssertMode::Unlocked => {}
-        }
+        debug_assert!(!owner.lock.try_lock());
     }
 
     pub fn is_active(&self) -> bool {
-        self.assert_valid(AssertMode::Locked);
-        // defer self.assert_valid(.locked) — re-checked at fn exit
+        self.assert_locked();
+        // defer assertValid(.locked) — re-checked at fn exit
         let r = self.active;
-        self.assert_valid(AssertMode::Locked);
+        self.assert_locked();
         r
     }
 
     fn activate(&mut self, js_now: f64, global: &JSGlobalObject) {
-        self.assert_valid(AssertMode::Locked);
+        self.assert_locked();
 
         self.active = true;
         CURRENT_TIME.set(global, &Timespec::EPOCH, Some(js_now));
 
-        self.assert_valid(AssertMode::Locked);
+        self.assert_locked();
     }
 
     fn deactivate(
         &mut self,
         global: &JSGlobalObject,
     ) -> Vec<core::ptr::NonNull<TimerObjectInternals>> {
-        self.assert_valid(AssertMode::Locked);
+        self.assert_locked();
 
         let pinned = self.clear();
         CURRENT_TIME.clear(global);
         self.active = false;
 
-        self.assert_valid(AssertMode::Locked);
+        self.assert_locked();
         pinned
     }
 
@@ -179,7 +165,7 @@ impl FakeTimers {
     /// same gap.
     #[must_use]
     fn clear(&mut self) -> Vec<core::ptr::NonNull<TimerObjectInternals>> {
-        self.assert_valid(AssertMode::Locked);
+        self.assert_locked();
 
         let mut pinned = Vec::new();
         while let Some(timer) = self.timers.delete_min() {
@@ -199,7 +185,7 @@ impl FakeTimers {
             }
         }
 
-        self.assert_valid(AssertMode::Locked);
+        self.assert_locked();
         pinned
     }
 

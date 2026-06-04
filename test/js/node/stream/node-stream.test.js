@@ -795,7 +795,6 @@ for (const size of [0x10, 0xffff, 0x10000, 0x1f000, 0x20000, 0x20010, 0x7ffff, 0
   });
 }
 
-
 // Node.js v26 semver-major stream semantics.
 describe("node v26 stream semantics", () => {
   // Upstream: v26 howMuchToRead() fast path; covered upstream by the updated

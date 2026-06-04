@@ -244,8 +244,10 @@ function flush() {
   if (!Bun.isMainThread) {
     // Worker VM: write only this thread's raw events to a side part file;
     // the main thread merges parts (and contributes metadata) at its flush.
+    // The pid component keeps a concurrent traced process (or a stale part
+    // from a killed previous run) in the same cwd from being merged by it.
     try {
-      require("node:fs").writeFileSync(`${fileName}.${tid}.part`, JSON.stringify(events));
+      require("node:fs").writeFileSync(`${fileName}.${process.pid}.${tid}.part`, JSON.stringify(events));
     } catch {
       // Best-effort, like the main-thread write below.
     }
@@ -298,13 +300,15 @@ function flush() {
   }
 }
 
-// Pick up `<file>.<tid>.part` files written by worker VMs that exited before
-// the main thread (their events share our pid but carry their own tid).
+// Pick up `<file>.<pid>.<tid>.part` files written by worker VMs of THIS
+// process that exited before the main thread (their events share our pid but
+// carry their own tid). The exact-pid prefix skips part files left by other
+// traced processes sharing the cwd.
 function mergeWorkerParts(fileName: string) {
   const fs = require("node:fs");
   const path = require("node:path");
   const dir = path.dirname(fileName);
-  const base = path.basename(fileName) + ".";
+  const base = path.basename(fileName) + "." + process.pid + ".";
   let names: string[];
   try {
     names = fs.readdirSync(dir);

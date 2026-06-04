@@ -71,10 +71,7 @@ impl FallbackEntryPoint {
                 b"';\nboot(globalThis.__BUN_DATA__);",
             )
         } else {
-            (
-                b"import boot from '",
-                b"';\nboot(globalThis.__BUN_DATA__);",
-            )
+            (b"import boot from '", b"';\nboot(globalThis.__BUN_DATA__);")
         };
         // The Source owns the rendered bytes (`Cow::Owned`), so nothing in
         // `entry` is borrowed and the entry may move or be cloned-from freely.

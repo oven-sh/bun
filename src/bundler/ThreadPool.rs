@@ -269,7 +269,8 @@ impl ThreadPool {
     /// must be freed here). Borrowed pools are left untouched: the runtime
     /// still owns them.
     pub fn deinit(&mut self) {
-        if let WorkerPool::Owned(pool) = core::mem::replace(&mut self.worker_pool, WorkerPool::Unset)
+        if let WorkerPool::Owned(pool) =
+            core::mem::replace(&mut self.worker_pool, WorkerPool::Unset)
         {
             drop(pool);
         }

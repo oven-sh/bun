@@ -272,11 +272,11 @@ impl<'a> Router<'a> {
         ctx.set_matched_route(None);
 
         // If there's an extname assume it's an asset and not a page
-        match ctx.url().extname.len() {
+        match ctx.url().extname().len() {
             0 => {}
             // json is used for updating the route client-side without a page reload
             4 /* "json".len */ => {
-                if ctx.url().extname != b"json" {
+                if ctx.url().extname() != b"json" {
                     ctx.handle_request()?;
                     return Ok(());
                 }
@@ -289,30 +289,40 @@ impl<'a> Router<'a> {
 
         // PERF: a borrowed `List<'a>` cannot soundly live in a `'static` thread_local,
         // so we allocate per-request; revisit with an arena/SmallVec if hot.
-        {
+        // NOTE: the `Match` returned by `match_page` borrows `ctx` (through
+        // `ctx.url()`'s accessor slices), so the mutable `ctx` calls below are
+        // hoisted out of the block: the redirect path is copied to an owned
+        // buffer and handled after the borrow ends.
+        let redirect_to: Option<Vec<u8>> = {
             let mut params_list = route_param::List::default();
             if let Some(route) = app
                 .routes
                 .match_page(&app.config.dir, ctx.url(), &mut params_list)
             {
                 if let Some(redirect) = route.redirect_path {
-                    ctx.handle_redirect(redirect)?;
-                    return Ok(());
-                }
+                    Some(redirect.to_vec())
+                } else {
+                    debug_assert!(!route.path.is_empty());
 
-                debug_assert!(!route.path.is_empty());
-
-                if let Some(watcher) = server.watcher_mut() {
-                    if watcher.watchloop_handle().is_none() {
-                        let _ = watcher.start();
+                    if let Some(watcher) = server.watcher_mut() {
+                        if watcher.watchloop_handle().is_none() {
+                            let _ = watcher.start();
+                        }
                     }
-                }
 
-                // ctx.matched_route = route;
-                // RequestContextType.JavaScriptHandler.enqueue(ctx, server, &params_list) catch {
-                //     server.javascript_enabled = false;
-                // };
+                    // ctx.matched_route = route;
+                    // RequestContextType.JavaScriptHandler.enqueue(ctx, server, &params_list) catch {
+                    //     server.javascript_enabled = false;
+                    // };
+                    None
+                }
+            } else {
+                None
             }
+        };
+        if let Some(redirect) = redirect_to {
+            ctx.handle_redirect(&redirect)?;
+            return Ok(());
         }
 
         if !ctx.controlled() && !ctx.has_called_done() {
@@ -324,77 +334,61 @@ impl<'a> Router<'a> {
 
 pub const BANNED_DIRS: [&[u8]; 1] = [b"node_modules"];
 
-struct RouteIndex {
-    route: Box<Route>,
-    name: &'static [u8],
-    match_name: &'static [u8],
-    filepath: &'static [u8],
-    public_path: &'static [u8],
-    hash: u32,
-}
-
-// TODO(b2-blocked): bun_collections::MultiArrayElement derive — proc-macro not
-// yet landed, so MultiArrayList<RouteIndex> can't expose per-field column
-// accessors. Hand-rolled SoA struct until the derive exists.
-#[derive(Default)]
-pub struct RouteIndexList {
+pub struct RouteIndex {
     // The `Box` is load-bearing: `Routes::index` / `Routes::static_` hold
-    // `NonNull<Route>` / `*const Route` into the box interiors; unboxing
-    // would dangle them on `Vec` realloc.
-    #[expect(clippy::vec_box)]
-    route: Vec<Box<Route>>,
-    name: Vec<&'static [u8]>,
-    match_name: Vec<&'static [u8]>,
-    filepath: Vec<&'static [u8]>,
-    public_path: Vec<&'static [u8]>,
-    hash: Vec<u32>,
+    // `NonNull<Route>` / `*const Route` into the box interiors. The SoA list
+    // below moves the `Box` handles on realloc, but the boxed `Route`
+    // allocations themselves never move, so those pointers stay valid —
+    // storing `Route` inline in the column would dangle them.
+    pub route: Box<Route>,
+    pub name: &'static [u8],
+    pub match_name: &'static [u8],
+    pub filepath: &'static [u8],
+    pub public_path: &'static [u8],
+    pub hash: u32,
 }
 
-impl RouteIndexList {
-    pub fn set_capacity(&mut self, cap: usize) -> Result<(), CoreError> {
-        self.route.reserve_exact(cap);
-        self.name.reserve_exact(cap);
-        self.match_name.reserve_exact(cap);
-        self.filepath.reserve_exact(cap);
-        self.public_path.reserve_exact(cap);
-        self.hash.reserve_exact(cap);
-        Ok(())
+bun_collections::multi_array_columns! {
+    pub trait RouteIndexColumns for RouteIndex {
+        route: Box<Route>,
+        name: &'static [u8],
+        match_name: &'static [u8],
+        filepath: &'static [u8],
+        public_path: &'static [u8],
+        hash: u32,
     }
-    pub(crate) fn push(&mut self, item: RouteIndex) {
-        self.route.push(item.route);
-        self.name.push(item.name);
-        self.match_name.push(item.match_name);
-        self.filepath.push(item.filepath);
-        self.public_path.push(item.public_path);
-        self.hash.push(item.hash);
+}
+
+/// `MultiArrayList(RouteIndex)` with per-field column accessors
+/// (`items_route()`, `items_name()`, … via [`RouteIndexColumns`]).
+///
+/// Newtype rather than a bare alias because `MultiArrayList`'s `Drop`
+/// intentionally frees the slab only (no per-element destructors — see its
+/// `Drop` doc); the `route` column uniquely owns `Box<Route>` allocations, so
+/// this wrapper runs `drop_elements()` first.
+#[derive(Default)]
+pub struct RouteIndexList(bun_collections::MultiArrayList<RouteIndex>);
+
+impl Drop for RouteIndexList {
+    fn drop(&mut self) {
+        // Frees the `Box<Route>` column payloads; the slab itself is freed by
+        // the inner list's own Drop.
+        self.0.drop_elements();
     }
+}
+
+impl core::ops::Deref for RouteIndexList {
+    type Target = bun_collections::MultiArrayList<RouteIndex>;
     #[inline]
-    pub fn len(&self) -> usize {
-        self.route.len()
+    fn deref(&self) -> &Self::Target {
+        &self.0
     }
+}
+
+impl core::ops::DerefMut for RouteIndexList {
     #[inline]
-    pub fn items_route(&self) -> &[Box<Route>] {
-        &self.route
-    }
-    #[inline]
-    pub fn items_name(&self) -> &[&'static [u8]] {
-        &self.name
-    }
-    #[inline]
-    pub fn items_match_name(&self) -> &[&'static [u8]] {
-        &self.match_name
-    }
-    #[inline]
-    pub fn items_filepath(&self) -> &[&'static [u8]] {
-        &self.filepath
-    }
-    #[inline]
-    pub fn items_public_path(&self) -> &[&'static [u8]] {
-        &self.public_path
-    }
-    #[inline]
-    pub fn items_hash(&self) -> &[u32] {
-        &self.hash
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
     }
 }
 
@@ -447,11 +441,11 @@ impl Routes {
     pub fn match_page_with_allocator<'p>(
         &mut self,
         _: &[u8],
-        url_path: &URLPath,
+        url_path: &'p URLPath,
         params: &'p mut route_param::List<'p>,
     ) -> Option<Match<'p>> {
         // Trim trailing slash
-        let mut path = url_path.path;
+        let mut path = url_path.path();
         let mut redirect = false;
 
         // Normalize trailing slash
@@ -494,11 +488,11 @@ impl Routes {
                     params: std::ptr::from_mut(params),
                     name: index.name,
                     path: index.abs_path.as_bytes(),
-                    pathname: url_path.pathname,
+                    pathname: url_path.pathname(),
                     basename: index.basename,
                     hash: INDEX_ROUTE_HASH,
                     file_path: index.abs_path.as_bytes(),
-                    query_string: url_path.query_string,
+                    query_string: url_path.query_string(),
                     client_framework_enabled: self.client_framework_enabled,
                     redirect_path: None,
                 });
@@ -515,11 +509,11 @@ impl Routes {
                 params: std::ptr::from_mut(params),
                 name: route.name,
                 path: route.abs_path.as_bytes(),
-                pathname: url_path.pathname,
+                pathname: url_path.pathname(),
                 basename: route.basename,
                 hash: route.full_hash,
                 file_path: route.abs_path.as_bytes(),
-                query_string: url_path.query_string,
+                query_string: url_path.query_string(),
                 client_framework_enabled: self.client_framework_enabled,
                 redirect_path: None,
             });
@@ -531,7 +525,7 @@ impl Routes {
     pub fn match_page<'p>(
         &mut self,
         _: &[u8],
-        url_path: &URLPath,
+        url_path: &'p URLPath,
         params: &'p mut route_param::List<'p>,
     ) -> Option<Match<'p>> {
         self.match_page_with_allocator(b"", url_path, params)
@@ -734,6 +728,7 @@ impl<'a> RouteLoader<'a> {
         route_list
             .set_capacity(this.all_routes.len())
             .expect("unreachable");
+        let route_capacity = this.all_routes.len();
 
         let mut dynamic_start: Option<usize> = None;
         let mut index_id: Option<usize> = None;
@@ -752,7 +747,8 @@ impl<'a> RouteLoader<'a> {
                 route.match_name.as_bytes(),
                 route.public_path.as_bytes(),
             );
-            route_list.push(RouteIndex {
+            debug_assert!(route_list.len() < route_capacity);
+            route_list.append_assume_capacity(RouteIndex {
                 name: route.name,
                 filepath,
                 match_name,
@@ -2104,7 +2100,7 @@ mod tests {
             // still flushes diagnostics on early-return for parity.
             let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
+                let _ = bun_core::output::with_error_writer(|w| unsafe { &*log }.print(w));
             });
 
             // const opts = Options.BundleOptions{ .target = .browser, ... };
@@ -2175,7 +2171,7 @@ mod tests {
             let mut log = bun_ast::Log::init();
             let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
                 // SAFETY: pointer to a stack local that outlives this guard.
-                let _ = unsafe { &*log }.print(bun_core::output::error_writer());
+                let _ = bun_core::output::with_error_writer(|w| unsafe { &*log }.print(w));
             });
 
             let opts = bun_resolver::options::BundleOptions {

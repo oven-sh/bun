@@ -673,3 +673,92 @@ test("importing bun:main from HTML entry preload does not crash", async () => {
   proc.kill();
   await proc.exited;
 });
+
+const pluginFixtureFiles = {
+  "bunfig.toml": `
+[serve.static]
+plugins = ["./plugin.ts"]
+`,
+  "plugin.ts": /*ts*/ `
+const plugin: Bun.BunPlugin = {
+  name: "marker-plugin",
+  setup(build) {
+    build.onLoad({ filter: /marker\\.js$/ }, () => ({
+      contents: "globalThis.__marker = 'from-plugin';",
+      loader: "js",
+    }));
+  },
+};
+export default plugin;
+`,
+  "index.html": /*html*/ `
+    <!DOCTYPE html>
+    <html>
+      <head><script type="module" src="marker.js"></script></head>
+      <body><h1>plugin serve test</h1></body>
+    </html>
+  `,
+  "marker.js": `globalThis.__marker = "original";`,
+};
+
+test("html route with serve.static plugin injects plugin contents (production)", async () => {
+  // Exercises ServePlugins' intrusive refcount: the bunfig `serve.static`
+  // plugin is loaded asynchronously while the HTML route waits on it, and
+  // the promise context pointer round-trips FFI.
+  const dir = tempDirWithFiles("html-plugin-prod-test", pluginFixtureFiles);
+
+  await using process = Bun.spawn({
+    cmd: [bunExe(), "index.html", "--port=0"],
+    env: { ...bunEnv, NODE_ENV: "production" },
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const serverUrl = await getServerUrl(process);
+
+  const response = await fetch(serverUrl);
+  expect(response.status).toBe(200);
+  const html = await response.text();
+  expect(html).toContain("plugin serve test");
+  const m = html.match(/src="(\/chunk-[a-z0-9]+\.js)"/);
+  expect(m).not.toBeNull();
+
+  // The bundled script must contain the plugin-injected contents.
+  const js = await fetch(new URL(m![1], serverUrl).href).then(r => r.text());
+  expect(js).toContain("from-plugin");
+  expect(js).not.toContain('"original"');
+
+  process.kill();
+  await process.exited;
+});
+
+test("dev server html route serves repeatedly and shuts down cleanly", async () => {
+  // Exercises the DevServer's per-route strong ref on the HTMLBundle route
+  // (taken when the route bundle is created, released at dev-server
+  // teardown) — a double-release crashes at shutdown, a missed one leaks.
+  // Repeated fetches re-enter the cached-route path; clean exit verifies
+  // teardown. Assertions deliberately avoid depending on the dev-mode HTML
+  // script-injection shape.
+  const dir = tempDirWithFiles("html-dev-route-test", pluginFixtureFiles);
+
+  await using process = Bun.spawn({
+    cmd: [bunExe(), "index.html", "--port=0"],
+    env: { ...bunEnv, NODE_ENV: "development" },
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const serverUrl = await getServerUrl(process);
+
+  for (let i = 0; i < 5; i++) {
+    const response = await fetch(serverUrl);
+    expect(response.status).toBe(200);
+    const html = await response.text();
+    expect(html).toContain("plugin serve test");
+  }
+
+  process.kill();
+  await process.exited;
+});

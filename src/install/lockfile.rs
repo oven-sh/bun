@@ -1778,10 +1778,7 @@ impl<'a> Printer<'a> {
                     ),
                 }
                 if log.errors > 0 {
-                    // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
-                    // not `&mut &mut Writer` — pass the raw vtable pointer.
-                    let ew: *mut bun_core::io::Writer = Output::error_writer();
-                    log.print(ew)?;
+                    Output::with_error_writer(|w| log.print(w))?;
                 }
                 Global::crash();
             }
@@ -1797,8 +1794,12 @@ impl<'a> Printer<'a> {
             crate::lockfile::LoadResult::Ok(_) => {}
         }
 
-        let writer = Output::writer_buffered();
-        match Self::print_with_lockfile(&lockfile, format, writer) {
+        // SAFETY (scoped reborrow): `print_with_lockfile` is a pure
+        // serializer — it writes through `W` and never re-enters
+        // `bun_core::output`, so no second `&mut Writer` can alias this one.
+        match Output::with_writer_buffered(|w| {
+            Self::print_with_lockfile(&lockfile, format, unsafe { &mut *w })
+        }) {
             Ok(()) => {}
             Err(e) if e == err!("OutOfMemory") => bun_core::out_of_memory(),
             Err(e) if e == err!("BrokenPipe") || e == err!("WriteFailed") => return Ok(()),
@@ -3146,8 +3147,9 @@ impl Lockfile {
         if print_name_version_string {
             Output::flush();
             Output::disable_buffering();
-            Output::writer()
-                .write_all(alphabetized_name_version_string)
+            // SAFETY (scoped reborrow): `write_all` goes straight to the
+            // stream vtable and does not re-enter `bun_core::output`.
+            Output::with_writer(|w| unsafe { &mut *w }.write_all(alphabetized_name_version_string))
                 .expect("unreachable");
             Output::enable_buffering();
         }

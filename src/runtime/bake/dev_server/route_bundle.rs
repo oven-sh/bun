@@ -34,12 +34,11 @@ pub struct Framework {
 }
 
 pub struct Html {
-    /// SHARED (LIFETIMES.tsv): DevServer increments the route's intrusive
-    /// refcount via `.initRef(html)` when storing; `.deref()` on drop.
-    /// Stored as raw ptr because `HTMLBundleRoute` does not yet impl
-    /// `bun_ptr::RefCounted` (gated server-side).
-    // TODO: switch to bun_ptr::RefPtr<HTMLBundleRoute> once the RefCounted impl is real.
-    pub html_bundle: *mut HTMLBundleRoute,
+    /// SHARED (LIFETIMES.tsv): the slot owns one intrusive ref, taken via
+    /// `RefPtr::init_ref` when DevServer stores it in `get_or_put_route_bundle`.
+    /// `RefPtr` has no `Drop` — the owned ref is released explicitly by
+    /// `DevServer::deinit`'s route-bundle teardown loop (`html_bundle.deref()`).
+    pub html_bundle: bun_ptr::RefPtr<HTMLBundleRoute>,
     pub bundled_file: incremental_graph::ClientFileIndex,
     pub script_injection_offset: Option<ByteOffset>,
     pub bundled_html_text: Option<Box<[u8]>>,
@@ -168,4 +167,4 @@ impl RouteBundle {
 //   - client_bundle / cached_response: Option<Arc<StaticRoute>> drop = .deref()
 //   - Framework: StrongOptional fields drop = .deinit()
 //   - Html: bundled_html_text Box<[u8]> drop = allocator.free()
-//           html_bundle RefPtr drop = .deref()
+//           html_bundle: explicit .deref() in DevServer::deinit (RefPtr has no Drop)

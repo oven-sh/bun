@@ -42,7 +42,7 @@ use crate::package_manager_real::PackageManager;
 // `crate::Task` is a `()` stub; the real Task lives in `package_manager_task`.
 // `'static` is sound here because we only ever hold raw `*mut Task` and never
 // materialise a `&'static` borrow of the inner `Request` lifetime.
-type Task = crate::package_manager_task::Task<'static>;
+type Task = crate::package_manager_task::Task;
 
 bun_output::declare_scope!(TarballStream, hidden);
 

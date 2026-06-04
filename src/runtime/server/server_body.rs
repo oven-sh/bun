@@ -832,13 +832,20 @@ pub struct ServerInitContext<'a> {
 
 // ─── ServePlugins ────────────────────────────────────────────────────────────
 /// State machine to handle loading plugins asynchronously. This structure is not thread-safe.
+///
+/// Intrusively refcounted via `#[derive(bun_ptr::CellRefCounted)]` (which also
+/// emits the `AnyRefCounted` bridge, so `bun_ptr::IntrusiveRc<ServePlugins>` /
+/// `ScopedRef` work). The refcount is incremented while other objects
+/// (HTMLBundle routes, DevServer) wait on plugin loads; the raw `*ServePlugins`
+/// crosses FFI as the JSPromise then/catch context pointer; the last deref
+/// frees. The derive's `deref` projects the count via `addr_of!` and frees
+/// through the original allocation pointer, preserving the `heap::alloc`
+/// provenance from [`ServePlugins::init`].
+#[derive(bun_ptr::CellRefCounted)]
 pub struct ServePlugins {
     state: ServePluginsState,
     ref_count: core::cell::Cell<u32>,
 }
-
-// Reference count is incremented while there are other objects waiting on plugin loads.
-// Maps to bun_ptr::IntrusiveRc<ServePlugins> — *ServePlugins crosses FFI as promise context ptr.
 
 pub enum ServePluginsState {
     Unqueued(Box<[Box<[u8]>]>),
@@ -886,43 +893,10 @@ impl ServePlugins {
         }))
     }
 
-    pub fn ref_(&self) {
-        self.ref_count.set(self.ref_count.get() + 1);
-    }
-
-    /// Bump the refcount and return an RAII guard that derefs on `Drop`.
-    ///
-    /// # Safety
-    /// `this` must originate from [`ServePlugins::init`] (carry `heap::alloc`
-    /// write provenance) so the eventual `deref_` can free it. Do **not** derive
-    /// `this` from a `&Self`/`&mut Self` reborrow — under Stacked Borrows that
-    /// pointer is invalidated by later writes through the reference and cannot
-    /// be used to deallocate.
-    #[inline]
-    unsafe fn guard_ref(this: *mut Self) -> ServePluginsRef {
-        // SAFETY: caller contract — `this` is live.
-        unsafe { (*this).ref_() };
-        ServePluginsRef(this)
-    }
-
-    /// Decrement the intrusive refcount, freeing the allocation when it hits zero.
-    ///
-    /// Takes the raw `*mut` (not `&self`) so the original `heap::alloc` provenance
-    /// from [`ServePlugins::init`] is preserved for the final `heap::take` — going
-    /// through `&self` would narrow provenance to read-only and make the drop UB.
-    ///
-    /// SAFETY: `this` must originate from [`ServePlugins::init`] and the caller must
-    /// hold a counted reference.
-    pub unsafe fn deref_(this: *mut Self) {
-        // SAFETY: caller contract — `this` is live while refcount > 0
-        let rc = unsafe { &(*this).ref_count };
-        let n = rc.get() - 1;
-        rc.set(n);
-        if n == 0 {
-            // SAFETY: refcount hit zero; `this` carries the heap::alloc provenance from init()
-            unsafe { drop(bun_core::heap::take(this)) };
-        }
-    }
+    // `ref_()` / `deref(this: *mut Self)` are emitted by the
+    // `CellRefCounted` derive; the deref projects the refcount via `addr_of!`
+    // (never forming `&Self`) and frees through the raw allocation pointer,
+    // so provenance from `init()`'s `heap::into_raw` is preserved.
 
     pub fn get_or_start_load(
         &mut self,
@@ -989,7 +963,7 @@ impl ServePlugins {
         // lives in the caller (`get_or_load_plugins`), which holds the heap-allocated
         // `*mut ServePlugins` directly. Deriving the guard's pointer from `&mut self`
         // here would give it a tag that is invalidated by the writes to `self.state`
-        // below (Stacked Borrows), making the eventual `heap::take` in `deref_` UB.
+        // below (Stacked Borrows), making the eventual free in `deref` UB.
 
         let plugin = JSBundler::Plugin::create(global, bun_jsc::BunPluginTarget::Browser);
         // SAFETY: `Plugin::create` returns a freshly-boxed `*mut Plugin` (single owner).
@@ -1142,35 +1116,6 @@ impl ServePlugins {
     }
 }
 
-/// RAII owner of one counted reference to a [`ServePlugins`]. Drops the
-/// reference via [`ServePlugins::deref_`] on scope exit.
-///
-/// Holds the raw `*mut` from [`ServePlugins::init`] so the final `heap::take`
-/// has write/dealloc provenance over the whole allocation. Never construct this
-/// from a pointer derived through `&ServePlugins` — that yields a SharedReadOnly
-/// tag under Stacked Borrows and freeing through it is UB.
-struct ServePluginsRef(*mut ServePlugins);
-
-impl ServePluginsRef {
-    /// Adopt an existing +1 reference (no increment).
-    ///
-    /// # Safety
-    /// Caller must own one counted reference to `ptr`, and `ptr` must carry the
-    /// `heap::alloc` provenance from [`ServePlugins::init`].
-    #[inline]
-    unsafe fn adopt(ptr: *mut ServePlugins) -> Self {
-        Self(ptr)
-    }
-}
-
-impl Drop for ServePluginsRef {
-    #[inline]
-    fn drop(&mut self) {
-        // SAFETY: constructed via `adopt`/`guard_ref` with a live counted ref.
-        unsafe { ServePlugins::deref_(self.0) };
-    }
-}
-
 impl Drop for ServePlugins {
     fn drop(&mut self) {
         match &self.state {
@@ -1191,8 +1136,11 @@ pub(super) fn on_resolve_impl(
 
     let [plugins_result, plugins_js] = callframe.arguments_as_array::<2>();
     let plugins = plugins_js.as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); deref pairs with that ref
-    let _guard = unsafe { ServePluginsRef::adopt(plugins) };
+    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); the
+    // adopted guard's drop-deref pairs with that ref (provenance: the raw ptr
+    // round-trips FFI untouched, so the final free sees `init()`'s allocation
+    // pointer).
+    let _guard = unsafe { bun_ptr::ScopedRef::<ServePlugins>::adopt(plugins) };
     plugins_result.ensure_still_alive();
 
     // SAFETY: pointer was passed via .then() above
@@ -1207,8 +1155,9 @@ pub(super) fn on_reject_impl(global: &JSGlobalObject, callframe: &CallFrame) -> 
 
     let [error_js, plugin_js] = callframe.arguments_as_array::<2>();
     let plugins = plugin_js.as_promise_ptr::<ServePlugins>();
-    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); deref pairs with that ref
-    let _guard = unsafe { ServePluginsRef::adopt(plugins) };
+    // SAFETY: `plugins` was heap-allocated and ref()'d before .then(); the
+    // adopted guard's drop-deref pairs with that ref (see on_resolve above).
+    let _guard = unsafe { bun_ptr::ScopedRef::<ServePlugins>::adopt(plugins) };
     // SAFETY: pointer was passed via .then() above
     unsafe { &mut *plugins }.handle_on_reject(global, error_js);
 
@@ -1427,8 +1376,9 @@ where
             // `&mut *p` reborrow below and remains valid for `heap::take` on drop.
             //
             // SAFETY: `p` was produced by `ServePlugins::init` (heap::alloc) and is
-            // live while held in `self.plugins`.
-            let _deref_guard = unsafe { ServePlugins::guard_ref(p.as_ptr()) };
+            // live while held in `self.plugins`; the guard's deref-on-drop can
+            // run a re-entrant plugin-rejection path that releases other refs.
+            let _deref_guard = unsafe { bun_ptr::ScopedRef::<ServePlugins>::new(p.as_ptr()) };
             // SAFETY: `plugins` holds a counted ref produced by
             // `ServePlugins::init` (heap::alloc); intrusive refcount permits
             // mutation through any owner. No other `&mut ServePlugins` is live

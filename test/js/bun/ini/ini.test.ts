@@ -585,3 +585,41 @@ const wtf = {
     },
   },
 };
+
+describe("parser arena ownership", () => {
+  // The ini parser now borrows a caller-owned arena (instead of owning one
+  // behind raw-pointer borrow splitting). Repeated parses of inputs that
+  // allocate heavily from the arena (env expansion, quoted-JSON values,
+  // dotted sections) must each produce identical, self-consistent results —
+  // a dangling arena borrow would corrupt or crash on re-parse.
+  test("repeated parses with quoted values and dotted sections are stable", () => {
+    const ini = /* ini */ `
+top = plain value
+quoted = "json \\"value\\" here"
+[a.b.c]
+arr[] = one
+arr[] = two
+[section two]
+x = 1
+`;
+    const first = parse(ini);
+    for (let i = 0; i < 32; i++) {
+      const again = parse(ini);
+      expect(again).toEqual(first);
+    }
+    expect(first.top).toBe("plain value");
+    expect(first.a.b.c.arr).toEqual(["one", "two"]);
+    expect(first["section two"].x).toBe("1");
+  });
+
+  test("large input spanning many arena chunks parses correctly", () => {
+    const lines = [];
+    for (let i = 0; i < 2000; i++) {
+      lines.push(`key${i} = value-${"v".repeat(64)}-${i}`);
+    }
+    const out = parse(lines.join("\n"));
+    expect(out.key0).toBe(`value-${"v".repeat(64)}-0`);
+    expect(out.key1999).toBe(`value-${"v".repeat(64)}-1999`);
+    expect(Object.keys(out).length).toBe(2000);
+  });
+});

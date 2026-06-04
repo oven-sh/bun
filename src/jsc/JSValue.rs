@@ -1163,6 +1163,40 @@ impl JSValue {
             .get(global, property)?
             .filter(|v| !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())))
     }
+    /// `JSValue.getPropertyValue` (JSValue.zig:1565) — like `get`, but safe for
+    /// property names that parse as array indices.
+    pub fn get_property_value(
+        self,
+        global: &JSGlobalObject,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<JSValue>> {
+        let property = property.as_ref();
+        // SAFETY: bytes valid for the call.
+        let v = unsafe {
+            crate::cpp::JSC__JSValue__getPropertyValue(
+                self,
+                global,
+                property.as_ptr(),
+                property.len(),
+            )
+        }?;
+        if v.0 == JSValue::PROPERTY_DOES_NOT_EXIST.0 || v.is_undefined() {
+            Ok(None)
+        } else {
+            Ok(Some(v))
+        }
+    }
+    /// `JSValue.getTruthyPropertyValue` (JSValue.zig:1668) — `get_truthy` for
+    /// property names that may parse as array indices.
+    pub fn get_truthy_property_value(
+        self,
+        global: &JSGlobalObject,
+        property: impl AsRef<[u8]>,
+    ) -> JsResult<Option<JSValue>> {
+        Ok(self
+            .get_property_value(global, property)?
+            .filter(|v| !v.is_empty_or_undefined_or_null() && !(v.is_string() && !v.to_boolean())))
+    }
     /// JSValue.zig:1649 `getTruthyComptime` — `fast_get` (precached `JSC::Identifier`,
     /// no StringImpl alloc / atom-table probe) followed by the same `truthyPropertyValue`
     /// filter as `get_truthy`. Use this when the property name is a `BuiltinName`.

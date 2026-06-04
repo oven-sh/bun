@@ -4401,9 +4401,9 @@ JSC::EncodedJSValue JSC__JSValue__createObject2(JSC::JSGlobalObject* globalObjec
 // Returns empty for exception, returns deleted if not found.
 // Be careful when handling the return value.
 // Can handle numeric index property names safely. If you know that the property name is not an integer index, use JSC__JSValue__getIfPropertyExistsImpl instead.
-JSC::EncodedJSValue JSC__JSValue__getPropertyValue(JSC::EncodedJSValue encodedValue,
+[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue JSC__JSValue__getPropertyValue(JSC::EncodedJSValue encodedValue,
     JSC::JSGlobalObject* globalObject,
-    const unsigned char* propertyName, uint32_t propertyNameLength)
+    const unsigned char* propertyName, size_t propertyNameLength)
 {
 
     ASSERT_NO_PENDING_EXCEPTION(globalObject);

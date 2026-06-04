@@ -1569,6 +1569,43 @@ it("sensitive headers should work", async () => {
   }
 });
 
+it("sensitive headers work with numeric header names", async () => {
+  const server = http2.createServer();
+  let client;
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    server.on("stream", stream => {
+      stream.respond({
+        ":status": 200,
+        "0": "some-value",
+
+        [http2.sensitiveHeaders]: ["0"],
+      });
+
+      stream.end();
+    });
+
+    server.listen(0, () => {
+      const port = server.address().port;
+      client = http2.connect(`http://localhost:${port}`);
+
+      client.on("error", reject);
+
+      const req = client.request({ ":path": "/", "1": "x" });
+      req.on("response", resolve);
+      req.on("error", reject);
+      req.end();
+    });
+    const res = await promise;
+
+    expect(res["0"]).toBe("some-value");
+    expect(res[http2.sensitiveHeaders]).toEqual(["0"]);
+  } finally {
+    server.close();
+    client?.close?.();
+  }
+});
+
 it("http2 session.goaway() validates input types", async done => {
   const { mustCall } = createCallCheckCtx(done);
   const server = http2.createServer((req, res) => {

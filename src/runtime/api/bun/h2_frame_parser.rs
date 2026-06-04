@@ -6206,11 +6206,14 @@ impl H2FrameParser {
                         }
                     };
 
-                    let never_index =
-                        match sensitive_arg.get_truthy(global_object, validated_name)? {
-                            Some(_) => true,
-                            None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
-                        };
+                    let never_index = match sensitive_arg
+                        .get_truthy_property_value(global_object, validated_name)?
+                    {
+                        Some(_) => true,
+                        None => sensitive_arg
+                            .get_truthy_property_value(global_object, name)?
+                            .is_some(),
+                    };
 
                     let value_slice = value_str.to_slice(global_object);
                     let value = value_slice.slice();
@@ -6248,10 +6251,13 @@ impl H2FrameParser {
                     }
                 };
 
-                let never_index = match sensitive_arg.get_truthy(global_object, validated_name)? {
-                    Some(_) => true,
-                    None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
-                };
+                let never_index =
+                    match sensitive_arg.get_truthy_property_value(global_object, validated_name)? {
+                        Some(_) => true,
+                        None => sensitive_arg
+                            .get_truthy_property_value(global_object, name)?
+                            .is_some(),
+                    };
 
                 let value_slice = value_str.to_slice(global_object);
                 let value = value_slice.slice();
@@ -6837,11 +6843,14 @@ impl H2FrameParser {
                             }
                         };
 
-                        let never_index =
-                            match sensitive_arg.get_truthy(global_object, validated_name)? {
-                                Some(_) => true,
-                                None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
-                            };
+                        let never_index = match sensitive_arg
+                            .get_truthy_property_value(global_object, validated_name)?
+                        {
+                            Some(_) => true,
+                            None => sensitive_arg
+                                .get_truthy_property_value(global_object, name)?
+                                .is_some(),
+                        };
 
                         let value_slice = value_str.to_slice(global_object);
                         let value = value_slice.slice();
@@ -6924,11 +6933,14 @@ impl H2FrameParser {
                         }
                     };
 
-                    let never_index =
-                        match sensitive_arg.get_truthy(global_object, validated_name)? {
-                            Some(_) => true,
-                            None => sensitive_arg.get_truthy(global_object, name)?.is_some(),
-                        };
+                    let never_index = match sensitive_arg
+                        .get_truthy_property_value(global_object, validated_name)?
+                    {
+                        Some(_) => true,
+                        None => sensitive_arg
+                            .get_truthy_property_value(global_object, name)?
+                            .is_some(),
+                    };
 
                     let value_slice = value_str.to_slice(global_object);
                     let value = value_slice.slice();

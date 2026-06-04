@@ -525,7 +525,7 @@ class BroadcastWriter {
   }
 
   // end() is synchronous internally - signal accepted for interface compliance.
-  end(options) {
+  end(_options) {
     if (this.#isClosed()) return this.#closed;
     this.#closed = Promise.resolve(this.#totalBytes);
     this.#broadcast[kEnd]();

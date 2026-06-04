@@ -1268,10 +1268,7 @@ Readable.prototype.iterator = function (options) {
 
   Readable.prototype[toAsyncStreamable] = function () {
     if (createBatchedAsyncIterator === undefined) {
-      if (
-        !process.execArgv.includes("--experimental-stream-iter") &&
-        process.env.BUN_EXPERIMENTAL_STREAM_ITER !== "1"
-      ) {
+      if (!process.execArgv.includes("--experimental-stream-iter")) {
         throw $ERR_STREAM_ITER_MISSING_FLAG();
       }
       ({ createBatchedAsyncIterator, normalizeBatch } = require("internal/streams/iter/classic"));

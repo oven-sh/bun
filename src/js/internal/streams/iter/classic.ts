@@ -508,11 +508,11 @@ function fromWritable(writable, options = kNullPrototype) {
       return Math.max(0, hwm - (writable.writableLength ?? 0));
     },
 
-    writeSync(chunk) {
+    writeSync(_chunk) {
       return false;
     },
 
-    writevSync(chunks) {
+    writevSync(_chunks) {
       return false;
     },
 

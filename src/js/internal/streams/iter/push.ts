@@ -606,7 +606,7 @@ class PushWriter {
     return result;
   }
 
-  end(options) {
+  end(_options) {
     const result = this.#queue.end();
     if (result === -2) {
       // Errored: reject with stored error

@@ -2365,6 +2365,16 @@ pub mod parse_worker {
         // pointer (which targets `(*transpiler).resolver`) remains valid.
         let topts = unsafe { &(*transpiler).options };
 
+        // Scan `"use client"` / `"use server"` on the ORIGINAL bytes, before the
+        // React Compiler rewrite below: the client/server boundary decision must
+        // not depend on whether the vendored emitter keeps the directive
+        // prologue ahead of its injected `react/compiler-runtime` import.
+        let use_directive: UseDirective = if !is_empty && topts.server_components {
+            UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
+        } else {
+            UseDirective::None
+        };
+
         // React Compiler (experimental): source-to-source rewrite before Bun's
         // parser runs. `compile_source` returns `None` whenever the file should
         // be used as-is (no components/hooks, opt-out directive, unsupported
@@ -2397,12 +2407,6 @@ pub mod parse_worker {
                 }
             }
         }
-
-        let use_directive: UseDirective = if !is_empty && topts.server_components {
-            UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
-        } else {
-            UseDirective::None
-        };
 
         if (use_directive == UseDirective::Client
         && task.known_target != options::Target::ServerComponentsSsr

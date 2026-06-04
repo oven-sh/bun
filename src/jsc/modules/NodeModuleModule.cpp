@@ -160,8 +160,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
 
     JSString* dirname = jsEmptyString(vm);
 
-    // TODO: handle when JSGlobalObject !== Bun::GlobalObject, such as in node:vm
-    Structure* structure = static_cast<Bun::GlobalObject*>(globalObject)
+    // The lexical global object is not always a Bun::GlobalObject (e.g. inside
+    // node:vm); fall back to the main global's structure in that case.
+    Structure* structure = defaultGlobalObject(globalObject)
                                ->CommonJSModuleObjectStructure();
 
     // TODO: handle ShadowRealm, node:vm, new.target, subclasses

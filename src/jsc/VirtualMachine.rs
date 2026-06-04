@@ -4707,6 +4707,12 @@ impl VirtualMachine {
 
         if let Some(rare) = self.rare_data.as_deref_mut() {
             rare.close_all_watchers_for_isolation();
+            // Stop leaked servers through their own lifecycle (listener close +
+            // `js_value` downgrade) BEFORE the blind socket-group walk below.
+            // The walk only closes fds — the server would keep `has_listener()`
+            // true and its strong `js_value` would pin the outgoing global
+            // (fetch handler closure and all) for the rest of the run.
+            rare.stop_all_servers_for_isolation();
         }
 
         {
@@ -4763,6 +4769,19 @@ impl VirtualMachine {
         self.auto_killer.clear();
 
         self.test_isolation_generation = self.test_isolation_generation.wrapping_add(1);
+
+        // Generation-stale JS timers would otherwise release their pins only
+        // when they fire — a module-scope `setTimeout(cb, 3_600_000)` keeps a
+        // Strong on its wrapper (and thereby the outgoing global's whole
+        // graph) for an hour. Every TimeoutObject / ImmediateObject /
+        // AbortSignal timeout in the heap belongs to the outgoing file (the
+        // new global doesn't exist yet), so drop them eagerly, same as
+        // `global_exit()`. Runs no user JS.
+        if let Some(hooks) = runtime_hooks() {
+            // SAFETY: live per-thread VM on the JS thread; `runtime_state`
+            // stays installed for the whole test run.
+            unsafe { (hooks.cancel_all_timers)(core::ptr::from_mut(self)) };
+        }
 
         self.overridden_main.deinit();
         self.entry_point_result.value.deinit();

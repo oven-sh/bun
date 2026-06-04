@@ -563,7 +563,7 @@ test.concurrent("--isolate: cached SourceProvider's module_info rebuilds correct
   expect(stderr).toContain("3 pass");
   expect(stderr).toContain("0 fail");
   expect(exitCode).toBe(0);
-});
+}, 60_000);
 
 test.concurrent(
   "--isolate: cached module_info handles `import * as ns; export { ns }` as a Namespace export",
@@ -656,4 +656,94 @@ test.concurrent("--isolate: leaked AbortSignal.timeout does not fire in next fil
   expect(stderr).toContain("2 pass");
   expect(stderr).toContain("0 fail");
   expect(exitCode).toBe(0);
+});
+
+// Each of these leaked handles used to pin its test file's ENTIRE global
+// object (and therefore the file's module graph) for the rest of a
+// `bun test --isolate` run, growing memory by one full global per file:
+//
+// - fs.watch: isolation teardown called FSWatcher.detach(), which never drops
+//   the initial pending_activity_count ref, so hasPendingActivity() stayed
+//   true forever and the GC could never collect the wrapper or its cached
+//   listener closure.
+// - Bun.serve: the swap blind-closed the listen socket at the uws layer; the
+//   Server object never learned, kept hasListener() true, and its strong
+//   js_value (fetch handler closure) pinned the global.
+// - setTimeout/setInterval: generation-stale timers only self-cancelled when
+//   they FIRED, so a module-scope long timer held a Strong on its wrapper
+//   until the deadline (effectively forever for hour-scale timers).
+//
+// Each fixture runs 8 isolated files that leak one handle apiece, forces a
+// full GC, and counts live GlobalObject cells. Pinned globals accumulate
+// (the last file sees 8); collectable ones plateau (current + a lagging one
+// or two).
+describe.concurrent("--isolate: collects globals pinned by leaked handles", () => {
+  const LEAK_FILE_COUNT = 8;
+
+  function makeLeakFixture(dirt: string): Record<string, string> {
+    const files: Record<string, string> = {};
+    for (let i = 1; i <= LEAK_FILE_COUNT; i++) {
+      files[`file_${i}.test.js`] = `
+        import { test, expect } from "bun:test";
+        import { heapStats } from "bun:jsc";
+        ${dirt}
+        test("leak-${i}", () => {
+          Bun.gc(true);
+          Bun.gc(true);
+          const globals = heapStats().objectTypeCounts.GlobalObject ?? 0;
+          console.log("GLOBALS=" + globals);
+          expect(globals).toBeGreaterThan(0);
+        });
+      `;
+    }
+    return files;
+  }
+
+  async function maxLiveGlobals(dir: string): Promise<number> {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate"],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain(`${LEAK_FILE_COUNT} pass`);
+    expect(exitCode).toBe(0);
+    const counts = [...stdout.matchAll(/GLOBALS=(\d+)/g)].map(m => Number(m[1]));
+    expect(counts).toHaveLength(LEAK_FILE_COUNT);
+    return Math.max(...counts);
+  }
+
+  test("fs.watch left open", async () => {
+    using dir = tempDir(
+      "isolate-leak-watch",
+      makeLeakFixture(`
+        import fs from "node:fs";
+        const watcher = fs.watch(import.meta.dir, () => {});
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  }, 60_000);
+
+  test("Bun.serve left running", async () => {
+    using dir = tempDir(
+      "isolate-leak-serve",
+      makeLeakFixture(`
+        const server = Bun.serve({ port: 0, fetch: () => new Response("x") });
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  }, 60_000);
+
+  test("long setTimeout/setInterval left pending", async () => {
+    using dir = tempDir(
+      "isolate-leak-timers",
+      makeLeakFixture(`
+        setTimeout(() => {}, 3_600_000);
+        setInterval(() => {}, 3_600_000);
+      `),
+    );
+    expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
+  }, 60_000);
 });

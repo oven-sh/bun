@@ -982,6 +982,25 @@ impl FSWatcher {
         // TODO(port): bun.Mutex lock/unlock — verify RAII guard vs manual unlock semantics.
     }
 
+    /// `bun test --isolate` teardown: `close()` minus the `'close'` event (no
+    /// user JS mid-swap; parity with `StatWatcher::close`). Dropping the
+    /// initial pending-activity ref is the load-bearing part — `detach()`
+    /// alone leaves `pending_activity_count` at 1, so `has_pending_activity()`
+    /// stays true forever and the GC can never collect the wrapper, pinning
+    /// the cached listener (and the outgoing file's entire global) for the
+    /// rest of the run.
+    pub fn close_for_isolation(&self) {
+        self.mutex.lock();
+        if !self.closed.get() {
+            self.closed.set(true);
+            self.mutex.unlock();
+            self.detach();
+            self.unref_task();
+        } else {
+            self.mutex.unlock();
+        }
+    }
+
     // this can be called multiple times
     pub fn detach(&self) {
         let ctx_ptr = self.as_ctx_ptr().cast::<c_void>();
@@ -1136,11 +1155,12 @@ impl FSWatcher {
             vm_ref.as_mut().rare_data().add_fs_watcher_for_isolation(
                 ctx.cast::<c_void>(),
                 // §Dispatch cold-path vtable — `bun_jsc::RareData` stores
-                // (ptr, close-fn) so it can fire detach without naming FSWatcher.
+                // (ptr, close-fn) so it can fire the close without naming
+                // FSWatcher.
                 |p| {
                     // SAFETY: `p` is the `ctx` registered above; still live
                     // until `remove_fs_watcher_for_isolation` runs.
-                    unsafe { (*p.cast::<FSWatcher>()).detach() }
+                    unsafe { (*p.cast::<FSWatcher>()).close_for_isolation() }
                 },
             );
         }

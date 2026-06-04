@@ -297,6 +297,12 @@ pub struct RareData {
 
     pub fs_watchers_for_isolation: Vec<IsolationWatcher>,
     pub stat_watchers_for_isolation: Vec<IsolationWatcher>,
+    /// Listening `Bun.serve`/node:http servers (erased `NewServer<SSL, DEBUG>`
+    /// + monomorphized stop fn). `bun test --isolate` teardown stops each one
+    /// properly — blind-closing the listen socket at the uws layer leaves the
+    /// server's `has_listener()` true and its strong `js_value` pinning the
+    /// outgoing global forever.
+    pub servers_for_isolation: Vec<IsolationWatcher>,
 
     pub temp_pipe_read_buffer: Option<Box<PipeReadBuffer>>,
 
@@ -358,6 +364,7 @@ impl Default for RareData {
             listening_sockets_for_watch_mode: Mutex::new(Vec::new()),
             fs_watchers_for_isolation: Vec::new(),
             stat_watchers_for_isolation: Vec::new(),
+            servers_for_isolation: Vec::new(),
             temp_pipe_read_buffer: None,
             s3_default_client: Strong::empty(),
             default_csrf_secret: Box::default(),
@@ -864,6 +871,40 @@ impl RareData {
                 break;
             };
             // SAFETY: registered via add_stat_watcher_for_isolation; still live.
+            unsafe { (w.close)(w.ptr) };
+            core::hint::black_box(this);
+        }
+    }
+
+    // ── isolation servers (Bun.serve / node:http) ─────────────────────────
+    pub fn add_server_for_isolation(&mut self, server: *mut c_void, stop: unsafe fn(*mut c_void)) {
+        self.servers_for_isolation.push(IsolationWatcher {
+            ptr: server,
+            close: stop,
+        });
+    }
+    pub fn remove_server_for_isolation(&mut self, server: *mut c_void) {
+        if let Some(i) = self
+            .servers_for_isolation
+            .iter()
+            .position(|w| w.ptr == server)
+        {
+            self.servers_for_isolation.swap_remove(i);
+        }
+    }
+    pub fn stop_all_servers_for_isolation(&mut self) {
+        // Same R-2 noalias mitigation as `close_all_watchers_for_isolation`:
+        // `stop` re-enters JS (abrupt close fires socket handlers), which can
+        // call `Bun.serve` again and push onto this Vec mid-drain.
+        let this: *mut Self = core::hint::black_box(core::ptr::from_mut(self));
+        loop {
+            // SAFETY: `this` is the unique live `RareData` (boxed by VM);
+            // momentary `&mut` only, ended before the re-entrant stop.
+            let Some(w) = (unsafe { &mut (*this).servers_for_isolation }).pop() else {
+                break;
+            };
+            // SAFETY: registered via add_server_for_isolation; the server
+            // unregisters in `stop_listening`/`deinit` before it is freed.
             unsafe { (w.close)(w.ptr) };
             core::hint::black_box(this);
         }

@@ -1537,6 +1537,15 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     pub fn stop_listening(&mut self, abrupt: bool) {
         // httplog!("stopListening", .{});
 
+        if self.vm().test_isolation_enabled {
+            // SAFETY: `vm_mut()` is the live thread-local VM pointer.
+            unsafe {
+                (*self.vm_mut())
+                    .rare_data()
+                    .remove_server_for_isolation(core::ptr::from_mut(self).cast());
+            }
+        }
+
         if Self::HAS_H3 {
             if let Some(h3l) = self.h3_listener.take() {
                 // Graceful: GOAWAY + drain via the still-open UDP socket; the
@@ -1863,6 +1872,16 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // This should've already been handled in stop_listening; however, when
         // the JS VM terminates, it hypothetically might not call stop_listening.
         this_ref.notify_inspector_server_stopped();
+        if this_ref.vm().test_isolation_enabled {
+            // Backstop for the same hypothetical — never leave a dangling
+            // registry entry behind the free below.
+            // SAFETY: `vm_mut()` is the live thread-local VM pointer.
+            unsafe {
+                (*this_ref.vm_mut())
+                    .rare_data()
+                    .remove_server_for_isolation(this.cast());
+            }
+        }
 
         // PORT NOTE: owned-field cleanup (all_closed_promise / user_routes /
         // config / on_clienterror / h3_alt_svc / dev_server / plugins) is

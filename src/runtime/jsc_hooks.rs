@@ -329,9 +329,9 @@ unsafe fn init_runtime_state(
     // validity-invariant UB, so write via `ptr::write` (NOT assignment — the
     // zeroed bytes are not a valid `Transpiler` to drop).
     //
-    // PORT NOTE: `configure_transform_options_for_bun_vm` lives in the
-    // ``-gated `bun_jsc::config` module; its body (3 field overwrites) is
-    // inlined below over the caller-supplied `opts.transform_options`.
+    // PORT NOTE: Zig's `configureTransformOptionsForBunVM` (jsc/config.zig)
+    // has its body (3 field overwrites) inlined below over the
+    // caller-supplied `opts.transform_options`.
     // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
     // `VirtualMachine::init` immediately before this hook fires.
     let log: *mut bun_ast::Log = unsafe { &*vm }
@@ -3002,11 +3002,6 @@ fn transpile_source_code_inner(
                 }
 
                 // Spec :553-558 — watcher path uses ref-counted source.
-                // TODO(b2-blocked): `VirtualMachine::ref_counted_resolved_source`.
-                // Spec RETURNS the ref-counted `ResolvedSource` here (with
-                // `is_commonjs_module`/`module_info` patched on). Gated so the
-                // fall-through to the non-watcher tail below is an explicit,
-                // intentional degradation rather than a silent live divergence.
                 // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
                 if unsafe { &*jsc_vm }.is_watcher_enabled() {
                     // SAFETY: `extra.source_code_printer` is non-null per

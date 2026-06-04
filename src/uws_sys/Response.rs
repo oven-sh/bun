@@ -825,7 +825,6 @@ impl AnyResponse {
     pub fn force_close(self) {
         match self {
             AnyResponse::SSL(ptr) => {
-                // TODO(port): crate::us_socket_t::close signature / CloseCode::Failure
                 // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
                 us_socket_t::opaque_mut(TLSResponse::as_handle(ptr).downcast_socket())
                     .close(crate::us_socket::CloseCode::failure);

@@ -68,9 +68,6 @@ impl FieldMessage {
             if field_int == 0 {
                 break;
             }
-            // TODO(port): Zig `FieldType` is a non-exhaustive `enum(u8)` (the
-            // `init` switch has an `else` arm). `from_raw` must accept any u8
-            // without UB — do NOT `transmute` here.
             let field: FieldType = FieldType::from(field_int);
 
             let message = reader.read_z()?;

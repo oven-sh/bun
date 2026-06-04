@@ -817,7 +817,6 @@ impl Package<u64> {
             total_dependencies_count = 0;
             // PERF(port): was `inline for` — profile if hot.
             for group in dependency_groups {
-                // TODO(port): @field reflection — see note above
                 let map: ExternalStringMap = package_version.dep_group(group.field);
                 let keys = map.name.get(&manifest.external_strings);
                 let version_strings = map.value.get(&manifest.external_strings_for_versions);

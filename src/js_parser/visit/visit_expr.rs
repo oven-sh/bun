@@ -540,11 +540,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         e_.children.truncate(last_child as usize);
                     }
 
-                    // TODO(port): jsxChildrenKeyData in Zig is a mutable `var` of `Expr.Data`
-                    // pointing at `Prefill.String.Children`. ExprData::EString wants a
-                    // `StoreRef<EString>` (arena-backed) so a process-static won't compile (see
-                    // P.rs `` ~7552). Allocate via `p.new_expr` from the const
-                    // `prefill::string::CHILDREN` instead — small extra alloc.
                     // PERF(port): was process-static — profile if it shows up on a hot path
                     let children_key = p.new_expr(prefill::string::CHILDREN, expr.loc);
 
@@ -2557,6 +2552,29 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 return;
             }
         }
+
+        // Collapse a single-`return` body to a shorthand expression body when
+        // minifying syntax while bundling: `(a) => { return a; }` becomes
+        // `(a) => a`. The printer (see js_printer EArrow) emits the shorthand
+        // when `prefer_expr` is set and the lone statement is a `return` with a
+        // value. A bare `return;` (no value) keeps the block body.
+        //
+        // Gated on `bundle` like the `e_function` name-drop below: the runtime
+        // transpiler forces `minify_syntax` on for `target.is_bun()`
+        // (see bundler/options.rs), so without this guard the collapse would
+        // also run for `bun run`/`bun test` and change an arrow's
+        // `Function.prototype.toString()` output.
+        if p.options.features.minify_syntax
+            && p.options.bundle
+            && stmts_list.len() == 1
+            && matches!(
+                stmts_list[0].data,
+                js_ast::StmtData::SReturn(ret) if ret.value.is_some(),
+            )
+        {
+            e_.prefer_expr = true;
+        }
+
         e_.body.stmts = bun_ast::StoreSlice::new_mut(stmts_list.into_bump_slice_mut());
     }
     #[inline(never)] // PERF(port:frame): see e_jsx_element.

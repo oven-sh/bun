@@ -36,8 +36,6 @@ impl NegotiateProtocolVersion {
                 break;
             }
             // `defer option.deinit()` — deleted; `option` drops at end of iteration.
-            // TODO(port): Zig used `borrowUTF8` then dropped `option`; that would dangle.
-            // Clone instead — `option` is Temporary into the connection buffer either way.
             this.unrecognized_options
                 .push(String::clone_utf8(option.slice()));
             // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path.

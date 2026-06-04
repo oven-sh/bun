@@ -9,7 +9,6 @@
 //! Otherwise, it's expected that the containing struct will deallocate the task.
 
 use crate::ManagedTask;
-// TODO(port): confirm crate for UnboundedQueue (bun.UnboundedQueue) — assuming bun_threading
 use bun_threading::UnboundedQueue;
 use bun_threading::unbounded_queue::{Link, Linked};
 
@@ -350,9 +349,6 @@ impl ConcurrentTask {
         Self::create(Task::from_boxed(task))
     }
 
-    // TODO(port): `comptime callback: anytype` + `std.meta.Child(@TypeOf(ptr))` is comptime
-    // reflection. Modeled here as a generic over the pointee type `T` with a plain fn-pointer
-    // callback. Zig's `ManagedTask.New(T, cb).init(ptr)` collapses to `ManagedTask::new(ptr, cb)`.
     // PORT NOTE: callback returns `JsResult<()>` to match `ManagedTask::new`'s stored ABI;
     // Zig accepted both `fn(*T) void` and `fn(*T) JSError!void` via comptime — Rust callers
     // that have a `fn(*mut T)` should wrap it as `|p| { f(p); Ok(()) }` at the call site.

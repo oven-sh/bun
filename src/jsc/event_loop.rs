@@ -47,7 +47,6 @@ pub use crate::work_task::{WorkTask, WorkTaskContext};
 
 bun_core::declare_scope!(EventLoop, hidden);
 
-// TODO(port): bun.LinearFifo(Task, .Dynamic) — std.fifo.LinearFifo
 pub type Queue =
     bun_collections::LinearFifo<Task, bun_collections::linear_fifo::DynamicBuffer<Task>>;
 

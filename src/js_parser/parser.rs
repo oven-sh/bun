@@ -620,7 +620,6 @@ pub use js_ast::Op::Level;
 pub use crate::lexer as js_lexer;
 pub use js_lexer::T;
 
-// TODO(port): defines arrives from move-in (was bun_bundler::defines → js_parser)
 use crate::defines::Define;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -2071,10 +2070,6 @@ impl Default for Jest {
 // '../../build/macos-x86_64/bun node_modules/react-dom/cjs/react-dom.development.js --resolve=disable' ran
 // 1.02 ± 0.07 times faster than '../../bun.before-comptime-js-parser node_modules/react-dom/cjs/react-dom.development.js --resolve=disable'
 //
-// TODO(port): `NewParser` is a Zig comptime type-generating fn parametrised by
-// a struct of bools (jsx/typescript/scan_only). The Rust port in `ast/P.rs`
-// will expose this via const generics or a marker-type strategy; these aliases
-// pin the eight monomorphizations.
 // `NewParser!` Zig comptime-type-fn lowering: named aliases now live in
 // `ast/Parser.rs` (where the JsxT ZSTs are in scope). Re-export here.
 pub use crate::parse::parse_entry::{

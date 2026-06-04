@@ -480,7 +480,6 @@ pub struct WritableHandler {
 pub type WritableHandlerFn = fn(ctx: *mut c_void, result: Writable);
 
 /// Trait replacing Zig's `comptime handler_fn` — implementors provide the callback.
-// TODO(port): Zig used comptime fn param to generate wrapper; trait-based dispatch instead
 pub trait WritablePendingCallback {
     fn on_handle(&mut self, result: Writable);
 }
@@ -527,7 +526,6 @@ impl WritablePending {
                     strong.swap(),
                     &global,
                 );
-                // TODO(port): Zig moved p out then reassigned future = .none; mem::replace mirrors this
             }
             WritableFuture::Handler(h) => {
                 self.future = WritableFuture::Handler(WritableHandler {
@@ -642,7 +640,6 @@ impl Default for Pending {
 }
 
 /// Trait replacing Zig's `comptime handler_fn` for Result.Pending.
-// TODO(port): Zig used comptime fn param to generate wrapper; trait-based dispatch instead
 pub trait PendingCallback {
     fn on_handle(&mut self, result: StreamResult);
 }
@@ -1152,7 +1149,6 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         self.buffer.capacity() as usize
     }
 
-    // TODO(port): const-generic string selection — Rust cannot branch on const bool to produce &'static str at type level
     pub const NAME: &'static str = if HTTP3 {
         "H3ResponseSink"
     } else if SSL {
@@ -1161,8 +1157,6 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
         "HTTPResponseSink"
     };
     // PORT NOTE: associated const with const-generic if — requires `#![feature(generic_const_exprs)]` or a trait-based dispatch.
-
-    // TODO(port): `pub const JSSink = Sink.JSSink(@This(), name)` — type generator; needs macro/codegen
 }
 
 /// Per-monomorphization JSSink wrapper alias. Mirrors
@@ -1227,12 +1221,6 @@ impl<const SSL: bool, const HTTP3: bool> crate::webcore::sink::JsSinkAbi
         http_sink_dispatch!(detach_ptr(ptr))
     }
 }
-
-// TODO(port): full impl depends on `bun_uws::Response<SSL>`
-// const-generic dispatch (the body casts `res` to `*mut uws::Response` without
-// the SSL/H3 parameter), `bun_event_loop::AutoFlusher` free-fns (the local
-// `crate::webcore::AutoFlusher` is a fieldless stub), and `ByteListPool::Node`
-// data access. Un-gate once the UwsResponse type-dispatch trait lands.
 
 impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
     /// Const-generic → runtime dispatch for the type-erased `res` field.
@@ -2153,7 +2141,6 @@ impl NetworkSink {
     pub fn new(init: NetworkSink) -> Box<NetworkSink> {
         Box::new(init)
     }
-    // TODO(port): bun.TrivialDeinit → relies on Drop; explicit deinit is no-op here
 
     pub fn path(&self) -> Option<&[u8]> {
         if let Some(task) = self.task_ref() {
@@ -2188,7 +2175,6 @@ impl NetworkSink {
     pub fn to_sink(&mut self) -> *mut NetworkSinkJSSink {
         // SAFETY: JSSink wraps Self at offset 0 (repr guarantee from codegen)
         std::ptr::from_mut::<Self>(self).cast::<NetworkSinkJSSink>()
-        // TODO(port): @ptrCast(this) to JSSink — depends on codegen layout
     }
 
     pub fn finalize(&mut self) {
@@ -2372,7 +2358,6 @@ impl NetworkSink {
 
     pub fn to_js(&mut self, global_this: &JSGlobalObject) -> JSValue {
         NetworkSinkJSSink::create_object(global_this, self, 0)
-        // TODO(port): JSSink.createObject — codegen-provided
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -2475,17 +2460,12 @@ impl BufferAction {
         self.tag
     }
 
-    // TODO(port): `AnyBlob::wrap` takes `(jsc::AnyPromise, &JSGlobalObject,
-    // BufferActionTag)`; `swap()` here yields `*mut JSPromise`. Un-gate once an
-    // `AnyPromise::from(*mut JSPromise)` adapter exists.
-
     pub fn fulfill(
         &mut self,
         global: &JSGlobalObject,
         blob: &mut AnyBlob,
     ) -> core::result::Result<(), jsc::JsTerminated> {
         blob.wrap(jsc::AnyPromise::Normal(self.swap()), global, self.tag())
-        // TODO(port): Zig passed `this.*` (full enum) as 3rd arg; using tag()
     }
 
     pub fn reject(

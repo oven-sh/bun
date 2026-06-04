@@ -274,7 +274,6 @@ impl<'a> GlobalJS<'a> {
     #[inline]
     pub fn create_null_delimited_env_map(
         self,
-        // TODO(port): allocator param dropped (global mimalloc)
     ) -> Result<bun_dotenv::NullDelimitedEnvMap, bun_core::AllocError> {
         // SAFETY: bun_vm() is non-null for a Bun-owned global; `transpiler.env` is a
         // long-lived `*mut Loader` owned by the VM.
@@ -457,7 +456,6 @@ impl<'a> GlobalMini<'a> {
 
 pub struct CmdEnvIter<'a> {
     pub env: &'a mut bun_collections::StringArrayHashMap<Box<ZStr>>,
-    // TODO(port): Zig `[:0]const u8` value — confirm map value type.
     pub iter: bun_collections::array_hash_map::Iter<'a, Box<[u8]>, Box<ZStr>>,
 }
 

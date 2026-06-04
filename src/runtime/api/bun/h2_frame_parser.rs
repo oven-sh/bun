@@ -37,7 +37,7 @@ bun_output::declare_scope!(H2FrameParser, visible);
 // (see `${TypeName}__fromJS` etc. in build/*/codegen/ZigGeneratedClasses.cpp);
 // replace with the macro-derived modules once the .rs codegen backend lands.
 // ──────────────────────────────────────────────────────────────────────────
-#[allow(non_snake_case, non_camel_case_types, dead_code)]
+#[allow(non_snake_case, non_camel_case_types)]
 pub mod JSH2FrameParser {
     use super::{JSGlobalObject, JSValue};
 
@@ -390,7 +390,6 @@ impl FrameHeader {
     pub const BYTE_SIZE: usize = 9;
     #[inline]
     fn write(&self, writer: &mut impl WireWriter) -> bool {
-        // TODO(port): byteSwapAllFields on packed struct(u72) — emit big-endian wire format manually
         let mut buf = [0u8; Self::BYTE_SIZE];
         buf[0] = ((self.length >> 16) & 0xFF) as u8;
         buf[1] = ((self.length >> 8) & 0xFF) as u8;
@@ -562,7 +561,6 @@ impl FullSettingsPayload {
 
     pub(crate) fn write(&self, writer: &mut impl WireWriter) -> bool {
         let mut swap = *self;
-        // TODO(port): byteSwapAllFields — swap each field manually
         swap._header_table_size_type = swap._header_table_size_type.swap_bytes();
         swap.header_table_size = swap.header_table_size.swap_bytes();
         swap._enable_push_type = swap._enable_push_type.swap_bytes();
@@ -1086,7 +1084,6 @@ pub fn js_get_packed_settings(
         }
     }
 
-    // TODO(port): byteSwapAllFields — done inside .write(); here we need raw swapped bytes
     let mut buf = [0u8; FullSettingsPayload::BYTE_SIZE];
     let mut cursor = FixedBufferStream::new(&mut buf);
     let _ = settings.write(&mut cursor);
@@ -1223,7 +1220,6 @@ impl Handlers {
         if JSH2FrameParser::Gc::onWrite.get(this_value) == Some(JSValue::ZERO)
             || JSH2FrameParser::Gc::onWrite.get(this_value).is_none()
         {
-            // TODO(port): Zig compares to .zero; codegen may return None — check both
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected at least \"write\" callback")));
         }
@@ -3775,7 +3771,6 @@ impl H2FrameParser {
 
             let global = self.handlers.get().global();
             while !payload.is_empty() {
-                // TODO(port): fixedBufferStream over const slice for reading u16 BE
                 if payload.len() < 2 {
                     bun_output::scoped_log!(
                         H2FrameParser,

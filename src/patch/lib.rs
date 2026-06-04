@@ -52,9 +52,6 @@ pub struct PatchFile<'a> {
 #[cfg_attr(unix, allow(dead_code))]
 struct ApplyState {
     pathbuf: PathBuffer,
-    // TODO(port): lifetime — `patch_dir_abs_path` is a self-referential slice
-    // into `self.pathbuf`. Model as (len) and reconstruct on demand to avoid
-    // a self-ref borrow.
     patch_dir_abs_path: Option<usize>,
 }
 
@@ -302,7 +299,6 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
     // to use the arena
     // PERF(port): was arena vs default_allocator selection — profile if hot.
     let _use_arena: bool = stat.st_size as usize <= PAGE_SIZE;
-    // TODO(port): Zig used `patch_dir.stdDir().readFileAlloc(...)` (std.fs). Replace with bun_sys::File::read_from.
     let filebuf: Vec<u8> = match read_file_alloc(patch_dir, &file_path, 1024 * 1024 * 1024 * 4) {
         Ok(b) => b,
         Err(_) => {

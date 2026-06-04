@@ -254,7 +254,6 @@ impl NodeModulesFolder {
         let out = 'brk: {
             #[cfg(unix)]
             {
-                // TODO(port): std.fs.Dir.makeOpenPath — bun_sys equivalent (mkdir -p + open)
                 break 'brk root.make_open_path(
                     self.path.as_slice(),
                     bun_sys::OpenDirOptions {
@@ -1245,7 +1244,6 @@ impl<'a> PackageInstaller<'a> {
                     .workspace_versions
                     .get(&pkg_name_hash)
                 {
-                    // TODO(port): std.fmt.bufPrint — write into &mut [u8], return written slice
                     break 'brk bun_core::fmt::buf_print(
                         &mut resolution_buf,
                         format_args!("{}", workspace_version.fmt(string_buf!())),
@@ -1743,7 +1741,6 @@ impl<'a> PackageInstaller<'a> {
                                 break 'result package_install::InstallResult::fail(
                                     err,
                                     package_install::Step::OpeningCacheDir,
-                                    // TODO(port): @errorReturnTrace()
                                     None,
                                 );
                             }

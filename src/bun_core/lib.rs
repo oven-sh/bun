@@ -217,8 +217,8 @@ unsafe impl<T: Sync> Sync for RawSlice<T> {}
 
 /// Port of Zig's `std.os.environ` global (`[][*:0]u8`). On Windows the
 /// startup path `bun_sys::windows::env::convert_env_to_wtf8` overwrites this
-/// with a WTF-8-encoded envp slice; `getenvZ` and `bun_main` then read it via
-/// `os_environ_ptr()`. POSIX builds leave it empty and use libc's `environ`.
+/// with a WTF-8-encoded envp slice; `getenvZ` then reads it via
+/// `os::environ()`. POSIX builds leave it empty and use libc's `environ`.
 #[cfg(windows)]
 pub mod os {
     use core::ffi::c_char;
@@ -259,20 +259,6 @@ pub mod os {
     }
 }
 
-/// `bun.os_environ_ptr()` — pointer to the first element of `std.os.environ`
-/// (or null if empty). Windows-only; POSIX uses libc's `environ` symbol.
-#[cfg(windows)]
-#[inline]
-#[allow(dead_code)]
-pub(crate) fn os_environ_ptr() -> *const *mut core::ffi::c_char {
-    // SAFETY: read of a process-global written once at startup.
-    let e = unsafe { os::environ() };
-    if e.is_empty() {
-        core::ptr::null()
-    } else {
-        e.as_ptr()
-    }
-}
 pub mod deprecated;
 pub mod env_var;
 pub mod feature_flags;

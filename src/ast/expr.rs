@@ -255,10 +255,6 @@ impl Expr {
         }
     }
 
-    // TODO(port): gated on `EString::string_z` (E.rs:1666 block) which
-    // needs `bun_core::ZStr` bump-arena constructors. Only caller
-    // (`get_string_cloned_z`) is likewise gated.
-
     #[inline]
     pub fn as_string_z<'b>(&self, bump: &'b Bump) -> Result<Option<&'b ZStr>, AllocError> {
         match &self.data {
@@ -283,10 +279,6 @@ impl Expr {
 }
 
 // Expr — property/object/string accessor methods.
-// TODO(port): these call into `E::Object::as_property` / `EString`
-// methods that need `bun_core::utf16_eql_string`/`to_utf8_alloc` (track-A
-// blocked_on) and `Vec::deep_clone`. Types are real; bodies un-gate with
-// the parser round once those land.
 
 impl Expr {
     pub fn has_any_property_named(&self, names: &'static [&'static [u8]]) -> bool {
@@ -314,7 +306,6 @@ impl Expr {
     }
 
     // toJS alias deleted — `to_js` lives in `bun_js_parser_jsc::expr_jsc` extension trait.
-    // TODO(port): move to *_jsc
 
     /// Only use this for pretty-printing JSON. Do not use in transpiler.
     ///
@@ -2306,10 +2297,6 @@ impl Data {
 
 // ───────────────────────────────────────────────────────────────────────────
 // Data — heavy transform/analysis methods (clone/deep_clone/fold/etc).
-// TODO(port): these reference `Vec::deep_clone`/`E::*::Clone`
-// surfaces, `bun_core::write_any_to_hasher`, and parser-state types that land
-// with `P.rs`/`Parser.rs`. The *types* (`Data`/`Expr`/`Tag`/`Store`) are real;
-// only these method bodies wait.
 
 impl Data {
     /// Shallow clone: re-allocate the boxed payload (so the caller owns a fresh
@@ -3101,7 +3088,6 @@ impl Data {
     }
 
     // toJS alias deleted — see `bun_js_parser_jsc::expr_jsc::DataJsc` extension trait.
-    // TODO(port): move to *_jsc
 
     #[inline]
     pub fn is_string_value(&self) -> bool {

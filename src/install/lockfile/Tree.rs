@@ -490,7 +490,6 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     }
 
     pub(crate) fn maybe_report_error(&mut self, args: core::fmt::Arguments<'_>) {
-        // TODO(port): bun_ast::Log::add_error_fmt signature — allocator param dropped.
         let _ = self.log.add_error_fmt(None, bun_ast::Loc::EMPTY, args);
     }
 
@@ -721,8 +720,6 @@ impl Tree {
             dependencies: DependencyIDList::default(),
         })?;
 
-        // TODO(port): Zig kept long-lived mutable slices into `builder.list` (trees, dependency_lists)
-        // alongside &mut builder. Reshaped to re-borrow per use to satisfy borrowck.
         // PORT NOTE: reshaped for borrowck.
         let next_id = (builder.list.len() - 1) as Id;
 

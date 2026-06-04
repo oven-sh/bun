@@ -127,9 +127,6 @@ impl TableSymbols {
 // Table
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig `column_color` was a comptime `[]const u8` param spliced into the
-// format string at compile time. Rust const generics don't accept `&'static str`, so
-// it is stored as a runtime field and the format string is built at print time.
 pub struct Table<
     'a,
     const COLUMN_LEFT_PAD: usize,
@@ -211,9 +208,6 @@ impl<'a, const L: usize, const R: usize, const C: bool> Table<'a, L, R, C> {
             for _ in 0..L {
                 crate::pretty!(" ");
             }
-            // TODO(port): Zig spliced `column_color` into the comptime format string
-            // ("<b><" ++ column_color ++ ">{s}<r>"). Replicate via Output::pretty's
-            // runtime tag handling.
             Output::pretty(format_args!(
                 "<b><{}>{}<r>",
                 self.column_color,
@@ -703,9 +697,6 @@ pub fn fmt_os_path(buf: crate::OSPathSlice<'_>, options: PathFormatOptions) -> F
     }
 }
 
-// TODO(port): Zig `fmtPath` dispatches on `comptime T: type` returning either FormatUTF8
-// or FormatUTF16. In Rust, callers should call `fmt_path_u8` / `fmt_path_u16` directly,
-// or use a small trait. Providing both monomorphizations here.
 pub fn fmt_path_u8(path: &[u8], options: PathFormatOptions) -> FormatUTF8<'_> {
     FormatUTF8 {
         buf: path,
@@ -3556,10 +3547,6 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
 // OutOfRangeFormatter — Equivalent to ERR_OUT_OF_RANGE
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig `NewOutOfRangeFormatter(comptime T: type)` branches on `@typeName(T)`
-// and `std.meta.hasFn(T, "format")` for the "Received" tail. The `@typeName(T)` fallback
-// path is debug-only (Zig panics if field_name unset in debug). Represent as a trait so
-// each `T` controls how it prints "Received <value>".
 pub trait OutOfRangeValue {
     fn write_received(&self, f: &mut Formatter<'_>) -> fmt::Result;
     fn type_name() -> &'static str;

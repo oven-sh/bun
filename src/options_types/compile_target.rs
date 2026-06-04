@@ -90,8 +90,6 @@ impl fmt::Display for BaselineFormatter {
     }
 }
 
-// TODO(port): impl From<DownloadError> for bun_core::Error
-
 #[derive(thiserror::Error, Debug, strum::IntoStaticStr)]
 pub enum ParseError {
     #[error("UnsupportedTarget")]
@@ -429,9 +427,6 @@ impl CompileTarget {
         // PERF(port): was comptime monomorphization (inline else over os/arch/libc returning
         // anonymous struct const). Could generate static tables via macro_rules! or
         // const_format::concatcp! over OperatingSystem::name_string().
-        // TODO(port): this needs a static [&[u8]; 3] per (os, arch, libc) combo — the os
-        // string is `"\"" ++ os.nameString() ++ "\""` and the version is
-        // `"\"" ++ Global.package_json_version ++ "\""`, both comptime in Zig.
         macro_rules! table {
             ($platform:literal, $arch:literal) => {{
                 const VALUES: &[&[u8]] = &[
@@ -455,7 +450,6 @@ impl CompileTarget {
                     OperatingSystem::Windows => table!(b"\"win32\"", b"\"x64\""),
                     OperatingSystem::Freebsd => table!(b"\"freebsd\"", b"\"x64\""),
                     OperatingSystem::Wasm => table!(b"\"wasm\"", b"\"x64\""),
-                    // TODO(port): verify os.nameString() values match these literals
                 },
             },
             Architecture::Arm64 => match self.libc {

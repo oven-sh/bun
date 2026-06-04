@@ -43,7 +43,6 @@ impl Percentage {
         };
 
         if self.v != 0.0 && self.v.abs() < 0.01 {
-            // TODO(port): fixed-size stack writer — Zig used std.Io.Writer.fixed over [32]u8.
             let mut backing = [0u8; 32];
             let mut fbs = css::serializer::FixedBufWriter::new_mut(&mut backing);
             if percent.to_css_generic(&mut fbs).is_err() {
@@ -122,10 +121,6 @@ impl Percentage {
         })
     }
 }
-
-// TODO(port): `needsDeepclone` was a comptime type-switch (Angle→false, LengthValue→false,
-// else @compileError). In Rust, `D: Clone` makes this distinction irrelevant for Copy types
-// (clone is memcpy). If a deep-clone protocol is required for non-Copy D, add a trait bound.
 
 pub enum DimensionPercentage<D> {
     Dimension(D),
@@ -232,7 +227,6 @@ where
     where
         D: protocol::Zero,
     {
-        // TODO(port): Zig special-cased D == f32 → 0.0. Handle via trait impl on f32.
         Self::Dimension(D::zero())
     }
 
@@ -241,7 +235,6 @@ where
         D: protocol::Zero,
     {
         match self {
-            // TODO(port): Zig special-cased D == f32 → d == 0.0. Handle via trait impl on f32.
             Self::Dimension(d) => d.is_zero(),
             Self::Percentage(p) => p.is_zero(),
             _ => false,
@@ -252,7 +245,6 @@ where
     where
         D: protocol::MulF32,
     {
-        // TODO(port): Zig special-cased D == f32 → lhs * rhs. Handle via trait impl on f32.
         lhs.mul_f32(rhs)
     }
 

@@ -576,8 +576,6 @@ impl FilePoll {
 
     #[inline]
     pub fn can_ref(&self) -> bool {
-        // TODO(port): Zig checks `.disable` flag, but no such variant exists in Flags enum —
-        // dead code in Zig? Preserving as no-op false check.
         !self.flags.contains(Flags::HasIncrementedPollCount)
     }
 
@@ -1252,7 +1250,6 @@ pub enum Flags {
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
-#[allow(dead_code)]
 pub type FlagsStruct = FlagsSet;
 
 impl Flags {
@@ -1422,7 +1419,6 @@ impl Store {
         self.pending_free_tail = poll;
 
         let callback: OpaqueCallback = Self::process_deferred_frees_thunk;
-        // TODO(port): Zig asserts the callback slot is empty or already this fn.
         debug_assert!(
             vm.after_event_loop_callback().is_none()
                 || vm.after_event_loop_callback().map(|f| f as usize) == Some(callback as usize)

@@ -183,8 +183,7 @@ impl Header {
 impl fmt::Display for Header {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // NOTE: pretty_fmt! is the comptime ANSI-tag expander (`<r><cyan>` → escape
-        // codes). bun_core's current impl is a passthrough TODO(port) until the
-        // proc-macro lands; output will contain literal `<r>` tags until then.
+        // codes).
         if enable_ansi_colors_stderr() {
             if self.is_multiline() {
                 write!(f, pretty_fmt!("<r><cyan>{}", true), BStr::new(self.value()))
@@ -286,7 +285,6 @@ impl<'a> HeaderList<'a> {
 // Request
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): thiserror not in workspace deps — manual Display/Error impl.
 #[derive(Debug, strum::IntoStaticStr)]
 pub enum ParseRequestError {
     BadRequest,

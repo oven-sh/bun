@@ -92,8 +92,6 @@ impl<'a> ProcessHandle<'a> {
             handle.config.combined.as_ptr().cast(),
             core::ptr::null(),
         ];
-        // TODO(port): Zig uses `[_:null]?[*:0]const u8` (null-terminated array of nullable C strings).
-
         handle.start_time = Some(Instant::now());
         let spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
@@ -256,8 +254,6 @@ bun_io::impl_buffered_reader_parent! {
 }
 
 /// `Output.prettyFmt(str, true)` — comptime ANSI-tag expansion in Zig.
-// TODO(port): `pretty_fmt` is comptime string processing in Zig; needs a `const fn` or macro
-// in `bun_core::Output`. Using a thin wrapper macro for now.
 macro_rules! fmt {
     ($s:literal) => {
         bun_core::Output::pretty_fmt!($s, true)
@@ -582,7 +578,6 @@ impl<'a> State<'a> {
     }
 
     fn flush_draw_buf(&self) {
-        // TODO(port): std::fs::File::stdout() banned — use bun_sys stdout write.
         let _ = bun_sys::File::stdout().write_all(&self.draw_buf);
     }
 
@@ -914,9 +909,7 @@ pub(crate) fn run_scripts_with_filter(
         }
     };
 
-    let handles: Box<[ProcessHandle]> =
-        // TODO(port): Box::new_uninit_slice — handles initialized in loop below.
-        Vec::with_capacity(scripts.len()).into();
+    let handles: Box<[ProcessHandle]> = Vec::with_capacity(scripts.len()).into();
     // PORT NOTE: reshaped for borrowck — Zig allocates uninit slice then writes each element.
     // We build into a Vec first, but need stable addresses for `&state` backref and `&mut handles[i]`
     // pointers stored in `map`. This is self-referential; raw pointers used below.

@@ -78,7 +78,6 @@ pub struct FrameworkRouter {
 }
 
 pub type StaticRouteMap = StringArrayHashMap<RouteIndex>;
-// TODO(port): ArrayHashMap with custom context (EffectiveURLContext) — needs custom Hash/Eq adapter
 pub type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrlContext>;
 
 /// A logical route, for which layouts are looked up on after resolving a route.
@@ -2060,7 +2059,6 @@ impl JSFrameworkRouter {
 
         let mut rendered: Vec<u8> = Vec::with_capacity(filepath.slice().len());
         for part in parsed.parts {
-            // TODO(port): writing fmt into Vec<u8> — needs adapter (bstr or io::Write)
             part.to_string_for_internal_use(&mut ByteFmtWriter::new(&mut rendered))
                 .expect("ByteFmtWriter is infallible");
         }

@@ -306,7 +306,6 @@ impl<'a> Router<'a> {
 
                 debug_assert!(!route.path.is_empty());
 
-                // TODO(port): @hasField(std.meta.Child(Server), "watcher") — modeled via ServerLike trait method
                 if let Some(watcher) = server.watcher_mut() {
                     if watcher.watchloop_handle().is_none() {
                         let _ = watcher.start();
@@ -2256,7 +2255,6 @@ mod tests {
     fn pattern_match() {
         type Entry = Param<'static>;
 
-        // TODO(port): Zig used anonymous-struct field iteration; ported as explicit array.
         let regular_list: &[(&[u8], &[u8], &[Entry])] = &[
             (b"404", b"404", &[]),
             (

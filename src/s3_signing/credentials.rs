@@ -31,8 +31,6 @@ fn pico_header_empty() -> PicoHeader {
     PicoHeader::ZERO
 }
 
-// TODO(port): bun_picohttp::Header::new — fields are private; constructing via
-// repr(C) layout-pun until a public ctor lands. Layout is asserted in bun_picohttp.
 #[inline]
 fn pico_header_new(name: &[u8], value: &[u8]) -> PicoHeader {
     PicoHeader::new(name, value)
@@ -560,7 +558,6 @@ impl S3Credentials {
                 // `tmp_buffer` which has since been overwritten by the `AWS4{secret}` bufPrint,
                 // so Zig passes corrupted bytes to `cache.set` (latent bug → cache never hits).
                 // We recompute the correct `{region}{service}{secret}` key here.
-                // TODO(port): fix the overwritten-key bug in credentials.zig as well.
                 let key = buf_print(
                     &mut tmp_buffer,
                     format_args!(

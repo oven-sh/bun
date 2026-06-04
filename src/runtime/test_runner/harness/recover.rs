@@ -132,7 +132,6 @@ mod musl {
 unsafe fn get_context(ctx: *mut Context) {
     #[cfg(windows)]
     {
-        // TODO(port): std.os.windows.ntdll.RtlCaptureContext → bun_sys::windows::ntdll
         // SAFETY: ctx is a valid, writable, properly-aligned CONTEXT (caller contract).
         unsafe { bun_sys::windows::ntdll_context::RtlCaptureContext(ctx) };
     }

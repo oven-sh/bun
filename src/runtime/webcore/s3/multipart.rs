@@ -118,7 +118,6 @@ use crate::webcore::s3::simple_request::{
     execute_simple_s3_request,
 };
 
-// TODO(port): verify exact path/type for `bun.JSTerminated!T` — assumed `Result<T, bun_jsc::JsTerminated>`
 type JsTerminatedResult<T> = Result<T, bun_jsc::JsTerminated>;
 
 declare_scope!(S3MultiPartUpload, hidden);

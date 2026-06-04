@@ -367,7 +367,6 @@ pub fn check_x509_server_identity(x509: &mut boring::X509, hostname: &[u8]) -> b
                     for i in 0..boring::sk_GENERAL_NAME_num(names) {
                         let r#gen = boring::sk_GENERAL_NAME_value(names, i);
                         if let Some(name) = r#gen.as_ref() {
-                            // TODO(port): name_type discriminants — verify GEN_* are c_int consts in bun_boringssl_sys
                             match name.name_type {
                                 boring::GEN_URI => {
                                     has_identifier_san = true;

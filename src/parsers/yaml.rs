@@ -889,9 +889,6 @@ impl<Enc: Encoding> YamlString<Enc> {
     }
 
     pub fn eql(&self, r: &[u8], input: &[Enc::Unit]) -> bool {
-        // TODO(port): Zig compared []const enc.unit() against []const u8 via
-        // std.mem.eql(enc.unit(), ...) which only compiles when enc.unit() == u8.
-        // TODO(port): constrain or transcode.
         let l_slice = self.slice(input);
         if l_slice.len() != r.len() {
             return false;
@@ -2422,8 +2419,6 @@ pub struct Parser<'i, Enc: Encoding> {
     pub explicit_document_start_line: Option<Line>,
 
     pub anchors: StringHashMap<Expr>,
-    // TODO(port): Zig key type was []const enc.unit(); StringHashMap keys are &[u8].
-    // For Utf16 this needs a different map type.
     pub tag_handles: StringHashMap<()>,
 
     pub whitespace_buf: Vec<Whitespace<Enc>>,
@@ -2608,7 +2603,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
             self.try_skip_char(Enc::ch(b'!'))?;
             self.try_skip_s_white()?;
 
-            // TODO(port): StringHashMap key type; for Utf16 needs different keying.
             self.tag_handles
                 .put(Enc::key_bytes(handle.slice(self.input)), ())?;
 
@@ -3476,7 +3470,6 @@ impl MappingProps {
             ast::ExprData::EString(key_str) => key_str.eql_comptime(b"<<"),
             _ => false,
         };
-        // TODO(port): exact ExprData variant names depend on bun_ast.
 
         if !is_merge_key {
             self.list.push(G::Property {
@@ -5353,8 +5346,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                     if self.line_indent.is_less_than(min_indent) {
                         return Ok(ctx.done()?);
                     }
-                    // TODO(port): need Enc::Unit from u32; assuming Enc::Unit: From<u8> for ASCII range only.
-                    // For non-ASCII units we need to read self.next() directly.
                     let unit = self.next();
                     let _ = c;
                     ctx.append(unit)?;
@@ -5639,7 +5630,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
                 let ch = char::from_u32(cp).ok_or(ParseError::UnexpectedCharacter)?;
                 let mut buf = [0u8; 4];
                 let s = ch.encode_utf8(&mut buf);
-                // TODO(port): need to push &[u8] into Vec<Enc::Unit>; Enc::Unit==u8 here.
                 for b in s.bytes() {
                     text.push(Enc::ch(b));
                 }
@@ -5795,7 +5785,6 @@ impl<'i, Enc: Encoding> Parser<'i, Enc> {
 
     fn shorthand_to_tag(&self, shorthand: StringRange) -> NodeTag {
         let s = shorthand.slice(self.input);
-        // TODO(port): comparing &[Enc::Unit] to ASCII literals; assumes u8-compatible.
         if eq_ascii::<Enc>(s, b"bool") {
             return NodeTag::Bool;
         }

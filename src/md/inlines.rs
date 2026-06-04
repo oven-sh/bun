@@ -18,7 +18,6 @@ pub struct EmphDelim {
     pub open_count: usize,  // total chars consumed as opener
     pub close_count: usize, // total chars consumed as closer
     // Individual match sizes in order (each is 1 for em, 2 for strong)
-    // TODO(port): Zig used u2 element type; Rust uses u8 — values are always 0..=2.
     pub open_sizes: [u8; MAX_EMPH_MATCHES],
     pub open_num: u8, // number of open matches (Zig: u4)
     pub close_sizes: [u8; MAX_EMPH_MATCHES],

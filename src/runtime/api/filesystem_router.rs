@@ -203,7 +203,6 @@ impl FileSystemRouter {
                     continue;
                 }
                 // PERF(port): was appendAssumeCapacity
-                // TODO(port): `toUTF8Bytes(allocator)[1..]` — slices off leading '.'; arena owns the bytes.
                 let bytes = val.to_slice(global_this)?.into_vec();
                 // SAFETY: arena is boxed and moved into the returned `FileSystemRouter`, so the
                 // backing allocation outlives this slice. Cast through raw ptr to detach the

@@ -95,7 +95,6 @@ impl fmt::Display for Diff<u8> {
             Operation::Insert => "+",
             Operation::Delete => "-",
         };
-        // TODO(port): Zig used `{s}` on `[]const Unit`; bytes may not be valid UTF-8.
         write!(f, "({}, \"{}\")", op, bstr::BStr::new(&self.text))
     }
 }
@@ -791,7 +790,6 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
     line_array: &mut Vec<*const [Unit]>,
     line_hash: &mut StringHashMap<usize>,
 ) -> Result<Box<[usize]>, DiffError> {
-    // TODO(port): comptime `if (Unit != u8) @panic` → runtime TypeId check.
     if TypeId::of::<Unit>() != TypeId::of::<u8>() {
         panic!("Unit must be u8");
     }
@@ -1296,7 +1294,6 @@ fn diff_cleanup_semantic_score<Unit: DiffUnit>(one: &[Unit], two: &[Unit]) -> us
         return 6;
     }
 
-    // TODO(port): comptime `if (Unit != u8) return 5;` → runtime TypeId check.
     if TypeId::of::<Unit>() != TypeId::of::<u8>() {
         return 5;
     }
@@ -1591,11 +1588,6 @@ mod tests {
             diffs
         );
     }
-
-    // TODO(port): `checkAllAllocationFailures` / `CheckAllAllocationFailuresTuples`
-    // are Zig comptime-reflection helpers wrapping `std.testing.checkAllAllocationFailures`.
-    // Rust's global allocator aborts on OOM; there is no analogous fallible-alloc
-    // injection harness in this codebase. Dropped.
 }
 
 // ported from: src/test_runner/diff/diff_match_patch.zig

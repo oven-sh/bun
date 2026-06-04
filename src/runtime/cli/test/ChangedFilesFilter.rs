@@ -111,7 +111,6 @@ pub(crate) fn filter<'a>(
     // With a clean working tree and no --watch, nothing can be affected and
     // there is no watcher to seed, so skip the module-graph scan entirely.
     if changed_files.count() == 0 && ctx.debug.hot_reload != HotReload::Watch {
-        // TODO(port): `HotReload::Watch` enum path — confirm crate::cli::Command::HotReload
         let total = test_files.len();
         return Ok(Result {
             test_files: &mut test_files[0..0],
@@ -264,7 +263,6 @@ pub(crate) fn filter<'a>(
     let mut queue: Vec<u32> = Vec::new();
 
     {
-        // TODO(port): StringSet iteration API — Zig accesses `.map.iterator()`
         for changed_path in changed_files.keys() {
             if let Some(&idx) = path_to_index.get(changed_path.as_ref()) {
                 if !affected.is_set(idx as usize) {
@@ -350,8 +348,6 @@ pub(crate) fn init_watch_trigger() {
         let path: ZBox = if let Some(existing) = getenv_z(TRIGGER_FILE_ENV_VAR_Z) {
             ZBox::from_bytes(existing)
         } else {
-            // TODO(port): std.Random.DefaultPrng / std.time.milliTimestamp / std.c.getpid —
-            // pick Rust equivalents (likely bun_core::time::milli_timestamp() ^ libc::getpid())
             // SAFETY: getpid is always safe.
             let seed: u64 =
                 bun_core::time::milli_timestamp() as u64 ^ unsafe { libc::getpid() } as u64;
@@ -700,7 +696,6 @@ fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
     }
 }
 
-// TODO(port): `HotReload` enum import — placeholder for `ctx.debug.hot_reload != .watch` check
 use crate::Command::HotReload;
 
 // ported from: src/cli/test/ChangedFilesFilter.zig

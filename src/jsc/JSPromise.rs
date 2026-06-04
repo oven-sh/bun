@@ -91,8 +91,6 @@ impl<T> Default for Weak<T> {
 
 impl<T> Weak<T> {
     pub fn reject(&mut self, global: &JSGlobalObject, val: JSValue) {
-        // TODO(port): Zig discards the `JSTerminated` from `JSPromise::reject` here
-        // (return type is `void`). Mirror that by ignoring the Result.
         let _ = self.swap().reject(global, Ok(val));
     }
 
@@ -230,9 +228,6 @@ impl Strong {
     }
 
     // Zig: `pub const rejectOnNextTick = @compileError("...")`
-    // TODO(port): @compileError poison-decl has no direct Rust equivalent. Relying on
-    // the method simply not existing; callers will fail to compile. A
-    // `#[deprecated(note = "...")]` shim could be added if migration error messages are needed.
 
     pub fn resolve(&mut self, global: &JSGlobalObject, val: JSValue) -> Result<(), JsTerminated> {
         self.swap().resolve(global, val)

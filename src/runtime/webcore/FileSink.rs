@@ -8,11 +8,10 @@ use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
+use crate::api::bun::process::Status as SpawnStatus;
 use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult};
 use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
-// TODO(port): verify module path for `bun.spawn.Status`
-use crate::api::bun::process::Status as SpawnStatus;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]

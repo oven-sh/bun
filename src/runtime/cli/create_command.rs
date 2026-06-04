@@ -135,7 +135,6 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
 pub(crate) struct ProgressBuf;
 
 impl ProgressBuf {
-    // TODO(port): mutable global buffers — single-threaded CLI usage
     thread_local! {
         static BUFS: core::cell::RefCell<[[u8; 1024]; 2]> = const { core::cell::RefCell::new([[0u8; 1024]; 2]) };
         static BUF_INDEX: Cell<usize> = const { Cell::new(0) };
@@ -447,7 +446,6 @@ impl CreateCommand {
 
                 let file_buf = vec![0u8; 16384];
 
-                // TODO(port): ArrayListUnmanaged with pre-allocated buffer — using Vec directly
                 let mut tarball_buf_list: Vec<u8> = file_buf;
                 let mut gunzip = Zlib::ZlibReaderArrayList::init(
                     tarball_bytes.list.as_slice(),
@@ -730,7 +728,6 @@ impl CreateCommand {
         let path_env = env_loader.map.get(b"PATH").unwrap_or(b"");
 
         {
-            // TODO(port): std.fs.openDirAbsolute — use bun_sys
             let parent_dir = bun_sys::Dir::open(destination)?;
             #[cfg(windows)]
             {
@@ -1089,7 +1086,6 @@ impl CreateCommand {
                     }
 
                     pub(crate) fn npx_react_scripts_build() -> bun_ast::Expr {
-                        // TODO(port): build bun_ast::Expr { .e_string = "npx react-scripts build" }
                         bun_ast::Expr::init(
                             bun_ast::E::EString::init(b"npx react-scripts build"),
                             bun_ast::Loc::EMPTY,
@@ -2367,7 +2363,6 @@ impl Example {
             Global::crash();
         }
 
-        // TODO(port): Zig returned `mutable.*` (deref-copy of struct). MutableString may need Clone.
         Ok(mutable.clone()?)
     }
 
@@ -2542,7 +2537,6 @@ impl Example {
 
         refresher.refresh();
 
-        // TODO(port): see note above re: returning MutableString by value
         Ok(mutable.clone()?)
     }
 
@@ -2758,7 +2752,6 @@ impl CreateListExamplesCommand {
 
 struct GitHandler;
 
-// TODO(port): mutable static atomic + thread handle — single use per process
 static SUCCESS: AtomicU32 = AtomicU32::new(0);
 // Zig used `std.Thread`; bun_threading has no top-level Thread wrapper yet,
 // so use std::thread::JoinHandle directly (CLI-only, no JSC interaction).

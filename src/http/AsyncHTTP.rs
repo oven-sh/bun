@@ -164,7 +164,7 @@ fn build_proxy_authorization(proxy: &URL<'_>) -> Option<Vec<u8>> {
 
     let size = bun_base64::encode_len_from_size(auth.len());
     let mut buf = vec![0u8; size + b"Basic ".len()];
-    let encoded_len = bun_base64::encode_url_safe(&mut buf[b"Basic ".len()..], &auth);
+    let encoded_len = bun_base64::encode(&mut buf[b"Basic ".len()..], &auth);
     buf[..b"Basic ".len()].copy_from_slice(b"Basic ");
     buf.truncate(b"Basic ".len() + encoded_len);
     Some(buf)

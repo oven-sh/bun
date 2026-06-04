@@ -832,7 +832,6 @@ impl AnyRoute {
 }
 
 pub struct ServerInitContext<'a> {
-    // TODO(port): arena removed in non-AST crate; if needed for bulk-free, reintroduce bumpalo
     pub dedupe_html_bundle_map: HashMap<*const HTMLBundle, RefPtr<html_bundle::Route>>,
     pub js_string_allocations: bake::StringRefList,
     pub global: &'a JSGlobalObject,

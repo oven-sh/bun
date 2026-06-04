@@ -137,9 +137,6 @@ pub struct RequestContext<
     /// pointee is live for the holder's entire lifetime. `None` once detached.
     pub server: Option<bun_ptr::BackRef<ThisServer>>,
     pub resp: Option<uws::AnyResponse>,
-    /// thread-local default heap allocator
-    /// this prevents an extra pthread_getspecific() call which shows up in profiling
-    // TODO(port): allocator field deleted — global mimalloc per PORTING.md §Allocators.
     pub req: Option<*mut Req<SSL_ENABLED, HTTP3>>,
     pub request_weakref: request::WeakRef,
     // PORT NOTE: Zig `?*AbortSignal`. `Arc<AbortSignal>` was wrong —
@@ -850,8 +847,6 @@ where
     }
 
     /// destroy RequestContext, should be only called by deref or if defer_deinit_until_callback_completes is ref is set to true
-    // TODO(port): named `deinit` (not Drop) because RequestContext is pool-allocated and
-    // explicitly returned to a HiveArray; Drop semantics don't apply.
     pub fn deinit(&mut self) {
         ctx_log!("deinit");
         self.detach_response();
@@ -1022,18 +1017,13 @@ where
         }
     }
 
-    // TODO(b2-blocked): `Api::FallbackMessageContainer` + `Fallback::render_backend`
-    // (bun_options_types::schema::api / bun_ast::runtime) — debug-only HTML
-    // error page. Production hits `render_production_error` instead.
-
     pub fn render_default_error(
         &mut self,
-        // TODO(port): arena_allocator param dropped; this is a non-AST crate, allocations use global mimalloc.
         // PERF(port): was arena bulk-free — profile in Phase B
         log: &mut bun_ast::Log,
         err: bun_core::Error,
         exceptions: &[Api::JsException],
-        fmt: core::fmt::Arguments<'_>, // TODO(port): Zig `comptime fmt: string, args: anytype`
+        fmt: core::fmt::Arguments<'_>,
     ) {
         if !self.flags.has_written_status() {
             self.flags.set_has_written_status(true);
@@ -1242,7 +1232,6 @@ where
         }
     }
 
-    // TODO(port): in-place init — `this` is a pre-allocated slot in a HiveArray pool.
     pub fn create(
         this: &mut core::mem::MaybeUninit<Self>,
         server: *const ThisServer,
@@ -2765,9 +2754,6 @@ where
             req.render_metadata();
         }
 
-        // TODO(b2-blocked): DEBUG_MODE dev-server HTML fallback page — gated on
-        // `Api::FallbackMessageContainer`/`Fallback::render_backend`.
-
         if DEBUG_MODE {
             if let Some(server) = req.server {
                 if !err.is_empty_or_undefined_or_null() {
@@ -3005,7 +2991,6 @@ where
     }
 
     pub fn on_pipe(this: &mut Self, mut stream: WebCore::streams::Result) {
-        // TODO(port): allocator param dropped — global mimalloc per §Allocators
         let stream_needs_deinit = matches!(
             stream,
             WebCore::streams::Result::Owned(_) | WebCore::streams::Result::OwnedAndDone(_)
@@ -3160,10 +3145,6 @@ where
         // SAFETY: BACKREF
         let server = &*server;
         let global_this = server.global_this();
-        // TODO(b2-blocked): DEBUG_MODE branch renders the HTML fallback page via
-        // `Api::JsException` + `render_default_error`; gated until bun_schema/
-        // bun_js_parser surfaces are in. Falls through to the production path.
-
         // `ServerLike::vm()` is the process-static VM `BackRef`; `as_mut()` is
         // the single audited `&mut VirtualMachine` accessor.
         let vm = server.vm().as_mut();
@@ -3416,7 +3397,6 @@ where
         // Advertise the QUIC endpoint on H1/H2 responses so browsers can
         // discover it (RFC 7838). Multiple Alt-Svc fields are valid, so a
         // user-supplied one composes rather than conflicts.
-        // TODO(port): `@hasDecl(ThisServer, "h3AltSvc")` — model as optional trait method.
         if !HTTP3 {
             // SAFETY: BACKREF
             if let Some(alt) = self.server().h3_alt_svc() {

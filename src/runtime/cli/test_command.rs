@@ -1697,7 +1697,6 @@ impl CommandLineReporter {
         }
 
         let mut console_buffer: Vec<u8> = Vec::new();
-        // TODO(port): std.Io.Writer.Allocating → Vec<u8> + adapter
         let console_writer = &mut console_buffer;
 
         let mut avg = Fraction {
@@ -1711,9 +1710,6 @@ impl CommandLineReporter {
 
         // --- LCOV ---
         let mut lcov_name_buf = PathBuffer::uninit();
-        // TODO(port): the Zig code uses tuple destructuring with comptime branching to make
-        // lcov_file/lcov_name/lcov_buffered_writer be `void` when !REPORTERS_LCOV. We use
-        // Option here.
         let mut lcov_state: Option<(File, &bun_core::ZStr, /*buffered*/ Vec<u8>)> =
             if REPORTERS_LCOV {
                 'brk: {
@@ -1782,7 +1778,6 @@ impl CommandLineReporter {
             } else {
                 None
             };
-        // TODO(port): errdefer lcov cleanup — using scopeguard with disarm on success
         let mut lcov_guard = scopeguard::guard(
             &mut lcov_state,
             |s: &mut Option<(File, &bun_core::ZStr, Vec<u8>)>| {
@@ -1894,7 +1889,6 @@ impl CommandLineReporter {
                 console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d> |<r>\n"))?;
             }
 
-            // TODO(port): console_writer.flush() — Vec<u8> has nothing to flush
             console.write_all(&console_buffer)?;
             console.write_all(&Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r><d>"))?;
             // Spec uses `catch return` (NOT `try`) — Zig's `errdefer` does not
@@ -1972,7 +1966,6 @@ pub(crate) extern "C" fn BunTest__shouldGenerateCodeCoverage(
     }
 
     let ext = bun_path::extension(slice);
-    // TODO(port): std.fs.path.extension — using bun_path equivalent
     // SAFETY: `VirtualMachine::get()` returns the process-lifetime VM pointer; only
     // called from the JS thread once a VM exists.
     let loader_by_ext = VirtualMachine::get()

@@ -2,7 +2,6 @@ use bun_core::strings;
 
 bun_core::declare_scope!(Postgres, visible);
 
-// TODO(port): lifetime — `Other` borrows from the input `tag` slice passed to `init`.
 pub enum CommandTag<'a> {
     // For an INSERT command, the tag is INSERT oid rows, where rows is the
     // number of rows inserted. oid used to be the object ID of the inserted

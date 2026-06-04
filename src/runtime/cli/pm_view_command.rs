@@ -80,7 +80,6 @@ pub(crate) fn view(
     let scope = manager.scope_for_package_name(name).clone();
 
     let mut url_buf = PathBuffer::uninit();
-    // TODO(port): std.fmt.bufPrint — `buf_print` returns the written slice
     let encoded_name = buf_print(
         url_buf.0.as_mut_slice(),
         format_args!("{}", bun_fmt::dependency_url(name)),

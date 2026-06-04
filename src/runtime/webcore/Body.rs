@@ -179,9 +179,6 @@ impl Body {
     }
 }
 
-// TODO(port): bun_jsc::ConsoleFormatter — write_format depends on the
-// ConsoleObject formatter trait (`print_as`/`print_comma`/`write_indent`).
-
 impl Body {
     pub fn write_format<F, W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
         &self,
@@ -189,7 +186,7 @@ impl Body {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: bun_jsc::ConsoleFormatter, // TODO(port): exact trait for ConsoleObject.Formatter
+        F: bun_jsc::ConsoleFormatter,
     {
         formatter.write_indent(writer)?;
         write!(
@@ -346,9 +343,6 @@ impl PendingValue {
         self.size_hint
     }
 
-    // TODO(port): ReadableStream::to_any_blob (gated on ByteBlobLoader/
-    // ByteStream un-stubbing in ReadableStream.rs).
-
     pub(crate) fn to_any_blob(&mut self) -> Option<AnyBlob> {
         if self.promise.is_some() {
             return None;
@@ -391,8 +385,6 @@ impl PendingValue {
         false
     }
 
-    // TODO(port): ReadableStream::to_any_blob (see above).
-
     pub(crate) fn to_any_blob_allow_promise(&mut self) -> Option<AnyBlob> {
         let global = self.global();
         let mut stream = self.readable.get(global)?;
@@ -404,9 +396,6 @@ impl PendingValue {
 
         None
     }
-
-    // TODO(port): JSGlobalObject::readable_stream_to_{json,array_buffer,
-    // bytes,text,blob,form_data} + bun_core::FormDataEncoding (gated payload).
 
     pub(crate) fn set_promise(
         &mut self,
@@ -638,11 +627,6 @@ impl ValueError {
     }
 }
 
-// TODO(port): BunString::{to_error_instance,to_type_error_instance} not
-// yet exported from `bun_string`; SystemError lacks Clone. The bodies are
-// otherwise wired to bun_jsc (CommonAbortReason::to_js, strong::Optional,
-// JSValue::attach_async_stack_from_promise all exist).
-
 impl ValueError {
     pub fn to_stream_error(
         &mut self,
@@ -756,10 +740,6 @@ impl Value {
         }
     }
 
-    // TODO(port): ZigStringSlice::slice() accessor + AnyBlob payload
-    // matching depend on the wtf string slice port. `to_any_blob` itself is
-    // un-gated above; only the WTFStringImpl→InternalBlob conversion blocks.
-
     pub fn to_blob_if_possible(&mut self) {
         if let Value::WTFStringImpl(str) = *self {
             if let Some(bytes) = wtf_impl(&str).to_utf8_if_needed() {
@@ -855,10 +835,6 @@ impl Value {
     }
 
     // pub const empty = Value::Empty;
-
-    // TODO(port): ByteStream::Source — webcore::byte_stream is still a unit
-    // stub (`pub struct ByteStream;`); `Source::new` / `.context.setup()` /
-    // `.to_readable_stream()` need the real ByteStream port to land.
 
     pub fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         jsc::mark_binding();
@@ -1001,10 +977,6 @@ impl Value {
             }
         }
 
-        // TODO(port): `bun_jsc::JsClass` is not yet implemented for the opaque
-        // `DOMFormData`/`URLSearchParams` stubs (orphan rule prevents impl here).
-        // The `as_dom_form_data`/`as_url_search_params` shims below return None
-        // until upstream wires `from_js`.
         if let Some(form_data) = as_dom_form_data(value) {
             // SAFETY: shim returns a live JSC heap cell.
             return Ok(Value::Blob(Blob::from_dom_form_data(global_this, unsafe {
@@ -1112,10 +1084,6 @@ impl Value {
             ..PendingValue::new(global_this)
         })
     }
-
-    // TODO(port): AnyBlob::to_string_transfer / to_json_share /
-    // to_array_buffer_transfer / to_uint8_array_transfer + Blob::new/to_js +
-    // AnyPromise::wrap — all in gated Blob/jsc impls.
 
     pub fn resolve(
         &mut self,
@@ -1317,10 +1285,6 @@ impl Value {
         }
     }
 
-    // TODO(port): Blob::init_empty signature takes `&JSGlobalObject`,
-    // but the Zig path passed `undefined`; needs a nullable
-    // overload (or `Blob::default()`) before this type-checks.
-
     pub fn try_use_as_any_blob(&mut self) -> Option<AnyBlob> {
         let any_blob: AnyBlob = match self {
             Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
@@ -1345,8 +1309,6 @@ impl Value {
         *self = Value::Used;
         Some(any_blob)
     }
-
-    // TODO(port): see `try_use_as_any_blob`.
 
     pub fn use_as_any_blob(&mut self) -> AnyBlob {
         let was_null = matches!(self, Value::Null);
@@ -1387,8 +1349,6 @@ impl Value {
         any_blob
     }
 
-    // TODO(port): see `try_use_as_any_blob`.
-
     pub fn use_as_any_blob_allow_non_utf8_string(&mut self) -> AnyBlob {
         let was_null = matches!(self, Value::Null);
         // PORT NOTE: see `use_as_any_blob` — match by `&mut` to avoid E0509.
@@ -1411,8 +1371,6 @@ impl Value {
         *self = if was_null { Value::Null } else { Value::Used };
         any_blob
     }
-
-    // TODO(port): webcore::readable_stream::Source::Bytes + ByteStream::on_data.
 
     pub fn to_error_instance(
         &mut self,
@@ -1475,8 +1433,6 @@ impl Value {
         Ok(())
     }
 
-    // TODO(port): forwards to `to_error_instance` (gated above).
-
     pub fn to_error(&mut self, err: bun_core::Error, global: &JSGlobalObject) -> JsTerminated<()> {
         self.to_error_instance(
             ValueError::Message(BunString::create_format(format_args!(
@@ -1538,10 +1494,6 @@ impl Drop for Value {
 }
 
 impl Value {
-    // TODO(port): ByteStream::Source — see `to_readable_stream`. The
-    // tail half of `tee()` constructs a `ByteStream::Source` to back a fresh
-    // ReadableStream; un-gate once the real ByteStream port lands.
-
     pub fn tee(
         &mut self,
         global_this: &JSGlobalObject,
@@ -1652,9 +1604,6 @@ impl Value {
             ..PendingValue::new(global_this)
         }))
     }
-
-    // TODO(port): forwards to `to_blob_if_possible`/`tee`/`Blob::init`,
-    // all of which are still gated (see notes above each).
 
     pub fn clone(&mut self, global_this: &JSGlobalObject) -> JsResult<Value> {
         self.clone_with_readable_stream(global_this, None)

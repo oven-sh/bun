@@ -483,7 +483,6 @@ impl BunxCommand {
             if is_stale {
                 let _ = target_package_json.close();
                 // If delete fails, oh well. Hope installation takes care of it.
-                // TODO(port): Zig used std.fs.cwd().deleteTree; map to bun_sys recursive rm.
                 let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
                 return Err(bun_core::err!("NeedToInstall"));
             }
@@ -900,7 +899,6 @@ impl BunxCommand {
         path = {
             let mut v = Vec::new();
             let path_is_nonzero = !path.is_empty();
-            // TODO(port): bun.pathLiteral() applied platform separator at comptime.
             write!(
                 &mut v,
                 "{tmp}{sep}bunx-{uid}-{pkg}{sep}node_modules{sep}.bin",
@@ -1255,7 +1253,6 @@ impl BunxCommand {
             Global::exit(1);
         }
 
-        // TODO(port): Zig used std.fs.cwd().makeOpenPath; map to bun_sys recursive mkdir + open.
         let bunx_install_dir = Fd::cwd().make_open_path(bunx_cache_dir)?;
 
         'create_package_json: {
@@ -1353,7 +1350,6 @@ impl BunxCommand {
                     BStr::new(&install_param),
                     err.name(),
                 );
-                // TODO(port): @errorName(err) → err.name()
                 Global::exit(1);
             }
             Ok(maybe) => match maybe {

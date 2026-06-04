@@ -155,7 +155,6 @@ impl Stmt {
     // Zig `comptime_init` — `@unionInit(Data, tag_name, origData)`. In Rust the
     // variant constructor IS the union-init; this helper collapses to identity
     // and is absorbed by `StatementData::wrap_ref`.
-    // TODO(port): no direct equivalent; callers use the trait.
 
     #[inline]
     pub fn alloc<T: StatementData>(orig_data: T, loc: crate::Loc) -> Stmt {

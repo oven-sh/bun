@@ -339,6 +339,10 @@ mod elf {
         pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
 
+    /// `Elf64_Phdr::p_type` value for loadable segments; `libc` doesn't
+    /// expose `PT_LOAD` for FreeBSD.
+    const PT_LOAD: u32 = 1;
+
     /// State for the `dl_iterate_phdr` callback: find the `PT_LOAD` segment
     /// of the main executable containing `addr` and record its end address.
     struct PhdrQuery {
@@ -358,11 +362,11 @@ mod elf {
         for i in 0..info.dlpi_phnum {
             // SAFETY: `dlpi_phdr` points to `dlpi_phnum` program headers.
             let phdr = unsafe { &*info.dlpi_phdr.add(i as usize) };
-            if phdr.p_type != libc::PT_LOAD {
+            if phdr.p_type != PT_LOAD {
                 continue;
             }
-            let seg_start = (info.dlpi_addr as u64).wrapping_add(phdr.p_vaddr);
-            let Some(seg_end) = seg_start.checked_add(phdr.p_memsz) else {
+            let seg_start = (info.dlpi_addr as u64).wrapping_add(phdr.p_vaddr as u64);
+            let Some(seg_end) = seg_start.checked_add(phdr.p_memsz as u64) else {
                 continue;
             };
             if query.addr >= seg_start && query.addr < seg_end {

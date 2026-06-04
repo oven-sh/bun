@@ -683,9 +683,13 @@ impl ErrorCode {
     pub const POSTGRES_CONNECTION_FAILED: ErrorCode = ErrorCode(312);
     /// `ERR_MYSQL_CONNECTION_FAILED` (instanceof Error)
     pub const MYSQL_CONNECTION_FAILED: ErrorCode = ErrorCode(313);
+    /// `ERR_TRACE_EVENTS_CATEGORY_REQUIRED` (instanceof TypeError)
+    pub const TRACE_EVENTS_CATEGORY_REQUIRED: ErrorCode = ErrorCode(314);
+    /// `ERR_TRACE_EVENTS_UNAVAILABLE` (instanceof Error)
+    pub const TRACE_EVENTS_UNAVAILABLE: ErrorCode = ErrorCode(315);
 
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 314;
+    pub const COUNT: u16 = 316;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1042,6 +1046,9 @@ impl ErrorCode {
         ErrorCode::SECRETS_INTERACTION_NOT_ALLOWED;
     pub const ERR_SECRETS_AUTH_FAILED: ErrorCode = ErrorCode::SECRETS_AUTH_FAILED;
     pub const ERR_SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode::SECRETS_INTERACTION_REQUIRED;
+    pub const ERR_TRACE_EVENTS_CATEGORY_REQUIRED: ErrorCode =
+        ErrorCode::TRACE_EVENTS_CATEGORY_REQUIRED;
+    pub const ERR_TRACE_EVENTS_UNAVAILABLE: ErrorCode = ErrorCode::TRACE_EVENTS_UNAVAILABLE;
 
     // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
     // do NOT live here. They belong to the unrelated enum
@@ -1373,6 +1380,8 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_SECRETS_INTERACTION_REQUIRED",
     "ERR_POSTGRES_CONNECTION_FAILED",
     "ERR_MYSQL_CONNECTION_FAILED",
+    "ERR_TRACE_EVENTS_CATEGORY_REQUIRED",
+    "ERR_TRACE_EVENTS_UNAVAILABLE",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

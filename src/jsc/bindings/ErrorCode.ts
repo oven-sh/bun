@@ -260,8 +260,6 @@ const errors: ErrorCodeMapping = [
   ["ERR_TLS_SNI_FROM_SERVER", Error],
   ["ERR_TLS_ALPN_CALLBACK_WITH_PROTOCOLS", TypeError],
   ["ERR_SSL_NO_CIPHER_MATCH", Error],
-  ["ERR_TRACE_EVENTS_CATEGORY_REQUIRED", TypeError],
-  ["ERR_TRACE_EVENTS_UNAVAILABLE", Error],
   ["ERR_UNAVAILABLE_DURING_EXIT", Error],
   ["ERR_UNCAUGHT_EXCEPTION_CAPTURE_ALREADY_SET", Error],
   ["ERR_UNESCAPED_CHARACTERS", TypeError],
@@ -326,5 +324,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_SECRETS_INTERACTION_REQUIRED", Error],
   ["ERR_POSTGRES_CONNECTION_FAILED", Error, "PostgresError"],
   ["ERR_MYSQL_CONNECTION_FAILED", Error, "MySQLError"],
+  ["ERR_TRACE_EVENTS_CATEGORY_REQUIRED", TypeError],
+  ["ERR_TRACE_EVENTS_UNAVAILABLE", Error],
 ];
 export default errors;

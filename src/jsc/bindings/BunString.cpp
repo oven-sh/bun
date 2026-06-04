@@ -18,6 +18,7 @@
 
 #include <limits>
 #include <wtf/Seconds.h>
+#include <wtf/Threading.h>
 #include <wtf/text/ExternalStringImpl.h>
 #include <JavaScriptCore/JSONObject.h>
 #include <wtf/text/AtomString.h>
@@ -63,6 +64,16 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__ref(WTF::StringImpl*
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__WTFStringImpl__destroy(WTF::StringImpl* impl)
 {
     WTF::StringImpl::destroy(impl);
+}
+
+// Debug-only detector used by the Rust-side `deref()`: destroying an atom
+// StringImpl removes it from the *current thread's* AtomStringTable, and
+// JSC's Heap::runEndPhase nulls that table out around
+// finalizeUnconditionalFinalizers() — releasing an atom ref there means a
+// last deref would crash in AtomStringImpl::remove().
+extern "C" [[ZIG_EXPORT(nothrow)]] bool Bun__currentThreadHasAtomStringTable()
+{
+    return WTF::Thread::currentSingleton().atomStringTable() != nullptr;
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)

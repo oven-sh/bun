@@ -1229,6 +1229,9 @@ impl WTFStringImplStruct {
     // These details must stay in sync with WTFStringImpl.h in WebKit!
     // ---------------------------------------------------------------------
     pub const S_HASH_FLAG_8BIT_BUFFER: u32 = 1 << 2;
+    /// `StringImpl::s_hashFlagStringKindIsAtom` — set while the impl is
+    /// registered in an `AtomStringTable`.
+    pub const S_HASH_FLAG_STRING_KIND_IS_ATOM: u32 = 1 << 4;
     /// The bottom bit in the ref count indicates a static (immortal) string.
     pub const S_REF_COUNT_FLAG_IS_STATIC_STRING: u32 = 0x1;
     /// This allows us to ref / deref without disturbing the static string flag.
@@ -1241,6 +1244,13 @@ impl WTFStringImplStruct {
     #[inline]
     pub fn is_8bit(&self) -> bool {
         (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_8BIT_BUFFER) != 0
+    }
+    /// `StringImpl::isAtom()` — atom strings live in a per-thread
+    /// `AtomStringTable`; see [`Self::deref`] for why releasing their refs
+    /// needs a usable table on the current thread.
+    #[inline]
+    pub fn is_atom(&self) -> bool {
+        (self.m_hash_and_flags.get() & Self::S_HASH_FLAG_STRING_KIND_IS_ATOM) != 0
     }
     #[inline]
     pub fn byte_length(&self) -> usize {
@@ -1311,6 +1321,8 @@ impl WTFStringImplStruct {
     /// `isStatic()` check is needed.
     #[inline]
     pub fn deref(&self) {
+        #[cfg(debug_assertions)]
+        self.assert_current_thread_can_release_atom();
         let old = self
             .ref_count_atomic()
             .fetch_sub(Self::S_REF_COUNT_INCREMENT, Ordering::Relaxed);
@@ -1323,6 +1335,26 @@ impl WTFStringImplStruct {
         // SAFETY: `old == s_refCountIncrement` ⇒ count is now 0 and we held
         // the sole ref; `self` is not touched again after this call.
         unsafe { Bun__WTFStringImpl__destroy(self) };
+    }
+    /// Atom strings are registered in a per-thread `AtomStringTable`;
+    /// destroying one runs `AtomStringImpl::remove()`, which dereferences the
+    /// *current thread's* table. JSC's `Heap::runEndPhase` nulls that table
+    /// out around `finalizeUnconditionalFinalizers()`, so atom refcounting
+    /// reachable from an unconditional finalizer (e.g. `ErrorInstance`
+    /// stack-trace materialization → `Bun__remapStackFramePositions`) crashes
+    /// if it drops the last reference there. `computeErrorInfoWrapperToString`
+    /// installs the VM's atom table for that window; this assert catches any
+    /// path that still releases an atom ref without a usable table.
+    #[cfg(debug_assertions)]
+    fn assert_current_thread_can_release_atom(&self) {
+        if self.is_atom() && !self.is_static() {
+            debug_assert!(
+                Bun__currentThreadHasAtomStringTable(),
+                "atom StringImpl refcount released on a thread with no atom string table \
+                 (inside GC's finalizeUnconditionalFinalizers?) — a last deref here would \
+                 crash in AtomStringImpl::remove()"
+            );
+        }
     }
     #[inline]
     pub fn ref_count_allocator(self: *mut Self) -> StdAllocator {
@@ -1407,6 +1439,11 @@ unsafe extern "C" {
     // Kept for Zig callers (`src/string/wtf.zig`); Rust no longer calls these.
     pub safe fn Bun__WTFStringImpl__ref(this: &WTFStringImplStruct);
     pub fn Bun__WTFStringImpl__deref(this: *const WTFStringImplStruct);
+    /// Whether `WTF::Thread::currentSingleton().atomStringTable()` is non-null.
+    /// Debug-only detector for atom refcounting inside GC's
+    /// finalizeUnconditionalFinalizers window (see `deref`).
+    #[cfg(debug_assertions)]
+    safe fn Bun__currentThreadHasAtomStringTable() -> bool;
     safe fn WTFStringImpl__isThreadSafe(this: &WTFStringImplStruct) -> bool;
     safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);
     fn Bun__WTFStringImpl__hasPrefix(

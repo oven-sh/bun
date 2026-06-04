@@ -3,33 +3,18 @@
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
 var __node_module__ = { exports: {} };
-'use strict';
+("use strict");
+
+const { NumberIsNaN } = primordials;
 
 const {
-  NumberIsNaN,
-} = primordials;
-
-const {
-  codes: {
-    ERR_INVALID_ARG_VALUE,
-    ERR_INVALID_CURSOR_POS,
-  },
+  codes: { ERR_INVALID_ARG_VALUE, ERR_INVALID_CURSOR_POS },
 } = require("internal/repl/node-errors");
 
-const {
-  validateFunction,
-} = require("internal/validators");
-const {
-  CSI,
-} = require("internal/readline/utils");
+const { validateFunction } = require("internal/validators");
+const { CSI } = require("internal/readline/utils");
 
-const {
-  kClearLine,
-  kClearScreenDown,
-  kClearToLineBeginning,
-  kClearToLineEnd,
-} = CSI;
-
+const { kClearLine, kClearScreenDown, kClearToLineBeginning, kClearToLineEnd } = CSI;
 
 /**
  * moves the cursor to the x and y coordinate on the given stream
@@ -37,25 +22,25 @@ const {
 
 function cursorTo(stream, x, y, callback) {
   if (callback !== undefined) {
-    validateFunction(callback, 'callback');
+    validateFunction(callback, "callback");
   }
 
-  if (typeof y === 'function') {
+  if (typeof y === "function") {
     callback = y;
     y = undefined;
   }
 
-  if (NumberIsNaN(x)) throw new ERR_INVALID_ARG_VALUE('x', x);
-  if (NumberIsNaN(y)) throw new ERR_INVALID_ARG_VALUE('y', y);
+  if (NumberIsNaN(x)) throw new ERR_INVALID_ARG_VALUE("x", x);
+  if (NumberIsNaN(y)) throw new ERR_INVALID_ARG_VALUE("y", y);
 
-  if (stream == null || (typeof x !== 'number' && typeof y !== 'number')) {
-    if (typeof callback === 'function') process.nextTick(callback, null);
+  if (stream == null || (typeof x !== "number" && typeof y !== "number")) {
+    if (typeof callback === "function") process.nextTick(callback, null);
     return true;
   }
 
-  if (typeof x !== 'number') throw new ERR_INVALID_CURSOR_POS();
+  if (typeof x !== "number") throw new ERR_INVALID_CURSOR_POS();
 
-  const data = typeof y !== 'number' ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
+  const data = typeof y !== "number" ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
   return stream.write(data, callback);
 }
 
@@ -65,15 +50,15 @@ function cursorTo(stream, x, y, callback) {
 
 function moveCursor(stream, dx, dy, callback) {
   if (callback !== undefined) {
-    validateFunction(callback, 'callback');
+    validateFunction(callback, "callback");
   }
 
   if (stream == null || !(dx || dy)) {
-    if (typeof callback === 'function') process.nextTick(callback, null);
+    if (typeof callback === "function") process.nextTick(callback, null);
     return true;
   }
 
-  let data = '';
+  let data = "";
 
   if (dx < 0) {
     data += CSI`${-dx}D`;
@@ -99,16 +84,15 @@ function moveCursor(stream, dx, dy, callback) {
 
 function clearLine(stream, dir, callback) {
   if (callback !== undefined) {
-    validateFunction(callback, 'callback');
+    validateFunction(callback, "callback");
   }
 
   if (stream === null || stream === undefined) {
-    if (typeof callback === 'function') process.nextTick(callback, null);
+    if (typeof callback === "function") process.nextTick(callback, null);
     return true;
   }
 
-  const type =
-    dir < 0 ? kClearToLineBeginning : dir > 0 ? kClearToLineEnd : kClearLine;
+  const type = dir < 0 ? kClearToLineBeginning : dir > 0 ? kClearToLineEnd : kClearLine;
   return stream.write(type, callback);
 }
 
@@ -118,11 +102,11 @@ function clearLine(stream, dir, callback) {
 
 function clearScreenDown(stream, callback) {
   if (callback !== undefined) {
-    validateFunction(callback, 'callback');
+    validateFunction(callback, "callback");
   }
 
   if (stream === null || stream === undefined) {
-    if (typeof callback === 'function') process.nextTick(callback, null);
+    if (typeof callback === "function") process.nextTick(callback, null);
     return true;
   }
 

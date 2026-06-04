@@ -16,6 +16,8 @@ pub mod bake_response;
 pub mod byte_blob_loader;
 #[path = "webcore/ByteStream.rs"]
 pub mod byte_stream;
+#[path = "webcore/CompressionStreamTransformer.rs"]
+pub mod compression_stream_transformer;
 #[path = "webcore/CookieMap.rs"]
 pub mod cookie_map;
 #[path = "webcore/Crypto.rs"]
@@ -32,8 +34,6 @@ pub mod s3_stat;
 pub mod text_encoder;
 #[path = "webcore/TextEncoderStreamEncoder.rs"]
 pub mod text_encoder_stream_encoder;
-#[path = "webcore/CompressionStreamTransformer.rs"]
-pub mod compression_stream_transformer;
 
 // ─── flat re-exports (mirror Zig `pub const X = @import(...)`) ───────────────
 pub use bun_jsc::js_error_code::DOMExceptionCode;

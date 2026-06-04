@@ -114,9 +114,9 @@ pub mod Classes {
     pub use crate::webcore::TextDecoder;
     pub use crate::webcore::byte_blob_loader::Source as BlobInternalReadableStreamSource;
     pub use crate::webcore::byte_stream::Source as BytesInternalReadableStreamSource;
+    pub use crate::webcore::compression_stream_transformer::CompressionStreamTransformer;
     pub use crate::webcore::crypto::Crypto;
     pub use crate::webcore::file_reader::Source as FileInternalReadableStreamSource;
-    pub use crate::webcore::compression_stream_transformer::CompressionStreamTransformer;
     pub use crate::webcore::text_encoder_stream_encoder::TextEncoderStreamEncoder;
     pub use Bundler as JSBundler;
     pub use Transpiler as JSTranspiler;

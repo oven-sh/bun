@@ -59,10 +59,7 @@ pub struct CompressionStreamTransformer {
 impl CompressionStreamTransformer {
     // PORT NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive
     // already emits the construct shim that calls `<Self>::constructor`.
-    pub(crate) fn constructor(
-        global: &JSGlobalObject,
-        frame: &CallFrame,
-    ) -> JsResult<Box<Self>> {
+    pub(crate) fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
         let arguments = frame.arguments_undef::<1>();
         let mode_value = arguments.ptr[0];
         if !mode_value.is_number() {
@@ -160,8 +157,7 @@ impl CompressionStreamTransformer {
         let arguments = args.slice();
         if arguments.len() != 2 {
             return Err(global.throw_value(
-                bun_core::String::static_(b"transform(chunk, isFinish)")
-                    .to_error_instance(global),
+                bun_core::String::static_(b"transform(chunk, isFinish)").to_error_instance(global),
             ));
         }
 

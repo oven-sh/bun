@@ -1975,8 +1975,7 @@ impl<'a> BundleOptions<'a> {
             // The inline `bun_resolver::fs::FileSystem` does
             // not yet expose `get_fd_path`, so resolve via `bun_sys` and box.
             let mut buf = bun_paths::PathBuffer::uninit();
-            let dir =
-                bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(bun_core::Error::from)?;
+            let dir = bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(bun_core::Error::from)?;
             opts.output_dir = Box::from(&dir[..]);
             opts.output_dir_handle = Some(handle);
         }

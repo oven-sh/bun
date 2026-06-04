@@ -2857,7 +2857,11 @@ impl<'a> Transpiler<'a> {
                 }
             }
         } else {
-            let Some(output_dir) = self.options.output_dir_handle.as_ref().map(bun_sys::Dir::fd)
+            let Some(output_dir) = self
+                .options
+                .output_dir_handle
+                .as_ref()
+                .map(bun_sys::Dir::fd)
             else {
                 bun_core::Output::print_error("Invalid or missing output directory.");
                 bun_core::Global::crash();
@@ -2898,7 +2902,11 @@ impl<'a> Transpiler<'a> {
         // Raw-fd view only: `self.options.output_dir_handle` keeps ownership
         // (and closes the fd); duplicating an owning handle here would
         // double-close.
-        final_result.root_dir = self.options.output_dir_handle.as_ref().map(bun_sys::Dir::fd);
+        final_result.root_dir = self
+            .options
+            .output_dir_handle
+            .as_ref()
+            .map(bun_sys::Dir::fd);
         Ok(final_result)
     }
 

@@ -115,10 +115,7 @@ function printEnvTrace(kind: EnvOpKind, key: string | null): void {
     if (envTracePrintMessage) {
       // Matches node_env_var.cc TraceEnvVar: `[--trace-env] <op> "<key>"`.
       const op = kind === "define" ? "set" : kind === "descriptor" ? "query" : kind;
-      out =
-        key === null
-          ? "[--trace-env] enumerate environment variables\n"
-          : `[--trace-env] ${op} "${key}"\n`;
+      out = key === null ? "[--trace-env] enumerate environment variables\n" : `[--trace-env] ${op} "${key}"\n`;
     }
     if (envTracePrintJsStack) {
       // The capture burns 3 frames on trace machinery (printEnvTrace, the
@@ -134,12 +131,7 @@ function printEnvTrace(kind: EnvOpKind, key: string | null): void {
         let frame = stack[i];
         if (!corrected) {
           const m = frame.match(RE_FRAME_LOC);
-          if (
-            m &&
-            !m[1].startsWith("internal:") &&
-            !m[1].startsWith("native") &&
-            m[1] !== "unknown"
-          ) {
+          if (m && !m[1].startsWith("internal:") && !m[1].startsWith("native") && m[1] !== "unknown") {
             corrected = true;
             const col = v8Column(kind, m[1], Number(m[2]), key);
             if (col > 0) {

@@ -187,7 +187,9 @@ let threadpoolInstrumented = false;
 function installInstrumentation() {
   if (
     !fsInstrumented &&
-    (isCategoryGroupEnabled(kFsSyncCat) || isCategoryGroupEnabled(kFsAsyncCat) || isCategoryGroupEnabled(kFsDirAsyncCat))
+    (isCategoryGroupEnabled(kFsSyncCat) ||
+      isCategoryGroupEnabled(kFsAsyncCat) ||
+      isCategoryGroupEnabled(kFsDirAsyncCat))
   ) {
     fsInstrumented = true;
     installFsInstrumentation();

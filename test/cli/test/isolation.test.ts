@@ -1,7 +1,12 @@
-import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { bunEnv, bunExe, isASAN, normalizeBunSnapshot, tempDir } from "harness";
 import fs from "node:fs";
 import net from "node:net";
+
+// Every case spawns at least one full `bun test --isolate` child; the heavy
+// ones (8-file leak fixtures, 500-2000-export module_info modules) exceed the
+// 5s default on debug/ASAN runners.
+setDefaultTimeout(isASAN ? 120_000 : 30_000);
 
 // Two test files where the first leaks state and the second observes it.
 // Under --isolate the second file must see a clean world.
@@ -522,20 +527,18 @@ test.concurrent("--isolate: SourceProvider cache covers node_modules .mjs and ty
   expect(exitCode).toBe(0);
 });
 
-test.concurrent(
-  "--isolate: cached SourceProvider's module_info rebuilds correct exports",
-  async () => {
-    // A wide module so the printer-generated module_info has thousands of
-    // export entries. Under --isolate, file b hits the SourceProvider cache and
-    // rebuilds JSModuleRecord from the cached module_info (Bun__analyzeTranspiledModule)
-    // instead of re-parsing. If the record is wrong, named imports would be
-    // undefined or the count would mismatch.
-    const N = 2000;
-    let big = "";
-    for (let i = 0; i < N; i++) big += `export function f${i}(x){return x+${i};}\n`;
-    big += `export const COUNT = ${N};\n`;
+test.concurrent("--isolate: cached SourceProvider's module_info rebuilds correct exports", async () => {
+  // A wide module so the printer-generated module_info has thousands of
+  // export entries. Under --isolate, file b hits the SourceProvider cache and
+  // rebuilds JSModuleRecord from the cached module_info (Bun__analyzeTranspiledModule)
+  // instead of re-parsing. If the record is wrong, named imports would be
+  // undefined or the count would mismatch.
+  const N = 2000;
+  let big = "";
+  for (let i = 0; i < N; i++) big += `export function f${i}(x){return x+${i};}\n`;
+  big += `export const COUNT = ${N};\n`;
 
-    const tBody = (name: string) => `
+  const tBody = (name: string) => `
     import { test, expect } from "bun:test";
     import { f0, f1, f${N - 1}, COUNT } from "./big";
     import * as all from "./big";
@@ -548,26 +551,24 @@ test.concurrent(
     });
   `;
 
-    using dir = tempDir("isolate-module-info", {
-      "big.ts": big,
-      "a.test.ts": tBody("a"),
-      "b.test.ts": tBody("b"),
-      "c.test.ts": tBody("c"),
-    });
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
-      env: bunEnv,
-      cwd: String(dir),
-      stderr: "pipe",
-      stdout: "pipe",
-    });
-    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect(stderr).toContain("3 pass");
-    expect(stderr).toContain("0 fail");
-    expect(exitCode).toBe(0);
-  },
-  60_000,
-);
+  using dir = tempDir("isolate-module-info", {
+    "big.ts": big,
+    "a.test.ts": tBody("a"),
+    "b.test.ts": tBody("b"),
+    "c.test.ts": tBody("c"),
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--isolate", "./a.test.ts", "./b.test.ts", "./c.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toContain("3 pass");
+  expect(stderr).toContain("0 fail");
+  expect(exitCode).toBe(0);
+});
 
 test.concurrent(
   "--isolate: cached module_info handles `import * as ns; export { ns }` as a Namespace export",
@@ -728,7 +729,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
       `),
     );
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
-  }, 60_000);
+  });
 
   test("Bun.serve left running", async () => {
     using dir = tempDir(
@@ -738,7 +739,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
       `),
     );
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
-  }, 60_000);
+  });
 
   test("long setTimeout/setInterval left pending", async () => {
     using dir = tempDir(
@@ -749,7 +750,7 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
       `),
     );
     expect(await maxLiveGlobals(String(dir))).toBeLessThanOrEqual(4);
-  }, 60_000);
+  });
 });
 
 // The synchronous module-load path (require(esm), importSync) must attach the
@@ -761,17 +762,15 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
 // per file; ~1.2s/file for a 3000-export module in a debug build). Run 1
 // exercises the fresh-transpile branch; run 2 hits the on-disk
 // RuntimeTranspilerCache entry (esm_record branch).
-test.concurrent(
-  "--isolate: require(esm) caches a BunTranspiledModule SourceProvider",
-  async () => {
-    // Wide enough to clear the RuntimeTranspilerCache minimum size (4KB).
-    let big = "";
-    for (let i = 0; i < 500; i++) big += `export function f${i}(x){return x+${i};}\n`;
-    big += `export const COUNT = 500;\n`;
+test.concurrent("--isolate: require(esm) caches a BunTranspiledModule SourceProvider", async () => {
+  // Wide enough to clear the RuntimeTranspilerCache minimum size (4KB).
+  let big = "";
+  for (let i = 0; i < 500; i++) big += `export function f${i}(x){return x+${i};}\n`;
+  big += `export const COUNT = 500;\n`;
 
-    using dir = tempDir("isolate-sync-provider", {
-      "big.mjs": big,
-      "a.test.ts": `
+  using dir = tempDir("isolate-sync-provider", {
+    "big.mjs": big,
+    "a.test.ts": `
       import { test, expect } from "bun:test";
       import { isolatedModuleCacheSourceType } from "bun:internal-for-testing";
 
@@ -783,26 +782,24 @@ test.concurrent(
         expect(isolatedModuleCacheSourceType(path)).toBe("BunTranspiledModule");
       });
     `,
-    });
+  });
 
-    const cacheDir = `${String(dir)}/transpiler-cache`;
-    for (const run of [1, 2]) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "test", "--isolate", "./a.test.ts"],
-        env: {
-          ...bunEnv,
-          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
-          BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
-        },
-        cwd: String(dir),
-        stderr: "pipe",
-        stdout: "pipe",
-      });
-      const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr, `run ${run}`).toContain("1 pass");
-      expect(stderr, `run ${run}`).toContain("0 fail");
-      expect(exitCode, `run ${run}`).toBe(0);
-    }
-  },
-  60_000,
-);
+  const cacheDir = `${String(dir)}/transpiler-cache`;
+  for (const run of [1, 2]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate", "./a.test.ts"],
+      env: {
+        ...bunEnv,
+        BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+        BUN_RUNTIME_TRANSPILER_CACHE_PATH: cacheDir,
+      },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr, `run ${run}`).toContain("1 pass");
+    expect(stderr, `run ${run}`).toContain("0 fail");
+    expect(exitCode, `run ${run}`).toBe(0);
+  }
+});

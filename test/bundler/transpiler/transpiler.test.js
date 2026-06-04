@@ -1022,6 +1022,16 @@ function foo() {}
       exp("new ((a?.b)`tpl`)();", "new (a?.b)`tpl`");
       exp("new ((a?.b)`tpl`.c)();", "new (a?.b)`tpl`.c");
       exp("new (a()`tpl`)();", "new (a()`tpl`)");
+
+      // An optional-chain call isolated below a non-optional access or template is
+      // wrapped on its own too, so no outer parens (a plain call still needs them).
+      exp("new ((a?.()).b)();", "new (a?.()).b");
+      exp("new ((a?.b())`tpl`)();", "new (a?.b())`tpl`");
+
+      // `import(...)` and `require(...)` print as calls, so a template-tagged one
+      // must stay wrapped as a `new` callee (otherwise `new import(x)`tpl`` /
+      // `new require("m").f`tpl`` reparse against the wrong subexpression).
+      exp("new (import(x)`tpl`)();", "new (import(x)`tpl`)");
     });
 
     it("wraps an optional-chain tag of a template literal", () => {

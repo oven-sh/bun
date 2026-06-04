@@ -1482,13 +1482,15 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
 ///
 /// Walks the `EDot`/`EIndex`/`ETemplate` (tagged) chain toward its base:
 ///
-/// - a `ECall` anywhere always needs the parens — nothing else isolates a call
-///   from the `new` (`new a().b()` → `(new a()).b()`);
-/// - an optional-chain link needs the parens only while it still reaches the top
-///   of the chain. Once a non-optional access (or a tagged template) sits above
-///   it, the inner chain is already parenthesized on its own — by the printer's
-///   `HasNonOptionalChainParent` handling (`(a?.b).c`) or the template-tag wrap
-///   (`(a?.b)`t``) — so it is inside those parens and no outer wrap is needed.
+/// - a non-optional call (`ECall`, `import(...)`, `require(...)`) always needs
+///   the parens — nothing isolates a plain call from the `new`
+///   (`new a().b()` → `(new a()).b()`);
+/// - an optional-chain link (including an optional call) needs the parens only
+///   while it still reaches the top of the chain. Once a non-optional access (or
+///   a tagged template) sits above it, the inner chain is already parenthesized
+///   on its own — by the printer's `HasNonOptionalChainParent` handling
+///   (`(a?.b).c`) or the template-tag wrap (`(a?.b)`t``) — so it is inside those
+///   parens and no outer wrap is needed.
 fn new_callee_needs_parens(expr: &js_ast::Expr) -> bool {
     use js_ast::ExprData;
     let mut current = expr;
@@ -1498,7 +1500,21 @@ fn new_callee_needs_parens(expr: &js_ast::Expr) -> bool {
     let mut crossed_non_optional_access = false;
     loop {
         match &current.data {
-            ExprData::ECall(_) => return true,
+            ExprData::ECall(e) => {
+                // An optional-chain call below a crossed boundary is isolated the
+                // same way an optional `EDot`/`EIndex` is; a non-optional call is
+                // never isolated, so it always needs the parens.
+                if e.optional_chain.is_some() {
+                    return !crossed_non_optional_access;
+                }
+                return true;
+            }
+            // `import(...)`, `require(...)`, and `require.resolve(...)` also print
+            // as calls and are captured by `new` the same way `ECall` is; none of
+            // them can be an optional chain.
+            ExprData::EImport(_)
+            | ExprData::ERequireString(_)
+            | ExprData::ERequireResolveString(_) => return true,
             ExprData::EDot(e) => {
                 if e.optional_chain.is_some() {
                     return !crossed_non_optional_access;

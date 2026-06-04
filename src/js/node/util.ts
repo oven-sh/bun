@@ -283,11 +283,13 @@ function aborted(signal: AbortSignal, resource: object) {
 }
 
 function setTraceSigInt(enable) {
+  // Node validates the argument before the worker check (lib/util.js), so a
+  // bad type throws ERR_INVALID_ARG_TYPE even inside a worker.
+  validateBoolean(enable, "enable");
   if (!Bun.isMainThread) {
     // Matches node's ERR_WORKER_UNSUPPORTED_OPERATION('Calling util.setTraceSigInt').
     throw $ERR_WORKER_UNSUPPORTED_OPERATION("Calling util.setTraceSigInt is not supported in workers");
   }
-  validateBoolean(enable, "enable");
   // Node starts/stops a SIGINT watchdog that prints a stack trace when the
   // process is interrupted; bun does not implement the watchdog yet, so this
   // is accepted as a no-op on the main thread.

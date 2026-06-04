@@ -1541,15 +1541,13 @@ async function getPipeline(options = {}) {
           steps: [getTestBunStep(target, options, { testFiles, buildId })],
         })),
       );
+      // aarch64-only Tart pilot — x64 darwin is being deprecated at 1.4, so the
+      // x64-via-Rosetta lane (proven possible but slow on subprocess-heavy tests)
+      // isn't worth productionizing. Intel runners cover x64 until then.
       steps.push({
         key: "darwin-aarch64",
         group: getTargetLabel({ os: "darwin", arch: "aarch64" }),
         steps: [getTartPilotStep(options, buildId, "aarch64")],
-      });
-      steps.push({
-        key: "darwin-x64",
-        group: getTargetLabel({ os: "darwin", arch: "x64" }),
-        steps: [getTartPilotStep(options, buildId, "x64")],
       });
     }
   }

@@ -22,7 +22,7 @@ class Tracing {
     if (this.#enabled) return;
     this.#enabled = true;
     agent.enableCategories(this.#categories);
-    enabledTracingObjects.add(this);
+    enabledTracingObjects.$add(this);
     if (enabledTracingObjects.size > kMaxTracingCount) {
       process.emitWarning(
         "Possible trace_events memory leak detected. There are more than " +
@@ -35,7 +35,7 @@ class Tracing {
     if (!this.#enabled) return;
     this.#enabled = false;
     agent.disableCategories(this.#categories);
-    enabledTracingObjects.delete(this);
+    enabledTracingObjects.$delete(this);
   }
 
   get enabled(): boolean {

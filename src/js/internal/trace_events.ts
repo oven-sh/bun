@@ -55,15 +55,15 @@ function setTid(value: number) {
 }
 
 function isTraceCategoryEnabled(category: string): boolean {
-  return categoryRefs.has(category);
+  return categoryRefs.$has(category);
 }
 
 function isCategoryGroupEnabled(cat: string): boolean {
   if (categoryRefs.size === 0) return false;
-  if (categoryRefs.has(cat)) return true;
+  if (categoryRefs.$has(cat)) return true;
   if (!cat.includes(",")) return false;
   for (const part of cat.split(",")) {
-    if (categoryRefs.has(part)) return true;
+    if (categoryRefs.$has(part)) return true;
   }
   return false;
 }
@@ -77,14 +77,14 @@ function enableCategories(categories: string[]) {
 
 function enableCategoriesImpl(categories: string[]) {
   for (const category of categories) {
-    const refs = categoryRefs.get(category);
+    const refs = categoryRefs.$get(category);
     if (refs === undefined) {
-      categoryRefs.set(category, 1);
-      everEnabled.add(category);
-      const buffer = categoryBuffers.get(category);
+      categoryRefs.$set(category, 1);
+      everEnabled.$add(category);
+      const buffer = categoryBuffers.$get(category);
       if (buffer) buffer[0] = 1;
     } else {
-      categoryRefs.set(category, refs + 1);
+      categoryRefs.$set(category, refs + 1);
     }
   }
   if (categories.length !== 0) {
@@ -98,29 +98,29 @@ function enableCategoriesImpl(categories: string[]) {
 
 function disableCategories(categories: string[]) {
   for (const category of categories) {
-    const refs = categoryRefs.get(category);
+    const refs = categoryRefs.$get(category);
     if (refs === undefined) continue;
     if (refs <= 1) {
-      categoryRefs.delete(category);
-      const buffer = categoryBuffers.get(category);
+      categoryRefs.$delete(category);
+      const buffer = categoryBuffers.$get(category);
       if (buffer) buffer[0] = 0;
     } else {
-      categoryRefs.set(category, refs - 1);
+      categoryRefs.$set(category, refs - 1);
     }
   }
 }
 
 function getEnabledCategories(): string | undefined {
   if (categoryRefs.size === 0) return undefined;
-  return Array.from(categoryRefs.keys()).join(",");
+  return Array.from(categoryRefs.$keys()).join(",");
 }
 
 function getCategoryEnabledBuffer(category: string): Uint8Array {
-  let buffer = categoryBuffers.get(category);
+  let buffer = categoryBuffers.$get(category);
   if (!buffer) {
     buffer = new Uint8Array(1);
-    buffer[0] = categoryRefs.has(category) ? 1 : 0;
-    categoryBuffers.set(category, buffer);
+    buffer[0] = categoryRefs.$has(category) ? 1 : 0;
+    categoryBuffers.$set(category, buffer);
   }
   return buffer;
 }
@@ -209,7 +209,7 @@ function installInstrumentation() {
   // Deliberately exact-match (not the compound group): the listeners flip
   // unhandled rejections from fatal to observed, so only opt in when the
   // user explicitly asked for node.promises.rejections.
-  if (!rejectionsInstrumented && categoryRefs.has("node.promises.rejections")) {
+  if (!rejectionsInstrumented && categoryRefs.$has("node.promises.rejections")) {
     rejectionsInstrumented = true;
     installRejectionInstrumentation();
   }
@@ -263,7 +263,7 @@ function flush() {
     }
   }
   emitMetadata();
-  if (everEnabled.has("v8")) {
+  if (everEnabled.$has("v8")) {
     // Synthetic stand-in for V8 GC trace events — JSC has no V8 tracing.
     events.push({
       pid: process.pid,
@@ -583,37 +583,37 @@ function installConsoleInstrumentation() {
   const originalTimeEnd = console.timeEnd;
   console.count = function count(label = "default") {
     const key = `${label}`;
-    const value = (counts.get(key) ?? 0) + 1;
-    counts.set(key, value);
+    const value = (counts.$get(key) ?? 0) + 1;
+    counts.$set(key, value);
     if (isCategoryGroupEnabled(kConsoleCat)) emitEvent("C", kConsoleCat, "count::" + key, 0, value);
     return originalCount.$call(this, label);
   };
   console.countReset = function countReset(label = "default") {
     const key = `${label}`;
-    if (counts.has(key)) {
-      counts.delete(key);
+    if (counts.$has(key)) {
+      counts.$delete(key);
       if (isCategoryGroupEnabled(kConsoleCat)) emitEvent("C", kConsoleCat, "count::" + key, 0, 0);
     }
     return originalCountReset.$call(this, label);
   };
   console.time = function time(label = "default") {
     const key = `${label}`;
-    if (!timeLabels.has(key)) {
-      timeLabels.add(key);
+    if (!timeLabels.$has(key)) {
+      timeLabels.$add(key);
       if (isCategoryGroupEnabled(kConsoleCat)) emitEvent("b", kConsoleCat, "time::" + key, 0);
     }
     return originalTime.$call(this, label);
   };
   console.timeLog = function timeLog(label = "default", ...data) {
     const key = `${label}`;
-    if (timeLabels.has(key) && isCategoryGroupEnabled(kConsoleCat)) {
+    if (timeLabels.$has(key) && isCategoryGroupEnabled(kConsoleCat)) {
       emitEvent("n", kConsoleCat, "time::" + key, 0);
     }
     return originalTimeLog.$call(this, label, ...data);
   };
   console.timeEnd = function timeEnd(label = "default") {
     const key = `${label}`;
-    if (timeLabels.delete(key) && isCategoryGroupEnabled(kConsoleCat)) {
+    if (timeLabels.$delete(key) && isCategoryGroupEnabled(kConsoleCat)) {
       emitEvent("e", kConsoleCat, "time::" + key, 0);
     }
     return originalTimeEnd.$call(this, label);

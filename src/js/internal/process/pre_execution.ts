@@ -27,14 +27,14 @@ function rewriteFrame(frame: string): string {
 
 function getSourceLine(file: string, line: number): string | null {
   sourceLineCache ??= new Map();
-  let lines = sourceLineCache.get(file);
+  let lines = sourceLineCache.$get(file);
   if (lines === undefined) {
     try {
       lines = (require("node:fs").readFileSync(file, "utf8") as string).split("\n");
     } catch {
       lines = null;
     }
-    sourceLineCache.set(file, lines);
+    sourceLineCache.$set(file, lines);
   }
   return lines === null ? null : (lines[line - 1] ?? null);
 }

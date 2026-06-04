@@ -4667,7 +4667,7 @@ pub mod formatter {
                         // of holes (`empty_start`) is part of the elided tail,
                         // so count from its start and clear it so it doesn't
                         // also leak into the trailing `N x empty items` summary.
-                        let elided_from = empty_start.map_or(u64::from(i), u64::from);
+                        let elided_from = u64::from(empty_start.unwrap_or(i));
                         let remaining = len - elided_from;
                         empty_start = None;
                         writer.print_comma::<C>();

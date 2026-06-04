@@ -620,14 +620,20 @@ mod tests {
     fn single_dot_null_cell() {
         let (columns, cells) = parse_areas(b"a . b").unwrap();
         assert_eq!(columns, 3);
-        assert_eq!(cells, vec![Some(b"a".as_slice()), None, Some(b"b".as_slice())]);
+        assert_eq!(
+            cells,
+            vec![Some(b"a".as_slice()), None, Some(b"b".as_slice())]
+        );
     }
 
     #[test]
     fn multi_dot_run_is_one_null_cell() {
         let (columns, cells) = parse_areas(b"a ... b").unwrap();
         assert_eq!(columns, 3);
-        assert_eq!(cells, vec![Some(b"a".as_slice()), None, Some(b"b".as_slice())]);
+        assert_eq!(
+            cells,
+            vec![Some(b"a".as_slice()), None, Some(b"b".as_slice())]
+        );
     }
 
     #[test]
@@ -650,7 +656,10 @@ mod tests {
         // null cell followed by the named area `a`.
         let (columns, cells) = parse_areas(b"..a b").unwrap();
         assert_eq!(columns, 3);
-        assert_eq!(cells, vec![None, Some(b"a".as_slice()), Some(b"b".as_slice())]);
+        assert_eq!(
+            cells,
+            vec![None, Some(b"a".as_slice()), Some(b"b".as_slice())]
+        );
     }
 
     #[test]

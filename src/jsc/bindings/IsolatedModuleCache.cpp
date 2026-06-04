@@ -70,7 +70,10 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsolatedModuleCacheSourceType, (JSC::JSGlobal
     case JSC::SourceProviderSourceType::BunTranspiledModule:
         return JSC::JSValue::encode(JSC::jsNontrivialString(vm, "BunTranspiledModule"_s));
     default:
-        return JSC::JSValue::encode(JSC::jsNumber(static_cast<unsigned>(provider->sourceType())));
+        // Unreachable today (isTagCacheable only admits JS-ish tags, whose
+        // providers are Program/Module/BunTranspiledModule), but keep the
+        // `string | null` contract if that ever widens.
+        return JSC::JSValue::encode(JSC::jsNontrivialString(vm, "Unknown"_s));
     }
 }
 

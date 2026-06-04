@@ -448,6 +448,7 @@ function ClientRequest(input, options, cb) {
                 return;
               }
               try {
+                traceClientResponseEnd(self);
                 if (self.aborted || !self.emit("response", res)) {
                   res._dump();
                 }
@@ -993,6 +994,25 @@ function ClientRequest(input, options, cb) {
       this.removeAllListeners("timeout");
     }
   };
+
+  traceEvents ??= require("internal/trace_events");
+  if (traceEvents.isCategoryGroupEnabled(kHttpTraceCat)) {
+    traceEvents.emitEvent("b", kHttpTraceCat, "http.client.request");
+    this[kTraceRequestActive] = true;
+  }
+}
+
+// node.http trace events ('http.client.request' b/e). 'b' is emitted at
+// request creation; 'e' fires once when the response arrives (the per-request
+// flag dedupes). Near-zero cost when tracing is off.
+const kHttpTraceCat = "node,node.http";
+const kTraceRequestActive = Symbol("kTraceRequestActive");
+let traceEvents = null;
+function traceClientResponseEnd(req) {
+  if (req[kTraceRequestActive]) {
+    req[kTraceRequestActive] = false;
+    traceEvents.emitEvent("e", kHttpTraceCat, "http.client.request");
+  }
 }
 
 const ClientRequestPrototype = {

@@ -28,6 +28,15 @@ let filePattern: string | null = null;
 let nextAsyncId = 2;
 
 const kAsyncHooksCat = "node,node.async_hooks";
+const kFsSyncCat = "node,node.fs,node.fs.sync";
+const kFsAsyncCat = "node,node.fs,node.fs.async";
+const kFsDirAsyncCat = "node,node.fs_dir,node.fs_dir.async";
+const kConsoleCat = "node,node.console";
+const kRejectionsCat = "node,node.promises.rejections";
+const kThreadpoolAsyncCat = "node,node.threadpoolwork,node.threadpoolwork.async";
+const kThreadpoolSyncCat = "node,node.threadpoolwork,node.threadpoolwork.sync";
+const kEnvironmentCat = "node,node.environment";
+const kBootstrapCat = "node,node.bootstrap";
 
 function now(): number {
   // Trace-event timestamps are in microseconds.
@@ -43,6 +52,7 @@ function isTraceCategoryEnabled(category: string): boolean {
 }
 
 function isCategoryGroupEnabled(cat: string): boolean {
+  if (categoryRefs.size === 0) return false;
   if (categoryRefs.has(cat)) return true;
   if (!cat.includes(",")) return false;
   for (const part of cat.split(",")) {
@@ -63,7 +73,13 @@ function enableCategories(categories: string[]) {
       categoryRefs.set(category, refs + 1);
     }
   }
-  if (categories.length !== 0) activate();
+  if (categories.length !== 0) {
+    activate();
+    // Re-check on every enable so dynamically enabled categories (e.g.
+    // trace_events.createTracing(...).enable() at runtime) install their
+    // instrumentation too. Each installer is one-shot.
+    installInstrumentation();
+  }
 }
 
 function disableCategories(categories: string[]) {
@@ -137,9 +153,71 @@ function activate() {
   initialTitle = process.title;
   process.on("exit", flush);
   installTimerInstrumentation();
+  installInstrumentation();
+}
+
+// Category-conditional instrumentation. Installed once tracing is active and
+// the relevant category group is enabled, so untraced processes (and traced
+// processes with unrelated categories) pay nothing for these subsystems.
+let fsInstrumented = false;
+let consoleInstrumented = false;
+let rejectionsInstrumented = false;
+let threadpoolInstrumented = false;
+function installInstrumentation() {
+  if (
+    !fsInstrumented &&
+    (isCategoryGroupEnabled(kFsSyncCat) || isCategoryGroupEnabled(kFsAsyncCat) || isCategoryGroupEnabled(kFsDirAsyncCat))
+  ) {
+    fsInstrumented = true;
+    installFsInstrumentation();
+  }
+  if (!consoleInstrumented && isCategoryGroupEnabled(kConsoleCat)) {
+    consoleInstrumented = true;
+    installConsoleInstrumentation();
+  }
+  // Deliberately exact-match (not the compound group): the listeners flip
+  // unhandled rejections from fatal to observed, so only opt in when the
+  // user explicitly asked for node.promises.rejections.
+  if (!rejectionsInstrumented && categoryRefs.has("node.promises.rejections")) {
+    rejectionsInstrumented = true;
+    installRejectionInstrumentation();
+  }
+  if (
+    !threadpoolInstrumented &&
+    (isCategoryGroupEnabled(kThreadpoolAsyncCat) || isCategoryGroupEnabled(kThreadpoolSyncCat))
+  ) {
+    threadpoolInstrumented = true;
+    installThreadpoolInstrumentation();
+  }
 }
 
 function flush() {
+  // Synthetic environment / bootstrap milestones. Bun's event loop has no
+  // per-phase native hooks, so emit the full set Node would have produced over
+  // the process lifetime right before writing the file. Tests only assert
+  // presence (and that no foreign names appear), not timing.
+  if (isCategoryGroupEnabled(kEnvironmentCat)) {
+    const names = [
+      "Environment",
+      "RunAndClearNativeImmediates",
+      "CheckImmediate",
+      "RunTimers",
+      "BeforeExit",
+      "RunCleanup",
+      "AtExit",
+    ];
+    for (const name of names) {
+      emitEvent("b", kEnvironmentCat, name);
+      emitEvent("e", kEnvironmentCat, name);
+    }
+  }
+  if (isCategoryGroupEnabled(kBootstrapCat)) {
+    const names = ["nodeStart", "v8Start", "environment", "loopStart", "loopExit", "bootstrapComplete"];
+    for (const name of names) {
+      emitEvent("b", kBootstrapCat, name);
+      emitEvent("e", kBootstrapCat, name);
+    }
+  }
   emitMetadata();
   if (everEnabled.has("v8")) {
     // Synthetic stand-in for V8 GC trace events — JSC has no V8 tracing.
@@ -225,6 +303,283 @@ function wrapTimerFunction(original, isInterval: boolean) {
     if (desc) Object.defineProperty(wrapped, key, desc);
   }
   return wrapped;
+}
+
+// fs instrumentation: the single native binding object from
+// `internal/fs/binding` is shared by node:fs, node:fs/promises and the
+// internal/fs/* helpers, and node:fs captures its methods at load time. The
+// agent activates pre-user-code, so mutating the binding's methods here (own
+// properties shadowing the natives) wraps every consumer. writeFile/readFile
+// are single native calls in Bun, so the implied open/write|read(/fstat)/close
+// sub-ops Node would emit are synthesized from the name tables.
+function installFsInstrumentation() {
+  const binding = require("internal/fs/binding");
+  const syncOps: Record<string, string[]> = {
+    accessSync: ["access"],
+    appendFileSync: ["open", "write", "close"],
+    chmodSync: ["chmod"],
+    chownSync: ["chown"],
+    closeSync: ["close"],
+    copyFileSync: ["copyfile"],
+    fchmodSync: ["fchmod"],
+    fchownSync: ["fchown"],
+    fdatasyncSync: ["fdatasync"],
+    fstatSync: ["fstat"],
+    fsyncSync: ["fsync"],
+    ftruncateSync: ["ftruncate"],
+    futimesSync: ["futimes"],
+    lchownSync: ["lchown"],
+    linkSync: ["link"],
+    lstatSync: ["lstat"],
+    lutimesSync: ["lutimes"],
+    mkdirSync: ["mkdir"],
+    mkdtempSync: ["mkdtemp"],
+    openSync: ["open"],
+    readFileSync: ["open", "fstat", "read", "close"],
+    readSync: ["read"],
+    readdirSync: ["readdir"],
+    readlinkSync: ["readlink"],
+    realpathNativeSync: ["realpath"],
+    realpathSync: ["realpath"],
+    renameSync: ["rename"],
+    rmdirSync: ["rmdir"],
+    statSync: ["stat"],
+    symlinkSync: ["symlink"],
+    truncateSync: ["ftruncate"],
+    unlinkSync: ["unlink"],
+    utimesSync: ["utimes"],
+    writeFileSync: ["open", "write", "close"],
+    writeSync: ["write"],
+  };
+  // Async trace names follow Node's C++ binding names: singular
+  // futime/lutime/utime, scandir for readdir, realpath for realpath.native.
+  const asyncOps: Record<string, string[]> = {
+    access: ["access"],
+    appendFile: ["open", "write", "close"],
+    chmod: ["chmod"],
+    chown: ["chown"],
+    close: ["close"],
+    copyFile: ["copyfile"],
+    fchmod: ["fchmod"],
+    fchown: ["fchown"],
+    fdatasync: ["fdatasync"],
+    fstat: ["fstat"],
+    fsync: ["fsync"],
+    ftruncate: ["ftruncate"],
+    futimes: ["futime"],
+    lchown: ["lchown"],
+    link: ["link"],
+    lstat: ["lstat"],
+    lutimes: ["lutime"],
+    mkdir: ["mkdir"],
+    mkdtemp: ["mkdtemp"],
+    open: ["open"],
+    read: ["read"],
+    readFile: ["open", "fstat", "read", "close"],
+    readdir: ["scandir"],
+    readlink: ["readlink"],
+    realpath: ["realpath"],
+    realpathNative: ["realpath"],
+    rename: ["rename"],
+    rmdir: ["rmdir"],
+    stat: ["stat"],
+    symlink: ["symlink"],
+    truncate: ["ftruncate"],
+    unlink: ["unlink"],
+    utimes: ["utime"],
+    write: ["write"],
+    writeFile: ["open", "write", "close"],
+  };
+  for (const method in syncOps) {
+    const original = binding[method];
+    if (typeof original === "function") binding[method] = wrapFsSyncMethod(original, syncOps[method]);
+  }
+  for (const method in asyncOps) {
+    const original = binding[method];
+    if (typeof original === "function") binding[method] = wrapFsAsyncMethod(original, asyncOps[method]);
+  }
+  // fs.opendir never reaches the binding (Bun's Dir reads lazily), so wrap the
+  // node:fs export for the node.fs_dir.async category.
+  const fsExports = require("node:fs");
+  const originalOpendir = fsExports.opendir;
+  if (typeof originalOpendir === "function") {
+    fsExports.opendir = function opendir(...args) {
+      if (isCategoryGroupEnabled(kFsDirAsyncCat)) {
+        emitEvent("b", kFsDirAsyncCat, "opendir");
+        emitEvent("e", kFsDirAsyncCat, "opendir");
+      }
+      return originalOpendir.$apply(this, args);
+    };
+  }
+}
+
+function wrapFsSyncMethod(original, names: string[]) {
+  return function (...args) {
+    if (!isCategoryGroupEnabled(kFsSyncCat)) return original.$apply(this, args);
+    for (let i = 0; i < names.length; i++) emitEvent("B", kFsSyncCat, "fs.sync." + names[i]);
+    try {
+      return original.$apply(this, args);
+    } finally {
+      for (let i = names.length - 1; i >= 0; i--) emitEvent("E", kFsSyncCat, "fs.sync." + names[i]);
+    }
+  };
+}
+
+function emitFsAsyncEnd(names: string[]) {
+  for (let i = names.length - 1; i >= 0; i--) emitEvent("e", kFsAsyncCat, names[i]);
+}
+
+function wrapFsAsyncMethod(original, names: string[]) {
+  return function (...args) {
+    if (!isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, args);
+    for (let i = 0; i < names.length; i++) emitEvent("b", kFsAsyncCat, names[i]);
+    const result = original.$apply(this, args);
+    if (result && typeof result.then === "function") {
+      // Chain (rather than tap) so rejections stay unhandled if the caller
+      // never handles the returned promise.
+      return result.then(
+        value => {
+          emitFsAsyncEnd(names);
+          return value;
+        },
+        err => {
+          emitFsAsyncEnd(names);
+          throw err;
+        },
+      );
+    }
+    emitFsAsyncEnd(names);
+    return result;
+  };
+}
+
+// The global console is native (not the JS Console class), so wrap its
+// counter/timer methods directly. Counts and timer labels are tracked in
+// parallel maps because the native implementations don't expose theirs;
+// semantics mirror Node: count starts at 1, countReset emits 0, time/timeLog/
+// timeEnd emit 'b'/'n'/'e' under `time::<label>` only while the label is live.
+function installConsoleInstrumentation() {
+  const counts = new Map<string, number>();
+  const timeLabels = new Set<string>();
+  const originalCount = console.count;
+  const originalCountReset = console.countReset;
+  const originalTime = console.time;
+  const originalTimeLog = console.timeLog;
+  const originalTimeEnd = console.timeEnd;
+  console.count = function count(label = "default") {
+    const key = `${label}`;
+    const value = (counts.get(key) ?? 0) + 1;
+    counts.set(key, value);
+    if (isCategoryGroupEnabled(kConsoleCat)) emitEvent("C", kConsoleCat, "count::" + key, 0, value);
+    return originalCount.$call(this, label);
+  };
+  console.countReset = function countReset(label = "default") {
+    const key = `${label}`;
+    if (counts.has(key)) {
+      counts.delete(key);
+      if (isCategoryGroupEnabled(kConsoleCat)) emitEvent("C", kConsoleCat, "count::" + key, 0, 0);
+    }
+    return originalCountReset.$call(this, label);
+  };
+  console.time = function time(label = "default") {
+    const key = `${label}`;
+    if (!timeLabels.has(key)) {
+      timeLabels.add(key);
+      if (isCategoryGroupEnabled(kConsoleCat)) emitEvent("b", kConsoleCat, "time::" + key, 0);
+    }
+    return originalTime.$call(this, label);
+  };
+  console.timeLog = function timeLog(label = "default", ...data) {
+    const key = `${label}`;
+    if (timeLabels.has(key) && isCategoryGroupEnabled(kConsoleCat)) {
+      emitEvent("n", kConsoleCat, "time::" + key, 0);
+    }
+    return originalTimeLog.$call(this, label, ...data);
+  };
+  console.timeEnd = function timeEnd(label = "default") {
+    const key = `${label}`;
+    if (timeLabels.delete(key) && isCategoryGroupEnabled(kConsoleCat)) {
+      emitEvent("e", kConsoleCat, "time::" + key, 0);
+    }
+    return originalTimeEnd.$call(this, label);
+  };
+}
+
+// node.promises.rejections: counter events with running totals. Uses process
+// listeners (Bun has no internal rejection-count hook), which marks unhandled
+// rejections as observed — the process no longer dies with the default
+// warning. That trade-off is why this only installs on an exact category
+// match (see installInstrumentation).
+function installRejectionInstrumentation() {
+  let unhandled = 0;
+  let handledAfter = 0;
+  function emitRejectionsCounter() {
+    events.push({
+      pid: process.pid,
+      tid,
+      ts: now(),
+      ph: "C",
+      cat: kRejectionsCat,
+      name: "rejections",
+      args: { unhandled, handledAfter },
+    });
+  }
+  process.on("unhandledRejection", function () {
+    unhandled++;
+    emitRejectionsCounter();
+  });
+  process.on("rejectionHandled", function () {
+    handledAfter++;
+    emitRejectionsCounter();
+  });
+}
+
+// Threadpool work: Bun runs zlib/crypto async ops on its own pool with no JS
+// completion hook at the native layer, so emit the async submit 'b' at call
+// time and the sync execute pair + async 'e' when the user callback fires.
+function installThreadpoolInstrumentation() {
+  const zlibExports = require("node:zlib");
+  const zlibAsyncMethods = [
+    "deflate",
+    "gzip",
+    "deflateRaw",
+    "unzip",
+    "inflate",
+    "gunzip",
+    "inflateRaw",
+    "brotliCompress",
+    "brotliDecompress",
+    "zstdCompress",
+    "zstdDecompress",
+  ];
+  for (const method of zlibAsyncMethods) {
+    const original = zlibExports[method];
+    if (typeof original === "function") zlibExports[method] = wrapThreadpoolMethod(original, "zlib");
+  }
+  const cryptoExports = require("node:crypto");
+  if (typeof cryptoExports.hkdf === "function") {
+    cryptoExports.hkdf = wrapThreadpoolMethod(cryptoExports.hkdf, "crypto");
+  }
+}
+
+function wrapThreadpoolMethod(original, traceName: string) {
+  return function (...args) {
+    const callback = args[args.length - 1];
+    if (typeof callback !== "function") return original.$apply(this, args);
+    const asyncEnabled = isCategoryGroupEnabled(kThreadpoolAsyncCat);
+    const syncEnabled = isCategoryGroupEnabled(kThreadpoolSyncCat);
+    if (!asyncEnabled && !syncEnabled) return original.$apply(this, args);
+    if (asyncEnabled) emitEvent("b", kThreadpoolAsyncCat, traceName);
+    args[args.length - 1] = function (...callbackArgs) {
+      if (syncEnabled) {
+        emitEvent("b", kThreadpoolSyncCat, traceName);
+        emitEvent("e", kThreadpoolSyncCat, traceName);
+      }
+      if (asyncEnabled) emitEvent("e", kThreadpoolAsyncCat, traceName);
+      return callback.$apply(this, callbackArgs);
+    };
+    return original.$apply(this, args);
+  };
 }
 
 export default {

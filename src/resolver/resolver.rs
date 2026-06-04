@@ -338,6 +338,14 @@ fn intern_package_json(pkg: PackageJSON) -> core::ptr::NonNull<PackageJSON> {
 // surface the bust log.
 bun_core::define_scoped_log!(debuglog, Resolver, hidden);
 
+#[inline]
+fn is_permission_denied_dir_read_error(err: bun_core::Error) -> bool {
+    err == bun_core::err!("AccessDenied")
+        || err == bun_core::err!("PermissionDenied")
+        || err == bun_core::err!("EACCES")
+        || err == bun_core::err!("EPERM")
+}
+
 // PORT NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
 // DirnameStore/FilenameStore). Alias here so the ~80 bare-`Path` use sites
 // resolve without a per-site lifetime annotation.
@@ -4329,6 +4337,11 @@ impl<'a> Resolver<'a> {
         if cfg!(debug_assertions) {
             debug_assert!(queue_slice_len > 0);
         }
+        let missing_parent_result = allocators::Result {
+            index: allocators::NOT_FOUND,
+            hash: 0,
+            status: allocators::ItemStatus::NotFound,
+        };
         let open_dir_count = core::cell::Cell::new(0usize);
 
         // When this function halts, any item not processed means it's not found.
@@ -4363,9 +4376,10 @@ impl<'a> Resolver<'a> {
         // - fts_open is not the fastest way to read directories. fts actually just uses readdir!!
         // - remember
         let mut _safe_path: Option<&'static [u8]> = None;
+        let mut parent_result = top_parent;
 
         // Start at the top.
-        while queue_slice_len > 0 {
+        'queue_loop: while queue_slice_len > 0 {
             // SAFETY: every slot in `0..queue_slice_len` was `.write()`-initialised above.
             let mut queue_top = unsafe { queue[queue_slice_len - 1].assume_init_ref() }.clone();
             // `unsafe_path` was set to a slice of the threadlocal
@@ -4378,6 +4392,7 @@ impl<'a> Resolver<'a> {
             let queue_top_safe_path: &[u8] = qt_safe_path.slice();
             // defer top_parent = queue_top.result — done at end of loop body
             queue_slice_len -= 1;
+            let is_target_dir = queue_slice_len == 0;
 
             let open_dir: FD = if queue_top.fd.is_valid() {
                 queue_top.fd
@@ -4438,6 +4453,10 @@ impl<'a> Resolver<'a> {
                                 || err == bun_core::err!("NotDir")
                             {
                                 return Ok(None);
+                            }
+                            if !is_target_dir && is_permission_denied_dir_read_error(err) {
+                                parent_result = missing_parent_result;
+                                continue 'queue_loop;
                             }
                             let cached_dir_entry_result = rfs!()
                                 .entries
@@ -4635,7 +4654,7 @@ impl<'a> Resolver<'a> {
             let dc = self.dir_cache_mut();
             let dir_info_ptr: *mut DirInfo::DirInfo =
                 dc.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
-            let parent_dir_ptr = dc.at_index(top_parent.index).map(DirInfoRef::from_slot);
+            let parent_dir_ptr = dc.at_index(parent_result.index).map(DirInfoRef::from_slot);
 
             self.dir_info_uncached(
                 dir_info_ptr,
@@ -4645,12 +4664,12 @@ impl<'a> Resolver<'a> {
                 queue_top.result,
                 cached_dir_entry_result.index,
                 parent_dir_ptr,
-                top_parent.index,
+                parent_result.index,
                 open_dir,
                 None,
             )?;
 
-            top_parent = queue_top.result;
+            parent_result = queue_top.result;
 
             if queue_slice_len == 0 {
                 // SAFETY: `dir_info_ptr` is the BSSMap slot just filled by `dir_info_uncached`.

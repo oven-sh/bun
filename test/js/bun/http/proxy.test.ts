@@ -463,7 +463,7 @@ test("proxy with long password (> 4096 chars) sends correct authorization", asyn
 
     // Decode and verify
     const encoded = capturedAuth.substring("Basic ".length);
-    const decoded = Buffer.from(encoded, "base64url").toString();
+    const decoded = Buffer.from(encoded, "base64").toString();
     expect(decoded).toBe(`${username}:${longPassword}`);
   } finally {
     await proxy.close();
@@ -510,7 +510,7 @@ test("proxy with long password (> 4096 chars) works correctly after redirect", a
     for (const capturedAuth of proxy.capturedAuths) {
       expect(capturedAuth.startsWith("Basic ")).toBe(true);
       const encoded = capturedAuth.substring("Basic ".length);
-      const decoded = Buffer.from(encoded, "base64url").toString();
+      const decoded = Buffer.from(encoded, "base64").toString();
       expect(decoded).toBe(`${username}:${longPassword}`);
     }
   } finally {

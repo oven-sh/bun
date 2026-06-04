@@ -1642,11 +1642,16 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     }
 }
 
-pub(crate) fn close_isolation_handles() {
+pub(crate) fn close_isolation_handles(vm: &mut VirtualMachine) {
     let state = runtime_state();
     if state.is_null() {
         return;
     }
+    // A microtask still pending at end-of-file (e.g. queued by
+    // `tick_immediate_tasks` or `handle_rejected_promises`) can register new
+    // handles when it runs. Drain first so they land in the registry before
+    // it empties — matches the swap's own drain-before-teardown ordering.
+    let _ = vm.event_loop_mut().drain_microtasks();
     loop {
         // SAFETY: live boxed per-thread `RuntimeState`; the borrow ends before
         // the close below re-enters JS.

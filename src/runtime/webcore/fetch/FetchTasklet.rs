@@ -125,8 +125,8 @@ struct HttpHandoff {
 /// |---|---|---|
 /// | JS baseline | `get` — `init_exact_refs(2)` (JS) | `on_progress_update` final-tick cleanup or shutdown early-out (`release_js_ref`, JS); `callback`'s shutdown branch and `release_at_shutdown` (raw `deref_from_thread`, HTTP, JS thread parked); `release_queued_tasks_for_shutdown` in dispatch.rs (`release_js_ref`, JS) |
 /// | HTTP baseline | `get` — `init_exact_refs(2)` (JS, on the HTTP thread's behalf) | final `callback` or `release_at_shutdown` (`release_http_ref`, HTTP) |
-/// | sink | `start_request_stream` (JS) | every `write_end_request` exit (`release_sink_ref`, JS); at exit, whichever path reaches the tasklet first claims it via `take_streaming_refs_for_exit`: `release_at_shutdown`, `callback`'s shutdown branch (both HTTP, `deref_from_thread`), or dispatch.rs's `__bun_release_task_at_shutdown` FetchTasklet arm (JS, `deref`) |
-/// | drain task | `on_write_request_data_drain` (HTTP) | `resume_request_data_stream` (`release_drain_task_ref`, JS); at exit, per `queued_drain_tasks` for nodes dropped unrun — same three-path take as the sink row |
+/// | sink | `start_request_stream` (JS) | every `write_end_request` exit (`release_sink_ref`, JS); at exit, whichever path reaches the tasklet first claims it via `take_streaming_refs_for_exit`: `release_at_shutdown`, `callback`'s shutdown branch (both HTTP, `deref_from_thread`), dispatch.rs's `__bun_release_task_at_shutdown` FetchTasklet arm, or `on_progress_update`'s shutdown early-out (both JS, `deref`) |
+/// | drain task | `on_write_request_data_drain` (HTTP) | `resume_request_data_stream` (`release_drain_task_ref`, JS); at exit, per `queued_drain_tasks` for nodes dropped unrun — same take paths as the sink row |
 ///
 /// # Lock invariants
 ///
@@ -755,12 +755,14 @@ impl FetchTasklet {
     /// `queued_drain_tasks`) and return how many refs the caller must now
     /// release. Their JS-thread release sites can never run once the VM is
     /// exiting, and a final `callback` in the exit window removes the entry
-    /// from `in_flight`, so three exit paths can each be the one that reaches
+    /// from `in_flight`, so four exit paths can each be the one that reaches
     /// a given tasklet: `release_at_shutdown`, `callback`'s shutdown branch,
-    /// and `__bun_release_task_at_shutdown`'s FetchTasklet arm (dispatch.rs,
-    /// for a progress node that out-survived its tasklet's `in_flight`
-    /// entry). The `swap` take makes them idempotent against one another —
-    /// whichever runs first claims the refs, the rest see zero.
+    /// `__bun_release_task_at_shutdown`'s FetchTasklet arm (dispatch.rs, for
+    /// a progress node that out-survived its tasklet's `in_flight` entry),
+    /// and `on_progress_update`'s shutdown early-out (for a node dispatched
+    /// after `is_shutting_down` flipped — defensive, the loop does not tick
+    /// then today). The `swap` take makes them idempotent against one
+    /// another — whichever runs first claims the refs, the rest see zero.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub(crate) fn take_streaming_refs_for_exit(this: *mut FetchTasklet) -> u32 {
         // SAFETY: the caller holds a ref, so `this` is live for the swaps.
@@ -1176,6 +1178,20 @@ impl FetchTasklet {
             }
             drop(shared);
             if is_done {
+                // A queued final progress node that still gets dispatched
+                // after `is_shutting_down` flips would be the only exit path
+                // left for this tasklet (the final `callback` already removed
+                // it from `in_flight` and released the HTTP ref, and a
+                // dequeued node never reaches
+                // `release_queued_tasks_for_shutdown`). The JS loop does not
+                // tick in that window today, so this is defensive symmetry
+                // with the other exit paths — the take is an idempotent
+                // no-op when another path already claimed the refs.
+                for _ in 0..FetchTasklet::take_streaming_refs_for_exit(t.task) {
+                    // SAFETY: `t.task` is the live heap tasklet; the taken
+                    // markers prove the refs are still held.
+                    FetchTasklet::deref(t.task);
+                }
                 // SAFETY: `t.task` is the live heap tasklet; we hold a ref.
                 FetchTasklet::release_js_ref(t.task);
             }

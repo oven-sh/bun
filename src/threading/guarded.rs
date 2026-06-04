@@ -121,7 +121,10 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
 pub struct GuardedLock<'a, Value, M: RawMutex> {
     guarded: &'a GuardedBy<Value, M>,
     // The platform mutex (Darwin os_unfair_lock / Windows SRWLOCK) must be
-    // unlocked on the locking thread — keep the guard !Send/!Sync like MutexGuard.
+    // unlocked on the locking thread — keep the guard !Send. The raw-pointer
+    // PhantomData also makes it !Sync, which is stricter than
+    // `std::sync::MutexGuard` (that is `Sync where T: Sync`); nothing here
+    // shares a guard across threads, so the stricter bound costs nothing.
     _not_send: core::marker::PhantomData<*const ()>,
 }
 

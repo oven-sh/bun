@@ -49,7 +49,6 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
     bump: &'bump Bump,
     ast: &mut JSAst<'_>,
 ) -> Result<(), AllocError> {
-    // TODO(port): narrow error set
     let hmr_api_ref = ast.wrapper_ref;
     let hmr_api_id = Expr::init_identifier(hmr_api_ref, Loc::EMPTY);
     let mut esm_decls: bun_alloc::ArenaVec<'bump, ArrayBinding> = bun_alloc::ArenaVec::new_in(bump);

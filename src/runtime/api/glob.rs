@@ -15,7 +15,6 @@ use bun_sys as syscall;
 
 // Codegen hooks (JSGlob): toJS / fromJS / fromJSDirect are provided by the
 // generated C++ wrapper. See PORTING.md §JSC ".classes.ts-backed types".
-// TODO(port): #[derive(bun_jsc::JsClass)] once codegen is wired for Rust.
 #[bun_jsc::JsClass]
 pub struct Glob {
     pattern: Box<[u8]>,
@@ -46,6 +45,13 @@ impl ScanOpts {
 
         let cwd_str: Box<[u8]> = 'cwd_str: {
             let cwd_utf8 = cwd_string.to_utf8_without_ref();
+
+            if cwd_utf8.slice().len() > MAX_PATH_BYTES {
+                return Err(global_this.throw(format_args!(
+                    "{}: invalid `cwd`, longer than {} bytes",
+                    fn_name, MAX_PATH_BYTES
+                )));
+            }
 
             // If its absolute return as is
             if resolve_path::Platform::AUTO.is_absolute(cwd_utf8.slice()) {

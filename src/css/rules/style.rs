@@ -73,12 +73,33 @@ impl<R> StyleRule<R> {
 }
 
 // ─── to_css ───────────────────────────────────────────────────────────────
+
+/// Maximum number of bytes the per-vendor-prefix serialization may emit from
+/// duplicate passes across a whole stylesheet.
+///
+/// When a style rule's selector list carries more than one vendor prefix (e.g.
+/// a list mixing `:-webkit-autofill` with an unprefixed pseudo-class, or a
+/// single pseudo downleveled to several prefixes), `StyleRule::to_css`
+/// serializes the rule once per prefix, and every pass after the first
+/// re-serializes the rule's whole body — declarations, nested rules, and
+/// everything under them. Nesting such rules repeats that body once per prefix
+/// at every level, so the output grows by (prefix count)^depth. The bytes
+/// emitted by each duplicate pass are measured and bounded, so a few kilobytes
+/// of deeply nested input cannot expand into gigabytes — whatever the
+/// duplicated payload is (nested rules, a large declaration block, etc.). Real
+/// stylesheets repeat only a little output across prefixes; anything past this
+/// limit is a runaway expansion, so bail out with an error instead of
+/// allocating gigabytes. Complements `MAX_NESTING_EXPANSIONS`
+/// (`selectors/selector.rs`) and `MAX_SELECTOR_EXPANSION` (`rules/mod.rs`).
+const MAX_PREFIX_EXPANSION_BYTES: usize = 64 << 20;
+
 impl<R> StyleRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if self.vendor_prefix.is_empty() {
             self.to_css_base(dest, true)?;
         } else {
             let mut first_rule = true;
+            let mut emitted_first_pass = false;
             let mut remaining_prefixes = self.vendor_prefix;
             // `inline for (css.VendorPrefix.FIELDS) |field|` — iterate the bool fields of the
             // packed struct in declared order. In Rust the bitflags type exposes the same
@@ -95,13 +116,40 @@ impl<R> StyleRule<R> {
 
                     dest.vendor_prefix = prefix;
                     let (line, col) = (dest.line, dest.col);
+                    // The first prefix pass is the original; every later pass
+                    // re-serializes the same body (declarations + nested rules),
+                    // so its output is a duplicate produced by the fan-out.
+                    // Measure how much it emits and charge it against the
+                    // expansion-byte budget so nesting fanning-out rules can't
+                    // expand a few kilobytes into gigabytes. The first pass
+                    // (and a single-prefix rule, which has no later pass) does
+                    // not charge; a flat multi-prefix rule's later passes do,
+                    // but without nesting to compound them that stays linear.
+                    let is_duplicate_pass = emitted_first_pass;
+                    let bytes_before = if is_duplicate_pass {
+                        dest.bytes_written()
+                    } else {
+                        0
+                    };
                     self.to_css_base(dest, remaining_prefixes.is_empty())?;
+                    if is_duplicate_pass {
+                        let emitted = dest.bytes_written().saturating_sub(bytes_before);
+                        dest.prefix_expansion_bytes =
+                            dest.prefix_expansion_bytes.saturating_add(emitted);
+                        if dest.prefix_expansion_bytes > MAX_PREFIX_EXPANSION_BYTES {
+                            return dest.new_error(
+                                css::error::PrinterErrorKind::maximum_vendor_prefix_expansion,
+                                None,
+                            );
+                        }
+                    }
                     // A non-final pass emits nothing when the rule has no
                     // declarations of its own and all of its nested rules are
                     // deferred to the final pass; don't write a separator
                     // after such a pass.
                     if dest.line != line || dest.col != col {
                         first_rule = false;
+                        emitted_first_pass = true;
                     }
                 }
             }
@@ -276,7 +324,7 @@ impl<R> StyleRule<R> {
     where
         R: for<'b> css::generics::DeepClone<'b>,
     {
-        use css::context::{DeclarationContext, PropertyHandlerContext};
+        use css::context::DeclarationContext;
 
         let mut unused = false;
         // TODO(port): blocked_on key-type mismatch — `selector::is_unused` takes
@@ -303,26 +351,7 @@ impl<R> StyleRule<R> {
             }
         }
 
-        // Compiling the enclosing nesting away for the targets repeats this
-        // rule's selectors once per combination of the enclosing style rules'
-        // selectors. That expansion is multiplicative across nesting levels,
-        // so bound it — otherwise a few hundred bytes of deeply nested
-        // multi-selector rules expand into gigabytes of cloned rules and
-        // output. See `css_rules::MAX_SELECTOR_EXPANSION`.
-        if context.selector_expansion_multiplier > 1 {
-            context.selector_expansion_total = context.selector_expansion_total.saturating_add(
-                context
-                    .selector_expansion_multiplier
-                    .saturating_mul(self.selectors.v.len().max(1)),
-            );
-            if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION {
-                context.err = Some(crate::error::MinifyError {
-                    kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
-                    loc: self.loc,
-                });
-                return Err(MinifyErr::minify_err);
-            }
-        }
+        self.charge_selector_expansion(context)?;
 
         // TODO: this
         // let pure_css_modules = context.pure_css_modules;
@@ -352,49 +381,95 @@ impl<R> StyleRule<R> {
         context.handler_context.context = DeclarationContext::None;
 
         if self.rules.v.len() > 0 {
-            // When the targets require compiling nesting away (or splitting
-            // this rule's selectors for compatibility), each of this rule's
-            // selectors multiplies the expansion of every nested rule.
-            //
-            // Mirrors the selector-compatibility branch in `minify_style_arm`
-            // (rules/mod.rs): an incompatible selector list is either collapsed
-            // into a single `:is()` selector (nothing cloned) or partitioned
-            // into one cloned rule per selector (fan-out = selector count).
-            // Only the partition case multiplies on its own — but the `:is()`
-            // wrap keeps one `&` reference per original selector, so when
-            // nesting is compiled away the printed output still fans out per
-            // selector, which is why the nesting branch bumps unconditionally.
-            let saved_expansion_multiplier = context.selector_expansion_multiplier;
-            let selectors_incompatible = self.selectors.v.len() > 1
-                && context.targets.should_compile_selectors()
-                && !self.is_compatible(context.targets);
-            let splits_selectors = selectors_incompatible
-                && !(context.targets.is_compatible(css::Feature::IsSelector)
-                    && !self.selectors.any_has_pseudo_element()
-                    && self.selectors.specifities_all_equal());
-            if context.targets.should_compile_same(css::Feature::Nesting) || splits_selectors {
-                context.selector_expansion_multiplier = context
-                    .selector_expansion_multiplier
-                    .saturating_mul(self.selectors.v.len().max(1));
-            }
-
-            let mut handler_context = context.handler_context.child(DeclarationContext::StyleRule);
-            core::mem::swap::<PropertyHandlerContext<'_>>(
-                &mut context.handler_context,
-                &mut handler_context,
-            );
-            self.rules.minify(context, unused)?;
-            core::mem::swap::<PropertyHandlerContext<'_>>(
-                &mut context.handler_context,
-                &mut handler_context,
-            );
-            context.selector_expansion_multiplier = saved_expansion_multiplier;
+            self.minify_nested_rules(context, unused)?;
             if unused && self.rules.v.len() == 0 {
                 return Ok(true);
             }
         }
 
         Ok(false)
+    }
+
+    /// Charge this rule's selectors against the selector-expansion budget.
+    ///
+    /// Compiling the enclosing nesting away for the targets repeats this rule's
+    /// selectors once per combination of the enclosing style rules' selectors.
+    /// That expansion is multiplicative across nesting levels, so bound it —
+    /// otherwise a few hundred bytes of deeply nested multi-selector rules
+    /// expand into gigabytes of cloned rules and output. See
+    /// [`css_rules::MAX_SELECTOR_EXPANSION`](super::MAX_SELECTOR_EXPANSION).
+    pub(crate) fn charge_selector_expansion(
+        &self,
+        context: &mut MinifyContext<'_, '_>,
+    ) -> Result<(), MinifyErr> {
+        if context.selector_expansion_multiplier > 1 {
+            context.selector_expansion_total = context.selector_expansion_total.saturating_add(
+                context
+                    .selector_expansion_multiplier
+                    .saturating_mul(self.selectors.v.len().max(1)),
+            );
+            if context.selector_expansion_total > super::MAX_SELECTOR_EXPANSION {
+                context.err = Some(crate::error::MinifyError {
+                    kind: crate::error::MinifyErrorKind::selector_expansion_limit_exceeded,
+                    loc: self.loc,
+                });
+                return Err(MinifyErr::minify_err);
+            }
+        }
+        Ok(())
+    }
+
+    /// Minify this rule's nested rules, bumping the selector-expansion
+    /// multiplier by this rule's selector count first (and restoring it after)
+    /// so the nested rules are charged for the combinations they expand into.
+    pub(crate) fn minify_nested_rules(
+        &mut self,
+        context: &mut MinifyContext<'_, '_>,
+        parent_is_unused: bool,
+    ) -> Result<(), MinifyErr>
+    where
+        R: for<'b> css::generics::DeepClone<'b>,
+    {
+        use css::context::{DeclarationContext, PropertyHandlerContext};
+
+        // When the targets require compiling nesting away (or splitting this
+        // rule's selectors for compatibility), each of this rule's selectors
+        // multiplies the expansion of every nested rule.
+        //
+        // Mirrors the selector-compatibility branch in `minify_style_arm`
+        // (rules/mod.rs): an incompatible selector list is either collapsed
+        // into a single `:is()` selector (nothing cloned) or partitioned
+        // into one cloned rule per selector (fan-out = selector count).
+        // Only the partition case multiplies on its own — but the `:is()`
+        // wrap keeps one `&` reference per original selector, so when
+        // nesting is compiled away the printed output still fans out per
+        // selector, which is why the nesting branch bumps unconditionally.
+        let saved_expansion_multiplier = context.selector_expansion_multiplier;
+        let selectors_incompatible = self.selectors.v.len() > 1
+            && context.targets.should_compile_selectors()
+            && !self.is_compatible(context.targets);
+        let splits_selectors = selectors_incompatible
+            && !(context.targets.is_compatible(css::Feature::IsSelector)
+                && !self.selectors.any_has_pseudo_element()
+                && self.selectors.specifities_all_equal());
+        if context.targets.should_compile_same(css::Feature::Nesting) || splits_selectors {
+            context.selector_expansion_multiplier = context
+                .selector_expansion_multiplier
+                .saturating_mul(self.selectors.v.len().max(1));
+        }
+
+        let mut handler_context = context.handler_context.child(DeclarationContext::StyleRule);
+        core::mem::swap::<PropertyHandlerContext<'_>>(
+            &mut context.handler_context,
+            &mut handler_context,
+        );
+        let result = self.rules.minify(context, parent_is_unused);
+        core::mem::swap::<PropertyHandlerContext<'_>>(
+            &mut context.handler_context,
+            &mut handler_context,
+        );
+        context.selector_expansion_multiplier = saved_expansion_multiplier;
+        result
     }
 
     /// Returns whether this rule is a duplicate of another rule.

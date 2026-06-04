@@ -626,8 +626,6 @@ pub enum EventLoopKind {
     Mini,
 }
 
-// TODO(port): Zig `Type()` / `refType()` return `type` at comptime. Rust cannot return a type
-// from a runtime enum value. Model as a trait with associated types instead:
 pub trait EventLoopKindT {
     type Loop;
     type Ref;

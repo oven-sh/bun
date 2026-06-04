@@ -9,8 +9,6 @@ use bun_core::Error;
 // the `HandleOom` trait impls below — the `AllocError` impls ARE the
 // "OOM-only" arm (Output = T / Output = !), and the `bun_core::Error` impls
 // ARE the "other errors possible" arm (Output = Result<T, E> / Output = E).
-//
-// TODO(port): @typeInfo reflection — no direct Rust equivalent; encoded as trait impls.
 
 /// If `error_union_or_set` is `error.OutOfMemory`, calls `bun.outOfMemory`. Otherwise:
 ///

@@ -215,15 +215,7 @@ pub enum ScopeError {
 //
 // `Parser::parse` / `Parser::prepare_str` (unquoted path) / `ConfigIterator`
 // now compile against the live `bun_js_parser::{Expr, ExprData, E::*}` surface.
-// Remaining gates are blocked on schema/API types only:
 // ──────────────────────────────────────────────────────────────────────────
-
-// TODO(port): bun_api::BunInstall
-// TODO(port): bun_api::NpmRegistry
-// TODO(port): bun_api::NpmRegistryMap
-// TODO(port): bun_api::npm_registry::Parser
-// TODO(port): bun_api::Ca
-// TODO(port): bun_install_types::NodeLinker::PnpmMatcher::from_expr
 
 pub use draft::{
     ConfigIterator, Parser, ScopeItem, ScopeIterator, ToStringFormatter, load_npmrc,
@@ -1319,15 +1311,15 @@ mod draft {
             }
             if log.has_errors() {
                 if log.errors == 1 {
-                    Output::warn(format_args!(
+                    bun_core::warn!(
                         "Encountered an error while reading <b>{}<r>:\n\n",
                         bstr::BStr::new(npmrc_path.as_bytes()),
-                    ));
+                    );
                 } else {
-                    Output::warn(format_args!(
+                    bun_core::warn!(
                         "Encountered errors while reading <b>{}<r>:\n\n",
                         bstr::BStr::new(npmrc_path.as_bytes()),
-                    ));
+                    );
                 }
                 Output::flush();
             }

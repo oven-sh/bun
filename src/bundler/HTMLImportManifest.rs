@@ -51,8 +51,6 @@ use crate::options::{Loader, OutputKind};
 use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
 
-// TODO(port): lifetime — LIFETIMES.tsv has no rows for this file; classified as
-// BORROW_PARAM (transient formatter struct passed by value).
 #[derive(Clone, Copy)]
 pub struct HTMLImportManifest<'a> {
     pub index: u32,
@@ -347,6 +345,45 @@ pub fn write<W: Write + ?Sized>(
 
     writer.write_all(b"]}")?;
     Ok(())
+}
+
+pub mod html_import_manifest {
+    use crate::Graph::Graph;
+    use crate::{LinkerGraph, chunk::Chunk};
+
+    pub use super::{EscapedJson, HTMLImportManifest};
+
+    #[inline]
+    pub(crate) fn format_escaped_json<'a>(
+        index: u32,
+        graph: &'a Graph,
+        chunks: &'a [Chunk],
+        linker_graph: &'a LinkerGraph,
+    ) -> EscapedJson<'a> {
+        super::HTMLImportManifest {
+            index,
+            graph,
+            chunks,
+            linker_graph,
+        }
+        .format_escaped_json()
+    }
+
+    pub fn write_escaped_json(
+        index: u32,
+        graph: &Graph,
+        linker_graph: &LinkerGraph<'_>,
+        chunks: &[Chunk],
+        w: &mut &mut [u8],
+    ) -> Result<(), core::fmt::Error> {
+        let taken = core::mem::take(w);
+        let mut fbs = bun_io::FixedBufferStream::new_mut(taken);
+        super::write_escaped_json(index, graph, linker_graph, chunks, &mut fbs)
+            .map_err(|_| core::fmt::Error)?;
+        let bun_io::FixedBufferStream { buffer, pos } = fbs;
+        *w = &mut buffer[pos..];
+        Ok(())
+    }
 }
 
 // ported from: src/bundler/HTMLImportManifest.zig

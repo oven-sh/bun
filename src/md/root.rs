@@ -209,12 +209,10 @@ impl Options {
     ];
 }
 
-// TODO(port): narrow error set — Zig: `parser.Parser.Error`
 pub fn render_to_html(text: &[u8]) -> Result<Box<[u8]>, parser::ParserError> {
     render_to_html_with_options(text, Options::default())
 }
 
-// TODO(port): narrow error set — Zig: `parser.Parser.Error`
 pub fn render_to_html_with_options(
     text: &[u8],
     options: Options,
@@ -223,7 +221,6 @@ pub fn render_to_html_with_options(
 }
 
 /// Parse and render using a custom renderer implementation.
-// TODO(port): narrow error set — Zig: `parser.Parser.Error`
 pub fn render_with_renderer<'a>(
     text: &'a [u8],
     options: Options,

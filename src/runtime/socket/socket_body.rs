@@ -214,11 +214,6 @@ impl<const SSL: bool> bun_ptr::RefCounted for NewSocket<SSL> {
 }
 
 impl<const SSL: bool> NewSocket<SSL> {
-    // TODO(port): `pub const js = if (!ssl) jsc.Codegen.JSTCPSocket else jsc.Codegen.JSTLSSocket`
-    // — codegen module accessor. `#[bun_jsc::JsClass]` derive provides
-    // `to_js`/`from_js`/`from_js_direct`. `dataSetCached`/`dataGetCached` are
-    // emitted as `Self::data_set_cached` / `Self::data_get_cached`.
-
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
 
     /// Read-modify-write the packed `Cell<Flags>` through `&self`.
@@ -591,7 +586,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         // the handlers must be kept alive for the duration of the function call
         // that way if we need to call the error handler, we can
         let scope = Handlers::enter_ref(handlers);
-        // TODO(port): errdefer — `scope.exit()` returns true when handlers freed
         let global = handlers.global_object;
         let this_value = self.get_this_value(&global);
         let _ = handlers.call_error_handler(this_value, &[this_value, err_value]);
@@ -774,11 +768,6 @@ impl<const SSL: bool> NewSocket<SSL> {
         this.poll_ref
             .with_mut(|p| p.unref_on_next_tick(js_loop_ctx()));
 
-        // TODO(port): errdefer — `defer markInactive()` + `defer if (needs_deref) deref()`
-        // moved to a guard so all early-returns run them. The outer
-        // `_outer_deref` above owns the final `deref()`; LIFO drop order
-        // (cleanup → _outer_deref) mirrors Zig's three defers exactly.
-        //
         // The deferred `mark_inactive()` is gated on the `Handlers` pointer
         // captured before the user callback runs: `onConnectError` can
         // synchronously re-enter `connect()` and — via `do_connect()`'s
@@ -2656,11 +2645,13 @@ impl<const SSL: bool> NewSocket<SSL> {
             .expect("No handlers set on Socket")
             .as_ptr();
         // SAFETY: `p` is the freely-aliased raw pointer; no `&Handlers` borrow
-        // is live across the read/writes below (single-threaded event loop,
-        // and `from_js` cannot reenter this socket's handlers).
+        // is live across the read/writes below (single-threaded event loop).
         let prev_mode = unsafe { (*p).mode };
         let handlers =
             Handlers::from_js(global, socket_obj, prev_mode == super::SocketMode::Server)?;
+        if this.handlers.get().map(|n| n.as_ptr()) != Some(p) {
+            return Ok(JSValue::UNDEFINED);
+        }
         // Preserve runtime state across the struct assignment. `Handlers.fromJS` returns a
         // fresh struct with `active_connections = 0` and `mode` limited to `.server`/`.client`,
         // but this socket (and any in-flight callback scope) still holds references that were
@@ -2668,7 +2659,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `.duplex_server`. Losing the counter causes the next `markInactive` to either free
         // the heap-allocated client `Handlers` while the socket still points at it, or
         // underflow on the server path.
-        // SAFETY: raw-pointer-only access; see `get_handlers` contract.
+        // SAFETY: `this.handlers` still points at `p` (checked above), so the
+        // allocation is live; raw-pointer-only access; see `get_handlers` contract.
         unsafe {
             let active_connections = (*p).active_connections.get();
             core::ptr::drop_in_place(p); // Zig: this_handlers.deinit()

@@ -4,20 +4,67 @@
 #![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]
 #![warn(unused_must_use)]
 
-// Shared value types + crate-name shims for the `Chunk` / `LinkerContext` /
-// `ParseTask` modules.
-pub mod ungate_support;
-pub use ungate_support::*;
+pub use bun_resolver::fs as bun_fs;
+pub use bun_resolver::node_fallbacks as bun_node_fallbacks;
+
+pub mod perf {
+    pub use bun_perf::{Ctx, PerfEvent};
+
+    #[inline]
+    pub(crate) fn trace(_name: &'static str) -> Ctx {
+        bun_perf::trace(PerfEvent::_Stub)
+    }
+}
+
+pub mod bun_css {
+    pub use ::bun_css::css_modules::Config as CssModuleConfig;
+    pub use ::bun_css::css_parser::LayerName;
+    pub use ::bun_css::*;
+}
+
+pub use crate::HTMLScanner as html_scanner;
+
+pub(crate) mod index {
+    pub(crate) use bun_ast::IndexInt as Int;
+}
+pub(crate) mod part {
+    pub(crate) use bun_ast::PartList as List;
+}
+pub(crate) mod import_record {
+    pub(crate) use bun_ast::import_record::List;
+}
+
+pub(crate) type JSAst<'a> = crate::BundledAst<'a>;
+pub(crate) use bun_ast::UseDirective;
+pub(crate) use bun_ast::{Part, Ref};
+pub use bun_js_printer::MangledProps;
+pub use options_impl::PathTemplate;
+
+pub use HTMLImportManifest::html_import_manifest;
+pub use bun_core::cheap_prefix_normalizer;
+pub use bundle_v2::{
+    CompileResult, CompileResultForSourceMap, ContentHasher, DeclInfo, DeclInfoKind, EventLoop,
+    ImportTracker, PartRange, StableRef, WrapKind, generic_path_with_pretty_initialized,
+    target_from_hashbang,
+};
+pub use chunk::{
+    CrossChunkImport, CrossChunkImportItem, CrossChunkImportItemList, bun_renamer,
+    cross_chunk_import,
+};
+pub use linker_graph::{
+    ExportData, ImportData, JSMeta, RefImportData, ResolvedExports, TopLevelSymbolToParts,
+    entry_point, js_meta,
+};
 
 /// `MultiArrayList` SoA column-accessor traits, gathered so a single
 /// `use crate::mal_prelude::*;` brings every `items_<field>()` set into scope.
 pub mod mal_prelude {
     pub use crate::Graph::InputFileColumns as _;
+    pub use crate::bundle_v2::CompileResultForSourceMapColumns as _;
     pub use crate::bundled_ast::BundledAstColumns as _;
     pub use crate::linker_graph::FileColumns as _;
-    pub use crate::ungate_support::CompileResultForSourceMapColumns as _;
-    pub use crate::ungate_support::entry_point::EntryPointColumns as _;
-    pub use crate::ungate_support::js_meta::JSMetaColumns as _;
+    pub use crate::linker_graph::entry_point::EntryPointColumns as _;
+    pub use crate::linker_graph::js_meta::JSMetaColumns as _;
     pub use bun_ast::server_component_boundary::ServerComponentBoundaryColumns as _;
 }
 
@@ -167,6 +214,9 @@ pub use linker::Linker;
 pub use linker_context_mod::LinkerContext;
 /// See `linker_graph` module.
 pub use linker_graph::LinkerGraph;
+/// `EntryPoint::Kind` is an inherent associated type on the struct (not a
+/// sibling module — that would collide with this re-export).
+pub use linker_graph::entry_point::EntryPoint;
 /// See `options_impl`.
 pub use options_impl::BundleOptions;
 pub use output_file::OutputFile;
@@ -176,9 +226,6 @@ pub use parse_task::ParseTask;
 pub use thread_pool::{ThreadPool, Worker};
 /// See `transpiler`.
 pub use transpiler::Transpiler;
-/// `EntryPoint::Kind` is an inherent associated type on the struct (not a
-/// sibling module — that would collide with this re-export).
-pub use ungate_support::entry_point::EntryPoint;
 /// `bundle_v2.zig:AdditionalFile`.
 pub enum AdditionalFile {
     SourceIndex(u32),

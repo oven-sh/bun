@@ -41,14 +41,12 @@ pub mod kernel32 {
         // ── IOCP / async directory watching ──
         // safe: all args are by-value opaques (`HANDLE`/`ULONG_PTR`/`DWORD`);
         // a bad handle yields NULL + GetLastError, no UB.
-        #[allow(dead_code)]
         pub safe fn CreateIoCompletionPort(
             FileHandle: HANDLE,
             ExistingCompletionPort: HANDLE,
             CompletionKey: ULONG_PTR,
             NumberOfConcurrentThreads: DWORD,
         ) -> HANDLE;
-        #[allow(dead_code)]
         pub fn GetQueuedCompletionStatus(
             CompletionPort: HANDLE,
             lpNumberOfBytesTransferred: *mut DWORD,
@@ -56,7 +54,6 @@ pub mod kernel32 {
             lpOverlapped: *mut *mut OVERLAPPED,
             dwMilliseconds: DWORD,
         ) -> BOOL;
-        #[allow(dead_code)]
         pub fn ReadDirectoryChangesW(
             hDirectory: HANDLE,
             lpBuffer: *mut c_void,
@@ -73,7 +70,6 @@ pub mod kernel32 {
         pub safe fn WaitForSingleObject(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
 
         // ── file moves ──
-        #[allow(dead_code)]
         pub fn MoveFileExW(
             lpExistingFileName: LPCWSTR,
             lpNewFileName: LPCWSTR,
@@ -81,22 +77,17 @@ pub mod kernel32 {
         ) -> BOOL;
 
         // ── SRW locks / condition variables (`bun_threading` windows arm) ──
-        #[allow(dead_code)]
         pub fn AcquireSRWLockExclusive(SRWLock: *mut SRWLOCK);
         pub fn ReleaseSRWLockExclusive(SRWLock: *mut SRWLOCK);
         // Returns BOOLEAN (u8), not BOOL — compare against 0, not FALSE.
-        #[allow(dead_code)]
         pub fn TryAcquireSRWLockExclusive(SRWLock: *mut SRWLOCK) -> u8;
-        #[allow(dead_code)]
         pub fn SleepConditionVariableSRW(
             ConditionVariable: *mut CONDITION_VARIABLE,
             SRWLock: *mut SRWLOCK,
             dwMilliseconds: DWORD,
             Flags: ULONG,
         ) -> BOOL;
-        #[allow(dead_code)]
         pub fn WakeConditionVariable(ConditionVariable: *mut CONDITION_VARIABLE);
-        #[allow(dead_code)]
         pub fn WakeAllConditionVariable(ConditionVariable: *mut CONDITION_VARIABLE);
 
         /// No preconditions; reads the calling thread's ID.
@@ -114,7 +105,6 @@ pub use bun_windows_sys::PATH_MAX_WIDE;
 pub use bun_windows_sys::WORD;
 /// `PVOID` (winnt.h) — alias of `LPVOID`. Zig's `std.os.windows` exposes both;
 /// keep the alias so ported callers (`bun_shim_impl`) don't need rewriting.
-#[allow(dead_code)]
 pub type PVOID = LPVOID;
 pub use bun_windows_sys::COORD;
 pub use bun_windows_sys::FALSE;
@@ -142,13 +132,9 @@ pub use bun_windows_sys::WCHAR;
 /// `STARTF_USESTDHANDLES` (winbase.h).
 pub use bun_windows_sys::externs::STARTF_USESTDHANDLES;
 /// `ENABLE_VIRTUAL_TERMINAL_PROCESSING` (consoleapi.h).
-#[allow(dead_code)]
 pub const ENABLE_VIRTUAL_TERMINAL_PROCESSING: DWORD = 0x0004;
-#[allow(dead_code)]
 pub const MOVEFILE_COPY_ALLOWED: DWORD = 0x2;
-#[allow(dead_code)]
 pub const MOVEFILE_REPLACE_EXISTING: DWORD = 0x1;
-#[allow(dead_code)]
 pub const MOVEFILE_WRITE_THROUGH: DWORD = 0x8;
 pub use bun_windows_sys::FILETIME;
 
@@ -213,7 +199,6 @@ pub use bun_core::windows_sys::{
 /// `-11_644_473_600` seconds (1601→1970 shift). The shift is required:
 /// `nano_timestamp()` uses `SystemTime::UNIX_EPOCH`, not raw FILETIME.
 #[inline]
-#[allow(dead_code)]
 pub const fn from_sys_time(nt_time: i64) -> i128 {
     /// `std.time.epoch.windows * (std.time.ns_per_s / 100)` — the
     /// 1601-01-01 → 1970-01-01 offset expressed in 100-ns ticks.
@@ -223,9 +208,7 @@ pub const fn from_sys_time(nt_time: i64) -> i128 {
 
 pub const INVALID_FILE_ATTRIBUTES: u32 = u32::MAX;
 
-#[allow(dead_code)]
 pub const NT_OBJECT_PREFIX: [u16; 4] = [b'\\' as u16, b'?' as u16, b'?' as u16, b'\\' as u16];
-#[allow(dead_code)]
 pub const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
     b'\\' as u16,
     b'?' as u16,
@@ -238,9 +221,7 @@ pub const NT_UNC_OBJECT_PREFIX: [u16; 8] = [
 ];
 pub const LONG_PATH_PREFIX: [u16; 4] = [b'\\' as u16, b'\\' as u16, b'?' as u16, b'\\' as u16];
 
-#[allow(dead_code)]
 pub const NT_OBJECT_PREFIX_U8: [u8; 4] = *b"\\??\\";
-#[allow(dead_code)]
 pub const NT_UNC_OBJECT_PREFIX_U8: [u8; 8] = *b"\\??\\UNC\\";
 pub const LONG_PATH_PREFIX_U8: [u8; 4] = *b"\\\\?\\";
 
@@ -261,7 +242,6 @@ pub use bun_windows_sys::ULONG_PTR;
 /// `HRESULT` — 32-bit signed result code.
 pub type HRESULT = i32;
 /// `WaitForSingleObject` infinite timeout sentinel.
-#[allow(dead_code)]
 pub const INFINITE: DWORD = 0xFFFF_FFFF;
 
 // ── SRWLOCK / CONDITION_VARIABLE (`bun_threading` windows arm) ────────────
@@ -283,11 +263,9 @@ impl Default for SRWLOCK {
 
 #[repr(transparent)]
 #[derive(Copy, Clone)]
-#[allow(dead_code)]
 pub struct CONDITION_VARIABLE {
     pub ptr: *mut c_void,
 }
-#[allow(dead_code)]
 pub const CONDITION_VARIABLE_INIT: CONDITION_VARIABLE = CONDITION_VARIABLE {
     ptr: ptr::null_mut(),
 };
@@ -309,20 +287,14 @@ pub const fn HRESULT_CODE(hr: HRESULT) -> HRESULT {
 }
 
 // `NtCreateFile` access masks / create-options not yet in `bun_windows_sys`.
-#[allow(dead_code)]
 pub const FILE_LIST_DIRECTORY: ULONG = 0x0001;
 pub const FILE_OPEN_FOR_BACKUP_INTENT: ULONG = 0x0000_4000;
 
 // `ReadDirectoryChangesW` action codes (`winnt.h`).
-#[allow(dead_code)]
 pub const FILE_ACTION_ADDED: DWORD = 0x0000_0001;
-#[allow(dead_code)]
 pub const FILE_ACTION_REMOVED: DWORD = 0x0000_0002;
-#[allow(dead_code)]
 pub const FILE_ACTION_MODIFIED: DWORD = 0x0000_0003;
-#[allow(dead_code)]
 pub const FILE_ACTION_RENAMED_OLD_NAME: DWORD = 0x0000_0004;
-#[allow(dead_code)]
 pub const FILE_ACTION_RENAMED_NEW_NAME: DWORD = 0x0000_0005;
 
 bitflags::bitflags! {
@@ -352,7 +324,6 @@ bitflags::bitflags! {
 /// by `ReadDirectoryChangesW`. `FileName` is a flexible array; declared as
 /// `[WCHAR; 1]` to match the C layout (read past it via `FileNameLength`).
 #[repr(C)]
-#[allow(dead_code)]
 pub struct FILE_NOTIFY_INFORMATION {
     pub NextEntryOffset: DWORD,
     pub Action: DWORD,
@@ -361,9 +332,7 @@ pub struct FILE_NOTIFY_INFORMATION {
 }
 
 pub use bun_windows_sys::OVERLAPPED;
-#[allow(dead_code)]
 pub type LPOVERLAPPED = *mut OVERLAPPED;
-#[allow(dead_code)]
 pub type LPOVERLAPPED_COMPLETION_ROUTINE =
     Option<unsafe extern "system" fn(DWORD, DWORD, *mut OVERLAPPED)>;
 
@@ -373,7 +342,6 @@ pub use bun_windows_sys::{PROCESS_INFORMATION, STARTUPINFOEXW, STARTUPINFOW};
 
 /// `std.os.windows.CreateIoCompletionPort` — wraps the kernel32 call and
 /// returns `Err` on `NULL` (matching Zig's `error.Unexpected`).
-#[allow(dead_code)]
 pub fn CreateIoCompletionPort(
     file_handle: HANDLE,
     existing_completion_port: HANDLE,
@@ -424,29 +392,6 @@ pub const FILE_TYPE_CHAR: DWORD = 0x0002;
 pub const FILE_TYPE_PIPE: DWORD = 0x0003;
 pub const FILE_TYPE_REMOTE: DWORD = 0x8000;
 
-pub use bun_windows_sys::externs::LPDWORD;
-
-pub use bun_windows_sys::externs::GetBinaryTypeW;
-
-/// A 32-bit Windows-based application
-#[allow(dead_code)]
-pub const SCS_32BIT_BINARY: DWORD = 0;
-/// A 64-bit Windows-based application.
-#[allow(dead_code)]
-pub const SCS_64BIT_BINARY: DWORD = 6;
-/// An MS-DOS – based application
-#[allow(dead_code)]
-pub const SCS_DOS_BINARY: DWORD = 1;
-/// A 16-bit OS/2-based application
-#[allow(dead_code)]
-pub const SCS_OS216_BINARY: DWORD = 5;
-/// A PIF file that executes an MS-DOS – based application
-#[allow(dead_code)]
-pub const SCS_PIF_BINARY: DWORD = 3;
-/// A POSIX – based application
-#[allow(dead_code)]
-pub const SCS_POSIX_BINARY: DWORD = 4;
-
 pub use SetCurrentDirectoryW as SetCurrentDirectory;
 /// Each process has a single current directory made up of two parts:
 ///
@@ -477,7 +422,6 @@ pub use bun_errno::Win32ErrorExt;
 /// `Win32Error::unwrap()` from windows.zig — extension trait because
 /// `Win32Error` is a foreign type and `bun_core::Error` is unavailable in
 /// `bun_errno` (orphan rule + layering).
-#[allow(dead_code)]
 pub trait Win32ErrorUnwrap: Copy {
     fn unwrap(self) -> Result<(), bun_core::Error>;
 }
@@ -3385,7 +3329,6 @@ pub fn get_last_win32_error() -> Win32Error {
 
 /// Zig: `@tagName(bun.windows.getLastError())` — for `Output.debug` only.
 #[inline]
-#[allow(dead_code)]
 pub fn get_last_error_tag() -> impl core::fmt::Display {
     // `Win32Error` derives `Debug`; route through that for a printable token.
     struct D(Win32Error);
@@ -3412,16 +3355,16 @@ pub fn translate_nt_status_to_errno(err: NTSTATUS) -> E {
     {
         use bun_windows_sys::ntstatus::{OBJECT_NAME_INVALID, SHARING_VIOLATION};
         match err {
-            SHARING_VIOLATION => bun_core::Output::debug_warn(
+            SHARING_VIOLATION => bun_core::debug_warn!(
                 "Received SHARING_VIOLATION, indicates file handle should've been opened with FILE_SHARE_DELETE",
             ),
-            OBJECT_NAME_INVALID => bun_core::Output::debug_warn(
+            OBJECT_NAME_INVALID => bun_core::debug_warn!(
                 "Received OBJECT_NAME_INVALID, indicates a file path conversion issue.",
             ),
-            t if e == E::UNKNOWN => bun_core::Output::debug_warn(format_args!(
+            t if e == E::UNKNOWN => bun_core::debug_warn!(
                 "Called translateNTStatusToErrno with {:?} which does not have a mapping to errno.",
                 t
-            )),
+            ),
             _ => {}
         }
     }
@@ -3494,9 +3437,7 @@ pub use bun_windows_sys::externs::SetInformationJobObject;
 // Output:
 // 4
 // 7
-#[allow(dead_code)]
 pub const JOB_OBJECT_MSG_ACTIVE_PROCESS_ZERO: DWORD = 4;
-#[allow(dead_code)]
 pub const JOB_OBJECT_MSG_EXIT_PROCESS: DWORD = 7;
 
 pub use bun_windows_sys::externs::OpenProcess;
@@ -3523,8 +3464,6 @@ pub use bun_windows_sys::{
 
 // Bun__UVSignalHandle__{init,close}: see src/runtime/node/uv_signal_handle_windows.zig
 
-// TODO(port): @export(&windows_process_dlopen, .{ .name = "Bun__LoadLibraryBunString" }) — see #[unsafe(no_mangle)] fn below
-
 /// Is not the actual UID of the user, but just a hash of username.
 pub fn user_unique_id() -> u32 {
     // https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-tsch/165836c1-89d7-4abb-840d-80cf2510aa3e
@@ -3550,12 +3489,10 @@ pub fn user_unique_id() -> u32 {
     bun_wyhash::hash32(bytemuck::cast_slice::<u16, u8>(name))
 }
 
-#[allow(dead_code)]
 pub fn win_sock_error_to_zig_error(
     err: win32::ws2_32::WinsockError,
 ) -> Result<(), bun_core::Error> {
     use win32::ws2_32::WinsockError as W;
-    // TODO(port): Zig used `inline else` proposal; manual mapping below.
     let tag = match err {
         W::WSA_INVALID_HANDLE => "WSA_INVALID_HANDLE",
         W::WSA_NOT_ENOUGH_MEMORY => "WSA_NOT_ENOUGH_MEMORY",
@@ -3655,7 +3592,7 @@ pub fn win_sock_error_to_zig_error(
         t => {
             if t.0 != 0 {
                 #[cfg(debug_assertions)]
-                bun_core::Output::debug_warn(format_args!("Unknown WinSockError: {}", t.0));
+                bun_core::debug_warn!("Unknown WinSockError: {}", t.0);
             }
             return Ok(());
         }
@@ -3790,9 +3727,7 @@ pub const ENABLE_ECHO_INPUT: DWORD = 0x004;
 pub const ENABLE_LINE_INPUT: DWORD = 0x002;
 pub const ENABLE_PROCESSED_INPUT: DWORD = 0x001;
 pub const ENABLE_VIRTUAL_TERMINAL_INPUT: DWORD = 0x200;
-#[allow(dead_code)]
 pub const ENABLE_WRAP_AT_EOL_OUTPUT: DWORD = 0x0002;
-#[allow(dead_code)]
 pub const ENABLE_PROCESSED_OUTPUT: DWORD = 0x0001;
 
 pub use bun_windows_sys::externs::GetConsoleCP;
@@ -4054,19 +3989,15 @@ pub const JOB_OBJECT_LIMIT_DIE_ON_UNHANDLED_EXCEPTION: DWORD = 0x400;
 pub const JOB_OBJECT_LIMIT_BREAKAWAY_OK: DWORD = 0x800;
 pub const JOB_OBJECT_LIMIT_SILENT_BREAKAWAY_OK: DWORD = 0x00001000;
 
-#[allow(dead_code)]
 const PE_HEADER_OFFSET_LOCATION: i64 = 0x3C;
-#[allow(dead_code)]
 const SUBSYSTEM_OFFSET: i64 = 0x5C;
 
 #[repr(u16)]
 #[derive(Copy, Clone, PartialEq, Eq)]
-#[allow(dead_code)]
 pub enum Subsystem {
     WindowsGui = 2,
 }
 
-#[allow(dead_code)]
 pub fn edit_win32_binary_subsystem(
     fd: &bun_sys::File,
     subsystem: Subsystem,
@@ -4114,9 +4045,7 @@ pub mod rescle {
 
     // TODO(port): move to windows_sys
     unsafe extern "C" {
-        #[allow(dead_code)]
         fn rescle__setIcon(exe_path: *const u16, icon_path: *const u16) -> c_int;
-        #[allow(dead_code)]
         fn rescle__setWindowsMetadata(
             exe_path: *const u16,    // exe_path
             icon_path: *const u16,   // icon_path (nullable)
@@ -4133,7 +4062,6 @@ pub mod rescle {
     #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
     pub enum RescleError {
         #[error("IconEditError")]
-        #[allow(dead_code)]
         IconEditError,
         #[error("InvalidVersionFormat")]
         InvalidVersionFormat,
@@ -4163,7 +4091,6 @@ pub mod rescle {
         WindowsMetadataEditError,
     }
 
-    #[allow(dead_code)]
     pub fn set_icon(exe_path: *const u16, icon: *const u16) -> Result<(), RescleError> {
         const _: () = assert!(cfg!(windows));
         // SAFETY: paths are NUL-terminated
@@ -4174,7 +4101,6 @@ pub mod rescle {
         }
     }
 
-    #[allow(dead_code)]
     pub fn set_windows_metadata(
         exe_path: *const u16,
         icon: Option<&[u8]>,
@@ -4226,7 +4152,6 @@ pub mod rescle {
             None
         };
 
-        // TODO(port): bun.strings.toUTF16AllocForReal returns owned [:0]u16; using Box<[u16]> here.
         let title_w = title
             .map(|t| bun_core::strings::to_utf16_alloc_for_real(t, false, true))
             .transpose()?;
@@ -4385,9 +4310,6 @@ const WATCHER_CHILD_ENV_Z: &[u16] = bun_core::w!("_BUN_WATCHER_CHILD\0");
 // magic exit code to indicate to the watcher manager that the child process should be re-spawned
 // this was randomly generated - we need to avoid using a common exit code that might be used by the script itself
 pub const WATCHER_RELOAD_EXIT: DWORD = 3224497970;
-
-// TODO(port): re-export of bun_runtime::api::bun::spawn::PosixSpawn removed (T1→T6 upward).
-// Callers should import `bun_runtime::api::bun::spawn::PosixSpawn` directly.
 
 pub fn is_watcher_child() -> bool {
     let mut buf: [u16; 1] = [0];
@@ -4592,7 +4514,6 @@ pub fn spawn_watcher_child(
             wShowWindow: 0,
             cbReserved2: 0,
             lpReserved2: ptr::null_mut(),
-            // TODO(port): std.fs.File.stdin/stdout/stderr().handle — use bun_sys stdio handles
             hStdInput: bun_sys::Fd::stdin().native(),
             hStdOutput: bun_sys::Fd::stdout().native(),
             hStdError: bun_sys::Fd::stderr().native(),
@@ -4676,7 +4597,6 @@ pub use bun_windows_sys::externs::windows_enable_stdio_inheritance;
 /// Extracted from standard library except this takes an open file descriptor
 ///
 /// NOTE: THE FILE MUST BE OPENED WITH ACCESS_MASK "DELETE" OR THIS WILL FAIL
-#[allow(dead_code)]
 pub fn delete_opened_file(fd: Fd) -> bun_sys::Result<()> {
     // TODO(port): comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
     let mut info = win32::FILE_DISPOSITION_INFORMATION_EX {
@@ -4816,7 +4736,7 @@ pub fn move_opened_file_at(
 
     #[cfg(debug_assertions)]
     if rc == win32::ntstatus::ACCESS_DENIED {
-        bun_core::Output::debug_warn(
+        bun_core::debug_warn!(
             "moveOpenedFileAt was called on a file descriptor without access_mask=w.DELETE",
         );
     }
@@ -4831,7 +4751,6 @@ pub fn move_opened_file_at(
 /// Same as moveOpenedFileAt but allows new_path to be a path relative to new_dir_fd.
 ///
 /// Aka: moveOpenedFileAtLoose(fd, dir, ".\\a\\relative\\not-normalized-path.txt", false);
-#[allow(dead_code)]
 pub fn move_opened_file_at_loose(
     src_fd: Fd,
     new_dir_fd: Fd,
@@ -4965,7 +4884,6 @@ mod kernel32_2 {
         // `Option<&mut i64>` (FFI-safe via the null-pointer niche →
         // ABI-identical to a nullable `PLARGE_INTEGER`). Bad handle → BOOL 0
         // + GetLastError, never UB.
-        #[allow(dead_code)]
         pub(super) safe fn SetFilePointerEx(
             hFile: HANDLE,
             liDistanceToMove: i64,
@@ -4998,13 +4916,11 @@ pub fn FreeEnvironmentStringsW(penv: *mut u16) {
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
 pub enum GetEnvironmentVariableError {
     #[error("EnvironmentVariableNotFound")]
-    #[allow(dead_code)]
     EnvironmentVariableNotFound,
     #[error("Unexpected")]
     Unexpected,
 }
 
-#[allow(dead_code)]
 pub fn GetEnvironmentVariableW(
     lpName: LPWSTR,
     lpBuffer: *mut u16,

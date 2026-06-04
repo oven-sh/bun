@@ -25,7 +25,6 @@ pub use parser::SelectorList;
 /// Zig-shaped namespace (`selector.impl.Selectors.SelectorImpl.*` type
 /// aliases) kept for diff parity with `selector.zig`.
 pub use super::impl_;
-// TODO(port): `impl` is a Rust keyword; using raw identifier `r#impl` for module name parity.
 pub mod r#impl {
     use super::*;
 
@@ -1052,8 +1051,6 @@ pub mod serialize {
             d.write_str(val)
         }
 
-        // TODO(port): Zig `Helpers.pseudo` used comptime `@field` to look up
-        // `dest.pseudo_classes.<snake_case_key>`. Expanded per call site via macro.
         macro_rules! pseudo {
             ($d:expr, $field:ident, $s:literal) => {{
                 let class = if let Some(pseudo_classes) = &$d.pseudo_classes {

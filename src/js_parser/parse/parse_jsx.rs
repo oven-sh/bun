@@ -16,6 +16,11 @@ use bun_core::err;
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
     pub fn parse_jsx_element(&mut self, loc: bun_ast::Loc) -> Result<Expr, bun_core::Error> {
         let p = self;
+        // Nested child elements (`<a><b><c>...`) recurse back into this function,
+        // so guard the stack the same way the other recursive parse entry points do.
+        if !p.stack_check.is_safe_to_recurse() {
+            return Err(err!("StackOverflow"));
+        }
         if SCAN_ONLY {
             p.needs_jsx_import = true;
         }
@@ -342,7 +347,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     let end_tag = JSXTag::parse(p)?;
 
                     if end_tag.name != tag.name {
-                        // TODO(port): arena param dropped from Zig signature.
                         p.log().add_range_error_fmt_with_note(
                             Some(p.source),
                             end_tag.range,

@@ -458,7 +458,7 @@ impl FetchTasklet {
         }
 
         if let Some(certificate) = self.result.certificate_info.take() {
-            drop(certificate); // TODO(port): CertificateInfo::deinit(allocator) -> Drop
+            drop(certificate);
         }
 
         // PORT NOTE: Zig `entries.deinit()` + `buf.deinit()`; Rust drop on
@@ -470,7 +470,7 @@ impl FetchTasklet {
         }
 
         if let Some(metadata) = self.metadata.take() {
-            drop(metadata); // TODO(port): HTTPResponseMetadata::deinit(allocator) -> Drop
+            drop(metadata);
         }
 
         self.response_buffer = MutableString::default();
@@ -1773,7 +1773,7 @@ impl FetchTasklet {
             metadata: None,
             javascript_vm: jsc_vm,
             global_this: GlobalRef::from(global_this),
-            request_body: fetch_options.body, // TODO(port): move semantics; FetchOptions consumed
+            request_body: fetch_options.body,
             request_body_streaming_buffer: None,
             response_buffer: MutableString::default(),
             scheduled_response_buffer: MutableString::default(),
@@ -1961,6 +1961,7 @@ impl FetchTasklet {
         http_client.client.flags.force_http2 = fetch_options.force_http2;
         http_client.client.flags.force_http3 = fetch_options.force_http3;
         http_client.client.flags.force_http1 = fetch_options.force_http1;
+        http_client.client.flags.is_node_http_client = fetch_options.is_node_http_client;
         fetch_tasklet.is_waiting_request_stream_start = is_stream;
         if is_stream {
             // Intrusive `ref_count` starts at 2 (one for the main thread, one for the HTTP
@@ -2466,6 +2467,7 @@ pub struct FetchOptions {
     pub force_http2: bool,
     pub force_http3: bool,
     pub force_http1: bool,
+    pub is_node_http_client: bool,
 }
 
 impl Default for FetchOptions {
@@ -2499,6 +2501,7 @@ impl Default for FetchOptions {
             force_http2: false,
             force_http3: false,
             force_http1: false,
+            is_node_http_client: false,
         }
     }
 }

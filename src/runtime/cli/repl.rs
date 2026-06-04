@@ -287,10 +287,12 @@ impl History {
             content.push(b'\n');
         }
 
-        let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o644) {
+        let file = match sys::open_a(path, sys::O::WRONLY | sys::O::CREAT | sys::O::TRUNC, 0o600) {
             sys::Result::Ok(fd) => sys::File::from_fd(fd),
             sys::Result::Err(_) => return,
         };
+        #[cfg(unix)]
+        let _ = sys::fchmod(file.fd(), 0o600);
         match file.write_all(&content) {
             sys::Result::Ok(()) => {}
             sys::Result::Err(_) => return,
@@ -409,7 +411,6 @@ impl LineEditor {
         if self.cursor == self.buffer.len() {
             self.buffer.extend_from_slice(slice);
         } else {
-            // TODO(port): Vec has no insert_slice; splice is equivalent
             self.buffer
                 .splice(self.cursor..self.cursor, slice.iter().copied());
         }
@@ -1673,7 +1674,6 @@ impl<'a> Repl<'a> {
                 ..Default::default()
             },
         )?;
-        // TODO(port): array.writer.flush() — Vec<u8> writer needs no flush
         Ok(Some(array.into_boxed_slice()))
     }
 

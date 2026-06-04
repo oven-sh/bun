@@ -2,9 +2,8 @@ use core::ffi::{c_char, c_void};
 #[cfg(target_os = "macos")]
 use core::ffi::{c_int, c_uint};
 
-// Only referenced from the Darwin `extern "C"` block below; rustc's
-// reachability analysis doesn't see uses inside dead `extern fn` signatures.
-#[allow(non_camel_case_types, dead_code)]
+#[cfg(target_os = "macos")]
+#[allow(non_camel_case_types)]
 type vm_size_t = usize;
 
 // Environment.allow_assert and Environment.isMac and !Environment.enable_asan

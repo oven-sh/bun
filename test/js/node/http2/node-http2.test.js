@@ -2404,3 +2404,310 @@ it("http2 server resets streams whose request headers contain CR, LF, or NUL oct
     server.close();
   }
 });
+
+it("http2 server rejects requests carrying connection-specific or repeated pseudo-headers", async () => {
+  // RFC 9113 Section 8.2.2: connection-specific fields (transfer-encoding,
+  // connection, keep-alive, ...) make an HTTP/2 request malformed, and
+  // Section 8.3.1 forbids repeating pseudo-header fields. Either must be
+  // answered with a stream error instead of being handed to the application,
+  // otherwise a proxy that copies req.headers re-serializes them into an
+  // HTTP/1.1 upstream request.
+  const deliveredRequests = [];
+  const server = http2.createServer();
+  server.on("stream", (stream, headers) => {
+    deliveredRequests.push(headers);
+    stream.respond({ ":status": 200 });
+    stream.end("ok");
+  });
+
+  const { promise: listening, resolve: onListening } = Promise.withResolvers();
+  server.listen(0, "127.0.0.1", onListening);
+  await listening;
+  const port = server.address().port;
+
+  // HPACK string literal: 7-bit length prefix, no Huffman coding.
+  const literal = str => {
+    const bytes = Buffer.from(str, "latin1");
+    return Buffer.concat([Buffer.from([bytes.length]), bytes]);
+  };
+  const malformedHeaderBlocks = {
+    "transfer-encoding header": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET   (static table index 2)
+      Buffer.from([0x86]), // :scheme: http  (static table index 6)
+      Buffer.from([0x84]), // :path: /       (static table index 4)
+      Buffer.from([0x01]), // :authority     (literal without indexing, name index 1)
+      literal("localhost"),
+      Buffer.from([0x00]), // literal header field without indexing, new name
+      literal("transfer-encoding"),
+      literal("chunked"),
+    ]),
+    "connection: keep-alive header": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x84]), // :path: /
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+      Buffer.from([0x00]), // literal header field without indexing, new name
+      literal("connection"),
+      literal("keep-alive"),
+    ]),
+    "repeated :path pseudo-header": Buffer.concat([
+      Buffer.from([0x82]), // :method: GET
+      Buffer.from([0x86]), // :scheme: http
+      Buffer.from([0x84]), // :path: /
+      Buffer.from([0x84]), // :path: /   (repeated)
+      Buffer.from([0x01]), // :authority
+      literal("localhost"),
+    ]),
+  };
+
+  async function exchange(headerBlock) {
+    const frames = [];
+    const { promise: exchanged, resolve: onExchanged, reject: onSocketError } = Promise.withResolvers();
+    const socket = net.connect(port, "127.0.0.1", () => {
+      socket.write(http2utils.kClientMagic);
+      socket.write(new http2utils.SettingsFrame(false).data);
+      // HEADERS frame on stream 1 with END_HEADERS | END_STREAM.
+      socket.write(new http2utils.HeadersFrame(1, headerBlock, 0, true, true).data);
+      // PING acts as a barrier: by the time its ACK (or a GOAWAY) arrives the
+      // server has fully processed the HEADERS frame above.
+      socket.write(new http2utils.PingFrame(false).data);
+    });
+    socket.on("error", onSocketError);
+    let received = Buffer.alloc(0);
+    socket.on("data", chunk => {
+      received = Buffer.concat([received, chunk]);
+      while (received.length >= 9) {
+        const length = received.readUIntBE(0, 3);
+        if (received.length < 9 + length) break;
+        const frame = {
+          type: received[3],
+          flags: received[4],
+          streamId: received.readUInt32BE(5) & 0x7fffffff,
+          payload: Buffer.from(received.subarray(9, 9 + length)),
+        };
+        received = received.subarray(9 + length);
+        frames.push(frame);
+        if ((frame.type === 6 && (frame.flags & 1) !== 0) || frame.type === 7) {
+          onExchanged();
+          return;
+        }
+      }
+    });
+    socket.on("close", () => onExchanged());
+    try {
+      await exchanged;
+    } finally {
+      socket.destroy();
+    }
+    return frames;
+  }
+
+  let client;
+  try {
+    for (const [caseName, headerBlock] of Object.entries(malformedHeaderBlocks)) {
+      const frames = await exchange(headerBlock);
+      // The malformed request never reaches the application.
+      expect({ caseName, delivered: deliveredRequests.length }).toEqual({ caseName, delivered: 0 });
+      // The stream is reset with PROTOCOL_ERROR instead of being answered.
+      const rst = frames.find(f => f.type === 3 && f.streamId === 1);
+      expect({ caseName, rstCode: rst?.payload?.readUInt32BE(0) }).toEqual({
+        caseName,
+        rstCode: http2.constants.NGHTTP2_PROTOCOL_ERROR,
+      });
+      expect(frames.find(f => f.type === 1 && f.streamId === 1)).toBeUndefined();
+    }
+
+    // A request without connection-specific or repeated headers still reaches
+    // the application and gets a response.
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", () => {});
+    const { promise: responded, resolve: onResponse, reject: onError } = Promise.withResolvers();
+    const req = client.request({ ":path": "/", "x-clean": "yes" });
+    req.on("response", onResponse);
+    req.on("error", onError);
+    req.resume();
+    req.end();
+    const headers = await responded;
+    expect(headers[":status"]).toBe(200);
+    expect(deliveredRequests.length).toBe(1);
+    expect(deliveredRequests[0]["x-clean"]).toBe("yes");
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
+it("http2 client survives session teardown from a socket write while flushing queued DATA frames", async () => {
+  // A flow-control-limited DATA frame sits in the native outbound queue until
+  // the peer reopens the window. The flush that follows writes to the JS
+  // socket (options.createConnection), and an application may tear the whole
+  // session down from inside that write -- e.g. an error handler reacting to a
+  // failed write. The teardown drops every queued frame, so the in-progress
+  // flush must not keep using the frame it was sending. Run in a subprocess so
+  // a crash shows up as a failed assertion instead of taking down the runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const { Duplex } = require("node:stream");
+
+      function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header[3] = type;
+        header[4] = flags;
+        header.writeUInt32BE(streamId, 5);
+        return Buffer.concat([header, payload]);
+      }
+      function windowUpdate(streamId, increment) {
+        const payload = Buffer.alloc(4);
+        payload.writeUInt32BE(increment, 0);
+        return frame(8, 0, streamId, payload);
+      }
+
+      let armed = false;
+      let tornDown = false;
+
+      const socket = new Duplex({
+        writableHighWaterMark: 4 * 1024 * 1024,
+        read() {},
+        write(chunk, encoding, callback) {
+          // Once the WINDOW_UPDATE has been delivered, the first DATA frame
+          // header for stream 1 is the flush of the queued DATA frame.
+          // Destroy the whole session from inside that write.
+          if (
+            armed &&
+            !tornDown &&
+            chunk.length >= 9 &&
+            chunk[3] === 0x00 &&
+            chunk.readUIntBE(0, 3) > 0 &&
+            (chunk.readUInt32BE(5) & 0x7fffffff) === 1
+          ) {
+            tornDown = true;
+            client.destroy();
+            setImmediate(() => {
+              console.log("TEARDOWN_DURING_FLUSH_OK");
+              process.exit(0);
+            });
+          }
+          callback();
+        },
+      });
+
+      const client = http2.connect("http://localhost", { createConnection: () => socket });
+      client.on("error", () => {});
+      client.on("connect", () => {
+        // Server preface: empty SETTINGS plus an ACK of the client's SETTINGS.
+        socket.push(Buffer.concat([frame(4, 0, 0), frame(4, 1, 0)]));
+      });
+      client.once("remoteSettings", () => {
+        const req = client.request({ ":method": "POST", ":path": "/" });
+        req.on("error", () => {});
+        // 65535 bytes fit in the initial flow-control window and go out right
+        // away; the remaining 32 KiB is queued natively until the window reopens.
+        req.write(Buffer.alloc(65535 + 32768, "a"));
+        console.log("DATA_QUEUED");
+        armed = true;
+        // Reopen the connection-level and stream-level windows so the queued
+        // DATA frames are flushed.
+        socket.push(Buffer.concat([windowUpdate(0, 1048576), windowUpdate(1, 1048576)]));
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("DATA_QUEUED");
+  expect(stdout).toContain("TEARDOWN_DURING_FLUSH_OK");
+  expect(exitCode).toBe(0);
+});
+
+it("http2 client keeps parsing a socket chunk whose ArrayBuffer is transferred by a frame event handler", async () => {
+  // With a user-supplied connection (options.createConnection), the exact
+  // Buffer handed to the socket "data" listener is fed to the native HTTP/2
+  // frame parser, and per-frame events (like "ping") fire synchronously while
+  // the parser is still iterating over that chunk. If a handler transfers the
+  // chunk's ArrayBuffer mid-parse, the remaining frames must still be parsed
+  // from the original contents rather than from memory the application now
+  // owns and overwrites. Run in a subprocess so a crash shows up as a failed
+  // assertion instead of taking down the test runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const { Duplex } = require("node:stream");
+
+      function frame(type, flags, streamId, payload = Buffer.alloc(0)) {
+        const header = Buffer.alloc(9);
+        header.writeUIntBE(payload.length, 0, 3);
+        header[3] = type;
+        header[4] = flags;
+        header.writeUInt32BE(streamId, 5);
+        return Buffer.concat([header, payload]);
+      }
+
+      const socket = new Duplex({
+        read() {},
+        write(chunk, encoding, callback) {
+          callback();
+        },
+      });
+
+      const client = http2.connect("http://localhost", { createConnection: () => socket });
+      client.on("error", () => {});
+
+      // Two PING frames in a single chunk backed by its own ArrayBuffer. The
+      // first ping's handler transfers that ArrayBuffer mid-parse; the second
+      // ping must still surface its original payload.
+      const ping1 = frame(6, 0, 0, Buffer.alloc(8, "A"));
+      const ping2 = frame(6, 0, 0, Buffer.alloc(8, "B"));
+      const chunkArrayBuffer = new ArrayBuffer(ping1.length + ping2.length);
+      const pingChunk = Buffer.from(chunkArrayBuffer);
+      ping1.copy(pingChunk, 0);
+      ping2.copy(pingChunk, ping1.length);
+
+      const pings = [];
+      client.on("ping", payload => {
+        pings.push(Buffer.from(payload).toString("hex"));
+        if (pings.length === 1) {
+          try {
+            const moved = chunkArrayBuffer.transfer();
+            new Uint8Array(moved).fill(0xff);
+          } catch {
+            // The runtime may refuse to detach a buffer it is still reading from.
+          }
+          setImmediate(() => {
+            console.log("PINGS:" + JSON.stringify(pings));
+            process.exit(0);
+          });
+        }
+      });
+
+      client.on("connect", () => {
+        // Server preface (empty SETTINGS) in its own, separate chunk.
+        socket.push(frame(4, 0, 0));
+      });
+      client.once("remoteSettings", () => {
+        socket.push(pingChunk);
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain('PINGS:["4141414141414141","4242424242424242"]');
+  expect(exitCode).toBe(0);
+});

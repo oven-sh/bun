@@ -3,7 +3,6 @@ use core::ffi::c_void;
 use crate::api::bun_subprocess::Subprocess;
 use crate::webcore::streams::{self, Signal};
 use bun_collections::{TaggedPtrUnion, VecExt};
-use bun_core::Output;
 use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sys::{self as sys, Error as SysError};
@@ -191,10 +190,6 @@ pub struct UTF8Fallback;
 // type alias once inherent associated types are stable; for now consumers
 // should reference `crate::webcore::sink::UTF8Fallback` directly.
 // TODO(port): inherent associated type — `impl Sink { pub type UTF8Fallback = UTF8Fallback; }`.
-
-// TODO(port): `bun_core::strings::{is_all_ascii, replace_latin1_with_utf8,
-// copy_utf16_into_utf8_impl, to_utf8_alloc}` + `Vec::<u8>::from_*` constructors
-// are not yet exported with these exact names. Body gated; signatures kept.
 
 impl UTF8Fallback {
     const STACK_SIZE: usize = 1024;
@@ -1197,8 +1192,6 @@ pub fn destructor_ptr_subprocess(ptr: *const c_void) -> usize {
     ((ptr as usize as u64 & ADDR_MASK) | (SUBPROCESS_TAG << ADDR_BITS)) as usize
 }
 
-// TODO(port): `Subprocess::on_stdin_destroyed` + `Output::debug_warn`.
-
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_void) {
     let _ = sink_ptr; // autofix
@@ -1233,7 +1226,7 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
         subprocess.on_stdin_destroyed();
         return;
     }
-    Output::debug_warn("Unknown sink type");
+    bun_core::debug_warn!("Unknown sink type");
 }
 
 // ported from: src/runtime/webcore/Sink.zig

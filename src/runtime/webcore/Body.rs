@@ -60,6 +60,33 @@ fn blob_store_mut(blob: &Blob) -> Option<&mut blob::Store> {
         .map(|s| unsafe { &mut *s.as_ptr() })
 }
 
+fn set_blob_content_type(blob: &Blob, mime_type: MimeType, allocated: bool) {
+    blob.content_type_was_set.set(true);
+    match mime_type.value {
+        Cow::Borrowed(interned) => {
+            if let Some(store) = blob_store_mut(blob) {
+                store.mime_type = MimeType {
+                    value: Cow::Borrowed(interned),
+                    category: mime_type.category,
+                };
+            }
+            blob.content_type.set(std::ptr::from_ref::<[u8]>(interned));
+            blob.content_type_allocated.set(false);
+        }
+        Cow::Owned(owned) => {
+            if let Some(store) = blob_store_mut(blob) {
+                store.mime_type = MimeType {
+                    value: Cow::Owned(owned.clone()),
+                    category: mime_type.category,
+                };
+            }
+            blob.content_type
+                .set(bun_core::heap::into_raw(owned.into_boxed_slice()));
+            blob.content_type_allocated.set(allocated);
+        }
+    }
+}
+
 // ────────────────────────────────────────────────────────────────────────────
 // Local shims for upstream-gated `JsClass` impls / `AnyPromise` methods.
 // These adapt call sites in this file without editing `bun_jsc` (orphan rule).
@@ -152,9 +179,6 @@ impl Body {
     }
 }
 
-// TODO(port): bun_jsc::ConsoleFormatter — write_format depends on the
-// ConsoleObject formatter trait (`print_as`/`print_comma`/`write_indent`).
-
 impl Body {
     pub fn write_format<F, W: core::fmt::Write, const ENABLE_ANSI_COLORS: bool>(
         &self,
@@ -162,7 +186,7 @@ impl Body {
         writer: &mut W,
     ) -> core::fmt::Result
     where
-        F: bun_jsc::ConsoleFormatter, // TODO(port): exact trait for ConsoleObject.Formatter
+        F: bun_jsc::ConsoleFormatter,
     {
         formatter.write_indent(writer)?;
         write!(
@@ -325,9 +349,6 @@ impl PendingValue {
         self.size_hint
     }
 
-    // TODO(port): ReadableStream::to_any_blob (gated on ByteBlobLoader/
-    // ByteStream un-stubbing in ReadableStream.rs).
-
     pub(crate) fn to_any_blob(&mut self) -> Option<AnyBlob> {
         if self.promise.is_some() {
             return None;
@@ -370,8 +391,6 @@ impl PendingValue {
         false
     }
 
-    // TODO(port): ReadableStream::to_any_blob (see above).
-
     pub(crate) fn to_any_blob_allow_promise(&mut self) -> Option<AnyBlob> {
         let global = self.global();
         let mut stream = self.readable.get(global)?;
@@ -383,9 +402,6 @@ impl PendingValue {
 
         None
     }
-
-    // TODO(port): JSGlobalObject::readable_stream_to_{json,array_buffer,
-    // bytes,text,blob,form_data} + bun_core::FormDataEncoding (gated payload).
 
     pub(crate) fn set_promise(
         &mut self,
@@ -617,11 +633,6 @@ impl ValueError {
     }
 }
 
-// TODO(port): BunString::{to_error_instance,to_type_error_instance} not
-// yet exported from `bun_string`; SystemError lacks Clone. The bodies are
-// otherwise wired to bun_jsc (CommonAbortReason::to_js, strong::Optional,
-// JSValue::attach_async_stack_from_promise all exist).
-
 impl ValueError {
     pub fn to_stream_error(
         &mut self,
@@ -735,10 +746,6 @@ impl Value {
         }
     }
 
-    // TODO(port): ZigStringSlice::slice() accessor + AnyBlob payload
-    // matching depend on the wtf string slice port. `to_any_blob` itself is
-    // un-gated above; only the WTFStringImpl→InternalBlob conversion blocks.
-
     pub fn to_blob_if_possible(&mut self) {
         if let Value::WTFStringImpl(str) = *self {
             if let Some(bytes) = wtf_impl(&str).to_utf8_if_needed() {
@@ -834,10 +841,6 @@ impl Value {
     }
 
     // pub const empty = Value::Empty;
-
-    // TODO(port): ByteStream::Source — webcore::byte_stream is still a unit
-    // stub (`pub struct ByteStream;`); `Source::new` / `.context.setup()` /
-    // `.to_readable_stream()` need the real ByteStream port to land.
 
     pub fn to_readable_stream(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         jsc::mark_binding();
@@ -986,10 +989,6 @@ impl Value {
             }
         }
 
-        // TODO(port): `bun_jsc::JsClass` is not yet implemented for the opaque
-        // `DOMFormData`/`URLSearchParams` stubs (orphan rule prevents impl here).
-        // The `as_dom_form_data`/`as_url_search_params` shims below return None
-        // until upstream wires `from_js`.
         if let Some(form_data) = as_dom_form_data(value) {
             // SAFETY: shim returns a live JSC heap cell.
             return Ok(Value::Blob(Blob::from_dom_form_data(global_this, unsafe {
@@ -1098,10 +1097,6 @@ impl Value {
         })
     }
 
-    // TODO(port): AnyBlob::to_string_transfer / to_json_share /
-    // to_array_buffer_transfer / to_uint8_array_transfer + Blob::new/to_js +
-    // AnyPromise::wrap — all in gated Blob/jsc impls.
-
     pub fn resolve(
         &mut self,
         new: &mut Value,
@@ -1199,28 +1194,7 @@ impl Value {
                                     true,
                                     Some(&mut allocated),
                                 );
-                                blob.content_type_was_set.set(true);
-                                // PORT NOTE: ownership reshape vs Zig. Zig's MimeType has no destructor so
-                                // `blob.content_type` (freed via `content_type_allocated`) is the sole owner
-                                // and `store.mime_type` aliases it. Rust `MimeType.value` is `Cow` (RAII), so
-                                // we give the Store the owning Cow and let `blob.content_type` alias it
-                                // (Blob holds a +1 on Store, alias valid for Blob's lifetime). When there is
-                                // no store, transfer the buffer into `blob.content_type` directly.
-                                if let Some(store) = blob_store_mut(blob) {
-                                    store.mime_type = mime_type;
-                                    blob.content_type.set(std::ptr::from_ref::<[u8]>(
-                                        store.mime_type.value.as_ref(),
-                                    ));
-                                    blob.content_type_allocated.set(false);
-                                } else {
-                                    blob.content_type.set(match mime_type.value {
-                                        Cow::Owned(v) => {
-                                            bun_core::heap::into_raw(v.into_boxed_slice())
-                                        }
-                                        Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
-                                    });
-                                    blob.content_type_allocated.set(allocated);
-                                }
+                                set_blob_content_type(blob, mime_type, allocated);
                                 // content_slice dropped (replaces defer content_slice.deinit())
                             }
                         }
@@ -1323,10 +1297,6 @@ impl Value {
         }
     }
 
-    // TODO(port): Blob::init_empty signature takes `&JSGlobalObject`,
-    // but the Zig path passed `undefined`; needs a nullable
-    // overload (or `Blob::default()`) before this type-checks.
-
     pub fn try_use_as_any_blob(&mut self) -> Option<AnyBlob> {
         let any_blob: AnyBlob = match self {
             Value::Blob(b) => AnyBlob::Blob(core::mem::take(b)),
@@ -1351,8 +1321,6 @@ impl Value {
         *self = Value::Used;
         Some(any_blob)
     }
-
-    // TODO(port): see `try_use_as_any_blob`.
 
     pub fn use_as_any_blob(&mut self) -> AnyBlob {
         let was_null = matches!(self, Value::Null);
@@ -1393,8 +1361,6 @@ impl Value {
         any_blob
     }
 
-    // TODO(port): see `try_use_as_any_blob`.
-
     pub fn use_as_any_blob_allow_non_utf8_string(&mut self) -> AnyBlob {
         let was_null = matches!(self, Value::Null);
         // PORT NOTE: see `use_as_any_blob` — match by `&mut` to avoid E0509.
@@ -1417,8 +1383,6 @@ impl Value {
         *self = if was_null { Value::Null } else { Value::Used };
         any_blob
     }
-
-    // TODO(port): webcore::readable_stream::Source::Bytes + ByteStream::on_data.
 
     pub fn to_error_instance(
         &mut self,
@@ -1481,8 +1445,6 @@ impl Value {
         Ok(())
     }
 
-    // TODO(port): forwards to `to_error_instance` (gated above).
-
     pub fn to_error(&mut self, err: bun_core::Error, global: &JSGlobalObject) -> JsTerminated<()> {
         self.to_error_instance(
             ValueError::Message(BunString::create_format(format_args!(
@@ -1544,10 +1506,6 @@ impl Drop for Value {
 }
 
 impl Value {
-    // TODO(port): ByteStream::Source — see `to_readable_stream`. The
-    // tail half of `tee()` constructs a `ByteStream::Source` to back a fresh
-    // ReadableStream; un-gate once the real ByteStream port lands.
-
     pub fn tee(
         &mut self,
         global_this: &JSGlobalObject,
@@ -1674,9 +1632,6 @@ impl Value {
             ..PendingValue::new(global_this)
         }))
     }
-
-    // TODO(port): forwards to `to_blob_if_possible`/`tee`/`Blob::init`,
-    // all of which are still gated (see notes above each).
 
     pub fn clone(&mut self, global_this: &JSGlobalObject) -> JsResult<Value> {
         self.clone_with_readable_stream(global_this, None)
@@ -2219,22 +2174,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
                     let mut allocated = false;
                     let mime_type =
                         MimeType::init(content_slice.slice(), true, Some(&mut allocated));
-                    blob.content_type_was_set.set(true);
-                    // PORT NOTE: ownership reshape vs Zig — see `resolve` (Action::None|GetBlob).
-                    // Store's Cow becomes the sole owner; Blob aliases it. With no store, Blob
-                    // takes the buffer directly via `content_type_allocated`.
-                    if let Some(store) = blob_store_mut(blob) {
-                        store.mime_type = mime_type;
-                        blob.content_type
-                            .set(std::ptr::from_ref::<[u8]>(store.mime_type.value.as_ref()));
-                        blob.content_type_allocated.set(false);
-                    } else {
-                        blob.content_type.set(match mime_type.value {
-                            Cow::Owned(v) => bun_core::heap::into_raw(v.into_boxed_slice()),
-                            Cow::Borrowed(s) => std::ptr::from_ref::<[u8]>(s),
-                        });
-                        blob.content_type_allocated.set(allocated);
-                    }
+                    set_blob_content_type(blob, mime_type, allocated);
                     // content_slice dropped (replaces defer content_slice.deinit())
                 }
             }

@@ -366,16 +366,26 @@ function findLlvmTool(
  * Call this once at configure time. All tool paths are absolute.
  * Throws BuildError if any required tool is missing.
  *
+ * `os`/`arch` are the HOST (where to search, executable suffixes, install
+ * hints). `targetOs` is what we're building FOR — it decides which tool
+ * *family* is needed: a windows target wants the MSVC-style drivers
+ * (clang-cl, llvm-lib, lld-link, llvm-rc) even when the host is linux/macOS,
+ * since those all ship in every LLVM distribution and are inherently
+ * cross-capable. Defaults to the host (native build).
+ *
  * zig/bun/esbuild are resolved separately (they come from cache/, not PATH)
  * so pass them in as placeholders for now; they'll be filled by downloaders.
  */
 export function resolveLlvmToolchain(
   os: OS,
   arch: Arch,
+  targetOs: OS = os,
 ): Pick<
   Toolchain,
   | "cc"
   | "cxx"
+  | "hostCc"
+  | "hostCxx"
   | "ar"
   | "ranlib"
   | "ld"
@@ -400,15 +410,19 @@ export function resolveLlvmToolchain(
   // install is highest-priority wins consistently.
   const paths = llvmSearchPaths(os, arch);
 
+  // The MSVC-style tool family is selected by the TARGET: building for
+  // windows needs clang-cl/llvm-lib/lld-link/llvm-rc regardless of host.
+  const msvcTarget = targetOs === "windows";
+
   // clang — version-checked. clang++ is the same binary (hardlink or
   // symlink) from the same install; a second version-check spawn would
   // just return the same answer. We still locate it separately so the
   // "not found" error names the right tool.
-  const ccResult = findLlvmTool(os === "windows" ? "clang-cl" : "clang", paths, os, {
+  const ccResult = findLlvmTool(msvcTarget ? "clang-cl" : "clang", paths, os, {
     checkVersion: true,
     required: true,
   });
-  const cxx = findLlvmTool(os === "windows" ? "clang-cl" : "clang++", paths, os, {
+  const cxx = findLlvmTool(msvcTarget ? "clang-cl" : "clang++", paths, os, {
     checkVersion: false,
     required: true,
   })?.path;
@@ -416,9 +430,10 @@ export function resolveLlvmToolchain(
   // Resource dir (builtin headers live at <resource-dir>/include). Needed by
   // darwin cross-compiles, which rebuild the include search path explicitly
   // (-nostdinc) so nothing from the build host can leak in. One ~10ms spawn;
-  // skipped on Windows where nothing consumes it.
+  // skipped for windows targets, where nothing consumes it (and cc is
+  // clang-cl, which takes MSVC-style flags).
   let clangResourceDir: string | undefined;
-  if (os !== "windows") {
+  if (!msvcTarget) {
     const probe = spawnSync(ccResult!.path, ["-print-resource-dir"], {
       encoding: "utf8",
       timeout: 30_000,
@@ -430,15 +445,28 @@ export function resolveLlvmToolchain(
     }
   }
 
-  // ar: llvm-ar (or llvm-lib on Windows)
+  // Host compiler for build-time codegen tools (dep_host_cc) and host-side
+  // cargo artifacts (.cargo/config.toml linker for the host triple). Normally
+  // the same as cc/cxx, but when cross-compiling for windows from a unix
+  // host, cc/cxx are clang-cl (which defaults to a *-windows-msvc triple,
+  // emits COFF, and can't drive an ELF link) — host tools must stay on plain
+  // clang/clang++.
+  let hostCc: string | undefined;
+  let hostCxx: string | undefined;
+  if (msvcTarget && os !== "windows") {
+    hostCc = findLlvmTool("clang", paths, os, { checkVersion: false, required: true })?.path;
+    hostCxx = findLlvmTool("clang++", paths, os, { checkVersion: false, required: true })?.path;
+  }
+
+  // ar: llvm-ar (or llvm-lib for windows targets)
   // No version check — ar doesn't always print a parseable version,
   // and any ar from the same LLVM install is fine.
-  const ar = findLlvmTool(os === "windows" ? "llvm-lib" : "llvm-ar", paths, os, {
+  const ar = findLlvmTool(msvcTarget ? "llvm-lib" : "llvm-ar", paths, os, {
     checkVersion: false,
     required: true,
   })?.path;
 
-  // ranlib: llvm-ranlib (unix only — Windows uses llvm-lib which doesn't need it)
+  // ranlib: llvm-ranlib (unix hosts only — llvm-lib targets don't need it).
   // Needed for nested cmake builds (CMAKE_RANLIB). llvm-ar's `s` flag does the
   // same thing for our direct archives, but deps may call ranlib explicitly.
   let ranlib: string | undefined;
@@ -449,10 +477,10 @@ export function resolveLlvmToolchain(
     })?.path;
   }
 
-  // ld: ld.lld on Linux (passed as --ld-path=), lld-link on Windows.
+  // ld: lld-link for windows targets, ld.lld on Linux (passed as --ld-path=).
   // On Darwin clang drives the system linker directly.
   let ld: string;
-  if (os === "windows") {
+  if (msvcTarget) {
     ld = findLlvmTool("lld-link", paths, os, { checkVersion: false, required: true })?.path ?? "";
   } else if (os === "linux") {
     ld = findLlvmTool("ld.lld", paths, os, { checkVersion: true, required: true })?.path ?? "";
@@ -491,25 +519,26 @@ export function resolveLlvmToolchain(
     dsymutil = findLlvmTool("dsymutil", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // rc/mt: windows only. Passed to nested cmake — when CMAKE_C_COMPILER
-  // is an explicit path, cmake's find_program for these may not search
-  // the compiler's directory, so we resolve them here and pass
-  // explicitly. rc is required (cmake's try_compile on windows uses
-  // it); mt is optional (not all LLVM distros ship it — source.ts sets
+  // rc/mt: windows targets only. Passed to nested cmake — when
+  // CMAKE_C_COMPILER is an explicit path, cmake's find_program for these
+  // may not search the compiler's directory, so we resolve them here and
+  // pass explicitly. rc is required (cmake's try_compile on windows uses
+  // it, and the final link embeds windows-app-info.res); mt is optional
+  // (not all LLVM distros ship it — source.ts sets
   // CMAKE_TRY_COMPILE_TARGET_TYPE=STATIC_LIBRARY as fallback).
   let rc: string | undefined;
   let mt: string | undefined;
-  if (os === "windows") {
+  if (msvcTarget) {
     rc = findLlvmTool("llvm-rc", paths, os, { checkVersion: false, required: true })?.path;
     mt = findLlvmTool("llvm-mt", paths, os, { checkVersion: false, required: false })?.path;
   }
 
-  // nasm: windows-x64 only. BoringSSL's win-x64 assembly is NASM syntax
-  // (perlasm emits gas .S everywhere else, including win-aarch64). clang's
-  // integrated assembler can't read NASM, and OPENSSL_NO_ASM is a 5-10×
-  // crypto perf hit, so this is required when targeting win-x64.
+  // nasm: windows-x64 targets only. BoringSSL's win-x64 assembly is NASM
+  // syntax (perlasm emits gas .S everywhere else, including win-aarch64).
+  // clang's integrated assembler can't read NASM, and OPENSSL_NO_ASM is a
+  // 5-10× crypto perf hit, so this is required when targeting win-x64.
   let nasm: string | undefined;
-  if (os === "windows") {
+  if (msvcTarget) {
     nasm = findTool({
       names: ["nasm"],
       // boringssl's win-x64 .asm needs nasm; win-aarch64 uses gas .S.
@@ -517,7 +546,10 @@ export function resolveLlvmToolchain(
       // resolveToolchain(). compile.ts:nasm() asserts at the use site
       // with the same hint, so a missing nasm still fails clearly.
       required: false,
-      hint: "Install from https://nasm.us or `winget install NASM.NASM`",
+      hint:
+        os === "windows"
+          ? "Install from https://nasm.us or `winget install NASM.NASM`"
+          : "Install nasm from your distro (apt install nasm) or https://nasm.us",
     })?.path;
   }
 
@@ -542,6 +574,8 @@ export function resolveLlvmToolchain(
     clangVersion: ccResult.version,
     clangResourceDir,
     cxx,
+    hostCc,
+    hostCxx,
     ar,
     ranlib,
     ld,

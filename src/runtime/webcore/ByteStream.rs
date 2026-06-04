@@ -59,9 +59,6 @@ impl Default for ByteStream {
 }
 
 /// `webcore.ReadableStream.NewSource(@This(), "Bytes", onStart, onPull, onCancel, deinit, null, drain, memoryCost, toBufferedValue)`
-// TODO(port): `NewSource` is a Zig comptime type-generator that wires callbacks into a
-// `.classes.ts` wrapper. In Rust this becomes `ReadableStream::Source<ByteStream>` where
-// `ByteStream: ReadableStreamSourceContext` (trait with `on_start`/`on_pull`/... methods).
 pub type Source = readable_stream::NewSource<ByteStream>;
 
 impl readable_stream::SourceContext for ByteStream {
@@ -177,7 +174,6 @@ impl ByteStream {
     }
 
     pub(crate) fn on_data(&self, stream: streams::Result) -> Result<(), bun_jsc::JsTerminated> {
-        // TODO(port): narrow error set — Zig `bun.JSTerminated!void`
         bun_jsc::mark_binding!();
         if self.done.get() {
             // PORT NOTE: Zig frees `stream.owned.slice()` / `stream.owned_and_done.slice()` here
@@ -204,7 +200,6 @@ impl ByteStream {
         };
         if let Some(ctx) = pipe_ctx {
             self.did_drain(stream.slice().len());
-            // TODO(port): `Pipe.onPipe` signature — Zig passes `(ctx, stream, allocator)`.
             (pipe_fn.unwrap())(ctx, stream);
             return Ok(());
         }

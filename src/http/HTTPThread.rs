@@ -326,7 +326,6 @@ impl LibdeflateState {
 
 pub const REQUEST_BODY_SEND_STACK_BUFFER_SIZE: usize = 32 * 1024;
 
-// TODO(port): UnboundedQueue is intrusive over `AsyncHttp.next`; encode the field offset.
 pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
 
 // Clone: bitwise OK for the `*const c_void` CA-string pointers — they borrow
@@ -550,7 +549,6 @@ impl HttpThread {
                 }
 
                 // Cache miss - create new SSL context
-                // TODO(port): Zig used allocator.create + manual destroy on error.
                 let custom_context = bun_core::heap::release(Box::new(NewHttpContext::<true> {
                     ref_count: Cell::new(1),
                     pending_sockets: bun_collections::HiveArray::init(),

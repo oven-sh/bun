@@ -1159,8 +1159,6 @@ pub(crate) fn sleep_sync(
         )));
     }
 
-    // TODO(port): std.Thread.sleep — bun owns its own sleep; using thread::sleep
-    // here matches Zig's blocking semantics (this is a sync API).
     std::thread::sleep(core::time::Duration::from_millis(
         u64::try_from(milliseconds).expect("int cast"),
     ));
@@ -1558,9 +1556,6 @@ pub(crate) fn index_of_line(
 }
 
 pub use crate::crypto as crypto_mod;
-// TODO(port): `pub const Crypto = @import("../crypto/crypto.zig");` re-exports
-// the crypto module under this file's namespace; in Rust the canonical path is
-// `crate::crypto`.
 
 #[bun_jsc::host_fn]
 pub(crate) fn nanoseconds(global_this: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
@@ -1710,99 +1705,6 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
     }
 }
 
-/// # Safety
-/// `ptr` must point to `len` initialized `u16` values valid for the duration
-/// of this call.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__escapeHTML16(
-    global_object: &JSGlobalObject,
-    input_value: JSValue,
-    ptr: *const u16,
-    len: usize,
-) -> JSValue {
-    debug_assert!(len > 0);
-    // SAFETY: caller passes a valid [ptr, len) UTF-16 slice.
-    let input_slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-    use bun_core::immutable::escape_html::{Escaped, escape_html_for_utf16_input};
-    let escaped = match escape_html_for_utf16_input(input_slice) {
-        Ok(v) => v,
-        Err(_) => {
-            let _ = global_object
-                .throw_value(ZigString::init(b"Out of memory").to_error_instance(global_object));
-            return JSValue::ZERO;
-        }
-    };
-
-    match escaped {
-        Escaped::Static(val) => ZigString::init(val).to_js(global_object),
-        Escaped::Original => input_value,
-        Escaped::Allocated(escaped_html) => {
-            // SAFETY: ownership of `escaped_html`'s buffer transfers to JSC via
-            // the external-string finalizer; do not drop it here.
-            let escaped_html = core::mem::ManuallyDrop::new(escaped_html);
-            let (ptr, len) = (escaped_html.as_ptr(), escaped_html.len());
-            // SAFETY: `ptr`/`len` describe `escaped_html`'s global-allocator buffer,
-            // forgotten above; ownership transfers to JSC's external-string finalizer.
-            unsafe { jsc::zig_string_to_external_u16(ptr, len, global_object) }
-        }
-    }
-}
-
-/// # Safety
-/// `ptr` must point to `len` initialized bytes valid for the duration of this
-/// call.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__escapeHTML8(
-    global_object: &JSGlobalObject,
-    input_value: JSValue,
-    ptr: *const u8,
-    len: usize,
-) -> JSValue {
-    debug_assert!(len > 0);
-    // SAFETY: caller passes a valid [ptr, len) byte slice.
-    let input_slice = unsafe { core::slice::from_raw_parts(ptr, len) };
-    // PERF(port): was stack-fallback (256 bytes) — profile if hot
-
-    use bun_core::immutable::escape_html::{Escaped, escape_html_for_latin1_input};
-    let escaped = match escape_html_for_latin1_input(input_slice) {
-        Ok(v) => v,
-        Err(_) => {
-            let _ = global_object
-                .throw_value(ZigString::init(b"Out of memory").to_error_instance(global_object));
-            return JSValue::ZERO;
-        }
-    };
-
-    match escaped {
-        Escaped::Static(val) => ZigString::init(val).to_js(global_object),
-        Escaped::Original => input_value,
-        Escaped::Allocated(escaped_html) => {
-            if cfg!(debug_assertions) {
-                // the output should always be longer than the input
-                debug_assert!(escaped_html.len() > input_slice.len());
-
-                // assert we do not allocate a new string unnecessarily
-                debug_assert!(input_slice != &escaped_html[..]);
-            }
-
-            if input_slice.len() <= 32 {
-                let zig_str = ZigString::init(&escaped_html);
-                let out = zig_str.to_atomic_value(global_object);
-                return out;
-            }
-
-            // Ownership of the buffer transfers to JSC's external-string
-            // finalizer (mimalloc-backed) via `to_external_value`; release
-            // the Box without dropping so JSC frees it on GC.
-            let raw: *mut [u8] = bun_core::heap::into_raw(escaped_html);
-            // SAFETY: `raw` is a freshly-leaked Box<[u8]> allocation, valid for
-            // the duration of this call; the resulting JSC external string
-            // adopts and later frees it.
-            ZigString::init(unsafe { &*raw }).to_external_value(global_object)
-        }
-    }
-}
-
 #[bun_jsc::host_fn]
 pub(crate) fn alloc_unsafe(
     global_this: &JSGlobalObject,
@@ -1880,7 +1782,6 @@ pub(crate) fn mmap_file(global_this: &JSGlobalObject, callframe: &CallFrame) -> 
                     libc::MAP_PRIVATE
                 };
 
-                // TODO(port): @hasField(std.c.MAP, "SYNC") — gated by target_os in Rust.
                 #[cfg(target_os = "linux")]
                 if opts
                     .get_boolean_loose(global_this, "sync")?

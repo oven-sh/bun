@@ -37,7 +37,7 @@ bun_output::declare_scope!(H2FrameParser, visible);
 // (see `${TypeName}__fromJS` etc. in build/*/codegen/ZigGeneratedClasses.cpp);
 // replace with the macro-derived modules once the .rs codegen backend lands.
 // ──────────────────────────────────────────────────────────────────────────
-#[allow(non_snake_case, non_camel_case_types, dead_code)]
+#[allow(non_snake_case, non_camel_case_types)]
 pub mod JSH2FrameParser {
     use super::{JSGlobalObject, JSValue};
 
@@ -390,7 +390,6 @@ impl FrameHeader {
     pub const BYTE_SIZE: usize = 9;
     #[inline]
     fn write(&self, writer: &mut impl WireWriter) -> bool {
-        // TODO(port): byteSwapAllFields on packed struct(u72) — emit big-endian wire format manually
         let mut buf = [0u8; Self::BYTE_SIZE];
         buf[0] = ((self.length >> 16) & 0xFF) as u8;
         buf[1] = ((self.length >> 8) & 0xFF) as u8;
@@ -562,7 +561,6 @@ impl FullSettingsPayload {
 
     pub(crate) fn write(&self, writer: &mut impl WireWriter) -> bool {
         let mut swap = *self;
-        // TODO(port): byteSwapAllFields — swap each field manually
         swap._header_table_size_type = swap._header_table_size_type.swap_bytes();
         swap.header_table_size = swap.header_table_size.swap_bytes();
         swap._enable_push_type = swap._enable_push_type.swap_bytes();
@@ -651,6 +649,17 @@ fn is_malformed_field_name(name: &[u8]) -> bool {
 #[inline]
 fn is_malformed_field_value(value: &[u8]) -> bool {
     value.iter().any(|&c| c == 0 || c == b'\r' || c == b'\n')
+}
+
+#[inline]
+fn is_forbidden_connection_specific_header(name: &[u8], value: &[u8]) -> bool {
+    if name == b"te" {
+        return !value.eq_ignore_ascii_case(b"trailers");
+    }
+    matches!(
+        name,
+        b"connection" | b"keep-alive" | b"proxy-connection" | b"transfer-encoding" | b"upgrade"
+    )
 }
 
 const SINGLE_VALUE_HEADERS_LEN: usize = 40;
@@ -1075,7 +1084,6 @@ pub fn js_get_packed_settings(
         }
     }
 
-    // TODO(port): byteSwapAllFields — done inside .write(); here we need raw swapped bytes
     let mut buf = [0u8; FullSettingsPayload::BYTE_SIZE];
     let mut cursor = FixedBufferStream::new(&mut buf);
     let _ = settings.write(&mut cursor);
@@ -1212,7 +1220,6 @@ impl Handlers {
         if JSH2FrameParser::Gc::onWrite.get(this_value) == Some(JSValue::ZERO)
             || JSH2FrameParser::Gc::onWrite.get(this_value).is_none()
         {
-            // TODO(port): Zig compares to .zero; codegen may return None — check both
             return Err(global_object
                 .throw_invalid_arguments(format_args!("Expected at least \"write\" callback")));
         }
@@ -1635,21 +1642,21 @@ impl Stream {
             return FlushState::NoAction;
         }
         // try to flush one frame
-        let Some(frame) = self.data_frame_queue.peek_front() else {
+        let Some(front) = self.data_frame_queue.peek_front() else {
             return FlushState::NoAction;
         };
-        // PORT NOTE: reshaped for borrowck — `frame` aliases self.data_frame_queue;
-        // capture pointers and rely on stable Vec backing within this scope.
-        let frame: *mut PendingFrame = frame;
-        // SAFETY: frame is a stable element of self.data_frame_queue's Vec backing store; not moved while this borrow lives (no push/pop until after use)
-        let frame = unsafe { &mut *frame };
+        let frame_len = front.len;
+        let frame_remaining = front.slice().len();
 
-        let mut is_flow_control_limited = false;
+        let mut owned_frame: Option<PendingFrame> = None;
         let no_backpressure: bool = 'brk: {
             let mut writer = client.to_writer();
 
-            if frame.len == 0 {
+            if frame_len == 0 {
                 // flush a zero payload frame
+                let Some(frame) = self.data_frame_queue.dequeue() else {
+                    return FlushState::NoAction;
+                };
                 let data_header = FrameHeader {
                     type_: FrameType::HTTP_FRAME_DATA as u8,
                     flags: if frame.end_stream && !self.wait_for_trailers {
@@ -1660,14 +1667,10 @@ impl Stream {
                     stream_identifier: self.id,
                     length: 0,
                 };
+                owned_frame = Some(frame);
                 break 'brk data_header.write(&mut writer);
             } else {
-                // Inline `frame.slice()` so the borrow is on `frame.buffer`
-                // alone — `frame.offset` / `frame.end_stream` stay disjoint
-                // and can be mutated/read below while the slice is live.
-                let frame_slice: &[u8] = &frame.buffer[frame.offset as usize..frame.len as usize];
-                let max_size = frame_slice
-                    .len()
+                let max_size = frame_remaining
                     .min(
                         (self
                             .remote_window_size
@@ -1686,7 +1689,7 @@ impl Stream {
                     bun_output::scoped_log!(
                         H2FrameParser,
                         "dataFrame flow control limited {} {} {} {} {} {}",
-                        frame_slice.len(),
+                        frame_remaining,
                         self.remote_window_size,
                         self.remote_used_window_size,
                         client.remote_window_size.get(),
@@ -1702,11 +1705,13 @@ impl Stream {
                         FlushState::NoAction
                     };
                 }
-                if max_size < frame_slice.len() {
-                    is_flow_control_limited = true;
+                if max_size < frame_remaining {
                     // we need to break the frame into smaller chunks
+                    let Some(frame) = self.data_frame_queue.peek_front() else {
+                        return FlushState::NoAction;
+                    };
+                    let able_to_send = frame.slice()[0..max_size].to_vec();
                     frame.offset += u32::try_from(max_size).expect("int cast");
-                    let able_to_send = &frame_slice[0..max_size];
                     client
                         .queued_data_size
                         .set(client.queued_data_size.get() - able_to_send.len() as u64);
@@ -1754,13 +1759,19 @@ impl Stream {
                                 );
                             }
                             buffer[0] = padding;
+                            buffer[1 + able_to_send.len()..payload_size].fill(0);
                             writer.write_all(&buffer[0..payload_size]).is_ok()
                         });
                     } else {
-                        break 'brk writer.write_all(able_to_send).is_ok();
+                        break 'brk writer.write_all(&able_to_send).is_ok();
                     }
                 } else {
                     // flush with some payload
+                    owned_frame = self.data_frame_queue.dequeue();
+                    let Some(frame) = owned_frame.as_ref() else {
+                        return FlushState::NoAction;
+                    };
+                    let frame_slice: &[u8] = frame.slice();
                     client
                         .queued_data_size
                         .set(client.queued_data_size.get() - frame_slice.len() as u64);
@@ -1811,6 +1822,7 @@ impl Stream {
                                 );
                             }
                             buffer[0] = padding;
+                            buffer[1 + frame_slice.len()..payload_size].fill(0);
                             writer.write_all(&buffer[0..payload_size]).is_ok()
                         });
                     } else {
@@ -1820,10 +1832,9 @@ impl Stream {
             }
         };
 
-        // defer block from Zig (only when !is_flow_control_limited)
-        if !is_flow_control_limited {
+        // defer block from Zig (only when the full frame was flushed)
+        if let Some(_frame) = owned_frame {
             // only call the callback + free the frame if we write to the socket the full frame
-            let mut _frame = self.data_frame_queue.dequeue().unwrap();
             client
                 .outbound_queue_size
                 .set(client.outbound_queue_size.get() - 1);
@@ -3315,6 +3326,8 @@ impl H2FrameParser {
 
         let mut sensitive_headers: JSValue = JSValue::UNDEFINED;
         let mut malformed = false;
+        let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
+        let mut seen_regular_header = false;
 
         // Stream-level limit violations seen mid-decode. The loop must consume
         // the whole block regardless: the HPACK dynamic table is
@@ -3372,10 +3385,28 @@ impl H2FrameParser {
                 continue;
             }
 
+            let is_pseudo_header = header.name.first() == Some(&b':');
+            if is_pseudo_header {
+                if seen_regular_header {
+                    malformed = true;
+                }
+            } else {
+                seen_regular_header = true;
+            }
+            if is_pseudo_header || header.name == b"content-length" {
+                if let Some(idx) = single_value_headers_index_of(header.name) {
+                    if single_value_headers[idx] {
+                        malformed = true;
+                    }
+                    single_value_headers[idx] = true;
+                }
+            }
+
             if malformed
                 || is_malformed_field_name(header.name)
                 || is_malformed_field_value(header.value)
-                || (header.name.first() == Some(&b':')
+                || is_forbidden_connection_specific_header(header.name, header.value)
+                || (is_pseudo_header
                     && !if self.is_server.get() {
                         is_valid_request_pseudo_header(header.name)
                     } else {
@@ -3740,7 +3771,6 @@ impl H2FrameParser {
 
             let global = self.handlers.get().global();
             while !payload.is_empty() {
-                // TODO(port): fixedBufferStream over const slice for reading u16 BE
                 if payload.len() < 2 {
                     bun_output::scoped_log!(
                         H2FrameParser,
@@ -5845,6 +5875,7 @@ impl H2FrameParser {
                                 );
                             }
                             buffer[0] = padding;
+                            buffer[1 + slice.len()..payload_size].fill(0);
                             let _ = writer.write_all(&buffer[0..payload_size]);
                         });
                     } else {
@@ -7366,8 +7397,9 @@ impl H2FrameParser {
         // closure so `?` short-circuits to the `result` binding instead of out
         // of the function, and the window-size update still runs on the error
         // path.
+        let array_buffer = buffer.as_pinned_arraybuffer(global_object);
         let result = (|| {
-            if let Some(array_buffer) = buffer.as_array_buffer(global_object) {
+            if let Some(array_buffer) = &array_buffer {
                 let mut bytes = array_buffer.byte_slice();
                 // read all the bytes
                 while !bytes.is_empty() {
@@ -7380,6 +7412,9 @@ impl H2FrameParser {
                     .throw(format_args!("Expected data to be a Buffer or ArrayBuffer")))
             }
         })();
+        if let Some(array_buffer) = &array_buffer {
+            array_buffer.unpin();
+        }
         this.increment_window_size_if_needed();
         result
     }

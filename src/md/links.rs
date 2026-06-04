@@ -927,6 +927,7 @@ impl Parser<'_> {
                 let mut uri_end = scheme_end + 1;
                 while uri_end < content.len()
                     && content[uri_end] != b'>'
+                    && content[uri_end] != b'<'
                     && !helpers::is_whitespace(content[uri_end])
                 {
                     uri_end += 1;

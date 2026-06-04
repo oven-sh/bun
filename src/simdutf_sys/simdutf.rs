@@ -628,8 +628,6 @@ pub mod length {
         pub mod from {
             use super::*;
             pub fn utf8(input: &[u8]) -> usize {
-                // TODO(port): Zig had `if (@inComptime())` branch using std.unicode.utf8CountCodepoints
-                // for compile-time evaluation; Rust has no equivalent — runtime path only.
                 // SAFETY: input is a valid slice; FFI reads exactly len bytes.
                 unsafe { simdutf__utf16_length_from_utf8(input.as_ptr(), input.len()) }
             }
@@ -761,6 +759,12 @@ pub mod base64 {
             outlen: usize,
             is_urlsafe: c_int,
         ) -> SIMDUTFResult;
+        fn simdutf__base64_decode_from_binary_lenient(
+            input: *const u8,
+            length: usize,
+            output: *mut u8,
+            outlen: usize,
+        ) -> SIMDUTFResult;
         fn simdutf__base64_length_from_binary(length: usize, options: c_int) -> usize;
     }
 
@@ -818,6 +822,23 @@ pub mod base64 {
                 output.as_mut_ptr(),
                 output.len(),
                 is_urlsafe as c_int,
+            )
+        }
+    }
+
+    /// Lenient decode matching Node.js `Buffer` semantics
+    /// (`simdutf::base64_default_or_url_accept_garbage` + loose last chunk):
+    /// accepts both the standard and URL-safe alphabets, skips whitespace and
+    /// any other non-alphabet characters, and stops at the first `'='`.
+    /// On success, `count` is the number of bytes written to `output`.
+    pub fn decode_lenient(input: &[u8], output: &mut [u8]) -> SIMDUTFResult {
+        // SAFETY: input/output are valid slices; FFI honors outlen bound.
+        unsafe {
+            simdutf__base64_decode_from_binary_lenient(
+                input.as_ptr(),
+                input.len(),
+                output.as_mut_ptr(),
+                output.len(),
             )
         }
     }

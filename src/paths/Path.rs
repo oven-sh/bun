@@ -375,11 +375,6 @@ impl PathUnit for u16 {
     }
 }
 
-/// `Unit::Os` — resolves to `u16` on Windows, `u8` elsewhere.
-#[cfg(windows)]
-#[allow(dead_code)]
-pub(crate) type OsUnit = u16;
-
 // ──────────────────────────────────────────────────────────────────────────
 // Buf — `opts.Buf()` (only the `.pool` variant is implemented in Zig)
 // ──────────────────────────────────────────────────────────────────────────
@@ -625,7 +620,7 @@ pub type AutoRelPath = Path<u8, { Kind::REL }, { PathSeparators::AUTO }>;
 /// `Path(comptime opts: Options) type`
 ///
 /// `BufType` is omitted as a parameter because only `.pool` is implemented in Zig.
-/// `Unit` is encoded as the type parameter `U: PathUnit` (use `u8`, `u16`, or `OsUnit`).
+/// `Unit` is encoded as the type parameter `U: PathUnit` (use `u8` or `u16`).
 pub struct Path<
     U: PathUnit = u8,
     const KIND: u8 = { Kind::ANY },
@@ -651,12 +646,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
     }
 
     // `deinit` → impl Drop (below). Body returns the buffer to the pool.
-
-    /// for call-site parity with the Zig (`const moved = this.move();`).
-    #[inline]
-    pub fn move_(self) -> Self {
-        self
-    }
 
     pub fn init_top_level_dir() -> Self {
         debug_assert!(crate::fs::FileSystem::instance_loaded());
@@ -696,7 +685,6 @@ impl<U: PathUnit, const KIND: u8, const SEP_OPT: u8, const CHECK: u8>
 
         #[cfg(windows)]
         {
-            // TODO(port): pick long_path_prefix vs long_path_prefix_u8 based on U.
             this._buf_append_input(crate::windows::long_path_prefix_for::<U>(), false);
         }
 

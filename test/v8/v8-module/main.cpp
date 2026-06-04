@@ -245,6 +245,44 @@ void test_v8_string_write_utf8(const FunctionCallbackInfo<Value> &info) {
   return ok(info);
 }
 
+// Regression test for WriteUtf8 when a valid surrogate pair (astral character)
+// does not fit in the remaining buffer. V8's legacy WriteUtf8 encodes the
+// unpaired lead surrogate as WTF-8 (3 bytes, 0xED 0xA0-0xAF ...) in that case
+// rather than leaving the buffer untouched. The encoder that backs this on Bun
+// previously wrote U+FFFD (0xEF 0xBF 0xBD) here, diverging from V8.
+void test_v8_string_write_utf8_surrogate(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  struct {
+    const char *label;
+    const char *utf8;
+  } inputs[] = {
+      // "😀" = U+1F600 (surrogate pair D83D DE00), leading astral character
+      {"emoji", "\xF0\x9F\x98\x80"},
+      // "a😀" — one ASCII byte then the astral character
+      {"a+emoji", "a\xF0\x9F\x98\x80"},
+  };
+
+  constexpr int total = 8;
+  char buf[total];
+  for (auto &in : inputs) {
+    Local<String> s = String::NewFromUtf8(isolate, in.utf8).ToLocalChecked();
+    for (int i = total; i >= 0; i--) {
+      memset(buf, 0xaa, total);
+      int nchars;
+      int retval = s->WriteUtf8(isolate, buf, i, &nchars);
+      printf("%-7s size = %d, nchars = %d, returned = %d, data =", in.label, i,
+             nchars, retval);
+      for (int j = 0; j < total; j++) {
+        printf("%c%02x", j == i ? '|' : ' ',
+               reinterpret_cast<unsigned char *>(buf)[j]);
+      }
+      printf("\n");
+    }
+  }
+  return ok(info);
+}
+
 void test_v8_external(const FunctionCallbackInfo<Value> &info) {
   Isolate *isolate = info.GetIsolate();
   int x = 5;
@@ -1153,6 +1191,8 @@ void initialize(Local<Object> exports, Local<Value> module,
   NODE_SET_METHOD(exports, "test_v8_string_latin1", test_v8_string_latin1);
   NODE_SET_METHOD(exports, "test_v8_string_write_utf8",
                   test_v8_string_write_utf8);
+  NODE_SET_METHOD(exports, "test_v8_string_write_utf8_surrogate",
+                  test_v8_string_write_utf8_surrogate);
   NODE_SET_METHOD(exports, "test_v8_external", test_v8_external);
   NODE_SET_METHOD(exports, "test_v8_object", test_v8_object);
   NODE_SET_METHOD(exports, "test_v8_array_new", test_v8_array_new);

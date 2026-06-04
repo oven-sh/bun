@@ -10,9 +10,10 @@ use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, Ordering};
 use std::io::Write as _;
 
+use bun_core::strings;
 use bun_core::{Global, Output};
-use bun_core::{PathString, strings};
 use bun_jsc::virtual_machine::VirtualMachine;
+use bun_ptr::Interned;
 use bun_sys::FdExt as _;
 
 use super::frame::{self, Frame};
@@ -30,14 +31,13 @@ pub struct Coordinator<'a> {
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
     pub event_loop_handle: bun_jsc::EventLoopHandle,
     pub reporter: &'a mut CommandLineReporter,
-    pub files: Vec<PathString>,
+    pub files: Vec<Interned>,
     pub cwd: &'a [u8],
     // [:null]?[*:0]const u8 — null-sentinel-terminated slice of C strings;
     // backing storage has a null at [len] for execve-style consumers.
     pub argv: Box<[bun_spawn::CStrPtr]>,
     /// One envp per worker slot — same base, with that slot's JEST_WORKER_ID
     /// and BUN_TEST_WORKER_ID appended.
-    // TODO(port): []const [:null]?[*:0]const u8 — see argv note.
     pub envps: Vec<bun_dotenv::NullDelimitedEnvMap>,
 
     pub workers: &'a mut [Worker],
@@ -203,7 +203,6 @@ impl<'a> Coordinator<'a> {
         if self.bailed || !self.has_undispatched_files() {
             return;
         }
-        // TODO(port): std.time.milliTimestamp() — verify bun_core helper name.
         let now = bun_core::time::milli_timestamp();
         for w in self.workers[..self.spawned_count as usize].iter() {
             if !w.alive {
@@ -233,7 +232,7 @@ impl<'a> Coordinator<'a> {
             return w.shutdown();
         }
         if let Some(idx) = w.range.pop_front() {
-            return w.dispatch(idx, self.files[idx as usize].slice());
+            return w.dispatch(idx, self.files[idx as usize].as_bytes());
         }
         // Steal the back half of the largest remaining range as a contiguous
         // block. The thief walks it forward via popFront, so both workers keep
@@ -252,7 +251,7 @@ impl<'a> Coordinator<'a> {
             if let Some(stolen) = v.range.steal_back_half() {
                 w.range = stolen;
                 if let Some(idx) = w.range.pop_front() {
-                    return w.dispatch(idx, self.files[idx as usize].slice());
+                    return w.dispatch(idx, self.files[idx as usize].as_bytes());
                 }
             }
         }
@@ -265,11 +264,11 @@ impl<'a> Coordinator<'a> {
         }
         self.bailed = true;
         self.break_dots();
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "\nBailed out after {} failure{}<r>\n",
             self.bail,
             if self.bail == 1 { "" } else { "s" }
-        ));
+        );
         Output::flush();
         // PORT NOTE: reachable from on_frame/account_crash with the caller's
         // `w: &mut Worker` still live and used afterward; iter_mut() here
@@ -292,7 +291,7 @@ impl<'a> Coordinator<'a> {
     pub(crate) fn rel_path(&self, file_idx: u32) -> &[u8] {
         bun_paths::resolve_path::relative(
             bun_paths::fs::FileSystem::instance().top_level_dir(),
-            self.files[file_idx as usize].slice(),
+            self.files[file_idx as usize].as_bytes(),
         )
     }
 
@@ -501,8 +500,6 @@ impl<'a> Coordinator<'a> {
 
         let mut respawned = false;
         if !self.bailed && self.has_undispatched_files() {
-            // TODO(port): explicit deinit of ipc/out/err — in Rust these become
-            // Drop on assignment; verify no double-free with Default::default().
             w.ipc = Default::default();
             w.out = WorkerPipe::new(PipeRole::Stdout, std::ptr::from_ref::<Worker>(w));
             w.err = WorkerPipe::new(PipeRole::Stderr, std::ptr::from_ref::<Worker>(w));
@@ -534,11 +531,11 @@ impl<'a> Coordinator<'a> {
     fn account_crash(&mut self, file_idx: u32, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "<r><red>✗<r> <b>{}<r> <d>(worker crashed: {})<r>\n",
             bstr::BStr::new(self.rel_path(file_idx)),
             bstr::BStr::new(describe_status(&mut buf, status)),
-        ));
+        );
         self.reporter.summary().fail += 1;
         self.reporter.summary().files += 1;
         self.crashed_files.push(file_idx);
@@ -557,14 +554,14 @@ impl<'a> Coordinator<'a> {
     fn abort_on_worker_panic(&mut self, file_idx: u32, status: &SpawnStatus) {
         self.break_dots();
         let mut buf = [0u8; 32];
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             concat!(
                 "\n<red>error<r>: a test worker process crashed with <b>{}<r> while running <b>{}<r>.\n",
                 "This indicates a bug in Bun or in a native addon, not in the test itself. Aborting.\n",
             ),
             bstr::BStr::new(describe_status(&mut buf, status)),
             bstr::BStr::new(self.rel_path(file_idx)),
-        ));
+        );
         Output::flush();
         // .shutdown() only takes effect between files, so a worker that's
         // mid-file would keep producing output after the panic banner.
@@ -629,16 +626,16 @@ impl<'a> Coordinator<'a> {
             // SAFETY: `wp` is in-bounds (see above); mutating `.range` through
             // *mut forms no `&mut Worker` aliasing the caller's live `w`.
             while let Some(idx) = unsafe { (*wp).range.pop_front() } {
-                Output::pretty_error(format_args!(
+                bun_core::pretty_error!(
                     "<r><red>✗<r> <b>{}<r> <d>({})<r>\n",
                     // PORT NOTE: reshaped for borrowck — inline rel_path body
                     // since `self.workers` is mutably borrowed.
                     bstr::BStr::new(bun_paths::resolve_path::relative(
                         bun_paths::fs::FileSystem::instance().top_level_dir(),
-                        self.files[idx as usize].slice(),
+                        self.files[idx as usize].as_bytes(),
                     )),
                     bstr::BStr::new(reason),
-                ));
+                );
                 self.reporter.summary().fail += 1;
                 self.reporter.summary().files += 1;
                 self.crashed_files.push(idx);
@@ -708,7 +705,6 @@ fn is_panic_status(status: &SpawnStatus) -> bool {
 }
 
 fn describe_status<'b>(buf: &'b mut [u8; 32], status: &SpawnStatus) -> &'b [u8] {
-    // TODO(port): std.fmt.bufPrint — using io::Write on &mut [u8].
     match status {
         SpawnStatus::Exited(e) => {
             let mut cursor: &mut [u8] = &mut buf[..];

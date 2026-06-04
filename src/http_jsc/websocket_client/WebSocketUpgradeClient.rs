@@ -1141,7 +1141,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Use ssl_config if available, otherwise use defaults
         let ssl_options: SSLConfig = match &me.ssl_config {
             Some(config) => (**config).clone(),
-            // TODO(port): SSLConfig clone — Zig copies by value (`config.*`).
             None => {
                 let mut c = SSLConfig::default();
                 c.reject_unauthorized = 0; // We verify manually
@@ -1827,8 +1826,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
         unsafe { (*this.as_ptr()).tcp.detach() };
 
         // For the TCP socket.
-        // TODO(port): defer self.deref() — moved to end of fn.
-
         if this.state == State::Reading {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToConnect) };

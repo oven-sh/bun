@@ -536,7 +536,6 @@ impl BinaryExpressionVisitor {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
                         return p.new_expr(
-                            // TODO(port): math arrives from move-in (was bun_jsc::math → js_parser)
                             E::Number {
                                 value: bun_ast::math::pow(vals[0], vals[1]),
                             },

@@ -379,8 +379,6 @@ impl<'a> YarnLock<'a> {
                     if spec_trimmed.is_empty() {
                         continue;
                     }
-                    // TODO(port): Zig dupes here; we borrow from `content` directly since
-                    // spec_trimmed is a subslice of `content` and outlives YarnLock<'a>.
                     current_specs.push(spec_trimmed);
                 }
 
@@ -393,7 +391,6 @@ impl<'a> YarnLock<'a> {
                 for spec in &current_specs {
                     if let Some(at_index) = strings::index_of(spec, b"@file:") {
                         let file_path = &spec[at_index + 6..];
-                        // TODO(port): Zig dupes here; borrow from content instead.
                         new_entry.file = Some(file_path);
                         break;
                     }
@@ -1156,6 +1153,9 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     ));
                 }
 
+                // Yarn v1 lockfiles legitimately contain entries without an integrity field
+                // (workspace deps, file:, codeload tarballs), so migration intentionally
+                // accepts off-registry tarball URLs without integrity instead of failing.
                 if Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz") {
                     break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                         sbuf!().append(resolved)?,
@@ -2036,7 +2036,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     this.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<true>(manager)?;
 
     if cfg!(debug_assertions) {
-        // TODO(port): Environment.allow_assert maps to debug_assertions
         this.verify_data()?;
     }
 

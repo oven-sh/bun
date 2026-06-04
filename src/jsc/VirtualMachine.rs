@@ -1653,9 +1653,14 @@ pub struct RuntimeHooks {
     /// `configureDebugger()` — everything `init()` does that names a
     /// `bun_runtime` type. Called once with the freshly-boxed VM AFTER
     /// `vm.global` / `vm.jsc_vm` are populated (spec VirtualMachine.zig:1313+);
-    /// returns the opaque per-VM runtime state pointer (or null).
-    pub init_runtime_state:
-        unsafe fn(vm: *mut VirtualMachine, opts: &mut InitOptions) -> RuntimeState,
+    /// returns the opaque per-VM runtime state pointer (or null). `Err` when
+    /// `Transpiler::init` fails (e.g. a deleted cwd → `getcwd` ENOENT); the
+    /// hook unwinds its own allocations, so [`VirtualMachine::init`] only has to
+    /// propagate the error (spec bubbles it via `try Transpiler.init(...)`).
+    pub init_runtime_state: unsafe fn(
+        vm: *mut VirtualMachine,
+        opts: &mut InitOptions,
+    ) -> Result<RuntimeState, bun_core::Error>,
     /// Reclaim the per-VM state boxed by `init_runtime_state`. Called from
     /// [`VirtualMachine::destroy`] (worker teardown) with the exact opaque
     /// pointer `init_runtime_state` returned (or null). The high tier
@@ -2182,7 +2187,13 @@ impl VirtualMachine {
             // thread. Write through the raw `vm` ptr (not `vm_ref`) so no
             // `&mut VirtualMachine` is held live across the hook call — the
             // hook body itself dereferences `vm`.
-            unsafe { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &mut opts) };
+            //
+            // `?`: on `Err` (e.g. a deleted cwd → `getcwd` ENOENT out of
+            // `Transpiler::init`) the hook already unwound its own per-VM state,
+            // so abort `init` here — `vm.transpiler` was never written, and
+            // bailing out before the CLI reads it turns the old segfault into a
+            // clean error + non-zero exit (spec: `try Transpiler.init(...)`).
+            unsafe { (*vm).runtime_state = (hooks.init_runtime_state)(vm, &mut opts)? };
         }
 
         // JSGlobalObject creation. Spec JSGlobalObject.zig:875 — the wrapper
@@ -6535,7 +6546,7 @@ impl VirtualMachine {
                 // (heap::alloc) above and is not yet aliased.
                 unsafe { IPCInstance::deinit(instance) };
                 self.ipc = None;
-                bun_core::output::warn("Unable to start IPC socket");
+                bun_core::warn!("Unable to start IPC socket");
                 return None;
             };
             socket.set_timeout(0);

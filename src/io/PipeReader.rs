@@ -337,9 +337,7 @@ impl PosixBufferedReader {
                     .read_to_end_with_array_list(&mut self._buffer, sys::SizeHint::UnknownSize);
                 self.handle.close(None, None::<fn(*mut c_void)>);
                 if let Err(err) = result {
-                    // TODO(port): bun_core::debug_warn — macro form is
-                    // broken (concat! into $fmt:literal); use the fn for now.
-                    bun_core::output::debug_warn(format_args!("error reading from memfd\n{}", err));
+                    bun_core::debug_warn!("error reading from memfd\n{}", err);
                     return self.buffer();
                 }
             }
@@ -828,13 +826,13 @@ impl PosixBufferedReader {
         if streaming {
             // Per-loop scratch buffer; single-threaded event loop (see
             // `EventLoopCtx::pipe_read_buffer_mut`).
-            let stack_buffer = parent.vtable.event_loop().pipe_read_buffer_mut();
-            let stack_buffer_len = stack_buffer.len();
+            let event_loop = parent.vtable.event_loop();
+            let stack_buffer_len = event_loop.pipe_read_buffer_mut().len();
             while parent._buffer.capacity() == 0 {
                 let stack_buffer_cutoff = stack_buffer_len / 2;
                 let mut head_start = 0usize; // index into stack_buffer where the unwritten head begins
                 while stack_buffer_len - head_start > 16 * 1024 {
-                    let buf = &mut stack_buffer[head_start..];
+                    let buf = &mut event_loop.pipe_read_buffer_mut()[head_start..];
 
                     match sys_fn(fd, buf, parent._offset) {
                         sys::Result::Ok(bytes_read) => {
@@ -849,9 +847,10 @@ impl PosixBufferedReader {
                             if bytes_read == 0 {
                                 parent.close_without_reporting();
                                 if head_start > 0 {
-                                    let _ = parent
-                                        .vtable
-                                        .on_read_chunk(&stack_buffer[..head_start], ReadState::Eof);
+                                    let _ = parent.vtable.on_read_chunk(
+                                        &event_loop.pipe_read_buffer_mut()[..head_start],
+                                        ReadState::Eof,
+                                    );
                                 }
                                 if !parent.flags.contains(PosixFlags::IS_DONE) {
                                     parent.done();
@@ -876,7 +875,7 @@ impl PosixBufferedReader {
                                 // returns the remaining bytes then 0, so
                                 // draining to `bytes_read == 0` is bounded.
                                 if !parent.vtable.on_read_chunk(
-                                    &stack_buffer[..head_start],
+                                    &event_loop.pipe_read_buffer_mut()[..head_start],
                                     if received_hup {
                                         ReadState::Eof
                                     } else {
@@ -892,7 +891,7 @@ impl PosixBufferedReader {
                         sys::Result::Err(err) => {
                             if err.is_retry() {
                                 if file_type == FileType::File {
-                                    bun_core::output::debug_warn(
+                                    bun_core::debug_warn!(
                                         "Received EAGAIN while reading from a file. This is a bug.",
                                     );
                                 } else {
@@ -901,7 +900,7 @@ impl PosixBufferedReader {
 
                                 if head_start > 0 {
                                     let _ = parent.vtable.on_read_chunk(
-                                        &stack_buffer[..head_start],
+                                        &event_loop.pipe_read_buffer_mut()[..head_start],
                                         ReadState::Drained,
                                     );
                                 }
@@ -910,7 +909,7 @@ impl PosixBufferedReader {
 
                             if head_start > 0 {
                                 let _ = parent.vtable.on_read_chunk(
-                                    &stack_buffer[..head_start],
+                                    &event_loop.pipe_read_buffer_mut()[..head_start],
                                     ReadState::Progress,
                                 );
                             }
@@ -922,7 +921,7 @@ impl PosixBufferedReader {
 
                 if head_start > 0 {
                     if !parent.vtable.on_read_chunk(
-                        &stack_buffer[..head_start],
+                        &event_loop.pipe_read_buffer_mut()[..head_start],
                         if received_hup {
                             ReadState::Eof
                         } else {
@@ -973,7 +972,7 @@ impl PosixBufferedReader {
                 sys::Result::Err(err) => {
                     if err.is_retry() {
                         if file_type == FileType::File {
-                            bun_core::output::debug_warn(
+                            bun_core::debug_warn!(
                                 "Received EAGAIN while reading from a file. This is a bug.",
                             );
                         } else {
@@ -1040,7 +1039,7 @@ impl PosixBufferedReader {
 
                     if err.is_retry() {
                         if file_type == FileType::File {
-                            bun_core::output::debug_warn(
+                            bun_core::debug_warn!(
                                 "Received EAGAIN while reading from a file. This is a bug.",
                             );
                         } else {
@@ -1094,7 +1093,6 @@ pub struct WindowsBufferedReader {
     pub flags: WindowsFlags,
     pub maxbuf: Option<NonNull<MaxBuf>>,
 
-    #[allow(dead_code)]
     pub parent: *mut c_void,
     pub vtable: BufferedReaderVTable,
 }
@@ -1126,12 +1124,10 @@ impl WindowsFlags {
 
 #[cfg(windows)]
 impl WindowsBufferedReader {
-    #[allow(dead_code)]
     pub fn memory_cost(&self) -> usize {
         mem::size_of::<Self>() + self._buffer.capacity()
     }
 
-    #[allow(dead_code)]
     pub fn init<T: BufferedReaderParent>() -> WindowsBufferedReader {
         WindowsBufferedReader {
             source: None,
@@ -1145,7 +1141,6 @@ impl WindowsBufferedReader {
     }
 
     #[inline]
-    #[allow(dead_code)]
     pub fn is_done(&self) -> bool {
         self.flags.intersects(
             WindowsFlags::IS_DONE
@@ -1154,7 +1149,6 @@ impl WindowsBufferedReader {
         )
     }
 
-    #[allow(dead_code)]
     pub fn from(&mut self, other: &mut WindowsBufferedReader, parent: *mut c_void) {
         debug_assert!(other.source.is_some() && self.source.is_none());
         // PORT NOTE: keep self.vtable; move other's state in.
@@ -1176,7 +1170,6 @@ impl WindowsBufferedReader {
         self.set_parent(parent);
     }
 
-    #[allow(dead_code)]
     pub fn get_fd(&self) -> Fd {
         let Some(source) = &self.source else {
             return Fd::INVALID;
@@ -1184,7 +1177,6 @@ impl WindowsBufferedReader {
         source.get_fd()
     }
 
-    #[allow(dead_code)]
     pub fn watch(&mut self) {
         // No-op on windows.
     }
@@ -1203,7 +1195,6 @@ impl WindowsBufferedReader {
         }
     }
 
-    #[allow(dead_code)]
     pub fn update_ref(&mut self, value: bool) {
         if let Some(source) = self.source.as_mut() {
             if value {
@@ -1214,17 +1205,10 @@ impl WindowsBufferedReader {
         }
     }
 
-    #[allow(dead_code)]
-    pub(crate) fn enable_keeping_process_alive<C>(&mut self, _: C) {
-        self.update_ref(true);
-    }
-
-    #[allow(dead_code)]
     pub fn disable_keeping_process_alive<C>(&mut self, _: C) {
         self.update_ref(false);
     }
 
-    #[allow(dead_code)]
     pub fn take_buffer(&mut self) -> Vec<u8> {
         mem::take(&mut self._buffer)
     }
@@ -1233,12 +1217,10 @@ impl WindowsBufferedReader {
         &mut self._buffer
     }
 
-    #[allow(dead_code)]
     pub fn final_buffer(&mut self) -> &mut Vec<u8> {
         self.buffer()
     }
 
-    #[allow(dead_code)]
     pub fn has_pending_activity(&self) -> bool {
         let Some(source) = &self.source else {
             return false;
@@ -1246,7 +1228,6 @@ impl WindowsBufferedReader {
         source.is_active()
     }
 
-    #[allow(dead_code)]
     pub fn has_pending_read(&self) -> bool {
         if self.flags.contains(WindowsFlags::HAS_INFLIGHT_READ) {
             return true;
@@ -1318,13 +1299,11 @@ impl WindowsBufferedReader {
         self.vtable.on_reader_done();
     }
 
-    #[allow(dead_code)]
     pub fn on_error(&mut self, err: sys::Error) {
         self.finish();
         self.vtable.on_reader_error(err);
     }
 
-    #[allow(dead_code)]
     pub(crate) fn get_read_buffer_with_stable_memory_address(
         &mut self,
         suggested_size: usize,
@@ -1335,7 +1314,6 @@ impl WindowsBufferedReader {
         unsafe { bun_core::vec::spare_bytes_mut(&mut self._buffer) }
     }
 
-    #[allow(dead_code)]
     pub fn start_with_current_pipe(&mut self) -> sys::Result<()> {
         debug_assert!(!self.source.as_ref().unwrap().is_closed());
         let self_ptr = core::ptr::from_mut(self).cast::<c_void>();
@@ -1348,14 +1326,12 @@ impl WindowsBufferedReader {
     /// SAFETY: `pipe` must be a `Box<uv::Pipe>`-allocated pointer; ownership
     /// transfers to `self.source` (later freed via `close_and_destroy`).
     #[cfg(windows)]
-    #[allow(dead_code)]
     pub unsafe fn start_with_pipe(&mut self, pipe: *mut uv::Pipe) -> sys::Result<()> {
         // SAFETY: caller contract — Box-allocated, ownership transfers.
         self.source = Some(Source::Pipe(unsafe { bun_core::heap::take(pipe) }));
         self.start_with_current_pipe()
     }
 
-    #[allow(dead_code)]
     pub fn start(&mut self, fd: Fd, _: bool) -> sys::Result<()> {
         debug_assert!(self.source.is_none());
         // Use the event loop from the parent, not the global one
@@ -1370,14 +1346,12 @@ impl WindowsBufferedReader {
         self.start_with_current_pipe()
     }
 
-    #[allow(dead_code)]
     pub fn start_file_offset(&mut self, fd: Fd, poll: bool, offset: usize) -> sys::Result<()> {
         self._offset = offset;
         self.flags.insert(WindowsFlags::USE_PREAD);
         self.start(fd, poll)
     }
 
-    #[allow(dead_code)]
     pub fn set_raw_mode(&mut self, value: bool) -> sys::Result<()> {
         let Some(source) = self.source.as_mut() else {
             return sys::Result::Err(sys::Error {
@@ -1712,7 +1686,6 @@ impl WindowsBufferedReader {
 
     #[cfg(not(windows))]
     pub fn start_reading(&mut self) -> sys::Result<()> {
-        // TODO(port): Windows-only path; stubbed on non-Windows so the type still compiles.
         sys::Result::Ok(())
     }
 
@@ -1780,9 +1753,7 @@ impl WindowsBufferedReader {
                     self.flags.insert(WindowsFlags::IS_PAUSED);
                 }
                 #[cfg(not(windows))]
-                _ => {
-                    // TODO(port): Pipe/Tty arms are Windows-only.
-                }
+                _ => {}
             }
             // self.source already None via take().
             if CALL_DONE {
@@ -1817,7 +1788,6 @@ impl WindowsBufferedReader {
     /// Explicit teardown that does **not** fire `on_reader_done` (unlike
     /// [`close`]). Mirrors Zig `WindowsBufferedReader.deinit`. Safe to call
     /// before Drop; both paths are idempotent over an already-taken source.
-    #[allow(dead_code)]
     pub fn deinit(&mut self) {
         MaxBuf::remove_from_pipereader(&mut self.maxbuf);
         self._buffer = Vec::new();
@@ -1916,17 +1886,14 @@ impl WindowsBufferedReader {
         }
     }
 
-    #[allow(dead_code)]
     pub fn pause(&mut self) {
         let _ = self.stop_reading();
     }
 
-    #[allow(dead_code)]
     pub fn unpause(&mut self) {
         let _ = self.start_reading();
     }
 
-    #[allow(dead_code)]
     pub fn read(&mut self) {
         // we cannot sync read pipes on Windows so we just check if we are paused to resume the reading
         self.unpause();

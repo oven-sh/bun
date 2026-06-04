@@ -103,10 +103,9 @@ pub use bun_uws_sys::{
 // `verifyErrorToJS`) live as extension traits in the *_jsc crate per PORTING.md.
 pub use bun_uws_sys::{Opcode, SendStatus, create_bun_socket_error_t, us_bun_verify_error_t};
 
-/// Owned socket-address shape (boxed IP) used where the borrowed
-/// `bun_uws_sys::SocketAddress<'a>` would tie a lifetime to a transient
-/// `uws_res` buffer. Distinct from the sys type by design — that one is the
-/// zero-copy borrow returned from `Response::get_remote_socket_info`.
+/// Owned socket-address shape (boxed IP). Distinct from the sys type by
+/// design — that one stores the IP text inline as returned from
+/// `Response::get_remote_socket_info`.
 pub struct SocketAddress {
     pub ip: Box<[u8]>,
     pub port: i32,
@@ -134,17 +133,16 @@ pub(crate) unsafe extern "C" fn BUN__warn__extra_ca_load_failed(
     let filename = unsafe { bun_core::ffi::cstr(filename) };
     // SAFETY: caller contract guarantees valid NUL-terminated strings.
     let error_msg = unsafe { bun_core::ffi::cstr(error_msg) };
-    bun_core::Output::warn(format_args!(
+    bun_core::warn!(
         "ignoring extra certs from {}, load failed: {}",
         bstr::BStr::new(filename.to_bytes()),
         bstr::BStr::new(error_msg.to_bytes()),
-    ));
+    );
 }
 
 pub use bun_uws_sys::LIBUS_SOCKET_DESCRIPTOR;
 
 mod c {
-    // TODO(port): move to uws_sys
     unsafe extern "C" {
         // safe: no args; returns a process-static NUL-terminated cipher list.
         pub(crate) safe fn us_get_default_ciphers() -> *const core::ffi::c_char;

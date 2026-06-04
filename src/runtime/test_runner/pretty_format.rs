@@ -19,6 +19,7 @@ use crate::webcore::BlobExt as _;
 /// `.as_bytes()` method — covering all three call shapes in this file
 /// (`format_args!("{}", …)`, `writer.write_all(&…)`, `….as_bytes()`).
 #[inline]
+#[allow(clippy::disallowed_methods)] // template is a runtime parameter (Zig comptime param)
 fn pretty_fmt_const<const ENABLE_ANSI_COLORS: bool>(s: &str) -> PrettyStr {
     PrettyStr(Output::pretty_fmt_rt(s, ENABLE_ANSI_COLORS).0)
 }
@@ -448,8 +449,6 @@ impl core::fmt::Display for ZigFormatter<'_, '_> {
 
         let result = (|| {
             let tag = Tag::get(self.value, self.global).map_err(|_| core::fmt::Error)?;
-            // TODO(port): core::fmt::Formatter is a text sink; format() takes bun_io::Write.
-            // Bridge via bun_io::FmtAdapter so ZigFormatter can write bytes through `f`.
             let mut adapter = bun_io::FmtAdapter::new(f);
             formatter
                 .format::<_, false>(tag, &mut adapter, self.value, self.global)
@@ -2612,7 +2611,6 @@ impl<'a> Formatter<'a> {
                             JSType::Uint16Array => print_typed_slice!(u16),
                             JSType::Int32Array => print_typed_slice!(i32),
                             JSType::Uint32Array => print_typed_slice!(u32),
-                            // TODO(port): Rust has no native f16; use bun_core::f16 or half crate.
                             JSType::Float16Array => print_typed_slice!(bun_core::f16),
                             JSType::Float32Array => print_typed_slice!(f32),
                             JSType::Float64Array => print_typed_slice!(f64),

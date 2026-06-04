@@ -974,6 +974,7 @@ struct us_socket_t *us_internal_ssl_on_open(struct us_socket_t *s, int is_client
   struct us_socket_t *result = us_dispatch_open(s, is_client, ip, ip_length);
   if (!result || ssl_gone(result)) return result;
   /* Kick the handshake immediately — some peers stall waiting for ClientHello. */
+  ssl_set_loop_data(result);
   ssl_update_handshake(result);
   return result;
 }
@@ -1118,8 +1119,15 @@ restart:
     read += just_read;
 
     if (read == LIBUS_RECV_BUFFER_LENGTH) {
+      char *saved_input = loop_ssl_data->ssl_read_input;
+      unsigned int saved_length = loop_ssl_data->ssl_read_input_length;
+      unsigned int saved_offset = loop_ssl_data->ssl_read_input_offset;
       s = us_dispatch_data(s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
       if (!s || ssl_gone(s)) return NULL;
+      loop_ssl_data->ssl_read_input = saved_input;
+      loop_ssl_data->ssl_read_input_length = saved_length;
+      loop_ssl_data->ssl_read_input_offset = saved_offset;
+      loop_ssl_data->ssl_socket = s;
       read = 0;
       goto restart;
     }

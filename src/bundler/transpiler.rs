@@ -831,8 +831,8 @@ impl<'a> Transpiler<'a> {
 // per-loader transpile branches.
 // ══════════════════════════════════════════════════════════════════════════
 
+use crate::bun_node_fallbacks as NodeFallbackModules;
 use crate::entry_points as EntryPoints;
-use crate::ungate_support::bun_node_fallbacks as NodeFallbackModules;
 use bun_ast::RuntimeTranspilerCache;
 use bun_core::strings;
 use bun_resolver::package_json::MacroMap as MacroRemap;
@@ -1773,7 +1773,6 @@ impl<'a> Transpiler<'a> {
                         source_contents_backing: source_backing,
                     },
                     js_ast::Result::Cached => ParseResult {
-                        // TODO(port): Zig used `undefined` for ast here.
                         ast: bun_ast::Ast::empty_in(arena),
                         runtime_transpiler_cache: rtc_ptr,
                         source: source.clone(),
@@ -1785,7 +1784,6 @@ impl<'a> Transpiler<'a> {
                         source_contents_backing: source_backing,
                     },
                     js_ast::Result::AlreadyBundled(already_bundled) => ParseResult {
-                        // TODO(port): Zig used `undefined` for ast here.
                         ast: bun_ast::Ast::empty_in(arena),
                         already_bundled: match already_bundled {
                             js_ast::AlreadyBundled::Bun => AlreadyBundled::SourceCode,
@@ -2846,20 +2844,20 @@ impl<'a> Transpiler<'a> {
             ) {
                 Ok(r) => r,
                 Err(err) => {
-                    bun_core::Output::pretty_error(format_args!(
+                    bun_core::pretty_error!(
                         "Error resolving \"{}\": {}\n",
                         bstr::BStr::new(entry),
                         err.name(),
-                    ));
+                    );
                     continue;
                 }
             };
 
             if result.path_const().is_none() {
-                bun_core::Output::pretty_error(format_args!(
+                bun_core::pretty_error!(
                     "\"{}\" is disabled due to \"browser\" field in package.json.\n",
                     bstr::BStr::new(entry),
-                ));
+                );
                 continue;
             }
 
@@ -2932,10 +2930,11 @@ impl<'a> Transpiler<'a> {
         if bun_core::FeatureFlags::TRACING
             && self.options.log().level.at_least(bun_ast::Level::Info)
         {
-            bun_core::Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><d>\n---Tracing---\nResolve time:      {}\nParsing time:      {}\n---Tracing--\n\n<r>",
-                self.resolver.elapsed, self.elapsed,
-            ));
+                self.resolver.elapsed,
+                self.elapsed,
+            );
         }
 
         let outbase: Box<[u8]> = self.result.outbase.clone();
@@ -3171,7 +3170,7 @@ impl<'a> Transpiler<'a> {
         dirname_fd: FD,
         file_path_pretty: &[u8],
     ) -> Option<crate::output_file::Value> {
-        use crate::ungate_support::bun_css;
+        use crate::bun_css;
 
         let entry = match self.resolver.caches.fs.read_file_with_allocator(
             self.fs_mut(),

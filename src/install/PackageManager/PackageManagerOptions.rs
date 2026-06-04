@@ -18,7 +18,6 @@ pub struct Options {
     pub log_level: LogLevel,
     pub global: bool,
 
-    // TODO(port): std.fs.Dir → bun_sys::Fd (directory handle); default was bun.FD.invalid.stdDir()
     pub global_bin_dir: bun_sys::Fd,
     pub explicit_global_directory: &'static [u8],
     /// destination directory to link bins into
@@ -102,7 +101,6 @@ impl Default for Options {
             global: false,
             global_bin_dir: bun_sys::Fd::INVALID,
             explicit_global_directory: b"",
-            // TODO(port): bun.pathLiteral("node_modules/.bin") — platform-specific separator at comptime
             bin_path: bun_paths::path_literal!("node_modules/.bin"),
             did_override_default_scope: false,
             // PORT NOTE: Zig had `= undefined`; always assigned in `load()` before read.
@@ -597,11 +595,21 @@ impl Options {
                                 || registry_.starts_with(b"http://"))
                         {
                             let prev_scope = self.scope.clone();
+                            let prev_url = prev_scope.url.url();
+                            let new_url = bun_url::URL::parse(registry_);
+                            let token = if bun_core::without_trailing_slash(new_url.host)
+                                == bun_core::without_trailing_slash(prev_url.host)
+                                && (new_url.is_https() || !prev_url.is_https())
+                            {
+                                prev_scope.token
+                            } else {
+                                Box::default()
+                            };
                             // PORT NOTE: was `std.mem.zeroes(Api.NpmRegistry)`; zeroed slices are
                             // invalid in Rust — use Default (empty strings) which is semantically equivalent.
                             let api_registry = Api::NpmRegistry {
                                 url: registry_.into(),
-                                token: prev_scope.token,
+                                token,
                                 ..Default::default()
                             };
                             self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;

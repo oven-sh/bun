@@ -9,12 +9,8 @@
 
 // ─── platform impls ───────────────────────────────────────────────────────
 //
-// Each platform watcher is compiled only for its target. All three backends
-// are now un-gated against their respective `bun_sys` platform surfaces. The
-// Windows backend's `init()` body alone remains re-gated on lower-tier
-// symbols that have not landed (`bun_windows_sys::ntdll::NtCreateFile`,
-// `bun_windows_sys::FILE_OPEN`); see the `TODO(port)` marker in
-// `WindowsWatcher.rs`. A host build never compiles the non-native backends.
+// Each platform watcher is compiled only for its target. A host build never
+// compiles the non-native backends.
 
 // Android: same kernel inotify ABI as glibc/musl Linux.
 #[cfg(any(target_os = "linux", target_os = "android"))]

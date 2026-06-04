@@ -268,9 +268,6 @@ impl List {
 
     pub fn name_index(&self) -> &[i32] {
         match &self.r#impl {
-            // TODO(port): Zig `inline else` calls `.items(.name_index)` on both arms, but
-            // `MappingWithoutName` has no `name_index` field — relies on Zig lazy analysis.
-            // Return an empty slice for the without-names case.
             ListValue::WithoutNames(_list) => &[],
             ListValue::WithNames(list) => list.items_name_index(),
         }

@@ -193,7 +193,6 @@ impl Accessor for SyscallAccessor {
     }
 
     fn close(handle: SyscallHandle) -> Option<SysError> {
-        // TODO(port): @returnAddress() — Rust has no stable equivalent; pass None.
         handle.value.close_allowing_bad_file_descriptor(None)
     }
 
@@ -771,7 +770,6 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             // kernel filter could hide entries needed by other indices,
             // so skip it. The filter is purely an optimization;
             // matchPatternImpl still runs for correctness.
-            // TODO(port): @hasDecl(Accessor.DirIter, "setNameFilter") — trait default method covers this
             let filter: Option<&[u16]> = if active.count() == 1 {
                 self.compute_nt_filter(
                     u32::try_from(active.find_first_set().unwrap()).expect("int cast"),
@@ -1083,13 +1081,11 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 }
 
                                 let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
-                                let entry_start: u32 = u32::try_from(if dir_dir_path.is_empty() {
-                                    0
-                                } else {
-                                    dir_dir_path.len() + 1
-                                })
-                                .unwrap();
                                 let subdir_entry_name = self.walker.join(subdir_parts)?;
+                                let joined = work_item_logical_path(&subdir_entry_name);
+                                let entry_start: u32 =
+                                    u32::try_from(joined.len() - strings::basename(joined).len())
+                                        .unwrap();
 
                                 self.walker.workbuf.push(WorkItem::new_symlink(
                                     subdir_entry_name,
@@ -1170,14 +1166,12 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 bun_sys::FileKind::SymLink => {
                                     if self.walker.follow_symlinks {
                                         let subdir_parts: &[&[u8]] = &[dir_dir_path, entry_name];
-                                        let entry_start: u32 =
-                                            u32::try_from(if dir_dir_path.is_empty() {
-                                                0
-                                            } else {
-                                                dir_dir_path.len() + 1
-                                            })
-                                            .unwrap();
                                         let subdir_entry_name = self.walker.join(subdir_parts)?;
+                                        let joined = work_item_logical_path(&subdir_entry_name);
+                                        let entry_start: u32 = u32::try_from(
+                                            joined.len() - strings::basename(joined).len(),
+                                        )
+                                        .unwrap();
                                         self.walker.workbuf.push(WorkItem::new_symlink(
                                             subdir_entry_name,
                                             active,

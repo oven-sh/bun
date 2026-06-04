@@ -205,9 +205,7 @@ mod darwin_impl {
         //
         // ulock_wait() uses 32-bit micro-second timeouts where 0 = INFINITE or no-timeout
         // ulock_wait2() uses 64-bit nano-second timeouts (with the same convention)
-        // TODO(port): builtin.target.os.version_range.semver.min.major >= 11 — Rust has no
-        // direct compile-time min-OS-version query. Bun's deployment target is macOS 13+, so
-        // assume true; revisit if a runtime check is needed.
+        // Bun's deployment target is macOS 13+, so ulock_wait2 is always available.
         let supports_ulock_wait2: bool = true;
 
         let mut timeout_ns: u64 = 0;

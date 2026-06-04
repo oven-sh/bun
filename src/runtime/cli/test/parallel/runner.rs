@@ -7,11 +7,11 @@ use core::ffi::c_char;
 use core::ptr::NonNull;
 use std::io::Write as _;
 
-use bun_core::PathString;
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_options_types::context::MacroOptions;
+use bun_ptr::Interned;
 use bun_resolver::fs::{FileSystem, RealFS};
 use bun_sys::{Fd, FdDirExt, FdExt};
 
@@ -75,7 +75,7 @@ impl Drop for WorkerTmpdir {
 pub fn run_as_coordinator(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
-    files: &[PathString],
+    files: &[Interned],
     ctx: Command::Context,
     coverage_opts: &mut CodeCoverageOptions,
 ) -> Result<bool, bun_core::Error> {
@@ -122,7 +122,6 @@ pub fn run_as_coordinator(
                 unsafe { libc::getpid() as i64 }
             }
         };
-        // TODO(port): allocPrintSentinel — was arena-backed; sentinel dropped (no C-string consumer on this path)
         let dir: Box<[u8]> = format_bytes!(
             "{}/bun-test-worker-{}",
             bstr::BStr::new(RealFS::get_default_temp_dir()),
@@ -167,16 +166,15 @@ pub fn run_as_coordinator(
     // Each worker owns a contiguous chunk; co-located files share imports, so
     // this keeps each worker's isolation SourceProvider cache hot. --randomize
     // explicitly opts out of locality (the caller already shuffled).
-    let mut sorted: Vec<PathString> = files.to_vec();
+    let mut sorted: Vec<Interned> = files.to_vec();
     if !ctx.test_options.randomize {
-        sorted.sort_by(|a, b| bun_core::order(a.slice(), b.slice()));
+        sorted.sort_by(|a, b| bun_core::order(a.as_bytes(), b.as_bytes()));
     }
 
     let mut workers: Vec<Worker> = Vec::with_capacity(k as usize);
-    // TODO(port): Zig allocates uninitialized then assigns in-place; Rust pushes
-    // constructed values. Populate fully BEFORE constructing Coordinator so it
-    // can hold `&mut [Worker]` without aliasing the push loop. The `coord`
-    // backref is null here and patched once Coordinator's address is fixed.
+    // Populate fully BEFORE constructing Coordinator so it can hold
+    // `&mut [Worker]` without aliasing the push loop. The `coord` backref is
+    // null here and patched once Coordinator's address is fixed.
     for i in 0..k {
         let idx: u32 = i;
         workers.push(Worker {
@@ -525,9 +523,6 @@ fn jsx_runtime_tag_name(r: bun_options_types::schema::api::JsxRuntime) -> &'stat
 /// `uv.Pipe` over the inherited duplex named-pipe on Windows.
 pub struct WorkerCommands {
     pub vm: *mut VirtualMachine,
-    // TODO(port): Channel(WorkerCommands, "channel") — second comptime arg is
-    // the field name for intrusive container_of recovery; encode via offset_of
-    // or a trait impl.
     pub channel: Channel<WorkerCommands>,
     /// Coordinator dispatches one `.run` and waits for `.file_done` before
     /// the next, so a single slot is sufficient. Owned path storage.
@@ -575,7 +570,7 @@ impl<'a> WorkerLoop<'a> {
         // SAFETY: vm pointer is valid for the worker's lifetime.
         let vm = unsafe { &mut *self.vm };
         if !self.cmds.channel.adopt(vm, Fd::from_uv(3)) {
-            Output::pretty_errorln("<red>error<r>: test worker failed to adopt IPC fd");
+            bun_core::pretty_errorln!("<red>error<r>: test worker failed to adopt IPC fd");
             Global::exit(1);
         }
         // SAFETY: single-threaded worker; WORKER_CMDS is only read on this thread
@@ -760,7 +755,6 @@ fn worker_flush_aggregates(
             }
         };
         if let Some(junit) = &mut reporter.reporters.junit {
-            // TODO(port): allocPrintSentinel → ZBox; was bun.default_allocator (leaked)
             let path =
                 ZBox::from_bytes(format_bytes!("{}/w{}.xml", bstr::BStr::new(dir), id).as_slice());
             if !junit.current_file.is_empty() {

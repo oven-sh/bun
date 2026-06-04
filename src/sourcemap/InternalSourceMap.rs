@@ -87,7 +87,7 @@
 use core::mem::size_of;
 use core::ptr;
 
-use crate::Ordinal; // TODO(port): bun_core::Ordinal — local shim
+use crate::Ordinal;
 use bun_collections::VecExt as _;
 use bun_core::MutableString;
 
@@ -298,7 +298,6 @@ impl State {
             source_index: self.source_index,
             name_index: -1,
         }
-        // TODO(port): verify Mapping field shape (`generated`/`original` struct name) in bun_sourcemap.
     }
 }
 
@@ -1310,6 +1309,18 @@ impl From<FromVlqError> for bun_core::Error {
 /// (`name_index`) is decoded but discarded; nothing in the stack-trace remap
 /// path reads it.
 pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, FromVlqError> {
+    /// Accumulate a VLQ delta into an absolute value. Like `Mapping::parse`,
+    /// reject streams whose absolute value overflows `i32` or goes negative —
+    /// both make the mapping meaningless, and unchecked garbage here would
+    /// flow into every downstream size/index computation.
+    #[inline]
+    fn accumulate(absolute: i32, delta: i32) -> Result<i32, FromVlqError> {
+        absolute
+            .checked_add(delta)
+            .filter(|v| *v >= 0)
+            .ok_or(FromVlqError::InvalidSourceMap)
+    }
+
     let mut builder = Builder::init();
 
     let mut generated_column: i32 = 0;
@@ -1335,7 +1346,7 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
         if gc.start == 0 {
             return Err(FromVlqError::InvalidSourceMap);
         }
-        generated_column += gc.value;
+        generated_column = accumulate(generated_column, gc.value)?;
         remain = &remain[gc.start as usize..];
 
         if remain.is_empty() || remain[0] == b',' || remain[0] == b';' {
@@ -1349,21 +1360,21 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
         if si.start == 0 {
             return Err(FromVlqError::InvalidSourceMap);
         }
-        source_index += si.value;
+        source_index = accumulate(source_index, si.value)?;
         remain = &remain[si.start as usize..];
 
         let ol = vlq_decode(remain, 0);
         if ol.start == 0 {
             return Err(FromVlqError::InvalidSourceMap);
         }
-        original_line += ol.value;
+        original_line = accumulate(original_line, ol.value)?;
         remain = &remain[ol.start as usize..];
 
         let oc = vlq_decode(remain, 0);
         if oc.start == 0 {
             return Err(FromVlqError::InvalidSourceMap);
         }
-        original_column += oc.value;
+        original_column = accumulate(original_column, oc.value)?;
         remain = &remain[oc.start as usize..];
 
         if !remain.is_empty() && remain[0] != b',' && remain[0] != b';' {

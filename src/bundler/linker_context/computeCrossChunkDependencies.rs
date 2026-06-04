@@ -325,8 +325,6 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     chunks: &mut [Chunk],
     chunk_metas: &mut [ChunkMeta],
 ) -> Result<(), bun_alloc::AllocError> {
-    // TODO(port): narrow error set
-
     // Mark imported symbols as exported in the chunk from which they are declared
     // PORT NOTE: reshaped for borrowck — Zig zips (chunks, chunk_metas, 0..) and also indexes
     // chunk_metas[other_chunk_index] / chunks[other_chunk_index] inside the loop body. We

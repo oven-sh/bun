@@ -144,7 +144,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             PropertyKind::Get => {
                 if args.len() > 0 {
                     let r = js_lexer::range_of_identifier(p.source, args[0].binding.loc);
-                    // TODO(port): Zig used p.keyNameForError(key) inline; borrowck reshape — pre-compute name.
                     let key_name = p.key_name_for_error(key);
                     p.log().add_range_error_fmt(
                         Some(p.source),

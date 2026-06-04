@@ -321,6 +321,7 @@ impl Readable {
                 Ok(jsc::MarkedArrayBuffer {
                     buffer: jsc::ArrayBuffer::from_owned_bytes(own, jsc::JSType::Uint8Array),
                     owns_buffer: true,
+                    pinned: false,
                 }
                 .to_node_buffer(global))
             }

@@ -25,9 +25,9 @@ use std::io::Write as _;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_core::ZStr;
-use bun_core::{self, strings};
+use bun_core::{self, getenv_z, strings, zstr};
 #[cfg(not(windows))]
-use bun_core::{ZBox, env_var, getenv_z, zstr};
+use bun_core::{ZBox, env_var};
 use bun_jsc::JSGlobalObject;
 #[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
@@ -451,13 +451,20 @@ fn spawn(
             v.extend_from_slice(d);
             ZBox::from_vec(v)
         } else {
-            // pid_t → u32 cast so {d} formats. Fresh dir per parent process;
-            // multiple Bun.WebView instances in one process share the Chrome.
-            // SAFETY: getpid is always safe.
-            let pid: u32 = unsafe { libc::getpid() } as u32;
-            let mut v = Vec::new();
-            write!(&mut v, "--user-data-dir=/tmp/bun-chrome-{}", pid)
-                .expect("infallible: in-memory write");
+            let mut name_buf = [0u8; 64];
+            let name = bun_paths::fs::FileSystem::tmpname(
+                b"bun-chrome",
+                &mut name_buf,
+                bun_core::fast_random(),
+            )?;
+            let mut dir_buf = path_buffer_pool::get();
+            let dir_parts: [&[u8]; 2] = [bun_resolver::fs::RealFS::tmpdir_path(), name.as_bytes()];
+            let dir =
+                resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &dir_parts);
+            bun_sys::mkdir(dir, 0o700)?;
+            let mut v = Vec::with_capacity(16 + dir.len());
+            v.extend_from_slice(b"--user-data-dir=");
+            v.extend_from_slice(&dir[..]);
             ZBox::from_vec(v)
         };
 
@@ -606,15 +613,8 @@ fn read_dev_tools_active_port(out_buf: &mut Vec<u8>) -> Option<()> {
     // Windows roots under %LOCALAPPDATA%; POSIX under $HOME. The subdir
     // names come from each browser's installer — hardcoded, not
     // discoverable. Edge uses the same CDP + file format as Chrome.
-    // NB: do NOT route Windows through bun_core::getenv_z — it is stubbed to
-    // None on cfg(windows) (TODO(port) in bun_core/util.rs), which made
-    // this whole function dead on Windows. Zig's bun.getenvZ walks the env
-    // block case-insensitively and returns a real value; std::env::var is the
-    // working equivalent here (LOCALAPPDATA is always valid Unicode).
     #[cfg(windows)]
-    let root_owned = std::env::var("LOCALAPPDATA").ok()?;
-    #[cfg(windows)]
-    let root: &[u8] = root_owned.as_bytes();
+    let root = getenv_z(zstr!("LOCALAPPDATA"))?;
     #[cfg(not(windows))]
     let root = getenv_z(zstr!("HOME"))?;
 

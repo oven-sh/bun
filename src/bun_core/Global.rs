@@ -99,10 +99,15 @@ impl StoredTrace {
     /// Capture the current call stack starting at `begin` (or the caller's return addr).
     pub fn capture(begin: Option<usize>) -> StoredTrace {
         let mut stored = StoredTrace::EMPTY;
-        let n = crate::capture_stack_trace(
-            begin.unwrap_or_else(crate::return_address),
-            &mut stored.data,
-        );
+        // Not `unwrap_or_else`: the default trim anchor must be read from this
+        // frame. Evaluated lazily, `return_address()` inlines into the closure
+        // and reads its popped frame, so the anchor matches no captured frame
+        // and the capture machinery is never trimmed.
+        let begin = match begin {
+            Some(addr) => addr,
+            None => crate::return_address(),
+        };
+        let n = crate::capture_stack_trace(begin, &mut stored.data);
         stored.index = n;
         // Trim trailing nulls (matches Zig loop).
         for (i, &addr) in stored.data[..n].iter().enumerate() {
@@ -175,7 +180,9 @@ pub fn dump_stack_trace(trace: &StackTrace<'_>, limits: DumpStackTraceOptions) {
         if addr == 0 {
             break;
         }
-        eprintln!("    at 0x{addr:x}");
+        // Direct fd write: this can run on threads (or pre-init contexts)
+        // where the thread-local Output Source was never initialized.
+        let _ = crate::output::File::stderr().write_fmt(format_args!("    at 0x{addr:x}\n"));
     }
 }
 
@@ -653,8 +660,6 @@ pub fn exit(code: u32) -> ! {
 
     #[cfg(debug_assertions)]
     {
-        // TODO(port): Zig asserts the debug allocator deinit() == .ok and nulls
-        // the backing. Map to `bun_alloc::debug_allocator_data` once ported.
         debug_assert!(debug_allocator_data::deinit_ok());
     }
 
@@ -782,9 +787,6 @@ pub fn crash() -> ! {
 
 pub const user_agent: &str = concatcp!("Bun/", package_json_version);
 
-// TODO(port): `*const c_char` is `!Sync`; wrap this in a `#[repr(transparent)]`
-// Sync newtype or export via a `#[used]` static byte array. Kept as-is to
-// mirror the Zig `export const`.
 #[repr(transparent)]
 pub struct SyncCStr(pub *const c_char);
 // SAFETY: points into a `'static` string literal; the pointer is never mutated.

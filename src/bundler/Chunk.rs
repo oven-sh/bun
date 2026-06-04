@@ -20,7 +20,6 @@ use bun_sourcemap as source_map;
 use crate::analyze_transpiled_module;
 use crate::bun_css;
 use crate::bun_fs;
-use crate::bun_renamer;
 
 use crate::Graph::Graph;
 use crate::html_import_manifest as HTMLImportManifest;
@@ -55,7 +54,6 @@ pub struct Chunk {
     pub files_with_parts_in_chunk: ArrayHashMap<IndexInt, core::sync::atomic::AtomicUsize>,
 
     /// We must not keep pointers to this type until all chunks have been allocated.
-    // TODO(port): was `= undefined` in Zig (set before use)
     pub entry_bits: AutoBitSet,
 
     /// PORT NOTE: Zig stored this as an arena-owned `[]const u8` (linker arena);
@@ -113,7 +111,7 @@ impl Default for Content {
 
 // SAFETY: `Chunk` is processed across the bundler thread pool (see
 // `computeCrossChunkDependencies`, `generateChunksInParallel`). Raw-pointer
-// fields (`Layers::Borrowed`, `StringJoiner` nodes, `ChunkRenamer` arena)
+// fields (`Layers::Borrowed`, `ChunkRenamer` arena)
 // point into bundler-arena storage that outlives the
 // pool join and is only mutated by the owning task. Zig has no Send/Sync
 // distinction; mirror `InputFile`'s blanket impls (bundle_v2.rs).
@@ -378,7 +376,7 @@ pub enum IntermediateOutput {
     /// If the chunk doesn't have any references to other chunks, then
     /// `joiner` contains the contents of the chunk. This is more efficient
     /// because it avoids doing a join operation twice.
-    Joiner(StringJoiner),
+    Joiner(StringJoiner<'static>),
 
     #[default]
     Empty,
@@ -653,7 +651,6 @@ impl IntermediateOutput {
         // `LinkerGraph.files` SoA (`items_entry_point_chunk_index`) lands with
         // the LinkerGraph work. `bun_paths` / `bun_core::fmt::count` /
         // `bun_alloc::alloc_slice` surfaces are tracked upstream.
-        // TODO(port): MultiArrayList SoA accessors — assuming `.items(.field)` → method returning slice
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
@@ -751,7 +748,6 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    // TODO(port): std.fmt.count → counting writer; assuming bun_core::fmt::count
                                     count += bun_core::fmt::count(format_args!(
                                         "{}",
                                         HTMLImportManifest::format_escaped_json(
@@ -791,7 +787,6 @@ impl IntermediateOutput {
 
                 let debug_id_len = if ENABLE_SOURCE_MAP_SHIFTS && FeatureFlags::SOURCE_MAP_DEBUG_ID
                 {
-                    // TODO(port): std.fmt.count → counting writer
                     bun_core::fmt::count(format_args!(
                         "\n//# debugId={}\n",
                         source_map::DebugIDFormatter {
@@ -915,7 +910,6 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    // TODO(port): std.io.fixedBufferStream → write into &mut [u8]
                                     let mut cursor: &mut [u8] = remain;
                                     let before_len = cursor.len();
                                     HTMLImportManifest::write_escaped_json(
@@ -1215,7 +1209,6 @@ impl fmt::Display for UniqueKey {
 pub struct EntryPoint(u64);
 
 /// so `EntryPoint` can be a u64
-// TODO(port): Rust has no native u30 — using u32 with mask. Zig: `pub const ID = u30;`
 pub(crate) type EntryPointId = u32;
 
 impl EntryPoint {
@@ -1426,13 +1419,11 @@ impl Layers {
 }
 
 impl CssImportOrder {
-    // TODO(port): hasher: anytype — Zig hasher protocol has .update([]const u8)
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         // TODO: conditions, condition_import_records
 
         // Zig: bun.writeAnyToHasher(hasher, std.meta.activeTag(this.kind)) — feeds the small-int
         // tag bytes. core::mem::Discriminant is opaque/pointer-sized; hash an explicit u8 instead.
-        // TODO(port): activeTag byte width — Zig's Tag(union) here is u2; u8 keeps hash stable.
         let tag: u8 = match &self.kind {
             CssImportOrderKind::Layers(_) => 0,
             CssImportOrderKind::ExternalPath(_) => 1,
@@ -1520,9 +1511,68 @@ impl<'a, 'ctx> fmt::Display for CssImportOrderDebug<'a, 'ctx> {
     }
 }
 
-pub(crate) type ImportsFromOtherChunks =
-    ArrayHashMap<IndexInt, crate::cross_chunk_import::ItemList>;
-// TODO(port): CrossChunkImport.Item.List — assuming exported as ItemList from cross_chunk_import module
+pub(crate) type ImportsFromOtherChunks = ArrayHashMap<IndexInt, cross_chunk_import::ItemList>;
+
+#[derive(Default, Clone)]
+pub struct CrossChunkImportItem {
+    pub export_alias: Box<[u8]>,
+    pub r#ref: Ref,
+}
+pub type CrossChunkImportItemList = Vec<CrossChunkImportItem>;
+#[derive(Default)]
+pub struct CrossChunkImport {
+    pub chunk_index: IndexInt,
+    pub sorted_import_items: core::mem::ManuallyDrop<CrossChunkImportItemList>,
+}
+
+pub mod cross_chunk_import {
+    pub(crate) type ItemList = super::CrossChunkImportItemList;
+}
+
+impl CrossChunkImportItem {
+    pub fn less_than(_: (), a: &CrossChunkImportItem, b: &CrossChunkImportItem) -> bool {
+        strings::order(&a.export_alias, &b.export_alias) == core::cmp::Ordering::Less
+    }
+}
+
+impl CrossChunkImport {
+    pub fn less_than(_: (), a: &CrossChunkImport, b: &CrossChunkImport) -> bool {
+        a.chunk_index < b.chunk_index
+    }
+
+    pub fn sorted_cross_chunk_imports(
+        list: &mut Vec<CrossChunkImport>,
+        chunks: &mut [Chunk],
+        imports_from_other_chunks: &mut ImportsFromOtherChunks,
+    ) -> Result<(), bun_core::Error> {
+        list.clear();
+        list.reserve(imports_from_other_chunks.count());
+
+        for i in 0..imports_from_other_chunks.count() {
+            let chunk_index = imports_from_other_chunks.keys()[i];
+            let chunk = &mut chunks[chunk_index as usize];
+
+            let exports_to_other_chunks = &chunk.content.javascript().exports_to_other_chunks;
+            let import_items = &mut imports_from_other_chunks.values_mut()[i];
+            for item in import_items.slice_mut() {
+                item.export_alias = (*exports_to_other_chunks.get(&item.r#ref).unwrap()).into();
+                debug_assert!(!item.export_alias.is_empty());
+            }
+            import_items
+                .slice_mut()
+                .sort_by(|a, b| strings::order(&a.export_alias, &b.export_alias));
+
+            list.push(CrossChunkImport {
+                chunk_index,
+                sorted_import_items: import_items.shallow_copy(),
+            });
+        }
+
+        list.sort_by_key(|a| a.chunk_index);
+        Ok(())
+    }
+}
+
 // `Chunk` is bump-arena-allocated (no Drop on free); boxing the large arm
 // would leak. The CSS/JS chunk size diff is acceptable.
 #[allow(clippy::large_enum_variant)]
@@ -1577,5 +1627,34 @@ impl Content {
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
+
+pub mod bun_renamer {
+    pub use bun_js_printer::renamer::*;
+
+    #[derive(Default)]
+    pub enum ChunkRenamer {
+        #[default]
+        None,
+        Number(Box<bun_js_printer::renamer::NumberRenamer>),
+        Minify(Box<bun_js_printer::renamer::MinifyRenamer>),
+    }
+
+    impl ChunkRenamer {
+        pub(crate) fn name_for_symbol(&mut self, ref_: bun_ast::Ref) -> &[u8] {
+            match self {
+                ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
+                ChunkRenamer::Number(r) => r.name_for_symbol(ref_),
+                ChunkRenamer::Minify(r) => r.name_for_symbol(ref_),
+            }
+        }
+        pub(crate) fn as_renamer(&mut self) -> bun_js_printer::renamer::Renamer<'_, '_> {
+            match self {
+                ChunkRenamer::None => unreachable!("ChunkRenamer not initialized"),
+                ChunkRenamer::Number(r) => bun_js_printer::renamer::Renamer::NumberRenamer(r),
+                ChunkRenamer::Minify(r) => bun_js_printer::renamer::Renamer::MinifyRenamer(r),
+            }
+        }
+    }
+}
 
 // ported from: src/bundler/Chunk.zig

@@ -3,10 +3,11 @@
  * for local mode. Override via `--webkit-version=<hash>` to test a branch.
  * From https://github.com/oven-sh/WebKit releases.
  */
-// oven-sh/WebKit main: macOS artifacts cross-compiled on Linux, all -lto
-// variants built with ThinLTO (per-module summaries, so bun's -flto=thin
-// link imports across the C++/Rust/JSC boundaries).
-export const WEBKIT_VERSION = "cf8fb22b701140a4245d21b34ce8c6f813ea3f1f";
+// oven-sh/WebKit main: macOS + Windows artifacts cross-compiled on Linux,
+// -lto variants built with ThinLTO (per-module summaries for cross-language
+// importing), and the Windows ICU data table filtered + per-item zstd
+// compressed (lazily decompressed via bun_icu_decompress.cpp).
+export const WEBKIT_VERSION = "6d586e293f008f0e74e5697611a379b1b24815c9";
 
 /**
  * WebKit (JavaScriptCore) — the JS engine.
@@ -91,9 +92,20 @@ function prebuiltDestDir(cfg: Config): string {
   const v = cfg.webkitVersion;
   const version16 = v.startsWith("autobuild-") ? v.slice("autobuild-".length) : v.slice(0, 16);
   // Cross-compiled targets share a host (and cache dir) with native builds,
-  // so include os+arch in the key — otherwise a FreeBSD/arm64 or macOS/x64
-  // extraction collides with a Linux/x64 one at the same WebKit version.
-  const osKey = cfg.freebsd ? "-freebsd" : cfg.darwin ? "-macos" : cfg.abi === "android" ? "-android" : "";
+  // so include os+arch in the key — otherwise a FreeBSD/arm64, macOS/x64, or
+  // Windows-cross extraction collides with a Linux/x64 one at the same WebKit
+  // version. Windows is keyed only when cross-compiling so native Windows
+  // dev machines keep their existing cache dirs.
+  const osKey =
+    cfg.windows && cfg.host.os !== "windows"
+      ? "-windows"
+      : cfg.freebsd
+        ? "-freebsd"
+        : cfg.darwin
+          ? "-macos"
+          : cfg.abi === "android"
+            ? "-android"
+            : "";
   const archKey = cfg.arm64 ? "-arm64" : "";
   return resolve(cfg.cacheDir, `webkit-${version16}${osKey}${archKey}${prebuiltSuffix(cfg)}`);
 }

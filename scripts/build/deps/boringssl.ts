@@ -70,7 +70,13 @@ export const boringssl: Dependency = {
       // nasm needs -I with a trailing slash and CodeView debug info to
       // match cmake's `-gcv8`. Absolute path quoted — a checkout root
       // with a space (C:\Users\John Doe\bun) would otherwise split argv.
-      nasmflags: ["-fwin64", "-gcv8", `-I${quote(depSourceDir(cfg, "boringssl") + "/gen/", true)}`],
+      // Quote style follows the HOST shell (cmd natively, sh when
+      // cross-compiling win-x64 from linux).
+      nasmflags: [
+        "-fwin64",
+        "-gcv8",
+        `-I${quote(depSourceDir(cfg, "boringssl") + "/gen/", cfg.host.os === "windows")}`,
+      ],
     };
     return spec;
   },

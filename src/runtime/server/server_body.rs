@@ -832,7 +832,6 @@ impl AnyRoute {
 }
 
 pub struct ServerInitContext<'a> {
-    // TODO(port): arena removed in non-AST crate; if needed for bulk-free, reintroduce bumpalo
     pub dedupe_html_bundle_map: HashMap<*const HTMLBundle, RefPtr<html_bundle::Route>>,
     pub js_string_allocations: bake::StringRefList,
     pub global: &'a JSGlobalObject,
@@ -1246,8 +1245,8 @@ fn on_timeout_for_idle_warn() {
     if !did_send_idletimeout_warning_once().swap(true, core::sync::atomic::Ordering::Relaxed)
         && !crate::cli::Command::get().debug.silent
     {
-        Output::pretty_errorln(
-            "<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure.",
+        bun_core::pretty_errorln!(
+            "<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure."
         );
         Output::flush();
     }
@@ -2783,6 +2782,14 @@ where
         resp: &mut uws_sys::NewAppResponse<SSL>,
     ) {
         jsc::mark_binding!();
+        if !matches!(self.config.address, server_config::Address::Unix(_))
+            && !resp
+                .get_remote_socket_info()
+                .is_some_and(|address| address.is_loopback())
+        {
+            req.set_yield(true);
+            return;
+        }
         self.pending_requests += 1;
         req.set_yield(false);
         // PERF(port): was stack-fallback alloc
@@ -3068,8 +3075,9 @@ where
         // SAFETY: ctx_slot was just initialized by create_in.
         let ctx = unsafe { &mut *ctx_slot };
 
-        // Don't report extra GC memory here: ctx is a recycled pool slot,
-        // not a fresh heap allocation (see NewServer::on_request).
+        self.vm()
+            .jsc_vm()
+            .deprecated_report_extra_memory(core::mem::size_of::<Ctx>());
 
         // `vm.initRequestBodyValue(.{ .Null = {} })` — pooled body slot,
         // ref_count = 1.
@@ -3417,18 +3425,11 @@ where
                 break 'brk false;
             }
 
-            if let Some(address) = resp.get_remote_socket_info() {
-                // IPv4 loopback addresses
-                if address.ip.starts_with(b"127.") {
-                    break 'brk true;
-                }
-                // IPv6 loopback addresses
-                if address.ip.starts_with(b"::ffff:127.")
-                    || address.ip == b"::1"
-                    || address.ip == b"0:0:0:0:0:0:0:1"
-                {
-                    break 'brk true;
-                }
+            if resp
+                .get_remote_socket_info()
+                .is_some_and(|address| address.is_loopback())
+            {
+                break 'brk true;
             }
 
             false

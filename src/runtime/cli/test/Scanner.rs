@@ -3,13 +3,13 @@ use std::collections::VecDeque;
 use bun_alloc::AllocError;
 use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
-use bun_core::PathString;
 #[cfg(not(windows))]
 use bun_core::ZStr;
 use bun_core::err;
 use bun_core::{StringOrTinyString, strings};
 use bun_output::{declare_scope, scoped_log};
 use bun_paths::{self, PathBuffer};
+use bun_ptr::Interned;
 use bun_resolver::fs::{self as fs, DirEntryIterator, EntriesOption, FileSystem};
 use bun_sys::{self, Fd};
 
@@ -26,7 +26,7 @@ pub struct Scanner<'a> {
     pub path_ignore_patterns: &'a [&'a [u8]],
     pub dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
-    pub test_files: Vec<PathString>,
+    pub test_files: Vec<Interned>,
     // TODO(port): LIFETIMES.tsv classifies as &'a FileSystem, but several call
     // sites (dirname_store.append, readDirectoryWithIterator) mutate. May need
     // interior mutability on FileSystem or &'a mut.
@@ -105,7 +105,7 @@ impl<'a> Scanner<'a> {
 
     /// Take the list of test files out of this scanner. Caller owns the returned
     /// allocation.
-    pub fn take_found_test_files(&mut self) -> Result<Box<[PathString]>, AllocError> {
+    pub fn take_found_test_files(&mut self) -> Result<Box<[Interned]>, AllocError> {
         Ok(core::mem::take(&mut self.test_files).into_boxed_slice())
     }
 
@@ -134,7 +134,7 @@ impl<'a> Scanner<'a> {
                         .filename_store
                         .append_slice(path)
                         .map_err(|_| ScanError::OutOfMemory)?;
-                    let rel_path = PathString::init(stored);
+                    let rel_path = Interned::from_static(stored);
                     self.test_files.push(rel_path);
                 }
             } else if e == err!("ENOENT") {
@@ -432,7 +432,7 @@ impl<'a> Scanner<'a> {
                     Ok(s) => s,
                     Err(_) => bun_core::out_of_memory(),
                 };
-                entry.abs_path = PathString::init(stored);
+                entry.abs_path = Interned::from_static(stored);
                 self.test_files.push(entry.abs_path);
             }
         }

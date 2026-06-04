@@ -402,7 +402,7 @@ pub mod debug {
 
 // ──────────────────────────────────────────────────────────────────────────
 // Byte-writer trait — D101: deduped to canonical `bun_io::Write`.
-// The local stub (TODO(port)) predated `bun_io` compiling; it carried a
+// The local stub predated `bun_io` compiling; it carried a
 // `core::fmt::Write` supertrait so `write!(…)` returned `fmt::Result`. The
 // canonical trait instead provides its own `write_fmt` returning
 // `Result<(), bun_core::Error>`, so `write!` on `impl Write` now yields the
@@ -930,15 +930,10 @@ mod draft {
                             // SAFETY: name was set from a valid NUL-terminated C string
                             let native_plugin_name =
                                 unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-                            let fmt = "\nBun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nThis indicates either a bug in the native plugin or in Bun.\n";
                             if write!(
                                 writer,
-                                "{}",
-                                Output::pretty_fmt_args(
-                                    fmt,
-                                    true,
-                                    format_args!("{}", bstr::BStr::new(native_plugin_name))
-                                )
+                                bun_core::pretty_fmt!("\nBun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nThis indicates either a bug in the native plugin or in Bun.\n", true),
+                                bstr::BStr::new(native_plugin_name)
                             )
                             .is_err()
                             {
@@ -954,15 +949,10 @@ mod draft {
                                     unsafe { bun_core::ffi::cstr(p) }.to_bytes()
                                 })
                                 .unwrap_or(b"<unknown>");
-                            let fmt = "Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n";
                             if write!(
                                 writer,
-                                "{}",
-                                Output::pretty_fmt_args(
-                                    fmt,
-                                    true,
-                                    format_args!("{}", bstr::BStr::new(name))
-                                )
+                                bun_core::pretty_fmt!("Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n", true),
+                                bstr::BStr::new(name)
                             )
                             .is_err()
                             {
@@ -1034,7 +1024,6 @@ mod draft {
                         } else {
                             #[cfg(windows)]
                             {
-                                // TODO(port): bun_sys::windows::GetThreadDescription / PWSTR / HRESULT_CODE
                                 {
                                     let mut name: bun_sys::windows::PWSTR = core::ptr::null_mut();
                                     // SAFETY: GetCurrentThread/GetThreadDescription are valid Win32 calls
@@ -1178,11 +1167,10 @@ mod draft {
                                 // SAFETY: name was set from a valid NUL-terminated C string
                                 let native_plugin_name =
                                     unsafe { bun_core::ffi::cstr(name) }.to_bytes();
-                                if write!(writer, "{}", Output::pretty_fmt_args(
+                                if write!(writer, bun_core::pretty_fmt!(
                                 "Bun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
                                 true,
-                                format_args!("{}", bstr::BStr::new(native_plugin_name)),
-                            )).is_err() { abort(); }
+                            ), bstr::BStr::new(native_plugin_name)).is_err() { abort(); }
                             } else if UNSUPPORTED_UV_FUNCTION.with(|c| c.get()).is_some() {
                                 // TODO(port): bun_analytics::Features::unsupported_uv_function
                                 let name: &[u8] = UNSUPPORTED_UV_FUNCTION
@@ -1192,15 +1180,10 @@ mod draft {
                                         unsafe { bun_core::ffi::cstr(p) }.to_bytes()
                                     })
                                     .unwrap_or(b"<unknown>");
-                                let fmt = "Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n";
                                 if write!(
                                     writer,
-                                    "{}",
-                                    Output::pretty_fmt_args(
-                                        fmt,
-                                        true,
-                                        format_args!("{}", bstr::BStr::new(name))
-                                    )
+                                    bun_core::pretty_fmt!("Bun encountered a crash when running a NAPI module that tried to call\nthe <red>{s}<r> libuv function.\n\nBun is actively working on supporting all libuv functions for POSIX\nsystems, please see this issue to track our progress:\n\n<cyan>https://github.com/oven-sh/bun/issues/18546<r>\n\n", true),
+                                    bstr::BStr::new(name)
                                 )
                                 .is_err()
                                 {
@@ -1289,11 +1272,10 @@ mod draft {
                     // attempt to prevent a double panic
                     bun_core::set_auto_reload_on_crash(false);
 
-                    // TODO(port): pretty_fmt! color tags — runtime rewrite via pretty_fmt_args
-                    Output::pretty_errorln(format_args!(
-                        "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{}<r><d>] ---<r>",
+                    bun_core::pretty_errorln!(
+                        "<d>--- Bun is auto-restarting due to crash <d>[time: <b>{d}<r><d>] ---<r>",
                         bun_core::time::milli_timestamp().max(0),
-                    ));
+                    );
                     Output::flush();
 
                     // TODO(port): comptime assert void == @TypeOf(bun.reloadProcess(...))
@@ -1513,7 +1495,7 @@ mod draft {
             );
         } else if err == bun_core::err!("MissingPackageJSON") {
             err_generic!("Bun could not find a package.json file to install from");
-            Output::note("Run \"bun init\" to initialize a project");
+            bun_core::note!("Run \"bun init\" to initialize a project");
         } else {
             // PORT NOTE: Zig picked the format string at comptime; the macros need
             // `:literal`, so branch on the const and call separately.
@@ -1545,6 +1527,16 @@ mod draft {
         error_return_trace: Option<&StackTrace>,
         begin_addr: Option<usize>,
     ) -> ! {
+        // Not `unwrap_or_else(debug::return_address)`: the default trim anchor
+        // must be read from *this* function's frame. Evaluated lazily, the
+        // `#[inline(always)]` intrinsic reads the closure's frame instead,
+        // which is popped before the capture walks the stack — the anchor then
+        // matches no captured frame and the capture/handler frames survive the
+        // trim, burying the real crash site in every report.
+        let begin_addr = match begin_addr {
+            Some(addr) => addr,
+            None => debug::return_address(),
+        };
         crash_handler(
             if msg == b"reached unreachable code" {
                 CrashReason::Unreachable
@@ -1555,7 +1547,7 @@ mod draft {
             },
             match error_return_trace {
                 Some(ert) if ert.index > 0 => TraceSeed::ErrorReturn(ert),
-                _ => TraceSeed::BeginAddr(begin_addr.unwrap_or_else(debug::return_address)),
+                _ => TraceSeed::BeginAddr(begin_addr),
             },
         );
     }
@@ -1581,7 +1573,6 @@ mod draft {
         "x64"
     };
 
-    // TODO(port): std.fmt.comptimePrint — use const_format::formatcp!
     const METADATA_VERSION_LINE: &str = const_format::formatcp!(
         "Bun {}v{} {} {}{}\n",
         if cfg!(debug_assertions) {
@@ -1956,11 +1947,14 @@ mod draft {
         limits: bun_core::DumpStackTraceOptions,
     ) {
         Output::flush();
+        // Not `unwrap_or_else`: the default trim anchor must be read from this
+        // frame, not from a closure's popped frame (see `panic_impl`).
+        let first_address = match first_address {
+            Some(addr) => addr,
+            None => debug::return_address(),
+        };
         let mut addrs: [usize; 32] = [0; 32];
-        let n = debug::capture_stack_trace(
-            first_address.unwrap_or_else(debug::return_address),
-            &mut addrs,
-        );
+        let n = debug::capture_stack_trace(first_address, &mut addrs);
         let n = n.min(limits.frame_count);
         if !Environment::SHOW_CRASH_TRACE {
             // debug symbols aren't available, lets print a tracestring
@@ -2175,7 +2169,6 @@ mod draft {
                 }
                 #[cfg(windows)]
                 {
-                    // TODO(port): std.zig.system.windows.detectRuntimeVersion()
                     write!(
                         writer,
                         "Windows v{}\n",
@@ -2216,7 +2209,6 @@ mod draft {
             }
         }
 
-        // TODO(port): bun_analytics::Features::formatter
         {
             write!(writer, "\n{}", bun_analytics::features::formatter()).map_err(fmt_err)?;
         }
@@ -2313,7 +2305,6 @@ mod draft {
     struct Platform;
 
     impl Platform {
-        // TODO(port): Zig builds this via @tagName(os) ++ "_" ++ @tagName(arch) ++ baseline.
         // Rust cannot concat ident names at const time without a proc-macro; spell out the cfg matrix.
         const CURRENT: u8 = {
             // Android folds into the Linux variants — Zig's `@tagName(Environment.os)`
@@ -2789,8 +2780,6 @@ mod draft {
         }
         #[cfg(windows)]
         {
-            // TODO(port): bun_sys::windows::PROCESS_INFORMATION / STARTUPINFOW / CreateProcessW
-            // TODO(port): bun_core::w! / strings::convert_utf8_to_utf16_in_buffer
             use bun_sys::windows;
             let mut process: windows::PROCESS_INFORMATION = bun_core::ffi::zeroed();
             let mut startup_info = windows::STARTUPINFOW {
@@ -3029,7 +3018,7 @@ mod draft {
             if IS_ROOT {
                 // SAFETY: read-only access
                 if VERBOSE_ERROR_TRACE.load(Ordering::Relaxed) {
-                    Output::note("Release build will not have this trace by default:");
+                    bun_core::note!("Release build will not have this trace by default:");
                 }
             } else {
                 bun_core::pretty_errorln!(
@@ -3287,11 +3276,14 @@ mod draft {
     }
 
     pub fn dump_current_stack_trace(first_address: Option<usize>, limits: WriteStackTraceLimits) {
+        // Not `unwrap_or_else`: the default trim anchor must be read from this
+        // frame, not from a closure's popped frame (see `panic_impl`).
+        let first_address = match first_address {
+            Some(addr) => addr,
+            None => debug::return_address(),
+        };
         let mut addrs: [usize; 32] = [0; 32];
-        let n = debug::capture_stack_trace(
-            first_address.unwrap_or_else(debug::return_address),
-            &mut addrs,
-        );
+        let n = debug::capture_stack_trace(first_address, &mut addrs);
         let stack = StackTrace {
             index: n,
             instruction_addresses: &addrs,
@@ -3338,9 +3330,6 @@ mod draft {
     // `@returnAddress()` intrinsic, apply that improvement in bun_core's
     // `StoredTrace::capture()` instead — this crate no longer owns the type.
     pub use bun_core::StoredTrace;
-
-    // TODO(port): move to *_jsc — `pub const js_bindings = @import("../runtime/api/crash_handler_jsc.zig").js_bindings;`
-    // Per PORTING.md this *_jsc alias is deleted; the bindings live as an extension trait in bun_runtime.
 
     /// For large codebases such as bun.bake.DevServer, it may be helpful
     /// to dump a large amount of state to a file to aid debugging a crash.

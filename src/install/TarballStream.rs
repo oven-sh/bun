@@ -154,6 +154,7 @@ pub struct TarballStream {
     bytes_received: usize,
     entry_count: u32,
     fail: Option<bun_core::Error>,
+    invalid_name: bool,
 
     /// Thread-pool task that runs `drain`. Re-enqueued whenever new data
     /// arrives and no drain is currently in flight.
@@ -249,6 +250,7 @@ impl TarballStream {
             bytes_received: 0,
             entry_count: 0,
             fail: None,
+            invalid_name: false,
             drain_task: thread_pool::Task {
                 node: thread_pool::Node::default(),
                 callback: drain_callback,
@@ -663,12 +665,20 @@ impl TarballStream {
         // Tag::Extract` for streaming tarballs).
         let tarball = &self.extract_task.request_extract().tarball;
         let (_, basename) = tarball.name_and_basename();
+        let truncated_basename = &basename[0..basename.len().min(32)];
+        let tmpname_suffix: &[u8] =
+            if crate::dependency::is_safe_install_folder_name(truncated_basename) {
+                truncated_basename
+            } else if tarball.resolution.tag.is_git()
+                || tarball.resolution.tag == ResolutionTag::LocalTarball
+            {
+                b"package"
+            } else {
+                self.invalid_name = true;
+                return Err(bun_core::err!("InstallFailed"));
+            };
         let mut buf = PathBuffer::uninit();
-        let tmpname = FileSystem::tmpname(
-            &basename[0..basename.len().min(32)],
-            &mut buf[..],
-            bun_core::fast_random(),
-        )?;
+        let tmpname = FileSystem::tmpname(tmpname_suffix, &mut buf[..], bun_core::fast_random())?;
         // allocator.dupeZ → owned NUL-terminated copy.
         self.tmpname = ZBox::from_bytes(tmpname.as_bytes());
 
@@ -1052,15 +1062,26 @@ impl TarballStream {
             };
 
             if let Some(err) = self.fail {
-                (*task).log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "{} extracting tarball for \"{}\"",
-                        err.name(),
-                        bstr::BStr::new(tarball.name.slice()),
-                    ),
-                );
+                if self.invalid_name {
+                    (*task).log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "Refusing to install package with invalid name \"{}\"",
+                            bun_fmt::s(tarball.name_and_basename().0),
+                        ),
+                    );
+                } else {
+                    (*task).log.add_error_fmt(
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        format_args!(
+                            "{} extracting tarball for \"{}\"",
+                            err.name(),
+                            bstr::BStr::new(tarball.name.slice()),
+                        ),
+                    );
+                }
                 (*task).err = Some(err);
                 (*task).status = TaskStatus::Fail;
                 return;
@@ -1140,12 +1161,12 @@ impl TarballStream {
             }
 
             if PackageManager::verbose_install() {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "[{}] Streamed {} tarball → {} entries<r>",
                     bstr::BStr::new(name),
                     bun_fmt::size(self.bytes_received, Default::default()),
                     self.entry_count,
-                ));
+                );
                 Output::flush();
             }
 

@@ -50,7 +50,6 @@ pub use crate::unlinkat_with_flags;
 // part of the public 2-arg signature, so we cannot `pub use mkdir_w as ...` —
 // that would drop the second arg and break Zig-ported callers that pass a mode.
 #[inline]
-#[allow(dead_code)]
 pub fn mkdir_os_path(file_path: &bun_core::WStr, flags: Mode) -> Result<()> {
     let _ = flags;
     crate::mkdir_w(file_path)
@@ -214,7 +213,6 @@ pub fn fchmod(fd: Fd, flags: Mode) -> Result<()> {
     }
 }
 
-#[allow(dead_code)]
 pub fn statfs(file_path: &ZStr) -> Result<StatFS> {
     // Zig: `defer req.deinit();` — `uv_fs_statfs` heap-allocates the
     // `uv_statfs_t` result into `req.ptr` (plus the WCHAR path copy); only
@@ -553,7 +551,6 @@ pub fn close(fd: Fd) -> Option<Error> {
     fd.close_allowing_bad_file_descriptor(None)
 }
 
-#[allow(dead_code)]
 pub fn close_allowing_stdout_and_stderr(fd: Fd) -> Option<Error> {
     // TODO(port): @returnAddress() — Rust has no stable equivalent; pass None for now.
     fd.close_allowing_standard_io(None)
@@ -578,7 +575,6 @@ fn sum_bufs_len(bufs: &[PlatformIOVec]) -> usize {
 
 pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
     let uv_fd = fd.uv();
-    // TODO(port): comptime bun.assert(bun.PlatformIOVec == uv.uv_buf_t) — static type-eq assert
     const _: () = assert!(
         core::mem::size_of::<PlatformIOVec>() == core::mem::size_of::<uv::uv_buf_t>()
             && core::mem::align_of::<PlatformIOVec>() == core::mem::align_of::<uv::uv_buf_t>()
@@ -652,7 +648,6 @@ pub fn preadv(fd: Fd, bufs: &[PlatformIOVec], position: i64) -> Result<usize> {
 
 pub fn pwritev(fd: Fd, bufs: &[PlatformIOVecConst], position: i64) -> Result<usize> {
     let uv_fd = fd.uv();
-    // TODO(port): comptime bun.assert(bun.PlatformIOVec == uv.uv_buf_t) — static type-eq assert
     const _: () = assert!(
         core::mem::size_of::<PlatformIOVec>() == core::mem::size_of::<uv::uv_buf_t>()
             && core::mem::align_of::<PlatformIOVec>() == core::mem::align_of::<uv::uv_buf_t>()

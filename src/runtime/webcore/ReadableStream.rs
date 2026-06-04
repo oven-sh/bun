@@ -440,8 +440,6 @@ impl ReadableStream {
         _parent: P,
         buffered_reader: &mut bun_io::BufferedReader,
     ) -> JsResult<JSValue> {
-        // TODO(port): Zig's `buffered_reader: anytype` — only ever instantiated with the
-        // platform `PipeReader`/`PosixBufferedReader`.
         let source = NewSource::<FileReader>::new_mut(NewSource {
             global_this: Some(bun_ptr::BackRef::new(global_this)),
             context: FileReader {
@@ -463,7 +461,6 @@ impl ReadableStream {
     }
 
     pub fn empty(global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        // TODO(port): bun.cpp.ReadableStream__empty wraps the extern with exception check
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
             ReadableStream__empty(global_this)
@@ -471,7 +468,6 @@ impl ReadableStream {
     }
 
     pub fn used(global_this: &JSGlobalObject) -> JsResult<JSValue> {
-        // TODO(port): bun.cpp.ReadableStream__used wraps the extern with exception check
         bun_jsc::from_js_host_call(global_this, || {
             // SAFETY: FFI call into JSC bindings; global_this is a valid &JSGlobalObject.
             ReadableStream__used(global_this)

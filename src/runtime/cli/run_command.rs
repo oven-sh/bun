@@ -248,7 +248,34 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         silent: bool,
         use_system_shell: bool,
     ) -> Result<(), bun_core::Error> {
-        let shell_bin = Self::find_shell(env.get(b"PATH").unwrap_or(b""), cwd)
+        Self::run_package_script_foreground_with_shell_path(
+            ctx,
+            original_script,
+            name,
+            cwd,
+            env,
+            passthrough,
+            silent,
+            use_system_shell,
+            None,
+        )
+    }
+
+    /// Like [`Self::run_package_script_foreground`], but resolves the shell
+    /// interpreter from `shell_path` instead of the loader's `PATH`.
+    pub fn run_package_script_foreground_with_shell_path(
+        ctx: &mut ContextData,
+        original_script: &[u8],
+        name: &[u8],
+        cwd: &[u8],
+        env: &mut DotEnv::Loader<'_>,
+        passthrough: &[Box<[u8]>],
+        silent: bool,
+        use_system_shell: bool,
+        shell_path: Option<&[u8]>,
+    ) -> Result<(), bun_core::Error> {
+        let shell_search_path = shell_path.unwrap_or_else(|| env.get(b"PATH").unwrap_or(b""));
+        let shell_bin = Self::find_shell(shell_search_path, cwd)
             .ok_or_else(|| bun_core::err!("MissingShell"))?;
         env.map
             .put(b"npm_lifecycle_event", name)
@@ -2526,7 +2553,7 @@ impl RunCommand {
                         let use_system_shell = ctx.debug.use_system_shell;
 
                         if let Some(&prescript) = scripts.get(&temp_script_buffer[1..]) {
-                            Self::run_package_script_foreground(
+                            Self::run_package_script_foreground_with_shell_path(
                                 ctx,
                                 prescript,
                                 &temp_script_buffer[1..],
@@ -2535,10 +2562,11 @@ impl RunCommand {
                                 &[],
                                 silent,
                                 use_system_shell,
+                                Some(original_path.as_slice()),
                             )?;
                         }
 
-                        Self::run_package_script_foreground(
+                        Self::run_package_script_foreground_with_shell_path(
                             ctx,
                             script_content,
                             target_name,
@@ -2547,12 +2575,13 @@ impl RunCommand {
                             &passthrough,
                             silent,
                             use_system_shell,
+                            Some(original_path.as_slice()),
                         )?;
 
                         temp_script_buffer[..b"post".len()].copy_from_slice(b"post");
 
                         if let Some(&postscript) = scripts.get(&temp_script_buffer[..]) {
-                            Self::run_package_script_foreground(
+                            Self::run_package_script_foreground_with_shell_path(
                                 ctx,
                                 postscript,
                                 &temp_script_buffer,
@@ -2561,6 +2590,7 @@ impl RunCommand {
                                 &[],
                                 silent,
                                 use_system_shell,
+                                Some(original_path.as_slice()),
                             )?;
                         }
 

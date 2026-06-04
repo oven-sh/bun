@@ -26,7 +26,7 @@ use bun_js_parser as js_parser;
 // PORT NOTE: `BundledAst<'arena>` — the bundler graph stores `'static`-erased
 // ASTs (arena outlives the link step). Use the crate-level alias so the
 // `Success`/helper signatures don't carry an explicit `'static` everywhere.
-use crate::ungate_support::JSAst;
+use crate::JSAst;
 /// `js_parser.Parser.Options` — the real parser-entry options struct.
 pub use bun_js_parser::parser::ParserOptions;
 
@@ -38,7 +38,7 @@ use crate::cache::{Entry as CacheEntry, ExternalFreeFunction};
 use crate::html_scanner::HTMLScanner;
 use crate::options::{self, Loader};
 use crate::transpiler::Transpiler;
-use crate::ungate_support::{ContentHasher, UseDirective, perf, target_from_hashbang};
+use crate::{ContentHasher, UseDirective, perf, target_from_hashbang};
 use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::{self as _resolver, Resolver};
 
@@ -544,7 +544,6 @@ pub mod parse_worker {
         // extra match matters (it shouldn't — called once).
 
         let parse_task = ParseTask {
-            // TODO(port): Zig used `undefined` for ctx; using None.
             ctx: None,
             path: Fs::Path::init_with_namespace(b"runtime", b"bun:runtime"),
             side_effects: bun_ast::SideEffects::NoSideEffectsPureData,
@@ -2324,9 +2323,9 @@ pub mod parse_worker {
         // the other's tag chain.
         let worker_raw: *mut crate::Worker = this;
         // SAFETY: see `get_source_code` — worker arena pinned for the bundle pass.
-        // `'static` matches `JSAst = BundledAst<'static>` (ungate_support.rs); the
-        // arena outlives all reads through the returned ASTs. `arena` is a
-        // `*const Bump` field; the deref points outside `*worker_raw`.
+        // `'static` matches `JSAst = BundledAst<'static>`; the arena outlives all
+        // reads through the returned ASTs. `arena` is a `*const Bump` field; the
+        // deref points outside `*worker_raw`.
         let bump: &'static Bump = unsafe { bun_ptr::detach_lifetime_ref(&*(*worker_raw).arena) };
 
         // SAFETY: `worker_raw` just derived from the live `this: &mut Worker`.

@@ -817,7 +817,6 @@ impl Package<u64> {
             total_dependencies_count = 0;
             // PERF(port): was `inline for` — profile if hot.
             for group in dependency_groups {
-                // TODO(port): @field reflection — see note above
                 let map: ExternalStringMap = package_version.dep_group(group.field);
                 let keys = map.name.get(&manifest.external_strings);
                 let version_strings = map.value.get(&manifest.external_strings_for_versions);
@@ -1065,7 +1064,7 @@ impl Diff {
             summary.overrides_changed = true;
 
             if PackageManager::verbose_install() {
-                Output::pretty_errorln(format_args!("Overrides changed since last install"));
+                bun_core::pretty_errorln!("Overrides changed since last install");
             }
         } else {
             // PORT NOTE: reshaped for borrowck — Zig passed `from_lockfile`
@@ -1103,9 +1102,7 @@ impl Diff {
                 {
                     summary.overrides_changed = true;
                     if PackageManager::verbose_install() {
-                        Output::pretty_errorln(format_args!(
-                            "Overrides changed since last install"
-                        ));
+                        bun_core::pretty_errorln!("Overrides changed since last install");
                     }
                     break;
                 }
@@ -1536,7 +1533,7 @@ impl Diff {
                         if pm.options.log_level.is_verbose()
                             && (diff.add + diff.remove + diff.update) > 0
                         {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "Workspace package \"{}\" has added <green>{}<r> dependencies, removed <red>{}<r> dependencies, and updated <cyan>{}<r> dependencies",
                                 bstr::BStr::new(
                                     workspace_path
@@ -1545,7 +1542,7 @@ impl Diff {
                                 diff.add,
                                 diff.remove,
                                 diff.update,
-                            ));
+                            );
                         }
 
                         !diff.has_diffs()
@@ -1667,11 +1664,11 @@ impl Package<u64> {
             Ok(j) => j,
             Err(err) => {
                 let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                     err.name(),
                     bstr::BStr::new(source.path.pretty_dir()),
-                ));
+                );
                 Global::crash();
             }
         };
@@ -1839,13 +1836,24 @@ impl Package<u64> {
         match dependency_version.tag {
             dependency::version::Tag::Folder => {
                 let folder = *dependency_version.folder();
-                let relative = resolve_path::relative(
+                let mut folder_buf = PathBuffer::uninit();
+                let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
                     FileSystem::instance().top_level_dir(),
-                    resolve_path::join_abs_string::<path::platform::Auto>(
-                        FileSystem::instance().top_level_dir(),
-                        &[source.path.name().dir, folder.slice(buf)],
-                    ),
-                );
+                    &mut folder_buf.0,
+                    &[source.path.name().dir, folder.slice(buf)],
+                ) else {
+                    log.add_error_fmt(
+                        source,
+                        value_loc,
+                        format_args!(
+                            "Dependency \"{}\" has an unsafe folder path",
+                            bstr::BStr::new(external_alias.slice(buf)),
+                        ),
+                    );
+                    return Err(bun_core::err!("InstallFailed"));
+                };
+                let relative =
+                    resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
                 // if relative is empty, we are linking the package to itself
                 dependency_version.value.folder = string_builder
                     .append::<String>(if relative.is_empty() { b"." } else { relative });

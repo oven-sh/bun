@@ -83,7 +83,7 @@ pub extern "C" fn blob_store_array_buffer_deallocator(_bytes: *mut c_void, ctx: 
 /// string. Stricter than `is_all_ascii`: also rejects control characters such
 /// as CR/LF, which would otherwise be stored in `content_type` and written
 /// verbatim into outgoing HTTP headers.
-fn is_valid_blob_type(slice: &[u8]) -> bool {
+pub(crate) fn is_valid_blob_type(slice: &[u8]) -> bool {
     slice.iter().all(|&c| matches!(c, 0x20..=0x7E))
 }
 
@@ -416,8 +416,6 @@ pub unsafe extern "C" fn Bun__Blob__sharedView(this: *const Blob, len: *mut usiz
 
 #[allow(non_snake_case, clippy::too_many_arguments)]
 impl BlobExt for Blob {
-    // TODO(port): bun_core::FormData (gated module)
-
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>> {
         let content_type_slice = self.get_content_type()?;
         let encoding = bun_core::form_data::Encoding::get(content_type_slice.slice())?;
@@ -724,8 +722,18 @@ impl BlobExt for Blob {
         &self,
         writer: &mut W,
     ) -> Result<(), bun_core::Error> {
+        let is_memory_backed = if let Some(store) = self.store.get() {
+            matches!(store.data, store::Data::Bytes(_))
+        } else {
+            false
+        };
+
         writer.write_int_le::<u8>(SERIALIZATION_VERSION)?;
-        writer.write_int_le::<u64>(self.offset.get())?;
+        writer.write_int_le::<u64>(if is_memory_backed {
+            0
+        } else {
+            self.offset.get()
+        })?;
 
         let ct = self.content_type_slice();
         writer.write_int_le::<u32>(ct.len() as u32)?;
@@ -744,9 +752,19 @@ impl BlobExt for Blob {
 
         writer.write_int_le::<u8>(store_tag as u8)?;
 
-        self.resolve_size();
         if let Some(store) = self.store.get() {
-            store.serialize(writer)?;
+            if let store::Data::Bytes(bytes) = &store.data {
+                let view = self.shared_view();
+                writer.write_int_le::<u32>(view.len() as u32)?;
+                writer.write_all(view)?;
+
+                let stored_name = &bytes.stored_name[..];
+                writer.write_int_le::<u32>(stored_name.len() as u32)?;
+                writer.write_all(stored_name)?;
+            } else {
+                self.resolve_size();
+                store.serialize(writer)?;
+            }
         }
 
         writer.write_int_le::<u8>(self.is_jsdom_file.get() as u8)?;
@@ -776,7 +794,6 @@ impl BlobExt for Blob {
             ctx,
             impl_: write_bytes,
         };
-        // TODO(port): wrap StructuredCloneWriter in a bun_io::Write adapter.
         let _ = self._on_structured_clone_serialize(&mut writer);
     }
 
@@ -2362,7 +2379,16 @@ impl BlobExt for Blob {
                 let store_size = store.size();
                 if store_size != MAX_SIZE {
                     self.offset.set(store_size.min(offset));
-                    self.size.set(store_size - offset);
+                    let available = store_size - self.offset.get();
+                    // Only resolve an unknown size. A slice already has a concrete
+                    // `size`; overwriting it with `store_size - offset` would widen
+                    // the view to the end of the backing store. Clamp a known size
+                    // to `available` so a bogus size can't report past the store end.
+                    if self.size.get() == MAX_SIZE {
+                        self.size.set(available);
+                    } else {
+                        self.size.set(self.size.get().min(available));
+                    }
                 }
             }
             store::DataTag::File => {
@@ -2408,7 +2434,18 @@ impl BlobExt for Blob {
                 let offset = self.offset.get();
                 let store_size = store.size();
                 if store_size != MAX_SIZE {
-                    return (store_size.min(offset), store_size - offset);
+                    let offset = store_size.min(offset);
+                    let available = store_size - offset;
+                    // Matches `resolve_size`: a known size (e.g. a slice) is
+                    // authoritative; only an unknown size falls back to the
+                    // remainder of the backing store. Clamp to `available` so a
+                    // bogus size can't report past the store end.
+                    let size = if self.size.get() == MAX_SIZE {
+                        available
+                    } else {
+                        self.size.get().min(available)
+                    };
+                    return (offset, size);
                 }
                 (self.offset.get(), self.size.get())
             }
@@ -2696,7 +2733,7 @@ impl BlobExt for Blob {
         if bom == Some(strings::BOM::Utf16Le) {
             let _free = (LIFETIME == Lifetime::Temporary).then(|| TemporaryBytes(raw_bytes));
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
-            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
+            // (`@divTrunc`).
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
             //
             // ZIG PARITY: this branch intentionally does NOT `self.detach()` for
@@ -2704,8 +2741,18 @@ impl BlobExt for Blob {
             // returns without detaching, unlike `toJSONWithBytes`. Any change to
             // that asymmetry belongs upstream in the Zig source, not here.
             let buf = &buf[..buf.len() & !1];
-            let out =
-                OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
+            let out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
+                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
+                Err(_) => {
+                    let units: Vec<u16> = buf
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|pair| u16::from_le_bytes(*pair))
+                        .collect();
+                    OwnedString::new(BunString::clone_utf16(&units))
+                }
+            };
             return out.to_js(global);
         }
 
@@ -2921,11 +2968,21 @@ impl BlobExt for Blob {
 
         if bom == Some(strings::BOM::Utf16Le) {
             // Mirrors Zig `bun.reinterpretSlice(u16, buf)`: drop a trailing odd byte
-            // (`@divTrunc`) so `bytemuck::cast_slice` cannot panic on slop.
+            // (`@divTrunc`).
             // +1 WTF ref; `OwnedString` releases it on scope exit (Zig: `defer out.deref()`).
             let buf = &buf[..buf.len() & !1];
-            let mut out =
-                OwnedString::new(BunString::clone_utf16(bytemuck::cast_slice::<u8, u16>(buf)));
+            let mut out = match bytemuck::try_cast_slice::<u8, u16>(buf) {
+                Ok(units) => OwnedString::new(BunString::clone_utf16(units)),
+                Err(_) => {
+                    let units: Vec<u16> = buf
+                        .as_chunks::<2>()
+                        .0
+                        .iter()
+                        .map(|pair| u16::from_le_bytes(*pair))
+                        .collect();
+                    OwnedString::new(BunString::clone_utf16(&units))
+                }
+            };
             // PORT NOTE: Zig used `defer { free; detach }`. Reshaped to compute the
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.
@@ -3556,13 +3613,22 @@ impl BlobExt for Blob {
                                         // or resizes this buffer before `done()`.
                                         joiner.push_cloned(buf.byte_slice());
                                     } else {
-                                        joiner.push_static(buf.byte_slice());
+                                        // SAFETY: the prescan above proved no remaining
+                                        // part can run user JS, so this buffer (rooted
+                                        // via `_keep`/`arg`) stays attached and valid
+                                        // until `joiner.done()` below.
+                                        joiner.push(unsafe {
+                                            bun_ptr::detach_lifetime(buf.byte_slice())
+                                        });
                                     }
                                     continue;
                                 }
                                 jsc::JSType::Array | jsc::JSType::DerivedArray => {
-                                    could_have_non_ascii = true;
-                                    break;
+                                    let sliced = item.to_slice_clone(global)?;
+                                    could_have_non_ascii =
+                                        could_have_non_ascii || sliced.is_allocated();
+                                    joiner.push_cloned(sliced.slice());
+                                    continue;
                                 }
                                 jsc::JSType::DOMWrapper => {
                                     if let Some(blob) = item.as_class_ref::<Blob>() {
@@ -3573,22 +3639,31 @@ impl BlobExt for Blob {
                                         if parts_can_run_js {
                                             joiner.push_cloned(blob.shared_view());
                                         } else {
-                                            joiner.push_static(blob.shared_view());
+                                            // SAFETY: the prescan above proved no
+                                            // remaining part can run user JS, so this
+                                            // Blob (rooted via `_keep`/`arg`) keeps its
+                                            // Store alive until `joiner.done()` below.
+                                            joiner.push(unsafe {
+                                                bun_ptr::detach_lifetime(blob.shared_view())
+                                            });
                                         }
                                         continue;
                                     } else {
-                                        let sliced = current.to_slice_clone(global)?;
+                                        let sliced = item.to_slice_clone(global)?;
                                         could_have_non_ascii =
                                             could_have_non_ascii || sliced.is_allocated();
                                         joiner.push_cloned(sliced.slice());
+                                        continue;
                                     }
                                 }
-                                _ => {}
+                                _ => {
+                                    let sliced = item.to_slice_clone(global)?;
+                                    could_have_non_ascii =
+                                        could_have_non_ascii || sliced.is_allocated();
+                                    joiner.push_cloned(sliced.slice());
+                                }
                             }
                         }
-
-                        // `reserve(iter.len)` above guarantees no realloc here.
-                        stack.push(item);
                     }
                 }
 
@@ -3622,7 +3697,11 @@ impl BlobExt for Blob {
                 | jsc::JSType::BigUint64Array
                 | jsc::JSType::DataView => {
                     let buf = current.as_array_buffer(global).unwrap();
-                    joiner.push_static(buf.slice());
+                    // SAFETY: this arm is only reached when the typed array is the
+                    // top-level value (the walk stack is empty), so no user JS runs
+                    // between this push and `joiner.done()` below; `_keep`/`arg` keeps
+                    // the buffer alive for that span.
+                    joiner.push(unsafe { bun_ptr::detach_lifetime(buf.slice()) });
                     could_have_non_ascii = true;
                 }
 
@@ -3660,7 +3739,7 @@ impl BlobExt for Blob {
             size += core::mem::size_of::<Store>();
             match &store.data {
                 store::Data::Bytes(bytes) => {
-                    size += bytes.stored_name.estimated_size();
+                    size += bytes.stored_name.len();
                     size += if self.size.get() != MAX_SIZE {
                         self.size.get() as usize
                     } else {
@@ -3723,7 +3802,7 @@ impl BlobExt for Blob {
                     let copy = core::mem::replace(
                         path_or_fd,
                         PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
-                            bun_core::PathString::default(),
+                            bun_ptr::cow_slice::CowSlice::EMPTY,
                         )),
                     );
                     let PathOrFileDescriptor::Path(path) = copy else {
@@ -3748,7 +3827,9 @@ impl BlobExt for Blob {
                     *path_or_fd =
                         PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
                             // Heap-dupe: this buffer is freed by `Blob.Store.deinit`.
-                            bun_core::PathString::init_owned(b"\\\\.\\NUL".to_vec()),
+                            bun_ptr::cow_slice::CowSlice::init_owned(
+                                b"\\\\.\\NUL".to_vec().into_boxed_slice(),
+                            ),
                         ));
                 }
 
@@ -3777,7 +3858,7 @@ impl BlobExt for Blob {
                         if !path_or_fd.path().is_string() {
                             *path_or_fd = PathOrFileDescriptor::Path(
                                 crate::webcore::node_types::PathLike::String(
-                                    bun_core::PathString::default(),
+                                    bun_ptr::cow_slice::CowSlice::EMPTY,
                                 ),
                             );
                         }
@@ -3789,7 +3870,7 @@ impl BlobExt for Blob {
                 core::mem::replace(
                     path_or_fd,
                     PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(
-                        bun_core::PathString::default(),
+                        bun_ptr::cow_slice::CowSlice::EMPTY,
                     )),
                 )
             }
@@ -3913,7 +3994,7 @@ where
 /// `*jsc.JSGlobalObject`), so they are stored as plain references rather than
 /// raw pointers.
 struct FormDataContext<'a> {
-    joiner: StringJoiner,
+    joiner: StringJoiner<'a>,
     boundary: &'a [u8], // borrowed; outlives the joiner
     failed: bool,
     global_this: &'a JSGlobalObject,
@@ -3946,7 +4027,7 @@ impl FormDataContext<'_> {
     /// (Zig: `joiner.push(slice, slice.allocator.get())`); an owned slice
     /// (UTF-16 / non-ASCII Latin-1 conversion) transfers its allocation to the
     /// joiner. When `escape` is set, `"`/CR/LF are percent-encoded into a copy.
-    fn push_string_slice(joiner: &mut StringJoiner, slice: ZigStringSlice, escape: bool) {
+    fn push_string_slice(joiner: &mut StringJoiner<'_>, slice: ZigStringSlice, escape: bool) {
         if escape {
             if let Some(escaped) = escape_form_data_name(slice.slice()) {
                 joiner.push_owned(escaped);
@@ -3957,7 +4038,9 @@ impl FormDataContext<'_> {
             // `into_vec` moves the buffer out of an `Owned` slice without copying.
             joiner.push_owned(slice.into_vec().into_boxed_slice());
         } else if matches!(slice, ZigStringSlice::Static(..)) {
-            joiner.push_static(slice.slice());
+            // SAFETY: `Static` bytes are owned by the `DOMFormData` being serialized
+            // (never freed), which outlives `joiner.done()` in `from_dom_form_data`.
+            joiner.push(unsafe { bun_ptr::detach_lifetime(slice.slice()) });
         } else {
             // WTF-backed slices release their pin on drop — copy rather than
             // borrow past it. (`ZigString::to_slice` never produces these.)
@@ -4003,7 +4086,10 @@ impl FormDataContext<'_> {
                     b"application/octet-stream"
                 };
                 joiner.push_static(b"Content-Type: ");
-                joiner.push_static(content_type);
+                // SAFETY: either a `'static` literal or borrowed from the entry's Blob,
+                // which the `DOMFormData` keeps alive past `joiner.done()` in
+                // `from_dom_form_data`.
+                joiner.push(unsafe { bun_ptr::detach_lifetime(content_type) });
                 joiner.push_static(b"\r\n\r\n");
 
                 if blob.store.get().is_some() {
@@ -4055,10 +4141,10 @@ impl FormDataContext<'_> {
                             }
                         }
                         store::Data::Bytes(_) => {
-                            // Borrowed: the blob's store is kept alive by the
-                            // `DOMFormData` entry until after `joiner.done()`
-                            // (Zig used `pushStatic` here too).
-                            joiner.push_static(blob.shared_view());
+                            // SAFETY: borrowed from the blob's store, which the
+                            // `DOMFormData` entry keeps alive until after
+                            // `joiner.done()` (Zig used `pushStatic` here too).
+                            joiner.push(unsafe { bun_ptr::detach_lifetime(blob.shared_view()) });
                         }
                     }
                 }
@@ -4121,6 +4207,9 @@ fn read_slice<B: AsRef<[u8]>>(
     reader: &mut bun_io::FixedBufferStream<B>,
     len: usize,
 ) -> Result<Vec<u8>, bun_core::Error> {
+    if len > reader.buffer.as_ref().len().saturating_sub(reader.pos) {
+        return Err(bun_core::err!("TooSmall"));
+    }
     let mut slice = vec![0u8; len];
     reader
         .read_exact(&mut slice)
@@ -4168,11 +4257,9 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                 // ScopeGuard derefs to its inner Blob.
                 if let Some(store) = (*guard).store() {
                     if let store::Data::Bytes(bytes_store) = &mut store.data_mut() {
-                        // `PathString::init` only borrows ptr+len; the local
-                        // `name: Vec<u8>` would drop at the end of this block
-                        // and leave `stored_name` dangling. Transfer ownership
-                        // into the packed pointer; freed by `Bytes::Drop`.
-                        bytes_store.stored_name = bun_core::PathString::init_owned(name);
+                        // Transfer ownership of the local `name: Vec<u8>` into
+                        // `stored_name` (a `Box<[u8]>`); freed by `Bytes::Drop`.
+                        bytes_store.stored_name = name.into_boxed_slice();
                     }
                 }
                 // else: `name` drops here (Zig: `if (!consumed) free(name)`).
@@ -4193,7 +4280,6 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
             match pathlike_tag {
                 PathOrFileDescriptorSerializeTag::Fd => {
-                    // TODO(port): readStruct(bun.FD) — read raw FD bytes.
                     let fd: Fd = reader.read_struct()?;
                     let mut path_or_fd = PathOrFileDescriptor::Fd(fd);
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
@@ -4206,12 +4292,12 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
                     let path_len = reader.read_int_le::<u32>()?;
                     let path = read_slice(reader, path_len as usize)?;
                     // Zig heap-allocates `path` and hands the allocation to
-                    // the store via `PathString.init(path)` (freed by
-                    // `Store.deinit`). `init_owned` consumes the Vec so the
-                    // store adopts the same allocation; borrowing here would
-                    // drop `path` at scope end and leave the store dangling.
+                    // the store (freed by `Store.deinit`). The owned `CowSlice`
+                    // adopts the `Box<[u8]>` so the store frees it in
+                    // `PathLike::drop`; borrowing here would drop `path` at scope
+                    // end and leave the store dangling.
                     let mut dest = PathOrFileDescriptor::Path(node::PathLike::String(
-                        bun_core::PathString::init_owned(path),
+                        bun_ptr::cow_slice::CowSlice::init_owned(path.into_boxed_slice()),
                     ));
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
                         &mut dest,
@@ -4328,8 +4414,8 @@ pub extern "C" fn Blob__setAsFile(this: &mut Blob, path_str: &mut BunString) {
         if let store::Data::Bytes(bytes) = &mut store.data_mut() {
             if bytes.stored_name.is_empty() {
                 // Zig: `path_str.toUTF8Bytes(allocator)` → owned heap slice
-                // adopted by PathString and freed by `Bytes.deinit`.
-                bytes.stored_name = bun_core::PathString::init_owned(path_str.to_owned_slice());
+                // owned by `stored_name` (`Box<[u8]>`) and freed by `Bytes::Drop`.
+                bytes.stored_name = path_str.to_owned_slice().into_boxed_slice();
             }
         }
     }
@@ -4395,7 +4481,9 @@ pub fn mkdir_if_not_exists<T: MkdirpTarget>(
         if let Some(dirname) = bun_core::dirname(path_string.as_bytes()) {
             let mut node_fs = node::fs::NodeFS::default();
             match node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                path: node::PathLike::String(bun_core::PathString::init(dirname)),
+                path: node::PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
+                    dirname, false,
+                )),
                 recursive: true,
                 always_return_none: true,
                 ..Default::default()
@@ -4530,9 +4618,11 @@ fn write_file_with_empty_source_to_destination(
                                 };
                                 let mkdir_result =
                                     node_fs.mkdir_recursive(&node::fs::args::Mkdir {
-                                        path: node::PathLike::String(bun_core::PathString::init(
-                                            dirpath,
-                                        )),
+                                        path: node::PathLike::String(
+                                            bun_ptr::cow_slice::CowSlice::init_unchecked(
+                                                dirpath, false,
+                                            ),
+                                        ),
                                         recursive: true,
                                         always_return_none: true,
                                         ..Default::default()
@@ -5599,13 +5689,9 @@ pub fn jsdom_file_construct_(
                 store::Data::Bytes(bytes) => {
                     // `get::<_, true>` on a single-Blob sequence returns
                     // `dupe()` (a shared StoreRef), so this `Bytes` may already
-                    // carry an owned `stored_name` from the source blob.
-                    // `PathString` is `Copy` — assignment alone would leak it.
-                    // SAFETY: every writer of `stored_name` adopts via
-                    // `PathString::init_owned` or leaves it `EMPTY`.
-                    unsafe { bytes.stored_name.deinit_owned() };
-                    bytes.stored_name =
-                        bun_core::PathString::init_owned(name_value_str.to_owned_slice());
+                    // carry an owned `stored_name` from the source blob; the
+                    // assignment drops (frees) the previous `Box<[u8]>`.
+                    bytes.stored_name = name_value_str.to_owned_slice().into_boxed_slice();
                 }
                 store::Data::S3(_) | store::Data::File(_) => {
                     blob.name.set(name_value_str.dupe_ref());
@@ -5615,7 +5701,7 @@ pub fn jsdom_file_construct_(
             // not store but we have a name so we need a store
             blob.store.set(Some(StoreRef::from(Store::new(Store {
                 data: store::Data::Bytes(store::Bytes::init_empty_with_name(
-                    bun_core::PathString::init_owned(name_value_str.to_owned_slice()),
+                    name_value_str.to_owned_slice().into_boxed_slice(),
                 )),
                 ref_count: bun_ptr::ThreadSafeRefCount::init(),
                 mime_type: bun_http_types::MimeType::NONE,
@@ -6488,9 +6574,6 @@ impl Any {
 }
 
 // ─── Any: JSC-integration (to_js/from_js paths) ──────────────────────────────
-// TODO(port): bun_jsc::* — Any::{to_action_value,to_promise,wrap,
-// to_json,to_string,to_array_buffer*,to_blob,to_uint8_array*} call into
-// JSValue/ZigString JSC methods and Blob JSC impls gated above.
 
 impl Any {
     fn to_internal_blob_if_possible(&mut self) {
@@ -6839,14 +6922,11 @@ impl Internal {
         self.bytes.capacity()
     }
 
-    // TODO(port): bun_jsc::* — ZigString::to_external_u16/to_js_object.
-
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
         if let Some(out) =
             strings::to_utf16_alloc(bytes_without_bom, false, false).unwrap_or(Some(Vec::new()))
         {
-            // TODO(port): Zig used `catch &[_]u16{}` to swallow alloc errors into empty.
             let out_len = out.len();
             // Ownership transfers to JSC's external-string finalizer.
             let out_ptr = bun_core::heap::into_raw(out.into_boxed_slice())
@@ -6878,8 +6958,6 @@ impl Internal {
             return Ok(str.to_external_value(global_this));
         }
     }
-
-    // TODO(port): bun_jsc::* — ZigString::to_json_object.
 
     pub fn to_json(&mut self, global_this: &JSGlobalObject) -> JSValue {
         let str_bytes = ZigString::init(strings::without_utf8_bom(&self.bytes)).with_encoding();
@@ -6977,8 +7055,6 @@ impl Inline {
     pub fn init_string(data: &[u8]) -> Inline {
         Self::internal_init(data, true)
     }
-
-    // TODO(port): bun_jsc::* — ZigString::to_js.
 
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JSValue {
         if self.len == 0 {

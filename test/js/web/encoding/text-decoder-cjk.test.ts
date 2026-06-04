@@ -1,4 +1,4 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 
 test("TextDecoder - Shift_JIS encoding", () => {
   const decoder = new TextDecoder("shift_jis");
@@ -79,4 +79,90 @@ test("TextDecoder - ISO-2022-JP encoding", () => {
   ]);
   const result = decoder.decode(bytes);
   expect(result).toBe("日本");
+});
+
+// A `{stream: true}` decode must carry the codec's partial state (lead byte,
+// escape mode, GB18030 first/second/third) across chunk boundaries so that
+// concatenating the streamed results equals a single whole decode.
+describe("TextDecoder - streaming across chunk boundaries", () => {
+  function streamingDecode(encoding: string, bytes: readonly number[], split: readonly number[]): string {
+    const d = new TextDecoder(encoding);
+    let out = "";
+    let off = 0;
+    for (let i = 0; i < split.length; i++) {
+      const chunk = new Uint8Array(bytes.slice(off, off + split[i]));
+      off += split[i];
+      out += d.decode(chunk, i < split.length - 1 ? { stream: true } : {});
+    }
+    return out;
+  }
+
+  const cases: Array<[encoding: string, bytes: number[], expected: string, splits: number[][]]> = [
+    ["big5", [0xa4, 0x40], "一", [[1, 1]]],
+    ["shift_jis", [0x88, 0xea], "一", [[1, 1]]],
+    ["gbk", [0xd2, 0xbb], "一", [[1, 1]]],
+    ["euc-kr", [0xec, 0xe9], "一", [[1, 1]]],
+    // JIS X 0212 plane: 0x8F lead + two trail bytes
+    [
+      "euc-jp",
+      [0x8f, 0xb0, 0xa1],
+      "丂",
+      [
+        [1, 2],
+        [2, 1],
+        [1, 1, 1],
+      ],
+    ],
+    // 4-byte GB18030 sequence for U+1F4A9
+    [
+      "gb18030",
+      [0x94, 0x39, 0xda, 0x33],
+      "💩",
+      [
+        [2, 2],
+        [1, 3],
+        [3, 1],
+        [1, 1, 1, 1],
+      ],
+    ],
+    // ESC $ B (switch to JIS X 0208) split mid-escape, then "一", then ESC ( B
+    [
+      "iso-2022-jp",
+      [0x1b, 0x24, 0x42, 0x30, 0x6c, 0x1b, 0x28, 0x42],
+      "一",
+      [
+        [1, 7],
+        [2, 6],
+        [4, 4],
+        [3, 2, 3],
+      ],
+    ],
+  ];
+
+  describe.each(cases)("%s", (encoding, bytes, expected, splits) => {
+    test("whole decode", () => {
+      expect(new TextDecoder(encoding).decode(new Uint8Array(bytes))).toBe(expected);
+    });
+    for (const split of splits) {
+      test(`split ${JSON.stringify(split)}`, () => {
+        expect(streamingDecode(encoding, bytes, split)).toBe(expected);
+      });
+    }
+  });
+
+  test("reusing a decoder after a flushing decode starts a fresh stream", () => {
+    // End the first stream in JIS X 0208 mode; a fresh stream must start in
+    // ASCII so plain ASCII bytes decode as themselves.
+    const d = new TextDecoder("iso-2022-jp");
+    let first = d.decode(new Uint8Array([0x1b, 0x24, 0x42, 0x30, 0x6c]), { stream: true });
+    first += d.decode(new Uint8Array([0x1b, 0x28, 0x42]));
+    expect(first).toBe("一");
+    expect(d.decode(new Uint8Array([0x41, 0x42, 0x43]))).toBe("ABC");
+
+    // Same for a lead-byte encoding: a buffered lead must not survive a flush.
+    const d2 = new TextDecoder("big5");
+    expect(d2.decode(new Uint8Array([0xa4]), { stream: true })).toBe("");
+    expect(d2.decode(new Uint8Array([0x40]))).toBe("一");
+    expect(d2.decode(new Uint8Array([0x40]))).toBe("@");
+  });
 });

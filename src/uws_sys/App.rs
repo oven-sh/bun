@@ -460,9 +460,6 @@ impl<const SSL: bool> App<SSL> {
 }
 
 /// Opaque listen socket handle, parameterized by SSL to match `App<SSL>`.
-///
-/// TODO(port): in Zig this was a nested `App<SSL>::ListenSocket` opaque. Rust cannot
-/// nest type definitions inside an `impl`; defined at module level instead.
 #[repr(C)]
 pub struct ListenSocket<const SSL: bool> {
     _p: core::cell::UnsafeCell<[u8; 0]>,

@@ -33,9 +33,6 @@ use bun_collections::ArrayHashMapExt;
 use bun_core::{OwnedString, String as BunString, ZigString};
 use bun_options_types::schema::api;
 
-// TODO(port): `pub const js = jsc.Codegen.JSTranspiler;` and the toJS/fromJS/fromJSDirect
-// aliases are wired by `#[bun_jsc::JsClass]` codegen — see PORTING.md §JSC types.
-
 // Host-fn re-entrancy: every JS-exposed method takes `&self`; per-field
 // interior mutability via `JsCell` (= `UnsafeCell` projector). `JsCell` is
 // `#[repr(transparent)]`, so field offsets are unchanged.
@@ -788,8 +785,6 @@ impl<'a> TransformTask<'a> {
             },
         );
 
-        // TODO(port): ASTMemoryAllocator scope — typed_arena in AST crates; here we just
-        // construct one and enter it. Model as RAII guard.
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
@@ -1455,10 +1450,10 @@ impl JSTranspiler {
             ));
         };
         let mut code = code;
-        if let StringOrBuffer::Buffer(buffer) = &code {
-            let bytes = buffer.slice().to_vec();
+        if matches!(code, StringOrBuffer::Buffer(_)) {
+            let bytes = code.slice().to_vec();
             global.vm().report_extra_memory(bytes.len());
-            buffer.buffer.value.unprotect();
+            bun_jsc::Unprotect::unprotect(&mut code);
             code = StringOrBuffer::EncodedSlice(bun_core::ZigStringSlice::init_owned(bytes));
         }
         // `errdefer code.deinitAndUnprotect()` — `from_js_with_encoding_maybe_async`

@@ -496,8 +496,6 @@ pub const MI_SMALL_SIZE_MAX: usize =
 pub const MI_ALIGNMENT_MAX: c_ulong = (16 * 1024) * 1024;
 pub const MI_MAX_ALIGN_SIZE: usize = 16;
 
-// TODO(port): Zig took `std.mem.Alignment` (log2 newtype). Rust callers pass the
-// alignment in bytes directly; revisit if `bun_alloc` grows an `Alignment` type.
 #[inline]
 pub fn must_use_aligned_alloc(alignment: usize) -> bool {
     alignment > MI_MAX_ALIGN_SIZE

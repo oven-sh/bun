@@ -135,7 +135,6 @@ fn exec_task(task_: &[u8], cwd: &[u8], _path: &[u8], npm_client: Option<NPMClien
 pub(crate) struct ProgressBuf;
 
 impl ProgressBuf {
-    // TODO(port): mutable global buffers — single-threaded CLI usage
     thread_local! {
         static BUFS: core::cell::RefCell<[[u8; 1024]; 2]> = const { core::cell::RefCell::new([[0u8; 1024]; 2]) };
         static BUF_INDEX: Cell<usize> = const { Cell::new(0) };
@@ -447,7 +446,6 @@ impl CreateCommand {
 
                 let file_buf = vec![0u8; 16384];
 
-                // TODO(port): ArrayListUnmanaged with pre-allocated buffer — using Vec directly
                 let mut tarball_buf_list: Vec<u8> = file_buf;
                 let mut gunzip = Zlib::ZlibReaderArrayList::init(
                     tarball_bytes.list.as_slice(),
@@ -513,7 +511,7 @@ impl CreateCommand {
                                     "<r>  <blue>{}<r>",
                                     bstr::BStr::new(&path[0..path.len().max(1) - 1]),
                                 );
-                                Output::pretty_errorln(bun_paths::SEP_STR);
+                                pretty_errorln!("{}", bun_paths::SEP_STR);
                             } else {
                                 pretty_errorln!("<r>  {}", bstr::BStr::new(path));
                             }
@@ -730,7 +728,6 @@ impl CreateCommand {
         let path_env = env_loader.map.get(b"PATH").unwrap_or(b"");
 
         {
-            // TODO(port): std.fs.openDirAbsolute — use bun_sys
             let parent_dir = bun_sys::Dir::open(destination)?;
             #[cfg(windows)]
             {
@@ -1089,7 +1086,6 @@ impl CreateCommand {
                     }
 
                     pub(crate) fn npx_react_scripts_build() -> bun_ast::Expr {
-                        // TODO(port): build bun_ast::Expr { .e_string = "npx react-scripts build" }
                         bun_ast::Expr::init(
                             bun_ast::E::EString::init(b"npx react-scripts build"),
                             bun_ast::Loc::EMPTY,
@@ -1270,10 +1266,10 @@ impl CreateCommand {
                                             || strings::contains(script, b"react-scripts eject")
                                         {
                                             if create_options.verbose {
-                                                Output::pretty_errorln(format_args!(
+                                                bun_core::pretty_errorln!(
                                                     "<r><d>[package.json] Pruned unnecessary script: {}<r>",
                                                     bstr::BStr::new(script),
-                                                ));
+                                                );
                                             }
 
                                             script_property_i += 1;
@@ -1396,34 +1392,31 @@ impl CreateCommand {
                         ..Default::default()
                     },
                 ) {
-                    Output::pretty_errorln(format_args!(
-                        "package.json failed to write due to error {}",
-                        err,
-                    ));
+                    bun_core::pretty_errorln!("package.json failed to write due to error {}", err,);
                     break 'process_package_json;
                 }
                 let written = package_json_writer.ctx.get_written();
                 // `file` is the fd still owned by `package_json_file`; borrow it
                 // (constructing an owning `File` here would double-close on drop).
                 if let Err(err) = bun_sys::File::borrow(&file).write_all(written) {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "package.json failed to write due to error {}",
                         bstr::BStr::new(err.name()),
-                    ));
+                    );
                     break 'process_package_json;
                 }
                 if let Err(err) = bun_sys::ftruncate(file, written.len() as i64) {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "package.json failed to write due to error {}",
                         bstr::BStr::new(err.name()),
-                    ));
+                    );
                     break 'process_package_json;
                 }
             }
         }
 
         if create_options.verbose {
-            Output::pretty_errorln(format_args!("Has dependencies? {}", has_dependencies as u8,));
+            bun_core::pretty_errorln!("Has dependencies? {}", has_dependencies as u8,);
         }
 
         let mut npm_client_: Option<NPMClient> = None;
@@ -1466,27 +1459,27 @@ impl CreateCommand {
             let start_time = bun_core::time::nano_timestamp();
             let install_args: &[&[u8]] = &[npm_client.bin, b"install"];
             Output::flush();
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "\n<r><d>$ <b><cyan>{}<r><d> install",
                 npm_client.tag.as_str(),
-            ));
+            );
 
             if install_args.len() > 2 {
                 for arg in &install_args[2..] {
-                    Output::pretty(format_args!(" "));
-                    Output::pretty(format_args!("{}", bstr::BStr::new(arg)));
+                    bun_core::pretty!(" ");
+                    bun_core::pretty!("{}", bstr::BStr::new(arg));
                 }
             }
 
-            Output::pretty(format_args!("<r>\n"));
+            bun_core::pretty!("<r>\n");
             Output::flush();
             scopeguard::defer! {
                 Output::print_errorln("\n");
                 Output::print_start_end(start_time, bun_core::time::nano_timestamp());
-                Output::pretty_error(format_args!(
+                bun_core::pretty_error!(
                     " <r><d>{} install<r>\n",
                     npm_client.tag.as_str(),
-                ));
+                );
                 Output::flush();
 
                 Output::print(format_args!("\n"));
@@ -1528,19 +1521,14 @@ impl CreateCommand {
 
         Output::print_error("\n");
         Output::print_start_end(ctx.start_time, bun_core::time::nano_timestamp());
-        Output::pretty_errorln(format_args!(
-            " <r><d>bun create {}<r>",
-            bstr::BStr::new(template)
-        ));
+        bun_core::pretty_errorln!(" <r><d>bun create {}<r>", bstr::BStr::new(template));
 
         Output::flush();
 
-        Output::pretty(format_args!(
-            "\n<d>Come hang out in bun's Discord: https://bun.com/discord<r>\n",
-        ));
+        bun_core::pretty!("\n<d>Come hang out in bun's Discord: https://bun.com/discord<r>\n",);
 
         if !create_options.skip_install {
-            Output::pretty(format_args!("\n<r><d>-----<r>\n"));
+            bun_core::pretty!("\n<r><d>-----<r>\n");
             Output::flush();
         }
 
@@ -1552,17 +1540,13 @@ impl CreateCommand {
         // }
 
         if !create_options.skip_git && !create_options.skip_install {
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "\n<d>A local git repository was created for you and dependencies were installed automatically.<r>\n",
-            ));
+            );
         } else if !create_options.skip_git {
-            Output::pretty(format_args!(
-                "\n<d>A local git repository was created for you.<r>\n",
-            ));
+            bun_core::pretty!("\n<d>A local git repository was created for you.<r>\n",);
         } else if !create_options.skip_install {
-            Output::pretty(format_args!(
-                "\n<d>Dependencies were installed automatically.<r>\n",
-            ));
+            bun_core::pretty!("\n<d>Dependencies were installed automatically.<r>\n",);
         }
 
         if example_tag == ExampleTag::GithubRepository {
@@ -1577,27 +1561,27 @@ impl CreateCommand {
                 }
             }
 
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "\n<b><green>Success!<r> <b>{}<r> loaded into <b>{}<r>\n",
                 bstr::BStr::new(display_name),
                 bstr::BStr::new(bun_paths::basename(destination)),
-            ));
+            );
         } else {
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "\n<b>Created <green>{}<r> project successfully\n",
                 bstr::BStr::new(bun_paths::basename(template)),
-            ));
+            );
         }
 
         if is_nextjs {
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "\n<r><d>#<r> When dependencies change, run this to update node_modules.bun:\n\n  <b><cyan>bun bun --use next<r>\n",
-            ));
+            );
         } else if is_create_react_app {
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "\n<r><d>#<r> When dependencies change, run this to update node_modules.bun:\n\n  <b><cyan>bun bun {}<r>\n",
                 bstr::BStr::new(create_react_app_entry_point_path),
-            ));
+            );
         }
 
         // PORT NOTE: Zig `filesystem.relativeTo(destination)` —
@@ -1608,16 +1592,16 @@ impl CreateCommand {
         let is_empty_destination = rel_destination.is_empty();
 
         if is_empty_destination {
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "\n<d>#<r><b> To get started, run:<r>\n\n  <b><cyan>{}<r>\n\n",
                 bstr::BStr::new(start_command),
-            ));
+            );
         } else {
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "\n<d>#<r><b> To get started, run:<r>\n\n  <b><cyan>cd {}<r>\n  <b><cyan>{}<r>\n\n",
                 bstr::BStr::new(rel_destination),
                 bstr::BStr::new(start_command),
-            ));
+            );
         }
 
         Output::flush();
@@ -1704,7 +1688,7 @@ impl CreateCommand {
                         // Show a warning when the local file exists and it's not a .js file
                         // A lot of create-* npm packages have .js in the name, so you could end up with that warning.
                         else if !extension.is_empty() && extension != b".js" {
-                            Output::warn(
+                            bun_core::warn!(
                                 "bun create [local file] only supports .jsx and .tsx files currently",
                             );
                         }
@@ -2131,18 +2115,18 @@ impl Example {
             });
 
             if !example.description.is_empty() {
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "  <r># {}<r>\n  <b>bun create <cyan>{}<r><b> {}<r>\n<d>  \n\n",
                     bstr::BStr::new(example.description),
                     bstr::BStr::new(example.name),
                     bstr::BStr::new(app_name),
-                ));
+                );
             } else {
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "  <r><b>bun create <cyan>{}<r><b> {}<r>\n\n",
                     bstr::BStr::new(example.name),
                     bstr::BStr::new(app_name),
-                ));
+                );
             }
         }
     }
@@ -2356,13 +2340,13 @@ impl Example {
             refresher.refresh();
 
             if !content_type.is_empty() {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: Unexpected content type from GitHub: {}",
                     bstr::BStr::new(content_type),
-                ));
+                );
                 Global::crash();
             } else {
-                Output::pretty_errorln(
+                bun_core::pretty_errorln!(
                     "<r><red>error<r>: Invalid response from GitHub (missing content type)",
                 );
                 Global::crash();
@@ -2373,11 +2357,12 @@ impl Example {
             progress.end();
             refresher.refresh();
 
-            Output::pretty_errorln("<r><red>error<r>: Invalid response from GitHub (missing body)");
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: Invalid response from GitHub (missing body)"
+            );
             Global::crash();
         }
 
-        // TODO(port): Zig returned `mutable.*` (deref-copy of struct). MutableString may need Clone.
         Ok(mutable.clone()?)
     }
 
@@ -2468,10 +2453,7 @@ impl Example {
                     let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                     Global::exit(1);
                 } else {
-                    Output::pretty_errorln(format_args!(
-                        "Error parsing package: <r><red>{}<r>",
-                        err.name(),
-                    ));
+                    bun_core::pretty_errorln!("Error parsing package: <r><red>{}<r>", err.name(),);
                     Global::exit(1);
                 }
             }
@@ -2502,7 +2484,7 @@ impl Example {
             progress.end();
             refresher.refresh();
 
-            Output::pretty_errorln(
+            bun_core::pretty_errorln!(
                 "package.json is missing tarball url. This is an internal error!",
             );
             Global::exit(1);
@@ -2546,16 +2528,15 @@ impl Example {
         if response.status_code != 200 {
             progress.end();
             refresher.refresh();
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "Error fetching tarball: <r><red>{}<r>",
                 response.status_code,
-            ));
+            );
             Global::exit(1);
         }
 
         refresher.refresh();
 
-        // TODO(port): see note above re: returning MutableString by value
         Ok(mutable.clone()?)
     }
 
@@ -2591,26 +2572,26 @@ impl Example {
             Ok(r) => r,
             Err(err) => {
                 if err == bun_core::err!("WouldBlock") {
-                    Output::pretty_errorln(
+                    bun_core::pretty_errorln!(
                         "Request timed out while trying to fetch examples list. Please try again",
                     );
                     Global::exit(1);
                 } else {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<r><red>{}<r> while trying to fetch examples list. Please try again",
                         err.name(),
-                    ));
+                    );
                     Global::exit(1);
                 }
             }
         };
 
         if response.status_code != 200 {
-            Output::pretty_errorln(format_args!(
+            bun_core::pretty_errorln!(
                 "<r><red>{} {}<r> fetching examples :( ",
                 response.status_code,
                 bstr::BStr::new(mutable.list.as_slice()),
-            ));
+            );
             Global::exit(1);
         }
 
@@ -2630,10 +2611,7 @@ impl Example {
                     let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                     Global::exit(1);
                 } else {
-                    Output::pretty_errorln(format_args!(
-                        "Error parsing examples: <r><red>{}<r>",
-                        err.name(),
-                    ));
+                    bun_core::pretty_errorln!("Error parsing examples: <r><red>{}<r>", err.name(),);
                     Global::exit(1);
                 }
             }
@@ -2708,10 +2686,10 @@ impl Example {
             }
         }
 
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "Corrupt examples data: expected object but received {}",
             examples_object.data.tag_name(),
-        ));
+        );
         Global::exit(1);
     }
 }
@@ -2745,26 +2723,26 @@ impl CreateListExamplesCommand {
             &mut env_loader,
             filesystem,
         )?;
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "Welcome to bun! Create a new project by pasting any of the following:\n",
-        ));
+        );
         Output::flush();
 
         Example::print(&examples, None);
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><d>#<r> You can also paste a GitHub repository:\n\n  <b>bun create <cyan>ahfarmer/calculator calc<r>\n",
-        ));
+        );
 
         if let Some(homedir) = env_loader.map.get(bun_core::env_var::HOME.key()) {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<d>This command is completely optional. To add a new local template, create a folder in {}/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
                 bstr::BStr::new(homedir),
-            ));
+            );
         } else {
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "<d>This command is completely optional. To add a new local template, create a folder in $HOME/.bun-create/. To publish a new template, git clone https://github.com/oven-sh/bun, add a new folder to the \"examples\" folder, and submit a PR.<r>",
-            ));
+            );
         }
 
         Output::flush();
@@ -2774,7 +2752,6 @@ impl CreateListExamplesCommand {
 
 struct GitHandler;
 
-// TODO(port): mutable static atomic + thread handle — single use per process
 static SUCCESS: AtomicU32 = AtomicU32::new(0);
 // Zig used `std.Thread`; bun_threading has no top-level Thread wrapper yet,
 // so use std::thread::JoinHandle directly (CLI-only, no JSC interaction).
@@ -2799,7 +2776,7 @@ impl GitHandler {
         {
             Ok(t) => t,
             Err(err) => {
-                Output::pretty_errorln(format_args!("<r><red>{}<r>", err));
+                bun_core::pretty_errorln!("<r><red>{}<r>", err);
                 Global::exit(1);
             }
         };
@@ -2884,7 +2861,7 @@ impl GitHandler {
             ];
 
             if VERBOSE {
-                Output::pretty_errorln(format_args!("git backend: {}", bstr::BStr::new(git)));
+                bun_core::pretty_errorln!("git backend: {}", bstr::BStr::new(git));
             }
 
             // same names, just comptime known values
@@ -2909,9 +2886,9 @@ impl GitHandler {
                 })?;
             }
 
-            Output::pretty_error("\n");
+            bun_core::pretty_error!("\n");
             Output::print_start_end(git_start, bun_core::time::nano_timestamp());
-            Output::pretty_error(" <d>git<r>\n");
+            bun_core::pretty_error!(" <d>git<r>\n");
             return Ok(true);
         }
 

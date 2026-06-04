@@ -24,11 +24,12 @@
  * the dynamic-list / NAPI surface (no inbound static ref) are retained too.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { bunExeName, type Config } from "./config.ts";
 import { assert } from "./error.ts";
 import type { Ninja } from "./ninja.ts";
+import { rustLtoFixCliPath } from "./rust-lto-fix-cli.ts";
 import { quote, quoteArgs } from "./shell.ts";
 import { streamPath } from "./stream.ts";
 
@@ -86,8 +87,12 @@ function cargoProfile(cfg: Config): { name: string; subdir: string } {
  *     compiles C for the target; if one ever does, emitRust's
  *     CFLAGS_<triple>/SDKROOT forwarding (set when the SDK is resolved)
  *     points cc-rs at the macOS SDK.
- *   windows-msvc × {x64,aarch64}: NOT from linux without `cargo-xwin`
- *     (or wine + the MSVC SDK). CI runs these on a Windows agent.
+ *   windows-msvc × {x64,aarch64}: yes *when a Windows sysroot (xwin splat)
+ *     is present* — the staticlib itself needs no SDK, but the bun_shim_impl
+ *     PE that emitRust() also builds links against kernel32/ntdll import
+ *     libs via lld-link + /winsysroot (see config.ts `winsysroot`). The
+ *     shared CI rust box doesn't carry a splat, so CI runs these on the
+ *     amazonlinux fleet instead, where configure fetches one per build.
  *
  * Unlike zig (which bundled its own libc/SDK for every target), cargo
  * delegates to a system C toolchain for any `cc`/`bindgen`/link step, so
@@ -98,7 +103,9 @@ export function rustCanCrossFromLinux(cfg: Config): boolean {
   if (cfg.linux) return true; // gnu, musl, android — all archs
   if (cfg.freebsd) return true;
   if (cfg.darwin) return true;
-  // windows: native agent required.
+  // windows: possible with a winsysroot (see above), but the shared rust
+  // box isn't provisioned with one — CI routes windows rust-only to the
+  // amazonlinux fleet (which fetches a splat at configure time) instead.
   return false;
 }
 
@@ -178,9 +185,22 @@ export function rustLibPath(cfg: Config): string {
 // ───────────────────────────────────────────────────────────────────────────
 
 export function registerRustRules(n: Ninja, cfg: Config): void {
-  if (cfg.cargo === undefined) return; // emitRust() asserts with a hint
   const hostWin = cfg.host.os === "windows";
   const q = (p: string) => quote(p, hostWin);
+
+  // Regular-LTO summary fix-up for the ELF cross-language LTO link (see
+  // rustLtoLinkInputs() below). Registered before the cargo gate: the
+  // link-only CI agents emit this edge too, and it needs rustc's
+  // llvm-tools, not cargo. Not darwin/windows: their ThinLTO links keep the
+  // per-CGU summaries (CARGO_PROFILE_RELEASE_LTO=off) and need no fix-up.
+  if (cfg.crossLangLto && !cfg.darwin && !cfg.windows) {
+    n.rule("rust_lto_fix", {
+      command: `${cfg.jsRuntime} ${q(rustLtoFixCliPath)} $in $out $llvm_bin $ar`,
+      description: "regular-LTO summary → $out",
+    });
+  }
+
+  if (cfg.cargo === undefined) return; // emitRust() asserts with a hint
   const stream = `${cfg.jsRuntime} ${q(streamPath)} rust`;
 
   // Cargo build for `bun_bin`. Runs from repo root (workspace `Cargo.toml`
@@ -239,27 +259,39 @@ export function registerRustRules(n: Ninja, cfg: Config): void {
   // preserving the embedded `"..."` around paths/env values). Same pattern as
   // codegen.ts / bun.ts.
   // Windows .bin/ shim PE: cargo build → copy into the source tree for
-  // `include_bytes!`. One rule does both so the declared output is the
-  // source-tree path (cargo's own output path is an undeclared intermediate).
+  // `include_bytes!`. One rule does both; cargo's own output path and the
+  // source-tree copy are undeclared side effects (see below for what $out is).
   //
-  // Copy is *content-conditional* (`fc /b` returns 0 iff bytes match) so
-  // `restat` actually prunes: any `.rs` edit re-invokes this rule (it shares
-  // `rustSources` with the main build), cargo no-ops, and a blind `copy /Y`
-  // would still bump $out's mtime → `bun_install`'s `include_bytes!` dep-info
-  // sees a change → spurious recompile of `bun_install` + downstream on every
-  // build. Skipping the copy when bytes match keeps mtime stable and lets
-  // `restat` cut the edge.
+  // Copy is *content-conditional* (`fc /b` / `cmp -s` returns 0 iff bytes
+  // match): any `.rs` edit re-invokes this rule (it shares `rustSources`
+  // with the main build), cargo no-ops, and a blind copy would still bump
+  // the destination's mtime → `bun_install`'s `include_bytes!` dep-info sees
+  // a change → spurious recompile of `bun_install` + downstream on every
+  // build. Skipping the copy when bytes match keeps its mtime stable.
   //
-  // Windows-only — never registered elsewhere, so the rule body hard-assumes
-  // cmd.exe (`fc`, `copy`, `>nul`).
+  // The declared output ($out) is a per-build-dir stamp, NOT the source-tree
+  // exe: the exe path is shared by every windows arch/profile (the
+  // `include_bytes!` path is fixed), so if it were the output, building x64
+  // then arm64 in sibling build dirs would leave the arm64 dir believing the
+  // (x64) exe is up to date and embed the wrong-arch shim. With the stamp as
+  // output and the shared exe as an implicit *input*, a sibling build dir
+  // overwriting the exe makes this dir's stamp stale → the shim is rebuilt
+  // for the right arch on the next build here.
+  //
+  // Registered for windows *targets* only; the shell dialect follows the
+  // HOST (cmd.exe natively, sh when cross-compiling from linux/macOS).
   if (cfg.windows) {
     n.rule("rust_shim", {
-      command:
-        `cmd /c "${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
-        `( fc /b $shim_src $out >nul 2>&1 || copy /Y /B $shim_src $out >nul )"`,
-      description: "cargo bun_shim_impl → $out",
+      command: hostWin
+        ? `cmd /c "${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
+          `( fc /b $shim_src $shim_dest >nul 2>&1 || copy /Y /B $shim_src $shim_dest >nul ) && type nul > $out"`
+        : `${stream} --cwd=$cwd $env ${q(cfg.cargo)} build $args && ` +
+          `( cmp -s $shim_src $shim_dest 2>/dev/null || cp $shim_src $shim_dest ) && touch $out`,
+      description: "cargo bun_shim_impl → $shim_dest",
       pool: "console",
-      restat: true,
+      // No restat: the stamp ($out) is touched unconditionally, so there's
+      // nothing for ninja to prune on; the content-conditional copy above
+      // exists for cargo's dep-info on $shim_dest, not for restat.
     });
   }
 
@@ -512,10 +544,11 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   if (!cfg.windows) rustflags.push(`-Clink-arg=-fuse-ld=lld`);
   if (cfg.crossLangLto) {
     // Cross-language LTO: emit LLVM bitcode (not machine code) into the .a
-    // so the final lld `-flto=thin` link sees through Rust↔C++ call edges.
-    // `linker-plugin-lto` supersedes Cargo's `[profile.release] lto="fat"`
-    // (cargo skips its own LTO pass and defers to the linker), so there's no
-    // double-LTO cost.
+    // so the final lld LTO link sees through Rust↔C++ call edges. The shape
+    // of that bitcode must match the platform's C++ LTO mode — thin
+    // (per-CGU, ThinLTO-summaried) on darwin, fat (pre-merged by rustc,
+    // summary-less) on ELF — selected via the CARGO_PROFILE_RELEASE_LTO
+    // override in the env block below.
     //
     // Bitcode-format compatibility: lld must be able to read rustc's bitcode.
     // LLVM bitcode is forward-compatible (newer reads older), so this works
@@ -535,21 +568,38 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     //     default is also 0 — pass nothing. Adding -Zsplit-lto-unit here
     //     would make the Rust modules the inconsistent ones and abort the
     //     link.
-    //   - linux (full LTO): -fwhole-program-vtables on ELF defaults the
-    //     split ON for C++, so every C++ module (ours and the WebKit -lto
-    //     prebuilts) carries EnableSplitLTOUnit=1. The Rust ThinLTO
-    //     summaries must say 1 to match → -Zsplit-lto-unit.
-    //
-    // The CARGO_PROFILE_RELEASE_LTO override below keeps the per-CGU
-    // ThinLTO summaries that the consistency check (and cross-language
-    // importing) reads — `lto = "fat"` would pre-merge all crates into one
-    // summary-less blob.
+    //   - windows cross (ThinLTO): same as darwin — clang-cl never gets
+    //     -fwhole-program-vtables (COFF associative-COMDAT abort) and
+    //     -fno-split-lto-unit is passed explicitly, so every C/C++ module is
+    //     0 and rustc's default 0 matches — pass nothing.
+    //   - linux (full LTO): the regular-LTO summary clang writes on ELF
+    //     always says EnableSplitLTOUnit=1, so every C++ module (ours and
+    //     the WebKit -lto prebuilts) carries 1. The Rust modules'
+    //     EnableSplitLTOUnit module flag must say 1 to match →
+    //     -Zsplit-lto-unit. (The flag is stamped per-CGU at module
+    //     creation, survives rustc's fat-LTO pre-merge, and is what the
+    //     rust_lto_fix step's `opt --module-summary` copies into the
+    //     regular-LTO summary it bolts onto the merged module — see
+    //     rust-lto-fix-cli.ts.)
     //
     // (`-Clink-arg=-fuse-ld=lld` is pushed unconditionally above — under LTO
     // it doubles as making rustc's bitcode link go through the LTO-aware
     // linker our final link uses, not BFD `/usr/bin/ld`.)
-    if (!cfg.darwin) {
+    if (!cfg.darwin && !cfg.windows) {
       rustflags.push("-Zsplit-lto-unit");
+
+      // Rust functions default to carrying the `uwtable(async)` attribute.
+      // When the LTO inliner inlines such a callee into one of our C++
+      // callers (compiled without unwind tables), the caller inherits the
+      // attribute — so cross-language inlining sprays full .eh_frame FDEs
+      // across thousands of C++ functions (~+1.8 MB on the linux links;
+      // the musl release binary keeps .eh_frame so it pays it in full).
+      // We build with panic=abort and always keep frame pointers, and the
+      // glibc release binary already ships without .eh_frame entirely, so
+      // the tables are pure dead weight here — turn them off for the Rust
+      // side of the merged module. (The prebuilt std bitcode keeps its own
+      // uwtable attrs; this only stops our crates from spreading them.)
+      rustflags.push("-Cforce-unwind-tables=no");
     }
   }
 
@@ -617,14 +667,34 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
     }
   }
   if (cfg.crossLangLto) {
-    // The workspace `[profile.release]` sets `lto = "fat"` so non-LTO release
-    // builds (where the rust .a is linked as native code) still get
-    // intra-Rust inlining. With `-Clinker-plugin-lto` that pre-merge is
-    // wasted work — the linker re-merges everything anyway — and it strips
-    // the per-module summary index lld needs for the EnableSplitLTOUnit
-    // consistency check (see the EnableSplitLTOUnit note above). Override to
-    // `off` so each crate's bitcode reaches lld with its summary intact.
-    env.CARGO_PROFILE_RELEASE_LTO = "off";
+    // The Rust bitcode's shape must match the platform's C++ LTO mode so both
+    // sides land in the same LTO partition at link time and can exchange
+    // function bodies. (The workspace `[profile.release] lto = "fat"` exists
+    // for non-LTO release builds, where the rust .a is linked as
+    // already-codegen'd machine code and still wants intra-Rust inlining.)
+    //
+    //   - darwin / windows cross (ThinLTO links): `off`. Each crate's
+    //     per-CGU bitcode keeps its ThinLTO summary, so the whole link is
+    //     one uniform ThinLTO graph and cross-module importing works across
+    //     Rust↔C++/JSC. `fat` would pre-merge the crates into one
+    //     summary-less blob the thin link can't import from (and rustc's
+    //     serial pre-merge is wasted work — the linker schedules the
+    //     backends itself).
+    //   - ELF (full-LTO link — see the -flto=full entry in flags.ts): `fat`.
+    //     rustc pre-merges every crate (including the prebuilt std's
+    //     embedded bitcode) into ONE summary-less regular-LTO module, which
+    //     lld then merges into the same regular-LTO partition as the C++
+    //     `-flto=full` objects — that merge is what gives Rust↔C++
+    //     cross-language inlining under full LTO. (The merged module first
+    //     gets a regular-LTO summary bolted on by the rust_lto_fix edge —
+    //     rustLtoLinkInputs() below — because lld's EnableSplitLTOUnit
+    //     consistency check requires one.) With `off`, the per-CGU
+    //     ThinLTO-summaried modules are processed as ThinLTO partitions
+    //     instead, which (a) never exchange function bodies with the C++
+    //     regular partition (no cross-language inlining at all), and
+    //     (b) go through the LLVM 22 ThinLTO backend pipeline that
+    //     miscompiles JSC on linux.
+    env.CARGO_PROFILE_RELEASE_LTO = cfg.darwin || cfg.windows ? "off" : "fat";
   } else if (cfg.asan) {
     // release-asan has `cfg.lto` forced off (config.ts), but without this
     // override Cargo.toml's `[profile.release] lto = "fat"` still applies —
@@ -710,9 +780,23 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       "-Clink-arg=/NODEFAULTLIB",
       "-Clink-arg=kernel32.lib",
       "-Clink-arg=ntdll.lib",
+      // Cross-compiling from a unix host: this is the only cargo-driven link
+      // of a *target* artifact, and the linker is lld-link (no MSVC install),
+      // so point it at the xwin splat for the kernel32/ntdll import libs.
+      ...(cfg.winsysroot !== undefined ? [`-Clink-arg=/winsysroot:${cfg.winsysroot}`] : []),
     ].join("\x1f");
+    // Declared output = per-build-dir stamp; the shared source-tree exe is an
+    // implicit INPUT (see the rust_shim rule comment for why). The exe must
+    // exist before ninja evaluates the graph — pre-create an empty
+    // placeholder the same way `src/install/build.rs` does for bare
+    // `cargo check`, so a fresh checkout doesn't error on a missing input.
+    if (!existsSync(shimDest)) {
+      mkdirSync(dirname(shimDest), { recursive: true });
+      writeFileSync(shimDest, "");
+    }
+    const shimStamp = resolve(targetDir, triple, "shim", "bun_shim_impl.stamp");
     n.build({
-      outputs: [shimDest],
+      outputs: [shimStamp],
       rule: "rust_shim",
       inputs: [],
       // Same staleness signal as the main build (any .rs / Cargo.toml change
@@ -720,18 +804,21 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
       // recompiles). vendorStamps order the lol-html fetch first — the shim
       // crate doesn't depend on lol-html, but cargo refuses to load the
       // workspace manifest if any path-dep's `Cargo.toml` is missing.
-      implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.vendorStamps],
+      // shimDest: rebuilt when a sibling build dir (other arch/profile)
+      // overwrote the shared exe.
+      implicitInputs: [cfg.cargo, ...inputs.rustSources, ...inputs.vendorStamps, shimDest],
       vars: {
         cwd: cfg.cwd,
         args: quoteArgs(shimArgs, hostWin),
         shim_src: quote(shimSrc, hostWin),
+        shim_dest: quote(shimDest, hostWin),
         env: Object.entries(shimEnv)
           .map(([k, v]) => `--env=${k}=${quote(v, hostWin)}`)
           .join(" "),
       },
     });
-    n.phony("bun-shim", [shimDest]);
-    shimInputs.push(shimDest);
+    n.phony("bun-shim", [shimStamp]);
+    shimInputs.push(shimStamp);
   }
 
   // ─── Emit build node ───
@@ -772,6 +859,44 @@ export function emitRust(n: Ninja, cfg: Config, inputs: RustBuildInputs): string
   n.blank();
 
   return [lib];
+}
+
+/**
+ * Link inputs for the Rust side of the binary.
+ *
+ * On ELF cross-language LTO targets the fat Rust bitcode member can't go
+ * into the link as-is: it has no per-module summary, so lld reads it as
+ * EnableSplitLTOUnit=0 while every clang-produced full-LTO object (ours,
+ * the deps', the WebKit -lto prebuilts') says 1, and the link aborts with
+ * "inconsistent LTO Unit splitting". rustc has no way to emit a regular-LTO
+ * summary (clang hardcodes one in shouldEmitRegularLTOSummary()), so a
+ * build step rewrites the bitcode with rustc's own LLVM tools — see
+ * rust-lto-fix-cli.ts and the `rustc-no-regular-lto-summary` workaround
+ * entry.
+ *
+ * Returns [fixed bitcode .o, original .a]: the .o defines every Rust symbol
+ * (so the archive's bitcode member is never pulled), and the archive still
+ * supplies its native members (compiler_builtins). On every other config
+ * this is the identity function.
+ */
+export function rustLtoLinkInputs(n: Ninja, cfg: Config, rustObjects: string[]): string[] {
+  const rustLib = rustObjects[0];
+  if (!cfg.crossLangLto || cfg.darwin || cfg.windows || rustLib === undefined) return rustObjects;
+  assert(
+    cfg.rustSysroot !== undefined && cfg.host.rustTriple !== undefined,
+    "ELF cross-language LTO needs rustc's sysroot to locate its LLVM tools (llvm-link/opt) for the regular-LTO summary fix-up, but rustc wasn't found",
+    { hint: "Install the pinned rust toolchain (rustup show active-toolchain), or build with --lto=off" },
+  );
+  const llvmBin = join(cfg.rustSysroot, "lib", "rustlib", cfg.host.rustTriple, "bin");
+  const out = resolve(cfg.buildDir, "bun_rust.lto.o");
+  n.build({
+    outputs: [out],
+    rule: "rust_lto_fix",
+    inputs: [rustLib],
+    implicitInputs: [rustLtoFixCliPath],
+    vars: { llvm_bin: llvmBin, ar: cfg.ar },
+  });
+  return [out, ...rustObjects];
 }
 
 /** `${buildDir}/${exe}.linker-map` — lld's `-Wl,-Map=` output (see flags.ts). */

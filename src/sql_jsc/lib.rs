@@ -3,10 +3,7 @@
 
 // ──────────────────────────────────────────────────────────────────────────
 // Module tree wired with explicit `#[path]` attrs (files use PascalCase
-// basenames, mirroring the Zig sources). Heavy leaf modules remain
-// individually gated with `// TODO(port):` markers naming the
-// lower-tier symbol they need. Un-gate one-by-one as `bun_jsc` /
-// `bun_string` / `bun_runtime` grow real method surfaces.
+// basenames, mirroring the Zig sources).
 // ──────────────────────────────────────────────────────────────────────────
 
 // Local signature-compatible stubs for the JSC surface this crate names.
@@ -22,6 +19,8 @@ pub mod postgres;
 pub mod shared {
     #[path = "CachedStructure.rs"]
     pub mod cached_structure;
+
+    pub mod datetime_text;
 
     #[path = "ObjectIterator.rs"]
     pub mod object_iterator;

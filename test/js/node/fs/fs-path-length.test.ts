@@ -105,3 +105,84 @@ describe.if(isWindows)("path length validation in normalizePathWindows", () => {
     expect(() => fs.readdirSync(devLong)).toThrow("ENAMETOOLONG");
   });
 });
+
+// On Windows, node:fs converts paths to UTF-16 into fixed-size wide buffers
+// (PathLike.osPath: a [32767]u16 WPathBuffer; PathLike.osPathKernel32: the
+// 98302-byte PathBuffer viewed as [49151]u16). Path validation only bounds
+// the UTF-8 *byte* length (98302), so an ASCII path of 32767..98302 chars
+// passed validation and the UTF-8→UTF-16 conversion wrote past the wide
+// buffer (simdutf performs no bounds checking), panicking with "range end
+// index 49151 out of range for slice of length 49150". Paths that long can't
+// exist on NT (PATH_MAX_WIDE caps them), so the conversions now reject them
+// up front: exists → false, other ops → ENAMETOOLONG.
+describe.if(isWindows)("path length validation against UTF-16 conversion buffers", () => {
+  // Used to overflow the 49151-u16 osPathKernel32 view (exists, recursive
+  // mkdir, copyFile src).
+  const kernel32Long = "C:\\" + Buffer.alloc(49200, "a").toString();
+  // Used to overflow the 32767-u16 WPathBuffer (copyFile dest, cp).
+  const wideLong = "C:\\" + Buffer.alloc(40000, "a").toString();
+
+  it("existsSync returns false instead of crashing", () => {
+    expect(fs.existsSync(kernel32Long)).toBe(false);
+  });
+
+  // https://github.com/oven-sh/bun/issues/20258 — drive-letter-less paths of
+  // 49151..98302 chars crashed existsSync (49150 and 98303 already worked:
+  // the former fit the buffer, the latter exceeded the UTF-8 byte check).
+  it.each([49150, 49151, 64503, 98302, 98303])(
+    "existsSync handles path length %i across the buffer boundaries (#20258)",
+    len => {
+      expect(fs.existsSync(Buffer.alloc(len, "A").toString())).toBe(false);
+    },
+  );
+
+  it("rejects over-long paths in accessSync", () => {
+    expect(() => fs.accessSync(kernel32Long)).toThrow("ENAMETOOLONG");
+  });
+
+  // slice_z's drive-letter branch adds the \\?\ prefix in the 98302-byte
+  // PathBuffer; for byte lengths in (98297, 98302] the prefixed copy used to
+  // write past the buffer. It must fall back to the unprefixed form and
+  // surface the syscall's error (which one depends on the OS/filesystem).
+  it("handles drive-letter paths in the last bytes below MAX_PATH_BYTES", () => {
+    const p = "C:\\" + Buffer.alloc(98297, "a").toString();
+    expect(() => fs.statSync(p)).toThrow(/ENOENT|ENAMETOOLONG|EINVAL/);
+  });
+
+  it("rejects over-long paths in recursive mkdirSync", () => {
+    expect(() => fs.mkdirSync(kernel32Long, { recursive: true })).toThrow("ENAMETOOLONG");
+  });
+
+  it("rejects over-long src paths in copyFileSync", () => {
+    expect(() => fs.copyFileSync(kernel32Long, "copy-file-dest-does-not-matter.txt")).toThrow("ENAMETOOLONG");
+  });
+
+  it("rejects over-long dest paths in copyFileSync", () => {
+    expect(() => fs.copyFileSync("copy-file-src-does-not-matter.txt", wideLong)).toThrow("ENAMETOOLONG");
+  });
+
+  it("rejects over-long paths in cpSync", () => {
+    expect(() => fs.cpSync(wideLong, "cp-dest-does-not-matter.txt")).toThrow("ENAMETOOLONG");
+  });
+
+  it("rejects over-long paths in async fs.promises.mkdir", async () => {
+    expect(async () => await fs.promises.mkdir(kernel32Long, { recursive: true })).toThrow("ENAMETOOLONG");
+  });
+
+  it("rejects over-long Buffer paths", () => {
+    expect(() => fs.mkdirSync(Buffer.from(kernel32Long), { recursive: true })).toThrow("ENAMETOOLONG");
+  });
+
+  it("still accepts multi-byte paths that are long in bytes but within the UTF-16 bound", () => {
+    // 150 × 200-char CJK segments: 90152 UTF-8 bytes — past the UTF-16-unit
+    // limit in bytes — but only 30152 UTF-16 units, so
+    // fits_in_wide_path_buffer must compute the exact length and accept it.
+    // Each component stays under NTFS's 255-unit limit so the only possible
+    // syscall failure is non-existence: copyFileSync (which checks both
+    // paths against the guard and does not swallow errors) must get past
+    // the length guard and fail with ENOENT — not ENAMETOOLONG.
+    const segment = Buffer.alloc(600, "\u4e00").toString();
+    const p = "C:\\" + Array(150).fill(segment).join("\\");
+    expect(() => fs.copyFileSync(p, "copy-file-dest-does-not-matter.txt")).toThrow("ENOENT");
+  });
+});

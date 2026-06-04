@@ -56,8 +56,6 @@ impl HostedGitInfoJsc for bun_install::hosted_git_info::HostedGitInfo {
     }
 }
 
-// TODO(port): proc-macro — `#[bun_jsc::host_fn]` will wrap these into the
-// `JSHostFn` ABI for `$newZigFunction`. Bodies are plain `JSHostFnZig`-shaped fns.
 pub fn js_parse_url(go: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     use bun_install::hosted_git_info as hgi;
     if callframe.arguments_count() != 1 {

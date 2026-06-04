@@ -48,6 +48,59 @@ pub fn decode(destination: &mut [u8], source: &[u8]) -> SIMDUTFResult {
     result
 }
 
+/// Destination size that lets [`decode_lenient`] decode an input of
+/// `source_len` base64 characters in a single simdutf pass (the worst-case
+/// decoded length).
+pub const fn decode_lenient_len(source_len: usize) -> usize {
+    source_len.div_ceil(4) * 3
+}
+
+/// Decode base64 the way Node.js `Buffer.from(str, "base64" | "base64url")`
+/// and `buf.write(str, "base64" | "base64url")` do: both the standard and the
+/// URL-safe alphabets are accepted, whitespace and any other non-alphabet
+/// bytes are skipped, and decoding stops at the first `'='`. Invalid input
+/// never fails — as much data as possible is decoded.
+///
+/// Like Node.js, strictly valid input for the requested alphabet
+/// (`is_urlsafe`) is decoded with simdutf's fastest kernel; everything else is
+/// decoded with simdutf's `base64_default_or_url_accept_garbage` mode.
+///
+/// Returns the number of bytes written to `destination`.
+pub fn decode_lenient(destination: &mut [u8], source: &[u8], is_urlsafe: bool) -> usize {
+    // Fast path: the common case is strictly valid base64 for the requested
+    // alphabet (possibly with whitespace and padding), which simdutf decodes
+    // with its fastest kernel. This is the same first attempt Node.js makes.
+    let strict = simdutf::base64::decode(source, destination, is_urlsafe);
+    if strict.is_successful() {
+        return strict.count;
+    }
+
+    // simdutf only honors the accept-garbage stop-at-'=' rule when the
+    // destination can hold the worst-case decode; with a smaller destination
+    // (e.g. `buf.write` into a short buffer) it switches to a chunked strategy
+    // that keeps decoding past the '='. Apply the rule up front in that case
+    // so both strategies agree.
+    let source = if destination.len() < decode_lenient_len(source.len()) {
+        match source.iter().position(|&c| c == b'=') {
+            Some(index) => &source[..index],
+            None => source,
+        }
+    } else {
+        source
+    };
+
+    let result = simdutf::base64::decode_lenient(source, destination);
+    if result.is_successful() {
+        return result.count;
+    }
+
+    // The decoded data does not fit in `destination`: fall back to the scalar
+    // decoder, which fills `destination` and stops.
+    let mut wrote: usize = 0;
+    let _ = MIXED_DECODER.decode(destination, source, &mut wrote);
+    wrote
+}
+
 #[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeAllocError {
     #[error("DecodingFailed")]
@@ -56,7 +109,6 @@ pub enum DecodeAllocError {
 bun_core::named_error_set!(DecodeAllocError);
 
 pub fn decode_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
-    // TODO(port): narrow error set
     let mut dest = vec![0u8; decode_len(input)];
     let result = decode(&mut dest, input);
     if !result.is_successful() {
@@ -69,7 +121,6 @@ pub fn decode_alloc(input: &[u8]) -> Result<Vec<u8>, DecodeAllocError> {
 pub use bun_core::base64::encode;
 
 pub fn encode_alloc(source: &[u8]) -> Vec<u8> {
-    // TODO(port): narrow error set (Zig was `!bun.Vec<u8>`; OOM now aborts)
     let len = encode_len(source);
     let mut destination = vec![0u8; len];
     let encoded_len = encode(&mut destination, source);
@@ -88,17 +139,17 @@ pub(crate) fn simdutf_encode_len_url_safe(source_len: usize) -> usize {
 /// * `-` and `_` are used instead of `+` and `/`
 ///
 /// See the documentation for simdutf's `binary_to_base64` function for more details (simdutf_impl.h).
-pub(crate) fn simdutf_encode_url_safe(destination: &mut [u8], source: &[u8]) -> usize {
-    simdutf::base64::encode(source, destination, true)
+pub fn encode_url_safe(dest: &mut [u8], source: &[u8]) -> usize {
+    simdutf::base64::encode(source, dest, true)
 }
 
-/// `simdutf_encode_url_safe` into a freshly-allocated `Vec<u8>` sized exactly via
+/// `encode_url_safe` into a freshly-allocated `Vec<u8>` sized exactly via
 /// `simdutf_encode_len_url_safe` (simdutf computes the exact no-padding length, so
 /// the trailing `truncate` is a no-op kept for symmetry with `encode_alloc`).
 pub fn simdutf_encode_url_safe_alloc(source: &[u8]) -> Vec<u8> {
     let len = simdutf_encode_len_url_safe(source.len());
     let mut destination = vec![0u8; len];
-    let encoded_len = simdutf_encode_url_safe(&mut destination, source);
+    let encoded_len = encode_url_safe(&mut destination, source);
     destination.truncate(encoded_len);
     destination
 }
@@ -145,23 +196,6 @@ pub(crate) const fn url_safe_encode_len_from_size(n: usize) -> usize {
 #[inline]
 pub const fn url_safe_encode_len(source: &[u8]) -> usize {
     url_safe_encode_len_from_size(source.len())
-}
-
-// TODO(port): move to base64_sys
-unsafe extern "C" {
-    fn WTF__base64URLEncode(
-        input: *const u8,
-        input_len: usize,
-        output: *mut u8,
-        output_len: usize,
-    ) -> usize;
-}
-
-pub fn encode_url_safe(dest: &mut [u8], source: &[u8]) -> usize {
-    // TODO(port): bun.jsc.markBinding(@src()) — debug-only binding marker, no Rust equivalent yet
-    // SAFETY: WTF__base64URLEncode reads `input_len` bytes from `input` and writes at most
-    // `output_len` bytes to `output`; both slices are valid for those lengths.
-    unsafe { WTF__base64URLEncode(source.as_ptr(), source.len(), dest.as_mut_ptr(), dest.len()) }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -353,10 +387,12 @@ pub mod vlq {
             }
         }
 
-        VLQResult {
-            start: start + encoded_.len(),
-            value: 0,
-        }
+        // Reached when the input is empty or ends mid-VLQ (the last byte's
+        // continuation bit is set with no following byte, or all 8 bytes have
+        // it set — both malformed). No value was decoded; return `start`
+        // unchanged so callers' no-progress checks treat the truncated
+        // mapping as a parse failure instead of silently accepting `value: 0`.
+        VLQResult { start, value: 0 }
     }
 
     #[inline]
@@ -972,7 +1008,7 @@ pub fn wyhash_url_safe<'a>(
     let slice_to_write: &mut [u8] =
         bump.alloc_slice_fill_default(encode_len + usize::from(at_start));
 
-    let base64_encoded_hash_len = simdutf_encode_url_safe(slice_to_write, &h_bytes);
+    let base64_encoded_hash_len = encode_url_safe(slice_to_write, &h_bytes);
 
     let base64_encoded_hash = &slice_to_write[0..base64_encoded_hash_len];
 

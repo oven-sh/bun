@@ -53,6 +53,7 @@ impl Default for Options {
 //
 // TODO: make this configurable in `Options`?
 const MAXLEN: u64 = u32::MAX as u64;
+const MAX_TRACE_BYTES: usize = 64 * 1024 * 1024;
 // Type aliasing to make future refactors easier
 #[allow(non_camel_case_types)]
 type uint = u32;
@@ -224,6 +225,12 @@ impl<L: Line, const CHECK_COMMA_DISPARITY: bool> Differ<L, CHECK_COMMA_DISPARITY
 
         for _diff_level in 0..=(max as usize) {
             let diff_level: int = i64::try_from(_diff_level).expect("int cast"); // why is this always usize?
+            let trace_bytes = (_diff_level + 1)
+                .saturating_mul(graph_size as usize)
+                .saturating_mul(core::mem::size_of::<uint>());
+            if trace_bytes > MAX_TRACE_BYTES {
+                return Err(Error::DiffTooLarge);
+            }
             // const new_trace = try TraceFrame.initCapacity(trace_alloc, graph.len);
             let new_trace: Box<[uint]> = graph.clone().into_boxed_slice();
             // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path

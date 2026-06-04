@@ -7,11 +7,12 @@ use bstr::BStr;
 
 use bun_alloc::{AllocError, allocators};
 use bun_collections::VecExt as _;
+use bun_core::MutableString;
 use bun_core::{FeatureFlags, Generation, ZStr, env_var};
-use bun_core::{MutableString, PathString};
 use bun_paths::resolve_path::platform;
 use bun_paths::strings;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP, resolve_path as path_handler};
+use bun_ptr::Interned;
 use bun_sys::{self, Fd};
 use bun_threading::Mutex;
 
@@ -299,15 +300,6 @@ impl strings::Appender for FilenameStoreAppender {
     }
 }
 
-#[derive(strum::IntoStaticStr, Debug)]
-pub enum FileSystemError {
-    ENOENT,
-    EACCESS,
-    INVALID_NAME,
-    ENOTDIR,
-}
-// TODO(port): impl From<FileSystemError> for bun_core::Error
-
 // PORTING.md §Global mutable state: highest-fd watermark, written from
 // resolver pool / bundler / router and read from the file-limit check below.
 // `AtomicCell` (not `RacyCell`) because those callers run on different
@@ -379,7 +371,7 @@ pub enum EntryKind {
 /// Port of `FileSystem.Entry.Cache` in `fs.zig`.
 #[derive(Clone, Copy)]
 pub struct EntryCache {
-    pub symlink: PathString,
+    pub symlink: Interned,
     /// Too much code expects this to be 0
     /// don't make it bun.invalid_fd
     pub fd: Fd,
@@ -389,7 +381,7 @@ pub struct EntryCache {
 impl Default for EntryCache {
     fn default() -> Self {
         Self {
-            symlink: PathString::EMPTY,
+            symlink: Interned::EMPTY,
             fd: Fd::INVALID,
             kind: EntryKind::File,
         }
@@ -405,8 +397,6 @@ impl Default for EntryCache {
 // that external-locking discipline).
 pub struct Entry {
     pub cache: core::cell::Cell<EntryCache>,
-    // TODO(port): rule deviation — Zig deinit calls allocator.free(e.dir) so guide says Box<[u8]>,
-    // but this points into DirnameStore (a &'static BSSList). Keeping &'static.
     pub dir: &'static [u8],
 
     pub base_: strings::StringOrTinyString,
@@ -417,7 +407,7 @@ pub struct Entry {
     pub mutex: Mutex,
     pub need_stat: core::cell::Cell<bool>,
 
-    pub abs_path: PathString,
+    pub abs_path: Interned,
 }
 
 impl Entry {
@@ -452,7 +442,7 @@ impl Entry {
     }
 
     #[inline(always)]
-    pub fn set_cache_symlink(&self, symlink: PathString) {
+    pub fn set_cache_symlink(&self, symlink: Interned) {
         let mut c = self.cache.get();
         c.symlink = symlink;
         self.cache.set(c);
@@ -474,15 +464,15 @@ impl Entry {
         self.dir
     }
 
-    /// Zig: `entry.abs_path` field. `PathString` is `Copy`.
+    /// Zig: `entry.abs_path` field. `Interned` is `Copy`.
     #[inline]
-    pub fn abs_path(&self) -> PathString {
+    pub fn abs_path(&self) -> Interned {
         self.abs_path
     }
 
     /// Zig: `entry.abs_path = PathString.init(...)`.
     #[inline]
-    pub fn set_abs_path(&mut self, p: PathString) {
+    pub fn set_abs_path(&mut self, p: Interned) {
         self.abs_path = p;
     }
 
@@ -539,7 +529,7 @@ impl Entry {
                 Err(_) => return b"",
             }
         }
-        crate::path_string_static(&self.cache().symlink)
+        self.cache().symlink.as_bytes()
     }
 }
 
@@ -570,7 +560,7 @@ impl Default for Entry {
             base_lowercase_: strings::StringOrTinyString::init(b""),
             mutex: Mutex::default(),
             need_stat: core::cell::Cell::new(true),
-            abs_path: PathString::EMPTY,
+            abs_path: Interned::EMPTY,
         }
     }
 }
@@ -812,7 +802,7 @@ impl DirEntry {
                         // if found_kind is null, we have set need_stat above, so we
                         // store an arbitrary kind
                         existing.set_cache_kind(found_kind.unwrap_or(EntryKind::File));
-                        existing.set_cache_symlink(PathString::EMPTY);
+                        existing.set_cache_symlink(Interned::EMPTY);
                     }
                     break 'brk existing_ptr;
                 }
@@ -861,13 +851,13 @@ impl DirEntry {
                 // for each entry was a big performance issue for that package.
                 addr_of_mut!((*p).need_stat).write(core::cell::Cell::new(found_kind.is_none()));
                 addr_of_mut!((*p).cache).write(core::cell::Cell::new(EntryCache {
-                    symlink: PathString::EMPTY,
+                    symlink: Interned::EMPTY,
                     // if found_kind is null, we have set need_stat above, so we
                     // store an arbitrary kind
                     kind: found_kind.unwrap_or(EntryKind::File),
                     fd: Fd::INVALID,
                 }));
-                addr_of_mut!((*p).abs_path).write(PathString::EMPTY);
+                addr_of_mut!((*p).abs_path).write(Interned::EMPTY);
                 p
             }
         };
@@ -1013,8 +1003,6 @@ impl bun_dotenv::DirEntryProbe for DirEntry {
 /// Compat re-exports for callers that named the seam-type aliases.
 pub use EntryKind as FsEntryKind;
 pub use dir_entry::Err as DirEntryErr;
-
-// TODO(port): Entry::deinit took allocator and destroyed self; Entry lives in EntryStore (BSSList) so no Drop needed
 
 // pub fn statBatch(fs: *FileSystemEntry, paths: []string) ![]?Stat {
 // }
@@ -1178,7 +1166,6 @@ impl RealFS {
             }
 
             let mut tmp_buf = PathBuffer::uninit();
-            // TODO(port): std.posix.getcwd — bun_sys::getcwd
             let n =
                 bun_sys::getcwd(&mut tmp_buf[..]).expect("Failed to get cwd for platformTempDir");
             let cwd = &tmp_buf[..n];
@@ -1449,11 +1436,6 @@ impl RealFS {
     }
 }
 
-#[derive(strum::IntoStaticStr, Debug)]
-pub enum ModKeyError {
-    Unusable,
-}
-
 #[derive(Default, Clone, Copy)]
 pub struct ModKey {
     pub inode: u64, // TODO(port): std.fs.File.INode equivalent
@@ -1467,8 +1449,6 @@ thread_local! {
 }
 
 impl ModKey {
-    pub const SAFETY_GAP: i32 = 3;
-
     pub fn hash_name(&self, basename: &[u8]) -> Result<&'static [u8], bun_core::Error> {
         // TODO(port): returns slice into threadlocal buffer; lifetime is unsound — should take a caller-supplied buffer
         let hex_int = self.hash();
@@ -2316,77 +2296,6 @@ pub fn read_file_with_handle_impl<'p, 'buf, const USE_SHARED_BUFFER: bool, const
 }
 
 impl RealFS {
-    pub fn kind_from_absolute(
-        &mut self,
-        absolute_path: &ZStr,
-        existing_fd: Fd,
-        store_fd: bool,
-    ) -> Result<EntryCache, bun_core::Error> {
-        let mut outpath = PathBuffer::uninit();
-
-        let stat = bun_sys::lstat(absolute_path)?;
-        let mut kind_ = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
-        let is_symlink = kind_ == bun_sys::FileKind::SymLink;
-        let mut cache = EntryCache {
-            kind: EntryKind::File,
-            symlink: PathString::EMPTY,
-            fd: Fd::INVALID,
-        };
-        let mut symlink: &[u8] = b"";
-
-        if is_symlink {
-            // TODO(port): existing_fd != 0 — Zig compared FD to integer 0; using is_valid()
-            let file: Fd = if existing_fd.is_valid() {
-                existing_fd
-            } else if store_fd {
-                bun_sys::open_file_absolute_z(absolute_path, bun_sys::OpenFlags::READ_ONLY)?
-                    .into_raw()
-            } else {
-                // PORT NOTE: Zig `bun.openFileForPath` (bun.zig:1900-1910) — O_PATH is
-                // Linux-only; macOS/BSD use O_RDONLY. Both add O_NOCTTY|O_CLOEXEC.
-                #[cfg(any(target_os = "linux", target_os = "android"))]
-                let flags = bun_sys::O::PATH | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                #[cfg(not(any(target_os = "linux", target_os = "android")))]
-                let flags = bun_sys::O::RDONLY | bun_sys::O::CLOEXEC | bun_sys::O::NOCTTY;
-                bun_sys::open(absolute_path, flags, 0)?
-            };
-            FileSystem::set_max_fd(file.native());
-
-            // PORT NOTE: Zig `defer { if (...) file.close() else cache.fd = file }` runs on
-            // BOTH success and error paths — use scopeguard so close-or-store happens even if
-            // stat()/get_fd_path() return early with `?`.
-            let need_to_close_files = self.need_to_close_files();
-            let cache_ptr: *mut EntryCache = &raw mut cache;
-            let _guard = scopeguard::guard(file, move |file| {
-                if (!store_fd || need_to_close_files) && !existing_fd.is_valid() {
-                    let _ = bun_sys::close(file);
-                } else if FeatureFlags::STORE_FILE_DESCRIPTORS {
-                    // SAFETY: `cache_ptr` points into a stack local that outlives this guard.
-                    unsafe { (*cache_ptr).fd = file };
-                }
-            });
-
-            let stat_ = bun_sys::fstat(*_guard)?;
-
-            symlink = bun_sys::get_fd_path(*_guard, &mut outpath)?;
-
-            kind_ = bun_sys::kind_from_mode(stat_.st_mode as bun_sys::Mode);
-        }
-
-        debug_assert!(kind_ != bun_sys::FileKind::SymLink);
-
-        if kind_ == bun_sys::FileKind::Directory {
-            cache.kind = EntryKind::Dir;
-        } else {
-            cache.kind = EntryKind::File;
-        }
-        if !symlink.is_empty() {
-            cache.symlink = PathString::init(FilenameStore::instance().append(symlink)?);
-        }
-
-        Ok(cache)
-    }
-
     pub fn kind(
         &mut self,
         dir_: &[u8],
@@ -2398,7 +2307,7 @@ impl RealFS {
         let _ = (existing_fd, store_fd);
         let mut cache = EntryCache {
             kind: EntryKind::File,
-            symlink: PathString::EMPTY,
+            symlink: Interned::EMPTY,
             fd: Fd::INVALID,
         };
 
@@ -2499,7 +2408,7 @@ impl RealFS {
             // round-trip via `usize` (HANDLE is pointer-sized).
             match bun_sys::get_fd_path(Fd::from_native(handle as usize as u64), &mut *buf2) {
                 bun_sys::Result::Ok(real) => {
-                    cache.symlink = PathString::init(FilenameStore::instance().append(real)?);
+                    cache.symlink = Interned::from_static(FilenameStore::instance().append(real)?);
                 }
                 bun_sys::Result::Err(_) => {}
             }
@@ -2558,7 +2467,7 @@ impl RealFS {
                 cache.kind = EntryKind::File;
             }
             if !symlink.is_empty() {
-                cache.symlink = PathString::init(FilenameStore::instance().append(symlink)?);
+                cache.symlink = Interned::from_static(FilenameStore::instance().append(symlink)?);
             }
 
             Ok(cache)
@@ -2637,11 +2546,8 @@ impl core::fmt::Display for PrintHandle<Fd> {
         write!(f, "{}", self.0)
     }
 }
-// TODO(port): FmtHandleFnGenerator used @TypeOf reflection — replaced with per-type Display impls
 
 #[path = "fs/stat_hash.rs"]
 pub mod stat_hash;
-// TODO(port): src/resolver/fs/stat_hash.rs depends on bun_hash::XxHash64 +
-// bun_http_types::wtf::write_http_date — gated until those land.
 
 // ported from: src/resolver/fs.zig

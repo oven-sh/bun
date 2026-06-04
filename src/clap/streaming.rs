@@ -6,7 +6,6 @@ use crate as clap;
 use crate::args::ArgIter;
 
 // Disabled because not all CLI arguments are parsed with Clap.
-// TODO(port): Zig `pub var` — using AtomicBool for safe mutable global.
 pub static WARN_ON_UNRECOGNIZED_FLAG: AtomicBool = AtomicBool::new(false);
 
 /// The result returned from StreamingClap.next
@@ -159,7 +158,7 @@ where
                 // if flag else arg
                 if arg_info.kind == ArgKind::Long || arg_info.kind == ArgKind::Short {
                     if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                        Output::warn(format_args!(
+                        bun_core::warn!(
                             "unrecognized flag: {}{}\n",
                             if arg_info.kind == ArgKind::Long {
                                 "--"
@@ -167,7 +166,7 @@ where
                                 "-"
                             },
                             bstr::BStr::new(name),
-                        ));
+                        );
                         Output::flush();
                     }
 
@@ -176,10 +175,7 @@ where
                 }
 
                 if WARN_ON_UNRECOGNIZED_FLAG.load(Ordering::Relaxed) {
-                    Output::warn(format_args!(
-                        "unrecognized argument: {}\n",
-                        bstr::BStr::new(name)
-                    ));
+                    bun_core::warn!("unrecognized argument: {}\n", bstr::BStr::new(name));
                     Output::flush();
                 }
                 Ok(None)

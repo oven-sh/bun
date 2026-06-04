@@ -7,7 +7,6 @@ use bun_core::String as BunString;
 /// Zig passed these as `comptime fn(ctx: Context) ...` arguments and `NewReader`
 /// filled them in from `Context.markMessageStart`, `Context.peek`, etc. — i.e.
 /// structural duck-typing. In Rust the trait bound IS that check.
-// TODO(port): narrow error set
 pub trait ReaderContext {
     fn mark_message_start(&mut self);
     fn peek(&self) -> &[u8];

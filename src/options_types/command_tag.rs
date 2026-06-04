@@ -132,8 +132,6 @@ impl Tag {
     // unless invoked. Rust has no lazy decl resolution; re-exporting
     // `bun_runtime::cli::Command::{tag_params, tag_print_help}` here would create a
     // crate cycle (cli → options_types → cli).
-    // TODO(port): call sites of `cmd.params()` / `cmd.printHelp()` must call
-    // `bun_runtime::cli::Command::tag_params(cmd)` / `tag_print_help(cmd)` directly.
 }
 
 /// `.rodata` flag table indexed by [`Tag`] discriminant. These tables cost zero

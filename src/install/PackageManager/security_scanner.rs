@@ -140,10 +140,12 @@ pub(crate) fn do_partial_install_of_security_scanner(
     };
 
     if cfg!(debug_assertions) {
-        Output::debug_warn(format_args!(
+        bun_core::debug_warn!(
             "Partial install summary - success: {}, fail: {}, skipped: {}",
-            summary.success, summary.fail, summary.skipped
-        ));
+            summary.success,
+            summary.fail,
+            summary.skipped
+        );
     }
 
     if summary.fail > 0 {
@@ -254,9 +256,7 @@ pub(crate) fn perform_security_scan_after_resolution(
     match result {
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
-            Output::prettyln(format_args!(
-                "<r><yellow>Attempting to install security scanner from npm...<r>"
-            ));
+            bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
             let log_level = manager.options.log_level;
             do_partial_install_of_security_scanner(
                 manager,
@@ -265,9 +265,7 @@ pub(crate) fn perform_security_scan_after_resolution(
                 pkg_id,
                 original_cwd,
             )?;
-            Output::prettyln(format_args!(
-                "<r><green><b>Security scanner installed successfully.<r>"
-            ));
+            bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");
 
             let retry_result = attempt_security_scan_with_retry(
                 manager,
@@ -300,9 +298,7 @@ pub fn perform_security_scan_for_all(
     match result {
         ScanAttemptResult::Success(scan_results) => Ok(Some(scan_results)),
         ScanAttemptResult::NeedsInstall(pkg_id) => {
-            Output::prettyln(format_args!(
-                "<r><yellow>Attempting to install security scanner from npm...<r>"
-            ));
+            bun_core::prettyln!("<r><yellow>Attempting to install security scanner from npm...<r>");
             let log_level = manager.options.log_level;
             do_partial_install_of_security_scanner(
                 manager,
@@ -311,9 +307,7 @@ pub fn perform_security_scan_for_all(
                 pkg_id,
                 original_cwd,
             )?;
-            Output::prettyln(format_args!(
-                "<r><green><b>Security scanner installed successfully.<r>"
-            ));
+            bun_core::prettyln!("<r><green><b>Security scanner installed successfully.<r>");
 
             let retry_result = attempt_security_scan_with_retry(
                 manager,
@@ -347,46 +341,37 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
 
         match advisory.level {
             SecurityAdvisoryLevel::Fatal => {
-                Output::pretty(format_args!(
-                    "  <red>FATAL<r>: {}\n",
-                    BStr::new(&advisory.package)
-                ));
+                bun_core::pretty!("  <red>FATAL<r>: {}\n", BStr::new(&advisory.package));
             }
             SecurityAdvisoryLevel::Warn => {
-                Output::pretty(format_args!(
-                    "  <yellow>WARNING<r>: {}\n",
-                    BStr::new(&advisory.package)
-                ));
+                bun_core::pretty!("  <yellow>WARNING<r>: {}\n", BStr::new(&advisory.package));
             }
         }
 
         if let Some(pkg_path) = &advisory.pkg_path {
             if pkg_path.len() > 1 {
-                Output::pretty(format_args!("    <d>via "));
+                bun_core::pretty!("    <d>via ");
                 for (idx, ancestor_id) in pkg_path[0..pkg_path.len() - 1].iter().enumerate() {
                     if idx > 0 {
-                        Output::pretty(format_args!(" › "));
+                        bun_core::pretty!(" › ");
                     }
                     let ancestor_name = pkg_names[*ancestor_id as usize].slice(string_buf);
-                    Output::pretty(format_args!("{}", BStr::new(ancestor_name)));
+                    bun_core::pretty!("{}", BStr::new(ancestor_name));
                 }
-                Output::pretty(format_args!(
-                    " › <red>{}<r>\n",
-                    BStr::new(&advisory.package)
-                ));
+                bun_core::pretty!(" › <red>{}<r>\n", BStr::new(&advisory.package));
             } else {
-                Output::pretty(format_args!("    <d>(direct dependency)<r>\n"));
+                bun_core::pretty!("    <d>(direct dependency)<r>\n");
             }
         }
 
         if let Some(desc) = &advisory.description {
             if !desc.is_empty() {
-                Output::pretty(format_args!("    {}\n", BStr::new(desc)));
+                bun_core::pretty!("    {}\n", BStr::new(desc));
             }
         }
         if let Some(url) = &advisory.url {
             if !url.is_empty() {
-                Output::pretty(format_args!("    <cyan>{}<r>\n", BStr::new(url)));
+                bun_core::pretty!("    <cyan>{}<r>\n", BStr::new(url));
             }
         }
     }
@@ -395,31 +380,32 @@ pub fn print_security_advisories(manager: &PackageManager, results: &SecuritySca
     let total = results.fatal_count + results.warn_count;
     if total == 1 {
         if results.fatal_count == 1 {
-            Output::pretty(format_args!("<b>1 advisory (<red>1 fatal<r>)<r>\n"));
+            bun_core::pretty!("<b>1 advisory (<red>1 fatal<r>)<r>\n");
         } else {
-            Output::pretty(format_args!("<b>1 advisory (<yellow>1 warning<r>)<r>\n"));
+            bun_core::pretty!("<b>1 advisory (<yellow>1 warning<r>)<r>\n");
         }
     } else {
         if results.fatal_count > 0 && results.warn_count > 0 {
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "<b>{} advisories (<red>{} fatal<r>, <yellow>{} warning{}<r>)<r>\n",
                 total,
                 results.fatal_count,
                 results.warn_count,
                 if results.warn_count == 1 { "" } else { "s" }
-            ));
+            );
         } else if results.fatal_count > 0 {
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "<b>{} advisories (<red>{} fatal<r>)<r>\n",
-                total, results.fatal_count
-            ));
+                total,
+                results.fatal_count
+            );
         } else {
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "<b>{} advisories (<yellow>{} warning{}<r>)<r>\n",
                 total,
                 results.warn_count,
                 if results.warn_count == 1 { "" } else { "s" }
-            ));
+            );
         }
     }
 }
@@ -428,23 +414,20 @@ pub(crate) fn prompt_for_warnings() -> bool {
     let can_prompt = Output::is_stdin_tty();
 
     if !can_prompt {
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "\n<red>Security warnings found. Cannot prompt for confirmation (no TTY).<r>\n"
-        ));
-        Output::pretty(format_args!("<red>Installation cancelled.<r>\n"));
+        );
+        bun_core::pretty!("<red>Installation cancelled.<r>\n");
         return false;
     }
 
-    Output::pretty(format_args!(
-        "\n<yellow>Security warnings found.<r> Continue anyway? [y/N] "
-    ));
+    bun_core::pretty!("\n<yellow>Security warnings found.<r> Continue anyway? [y/N] ");
     Output::flush();
 
-    // TODO(port): Zig used std.fs.File.stdin().readerStreaming(); use bun_core stdin reader.
     let mut reader = bun_core::output::stdin_reader();
 
     let Ok(first_byte) = reader.take_byte() else {
-        Output::pretty(format_args!("\n<red>Installation cancelled.<r>\n"));
+        bun_core::pretty!("\n<red>Installation cancelled.<r>\n");
         return false;
     };
 
@@ -481,20 +464,17 @@ pub(crate) fn prompt_for_warnings() -> bool {
     };
 
     if !should_continue {
-        Output::pretty(format_args!("\n<red>Installation cancelled.<r>\n"));
+        bun_core::pretty!("\n<red>Installation cancelled.<r>\n");
         return false;
     }
 
-    Output::pretty(format_args!(
-        "\n<yellow>Continuing with installation...<r>\n\n"
-    ));
+    bun_core::pretty!("\n<yellow>Continuing with installation...<r>\n\n");
     true
 }
 
 struct PackageCollector<'a> {
     manager: &'a PackageManager,
     dedupe: ArrayHashMap<PackageID, ()>,
-    // TODO(port): Zig uses bun.LinearFifo(QueueItem, .Dynamic); VecDeque is the closest std equivalent.
     queue: VecDeque<QueueItem>,
     package_paths: ArrayHashMap<PackageID, PackagePath>,
 }
@@ -535,11 +515,6 @@ impl<'a> PackageCollector<'a> {
                 continue;
             }
 
-            let dep_res = &pkg_resolutions[dep_pkg_id as usize];
-            if dep_res.tag != bun_install::resolution::Tag::Npm {
-                continue;
-            }
-
             if self.dedupe.get_or_put(dep_pkg_id)?.found_existing {
                 continue;
             }
@@ -569,11 +544,6 @@ impl<'a> PackageCollector<'a> {
                 let dep_pkg_id = self.manager.lockfile.buffers.resolutions[dep_id as usize];
 
                 if dep_pkg_id == invalid_package_id {
-                    continue;
-                }
-
-                let dep_res = &pkg_resolutions[dep_pkg_id as usize];
-                if dep_res.tag != bun_install::resolution::Tag::Npm {
                     continue;
                 }
 
@@ -607,10 +577,6 @@ impl<'a> PackageCollector<'a> {
                 let update_pkg_id: PackageID =
                     PackageID::try_from(_update_pkg_id).expect("int cast");
                 if update_pkg_id != req.package_id {
-                    continue;
-                }
-                if pkg_resolutions[update_pkg_id as usize].tag != bun_install::resolution::Tag::Npm
-                {
                     continue;
                 }
 
@@ -682,16 +648,18 @@ impl<'a> PackageCollector<'a> {
             let pkg_id = item.pkg_id;
             let _ = item.dep_id; // Could be useful in the future for dependency-specific processing
 
-            let pkg_path_copy: Box<[PackageID]> = item.pkg_path.clone().into_boxed_slice();
-            let dep_path_copy: Box<[DependencyID]> = item.dep_path.clone().into_boxed_slice();
+            if pkg_resolutions[pkg_id as usize].tag == bun_install::resolution::Tag::Npm {
+                let pkg_path_copy: Box<[PackageID]> = item.pkg_path.clone().into_boxed_slice();
+                let dep_path_copy: Box<[DependencyID]> = item.dep_path.clone().into_boxed_slice();
 
-            self.package_paths.put(
-                pkg_id,
-                PackagePath {
-                    pkg_path: pkg_path_copy,
-                    dep_path: dep_path_copy,
-                },
-            )?;
+                self.package_paths.put(
+                    pkg_id,
+                    PackagePath {
+                        pkg_path: pkg_path_copy,
+                        dep_path: dep_path_copy,
+                    },
+                )?;
+            }
 
             let pkg_deps = pkg_dependencies[pkg_id as usize];
             for _next_dep_id in pkg_deps.begin()..pkg_deps.end() {
@@ -700,11 +668,6 @@ impl<'a> PackageCollector<'a> {
                 let next_pkg_id = self.manager.lockfile.buffers.resolutions[next_dep_id as usize];
 
                 if next_pkg_id == invalid_package_id {
-                    continue;
-                }
-
-                let next_pkg_res = &pkg_resolutions[next_pkg_id as usize];
-                if next_pkg_res.tag != bun_install::resolution::Tag::Npm {
                     continue;
                 }
 
@@ -773,9 +736,9 @@ impl<'a> JSONBuilder<'a> {
                 json_buf.extend_from_slice(b",\n");
             }
 
-            // SAFETY: `PackageCollector::collect_packages_from_root` only inserts
-            // packages whose resolution tag is `Tag::Npm` into `package_paths`,
-            // so the `npm` union variant is the active field here.
+            // SAFETY: `PackageCollector::process_queue` only inserts packages
+            // whose resolution tag is `Tag::Npm` into `package_paths`, so the
+            // `npm` union variant is the active field here.
             let npm = pkg_res.npm();
             if dep_id == invalid_dependency_id {
                 write!(
@@ -841,20 +804,19 @@ fn attempt_security_scan_with_retry(
     is_retry: bool,
 ) -> Result<ScanAttemptResult, Error> {
     if manager.options.log_level == crate::package_manager::Options::LogLevel::Verbose {
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "<d>[SecurityProvider]<r> Running at '{}'",
             BStr::new(security_scanner)
-        ));
-        Output::pretty_errorln(format_args!(
+        );
+        bun_core::pretty_errorln!(
             "<d>[SecurityProvider]<r> top_level_dir: '{}'",
             BStr::new(FileSystem::instance().top_level_dir())
-        ));
-        Output::pretty_errorln(format_args!(
+        );
+        bun_core::pretty_errorln!(
             "<d>[SecurityProvider]<r> original_cwd: '{}'",
             BStr::new(original_cwd)
-        ));
+        );
     }
-    // TODO(port): std.time.milliTimestamp() — use bun_core::time helper or std::time::Instant.
     let start_time = bun_core::time::milli_timestamp();
 
     let finder = ScannerFinder {
@@ -889,14 +851,10 @@ fn attempt_security_scan_with_retry(
 
     // PORT NOTE: destructure `collector` here to release its `&PackageManager`
     // borrow before constructing `SecurityScanSubprocess` (which needs `&mut`).
-    // Only `package_paths` and the dedupe count are read past this point.
-    let PackageCollector {
-        dedupe,
-        package_paths,
-        ..
-    } = collector;
+    // Only `package_paths` is read past this point.
+    let PackageCollector { package_paths, .. } = collector;
     let mut package_paths = package_paths;
-    let packages_scanned = dedupe.count();
+    let packages_scanned = package_paths.count();
 
     let mut code: Vec<u8> = Vec::new();
 
@@ -1760,29 +1718,31 @@ impl<'a> SecurityScanSubprocess<'a> {
             match &status {
                 Status::Exited(Exited { code, .. }) => {
                     if *code == 0 {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<d>[SecurityProvider]<r> Completed with exit code {} [{}ms]",
-                            code, duration
-                        ));
+                            code,
+                            duration
+                        );
                     } else {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<d>[SecurityProvider]<r> Failed with exit code {} [{}ms]",
-                            code, duration
-                        ));
+                            code,
+                            duration
+                        );
                     }
                 }
                 Status::Signaled(sig) => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<d>[SecurityProvider]<r> Terminated by signal {} [{}ms]",
                         signal_name(*sig),
                         duration
-                    ));
+                    );
                 }
                 _ => {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<d>[SecurityProvider]<r> Completed with unknown status [{}ms]",
                         duration
-                    ));
+                    );
                 }
             }
         } else if self.manager.options.log_level
@@ -1795,20 +1755,20 @@ impl<'a> SecurityScanSubprocess<'a> {
                 ""
             };
             if packages_scanned == 1 {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<d>{}[{}] Scanning 1 package took {}ms<r>",
                     maybe_hourglass,
                     BStr::new(security_scanner),
                     duration
-                ));
+                );
             } else {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<d>{}[{}] Scanning {} packages took {}ms<r>",
                     maybe_hourglass,
                     BStr::new(security_scanner),
                     packages_scanned,
                     duration
-                ));
+                );
             }
         }
 

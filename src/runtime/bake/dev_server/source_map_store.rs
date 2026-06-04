@@ -280,10 +280,10 @@ impl Entry {
         .map_err(|_| EncodeSourceMapPathError::OutOfMemory)
     }
 
-    fn join_vlq(
-        &self,
+    fn join_vlq<'a>(
+        &'a self,
         kind: ChunkKind,
-        j: &mut StringJoiner,
+        j: &mut StringJoiner<'a>,
         side: Side,
     ) -> Result<(), bun_core::Error> {
         let _ = side;
@@ -732,10 +732,10 @@ impl SourceMapStore {
             Default::default(),
         ) {
             source_map::ParseResult::Fail(fail) => {
-                bun_core::output::debug_warn(format_args!(
+                bun_core::debug_warn!(
                     "Failed to re-parse source map: {}",
                     bstr::BStr::new(fail.msg)
-                ));
+                );
                 None
             }
             source_map::ParseResult::Success(mut psm) => Some(GetResult {

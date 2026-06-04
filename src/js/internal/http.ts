@@ -57,6 +57,9 @@ const kSignal = Symbol("signal");
 const kMaxHeaderSize = Symbol("maxHeaderSize");
 const abortedSymbol = Symbol("aborted");
 const kClearTimeout = Symbol("kClearTimeout");
+// Set when a ClientRequest is driven over a socket produced by a custom agent
+// (e.g. the `tunnel` package) instead of the native fetch fast path.
+const kCustomSocketPath = Symbol("customSocketPath");
 
 const headerStateSymbol = Symbol("headerState");
 // used for pretending to emit events in the right order
@@ -514,6 +517,7 @@ export {
   kBodyChunks,
   kClearTimeout,
   kCloseCallback,
+  kCustomSocketPath,
   kDeferredTimeouts,
   kDeprecatedReplySymbol,
   kEmitState,

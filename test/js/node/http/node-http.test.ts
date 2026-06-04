@@ -23,7 +23,8 @@ import http, {
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
 import type { AddressInfo } from "node:net";
-import { connect } from "node:net";
+import { connect, createServer as createNetServer } from "node:net";
+import tunnel from "tunnel";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { PassThrough } from "node:stream";
@@ -827,6 +828,99 @@ describe("node:http", () => {
 
     it("request via http proxy, issue#4295", async () => {
       await runHTTPProxyTest();
+    });
+
+    // https://github.com/oven-sh/bun/issues/31795
+    // A custom agent (the `tunnel` package) establishes an HTTP CONNECT tunnel
+    // by overriding addRequest/createSocket and calling req.onSocket(). Bun
+    // must route through those hooks and emit a CONNECT, not bypass the proxy.
+    it("uses a tunnel.httpsOverHttp() agent and sends CONNECT to the proxy", async () => {
+      const { promise: connectLine, resolve: gotConnect, reject: connectFailed } = Promise.withResolvers<string>();
+
+      // Minimal proxy that records the CONNECT request it receives and replies
+      // 502 so the tunnel fails the same way it does in Node.
+      await using proxy = createNetServer(socket => {
+        socket.once("data", buf => {
+          gotConnect(buf.toString());
+          socket.end("HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n\r\n");
+        });
+      });
+      await once(proxy.listen(0, "127.0.0.1"), "listening");
+      const proxyPort = (proxy.address() as AddressInfo).port;
+
+      const agent = tunnel.httpsOverHttp({ proxy: { host: "127.0.0.1", port: proxyPort } });
+
+      const { promise: requestDone, resolve: requestResolve } = Promise.withResolvers<{
+        status?: number;
+        error?: string;
+      }>();
+      const req = https.request(
+        { host: "example.com", port: 443, path: "/", method: "GET", agent },
+        res => {
+          res.resume();
+          requestResolve({ status: res.statusCode });
+        },
+      );
+      req.on("error", err => requestResolve({ error: (err as Error).message }));
+      req.end();
+
+      // The proxy must receive a CONNECT targeting the requested host:port.
+      const received = await connectLine;
+      expect(received).toContain("CONNECT example.com:443 HTTP/1.1");
+      expect(received.toLowerCase()).toContain("host: example.com:443");
+
+      // And the request must surface the proxy's failure, not a direct 200.
+      const result = await requestDone;
+      expect(result.status).toBeUndefined();
+      expect(result.error).toContain("statusCode=502");
+    });
+
+    // Full success path: the proxy accepts the CONNECT and pipes bytes through,
+    // so the tunneled request receives the target server's response.
+    it("tunnels a request through an HTTP CONNECT proxy (tunnel.httpOverHttp)", async () => {
+      await using target = createServer((req, res) => {
+        res.writeHead(200, { "x-tunneled": "yes" });
+        res.end("through-the-tunnel");
+      });
+      await once(target.listen(0, "127.0.0.1"), "listening");
+      const targetPort = (target.address() as AddressInfo).port;
+
+      let connectTarget: string | undefined;
+      await using proxy = createServer();
+      proxy.on("connect", (req, clientSocket, head) => {
+        connectTarget = req.url as string;
+        const [host, port] = (req.url as string).split(":");
+        const serverSocket = connect(Number(port), host, () => {
+          clientSocket.write("HTTP/1.1 200 Connection Established\r\n\r\n");
+          if (head?.length) serverSocket.write(head);
+          serverSocket.pipe(clientSocket);
+          clientSocket.pipe(serverSocket);
+        });
+        serverSocket.on("error", () => clientSocket.end());
+      });
+      await once(proxy.listen(0, "127.0.0.1"), "listening");
+      const proxyPort = (proxy.address() as AddressInfo).port;
+
+      const agent = tunnel.httpOverHttp({ proxy: { host: "127.0.0.1", port: proxyPort } });
+
+      const { promise, resolve, reject } = Promise.withResolvers<{ status: number; header?: string; body: string }>();
+      const req = http.request(
+        { host: "127.0.0.1", port: targetPort, path: "/", method: "GET", agent },
+        res => {
+          let body = "";
+          res.setEncoding("utf8");
+          res.on("data", c => (body += c));
+          res.on("end", () => resolve({ status: res.statusCode as number, header: res.headers["x-tunneled"], body }));
+        },
+      );
+      req.on("error", reject);
+      req.end();
+
+      const result = await promise;
+      expect(result).toEqual({ status: 200, header: "yes", body: "through-the-tunnel" });
+      // The request must have gone through the proxy's CONNECT handler, not a
+      // direct connection to the target (which would bypass the agent).
+      expect(connectTarget).toBe(`127.0.0.1:${targetPort}`);
     });
 
     it("should correctly stream a multi-chunk response #5320", async done => {

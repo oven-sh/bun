@@ -149,10 +149,16 @@ function IncomingMessage(req, options = defaultIncomingOpts) {
         this[fakeSocketSymbol] = req;
       }
     } else {
-      // Node defaults url and method to null.
+      // Node defaults url and method to null. This is the path taken when the
+      // HTTPParser constructs a response IncomingMessage over a raw socket
+      // (the socket-driven client path), passing the socket as `req`.
       this.url = "";
       this.method = null;
+      this.headers = {};
       this.rawHeaders = [];
+      if (req && typeof req.on === "function") {
+        this[fakeSocketSymbol] = req;
+      }
     }
 
     this[noBodySymbol] =
@@ -293,6 +299,68 @@ const IncomingMessagePrototype = {
   },
   _finish() {
     this.emit("prefinish");
+  },
+  // Populate this.headers / this.rawHeaders from the flat [key, value, ...]
+  // array produced by the HTTPParser. Used by the socket-driven client path
+  // (see _http_common.ts parserOnHeadersComplete). Mirrors the observable
+  // behavior of node:http's IncomingMessage._addHeaderLines.
+  _addHeaderLines(headers, n) {
+    if (headers?.length) {
+      // Trailers are exposed as a frozen empty object on IncomingMessage, so
+      // only leading headers are populated here (matches the fetch path).
+      if (this.complete) return;
+      this.rawHeaders = headers;
+      const dest = this.headers;
+
+      if (dest) {
+        for (let i = 0; i < n; i += 2) {
+          this._addHeaderLine(headers[i], headers[i + 1], dest);
+        }
+      }
+    }
+  },
+  _addHeaderLine(field, value, dest) {
+    const lower = field.toLowerCase();
+    const existing = dest[lower];
+
+    if (lower === "set-cookie") {
+      if (existing !== undefined) {
+        existing.push(value);
+      } else {
+        dest[lower] = [value];
+      }
+      return;
+    }
+
+    if (existing === undefined) {
+      dest[lower] = value;
+      return;
+    }
+
+    // These headers are not joined with ", " by Node; the first value wins.
+    switch (lower) {
+      case "age":
+      case "authorization":
+      case "content-length":
+      case "content-type":
+      case "etag":
+      case "expires":
+      case "from":
+      case "host":
+      case "if-modified-since":
+      case "if-unmodified-since":
+      case "last-modified":
+      case "location":
+      case "max-forwards":
+      case "proxy-authorization":
+      case "referer":
+      case "retry-after":
+      case "server":
+      case "user-agent":
+        return;
+      default:
+        dest[lower] = existing + ", " + value;
+    }
   },
   _destroy: function IncomingMessage_destroy(err, cb) {
     const shouldEmitAborted = !this.readableEnded || !this.complete;

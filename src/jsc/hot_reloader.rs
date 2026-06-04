@@ -790,7 +790,6 @@ where
         if cfg!(feature = "debug_logs") {
             bun_core::scoped_log!(hot_reloader, "{}", args);
         } else {
-            // TODO(port): Output.prettyErrorln with color tags
             bun_core::pretty_errorln!("<cyan>watcher<r><d>:<r> {}", args);
         }
     }

@@ -1557,7 +1557,7 @@ pub struct PatternBuffer {
 
 impl PatternBuffer {
     pub const EMPTY: PatternBuffer = PatternBuffer {
-        bytes: PathBuffer::ZEROED, // TODO(port): Zig used `undefined`; uninit not const-safe
+        bytes: PathBuffer::ZEROED,
         i: core::mem::size_of::<PathBuffer>() as u32,
     };
 

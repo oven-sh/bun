@@ -146,14 +146,6 @@ impl<const SIZE: usize> IntegerBitSet<SIZE> {
     /// The number of items in this bit set
     pub const BIT_LENGTH: usize = SIZE;
 
-    /// The integer type used to represent a mask in this bit set
-    // TODO(port): Zig: `pub const MaskInt = std.meta.Int(.unsigned, size);`
-    // type MaskInt = usize (inherent assoc → inline usize)
-
-    /// The integer type used to shift a mask in this bit set
-    // TODO(port): Zig: `pub const ShiftInt = std.math.Log2Int(MaskInt);`
-    // type ShiftInt = u32 (inherent assoc → inline u32)
-
     const FULL_MASK: usize = if SIZE as u32 >= usize::BITS {
         // SIZE > usize::BITS is a caller error (use ArrayBitSet); saturating
         // here avoids a const-eval shift-overflow at monomorphization time so
@@ -454,9 +446,6 @@ pub const fn num_masks_for(bit_length: usize) -> usize {
 ///
 // TODO(port): Zig is generic over `MaskIntType`; every in-tree caller uses
 // `usize`. Dropped the type parameter. Phase B can re-generify if needed.
-// TODO(port): `[usize; NUM_MASKS]` requires
-// `#![feature(generic_const_exprs)]`. Phase B may instead take NUM_MASKS as a
-// second const generic and assert `NUM_MASKS == num_masks_for(SIZE)`.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct ArrayBitSet<const SIZE: usize, const NUM_MASKS: usize> {
@@ -1743,9 +1732,6 @@ impl DynamicBitSet {
 // ───────────────────────────── IteratorOptions ─────────────────────────────
 
 /// Options for configuring an iterator over a bit set
-// TODO(port): Zig passes a `comptime options: IteratorOptions` struct. Stable
-// Rust adt_const_params is unstable; split into two const-generic enum params
-// (`KIND`, `DIRECTION`) at every callsite.
 #[derive(Clone, Copy, Default)]
 pub struct IteratorOptions {
     /// determines which bits should be visited

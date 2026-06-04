@@ -329,7 +329,6 @@ impl<'a, W, const BUFFER_SIZE: usize> Drop for ZlibReader<'a, W, BUFFER_SIZE> {
     }
 }
 
-// TODO(port): thiserror not in workspace deps; manual Display impl below.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZlibError {
     OutOfMemory,

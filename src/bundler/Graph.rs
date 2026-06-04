@@ -18,9 +18,7 @@ use bun_ast::Index;
 pub(crate) use crate::IndexInt;
 
 pub struct Graph<'a> {
-    // TODO(port): lifetime — no direct LIFETIMES.tsv row for Graph.pool, but row 170
-    // (ThreadPool.v2, BACKREF) evidence states "BundleV2.graph.pool owns ThreadPool".
-    // bundle_v2.zig:992 allocates it from `this.arena()` (the `self.heap` arena) and
+    // bundle_v2.zig:992 allocates this from `this.arena()` (the `self.heap` arena) and
     // bundle_v2.zig:2248 calls `pool.deinit()`, so this is arena-owned but self-referential
     // (sibling field). `BackRef` (not raw `NonNull`) so the read accessor `pool()` is
     // safe — the BACKREF invariant (pointee outlives holder) holds for the entire

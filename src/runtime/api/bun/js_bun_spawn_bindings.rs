@@ -391,8 +391,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let cmd_value: JSValue;
     let mut detached = false;
     let mut args = args_;
-    // TODO(port): Zig used `if (is_sync) void else ?IPC.Mode`; Rust const-generic bool
-    // can't gate field type. Always Option<IPC::Mode>; IS_SYNC branches never read it.
     let mut maybe_ipc_mode: Option<IPC::Mode> = None;
     let mut ipc_callback: JSValue = JSValue::ZERO;
     let mut extra_fds: Vec<SpawnOptionsStdio> = Vec::new();
@@ -410,8 +408,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut terminal_info: Option<TerminalCreateResult> = None;
     let mut existing_terminal: Option<bun_ptr::BackRef<Terminal>> = None; // Existing terminal passed by user
     let mut terminal_js_value: JSValue = JSValue::ZERO;
-    // TODO(port): the Zig `defer` block at function end (abort_signal.unref + terminal cleanup)
-    // is implemented via scopeguard below; disarmed where the Zig set the locals to null.
     let mut defer_guard = scopeguard::guard(
         (&mut abort_signal, &mut terminal_info),
         |(abort_signal, terminal_info): (
@@ -907,8 +903,6 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     );
     // PORT NOTE: reshaped for borrowck — re-borrow through the guard tuple so the guard
     // stays armed (runs on every early return) until disarmed by `**should_close_memfd = false` below.
-    // TODO(port): errdefer — if borrowck rejects the double-&mut reborrow at later use sites,
-    // may need to move stdio into the guard by value and reborrow via DerefMut.
     let (should_close_memfd, stdio) = &mut *memfd_guard;
 
     // "NODE_CHANNEL_FD=" is 16 bytes long, 15 bytes for the number, and 1 byte for the null terminator should be enough/safe

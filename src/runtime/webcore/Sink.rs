@@ -191,10 +191,6 @@ pub struct UTF8Fallback;
 // should reference `crate::webcore::sink::UTF8Fallback` directly.
 // TODO(port): inherent associated type — `impl Sink { pub type UTF8Fallback = UTF8Fallback; }`.
 
-// TODO(port): `bun_core::strings::{is_all_ascii, replace_latin1_with_utf8,
-// copy_utf16_into_utf8_impl, to_utf8_alloc}` + `Vec::<u8>::from_*` constructors
-// are not yet exported with these exact names. Body gated; signatures kept.
-
 impl UTF8Fallback {
     const STACK_SIZE: usize = 1024;
 
@@ -1195,8 +1191,6 @@ pub fn destructor_ptr_subprocess(ptr: *const c_void) -> usize {
     const SUBPROCESS_TAG: u64 = 1023; // second variant: 1024 - 1
     ((ptr as usize as u64 & ADDR_MASK) | (SUBPROCESS_TAG << ADDR_BITS)) as usize
 }
-
-// TODO(port): `Subprocess::on_stdin_destroyed` + `Output::debug_warn`.
 
 #[unsafe(no_mangle)]
 pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_void) {

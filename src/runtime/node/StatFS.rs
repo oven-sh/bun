@@ -36,8 +36,6 @@ macro_rules! define_statfs_type {
 
             fn statfs_to_js(&self, global: &JSGlobalObject) -> JsResult<JSValue> {
                 if $big {
-                    // TODO(port): bun.jsc.fromJSHostCall wraps an extern call with
-                    // JSC exception-scope checking; map to the Rust equivalent.
                     return bun_jsc::from_js_host_call(global, || {
                         Bun__createJSBigIntStatFSObject(
                             global,

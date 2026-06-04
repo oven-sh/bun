@@ -984,7 +984,6 @@ impl Parser<'_> {
                     dest: dest_dupe,
                     title: title_dupe,
                 });
-                // TODO(port): Zig used `catch return` on push; Vec::push is infallible here
             }
 
             let mut newlines: u32 = 0;
@@ -1028,8 +1027,6 @@ impl Parser<'_> {
     // get_block_header_at / get_block_at moved to parser.rs (shared by containers.rs).
 }
 
-// TODO(port): `Line.type` field — Zig uses `.type`; Rust uses `r#type`. The variant
-// type is assumed to be `types::LineType` re-exported here for brevity.
 use crate::types::LineType;
 
 // ported from: src/md/blocks.zig

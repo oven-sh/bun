@@ -104,10 +104,6 @@ pub trait RunTasksCallbacks {
         unreachable!()
     }
 
-    // TODO(port): two distinct call shapes in Zig:
-    //   PackageInstaller: (ctx, task_id, dependency_id, *ExtractData, log_level)
-    //   Store.Installer:  (ctx, task_id)
-    // Model as two methods; only one is reachable per impl.
     fn on_extract_package_installer(
         _ctx: &mut Self::Ctx,
         _task_id: Task::Id,

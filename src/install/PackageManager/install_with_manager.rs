@@ -1080,7 +1080,6 @@ fn print_install_summary(
                         count,
                         if count == 1 { "" } else { "s" },
                     );
-                    // TODO(port): Output::pretty multi-arg formatting
                     Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
                 }
                 printed_timestamp = true;
@@ -1095,7 +1094,6 @@ fn print_install_summary(
                         "s"
                     },
                 );
-                // TODO(port): Output::pretty multi-arg formatting
                 Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
                 printed_timestamp = true;
                 print_blocked_packages_info(install_summary, this.options.global);
@@ -1191,7 +1189,6 @@ fn print_summary_installed(
         pkgs_installed,
         if pkgs_installed == 1 { "" } else { "s" },
     );
-    // TODO(port): Output::pretty multi-arg formatting
     Output::print_start_end_stdout(start_time, nano_timestamp());
     print_blocked_packages_info(install_summary, this.options.global);
 
@@ -1218,7 +1215,6 @@ fn print_summary_removed(
         this.summary.remove,
         if this.summary.remove == 1 { "" } else { "s" },
     );
-    // TODO(port): Output::pretty multi-arg formatting
     Output::print_start_end_stdout(start_time, nano_timestamp());
     print_blocked_packages_info(install_summary, this.options.global);
 }
@@ -1231,7 +1227,6 @@ fn print_summary_failed(install_summary: &PackageInstallSummary) {
         install_summary.fail,
         if install_summary.fail == 1 { "" } else { "s" },
     );
-    // TODO(port): Output::pretty multi-arg formatting
     Output::flush();
 }
 
@@ -1265,7 +1260,6 @@ fn print_blocked_packages_info(summary: &PackageInstallSummary, global: bool) {
             if scripts_count > 1 { "s" } else { "" },
             if global { "-g " } else { "" },
         );
-        // TODO(port): Output::pretty multi-arg formatting
     } else {
         bun_core::pretty!("<r>\n");
     }
@@ -1798,7 +1792,6 @@ fn save_lockfile_only(
                 "s"
             },
         );
-        // TODO(port): Output::pretty multi-arg formatting — Zig used positional `{s} {d} {s}`
         Output::print_start_end_stdout(ctx.start_time, nano_timestamp());
         bun_core::pretty!("\n");
     }

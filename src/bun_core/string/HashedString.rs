@@ -33,10 +33,6 @@ impl HashedString {
         }
     }
 
-    // TODO(port): Zig `eql` took `other: anytype` and switched on `@TypeOf(other)`:
-    //   - HashedString / *HashedString / *const HashedString → compare hash/ptr/len
-    //   - else (slice-like with .len and indexing)           → rehash bytes and compare
-    // Rust has no type-switch; split into `eql` (HashedString) and `eql_bytes` (&[u8]).
     pub fn eql(&self, other: &HashedString) -> bool {
         ((self.hash.max(other.hash) > 0 && self.hash == other.hash) || (self.ptr == other.ptr))
             && self.len == other.len

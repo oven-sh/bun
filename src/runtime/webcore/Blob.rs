@@ -416,8 +416,6 @@ pub unsafe extern "C" fn Bun__Blob__sharedView(this: *const Blob, len: *mut usiz
 
 #[allow(non_snake_case, clippy::too_many_arguments)]
 impl BlobExt for Blob {
-    // TODO(port): bun_core::FormData (gated module)
-
     fn get_form_data_encoding(&self) -> Option<Box<bun_core::form_data::AsyncFormData>> {
         let content_type_slice = self.get_content_type()?;
         let encoding = bun_core::form_data::Encoding::get(content_type_slice.slice())?;
@@ -796,7 +794,6 @@ impl BlobExt for Blob {
             ctx,
             impl_: write_bytes,
         };
-        // TODO(port): wrap StructuredCloneWriter in a bun_io::Write adapter.
         let _ = self._on_structured_clone_serialize(&mut writer);
     }
 
@@ -4283,7 +4280,6 @@ fn _on_structured_clone_deserialize<B: AsRef<[u8]>>(
 
             match pathlike_tag {
                 PathOrFileDescriptorSerializeTag::Fd => {
-                    // TODO(port): readStruct(bun.FD) — read raw FD bytes.
                     let fd: Fd = reader.read_struct()?;
                     let mut path_or_fd = PathOrFileDescriptor::Fd(fd);
                     break 'file Blob::new(Blob::find_or_create_file_from_path(
@@ -6578,9 +6574,6 @@ impl Any {
 }
 
 // ─── Any: JSC-integration (to_js/from_js paths) ──────────────────────────────
-// TODO(port): bun_jsc::* — Any::{to_action_value,to_promise,wrap,
-// to_json,to_string,to_array_buffer*,to_blob,to_uint8_array*} call into
-// JSValue/ZigString JSC methods and Blob JSC impls gated above.
 
 impl Any {
     fn to_internal_blob_if_possible(&mut self) {
@@ -6929,14 +6922,11 @@ impl Internal {
         self.bytes.capacity()
     }
 
-    // TODO(port): bun_jsc::* — ZigString::to_external_u16/to_js_object.
-
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         let bytes_without_bom = strings::without_utf8_bom(&self.bytes);
         if let Some(out) =
             strings::to_utf16_alloc(bytes_without_bom, false, false).unwrap_or(Some(Vec::new()))
         {
-            // TODO(port): Zig used `catch &[_]u16{}` to swallow alloc errors into empty.
             let out_len = out.len();
             // Ownership transfers to JSC's external-string finalizer.
             let out_ptr = bun_core::heap::into_raw(out.into_boxed_slice())
@@ -6968,8 +6958,6 @@ impl Internal {
             return Ok(str.to_external_value(global_this));
         }
     }
-
-    // TODO(port): bun_jsc::* — ZigString::to_json_object.
 
     pub fn to_json(&mut self, global_this: &JSGlobalObject) -> JSValue {
         let str_bytes = ZigString::init(strings::without_utf8_bom(&self.bytes)).with_encoding();
@@ -7067,8 +7055,6 @@ impl Inline {
     pub fn init_string(data: &[u8]) -> Inline {
         Self::internal_init(data, true)
     }
-
-    // TODO(port): bun_jsc::* — ZigString::to_js.
 
     pub fn to_string_owned(&mut self, global_this: &JSGlobalObject) -> JSValue {
         if self.len == 0 {

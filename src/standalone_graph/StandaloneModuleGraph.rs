@@ -376,11 +376,9 @@ pub struct File {
     pub loader: Loader,
     pub contents: &'static ZStr,
     pub sourcemap: LazySourceMap,
-    // TODO(port): lifetime — assigned in runtime/api/ (out of crate)
     pub cached_blob: Option<NonNull<Blob>>,
     pub encoding: Encoding,
     pub wtf_string: BunString,
-    // TODO(port): Zig type is []u8 (mutable) obtained via @constCast on section bytes.
     // BACKREF into the embedded section; JSC mutates the bytecode buffer in place.
     pub bytecode: *mut [u8],
     pub module_info: *mut [u8],
@@ -464,9 +462,6 @@ impl LazySourceMap {
                 let mut stored = SourceMap::ParsedSourceMap::from_internal(ism);
 
                 let source_files_count = serialized.source_files_count();
-                // TODO(port): Zig allocated a single `[]?[]u8` of len*2 and reinterpreted
-                // the first half as `[][]const u8` for file_names. Rust splits into two
-                // separate Vecs to avoid the punning.
                 // PERF(port): `external_source_names` is `Vec<Box<[u8]>>` so we
                 // copy the section bytes; Zig held a borrowed slice. Could switch
                 // the field to `Vec<&'static [u8]>` for the standalone path.
@@ -1689,7 +1684,7 @@ pub(crate) fn download_to_path(
 pub fn to_executable(
     target: &CompileTarget,
     output_files: &[OutputFile],
-    root_dir: Fd, // TODO(port): was std.fs.Dir
+    root_dir: Fd,
     module_prefix: &[u8],
     outfile: &[u8],
     env: &mut bun_dotenv::Loader,
@@ -1739,7 +1734,6 @@ pub fn to_executable(
         }
     } else {
         let mut exe_path_buf = PathBuffer::uninit();
-        // TODO(port): std.fmt.allocPrintSentinel — build NUL-terminated owned string.
         let mut version_str: Vec<u8> = Vec::new();
         let _ = write!(&mut version_str, "{}", target);
         version_str.push(0);
@@ -1940,8 +1934,6 @@ pub fn to_executable(
                 )));
             }
         };
-        // TODO(port): std.posix.toPosixPath — copy into NUL-terminated fixed buffer.
-        // `resolve_path::z` does the same (copy + NUL) and yields `&ZStr`.
         let mut temp_posix_buf = PathBuffer::uninit();
         let temp_posix = path::resolve_path::z(&temp_location, &mut temp_posix_buf);
         let outfile_basename = bun_paths::basename(outfile);

@@ -362,7 +362,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             .discard(self.receive_buffer.readable_length());
 
         if free {
-            // TODO(port): LinearFifo::deinit → Drop semantics; reset to fresh state
             self.receive_buffer = LinearFifo::<u8, DynamicBuffer<u8>>::init();
         }
 
@@ -401,8 +400,6 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         // PORT NOTE: reshaped for borrowck — drop deflate borrow before re-borrowing self
         let items = decompressed.as_slice();
-        // TODO(port): borrowck — `decompressed` borrows `deflate.rare_data`; may need to
-        // copy out or restructure.
         self.dispatch_data(items, kind);
     }
 
@@ -2097,10 +2094,6 @@ impl<const SSL: bool> WebSocket<SSL> {
 // ──────────────────────────────────────────────────────────────────────────
 // exportAll() — comptime @export with name concat
 // ──────────────────────────────────────────────────────────────────────────
-// TODO(port): Zig's `@export(&fn, .{.name = "Bun__" ++ name ++ "__fn"})` with
-// comptime string concat cannot be expressed generically in Rust (no_mangle
-// requires a literal). Emit two monomorphized #[no_mangle] shims per fn via macro.
-
 // PORT NOTE: avoids the `paste` crate by passing the nine fully-qualified
 // `#[no_mangle]` idents at the call site (declare-site macro). Zig's
 // comptime `++` concat has no Rust equivalent for `#[no_mangle]` literals.

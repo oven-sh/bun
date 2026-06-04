@@ -155,7 +155,6 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 //         core::ptr::drop_in_place(raw as *mut ManuallyDrop<T>); // no-op
 //         alloc::alloc::dealloc(raw.cast(), Layout::new::<T>());
 //     }
-//   // TODO(port): audit callers of deinitShallow; likely all fall under (a) or (b).
 
 // ── get ──────────────────────────────────────────────────────────────────────────────────────
 // Returns the inner pointer or slice.

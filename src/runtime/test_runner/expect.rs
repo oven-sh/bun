@@ -54,7 +54,7 @@ pub enum Promise {
     Rejects = 2,
 }
 
-#[repr(u8)] // TODO(port): Zig used u5; encoded inside Flags packed repr
+#[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum AsymmetricMatcherConstructorType {
     #[default]

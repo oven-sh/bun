@@ -489,8 +489,6 @@ fn new_pack_queue() -> PackQueue {
 
 /// (dir, dir_subpath, dir_depth)
 struct DirInfo(Dir, Box<[u8]>, usize);
-// TODO(port): Zig used `string` (borrowed) for the subpath; here owned because
-// values are pushed onto a Vec stack and outlive the producing iteration.
 
 // ───────────────────────────────────────────────────────────────────────────
 // tree iteration (includes / excludes)
@@ -2324,7 +2322,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     path: ZBox::from_bytes(bin.path.as_bytes()),
                     optional: true,
                 })?;
-                // TODO(port): Zig pushed a borrowed slice; cloning here
             }
             BinType::Dir => {
                 let bin_dir = match dir_open_dir_z(
@@ -3024,8 +3021,6 @@ fn run_lifecycle_script<const FOR_PUBLISH: bool>(
             if err == bun_core::err!("OutOfMemory") {
                 return Err(PackError::OutOfMemory);
             }
-            // TODO(port): Zig's error set is exactly {MissingShell, OutOfMemory};
-            // unreachable here.
             unreachable!()
         }
     }
@@ -3214,7 +3209,6 @@ fn archive_package_json(
     };
 
     entry.set_pathname(bun_core::zstr!("package/package.json"));
-    // TODO(port): PACKAGE_PREFIX ++ "package.json" comptime concat
     entry.set_size(i64::try_from(edited_package_json.len()).expect("int cast"));
     // https://github.com/libarchive/libarchive/blob/898dc8319355b7e985f68a9819f182aaed61b53a/libarchive/archive_entry.h#L185
     entry.set_filetype(0o100000);
@@ -3360,7 +3354,6 @@ fn edit_root_package_json(
         if let Some(dependencies_expr) = json.root.get(dependency_group) {
             if let ExprData::EObject(mut dependencies) = dependencies_expr.data {
                 for dependency in dependencies.properties.slice_mut() {
-                    // TODO(port): Zig iterated `slice()` of `*dependency`; need mutable iter
                     if dependency.key.is_none() {
                         continue;
                     }
@@ -3548,7 +3541,6 @@ fn edit_root_package_json(
         .buffer
         .list
         .reserve(json.source.contents.len() + 1);
-    // TODO(port): ensureTotalCapacity → reserve(n - len) per guide; len==0 here
     buffer_writer.append_newline = has_trailing_newline;
     let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
 
@@ -3581,8 +3573,6 @@ fn edit_root_package_json(
         .ctx
         .written_without_trailing_zero()
         .into())
-    // TODO(port): return type ownership — Zig returned a borrowed slice into
-    // package_json_writer's internal buffer; here boxed.
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -3872,8 +3862,6 @@ impl IgnorePatterns {
 // printArchivedFilesAndPackages
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): Zig used `comptime is_dry_run: bool` to vary the param type
-// (`*PackQueue` vs `PackList`). Using a small enum wrapper.
 enum PackListOrQueue<'a> {
     Queue(&'a mut PackQueue),
     List(&'a PackList),

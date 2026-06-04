@@ -265,10 +265,6 @@ impl<'a> InternalState<'a> {
 
         if bun_core::feature_flags::is_libdeflate_enabled() {
             // Fast-path: use libdeflate
-            // TODO(port): bun_http::HTTPThread::deflater — `http_thread()` accessor and the
-            // `LibdeflateState { decompressor, shared_buffer }` it returns live in the gated
-            // HTTPThread cluster. Re-gated until HTTPThread un-gates (which itself blocks on
-            // bun_uws::SocketHandler method bodies).
 
             'libdeflate: {
                 use bun_libdeflate_sys::libdeflate as bun_libdeflate;
@@ -355,10 +351,6 @@ impl<'a> InternalState<'a> {
                     return Err(err.into());
                 }
             }
-
-            // TODO(port): bun_zlib::ZlibReaderArrayList / bun_brotli::BrotliReaderArrayList /
-            // bun_zstd::ZstdReaderArrayList — `Decompressor::update_buffers` is re-gated until
-            // those reader types are reshaped to not carry an `'a` borrow of the output Vec.
 
             if let Err(err) = self
                 .decompressor

@@ -622,7 +622,6 @@ pub struct SlotCounts {
 
 impl SlotCounts {
     pub fn union_max(&mut self, other: SlotCounts) {
-        // TODO(port): `enum_map::EnumMap` exposes `.values()`; the Zig iterates raw arrays.
         for (a, b) in self.slots.values_mut().zip(other.slots.values()) {
             if *a < *b {
                 *a = *b;
@@ -1244,7 +1243,6 @@ pub fn printmem(args: fmt::Arguments<'_>) {
     Output::flush();
 }
 
-// TODO(port): `thiserror` not in this crate's deps; hand-roll Display/Error.
 #[derive(Debug, Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ToJSError {
     #[strum(serialize = "Cannot convert argument type to JS")]

@@ -35,7 +35,6 @@ pub(crate) fn freemem() -> u64 {
 // `global.throw_value`) or reaches `bun_sys::posix::sysctlbyname` /
 // `bun_sys::c::sysinfo` / `crate::gen_::node_os` which are not yet exported.
 // CPUTimes struct + freemem() + trailing pure helpers hoisted above/below.
-// TODO(port): un-gate once bun_jsc + bun_sys::posix syscall surface land.
 
 mod _impl {
     use super::*;
@@ -317,7 +316,6 @@ mod _impl {
 
         // Read /proc/stat to get number of CPUs and times
         {
-            // TODO(port): std.fs.cwd().openFile → bun_sys::File::open (no std::fs)
             let file =
                 match bun_sys::File::open(bun_core::zstr!("/proc/stat"), bun_sys::O::RDONLY, 0) {
                     Ok(f) => f,
@@ -1049,7 +1047,6 @@ mod _impl {
 
             // SAFETY: ifa_name is a NUL-terminated C string
             let interface_name = unsafe { bun_core::ffi::cstr(iface.ifa_name) }.to_bytes();
-            // TODO(port): std.net.Address — using bun_sys::net::Address (no std::net)
             // SAFETY: ifa_addr/ifa_netmask are valid sockaddr* (skip() ensures ifa_addr non-null)
             let addr = unsafe { bun_sys::net::Address::init_posix(iface.ifa_addr.cast_const()) };
             // SAFETY: ifa_netmask is a valid sockaddr* populated by getifaddrs for this entry
@@ -1591,7 +1588,6 @@ mod _impl {
             if bun_sys::posix::sysctl_read(c"kern.boottime", &mut boot_time).is_err() {
                 return Ok(0.0);
             }
-            // TODO(port): std.time.timestamp() → bun_sys::time::timestamp() (no std::time wallclock)
             return Ok((bun_sys::time::timestamp() - boot_time.tv_sec as i64) as f64);
         }
         #[cfg(any(target_os = "linux", target_os = "android"))]

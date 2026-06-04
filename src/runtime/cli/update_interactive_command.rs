@@ -1432,8 +1432,6 @@ impl UpdateInteractiveCommand {
         let mut reprint_menu = true;
         let mut total_lines: usize = 0;
         let mut last_terminal_width = initial_terminal_size.width;
-        // TODO(port): errdefer reprint_menu = false; — handled inline below by setting before early return on error.
-        // TODO(port): defer block that uses state.selected — moved to explicit calls before each return.
 
         macro_rules! cleanup_and_reprint {
             ($reprint:expr) => {{
@@ -2006,7 +2004,6 @@ impl UpdateInteractiveCommand {
             Output::flush();
 
             // Read input
-            // TODO(port): std.fs.File.stdin().readerStreaming — use bun_sys stdin byte reader
             let mut reader = bun_core::output::stdin_reader();
             let byte = match reader.take_byte() {
                 Ok(b) => b,

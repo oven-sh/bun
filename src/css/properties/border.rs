@@ -186,7 +186,7 @@ where
 // ──────────────────────────────────────────────────────────────────────────
 
 /// A [`<line-style>`](https://drafts.csswg.org/css-backgrounds/#typedef-line-style) value, used in the `border-style` property.
-#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)] // TODO(port): provides eql/hash/parse/to_css/deep_clone
+#[derive(Clone, Copy, Default, PartialEq, Eq, Hash, css::DefineEnumProperty)]
 pub enum LineStyle {
     /// No border.
     #[default]

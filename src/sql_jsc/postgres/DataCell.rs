@@ -254,7 +254,6 @@ fn parse_array(
                         value: Value {
                             json: if !unescaped.is_empty() {
                                 BunString::clone_utf8(unescaped).leak_wtf_impl()
-                                // TODO(port): .value.WTFStringImpl accessor name
                             } else {
                                 core::ptr::null_mut()
                             },
@@ -1481,7 +1480,6 @@ impl<'a> Putter<'a> {
         result_mode: PostgresSQLQueryResultMode,
         cached_structure: Option<&PostgresCachedStructure>,
     ) -> Result<JSValue, AnyPostgresError> {
-        // TODO(port): jsc.JSObject.ExternColumnIdentifier path — confirm bun_jsc export name
         let mut names: *mut crate::jsc::ExternColumnIdentifier = core::ptr::null_mut();
         let mut names_count: u32 = 0;
         if let Some(c) = cached_structure {

@@ -24,7 +24,6 @@ pub struct SourceLocationBytes {
 
 #[inline(always)]
 fn auto_disable() {
-    // TODO(port): bun_core::feature_flags::DISABLE_LOLHTML — comptime flag in Zig
     if bun_core::feature_flags::DISABLE_LOLHTML {
         unreachable!();
     }
@@ -222,8 +221,6 @@ impl HTMLRewriterBuilder {
     ///
     /// WARNING: Pointers passed to handlers are valid only during the
     /// handler execution. So they should never be leaked outside of handlers.
-    // TODO(port): Zig used comptime fn-value params to monomorphize trampolines per callback.
-    // Rust cannot take const fn pointers as const generics; modeled via DirectiveCallback trait.
     // PORT NOTE: handler-data params are `Option<NonNull<H>>`, not
     // `Option<&mut H>` — callers routinely pass the SAME allocation for
     // multiple slots (one `DocumentHandler` services doctype/comment/text/end),
@@ -285,7 +282,6 @@ impl HTMLRewriterBuilder {
     ///
     /// WARNING: Pointers passed to handlers are valid only during the
     /// handler execution. So they should never be leaked outside of handlers.
-    // TODO(port): comptime fn-value params → trait-based trampolines (see add_document_content_handlers)
     // PORT NOTE: Zig also checked `handler != null` (in addition to `handler_data != null`); the trait
     // model assumes the handler is always present when data is Some, so (handler=null, data=non-null)
     // is unrepresentable here.
@@ -327,8 +323,6 @@ impl HTMLRewriterBuilder {
         }
     }
 
-    // TODO(port): Zig took comptime Writer/Done fn-values; modeled via OutputSink trait
-    //
     // PORT NOTE: takes `*mut S` (not `&mut S`) so the userdata pointer stored
     // in the C rewriter retains the caller's raw-pointer provenance (typically
     // a `heap::alloc` root). If we took `&mut S`, the userdata would carry a

@@ -51,7 +51,7 @@ impl<'a> TOML<'a> {
     // call sites, so this collapses to a single generic forwarding to Expr::init.
     pub fn e<D>(&self, t: D, loc: bun_ast::Loc) -> Expr
     where
-        D: js_ast::ExprInit, // TODO(port): real trait bound for Expr::init payloads
+        D: js_ast::ExprInit,
     {
         Expr::init(t, loc)
     }

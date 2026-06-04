@@ -381,7 +381,6 @@ impl BuildCommand {
                 resolve_path::get_if_exists_longest_common_path(&entries).unwrap_or(b".")
             };
 
-            // TODO(port): std.posix.toPosixPath — NUL-terminate path into a stack buffer
             let dir = match bun_sys::open_dir_at(Fd::cwd(), path) {
                 Ok(d) => d,
                 Err(err) => {
@@ -473,7 +472,6 @@ impl BuildCommand {
             MacroOptions::Unspecified => {}
         }
 
-        // TODO(port): client_transpiler is left uninitialized in Zig until needed; using Option here
         let mut client_transpiler: Option<transpiler::Transpiler> = None;
         if this_transpiler.options.server_components {
             let mut ct = transpiler::Transpiler::init(arena, log, ctx.args.clone(), None)?;
@@ -811,7 +809,6 @@ impl BuildCommand {
                     outfile = b"index";
                 }
 
-                // TODO(port): outfile may need owned storage when reassigned to allocated buffer below
                 let mut outfile_owned: Vec<u8>;
                 if compile_target.os == OperatingSystem::Windows
                     && !strings::has_suffix_comptime(outfile, b".exe")
@@ -1135,7 +1132,6 @@ fn print_summary(
 
     let bundle_elapsed = if minified {
         bundle_until_now - i64::try_from((minify_duration as u64) & ((1u64 << 63) - 1)).unwrap()
-        // TODO(port): @as(u63, @truncate(minify_duration)) — masked to 63 bits above
     } else {
         bundle_until_now
     };

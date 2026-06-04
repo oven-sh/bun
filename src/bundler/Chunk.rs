@@ -54,7 +54,6 @@ pub struct Chunk {
     pub files_with_parts_in_chunk: ArrayHashMap<IndexInt, core::sync::atomic::AtomicUsize>,
 
     /// We must not keep pointers to this type until all chunks have been allocated.
-    // TODO(port): was `= undefined` in Zig (set before use)
     pub entry_bits: AutoBitSet,
 
     /// PORT NOTE: Zig stored this as an arena-owned `[]const u8` (linker arena);
@@ -652,7 +651,6 @@ impl IntermediateOutput {
         // `LinkerGraph.files` SoA (`items_entry_point_chunk_index`) lands with
         // the LinkerGraph work. `bun_paths` / `bun_core::fmt::count` /
         // `bun_alloc::alloc_slice` surfaces are tracked upstream.
-        // TODO(port): MultiArrayList SoA accessors — assuming `.items(.field)` → method returning slice
         let additional_files = graph.input_files.items_additional_files();
         let unique_key_for_additional_files =
             graph.input_files.items_unique_key_for_additional_file();
@@ -750,7 +748,6 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    // TODO(port): std.fmt.count → counting writer; assuming bun_core::fmt::count
                                     count += bun_core::fmt::count(format_args!(
                                         "{}",
                                         HTMLImportManifest::format_escaped_json(
@@ -790,7 +787,6 @@ impl IntermediateOutput {
 
                 let debug_id_len = if ENABLE_SOURCE_MAP_SHIFTS && FeatureFlags::SOURCE_MAP_DEBUG_ID
                 {
-                    // TODO(port): std.fmt.count → counting writer
                     bun_core::fmt::count(format_args!(
                         "\n//# debugId={}\n",
                         source_map::DebugIDFormatter {
@@ -914,7 +910,6 @@ impl IntermediateOutput {
                                 }
 
                                 QueryKind::HtmlImport => {
-                                    // TODO(port): std.io.fixedBufferStream → write into &mut [u8]
                                     let mut cursor: &mut [u8] = remain;
                                     let before_len = cursor.len();
                                     HTMLImportManifest::write_escaped_json(
@@ -1214,7 +1209,6 @@ impl fmt::Display for UniqueKey {
 pub struct EntryPoint(u64);
 
 /// so `EntryPoint` can be a u64
-// TODO(port): Rust has no native u30 — using u32 with mask. Zig: `pub const ID = u30;`
 pub(crate) type EntryPointId = u32;
 
 impl EntryPoint {
@@ -1425,13 +1419,11 @@ impl Layers {
 }
 
 impl CssImportOrder {
-    // TODO(port): hasher: anytype — Zig hasher protocol has .update([]const u8)
     pub(crate) fn hash<H: bun_core::Hasher + ?Sized>(&self, hasher: &mut H) {
         // TODO: conditions, condition_import_records
 
         // Zig: bun.writeAnyToHasher(hasher, std.meta.activeTag(this.kind)) — feeds the small-int
         // tag bytes. core::mem::Discriminant is opaque/pointer-sized; hash an explicit u8 instead.
-        // TODO(port): activeTag byte width — Zig's Tag(union) here is u2; u8 keeps hash stable.
         let tag: u8 = match &self.kind {
             CssImportOrderKind::Layers(_) => 0,
             CssImportOrderKind::ExternalPath(_) => 1,

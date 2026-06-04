@@ -397,8 +397,6 @@ impl Default for EntryCache {
 // that external-locking discipline).
 pub struct Entry {
     pub cache: core::cell::Cell<EntryCache>,
-    // TODO(port): rule deviation — Zig deinit calls allocator.free(e.dir) so guide says Box<[u8]>,
-    // but this points into DirnameStore (a &'static BSSList). Keeping &'static.
     pub dir: &'static [u8],
 
     pub base_: strings::StringOrTinyString,
@@ -1006,8 +1004,6 @@ impl bun_dotenv::DirEntryProbe for DirEntry {
 pub use EntryKind as FsEntryKind;
 pub use dir_entry::Err as DirEntryErr;
 
-// TODO(port): Entry::deinit took allocator and destroyed self; Entry lives in EntryStore (BSSList) so no Drop needed
-
 // pub fn statBatch(fs: *FileSystemEntry, paths: []string) ![]?Stat {
 // }
 // pub fn stat(fs: *FileSystemEntry, path: string) !Stat {
@@ -1170,7 +1166,6 @@ impl RealFS {
             }
 
             let mut tmp_buf = PathBuffer::uninit();
-            // TODO(port): std.posix.getcwd — bun_sys::getcwd
             let n =
                 bun_sys::getcwd(&mut tmp_buf[..]).expect("Failed to get cwd for platformTempDir");
             let cwd = &tmp_buf[..n];
@@ -2551,11 +2546,8 @@ impl core::fmt::Display for PrintHandle<Fd> {
         write!(f, "{}", self.0)
     }
 }
-// TODO(port): FmtHandleFnGenerator used @TypeOf reflection — replaced with per-type Display impls
 
 #[path = "fs/stat_hash.rs"]
 pub mod stat_hash;
-// TODO(port): src/resolver/fs/stat_hash.rs depends on bun_hash::XxHash64 +
-// bun_http_types::wtf::write_http_date — gated until those land.
 
 // ported from: src/resolver/fs.zig

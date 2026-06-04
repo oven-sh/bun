@@ -446,7 +446,6 @@ impl Bin {
     }
 
     pub fn init() -> Bin {
-        // TODO(port): bun.serializable() zero-initialized padding for hashing stability
         Bin {
             tag: Tag::None,
             _padding_tag: [0; 3],
@@ -517,7 +516,6 @@ pub union Value {
 
 impl Value {
     /// To avoid undefined memory between union values, we must zero initialize the union first.
-    // TODO(port): bun.serializableInto zeroed the full union before assignment.
     #[inline]
     pub fn init_none() -> Value {
         // SAFETY: all-zero is a valid Value (largest member ExternalStringList is POD)
@@ -592,7 +590,6 @@ pub struct NamesIterator<'a> {
     pub bin: Bin,
     pub i: usize,
     pub done: bool,
-    // TODO(port): std.fs.Dir.Iterator → bun_sys directory iterator type
     pub dir_iterator: Option<sys::dir_iterator::WrappedIterator>,
     pub package_name: String,
     /// Borrowed view of the destination `node_modules` directory fd; the
@@ -1167,7 +1164,6 @@ impl<'a> Linker<'a> {
                     // Snapshot the length and restore via `set_length` after.
                     let node_modules_path_save = self.node_modules_path.len();
                     let _ = self.node_modules_path.append(b".bin");
-                    // TODO(port): bun.makePath(std.fs.cwd(), ...)
                     let _ = sys::Dir::cwd().make_path(self.node_modules_path.slice());
                     self.node_modules_path.set_length(node_modules_path_save);
 
@@ -1331,7 +1327,6 @@ impl<'a> Linker<'a> {
         }
 
         // delete and try again
-        // TODO(port): std.fs.deleteTreeAbsolute → bun_sys equivalent
         let _ = sys::delete_tree_absolute(abs_dest.as_bytes());
         if let Err(err) = sys::symlink_running_executable(rel_target, abs_dest) {
             self.err = Some(err.to_zig_err());

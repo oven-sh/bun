@@ -325,10 +325,6 @@ impl ::bun_install_types::resolver_hooks::PackageJsonView for PackageJSON {
 }
 
 impl PackageJSON {
-    // pub const new = bun.TrivialNew(@This());
-    // pub const deinit = bun.TrivialDeinit(@This());
-    // TODO(port): TrivialNew/TrivialDeinit — use Box::new / Drop
-
     pub fn name_for_import(&self) -> Result<Box<[u8]>, bun_core::Error> {
         // TODO(port): narrow error set
         if strings::index_of(self.source.path.text, NODE_MODULES_PATH.as_bytes()).is_some() {
@@ -1541,7 +1537,6 @@ impl PackageJSON {
                 }
 
                 type DependencyGroup = install_stubs::DependencyGroup;
-                // TODO(port): comptime feature flags + comptime brk block — expanded inline below
                 let dev_deps = INCLUDE_DEPENDENCIES == IncludeDependencies::Main;
                 let dependency_groups: &[DependencyGroup] = if dev_deps {
                     &[
@@ -2399,7 +2394,6 @@ impl<'a> ESModule<'a> {
         // live `&mut` to resolved_path_buf_percent on this thread.
         let resolved_path_buf_percent: &mut PathBuffer =
             unsafe { &mut (*module_bufs()).resolved_path_buf_percent };
-        // TODO(port): std.io.fixedBufferStream + PercentEncoding.decode
         let len = match bun_url::PercentEncoding::decode_into(
             &mut resolved_path_buf_percent.0,
             &result.path,

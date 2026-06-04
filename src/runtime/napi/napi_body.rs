@@ -186,7 +186,6 @@ unsafe impl bun_ptr::ExternalSharedDescriptor for NapiEnv {
     }
 }
 
-// TODO(port): bun.ptr.ExternalShared(NapiEnv) — intrusive externally-refcounted handle.
 pub(super) type NapiEnvRef = bun_ptr::ExternalShared<NapiEnv>;
 
 #[cold]
@@ -2572,8 +2571,6 @@ impl ThreadSafeFunction {
                 // TODO: is this boolean necessary? Can we rely just on the closing value?
                 if !self.has_queued_finalizer {
                     self.has_queued_finalizer = true;
-                    // TODO(port): callback.deinit() — Strong handles drop on Drop; here we must
-                    // explicitly clear before enqueuing the finalize task to match Zig ordering.
                     // PORT NOTE: replace callback with a no-op variant to drop Strong now.
                     self.callback = TsfnCallback::Js(StrongOptional::empty());
                     self.poll_ref.disable();

@@ -222,7 +222,6 @@ where
                 package_index::Entry::Id(id) => *id,
                 package_index::Entry::Ids(ids) => ids.as_slice()[0],
             };
-            // TODO(port): MultiArrayList column accessor — `packages.items(.name)` in Zig.
             let name = this.packages.items_name()[first_id as usize].slice(sb);
             w.object_field(name)?;
             match entry {

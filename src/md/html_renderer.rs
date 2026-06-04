@@ -7,10 +7,6 @@ use crate::helpers;
 use crate::types;
 use crate::types::{BlockType, JsResult, Renderer, RendererImpl, SpanDetail, SpanType, TextType};
 
-// TODO(port): lifetime — `src_text` and `saved_img_title` borrow the caller's
-// source buffer for the renderer's lifetime (never freed in Zig `deinit`).
-// The porting guide discourages struct lifetimes, but raw `*const [u8]` is
-// worse here; revisit if `'src` causes friction.
 pub(crate) struct HtmlRenderer<'src> {
     pub out: OutputBuffer,
     // allocator dropped — non-AST crate uses global mimalloc
@@ -210,7 +206,6 @@ impl<'src> HtmlRenderer<'src> {
             BlockType::Li => self.write(b"</li>\n"),
             BlockType::Hr => {}
             BlockType::H => {
-                // TODO(port): leave_heading() drops allocator param; returns Option<&[u8]>.
                 if let Some(slug) = self.heading_tracker.leave_heading() {
                     // Write opening tag with id
                     self.out.write(match data {

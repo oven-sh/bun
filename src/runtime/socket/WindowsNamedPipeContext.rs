@@ -284,9 +284,6 @@ impl WindowsNamedPipeContext {
     ) -> *mut WindowsNamedPipeContext {
         let global_this = GlobalRef::from(global_this);
         let vm: &'static VirtualMachine = global_this.bun_vm();
-        // TODO(port): in-place init — `named_pipe`/`task` capture `this` (self-referential), so
-        // allocate uninit, derive the stable pointer, build the fields, then ptr::write the whole
-        // struct. Avoids `mem::zeroed()` on non-POD AnyTask/WindowsNamedPipe.
         let this: *mut WindowsNamedPipeContext = bun_core::heap::into_raw(Box::<
             core::mem::MaybeUninit<WindowsNamedPipeContext>,
         >::new_uninit())

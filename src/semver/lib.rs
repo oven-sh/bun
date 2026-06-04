@@ -84,10 +84,6 @@ pub mod sliced_string {
     use super::external_string::ExternalString;
     use super::semver_string::String;
 
-    // TODO(port): lifetime — PORTING.md says "no lifetime param on struct for []const u8 fields",
-    // but SlicedString is purely a borrowed (ptr+len) view used for offset arithmetic into a
-    // backing buffer; Box/&'static/raw are all wrong here. Confirm `'a` threading or
-    // swap to raw `*const [u8]` if borrowck fights at call sites.
     #[derive(Copy, Clone)]
     pub struct SlicedString<'a> {
         pub buf: &'a [u8],
@@ -751,8 +747,6 @@ pub mod semver_string {
                     b'#' => b'+',
                     _ => c,
                 };
-                // TODO(port): writing raw byte through fmt::Write requires char conversion;
-                // bytes here are path-safe ASCII so `as char` is fine.
                 use core::fmt::Write;
                 f.write_char(n as char)?;
             }

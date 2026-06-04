@@ -51,9 +51,6 @@ impl PollOrFd {
         }
     }
 
-    // TODO(port): Zig's `comptime onCloseFn: anytype` allowed passing `void` for
-    // "no callback" (checked via `@TypeOf(onCloseFn) != void`). Represented here
-    // as `Option<F>`; callers that passed `{}` should pass `None::<fn(*mut c_void)>`.
     pub fn close_impl<F>(
         &mut self,
         ctx: Option<*mut c_void>,

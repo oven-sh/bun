@@ -1077,7 +1077,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if let Some(network_concurrency) = args.option(b"--network-concurrency") {
-            // TODO(port): parse u16 from &[u8] — bun_str helper or core::str::from_utf8 + parse
             cli.network_concurrency =
                 Some(match strings::parse_int::<u16>(network_concurrency, 10) {
                     Ok(n) => n,
@@ -1096,7 +1095,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
 
         if let Some(min_age_secs) = args.option(b"--minimum-release-age") {
-            // TODO(port): parse f64 from &[u8]
             let secs: f64 = match bun_core::parse_double(min_age_secs) {
                 Ok(s) => s,
                 Err(_) => {

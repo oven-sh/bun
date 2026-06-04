@@ -271,8 +271,6 @@ pub struct ValkeyClient {
     pub reply_scanner: protocol::ReplyScanner,
 
     /// In-flight commands, after the data has been written to the network socket
-    // TODO(port): `Queue` is `std.fifo.LinearFifo(PromisePair, .Dynamic)` in Zig — assume
-    // valkey_command.rs exposes a matching type (readable_slice/read_item/write_item/etc.).
     pub in_flight: command::promise_pair::Queue,
 
     /// Commands that are waiting to be sent to the server. When pipelining is implemented, this usually will be empty.

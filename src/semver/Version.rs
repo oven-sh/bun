@@ -777,8 +777,6 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
         )
         .unwrap_or(ChangedVersion::None);
 
-        // TODO(port): Output.prettyFmt is a comptime ANSI-tag expander. `pretty_fmt!`
-        // currently passes the literal through; the proc-macro substitution lands later.
         match diff {
             ChangedVersion::Major => write!(
                 writer,
@@ -989,9 +987,6 @@ pub struct Tag {
 
 impl Tag {
     pub fn order_pre(self, rhs: Tag, lhs_buf: &[u8], rhs_buf: &[u8]) -> Ordering {
-        // TODO(port): Zig parameterized this on IntType (u32 vs u64). Only the
-        // u64 instantiation is used at runtime (OldV2Version is migration-only),
-        // so we hardcode u64 here.
         let lhs_str = self.pre.slice(lhs_buf);
         let rhs_str = rhs.pre.slice(rhs_buf);
 

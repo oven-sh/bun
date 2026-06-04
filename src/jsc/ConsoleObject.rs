@@ -95,11 +95,6 @@ pub struct ConsoleObject {
     stderr_buffer: [u8; 4096],
     stdout_buffer: [u8; 4096],
 
-    // TODO(port): Zig stores `Adapter` structs for the old→new `std.Io.Writer`
-    // bridge plus self-referential `*std.Io.Writer` pointers into them. In Rust
-    // we restructure as direct buffered writer fields and expose them via
-    // `error_writer()` / `writer()` getters (LIFETIMES.tsv: BORROW_FIELD →
-    // self-ref; restructure as getter).
     error_writer_backing: Output::QuietWriterAdapter,
     writer_backing: Output::QuietWriterAdapter,
 
@@ -1929,10 +1924,6 @@ pub mod formatter {
 
     impl core::fmt::Display for ZigFormatter<'_, '_> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            // TODO(port): Zig writes through `*std.Io.Writer`; here we go
-            // through `core::fmt::Write`. A `bun_io::Write` adapter for
-            // `core::fmt::Formatter` would keep the byte path.
-            //
             // Move the unique `&mut Formatter` out of the cell for the body;
             // re-seat it (and clear `remaining_values`) on the way out so the
             // adapter mirrors Zig's `defer` and stays reusable.
@@ -1947,7 +1938,6 @@ pub mod formatter {
             let result = (|| {
                 let tag =
                     Tag::get(self.value, formatter.global_this).map_err(|_| core::fmt::Error)?;
-                // TODO(port): need a `&mut dyn bun_io::Write` over `f`.
                 let mut sink = bun_io::FmtAdapter::new(f);
                 let global = formatter.global_this;
                 formatter
@@ -2540,10 +2530,6 @@ pub mod formatter {
     }
 
     impl<'a> Formatter<'a> {
-        // TODO(port): Zig parameterizes over `Slice` (`[]const u8` or `[]const u16`)
-        // via `comptime Slice: type`. Only the `&[u8]` path is handled here; the
-        // UTF-16 path was unused at the call site (`slice` always comes from
-        // `toSlice` → UTF-8).
         fn write_with_formatting<const ENABLE_ANSI_COLORS: bool>(
             &mut self,
             writer_: &mut dyn bun_io::Write,

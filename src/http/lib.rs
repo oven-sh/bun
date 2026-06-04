@@ -1158,8 +1158,6 @@ pub fn print_request(
     body: &[u8],
     curl: bool,
 ) {
-    // TODO(port): Zig built a clone with `path = url` for the curl formatter.
-    // picohttp::Request<'_> isn't `Clone`, so format the fields directly.
     if curl {
         let request_ = picohttp::Request {
             method: request.method,
@@ -2437,8 +2435,6 @@ impl<'a> HTTPClient<'a> {
         // (it needs `&mut self`, which would alias every other `self.*` call in the body),
         // so it is reshaped as an explicit `self.complete_connecting_process()` before each return.
 
-        // TODO(port): allocator vtable identity check elided (no allocator param in Rust)
-
         // Aborted before connecting
         if self.signals.get(signals::Field::Aborted) {
             self.fail(err!(AbortedBeforeConnecting));
@@ -3315,7 +3311,6 @@ impl<'a> HTTPClient<'a> {
             && !self.state.flags.did_set_content_encoding
         {
             // if it compressed with this header, it is no longer because we will decompress it
-            // TODO(port): Zig wrapped headers in ArrayListUnmanaged but never mutated; preserved as-is
             self.state.flags.did_set_content_encoding = true;
             self.state.content_encoding_i = u8::MAX;
             // we need to reset the pending response because we removed a header

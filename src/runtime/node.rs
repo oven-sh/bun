@@ -241,9 +241,6 @@ impl<R, E> MaybeExt<R, E> for Maybe<R, E> {
             // panic message; collapsed to a single panic + type name.
             panic!("TODO: Maybe({})", core::any::type_name::<R>());
         }
-        // TODO(port): Zig used `@hasDecl(E, "todo")` to optionally call
-        // `E::todo()` else default-construct. Modeled via `MaybeErrorTodo`
-        // trait with a default impl returning `E::default()`.
         Err(E::todo())
     }
 

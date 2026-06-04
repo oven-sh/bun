@@ -737,8 +737,6 @@ fn parse_compound_selector<Impl: BunSelectorImpl>(
 
     if parse_type_selector::<Impl>(parser, input, *state, builder).is_ok() {
         // Note: Zig `.asValue()` here means "if Ok"; the bool result is unused.
-        // TODO(port): the Zig only sets `empty = false` on Ok(true|false) — but
-        // `asValue()` returns Some on .result regardless of bool value, so this matches.
         empty = false;
     }
 

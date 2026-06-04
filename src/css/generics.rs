@@ -63,9 +63,6 @@ pub use bun_css_derive::DeepClone;
 
 #[inline]
 pub fn implement_deep_clone<'bump, T: DeepClone<'bump>>(this: &T, bump: &'bump Arena) -> T {
-    // TODO(port): Zig `implementDeepClone` is comptime field/variant reflection.
-    // In Rust this is the body of `#[derive(DeepClone)]`; the free fn just
-    // forwards to the trait so existing callers keep working.
     this.deep_clone(bump)
 }
 
@@ -202,8 +199,6 @@ pub use bun_css_derive::CssEql;
 
 #[inline]
 pub fn implement_eql<T: CssEql>(this: &T, other: &T) -> bool {
-    // TODO(port): Zig `implementEql` is comptime field/variant reflection ==
-    // the body of `#[derive(CssEql)]`. Free fn forwards to trait.
     this.eql(other)
 }
 
@@ -893,8 +888,6 @@ pub use bun_css_derive::CssHash;
 
 #[inline]
 pub fn implement_hash<T: CssHash>(this: &T, hasher: &mut Wyhash) {
-    // TODO(port): Zig `implementHash` is comptime field/variant reflection ==
-    // the body of `#[derive(CssHash)]`. Free fn forwards to trait.
     this.hash(hasher)
 }
 

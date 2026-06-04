@@ -123,9 +123,6 @@ impl MySQLStatement {
             .remove(ExecutionFlags::NEEDS_DUPLICATE_CHECK);
 
         let mut seen_numbers: Vec<u32> = Vec::new();
-        // TODO(port): StringHashMap key lifetime — Zig stores borrowed `name.slice()` pointers
-        // that outlive the map (columns outlive this function). The Rust StringHashMap clones
-        // into owned `Box<[u8]>` keys; fine for a transient dedup set.
         let mut seen_fields: StringHashMap<()> = StringHashMap::default();
         seen_fields.reserve(self.columns.len());
 

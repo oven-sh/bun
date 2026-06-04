@@ -534,7 +534,6 @@ impl PmPkgCommand {
                         }
 
                         current = arr.items.slice()[index];
-                        // TODO(port): Expr likely Copy via arena handle; verify.
                     } else {
                         if !matches!(current.data, ExprData::EObject(_)) {
                             return Err(err!("NotFound"));
@@ -940,7 +939,6 @@ impl PmPkgCommand {
         }
 
         let content = writer.ctx.written_without_trailing_zero();
-        // TODO(port): Zig used std.fs.cwd().writeFile; using bun_sys per porting rules (no std::fs).
         let path_z = bun_core::ZBox::from_bytes(path);
         if let Err(e) = bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z.as_zstr(), content) {
             Output::err_generic(

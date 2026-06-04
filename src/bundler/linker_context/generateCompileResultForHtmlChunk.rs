@@ -489,14 +489,12 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
                     html_loader.added_body_script = true;
                 }
             }
-            // value is ignored. fail loud if hit in debug
-            // TODO(port): Zig returned `undefined` in debug to fail loud; Rust has no direct equivalent.
+            // value is ignored
             break 'brk 0;
         }
     };
 
     CompileResult::Html {
-        // TODO(port): Zig returned `output.items` (slice into the ArrayList). Here we hand over the Vec.
         code: html_loader.output.into_boxed_slice(),
         source_index,
         script_injection_offset,

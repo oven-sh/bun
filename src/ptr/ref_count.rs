@@ -1088,8 +1088,6 @@ pub struct DebugData<Count> {
     // TODO(port): Zig used `align(@alignOf(u32))` to reduce u128 alignment to
     // 4. Rust cannot under-align a field; consider `[u32; 4]` if layout matters.
     magic: u128,
-    // TODO(port): Zig used `if (thread_safe) std.debug.SafetyLock else bun.Mutex`.
-    // Debug-only — always `bun_core::Mutex<()>` (poison-free `std::sync`) here for simplicity.
     lock: bun_core::Mutex<()>,
     next_id: AtomicU32,
     map: HashMap<TrackedRefId, TrackedRef>,

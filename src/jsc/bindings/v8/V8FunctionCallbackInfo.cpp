@@ -4,8 +4,8 @@
 
 // Check that a slot index in our FunctionCallbackInfo matches the index V8's
 // inline accessors use to read that slot of the ApiCallbackExitFrame
-#define CHECK_FRAME_INDEX(NAME)                                            \
-    static_assert(static_cast<int>(v8::FunctionCallbackInfo<v8::Value>::NAME)        \
+#define CHECK_FRAME_INDEX(NAME)                                                       \
+    static_assert(static_cast<int>(v8::FunctionCallbackInfo<v8::Value>::NAME)         \
             == static_cast<int>(real_v8::FunctionCallbackInfo<real_v8::Value>::NAME), \
         "Index of `" #NAME "` in the callback exit frame does not match V8");
 

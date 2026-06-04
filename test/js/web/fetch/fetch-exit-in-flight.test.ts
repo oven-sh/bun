@@ -40,13 +40,7 @@ async function runFixture(code: string) {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  // ASAN debug builds unconditionally print a signal-handler warning to
-  // stderr at startup; ignore that line.
-  const filteredStderr = stderr
-    .split("\n")
-    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
-    .join("\n");
-  return { stdout, stderr: filteredStderr, exitCode };
+  return { stdout, stderr, exitCode };
 }
 
 test.concurrent(

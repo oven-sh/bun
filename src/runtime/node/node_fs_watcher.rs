@@ -1006,7 +1006,9 @@ impl FSWatcher {
         let ctx_ptr = self.as_ctx_ptr().cast::<c_void>();
         if self.vm().test_isolation_enabled {
             if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                handles.remove_fs_watcher(self.as_ctx_ptr().cast_const());
+                handles.swap_remove(&crate::jsc_hooks::IsolationHandle::FsWatcher(
+                    core::ptr::NonNull::from(self),
+                ));
             }
         }
 
@@ -1151,9 +1153,12 @@ impl FSWatcher {
         };
         if vm_ref.test_isolation_enabled {
             if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                handles
-                    .fs_watchers
-                    .push(core::ptr::NonNull::new(ctx).expect("init: watcher"));
+                bun_core::handle_oom(handles.put(
+                    crate::jsc_hooks::IsolationHandle::FsWatcher(
+                        core::ptr::NonNull::new(ctx).expect("init: watcher"),
+                    ),
+                    (),
+                ));
             }
         }
         Ok(ctx)

@@ -1662,7 +1662,12 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
 
             if global_object.bun_vm().test_isolation_enabled {
                 if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                    handles.servers.push(AnyServer::from(server.cast_const()));
+                    bun_core::handle_oom(handles.put(
+                        crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(
+                            server.cast_const(),
+                        )),
+                        (),
+                    ));
                 }
             }
 

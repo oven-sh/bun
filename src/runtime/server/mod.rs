@@ -1539,7 +1539,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         if self.vm().test_isolation_enabled {
             if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                handles.remove_server(core::ptr::from_ref(self).cast());
+                handles.swap_remove(&crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(
+                    core::ptr::from_ref(self),
+                )));
             }
         }
 
@@ -1871,7 +1873,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         this_ref.notify_inspector_server_stopped();
         if this_ref.vm().test_isolation_enabled {
             if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                handles.remove_server(this.cast::<()>().cast_const());
+                handles.swap_remove(&crate::jsc_hooks::IsolationHandle::Server(AnyServer::from(
+                    this.cast_const(),
+                )));
             }
         }
 
@@ -3255,7 +3259,7 @@ pub type DebugHTTPSServer = NewServer<true, true>;
 // hand-roll the tag here. AnyServer is cold-path (per-request, not per-tick).
 // PERF(port): was TaggedPointerUnion pack — 8→16 bytes; ~handful of instances.
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum AnyServerTag {
     HTTPServer = 0,
     HTTPSServer = 1,
@@ -3263,7 +3267,7 @@ pub enum AnyServerTag {
     DebugHTTPSServer = 3,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub struct AnyServer {
     pub tag: AnyServerTag,
     pub ptr: *mut (),

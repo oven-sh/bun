@@ -100,47 +100,14 @@ pub struct RuntimeState {
     pub isolation_handles: IsolationHandles,
 }
 
-#[derive(Default)]
-pub struct IsolationHandles {
-    pub fs_watchers: Vec<ptr::NonNull<crate::node::node_fs_watcher::FSWatcher>>,
-    pub stat_watchers: Vec<ptr::NonNull<crate::node::node_fs_stat_watcher::StatWatcher>>,
-    pub servers: Vec<crate::server::AnyServer>,
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IsolationHandle {
+    FsWatcher(ptr::NonNull<crate::node::node_fs_watcher::FSWatcher>),
+    StatWatcher(ptr::NonNull<crate::node::node_fs_stat_watcher::StatWatcher>),
+    Server(crate::server::AnyServer),
 }
 
-impl IsolationHandles {
-    pub fn remove_fs_watcher(&mut self, watcher: *const crate::node::node_fs_watcher::FSWatcher) {
-        if let Some(i) = self
-            .fs_watchers
-            .iter()
-            .position(|p| p.as_ptr().cast_const() == watcher)
-        {
-            self.fs_watchers.swap_remove(i);
-        }
-    }
-
-    pub fn remove_stat_watcher(
-        &mut self,
-        watcher: *const crate::node::node_fs_stat_watcher::StatWatcher,
-    ) {
-        if let Some(i) = self
-            .stat_watchers
-            .iter()
-            .position(|p| p.as_ptr().cast_const() == watcher)
-        {
-            self.stat_watchers.swap_remove(i);
-        }
-    }
-
-    pub fn remove_server(&mut self, server: *const ()) {
-        if let Some(i) = self
-            .servers
-            .iter()
-            .position(|s| s.ptr.cast_const() == server)
-        {
-            self.servers.swap_remove(i);
-        }
-    }
-}
+pub type IsolationHandles = bun_collections::ArrayHashMap<IsolationHandle, ()>;
 
 thread_local! {
     /// One `RuntimeState` per JS thread (`VirtualMachine` is per-thread).
@@ -1680,36 +1647,15 @@ pub(crate) fn close_isolation_handles() {
     if state.is_null() {
         return;
     }
-    // close/stop may re-enter JS (close/error handlers), which can register
-    // new handles into ANY of the three registries — e.g. a server's close
-    // handler calling fs.watch() after the fs_watchers pass already finished.
-    // Repeat full passes until one makes no progress.
     loop {
-        let mut made_progress = false;
-        loop {
-            let Some(w) = (unsafe { &mut (*state).isolation_handles.fs_watchers }).pop() else {
-                break;
-            };
-            made_progress = true;
-            // SAFETY: live until it unregisters in `detach`.
-            unsafe { w.as_ref() }.close_for_isolation();
-        }
-        loop {
-            let Some(w) = (unsafe { &mut (*state).isolation_handles.stat_watchers }).pop() else {
-                break;
-            };
-            made_progress = true;
-            bun_ptr::ParentRef::from(w).close();
-        }
-        loop {
-            let Some(mut s) = (unsafe { &mut (*state).isolation_handles.servers }).pop() else {
-                break;
-            };
-            made_progress = true;
-            s.stop(true);
-        }
-        if !made_progress {
+        let Some(kv) = (unsafe { &mut (*state).isolation_handles }).pop() else {
             break;
+        };
+        match kv.key {
+            // SAFETY: live until it unregisters in `detach`.
+            IsolationHandle::FsWatcher(w) => unsafe { w.as_ref() }.close_for_isolation(),
+            IsolationHandle::StatWatcher(w) => bun_ptr::ParentRef::from(w).close(),
+            IsolationHandle::Server(mut s) => s.stop(true),
         }
     }
 }

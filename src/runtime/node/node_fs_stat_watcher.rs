@@ -717,7 +717,9 @@ impl StatWatcher {
         // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
         if this_ref.ctx.test_isolation_enabled {
             if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                handles.remove_stat_watcher(this.cast_const());
+                handles.swap_remove(&crate::jsc_hooks::IsolationHandle::StatWatcher(
+                    NonNull::new(this).expect("deinit: watcher"),
+                ));
             }
         }
         this_ref.persistent.set(false);
@@ -1033,9 +1035,12 @@ impl StatWatcher {
         // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
         if this_ref.ctx.test_isolation_enabled {
             if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                handles
-                    .stat_watchers
-                    .push(NonNull::new(this_ptr).expect("init: watcher"));
+                bun_core::handle_oom(handles.put(
+                    crate::jsc_hooks::IsolationHandle::StatWatcher(
+                        NonNull::new(this_ptr).expect("init: watcher"),
+                    ),
+                    (),
+                ));
             }
         }
         // SAFETY: `this_ptr` was just leaked from `Box`; live with refcount 1.

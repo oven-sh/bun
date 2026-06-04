@@ -499,12 +499,9 @@ impl<'a> Scanner<'a> {
                 // reshaped for borrowck — drop the &mut borrow from
                 // abs_buf and reborrow open_dir_buf immutably so &self methods
                 // below can be called with the slice.
-                let path_len = Self::abs_buf_projected(
-                    self.top_level_dir(),
-                    &parts,
-                    &mut self.open_dir_buf,
-                )
-                .len();
+                let path_len =
+                    Self::abs_buf_projected(self.top_level_dir(), &parts, &mut self.open_dir_buf)
+                        .len();
                 let path = &self.open_dir_buf[..path_len];
 
                 if !self.does_absolute_path_match_filter(path) {

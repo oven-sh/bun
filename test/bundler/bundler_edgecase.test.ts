@@ -2541,6 +2541,41 @@ describe("bundler", () => {
       `);
     },
   });
+  // Regression: an empty import specifier used to panic ("reached unreachable
+  // code") while building the resolve-error message instead of reporting a
+  // normal "Could not resolve" diagnostic.
+  itBundled("edgecase/ImportEmptyStringDoesNotPanic", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import "";
+        console.log("unreachable");
+      `,
+    },
+    bundleErrors: {
+      "/entry.ts": ['Could not resolve: ""'],
+    },
+  });
+  // The bundler copies diagnostics out of per-parse-task logs into a single
+  // packed buffer owned by the destination log (the parse task's source
+  // buffers are recycled afterwards). Assert the message — including the
+  // dynamic key name interpolated from the source — survives that copy intact
+  // for a TOML parse error, which always takes the recycled-log path.
+  // Note: this is a behavior-preservation guard for the packed-buffer copy
+  // (it catches corruption/UAF in that path, e.g. under ASAN), not a
+  // differential regression test — the previous implementation deep-copied
+  // each string and also produced correct output.
+  itBundled("edgecase/TomlErrorMessageSurvivesLogTransfer", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import config from "./config.toml";
+        console.log(config);
+      `,
+      "/config.toml": `duplicated_key_name = 1\nduplicated_key_name = 2\n`,
+    },
+    bundleErrors: {
+      "/config.toml": ["Cannot redefine key 'duplicated_key_name'"],
+    },
+  });
 });
 
 for (const backend of ["api", "cli"] as const) {

@@ -408,7 +408,20 @@ export function windowsEnv(
 
   return new Proxy(internalEnv, {
     get(_, p) {
-      return typeof p === "string" ? internalEnv[p.toUpperCase()] : undefined;
+      if (typeof p !== "string") {
+        // Symbol keys (e.g. Bun.inspect.custom) live on internalEnv as-is.
+        return (internalEnv as any)[p];
+      }
+      // Env-var lookup is case-insensitive on Windows: the canonical
+      // uppercase key wins when the variable exists.
+      const k = p.toUpperCase();
+      if (k in internalEnv) {
+        return internalEnv[k];
+      }
+      // Not an env var: fall through to own as-is properties (toJSON) and
+      // inherited Object.prototype methods (hasOwnProperty, toString, ...),
+      // matching node where `process.env.hasOwnProperty` is callable.
+      return internalEnv[p];
     },
     set(_, p, value) {
       const k = String(p).toUpperCase();
@@ -431,7 +444,13 @@ export function windowsEnv(
       return true;
     },
     has(_, p) {
-      return typeof p !== "symbol" ? String(p).toUpperCase() in internalEnv : false;
+      // Case-insensitive env-var query first, then ordinary lookup so own
+      // as-is properties and Object.prototype methods answer `in` like node
+      // (`'hasOwnProperty' in process.env` is true on all platforms).
+      if (typeof p === "string" && p.toUpperCase() in internalEnv) {
+        return true;
+      }
+      return p in internalEnv;
     },
     deleteProperty(_, p) {
       const k = String(p).toUpperCase();
@@ -452,7 +471,12 @@ export function windowsEnv(
       return $Object.$defineProperty(internalEnv, k, attributes);
     },
     getOwnPropertyDescriptor(target, p) {
-      return typeof p === "string" ? Reflect.getOwnPropertyDescriptor(target, p.toUpperCase()) : undefined;
+      if (typeof p === "string") {
+        const desc = Reflect.getOwnPropertyDescriptor(target, p.toUpperCase());
+        if (desc) return desc;
+      }
+      // Own as-is properties (toJSON, Bun.inspect.custom symbol).
+      return Reflect.getOwnPropertyDescriptor(target, p);
     },
     ownKeys() {
       // .slice() because paranoia that there is a way to call this without the engine cloning it for us

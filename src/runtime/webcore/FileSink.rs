@@ -739,8 +739,8 @@ impl FileSink {
                     // via `mkdir_if_not_exists`).
                     if let Some(dirname) = bun_core::dirname(slice.slice()) {
                         let mut node_fs = crate::node::fs::NodeFS::default();
-                        if let bun_sys::Result::Ok(_) =
-                            node_fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
+                        if node_fs
+                            .mkdir_recursive(&crate::node::fs::args::Mkdir {
                                 path: crate::node::PathLike::String(bun_core::PathString::init(
                                     dirname,
                                 )),
@@ -748,6 +748,7 @@ impl FileSink {
                                 always_return_none: true,
                                 ..Default::default()
                             })
+                            .is_ok()
                         {
                             result = bun_io::open_for_writing(
                                 Fd::cwd(),

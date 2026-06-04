@@ -29,10 +29,16 @@ export const reactCompiler: Dependency = {
     commit: REACT_COMPILER_COMMIT,
   }),
 
-  // Turn off oxc_codegen's default "sourcemap" feature: the optional
-  // oxc_sourcemap dep declares `crate-type = ["lib", "cdylib"]`, and the
-  // useless cdylib artifact fails to link under bun's rustflags.
-  patches: ["patches/react-compiler/0001-codegen-no-sourcemap.patch"],
+  // 0001: turn off oxc_codegen's default "sourcemap" feature — the optional
+  //       oxc_sourcemap dep declares `crate-type = ["lib", "cdylib"]`, and the
+  //       useless cdylib artifact fails to link under bun's rustflags.
+  // 0002: trim regex to std-only (drops aho-corasick's AVX2 Teddy kernels)
+  //       and force sha2's software path (drops the SHA-NI block fn) so
+  //       baseline builds pass verify-baseline-static.
+  patches: [
+    "patches/react-compiler/0001-codegen-no-sourcemap.patch",
+    "patches/react-compiler/0002-baseline-safe-deps.patch",
+  ],
 
   // No separate build — compiled as part of the workspace cargo build via
   // `bun_react_compiler`'s path deps on `vendor/react-compiler/compiler/crates/*`.

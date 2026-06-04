@@ -876,8 +876,9 @@ _RNvNtNtNtNtNt<rust-hash>17compiler_builtins4math9libm_math4arch3x863fma13fma_wi
 
 
 # ----------------------------------------------------------------------------
-# Rust memchr AVX2 (via lolhtml deps). Gate: is_x86_feature_detected!.
-# (11 symbols)
+# Rust memchr AVX2 (via lolhtml deps; count_raw via oxc_parser/oxc_semantic,
+# pulled in by bun_react_compiler). Gate: is_x86_feature_detected!.
+# (12 symbols)
 # ----------------------------------------------------------------------------
 _RNvMNtNtNtNt<rust-hash>6memchr4arch6x86_644avx26memchrNtB2_3One13find_raw_avx2       [AVX, AVX2]
 _RNvMNtNtNtNt<rust-hash>6memchr4arch6x86_644avx26memchrNtB2_3One14rfind_raw_avx2      [AVX, AVX2]
@@ -887,6 +888,7 @@ _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr10memchr_raw9find_avx2         
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr2_raw9find_avx2              [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memchr3_raw9find_avx2              [AVX, AVX2]
 _RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr11memrchr_raw9find_avx2              [AVX, AVX2]
+_RNvNvNtNtNt<rust-hash>6memchr4arch6x86_646memchr9count_raw9find_avx2                [AVX, AVX2]
 # packedpair::Finder — only constructed when Finder::with_pair() sees avx2 in
 # is_x86_feature_detected!(); the *_impl fns are #[target_feature(enable="avx2")]
 # and only reached via that constructed Finder.

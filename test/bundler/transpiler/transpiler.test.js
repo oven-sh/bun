@@ -3657,6 +3657,16 @@ console.log(foo, array);
     expectPrinted(code, result);
   });
 
+  it("raw template literal contents preserve non-ASCII (#18115)", () => {
+    expectPrinted("String.raw`Redémarrage`", "String.raw`Redémarrage`");
+    expectPrinted("String.raw`a中`", "String.raw`a中`");
+    expectPrinted("String.raw`╭─╮`", "String.raw`╭─╮`");
+    expectPrinted("String.raw`🐰`", "String.raw`🐰`");
+    expectPrinted("/╭─╮/.source", "/╭─╮/.source");
+    expectPrinted("/Redémarrage/.source", "/Redémarrage/.source");
+    expectPrinted("/🐰/.source", "/🐰/.source");
+  });
+
   describe("scan", () => {
     it("reports all export names", () => {
       const { imports, exports } = transpiler.scan(code);

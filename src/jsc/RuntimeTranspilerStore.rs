@@ -1034,7 +1034,7 @@ impl TranspilerJob {
         if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
             let bytecode_slice = parse_result.already_bundled.bytecode_slice();
             self.resolved_source = OwnedResolvedSource::from(ResolvedSource {
-                source_code: String::clone_latin1(&parse_result.source.contents),
+                source_code: String::clone_utf8(&parse_result.source.contents),
                 already_bundled: true,
                 bytecode_cache: if !bytecode_slice.is_empty() {
                     bytecode_slice.as_ptr().cast_mut()
@@ -1186,7 +1186,9 @@ impl TranspilerJob {
             // `cache.output_code` (only the `r#impl == None` fallback does,
             // and `r#impl` is `Some(Jsc)` here), so it is always `None`.
             debug_assert!(cache.output_code.is_none());
-            let result = String::clone_latin1(written);
+            // UTF-8 decode is required — the printer emits raw non-ASCII
+            // bytes for `String.raw` / `RegExp.source` (#18115).
+            let result = String::clone_utf8(written);
 
             // SAFETY: leaf scalar field read on `*vm`; see `vm` PORT NOTE above.
             if written.len() > 1024 * 1024 * 2 || unsafe { (*vm).smol } {

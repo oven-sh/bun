@@ -79,12 +79,10 @@ impl CompressionStreamTransformer {
             | NodeMode::GUNZIP
             | NodeMode::DEFLATERAW
             | NodeMode::INFLATERAW
-            | NodeMode::UNZIP => {
-                Engine::Zlib(crate::node::native_zlib_impl::Context {
-                    mode,
-                    ..Default::default()
-                })
-            }
+            | NodeMode::UNZIP => Engine::Zlib(crate::node::native_zlib_impl::Context {
+                mode,
+                ..Default::default()
+            }),
             NodeMode::BROTLI_ENCODE | NodeMode::BROTLI_DECODE => {
                 Engine::Brotli(crate::node::native_brotli_impl::Context {
                     mode,

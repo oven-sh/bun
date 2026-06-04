@@ -1,4 +1,5 @@
 use core::cell::Cell;
+use core::ptr::NonNull;
 
 use bun_collections::VecExt;
 use bun_jsc::strong::Optional as StrongOptional;
@@ -26,9 +27,15 @@ pub struct ByteStream {
     pub pending: JsCell<streams::Pending>,
     pub done: Cell<bool>,
     /// Borrowed view into a JS `Uint8Array` passed from `on_pull`; kept alive by `pending_value`.
-    // Raw fat slice ptr because the backing store is JS-heap-owned and rooted via
-    // `pending_value: Strong`. Never freed by Rust.
-    pub pending_buffer: Cell<*mut [u8]>,
+    // `RawSliceMut` (raw fat slice wrapper) because the backing store is
+    // JS-heap-owned and rooted via `pending_value: Strong`. Never freed by Rust.
+    //
+    // Intentionally never read: the fulfillment path (`on_data` pending
+    // branch) re-derives the destination from the GC-rooted `pending_value`
+    // via `as_array_buffer` (detach-safe). Keep it that way; reading this
+    // stored slice would reintroduce the dangling-on-detach hazard the
+    // re-derivation avoids.
+    pub pending_buffer: Cell<streams::RawSliceMut<u8>>,
     pub pending_value: JsCell<StrongOptional>, // jsc.Strong.Optional
     pub offset: Cell<usize>,
     pub high_water_mark: blob::SizeType,
@@ -47,7 +54,7 @@ impl Default for ByteStream {
                 ..Default::default()
             }),
             done: Cell::new(false),
-            pending_buffer: Cell::new(Self::empty_pending_buffer()),
+            pending_buffer: Cell::new(streams::RawSliceMut::EMPTY),
             pending_value: JsCell::new(StrongOptional::empty()),
             offset: Cell::new(0),
             high_water_mark: 0,
@@ -104,11 +111,6 @@ impl readable_stream::SourceContext for ByteStream {
 bun_core::impl_field_parent! { ByteStream => Source.context; pub fn parent_const; pub fn parent; }
 
 impl ByteStream {
-    #[inline]
-    const fn empty_pending_buffer() -> *mut [u8] {
-        core::ptr::slice_from_raw_parts_mut(core::ptr::NonNull::<u8>::dangling().as_ptr(), 0)
-    }
-
     /// Init-time reset. Runs before the JS
     /// wrapper exists, so `&mut self` is sound here (R-2 exemption).
     pub(crate) fn setup(&mut self) {
@@ -285,7 +287,7 @@ impl ByteStream {
             let pending_buffer_len = pending_buf.len();
             debug_assert!(pending_buf.as_ptr() != chunk.as_ptr());
             pending_buf[..to_copy_len].copy_from_slice(&chunk[..to_copy_len]);
-            self.pending_buffer.set(Self::empty_pending_buffer());
+            self.pending_buffer.set(streams::RawSliceMut::EMPTY);
 
             let is_really_done =
                 self.has_received_last_chunk.get() && to_copy_len <= pending_buffer_len;
@@ -451,13 +453,16 @@ impl ByteStream {
             return streams::Result::Done;
         }
 
-        // Raw borrow of a JS-owned buffer; rooted by `set_value`.
-        self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
+        // Root the view BEFORE stashing the raw borrow, so the stored slice
+        // is never live without its GC anchor (both happen inside one
+        // JS-blocked region either way).
         self.set_value(view);
+        self.pending_buffer.set(streams::RawSliceMut::new(buffer));
 
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
-        // returned `streams::Result::Pending` raw-backref needs.
-        streams::Result::Pending(self.pending.as_ptr())
+        // returned `streams::Result::Pending` raw-backref needs; non-null
+        // because it is derived from the embedded `pending` field of `self`.
+        streams::Result::Pending(NonNull::new(self.pending.as_ptr()).expect("embedded field"))
     }
 
     pub(crate) fn on_cancel(&self) {
@@ -473,7 +478,7 @@ impl ByteStream {
         self.pending_value.with_mut(|pv| pv.deinit());
 
         if !view.is_empty() {
-            self.pending_buffer.set(Self::empty_pending_buffer());
+            self.pending_buffer.set(streams::RawSliceMut::EMPTY);
             self.pending.with_mut(|p| {
                 p.result.release();
                 p.result = streams::Result::Done;
@@ -518,7 +523,7 @@ impl ByteStream {
         if !self.done.get() {
             self.done.set(true);
 
-            self.pending_buffer.set(Self::empty_pending_buffer());
+            self.pending_buffer.set(streams::RawSliceMut::EMPTY);
             let is_promise = self.pending.with_mut(|p| {
                 p.result.release();
                 p.result = streams::Result::Done;

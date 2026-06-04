@@ -796,3 +796,77 @@ payloads.forEach(type => {
     expect(calls).toBeGreaterThan(0);
   });
 });
+
+// Regression guard (passes pre- and post-BufferError refactor): pins the
+// native stream-state error mapping that the BufferError split must preserve.
+// A locked/already-piped JS stream body has always surfaced ERR_STREAM_CANNOT_PIPE.
+// The Js-propagation branch itself is not reachable from plain JS (it requires
+// to_readable_stream to throw inside the bufferer's double-waiter path), so it
+// has no direct JS-level test.
+it("transform() of a Response whose stream is already locked reports ERR_STREAM_CANNOT_PIPE", async () => {
+  const stream = new ReadableStream({
+    pull(controller) {
+      controller.enqueue(new TextEncoder().encode("<div>hello</div>"));
+      controller.close();
+    },
+  });
+  const response = new Response(stream, { headers: { "content-type": "text/html" } });
+  // Lock the body before transforming — the bufferer must surface the
+  // stream-state error (native error path), not a JS exception.
+  response.body.getReader();
+
+  let outcome;
+  try {
+    outcome = new HTMLRewriter().on("div", { element() {} }).transform(response);
+  } catch (e) {
+    outcome = e;
+  }
+  expect(outcome).toBeInstanceOf(Error);
+  expect(outcome.code).toBe("ERR_STREAM_CANNOT_PIPE");
+});
+
+it("transform() of a streaming Response survives forced GC between chunks", async () => {
+  // Regression guard: exercises the body-value bufferer + sink backpressure
+  // (Writable pending backref) with full GCs interleaved between producer
+  // chunks. The Pending representation change it covers is behavior-neutral,
+  // so this is GC-stress coverage, not a pre-fix-failing test.
+  //
+  // The chunked body is served over HTTP because transform() only accepts
+  // native (fetched/file) bodies — JS-defined ReadableStream bodies throw
+  // ERR_STREAM_CANNOT_PIPE synchronously.
+  const piece = "<p>x</p>";
+  const perChunk = 64;
+  const chunks = 16;
+  const encoder = new TextEncoder();
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream({
+        async pull(controller) {
+          for (let i = 0; i < chunks; i++) {
+            controller.enqueue(encoder.encode(piece.repeat(perChunk)));
+            Bun.gc(true);
+            await Bun.sleep(1);
+          }
+          controller.close();
+        },
+      });
+      return new Response(stream, { headers: { "content-type": "text/html" } });
+    },
+  });
+
+  const res = await fetch(server.url);
+  let count = 0;
+  const transformed = new HTMLRewriter()
+    .on("p", {
+      element() {
+        count++;
+        Bun.gc(true);
+      },
+    })
+    .transform(res);
+  if (transformed instanceof Error) throw transformed;
+  const text = await transformed.text();
+  expect(text).toBe(piece.repeat(perChunk * chunks));
+  expect(count).toBe(perChunk * chunks);
+});

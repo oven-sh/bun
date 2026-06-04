@@ -62,7 +62,13 @@ impl Socket {
         // guarantees `fd` is a bound UDP socket it owns.
         unsafe {
             us_create_udp_socket_from_fd(
-                loop_, data_cb, drain_cb, close_cb, recv_error_cb, fd, user_data,
+                loop_,
+                data_cb,
+                drain_cb,
+                close_cb,
+                recv_error_cb,
+                fd,
+                user_data,
             )
         }
     }

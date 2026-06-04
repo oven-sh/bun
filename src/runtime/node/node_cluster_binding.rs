@@ -506,7 +506,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                         (&raw mut sin6.sin6_addr).cast(),
                     ) == 1
                 } else {
-                    let sin: &mut libc::sockaddr_in = &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
+                    let sin: &mut libc::sockaddr_in =
+                        &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
                     sin.sin_family = libc::AF_INET as libc::sa_family_t;
                     sin.sin_port = (port as u16).to_be();
                     libc::inet_pton(
@@ -523,12 +524,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                 hints.ai_socktype = socktype;
                 let mut res: *mut libc::addrinfo = core::ptr::null_mut();
                 let rc = unsafe {
-                    libc::getaddrinfo(
-                        addr_z.as_ptr().cast(),
-                        core::ptr::null(),
-                        &hints,
-                        &mut res,
-                    )
+                    libc::getaddrinfo(addr_z.as_ptr().cast(), core::ptr::null(), &hints, &mut res)
                 };
                 if rc != 0 || res.is_null() {
                     return Ok(JSValue::js_number_from_int32(-(libc::EINVAL)));
@@ -566,7 +562,8 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                     sin6.sin6_addr = core::mem::zeroed(); // in6addr_any
                     ss_len = core::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t;
                 } else {
-                    let sin: &mut libc::sockaddr_in = &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
+                    let sin: &mut libc::sockaddr_in =
+                        &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
                     sin.sin_family = libc::AF_INET as libc::sa_family_t;
                     sin.sin_port = (port as u16).to_be();
                     sin.sin_addr.s_addr = libc::INADDR_ANY.to_be();
@@ -601,13 +598,7 @@ pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> Js
                 }
             }
             if family == libc::AF_INET6 && flags & 0x1 != 0 {
-                libc::setsockopt(
-                    fd,
-                    libc::IPPROTO_IPV6,
-                    libc::IPV6_V6ONLY,
-                    one_ptr,
-                    one_len,
-                );
+                libc::setsockopt(fd, libc::IPPROTO_IPV6, libc::IPV6_V6ONLY, one_ptr, one_len);
             }
 
             if libc::bind(fd, (&raw const ss).cast(), ss_len) != 0 {

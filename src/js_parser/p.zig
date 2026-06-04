@@ -4276,12 +4276,12 @@ pub fn NewParser_(
                         // Arithmetic between two numeric literals (or inlined
                         // enum numbers) has no `valueOf`/`toString` side
                         // effects and cannot throw — removable when both
-                        // sides are. Pre-PR this never fired because every
-                        // such node was folded to `.e_number` before reaching
-                        // here; with size-aware folding the `.e_binary`
-                        // survives (e.g. `export class C { ratio = 1/3 }`)
-                        // and without this arm the unused export no longer
-                        // tree-shakes.
+                        // sides are. Pre-size-aware folding this never fired
+                        // because every such node was folded to `.e_number`
+                        // before reaching here; with size-aware folding the
+                        // `.e_binary` survives (e.g.
+                        // `export class C { ratio = 1/3 }`) and without this
+                        // arm the unused export no longer tree-shakes.
                         //
                         // `extractNumericValue` is a non-recursive shallow
                         // match on `.e_number`/inlined enum — not

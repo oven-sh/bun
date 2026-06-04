@@ -954,26 +954,38 @@ impl MultiPartUpload {
             return Ok(());
         }
 
-        while let Some(&(ptr, allocated)) = self.ready_parts.front() {
-            // SAFETY: the entry owns its allocation (transferred in
-            // finish_current_part); enqueue_part with needs_clone=false takes
-            // ownership on success, so only pop after a successful enqueue.
-            if self.enqueue_part(unsafe { &*ptr }, allocated, false)? {
-                scoped_log!(
-                    S3MultiPartUpload,
-                    "processMultiPart {} part enqueued ({} bytes)",
-                    BStr::new(&self.path),
-                    ptr.len()
-                );
-                self.ready_parts.pop_front();
-            } else {
-                scoped_log!(
-                    S3MultiPartUpload,
-                    "processMultiPart {} queue full",
-                    BStr::new(&self.path)
-                );
-                // queue is full; retry on the next drain
-                break;
+        while let Some((ptr, allocated)) = self.ready_parts.pop_front() {
+            // Pop BEFORE enqueueing: `enqueue_part(needs_clone=false)` hands
+            // the allocation to the `UploadPart` as soon as `get_create_part`
+            // succeeds, and its fallible tail (`execute_simple_s3_request`,
+            // `start`) can still propagate `Err` afterwards — at which point
+            // the part's failure path frees the buffer. Leaving the entry in
+            // `ready_parts` for that case would make `Drop` free it a second
+            // time. On `Err` the entry must stay popped; only a queue-full
+            // `Ok(false)` (no transfer happened) returns it to the front.
+            // SAFETY: the entry owned its allocation (transferred in
+            // finish_current_part) until this handoff.
+            match self.enqueue_part(unsafe { &*ptr }, allocated, false) {
+                Ok(true) => {
+                    scoped_log!(
+                        S3MultiPartUpload,
+                        "processMultiPart {} part enqueued ({} bytes)",
+                        BStr::new(&self.path),
+                        ptr.len()
+                    );
+                }
+                Ok(false) => {
+                    scoped_log!(
+                        S3MultiPartUpload,
+                        "processMultiPart {} queue full",
+                        BStr::new(&self.path)
+                    );
+                    // queue is full; no ownership transfer happened — retry
+                    // this part on the next drain
+                    self.ready_parts.push_front((ptr, allocated));
+                    break;
+                }
+                Err(err) => return Err(err),
             }
         }
         Ok(())

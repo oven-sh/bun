@@ -1066,10 +1066,20 @@ struct BlobHeader {
 
 #if OS(DARWIN)
 
+#include <mach-o/getsect.h>
+#include <mach-o/ldsyms.h>
+
 extern "C" BlobHeader __attribute__((section("__BUN,__bun"))) BUN_COMPILED = { 0, 0 };
 
 extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
 {
+    // The embedded length is untrusted (truncated download, AV rewriting,
+    // post-build tampering). Validate it against the section size recorded in
+    // the load command so callers never read past the mapped section.
+    unsigned long sectionSize = 0;
+    uint8_t* sectionData = getsectiondata(&_mh_execute_header, "__BUN", "__bun", &sectionSize);
+    if (!sectionData || sectionSize < sizeof(uint64_t)) return nullptr;
+    if (BUN_COMPILED.size > sectionSize - sizeof(uint64_t)) return nullptr;
     return &BUN_COMPILED.size;
 }
 
@@ -1108,11 +1118,27 @@ static bool initializePESection()
 
     PIMAGE_SECTION_HEADER sectionHeader = IMAGE_FIRST_SECTION(ntHeaders);
 
+    // Exact 8-byte name written by the section writer (src/exe_format/pe.rs);
+    // a prefix match would also hit unrelated sections like ".bundle".
+    static const BYTE bunSectionName[IMAGE_SIZEOF_SHORT_NAME] = { '.', 'b', 'u', 'n', 0, 0, 0, 0 };
+
     for (int i = 0; i < ntHeaders->FileHeader.NumberOfSections; i++) {
-        if (strncmp((char*)sectionHeader->Name, ".bun", 4) == 0) {
+        if (memcmp(sectionHeader->Name, bunSectionName, IMAGE_SIZEOF_SHORT_NAME) == 0) {
             // Found the .bun section
             // Section format: 8 bytes size (uint64_t) + data
+            // Only VirtualSize bytes of the section are guaranteed to be
+            // mapped, and the embedded length is untrusted (truncated
+            // download, AV rewriting, post-build tampering). Reject instead
+            // of handing out a slice that extends past the image, which
+            // would crash the process before main() gets a chance to run.
+            uint64_t sectionSize = sectionHeader->Misc.VirtualSize;
+            if (sectionSize < sizeof(uint64_t)) return false;
+
             BYTE* sectionData = (BYTE*)hModule + sectionHeader->VirtualAddress;
+            uint64_t embeddedLength;
+            memcpy(&embeddedLength, sectionData, sizeof(embeddedLength));
+            if (embeddedLength > sectionSize - sizeof(uint64_t)) return false;
+
             pe_section_size = (uint64_t*)sectionData;
             pe_section_data = sectionData + sizeof(uint64_t); // Skip size (8)
             return true;

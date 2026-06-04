@@ -339,6 +339,56 @@ mod elf {
         pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
 
+    /// State for the `dl_iterate_phdr` callback: find the `PT_LOAD` segment
+    /// of the main executable containing `addr` and record its end address.
+    struct PhdrQuery {
+        addr: u64,
+        segment_end: Option<u64>,
+    }
+
+    unsafe extern "C" fn phdr_callback(
+        info: *mut libc::dl_phdr_info,
+        _size: libc::size_t,
+        data: *mut libc::c_void,
+    ) -> libc::c_int {
+        // SAFETY: `data` is the `PhdrQuery` passed to `dl_iterate_phdr` below.
+        let query = unsafe { &mut *data.cast::<PhdrQuery>() };
+        // SAFETY: libc passes a valid `dl_phdr_info` for the current object.
+        let info = unsafe { &*info };
+        for i in 0..info.dlpi_phnum {
+            // SAFETY: `dlpi_phdr` points to `dlpi_phnum` program headers.
+            let phdr = unsafe { &*info.dlpi_phdr.add(i as usize) };
+            if phdr.p_type != libc::PT_LOAD {
+                continue;
+            }
+            let seg_start = (info.dlpi_addr as u64).wrapping_add(phdr.p_vaddr);
+            let Some(seg_end) = seg_start.checked_add(phdr.p_memsz) else {
+                continue;
+            };
+            if query.addr >= seg_start && query.addr < seg_end {
+                query.segment_end = Some(seg_end);
+            }
+        }
+        // The first object visited is the main executable; the standalone
+        // payload can only live there, so stop after one object.
+        1
+    }
+
+    /// Returns the end address of the main executable's `PT_LOAD` segment
+    /// containing `addr`, or `None` when `addr` is not mapped by one.
+    fn containing_load_segment_end(addr: u64) -> Option<u64> {
+        let mut query = PhdrQuery {
+            addr,
+            segment_end: None,
+        };
+        // SAFETY: the callback only dereferences pointers libc hands it plus
+        // the `PhdrQuery` that outlives the call.
+        unsafe {
+            libc::dl_iterate_phdr(Some(phdr_callback), (&raw mut query).cast());
+        }
+        query.segment_end
+    }
+
     /// Returns `(base, len)` for the embedded ELF segment data. Kept as a raw
     /// `*mut u8` so write-provenance is preserved end-to-end — collapsing to
     /// `&[u8]` here would freeze it to read-only and make the later
@@ -355,18 +405,35 @@ mod elf {
             return None;
         }
         // BUN_COMPILED.size holds the virtual address of the appended data.
-        // The kernel mapped it via PT_LOAD, so we can dereference directly.
         // Format at target: [u64 payload_len][payload bytes]
+        // Both the vaddr and the length prefix it points at are untrusted
+        // (truncated download, AV rewriting, post-build tampering), so check
+        // against the program headers that the whole range is mapped by the
+        // PT_LOAD the compile-time writer extended — otherwise the reads
+        // below would fault before startup can fall back gracefully.
+        let Some(segment_end) = containing_load_segment_end(vaddr) else {
+            bun_core::debug_warn!("bun standalone module graph vaddr is not mapped");
+            return None;
+        };
+        if segment_end - vaddr < 8 {
+            bun_core::debug_warn!("bun standalone module graph is too small to be valid");
+            return None;
+        }
         // Synthesize a `*mut u8` directly so the provenance carries write
         // permission for the in-place bytecode mutation done by JSC.
         let target = vaddr as *mut u8;
-        // SAFETY: target points to 8-byte little-endian length prefix.
+        // SAFETY: `[vaddr, vaddr + 8)` is inside a PT_LOAD (checked above).
         let payload_len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
         if payload_len < 8 {
             return None;
         }
-        // SAFETY: payload_len bytes follow the 8-byte header at `target`.
+        if payload_len > segment_end - vaddr - 8 {
+            bun_core::debug_warn!("bun standalone module graph length exceeds its segment");
+            return None;
+        }
+        // SAFETY: payload_len bytes follow the 8-byte header at `target`,
+        // all inside the containing PT_LOAD (checked above).
         Some((unsafe { target.add(8) }, payload_len as usize))
     }
 }

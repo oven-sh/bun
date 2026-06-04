@@ -275,7 +275,11 @@ impl CompressionStreamTransformer {
         };
 
         JSValue::create_array_from_iter(global, outputs.into_iter(), |bytes| {
-            Ok(JSUint8Array::from_bytes(global, bytes))
+            // `from_bytes` reaches `JSC::JSUint8Array::create`, which opens a
+            // throw scope (allocation can throw). Observe the exception here,
+            // before `put_index` opens the next scope — same pattern as
+            // `BunString::to_jsdomurl`.
+            bun_jsc::from_js_host_call(global, || JSUint8Array::from_bytes(global, bytes))
         })
     }
 

@@ -766,6 +766,9 @@ ObjectDefineProperty(inspect, "replDefaults", {
     validateObject(options, "options");
     return ObjectAssign(inspectReplDefaults, options);
   },
+  // node:repl re-defines this property with its own writer-backed accessor
+  // (see REPLServer constructor); keep it configurable so that works.
+  configurable: true,
 });
 
 // Set Graphics Rendition https://en.wikipedia.org/wiki/ANSI_escape_code#graphics
@@ -1362,7 +1365,7 @@ function formatRaw(ctx, value, recurseTimes, typedArray) {
       if (keys.length === 0 && protoProps === undefined) {
         return ctx.stylize(base, "date");
       }
-    } else if (value instanceof Error) {
+    } else if (isNativeError(value) || value instanceof Error) {
       base = formatError(value, constructor, tag, ctx, keys);
       if (keys.length === 0 && protoProps === undefined) return base;
     } else if (isAnyArrayBuffer(value)) {
@@ -1650,7 +1653,7 @@ function getStackFrames(ctx, err, stack) {
   }
 
   // Remove stack frames identical to frames in cause.
-  if (cause != null && cause instanceof Error) {
+  if (cause != null && (isNativeError(cause) || cause instanceof Error)) {
     const causeStack = getStackString(cause);
     const causeStackStart = StringPrototypeIndexOf(causeStack, "\n    at");
     if (causeStackStart !== -1) {

@@ -2955,6 +2955,17 @@ impl RunCommand {
     /// in `ctx.runtime_options.eval.script`. Public so `Command::start` can
     /// route the `-e`/`-p` AutoCommand path here without re-implementing the
     /// path-buffer dance.
+    /// `bun --interactive` — boots the embedded `eval/node-repl.ts` script,
+    /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
+    /// which is Bun's own native REPL.
+    pub fn exec_node_repl(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
+        ctx.runtime_options.eval.script = bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts")
+            .as_bytes()
+            .to_vec()
+            .into_boxed_slice();
+        Self::exec_eval(ctx)
+    }
+
     pub fn exec_eval(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         // prepend positionals into the existing passthrough vec
         // (cold path, single allocation).

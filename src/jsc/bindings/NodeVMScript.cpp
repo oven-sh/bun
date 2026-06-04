@@ -376,7 +376,9 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     script->setSigintReceived(false);
 
     if (exception) [[unlikely]] {
-        if (handleException(globalObject, vm, exception, scope)) {
+        // Node only decorates the error stack with the source line when
+        // displayErrors is not false (lib/vm.js decorateErrorStack).
+        if (options.displayErrors && handleException(globalObject, vm, exception, scope)) {
             return {};
         }
         JSC::throwException(globalObject, scope, exception.get());
@@ -439,7 +441,9 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     script->setSigintReceived(false);
 
     if (exception) [[unlikely]] {
-        if (handleException(globalObject, vm, exception, scope)) {
+        // Node only decorates the error stack with the source line when
+        // displayErrors is not false (lib/vm.js decorateErrorStack).
+        if (options.displayErrors && handleException(globalObject, vm, exception, scope)) {
             return {};
         }
         JSC::throwException(globalObject, scope, exception.get());

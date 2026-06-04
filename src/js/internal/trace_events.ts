@@ -112,7 +112,7 @@ function disableCategories(categories: string[]) {
 
 function getEnabledCategories(): string | undefined {
   if (categoryRefs.size === 0) return undefined;
-  return Array.from(categoryRefs.$keys()).join(",");
+  return $Array.from(categoryRefs.$keys()).join(",");
 }
 
 function getCategoryEnabledBuffer(category: string): Uint8Array {

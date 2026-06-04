@@ -2411,6 +2411,7 @@ pub mod parse_worker {
         // build — it only substitutes the source that gets parsed below.
         if topts.react_compiler
             && !is_empty
+            && !task.source_index.is_runtime()
             && loader.is_javascript_like()
             && !file_path.is_node_module()
         {
@@ -2492,8 +2493,11 @@ pub mod parse_worker {
             ..Default::default()
         });
 
+        // Like the use-directive scan above, read the hashbang from the
+        // ORIGINAL bytes — the React Compiler rewrite must not affect
+        // auto-target detection.
         let target = (if task.source_index.get() == 1 {
-            target_from_hashbang(entry_contents)
+            target_from_hashbang(entry.contents.as_slice())
         } else {
             None
         })

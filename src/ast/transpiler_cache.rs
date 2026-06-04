@@ -22,7 +22,7 @@ pub struct RuntimeTranspilerCache {
     /// Bundler/parser only store/read the bytes; T6 owns the string wrapper
     /// when surfacing to JS.
     pub output_code: Option<Box<[u8]>>,
-    /// Opaque storage for `bun_bundler::cache::RuntimeTranspilerCacheEntry` —
+    /// Opaque storage for `bun_jsc::runtime_transpiler_cache::Entry` —
     /// the concrete type lives a tier up and is round-tripped via cast.
     pub entry: Option<*mut ()>,
 

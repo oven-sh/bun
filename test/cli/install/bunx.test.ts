@@ -504,7 +504,7 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
 it.concurrent("should handle package that requires node 24", async () => {
   const { x_dir, env } = setup();
   const subprocess = spawn({
-    cmd: [bunExe(), "x", "--bun", "@angular/cli@latest", "--help"],
+    cmd: [bunExe(), "x", "--bun", "@angular/cli@21.2.14", "--help"],
     cwd: x_dir,
     stdout: "pipe",
     stdin: "inherit",

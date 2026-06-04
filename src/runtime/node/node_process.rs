@@ -142,6 +142,15 @@ mod _impl {
 
     // ───────────────────────────── title ─────────────────────────────
 
+    // Windows `process.title` getter support: the C++ getter needs to know
+    // whether a title was explicitly set (CLI `--title` or assignment) so it
+    // can prefer the store over `uv_get_process_title` without comparing
+    // against the "bun" default string.
+    #[unsafe(export_name = "Bun__Process__hasTitle")]
+    pub(super) extern "C" fn has_title() -> bool {
+        crate::cli::Bun__Node__ProcessTitle.lock().is_some()
+    }
+
     #[unsafe(export_name = "Bun__Process__getTitle")]
     pub(super) extern "C" fn get_title(_global: *const JSGlobalObject, title: *mut BunString) {
         let guard = crate::cli::Bun__Node__ProcessTitle.lock();

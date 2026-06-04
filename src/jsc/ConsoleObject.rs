@@ -4567,26 +4567,6 @@ pub mod formatter {
                 return Ok(());
             }
 
-            // `maxArrayLength: 0` elides every element. Node prints
-            // `[ ... N more items ]` inline (the per-element loop below always
-            // prints index 0, so this case is handled up front).
-            if self.max_array_length == 0 {
-                writer.write_all(b"[ ");
-                writer.pretty::<C>(
-                    "... N more items".len(),
-                    format_args!(
-                        "{}... {} more item{}{}",
-                        pf!("<r><d>"),
-                        len,
-                        more_items_plural(len),
-                        pf!("<r>")
-                    ),
-                );
-                writer.write_all(b" ]");
-                writer.add_for_new_line(2);
-                return Ok(());
-            }
-
             let mut was_good_time = self.always_newline_scope ||
                 // heuristic: more than 10, probably should have a newline before it
                 len > 10;
@@ -4602,7 +4582,37 @@ pub mod formatter {
                 self.quote_strings = true;
                 let _qs = defer_restore!(self.quote_strings, prev_quote_strings);
                 let mut empty_start: Option<u32> = None;
+                // Index of the next element to consider. Doubles as the
+                // "entries printed so far" signal for the named-property pass
+                // below (a leading comma is emitted when it is > 0).
+                let mut i: u32 = 1;
                 'first: {
+                    // `maxArrayLength: 0` elides every element — print
+                    // `[ ... N more items` and fall through to the
+                    // named-property pass (Node: `[ ... N more items, foo: 1 ]`).
+                    if self.max_array_length == 0 {
+                        // Nothing is printed, so keep the brackets inline
+                        // regardless of the element count (`len > 10` would
+                        // otherwise force a multi-line close).
+                        was_good_time = false;
+                        writer.write_all(b"[ ");
+                        writer.add_for_new_line(2);
+                        writer.pretty::<C>(
+                            "... N more items".len(),
+                            format_args!(
+                                "{}... {} more item{}{}",
+                                pf!("<r><d>"),
+                                len,
+                                more_items_plural(len),
+                                pf!("<r>")
+                            ),
+                        );
+                        // Past the end so the element loop is skipped; `i > 0`
+                        // still makes the named-property pass emit a comma.
+                        i = len as u32;
+                        break 'first;
+                    }
+
                     let element = value.get_direct_index(self.global_this, 0);
 
                     let tag = Tag::get_advanced(element, self.global_this, tag_opts)?;
@@ -4639,9 +4649,10 @@ pub mod formatter {
                     }
                 }
 
-                let mut i: u32 = 1;
                 let mut nonempty_count: u32 = 1;
 
+                // `i` is already past the end when `maxArrayLength: 0` elided
+                // everything, so this loop is naturally skipped in that case.
                 while (i as u64) < len {
                     let element = value.get_direct_index(self.global_this, i);
                     if element.is_empty() {
@@ -4652,7 +4663,13 @@ pub mod formatter {
                         continue;
                     }
                     if nonempty_count >= self.max_array_length {
-                        let remaining = len - u64::from(i);
+                        // Elide everything from here to the end. A pending run
+                        // of holes (`empty_start`) is part of the elided tail,
+                        // so count from its start and clear it so it doesn't
+                        // also leak into the trailing `N x empty items` summary.
+                        let elided_from = empty_start.map_or(u64::from(i), u64::from);
+                        let remaining = len - elided_from;
+                        empty_start = None;
                         writer.print_comma::<C>();
                         writer.write_all(b"\n"); // we want the line break to be unconditional here
                         *writer.estimated_line_length = 0;

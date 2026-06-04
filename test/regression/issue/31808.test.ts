@@ -80,6 +80,33 @@ test("Bun.inspect uses singular 'item' when exactly one element is elided", () =
   expect(Bun.inspect([1, 2], { maxArrayLength: 0 })).toBe("[ ... 2 more items ]");
 });
 
+test("Bun.inspect maxArrayLength still prints named own properties", () => {
+  // maxArrayLength: 0 must not swallow non-index properties attached to the array.
+  expect(Bun.inspect(Object.assign([1, 2, 3], { foo: "bar" }), { maxArrayLength: 0 })).toBe(
+    '[ ... 3 more items, foo: "bar" ]',
+  );
+  // Truncating mid-array keeps trailing named properties too.
+  expect(Bun.inspect(Object.assign([1, 2, 3, 4, 5], { foo: "bar" }), { maxArrayLength: 2 }))
+    .toMatchInlineSnapshot(`
+    "[ 1, 2,
+      ... 3 more items, foo: "bar" ]"
+  `);
+});
+
+test("Bun.inspect maxArrayLength counts holes at the truncation boundary", () => {
+  // A hole at the cap boundary belongs to the elided tail and must be counted
+  // (3 remaining: the hole at index 1 plus indices 2 and 3), not leak into a
+  // bogus trailing "empty items" summary.
+  expect(Bun.inspect([1, , 3, 4], { maxArrayLength: 1 })).toMatchInlineSnapshot(`
+    "[ 1,
+      ... 3 more items ]"
+  `);
+  expect(Bun.inspect([1, 2, , , 5, 6], { maxArrayLength: 2 })).toMatchInlineSnapshot(`
+    "[ 1, 2,
+      ... 4 more items ]"
+  `);
+});
+
 test.concurrent("console.dir honors maxArrayLength", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", "const a = Array.from({length:200}, (_,i)=>i); console.dir(a, {maxArrayLength: 5});"],

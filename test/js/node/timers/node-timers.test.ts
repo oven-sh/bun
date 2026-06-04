@@ -179,12 +179,15 @@ describe("_onImmediate", () => {
     }
   });
 
-  it("is writable", () => {
+  it("is writable through the prototype setter", () => {
     const replacement = () => {};
     const immediate = setImmediate(() => {}) as any;
     try {
       immediate._onImmediate = replacement;
       expect(immediate._onImmediate).toBe(replacement);
+      // The write must route through the prototype accessor, not create an own
+      // expando data property (which is what a runtime lacking the accessor does).
+      expect(Object.getOwnPropertyDescriptor(immediate, "_onImmediate")).toBeUndefined();
     } finally {
       clearImmediate(immediate);
     }

@@ -27,6 +27,105 @@ function waitForDebugger() {
   throwNotImplemented("node:inspector", 2445);
 }
 
+// Sessions with the Runtime domain enabled receive Runtime.consoleAPICalled
+// notifications for console calls, like Node's in-process inspector sessions.
+const runtimeEnabledSessions = new Set<Session>();
+const hookedConsoleMethods: Array<[string, Function]> = [];
+
+const CONSOLE_API_TYPES: Record<string, string> = {
+  log: "log",
+  info: "info",
+  warn: "warning",
+  error: "error",
+  debug: "debug",
+  trace: "trace",
+  dir: "dir",
+  table: "table",
+  group: "startGroup",
+  groupCollapsed: "startGroupCollapsed",
+  groupEnd: "endGroup",
+};
+
+function toRemoteObject(arg: unknown): object {
+  switch (typeof arg) {
+    case "string":
+      return { type: "string", value: arg };
+    case "number":
+      return Number.isFinite(arg)
+        ? { type: "number", value: arg, description: String(arg) }
+        : {
+            type: "number",
+            unserializableValue: String(arg),
+            description: String(arg),
+          };
+    case "boolean":
+      return { type: "boolean", value: arg };
+    case "undefined":
+      return { type: "undefined" };
+    case "bigint":
+      return {
+        type: "bigint",
+        unserializableValue: `${arg}n`,
+        description: `${arg}n`,
+      };
+    case "symbol":
+      return { type: "symbol", description: String(arg) };
+    case "function":
+      return {
+        type: "function",
+        description: Function.prototype.toString.$call(arg),
+      };
+    default:
+      if (arg === null) return { type: "object", subtype: "null", value: null };
+      return {
+        type: "object",
+        description: Object.prototype.toString.$call(arg),
+      };
+  }
+}
+
+function emitConsoleAPICalled(type: string, args: unknown[]) {
+  const message = {
+    method: "Runtime.consoleAPICalled",
+    params: {
+      type,
+      args: args.map(toRemoteObject),
+      executionContextId: 1,
+      timestamp: Date.now(),
+    },
+  };
+  for (const session of runtimeEnabledSessions) {
+    session.emit("inspectorNotification", message);
+    session.emit("Runtime.consoleAPICalled", message);
+  }
+}
+
+function makeConsoleHook(type: string, original: Function): Function {
+  return function (this: unknown, ...args: unknown[]) {
+    emitConsoleAPICalled(type, args);
+    return original.$apply(this, args);
+  };
+}
+
+function installConsoleHooks() {
+  if (hookedConsoleMethods.length > 0) return;
+  const consoleObject = globalThis.console;
+  for (const method in CONSOLE_API_TYPES) {
+    const original = consoleObject[method];
+    if (typeof original !== "function") continue;
+    hookedConsoleMethods.push([method, original]);
+    consoleObject[method] = makeConsoleHook(CONSOLE_API_TYPES[method], original);
+  }
+}
+
+function removeConsoleHooks() {
+  const consoleObject = globalThis.console;
+  for (const [method, original] of hookedConsoleMethods) {
+    consoleObject[method] = original;
+  }
+  hookedConsoleMethods.length = 0;
+}
+
 class Session extends EventEmitter {
   #connected = false;
   #profilerEnabled = false;
@@ -47,6 +146,8 @@ class Session extends EventEmitter {
     if (isCPUProfilerRunning()) stopCPUProfiler();
     this.#profilerEnabled = false;
     this.#connected = false;
+    runtimeEnabledSessions.delete(this);
+    if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
   }
 
   post(
@@ -91,6 +192,16 @@ class Session extends EventEmitter {
 
   #handleMethod(method: string, params?: object): any {
     switch (method) {
+      case "Runtime.enable":
+        runtimeEnabledSessions.add(this);
+        installConsoleHooks();
+        return {};
+
+      case "Runtime.disable":
+        runtimeEnabledSessions.delete(this);
+        if (runtimeEnabledSessions.size === 0) removeConsoleHooks();
+        return {};
+
       case "Profiler.enable":
         this.#profilerEnabled = true;
         return {};

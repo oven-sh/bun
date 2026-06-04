@@ -8,6 +8,9 @@ const { Stream } = require('stream');
 if (process.features.inspector)
   common.skip('test is for node compiled with --without-inspector only');
 
+if ('Bun' in globalThis)
+  common.skip('BUN: node:repl REPLServer is not implemented');
+
 // Ignore terminal settings. This is so the test can be run intact if TERM=dumb.
 process.env.TERM = '';
 const PROMPT = 'repl > ';

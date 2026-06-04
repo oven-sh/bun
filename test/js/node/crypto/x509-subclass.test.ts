@@ -92,6 +92,50 @@ describe("X509Certificate", () => {
   });
 });
 
+// X509Certificate.prototype accessors must be non-enumerable, matching Node.js.
+// Previously Bun marked them enumerable, so walking the prototype (e.g. Bluebird's
+// promisifyAll) invoked the getters with the prototype as `this` and threw
+// ERR_INVALID_THIS. https://github.com/oven-sh/bun/issues/31806
+describe("X509Certificate.prototype accessor enumerability", () => {
+  const accessors = [
+    "ca",
+    "fingerprint",
+    "fingerprint256",
+    "fingerprint512",
+    "infoAccess",
+    "issuer",
+    "issuerCertificate",
+    "keyUsage",
+    "publicKey",
+    "raw",
+    "serialNumber",
+    "subject",
+    "subjectAltName",
+    "validFrom",
+    "validFromDate",
+    "validTo",
+    "validToDate",
+  ];
+
+  test("accessors are non-enumerable", () => {
+    const enumerable = accessors.filter(name => {
+      const desc = Object.getOwnPropertyDescriptor(X509Certificate.prototype, name);
+      return desc?.enumerable;
+    });
+    expect(enumerable).toEqual([]);
+  });
+
+  test("walking the prototype does not invoke getters (no ERR_INVALID_THIS)", () => {
+    // Mirrors Bluebird's promisifyAll: enumerate the prototype keys and read each value.
+    // The accessors must not be visited, so reading values must not throw.
+    expect(() => {
+      for (const key in X509Certificate.prototype) {
+        void (X509Certificate.prototype as any)[key];
+      }
+    }).not.toThrow();
+  });
+});
+
 // checkIssued() must return a boolean to match Node.js. Previously Bun
 // returned the issuer certificate object on success and undefined on failure.
 // https://github.com/oven-sh/bun/issues/31570

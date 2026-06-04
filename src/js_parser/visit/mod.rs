@@ -1697,7 +1697,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             match stmt.data {
                 StmtData::SEmpty(_) => continue,
 
-                // skip directives for now
+                // Keep "use strict" directives so a function body that is only
+                // strict because of its own directive stays strict in the printed
+                // output (CommonJS is compiled as a sloppy Program). Other
+                // directives are not needed by the runtime, so drop them as before.
+                StmtData::SDirective(dir) if dir.value.slice() == b"use strict" => {
+                    output.push(stmt);
+                    continue;
+                }
                 StmtData::SDirective(_) => continue,
 
                 StmtData::SLocal(local) => {

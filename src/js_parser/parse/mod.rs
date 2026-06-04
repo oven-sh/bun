@@ -1481,12 +1481,30 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             is_directive_prologue = true;
 
                             if str_.eql_comptime(b"use strict") {
-                                skip = true;
                                 // Track "use strict" directives
                                 p.current_scope_mut().strict_mode =
                                     StrictModeKind::ExplicitStrictMode;
                                 if p.current_scope == p.module_scope {
+                                    // The module-scope directive is dropped here and
+                                    // re-synthesized during printing only when the module
+                                    // is wrapped as CommonJS (see `preserve_strict_mode` in
+                                    // `to_ast`). It also doubles as a CommonJS-detection
+                                    // heuristic, so it must not be emitted as a directive.
+                                    skip = true;
                                     p.module_scope_directive_loc = stmt.loc;
+                                } else {
+                                    // Keep the directive inside function bodies: JSC treats
+                                    // CommonJS output as a sloppy Program, so a function that
+                                    // is only strict because of its own "use strict" would
+                                    // otherwise run sloppy. Re-emit it as a directive so the
+                                    // printed function body stays strict (matches esbuild).
+                                    let bytes = str_.string(p.arena).expect("OOM");
+                                    stmt = Stmt::alloc(
+                                        S::Directive {
+                                            value: bun_ast::StoreStr::new(bytes),
+                                        },
+                                        stmt.loc,
+                                    );
                                 }
                             } else if str_.eql_comptime(b"use asm") {
                                 skip = true;

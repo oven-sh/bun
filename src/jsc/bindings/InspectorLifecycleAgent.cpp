@@ -36,7 +36,7 @@ void Bun__LifecycleAgentReportReload(Inspector::InspectorLifecycleAgent* agent)
     agent->reportReload();
 }
 
-void Bun__LifecycleAgentReportError(Inspector::InspectorLifecycleAgent* agent, ZigException* exception)
+void Bun__LifecycleAgentReportError(Inspector::InspectorLifecycleAgent* agent, BunException* exception)
 {
     ASSERT(exception);
     ASSERT(agent);
@@ -100,7 +100,7 @@ void InspectorLifecycleAgent::reportReload()
     m_frontendDispatcher->reload();
 }
 
-void InspectorLifecycleAgent::reportError(ZigException& exception)
+void InspectorLifecycleAgent::reportError(BunException& exception)
 {
     if (!m_enabled)
         return;
@@ -117,7 +117,7 @@ void InspectorLifecycleAgent::reportError(ZigException& exception)
     }
 
     for (size_t i = 0; i < exception.stack.frames_len; i++) {
-        ZigStackFrame* frame = &exception.stack.frames_ptr[i];
+        BunStackFrame* frame = &exception.stack.frames_ptr[i];
         lineColumns->addItem(frame->position.line_zero_based + 1);
         lineColumns->addItem(frame->position.column_zero_based + 1);
         urls->addItem(frame->source_url.toWTFString());

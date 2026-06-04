@@ -13,7 +13,7 @@
 #include <JavaScriptCore/JSBoundFunction.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
-using namespace Zig;
+using namespace Bun;
 using namespace JSC;
 
 namespace Bun {
@@ -33,7 +33,7 @@ JSC::JSValue resolveLookupPaths(JSC::JSGlobalObject* globalObject, String reques
 
 }
 
-namespace Zig {
+namespace Bun {
 
 void generateNativeModule_NodeModule(                                     
   JSC::JSGlobalObject *lexicalGlobalObject, JSC::Identifier moduleKey,     
@@ -41,4 +41,4 @@ void generateNativeModule_NodeModule(
   JSC::MarkedArgumentBuffer &exportValues);  
 
 
-} // namespace Zig
+} // namespace Bun

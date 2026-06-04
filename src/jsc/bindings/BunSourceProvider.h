@@ -20,7 +20,7 @@ namespace Bun {
 class GlobalObject;
 }
 
-namespace Zig {
+namespace Bun {
 
 void forEachSourceProvider(WTF::Function<void(JSC::SourceID)>);
 JSC::SourceID sourceIDForSourceURL(const WTF::String& sourceURL);
@@ -81,4 +81,4 @@ private:
     unsigned m_hash = 0;
 };
 
-} // namespace Zig
+} // namespace Bun

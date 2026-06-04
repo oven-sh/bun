@@ -251,7 +251,7 @@ JSObject* createError(JSC::JSGlobalObject* globalObject, ErrorCode code, const S
     return createError(globalObject->vm(), globalObject, code, message);
 }
 
-JSObject* createError(Zig::JSGlobalObject* globalObject, ErrorCode code, JSC::JSValue message)
+JSObject* createError(Bun::JSGlobalObject* globalObject, ErrorCode code, JSC::JSValue message)
 {
     auto& vm = JSC::getVM(globalObject);
     return createError(vm, globalObject, code, message);
@@ -321,7 +321,7 @@ void JSValueToStringSafe(JSC::JSGlobalObject* globalObject, WTF::StringBuilder& 
     case JSC::JSType::InternalFunctionType:
     case JSC::JSType::JSFunctionType: {
         auto& vm = JSC::getVM(globalObject);
-        auto name = Zig::functionName(vm, globalObject, cell->getObject());
+        auto name = Bun::functionName(vm, globalObject, cell->getObject());
 
         if (!name.isEmpty()) {
             builder.append("[Function: "_s);
@@ -400,7 +400,7 @@ void determineSpecificType(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::
     }
     if (cell->isCallable()) {
         builder.append("function "_s);
-        auto name = Zig::functionName(vm, globalObject, cell->getObject());
+        auto name = Bun::functionName(vm, globalObject, cell->getObject());
 
         if (!name.isEmpty()) {
             builder.append(name);

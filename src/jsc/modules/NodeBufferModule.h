@@ -10,7 +10,7 @@
 #include "wtf/SIMDUTF.h"
 #include <limits>
 
-namespace Zig {
+namespace Bun {
 using namespace WebCore;
 using namespace JSC;
 
@@ -216,4 +216,4 @@ DEFINE_NATIVE_MODULE(NodeBuffer)
     put(JSC::Identifier::fromString(vm, "isUtf8"_s), JSC::JSFunction::create(vm, globalObject, 1, "isUtf8"_s, jsBufferConstructorFunction_isUtf8, ImplementationVisibility::Public, NoIntrinsic, jsBufferConstructorFunction_isUtf8));
 }
 
-} // namespace Zig
+} // namespace Bun

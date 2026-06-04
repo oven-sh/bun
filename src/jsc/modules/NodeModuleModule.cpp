@@ -1135,7 +1135,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsModuleResolveFilenameSlowPathEnabled,
 
 } // namespace Bun
 
-namespace Zig {
+namespace Bun {
 void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
@@ -1177,4 +1177,4 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     }
 }
 
-} // namespace Zig
+} // namespace Bun

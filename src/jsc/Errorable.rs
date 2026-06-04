@@ -1,6 +1,6 @@
 use crate::JSValue;
 use crate::error_code::ErrorCode;
-use crate::zig_error_type::ZigErrorType;
+use crate::bun_error_type::BunErrorType;
 
 #[repr(C)]
 pub struct Errorable<T: Copy> {
@@ -11,7 +11,7 @@ pub struct Errorable<T: Copy> {
 #[repr(C)]
 pub union Result<T: Copy> {
     pub value: T,
-    pub err: ZigErrorType,
+    pub err: BunErrorType,
 }
 
 impl<T: Copy> Errorable<T> {
@@ -42,7 +42,7 @@ impl<T: Copy> Errorable<T> {
     pub fn err(code: bun_core::Error, err_value: JSValue) -> Self {
         Self {
             result: Result {
-                err: ZigErrorType {
+                err: BunErrorType {
                     code: ErrorCode::from(code),
                     value: err_value,
                 },

@@ -53,7 +53,7 @@
 #include "isBuiltinModule.h"
 #include "WebCoreJSBuiltins.h"
 
-namespace Zig {
+namespace Bun {
 using namespace JSC;
 using namespace WebCore;
 

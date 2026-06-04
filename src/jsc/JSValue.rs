@@ -12,7 +12,7 @@ use core::marker::PhantomData;
 use crate::array_buffer::MarkedArrayBuffer_deallocator;
 use crate::{
     AnyPromise, ArrayBuffer, BuiltinName, JSArrayIterator, JSGlobalObject, JSInternalPromise,
-    JSObject, JSPromise, JSString, JSType, JsClass, JsError, JsResult, ZigException,
+    JSObject, JSPromise, JSString, JSType, JsClass, JsError, JsResult, BunException,
     bun_string_jsc, ffi, host_fn,
 };
 
@@ -901,8 +901,8 @@ impl JSValue {
         let s = bun_core::OwnedString::new(self.to_bun_string(global)?);
         Ok(s.to_utf8())
     }
-    pub fn to_zig_exception(self, global: &JSGlobalObject, exception: &mut ZigException) {
-        JSC__JSValue__toZigException(self, global, exception)
+    pub fn to_bun_exception(self, global: &JSGlobalObject, exception: &mut BunException) {
+        JSC__JSValue__toBunException(self, global, exception)
     }
     pub fn to_error(self) -> Option<JSValue> {
         let v = JSC__JSValue__toError_(self);
@@ -1991,10 +1991,10 @@ unsafe extern "C" {
         out: &mut bun_core::String,
     );
     safe fn JSC__JSValue__toError_(this: JSValue) -> JSValue;
-    safe fn JSC__JSValue__toZigException(
+    safe fn JSC__JSValue__toBunException(
         this: JSValue,
         global: &JSGlobalObject,
-        exception: &mut ZigException,
+        exception: &mut BunException,
     );
     safe fn JSC__JSValue__getUnixTimestamp(this: JSValue) -> f64;
     safe fn JSC__JSValue__isPrimitive(this: JSValue) -> bool;

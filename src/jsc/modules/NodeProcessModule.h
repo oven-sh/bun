@@ -4,7 +4,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include "BunProcess.h"
 
-namespace Zig {
+namespace Bun {
 
 DEFINE_NATIVE_MODULE(NodeProcess)
 {
@@ -44,4 +44,4 @@ DEFINE_NATIVE_MODULE(NodeProcess)
     }
 }
 
-} // namespace Zig
+} // namespace Bun

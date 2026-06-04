@@ -2,7 +2,7 @@
 #include "../bindings/BunGlobalObject.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 
-namespace Zig {
+namespace Bun {
 
 DEFINE_NATIVE_MODULE(NodeStringDecoder)
 {
@@ -14,4 +14,4 @@ DEFINE_NATIVE_MODULE(NodeStringDecoder)
     RETURN_NATIVE_MODULE();
 }
 
-} // namespace Zig
+} // namespace Bun

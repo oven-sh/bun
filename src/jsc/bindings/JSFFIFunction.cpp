@@ -78,15 +78,15 @@ extern "C" FFICallbackFunctionWrapper* Bun__createFFICallbackFunction(
     return wrapper;
 }
 
-extern "C" Zig::JSFFIFunction* Bun__CreateFFIFunctionWithData(Bun::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, void* data)
+extern "C" Bun::JSFFIFunction* Bun__CreateFFIFunctionWithData(Bun::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Bun::FFIFunction functionPointer, void* data)
 {
     auto& vm = JSC::getVM(globalObject);
-    Zig::JSFFIFunction* function = Zig::JSFFIFunction::create(vm, globalObject, argCount, symbolName != nullptr ? Zig::toStringCopy(*symbolName) : String(), functionPointer, JSC::NoIntrinsic);
+    Bun::JSFFIFunction* function = Bun::JSFFIFunction::create(vm, globalObject, argCount, symbolName != nullptr ? Bun::toStringCopy(*symbolName) : String(), functionPointer, JSC::NoIntrinsic);
     function->dataPtr = data;
     return function;
 }
 
-extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionWithDataValue(Bun::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, void* data)
+extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionWithDataValue(Bun::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Bun::FFIFunction functionPointer, void* data)
 {
     return JSC::JSValue::encode(Bun__CreateFFIFunctionWithData(globalObject, symbolName, argCount, functionPointer, data));
 }
@@ -94,7 +94,7 @@ extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionWithDataValue(Bun::GlobalOb
 extern "C" void* Bun__FFIFunction_getDataPtr(JSC::EncodedJSValue jsValue)
 {
 
-    Zig::JSFFIFunction* function = dynamicDowncast<Zig::JSFFIFunction>(JSC::JSValue::decode(jsValue));
+    Bun::JSFFIFunction* function = dynamicDowncast<Bun::JSFFIFunction>(JSC::JSValue::decode(jsValue));
     if (!function)
         return nullptr;
 
@@ -104,17 +104,17 @@ extern "C" void* Bun__FFIFunction_getDataPtr(JSC::EncodedJSValue jsValue)
 extern "C" void Bun__FFIFunction_setDataPtr(JSC::EncodedJSValue jsValue, void* ptr)
 {
 
-    Zig::JSFFIFunction* function = dynamicDowncast<Zig::JSFFIFunction>(JSC::JSValue::decode(jsValue));
+    Bun::JSFFIFunction* function = dynamicDowncast<Bun::JSFFIFunction>(JSC::JSValue::decode(jsValue));
     if (!function)
         return;
 
     function->dataPtr = ptr;
 }
 
-extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Bun::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool addPtrField, void* symbolFromDynamicLibrary)
+extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Bun::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Bun::FFIFunction functionPointer, bool addPtrField, void* symbolFromDynamicLibrary)
 {
     if (addPtrField) {
-        auto* function = Zig::JSFFIFunction::createForFFI(globalObject->vm(), globalObject, argCount, symbolName != nullptr ? Zig::toStringCopy(*symbolName) : String(), reinterpret_cast<Bun::CFFIFunction>(functionPointer));
+        auto* function = Bun::JSFFIFunction::createForFFI(globalObject->vm(), globalObject, argCount, symbolName != nullptr ? Bun::toStringCopy(*symbolName) : String(), reinterpret_cast<Bun::CFFIFunction>(functionPointer));
         auto& vm = JSC::getVM(globalObject);
         // We should only expose the "ptr" field when it's a JSCallback for bun:ffi.
         // Not for internal usages of this function type.
@@ -127,7 +127,7 @@ extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Bun::GlobalObject* gl
     return Bun__CreateFFIFunctionWithDataValue(globalObject, symbolName, argCount, functionPointer, nullptr);
 }
 
-namespace Zig {
+namespace Bun {
 using namespace JSC;
 
 const ClassInfo JSFFIFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFFIFunction) };

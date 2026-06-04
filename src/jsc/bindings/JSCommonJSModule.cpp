@@ -67,7 +67,7 @@
 
 #include <JavaScriptCore/JSMapInlines.h>
 #include <JavaScriptCore/GetterSetter.h>
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "JSCommonJSModule.h"
 #include <JavaScriptCore/JSModuleNamespaceObject.h>
@@ -201,7 +201,7 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Bun::GlobalObject* globalObj
     if (auto* jsFunction = dynamicDowncast<JSC::JSFunction>(fn)) {
         if (jsFunction->jsExecutable()->parameterCount() > 5) {
             // it expects ImportMetaObject
-            args.append(Zig::ImportMetaObject::create(globalObject, filename));
+            args.append(Bun::ImportMetaObject::create(globalObject, filename));
         }
     }
 
@@ -1373,7 +1373,7 @@ void JSCommonJSModule::evaluate(
         }
     }
 
-    auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+    auto sourceProvider = Bun::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
     this->ignoreESModuleAnnotation = source.tag == ResolvedSourceTagPackageJSONTypeModule;
     if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
         Bun::IsolatedModuleCache::insert(vm, key, sourceProvider.get());
@@ -1492,7 +1492,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
             source.source_code = Bun::toStringRef(concat);
         }
 
-        auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
+        auto sourceProvider = Bun::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);
         if (!isBuiltIn && !globalObject->hasOverriddenModuleWrapper && Bun::IsolatedModuleCache::canUse(vm, globalObject->bunVM())) {
             Bun::IsolatedModuleCache::insert(vm, sourceURL, sourceProvider.get());
         }
@@ -1509,7 +1509,7 @@ std::optional<JSC::SourceCode> createCommonJSModule(
         requireMap->set(globalObject, filename, moduleObject);
         RETURN_IF_EXCEPTION(scope, {});
     } else {
-        sourceOrigin = Zig::toSourceOrigin(sourceURL, isBuiltIn);
+        sourceOrigin = Bun::toSourceOrigin(sourceURL, isBuiltIn);
     }
 
     moduleObject->ignoreESModuleAnnotation = ignoreESModuleAnnotation;

@@ -30,12 +30,9 @@ namespace Bun {
 class GlobalObject;
 }
 
-namespace Zig {
-}
-
 namespace WebCore {
 using namespace JSC;
-using namespace Zig;
+using namespace Bun;
 
 enum class UseCustomHeapCellType { Yes,
     No };
@@ -127,7 +124,7 @@ public:
 
     // Backing storage for Bun::IsolatedModuleCache (see IsolatedModuleCache.h).
     // All access should go through that class. Stored as the JSC base type to
-    // avoid pulling ZigSourceProvider.h into this header; the cache class
+    // avoid pulling BunSourceProvider.h into this header; the cache class
     // downcasts on lookup. Values hold strong refs by design: this map is the
     // only owner once the previous global is GC'd, so a weak map would empty
     // after every swap.

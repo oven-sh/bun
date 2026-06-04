@@ -109,7 +109,7 @@ impl From<ResolvedSource> for OwnedResolvedSource {
 impl OwnedResolvedSource {
     /// Hand the raw value to C++ (which takes over the `deref()` obligation
     /// per `headers-handwritten.h` `BunString::deref` callers in
-    /// `Zig::ResolvedSource` consumers). After this, Rust must not touch the
+    /// `Bun::ResolvedSource` consumers). After this, Rust must not touch the
     /// strings.
     #[inline]
     pub fn into_ffi(self) -> ResolvedSource {

@@ -6,7 +6,7 @@
 using namespace JSC;
 using namespace WebCore;
 
-namespace Zig {
+namespace Bun {
 
 inline void generateNativeModule_AbortControllerModule(
     JSC::JSGlobalObject* lexicalGlobalObject, JSC::Identifier moduleKey,
@@ -49,4 +49,4 @@ inline void generateNativeModule_AbortControllerModule(
         vm, vm.propertyNames->defaultKeyword, abortController,
         static_cast<unsigned>(PropertyAttribute::DontDelete));
 }
-} // namespace Zig
+} // namespace Bun

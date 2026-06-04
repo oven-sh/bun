@@ -16,7 +16,7 @@
 using namespace JSC;
 using namespace WebCore;
 
-namespace Zig {
+namespace Bun {
 
 const JSC::ClassInfo CallSite::s_info = { "CallSite"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(CallSite) };
 

@@ -9,7 +9,7 @@
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
 BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPluginClear);
 
-namespace Zig {
+namespace Bun {
 
 using namespace JSC;
 
@@ -99,7 +99,7 @@ public:
     };
 };
 
-} // namespace Zig
+} // namespace Bun
 
 namespace Bun {
 class GlobalObject;

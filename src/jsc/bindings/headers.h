@@ -294,7 +294,7 @@ CPP_DECL JSC::JSObject* JSC__JSValue__toObject(JSC::EncodedJSValue JSValue0, JSC
 CPP_DECL JSC::JSString* JSC__JSValue__toString(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL JSC::JSString* JSC__JSValue__toStringOrNull(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1);
 CPP_DECL uint64_t JSC__JSValue__toUInt64NoTruncate(JSC::EncodedJSValue JSValue0);
-CPP_DECL void JSC__JSValue__toZigException(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, ZigException* arg2);
+CPP_DECL void JSC__JSValue__toBunException(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, BunException* arg2);
 CPP_DECL void JSC__JSValue__toZigString(JSC::EncodedJSValue JSValue0, ZigString* arg1, JSC::JSGlobalObject* arg2);
 
 #pragma mark - JSC::VM
@@ -674,7 +674,7 @@ ZIG_DECL JSC::EncodedJSValue Bun__Process__setCwd(JSC::JSGlobalObject* arg0, Zig
 ZIG_DECL JSC::EncodedJSValue Bun__Process__getEval(JSC::JSGlobalObject* arg0);
 
 #endif
-CPP_DECL ZigException ZigException__fromException(JSC::Exception* arg0);
+CPP_DECL BunException BunException__fromException(JSC::Exception* arg0);
 
 #pragma mark - Bun::ConsoleObject
 

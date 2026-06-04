@@ -81,8 +81,8 @@ test("native error printer handles lone surrogates in message and stack frame na
   // path formatting around it.
   const fixture = String.raw`
     function thrower() { throw new Error("MSG_PRE\uD800MSG_POST"); }
-    // Force the native ZigStackFrame NameFormatter path: give the frame a
-    // function_name containing a lone high surrogate. (src/jsc/ZigStackFrame.zig
+    // Force the native BunStackFrame NameFormatter path: give the frame a
+    // function_name containing a lone high surrogate. (src/jsc/BunStackFrame.zig
     // NameFormatter.format -> "{f}" on bun.String)
     Object.defineProperty(thrower, "name", { value: "FN_PRE\uD800FN_POST" });
     thrower();

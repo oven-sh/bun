@@ -960,7 +960,7 @@ pub enum DomEffectId {
 pub struct DomCall {
     pub class_name: &'static str,
     pub function_name: &'static str,
-    /// `<class>__<fn>__put` — generated in `ZigLazyStaticFunctions-inlines.h`.
+    /// `<class>__<fn>__put` — generated in `BunLazyStaticFunctions-inlines.h`.
     pub put: unsafe extern "C" fn(*mut JSGlobalObject, JSValue),
 }
 

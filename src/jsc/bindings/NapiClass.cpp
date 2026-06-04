@@ -2,7 +2,7 @@
 #include "napi.h"
 #include <wtf/TZoneMallocInlines.h>
 
-namespace Zig {
+namespace Bun {
 
 template<typename Visitor>
 void NapiClass::visitChildrenImpl(JSCell* cell, Visitor& visitor)

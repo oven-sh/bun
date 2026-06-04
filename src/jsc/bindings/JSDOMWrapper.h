@@ -29,7 +29,7 @@
 #include <wtf/SignedPtr.h>
 
 namespace WebCore {
-using namespace Zig;
+using namespace Bun;
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT
 #define RENAMED_JSDOM_GLOBAL_OBJECT
 using JSDOMGlobalObject = Bun::GlobalObject;

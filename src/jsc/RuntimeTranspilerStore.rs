@@ -541,7 +541,7 @@ impl TranspilerJob {
         let referrer = core::mem::take(&mut self.non_threadsafe_referrer).into_inner();
         let mut log = core::mem::replace(&mut self.log, bun_ast::Log::init());
         // Take RAII ownership out of the job; `into_ffi()` below transfers the
-        // +1 strings to `AsyncModule::fulfill` → C++ `Zig::ResolvedSource`.
+        // +1 strings to `AsyncModule::fulfill` → C++ `Bun::ResolvedSource`.
         let mut owned_resolved_source = core::mem::take(&mut self.resolved_source);
         let resolved_source = owned_resolved_source.as_mut();
         let specifier = 'brk: {

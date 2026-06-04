@@ -501,7 +501,7 @@ const importCandidates: Array<[string, string]> = [
   ["bun_jsc", "JSInternalPromise"],
   ["bun_jsc", "JSObject"],
   ["bun_jsc", "JSPromise"],
-  ["bun_jsc", "ZigStackFrame"],
+  ["bun_jsc", "BunStackFrame"],
   ["bun_jsc::virtual_machine", "VirtualMachine"],
   ["bun_jsc::debugger", "InspectorBunFrontendDevServerAgentHandle"],
   ["bun_jsc::debugger", "LifecycleHandle"],

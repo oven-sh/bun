@@ -91,11 +91,9 @@ extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
 extern "C" uv_loop_t* Bun__GlobalObject__uvLoop(void* /* BunVM */);
 #endif
 
-namespace Zig {
-class JSCStackTrace;
-} // namespace Zig
-
 namespace Bun {
+
+class JSCStackTrace;
 
 using JSDOMStructureMap = UncheckedKeyHashMap<const JSC::ClassInfo*, JSC::WriteBarrier<JSC::Structure>>;
 using DOMGuardedObjectSet = UncheckedKeyHashSet<WebCore::DOMGuardedObject*>;
@@ -719,8 +717,8 @@ public:
     String agentClusterID() const;
     static String defaultAgentClusterID();
 
-    Zig::BunPlugin::OnLoad onLoadPlugins {};
-    Zig::BunPlugin::OnResolve onResolvePlugins {};
+    Bun::BunPlugin::OnLoad onLoadPlugins {};
+    Bun::BunPlugin::OnResolve onResolvePlugins {};
 
     // This increases the cache hit rate for JSC::VM's SourceProvider cache
     // It also avoids an extra allocation for the SourceProvider

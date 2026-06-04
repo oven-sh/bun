@@ -168,19 +168,19 @@ void InspectorTestReporterAgent::reportTestFound(JSC::CallFrame* callFrame, int 
     JSC::SourceID sourceID = 0;
     String sourceURL;
 
-    ZigStackFrame remappedFrame = {};
+    BunStackFrame remappedFrame = {};
 
     auto* globalObject = &m_globalObject;
     auto& vm = JSC::getVM(globalObject);
 
     JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        if (Zig::isImplementationVisibilityPrivate(visitor))
+        if (Bun::isImplementationVisibilityPrivate(visitor))
             return WTF::IterationStatus::Continue;
 
         if (visitor->hasLineAndColumnInfo()) {
             lineColumn = visitor->computeLineAndColumn();
 
-            String sourceURLForFrame = Zig::sourceURL(visitor);
+            String sourceURLForFrame = Bun::sourceURL(visitor);
 
             // Sometimes, the sourceURL is empty.
             // For example, pages in Next.js.

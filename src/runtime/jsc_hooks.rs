@@ -3513,7 +3513,7 @@ fn get_hardcoded_module(
             Some(OwnedResolvedSource::from(ResolvedSource {
                 source_code: bun_core::String::clone_utf8(&ep.contents),
                 // +1 each: ~SourceProvider() derefs `specifier` and
-                // `source_url` once all uses are done (see ZigSourceProvider.cpp).
+                // `source_url` once all uses are done (see BunSourceProvider.cpp).
                 specifier: specifier.dupe_ref(),
                 source_url: specifier.dupe_ref(),
                 tag: Tag::Esm,

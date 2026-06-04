@@ -124,7 +124,7 @@ private:
 
         for (size_t i = 0; i < paths.size(); i++) {
             ZigString rawPath = paths[i];
-            WTF::String path = Zig::toString(rawPath);
+            WTF::String path = Bun::toString(rawPath);
             uint32_t originalIdentifierIndex = m_pathIdentifiers.size();
             size_t startOfIdentifier = 0;
             size_t identifierCount = 0;

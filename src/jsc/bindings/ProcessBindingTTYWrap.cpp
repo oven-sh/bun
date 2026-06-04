@@ -497,7 +497,7 @@ JSValue createBunTTYFunctions(Bun::GlobalObject* globalObject)
     auto& vm = JSC::getVM(globalObject);
     auto* obj = constructEmptyObject(globalObject);
 
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isatty"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isatty"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Bun::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
 
     obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "setRawMode"_s)), JSFunction::create(vm, globalObject, 0, "ttySetMode"_s, jsTTYSetMode, ImplementationVisibility::Public), 0);
 
@@ -511,7 +511,7 @@ JSValue createNodeTTYWrapObject(JSC::JSGlobalObject* globalObject)
     auto& vm = JSC::getVM(globalObject);
     auto* obj = constructEmptyObject(globalObject);
 
-    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isTTY"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Zig::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
+    obj->putDirect(vm, PropertyName(Identifier::fromString(vm, "isTTY"_s)), JSFunction::create(vm, globalObject, 0, "isatty"_s, Bun::jsFunctionTty_isatty, ImplementationVisibility::Public), 0);
 
     TTYWrapPrototype* prototype = TTYWrapPrototype::create(vm, globalObject, TTYWrapPrototype::createStructure(vm, globalObject));
     TTYWrapConstructor* constructor = TTYWrapConstructor::create(vm, globalObject, TTYWrapConstructor::createStructure(vm, globalObject, globalObject->functionPrototype()), prototype);

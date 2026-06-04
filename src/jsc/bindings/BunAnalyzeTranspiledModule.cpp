@@ -10,7 +10,7 @@
 #include <wtf/text/MakeString.h>
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/ExceptionScope.h"
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 #include "BunGlobalObject.h"
 #include "headers-handwritten.h"
 #include "IsolatedModuleCache.h"
@@ -39,8 +39,8 @@ Identifier getFromIdentifierArray(VM& vm, Identifier* identifierArray, uint32_t 
     return identifierArray[n];
 }
 
-extern "C" JSModuleRecord* zig__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, VariableEnvironment& declared_variables, VariableEnvironment& lexical_variables, bun_ModuleInfoDeserialized* module_info);
-extern "C" void zig__renderDiff(const char* expected_ptr, size_t expected_len, const char* received_ptr, size_t received_len, JSGlobalObject* globalObject);
+extern "C" JSModuleRecord* bun__ModuleInfoDeserialized__toJSModuleRecord(JSGlobalObject* globalObject, VM& vm, const Identifier& module_key, const SourceCode& source_code, VariableEnvironment& declared_variables, VariableEnvironment& lexical_variables, bun_ModuleInfoDeserialized* module_info);
+extern "C" void bun__renderDiff(const char* expected_ptr, size_t expected_len, const char* received_ptr, size_t received_len, JSGlobalObject* globalObject);
 
 extern "C" Identifier* JSC__IdentifierArray__create(size_t len)
 {
@@ -176,7 +176,7 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     VariableEnvironment declaredVariables = VariableEnvironment();
     VariableEnvironment lexicalVariables = VariableEnvironment();
 
-    auto provider = static_cast<Zig::SourceProvider*>(sourceCode.provider());
+    auto provider = static_cast<Bun::SourceProvider*>(sourceCode.provider());
 
     if (provider->m_resolvedSource.module_info == nullptr) {
         dataLog("[note] module_info is null for module: ", moduleKey.utf8(), "\n");
@@ -184,12 +184,12 @@ extern "C" EncodedJSValue Bun__analyzeTranspiledModule(JSGlobalObject* globalObj
     }
 
     auto* moduleInfo = static_cast<bun_ModuleInfoDeserialized*>(provider->m_resolvedSource.module_info);
-    auto moduleRecord = zig__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, moduleInfo);
+    auto moduleRecord = bun__ModuleInfoDeserialized__toJSModuleRecord(globalObject, vm, moduleKey, sourceCode, declaredVariables, lexicalVariables, moduleInfo);
     // Under --isolate the same SourceProvider is reused across globals via the
     // IsolatedModuleCache, so module_info must remain alive on the provider;
     // ~SourceProvider frees it. Otherwise, free now.
     if (!Bun::IsolatedModuleCache::canUse(vm, uncheckedDowncast<Bun::GlobalObject>(globalObject)->bunVM())) {
-        zig__ModuleInfoDeserialized__deinit(moduleInfo);
+        bun__ModuleInfoDeserialized__deinit(moduleInfo);
         provider->m_resolvedSource.module_info = nullptr;
     }
     if (moduleRecord == nullptr) {
@@ -239,7 +239,7 @@ static EncodedJSValue fallbackParse(JSGlobalObject* globalObject, const Identifi
             dataLog("  ------", "\n");
             dataLog("  BunAnalyzeTranspiledModule:", "\n");
 
-            zig__renderDiff(expected.utf8().data(), expected.utf8().length(), actual.utf8().data(), actual.utf8().length(), globalObject);
+            bun__renderDiff(expected.utf8().data(), expected.utf8().length(), actual.utf8().data(), actual.utf8().length(), globalObject);
 
             RELEASE_AND_RETURN(scope, JSValue::encode(rejectWithError(createError(globalObject, WTF::String::fromLatin1("Imports different between parseFromSourceCode and fallbackParse")))));
         }

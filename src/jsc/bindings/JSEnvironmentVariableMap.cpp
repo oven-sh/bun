@@ -47,7 +47,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGetterEnvironmentVariable, (JSGlobalObject * globalOb
         return JSValue::encode(jsUndefined());
     }
 
-    JSValue result = jsString(vm, Zig::toStringCopy(value));
+    JSValue result = jsString(vm, Bun::toStringCopy(value));
     thisObject->putDirect(vm, propertyName, result, 0);
     return JSValue::encode(result);
 }
@@ -153,7 +153,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsTimeZoneEnvironmentVariableGetter, (JSGlobalObject * 
         return JSValue::encode(jsUndefined());
     }
 
-    JSValue out = jsString(vm, Zig::toStringCopy(value));
+    JSValue out = jsString(vm, Bun::toStringCopy(value));
     thisObject->putDirect(vm, clientData->builtinNames().dataPrivateName(), out, 0);
 
     return JSValue::encode(out);
@@ -235,7 +235,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsNodeTLSRejectUnauthorizedGetter, (JSGlobalObject * gl
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+    return JSValue::encode(jsString(vm, Bun::toStringCopy(value)));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsNodeTLSRejectUnauthorizedSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
@@ -289,7 +289,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsBunConfigVerboseFetchGetter, (JSGlobalObject * global
         return JSValue::encode(jsUndefined());
     }
 
-    return JSValue::encode(jsString(vm, Zig::toStringCopy(value)));
+    return JSValue::encode(jsString(vm, Bun::toStringCopy(value)));
 }
 
 JSC_DEFINE_CUSTOM_SETTER(jsBunConfigVerboseFetchSetter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, PropertyName propertyName))
@@ -443,7 +443,7 @@ JSValue createEnvironmentVariablesMap(Bun::GlobalObject* globalObject)
                 ZigString valueString = { nullptr, 0 };
                 ZigString nameStr = toZigString(name);
                 if (Bun__getEnvValue(globalObject, &nameStr, &valueString)) {
-                    JSValue value = jsString(vm, Zig::toStringCopy(valueString));
+                    JSValue value = jsString(vm, Bun::toStringCopy(valueString));
                     RETURN_IF_EXCEPTION(scope, {});
                     object->putDirectIndex(globalObject, *index, value, 0, PutDirectIndexLikePutDirect);
                     RETURN_IF_EXCEPTION(scope, {});

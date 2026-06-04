@@ -8,22 +8,22 @@ use bun_url::URL as ZigURL;
 
 use crate::module_loader::ModuleLoader;
 use crate::virtual_machine::VirtualMachine;
-use crate::{JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, ZigStackTrace};
+use crate::{JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, BunStackFrame, BunStackTrace};
 
 // SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
 // opaque `UnsafeCell`-backed handle (`&` is ABI-identical to non-null `*mut`);
-// `ZigException` is a `#[repr(C)]` out-param the C++ side fills in-place.
+// `BunException` is a `#[repr(C)]` out-param the C++ side fills in-place.
 unsafe extern "C" {
-    pub(crate) safe fn ZigException__collectSourceLines(
+    pub(crate) safe fn BunException__collectSourceLines(
         js_value: JSValue,
         global: &JSGlobalObject,
-        exception: &mut ZigException,
+        exception: &mut BunException,
     );
 }
 
 /// Represents a JavaScript exception with additional information
 #[repr(C)]
-pub struct ZigException {
+pub struct BunException {
     pub r#type: JSErrorCode,
     pub runtime_type: JSRuntimeType,
 
@@ -38,7 +38,7 @@ pub struct ZigException {
 
     pub name: String,
     pub message: String,
-    pub stack: ZigStackTrace,
+    pub stack: BunStackTrace,
 
     pub exception: *mut c_void,
 
@@ -49,9 +49,9 @@ pub struct ZigException {
     pub browser_url: String,
 }
 
-impl ZigException {
+impl BunException {
     pub fn collect_source_lines(&mut self, value: JSValue, global: &JSGlobalObject) {
-        ZigException__collectSourceLines(value, global, self);
+        BunException__collectSourceLines(value, global, self);
     }
 
     // Kept as explicit `deinit` (not `Drop`) — this is a #[repr(C)] FFI
@@ -79,9 +79,9 @@ impl ZigException {
         }
     }
 
-    // `ZigException__fromException` is declared in headers.h but has no C++
+    // `BunException__fromException` is declared in headers.h but has no C++
     // body (bindings.cpp dropped it; the only producer is
-    // `JSC__JSValue__toZigException` which writes through an out-param), so
+    // `JSC__JSValue__toBunException` which writes through an out-param), so
     // there is intentionally no `from_exception` here.
 
     pub fn add_to_error_list(
@@ -132,11 +132,11 @@ impl ZigException {
 pub struct Holder {
     pub source_line_numbers: [i32; Self::SOURCE_LINES_COUNT],
     pub source_lines: [String; Self::SOURCE_LINES_COUNT],
-    pub frames: [ZigStackFrame; Self::FRAME_COUNT],
+    pub frames: [BunStackFrame; Self::FRAME_COUNT],
     pub loaded: bool,
-    // Never read until `loaded` flips and `zig_exception()` writes it;
+    // Never read until `loaded` flips and `bun_exception()` writes it;
     // all access must be gated on `loaded`.
-    pub zig_exception: MaybeUninit<ZigException>,
+    pub bun_exception: MaybeUninit<BunException>,
     pub need_to_clear_parser_arena_on_deinit: bool,
 }
 
@@ -146,10 +146,10 @@ impl Holder {
 
     pub fn zero() -> Self {
         Self {
-            frames: core::array::from_fn(|_| ZigStackFrame::ZERO),
+            frames: core::array::from_fn(|_| BunStackFrame::ZERO),
             source_line_numbers: [-1; Self::SOURCE_LINES_COUNT],
             source_lines: core::array::from_fn(|_| String::EMPTY),
-            zig_exception: MaybeUninit::uninit(),
+            bun_exception: MaybeUninit::uninit(),
             loaded: false,
             need_to_clear_parser_arena_on_deinit: false,
         }
@@ -166,8 +166,8 @@ impl Holder {
     // call won't leak WTF string refs.
     pub fn deinit(&mut self, vm: &mut VirtualMachine) {
         if self.loaded {
-            // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
-            unsafe { self.zig_exception.assume_init_mut() }.deinit();
+            // SAFETY: `loaded == true` ⇔ `bun_exception()` has written this slot.
+            unsafe { self.bun_exception.assume_init_mut() }.deinit();
             // Make idempotent so the subsequent `Drop` is a no-op.
             self.loaded = false;
         }
@@ -176,15 +176,15 @@ impl Holder {
         }
     }
 
-    pub fn zig_exception(&mut self) -> &mut ZigException {
+    pub fn bun_exception(&mut self) -> &mut BunException {
         if !self.loaded {
-            self.zig_exception.write(ZigException {
+            self.bun_exception.write(BunException {
                 r#type: JSErrorCode(255),
                 runtime_type: JSRuntimeType::NOTHING,
                 name: String::EMPTY,
                 message: String::EMPTY,
                 exception: ptr::null_mut(),
-                stack: ZigStackTrace {
+                stack: BunStackTrace {
                     source_lines_ptr: self.source_lines.as_mut_ptr(),
                     source_lines_numbers: self.source_line_numbers.as_mut_ptr(),
                     source_lines_len: Self::SOURCE_LINES_COUNT as u8,
@@ -207,7 +207,7 @@ impl Holder {
 
         // SAFETY: either the branch above just wrote it, or `loaded` was already
         // true from a prior call that wrote it.
-        unsafe { self.zig_exception.assume_init_mut() }
+        unsafe { self.bun_exception.assume_init_mut() }
     }
 }
 
@@ -218,8 +218,8 @@ impl Drop for Holder {
     // skips the tail `deinit` call.
     fn drop(&mut self) {
         if self.loaded {
-            // SAFETY: `loaded == true` ⇔ `zig_exception()` has written this slot.
-            unsafe { self.zig_exception.assume_init_mut() }.deinit();
+            // SAFETY: `loaded == true` ⇔ `bun_exception()` has written this slot.
+            unsafe { self.bun_exception.assume_init_mut() }.deinit();
             self.loaded = false;
         }
     }

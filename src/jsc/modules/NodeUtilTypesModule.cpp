@@ -461,7 +461,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsEventTarget,
     return JSValue::encode(jsBoolean(cell->inherits<WebCore::JSEventTarget>()));
 }
 
-namespace Zig {
+namespace Bun {
 
 // Hardcoded module "node:util/types"
 DEFINE_NATIVE_MODULE_NOINLINE(NodeUtilTypes)
@@ -516,4 +516,4 @@ DEFINE_NATIVE_MODULE_NOINLINE(NodeUtilTypes)
     RETURN_NATIVE_MODULE();
 }
 
-} // namespace Zig
+} // namespace Bun

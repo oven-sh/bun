@@ -885,14 +885,14 @@ void WebSocket::sendWebSocketString(const String& message, const Opcode op)
 {
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        auto zigStr = Zig::toZigString(message);
+        auto zigStr = Bun::toZigString(message);
         Bun__WebSocketClient__writeString(this->m_connectedWebSocket.client, &zigStr, static_cast<uint8_t>(op));
         // this->m_connectedWebSocket.client->send({ baseAddress, length }, opCode);
         // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        auto zigStr = Zig::toZigString(message);
+        auto zigStr = Bun::toZigString(message);
         Bun__WebSocketClientTLS__writeString(this->m_connectedWebSocket.clientSSL, &zigStr, static_cast<uint8_t>(op));
         break;
     }
@@ -991,14 +991,14 @@ ExceptionOr<void> WebSocket::close(std::optional<unsigned short> optionalCode, c
     m_state = CLOSING;
     switch (m_connectedWebSocketKind) {
     case ConnectedWebSocketKind::Client: {
-        ZigString reasonZigStr = Zig::toZigString(reason);
+        ZigString reasonZigStr = Bun::toZigString(reason);
         Bun__WebSocketClient__close(this->m_connectedWebSocket.client, code, &reasonZigStr);
         updateHasPendingActivity();
         // this->m_bufferedAmount = this->m_connectedWebSocket.client->getBufferedAmount();
         break;
     }
     case ConnectedWebSocketKind::ClientSSL: {
-        ZigString reasonZigStr = Zig::toZigString(reason);
+        ZigString reasonZigStr = Bun::toZigString(reason);
         Bun__WebSocketClientTLS__close(this->m_connectedWebSocket.clientSSL, code, &reasonZigStr);
         updateHasPendingActivity();
         // this->m_bufferedAmount = this->m_connectedWebSocket.clientSSL->getBufferedAmount();
@@ -1904,7 +1904,7 @@ extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t erro
 
 extern "C" void WebSocket__didReceiveText(WebCore::WebSocket* webSocket, bool clone, const ZigString* str)
 {
-    WTF::String wtf_str = clone ? Zig::toStringCopy(*str) : Zig::toString(*str);
+    WTF::String wtf_str = clone ? Bun::toStringCopy(*str) : Bun::toString(*str);
     webSocket->didReceiveMessage(WTF::move(wtf_str));
 }
 extern "C" void WebSocket__didReceiveBytes(WebCore::WebSocket* webSocket, const uint8_t* bytes, size_t len, const uint8_t op)

@@ -440,7 +440,7 @@ impl core::fmt::Display for DebugIDFormatter {
     }
 }
 
-// This is a pointer to a ZigSourceProvider that may or may not have a `//# sourceMappingURL` comment
+// This is a pointer to a BunSourceProvider that may or may not have a `//# sourceMappingURL` comment
 // when we want to lookup this data, we will then resolve it to a ParsedSourceMap if it does.
 //
 // This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
@@ -451,12 +451,12 @@ unsafe extern "C" {
     // bytes of it), so `&SourceProviderMap` carries no `readonly`/`noalias` —
     // the foreign side owns all state behind the handle and may mutate it. The
     // only param is that handle reference, so this is a `safe fn`.
-    safe fn ZigSourceProvider__getSourceSlice(this: &SourceProviderMap) -> bun_core::String;
+    safe fn BunSourceProvider__getSourceSlice(this: &SourceProviderMap) -> bun_core::String;
 }
 
 impl SourceProviderMap {
     pub fn get_source_slice(&self) -> bun_core::String {
-        ZigSourceProvider__getSourceSlice(self)
+        BunSourceProvider__getSourceSlice(self)
     }
 
     pub fn to_source_content_ptr(&self) -> SourceContentPtr {

@@ -2,7 +2,7 @@
 
 #include "helpers.h"
 
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 #include "MimallocWTFMalloc.h"
 #include "BunAnalyzeTranspiledModule.h"
 
@@ -18,7 +18,7 @@
 #include <mimalloc.h>
 #include <JavaScriptCore/CodeCache.h>
 
-namespace Zig {
+namespace Bun {
 
 using Base = JSC::SourceProvider;
 using BytecodeCacheGenerator = JSC::BytecodeCacheGenerator;
@@ -176,7 +176,7 @@ SourceProvider::~SourceProvider()
         Bun__removeSourceProviderSourceMap(m_bunVM, this, &str);
     }
     if (m_resolvedSource.module_info != nullptr) {
-        zig__ModuleInfoDeserialized__deinit(static_cast<bun_ModuleInfoDeserialized*>(m_resolvedSource.module_info));
+        bun__ModuleInfoDeserialized__deinit(static_cast<bun_ModuleInfoDeserialized*>(m_resolvedSource.module_info));
         m_resolvedSource.module_info = nullptr;
     }
     // The Rust side hands these as +1 (RuntimeTranspilerStore::run_from_js_thread:
@@ -404,9 +404,9 @@ int SourceProvider::readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
     // }
 }
 
-extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
+extern "C" BunString BunSourceProvider__getSourceSlice(SourceProvider* provider)
 {
     return Bun::toStringView(provider->source());
 }
 
-}; // namespace Zig
+}; // namespace Bun

@@ -14,7 +14,7 @@
 using namespace JSC;
 using namespace WebCore;
 
-namespace Zig {
+namespace Bun {
 
 class JSCStackFrame;
 

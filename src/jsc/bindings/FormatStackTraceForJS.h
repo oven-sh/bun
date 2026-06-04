@@ -44,11 +44,8 @@ class String;
 class OrdinalNumber;
 } // namespace WTF
 
-namespace Zig {
-class JSCStackTrace;
-} // namespace Zig
-
 namespace Bun {
+class JSCStackTrace;
 class GlobalObject;
 } // namespace Bun
 
@@ -88,13 +85,13 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, WTF::Vector<JSC::Stac
 void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull sourceProvider, JSC::LineColumn& lineColumn, WTF::String& remappedSourceURL);
 } // namespace Bun
 
-namespace Zig {
+namespace Bun {
 
 // GlobalObject member function for creating CallSite objects
 void createCallSitesFromFrames(
     Bun::GlobalObject* globalObject,
     JSC::JSGlobalObject* lexicalGlobalObject,
-    Zig::JSCStackTrace& stackTrace,
+    Bun::JSCStackTrace& stackTrace,
     JSC::MarkedArgumentBuffer& callSites);
 
-} // namespace Zig
+} // namespace Bun

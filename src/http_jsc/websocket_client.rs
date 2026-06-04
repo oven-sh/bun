@@ -426,7 +426,7 @@ impl<const SSL: bool> WebSocket<SSL> {
                 let mut outstring;
                 if let Some(utf16) = utf16_bytes {
                     // Ownership of the UTF-16 buffer transfers to C++: with
-                    // `clone=false` and the global tag set, `Zig::toString`
+                    // `clone=false` and the global tag set, `Bun::toString`
                     // adopts the allocation into a `WTF::ExternalStringImpl`
                     // which `mi_free`s it later. Dropping the Vec here would
                     // be a UAF + double-free, so `utf16` must never be freed

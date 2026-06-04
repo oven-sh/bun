@@ -25,7 +25,7 @@ class GlobalObject;
 extern "C" size_t Bun__stringSyntheticAllocationLimit;
 extern "C" const char* Bun__errnoName(int);
 
-namespace Zig {
+namespace Bun {
 
 // 8 bit byte
 // we tag the final two bits
@@ -343,7 +343,7 @@ static WTF::StringView toStringView(ZigString str)
     return WTF::StringView(std::span { untag(str.ptr), str.len });
 }
 
-static void throwException(JSC::ThrowScope& scope, ZigErrorType err, JSC::JSGlobalObject* global)
+static void throwException(JSC::ThrowScope& scope, BunErrorType err, JSC::JSGlobalObject* global)
 {
     scope.throwException(global,
         JSC::Exception::create(global->vm(), JSC::JSValue::decode(err.value)));
@@ -434,12 +434,12 @@ static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* gl
     if (str.len == 0 || str.ptr == nullptr) {
         return global->vm().propertyNames->emptyIdentifier;
     }
-    WTF::String wtfstr = Zig::isTaggedExternalPtr(str.ptr) ? toString(str) : Zig::toStringCopy(str);
+    WTF::String wtfstr = Bun::isTaggedExternalPtr(str.ptr) ? toString(str) : Bun::toStringCopy(str);
     JSC::Identifier id = JSC::Identifier::fromString(global->vm(), wtfstr);
     return id;
 }
 
-}; // namespace Zig
+}; // namespace Bun
 
 JSC::JSValue createSystemError(JSC::JSGlobalObject* global, ASCIILiteral message, ASCIILiteral syscall, int err);
 JSC::JSValue createSystemError(JSC::JSGlobalObject* global, ASCIILiteral syscall, int err);

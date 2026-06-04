@@ -12,7 +12,7 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 
-namespace Zig {
+namespace Bun {
 using namespace JSC;
 
 const ClassInfo JSWrappingFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWrappingFunction) };
@@ -21,7 +21,7 @@ JS_EXPORT_PRIVATE JSWrappingFunction* JSWrappingFunction::create(
     VM& vm,
     Bun::GlobalObject* globalObject,
     const BunString* symbolName,
-    Zig::NativeFunctionPtr functionPointer,
+    Bun::NativeFunctionPtr functionPointer,
     JSC::JSValue wrappedFnValue)
 {
     JSC::JSObject* wrappedFn = wrappedFnValue.getObject();
@@ -63,7 +63,7 @@ DEFINE_VISIT_CHILDREN(JSWrappingFunction);
 extern "C" JSC::EncodedJSValue Bun__JSWrappingFunction__create(
     Bun::GlobalObject* globalObject,
     const BunString* symbolName,
-    Zig::NativeFunctionPtr functionPointer,
+    Bun::NativeFunctionPtr functionPointer,
     JSC::EncodedJSValue wrappedFnEncoded)
 {
     auto& vm = JSC::getVM(globalObject);

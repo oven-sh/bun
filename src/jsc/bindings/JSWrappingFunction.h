@@ -16,7 +16,7 @@ namespace JSC {
 class JSGlobalObject;
 }
 
-namespace Zig {
+namespace Bun {
 
 using NativeFunctionPtr = SYSV_ABI JSC::EncodedJSValue (*)(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 

@@ -40,7 +40,7 @@ export const sharedTypes: Record<string, string> = {
   "JSC::EncodedJSValue": "jsc.JSValue",
   "EncodedJSValue": "jsc.JSValue",
   "JSC::JSGlobalObject": "jsc.JSGlobalObject",
-  "ZigException": "jsc.ZigException",
+  "BunException": "jsc.BunException",
   "Inspector::InspectorHTTPServerAgent": "HTTPServerAgent.InspectorHTTPServerAgent",
   "HotReloadId": "HTTPServerAgent.HotReloadId",
   "ServerId": "HTTPServerAgent.ServerId",

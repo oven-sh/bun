@@ -181,8 +181,8 @@ WTF::String formatStackTrace(
                 // "".test(/[a-0]/);
                 auto originalLine = WTF::OrdinalNumber::fromOneBasedInt(err->line());
 
-                ZigStackFrame remappedFrame = {};
-                memset(&remappedFrame, 0, sizeof(ZigStackFrame));
+                BunStackFrame remappedFrame = {};
+                memset(&remappedFrame, 0, sizeof(BunStackFrame));
 
                 remappedFrame.position.line_zero_based = originalLine.zeroBasedInt();
                 remappedFrame.position.column_zero_based = 0;
@@ -238,19 +238,19 @@ WTF::String formatStackTrace(
     // Pass 1: collect (line, col, source_url) for frames that should be
     // source-mapped, then batch the remap so the Rust side can resolve each
     // file's map once instead of per frame.
-    WTF::Vector<ZigStackFrame, 8> remappedFrames;
+    WTF::Vector<BunStackFrame, 8> remappedFrames;
     WTF::Vector<WTF::String, 8> sourceURLs;
     WTF::Vector<LineColumn, 8> originalLineColumns;
     remappedFrames.grow(framesCount);
-    memset(remappedFrames.begin(), 0, sizeof(ZigStackFrame) * framesCount);
+    memset(remappedFrames.begin(), 0, sizeof(BunStackFrame) * framesCount);
     sourceURLs.grow(framesCount);
     originalLineColumns.grow(framesCount);
     bool anyRemap = false;
 
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
-        ZigStackFrame& remappedFrame = remappedFrames[i];
-        // Match `ZigStackFramePosition::INVALID` exactly so the Rust batch loop's
+        BunStackFrame& remappedFrame = remappedFrames[i];
+        // Match `BunStackFramePosition::INVALID` exactly so the Rust batch loop's
         // `position.isInvalid()` skips frames we never populate (vm-context
         // frames, frames without line/col info). memset alone leaves
         // `line_start_byte = 0` which fails that byte-compare.
@@ -270,7 +270,7 @@ WTF::String formatStackTrace(
             }
         }
 
-        sourceURLs[i] = Zig::sourceURL(vm, frame);
+        sourceURLs[i] = Bun::sourceURL(vm, frame);
 
         bool isDefinitelyNotRunninginNodeVMGlobalObject = globalObject == globalObjectForFrame;
         bool isDefaultGlobalObjectInAFinalizer = (globalObject && !lexicalGlobalObject && !errorInstance);
@@ -293,7 +293,7 @@ WTF::String formatStackTrace(
     // re-derived from `frame`; only the remap output is read from pass 1.
     for (size_t i = 0; i < framesCount; i++) {
         StackFrame& frame = stackTrace.at(i);
-        ZigStackFrame& remappedFrame = remappedFrames[i];
+        BunStackFrame& remappedFrame = remappedFrames[i];
         unsigned int flags = static_cast<unsigned int>(FunctionNameFlags::AddNewKeyword);
 
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
@@ -305,7 +305,7 @@ WTF::String formatStackTrace(
             }
         }
 
-        WTF::String functionName = Zig::functionName(vm, globalObjectForFrame, frame, errorInstance ? Zig::FinalizerSafety::NotInFinalizer : Zig::FinalizerSafety::MustNotTriggerGC, &flags);
+        WTF::String functionName = Bun::functionName(vm, globalObjectForFrame, frame, errorInstance ? Bun::FinalizerSafety::NotInFinalizer : Bun::FinalizerSafety::MustNotTriggerGC, &flags);
         OrdinalNumber originalLine = {};
         OrdinalNumber originalColumn = {};
         OrdinalNumber displayLine = {};
@@ -435,24 +435,24 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Bun::GlobalObj
     MarkedArgumentBuffer callSites;
 
     // Create the call sites (one per frame)
-    Zig::createCallSitesFromFrames(globalObject, lexicalGlobalObject, stackTrace, callSites);
+    Bun::createCallSitesFromFrames(globalObject, lexicalGlobalObject, stackTrace, callSites);
 
     // We need to sourcemap it if it's a GlobalObject.
 
     const int n = stackTrace.size();
-    WTF::Vector<ZigStackFrame, 8> remappedFrames;
+    WTF::Vector<BunStackFrame, 8> remappedFrames;
     WTF::Vector<WTF::String, 8> sourceURLs;
     WTF::Vector<bool, 8> didRemap;
     remappedFrames.grow(n);
-    memset(remappedFrames.begin(), 0, sizeof(ZigStackFrame) * n);
+    memset(remappedFrames.begin(), 0, sizeof(BunStackFrame) * n);
     sourceURLs.grow(n);
     didRemap.grow(n);
     bool anyRemap = false;
 
     for (int i = 0; i < n; i++) {
-        ZigStackFrame& frame = remappedFrames[i];
+        BunStackFrame& frame = remappedFrames[i];
         auto& stackFrame = stackFrames.at(i);
-        sourceURLs[i] = Zig::sourceURL(vm, stackFrame);
+        sourceURLs[i] = Bun::sourceURL(vm, stackFrame);
         didRemap[i] = false;
         frame.position.line_zero_based = -1;
         frame.position.column_zero_based = -1;
@@ -493,7 +493,7 @@ static JSValue computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Bun::GlobalObj
     }
 
     for (int i = 0; i < n; i++) {
-        ZigStackFrame& frame = remappedFrames[i];
+        BunStackFrame& frame = remappedFrames[i];
         WTF::String sourceURLForFrame = didRemap[i] ? frame.source_url.toWTFString() : sourceURLs[i];
 
         auto* callsite = uncheckedDowncast<CallSite>(callSites.at(i));
@@ -604,7 +604,7 @@ void computeLineColumnWithSourcemap(JSC::VM& vm, JSC::SourceProvider* _Nonnull s
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(lineColumn.line);
     OrdinalNumber column = OrdinalNumber::fromOneBasedInt(lineColumn.column);
 
-    ZigStackFrame frame = {};
+    BunStackFrame frame = {};
     frame.position.line_zero_based = line.zeroBasedInt();
     frame.position.column_zero_based = column.zeroBasedInt();
     frame.source_url = Bun::toStringRef(sourceURL);
@@ -796,7 +796,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
 } // namespace Bun
 
-namespace Zig {
+namespace Bun {
 
 void createCallSitesFromFrames(Bun::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, JSCStackTrace& stackTrace, MarkedArgumentBuffer& callSites)
 {
@@ -822,4 +822,4 @@ void createCallSitesFromFrames(Bun::GlobalObject* globalObject, JSC::JSGlobalObj
     }
 }
 
-} // namespace Zig
+} // namespace Bun

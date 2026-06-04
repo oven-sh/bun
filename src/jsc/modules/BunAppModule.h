@@ -4,7 +4,7 @@
 #include "_NativeModule.h"
 #include "BakeAdditionsToGlobalObject.h"
 
-namespace Zig {
+namespace Bun {
 using namespace WebCore;
 using namespace JSC;
 
@@ -20,4 +20,4 @@ DEFINE_NATIVE_MODULE(BunApp)
     RETURN_NATIVE_MODULE();
 }
 
-} // namespace Zig
+} // namespace Bun

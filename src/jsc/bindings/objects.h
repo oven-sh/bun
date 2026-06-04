@@ -7,7 +7,7 @@
 //
 // #include <JavaScriptCore/InternalFunction.h>
 
-// namespace Zig {
+// namespace Bun {
 
 // class ModulePrototype final : public JSC::JSNonFinalObject {
 // public:
@@ -91,7 +91,7 @@
 
 // }
 
-// namespace Zig {
+// namespace Bun {
 
 // class HeadersPrototype final : public JSC::JSNonFinalObject {
 // public:

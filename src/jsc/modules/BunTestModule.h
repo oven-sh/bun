@@ -1,5 +1,5 @@
 
-namespace Zig {
+namespace Bun {
 void generateNativeModule_BunTest(
     JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
@@ -37,4 +37,4 @@ void generateNativeModule_BunTest(
     }
 }
 
-} // namespace Zig
+} // namespace Bun

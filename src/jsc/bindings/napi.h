@@ -579,7 +579,7 @@ void executePendingNapiModule(Bun::GlobalObject* globalObject);
 
 }
 
-namespace Zig {
+namespace Bun {
 using namespace JSC;
 
 static inline JSValue toJS(napi_value val)

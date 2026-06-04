@@ -23,7 +23,7 @@
 use core::ffi::c_void;
 
 use bun_jsc::virtual_machine::VirtualMachine;
-use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, ZigStackFrame};
+use bun_jsc::{CallFrame, JSGlobalObject, JSInternalPromise, JSValue, BunStackFrame};
 
 // ─── VirtualMachine ──────────────────────────────────────────────────────────
 //
@@ -73,13 +73,13 @@ pub fn log_unhandled_exception(exception: JSValue) {
 /// underlying method serializes on `remap_stack_frames_mutex`.
 ///
 /// # Safety
-/// `frames` must point to a live array of `frames_count` `ZigStackFrame`s.
+/// `frames` must point to a live array of `frames_count` `BunStackFrame`s.
 // HOST_EXPORT(Bun__remapStackFramePositions, c)
 // Forwards `frames` to the C++-side remapper without dereferencing; not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub fn remap_stack_frame_positions(
     vm: &mut VirtualMachine,
-    frames: *mut ZigStackFrame,
+    frames: *mut BunStackFrame,
     frames_count: usize,
 ) {
     // SAFETY: `frames[..frames_count]` is a live C++ array; the method takes

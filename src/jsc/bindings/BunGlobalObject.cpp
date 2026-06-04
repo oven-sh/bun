@@ -165,7 +165,7 @@
 #include "webcrypto/JSCryptoKey.h"
 #include "webcrypto/JSSubtleCrypto.h"
 #include "ZigGeneratedClasses.h"
-#include "ZigSourceProvider.h"
+#include "BunSourceProvider.h"
 #include "UtilInspect.h"
 #include "Base64Helpers.h"
 #include "wtf/text/OrdinalNumber.h"
@@ -2342,7 +2342,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_NapiClassStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
-            init.setStructure(Zig::NapiClass::createStructure(init.vm, init.global, init.global->functionPrototype()));
+            init.setStructure(Bun::NapiClass::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
 
     m_JSArrayBufferControllerPrototype.initLater(
@@ -2472,12 +2472,12 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_importMetaObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner));
+            init.set(Bun::ImportMetaObject::createStructure(init.vm, init.owner));
         });
 
     m_importMetaBakeObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            init.set(Zig::ImportMetaObject::createStructure(init.vm, init.owner, true));
+            init.set(Bun::ImportMetaObject::createStructure(init.vm, init.owner, true));
         });
 
     m_asyncBoundFunctionStructure.initLater(
@@ -2605,7 +2605,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_JSFFIFunctionStructure.initLater(
         [](LazyClassStructure::Initializer& init) {
-            init.setStructure(Zig::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
+            init.setStructure(Bun::JSFFIFunction::createStructure(init.vm, init.global, init.global->functionPrototype()));
         });
 
     // Initialize LazyProperties for stdin/stderr/stdout
@@ -3175,7 +3175,7 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
 {
     auto& vm = JSC::getVM(globalObject);
 
-    if (WTF::setTimeZoneOverride(Zig::toString(*timeZone))) {
+    if (WTF::setTimeZoneOverride(Bun::toString(*timeZone))) {
         vm.dateCache.resetIfNecessarySlow();
         return true;
     }
@@ -3659,7 +3659,7 @@ JSC::JSObject* GlobalObject::moduleLoaderCreateImportMetaProperties(JSGlobalObje
     JSModuleRecord* record,
     RefPtr<JSC::ScriptFetcher>)
 {
-    return Zig::ImportMetaObject::create(globalObject, key);
+    return Bun::ImportMetaObject::create(globalObject, key);
 }
 
 JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObject,
@@ -3782,7 +3782,7 @@ void GlobalObject::instantiateStreaming(JSGlobalObject* globalObject, JSC::JSPro
     handleResponseOnStreamingAction(globalObject, promise, source, JSC::Wasm::CompilerMode::FullCompile, importObject, WTF::move(compileOptions));
 }
 
-GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Zig::FFIFunction handler)
+GlobalObject::PromiseFunctions GlobalObject::promiseHandlerID(Bun::FFIFunction handler)
 {
     if (handler == BunServe__onResolvePlugins) {
         return GlobalObject::PromiseFunctions::BunServe__Plugins__onResolve;

@@ -16,7 +16,7 @@ use bun_io::KeepAlive;
 use bun_io::posix_event_loop::{AllocatorType, get_vm_ctx};
 
 use crate::virtual_machine::{VirtualMachine, runtime_hooks};
-use crate::{self as jsc, CallFrame, JSGlobalObject, ZigException};
+use crate::{self as jsc, CallFrame, JSGlobalObject, BunException};
 
 bun_core::declare_scope!(debugger, visible);
 bun_core::declare_scope!(TestReporterAgent, visible);
@@ -1076,13 +1076,13 @@ pub struct LifecycleAgent {
 bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
 
 // SAFETY (safe fn): `LifecycleHandle` is an `opaque_ffi!` ZST handle (`!Freeze`
-// via `UnsafeCell`); `ZigException` is a `#[repr(C)]` out-param the C++ side
+// via `UnsafeCell`); `BunException` is a `#[repr(C)]` out-param the C++ side
 // reads/fills in-place.
 unsafe extern "C" {
     safe fn Bun__LifecycleAgentReportReload(agent: &mut LifecycleHandle);
     safe fn Bun__LifecycleAgentReportError(
         agent: &mut LifecycleHandle,
-        exception: &mut ZigException,
+        exception: &mut BunException,
     );
     safe fn Bun__LifecycleAgentPreventExit(agent: &mut LifecycleHandle);
     safe fn Bun__LifecycleAgentStopPreventingExit(agent: &mut LifecycleHandle);
@@ -1102,7 +1102,7 @@ impl LifecycleHandle {
         Bun__LifecycleAgentReportReload(self)
     }
 
-    pub fn report_error(&mut self, exception: &mut ZigException) {
+    pub fn report_error(&mut self, exception: &mut BunException) {
         bun_core::scoped_log!(LifecycleAgent, "reportError");
         Bun__LifecycleAgentReportError(self, exception)
     }
@@ -1138,7 +1138,7 @@ impl LifecycleAgent {
         core::ptr::NonNull::new(self.handle).map(|p| LifecycleHandle::opaque_mut(p.as_ptr()))
     }
 
-    pub(crate) fn report_error(&mut self, exception: &mut ZigException) {
+    pub(crate) fn report_error(&mut self, exception: &mut BunException) {
         if let Some(h) = self.handle_mut() {
             h.report_error(exception);
         }

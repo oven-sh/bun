@@ -10,7 +10,7 @@
 
 #pragma mark - Node.js Path
 
-namespace Zig {
+namespace Bun {
 
 static JSC::JSObject* createPath(JSC::JSGlobalObject* globalThis, bool isWindows);
 
@@ -112,7 +112,7 @@ static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
     return path;
 }
 
-} // namespace Zig
+} // namespace Bun
 
 extern "C" JSC::EncodedJSValue PathParsedObject__create(
     JSC::JSGlobalObject* globalObject,
@@ -144,12 +144,12 @@ JSC::JSValue createNodePathBinding(Bun::GlobalObject* globalObject)
     binding->putDirectIndex(
         globalObject,
         (unsigned)0,
-        Zig::createPath(globalObject, false));
+        Bun::createPath(globalObject, false));
     RETURN_IF_EXCEPTION(scope, {});
     binding->putDirectIndex(
         globalObject,
         (unsigned)1,
-        Zig::createPath(globalObject, true));
+        Bun::createPath(globalObject, true));
     RETURN_IF_EXCEPTION(scope, {});
     return binding;
 }

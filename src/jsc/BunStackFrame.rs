@@ -9,15 +9,15 @@ use bun_paths::strings;
 use bun_url::URL as ZigURL;
 
 use crate::schema_api as api;
-use crate::{ZigStackFrameCode, ZigStackFramePosition};
+use crate::{BunStackFrameCode, BunStackFramePosition};
 
 /// Represents a single frame in a stack trace
 #[repr(C)]
-pub struct ZigStackFrame {
+pub struct BunStackFrame {
     pub function_name: BunString,
     pub source_url: BunString,
-    pub position: ZigStackFramePosition,
-    pub code_type: ZigStackFrameCode,
+    pub position: BunStackFramePosition,
+    pub code_type: BunStackFrameCode,
     pub is_async: bool,
 
     /// This informs formatters whether to display as a blob URL or not
@@ -27,13 +27,13 @@ pub struct ZigStackFrame {
     pub jsc_stack_frame_index: i32,
 }
 
-impl ZigStackFrame {
+impl BunStackFrame {
     /// Explicit deref of owned strings.
     ///
     /// Intentionally NOT `Drop`: this `#[repr(C)]` extern struct lives both in
-    /// C++-populated buffers (`ZigStackTrace.frames_ptr`) and in the Rust-owned
-    /// `Holder.frames: [ZigStackFrame; 32]` array. `Holder::deinit()` calls
-    /// `ZigException::deinit()` → `frame.deinit()` to release the strings, but
+    /// C++-populated buffers (`BunStackTrace.frames_ptr`) and in the Rust-owned
+    /// `Holder.frames: [BunStackFrame; 32]` array. `Holder::deinit()` calls
+    /// `BunException::deinit()` → `frame.deinit()` to release the strings, but
     /// the array elements are then later dropped by Rust when `Holder` itself
     /// drops. A `Drop` impl would deref the same `WTF::StringImpl` a second
     /// time (UAF). Explicit `deinit` only.
@@ -70,17 +70,17 @@ impl ZigStackFrame {
 
         frame.position = self.position;
         // api::StackFrameScope is a #[repr(transparent)] u8 newtype with the same
-        // discriminants as ZigStackFrameCode.
+        // discriminants as BunStackFrameCode.
         frame.scope = api::StackFrameScope(self.code_type.0);
 
         Ok(frame)
     }
 
-    pub const ZERO: ZigStackFrame = ZigStackFrame {
+    pub const ZERO: BunStackFrame = BunStackFrame {
         function_name: BunString::EMPTY,
-        code_type: ZigStackFrameCode::NONE,
+        code_type: BunStackFrameCode::NONE,
         source_url: BunString::EMPTY,
-        position: ZigStackFramePosition::INVALID,
+        position: BunStackFramePosition::INVALID,
         is_async: false,
         remapped: false,
         jsc_stack_frame_index: -1,
@@ -116,7 +116,7 @@ impl ZigStackFrame {
 
 pub struct SourceURLFormatter<'a> {
     pub source_url: BunString,
-    pub position: ZigStackFramePosition,
+    pub position: BunStackFramePosition,
     pub enable_color: bool,
     pub origin: Option<&'a ZigURL<'a>>,
     pub exclude_line_column: bool,
@@ -225,7 +225,7 @@ impl<'a> fmt::Display for SourceURLFormatter<'a> {
 
 pub struct NameFormatter {
     pub function_name: BunString,
-    pub code_type: ZigStackFrameCode,
+    pub code_type: BunStackFrameCode,
     pub enable_color: bool,
     pub is_async: bool,
 }
@@ -235,7 +235,7 @@ impl fmt::Display for NameFormatter {
         let name = &self.function_name;
 
         match self.code_type {
-            ZigStackFrameCode::EVAL => {
+            BunStackFrameCode::EVAL => {
                 if self.enable_color {
                     f.write_str(concat!(
                         Output::pretty_fmt!("<r><d>", true),
@@ -253,7 +253,7 @@ impl fmt::Display for NameFormatter {
                     }
                 }
             }
-            ZigStackFrameCode::FUNCTION => {
+            BunStackFrameCode::FUNCTION => {
                 if !name.is_empty() {
                     if self.enable_color {
                         if self.is_async {
@@ -291,15 +291,15 @@ impl fmt::Display for NameFormatter {
                     }
                 }
             }
-            ZigStackFrameCode::GLOBAL => {}
-            ZigStackFrameCode::WASM => {
+            BunStackFrameCode::GLOBAL => {}
+            BunStackFrameCode::WASM => {
                 if !name.is_empty() {
                     write!(f, "{}", name)?;
                 } else {
                     f.write_str("WASM")?;
                 }
             }
-            ZigStackFrameCode::CONSTRUCTOR => {
+            BunStackFrameCode::CONSTRUCTOR => {
                 write!(f, "new {}", name)?;
             }
             _ => {

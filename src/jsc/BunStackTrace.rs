@@ -7,17 +7,17 @@ use bun_core::ZigStringSlice;
 use bun_url::URL as ZigURL;
 
 use crate::SourceProvider;
-use crate::ZigStackFrame;
+use crate::BunStackFrame;
 
 /// Represents a JavaScript stack trace
 #[repr(C)]
-pub struct ZigStackTrace {
+pub struct BunStackTrace {
     pub source_lines_ptr: *mut BunString,
     pub source_lines_numbers: *mut i32,
     pub source_lines_len: u8,
     pub source_lines_to_collect: u8,
 
-    pub frames_ptr: *mut ZigStackFrame,
+    pub frames_ptr: *mut BunStackFrame,
     pub frames_len: u8,
     pub frames_cap: u8,
 
@@ -29,9 +29,9 @@ pub struct ZigStackTrace {
     pub referenced_source_provider: Option<NonNull<SourceProvider>>,
 }
 
-impl ZigStackTrace {
-    pub fn from_frames(frames_slice: &mut [ZigStackFrame]) -> ZigStackTrace {
-        ZigStackTrace {
+impl BunStackTrace {
+    pub fn from_frames(frames_slice: &mut [BunStackFrame]) -> BunStackTrace {
+        BunStackTrace {
             source_lines_ptr: ptr::dangling_mut(),
             source_lines_numbers: ptr::dangling_mut(),
             source_lines_len: 0,
@@ -89,13 +89,13 @@ impl ZigStackTrace {
         Ok(stack_trace)
     }
 
-    pub fn frames(&self) -> &[ZigStackFrame] {
+    pub fn frames(&self) -> &[BunStackFrame] {
         // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements
         // (populated by C++ via FFI).
         unsafe { bun_core::ffi::slice(self.frames_ptr, self.frames_len as usize) }
     }
 
-    pub fn frames_mutable(&mut self) -> &mut [ZigStackFrame] {
+    pub fn frames_mutable(&mut self) -> &mut [BunStackFrame] {
         // SAFETY: frames_ptr points to a caller-owned buffer of at least frames_len elements.
         unsafe { bun_core::ffi::slice_mut(self.frames_ptr, self.frames_len as usize) }
     }
@@ -130,7 +130,7 @@ impl ZigStackTrace {
 }
 
 pub struct SourceLineIterator<'a> {
-    pub trace: &'a ZigStackTrace,
+    pub trace: &'a BunStackTrace,
     pub i: i32,
 }
 

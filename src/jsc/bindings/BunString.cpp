@@ -189,11 +189,11 @@ JSC::JSString* toJS(JSC::JSGlobalObject* globalObject, BunString bunString)
     }
 
     if (bunString.tag == BunStringTag::StaticZigString) {
-        return JSC::jsString(globalObject->vm(), Zig::toStringStatic(bunString.impl.zig));
+        return JSC::jsString(globalObject->vm(), Bun::toStringStatic(bunString.impl.zig));
     }
 
     if (bunString.tag == BunStringTag::ZigString) {
-        return Zig::toJSStringGC(bunString.impl.zig, globalObject);
+        return Bun::toJSStringGC(bunString.impl.zig, globalObject);
     }
 
     UNREACHABLE();
@@ -549,14 +549,14 @@ extern "C" [[ZIG_EXPORT(nothrow)]] void BunString__toWTFString(BunString* bunStr
 {
     WTF::String str;
     if (bunString->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedExternalPtr(bunString->impl.zig.ptr)) {
-            str = Zig::toString(bunString->impl.zig);
+        if (Bun::isTaggedExternalPtr(bunString->impl.zig.ptr)) {
+            str = Bun::toString(bunString->impl.zig);
         } else {
-            str = Zig::toStringCopy(bunString->impl.zig);
+            str = Bun::toStringCopy(bunString->impl.zig);
         }
 
     } else if (bunString->tag == BunStringTag::StaticZigString) {
-        str = Zig::toStringStatic(bunString->impl.zig);
+        str = Bun::toStringStatic(bunString->impl.zig);
     } else {
         return;
     }
@@ -776,13 +776,13 @@ size_t BunString::utf8ByteLength(const WTF::String& str)
 WTF::String BunString::toWTFString() const
 {
     if (this->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedExternalPtr(this->impl.zig.ptr)) {
-            return Zig::toString(this->impl.zig);
+        if (Bun::isTaggedExternalPtr(this->impl.zig.ptr)) {
+            return Bun::toString(this->impl.zig);
         } else {
-            return Zig::toStringCopy(this->impl.zig);
+            return Bun::toStringCopy(this->impl.zig);
         }
     } else if (this->tag == BunStringTag::StaticZigString) {
-        return Zig::toStringCopy(this->impl.zig);
+        return Bun::toStringCopy(this->impl.zig);
     } else if (this->tag == BunStringTag::WTFStringImpl) {
         return WTF::String(this->impl.wtf);
     }
@@ -798,7 +798,7 @@ void BunString::appendToBuilder(WTF::StringBuilder& builder) const
     }
 
     if (this->tag == BunStringTag::ZigString || this->tag == BunStringTag::StaticZigString) {
-        Zig::appendToBuilder(this->impl.zig, builder);
+        Bun::appendToBuilder(this->impl.zig, builder);
         return;
     }
 
@@ -808,13 +808,13 @@ void BunString::appendToBuilder(WTF::StringBuilder& builder) const
 WTF::String BunString::toWTFString(ZeroCopyTag) const
 {
     if (this->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedUTF8Ptr(this->impl.zig.ptr)) {
-            return Zig::toStringCopy(this->impl.zig);
+        if (Bun::isTaggedUTF8Ptr(this->impl.zig.ptr)) {
+            return Bun::toStringCopy(this->impl.zig);
         } else {
-            return Zig::toString(this->impl.zig);
+            return Bun::toString(this->impl.zig);
         }
     } else if (this->tag == BunStringTag::StaticZigString) {
-        return Zig::toStringStatic(this->impl.zig);
+        return Bun::toStringStatic(this->impl.zig);
     } else if (this->tag == BunStringTag::WTFStringImpl) {
         ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
         return WTF::String(this->impl.wtf);
@@ -837,25 +837,25 @@ WTF::String BunString::toWTFString(NonNullTag) const
 WTF::String BunString::transferToWTFString()
 {
     if (this->tag == BunStringTag::ZigString) {
-        if (Zig::isTaggedUTF8Ptr(this->impl.zig.ptr)) {
-            auto str = Zig::toStringCopy(this->impl.zig);
-            *this = Zig::BunStringEmpty;
+        if (Bun::isTaggedUTF8Ptr(this->impl.zig.ptr)) {
+            auto str = Bun::toStringCopy(this->impl.zig);
+            *this = Bun::BunStringEmpty;
             return str;
         } else {
-            auto str = Zig::toString(this->impl.zig);
-            *this = Zig::BunStringEmpty;
+            auto str = Bun::toString(this->impl.zig);
+            *this = Bun::BunStringEmpty;
             return str;
         }
     } else if (this->tag == BunStringTag::StaticZigString) {
-        auto str = Zig::toStringStatic(this->impl.zig);
-        *this = Zig::BunStringEmpty;
+        auto str = Bun::toStringStatic(this->impl.zig);
+        *this = Bun::BunStringEmpty;
         return str;
     } else if (this->tag == BunStringTag::WTFStringImpl) {
         ASSERT(this->impl.wtf->refCount() > 0 && !this->impl.wtf->isEmpty());
 
         auto str = WTF::String(this->impl.wtf);
         this->impl.wtf->deref();
-        *this = Zig::BunStringEmpty;
+        *this = Bun::BunStringEmpty;
         return str;
     }
 

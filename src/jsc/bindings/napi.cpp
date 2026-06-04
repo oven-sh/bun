@@ -77,7 +77,7 @@
 #include "AsyncContextFrame.h"
 
 using namespace JSC;
-using namespace Zig;
+using namespace Bun;
 
 // Every NAPI function should use this at the start. It does the following:
 // - if NAPI_VERBOSE is 1, log that the function was called
@@ -1794,7 +1794,7 @@ extern "C" napi_status napi_create_typedarray(
     NAPI_RETURN_SUCCESS(env);
 }
 
-namespace Zig {
+namespace Bun {
 
 extern "C" napi_status napi_get_all_property_names(
     napi_env env, napi_value objectNapi, napi_key_collection_mode key_mode,
@@ -2673,7 +2673,7 @@ extern "C" napi_status napi_run_script(napi_env env, napi_value script,
 
     JSC::SourceCode sourceCode = makeSource(code, SourceOrigin(), SourceTaintedOrigin::Untainted);
 
-    NakedPtr<Exception> returnedException;
+    NakedPtr<JSC::Exception> returnedException;
     JSValue value = JSC::evaluate(globalObject, sourceCode, globalObject->globalThis(), returnedException);
 
     if (returnedException) {

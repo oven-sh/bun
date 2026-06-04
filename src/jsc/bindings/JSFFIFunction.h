@@ -16,7 +16,7 @@ namespace JSC {
 class JSGlobalObject;
 }
 
-namespace Zig {
+namespace Bun {
 
 using namespace JSC;
 

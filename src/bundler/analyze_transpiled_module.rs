@@ -520,11 +520,11 @@ impl ModuleInfoExt for ModuleInfo {
     }
 }
 
-// zig__renderDiff, zig__ModuleInfoDeserialized__toJSModuleRecord, and the
+// bun__renderDiff, bun__ModuleInfoDeserialized__toJSModuleRecord, and the
 // JSModuleRecord/IdentifierArray opaques: see bun_bundler_jsc::analyze_jsc
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
+pub(crate) extern "C" fn bun__ModuleInfo__destroy(info: *mut ModuleInfo) {
     // SAFETY: C++ caller passes a non-null pointer obtained from `ModuleInfo::create`.
     let info = unsafe { NonNull::new(info).unwrap_unchecked() };
     // SAFETY: `info` came from `bun_core::heap::into_raw` and ownership is transferred back here.
@@ -532,7 +532,7 @@ pub(crate) extern "C" fn zig__ModuleInfo__destroy(info: *mut ModuleInfo) {
 }
 
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn zig__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
+pub(crate) extern "C" fn bun__ModuleInfoDeserialized__deinit(info: *mut ModuleInfoDeserialized) {
     // SAFETY: C++ caller passes a non-null pointer obtained from `create` or
     // `ModuleInfoExt::into_deserialized`.
     let info = unsafe { NonNull::new(info).unwrap_unchecked() };

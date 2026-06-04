@@ -3232,7 +3232,7 @@ const GENERATED_CLASSES_HEADER = [
 
 #include "root.h"
 
-namespace Zig {
+namespace Bun {
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionInherits);
 
@@ -3246,7 +3246,7 @@ JSC_DECLARE_HOST_FUNCTION(jsFunctionInherits);
   `
 
 namespace WebCore {
-using namespace Zig;
+using namespace Bun;
 using namespace JSC;
 
 `,
@@ -3297,7 +3297,7 @@ const GENERATED_CLASSES_IMPL_HEADER_POST = `
 namespace WebCore {
 
 using namespace JSC;
-using namespace Zig;
+using namespace Bun;
 
 #include "ZigGeneratedClasses.lut.h"
 
@@ -3317,7 +3317,7 @@ ${jsclasses
   .map((v, i) => `#include "${v}"`)
   .join("\n")}
 
-JSC_DEFINE_HOST_FUNCTION(Zig::jsFunctionInherits, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionInherits, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto id = callFrame->argument(0).toInt32(globalObject);
     auto value = callFrame->argument(1);

@@ -653,7 +653,7 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
 // WTF::JSON parses to a C++ tree — no JSValue allocation, no GC pressure.
 // The tree is small (exceptionDetails is error-path only, ~200B). Stamp
 // .stack with description directly; Bun's V8StackTraceIterator
-// (ZigException.cpp) already parses V8 stacks when it needs frames.
+// (BunException.cpp) already parses V8 stacks when it needs frames.
 // ErrorInstance::create stackString overload sets .stack without capturing
 // a JSC-side trace (which would show ChromeBackend.cpp, not page frames).
 static JSValue errorFromExceptionDetails(JSGlobalObject* g, std::span<const char> excDetails)

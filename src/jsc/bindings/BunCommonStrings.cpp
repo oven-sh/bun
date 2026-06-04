@@ -143,7 +143,7 @@ extern "C" JSC::EncodedJSValue Bun__HTTPMethod__toJS(HTTPMethod method, Bun::Glo
     return JSValue::encode(toJS(globalObject, method));
 }
 
-enum class CommonStringsForZig : uint8_t {
+enum class CommonStringsForBun : uint8_t {
     IPv4 = 0,
     IPv6 = 1,
     IN4Loopback = 2,
@@ -159,35 +159,35 @@ enum class CommonStringsForZig : uint8_t {
     binaryTypeUint8Array = 12,
 };
 
-static JSC::JSValue toJS(Bun::GlobalObject* globalObject, CommonStringsForZig commonString)
+static JSC::JSValue toJS(Bun::GlobalObject* globalObject, CommonStringsForBun commonString)
 {
     auto& commonStrings = globalObject->commonStrings();
     switch (commonString) {
-    case CommonStringsForZig::IPv4:
+    case CommonStringsForBun::IPv4:
         return commonStrings.IPv4String(globalObject);
-    case CommonStringsForZig::IPv6:
+    case CommonStringsForBun::IPv6:
         return commonStrings.IPv6String(globalObject);
-    case CommonStringsForZig::IN4Loopback:
+    case CommonStringsForBun::IN4Loopback:
         return commonStrings.IN4LoopbackString(globalObject);
-    case CommonStringsForZig::IN6Any:
+    case CommonStringsForBun::IN6Any:
         return commonStrings.IN6AnyString(globalObject);
-    case CommonStringsForZig::ipv4Lower:
+    case CommonStringsForBun::ipv4Lower:
         return commonStrings.ipv4LowerString(globalObject);
-    case CommonStringsForZig::ipv6Lower:
+    case CommonStringsForBun::ipv6Lower:
         return commonStrings.ipv6LowerString(globalObject);
-    case CommonStringsForZig::fetchDefault:
+    case CommonStringsForBun::fetchDefault:
         return globalObject->vm().smallStrings.defaultString();
-    case CommonStringsForZig::fetchError:
+    case CommonStringsForBun::fetchError:
         return commonStrings.fetchErrorString(globalObject);
-    case CommonStringsForZig::fetchInclude:
+    case CommonStringsForBun::fetchInclude:
         return commonStrings.fetchIncludeString(globalObject);
-    case CommonStringsForZig::buffer:
+    case CommonStringsForBun::buffer:
         return commonStrings.bufferString(globalObject);
-    case CommonStringsForZig::binaryTypeArrayBuffer:
+    case CommonStringsForBun::binaryTypeArrayBuffer:
         return commonStrings.binaryTypeArrayBufferString(globalObject);
-    case CommonStringsForZig::binaryTypeNodeBuffer:
+    case CommonStringsForBun::binaryTypeNodeBuffer:
         return commonStrings.binaryTypeNodeBufferString(globalObject);
-    case CommonStringsForZig::binaryTypeUint8Array:
+    case CommonStringsForBun::binaryTypeUint8Array:
         return commonStrings.binaryTypeUint8ArrayString(globalObject);
     default: {
         ASSERT_NOT_REACHED();
@@ -196,7 +196,7 @@ static JSC::JSValue toJS(Bun::GlobalObject* globalObject, CommonStringsForZig co
     }
 }
 
-extern "C" JSC::EncodedJSValue Bun__CommonStringsForZig__toJS(CommonStringsForZig commonString, Bun::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__CommonStringsForBun__toJS(CommonStringsForBun commonString, Bun::GlobalObject* globalObject)
 {
     return JSValue::encode(toJS(globalObject, commonString));
 }

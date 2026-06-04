@@ -35,7 +35,7 @@
 #include "AsyncContextFrame.h"
 #include "ImportMetaObject.h"
 
-namespace Zig {
+namespace Bun {
 
 extern "C" void Bun__onDidAppendPlugin(void* bunVM, JSGlobalObject* globalObject);
 using OnAppendPluginCallback = void (*)(void*, JSGlobalObject* globalObject);
@@ -881,7 +881,7 @@ EncodedJSValue BunPlugin::OnResolve::run(JSC::JSGlobalObject* globalObject, BunS
     return JSValue::encode(JSC::jsUndefined());
 }
 
-} // namespace Zig
+} // namespace Bun
 
 extern "C" JSC::EncodedJSValue Bun__runOnResolvePlugins(Bun::GlobalObject* globalObject, BunString* namespaceString, BunString* path, BunString* from, BunPluginTarget target)
 {
@@ -897,7 +897,7 @@ namespace Bun {
 
 Structure* createModuleMockStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
 {
-    return Zig::JSModuleMock::createStructure(vm, globalObject, prototype);
+    return Bun::JSModuleMock::createStructure(vm, globalObject, prototype);
 }
 
 JSC::JSValue runVirtualModule(Bun::GlobalObject* globalObject, BunString* specifier, bool& wasModuleMock)
@@ -919,7 +919,7 @@ JSC::JSValue runVirtualModule(Bun::GlobalObject* globalObject, BunString* specif
 
         JSValue result;
 
-        if (Zig::JSModuleMock* moduleMock = dynamicDowncast<Zig::JSModuleMock>(function)) {
+        if (Bun::JSModuleMock* moduleMock = dynamicDowncast<Bun::JSModuleMock>(function)) {
             wasModuleMock = true;
             // module mock
             result = moduleMock->executeOnce(globalObject);

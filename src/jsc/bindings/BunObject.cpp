@@ -1185,7 +1185,7 @@ static void exportBunObject(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC:
 
 } // namespace Bun
 
-namespace Zig {
+namespace Bun {
 void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     JSC::Identifier moduleKey,
     Vector<JSC::Identifier, 4>& exportNames,
@@ -1207,4 +1207,4 @@ void generateNativeModule_BunObject(JSC::JSGlobalObject* lexicalGlobalObject,
     Bun::exportBunObject(vm, globalObject, object, exportNames, exportValues);
 }
 
-} // namespace Zig
+} // namespace Bun

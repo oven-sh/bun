@@ -24,7 +24,7 @@ leak:CRYPTO_set_thread_local
 leak:BIO_new
 leak:_tlv_get_addr
 leak:Bun::generateModule
-leak:Zig::ImportMetaObject::createFromSpecifier
+leak:Bun::ImportMetaObject::createFromSpecifier
 leak:Bun::GlobalObject::moduleLoaderResolve
 leak:JSModuleLoader__import
 leak:dyld::ThreadLocalVariables
@@ -54,7 +54,7 @@ leak:JSC::moduleLoaderModuleDeclarationInstantiation
 leak:JSC::arrayProtoFuncSort
 leak:bindgen_Fmt_jsFmtString
 leak:runtime.dns_jsc.dns.GetAddrInfoRequest.run
-leak:Zig::ImportMetaObject::finishCreation
+leak:Bun::ImportMetaObject::finishCreation
 leak:uws_add_server_name_with_options
 leak:runtime.webcore.Body.Value.fromJS
 leak:sys_jsc.error_jsc.errorToSystemError
@@ -95,12 +95,12 @@ leak:Bun__canonicalizeIP
 leak:dlopen
 leak:Bun::evaluateCommonJSModuleOnce
 leak:fse_run_loop
-leak:Zig::NapiClass_ConstructorFunction
+leak:Bun::NapiClass_ConstructorFunction
 leak:runtime.webcore.fetch.FetchTasklet.toResponse
 leak:JSC::jsonProtoFuncStringify
 leak:lolhtml_sys.lol_html.HTMLString.toString
 leak:libarchive_sys.bindings.Archive.readNew
-leak:Zig::SourceProvider::create
+leak:Bun::SourceProvider::create
 
 leak:fromErrorInstance
 

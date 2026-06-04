@@ -14,7 +14,7 @@
 using namespace JSC;
 using namespace WebCore;
 
-namespace Zig {
+namespace Bun {
 
 /* JSCStackFrame is an alternative to JSC::StackFrame, which provides the following advantages\changes:
  * - Also hold the call frame (ExecState). This is mainly used by CallSite to get "this value".

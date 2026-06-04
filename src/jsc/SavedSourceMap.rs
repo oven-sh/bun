@@ -263,7 +263,7 @@ impl Drop for SavedSourceMap {
                     // SAFETY: pointer was stored by us and is live until table teardown.
                     unsafe { ParsedSourceMap::deref(source_map) };
                 } else if let Some(_provider) = value.get::<SourceProviderMap>() {
-                    // do nothing, we did not hold a ref to ZigSourceProvider
+                    // do nothing, we did not hold a ref to BunSourceProvider
                 } else if let Some(ism) = value.get::<InternalSourceMap>() {
                     // SAFETY: blob was heap-allocated via `put_mappings`
                     // (`Box<[u8]>::into_raw`); the tagged pointer's address IS
@@ -355,7 +355,7 @@ impl SavedSourceMap {
                     // SAFETY: pointer was stored by us and is live until replaced.
                     unsafe { ParsedSourceMap::deref(parsed_source_map) };
                 } else if let Some(_provider) = old_value.get::<SourceProviderMap>() {
-                    // do nothing, we did not hold a ref to ZigSourceProvider
+                    // do nothing, we did not hold a ref to BunSourceProvider
                 } else if let Some(ism) = old_value.get::<InternalSourceMap>() {
                     // SAFETY: blob was heap-allocated via `put_mappings`
                     // (`Box<[u8]>::into_raw`); the tagged pointer's address IS

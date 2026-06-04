@@ -725,7 +725,7 @@ pub(crate) fn inspect(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
     // NOTE: this is *not* the fix for error-gc-test.test.js timing out under
     // debug+ASAN — that test does 100k `Bun.inspect(new Error)` and the cost
     // is spread across ASAN-instrumented memcpy/memset, mimalloc zero-checks
-    // and the source-file re-read in `remap_zig_exception`, none of which a
+    // and the source-file re-read in `remap_bun_exception`, none of which a
     // 32-byte alloc elision can recover. The test is classified `[TIMEOUT]`
     // for ASAN in test/expectations.txt instead.
     let args_buf = scopeguard::guard(args_buf, |buf| {

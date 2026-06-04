@@ -6,7 +6,7 @@ namespace Bun {
 class GlobalObject;
 }
 
-namespace Zig {
+namespace Bun {
 class JSFFIFunction;
 
 class LazyStaticFunctions {
@@ -21,4 +21,4 @@ public:
     /* -- END FUNCTION DEFINITIONS-- */
 };
 
-} // namespace Zig
+} // namespace Bun

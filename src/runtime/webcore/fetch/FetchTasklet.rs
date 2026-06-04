@@ -125,8 +125,8 @@ struct HttpHandoff {
 /// |---|---|---|
 /// | JS baseline | `get` — `init_exact_refs(2)` (JS) | `on_progress_update` final-tick cleanup or shutdown early-out (`release_js_ref`, JS); `callback`'s shutdown branch and `release_at_shutdown` (raw `deref_from_thread`, HTTP, JS thread parked); `release_queued_tasks_for_shutdown` in dispatch.rs (`release_js_ref`, JS) |
 /// | HTTP baseline | `get` — `init_exact_refs(2)` (JS, on the HTTP thread's behalf) | final `callback` or `release_at_shutdown` (`release_http_ref`, HTTP) |
-/// | sink | `start_request_stream` (JS) | every `write_end_request` exit (`release_sink_ref`, JS); at exit, when still outstanding per `sink_ref_held`: `release_at_shutdown` or `callback`'s shutdown branch if the final callback landed first (raw `deref_from_thread`, HTTP) |
-/// | drain task | `on_write_request_data_drain` (HTTP) | `resume_request_data_stream` (`release_drain_task_ref`, JS); at exit, per `queued_drain_tasks` for nodes dropped unrun: `release_at_shutdown` or `callback`'s shutdown branch if the final callback landed first (raw `deref_from_thread`, HTTP) |
+/// | sink | `start_request_stream` (JS) | every `write_end_request` exit (`release_sink_ref`, JS); at exit, whichever path reaches the tasklet first claims it via `take_streaming_refs_for_exit`: `release_at_shutdown`, `callback`'s shutdown branch (both HTTP, `deref_from_thread`), or dispatch.rs's `__bun_release_task_at_shutdown` FetchTasklet arm (JS, `deref`) |
+/// | drain task | `on_write_request_data_drain` (HTTP) | `resume_request_data_stream` (`release_drain_task_ref`, JS); at exit, per `queued_drain_tasks` for nodes dropped unrun — same three-path take as the sink row |
 ///
 /// # Lock invariants
 ///
@@ -739,8 +739,8 @@ impl FetchTasklet {
 
     /// Drain-task ref taken on the HTTP thread in `on_write_request_data_drain`;
     /// released on the JS thread in `resume_request_data_stream` (or balanced
-    /// by `release_at_shutdown` via `queued_drain_tasks` when the queued node
-    /// is dropped unrun at exit).
+    /// at exit via `take_streaming_refs_for_exit` when the queued node is
+    /// dropped unrun).
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub(crate) fn release_drain_task_ref(this: *mut FetchTasklet) {
@@ -749,6 +749,25 @@ impl FetchTasklet {
         // free the allocation.
         unsafe { (*this).queued_drain_tasks.fetch_sub(1, Ordering::Release) };
         Self::deref(this);
+    }
+
+    /// Atomically take the streaming-upload ref markers (`sink_ref_held`,
+    /// `queued_drain_tasks`) and return how many refs the caller must now
+    /// release. Their JS-thread release sites can never run once the VM is
+    /// exiting, and a final `callback` in the exit window removes the entry
+    /// from `in_flight`, so three exit paths can each be the one that reaches
+    /// a given tasklet: `release_at_shutdown`, `callback`'s shutdown branch,
+    /// and `__bun_release_task_at_shutdown`'s FetchTasklet arm (dispatch.rs,
+    /// for a progress node that out-survived its tasklet's `in_flight`
+    /// entry). The `swap` take makes them idempotent against one another —
+    /// whichever runs first claims the refs, the rest see zero.
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
+    pub(crate) fn take_streaming_refs_for_exit(this: *mut FetchTasklet) -> u32 {
+        // SAFETY: the caller holds a ref, so `this` is live for the swaps.
+        let sink = unsafe { (*this).sink_ref_held.swap(false, Ordering::AcqRel) };
+        // SAFETY: as above.
+        let drains = unsafe { (*this).queued_drain_tasks.swap(0, Ordering::AcqRel) };
+        u32::from(sink) + drains
     }
 
     // PORT NOTE: ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
@@ -935,17 +954,11 @@ impl FetchTasklet {
         // here too; otherwise the count never reaches zero and the tasklet ⇄
         // `Box<AsyncHTTP>` chain (plus the sink and stream buffer it pins)
         // is unreachable from any root and LSan reports it all as leaked at
-        // exit. The reads are race-free: the JS-side writers are serialized
+        // exit. The take is race-free: the JS-side writers are serialized
         // against the `global_exit` that parked the JS thread, and the
         // HTTP-side writer (`on_write_request_data_drain`) runs on this
         // thread. Dropped first so `this` stays live for every read below.
-        // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
-        if unsafe { (*this).sink_ref_held.load(Ordering::Acquire) } {
-            // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
-            FetchTasklet::deref_from_thread(this);
-        }
-        // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
-        for _ in 0..unsafe { (*this).queued_drain_tasks.load(Ordering::Acquire) } {
+        for _ in 0..FetchTasklet::take_streaming_refs_for_exit(this) {
             // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
             FetchTasklet::deref_from_thread(this);
         }
@@ -2608,23 +2621,17 @@ impl FetchTasklet {
             if is_done {
                 // A final callback in this window removes the entry from
                 // `in_flight` (`on_async_http_callback_raw`), so
-                // `release_at_shutdown` will never run for it — balance a
-                // still-attached sink's ref and any queued drain-task refs
-                // here too, mirroring that path, or the tasklet ⇄
-                // `Box<AsyncHTTP>` ⇄ sink chain leaks at exit. The invariant
-                // is weaker than `release_at_shutdown`'s: the JS thread is
-                // not parked yet (it is running `global_exit` cleanup between
+                // `release_at_shutdown` will never run for it — take and
+                // balance a still-attached sink's ref and any queued
+                // drain-task refs here too, or the tasklet ⇄ `Box<AsyncHTTP>`
+                // ⇄ sink chain leaks at exit. The invariant is weaker than
+                // `release_at_shutdown`'s: the JS thread is not parked yet
+                // (it is running `global_exit` cleanup between
                 // `is_shutting_down = true` and `shutdown_for_exit`), but it
                 // never ticks the event loop again, so the JS-side release
                 // sites (`release_sink_ref`, `release_drain_task_ref`) cannot
-                // race these loads.
-                let sink_ref_outstanding = task_ref.sink_ref_held.load(Ordering::Acquire);
-                let drain_refs = task_ref.queued_drain_tasks.load(Ordering::Acquire);
-                if sink_ref_outstanding {
-                    // SAFETY: `task` is the live heap tasklet; refs still held.
-                    FetchTasklet::deref_from_thread(task);
-                }
-                for _ in 0..drain_refs {
+                // race the take.
+                for _ in 0..FetchTasklet::take_streaming_refs_for_exit(task) {
                     // SAFETY: `task` is the live heap tasklet; refs still held.
                     FetchTasklet::deref_from_thread(task);
                 }

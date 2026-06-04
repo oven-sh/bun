@@ -73,7 +73,10 @@ pub(crate) extern "C" fn Bun__NODE_NO_WARNINGS() -> bool {
 /// "Timeout" covers setTimeout + setInterval, "Immediate" covers
 /// setImmediate. Per-thread (workers have their own RuntimeState).
 #[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__Timer__getActiveTimerCounts(timeouts: *mut usize, immediates: *mut usize) {
+pub(crate) extern "C" fn Bun__Timer__getActiveTimerCounts(
+    timeouts: *mut usize,
+    immediates: *mut usize,
+) {
     let state = crate::jsc_hooks::runtime_state();
     // SAFETY: out-params are valid pointers from the C++ caller; `state` is
     // the live per-thread RuntimeState (null before runtime init).

@@ -873,7 +873,11 @@ Object.assign(EventEmitter, {
 // lookups.
 try {
   const processPrototype = Object.getPrototypeOf(process);
-  if (processPrototype !== null && processPrototype !== Object.prototype && !(processPrototype instanceof EventEmitter)) {
+  if (
+    processPrototype !== null &&
+    processPrototype !== Object.prototype &&
+    !(processPrototype instanceof EventEmitter)
+  ) {
     Object.setPrototypeOf(processPrototype, EventEmitter.prototype);
   }
 } catch {

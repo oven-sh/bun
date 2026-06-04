@@ -266,12 +266,24 @@ template<typename CharType>
 static void appendEscapedQuotedChar(WTF::StringBuilder& builder, CharType c, char quote)
 {
     switch (c) {
-    case '\b': builder.append("\\b"_s); return;
-    case '\t': builder.append("\\t"_s); return;
-    case '\n': builder.append("\\n"_s); return;
-    case '\f': builder.append("\\f"_s); return;
-    case '\r': builder.append("\\r"_s); return;
-    case '\\': builder.append("\\\\"_s); return;
+    case '\b':
+        builder.append("\\b"_s);
+        return;
+    case '\t':
+        builder.append("\\t"_s);
+        return;
+    case '\n':
+        builder.append("\\n"_s);
+        return;
+    case '\f':
+        builder.append("\\f"_s);
+        return;
+    case '\r':
+        builder.append("\\r"_s);
+        return;
+    case '\\':
+        builder.append("\\\\"_s);
+        return;
     default:
         if (c == static_cast<CharType>(quote)) {
             builder.append('\\');

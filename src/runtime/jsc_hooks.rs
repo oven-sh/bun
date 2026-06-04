@@ -3532,6 +3532,20 @@ fn get_hardcoded_module(
             }
             Some(js_synthetic_module(b"bun:internal-for-testing", specifier))
         }
+        HardcodedModule::InternalTestBinding => {
+            // Gated behind `--expose-internals` (release) / always-on (debug),
+            // same as `bun:internal-for-testing`. The tag key uses the
+            // generated `internal:`-prefixed canonical specifier (see
+            // `generated_resolved_source_tag.rs`).
+            if !cfg!(debug_assertions) {
+                let allowed = bun_jsc::module_loader::IS_ALLOWED_TO_USE_INTERNAL_TESTING_APIS
+                    .load(core::sync::atomic::Ordering::Relaxed);
+                if !allowed {
+                    return None;
+                }
+            }
+            Some(js_synthetic_module(b"internal:test/binding", specifier))
+        }
         HardcodedModule::BunWrap => {
             // `Runtime.Runtime.sourceCode()` — the bundler's CJS-interop
             // shim, embedded as a static string in `bun_ast::runtime`.

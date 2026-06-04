@@ -587,7 +587,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 name: js_ast::StoreStr::new(b"" as &[u8]),
                 value: None,
             };
-            // Assigned in both live arms below; the third arm returns.
+            // Assigned in every live arm below; the error arm returns.
             let needs_symbol: bool;
 
             // Parse the name

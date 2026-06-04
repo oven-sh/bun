@@ -99,4 +99,44 @@ describe("css", () => {
       `);
     },
   });
+
+  // Exercises the css-module export map produced by StyleSheet printing
+  // (`to_css`/`to_css_with_writer`): multiple locally-scoped classes and a
+  // `composes:` entry must all survive into the generated JS exports object,
+  // and the hashed local names in the printed CSS must match the names in the
+  // exports map.
+  itBundled("css-module/ExportsMapMultipleClassesAndComposes", {
+    files: {
+      "/entry.js": `
+        import styles from './styles.module.css';
+        console.log(styles.alpha, styles.betaGamma);
+      `,
+      "/styles.module.css": `
+        .alpha { color: red; }
+        .betaGamma { composes: alpha; color: blue; }
+      `,
+    },
+    entryPoints: ["/entry.js"],
+    outdir: "/out",
+    onAfterBundle(api) {
+      const js = api.readFile("/out/entry.js");
+
+      // Both locally-scoped classes appear in the exports object with their
+      // hashed names.
+      const alpha = js.match(/alpha:\s*"(alpha_[A-Za-z0-9_-]+)"/);
+      expect(alpha).not.toBeNull();
+      // `composes: alpha` means the betaGamma export value contains both its
+      // own hashed name and alpha's hashed name.
+      const beta = js.match(/betaGamma:\s*"([^"]+)"/);
+      expect(beta).not.toBeNull();
+      expect(beta![1]).toContain("betaGamma_");
+      expect(beta![1]).toContain(alpha![1]);
+
+      // The printed CSS uses the same hashed names the exports map reports.
+      const css = api.readFile("/out/entry.css");
+      expect(css).toContain(`.${alpha![1]}`);
+      const betaOwn = beta![1].split(" ").find(name => name.startsWith("betaGamma_"))!;
+      expect(css).toContain(`.${betaOwn}`);
+    },
+  });
 });

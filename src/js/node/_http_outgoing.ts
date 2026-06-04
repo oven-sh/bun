@@ -208,27 +208,10 @@ const OutgoingMessagePrototype = {
   shouldKeepAlive: true,
   _onPendingData: function nop() {},
   outputSize: 0,
-  // The constructor creates a per-instance array; a plain array default here
-  // would be shared (and mutated) across every instance. This accessor lazily
-  // creates an own array for subclasses that don't chain the constructor.
-  get outputData() {
-    const value = [];
-    ObjectDefineProperty(this, "outputData", {
-      value,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-    return value;
-  },
-  set outputData(value) {
-    ObjectDefineProperty(this, "outputData", {
-      value,
-      writable: true,
-      enumerable: true,
-      configurable: true,
-    });
-  },
+  // No outputData default on the prototype (a shared array would leak buffered
+  // writes across instances, and a lazy accessor would self-destruct when read
+  // directly off the prototype). The constructor creates the per-instance
+  // array; methods lazily init for subclasses that don't chain the constructor.
   strictContentLength: false,
   _removedTE: false,
   _removedContLen: false,
@@ -283,8 +266,11 @@ const OutgoingMessagePrototype = {
 
   getRawHeaderNames() {
     var headers = this[headersSymbol];
-    if (!headers) return [];
-    return getRawKeys.$call(headers);
+    const emptySetCookie = this[kEmptySetCookie];
+    if (!headers) return emptySetCookie ? [emptySetCookie] : [];
+    const names = getRawKeys.$call(headers);
+    if (emptySetCookie) names.push(emptySetCookie);
+    return names;
   },
 
   getHeaders() {
@@ -313,12 +299,13 @@ const OutgoingMessagePrototype = {
     validateHeaderName(name);
     validateHeaderValue(name, value);
     const headers = (this[headersSymbol] ??= new Headers());
-    if (name.toLowerCase() === "set-cookie") {
+    if (name.length === 10 && name.toLowerCase() === "set-cookie") {
       if ($isArray(value) && value.length === 0) {
         // Present-but-empty: nothing to store in the backing Headers (and
         // nothing goes on the wire), but getHeader must return [].
         headers.delete(name);
-        this[kEmptySetCookie] = true;
+        // Remember the original-case name so getRawHeaderNames can report it.
+        this[kEmptySetCookie] = name;
         return this;
       }
       this[kEmptySetCookie] = false;
@@ -502,7 +489,7 @@ const OutgoingMessagePrototype = {
         data = this._header + data;
       } else {
         const header = this._header;
-        this.outputData.unshift({
+        (this.outputData ??= []).unshift({
           data: header,
           encoding: "latin1",
           callback: null,
@@ -529,20 +516,20 @@ const OutgoingMessagePrototype = {
 
     if (conn && conn._httpMessage === this && conn.writable) {
       // There might be pending data in the this.output buffer.
-      if (this.outputData.length) {
+      if (this.outputData?.length) {
         this._flushOutput(conn);
       }
       // Directly write to socket.
       return conn.write(data, encoding, callback);
     }
     // Buffer, as long as we're not destroyed.
-    this.outputData.push({ data, encoding, callback });
+    (this.outputData ??= []).push({ data, encoding, callback });
     this.outputSize += data.length;
     this._onPendingData(data.length);
     return this.outputSize < this[kHighWaterMark];
   },
   _flushOutput(socket) {
-    const outputLength = this.outputData.length;
+    const outputLength = this.outputData?.length ?? 0;
     if (outputLength <= 0) return undefined;
 
     const outputData = this.outputData;

@@ -162,12 +162,18 @@ function eos(stream, options, callback) {
   } else if (options.signal?.aborted) {
     immediateResult = $makeAbortError(undefined, { cause: options.signal.reason });
   }
-  if (immediateResult !== undefined && options[kEosNodeSynchronousCallback]) {
+  // null means "finished without error": invoke with no error argument at all,
+  // not an explicit null/undefined.
+  const invokeImmediate = () => {
     if (immediateResult === null) {
       callback.$call(stream);
     } else {
       callback.$call(stream, immediateResult);
     }
+  };
+
+  if (immediateResult !== undefined && options[kEosNodeSynchronousCallback]) {
+    invokeImmediate();
     return cleanup;
   }
 
@@ -176,13 +182,7 @@ function eos(stream, options, callback) {
   }
 
   if (immediateResult !== undefined) {
-    process.nextTick(() => {
-      if (immediateResult === null) {
-        callback.$call(stream);
-      } else {
-        callback.$call(stream, immediateResult);
-      }
-    });
+    process.nextTick(invokeImmediate);
     return cleanup;
   }
 

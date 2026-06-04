@@ -742,7 +742,7 @@ export const defines: Flag[] = [
   },
   {
     // Shell-escaped quotes so clang receives literal quotes in the define
-    // (the preprocessor needs the string to be "24.3.0", not bare 24.3.0).
+    // (the preprocessor needs the string to be "24.16.0", not bare 24.16.0).
     flag: c => `REPORTED_NODEJS_VERSION=\\"${c.nodejsVersion}\\"`,
     desc: "Node.js version string reported by process.version",
   },

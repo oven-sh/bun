@@ -148,7 +148,7 @@ panic = "abort"
 
 # ─── React Compiler dependency closure: optimize for size ──────────────────
 # The vendored React Compiler (`bun_react_compiler` → `vendor/react-compiler`
-# crates + their oxc/serde/regex closure) is build-time-only code: it runs as
+# crates + their oxc/serde closure) is build-time-only code: it runs as
 # a bundler source transform, never on a hot runtime path. At the default
 # `opt-level = 3` this closure contributes ~7 MB of machine code to the
 # stripped release binary; `opt-level = "z"` cuts that roughly in half. The
@@ -209,9 +209,6 @@ react_compiler_ssa = { opt-level = "z" }
 react_compiler_typeinference = { opt-level = "z" }
 react_compiler_utils = { opt-level = "z" }
 react_compiler_validation = { opt-level = "z" }
-regex = { opt-level = "z" }
-regex-automata = { opt-level = "z" }
-regex-syntax = { opt-level = "z" }
 ryu = { opt-level = "z" }
 self_cell = { opt-level = "z" }
 seq-macro = { opt-level = "z" }

@@ -1,23 +1,9 @@
 Keep post-Nehalem instruction sets out of bun's baseline builds
 (verify-baseline-static scans every emitted instruction):
 
-- regex's default "perf-literal" feature pulls aho-corasick, whose Teddy
-  searcher compiles AVX/AVX2 kernels. The compiler's only pattern is the
-  trivial `^use memo if\(([^\)]*)\)$` dynamic-gating directive, so the
-  std-only feature set loses nothing.
 - sha2 compiles a CPUID-dispatched SHA-NI block function by default.
   "force-soft" keeps it pure software; it only hashes short gating
   directive strings, so the hardware path is irrelevant.
---- a/compiler/crates/react_compiler/Cargo.toml
-+++ b/compiler/crates/react_compiler/Cargo.toml
-@@ -15,6 +15,6 @@
- react_compiler_typeinference = { path = "../react_compiler_typeinference" }
- react_compiler_validation = { path = "../react_compiler_validation" }
- indexmap = "2"
--regex = "1"
-+regex = { version = "1", default-features = false, features = ["std"] }
- serde = { version = "1", features = ["derive"] }
- serde_json = { version = "1", features = ["raw_value"] }
 --- a/compiler/crates/react_compiler_reactive_scopes/Cargo.toml
 +++ b/compiler/crates/react_compiler_reactive_scopes/Cargo.toml
 @@ -9,5 +9,5 @@

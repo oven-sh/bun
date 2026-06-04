@@ -1,0 +1,51 @@
+Drop the regex crate: the compiler's single pattern is the dynamic-gating
+directive `^use memo if\(([^\)]*)\)$`, a literal prefix/suffix match. The
+regex+regex-automata+regex-syntax stack costs ~130 KB of machine code in the
+release binary (even at opt-level="z" and with default features off) — for
+one pattern that a strip_prefix/strip_suffix pair expresses exactly. This
+also removes the regex hunk previously needed in
+0002-baseline-safe-deps.patch.
+--- a/compiler/crates/react_compiler/Cargo.toml
++++ b/compiler/crates/react_compiler/Cargo.toml
+@@ -15,6 +15,5 @@
+ react_compiler_typeinference = { path = "../react_compiler_typeinference" }
+ react_compiler_validation = { path = "../react_compiler_validation" }
+ indexmap = "2"
+-regex = "1"
+ serde = { version = "1", features = ["derive"] }
+ serde_json = { version = "1", features = ["raw_value"] }
+--- a/compiler/crates/react_compiler/src/entrypoint/program.rs
++++ b/compiler/crates/react_compiler/src/entrypoint/program.rs
+@@ -43,7 +43,6 @@
+ use react_compiler_hir::ReactFunctionType;
+ use react_compiler_hir::environment_config::EnvironmentConfig;
+ use react_compiler_lowering::FunctionNode;
+-use regex::Regex;
+ 
+ use super::compile_result::BindingRenameInfo;
+ use super::compile_result::CodegenFunction;
+@@ -175,15 +174,20 @@
+         None => return Ok(None),
+     };
+ 
+-    let pattern = Regex::new(r"^use memo if\(([^\)]*)\)$").expect("Invalid dynamic gating regex");
++    // Equivalent of the regex `^use memo if\(([^\)]*)\)$` without pulling in
++    // the regex crate for a single literal pattern: a prefix/suffix match with
++    // a `)`-free body.
++    fn match_dynamic_gating(value: &str) -> Option<&str> {
++        let inner = value.strip_prefix("use memo if(")?.strip_suffix(')')?;
++        if inner.contains(')') { None } else { Some(inner) }
++    }
+ 
+     let mut errors: Vec<CompilerErrorDetail> = Vec::new();
+     let mut matches: Vec<(&'a Directive, String)> = Vec::new();
+ 
+     for directive in directives {
+-        if let Some(caps) = pattern.captures(&directive.value.value) {
+-            if let Some(m) = caps.get(1) {
+-                let ident = m.as_str();
++        {
++            if let Some(ident) = match_dynamic_gating(&directive.value.value) {
+                 if is_valid_identifier(ident) {
+                     matches.push((directive, ident.to_string()));
+                 } else {

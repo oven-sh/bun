@@ -155,6 +155,14 @@ function trace(phase: number, cat: string, name: string, id?: number, data?: unk
   emitEvent(String.fromCharCode(phase), cat, name, id, data);
 }
 
+// --trace-event-file-pattern with no --trace-event-categories: remember the
+// pattern so a later dynamic createTracing(...).enable() writes to it (Node
+// honors the pattern regardless of how tracing is enabled). Does not activate
+// tracing by itself.
+function setFilePattern(pattern: string) {
+  filePattern = pattern;
+}
+
 // CLI entry — called by internal/process/pre_execution before user code.
 // `catString` is the resolved value of --trace-event-categories (last
 // occurrence wins; --trace-events-enabled is an alias for
@@ -708,6 +716,7 @@ export default {
   emitEventWithArgs,
   trace,
   initFromCli,
+  setFilePattern,
   setTid,
   emitWorkerThreadName,
   inspectorStart,

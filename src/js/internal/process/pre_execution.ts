@@ -298,6 +298,11 @@ function installExitTracing(): void {
   // trace events would silently go missing.
   if (catString !== null) {
     require("internal/trace_events").initFromCli(catString, filePattern);
+  } else if (filePattern !== null) {
+    // Node honors --trace-event-file-pattern no matter how tracing is later
+    // enabled (e.g. a dynamic createTracing(...).enable()), so hand the
+    // pattern to the agent even when no CLI categories were given.
+    require("internal/trace_events").setFilePattern(filePattern);
   }
 
   if (traceExit || traceEnv || traceEnvJsStack) {

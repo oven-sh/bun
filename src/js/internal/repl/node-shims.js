@@ -365,19 +365,26 @@ let captureCallbacks = null;
 function addUncaughtExceptionCaptureCallback(cb) {
   if (!captureCallbacks) {
     captureCallbacks = [];
-    process.setUncaughtExceptionCaptureCallback(err => {
-      for (const fn of captureCallbacks) {
-        if (fn(err)) return;
-      }
-      // No callback claimed the error: Node's additive API falls through to
-      // the regular 'uncaughtException' flow, and only then to the fatal
-      // handler.
-      if (process.emit("uncaughtException", err)) return;
-      try {
-        process.stderr.write(`Uncaught ${util.inspect(err)}\n`);
-      } catch {}
-      process.exit(1);
-    });
+    try {
+      process.setUncaughtExceptionCaptureCallback(err => {
+        for (const fn of captureCallbacks) {
+          if (fn(err)) return;
+        }
+        // No callback claimed the error: Node's additive API falls through to
+        // the regular 'uncaughtException' flow, and only then to the fatal
+        // handler.
+        if (process.emit("uncaughtException", err)) return;
+        try {
+          process.stderr.write(`Uncaught ${util.inspect(err)}\n`);
+        } catch {}
+        process.exit(1);
+      });
+    } catch {
+      // A user capture callback is already installed via the single-callback
+      // API. Node's additive API coexists with it natively; without that
+      // engine support, defer to the user's callback - REPL error handling
+      // falls back to the regular uncaughtException flow.
+    }
   }
   captureCallbacks.push(cb);
 }

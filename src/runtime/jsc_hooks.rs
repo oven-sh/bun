@@ -1648,6 +1648,8 @@ pub(crate) fn close_isolation_handles() {
         return;
     }
     loop {
+        // SAFETY: live boxed per-thread `RuntimeState`; the borrow ends before
+        // the close below re-enters JS.
         let Some(kv) = (unsafe { &mut (*state).isolation_handles }).pop() else {
             break;
         };

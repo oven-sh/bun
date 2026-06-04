@@ -322,5 +322,8 @@ const errors: ErrorCodeMapping = [
   ["ERR_SECRETS_INTERACTION_NOT_ALLOWED", Error],
   ["ERR_SECRETS_AUTH_FAILED", Error],
   ["ERR_SECRETS_INTERACTION_REQUIRED", Error],
+  // Appended (not alphabetical): discriminants are index-aligned with the
+  // checked-in Rust mirror (src/jsc/ErrorCode.rs) — only ever append here.
+  ["ERR_HTTP2_GOAWAY_SESSION", Error],
 ];
 export default errors;

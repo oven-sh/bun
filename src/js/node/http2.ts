@@ -381,12 +381,6 @@ function emitOutofStreamErrorNT(self: any) {
   self.destroy($ERR_HTTP2_OUT_OF_STREAMS());
 }
 
-function goawaySessionError() {
-  const err = new Error("New streams cannot be created after receiving a GOAWAY");
-  (err as any).code = "ERR_HTTP2_GOAWAY_SESSION";
-  return err;
-}
-hideFromStack(goawaySessionError);
 function cache() {
   const d = new Date();
   utcCache = d.toUTCString();
@@ -3912,7 +3906,7 @@ class ClientHttp2Session extends Http2Session {
         throw $ERR_HTTP2_INVALID_SESSION();
       }
       if (this.closed) {
-        throw goawaySessionError();
+        throw $ERR_HTTP2_GOAWAY_SESSION();
       }
 
       if (this.sentTrailers) {

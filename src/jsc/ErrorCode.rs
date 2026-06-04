@@ -682,8 +682,11 @@ impl ErrorCode {
     /// `ERR_SECRETS_INTERACTION_REQUIRED` (instanceof Error)
     pub const SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode(311);
 
+    /// `ERR_HTTP2_GOAWAY_SESSION`
+    pub const HTTP2_GOAWAY_SESSION: ErrorCode = ErrorCode(312);
+
     /// == C++ `NODE_ERROR_COUNT`.
-    pub const COUNT: u16 = 312;
+    pub const COUNT: u16 = 313;
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -1038,6 +1041,7 @@ impl ErrorCode {
         ErrorCode::SECRETS_INTERACTION_NOT_ALLOWED;
     pub const ERR_SECRETS_AUTH_FAILED: ErrorCode = ErrorCode::SECRETS_AUTH_FAILED;
     pub const ERR_SECRETS_INTERACTION_REQUIRED: ErrorCode = ErrorCode::SECRETS_INTERACTION_REQUIRED;
+    pub const ERR_HTTP2_GOAWAY_SESSION: ErrorCode = ErrorCode::HTTP2_GOAWAY_SESSION;
 
     // NOTE: `ERR_SYSTEM_ERROR` / `ERR_CHILD_CLOSED_BEFORE_REPLY` intentionally
     // do NOT live here. They belong to the unrelated Zig enum
@@ -1368,6 +1372,7 @@ static CODE_STR: [&str; ErrorCode::COUNT as usize] = [
     "ERR_SECRETS_INTERACTION_NOT_ALLOWED",
     "ERR_SECRETS_AUTH_FAILED",
     "ERR_SECRETS_INTERACTION_REQUIRED",
+    "ERR_HTTP2_GOAWAY_SESSION",
 ];
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -859,6 +859,22 @@ function newStreamDuplexFromReadableWritablePair(pair = kEmptyObject, options = 
   return duplex;
 }
 
+// Shared by CompressionStream and DecompressionStream: per the Compression
+// Streams spec, chunks must be BufferSource (ArrayBuffer or ArrayBufferView
+// not backed by SharedArrayBuffer), and an invalid chunk must error both
+// sides of the pair synchronously.
+function newBufferSourceTransformPairFromDuplex(duplex) {
+  const { isArrayBufferView, isSharedArrayBuffer } = require("node:util/types");
+  return newReadableWritablePairFromDuplex(duplex, {
+    [kValidateChunk]: function validateBufferSourceChunk(chunk) {
+      if (isSharedArrayBuffer(isArrayBufferView(chunk) ? chunk.buffer : chunk)) {
+        throw $ERR_INVALID_ARG_TYPE("chunk", ["ArrayBuffer", "Buffer", "TypedArray", "DataView"], chunk);
+      }
+    },
+    [kDestroyOnSyncError]: true,
+  });
+}
+
 export default {
   newWritableStreamFromStreamWritable,
   newReadableStreamFromStreamReadable,
@@ -866,6 +882,7 @@ export default {
   newStreamReadableFromReadableStream,
   newReadableWritablePairFromDuplex,
   newStreamDuplexFromReadableWritablePair,
+  newBufferSourceTransformPairFromDuplex,
   kValidateChunk,
   kDestroyOnSyncError,
   _ReadableFromWeb: ReadableFromWeb,

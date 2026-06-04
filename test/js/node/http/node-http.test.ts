@@ -2265,6 +2265,7 @@ it("setHeaders stores an empty set-cookie array (nodejs/node#59734)", () => {
   expect(msg.hasHeader("set-cookie")).toBe(true);
   expect(msg.getHeaders()["set-cookie"]).toEqual([]);
   expect(msg.getHeaderNames()).toContain("set-cookie");
+  expect(msg.getRawHeaderNames()).toContain("set-cookie");
   msg.removeHeader("set-cookie");
   expect(msg.getHeader("set-cookie")).toBeUndefined();
   expect(msg.hasHeader("set-cookie")).toBe(false);
@@ -2274,6 +2275,12 @@ it("setHeaders stores an empty set-cookie array (nodejs/node#59734)", () => {
   msg2.setHeaders(new Map([["x-test", "1"]]));
   expect(msg2.getHeader("set-cookie")).toBeUndefined();
   expect(msg2.getHeader("x-test")).toBe("1");
+
+  // getRawHeaderNames preserves the original casing, like Node.
+  const msg3 = new OutgoingMessage();
+  msg3.setHeader("Set-Cookie", []);
+  expect(msg3.getRawHeaderNames()).toEqual(["Set-Cookie"]);
+  expect(msg3.getHeaderNames()).toEqual(["set-cookie"]);
 });
 
 it("https.Agent applies defaultPort/protocol through options (nodejs/node#58980)", () => {
@@ -2424,4 +2431,14 @@ it("OutgoingMessage outputData is per-instance and _flushOutput is defined", () 
   expect(a.outputData.length).toBe(1);
   expect(b.outputData.length).toBe(0);
   expect(new OutgoingMessage().outputData.length).toBe(0);
+
+  // Like Node, the prototype has no outputData property at all; reading it off
+  // the prototype (e.g. a spread or inspection) must not materialize shared
+  // state on the prototype.
+  expect(Object.getOwnPropertyDescriptor(OutgoingMessage.prototype, "outputData")).toBeUndefined();
+  void { ...OutgoingMessage.prototype };
+  const c = new OutgoingMessage();
+  const d = new OutgoingMessage();
+  c.outputData.push({ data: "y", encoding: "utf8", callback: null });
+  expect(d.outputData.length).toBe(0);
 });

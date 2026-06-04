@@ -286,6 +286,38 @@ impl Handlers {
         generated: &GeneratedSocketConfigHandlers,
         is_server: bool,
     ) -> JsResult<Handlers> {
+        // Validate the config before constructing a `Handlers`: an invalid
+        // handler must return an error while there is nothing to clean up.
+        // A constructed-but-not-yet-`protect()`ed `Handlers` whose `Drop` runs
+        // `unprotect()` would trip `debug_assert!(protection_count > 0)` (debug
+        // abort) and unprotect callbacks `protect()` never rooted (release).
+        macro_rules! validate_callback {
+            ($field:ident, $name:literal) => {{
+                let value = generated.$field;
+                if !value.is_undefined_or_null() && !value.is_callable() {
+                    return Err(global_object.throw_invalid_arguments(format_args!(
+                        "Expected \"{}\" callback to be a function",
+                        $name
+                    )));
+                }
+            }};
+        }
+        validate_callback!(on_open, "onOpen");
+        validate_callback!(on_close, "onClose");
+        validate_callback!(on_data, "onData");
+        validate_callback!(on_writable, "onWritable");
+        validate_callback!(on_timeout, "onTimeout");
+        validate_callback!(on_connect_error, "onConnectError");
+        validate_callback!(on_end, "onEnd");
+        validate_callback!(on_error, "onError");
+        validate_callback!(on_handshake, "onHandshake");
+
+        if !generated.on_data.is_callable() && !generated.on_writable.is_callable() {
+            return Err(global_object.throw_invalid_arguments(format_args!(
+                "Expected at least \"data\" or \"drain\" callback"
+            )));
+        }
+
         let mut result = Handlers {
             on_open: JSValue::ZERO,
             on_close: JSValue::ZERO,
@@ -316,36 +348,23 @@ impl Handlers {
             protection_count: 0,
         };
 
-        // inline for (callback_fields) |field| { ... @field(generated, field) ... }
+        // Callbacks are validated above; assign the ones that are present.
         macro_rules! assign_callback {
-            ($field:ident, $name:literal) => {{
-                let value = generated.$field;
-                if value.is_undefined_or_null() {
-                } else if !value.is_callable() {
-                    return Err(global_object.throw_invalid_arguments(format_args!(
-                        "Expected \"{}\" callback to be a function",
-                        $name
-                    )));
-                } else {
-                    result.$field = value;
+            ($field:ident) => {{
+                if generated.$field.is_callable() {
+                    result.$field = generated.$field;
                 }
             }};
         }
-        assign_callback!(on_open, "onOpen");
-        assign_callback!(on_close, "onClose");
-        assign_callback!(on_data, "onData");
-        assign_callback!(on_writable, "onWritable");
-        assign_callback!(on_timeout, "onTimeout");
-        assign_callback!(on_connect_error, "onConnectError");
-        assign_callback!(on_end, "onEnd");
-        assign_callback!(on_error, "onError");
-        assign_callback!(on_handshake, "onHandshake");
-
-        if result.on_data.is_empty() && result.on_writable.is_empty() {
-            return Err(global_object.throw_invalid_arguments(format_args!(
-                "Expected at least \"data\" or \"drain\" callback"
-            )));
-        }
+        assign_callback!(on_open);
+        assign_callback!(on_close);
+        assign_callback!(on_data);
+        assign_callback!(on_writable);
+        assign_callback!(on_timeout);
+        assign_callback!(on_connect_error);
+        assign_callback!(on_end);
+        assign_callback!(on_error);
+        assign_callback!(on_handshake);
         result.with_async_context_if_needed(global_object);
         result.protect();
         Ok(result)

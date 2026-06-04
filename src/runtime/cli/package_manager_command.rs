@@ -477,8 +477,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         }
                     }
 
-                    bun_core::prettyln!("Cleared {} cached 'bunx' packages", deleted);
                 }
+
+                bun_core::prettyln!("Cleared {} cached 'bunx' packages", deleted);
 
                 Global::exit(if had_err { 1 } else { 0 });
             }

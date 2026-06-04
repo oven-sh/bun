@@ -339,6 +339,31 @@ impl<'a> Parser<'a> {
     }
 }
 
+/// Error payload of [`Parser::parse`].
+///
+/// `parse()` consumes the parser by value, so by the time the caller sees the
+/// `Err` the lexer (and its current token position) is gone. The failing
+/// token's range is captured here, inside `_parse`, while the lexer is still
+/// alive, so callers can point their diagnostic at the failing token instead
+/// of `Range::None`.
+#[derive(Copy, Clone)]
+pub struct ParseFailure {
+    pub err: Error,
+    /// The lexer's token range at the moment the parse failed.
+    pub range: js_ast::Range,
+}
+
+impl From<Error> for ParseFailure {
+    /// Used by error paths that fail before a parser (and lexer) exists —
+    /// e.g. `P::init` inside `init_p!` — where no token range is available.
+    fn from(err: Error) -> Self {
+        ParseFailure {
+            err,
+            range: js_ast::Range::None,
+        }
+    }
+}
+
 // ── live `Parser::parse` / `Parser::scan_imports` symbols ────────────────
 // `parse()` is the real const-generic dispatcher. `_parse` carries the correct `<const TS, JX>`
 // shape but its body is blocked on `P::{init, prepare_for_visit_pass,
@@ -347,7 +372,7 @@ impl<'a> Parser<'a> {
 // surface lands.
 impl<'a> Parser<'a> {
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
-    pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
+    pub fn parse(mut self) -> Result<crate::Result<'a>, ParseFailure> {
         #[cfg(target_arch = "wasm32")]
         {
             self.options.ts = true;
@@ -709,7 +734,7 @@ impl<'a> Parser<'a> {
         Ok(())
     }
 
-    fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
+    fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, ParseFailure> {
         // `Source.path` is `Path<'static>`, so
         // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
         let _action_guard = bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(
@@ -738,8 +763,13 @@ impl<'a> Parser<'a> {
         let mut __p = init_p!(P<'_, TS, false>;
             bump, log, source, define, lexer, options);
         // SAFETY: `init_p!` only yields after `init` succeeded.
-        let p: &mut P<'_, TS, false> = unsafe { __p.assume_init_mut() };
+        let p: &mut P<'a, TS, false> = unsafe { __p.assume_init_mut() };
 
+        // The whole fallible parse body runs through an inner closure so that
+        // on the error path the failing token's range can still be read off
+        // `p.lexer` (which the closure only reborrows) before `P` is dropped.
+        // The range travels to callers in `ParseFailure`.
+        let run = |p: &mut P<'a, TS, false>| -> Result<crate::Result<'a>, Error> {
         if p.options.features.hot_module_reloading {
             debug_assert!(!p.options.tree_shaking);
         }
@@ -2204,6 +2234,15 @@ impl<'a> Parser<'a> {
             wrap_mode,
             hashbang,
         )?))
+        };
+
+        run(&mut *p).map_err(|err| ParseFailure {
+            // The closure's reborrow of `p` has ended; the lexer is still
+            // alive here, so capture the failing token's range for the
+            // caller's diagnostic.
+            range: p.lexer.range(),
+            err,
+        })
     }
 
     // associated fn (was `&self` reading `self.lexer.source.contents`)

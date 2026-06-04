@@ -1276,3 +1276,109 @@ it("auto-allocated byte stream chunks are zero-filled before being exposed to th
   expect(value.subarray(1).every(b => b === 0)).toBe(true);
   reader.cancel();
 });
+
+it("Bun.file().stream() pulls remain correct under forced GC (raw pending-view slice)", async () => {
+  // Regression coverage for the FileReader pending-view refactor: the
+  // in-flight pull buffer is a raw slice into a JS typed-array buffer rooted
+  // only by the pull's view value (previously held as a forged
+  // `&'static mut [u8]`). Force a full GC around every read to give a stale
+  // or wrongly-rooted buffer the best chance to be collected/moved; the
+  // assembled bytes must still match the file exactly.
+  const script = `
+    const size = 1 << 20;
+    const pattern = new Uint8Array(size);
+    for (let i = 0; i < size; i++) pattern[i] = (i * 7 + (i >> 8)) & 0xff;
+    await Bun.write("data.bin", pattern);
+    const reader = Bun.file("data.bin").stream().getReader();
+    let total = 0, ok = true, idx = 0;
+    while (true) {
+      Bun.gc(true);
+      const { done, value } = await reader.read();
+      Bun.gc(true);
+      if (done) break;
+      for (let i = 0; i < value.length; i++, idx++) {
+        if (value[i] !== ((idx * 7 + (idx >> 8)) & 0xff)) ok = false;
+      }
+      total += value.length;
+    }
+    console.log(JSON.stringify({ total, ok }));
+  `;
+  using dir = tempDir("filereader-gc-stream", {});
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", script],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  // stderr is drained but deliberately not asserted on: the stdout JSON plus
+  // exit code cover the behavior, and benign warnings must not break this.
+  const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(JSON.parse(stdout)).toEqual({ total: 1 << 20, ok: true });
+  expect(exitCode).toBe(0);
+});
+
+it("subprocess stdout stream (pipe-backed FileReader) resolves pending pulls under forced GC", async () => {
+  // A pipe-backed FileReader returns `Pending` from onPull when the writer is
+  // slower than the reader, exercising the pending-view/pending-result path
+  // (raw slice + NonNull pending backref). Force GC between chunks.
+  const writer = `
+    const chunk = Buffer.alloc(65536, 0xab);
+    for (let i = 0; i < 16; i++) {
+      await Bun.write(Bun.stdout, chunk);
+      await Bun.sleep(1);
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", writer],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  let total = 0;
+  let ok = true;
+  for await (const chunk of proc.stdout) {
+    Bun.gc(true);
+    for (let i = 0; i < chunk.length; i++) {
+      if (chunk[i] !== 0xab) ok = false;
+    }
+    total += chunk.length;
+  }
+  expect(ok).toBe(true);
+  expect(total).toBe(16 * 65536);
+  expect(await proc.exited).toBe(0);
+});
+
+it("fetch() body stream (ByteStream) resolves pending reads correctly under forced GC", async () => {
+  // The client reads faster than the server produces, so each read parks a
+  // pending pull (rooted view + raw pending buffer) that is later fulfilled
+  // by onData re-deriving the destination from the GC-rooted view.
+  const part = "0123456789abcdef".repeat(256); // 4096 bytes
+  const parts = 8;
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      const stream = new ReadableStream({
+        async pull(controller) {
+          for (let i = 0; i < parts; i++) {
+            controller.enqueue(new TextEncoder().encode(part));
+            await Bun.sleep(1);
+          }
+          controller.close();
+        },
+      });
+      return new Response(stream, { headers: { "content-type": "text/plain" } });
+    },
+  });
+  const res = await fetch(server.url);
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let text = "";
+  while (true) {
+    Bun.gc(true);
+    const { done, value } = await reader.read();
+    if (done) break;
+    text += decoder.decode(value, { stream: true });
+  }
+  text += decoder.decode();
+  expect(text).toBe(part.repeat(parts));
+});

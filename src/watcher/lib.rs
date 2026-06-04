@@ -36,21 +36,8 @@ pub use watcher_impl::{
     WatchItem, WatchItemColumns, WatchItemIndex, WatchItemKind, WatchList, Watcher, WatcherContext,
 };
 
-// ─── upward-crate placeholders (CYCLEBREAK) ───────────────────────────────
-//
-// These belong to higher-tier crates that don't yet expose a usable surface
-// to depend on. Watcher only stores/passes them through; never dereferenced.
-
-/// Opaque forward-decl of `bun_ast::Loader` (cycle-break: bun_watcher sits
-/// below bun_ast in the crate graph). Watcher only stores the value in
-/// `WatchItem.loader` and passes it through; callers construct it via
-/// `Loader(bun_ast::Loader as u8)` at the boundary.
-#[derive(Clone, Copy, Default)]
-pub struct Loader(pub u8);
-impl Loader {
-    /// Mirrors `bun_ast::Loader::File as u8`;
-    /// keep the discriminant in sync with `src/ast/loader.rs`. A compile-time
-    /// drift guard lives in `src/jsc/hot_reloader.rs` (a crate that sees both
-    /// types).
-    pub const File: Loader = Loader(5);
-}
+/// The watcher only stores `Loader` in `WatchItem.loader` and passes it
+/// through. `bun_ast` has no dependency on `bun_watcher`, so depending on the
+/// real type is acyclic; re-exporting it replaces the old duplicate `u8`
+/// newtype (and the compile-time drift guard that kept the two in sync).
+pub use bun_ast::Loader;

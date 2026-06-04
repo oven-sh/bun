@@ -53,8 +53,8 @@ mod _impl {
     use core::ffi::c_uint;
 
     use bun_jsc::{
-        CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsResult, RangeErrorOptions,
-        StrongOptional, WorkPoolTask,
+        CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
+        RangeErrorOptions, WorkPoolTask,
     };
 
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};
@@ -78,8 +78,9 @@ mod _impl {
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
-        // TODO: Strong self-ref on the wrapper → JsRef per PORTING.md §JSC (Strong back-ref to own wrapper leaks)
-        pub this_value: JsCell<StrongOptional>, // Strong.Optional — empty-initialised
+        // Back-ref to the JS wrapper; strong only while a write is in flight
+        // (see `CompressionStream::write` / `run_from_js_thread`).
+        pub this_value: JsCell<JsRef>,
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
         pub pending_reset: Cell<bool>,
@@ -133,7 +134,7 @@ mod _impl {
                 global_this: bun_ptr::BackRef::new(global_this),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
-                this_value: JsCell::new(StrongOptional::empty()),
+                this_value: JsCell::new(JsRef::empty()),
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
                 pending_reset: Cell::new(false),
@@ -279,11 +280,14 @@ mod _impl {
 
         /// RefCount destructor body (called when ref_count → 0).
         fn deinit(&mut self) {
-            // this_value / poll_ref have Drop impls; explicit calls kept for
-            // ordering. The `stream` close below is load-bearing:
+            // `finalize()` marks the `this_value` slot terminal and releases any
+            // Strong handle slot; it is advisory state only (the struct is freed
+            // immediately after deinit, which is the actual protection against
+            // late access). poll_ref has a Drop impl; the explicit replace keeps
+            // teardown ordering obvious. The `stream` close below is load-bearing:
             // `Context` has no Drop, so the brotli encoder/decoder state would
             // leak without it.
-            self.this_value.set(StrongOptional::empty());
+            self.this_value.with_mut(|v| v.finalize());
             drop(self.poll_ref.replace(CountedKeepAlive::default()));
             self.stream.with_mut(|s| match s.mode {
                 bun_zlib::NodeMode::BROTLI_ENCODE | bun_zlib::NodeMode::BROTLI_DECODE => s.close(),

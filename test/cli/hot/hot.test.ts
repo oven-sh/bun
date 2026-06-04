@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
 import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, tmpdirSync, waitForFileToExist } from "harness";
+import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -765,4 +765,35 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+it(
+  "--hot process that exits right after the watcher starts shuts down cleanly",
+  async () => {
+    // Regression pin for the watcher teardown window targeted by the fix in
+    // progress for issue #30644 (deinit right after init): the file-watcher
+    // thread takes ownership of its heap state at startup and frees it during
+    // teardown; exiting immediately after start exercises the narrow window
+    // between thread spawn and the watch loop running. Repeat a few times so
+    // a racy teardown shows up as a crash or bad exit code. This pins the
+    // currently-working behavior; it is not a differential test for the Send
+    // newtype change (which is behavior-preserving by design).
+    using dir = tempDir("hot-immediate-exit", {
+      "exit.js": `console.log("ready");\nprocess.exit(0);\n`,
+    });
+    for (let i = 0; i < 5; i++) {
+      await using proc = spawn({
+        cmd: [bunExe(), "--hot", "run", "exit.js"],
+        env: bunEnv,
+        cwd: String(dir),
+        stdout: "pipe",
+        stderr: "pipe",
+        stdin: "ignore",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(stdout).toBe("ready\n");
+      expect(exitCode).toBe(0);
+    }
+  },
+  timeout,
 );

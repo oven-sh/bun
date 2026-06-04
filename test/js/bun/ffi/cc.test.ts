@@ -1,7 +1,7 @@
 import { cc, CString, JSCallback, ptr, type FFIFunction, type Library } from "bun:ffi";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { promises as fs } from "fs";
-import { bunEnv, bunExe, isArm64, isASAN, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isArm64, isASAN, isWindows, normalizeBunSnapshot, tempDirWithFiles } from "harness";
 import path from "path";
 
 // TinyCC (and all of bun:ffi) is disabled on Windows ARM64
@@ -384,6 +384,84 @@ describe.skipIf(isWindows || isASAN)("threadsafe JSCallback invoked from a forei
 
     expect(stderr).toBe("");
     expect(stdout).toBe("ok\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// =============================================================================
+
+// GC rooting-invariant guard for FFI function values. This is not a
+// behavior test for any single change — it pins two liveness invariants:
+// (a) the compiled trampoline's executable memory survives the library
+// wrapper being collected (FFI finalization deliberately does not tear down
+// an unclosed library's compiled state), and (b) the JS closure behind a
+// JSCallback stays alive via the native callback wrapper's Strong reference
+// until close(). Drop every other reference, force GC between calls, and
+// the trampolines must still dispatch to live functions.
+// TinyCC's setjmp/longjmp error handling conflicts with ASan.
+describe.skipIf(isASAN || isFFIUnavailable)("GC liveness of compiled symbols and callbacks", () => {
+  it("keeps symbol functions and callback closures alive across forced GC", async () => {
+    const dir = tempDirWithFiles("bun-ffi-cc-gc-liveness", {
+      "lib.c": /* c */ `
+        int twice(int x) { return x + x; }
+        int invoke(int (*cb)(int), int value) { return cb(value); }
+      `,
+      "fixture.js": /* js */ `
+        import { cc, JSCallback } from "bun:ffi";
+        import path from "path";
+
+        function makeSymbols() {
+          // Only the two bound functions escape (kept alive by the caller's
+          // locals once this returns); the library wrapper and the symbols
+          // object become unreachable and may be collected, so the compiled
+          // trampoline memory must outlive them.
+          const { symbols } = cc({
+            source: path.join(import.meta.dir, "lib.c"),
+            symbols: {
+              twice: { args: ["int"], returns: "int" },
+              invoke: { args: ["ptr", "int"], returns: "int" },
+            },
+          });
+          return [symbols.twice, symbols.invoke];
+        }
+
+        function makeCallback() {
+          // The closure has no reference outside the JSCallback; it must be
+          // kept alive by the native wrapper until close().
+          return new JSCallback(x => x * 3, { args: ["int"], returns: "int" });
+        }
+
+        const [twice, invoke] = makeSymbols();
+        const cb = makeCallback();
+        let total = 0;
+        for (let i = 0; i < 100; i++) {
+          Bun.gc(true);
+          const doubled = twice(21);
+          if (doubled !== 42) {
+            throw new Error("twice() returned " + doubled + " at iteration " + i);
+          }
+          const tripled = invoke(cb.ptr, i);
+          if (tripled !== i * 3) {
+            throw new Error("callback returned " + tripled + " at iteration " + i);
+          }
+          total++;
+        }
+        cb.close();
+        console.log("OK " + total);
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"OK 100"`);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
   });
 });

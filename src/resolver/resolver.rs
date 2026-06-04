@@ -854,9 +854,15 @@ impl<'a> Resolver<'a> {
     ///
     /// Stacked Borrows: each call pushes a fresh Unique tag on the BSSMap
     /// allocation, so any `*mut DirInfo` previously projected from an earlier
-    /// `dir_cache_mut()` borrow is popped. Callers that need a slot pointer to
-    /// survive a subsequent map access must route both through ONE bound
-    /// `&mut HashMap` (see `dir_info_for_resolution` / `dir_info_cached_maybe_log`).
+    /// `dir_cache_mut()` borrow is popped. Slot pointers that must survive a
+    /// subsequent map access are re-derived from the raw singleton:
+    /// `HashMapExt::put` does this internally, and `DirInfo::slot_ptr_at`
+    /// covers index-based lookups (see `dir_info_cached_miss`,
+    /// `dir_info_for_resolution`). This is NOT yet universal: read paths that
+    /// go through `at_index(..).map(DirInfoRef::from_slot)` (e.g. the
+    /// cache-hit arm of `dir_info_cached_maybe_log`) and
+    /// `DirInfo::ref_at_index` still hand out refs whose tags descend from a
+    /// transient borrow; those are only durable until the next map access.
     #[inline(always)]
     pub fn dir_cache_mut(&mut self) -> &mut DirInfo::HashMap {
         // SAFETY: ARENA — `self.dir_cache` is the never-null
@@ -3419,17 +3425,16 @@ impl<'a> Resolver<'a> {
         let dir_path = strings::without_trailing_slash_windows_path(dir_path_maybe_trail_slash);
 
         Self::assert_valid_cache_key(dir_path);
-        // Stacked Borrows: bind ONE `&mut HashMap` and route both the lookup and the slot
-        // projection through it so the returned `*mut DirInfo` shares a parent tag with the
-        // borrow it was derived from (a second `dir_cache_mut()` Unique retag of the
-        // whole `BSSMapInner` would otherwise pop it).
-        let dc = self.dir_cache_mut();
-        let mut dir_cache_info_result = dc.get_or_put(dir_path)?;
+        let mut dir_cache_info_result = self.dir_cache_mut().get_or_put(dir_path)?;
         if dir_cache_info_result.status == allocators::ItemStatus::Exists {
             // we've already looked up this package before
-            return Ok(dc
-                .at_index(dir_cache_info_result.index)
-                .map(DirInfoRef::from_slot));
+            // SAFETY: `Exists` means `index` was assigned by `put`; resolver
+            // mutex held. `from_raw`: `slot_ptr_at` yields a live BSSMap slot
+            // rooted at the raw singleton, so the returned ref survives the
+            // caller's later map reborrows (`load_node_modules` holds it
+            // across further `&mut self` calls).
+            return Ok(unsafe { DirInfo::slot_ptr_at(dir_cache_info_result.index) }
+                .map(|p| unsafe { DirInfoRef::from_raw(p) }));
         }
         // SAFETY: PORT (Stacked Borrows) — derive `rfs` from the raw `*mut FileSystem`
         // field via `addr_of_mut!` so later `&mut *self.log()` / `&mut *self.dir_cache()`
@@ -3556,8 +3561,9 @@ impl<'a> Resolver<'a> {
 
         // We must initialize it as empty so that the result index is correct.
         // This is important so that browser_scope has a valid index.
-        // NOTE: erase the `&mut DirInfo` borrow to `*mut` immediately so
-        // `self.dir_cache` (and `*self`) are reborrowable for the call below.
+        // NOTE: `HashMapExt::put` returns a `*mut` re-derived from the raw
+        // singleton (`DirInfo::slot_ptr_at`), so `self.dir_cache` (and `*self`)
+        // are reborrowable for the call below without popping this pointer.
         let dir_info_ptr: *mut DirInfo::DirInfo = self
             .dir_cache_mut()
             .put(&mut dir_cache_info_result, DirInfo::DirInfo::default())
@@ -4628,19 +4634,19 @@ impl<'a> Resolver<'a> {
 
             // We must initialize it as empty so that the result index is correct.
             // This is important so that browser_scope has a valid index.
-            // NOTE: erase the `&mut DirInfo` borrow to `*mut` immediately so
-            // `self.dir_cache` (and `*self`) are reborrowable for the call below.
-            // SAFETY: ARENA — `dir_cache()` singleton (see NOTE). Stacked Borrows: bind
-            // ONE `&mut HashMap` and derive BOTH slot pointers from it so they share a parent
-            // tag — a second `&mut *self.dir_cache()` Unique retag of the whole `BSSMapInner`
-            // (whose `backing_buf` is inline) would pop `dir_info_ptr`'s tag before
-            // `dir_info_uncached` writes through it.
-            // NOTE: erasing `&mut V` to `*mut V` does NOT, by itself, survive a sibling Unique
-            // retag of the parent allocation; the shared `dc` parent is what keeps both live.
-            let dc = self.dir_cache_mut();
-            let dir_info_ptr: *mut DirInfo::DirInfo =
-                dc.put(&mut queue_top.result, DirInfo::DirInfo::default())?;
-            let parent_dir_ptr = dc.at_index(top_parent.index).map(DirInfoRef::from_slot);
+            // SAFETY: ARENA — `dir_cache()` singleton (see NOTE). Stacked Borrows:
+            // `HashMapExt::put` re-derives the returned slot pointer from the raw
+            // singleton (`DirInfo::slot_ptr_at`), and `parent_dir_ptr` is derived
+            // the same way below — both pointers are rooted at the static, so the
+            // later map reborrows inside `dir_info_uncached` cannot pop their tags.
+            let dir_info_ptr: *mut DirInfo::DirInfo = self
+                .dir_cache_mut()
+                .put(&mut queue_top.result, DirInfo::DirInfo::default())?;
+            // SAFETY: `top_parent.index` is either a sentinel (`slot_ptr_at`
+            // returns `None`) or a slot previously assigned by `put`; resolver
+            // mutex held. `from_raw`: `slot_ptr_at` yields a live BSSMap slot.
+            let parent_dir_ptr = unsafe { DirInfo::slot_ptr_at(top_parent.index) }
+                .map(|p| unsafe { DirInfoRef::from_raw(p) });
 
             self.dir_info_uncached(
                 dir_info_ptr,
@@ -5995,27 +6001,26 @@ impl<'a> Resolver<'a> {
     ) -> core::result::Result<(), bun_core::Error> {
         let result = _result;
 
-        // SAFETY: RealFS / DirEntry are global ARENA singletons (BSSMap-backed).
-        // Derive `rfs_ptr` from the raw `*mut FileSystem` field so later `unsafe { &mut *self.fs() }` calls
-        // (`abs_buf` / `dirname_store.append_slice` in the parent-symlink block) cannot
-        // invalidate it under Stacked Borrows. Re-borrow at EACH use site so no `&mut`
-        // outlives a `unsafe { &mut *self.fs() }` / `get_entries()` / `parse_package_json()` call.
-        // TODO: split RealFS borrow once entries iteration is interior-mutability-backed.
+        // SAFETY: RealFS is the process-global ARENA singleton. Derive `rfs_ptr` from
+        // the raw `*mut FileSystem` field (not a `&mut`), and pass it straight through
+        // to `Entry::kind`/`Entry::symlink` — those take the resolver by raw pointer
+        // and reborrow internally only for the duration of the lazy stat, so no
+        // `&mut RealFS` is ever materialized in this frame and the interleaved
+        // `self.fs_ref()` / `parse_package_json()` / `parse_tsconfig()` calls below
+        // cannot invalidate it under Stacked Borrows.
         let rfs_ptr: *mut Fs::file_system::RealFS = self.rfs_ptr();
-        // SAFETY: caller passes `_entries` as a live slot in the global BSSMap-backed entries cache (ARENA).
-        let entries_ptr: *mut Fs::file_system::DirEntry = unsafe { &mut *_entries }.entries_mut();
-        // NOTE: re-borrow per use; see SAFETY note above.
-        macro_rules! rfs {
-            () => {
-                // SAFETY: `rfs_ptr` points at the process-global RealFS singleton; see note above.
-                // Caller must invoke from an `unsafe` block (all sites wrap the unsafe `kind`/`symlink` call).
-                &mut *rfs_ptr
-            };
-        }
+        // ARENA-backed `DirEntry`: the caller passes `_entries` as a live slot in the
+        // global BSSMap-backed entries cache, and the payload `DirEntry` is a separate
+        // process-lifetime allocation, so a shared `BackRef` survives unrelated
+        // entries-map traffic. Every use in this function is a `&self` read
+        // (`get_comptime_query` / `has_comptime_query` / `.fd`); `Entry` cache fields
+        // mutate through `Cell` under `entries_mutex`, which the caller holds.
+        // SAFETY: `_entries` is a live `EntriesOption` slot (caller contract).
+        let dir_entries = bun_ptr::BackRef::new(unsafe { &*_entries }.entries());
         macro_rules! entries {
             () => {
-                // SAFETY: `entries_ptr` is a live BSSMap-backed `DirEntry` slot (ARENA); see note above.
-                unsafe { &mut *entries_ptr }
+                // Fresh safe shared borrow of the ARENA-backed `DirEntry` (see note above).
+                dir_entries.get()
             };
         }
 
@@ -6056,8 +6061,8 @@ impl<'a> Resolver<'a> {
             if let Some(entry) = entries!().get_comptime_query(b"node_modules") {
                 info.flags.set_present(
                     DirInfo::Flag::HasNodeModules,
-                    // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                    unsafe { entry.entry().kind(rfs!(), self.store_fd) }
+                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                    unsafe { entry.entry().kind(rfs_ptr, self.store_fd) }
                         == Fs::file_system::EntryKind::Dir,
                 );
             }
@@ -6108,8 +6113,8 @@ impl<'a> Resolver<'a> {
 
                 if info.is_node_modules() {
                     if let Some(q) = entries!().get_comptime_query(b".bin") {
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                        if unsafe { q.entry().kind(rfs!(), self.store_fd) }
+                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                        if unsafe { q.entry().kind(rfs_ptr, self.store_fd) }
                             == Fs::file_system::EntryKind::Dir
                         {
                             // SAFETY: BIN_FOLDERS_LOADED is single-thread init-once; protected by RESOLVER_MUTEX held by callers.
@@ -6187,9 +6192,9 @@ impl<'a> Resolver<'a> {
             if !self.opts.preserve_symlinks {
                 if let Some(parent_entries) = parent_.get_entries_ref(self.generation) {
                     if let Some(lookup) = parent_entries.get(base) {
-                        // `entries_ptr` is a slot in the BSSMap-backed entries singleton —
-                        // route the read-only `.fd` access through the existing
-                        // `entries!()` re-borrow macro instead of a raw-ptr deref.
+                        // Read-only `.fd` access through the shared `entries!()`
+                        // borrow of the ARENA-backed `DirEntry` (see the note at
+                        // the top of this function).
                         let entries_fd = entries!().fd;
                         if entries_fd.is_valid()
                             && !lookup.entry().cache().fd.is_valid()
@@ -6201,8 +6206,8 @@ impl<'a> Resolver<'a> {
                         // dies (NLL) before any later `&mut` to this slot.
                         let entry = lookup.entry();
 
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                        let mut symlink = unsafe { entry.symlink(rfs!(), self.store_fd) };
+                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                        let mut symlink = unsafe { entry.symlink(rfs_ptr, self.store_fd) };
                         if !symlink.is_empty() {
                             if let Some(logs) = self.debug_logs.as_mut() {
                                 let mut buf = Vec::new();
@@ -6262,8 +6267,8 @@ impl<'a> Resolver<'a> {
                 // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                 // dies (NLL) before any later `&mut` to this slot.
                 let entry = lookup.entry();
-                // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                if unsafe { entry.kind(rfs!(), self.store_fd) } == Fs::file_system::EntryKind::File
+                // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                if unsafe { entry.kind(rfs_ptr, self.store_fd) } == Fs::file_system::EntryKind::File
                 {
                     info.package_json = if self.use_package_manager()
                         && !info.has_node_modules()
@@ -6332,8 +6337,8 @@ impl<'a> Resolver<'a> {
                     // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                     // dies (NLL) before any later `&mut` to this slot.
                     let entry = lookup.entry();
-                    // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                    if unsafe { entry.kind(rfs!(), self.store_fd) }
+                    // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                    if unsafe { entry.kind(rfs_ptr, self.store_fd) }
                         == Fs::file_system::EntryKind::File
                     {
                         let parts = [path, b"tsconfig.json".as_slice()];
@@ -6348,8 +6353,8 @@ impl<'a> Resolver<'a> {
                         // SAFETY: EntryStore-owned slot; `entries_mutex` held — read-only borrow,
                         // dies (NLL) before any later `&mut` to this slot.
                         let entry = lookup.entry();
-                        // SAFETY: entries_mutex held; rfs points at the process-global RealFS.
-                        if unsafe { entry.kind(rfs!(), self.store_fd) }
+                        // SAFETY: entries_mutex held; `rfs_ptr` points at the process-global RealFS.
+                        if unsafe { entry.kind(rfs_ptr, self.store_fd) }
                             == Fs::file_system::EntryKind::File
                         {
                             let parts = [path, b"jsconfig.json".as_slice()];
@@ -6574,6 +6579,13 @@ pub struct BrowserMapPath<'b> {
 }
 
 impl<'b> BrowserMapPath<'b> {
+    /// On a match, only `self.remapped` is updated — that is the sole field
+    /// callers read after a successful call. `cleaned` / `input_path` are
+    /// read-only inputs set at construction (`check_browser_map` reads
+    /// `input_path` only between *unsuccessful* calls, where it is untouched),
+    /// so the matched candidate itself — which would otherwise borrow the
+    /// threadlocal `extension_path` / `tsconfig_base_url` scratch buffers — is
+    /// never stored back into the checker.
     pub fn check_path(&mut self, path_to_check: &[u8]) -> bool {
         let map = self.map;
 
@@ -6585,8 +6597,6 @@ impl<'b> BrowserMapPath<'b> {
             // cache is process-global); the `'b` borrow on `map` artificially shortens
             // what is process-lifetime storage. `Interned` is the canonical proof type.
             self.remapped = unsafe { bun_ptr::Interned::assume(result) }.as_bytes();
-            // SAFETY: extending borrow of caller-owned slice; consumed before checker is dropped (TODO: thread explicit lifetime).
-            self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(path_to_check) };
             return true;
         }
 
@@ -6609,10 +6619,6 @@ impl<'b> BrowserMapPath<'b> {
                 if let Some(_remapped) = map.get(new_path) {
                     // SAFETY: ARENA — see `result` note above.
                     self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
-                    // SAFETY: `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite (TODO: thread explicit lifetime).
-                    self.cleaned = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
-                    // SAFETY: same as above.
-                    self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
                     return true;
                 }
             }
@@ -6636,8 +6642,6 @@ impl<'b> BrowserMapPath<'b> {
         if let Some(_remapped) = map.get(index_path) {
             // SAFETY: ARENA — see `result` note above.
             self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
-            // SAFETY: `index_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite (TODO: thread explicit lifetime).
-            self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(index_path) };
             return true;
         }
 
@@ -6657,10 +6661,6 @@ impl<'b> BrowserMapPath<'b> {
                 if let Some(_remapped) = map.get(new_path) {
                     // SAFETY: ARENA — see `result` note above.
                     self.remapped = unsafe { bun_ptr::Interned::assume(_remapped) }.as_bytes();
-                    // SAFETY: `new_path` borrows the threadlocal `extension_path` buf; consumed before next overwrite (TODO: thread explicit lifetime).
-                    self.cleaned = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
-                    // SAFETY: same as above.
-                    self.input_path = unsafe { &*std::ptr::from_ref::<[u8]>(new_path) };
                     return true;
                 }
             }

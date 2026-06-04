@@ -429,7 +429,7 @@ for (const mode of ["clear", "refresh", "repeat"]) {
       .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
       .join("\n");
     expect(filteredStderr).toBe("");
-    expect(stdout).toContain("delta:");
+    expect(stdout).toContain("protected Timeout count: 0");
     expect(exitCode).toBe(0);
   }, 90_000);
 }
@@ -529,3 +529,104 @@ it("clearTimeout with a numeric id is a no-op after a timeout promoted to an int
   expect(stdout).toBe("converted: ok\nsurvived\n");
   expect(exitCode).toBe(0);
 });
+
+it("re-entrant timer operations during timer drain do not corrupt the timer heap", async () => {
+  // Fired callbacks re-enter the timer subsystem while the drain loop is
+  // mid-iteration: clearing sibling timers, refreshing the fired timer,
+  // scheduling new timers, and cancelling intervals from inside their own
+  // callback. Interleaves Atomics.waitAsync timeouts so the internal WTF
+  // timer fire path runs between JS timer fires, and forces GC between
+  // rounds. Asserts everything fires the expected number of times.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        async function main() {
+          for (let round = 0; round < 20; round++) {
+            let fired = 0;
+            let cancelled = 0;
+            const timers = [];
+            const done = Promise.withResolvers();
+
+            // Atomics.waitAsync timeouts ride the internal WTF timer.
+            const sab = new Int32Array(new SharedArrayBuffer(8));
+            const waits = [
+              Atomics.waitAsync(sab, 0, 0, 1).value,
+              Atomics.waitAsync(sab, 0, 0, 2).value,
+            ];
+
+            // 16 timers with equal-ish deadlines; even ones clear the next
+            // odd one from inside their callback (remove during drain).
+            for (let i = 0; i < 16; i++) {
+              timers[i] = setTimeout(() => {
+                fired++;
+                if (i % 2 === 0 && timers[i + 1] !== undefined) {
+                  clearTimeout(timers[i + 1]);
+                  cancelled++;
+                }
+                // Insert during drain.
+                if (i === 0) {
+                  timers.push(
+                    setTimeout(() => {
+                      fired++;
+                    }, 1),
+                  );
+                }
+              }, 1);
+            }
+
+            // Interval that refreshes a timeout from its callback (update
+            // during drain), then cancels itself (remove during drain).
+            let ticks = 0;
+            const refreshee = setTimeout(() => {
+              fired++;
+            }, 30);
+            const interval = setInterval(() => {
+              ticks++;
+              refreshee.refresh();
+              if (ticks === 3) {
+                clearInterval(interval);
+                clearTimeout(refreshee);
+                done.resolve();
+              }
+            }, 1);
+
+            await done.promise;
+            await Promise.all(waits);
+            Bun.gc(round % 4 === 0);
+
+            // 8 even timers fired; odd ones 1..15 cleared by their
+            // predecessor (7 of them are cleared before firing — timer 1 may
+            // race timer 0 at equal deadlines, so just check bounds), plus
+            // the late-inserted one.
+            if (fired < 9 || fired > 17) throw new Error("unexpected fired count: " + fired);
+            if (cancelled !== 8) throw new Error("unexpected cancelled count: " + cancelled);
+            if (ticks !== 3) throw new Error("unexpected interval ticks: " + ticks);
+          }
+          console.log("drained");
+        }
+        main().then(
+          () => {},
+          err => {
+            console.error(err);
+            process.exit(1);
+          },
+        );
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const stderrLines = stderr
+    .split("\n")
+    .filter(l => l && !l.startsWith("WARNING: ASAN interferes"))
+    .join("\n");
+  expect(stderrLines).toBe("");
+  expect(stdout).toBe("drained\n");
+  expect(exitCode).toBe(0);
+}, 60_000);

@@ -83,9 +83,14 @@ impl BuildMessage {
     /// `BuildMessageClass__finalize` on lazy sweep.
     pub fn create(
         global: &JSGlobalObject,
-        msg: bun_ast::Msg,
+        mut msg: bun_ast::Msg,
         // resolve_result: *const Resolver.Result,
     ) -> JsResult<JSValue> {
+        // Escape boundary: this JS-visible object outlives the `Log` (and any
+        // `Source`/arena) that backed the message's borrowed string views —
+        // e.g. `Log::clone_to_with_recycled` leaves `Cow::Borrowed` views into
+        // the Log's `owned_strings` packed buffer. Own every byte now.
+        msg.make_owned();
         let build_error = BuildMessage {
             msg,
             // resolve_result: resolve_result.*,
@@ -155,7 +160,7 @@ impl BuildMessage {
         object.put(
             global,
             b"namespace",
-            ZigString::init(location.namespace).to_js(global),
+            ZigString::init(&location.namespace).to_js(global),
         );
         object.put(global, b"line", JSValue::from(location.line));
         object.put(global, b"column", JSValue::from(location.column));

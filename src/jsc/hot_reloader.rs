@@ -30,12 +30,6 @@ pub enum ImportWatcher {
     Watch(Box<Watcher>),
 }
 
-// Drift guard for the bun_watcher CYCLEBREAK `Loader` newtype: its `File`
-// constant must mirror `bun_ast::Loader::File` —
-// the watcher stores that value for auto-watched directories. This crate sees
-// both types, so the compile-time check lives here.
-const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
-
 impl ImportWatcher {
     pub fn start(&mut self) -> Result<(), bun_core::Error> {
         match self {
@@ -107,11 +101,9 @@ impl ImportWatcher {
 
     #[inline]
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8], loader: bun_ast::Loader) -> bool {
-        // Note: bun_watcher::Loader is an opaque newtype over u8;
-        // wrap the bun_ast::Loader discriminant.
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
-                w.add_file_by_path_slow(file_path, bun_watcher::Loader(loader as u8))
+                w.add_file_by_path_slow(file_path, loader)
             }
             ImportWatcher::None => true,
         }
@@ -131,14 +123,7 @@ impl ImportWatcher {
     ) -> bun_sys::Result<()> {
         match self {
             ImportWatcher::Hot(watcher) | ImportWatcher::Watch(watcher) => watcher
-                .add_file::<COPY_FILE_PATH>(
-                    fd,
-                    file_path,
-                    hash,
-                    bun_watcher::Loader(loader as u8),
-                    dir_fd,
-                    package_json,
-                ),
+                .add_file::<COPY_FILE_PATH>(fd, file_path, hash, loader, dir_fd, package_json),
             ImportWatcher::None => Ok(()),
         }
     }

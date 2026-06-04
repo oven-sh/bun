@@ -2166,6 +2166,36 @@ fn handle_body_already_used(global_object: &JSGlobalObject) -> JSValue {
 pub(crate) type ValueBuffererCallback =
     fn(ctx: *mut c_void, bytes: &[u8], err: Option<ValueError>, is_async: bool);
 
+/// Error surface of [`ValueBufferer::run`] / `buffer_locked_body_value`.
+///
+/// Mirrors the original error union: stream-state failures are carried as
+/// native string-coded errors, while a JS exception raised during body
+/// conversion (e.g. `to_readable_stream`) is propagated as
+/// [`bun_jsc::JsError`] — the exception value itself stays *pending on the
+/// VM* (the repo-wide `JsError::Thrown` convention), so no GC rooting is
+/// needed here and callers can rethrow or inspect it via the exception scope
+/// instead of receiving a flattened synthetic "JSError" string.
+pub enum BufferError {
+    /// A JS exception is pending on the VM (or OOM/termination).
+    Js(bun_jsc::JsError),
+    /// Native stream-state failure (`StreamAlreadyUsed`, `InvalidStream`, …).
+    Native(bun_core::Error),
+}
+
+impl From<bun_jsc::JsError> for BufferError {
+    #[inline]
+    fn from(e: bun_jsc::JsError) -> Self {
+        BufferError::Js(e)
+    }
+}
+
+impl From<bun_core::Error> for BufferError {
+    #[inline]
+    fn from(e: bun_core::Error) -> Self {
+        BufferError::Native(e)
+    }
+}
+
 pub struct ValueBufferer<'a> {
     pub ctx: *mut c_void,
     pub on_finished_buffering: ValueBuffererCallback,
@@ -2220,13 +2250,13 @@ impl<'a> ValueBufferer<'a> {
         &mut self,
         value: &mut Value,
         owned_readable_stream: Option<ReadableStream>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), BufferError> {
         value.to_blob_if_possible();
 
         match value {
             Value::Used => {
                 bun_core::scoped_log!(BodyValueBufferer, "Used");
-                return Err(bun_core::err!("StreamAlreadyUsed"));
+                return Err(bun_core::err!("StreamAlreadyUsed").into());
             }
             Value::Empty | Value::Null => {
                 bun_core::scoped_log!(BodyValueBufferer, "Empty");
@@ -2404,7 +2434,7 @@ impl<'a> ValueBufferer<'a> {
         &mut self,
         value: &mut Value,
         owned_readable_stream: Option<ReadableStream>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), BufferError> {
         debug_assert!(matches!(value, Value::Locked(_)));
         let Value::Locked(locked) = value else {
             unreachable!()
@@ -2430,12 +2460,12 @@ impl<'a> ValueBufferer<'a> {
             *value = Value::Used;
 
             if stream.is_locked(self.global) {
-                return Err(bun_core::err!("StreamAlreadyUsed"));
+                return Err(bun_core::err!("StreamAlreadyUsed").into());
             }
 
             match stream.ptr {
                 webcore::readable_stream::Source::Invalid => {
-                    return Err(bun_core::err!("InvalidStream"));
+                    return Err(bun_core::err!("InvalidStream").into());
                 }
                 // toBlobIfPossible should've caught this
                 webcore::readable_stream::Source::Blob(_)
@@ -2444,7 +2474,7 @@ impl<'a> ValueBufferer<'a> {
                 | webcore::readable_stream::Source::Direct => {
                     // this is broken right now
                     // return self.create_js_sink(stream);
-                    return Err(bun_core::err!("UnsupportedStreamType"));
+                    return Err(bun_core::err!("UnsupportedStreamType").into());
                 }
                 webcore::readable_stream::Source::Bytes(byte_stream_ptr) => {
                     // BACKREF: see `Source::bytes()` — payload owned by the
@@ -2492,12 +2522,11 @@ impl<'a> ValueBufferer<'a> {
 
         if locked.on_receive_value.is_some() || locked.task.is_some() {
             // someone else is waiting for the stream or waiting for `onStartStreaming`
+            // A thrown exception propagates as `BufferError::Js` (pending on
+            // the VM) instead of being flattened to a synthetic string error.
             let readable = value
                 .to_readable_stream(self.global)
-                .map_err(|_| bun_core::err!("JSError"))?;
-            // The JS exception value is
-            // flattened to a string-coded error because `run`'s callers consume
-            // `bun_core::Error` (the exception itself stays pending on the VM).
+                .map_err(BufferError::Js)?;
             readable.ensure_still_alive();
             readable.protect();
             return self.buffer_locked_body_value(value, None);

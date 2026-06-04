@@ -1391,10 +1391,11 @@ impl<'a> Transpiler<'a> {
 
         let mut input_fd: Option<FD> = None;
         // Owns the heap allocation backing `source.contents` for the
-        // non-shared-buffer file-read and `data:` URL paths. Threaded into the
+        // non-shared-buffer file-read, `data:` URL, and client-entry paths.
+        // Threaded into the
         // returned `ParseResult` so it drops with the result instead of being
         // `mem::forget`-ed (PORTING.md §Forbidden patterns). For virtual /
-        // client-entry / `node:` / shared-buffer paths it stays `Empty`
+        // `node:` / shared-buffer paths it stays `Empty`
         // (`Drop` is a no-op).
         let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
 
@@ -1404,7 +1405,25 @@ impl<'a> Transpiler<'a> {
             }
 
             if let Some(client_entry_point) = client_entry_point_ {
-                break 'brk client_entry_point.source.clone();
+                // The entry's `source.contents` is `Cow::Owned`; a plain
+                // `.clone()` would deep-copy the heap buffer into the no-Drop
+                // arena slot below and leak it. Move the cloned buffer into
+                // `source_backing` instead (same pattern as the `data:` path
+                // below) so it drops with the `ParseResult`, and let the
+                // arena `Source` re-borrow it.
+                let mut src = client_entry_point.source.clone();
+                source_backing = resolver::cache::Contents::from(core::mem::replace(
+                    &mut src.contents,
+                    std::borrow::Cow::Borrowed(b"".as_slice()),
+                ));
+                // SAFETY: `source_backing` is moved into the returned
+                // `ParseResult` (or drops on `return None`); the re-borrow is
+                // sound because consumers of `source.contents` never outlive
+                // the `ParseResult`.
+                src.contents = std::borrow::Cow::Borrowed(unsafe {
+                    bun_ptr::detach_lifetime_ref::<[u8]>(source_backing.as_slice())
+                });
+                break 'brk src;
             }
 
             if path.namespace == b"node" {
@@ -2816,6 +2835,11 @@ impl<'a> Transpiler<'a> {
         }
         self.options.transform_only = true;
 
+        // Invariant: only the main-thread transpiler reaches this method.
+        // Worker option clones (`BundleOptions::for_worker`) intentionally
+        // carry `output_dir_handle: None` because the handle is owning; if a
+        // worker ever called `transform()`, this branch would silently route
+        // output to stdout instead of the output directory.
         if self.options.output_dir_handle.is_none() {
             let outstream = TransformOutstream::Stdout;
             match self.options.import_path_format {
@@ -2833,7 +2857,8 @@ impl<'a> Transpiler<'a> {
                 }
             }
         } else {
-            let Some(output_dir) = self.options.output_dir_handle else {
+            let Some(output_dir) = self.options.output_dir_handle.as_ref().map(bun_sys::Dir::fd)
+            else {
                 bun_core::Output::print_error("Invalid or missing output directory.");
                 bun_core::Global::crash();
             };
@@ -2870,7 +2895,10 @@ impl<'a> Transpiler<'a> {
         // SAFETY: see above (`self.log` is the same pointer as `log`).
         let mut final_result =
             options::TransformResult::init(outbase, output_files, unsafe { &mut *self.log })?;
-        final_result.root_dir = self.options.output_dir_handle;
+        // Raw-fd view only: `self.options.output_dir_handle` keeps ownership
+        // (and closes the fd); duplicating an owning handle here would
+        // double-close.
+        final_result.root_dir = self.options.output_dir_handle.as_ref().map(bun_sys::Dir::fd);
         Ok(final_result)
     }
 
@@ -3221,6 +3249,8 @@ impl<'a> Transpiler<'a> {
                 dir: self
                     .options
                     .output_dir_handle
+                    .as_ref()
+                    .map(bun_sys::Dir::fd)
                     .unwrap_or(bun_sys::Fd::INVALID),
                 is_outdir: true,
                 ..Default::default()

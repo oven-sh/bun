@@ -574,7 +574,8 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
     pub binary_expression_stack: ListManaged<'a, BinaryExpressionVisitor>,
     // Reusable stack for `SideEffects::simplify_unused_binary_comma_expr`;
-    // avoids per-call allocation once that path is wired to push into it.
+    // avoids per-call allocation. Callers record a bottom watermark and
+    // truncate back to it on exit (the path is recursive).
     pub binary_expression_simplify_stack: ListManaged<'a, BinaryExpressionSimplifyVisitor>,
 
     /// We build up enough information about the TypeScript namespace hierarchy to
@@ -9129,8 +9130,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             require_resolve_transposer: RequireResolveTransposer::dangling(),
             source,
             // A `&'a mut Vec<Stmt>` cannot be left uninitialized, so allocate
-            // an empty placeholder in the arena (real list is wired by the visit
-            // pass before any macro expansion runs).
+            // an empty placeholder in the arena. The placeholder is permanent:
+            // `MacroState::prepend_stmts` is write-only (written once, never
+            // read), so the visit pass intentionally does not wire a real
+            // backref — see visit/mod.rs and parser.rs.
             macro_: MacroState::init(arena.alloc(Vec::new())),
             current_scope: scope,
             module_scope: scope,

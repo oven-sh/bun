@@ -24,9 +24,10 @@ pub use bun_options_types::global_cache::GlobalCache;
 
 // Canonical alias lives in the resolver.
 pub use bun_resolver::package_json::ConditionsMap;
-// TODO(b2-blocked): bun_sys::Dir — directory handle. Mapped to Fd for now
-// (matches `bun.FD.fromStdDir` pattern).
-pub type Dir = bun_sys::Fd;
+/// Owning directory handle (closes the fd on `Drop`). `BundleOptions` is the
+/// single owner; everything downstream takes a raw `Fd` view via [`Dir::fd`]
+/// / [`bun_sys::Dir::borrow`] so the fd is closed exactly once.
+pub type Dir = bun_sys::Dir;
 /// Unified with the canonical
 /// `bun_ast::LoaderHashTable` so the resolver and
 /// bundler share one nominal map type (PORTING.md crate-tier rule).
@@ -1476,7 +1477,11 @@ impl<'a> BundleOptions<'a> {
             react_fast_refresh: self.react_fast_refresh,
             inject: self.inject.clone(),
             origin: self.origin.clone(),
-            output_dir_handle: self.output_dir_handle,
+            // `output_dir_handle` is an owning handle (closes on Drop); the
+            // parent keeps sole ownership. Workers never write to the output
+            // dir through their options copy — duplicating the handle here
+            // would close the parent's fd when the worker options drop.
+            output_dir_handle: None,
             output_dir: self.output_dir.clone(),
             root_dir: self.root_dir.clone(),
             node_modules_bundle_url: self.node_modules_bundle_url.clone(),
@@ -1967,12 +1972,13 @@ impl<'a> BundleOptions<'a> {
 
         if opts.write && !opts.output_dir.is_empty() {
             let handle = open_output_dir(&opts.output_dir)?;
-            opts.output_dir_handle = Some(handle);
             // The inline `bun_resolver::fs::FileSystem` does
             // not yet expose `get_fd_path`, so resolve via `bun_sys` and box.
             let mut buf = bun_paths::PathBuffer::uninit();
-            let dir = bun_sys::get_fd_path(handle, &mut buf).map_err(bun_core::Error::from)?;
+            let dir =
+                bun_sys::get_fd_path(handle.fd(), &mut buf).map_err(bun_core::Error::from)?;
             opts.output_dir = Box::from(&dir[..]);
+            opts.output_dir_handle = Some(handle);
         }
 
         opts.polyfill_node_globals = opts.target == Target::Browser;
@@ -2041,7 +2047,7 @@ pub mod bundle_options_defaults {
 pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
     // Routed through `bun_sys` per CLAUDE.md (never `std::fs`).
     match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
-        Ok(d) => Ok(d),
+        Ok(d) => Ok(Dir::from_fd(d)),
         Err(_) => {
             // Single-level mkdir
             // (fails ENOENT if parent missing). Do NOT use `make_path` (the
@@ -2063,7 +2069,7 @@ pub fn open_output_dir(output_dir: &[u8]) -> Result<Dir, bun_core::Error> {
             }
 
             match bun_sys::open_dir_at(bun_sys::Fd::cwd(), output_dir) {
-                Ok(handle) => Ok(handle),
+                Ok(handle) => Ok(Dir::from_fd(handle)),
                 Err(err2) => {
                     Output::print_errorln(format_args!(
                         "error: Unable to open \"{}\": \"{}\"",
@@ -2171,7 +2177,9 @@ pub struct TransformResult {
     pub warnings: Box<[bun_ast::Msg]>,
     pub output_files: Box<[OutputFile]>,
     pub outbase: Box<[u8]>,
-    pub root_dir: Option<Dir>,
+    /// Non-owning view of `BundleOptions.output_dir_handle` (which owns the
+    /// descriptor and closes it). Never close this fd.
+    pub root_dir: Option<bun_sys::Fd>,
 }
 
 impl TransformResult {

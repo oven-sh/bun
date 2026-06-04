@@ -307,9 +307,9 @@ pub(crate) type TaskCallbackList = Vec<TaskCallbackContext>;
 pub(crate) type TaskDependencyQueue =
     HashMap<Task::Id, TaskCallbackList /* , IdentityContext<Task::Id>, 80 */>;
 
-type PreallocatedTaskStore = HiveArrayFallback<Task::Task<'static>, 64>;
+type PreallocatedTaskStore = HiveArrayFallback<Task::Task, 64>;
 type PreallocatedNetworkTasks = HiveArrayFallback<NetworkTask, 128>;
-type ResolveTaskQueue = UnboundedQueue<Task::Task<'static> /* , .next */>;
+type ResolveTaskQueue = UnboundedQueue<Task::Task /* , .next */>;
 
 type RepositoryMap = HashMap<Task::Id, Fd /* , IdentityContext<Task::Id>, 80 */>;
 pub(crate) type FolderResolutionMap =
@@ -866,9 +866,7 @@ impl PackageManager {
             // so we only need a shared borrow here — the sole invariant is
             // that no `&mut bun_ast::Log` to the pointee is live, which holds on this path.
             // `IntoLogWrite` is impl'd for `*mut io::Writer`, not `&mut`.
-            let _ = self
-                .log_mut()
-                .print(std::ptr::from_mut(Output::error_writer()));
+            let _ = Output::with_error_writer(|w| self.log_mut().print(w));
         }
         Global::crash();
     }

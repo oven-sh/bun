@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
@@ -735,4 +735,110 @@ describe("dictionary buffer lifetime", () => {
 
     expect(Buffer.concat(chunks).toString()).toBe(input.toString());
   });
+});
+
+describe("compression stream wrapper GC liveness", () => {
+  // The native NativeZlib / NativeBrotli / NativeZstd classes root their JS
+  // wrapper (a strong this_value back-ref) only while an async write is in
+  // flight on the work pool. The wrapper has no pending-activity hook, so that
+  // back-ref is the sole GC liveness source for the wrapper and the cached
+  // writeCallback / pendingInput / pendingOutput values mid-write. If the
+  // rooting is ever lost, a full GC between scheduling a write and its
+  // completion collects the wrapper while the worker thread still uses its
+  // buffers — a use-after-free observable as a crash or corrupted output.
+  it("async writes survive forced GC while in flight", async () => {
+    const code = `
+      const zlib = require("node:zlib");
+      const { promisify } = require("node:util");
+      const input = Buffer.alloc(65536, 7);
+
+      const codecs = [
+        [promisify(zlib.deflate), promisify(zlib.inflate)],
+        [promisify(zlib.gzip), promisify(zlib.gunzip)],
+        [promisify(zlib.brotliCompress), promisify(zlib.brotliDecompress)],
+      ];
+      if (typeof zlib.zstdCompress === "function") {
+        codecs.push([promisify(zlib.zstdCompress), promisify(zlib.zstdDecompress)]);
+      }
+
+      for (const [compress, decompress] of codecs) {
+        for (let i = 0; i < 20; i++) {
+          const pending = [];
+          for (let j = 0; j < 4; j++) pending.push(compress(input));
+          // No JS-side root retains the underlying streams here; only the
+          // native in-flight strong ref keeps the wrappers alive across GC.
+          Bun.gc(true);
+          const compressed = await Promise.all(pending);
+          Bun.gc(true);
+          const round = compressed.map(c => decompress(c));
+          Bun.gc(true);
+          for (const r of await Promise.all(round)) {
+            if (!r.equals(input)) throw new Error("round-trip mismatch");
+          }
+        }
+      }
+      Bun.gc(true);
+      console.log("OK");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"OK"`);
+    expect(exitCode).toBe(0);
+  }, 60_000);
+
+  it("destroying streams with in-flight writes under GC pressure does not crash", async () => {
+    // Exercises the pending_close path (close while write_in_progress) and the
+    // this_value clear in closeInternal, interleaved with forced GC. The
+    // event-loop keepalive held during each in-flight write guarantees the
+    // process does not exit before every completion task has run, so no
+    // timer-based waiting is needed.
+    const code = `
+      const zlib = require("node:zlib");
+      const input = Buffer.alloc(1 << 20, 42);
+
+      // Destroy immediately after write: the native close is deferred until
+      // the in-flight write completes back on the JS thread.
+      for (const make of [zlib.createGzip, zlib.createBrotliCompress]) {
+        for (let i = 0; i < 50; i++) {
+          const d = make();
+          d.on("error", () => {});
+          d.on("data", () => {});
+          d.write(input);
+          d.destroy();
+          if (i % 10 === 0) Bun.gc(true);
+        }
+      }
+
+      // Destroy from inside the first data event (write completed, stream
+      // mid-pipeline), then force GC.
+      for (let i = 0; i < 25; i++) {
+        await new Promise((resolve, reject) => {
+          const d = zlib.createGzip();
+          d.on("error", reject);
+          d.once("data", () => {
+            d.destroy();
+            resolve();
+          });
+          d.write(input);
+          d.end();
+        });
+        if (i % 5 === 0) Bun.gc(true);
+      }
+
+      Bun.gc(true);
+      console.log("OK");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"OK"`);
+    expect(exitCode).toBe(0);
+  }, 60_000);
 });

@@ -566,7 +566,7 @@ impl HTMLRewriterLoader {
                 // double-buffer.
                 // SAFETY: `pending` points at a heap WritablePending owned by
                 // the destination sink; valid for the duration of this call.
-                unsafe { (*pending).apply_backpressure(&mut self.output, bytes) };
+                unsafe { (*pending.as_ptr()).apply_backpressure(&mut self.output, bytes) };
             }
             Writable::IntoArray(_) | Writable::Owned(_) | Writable::Temporary(_) => {
                 self.signal.ready(
@@ -907,7 +907,7 @@ impl BufferOutputSink {
         // `<BufferOutputSink as OutputSink>::write/done` and forms a fresh
         // `&mut *sink`. Hoist the bufferer through a raw pointer so no `&mut`
         // derived from `*sink` is live across that callback.
-        let buffering_result: Result<(), bun_core::Error> = unsafe {
+        let buffering_result: Result<(), webcore::body::BufferError> = unsafe {
             let bufferer: *mut webcore::body::ValueBufferer =
                 (*sink).body_value_bufferer.as_mut().unwrap();
             (*bufferer).run(value, owned_readable_stream)
@@ -916,19 +916,25 @@ impl BufferOutputSink {
             // SAFETY: `sink` is a live `heap::into_raw` allocation; release the
             // ref taken for the in-flight bufferer.
             unsafe { BufferOutputSink::deref(sink) };
-            return Ok(match buffering_error {
-                e if e == bun_core::err!("StreamAlreadyUsed") => {
+            return match buffering_error {
+                // The original JS exception is still pending on the VM —
+                // propagate it instead of masking it with a synthetic
+                // "Failed to pipe stream" error.
+                webcore::body::BufferError::Js(js_err) => Err(js_err),
+                webcore::body::BufferError::Native(e)
+                    if e == bun_core::err!("StreamAlreadyUsed") =>
+                {
                     let err = system_error(
                         "ERR_STREAM_ALREADY_FINISHED",
                         "Stream already used, please create a new one",
                     );
-                    err.to_error_instance(global)
+                    Ok(err.to_error_instance(global))
                 }
-                _ => {
+                webcore::body::BufferError::Native(_) => {
                     let err = system_error("ERR_STREAM_CANNOT_PIPE", "Failed to pipe stream");
-                    err.to_error_instance(global)
+                    Ok(err.to_error_instance(global))
                 }
-            });
+            };
         }
 
         // sync error occurs — read via the Cell (shares SharedReadWrite

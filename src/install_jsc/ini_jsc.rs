@@ -200,20 +200,14 @@ impl IniTestingAPIs {
         let utf8str = bunstr.to_utf8();
 
         let env = global.bun_vm().as_mut().transpiler.env_mut();
-        // `Parser::init` ties `src: &'a [u8]` and
-        // `env: &'a mut DotEnvLoader<'a>` to one invariant `'a`; the VM-owned
-        // env is `'static`, so erase `src` to match. SAFETY: `parser` is dropped
-        // before `utf8str` (drop order is reverse of declaration); no borrow
-        // escapes this function. Same pattern as `bun_ini::load_npmrc`.
-        let src: &'static [u8] = bun_ast::IntoStr::into_str(utf8str.slice());
-        let mut parser = Parser::init(b"<src>", src, env);
-
-        // Borrowck — `Parser::parse` takes `&'a Arena`; split the borrow via
-        // raw ptr so the bump outlives the `&mut parser` for the call.
-        let arena_ptr: *const bun_alloc::Arena = &raw const parser.arena;
-        // SAFETY: `parser.arena` is not moved/dropped for the lifetime of `parser`.
-        let bump: &bun_alloc::Arena = unsafe { &*arena_ptr };
-        parser.parse(bump)?;
+        // `Parser<'a, 'e>` splits the env-data lifetime (`'e`, here the
+        // VM-owned loader's) from the parse-input lifetime `'a`, so `utf8str`
+        // and the local arena are borrowed directly — no `'static` erasure or
+        // raw-pointer borrow splitting. `utf8str` and `arena` are declared
+        // before `parser`, so they outlive every borrow it holds.
+        let arena = bun_alloc::Arena::new();
+        let mut parser = Parser::init(b"<src>", utf8str.slice(), env, &arena);
+        parser.parse()?;
 
         match bun_js_parser_jsc::expr_to_js(&parser.out, global) {
             Ok(v) => Ok(v),

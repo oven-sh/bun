@@ -6,8 +6,7 @@ mod _impl {
     use core::ptr;
 
     use bun_jsc::{
-        self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StrongOptional,
-        WorkPoolTask,
+        self as jsc, CallFrame, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, WorkPoolTask,
     };
     use bun_zstd::c; // `bun.c` translated-c-headers (ZSTD_* fns/consts live here)
 
@@ -43,7 +42,9 @@ mod _impl {
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
-        pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
+        // Back-ref to the JS wrapper; strong only while a write is in flight
+        // (see `CompressionStream::write` / `run_from_js_thread`).
+        pub this_value: JsCell<JsRef>,
         pub write_in_progress: Cell<bool>,
         pub pending_close: Cell<bool>,
         pub pending_reset: Cell<bool>,
@@ -99,7 +100,7 @@ mod _impl {
                 global_this: bun_ptr::BackRef::new(global),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
-                this_value: JsCell::new(StrongOptional::empty()),
+                this_value: JsCell::new(JsRef::empty()),
                 write_in_progress: Cell::new(false),
                 pending_close: Cell::new(false),
                 pending_reset: Cell::new(false),
@@ -238,11 +239,14 @@ mod _impl {
         }
     }
 
-    // Called by RefCount when the count hits 0. `poll_ref` and `this_value`
-    // (Strong) cleanup are handled by their own Drop impls; the Box free is
-    // handled by IntrusiveRc dropping the Box.
+    // Called by RefCount when the count hits 0. `finalize()` marks the
+    // `this_value` slot terminal and releases any Strong handle slot (advisory
+    // state only — the struct is freed right after, which is the actual
+    // protection against late access). `poll_ref` cleanup is handled by its
+    // own Drop impl; the Box free is handled by IntrusiveRc dropping the Box.
     impl Drop for NativeZstd {
         fn drop(&mut self) {
+            self.this_value.with_mut(|v| v.finalize());
             self.stream.with_mut(|s| match s.mode {
                 NodeMode::ZSTD_COMPRESS | NodeMode::ZSTD_DECOMPRESS => s.close(),
                 _ => {}

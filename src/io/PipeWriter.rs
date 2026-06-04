@@ -557,6 +557,18 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
     }
 
+    /// API parity with the Windows `BaseWindowsPipeWriter::start_movable`:
+    /// POSIX never transfers fd ownership, so this simply forwards the inner
+    /// fd and leaves `rawfd` untouched.
+    #[cfg(not(windows))]
+    pub fn start_movable(
+        &mut self,
+        rawfd: &mut sys::MovableIfWindowsFd,
+        pollable: bool,
+    ) -> sys::Result<()> {
+        self.start(rawfd.get_posix(), pollable)
+    }
+
     /// On POSIX a `MovableIfWindowsFd` never transfers ownership, so callers
     /// pass the plain `Fd` (via `MovableIfWindowsFd::get_posix()` when needed).
     pub fn start(&mut self, rawfd: Fd, pollable: bool) -> sys::Result<()> {
@@ -1315,7 +1327,12 @@ pub trait BaseWindowsPipeWriter {
         self.start_with_current_pipe()
     }
 
-    // TODO: MovableIfWindowsFd overload — add a separate start_movable().
+    /// Plain-`Fd` start. When `Source::open` produces a uv pipe/tty, libuv
+    /// (`uv_pipe_open`/`uv_tty_init`) takes ownership of the HANDLE and
+    /// `uv_close` will close it — a caller that retains a copy of `rawfd` and
+    /// closes it later double-closes. Callers that retain the fd must use
+    /// [`Self::start_movable`], which disarms their slot on the ownership
+    /// transfer.
     fn start(&mut self, rawfd: Fd, _pollable: bool) -> sys::Result<()> {
         let fd = rawfd;
         debug_assert!(self.source().is_none());
@@ -1327,12 +1344,37 @@ pub trait BaseWindowsPipeWriter {
             sys::Result::Ok(source) => source,
             sys::Result::Err(err) => return sys::Result::Err(err),
         };
-        // Creating a uv_pipe/uv_tty takes ownership of the file descriptor
-        // TODO: Change the type of the parameter and update all places to
-        //       use MovableFD
-        // TODO: take ownership of the fd for pipe/tty sources via a MovableFd
-        // overload.
-        let _ = matches!(source, Source::Pipe(_) | Source::Tty(_));
+        source.set_data(core::ptr::from_mut(self).cast::<c_void>());
+        *self.source_mut() = Some(source);
+        let p = self.parent_ptr();
+        self.set_parent(p);
+        self.start_with_current_pipe()
+    }
+
+    /// `start` variant for callers that retain their fd slot past the call:
+    /// when libuv takes ownership of the HANDLE (the `Source::Pipe`/
+    /// `Source::Tty` success path), `rawfd` is `take()`n so the caller's
+    /// later close/Drop is a no-op instead of a double-close. On the
+    /// `Source::File`/`SyncFile` path — and on open failure — the slot is
+    /// left untouched: the caller still owns the fd (and fallback paths like
+    /// the shell's EBADF→`start_with_file` rely on it staying valid).
+    fn start_movable(
+        &mut self,
+        rawfd: &mut sys::MovableIfWindowsFd,
+        _pollable: bool,
+    ) -> sys::Result<()> {
+        let fd = rawfd.get().expect("start_movable: fd was already moved");
+        debug_assert!(self.source().is_none());
+        // SAFETY: parent is BACKREF set via set_parent; valid while writer alive.
+        let loop_ = unsafe { Self::Parent::loop_(self.parent_ptr()) };
+        let mut source = match Source::open(loop_, fd) {
+            sys::Result::Ok(source) => source,
+            sys::Result::Err(err) => return sys::Result::Err(err),
+        };
+        // Creating a uv_pipe/uv_tty takes ownership of the file descriptor.
+        if matches!(source, Source::Pipe(_) | Source::Tty(_)) {
+            let _ = rawfd.take();
+        }
         source.set_data(core::ptr::from_mut(self).cast::<c_void>());
         *self.source_mut() = Some(source);
         let p = self.parent_ptr();

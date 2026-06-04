@@ -312,7 +312,7 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
         if let Some(p) = self.plugins.take() {
             // SAFETY: `plugins` carries the `heap::alloc` provenance from
             // `ServePlugins::init`; this releases the server's counted ref.
-            unsafe { ServePlugins::deref_(p.as_ptr()) };
+            unsafe { ServePlugins::deref(p.as_ptr()) };
         }
     }
 }

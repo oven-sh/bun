@@ -304,8 +304,14 @@ impl ResolveMessage {
         msg: &bun_ast::Msg,
         referrer: &[u8],
     ) -> JsResult<JSValue> {
+        // `Msg::clone` deep-dupes every string, but keep the escape boundary
+        // airtight against future `Clone` changes: this JS-visible object must
+        // not retain any view into a `Log`'s `owned_strings` buffer or a
+        // `Source`'s contents (see `Msg::make_owned`).
+        let mut msg = msg.clone();
+        msg.make_owned();
         let resolve_error = ResolveMessage {
-            msg: msg.clone(),
+            msg,
             referrer: Some(Box::<[u8]>::from(referrer)),
             logged: Cell::new(false),
         };

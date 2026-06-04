@@ -47,7 +47,10 @@ pub mod impl_ {
         type LocalIdentifier = IdentOrRef;
         type LocalName = Ident;
         type NamespacePrefix = Ident;
-        // TODO: lifetime — should borrow the parser input.
+        // TODO: lifetime — should borrow the parser input. Must land with the
+        // crate-wide `'bump` lifetime-threading campaign (requires lifetime-
+        // parameterized SelectorImpl/`Selectors<'a>` threading through every
+        // selector consumer); do not fix piecemeal.
         type NamespaceUrl = &'static [u8];
         type BorrowedNamespaceUrl = &'static [u8];
         type BorrowedLocalName = Ident;

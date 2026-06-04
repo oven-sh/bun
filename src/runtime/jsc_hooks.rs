@@ -293,7 +293,9 @@ unsafe fn init_runtime_state(
     // `into_raw`-without-reclaim only for true process-lifetime singletons via
     // `OnceLock`, which this is not (per-VM / per-Worker-thread).
     let state = bun_core::heap::into_raw(Box::new(RuntimeState {
-        timer: timer::All::init(),
+        // `vm` is stored as the owning-VM back-pointer (read by the Windows
+        // `ensure_uv_timer` lazy-init); only the address is captured here.
+        timer: timer::All::init(vm),
         sql_rare: bun_sql_jsc::jsc::RareData {
             mysql_context: Default::default(),
             postgresql_context: Default::default(),
@@ -930,16 +932,16 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
             // `WTFTimer` JS callback.
             // A re-entrant `setTimeout`/`clearTimeout` reaches
             // `timer::All::insert`/`remove` via `runtime_state()` and would
-            // mint a second `&mut timer` if we held `&mut (*state).timer`
-            // across the call. Pass the raw `*mut Self` instead;
-            // `timer::All::get_timeout` forms short-lived `&mut` only around
-            // heap ops that cannot re-enter JS, releasing the borrow before
-            // invoking `fire()`.
+            // mint a second `&mut timer` if a `&mut (*state).timer` existed
+            // for this call frame. `addr_of_mut!` passes the raw `*mut All`
+            // without materializing a reference; `timer::All::get_timeout`
+            // forms short-lived `&mut` only around heap ops that cannot
+            // re-enter JS, releasing the borrow before invoking `fire()`.
             // SAFETY: `state` is the live per-thread `RuntimeState`; the
             // `timer` field address is stable for the VM lifetime.
             let have_timeout = unsafe {
                 timer::All::get_timeout(
-                    &mut (*state).timer,
+                    core::ptr::addr_of_mut!((*state).timer),
                     &mut timespec,
                     has_pending_immediate,
                     quic_next_tick_us,
@@ -960,12 +962,13 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     {
         // Note (§Forbidden aliased-&mut): `drain_timers` fires user
         // `setTimeout` callbacks which may re-enter `timer::All::insert`/
-        // `remove` via `runtime_state()`. Pass raw `*mut Self` so no
-        // long-lived `&mut (*state).timer` is held across `fire()`;
-        // `drain_timers` forms short-lived `&mut` only around heap pop/peek.
+        // `remove` via `runtime_state()`. `addr_of_mut!` passes the raw
+        // `*mut All` without materializing a `&mut (*state).timer` for the
+        // call frame; `drain_timers` forms short-lived `&mut` only around
+        // heap pop/peek.
         // SAFETY: `state` is the live per-thread `RuntimeState`; the `timer`
         // field address is stable for the VM lifetime.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
+        unsafe { timer::All::drain_timers(core::ptr::addr_of_mut!((*state).timer), vm.cast()) };
     }
     #[cfg(not(unix))]
     let _ = state;
@@ -1053,7 +1056,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
             // Note on `auto_tick` re: aliased-&mut across `fire()`.
             let have_timeout = unsafe {
                 timer::All::get_timeout(
-                    &mut (*state).timer,
+                    core::ptr::addr_of_mut!((*state).timer),
                     &mut timespec,
                     has_pending_immediate,
                     quic_next_tick_us,
@@ -1074,7 +1077,7 @@ unsafe fn auto_tick_active(vm: *mut VirtualMachine) {
     {
         // SAFETY: `state` is the live per-thread `RuntimeState`; see Note
         // on `auto_tick` re: aliased-&mut across `fire()`.
-        unsafe { timer::All::drain_timers(&mut (*state).timer, vm.cast()) };
+        unsafe { timer::All::drain_timers(core::ptr::addr_of_mut!((*state).timer), vm.cast()) };
     }
     #[cfg(not(unix))]
     let _ = state;

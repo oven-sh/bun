@@ -663,3 +663,40 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
 });
+
+it("pm hash-string prints the alphabetized lockfile string through the scoped stdout writer", async () => {
+  // `bun pm hash-string` writes the lockfile's alphabetized name@version
+  // string through the closure-scoped stdout writer accessor (which replaced
+  // the legacy `&'static mut` thread-local writer escape). Output must be
+  // complete and the process must exit cleanly.
+  using dir = tempDir("pm-hash-string-writer", {
+    "package.json": JSON.stringify({
+      name: "hash-string-app",
+      version: "1.0.0",
+      dependencies: { "local-a": "file:./a", "local-b": "file:./b" },
+    }),
+    "a/package.json": JSON.stringify({ name: "local-a", version: "0.0.1" }),
+    "b/package.json": JSON.stringify({ name: "local-b", version: "0.0.2" }),
+  });
+
+  await using install = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await install.exited).toBe(0);
+
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", "hash-string"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(out).toContain("local-a");
+  expect(out).toContain("local-b");
+  expect(exitCode).toBe(0);
+});

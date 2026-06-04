@@ -1215,7 +1215,7 @@ impl FFI {
                 }
                 return Err(JsError::Thrown);
             }
-            match &mut function.step {
+            match &function.step {
                 Step::Failed { msg, .. } => {
                     let res = ZigString::init(msg).to_error_instance(global_this);
                     return Err(global_this.throw_value(res));
@@ -1235,7 +1235,8 @@ impl FFI {
                         true,
                         function.symbol_from_dynamic_library,
                     );
-                    compiled.js_function = cb;
+                    // `cb` stays alive via the `symbolsValue` cached
+                    // own-property set below (GC-visited on the FFI wrapper).
                     obj.put(global_this, str.slice(), cb);
                 }
             }
@@ -1576,7 +1577,7 @@ impl FFI {
                 dylib.close();
                 return ret;
             }
-            match &mut function.step {
+            match &function.step {
                 Step::Failed { msg, .. } => {
                     let res = ZigString::init(msg).to_error_instance(global);
                     dylib.close();
@@ -1597,7 +1598,8 @@ impl FFI {
                         true,
                         function.symbol_from_dynamic_library,
                     );
-                    compiled.js_function = cb;
+                    // `cb` stays alive via the `symbolsValue` cached
+                    // own-property set below (GC-visited on the FFI wrapper).
                     obj.put(global, str.slice(), cb);
                 }
             }
@@ -1673,7 +1675,7 @@ impl FFI {
                 ));
                 return ret;
             }
-            match &mut function.step {
+            match &function.step {
                 Step::Failed { msg, .. } => {
                     let res = ZigString::init(msg).to_error_instance(global);
                     return res;
@@ -1693,8 +1695,8 @@ impl FFI {
                         true,
                         function.symbol_from_dynamic_library,
                     );
-                    compiled.js_function = cb;
-
+                    // `cb` stays alive via the `symbolsValue` cached
+                    // own-property set below (GC-visited on the FFI wrapper).
                     obj.put(global, name.slice(), cb);
                 }
             }
@@ -2223,7 +2225,6 @@ impl Function {
 
         self.step = Step::Compiled(Compiled {
             ptr: symbol.as_ptr().cast::<c_void>(),
-            js_function,
             // SAFETY: opaque-handle storage only. Never
             // dereferenced or written through on the Rust side; stored as
             // NonNull to avoid laundering &T → *mut T provenance.
@@ -2542,10 +2543,15 @@ pub enum Step {
     Failed { msg: Box<[u8]>, allocated: bool },
 }
 
+/// No JS function value is stored here. Liveness is owned elsewhere:
+/// symbol functions are kept alive by the `symbolsValue` cached own-property
+/// on the FFI wrapper object (declared in `ffi.classes.ts` `values:` and
+/// visited by the generated class's visitChildren), and callback functions
+/// are kept alive by the C++ `FFICallbackFunctionWrapper` (it holds a
+/// `JSC::Strong` to the function), which `Function::drop` derefs via
+/// `FFICallbackFunctionWrapper_destroy` after the trampoline can no longer run.
 pub struct Compiled {
     pub ptr: *mut c_void,
-    // TODO: bare JSValue on heap — rooted via JSFFI.symbolsValue own: property; revisit Strong/JsRef.
-    pub js_function: JSValue,
     // Opaque storage, never dereferenced. NonNull avoids
     // a &T → *mut T cast at the assignment site in compile_callback().
     pub js_context: Option<NonNull<JSGlobalObject>>,
@@ -2556,7 +2562,6 @@ impl Default for Compiled {
     fn default() -> Self {
         Self {
             ptr: core::ptr::null_mut(),
-            js_function: JSValue::ZERO,
             js_context: None,
             ffi_callback_function_wrapper: None,
         }

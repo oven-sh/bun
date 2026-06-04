@@ -35,8 +35,15 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     /// `EventLoop`) outlives every task scheduled on it.
     pub event_loop: BackRef<EventLoop>,
     pub promise: JSPromiseStrong,
-    pub global_this: &'a JSGlobalObject,
+    /// BACKREF — captured from the JS thread at create time; the VM (and its
+    /// global object) outlives every task scheduled on it. The task is
+    /// heap-allocated and crosses threads, so a borrowed reference would lie
+    /// about the lifetime.
+    pub global_this: BackRef<JSGlobalObject>,
     pub concurrent_task: ConcurrentTask,
+    /// Keeps the public `ConcurrentPromiseTask<'a, _>` lifetime parameter (used
+    /// by `Context` type aliases downstream) now that no field borrows for `'a`.
+    pub _global_lifetime: core::marker::PhantomData<&'a ()>,
 
     // This is a poll because we want it to enter the uSockets loop
     // (`ref` is a Rust keyword, hence `ref_`)
@@ -68,8 +75,9 @@ impl<'a, Context: ConcurrentPromiseTaskContext> ConcurrentPromiseTask<'a, Contex
                 callback: Self::run_from_thread_pool,
             },
             promise: JSPromiseStrong::init(global_this),
-            global_this,
+            global_this: BackRef::new(global_this),
             concurrent_task: ConcurrentTask::default(),
+            _global_lifetime: core::marker::PhantomData,
             ref_: KeepAlive::default(),
         });
         this.ref_.ref_(Async::js_vm_ctx());

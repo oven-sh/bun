@@ -10,7 +10,7 @@ use crate::package_json::PackageJSON;
 use crate::tsconfig_json::TSConfigJSON;
 
 pub use allocators::IndexType;
-use allocators::NOT_FOUND;
+use allocators::{NOT_FOUND, UNASSIGNED};
 
 pub type Index = IndexType;
 
@@ -341,6 +341,76 @@ fn ref_at_index(index: Index) -> Option<DirInfoRef> {
     unsafe { (*hash_map_instance()).at_index(index) }.map(DirInfoRef::from_slot)
 }
 
+/// Derive the slot pointer for `index` directly from the raw singleton
+/// (`hash_map_instance()`), so its provenance is rooted in the `DIR_INFO_MAP`
+/// static rather than a transient `&mut HashMap`.
+///
+/// `backing_buf` is stored inline in the `BSSMapInner` allocation, so a slot
+/// pointer derived through a `&mut HashMap` (e.g. the `&mut DirInfo` that
+/// `BSSMapInner::put` returns) is popped by ANY later fresh
+/// `&mut *hash_map_instance()` Unique retag under Stacked Borrows. Inline-slot
+/// pointers re-derived here use a raw place projection (no intermediate
+/// reference), so they descend from the static's root provenance and survive
+/// sibling `&mut HashMap` retags outright.
+///
+/// Overflow slots live in separately-boxed `OverflowListBlock` allocations.
+/// Under shallow-retag semantics a sibling `&mut HashMap` retag only touches
+/// the inline map bytes and leaves block-interior pointers alone, but under
+/// field retagging (e.g. Miri's default) the fresh `&mut` descends into the
+/// `overflow_list`'s `Box`ed blocks and pops them just like inline slots —
+/// do not treat overflow slot pointers as retag-immune. They are addressed
+/// the same way `at_index` addresses them, re-rooting only the intermediate
+/// `&mut OverflowList` auto-ref at `raw`. Their durability is in any case
+/// bounded by later unique access to the same block (`at_index_mut`
+/// re-uniques the block's `items`), a pre-existing property of the overflow
+/// store — callers that stash slot pointers long-term must not rely on
+/// overflow slots surviving unrelated overflow-arm traffic.
+///
+/// Returns `None` for the `NOT_FOUND` / `UNASSIGNED` sentinels.
+///
+/// # Safety
+/// A non-sentinel `index` must have been assigned by `put` (slot initialized),
+/// and the caller must hold the resolver mutex. Inline-arm bounds are checked
+/// (panic on violation, matching the inherent `at_index` failure mode);
+/// initialization remains the caller's contract.
+pub(crate) unsafe fn slot_ptr_at(index: Index) -> Option<*mut DirInfo> {
+    if index.index() == NOT_FOUND.index() || index.index() == UNASSIGNED.index() {
+        return None;
+    }
+    let raw = hash_map_instance();
+    if index.is_overflow() {
+        // SAFETY: caller contract — assigned overflow index under the resolver
+        // mutex. The `&mut OverflowList` auto-ref is derived from `raw`
+        // (SharedReadWrite root), not from any caller `&mut HashMap`.
+        Some(std::ptr::from_mut::<DirInfo>(unsafe {
+            (*raw).overflow_list.at_index_mut(index)
+        }))
+    } else {
+        // SAFETY (read): raw place read of a `Copy` scalar — no retag.
+        let used = u32::from(unsafe { (*raw).backing_buf_used });
+        // Unconditional (release too): the inherent `at_index` path this
+        // mirrors bounds-checks the slot via array indexing, so a corrupted
+        // index panics there. Keep that failure mode — a silent out-of-bounds
+        // slot pointer would be written through by `put` callers.
+        assert!(
+            index.index() < used,
+            "dir cache slot index {} out of bounds (used: {used})",
+            index.index(),
+        );
+        // SAFETY: caller contract — `index.index() < backing_buf_used` and the
+        // slot was initialized by `put`. `addr_of_mut!` is a raw place
+        // projection: no reference to the slot (or the map) is materialized,
+        // so the result is a direct child of the singleton's root provenance.
+        // `MaybeUninit<DirInfo>` is `#[repr(transparent)]`, so the cast is
+        // layout-sound.
+        Some(unsafe {
+            core::ptr::addr_of_mut!((*raw).backing_buf)
+                .cast::<DirInfo>()
+                .add(index.index() as usize)
+        })
+    }
+}
+
 bitflags::bitflags! {
     #[derive(Clone, Copy, Default, PartialEq, Eq, Debug)]
     pub struct Flags: u8 {
@@ -423,17 +493,25 @@ impl HashMapExt for HashMap {
         result: &mut allocators::Result,
         value: DirInfo,
     ) -> core::result::Result<*mut DirInfo, bun_core::Error> {
-        // `result.index` is written back, so `&mut`. Inherent returns `&mut DirInfo`;
-        // erase to `*mut` so callers can stash it past borrowck. NOTE (Stacked Borrows):
-        // this erasure does NOT make the pointer survive a sibling `&mut HashMap` Unique
-        // retag of the same `BSSMapInner` allocation — `backing_buf` is inline, so a fresh
-        // `&mut *dir_cache()` pops every tag derived here. Callers MUST derive all slot
-        // pointers from a single bound `&mut HashMap` (see resolver.rs `dir_info_cached_*`).
-        // TODO: derive via `addr_of_mut!` from the raw singleton (SharedReadWrite
-        // provenance) so slot pointers survive sibling retags outright.
-        self.put(result, value)
-            .map(std::ptr::from_mut::<DirInfo>)
-            .map_err(Into::into)
+        // `self` is always the `hash_map_instance()` singleton: `Resolver.dir_cache`
+        // is set to it in `init1` and never reassigned, and no other `HashMap`
+        // instance exists. `slot_ptr_at` below relies on this.
+        debug_assert!(core::ptr::eq(
+            core::ptr::from_ref::<HashMap>(self),
+            hash_map_instance().cast_const(),
+        ));
+        // `result.index` is written back, so `&mut`. The `&mut DirInfo` the
+        // inherent `put` returns is deliberately DISCARDED: its tag descends from
+        // the caller's `&mut HashMap`, which any later fresh
+        // `&mut *hash_map_instance()` Unique retag would pop (`backing_buf` is
+        // inline in the map allocation). Re-derive the slot pointer from the raw
+        // singleton instead so its provenance is rooted at the static and
+        // survives sibling retags outright (see `slot_ptr_at`).
+        self.put(result, value).map_err(bun_core::Error::from)?;
+        // SAFETY: `result.index` was just assigned (or confirmed) by `put`, so it
+        // is a non-sentinel, in-bounds, initialized slot; callers hold the
+        // resolver mutex.
+        Ok(unsafe { slot_ptr_at(result.index) }.expect("put assigned a non-sentinel index"))
     }
     #[inline]
     fn mark_not_found(&mut self, result: allocators::Result) {

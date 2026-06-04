@@ -117,6 +117,14 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         limit = std::max<size_t>(s.inbox.size(), 1000);
     }
 
+    // All 'message' listeners removed: the port is paused. Leave the inbox buffered
+    // and stop draining; a later addEventListener re-schedules this drain.
+    if (!port->hasMessageEventListener()) {
+        Locker locker { s.lock };
+        s.state.fetch_and(~uint64_t(DrainScheduled), std::memory_order_acq_rel);
+        return;
+    }
+
     auto* context = port->scriptExecutionContext();
     if (!context || !context->globalObject()) {
         Locker locker { s.lock };
@@ -161,6 +169,14 @@ void MessagePortPipe::drainAndDispatch(uint8_t side, ScriptExecutionContextIdent
         // queueMicrotask(cb) inside onmessage runs before the next message.
         if (globalObject->drainMicrotasks())
             break; // termination pending
+
+        // Listeners may have been removed mid-drain (port.off()); pause like the
+        // pre-loop check instead of dispatching the rest to zero listeners.
+        if (!port->hasMessageEventListener()) {
+            Locker locker { s.lock };
+            s.state.fetch_and(~uint64_t(DrainScheduled), std::memory_order_acq_rel);
+            break;
+        }
     }
 
     if (rescheduleCtx)
@@ -188,7 +204,7 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContextIdentifier ctxI
         s.ctxId = ctxId;
         s.port = WTF::move(port);
         uint64_t st = s.state.load(std::memory_order_relaxed);
-        uint64_t ns = (st | Attached) & ~Closed;
+        uint64_t ns = (st | Attached | ContextKnown) & ~Closed;
         if (queuedCount(st) > 0 && !(st & DrainScheduled)) {
             ns |= DrainScheduled;
             wakeCtx = ctxId;
@@ -197,6 +213,20 @@ void MessagePortPipe::attach(uint8_t side, ScriptExecutionContextIdentifier ctxI
     }
     if (wakeCtx)
         scheduleDrain(side, wakeCtx);
+}
+
+void MessagePortPipe::registerCloseContext(uint8_t side, ScriptExecutionContextIdentifier ctxId, ThreadSafeWeakPtr<MessagePort> port)
+{
+    ASSERT(side < 2);
+    auto& s = m_sides[side];
+    Locker locker { s.lock };
+    uint64_t st = s.state.load(std::memory_order_relaxed);
+    // Already closed, or context already known (started or previously registered).
+    if ((st & Closed) || (st & (Attached | ContextKnown)))
+        return;
+    s.ctxId = ctxId;
+    s.port = WTF::move(port);
+    s.state.store(st | ContextKnown, std::memory_order_release);
 }
 
 void MessagePortPipe::detach(uint8_t side)
@@ -211,7 +241,7 @@ void MessagePortPipe::detach(uint8_t side)
     // drainAndDispatch()'s s.ctxId != expectedCtx check makes it a no-op —
     // even if a new owner attach()es to a different context before it runs.
     // Messages remain queued for the next owner.
-    s.state.fetch_and(~uint64_t(Attached | DrainScheduled), std::memory_order_acq_rel);
+    s.state.fetch_and(~uint64_t(Attached | ContextKnown | DrainScheduled), std::memory_order_acq_rel);
 }
 
 void MessagePortPipe::close(uint8_t side)
@@ -252,7 +282,38 @@ void MessagePortPipe::close(uint8_t side)
         // `dropped` (and the RefPtr in the structured binding) destruct
         // outside the lock; they may hold the last ref to pipes whose
         // destructors also take locks.
+
+        // Notify each closed pipe's entangled peer so it can fire 'close' and
+        // release its event-loop ref — including nested in-transit ports drained
+        // from the worklist, not just the originally-closed side.
+        pipe->notifyPeerClosed(1 - sd);
     }
+}
+
+void MessagePortPipe::notifyPeerClosed(uint8_t peerSide)
+{
+    auto& s = m_sides[peerSide];
+    ScriptExecutionContextIdentifier ctxId = 0;
+    {
+        Locker locker { s.lock };
+        uint64_t st = s.state.load(std::memory_order_acquire);
+        if ((st & Closed) || !(st & ContextKnown))
+            return;
+        ctxId = s.ctxId;
+    }
+    if (!ctxId)
+        return;
+    ScriptExecutionContext::postTaskTo(ctxId, [pipe = Ref { *this }, peerSide, ctxId](ScriptExecutionContext&) {
+        RefPtr<MessagePort> port;
+        {
+            Locker locker { pipe->m_sides[peerSide].lock };
+            if (pipe->m_sides[peerSide].ctxId != ctxId)
+                return;
+            port = pipe->m_sides[peerSide].port.get();
+        }
+        if (port)
+            port->peerClosed();
+    });
 }
 
 } // namespace WebCore

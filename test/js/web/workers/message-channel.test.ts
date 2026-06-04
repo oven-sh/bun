@@ -51,9 +51,11 @@ test("non-transferable", () => {
   expect(() => {
     channel.port1.postMessage("hello", [channel.port1]);
   }).toThrow();
+  // node: posting the source port's own entangled peer targets the message at
+  // itself, which warns and loses the channel rather than throwing.
   expect(() => {
     channel.port1.postMessage("hello", [channel.port2]);
-  }).toThrow();
+  }).not.toThrow();
 });
 
 test("transfer message ports and post messages", done => {
@@ -138,9 +140,15 @@ test("many message channels", done => {
   expect(() => {
     channel.port1.postMessage("same port", [channel.port1]);
   }).toThrow();
-  expect(() => {
-    channel.port1.postMessage("entangled port", [channel.port2]);
-  }).toThrow();
+  // node: posting the entangled peer warns and loses the channel, not a throw.
+  // Use a dedicated channel: the post closes its source port, which would break
+  // the "done" delivery on the shared channel below.
+  {
+    const peerChannel = new MessageChannel();
+    expect(() => {
+      peerChannel.port1.postMessage("entangled port", [peerChannel.port2]);
+    }).not.toThrow();
+  }
   expect(() => {
     // @ts-ignore
     channel.port1.postMessage("null port", [channel3.port1, null, channel3.port2]);

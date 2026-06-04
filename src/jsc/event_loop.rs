@@ -1211,6 +1211,12 @@ impl EventLoop {
                     if !worker.has_requested_terminate()
                         && promise.status() == PromiseStatus::Pending
                     {
+                        // Unsettled top-level await: the loop has drained but the
+                        // entry module's evaluation promise is still pending. Stop
+                        // waiting so the worker can exit (node uses exit code 13).
+                        if !self.vm_ref().is_event_loop_alive() {
+                            break;
+                        }
                         self.auto_tick();
                     }
                 }

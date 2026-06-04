@@ -289,6 +289,10 @@ static inline JSC::EncodedJSValue jsMessagePortPrototypeFunction_postMessageOver
             RELEASE_AND_RETURN(throwScope, (jsMessagePortPrototypeFunction_postMessage2Body(lexicalGlobalObject, callFrame, castedThis)));
         if (distinguishingArg.isUndefinedOrNull())
             RELEASE_AND_RETURN(throwScope, (jsMessagePortPrototypeFunction_postMessage2Body(lexicalGlobalObject, callFrame, castedThis)));
+        // node: a non-object transferList (number/string/boolean/symbol) is
+        // rejected as not-an-iterable before any iteration is attempted.
+        if (!distinguishingArg.isObject())
+            return throwVMError(lexicalGlobalObject, throwScope, createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "Optional transferList argument must be an iterable"_s));
         {
             bool success = hasIteratorMethod(lexicalGlobalObject, distinguishingArg);
             RETURN_IF_EXCEPTION(throwScope, {});

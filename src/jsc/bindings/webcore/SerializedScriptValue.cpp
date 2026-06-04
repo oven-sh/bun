@@ -1594,6 +1594,23 @@ private:
         VM& vm = m_lexicalGlobalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
+        // markAsUncloneable: reject a marked object anywhere in the graph, not just the
+        // root (nested terminals go through dumpIfTerminal directly). ArrayBuffers/views
+        // are excluded: they serialize natively.
+        if (value.isObject()) {
+            JSObject* obj = asObject(value);
+            if (!obj->inherits<JSArrayBuffer>() && !obj->inherits<JSArrayBufferView>()
+                && obj->structure()->hasNonEnumerableProperties()) {
+                auto uncloneableMarker = Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.worker_threads.uncloneable"_s));
+                bool marked = obj->hasOwnProperty(m_lexicalGlobalObject, uncloneableMarker);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (marked) {
+                    code = SerializationReturnCode::DataCloneError;
+                    return true;
+                }
+            }
+        }
+
         if (isArray(value))
             return false;
 
@@ -1691,45 +1708,35 @@ private:
                 auto errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(scope, false);
 
-                String message;
-                PropertyDescriptor messageDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, messageDescriptor) && messageDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    message = messageDescriptor.value().toWTFString(m_lexicalGlobalObject);
+                // Read error fields under one catch scope: stack (and line/column/sourceURL
+                // derived from it) may be materialized via Error.prepareStackTrace, and a
+                // throwing getter must drop the field, not abort serialization (node drops
+                // the stack to undefined).
+                String message, sourceURL, stack;
+                unsigned line = 0, column = 0;
+                {
+                    auto fieldScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+                    // Clear a throwing getter's exception; only an unclearable
+                    // TerminationException is propagated instead of serializing a bogus record.
+                    const auto readString = [&](const JSC::Identifier& name, String& out) -> bool {
+                        JSValue v = errorInstance->get(m_lexicalGlobalObject, name);
+                        if (!fieldScope.exception() && v.isString())
+                            out = v.toWTFString(m_lexicalGlobalObject);
+                        return fieldScope.tryClearException();
+                    };
+                    const auto readNumber = [&](const JSC::Identifier& name, unsigned& out) -> bool {
+                        JSValue v = errorInstance->get(m_lexicalGlobalObject, name);
+                        if (!fieldScope.exception() && v.isNumber())
+                            out = v.toNumber(m_lexicalGlobalObject);
+                        return fieldScope.tryClearException();
+                    };
+                    if (!readString(vm.propertyNames->message, message)
+                        || !readNumber(vm.propertyNames->line, line)
+                        || !readNumber(vm.propertyNames->column, column)
+                        || !readString(vm.propertyNames->sourceURL, sourceURL)
+                        || !readString(vm.propertyNames->stack, stack))
+                        return false;
                 }
-                RETURN_IF_EXCEPTION(scope, false);
-
-                unsigned line = 0;
-                PropertyDescriptor lineDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, lineDescriptor) && lineDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    line = lineDescriptor.value().toNumber(m_lexicalGlobalObject);
-                }
-                RETURN_IF_EXCEPTION(scope, false);
-
-                unsigned column = 0;
-                PropertyDescriptor columnDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, columnDescriptor) && columnDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    column = columnDescriptor.value().toNumber(m_lexicalGlobalObject);
-                }
-                RETURN_IF_EXCEPTION(scope, false);
-
-                String sourceURL;
-                PropertyDescriptor sourceURLDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, sourceURLDescriptor) && sourceURLDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    sourceURL = sourceURLDescriptor.value().toWTFString(m_lexicalGlobalObject);
-                }
-                RETURN_IF_EXCEPTION(scope, false);
-
-                String stack;
-                PropertyDescriptor stackDescriptor;
-                if (errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->stack, stackDescriptor) && stackDescriptor.isDataDescriptor()) {
-                    scope.assertNoException();
-                    stack = stackDescriptor.value().toWTFString(m_lexicalGlobalObject);
-                }
-                RETURN_IF_EXCEPTION(scope, false);
 
                 write(ErrorInstanceTag);
                 write(errorNameToSerializableErrorType(errorTypeString));
@@ -1747,8 +1754,10 @@ private:
                     write(index->value);
                     return true;
                 }
-                // MessagePort object could not be found in transferred message ports
-                code = SerializationReturnCode::ValidationError;
+                // MessagePort present in the message but not listed in the
+                // transfer list: node throws a DataCloneError with this message.
+                WebCore::propagateException(*m_lexicalGlobalObject, scope, Exception { DataCloneError, "Object that needs transfer was found in message but not listed in transferList"_s });
+                code = SerializationReturnCode::ExistingExceptionError;
                 return true;
             }
             if (auto* arrayBuffer = toPossiblySharedArrayBuffer(vm, obj)) {
@@ -6216,8 +6225,14 @@ ExceptionOr<Ref<SerializedScriptValue>> SerializedScriptValue::create(JSGlobalOb
 #if ENABLE(WEB_CODECS)
     Vector<Ref<WebCodecsVideoFrame>> transferredVideoFrames;
 #endif
+    auto untransferableMarker = Identifier::fromUid(vm.symbolRegistry().symbolForKey("nodejs.worker_threads.untransferable"_s));
     HashSet<JSC::JSObject*> uniqueTransferables;
     for (auto& transferable : transferList) {
+        if (transferable->hasOwnProperty(&lexicalGlobalObject, untransferableMarker)) {
+            RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
+            return Exception { DataCloneError, "Cannot transfer object marked as untransferable"_s };
+        }
+        RETURN_IF_EXCEPTION(scope, Exception { ExistingExceptionError });
         if (!uniqueTransferables.add(transferable.get()).isNewEntry) {
             if (toPossiblySharedArrayBuffer(vm, transferable.get())) {
                 return Exception { DataCloneError, "Transfer list contains duplicate ArrayBuffer"_s };

@@ -680,64 +680,71 @@ unsafe fn load_preloads(
             .strip_prefix(b"file://".as_slice())
             .unwrap_or(preload_slice);
 
-        // ── resolve ─────────────────────────────────────────────────────
-        // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
-        // singleton field.
-        let mut result = match unsafe {
-            (*vm).transpiler.resolver.resolve_and_auto_install(
-                &*top_level_dir,
-                normalized,
-                ImportKind::Stmt,
-                global_cache,
-            )
-        } {
-            ResolveResultUnion::Success(r) => r,
-            ResolveResultUnion::Failure(e) => {
-                // Spec VirtualMachine.zig:2216-2226 — `log.addErrorFmt` then
-                // `return e`.
-                // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
-                // `VirtualMachine::init`.
-                if let Some(log) = unsafe { &*vm }.log {
-                    // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                    let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "{} resolving preload {}",
-                            e.name(),
-                            bun_core::fmt::format_json_string_latin1(preload_slice),
-                        ),
-                    );
+        // Builtin specifiers (node:/bun:) bypass the file resolver — JSModuleLoader
+        // resolves them internally. node:worker_threads is preloaded this way so its
+        // node-style worker bootstrap (stdio rebinding) runs before user code.
+        let module_name = if normalized.starts_with(b"node:") || normalized.starts_with(b"bun:") {
+            bun_core::String::from_bytes(normalized)
+        } else {
+            // ── resolve ─────────────────────────────────────────────────────
+            // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
+            // singleton field.
+            let mut result = match unsafe {
+                (*vm).transpiler.resolver.resolve_and_auto_install(
+                    &*top_level_dir,
+                    normalized,
+                    ImportKind::Stmt,
+                    global_cache,
+                )
+            } {
+                ResolveResultUnion::Success(r) => r,
+                ResolveResultUnion::Failure(e) => {
+                    // Spec VirtualMachine.zig:2216-2226 — `log.addErrorFmt` then
+                    // `return e`.
+                    // SAFETY: `vm.log` was set to a fresh leaked `Box<Log>` by
+                    // `VirtualMachine::init`.
+                    if let Some(log) = unsafe { &*vm }.log {
+                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "{} resolving preload {}",
+                                e.name(),
+                                bun_core::fmt::format_json_string_latin1(preload_slice),
+                            ),
+                        );
+                    }
+                    return Err(e);
                 }
-                return Err(e);
-            }
-            ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
-                // Spec VirtualMachine.zig:2228-2238 — `log.addErrorFmt` then
-                // `return error.ModuleNotFound`.
-                // SAFETY: see above.
-                if let Some(log) = unsafe { &*vm }.log {
-                    // SAFETY: `log` is the unique per-VM `Box<Log>`.
-                    let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
-                        None,
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "preload not found {}",
-                            bun_core::fmt::format_json_string_latin1(preload_slice),
-                        ),
-                    );
+                ResolveResultUnion::Pending(_) | ResolveResultUnion::NotFound => {
+                    // Spec VirtualMachine.zig:2228-2238 — `log.addErrorFmt` then
+                    // `return error.ModuleNotFound`.
+                    // SAFETY: see above.
+                    if let Some(log) = unsafe { &*vm }.log {
+                        // SAFETY: `log` is the unique per-VM `Box<Log>`.
+                        let _ = unsafe { &mut *log.as_ptr() }.add_error_fmt(
+                            None,
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "preload not found {}",
+                                bun_core::fmt::format_json_string_latin1(preload_slice),
+                            ),
+                        );
+                    }
+                    return Err(bun_core::err!("ModuleNotFound"));
                 }
-                return Err(bun_core::err!("ModuleNotFound"));
-            }
-        };
+            };
 
-        // ── import ──────────────────────────────────────────────────────
-        // Spec VirtualMachine.zig:2241 —
-        // `try JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text))`.
-        let path_text = result
-            .path()
-            .expect("resolver Success result has a primary path")
-            .text;
-        let module_name = bun_core::String::from_bytes(path_text);
+            // ── import ──────────────────────────────────────────────────────
+            // Spec VirtualMachine.zig:2241 —
+            // `try JSModuleLoader.import(this.global, &String.fromBytes(result.path().?.text))`.
+            let path_text = result
+                .path()
+                .expect("resolver Success result has a primary path")
+                .text;
+            bun_core::String::from_bytes(path_text)
+        };
         // PORT NOTE: use `import_ptr` (not `import`) so the `*mut` we store in
         // `pending_internal_promise` keeps the FFI's mutable provenance instead
         // of being laundered through `&JSInternalPromise -> *const -> *mut`

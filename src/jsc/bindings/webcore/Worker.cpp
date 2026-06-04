@@ -44,6 +44,7 @@
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
 #include "JSMessagePort.h"
+#include "MessagePortPipe.h"
 #include "JSBroadcastChannel.h"
 
 namespace WebCore {
@@ -569,6 +570,10 @@ extern "C" void WebWorker__teardownJSCVM(Zig::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     vm.setHasTerminationRequest();
+    // Mark the context permanently terminating so postTaskTo drops tasks that
+    // can never run (e.g. notifyPeerClosed posted during the final collectNow).
+    if (auto* ctx = globalObject->scriptExecutionContext())
+        ctx->markTerminating();
 
     {
         auto scope = DECLARE_THROW_SCOPE(vm);
@@ -607,6 +612,27 @@ extern "C" void WebWorker__dispatchExit(Worker* worker, int32_t exitCode)
 
 extern "C" void WebWorker__dispatchOnline(Worker* worker, Zig::GlobalObject* globalObject)
 {
+    // The entry module just finished its top-level evaluation. Flush the
+    // worker_threads hub's deferred cross-thread deliveries first: node's
+    // bootstrap runs the synchronous CJS main before any port delivery, so a
+    // routed message must not observe "no listeners" while the entry that
+    // registers them is still loading.
+    {
+        auto& vm = JSC::getVM(globalObject);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        auto symbol = vm.symbolRegistry().symbolForKey("bun.worker.entryEvaluated"_s);
+        JSValue hook = globalObject->getIfPropertyExists(globalObject, JSC::Identifier::fromUid(vm, &symbol.get()));
+        if (scope.exception()) [[unlikely]] {
+            CLEAR_IF_EXCEPTION(scope);
+            hook = {};
+        }
+        if (hook && hook.isCallable()) {
+            JSC::MarkedArgumentBuffer args;
+            JSC::call(globalObject, hook, args, "entryEvaluated hook"_s);
+            CLEAR_IF_EXCEPTION(scope);
+        }
+    }
+
     worker->dispatchOnline(globalObject);
 }
 
@@ -666,6 +692,17 @@ JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobal
     return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_ARG_TYPE, "The \"port\" argument must be a MessagePort instance"_s);
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsMessagePortIsActive, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto port = callFrame->argument(0);
+    if (auto* messagePort = dynamicDowncast<JSMessagePort>(port)) {
+        auto& wrapped = messagePort->wrapped();
+        bool active = (wrapped.isDetached() == false) && wrapped.pipe()->isOtherSideOpen(wrapped.side());
+        return JSC::JSValue::encode(jsBoolean(active));
+    }
+    return JSC::JSValue::encode(jsBoolean(false));
+}
+
 JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
@@ -673,6 +710,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue workerData = jsNull();
     JSValue threadId = jsNumber(0);
+    JSValue threadName = jsEmptyString(vm);
     JSMap* environmentData = nullptr;
 
     if (auto* worker = WebWorker__getParentWorker(globalObject->bunVM())) {
@@ -706,6 +744,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
         // Main thread starts at 1
         threadId = jsNumber(worker->clientIdentifier() - 1);
+        threadName = jsString(vm, options.name);
     }
     if (!environmentData) {
         environmentData = JSMap::create(vm, globalObject->mapStructure());
@@ -714,12 +753,14 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     ASSERT(environmentData);
     globalObject->setNodeWorkerEnvironmentData(environmentData);
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 4);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 6);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
     array->putDirectIndex(globalObject, 2, JSFunction::create(vm, globalObject, 1, "receiveMessageOnPort"_s, jsReceiveMessageOnPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 3, environmentData);
+    array->putDirectIndex(globalObject, 4, threadName);
+    array->putDirectIndex(globalObject, 5, JSFunction::create(vm, globalObject, 1, "isMessagePortActive"_s, jsMessagePortIsActive, ImplementationVisibility::Public, NoIntrinsic));
     return array;
 }
 

@@ -46,6 +46,8 @@
 #include "JSWindowProxy.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+
+extern "C" BunString Bun__inspect_singleline(JSC::JSGlobalObject* globalObject, JSC::JSValue value);
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSArray.h>
 #include <JavaScriptCore/JSCInlines.h>
@@ -152,13 +154,41 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!portsValue.isUndefined()) {
+        // node-compatible validation messages (with the offending value inspected).
+        bool iterable = portsValue.isObject();
+        if (iterable) {
+            JSValue iterFn = portsValue.get(&lexicalGlobalObject, vm.propertyNames->iteratorSymbol);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            iterable = iterFn.isCallable();
+        }
+        if (!iterable) {
+            auto inspected = Bun__inspect_singleline(&lexicalGlobalObject, portsValue).transferToWTFString();
+            RETURN_IF_EXCEPTION(throwScope, {});
+            throwTypeError(&lexicalGlobalObject, throwScope, makeString("MessageEvent constructor: eventInitDict.ports ("_s, inspected, ") is not iterable."_s));
+            return {};
+        }
+        JSObject* portsObj = asObject(portsValue);
+        JSValue lengthValue = portsObj->get(&lexicalGlobalObject, vm.propertyNames->length);
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (lengthValue.isNumber()) {
+            unsigned len = lengthValue.toUInt32(&lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            for (unsigned i = 0; i < len; ++i) {
+                JSValue item = portsObj->get(&lexicalGlobalObject, i);
+                RETURN_IF_EXCEPTION(throwScope, {});
+                if (!item.isCell() || !item.asCell()->inherits<JSMessagePort>()) {
+                    auto inspected = Bun__inspect_singleline(&lexicalGlobalObject, item).transferToWTFString();
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    throwTypeError(&lexicalGlobalObject, throwScope, makeString("MessageEvent constructor: Expected eventInitDict.ports["_s, i, "] (\""_s, inspected, "\") to be an instance of MessagePort."_s));
+                    return {};
+                }
+            }
+        }
         result.ports = convert<IDLSequence<IDLInterface<MessagePort>>>(
             lexicalGlobalObject,
             portsValue,
             [](JSGlobalObject& lexicalGlobalObject, ThrowScope& throwScope) {
-                Bun::ERR::INVALID_ARG_TYPE(throwScope,
-                    &lexicalGlobalObject,
-                    "MessageEvent constructor: Expected every item of eventInitDict.ports to be an instance of MessagePort."_s);
+                throwTypeError(&lexicalGlobalObject, throwScope, "MessageEvent constructor: Expected an item of eventInitDict.ports to be an instance of MessagePort."_s);
             },
             "MessageEvent constructor"_s,
             "eventInitDict.ports"_s);
@@ -174,7 +204,10 @@ template<> MessageEvent::Init convertDictionary<MessageEvent::Init>(JSGlobalObje
     }
     if (!sourceValue.isUndefinedOrNull()) {
         result.source = convert<IDLNullable<IDLInterface<MessagePort>>>(lexicalGlobalObject, sourceValue, [&sourceValue](JSGlobalObject& lexicalGlobalObject, ThrowScope& throwScope) {
-            Bun::ERR::INVALID_ARG_TYPE(throwScope, &lexicalGlobalObject, "eventInitDict.source"_s, "MessagePort"_s, sourceValue);
+            auto inspected = Bun__inspect_singleline(&lexicalGlobalObject, sourceValue).transferToWTFString();
+            if (throwScope.exception()) [[unlikely]]
+                return;
+            throwTypeError(&lexicalGlobalObject, throwScope, makeString("MessageEvent constructor: Expected eventInitDict.source (\""_s, inspected, "\") to be an instance of MessagePort."_s));
         });
         RETURN_IF_EXCEPTION(throwScope, {});
     } else {

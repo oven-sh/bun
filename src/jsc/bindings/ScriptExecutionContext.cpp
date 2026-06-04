@@ -115,6 +115,13 @@ bool ScriptExecutionContext::postTaskTo(ScriptExecutionContextIdentifier identif
     if (!context)
         return false;
 
+    // A permanently-terminating context never drains its concurrent queue, so a task
+    // enqueued during teardown would leak its captured refs (e.g. notifyPeerClosed
+    // pinning the MessagePortPipe) — drop it. Gate on the worker-teardown flag, not
+    // VM::hasTerminationRequest(), which node:vm {timeout}/{breakOnSigint} sets transiently.
+    if (context->isTerminating())
+        return false;
+
     context->postTaskConcurrently(WTF::move(task));
     return true;
 }
@@ -151,9 +158,10 @@ void ScriptExecutionContext::didCreateDestructionObserver(ContextDestructionObse
 
 void ScriptExecutionContext::willDestroyDestructionObserver(ContextDestructionObserver& observer)
 {
-#if ASSERT_ENABLED
-    ASSERT(!m_inScriptExecutionContextDestructor);
-#endif // ASSERT_ENABLED
+    // This can legitimately run during context teardown: a ContextDestructionObserver
+    // (e.g. a MessagePort kept alive by a pending message-dispatch task) may have its
+    // last ref released from within ~ScriptExecutionContext. remove() is safe during
+    // teardown (the set is drained one element at a time, not iterated concurrently).
     m_destructionObservers.remove(&observer);
 }
 

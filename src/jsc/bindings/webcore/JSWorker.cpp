@@ -20,6 +20,15 @@
 
 #include "config.h"
 #include "JSWorker.h"
+#include "BunCPUProfiler.h"
+#if OS(WINDOWS)
+#include <uv.h>
+#else
+#include <sys/resource.h>
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#endif
+#endif
 
 #include "ActiveDOMObject.h"
 #include "EventNames.h"
@@ -62,6 +71,7 @@
 #include <wtf/URL.h>
 #include "SerializedScriptValue.h"
 #include "BunProcess.h"
+#include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/JSMap.h>
 
 namespace WebCore {
@@ -74,6 +84,10 @@ static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_postMessage);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_unref);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_ref);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapStatistics);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_startCpuProfileInternal);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_stopCpuProfileInternal);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_cpuUsageInternal);
 
 // Attributes
 
@@ -231,41 +245,54 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             }
         }
 
-        auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
+        auto shareEnvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "shareEnv"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
-        // for now, we don't permit SHARE_ENV, because the behavior isn't implemented
-        if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
-            return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
-        }
-        JSObject* envObject = nullptr;
-
-        if (envValue && envValue.isCell()) {
-            envObject = dynamicDowncast<JSC::JSObject>(envValue);
-        } else if (globalObject->m_processEnvObject.isInitialized()) {
-            envObject = globalObject->processEnvObject();
+        if (shareEnvValue) {
+            options.shareEnv = shareEnvValue.toBoolean(lexicalGlobalObject);
         }
 
-        if (envObject) {
-            if (!envObject->staticPropertiesReified()) {
-                envObject->reifyAllStaticProperties(globalObject);
-                RETURN_IF_EXCEPTION(throwScope, {});
-            }
-
-            JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-            envObject->methodTable()->getOwnPropertyNames(envObject, lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
+        if (!options.shareEnv) {
+            auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
             RETURN_IF_EXCEPTION(throwScope, {});
+            if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
+                return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
+            }
+            JSObject* envObject = nullptr;
 
-            HashMap<String, String> env;
-
-            for (const auto& key : keys) {
-                JSValue value = envObject->get(lexicalGlobalObject, key);
-                RETURN_IF_EXCEPTION(throwScope, {});
-                String str = value.toWTFString(lexicalGlobalObject).isolatedCopy();
-                RETURN_IF_EXCEPTION(throwScope, {});
-                env.add(key.impl()->isolatedCopy(), str);
+            if (envValue && envValue.isCell()) {
+                envObject = dynamicDowncast<JSC::JSObject>(envValue);
+            } else if (globalObject->m_processEnvObject.isInitialized()) {
+                envObject = globalObject->processEnvObject();
             }
 
-            options.env.emplace(WTF::move(env));
+            if (envObject) {
+                if (!envObject->staticPropertiesReified()) {
+                    envObject->reifyAllStaticProperties(globalObject);
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                }
+
+                JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+                envObject->methodTable()->getOwnPropertyNames(envObject, lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
+                RETURN_IF_EXCEPTION(throwScope, {});
+
+                HashMap<String, String> env;
+
+                for (const auto& key : keys) {
+                    JSValue value = envObject->get(lexicalGlobalObject, key);
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    String str = value.toWTFString(lexicalGlobalObject).isolatedCopy();
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    env.add(key.impl()->isolatedCopy(), str);
+                }
+
+                options.env.emplace(WTF::move(env));
+            }
+        } else {
+            // Seed the shared store from the parent's current process.env and
+            // swap the parent's process.env to the shared write-through variant
+            // (idempotent across SHARE_ENV workers), on the parent thread.
+            Bun::enableSharedEnvForWorker(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
         }
 
         // needed to match the coercion behavior of `String(value)`, which returns a descriptive
@@ -405,6 +432,10 @@ static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "threadId"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_threadIdGetter, nullptr } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_unref, 0 } },
     { "getHeapSnapshot"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getHeapSnapshot, 0 } },
+    { "getHeapStatistics"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getHeapStatistics, 0 } },
+    { "startCpuProfileInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_startCpuProfileInternal, 0 } },
+    { "stopCpuProfileInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_stopCpuProfileInternal, 0 } },
+    { "cpuUsageInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_cpuUsageInternal, 0 } },
 };
 
 const ClassInfo JSWorkerPrototype::s_info = { "Worker"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkerPrototype) };
@@ -724,6 +755,195 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
                 "Worker instance not running"_s));
     }
     return JSValue::encode(promise);
+}
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto& worker = castedThis->wrapped();
+
+    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    if (!worker.isOnline()) {
+        promise->reject(vm, globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+        return JSValue::encode(promise);
+    }
+
+    // See getHeapSnapshot for the Strong-handle-across-threads rationale.
+    auto* promiseHandle = new Strong<JSPromise>(vm, promise);
+    auto parentId = globalObject->scriptExecutionContext()->identifier();
+    bool accepted = worker.postTaskToWorkerGlobalScope([promiseHandle, parentId](ScriptExecutionContext& workerCtx) {
+        auto& wvm = workerCtx.vm();
+        double heapSize = static_cast<double>(wvm.heap.size());
+        double capacity = static_cast<double>(wvm.heap.capacity());
+        double extra = static_cast<double>(wvm.heap.extraMemorySize());
+        ScriptExecutionContext::postTaskTo(parentId, [promiseHandle, heapSize, capacity, extra](ScriptExecutionContext& parentCtx) {
+            std::unique_ptr<Strong<JSPromise>> handle(promiseHandle);
+            auto& pvm = parentCtx.vm();
+            auto* go = parentCtx.globalObject();
+            JSObject* o = constructEmptyObject(go);
+            auto set = [&](ASCIILiteral k, double v) { o->putDirect(pvm, Identifier::fromString(pvm, k), jsNumber(v)); };
+            double avail = capacity > heapSize ? capacity - heapSize : 0;
+            set("total_heap_size"_s, heapSize);
+            set("total_heap_size_executable"_s, heapSize / 2.0);
+            set("total_physical_size"_s, capacity);
+            set("total_available_size"_s, avail);
+            set("used_heap_size"_s, heapSize);
+            set("heap_size_limit"_s, capacity * 10.0);
+            set("malloced_memory"_s, heapSize);
+            set("peak_malloced_memory"_s, capacity);
+            o->putDirect(pvm, Identifier::fromString(pvm, "does_zap_garbage"_s), jsBoolean(false));
+            set("number_of_native_contexts"_s, 1);
+            set("number_of_detached_contexts"_s, 0);
+            set("total_global_handles_size"_s, 8192);
+            set("used_global_handles_size"_s, 2208);
+            set("external_memory"_s, extra);
+            set("total_allocated_bytes"_s, heapSize);
+            handle->get()->resolve(go, pvm, o);
+        });
+    });
+    if (!accepted) {
+        delete promiseHandle;
+        promise->reject(vm, globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+    }
+    return JSValue::encode(promise);
+}
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto& worker = castedThis->wrapped();
+    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    if (!worker.isOnline()) {
+        promise->reject(vm, globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+        return JSValue::encode(promise);
+    }
+    auto* promiseHandle = new Strong<JSPromise>(vm, promise);
+    auto parentId = globalObject->scriptExecutionContext()->identifier();
+    bool accepted = worker.postTaskToWorkerGlobalScope([promiseHandle, parentId](ScriptExecutionContext& workerCtx) {
+        if (!Bun::isCPUProfilerRunning())
+            Bun::startCPUProfiler(workerCtx.vm());
+        ScriptExecutionContext::postTaskTo(parentId, [promiseHandle](ScriptExecutionContext& parentCtx) {
+            std::unique_ptr<Strong<JSPromise>> handle(promiseHandle);
+            handle->get()->resolve(parentCtx.globalObject(), parentCtx.vm(), jsUndefined());
+        });
+    });
+    if (!accepted) {
+        delete promiseHandle;
+        promise->reject(vm, globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+    }
+    return JSValue::encode(promise);
+}
+
+static constexpr ASCIILiteral kEmptyCpuProfileJSON = "{\"nodes\":[],\"startTime\":0,\"endTime\":0,\"samples\":[],\"timeDeltas\":[]}"_s;
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto& worker = castedThis->wrapped();
+    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    auto* promiseHandle = new Strong<JSPromise>(vm, promise);
+    auto parentId = globalObject->scriptExecutionContext()->identifier();
+    bool accepted = worker.isOnline() && worker.postTaskToWorkerGlobalScope([promiseHandle, parentId](ScriptExecutionContext& workerCtx) {
+        WTF::String result;
+        if (Bun::isCPUProfilerRunning())
+            Bun::stopCPUProfiler(workerCtx.vm(), &result, nullptr);
+        if (result.isEmpty())
+            result = kEmptyCpuProfileJSON;
+        ScriptExecutionContext::postTaskTo(parentId, [promiseHandle, result = result.isolatedCopy()](ScriptExecutionContext& parentCtx) {
+            std::unique_ptr<Strong<JSPromise>> handle(promiseHandle);
+            handle->get()->resolve(parentCtx.globalObject(), parentCtx.vm(), jsString(parentCtx.vm(), result));
+        });
+    });
+    if (!accepted) {
+        // Worker already gone: resolve with an empty profile rather than reject,
+        // so a handle.stop() after terminate still yields parseable JSON.
+        delete promiseHandle;
+        promise->resolve(globalObject, vm, jsString(vm, String(kEmptyCpuProfileJSON)));
+    }
+    return JSValue::encode(promise);
+}
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto& worker = castedThis->wrapped();
+    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    if (!worker.isOnline()) {
+        promise->reject(vm, globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+        return JSValue::encode(promise);
+    }
+    auto* promiseHandle = new Strong<JSPromise>(vm, promise);
+    auto parentId = globalObject->scriptExecutionContext()->identifier();
+    bool accepted = worker.postTaskToWorkerGlobalScope([promiseHandle, parentId](ScriptExecutionContext&) {
+        double user = 0;
+        double sys = 0;
+#if OS(WINDOWS)
+        uv_rusage_t ru;
+        if (uv_getrusage(&ru) == 0) {
+            user = static_cast<double>(ru.ru_utime.tv_sec) * 1e6 + static_cast<double>(ru.ru_utime.tv_usec);
+            sys = static_cast<double>(ru.ru_stime.tv_sec) * 1e6 + static_cast<double>(ru.ru_stime.tv_usec);
+        }
+#elif defined(__APPLE__)
+        // Darwin has no RUSAGE_THREAD; RUSAGE_SELF would report whole-process
+        // CPU for every worker. Use mach thread_info for this thread only.
+        mach_port_t machThread = mach_thread_self();
+        thread_basic_info_data_t tinfo;
+        mach_msg_type_number_t tcount = THREAD_BASIC_INFO_COUNT;
+        if (thread_info(machThread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&tinfo), &tcount) == KERN_SUCCESS) {
+            user = static_cast<double>(tinfo.user_time.seconds) * 1e6 + static_cast<double>(tinfo.user_time.microseconds);
+            sys = static_cast<double>(tinfo.system_time.seconds) * 1e6 + static_cast<double>(tinfo.system_time.microseconds);
+        }
+        mach_port_deallocate(mach_task_self(), machThread);
+#else
+        struct rusage ru;
+        memset(&ru, 0, sizeof(ru));
+#if defined(RUSAGE_THREAD)
+        getrusage(RUSAGE_THREAD, &ru);
+#else
+        getrusage(RUSAGE_SELF, &ru);
+#endif
+        user = static_cast<double>(ru.ru_utime.tv_sec) * 1e6 + static_cast<double>(ru.ru_utime.tv_usec);
+        sys = static_cast<double>(ru.ru_stime.tv_sec) * 1e6 + static_cast<double>(ru.ru_stime.tv_usec);
+#endif
+        ScriptExecutionContext::postTaskTo(parentId, [promiseHandle, user, sys](ScriptExecutionContext& parentCtx) {
+            std::unique_ptr<Strong<JSPromise>> handle(promiseHandle);
+            auto& pvm = parentCtx.vm();
+            auto* go = parentCtx.globalObject();
+            JSObject* o = constructEmptyObject(go);
+            o->putDirect(pvm, Identifier::fromString(pvm, "user"_s), jsNumber(user));
+            o->putDirect(pvm, Identifier::fromString(pvm, "system"_s), jsNumber(sys));
+            handle->get()->resolve(go, pvm, o);
+        });
+    });
+    if (!accepted) {
+        delete promiseHandle;
+        promise->reject(vm, globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s));
+    }
+    return JSValue::encode(promise);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_cpuUsageInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_cpuUsageInternalBody>(*lexicalGlobalObject, *callFrame, "cpuUsageInternal");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_startCpuProfileInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_startCpuProfileInternalBody>(*lexicalGlobalObject, *callFrame, "startCpuProfileInternal");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_stopCpuProfileInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_stopCpuProfileInternalBody>(*lexicalGlobalObject, *callFrame, "stopCpuProfileInternal");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapStatistics, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getHeapStatisticsBody>(*lexicalGlobalObject, *callFrame, "getHeapStatistics");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

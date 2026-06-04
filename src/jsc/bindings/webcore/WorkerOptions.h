@@ -18,6 +18,9 @@ struct WorkerOptions {
     String name;
     bool mini { false };
     bool unref { false };
+    // worker_threads `env: SHARE_ENV`: the worker shares a live, process-wide
+    // environment store with the parent instead of receiving an env snapshot.
+    bool shareEnv { false };
     // Most of our code doesn't care whether `eval` was passed, because worker_threads.ts
     // automatically passes a Blob URL instead of a file path if `eval` is true. But, if `eval` is
     // true, then we need to make sure that `process.argv` contains "[worker eval]" instead of the

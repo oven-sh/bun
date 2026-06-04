@@ -207,7 +207,7 @@ static JSValue constructPlatform(VM& vm, JSObject* processObject)
 
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = processObject->globalObject();
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
     RETURN_IF_EXCEPTION(scope, {});
@@ -268,18 +268,20 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
 static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* release = JSC::constructEmptyObject(globalObject);
 
     release->putDirect(vm, vm.propertyNames->name, jsOwnedString(vm, String("node"_s)), 0); // maybe this should be 'bun' eventually
     release->putDirect(vm, Identifier::fromString(vm, "sourceUrl"_s), jsOwnedString(vm, WTF::String(std::span { Bun__githubURL, strlen(Bun__githubURL) })), 0);
     release->putDirect(vm, Identifier::fromString(vm, "headersUrl"_s), jsOwnedString(vm, String("https://nodejs.org/download/release/v" REPORTED_NODEJS_VERSION "/node-v" REPORTED_NODEJS_VERSION "-headers.tar.gz"_s)), 0);
 
+    RETURN_IF_EXCEPTION(scope, {});
     return release;
 }
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
-    static bool processIsExiting = false;
+    static thread_local bool processIsExiting = false;
     if (processIsExiting)
         return;
     processIsExiting = true;
@@ -1210,6 +1212,21 @@ extern "C" int Bun__handleUncaughtException(JSC::JSGlobalObject* lexicalGlobalOb
     auto* process = globalObject->processObject();
     auto& wrapped = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
+
+    // node parity (exitWithUndefinedFatalException): the internal fatal-exception
+    // handler is monkey-patchable as process._fatalException. If user code
+    // replaces it with a non-callable value, node cannot dispatch and exits with
+    // code 6 (InvalidFatalExceptionMonkeyPatching).
+    {
+        auto fatalScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+        JSValue fatalException = process->get(globalObject, Identifier::fromString(vm, "_fatalException"_s));
+        if (fatalScope.exception()) {
+            (void)fatalScope.tryClearException();
+        } else if (!fatalException.isCallable()) {
+            Bun__Process__exit(globalObject, 6);
+            return true;
+        }
+    }
 
     MarkedArgumentBuffer args;
     args.append(exception);
@@ -2454,6 +2471,7 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     // auto* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
     auto process = uncheckedDowncast<Process>(processObject);
 
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* report = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 10);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "compact"_s), JSC::jsBoolean(false), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "directory"_s), JSC::jsEmptyString(vm), 0);
@@ -2465,6 +2483,7 @@ static JSValue constructProcessReportObject(VM& vm, JSObject* processObject)
     report->putDirect(vm, JSC::Identifier::fromString(vm, "excludeEnv"_s), JSC::jsBoolean(false), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "excludeEnv"_s), JSC::jsString(vm, String("SIGUSR2"_s)), 0);
     report->putDirect(vm, JSC::Identifier::fromString(vm, "writeReport"_s), JSC::JSFunction::create(vm, globalObject, 1, String("writeReport"_s), Process_functionWriteReport, ImplementationVisibility::Public), 0);
+    RETURN_IF_EXCEPTION(scope, {});
     return report;
 }
 
@@ -2494,6 +2513,7 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     //      v8_use_snapshot: 1
     //    }
     // }
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSObject* config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     JSC::JSObject* variables = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     variables->putDirect(vm, JSC::Identifier::fromString(vm, "v8_enable_i8n_support"_s), JSC::jsNumber(1), 0);
@@ -2569,6 +2589,7 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
 #endif
 
     config->freeze(vm);
+    RETURN_IF_EXCEPTION(scope, {});
     return config;
 }
 
@@ -2724,7 +2745,7 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     if (Bun__GlobalObject__hasIPC(globalObject)) {
         auto& vm = JSC::getVM(globalObject);
-        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
         JSC::JSFunction* getControl = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetChannelCodeGenerator(vm), globalObject);
         JSC::MarkedArgumentBuffer args;
@@ -3774,13 +3795,20 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * g
 
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
 {
-    return JSC::constructEmptyArray(processObject->globalObject(), nullptr);
+    auto* globalObject = processObject->globalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSC::JSArray* result = JSC::constructEmptyArray(globalObject, nullptr);
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
 }
 
 static JSValue Process_stubEmptySet(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    return JSSet::create(vm, globalObject->setStructure());
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSSet* result = JSSet::create(vm, globalObject->setStructure());
+    RETURN_IF_EXCEPTION(scope, {});
+    return result;
 }
 
 static JSValue constructMemoryUsage(VM& vm, JSObject* processObject)
@@ -3897,7 +3925,7 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
 // return require.cache.get(Bun.main)
 static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 {
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
     auto* bun = globalObject->bunObject();
     RETURN_IF_EXCEPTION(scope, {});
@@ -3969,6 +3997,7 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     //     cached_builtins: [Getter]
     // }
     auto* globalObject = processObject->globalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* object = constructEmptyObject(globalObject);
 
     object->putDirect(vm, Identifier::fromString(vm, "inspector"_s), jsBoolean(true));
@@ -3990,6 +4019,7 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     object->putDirect(vm, Identifier::fromString(vm, "require_module"_s), jsBoolean(true));
     object->putDirect(vm, Identifier::fromString(vm, "typescript"_s), jsString(vm, String("transform"_s)));
 
+    RETURN_IF_EXCEPTION(scope, {});
     return object;
 }
 

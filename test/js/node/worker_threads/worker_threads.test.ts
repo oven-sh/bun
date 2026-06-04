@@ -65,19 +65,25 @@ test("all worker_threads module properties are present", () => {
   expect(MessagePort).toBeDefined();
   expect(Worker).toBeDefined();
 
-  expect(() => {
-    // @ts-expect-error no args
-    wt.markAsUntransferable();
-  }).toThrow("not yet implemented");
+  // markAsUntransferable / isMarkedAsUntransferable / markAsUncloneable are implemented.
+  expect(wt.markAsUntransferable).toBeFunction();
+  expect(wt.isMarkedAsUntransferable).toBeFunction();
+  expect(wt.markAsUncloneable).toBeFunction();
+  {
+    const ab = new ArrayBuffer(8);
+    expect(wt.isMarkedAsUntransferable(ab)).toBe(false);
+    wt.markAsUntransferable(ab);
+    expect(wt.isMarkedAsUntransferable(ab)).toBe(true);
+  }
 
   expect(() => {
-    // @ts-expect-error no args
-    wt.moveMessagePortToContext();
+    const { port1 } = new MessageChannel();
+    wt.moveMessagePortToContext(port1, {});
   }).toThrow("not yet implemented");
 });
 
 test("all worker_threads worker instance properties are present", async () => {
-  const worker = new Worker(new URL("./worker.js", import.meta.url).href);
+  const worker = new Worker(new URL("./worker.js", import.meta.url));
   expect(worker).toHaveProperty("threadId");
   expect(worker).toHaveProperty("ref");
   expect(worker).toHaveProperty("unref");
@@ -108,8 +114,10 @@ test("all worker_threads worker instance properties are present", async () => {
   expect(worker.ref).toBeFunction();
   expect(worker.unref).toBeFunction();
   expect(worker.stdin).toBeNull();
-  expect(worker.stdout).toBeNull();
-  expect(worker.stderr).toBeNull();
+  // node always exposes worker.stdout/stderr as Readables (fed by the worker's
+  // process.stdout/stderr); only stdin stays null until { stdin: true }.
+  expect(worker.stdout).not.toBeNull();
+  expect(worker.stderr).not.toBeNull();
   expect(worker.performance).toBeDefined();
   expect(worker.terminate).toBeFunction();
   expect(worker.postMessage).toBeFunction();
@@ -133,11 +141,11 @@ test("all worker_threads worker instance properties are present", async () => {
 });
 
 test("threadId module and worker property is consistent", async () => {
-  const worker1 = new Worker(new URL("./worker-thread-id.ts", import.meta.url).href);
+  const worker1 = new Worker(new URL("./worker-thread-id.ts", import.meta.url));
   expect(threadId).toBe(0);
   expect(worker1.threadId).toBeGreaterThan(0);
   expect(() => worker1.postMessage({ workerId: worker1.threadId })).not.toThrow();
-  const worker2 = new Worker(new URL("./worker-thread-id.ts", import.meta.url).href);
+  const worker2 = new Worker(new URL("./worker-thread-id.ts", import.meta.url));
   expect(worker2.threadId).toBeGreaterThan(worker1.threadId);
   expect(() => worker2.postMessage({ workerId: worker2.threadId })).not.toThrow();
   await worker1.terminate();
@@ -146,7 +154,7 @@ test("threadId module and worker property is consistent", async () => {
 
 test("receiveMessageOnPort works across threads", async () => {
   const { port1, port2 } = new MessageChannel();
-  const worker = new Worker(new URL("./worker.js", import.meta.url).href, {
+  const worker = new Worker(new URL("./worker.js", import.meta.url), {
     workerData: port2,
     transferList: [port2],
   });
@@ -194,7 +202,7 @@ test("receiveMessageOnPort works as FIFO", () => {
 }, 9999999);
 
 test("you can override globalThis.postMessage", async () => {
-  const worker = new Worker(new URL("./worker-override-postMessage.js", import.meta.url).href);
+  const worker = new Worker(new URL("./worker-override-postMessage.js", import.meta.url));
   const message = await new Promise(resolve => {
     worker.on("message", resolve);
     worker.postMessage("Hello from worker!");
@@ -246,7 +254,8 @@ test("support worker eval that throws", async () => {
     worker.on("message", resolve);
     worker.on("error", resolve);
   });
-  expect(result.toString()).toInclude(`error: Unexpected throw`);
+  expect(result.toString()).toInclude("Unexpected throw");
+  expect(result.name).toBe("SyntaxError");
   await worker.terminate();
 });
 
@@ -419,7 +428,7 @@ describe("error event", () => {
     );
     const [err] = await once(worker, "error");
     expect(err).toBeInstanceOf(Error);
-    expect(err.message).toMatch(/MessagePort \{.*\}/s);
+    expect(err.message).toMatch(/MessagePort \[EventTarget\] \{.*\}/s);
   });
 });
 

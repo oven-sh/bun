@@ -5,6 +5,7 @@ export default [
     name: "CompressionStreamTransformer",
     construct: true,
     finalize: true,
+    estimatedSize: true,
     JSType: "0b11101110",
     configurable: false,
     klass: {},

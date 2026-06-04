@@ -57,6 +57,27 @@ pub struct CompressionStreamTransformer {
 }
 
 impl CompressionStreamTransformer {
+    /// Native context footprint for the GC, mirroring the per-mode constants
+    /// the `NativeZlib`/`NativeBrotli`/`NativeZstd` handles report.
+    pub fn estimated_size(&self) -> usize {
+        core::mem::size_of::<Self>()
+            + match self.engine.get() {
+                // deflate internal_state @ cloudflare/zlib (see NativeZlib)
+                Engine::Zlib(_) => 3309,
+                Engine::Brotli(ctx) => match ctx.mode {
+                    NodeMode::BROTLI_ENCODE => 5143, // sizeof(BrotliEncoderStateStruct)
+                    NodeMode::BROTLI_DECODE => 855,  // sizeof(BrotliDecoderStateStruct)
+                    _ => 0,
+                },
+                Engine::Zstd(ctx) => match ctx.mode {
+                    NodeMode::ZSTD_COMPRESS => 5272,    // ZSTD_sizeof_CCtx estimate
+                    NodeMode::ZSTD_DECOMPRESS => 95968, // ZSTD_sizeof_DCtx estimate
+                    _ => 0,
+                },
+                Engine::Closed => 0,
+            }
+    }
+
     // PORT NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive
     // already emits the construct shim that calls `<Self>::constructor`.
     pub(crate) fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<Self>> {
@@ -199,17 +220,26 @@ impl CompressionStreamTransformer {
             // The processChunkSync loop from node:zlib: run the context until
             // it stops filling the output window — avail_out == 0 means more
             // output is pending (regardless of input), avail_out > 0 means
-            // the engine consumed the input and drained its output.
+            // the engine consumed the input it was given and drained its
+            // output.
             loop {
+                // The engine counters are u32, but the chunk length is user
+                // controlled and JSC allows >4GiB typed arrays on 64-bit:
+                // feed at most one u32 window per iteration instead of
+                // overflowing the casts.
+                let window_len = input.len().min(u32::MAX as usize);
+                let window = &input[..window_len];
+
                 // Zero-initialized so the window handed to the C engine is
                 // fully defined; full windows are adopted as-is below with no
                 // copy (len == capacity).
                 let mut out_vec = vec![0u8; CHUNK];
-                ctx.set_buffers(Some(input), Some(&mut out_vec));
+                ctx.set_buffers(Some(window), Some(&mut out_vec));
                 ctx.set_flush(flush);
                 ctx.do_work();
 
-                let mut avail_in = u32::try_from(input.len()).expect("chunk fits u32");
+                #[expect(clippy::cast_possible_truncation)] // window_len <= u32::MAX
+                let mut avail_in = window_len as u32;
                 let mut avail_out = u32::try_from(CHUNK).expect("constant");
                 ctx.update_write_result(&mut avail_in, &mut avail_out);
                 let err = ctx.get_error_info();
@@ -224,12 +254,13 @@ impl CompressionStreamTransformer {
                     outputs.push(out_vec[..written].into());
                 }
 
-                let consumed = input.len() - avail_in as usize;
+                let consumed = window_len - avail_in as usize;
                 input = &input[consumed..];
 
-                if avail_out == 0 {
-                    // Output window exhausted before the engine finished —
-                    // keep draining (input may already be empty).
+                if avail_out == 0 || !input.is_empty() {
+                    // Output window exhausted before the engine finished, or
+                    // input remains past the current u32 window — keep
+                    // driving.
                     continue;
                 }
                 break;

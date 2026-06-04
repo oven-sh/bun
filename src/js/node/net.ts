@@ -67,6 +67,7 @@ const kReinitializeHandle = Symbol("kReinitializeHandle");
 const kRealListen = Symbol("kRealListen");
 const kSetNoDelay = Symbol("kSetNoDelay");
 const kSetKeepAlive = Symbol("kSetKeepAlive");
+const kSyncWriteFd = Symbol("kSyncWriteFd");
 const kSetKeepAliveInitialDelay = Symbol("kSetKeepAliveInitialDelay");
 const kConnectOptions = Symbol("connect-options");
 const kAttach = Symbol("kAttach");
@@ -731,6 +732,24 @@ function Socket(options?) {
   if (options?.fd !== undefined) {
     const { fd } = options;
     validateInt32(fd, "fd", 0);
+    // Adopt pipe/character-device/file fds with synchronous writes. Matches
+    // node's effective semantics for stdio-style sockets: writes to a pipe
+    // complete inline, so data survives an immediate process.exit().
+    // Network-socket fds are not supported (handle adoption needs native
+    // support); those keep the previous validated-but-inert behavior.
+    const stats = require("node:fs").fstatSync(fd);
+    // isSocket() covers stdio handed to a child as a socketpair (how spawn
+    // implements pipes on unix); writable-only adoption with sync write(2)
+    // is correct there too.
+    if (stats.isFIFO() || stats.isCharacterDevice() || stats.isFile() || (stats.isSocket() && options.readable !== true)) {
+      this[kSyncWriteFd] = fd;
+      this._write = fdSyncWrite;
+      this._writev = fdSyncWritev;
+      if (options.readable !== true) {
+        this.push(null);
+        this.read(0);
+      }
+    }
   }
 
   if (socket instanceof Socket) {
@@ -1310,6 +1329,37 @@ Object.defineProperty(Socket.prototype, "remoteFamily", {
     return this._getpeername().family;
   },
 });
+
+function fdSyncWrite(chunk, encoding, callback) {
+  const fs = require("node:fs");
+  try {
+    const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+    let offset = 0;
+    while (offset < buf.length) {
+      offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
+    }
+    callback();
+  } catch (err) {
+    callback(err);
+  }
+}
+
+function fdSyncWritev(data, callback) {
+  const fs = require("node:fs");
+  try {
+    for (let i = 0; i < data.length; i++) {
+      const { chunk, encoding } = data[i];
+      const buf = typeof chunk === "string" ? Buffer.from(chunk, encoding) : chunk;
+      let offset = 0;
+      while (offset < buf.length) {
+        offset += fs.writeSync(this[kSyncWriteFd], buf, offset);
+      }
+    }
+    callback();
+  } catch (err) {
+    callback(err);
+  }
+}
 
 Socket.prototype.resetAndDestroy = function resetAndDestroy() {
   if (this._handle) {

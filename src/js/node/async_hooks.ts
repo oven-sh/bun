@@ -365,6 +365,7 @@ const createHookNotImpl = createWarning(
 );
 
 let hasEnabledCreateHook = false;
+const kHookEnabled = Symbol("kHookEnabled");
 function createHook(hook) {
   validateObject(hook, "hook");
   const { init, before, after, destroy, promiseResolve } = hook;
@@ -375,14 +376,36 @@ function createHook(hook) {
   if (promiseResolve !== undefined && typeof promiseResolve !== "function")
     throw $ERR_ASYNC_CALLBACK("hook.promiseResolve");
 
+  let enabledInit;
   return {
     enable() {
-      createHookNotImpl(hook);
+      if (init !== undefined && enabledInit === undefined) {
+        // init is delivered for TickObject resources (process.nextTick);
+        // other resource types are still unimplemented.
+        enabledInit = init;
+        require("internal/async_hooks_tick").tickInitHooks.push(init);
+      }
+      if (before !== undefined || after !== undefined || destroy !== undefined || promiseResolve !== undefined) {
+        createHookNotImpl(hook);
+      }
       hasEnabledCreateHook = true;
+      if (!this[kHookEnabled]) {
+        this[kHookEnabled] = true;
+        require("internal/async_hooks").markHookEnabled();
+      }
       return this;
     },
     disable() {
-      createHookNotImpl();
+      if (enabledInit !== undefined) {
+        const hooks = require("internal/async_hooks_tick").tickInitHooks;
+        const idx = hooks.indexOf(enabledInit);
+        if (idx !== -1) hooks.splice(idx, 1);
+        enabledInit = undefined;
+      }
+      if (this[kHookEnabled]) {
+        this[kHookEnabled] = false;
+        require("internal/async_hooks").markHookDisabled();
+      }
       return this;
     },
   };

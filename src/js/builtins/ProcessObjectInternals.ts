@@ -300,6 +300,7 @@ export function initializeNextTickQueue(
   reportUncaughtExceptionFn,
 ) {
   var queue;
+  var tickInitHooks;
   var process;
   var nextTickQueue = nextTickQueue;
   var drainMicrotasks = drainMicrotasksFn;
@@ -311,6 +312,7 @@ export function initializeNextTickQueue(
   setup = () => {
     const { FixedQueue } = require("internal/fixed_queue");
     queue = new FixedQueue();
+    tickInitHooks = require("internal/async_hooks_tick").tickInitHooks;
 
     function processTicksAndRejections() {
       var tock;
@@ -368,13 +370,23 @@ export function initializeNextTickQueue(
     }
     if (process._exiting) return;
 
-    queue.push({
+    const tock = {
       callback: cb,
       // We want to avoid materializing the args if there are none because it's
       // a waste of memory and Array.prototype.slice shows up in profiling.
       args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
-    });
+    };
+    if (tickInitHooks.length !== 0) {
+      // node fires one TickObject init per process.nextTick() call, at
+      // construction time (before the callback runs).
+      const asyncHooksTick = require("internal/async_hooks_tick");
+      const asyncId = asyncHooksTick.newAsyncId();
+      for (let i = 0; i < tickInitHooks.length; i++) {
+        tickInitHooks[i](asyncId, "TickObject", 0, tock);
+      }
+    }
+    queue.push(tock);
     $putInternalField(nextTickQueue, 0, 1);
   }
 

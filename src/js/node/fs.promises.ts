@@ -264,7 +264,11 @@ const exports = {
   rm: asyncWrap(fs.rm, "rm"),
   rmdir: async function rmdir(path, options) {
     if (options?.recursive) {
-      throw $ERR_INVALID_ARG_VALUE("options.recursive", options.recursive, "is not supported, use fs.promises.rm instead");
+      throw $ERR_INVALID_ARG_VALUE(
+        "options.recursive",
+        options.recursive,
+        "is not supported, use fs.promises.rm instead",
+      );
     }
     return fs.rmdir(path, options);
   },

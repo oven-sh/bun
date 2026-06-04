@@ -176,7 +176,11 @@ impl ChangeEvent {
     ) -> bool {
         let time_diff = timestamp.saturating_sub(self.timestamp);
         // skip consecutive exact duplicates (same path and event type) only
-        if self.timestamp == 0 || time_diff > 1 || self.event_type != event_type || self.hash != hash {
+        if self.timestamp == 0
+            || time_diff > 1
+            || self.event_type != event_type
+            || self.hash != hash
+        {
             self.timestamp = timestamp;
             self.event_type = event_type;
             self.hash = hash;

@@ -265,7 +265,11 @@ pub(crate) struct ChangeEvent {
 impl ChangeEvent {
     fn should_emit(&mut self, hash: u64, timestamp: i64, event_type: EventType) -> bool {
         let time_diff = timestamp - self.timestamp;
-        if self.timestamp == 0 || time_diff > 1 || self.event_type_ != event_type || self.hash != hash {
+        if self.timestamp == 0
+            || time_diff > 1
+            || self.event_type_ != event_type
+            || self.hash != hash
+        {
             self.timestamp = timestamp;
             self.event_type_ = event_type;
             self.hash = hash;

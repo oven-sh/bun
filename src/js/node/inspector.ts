@@ -96,21 +96,22 @@ function emitConsoleAPICalled(type: string, args: unknown[]) {
   try {
     const timestamp = Date.now();
     for (const session of runtimeEnabledSessions) {
-      // A fresh message per session: a listener that mutates its payload
-      // must not contaminate what the next session receives.
-      const message = {
-        method: "Runtime.consoleAPICalled",
-        params: {
-          type,
-          args: args.map(toRemoteObject),
-          executionContextId: 1,
-          timestamp,
-        },
-      };
-      // A throwing listener must not make the console call itself throw,
-      // suppress the underlying output, or starve later sessions; Node
-      // surfaces listener exceptions as process warnings.
+      // Neither a throwing listener nor a throwing argument serialization
+      // (toRemoteObject reads user-controlled toString) may make the console
+      // call itself throw, suppress the underlying output, or starve later
+      // sessions; Node surfaces listener exceptions as process warnings.
       try {
+        // A fresh message per session: a listener that mutates its payload
+        // must not contaminate what the next session receives.
+        const message = {
+          method: "Runtime.consoleAPICalled",
+          params: {
+            type,
+            args: args.map(toRemoteObject),
+            executionContextId: 1,
+            timestamp,
+          },
+        };
         session.emit("inspectorNotification", message);
         session.emit("Runtime.consoleAPICalled", message);
       } catch (e) {

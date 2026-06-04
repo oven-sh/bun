@@ -32,7 +32,11 @@ test("Runtime.consoleAPICalled is emitted while the Runtime domain is enabled", 
     expect(seen).toHaveLength(1);
     expect(seen[0].params.type).toBe("log");
     expect(seen[0].params.args[0]).toEqual({ type: "string", value: "hello" });
-    expect(seen[0].params.args[1]).toEqual({ type: "number", value: 42, description: "42" });
+    expect(seen[0].params.args[1]).toEqual({
+      type: "number",
+      value: 42,
+      description: "42",
+    });
     session.post("Runtime.disable");
     console.log("after disable");
     expect(seen).toHaveLength(1);
@@ -58,7 +62,7 @@ test("a consoleAPICalled listener that logs does not recurse", () => {
   }
 });
 
-test("a throwing consoleAPICalled listener does not break console.log or other sessions", () => {
+test("a throwing consoleAPICalled listener does not break console.log or other sessions", async () => {
   const s1 = new inspector.Session();
   const s2 = new inspector.Session();
   s1.connect();
@@ -76,10 +80,33 @@ test("a throwing consoleAPICalled listener does not break console.log or other s
     s2.post("Runtime.enable");
     expect(() => console.log("still works")).not.toThrow();
     expect(s2Saw).toBe(1);
+    // process.emitWarning delivers asynchronously
+    await new Promise(resolve => setImmediate(resolve));
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0].message).toBe("listener boom");
   } finally {
     process.off("warning", onWarning);
     s1.disconnect();
     s2.disconnect();
+  }
+});
+
+test("a console argument whose toString throws does not break console.log", async () => {
+  const session = new inspector.Session();
+  session.connect();
+  const warnings: Error[] = [];
+  const onWarning = (w: Error) => warnings.push(w);
+  process.on("warning", onWarning);
+  try {
+    session.post("Runtime.enable");
+    const { proxy, revoke } = Proxy.revocable({}, {});
+    revoke();
+    expect(() => console.log(proxy)).not.toThrow();
+    await new Promise(resolve => setImmediate(resolve));
+    expect(warnings).toHaveLength(1);
+  } finally {
+    process.off("warning", onWarning);
+    session.disconnect();
   }
 });
 

@@ -626,10 +626,21 @@ const SocketHandlers2: SocketHandler<NonNullable<import("node:net").Socket["_han
 const kNetTraceCat = "node,node.net,node.net.native";
 const kTraceConnectActive = Symbol("kTraceConnectActive");
 let traceEvents = null;
-function traceConnectStart(req) {
+function traceConnectStart(req, pipePath?) {
   traceEvents ??= require("internal/trace_events");
   if (!traceEvents.isCategoryGroupEnabled(kNetTraceCat)) return;
-  traceEvents.emitEvent("b", kNetTraceCat, "connect");
+  if (pipePath !== undefined) {
+    // Node (pipe_wrap.cc) emits path_type/pipe_path at the top level of the
+    // event's `args` for pipe connects; an abstract socket path starts with
+    // '\0', which is stripped from the reported path.
+    const isAbstract = pipePath.charCodeAt(0) === 0;
+    traceEvents.emitEventWithArgs("b", kNetTraceCat, "connect", undefined, {
+      path_type: isAbstract ? "abstract socket" : "file",
+      pipe_path: isAbstract ? pipePath.slice(1) : pipePath,
+    });
+  } else {
+    traceEvents.emitEvent("b", kNetTraceCat, "connect");
+  }
   req[kTraceConnectActive] = true;
 }
 function traceConnectEnd(req) {
@@ -1804,7 +1815,7 @@ function internalConnect(self, options, address, port, addressType, localAddress
     req.oncomplete = afterConnect;
     req.tls = tls;
 
-    traceConnectStart(req);
+    traceConnectStart(req, address);
     err = kConnectPipe(self, req, address);
   }
 

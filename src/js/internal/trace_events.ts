@@ -126,6 +126,14 @@ function getCategoryEnabledBuffer(category: string): Uint8Array {
 }
 
 function emitEvent(ph: string, cat: string, name: string, id?: number, data?: unknown) {
+  emitEventWithArgs(ph, cat, name, id, data === undefined ? {} : { data });
+}
+
+// Like `emitEvent`, but `args` lands at the top level of the event's `args`
+// object instead of under `args.data`. Node's native TRACE_EVENT macros
+// (e.g. the pipe connect event in pipe_wrap.cc) emit their key/value pairs
+// this way, and tests assert e.g. `trace.args.path_type` directly.
+function emitEventWithArgs(ph: string, cat: string, name: string, id?: number, args?: unknown) {
   const event: Record<string, unknown> = {
     pid: process.pid,
     tid,
@@ -135,7 +143,7 @@ function emitEvent(ph: string, cat: string, name: string, id?: number, data?: un
     name,
   };
   if (id !== undefined) event.id = "0x" + id.toString(16);
-  event.args = data === undefined ? {} : { data };
+  event.args = args === undefined ? {} : args;
   events.push(event);
 }
 
@@ -697,6 +705,7 @@ export default {
   isTraceCategoryEnabled,
   isCategoryGroupEnabled,
   emitEvent,
+  emitEventWithArgs,
   trace,
   initFromCli,
   setTid,

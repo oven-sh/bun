@@ -1606,6 +1606,16 @@ export function readableStreamCancel(stream: ReadableStream, reason: any) {
   if (state === $streamErrored) return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
   $readableStreamClose(stream);
 
+  const reader = $getByIdDirectPrivate(stream, "reader");
+  if (reader && $isReadableStreamBYOBReader(reader)) {
+    const readIntoRequests = $getByIdDirectPrivate(reader, "readIntoRequests");
+    if (readIntoRequests?.isNotEmpty()) {
+      $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
+      for (var request = readIntoRequests.shift(); request; request = readIntoRequests.shift())
+        $fulfillPromise(request, { value: undefined, done: true });
+    }
+  }
+
   const controller = $getByIdDirectPrivate(stream, "readableStreamController");
   if (controller === null) return Promise.$resolve();
 

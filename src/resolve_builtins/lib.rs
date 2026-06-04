@@ -3,5 +3,5 @@
 #[path = "HardcodedModule.rs"]
 pub mod HardcodedModule;
 
-pub use HardcodedModule::{Alias, Cfg, HardcodedModule as Module};
+pub use HardcodedModule::{stream_iter_enabled, Alias, Cfg, HardcodedModule as Module};
 pub mod node_builtins;

@@ -275,7 +275,7 @@ const IncomingMessagePrototype = {
         if (!this._dumped) {
           this.push(new Buffer(completeBody));
         }
-        emitEOFIncomingMessage(this);
+        emitEOFIncomingMessage(this, true);
         return;
       }
 
@@ -304,15 +304,19 @@ const IncomingMessagePrototype = {
       this.emit("aborted");
     }
 
-    // Suppress "AbortError" from fetch() because we emit this in the 'aborted' event
-    if (isAbortError(err)) {
+    // Suppress "AbortError" from fetch() because we emit this in the 'aborted' event.
+    // Server requests must still deliver the error (node emits it from _destroy).
+    if (isAbortError(err) && this[typeSymbol] !== NodeHTTPIncomingRequestType.NodeHTTPResponse) {
       err = undefined;
     }
     var nodeHTTPResponse = this[kHandle];
     if (nodeHTTPResponse) {
       this[kHandle] = undefined;
       nodeHTTPResponse.onabort = nodeHTTPResponse.ondata = undefined;
-      if (!nodeHTTPResponse.finished && shouldEmitAborted) {
+      // stream.destroy() (the destroyer) detaches this.socket first to signal
+      // that the connection must outlive the request so the response can still
+      // reply (node's _destroy socket-null check).
+      if (!nodeHTTPResponse.finished && shouldEmitAborted && this.socket) {
         nodeHTTPResponse.abort();
       }
       const socket = this.socket;
@@ -407,7 +411,14 @@ const IncomingMessagePrototype = {
     return this;
   },
   get socket() {
-    return (this[fakeSocketSymbol] ??= new FakeSocket(this));
+    // Lazy-init only when never set: the stream destroyer assigns
+    // `stream.socket = null` before destroying a server request and node
+    // then observes null (it gates connection teardown on it). `??=` would
+    // resurrect a FakeSocket and defeat that signal.
+    if (this[fakeSocketSymbol] === undefined) {
+      this[fakeSocketSymbol] = new FakeSocket(this);
+    }
+    return this[fakeSocketSymbol];
   },
   set socket(value) {
     this[fakeSocketSymbol] = value;
@@ -460,7 +471,7 @@ async function consumeStream(self, reader: ReadableStreamDefaultReader) {
   }
 
   if (!self.complete) {
-    emitEOFIncomingMessage(self);
+    emitEOFIncomingMessage(self, true);
   }
 }
 

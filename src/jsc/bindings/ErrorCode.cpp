@@ -1777,6 +1777,19 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
         return JSValue::encode(ERR_INVALID_ARG_VALUE(scope, globalObject, arg0, arg1, arg2));
     }
 
+    case Bun::ErrorCode::ERR_STREAM_ITER_MISSING_FLAG: {
+        return JSC::JSValue::encode(createError(globalObject, error, "The stream/iter API requires the --experimental-stream-iter flag"_s));
+    }
+
+    case Bun::ErrorCode::ERR_OPERATION_FAILED: {
+        auto arg0 = callFrame->argument(1);
+        WTF::StringBuilder builder;
+        builder.append("Operation failed: "_s);
+        JSValueToStringSafe(globalObject, builder, arg0);
+        RETURN_IF_EXCEPTION(scope, {});
+        return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
+    }
+
     case Bun::ErrorCode::ERR_UNKNOWN_ENCODING: {
         auto arg0 = callFrame->argument(1);
         WTF::StringBuilder builder;

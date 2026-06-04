@@ -397,7 +397,6 @@ export default {
     flatMap,
     map,
     take,
-    compose,
   },
   promiseReturningOperators: {
     every,

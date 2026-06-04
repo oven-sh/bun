@@ -225,13 +225,22 @@ function ClientRequest(input, options, cb) {
 
     this.finished = true;
 
+    // Node tears the in-flight response down via the socket 'close' path
+    // (socketCloseListener): an incomplete response is destroyed with
+    // ECONNRESET so consumers (e.g. async iteration) observe the reset.
     if (this.res && !this.res.complete) {
-      this.res.emit("end");
+      this.res.destroy(new ConnResetException("aborted"));
     }
 
     // If request is destroyed we abort the current response
     this[kAbortController]?.abort?.();
     this.socket.destroy(err);
+
+    // Node routes destroy(err) through the socket 'error' event back to the
+    // request; our socket teardown does not, so emit it here directly.
+    if (err) {
+      process.nextTick((self, e) => self.emit("error", e), this, err);
+    }
 
     return this;
   };

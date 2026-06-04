@@ -482,7 +482,8 @@ impl EventLoopDelayMonitor {
         // `on_fire` skips recording while the ref is empty.
         if !histogram.is_empty_or_undefined_or_null() {
             let global = vm.global();
-            self.js_histogram.with_mut(|r| r.set_strong(histogram, global));
+            self.js_histogram
+                .with_mut(|r| r.set_strong(histogram, global));
         }
         self.resolution_ms = resolution_ms;
         self.enabled = true;

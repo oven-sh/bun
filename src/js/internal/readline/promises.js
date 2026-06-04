@@ -3,27 +3,18 @@
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
 var __node_module__ = { exports: {} };
-'use strict';
+("use strict");
 
-const {
-  ArrayPrototypeJoin,
-  ArrayPrototypePush,
-  Promise,
-} = primordials;
+const { ArrayPrototypeJoin, ArrayPrototypePush, Promise } = primordials;
 
 const { CSI } = require("internal/readline/utils");
 const { validateBoolean, validateInteger } = require("internal/validators");
 const { isWritable } = require("internal/repl/node-shims");
-const { codes: {
-  ERR_INVALID_ARG_TYPE,
-} } = require("internal/repl/node-errors");
-
 const {
-  kClearToLineBeginning,
-  kClearToLineEnd,
-  kClearLine,
-  kClearScreenDown,
-} = CSI;
+  codes: { ERR_INVALID_ARG_TYPE },
+} = require("internal/repl/node-errors");
+
+const { kClearToLineBeginning, kClearToLineEnd, kClearLine, kClearScreenDown } = CSI;
 
 class Readline {
   #autoCommit = false;
@@ -31,11 +22,10 @@ class Readline {
   #todo = [];
 
   constructor(stream, options = undefined) {
-    if (!isWritable(stream))
-      throw new ERR_INVALID_ARG_TYPE('stream', 'Writable', stream);
+    if (!isWritable(stream)) throw new ERR_INVALID_ARG_TYPE("stream", "Writable", stream);
     this.#stream = stream;
     if (options?.autoCommit != null) {
-      validateBoolean(options.autoCommit, 'options.autoCommit');
+      validateBoolean(options.autoCommit, "options.autoCommit");
       this.#autoCommit = options.autoCommit;
     }
   }
@@ -47,8 +37,8 @@ class Readline {
    * @returns {Readline} this
    */
   cursorTo(x, y = undefined) {
-    validateInteger(x, 'x');
-    if (y != null) validateInteger(y, 'y');
+    validateInteger(x, "x");
+    if (y != null) validateInteger(y, "y");
 
     const data = y == null ? CSI`${x + 1}G` : CSI`${y + 1};${x + 1}H`;
     if (this.#autoCommit) process.nextTick(() => this.#stream.write(data));
@@ -65,10 +55,10 @@ class Readline {
    */
   moveCursor(dx, dy) {
     if (dx || dy) {
-      validateInteger(dx, 'dx');
-      validateInteger(dy, 'dy');
+      validateInteger(dx, "dx");
+      validateInteger(dy, "dy");
 
-      let data = '';
+      let data = "";
 
       if (dx < 0) {
         data += CSI`${-dx}D`;
@@ -96,12 +86,9 @@ class Readline {
    * @returns {Readline} this
    */
   clearLine(dir) {
-    validateInteger(dir, 'dir', -1, 1);
+    validateInteger(dir, "dir", -1, 1);
 
-    const data =
-      dir < 0 ? kClearToLineBeginning :
-        dir > 0 ? kClearToLineEnd :
-          kClearLine;
+    const data = dir < 0 ? kClearToLineBeginning : dir > 0 ? kClearToLineEnd : kClearLine;
     if (this.#autoCommit) process.nextTick(() => this.#stream.write(data));
     else ArrayPrototypePush(this.#todo, data);
     return this;
@@ -127,8 +114,8 @@ class Readline {
    *   flushed to the associated `stream`.
    */
   commit() {
-    return new Promise((resolve) => {
-      this.#stream.write(ArrayPrototypeJoin(this.#todo, ''), resolve);
+    return new Promise(resolve => {
+      this.#stream.write(ArrayPrototypeJoin(this.#todo, ""), resolve);
       this.#todo = [];
     });
   }

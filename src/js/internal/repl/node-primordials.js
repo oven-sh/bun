@@ -5,7 +5,7 @@
 
 class SafeStringIterator {
   constructor(string) {
-    return string[Symbol.iterator]()
+    return string[Symbol.iterator]();
   }
 }
 
@@ -63,15 +63,13 @@ export default {
   ObjectKeys: Object.keys,
   ObjectSetPrototypeOf: Object.setPrototypeOf,
   Promise,
-  PromisePrototypeThen: (p, onFulfilled, onRejected) =>
-    p.then(onFulfilled, onRejected),
+  PromisePrototypeThen: (p, onFulfilled, onRejected) => p.then(onFulfilled, onRejected),
   PromiseReject: v => Promise.reject(v),
   PromiseResolve: v => Promise.resolve(v),
   ReflectApply: (fn, thisArg, args) => fn.$apply(thisArg, args),
   RegExp,
   RegExpPrototypeExec: (re, s) => re.exec(s),
-  RegExpPrototypeSymbolReplace: (re, s, replacement) =>
-    re[Symbol.replace](s, replacement),
+  RegExpPrototypeSymbolReplace: (re, s, replacement) => re[Symbol.replace](s, replacement),
   RegExpPrototypeSymbolSplit: (re, s, limit) => re[Symbol.split](s, limit),
   SafePromiseRace: promises => Promise.race(promises),
   SafeSet: Set,
@@ -101,4 +99,4 @@ export default {
   SymbolDispose: Symbol.dispose,
   SyntaxError,
   globalThis,
-}
+};

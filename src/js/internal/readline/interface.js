@@ -3,7 +3,7 @@
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
 var __node_module__ = { exports: {} };
-'use strict';
+("use strict");
 
 const {
   ArrayFrom,
@@ -41,41 +41,18 @@ const {
 
 const {
   AbortError,
-  codes: {
-    ERR_INVALID_ARG_VALUE,
-    ERR_USE_AFTER_CLOSE,
-  },
+  codes: { ERR_INVALID_ARG_VALUE, ERR_USE_AFTER_CLOSE },
 } = require("internal/repl/node-errors");
 
-const {
-  validateAbortSignal,
-  validateString,
-  validateUint32,
-} = require("internal/validators");
-const {
-  assignFunctionName,
-  kEmptyObject,
-} = require("internal/repl/node-shims");
-const {
-  inspect,
-  getStringWidth,
-  stripVTControlCharacters,
-} = require("internal/repl/node-inspect");
+const { validateAbortSignal, validateString, validateUint32 } = require("internal/validators");
+const { assignFunctionName, kEmptyObject } = require("internal/repl/node-shims");
+const { inspect, getStringWidth, stripVTControlCharacters } = require("internal/repl/node-inspect");
 const EventEmitter = require("node:events");
 const { addAbortListener } = require("internal/repl/node-shims");
-const {
-  charLengthAt,
-  charLengthLeft,
-  commonPrefix,
-  kSubstringSearch,
-} = require("internal/readline/utils");
+const { charLengthAt, charLengthLeft, commonPrefix, kSubstringSearch } = require("internal/readline/utils");
 let emitKeypressEvents;
 let kFirstEventParam;
-const {
-  clearScreenDown,
-  cursorTo,
-  moveCursor,
-} = require("internal/readline/callbacks");
+const { clearScreenDown, cursorTo, moveCursor } = require("internal/readline/callbacks");
 
 const { StringDecoder } = require("node:string_decoder");
 const { ReplHistory } = require("internal/repl/history");
@@ -92,9 +69,9 @@ const kMincrlfDelay = 100;
  */
 const lineEnding = /\r?\n|\r(?!\n)|\u2028|\u2029/g;
 
-const kLineObjectStream = Symbol('line object stream');
-const kQuestionCancel = Symbol('kQuestionCancel');
-const kQuestion = Symbol('kQuestion');
+const kLineObjectStream = Symbol("line object stream");
+const kQuestionCancel = Symbol("kQuestionCancel");
+const kQuestion = Symbol("kQuestion");
 
 // GNU readline library - keyseq-timeout is 500ms (default)
 const ESCAPE_CODE_TIMEOUT = 500;
@@ -102,65 +79,65 @@ const ESCAPE_CODE_TIMEOUT = 500;
 // Max length of the kill ring
 const kMaxLengthOfKillRing = 32;
 
-const kMultilinePrompt = Symbol('| ');
+const kMultilinePrompt = Symbol("| ");
 
-const kAddHistory = Symbol('_addHistory');
-const kBeforeEdit = Symbol('_beforeEdit');
-const kDecoder = Symbol('_decoder');
-const kDeleteLeft = Symbol('_deleteLeft');
-const kDeleteLineLeft = Symbol('_deleteLineLeft');
-const kDeleteLineRight = Symbol('_deleteLineRight');
-const kDeleteRight = Symbol('_deleteRight');
-const kDeleteWordLeft = Symbol('_deleteWordLeft');
-const kDeleteWordRight = Symbol('_deleteWordRight');
-const kGetDisplayPos = Symbol('_getDisplayPos');
-const kHistoryNext = Symbol('_historyNext');
-const kMoveDownOrHistoryNext = Symbol('_moveDownOrHistoryNext');
-const kHistoryPrev = Symbol('_historyPrev');
-const kMoveUpOrHistoryPrev = Symbol('_moveUpOrHistoryPrev');
-const kInsertString = Symbol('_insertString');
-const kLine = Symbol('_line');
-const kLine_buffer = Symbol('_line_buffer');
-const kKillRing = Symbol('_killRing');
-const kKillRingCursor = Symbol('_killRingCursor');
-const kMoveCursor = Symbol('_moveCursor');
-const kNormalWrite = Symbol('_normalWrite');
-const kOldPrompt = Symbol('_oldPrompt');
-const kOnLine = Symbol('_onLine');
-const kSetLine = Symbol('_setLine');
-const kPreviousKey = Symbol('_previousKey');
-const kPrompt = Symbol('_prompt');
-const kPushToKillRing = Symbol('_pushToKillRing');
-const kPushToUndoStack = Symbol('_pushToUndoStack');
-const kQuestionCallback = Symbol('_questionCallback');
-const kLastCommandErrored = Symbol('_lastCommandErrored');
-const kQuestionReject = Symbol('_questionReject');
-const kRedo = Symbol('_redo');
-const kRedoStack = Symbol('_redoStack');
-const kRefreshLine = Symbol('_refreshLine');
-const kSawKeyPress = Symbol('_sawKeyPress');
-const kSawReturnAt = Symbol('_sawReturnAt');
-const kSetRawMode = Symbol('_setRawMode');
-const kTabComplete = Symbol('_tabComplete');
-const kTabCompleter = Symbol('_tabCompleter');
-const kTtyWrite = Symbol('_ttyWrite');
-const kUndo = Symbol('_undo');
-const kUndoStack = Symbol('_undoStack');
-const kIsMultiline = Symbol('_isMultiline');
-const kWordLeft = Symbol('_wordLeft');
-const kWordRight = Symbol('_wordRight');
-const kWriteToOutput = Symbol('_writeToOutput');
-const kYank = Symbol('_yank');
-const kYanking = Symbol('_yanking');
-const kYankPop = Symbol('_yankPop');
-const kSavePreviousState = Symbol('_savePreviousState');
-const kRestorePreviousState = Symbol('_restorePreviousState');
-const kPreviousLine = Symbol('_previousLine');
-const kPreviousCursor = Symbol('_previousCursor');
-const kPreviousCursorCols = Symbol('_previousCursorCols');
-const kMultilineMove = Symbol('_multilineMove');
-const kPreviousPrevRows = Symbol('_previousPrevRows');
-const kAddNewLineOnTTY = Symbol('_addNewLineOnTTY');
+const kAddHistory = Symbol("_addHistory");
+const kBeforeEdit = Symbol("_beforeEdit");
+const kDecoder = Symbol("_decoder");
+const kDeleteLeft = Symbol("_deleteLeft");
+const kDeleteLineLeft = Symbol("_deleteLineLeft");
+const kDeleteLineRight = Symbol("_deleteLineRight");
+const kDeleteRight = Symbol("_deleteRight");
+const kDeleteWordLeft = Symbol("_deleteWordLeft");
+const kDeleteWordRight = Symbol("_deleteWordRight");
+const kGetDisplayPos = Symbol("_getDisplayPos");
+const kHistoryNext = Symbol("_historyNext");
+const kMoveDownOrHistoryNext = Symbol("_moveDownOrHistoryNext");
+const kHistoryPrev = Symbol("_historyPrev");
+const kMoveUpOrHistoryPrev = Symbol("_moveUpOrHistoryPrev");
+const kInsertString = Symbol("_insertString");
+const kLine = Symbol("_line");
+const kLine_buffer = Symbol("_line_buffer");
+const kKillRing = Symbol("_killRing");
+const kKillRingCursor = Symbol("_killRingCursor");
+const kMoveCursor = Symbol("_moveCursor");
+const kNormalWrite = Symbol("_normalWrite");
+const kOldPrompt = Symbol("_oldPrompt");
+const kOnLine = Symbol("_onLine");
+const kSetLine = Symbol("_setLine");
+const kPreviousKey = Symbol("_previousKey");
+const kPrompt = Symbol("_prompt");
+const kPushToKillRing = Symbol("_pushToKillRing");
+const kPushToUndoStack = Symbol("_pushToUndoStack");
+const kQuestionCallback = Symbol("_questionCallback");
+const kLastCommandErrored = Symbol("_lastCommandErrored");
+const kQuestionReject = Symbol("_questionReject");
+const kRedo = Symbol("_redo");
+const kRedoStack = Symbol("_redoStack");
+const kRefreshLine = Symbol("_refreshLine");
+const kSawKeyPress = Symbol("_sawKeyPress");
+const kSawReturnAt = Symbol("_sawReturnAt");
+const kSetRawMode = Symbol("_setRawMode");
+const kTabComplete = Symbol("_tabComplete");
+const kTabCompleter = Symbol("_tabCompleter");
+const kTtyWrite = Symbol("_ttyWrite");
+const kUndo = Symbol("_undo");
+const kUndoStack = Symbol("_undoStack");
+const kIsMultiline = Symbol("_isMultiline");
+const kWordLeft = Symbol("_wordLeft");
+const kWordRight = Symbol("_wordRight");
+const kWriteToOutput = Symbol("_writeToOutput");
+const kYank = Symbol("_yank");
+const kYanking = Symbol("_yanking");
+const kYankPop = Symbol("_yankPop");
+const kSavePreviousState = Symbol("_savePreviousState");
+const kRestorePreviousState = Symbol("_restorePreviousState");
+const kPreviousLine = Symbol("_previousLine");
+const kPreviousCursor = Symbol("_previousCursor");
+const kPreviousCursorCols = Symbol("_previousCursorCols");
+const kMultilineMove = Symbol("_multilineMove");
+const kPreviousPrevRows = Symbol("_previousPrevRows");
+const kAddNewLineOnTTY = Symbol("_addNewLineOnTTY");
 
 function InterfaceConstructor(input, output, completer, terminal) {
   this[kSawReturnAt] = 0;
@@ -175,7 +152,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
   FunctionPrototypeCall(EventEmitter, this);
 
   let crlfDelay;
-  let prompt = '> ';
+  let prompt = "> ";
   let signal;
 
   if (input?.input) {
@@ -191,7 +168,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
     const removeHistoryDuplicates = input.removeHistoryDuplicates;
 
     if (input.tabSize !== undefined) {
-      validateUint32(input.tabSize, 'tabSize', true);
+      validateUint32(input.tabSize, "tabSize", true);
       this.tabSize = input.tabSize;
     }
     if (input.prompt !== undefined) {
@@ -201,15 +178,12 @@ function InterfaceConstructor(input, output, completer, terminal) {
       if (NumberIsFinite(input.escapeCodeTimeout)) {
         this.escapeCodeTimeout = input.escapeCodeTimeout;
       } else {
-        throw new ERR_INVALID_ARG_VALUE(
-          'input.escapeCodeTimeout',
-          this.escapeCodeTimeout,
-        );
+        throw new ERR_INVALID_ARG_VALUE("input.escapeCodeTimeout", this.escapeCodeTimeout);
       }
     }
 
     if (signal) {
-      validateAbortSignal(signal, 'options.signal');
+      validateAbortSignal(signal, "options.signal");
     }
 
     crlfDelay = input.crlfDelay;
@@ -222,8 +196,8 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
   this.setupHistoryManager(input);
 
-  if (completer !== undefined && typeof completer !== 'function') {
-    throw new ERR_INVALID_ARG_VALUE('completer', completer);
+  if (completer !== undefined && typeof completer !== "function") {
+    throw new ERR_INVALID_ARG_VALUE("completer", completer);
   }
 
   // Backwards compat; check the isTTY prop of the output stream
@@ -234,7 +208,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
   const self = this;
 
-  this.line = '';
+  this.line = "";
   this[kIsMultiline] = false;
   this[kSubstringSearch] = null;
   this.output = output;
@@ -251,9 +225,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
   this[kKillRing] = [];
   this[kKillRingCursor] = 0;
 
-  this.crlfDelay = crlfDelay ?
-    MathMax(kMincrlfDelay, crlfDelay) :
-    kMincrlfDelay;
+  this.crlfDelay = crlfDelay ? MathMax(kMincrlfDelay, crlfDelay) : kMincrlfDelay;
   this.completer = completer;
 
   this.setPrompt(prompt);
@@ -261,7 +233,7 @@ function InterfaceConstructor(input, output, completer, terminal) {
   this.terminal = !!terminal;
 
   function onerror(err) {
-    self.emit('error', err);
+    self.emit("error", err);
   }
 
   function ondata(data) {
@@ -269,18 +241,15 @@ function InterfaceConstructor(input, output, completer, terminal) {
   }
 
   function onend() {
-    if (
-      typeof self[kLine_buffer] === 'string' &&
-        self[kLine_buffer].length > 0
-    ) {
-      self.emit('line', self[kLine_buffer]);
+    if (typeof self[kLine_buffer] === "string" && self[kLine_buffer].length > 0) {
+      self.emit("line", self[kLine_buffer]);
     }
     self.close();
   }
 
   function ontermend() {
-    if (typeof self.line === 'string' && self.line.length > 0) {
-      self.emit('line', self.line);
+    if (typeof self.line === "string" && self.line.length > 0) {
+      self.emit("line", self.line);
     }
     self.close();
   }
@@ -302,26 +271,26 @@ function InterfaceConstructor(input, output, completer, terminal) {
 
   this[kLineObjectStream] = undefined;
 
-  input.on('error', onerror);
+  input.on("error", onerror);
 
   if (!this.terminal) {
     function onSelfCloseWithoutTerminal() {
-      input.removeListener('data', ondata);
-      input.removeListener('error', onerror);
-      input.removeListener('end', onend);
+      input.removeListener("data", ondata);
+      input.removeListener("error", onerror);
+      input.removeListener("end", onend);
     }
 
-    input.on('data', ondata);
-    input.on('end', onend);
-    self.once('close', onSelfCloseWithoutTerminal);
-    this[kDecoder] = new StringDecoder('utf8');
+    input.on("data", ondata);
+    input.on("end", onend);
+    self.once("close", onSelfCloseWithoutTerminal);
+    this[kDecoder] = new StringDecoder("utf8");
   } else {
     function onSelfCloseWithTerminal() {
-      input.removeListener('keypress', onkeypress);
-      input.removeListener('error', onerror);
-      input.removeListener('end', ontermend);
+      input.removeListener("keypress", onkeypress);
+      input.removeListener("error", onerror);
+      input.removeListener("end", ontermend);
       if (output !== null && output !== undefined) {
-        output.removeListener('resize', onresize);
+        output.removeListener("resize", onresize);
       }
     }
 
@@ -329,8 +298,8 @@ function InterfaceConstructor(input, output, completer, terminal) {
     emitKeypressEvents(input, this);
 
     // `input` usually refers to stdin
-    input.on('keypress', onkeypress);
-    input.on('end', ontermend);
+    input.on("keypress", onkeypress);
+    input.on("end", ontermend);
 
     this[kSetRawMode](true);
     this.terminal = true;
@@ -338,10 +307,9 @@ function InterfaceConstructor(input, output, completer, terminal) {
     // Cursor position on the line.
     this.cursor = 0;
 
-    if (output !== null && output !== undefined)
-      output.on('resize', onresize);
+    if (output !== null && output !== undefined) output.on("resize", onresize);
 
-    self.once('close', onSelfCloseWithTerminal);
+    self.once("close", onSelfCloseWithTerminal);
   }
 
   if (signal) {
@@ -350,12 +318,12 @@ function InterfaceConstructor(input, output, completer, terminal) {
       process.nextTick(onAborted);
     } else {
       const disposable = addAbortListener(signal, onAborted);
-      self.once('close', disposable[SymbolDispose]);
+      self.once("close", disposable[SymbolDispose]);
     }
   }
 
   // Current line
-  this[kSetLine]('');
+  this[kSetLine]("");
 
   input.resume();
 }
@@ -392,33 +360,53 @@ class Interface extends InterfaceConstructor {
       this.historyManager.initialize(options.onHistoryFileLoaded);
     }
 
-    ObjectDefineProperty(this, 'history', {
-      __proto__: null, configurable: true, enumerable: true,
-      get() { return this.historyManager.history; },
-      set(newHistory) { return this.historyManager.history = newHistory; },
+    ObjectDefineProperty(this, "history", {
+      __proto__: null,
+      configurable: true,
+      enumerable: true,
+      get() {
+        return this.historyManager.history;
+      },
+      set(newHistory) {
+        return (this.historyManager.history = newHistory);
+      },
     });
 
-    ObjectDefineProperty(this, 'historyIndex', {
-      __proto__: null, configurable: true, enumerable: true,
-      get() { return this.historyManager.index; },
-      set(historyIndex) { return this.historyManager.index = historyIndex; },
+    ObjectDefineProperty(this, "historyIndex", {
+      __proto__: null,
+      configurable: true,
+      enumerable: true,
+      get() {
+        return this.historyManager.index;
+      },
+      set(historyIndex) {
+        return (this.historyManager.index = historyIndex);
+      },
     });
 
-    ObjectDefineProperty(this, 'historySize', {
-      __proto__: null, configurable: true, enumerable: true,
-      get() { return this.historyManager.size; },
+    ObjectDefineProperty(this, "historySize", {
+      __proto__: null,
+      configurable: true,
+      enumerable: true,
+      get() {
+        return this.historyManager.size;
+      },
     });
 
-    ObjectDefineProperty(this, 'isFlushing', {
-      __proto__: null, configurable: true, enumerable: true,
-      get() { return this.historyManager.isFlushing; },
+    ObjectDefineProperty(this, "isFlushing", {
+      __proto__: null,
+      configurable: true,
+      enumerable: true,
+      get() {
+        return this.historyManager.isFlushing;
+      },
     });
   }
 
   [kSetRawMode](mode) {
     const wasInRawMode = this.input.isRaw;
 
-    if (typeof this.input.setRawMode === 'function') {
+    if (typeof this.input.setRawMode === "function") {
       this.input.setRawMode(mode);
     }
 
@@ -432,7 +420,7 @@ class Interface extends InterfaceConstructor {
    */
   prompt(preserveCursor) {
     if (this.paused) this.resume();
-    if (this.terminal && process.env.TERM !== 'dumb') {
+    if (this.terminal && process.env.TERM !== "dumb") {
       if (!preserveCursor) this.cursor = 0;
       this[kRefreshLine]();
     } else {
@@ -442,7 +430,7 @@ class Interface extends InterfaceConstructor {
 
   [kQuestion](query, cb) {
     if (this.closed) {
-      throw new ERR_USE_AFTER_CLOSE('readline');
+      throw new ERR_USE_AFTER_CLOSE("readline");
     }
     if (this[kQuestionCallback]) {
       this.prompt();
@@ -454,9 +442,9 @@ class Interface extends InterfaceConstructor {
     }
   }
 
-  [kSetLine](line = '') {
+  [kSetLine](line = "") {
     this.line = line;
-    this[kIsMultiline] = StringPrototypeIncludes(line, '\n');
+    this[kIsMultiline] = StringPrototypeIncludes(line, "\n");
   }
 
   [kOnLine](line) {
@@ -466,7 +454,7 @@ class Interface extends InterfaceConstructor {
       this.setPrompt(this[kOldPrompt]);
       cb(line);
     } else {
-      this.emit('line', line);
+      this.emit("line", line);
     }
   }
 
@@ -483,7 +471,7 @@ class Interface extends InterfaceConstructor {
   }
 
   [kWriteToOutput](stringToWrite) {
-    validateString(stringToWrite, 'stringToWrite');
+    validateString(stringToWrite, "stringToWrite");
 
     if (this.output !== null && this.output !== undefined) {
       this.output.write(stringToWrite);
@@ -516,7 +504,7 @@ class Interface extends InterfaceConstructor {
     clearScreenDown(this.output);
 
     if (this[kIsMultiline]) {
-      const lines = StringPrototypeSplit(this.line, '\n');
+      const lines = StringPrototypeSplit(this.line, "\n");
       // Write first line with normal prompt
       this[kWriteToOutput](this[kPrompt] + lines[0]);
 
@@ -531,7 +519,7 @@ class Interface extends InterfaceConstructor {
 
     // Force terminal to allocate a new line
     if (lineCols === 0) {
-      this[kWriteToOutput](' ');
+      this[kWriteToOutput](" ");
     }
 
     // Move cursor to original position.
@@ -556,7 +544,7 @@ class Interface extends InterfaceConstructor {
       this[kSetRawMode](false);
     }
     this.closed = true;
-    this.emit('close');
+    this.emit("close");
   }
 
   /**
@@ -565,12 +553,12 @@ class Interface extends InterfaceConstructor {
    */
   pause() {
     if (this.closed) {
-      throw new ERR_USE_AFTER_CLOSE('readline');
+      throw new ERR_USE_AFTER_CLOSE("readline");
     }
     if (this.paused) return;
     this.input.pause();
     this.paused = true;
-    this.emit('pause');
+    this.emit("pause");
     return this;
   }
 
@@ -580,12 +568,12 @@ class Interface extends InterfaceConstructor {
    */
   resume() {
     if (this.closed) {
-      throw new ERR_USE_AFTER_CLOSE('readline');
+      throw new ERR_USE_AFTER_CLOSE("readline");
     }
     if (!this.paused) return;
     this.input.resume();
     this.paused = false;
-    this.emit('resume');
+    this.emit("resume");
     return this;
   }
 
@@ -603,7 +591,7 @@ class Interface extends InterfaceConstructor {
    */
   write(d, key) {
     if (this.closed) {
-      throw new ERR_USE_AFTER_CLOSE('readline');
+      throw new ERR_USE_AFTER_CLOSE("readline");
     }
     if (this.paused) this.resume();
     if (this.terminal) {
@@ -618,10 +606,7 @@ class Interface extends InterfaceConstructor {
       return;
     }
     let string = this[kDecoder].write(b);
-    if (
-      this[kSawReturnAt] &&
-      DateNow() - this[kSawReturnAt] <= this.crlfDelay
-    ) {
+    if (this[kSawReturnAt] && DateNow() - this[kSawReturnAt] <= this.crlfDelay) {
       if (StringPrototypeCodePointAt(string) === 10) string = StringPrototypeSlice(string, 1);
       this[kSawReturnAt] = 0;
     }
@@ -635,9 +620,7 @@ class Interface extends InterfaceConstructor {
         lineEnding.lastIndex = 0; // Start the search from the beginning of the string.
         newPartContainsEnding = RegExpPrototypeExec(lineEnding, string);
       }
-      this[kSawReturnAt] = StringPrototypeEndsWith(string, '\r') ?
-        DateNow() :
-        0;
+      this[kSawReturnAt] = StringPrototypeEndsWith(string, "\r") ? DateNow() : 0;
 
       const indexes = [0, newPartContainsEnding.index, lineEnding.lastIndex];
       let nextMatch;
@@ -665,11 +648,7 @@ class Interface extends InterfaceConstructor {
     if (!this.isCompletionEnabled) {
       if (this.cursor < this.line.length) {
         const beg = StringPrototypeSlice(this.line, 0, this.cursor);
-        const end = StringPrototypeSlice(
-          this.line,
-          this.cursor,
-          this.line.length,
-        );
+        const end = StringPrototypeSlice(this.line, this.cursor, this.line.length);
         this.line = beg + c + end;
       } else {
         this.line += c;
@@ -680,11 +659,7 @@ class Interface extends InterfaceConstructor {
     }
     if (this.cursor < this.line.length) {
       const beg = StringPrototypeSlice(this.line, 0, this.cursor);
-      const end = StringPrototypeSlice(
-        this.line,
-        this.cursor,
-        this.line.length,
-      );
+      const end = StringPrototypeSlice(this.line, this.cursor, this.line.length);
       this[kSetLine](beg + c + end);
       this.cursor += c.length;
       this[kRefreshLine]();
@@ -725,21 +700,16 @@ class Interface extends InterfaceConstructor {
     }
 
     // If there is a common prefix to all matches, then apply that portion.
-    const prefix = commonPrefix(
-      ArrayPrototypeFilter(completions, (e) => e !== ''),
-    );
-    if (StringPrototypeStartsWith(prefix, completeOn) &&
-        prefix.length > completeOn.length) {
+    const prefix = commonPrefix(ArrayPrototypeFilter(completions, e => e !== ""));
+    if (StringPrototypeStartsWith(prefix, completeOn) && prefix.length > completeOn.length) {
       this[kInsertString](StringPrototypeSlice(prefix, completeOn.length));
       return;
     } else if (!StringPrototypeStartsWith(completeOn, prefix)) {
-      this[kSetLine](StringPrototypeSlice(this.line,
-                                          0,
-                                          this.cursor - completeOn.length) +
-                  prefix +
-                  StringPrototypeSlice(this.line,
-                                       this.cursor,
-                                       this.line.length));
+      this[kSetLine](
+        StringPrototypeSlice(this.line, 0, this.cursor - completeOn.length) +
+          prefix +
+          StringPrototypeSlice(this.line, this.cursor, this.line.length),
+      );
       this.cursor = this.cursor - completeOn.length + prefix.length;
       this[kRefreshLine]();
       return;
@@ -752,36 +722,34 @@ class Interface extends InterfaceConstructor {
     this[kBeforeEdit](this.line, this.cursor);
 
     // Apply/show completions.
-    const completionsWidth = ArrayPrototypeMap(completions, (e) =>
-      getStringWidth(e),
-    );
+    const completionsWidth = ArrayPrototypeMap(completions, e => getStringWidth(e));
     const width = MathMaxApply(completionsWidth) + 2; // 2 space padding
     let maxColumns = MathFloor(this.columns / width) || 1;
     if (maxColumns === Infinity) {
       maxColumns = 1;
     }
-    let output = '\r\n';
+    let output = "\r\n";
     let lineIndex = 0;
     let whitespace = 0;
     for (let i = 0; i < completions.length; i++) {
       const completion = completions[i];
-      if (completion === '' || lineIndex === maxColumns) {
-        output += '\r\n';
+      if (completion === "" || lineIndex === maxColumns) {
+        output += "\r\n";
         lineIndex = 0;
         whitespace = 0;
       } else {
-        output += StringPrototypeRepeat(' ', whitespace);
+        output += StringPrototypeRepeat(" ", whitespace);
       }
-      if (completion !== '') {
+      if (completion !== "") {
         output += completion;
         whitespace = width - completionsWidth[i];
         lineIndex++;
       } else {
-        output += '\r\n';
+        output += "\r\n";
       }
     }
     if (lineIndex !== 0) {
-      output += '\r\n\r\n';
+      output += "\r\n\r\n";
     }
     this[kWriteToOutput](output);
     this[kRefreshLine]();
@@ -792,10 +760,7 @@ class Interface extends InterfaceConstructor {
       // Reverse the string and match a word near beginning
       // to avoid quadratic time complexity
       const leading = StringPrototypeSlice(this.line, 0, this.cursor);
-      const reversed = ArrayPrototypeJoin(
-        ArrayPrototypeReverse(ArrayFrom(leading)),
-        '',
-      );
+      const reversed = ArrayPrototypeJoin(ArrayPrototypeReverse(ArrayFrom(leading)), "");
       const match = RegExpPrototypeExec(/^\s*(?:[^\w\s]+|\w+)?/, reversed);
       this[kMoveCursor](-match[0].length);
     }
@@ -830,11 +795,7 @@ class Interface extends InterfaceConstructor {
       const charSize = charLengthAt(this.line, this.cursor);
       this.line =
         StringPrototypeSlice(this.line, 0, this.cursor) +
-        StringPrototypeSlice(
-          this.line,
-          this.cursor + charSize,
-          this.line.length,
-        );
+        StringPrototypeSlice(this.line, this.cursor + charSize, this.line.length);
       this[kRefreshLine]();
     }
   }
@@ -845,19 +806,10 @@ class Interface extends InterfaceConstructor {
       // Reverse the string and match a word near beginning
       // to avoid quadratic time complexity
       let leading = StringPrototypeSlice(this.line, 0, this.cursor);
-      const reversed = ArrayPrototypeJoin(
-        ArrayPrototypeReverse(ArrayFrom(leading)),
-        '',
-      );
+      const reversed = ArrayPrototypeJoin(ArrayPrototypeReverse(ArrayFrom(leading)), "");
       const match = RegExpPrototypeExec(/^\s*(?:[^\w\s]+|\w+)?/, reversed);
-      leading = StringPrototypeSlice(
-        leading,
-        0,
-        leading.length - match[0].length,
-      );
-      this.line =
-        leading +
-        StringPrototypeSlice(this.line, this.cursor, this.line.length);
+      leading = StringPrototypeSlice(leading, 0, leading.length - match[0].length);
+      this.line = leading + StringPrototypeSlice(this.line, this.cursor, this.line.length);
       this.cursor = leading.length;
       this[kRefreshLine]();
     }
@@ -868,9 +820,7 @@ class Interface extends InterfaceConstructor {
       this[kBeforeEdit](this.line, this.cursor);
       const trailing = StringPrototypeSlice(this.line, this.cursor);
       const match = RegExpPrototypeExec(/^(?:\s+|\W+|\w+)\s*/, trailing);
-      this.line =
-        StringPrototypeSlice(this.line, 0, this.cursor) +
-        StringPrototypeSlice(trailing, match[0].length);
+      this.line = StringPrototypeSlice(this.line, 0, this.cursor) + StringPrototypeSlice(trailing, match[0].length);
       this[kRefreshLine]();
     }
   }
@@ -896,8 +846,7 @@ class Interface extends InterfaceConstructor {
     if (!del || del === this[kKillRing][0]) return;
     ArrayPrototypeUnshift(this[kKillRing], del);
     this[kKillRingCursor] = 0;
-    while (this[kKillRing].length > kMaxLengthOfKillRing)
-      ArrayPrototypePop(this[kKillRing]);
+    while (this[kKillRing].length > kMaxLengthOfKillRing) ArrayPrototypePop(this[kKillRing]);
   }
 
   [kYank]() {
@@ -918,10 +867,8 @@ class Interface extends InterfaceConstructor {
         this[kKillRingCursor] = 0;
       }
       const currentYank = this[kKillRing][this[kKillRingCursor]];
-      const head =
-            StringPrototypeSlice(this.line, 0, this.cursor - lastYank.length);
-      const tail =
-            StringPrototypeSlice(this.line, this.cursor);
+      const head = StringPrototypeSlice(this.line, 0, this.cursor - lastYank.length);
+      const tail = StringPrototypeSlice(this.line, this.cursor);
       this[kSetLine](head + currentYank + tail);
       this.cursor = head.length + currentYank.length;
       this[kRefreshLine]();
@@ -942,8 +889,8 @@ class Interface extends InterfaceConstructor {
 
   clearLine() {
     this[kMoveCursor](+Infinity);
-    this[kWriteToOutput]('\r\n');
-    this[kSetLine]('');
+    this[kWriteToOutput]("\r\n");
+    this[kSetLine]("");
     this.cursor = 0;
     this.prevRows = 0;
   }
@@ -956,7 +903,6 @@ class Interface extends InterfaceConstructor {
     this.clearLine();
     this[kOnLine](line);
   }
-
 
   // TODO(puskin94): edit [kTtyWrite] to make call this function on a new key combination
   //                 to make it add a new line in the middle of a "complete" multiline.
@@ -988,13 +934,13 @@ class Interface extends InterfaceConstructor {
 
     // Handle cursor positioning based on different scenarios
     if (hasContentAfterCursor) {
-      const splitBeg = StringPrototypeSplit(beforeCursor, '\n');
+      const splitBeg = StringPrototypeSplit(beforeCursor, "\n");
       // Determine if we need to rewrite the first line
       needsRewriteFirstLine = splitBeg.length < 2;
 
       // If the cursor is not on the first line
       if (cursorIsNotOnFirstLine) {
-        const splitEnd = StringPrototypeSplit(afterCursor, '\n');
+        const splitEnd = StringPrototypeSplit(afterCursor, "\n");
 
         // If the cursor when I pressed enter was at least on the second line
         // I need to completely erase the line where the cursor was pressed because it is possible
@@ -1003,7 +949,7 @@ class Interface extends InterfaceConstructor {
         const dy = splitEnd.length + 1;
 
         // Calculate how many Xs we need to move on the right to get to the end of the line
-        const dxEndOfLineAbove = (splitBeg[splitBeg.length - 2] || '').length + kMultilinePrompt.description.length;
+        const dxEndOfLineAbove = (splitBeg[splitBeg.length - 2] || "").length + kMultilinePrompt.description.length;
         moveCursor(this.output, dxEndOfLineAbove, -dy);
 
         // This is the line that was split in the middle
@@ -1011,7 +957,7 @@ class Interface extends InterfaceConstructor {
         afterCursor = `${splitBeg[splitBeg.length - 1]}\n${afterCursor}`;
       } else {
         // Otherwise, go to the very beginning of the first line and erase everything
-        const dy = StringPrototypeSplit(originalLine, '\n').length;
+        const dy = StringPrototypeSplit(originalLine, "\n").length;
         moveCursor(this.output, 0, -dy);
       }
 
@@ -1019,7 +965,7 @@ class Interface extends InterfaceConstructor {
       clearScreenDown(this.output);
 
       if (cursorIsNotOnFirstLine) {
-        this[kWriteToOutput]('\n');
+        this[kWriteToOutput]("\n");
       }
     }
 
@@ -1035,11 +981,7 @@ class Interface extends InterfaceConstructor {
       const oldCursor = this.getCursorPos();
 
       // Write everything after the cursor which has been deleted by clearScreenDown
-      const formattedEndContent = StringPrototypeReplaceAll(
-        afterCursor,
-        '\n',
-        `\n${kMultilinePrompt.description}`,
-      );
+      const formattedEndContent = StringPrototypeReplaceAll(afterCursor, "\n", `\n${kMultilinePrompt.description}`);
 
       this[kWriteToOutput](formattedEndContent);
 
@@ -1054,13 +996,12 @@ class Interface extends InterfaceConstructor {
     } else {
       // Setting how many rows we have on top of the cursor
       // Necessary for kRefreshLine
-      this.prevRows = StringPrototypeSplit(this.line, '\n').length - 1;
+      this.prevRows = StringPrototypeSplit(this.line, "\n").length - 1;
     }
   }
 
   [kPushToUndoStack](text, cursor) {
-    if (ArrayPrototypePush(this[kUndoStack], { text, cursor }) >
-        kMaxUndoRedoStackSize) {
+    if (ArrayPrototypePush(this[kUndoStack], { text, cursor }) > kMaxUndoRedoStackSize) {
       ArrayPrototypeShift(this[kUndoStack]);
     }
   }
@@ -1068,10 +1009,7 @@ class Interface extends InterfaceConstructor {
   [kUndo]() {
     if (this[kUndoStack].length <= 0) return;
 
-    ArrayPrototypePush(
-      this[kRedoStack],
-      { text: this.line, cursor: this.cursor },
-    );
+    ArrayPrototypePush(this[kRedoStack], { text: this.line, cursor: this.cursor });
 
     const entry = ArrayPrototypePop(this[kUndoStack]);
     this[kSetLine](entry.text);
@@ -1083,10 +1021,7 @@ class Interface extends InterfaceConstructor {
   [kRedo]() {
     if (this[kRedoStack].length <= 0) return;
 
-    ArrayPrototypePush(
-      this[kUndoStack],
-      { text: this.line, cursor: this.cursor },
-    );
+    ArrayPrototypePush(this[kUndoStack], { text: this.line, cursor: this.cursor });
 
     const entry = ArrayPrototypePop(this[kRedoStack]);
     this[kSetLine](entry.text);
@@ -1102,9 +1037,7 @@ class Interface extends InterfaceConstructor {
     const promptLen = kMultilinePrompt.description.length;
     let amountToMove;
     // Clamp distance to end of current + prompt + next/prev line + newline
-    const clamp = down ?
-      curr.length - cols + promptLen + adj.length + 1 :
-      -cols + 1;
+    const clamp = down ? curr.length - cols + promptLen + adj.length + 1 : -cols + 1;
     const shouldClamp = cols > adj.length + 1;
 
     if (shouldClamp) {
@@ -1133,7 +1066,7 @@ class Interface extends InterfaceConstructor {
 
   [kMoveDownOrHistoryNext]() {
     const cursorPos = this.getCursorPos();
-    const splitLines = StringPrototypeSplit(this.line, '\n');
+    const splitLines = StringPrototypeSplit(this.line, "\n");
     if (this[kIsMultiline] && cursorPos.rows < splitLines.length - 1) {
       this[kMultilineMove](1, splitLines, cursorPos);
       return;
@@ -1150,7 +1083,9 @@ class Interface extends InterfaceConstructor {
   // <ctrl> + N. Only show this after two/three UPs or DOWNs, not on the first
   // one.
   [kHistoryNext]() {
-    if (!this.historyManager.canNavigateToNext()) { return; }
+    if (!this.historyManager.canNavigateToNext()) {
+      return;
+    }
 
     this[kBeforeEdit](this.line, this.cursor);
     this[kSetLine](this.historyManager.navigateToNext(this[kSubstringSearch]));
@@ -1161,7 +1096,7 @@ class Interface extends InterfaceConstructor {
   [kMoveUpOrHistoryPrev]() {
     const cursorPos = this.getCursorPos();
     if (this[kIsMultiline] && cursorPos.rows > 0) {
-      const splitLines = StringPrototypeSplit(this.line, '\n');
+      const splitLines = StringPrototypeSplit(this.line, "\n");
       this[kMultilineMove](-1, splitLines, cursorPos);
       return;
     }
@@ -1170,7 +1105,9 @@ class Interface extends InterfaceConstructor {
   }
 
   [kHistoryPrev]() {
-    if (!this.historyManager.canNavigateToPrevious()) { return; }
+    if (!this.historyManager.canNavigateToPrevious()) {
+      return;
+    }
 
     this[kBeforeEdit](this.line, this.cursor);
     this[kSetLine](this.historyManager.navigateToPrevious(this[kSubstringSearch]));
@@ -1186,7 +1123,7 @@ class Interface extends InterfaceConstructor {
     str = stripVTControlCharacters(str);
 
     for (const char of new SafeStringIterator(str)) {
-      if (char === '\n') {
+      if (char === "\n") {
         // Rows must be incremented by 1 even if offset = 0 or col = +Infinity.
         rows += MathCeil(offset / col) || 1;
         // Only add prefix offset for continuation lines in user input (not prompts)
@@ -1194,7 +1131,7 @@ class Interface extends InterfaceConstructor {
         continue;
       }
       // Tabs must be aligned by an offset of the tab size.
-      if (char === '\t') {
+      if (char === "\t") {
         offset += this.tabSize - (offset % this.tabSize);
         continue;
       }
@@ -1264,24 +1201,15 @@ class Interface extends InterfaceConstructor {
     this[kPreviousKey] = key;
     let shouldResetPreviousCursorCols = true;
 
-    if (!key.meta || key.name !== 'y') {
+    if (!key.meta || key.name !== "y") {
       // Reset yanking state unless we are doing yank pop.
       this[kYanking] = false;
     }
 
     // Activate or deactivate substring search.
-    if (
-      (key.name === 'up' || key.name === 'down') &&
-      !key.ctrl &&
-      !key.meta &&
-      !key.shift
-    ) {
+    if ((key.name === "up" || key.name === "down") && !key.ctrl && !key.meta && !key.shift) {
       if (this[kSubstringSearch] === null && !this[kIsMultiline]) {
-        this[kSubstringSearch] = StringPrototypeSlice(
-          this.line,
-          0,
-          this.cursor,
-        );
+        this[kSubstringSearch] = StringPrototypeSlice(this.line, 0, this.cursor);
       }
     } else if (this[kSubstringSearch] !== null) {
       this[kSubstringSearch] = null;
@@ -1292,7 +1220,7 @@ class Interface extends InterfaceConstructor {
     }
 
     // Undo & Redo
-    if (typeof key.sequence === 'string') {
+    if (typeof key.sequence === "string") {
       switch (StringPrototypeCodePointAt(key.sequence, 0)) {
         case 0x1f:
           this[kUndo]();
@@ -1307,18 +1235,18 @@ class Interface extends InterfaceConstructor {
 
     // Ignore escape key, fixes
     // https://github.com/nodejs/node-v0.x-archive/issues/2876.
-    if (key.name === 'escape') return;
+    if (key.name === "escape") return;
 
     if (key.ctrl && key.shift) {
       /* Control and shift pressed */
       switch (key.name) {
         // TODO(BridgeAR): The transmitted escape sequence is `\b` and that is
         // identical to <ctrl>-h. It should have a unique escape sequence.
-        case 'backspace':
+        case "backspace":
           this[kDeleteLineLeft]();
           break;
 
-        case 'delete':
+        case "delete":
           this[kDeleteLineRight]();
           break;
       }
@@ -1326,84 +1254,84 @@ class Interface extends InterfaceConstructor {
       /* Control key pressed */
 
       switch (key.name) {
-        case 'c':
-          if (this.listenerCount('SIGINT') > 0) {
-            this.emit('SIGINT');
+        case "c":
+          if (this.listenerCount("SIGINT") > 0) {
+            this.emit("SIGINT");
           } else {
             // This readline instance is finished
             this.close();
-            this[kQuestionReject]?.(new AbortError('Aborted with Ctrl+C'));
+            this[kQuestionReject]?.(new AbortError("Aborted with Ctrl+C"));
           }
           break;
 
-        case 'h': // delete left
+        case "h": // delete left
           this[kDeleteLeft]();
           break;
 
-        case 'd': // delete right or EOF
+        case "d": // delete right or EOF
           if (this.cursor === 0 && this.line.length === 0) {
             // This readline instance is finished
             this.close();
-            this[kQuestionReject]?.(new AbortError('Aborted with Ctrl+D'));
+            this[kQuestionReject]?.(new AbortError("Aborted with Ctrl+D"));
           } else if (this.cursor < this.line.length) {
             this[kDeleteRight]();
           }
           break;
 
-        case 'u': // Delete from current to start of line
+        case "u": // Delete from current to start of line
           this[kDeleteLineLeft]();
           break;
 
-        case 'k': // Delete from current to end of line
+        case "k": // Delete from current to end of line
           this[kDeleteLineRight]();
           break;
 
-        case 'a': // Go to the start of the line
+        case "a": // Go to the start of the line
           this[kMoveCursor](-Infinity);
           break;
 
-        case 'e': // Go to the end of the line
+        case "e": // Go to the end of the line
           this[kMoveCursor](+Infinity);
           break;
 
-        case 'b': // back one character
+        case "b": // back one character
           this[kMoveCursor](-charLengthLeft(this.line, this.cursor));
           break;
 
-        case 'f': // Forward one character
+        case "f": // Forward one character
           this[kMoveCursor](+charLengthAt(this.line, this.cursor));
           break;
 
-        case 'l': // Clear the whole screen
+        case "l": // Clear the whole screen
           cursorTo(this.output, 0, 0);
           clearScreenDown(this.output);
           this[kRefreshLine]();
           break;
 
-        case 'n': // next history item
+        case "n": // next history item
           this[kHistoryNext]();
           break;
 
-        case 'p': // Previous history item
+        case "p": // Previous history item
           this[kHistoryPrev]();
           break;
 
-        case 'y': // Yank killed string
+        case "y": // Yank killed string
           this[kYank]();
           break;
 
-        case 'z':
-          if (process.platform === 'win32') break;
-          if (this.listenerCount('SIGTSTP') > 0) {
-            this.emit('SIGTSTP');
+        case "z":
+          if (process.platform === "win32") break;
+          if (this.listenerCount("SIGTSTP") > 0) {
+            this.emit("SIGTSTP");
           } else {
-            process.once('SIGCONT', () => {
+            process.once("SIGCONT", () => {
               // Don't raise events if stream has already been abandoned.
               if (!this.paused) {
                 // Stream must be paused and resumed after SIGCONT to catch
                 // SIGINT, SIGTSTP, and EOF.
                 this.pause();
-                this.emit('SIGCONT');
+                this.emit("SIGCONT");
               }
               // Explicitly re-enable "raw mode" and move the cursor to
               // the correct position.
@@ -1412,27 +1340,27 @@ class Interface extends InterfaceConstructor {
               this[kRefreshLine]();
             });
             this[kSetRawMode](false);
-            process.kill(process.pid, 'SIGTSTP');
+            process.kill(process.pid, "SIGTSTP");
           }
           break;
 
-        case 'w': // Delete backwards to a word boundary
+        case "w": // Delete backwards to a word boundary
         // TODO(BridgeAR): The transmitted escape sequence is `\b` and that is
         // identical to <ctrl>-h. It should have a unique escape sequence.
         // Falls through
-        case 'backspace':
+        case "backspace":
           this[kDeleteWordLeft]();
           break;
 
-        case 'delete': // Delete forward to a word boundary
+        case "delete": // Delete forward to a word boundary
           this[kDeleteWordRight]();
           break;
 
-        case 'left':
+        case "left":
           this[kWordLeft]();
           break;
 
-        case 'right':
+        case "right":
           this[kWordRight]();
           break;
       }
@@ -1440,24 +1368,24 @@ class Interface extends InterfaceConstructor {
       /* Meta key pressed */
 
       switch (key.name) {
-        case 'b': // backward word
+        case "b": // backward word
           this[kWordLeft]();
           break;
 
-        case 'f': // forward word
+        case "f": // forward word
           this[kWordRight]();
           break;
 
-        case 'd': // delete forward word
-        case 'delete':
+        case "d": // delete forward word
+        case "delete":
           this[kDeleteWordRight]();
           break;
 
-        case 'backspace': // Delete backwards to a word boundary
+        case "backspace": // Delete backwards to a word boundary
           this[kDeleteWordLeft]();
           break;
 
-        case 'y': // Doing yank pop
+        case "y": // Doing yank pop
           this[kYankPop]();
           break;
       }
@@ -1465,74 +1393,67 @@ class Interface extends InterfaceConstructor {
       /* No modifier keys used */
 
       // \r bookkeeping is only relevant if a \n comes right after.
-      if (this[kSawReturnAt] && key.name !== 'enter') this[kSawReturnAt] = 0;
+      if (this[kSawReturnAt] && key.name !== "enter") this[kSawReturnAt] = 0;
 
       switch (key.name) {
-        case 'return': // Carriage return, i.e. \r
+        case "return": // Carriage return, i.e. \r
           this[kSawReturnAt] = DateNow();
           this[kLine]();
           break;
 
-        case 'enter':
+        case "enter":
           // When key interval > crlfDelay
-          if (
-            this[kSawReturnAt] === 0 ||
-            DateNow() - this[kSawReturnAt] > this.crlfDelay
-          ) {
+          if (this[kSawReturnAt] === 0 || DateNow() - this[kSawReturnAt] > this.crlfDelay) {
             this[kLine]();
           }
           this[kSawReturnAt] = 0;
           break;
 
-        case 'backspace':
+        case "backspace":
           this[kDeleteLeft]();
           break;
 
-        case 'delete':
+        case "delete":
           this[kDeleteRight]();
           break;
 
-        case 'left':
+        case "left":
           // Obtain the code point to the left
           this[kMoveCursor](-charLengthLeft(this.line, this.cursor));
           break;
 
-        case 'right':
+        case "right":
           this[kMoveCursor](+charLengthAt(this.line, this.cursor));
           break;
 
-        case 'home':
+        case "home":
           this[kMoveCursor](-Infinity);
           break;
 
-        case 'end':
+        case "end":
           this[kMoveCursor](+Infinity);
           break;
 
-        case 'up':
+        case "up":
           shouldResetPreviousCursorCols = false;
           this[kMoveUpOrHistoryPrev]();
           break;
 
-        case 'down':
+        case "down":
           shouldResetPreviousCursorCols = false;
           this[kMoveDownOrHistoryNext]();
           break;
 
-        case 'tab':
+        case "tab":
           // If tab completion enabled, do that...
-          if (
-            typeof this.completer === 'function' &&
-            this.isCompletionEnabled
-          ) {
-            const lastKeypressWasTab =
-              previousKey && previousKey.name === 'tab';
+          if (typeof this.completer === "function" && this.isCompletionEnabled) {
+            const lastKeypressWasTab = previousKey && previousKey.name === "tab";
             this[kTabComplete](lastKeypressWasTab);
             break;
           }
         // falls through
         default:
-          if (typeof s === 'string' && s) {
+          if (typeof s === "string" && s) {
             // Erase state of previous searches.
             lineEnding.lastIndex = 0;
             let nextMatch;
@@ -1564,17 +1485,16 @@ class Interface extends InterfaceConstructor {
   [SymbolAsyncIterator]() {
     if (this[kLineObjectStream] === undefined) {
       kFirstEventParam ??= Symbol.for("nodejs.kFirstEventParam");
-      this[kLineObjectStream] = EventEmitter.on(
-        this, 'line', {
-          close: ['close'],
-          highWaterMark: 1024,
-          [kFirstEventParam]: true,
-        });
+      this[kLineObjectStream] = EventEmitter.on(this, "line", {
+        close: ["close"],
+        highWaterMark: 1024,
+        [kFirstEventParam]: true,
+      });
     }
     return this[kLineObjectStream];
   }
 }
-Interface.prototype[SymbolDispose] = assignFunctionName(SymbolDispose, function() {
+Interface.prototype[SymbolDispose] = assignFunctionName(SymbolDispose, function () {
   this.close();
 });
 

@@ -3,68 +3,68 @@
 // ones that Bun's ErrorCode registry lacks are defined here.
 
 function ERR_INVALID_ARG_TYPE(...args) {
-  return $ERR_INVALID_ARG_TYPE(...args)
+  return $ERR_INVALID_ARG_TYPE(...args);
 }
 function ERR_INVALID_ARG_VALUE(...args) {
-  return $ERR_INVALID_ARG_VALUE(...args)
+  return $ERR_INVALID_ARG_VALUE(...args);
 }
 function ERR_MISSING_ARGS(...args) {
-  return $ERR_MISSING_ARGS(...args)
+  return $ERR_MISSING_ARGS(...args);
 }
 function ERR_USE_AFTER_CLOSE(...args) {
-  return $ERR_USE_AFTER_CLOSE(...args)
+  return $ERR_USE_AFTER_CLOSE(...args);
 }
 function ERR_INVALID_CURSOR_POS(...args) {
-  return $ERR_INVALID_CURSOR_POS(...args)
+  return $ERR_INVALID_CURSOR_POS(...args);
 }
 function ERR_SCRIPT_EXECUTION_INTERRUPTED(...args) {
-  return $ERR_SCRIPT_EXECUTION_INTERRUPTED(...args)
+  return $ERR_SCRIPT_EXECUTION_INTERRUPTED(...args);
 }
 function ERR_INVALID_STATE(...args) {
-  return $ERR_INVALID_STATE(...args)
+  return $ERR_INVALID_STATE(...args);
 }
 
 class ERR_CANNOT_WATCH_SIGINT extends Error {
-  code = 'ERR_CANNOT_WATCH_SIGINT'
+  code = "ERR_CANNOT_WATCH_SIGINT";
   constructor() {
-    super('Cannot watch for interruptions when running asynchronously')
-    this.name = 'Error [ERR_CANNOT_WATCH_SIGINT]'
-    Error.captureStackTrace?.(this, ERR_CANNOT_WATCH_SIGINT)
+    super("Cannot watch for interruptions when running asynchronously");
+    this.name = "Error [ERR_CANNOT_WATCH_SIGINT]";
+    Error.captureStackTrace?.(this, ERR_CANNOT_WATCH_SIGINT);
   }
 }
 
 class ERR_INSPECTOR_NOT_AVAILABLE extends Error {
-  code = 'ERR_INSPECTOR_NOT_AVAILABLE'
+  code = "ERR_INSPECTOR_NOT_AVAILABLE";
   constructor() {
-    super('Inspector is not available')
-    this.name = 'Error [ERR_INSPECTOR_NOT_AVAILABLE]'
-    Error.captureStackTrace?.(this, ERR_INSPECTOR_NOT_AVAILABLE)
+    super("Inspector is not available");
+    this.name = "Error [ERR_INSPECTOR_NOT_AVAILABLE]";
+    Error.captureStackTrace?.(this, ERR_INSPECTOR_NOT_AVAILABLE);
   }
 }
 
 class ERR_INVALID_REPL_EVAL_CONFIG extends TypeError {
-  code = 'ERR_INVALID_REPL_EVAL_CONFIG'
+  code = "ERR_INVALID_REPL_EVAL_CONFIG";
   constructor() {
-    super('Cannot specify both "breakEvalOnSigint" and "eval" for REPL')
-    this.name = 'TypeError [ERR_INVALID_REPL_EVAL_CONFIG]'
-    Error.captureStackTrace?.(this, ERR_INVALID_REPL_EVAL_CONFIG)
+    super('Cannot specify both "breakEvalOnSigint" and "eval" for REPL');
+    this.name = "TypeError [ERR_INVALID_REPL_EVAL_CONFIG]";
+    Error.captureStackTrace?.(this, ERR_INVALID_REPL_EVAL_CONFIG);
   }
 }
 
 class ERR_INVALID_REPL_INPUT extends TypeError {
-  code = 'ERR_INVALID_REPL_INPUT'
+  code = "ERR_INVALID_REPL_INPUT";
   constructor(message) {
-    super(message)
-    this.name = 'TypeError [ERR_INVALID_REPL_INPUT]'
-    Error.captureStackTrace?.(this, ERR_INVALID_REPL_INPUT)
+    super(message);
+    this.name = "TypeError [ERR_INVALID_REPL_INPUT]";
+    Error.captureStackTrace?.(this, ERR_INVALID_REPL_INPUT);
   }
 }
 
 class AbortError extends Error {
-  code = 'ABORT_ERR'
-  name = 'AbortError'
-  constructor(message = 'The operation was aborted', options = undefined) {
-    super(message, options)
+  code = "ABORT_ERR";
+  name = "AbortError";
+  constructor(message = "The operation was aborted", options = undefined) {
+    super(message, options);
   }
 }
 
@@ -159,4 +159,4 @@ export default {
     ERR_INVALID_REPL_EVAL_CONFIG,
     ERR_INVALID_REPL_INPUT,
   },
-}
+};

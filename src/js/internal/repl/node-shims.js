@@ -2,28 +2,28 @@
 // node:repl / internal/readline stack. Each export matches the name and
 // calling convention of the Node internal it replaces; implementations
 // delegate to Bun equivalents.
-const util = require('node:util')
-const Module = require('node:module')
-const path = require('node:path')
+const util = require("node:util");
+const Module = require("node:module");
+const path = require("node:path");
 
 // ---- internal/util ----------------------------------------------------
 
-const kEmptyObject = Object.freeze({ __proto__: null })
+const kEmptyObject = Object.freeze({ __proto__: null });
 
 function SideEffectFreeRegExpPrototypeSymbolReplace(regexp, str, replacement) {
-  return regexp[Symbol.replace](str, replacement)
+  return regexp[Symbol.replace](str, replacement);
 }
 
 function SideEffectFreeRegExpPrototypeSymbolSplit(regexp, str, limit) {
-  return regexp[Symbol.split](str, limit)
+  return regexp[Symbol.split](str, limit);
 }
 
 function assignFunctionName(name, fn) {
-  return Object.defineProperty(fn, 'name', {
+  return Object.defineProperty(fn, "name", {
     __proto__: null,
     configurable: true,
     value: name,
-  })
+  });
 }
 
 function decorateErrorStack(err) {
@@ -32,147 +32,140 @@ function decorateErrorStack(err) {
   // frames to V8's bare "loc" form, then cut at the last anonymous frame
   // (Node's null-functionName boundary) - that drops the REPL top-level frame
   // and the vm runner frames below it.
-  if (typeof err?.stack !== 'string') return err
-  let lines = err.stack.split('\n')
-  lines = lines.map(l => l.replace(/^(\s+at )<anonymous> \((.+)\)$/, '$1$2'))
-  let anonIdx = -1
+  if (typeof err?.stack !== "string") return err;
+  let lines = err.stack.split("\n");
+  lines = lines.map(l => l.replace(/^(\s+at )<anonymous> \((.+)\)$/, "$1$2"));
+  let anonIdx = -1;
   for (let i = 0; i < lines.length; i++) {
-    if (/^\s+at REPL\d*:\d+:\d+$/.test(lines[i])) anonIdx = i
+    if (/^\s+at REPL\d*:\d+:\d+$/.test(lines[i])) anonIdx = i;
   }
-  if (anonIdx !== -1) lines = lines.slice(0, anonIdx)
-  err.stack = lines.join('\n')
-  return err
+  if (anonIdx !== -1) lines = lines.slice(0, anonIdx);
+  err.stack = lines.join("\n");
+  return err;
 }
 
 function isError(e) {
-  return (
-    e instanceof Error || Object.prototype.toString.$call(e) === '[object Error]'
-  )
+  return e instanceof Error || Object.prototype.toString.$call(e) === "[object Error]";
 }
 
 // ---- internal/util/colors ----------------------------------------------
 
 function shouldColorize(stream) {
   if (process.env.FORCE_COLOR !== undefined) {
-    const getColorDepth = require('node:tty').WriteStream.prototype.getColorDepth
-    return getColorDepth.$call({}) > 2
+    const getColorDepth = require("node:tty").WriteStream.prototype.getColorDepth;
+    return getColorDepth.$call({}) > 2;
   }
-  return (
-    stream?.isTTY &&
-    (typeof stream.getColorDepth === 'function'
-      ? stream.getColorDepth() > 2
-      : true)
-  )
+  return stream?.isTTY && (typeof stream.getColorDepth === "function" ? stream.getColorDepth() > 2 : true);
 }
 
 // ---- internal/util/debuglog ----------------------------------------------
 
 function debuglog(set, cb) {
-  const fn = util.debuglog(set)
-  if (typeof cb === 'function') cb(fn)
-  return fn
+  const fn = util.debuglog(set);
+  if (typeof cb === "function") cb(fn);
+  return fn;
 }
 
 // ---- internal/util/inspector ----------------------------------------------
 
 function sendInspectorCommand(cb, onError) {
-  return onError()
+  return onError();
 }
 
 // ---- internal/util/types ----------------------------------------------
 
-const isProxy = util.types.isProxy
+const isProxy = util.types.isProxy;
 
 // ---- internal/options ----------------------------------------------
 
 function getOptionValue(name) {
   switch (name) {
-    case '--pending-deprecation':
-      return process.execArgv.includes('--pending-deprecation')
-    case '--experimental-repl-await':
-      return true
-    case '--use-strict':
-      return false
+    case "--pending-deprecation":
+      return process.execArgv.includes("--pending-deprecation");
+    case "--experimental-repl-await":
+      return true;
+    case "--use-strict":
+      return false;
     default:
-      return undefined
+      return undefined;
   }
 }
 
 // ---- internal/process/permission ----------------------------------------------
 
 function isEnabled() {
-  return false
+  return false;
 }
 
 function has() {
-  return true
+  return true;
 }
 
 // ---- internal/streams/utils ----------------------------------------------
 
 function isWritable(stream) {
-  return typeof stream?.write === 'function'
+  return typeof stream?.write === "function";
 }
 
 // ---- internal/events/abort_listener ----------------------------------------------
 
 function addAbortListener(signal, listener) {
-  if (require('node:events').addAbortListener) {
-    return require('node:events').addAbortListener(signal, listener)
+  if (require("node:events").addAbortListener) {
+    return require("node:events").addAbortListener(signal, listener);
   }
   if (signal.aborted) {
-    queueMicrotask(() => listener())
+    queueMicrotask(() => listener());
   } else {
-    signal.addEventListener('abort', listener, { once: true })
+    signal.addEventListener("abort", listener, { once: true });
   }
   return {
     [Symbol.dispose]() {
-      signal?.removeEventListener('abort', listener)
+      signal?.removeEventListener("abort", listener);
     },
-  }
+  };
 }
 
 // ---- internal/bootstrap/realm ----------------------------------------------
 
 const BuiltinModule = {
   getSchemeOnlyModuleNames() {
-    return ['node:test']
+    return ["node:test"];
   },
   exists(id) {
-    return Module.isBuiltin(id)
+    return Module.isBuiltin(id);
   },
   canBeRequiredByUsers(id) {
-    return Module.isBuiltin(id)
+    return Module.isBuiltin(id);
   },
   canBeRequiredWithoutScheme(id) {
-    return Module.isBuiltin(id) && Module.isBuiltin('node:' + id)
+    return Module.isBuiltin(id) && Module.isBuiltin("node:" + id);
   },
-}
+};
 
 // ---- internal/modules/esm/get_format ----------------------------------------------
 
 const extensionFormatMap = {
   __proto__: null,
-  '.cjs': 'commonjs',
-  '.js': 'module',
-  '.json': 'json',
-  '.mjs': 'module',
-  '.node': 'addon',
-  '.wasm': 'wasm',
-}
+  ".cjs": "commonjs",
+  ".js": "module",
+  ".json": "json",
+  ".mjs": "module",
+  ".node": "addon",
+  ".wasm": "wasm",
+};
 
 // ---- internal/modules/esm/loader ----------------------------------------------
 
 const cascadedLoader = {
-  kEvaluationPhase: 'evaluation',
-  kSourcePhase: 'source',
+  kEvaluationPhase: "evaluation",
+  kSourcePhase: "source",
   import(specifier, parentURL, importAttributes, phase) {
-    return import(specifier)
+    return import(specifier);
   },
-}
+};
 
 function getOrInitializeCascadedLoader() {
-  return cascadedLoader
+  return cascadedLoader;
 }
 
 // ---- internal/modules/helpers ----------------------------------------------
@@ -181,69 +174,65 @@ function makeRequireFunction(mod) {
   // `mod` is a CJS Module instance whose `paths` were initialized by the
   // REPL. Resolution is anchored to a synthetic file in the REPL's cwd so
   // relative requires behave like Node's REPL.
-  const filename = path.join(process.cwd(), '<repl>')
-  const requireFn = Module.createRequire(filename)
-  return requireFn
+  const filename = path.join(process.cwd(), "<repl>");
+  const requireFn = Module.createRequire(filename);
+  return requireFn;
 }
 
-let builtinLibs
+let builtinLibs;
 
 function getBuiltinLibs() {
   if (!builtinLibs) {
-    builtinLibs = Module.builtinModules.filter(
-      id => !id.startsWith('_') && !id.startsWith('node:'),
-    )
+    builtinLibs = Module.builtinModules.filter(id => !id.startsWith("_") && !id.startsWith("node:"));
   }
-  return builtinLibs
+  return builtinLibs;
 }
 
 function addBuiltinLibsToObject(object, dummy) {
   // Make built-in modules available directly (loaded lazily).
   getBuiltinLibs().forEach(name => {
     if (Object.getOwnPropertyDescriptor(object, name)) {
-      return
+      return;
     }
 
     const setReal = val => {
       // Deleting the property before re-assigning it disables the
       // getter/setter mechanism.
-      delete object[name]
-      object[name] = val
-    }
+      delete object[name];
+      object[name] = val;
+    };
 
     Object.defineProperty(object, name, {
       __proto__: null,
       get: () => {
-        const lib = require('node:module').createRequire(
-          path.join(process.cwd(), '<repl>'),
-        )(name)
+        const lib = require("node:module").createRequire(path.join(process.cwd(), "<repl>"))(name);
 
         try {
           // Override the current getter/setter pair with the lib itself.
-          delete object[name]
+          delete object[name];
           Object.defineProperty(object, name, {
             __proto__: null,
             get: () => lib,
             set: setReal,
             configurable: true,
             enumerable: false,
-          })
+          });
         } catch {
           // If the property is no longer configurable, ignore the error.
         }
 
-        return lib
+        return lib;
       },
       set: setReal,
       configurable: true,
       enumerable: false,
-    })
-  })
+    });
+  });
 }
 
 // ---- internal/vm ----------------------------------------------
 
-const vm = require('node:vm')
+const vm = require("node:vm");
 
 function makeContextifyScript(
   code,
@@ -263,55 +252,55 @@ function makeContextifyScript(
     cachedData,
     produceCachedData,
     importModuleDynamically: importModuleDynamically ?? (specifier => import(specifier)),
-  })
+  });
   // Node's vm.Script constructor throws SyntaxError eagerly; Bun's native
   // Script defers parsing to run time. The REPL's recoverable-error flow
   // depends on the eager throw, so force a parse via createCachedData and,
   // when it fails, surface the real SyntaxError by running the script in a
   // throwaway context (a parse error always fires before any code executes).
   try {
-    script.createCachedData()
+    script.createCachedData();
   } catch {
-    new vm.Script(code, { filename, lineOffset, columnOffset }).runInContext(vm.createContext({}), { displayErrors: false })
+    new vm.Script(code, { filename, lineOffset, columnOffset }).runInContext(vm.createContext({}), {
+      displayErrors: false,
+    });
   }
-  return script
+  return script;
 }
 
 function runScriptInThisContext(script, displayErrors, breakOnFirstLine) {
-  return script.runInThisContext({ displayErrors })
+  return script.runInThisContext({ displayErrors });
 }
 
 // ---- internal/modules/cjs/loader (constructible Module shim) ----------------
 
 class CJSModuleShim {
-  constructor(id = '', parent = undefined) {
-    this.id = id
-    this.path = ''
-    this.exports = {}
-    this.filename = null
-    this.loaded = false
-    this.children = []
-    this.paths = []
-    this.parent = parent
+  constructor(id = "", parent = undefined) {
+    this.id = id;
+    this.path = "";
+    this.exports = {};
+    this.filename = null;
+    this.loaded = false;
+    this.children = [];
+    this.paths = [];
+    this.parent = parent;
   }
 
-  static builtinModules = Module.builtinModules
-  static globalPaths = Module.globalPaths
-  static _extensions = Module._extensions
+  static builtinModules = Module.builtinModules;
+  static globalPaths = Module.globalPaths;
+  static _extensions = Module._extensions;
   static _nodeModulePaths(from) {
-    return Module._nodeModulePaths(from)
+    return Module._nodeModulePaths(from);
   }
   static _resolveLookupPaths(request, parent) {
-    if (typeof Module._resolveLookupPaths === 'function') {
-      return Module._resolveLookupPaths(request, parent)
+    if (typeof Module._resolveLookupPaths === "function") {
+      return Module._resolveLookupPaths(request, parent);
     }
-    const path = require('node:path')
-    return Module._nodeModulePaths(process.cwd()).concat(
-      Module.globalPaths ?? [],
-    )
+    const path = require("node:path");
+    return Module._nodeModulePaths(process.cwd()).concat(Module.globalPaths ?? []);
   }
   static _resolveFilename(request, parent, isMain, options) {
-    return Module._resolveFilename(request, parent, isMain, options)
+    return Module._resolveFilename(request, parent, isMain, options);
   }
 }
 
@@ -321,45 +310,45 @@ function startSigintWatchdog() {
   // Bun has no native SIGINT watchdog for vm script execution; report
   // success so breakEvalOnSigint callers proceed (Ctrl+C interruption of
   // long-running synchronous eval is not supported).
-  return true
+  return true;
 }
 
 function stopSigintWatchdog() {
-  return false
+  return false;
 }
 
 // ---- internalBinding('util') ----------------------------------------------
 
-const ALL_PROPERTIES = 0
-const ONLY_WRITABLE = 1
-const ONLY_ENUMERABLE = 2
-const ONLY_CONFIGURABLE = 4
-const SKIP_STRINGS = 8
-const SKIP_SYMBOLS = 16
+const ALL_PROPERTIES = 0;
+const ONLY_WRITABLE = 1;
+const ONLY_ENUMERABLE = 2;
+const ONLY_CONFIGURABLE = 4;
+const SKIP_STRINGS = 8;
+const SKIP_SYMBOLS = 16;
 
 function getOwnNonIndexProperties(obj, filter = ALL_PROPERTIES) {
-  const indexRegex = /^(0|[1-9][0-9]*)$/
-  let keys = []
+  const indexRegex = /^(0|[1-9][0-9]*)$/;
+  let keys = [];
   if (!(filter & SKIP_STRINGS)) {
     for (const key of Object.getOwnPropertyNames(obj)) {
-      if (indexRegex.test(key)) continue
+      if (indexRegex.test(key)) continue;
       if (filter & ONLY_ENUMERABLE) {
-        const desc = Object.getOwnPropertyDescriptor(obj, key)
-        if (!desc?.enumerable) continue
+        const desc = Object.getOwnPropertyDescriptor(obj, key);
+        if (!desc?.enumerable) continue;
       }
-      keys.push(key)
+      keys.push(key);
     }
   }
   if (!(filter & SKIP_SYMBOLS)) {
     for (const sym of Object.getOwnPropertySymbols(obj)) {
       if (filter & ONLY_ENUMERABLE) {
-        const desc = Object.getOwnPropertyDescriptor(obj, sym)
-        if (!desc?.enumerable) continue
+        const desc = Object.getOwnPropertyDescriptor(obj, sym);
+        if (!desc?.enumerable) continue;
       }
-      keys.push(sym)
+      keys.push(sym);
     }
   }
-  return keys
+  return keys;
 }
 
 // ---- process.addUncaughtExceptionCaptureCallback polyfill ----------------
@@ -451,4 +440,4 @@ export default {
   // internal/vm
   makeContextifyScript,
   runScriptInThisContext,
-}
+};

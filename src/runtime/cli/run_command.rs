@@ -2959,10 +2959,11 @@ impl RunCommand {
     /// the Node.js-compatible REPL (node:repl). Distinct from `bun repl`,
     /// which is Bun's own native REPL.
     pub fn exec_node_repl(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
-        ctx.runtime_options.eval.script = bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts")
-            .as_bytes()
-            .to_vec()
-            .into_boxed_slice();
+        ctx.runtime_options.eval.script =
+            bun_core::runtime_embed_file!(Codegen, "eval/node-repl.ts")
+                .as_bytes()
+                .to_vec()
+                .into_boxed_slice();
         Self::exec_eval(ctx)
     }
 

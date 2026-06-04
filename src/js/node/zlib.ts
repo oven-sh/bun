@@ -406,15 +406,25 @@ function processChunk(self, chunk, flushFlag, cb) {
   handle.inOff = 0;
   handle.flushFlag = flushFlag;
 
-  handle.write(
-    flushFlag, // flush
-    chunk, // in
-    0, // in_off
-    handle.availInBefore, // in_len
-    self._outBuffer, // out
-    self._outOffset, // out_off
-    handle.availOutBefore, // out_len
-  );
+  try {
+    handle.write(
+      flushFlag, // flush
+      chunk, // in
+      0, // in_off
+      handle.availInBefore, // in_len
+      self._outBuffer, // out
+      self._outOffset, // out_off
+      handle.availOutBefore, // out_len
+    );
+  } catch (err) {
+    // The native write rejects flush values the codec doesn't define (e.g.
+    // brotli with a zlib-only constant like Z_FINISH) synchronously, before
+    // scheduling any work. Route the error through the stream's error path
+    // instead of letting it escape into the stream machinery.
+    handle.buffer = null;
+    handle.cb = null;
+    cb(err);
+  }
 }
 
 function processCallback() {

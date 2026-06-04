@@ -1,6 +1,6 @@
 import { deflateSync, gunzipSync, gzipSync, inflateSync } from "bun";
 import { describe, expect, it } from "bun:test";
-import { tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tmpdirSync } from "harness";
 import * as buffer from "node:buffer";
 import * as fs from "node:fs";
 import { resolve } from "node:path";
@@ -244,31 +244,36 @@ describe("zlib.brotli", () => {
     }
   });
 
-  it("streaming encode doesn't wait for entire input", async () => {
-    const createPRNG = seed => {
-      let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
-      return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
-    };
-    const readStream = new stream.Readable();
-    const brotliStream = zlib.createBrotliCompress();
-    const rand = createPRNG(1);
-    let all = [];
+  it(
+    "streaming encode doesn't wait for entire input",
+    async () => {
+      const createPRNG = seed => {
+        let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
+        return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
+      };
+      const readStream = new stream.Readable();
+      const brotliStream = zlib.createBrotliCompress();
+      const rand = createPRNG(1);
+      let all = [];
 
-    const { promise, resolve, reject } = Promise.withResolvers();
-    brotliStream.on("data", chunk => all.push(chunk.length));
-    brotliStream.on("end", resolve);
-    brotliStream.on("error", reject);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      brotliStream.on("data", chunk => all.push(chunk.length));
+      brotliStream.on("end", resolve);
+      brotliStream.on("error", reject);
 
-    for (let i = 0; i < 50; i++) {
-      let buf = Buffer.alloc(1024 * 1024);
-      for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
-      readStream.push(buf);
-    }
-    readStream.push(null);
-    readStream.pipe(brotliStream);
-    await promise;
-    expect(all.length).toBeGreaterThanOrEqual(7);
-  }, 15_000);
+      for (let i = 0; i < 50; i++) {
+        let buf = Buffer.alloc(1024 * 1024);
+        for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
+        readStream.push(buf);
+      }
+      readStream.push(null);
+      readStream.pipe(brotliStream);
+      await promise;
+      expect(all.length).toBeGreaterThanOrEqual(7);
+      // Debug/ASAN builds are much slower at streaming 50MB through brotli.
+    },
+    isDebug || isASAN ? 60_000 : 15_000,
+  );
 
   it("should accept params", async () => {
     const ZLIB = zlib.constants;
@@ -322,6 +327,136 @@ describe("zlib.brotli", () => {
       });
       expect(compressed.toString()).toEqual(Buffer.from(compressedString3, "base64").toString());
     }
+  });
+
+  // Brotli streams only define the BROTLI_OPERATION_* flush values (0..=3).
+  // Passing a zlib-only flush constant (Z_FINISH=4, Z_BLOCK=5) to .flush() used
+  // to abort the whole process — the shared write path validated against the
+  // zlib flush range (0..=6) and brotli's set_flush trapped on anything above 3.
+  // They are now rejected at the write boundary with an ERR_INVALID_ARG_TYPE
+  // TypeError (the code Node throws for an out-of-range flush), surfaced as a
+  // stream 'error' event and an errored flush callback. (Node silently accepts
+  // these particular values and hangs forever instead — nodejs/node#63701.)
+  describe.each([
+    ["Z_FINISH", zlib.constants.Z_FINISH],
+    ["Z_BLOCK", zlib.constants.Z_BLOCK],
+  ])("brotli flush(%s) is rejected with ERR_INVALID_ARG_TYPE", (_, kind) => {
+    // Run in a subprocess: a regression here either aborts the process (panic)
+    // or never settles the stream (hang) — both must show up as a failed or
+    // timed-out subprocess instead of a pass (or a dead test runner).
+    it("createBrotliCompress", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const z = require("zlib");
+            const s = z.createBrotliCompress();
+            let cbErr = null, evtErr = null;
+            function report(err) {
+              return { code: err.code, isTypeError: err instanceof TypeError };
+            }
+            function check() {
+              if (cbErr && evtErr) {
+                console.log(JSON.stringify({ flushCb: report(cbErr), errorEvent: report(evtErr) }));
+                process.exit(0);
+              }
+            }
+            s.on("error", err => { evtErr = err; check(); });
+            s.write(Buffer.alloc(128, 0x61));
+            s.flush(${kind}, err => { cbErr = err; check(); });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
+      expect(stderrLines).toEqual([]);
+      expect(JSON.parse(stdout)).toEqual({
+        flushCb: { code: "ERR_INVALID_ARG_TYPE", isTypeError: true },
+        errorEvent: { code: "ERR_INVALID_ARG_TYPE", isTypeError: true },
+      });
+      expect(exitCode).toBe(0);
+    });
+
+    it("createBrotliDecompress", async () => {
+      const compressed = zlib.brotliCompressSync(Buffer.alloc(128, 0x62));
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const z = require("zlib");
+            const s = z.createBrotliDecompress();
+            let cbErr = null, evtErr = null;
+            function report(err) {
+              return { code: err.code, isTypeError: err instanceof TypeError };
+            }
+            function check() {
+              if (cbErr && evtErr) {
+                console.log(JSON.stringify({ flushCb: report(cbErr), errorEvent: report(evtErr) }));
+                process.exit(0);
+              }
+            }
+            s.on("error", err => { evtErr = err; check(); });
+            s.on("data", () => {});
+            s.write(Buffer.from(${JSON.stringify([...compressed])}));
+            s.flush(${kind}, err => { cbErr = err; check(); });
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const stderrLines = stderr.split("\n").filter(l => l && !l.startsWith("WARNING: ASAN interferes"));
+      expect(stderrLines).toEqual([]);
+      expect(JSON.parse(stdout)).toEqual({
+        flushCb: { code: "ERR_INVALID_ARG_TYPE", isTypeError: true },
+        errorEvent: { code: "ERR_INVALID_ARG_TYPE", isTypeError: true },
+      });
+      expect(exitCode).toBe(0);
+    });
+  });
+
+  // Valid brotli flush values are unaffected by the narrowed validation.
+  it.each([
+    ["implicit BROTLI_OPERATION_FLUSH", undefined],
+    ["BROTLI_OPERATION_FLUSH", zlib.constants.BROTLI_OPERATION_FLUSH],
+  ])("brotli flush(%s) still works and round-trips", async (_, kind) => {
+    const input = Buffer.alloc(128, 0x61);
+    const s = zlib.createBrotliCompress();
+    const chunks = [];
+    const { promise, resolve, reject } = Promise.withResolvers();
+    s.on("data", c => chunks.push(c));
+    s.on("end", resolve);
+    s.on("error", reject);
+    s.write(input);
+    if (kind === undefined) {
+      s.flush(() => s.end());
+    } else {
+      s.flush(kind, () => s.end());
+    }
+    await promise;
+    expect(zlib.brotliDecompressSync(Buffer.concat(chunks)).equals(input)).toBe(true);
+  });
+
+  // zlib streams still accept the full zlib flush range (Z_FINISH=4 included) —
+  // the narrowed validation is brotli-only.
+  it("deflate flush(Z_FINISH) still works and round-trips", async () => {
+    const input = Buffer.alloc(128, 0x63);
+    const s = zlib.createDeflate();
+    const chunks = [];
+    const { promise, resolve, reject } = Promise.withResolvers();
+    s.on("data", c => chunks.push(c));
+    s.on("end", resolve);
+    s.on("error", reject);
+    s.write(input);
+    s.flush(zlib.constants.Z_FINISH, () => s.end());
+    await promise;
+    expect(zlib.inflateSync(Buffer.concat(chunks)).equals(input)).toBe(true);
   });
 });
 
@@ -608,31 +743,36 @@ describe("zlib.zstd", () => {
     }
   });
 
-  it("streaming encode doesn't wait for entire input", async () => {
-    const createPRNG = seed => {
-      let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
-      return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
-    };
-    const readStream = new stream.Readable();
-    const zstdStream = zlib.createZstdCompress();
-    const rand = createPRNG(1);
-    let all = [];
+  it(
+    "streaming encode doesn't wait for entire input",
+    async () => {
+      const createPRNG = seed => {
+        let state = seed ?? Math.floor(Math.random() * 0x7fffffff);
+        return () => (state = (1103515245 * state + 12345) % 0x80000000) / 0x7fffffff;
+      };
+      const readStream = new stream.Readable();
+      const zstdStream = zlib.createZstdCompress();
+      const rand = createPRNG(1);
+      let all = [];
 
-    const { promise, resolve, reject } = Promise.withResolvers();
-    zstdStream.on("data", chunk => all.push(chunk.length));
-    zstdStream.on("end", resolve);
-    zstdStream.on("error", reject);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      zstdStream.on("data", chunk => all.push(chunk.length));
+      zstdStream.on("end", resolve);
+      zstdStream.on("error", reject);
 
-    for (let i = 0; i < 50; i++) {
-      let buf = Buffer.alloc(1024 * 1024);
-      for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
-      readStream.push(buf);
-    }
-    readStream.push(null);
-    readStream.pipe(zstdStream);
-    await promise;
-    expect(all.length).toBeGreaterThanOrEqual(7);
-  }, 15_000);
+      for (let i = 0; i < 50; i++) {
+        let buf = Buffer.alloc(1024 * 1024);
+        for (let j = 0; j < buf.length; j++) buf[j] = (rand() * 256) | 0;
+        readStream.push(buf);
+      }
+      readStream.push(null);
+      readStream.pipe(zstdStream);
+      await promise;
+      expect(all.length).toBeGreaterThanOrEqual(7);
+      // Debug/ASAN builds are much slower at streaming 50MB through zstd.
+    },
+    isDebug || isASAN ? 60_000 : 15_000,
+  );
 });
 
 describe("async write buffer lifetime", () => {

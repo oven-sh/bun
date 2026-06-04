@@ -1606,6 +1606,19 @@ export function readableStreamCancel(stream: ReadableStream, reason: any) {
   if (state === $streamErrored) return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
   $readableStreamClose(stream);
 
+  // https://streams.spec.whatwg.org/#readable-stream-cancel step 5: a BYOB
+  // reader's pending read requests are closed with undefined ($readableStreamClose
+  // only settles default-reader read requests; respond(0) is not coming after cancel).
+  const reader = $getByIdDirectPrivate(stream, "reader");
+  if (reader && $isReadableStreamBYOBReader(reader)) {
+    const requests = $getByIdDirectPrivate(reader, "readIntoRequests");
+    if (requests.isNotEmpty()) {
+      $putByIdDirectPrivate(reader, "readIntoRequests", $createFIFO());
+      for (var request = requests.shift(); request; request = requests.shift())
+        $fulfillPromise(request, { value: undefined, done: true });
+    }
+  }
+
   const controller = $getByIdDirectPrivate(stream, "readableStreamController");
   if (controller === null) return Promise.$resolve();
 

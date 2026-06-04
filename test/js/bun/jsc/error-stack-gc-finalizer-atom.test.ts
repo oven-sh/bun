@@ -49,17 +49,20 @@ test("materializing error info in the GC finalizer context is atom-string-safe",
 // the current thread.
 test("GC-time stack materialization of errors with dead frames", () => {
   const keep: Error[] = ((globalThis as any).__errorGCFinalizerKeep = []);
-  (function run() {
-    for (let i = 0; i < 50; i++) {
-      const make = new Function("msg", "return new Error('boom ' + msg)");
-      keep.push(make(i));
-    }
-  })();
-  Bun.gc(true);
+  try {
+    (function run() {
+      for (let i = 0; i < 50; i++) {
+        const make = new Function("msg", "return new Error('boom ' + msg)");
+        keep.push(make(i));
+      }
+    })();
+    Bun.gc(true);
 
-  // Stacks were materialized during GC and are still readable.
-  const stack = keep[5].stack!;
-  expect(stack).toContain("at run (");
-  expect(stack).toContain("error-stack-gc-finalizer-atom.test.ts");
-  delete (globalThis as any).__errorGCFinalizerKeep;
+    // Stacks were materialized during GC and are still readable.
+    const stack = keep[5].stack!;
+    expect(stack).toContain("at run (");
+    expect(stack).toContain("error-stack-gc-finalizer-atom.test.ts");
+  } finally {
+    delete (globalThis as any).__errorGCFinalizerKeep;
+  }
 });

@@ -326,6 +326,23 @@ fn decode_via_system(_bytes: &[u8], _max_pixels: u64) -> Result<Option<Decoded>,
     Ok(None)
 }
 
+/// EXIF orientation (1..8) read by the active system backend (ImageIO on
+/// macOS, WIC on Windows). `None` when there is no system backend, when the
+/// `bun` backend is selected, or on any reader failure — the caller then
+/// falls back to identity, matching JPEG's "no Exif segment" behaviour.
+///
+/// HEIC/TIFF/AVIF store orientation inside containers with nothing in common
+/// with JPEG markers (HEIF's `irot`/`imir` live behind an ISOBMFF box walk),
+/// so `exif::read_jpeg` can't reach it — we delegate to the backend that has
+/// already parsed the container. See `exif::read`. (#30235)
+pub(crate) fn orientation_via_system(_bytes: &[u8]) -> Option<u8> {
+    #[cfg(any(target_os = "macos", windows))]
+    if use_system() {
+        return Some(system_backend::orientation(_bytes));
+    }
+    None
+}
+
 #[inline]
 pub(crate) fn guard(w: u32, h: u32, max_pixels: u64) -> Result<(), Error> {
     // u64 mul cannot overflow from two u32 factors.

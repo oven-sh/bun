@@ -1067,7 +1067,16 @@ impl HttpThread {
                 if let Some(ctx) = client.custom_ssl_ctx.take() {
                     ctx.deref();
                 }
-                drop(core::mem::take(&mut client.state));
+                let mut state = core::mem::take(&mut client.state);
+                // A streaming request body holds the HTTP-side ref on the
+                // `ThreadSafeStreamBuffer` (`Stream` has no `Drop` — the body
+                // is bitwise-shared with the JS-thread original). Normal
+                // teardown releases it in `InternalState::reset`; mirror that
+                // here or the buffer outlives both of its owners' releases
+                // and LSan reports it at exit. Idempotent: `detach` takes the
+                // `Option`.
+                state.original_request_body.deinit();
+                drop(state);
                 if let Some(f) = release.release_at_shutdown {
                     f(release.ctx);
                 }

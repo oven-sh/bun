@@ -1,5 +1,5 @@
 use core::ffi::c_void;
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use bun_boringssl as boringssl;
 use bun_core::{Error as BunError, err};
@@ -125,8 +125,8 @@ struct HttpHandoff {
 /// |---|---|---|
 /// | JS baseline | `get` — `init_exact_refs(2)` (JS) | `on_progress_update` final-tick cleanup or shutdown early-out (`release_js_ref`, JS); `callback`'s shutdown branch and `release_at_shutdown` (raw `deref_from_thread`, HTTP, JS thread parked); `release_queued_tasks_for_shutdown` in dispatch.rs (`release_js_ref`, JS) |
 /// | HTTP baseline | `get` — `init_exact_refs(2)` (JS, on the HTTP thread's behalf) | final `callback` or `release_at_shutdown` (`release_http_ref`, HTTP) |
-/// | sink | `start_request_stream` (JS) | every `write_end_request` exit (`release_sink_ref`, JS) |
-/// | drain task | `on_write_request_data_drain` (HTTP) | `resume_request_data_stream` (`release_drain_task_ref`, JS) |
+/// | sink | `start_request_stream` (JS) | every `write_end_request` exit (`release_sink_ref`, JS); `release_at_shutdown` when still outstanding per `sink_ref_held` (raw `deref_from_thread`, HTTP, JS thread parked) |
+/// | drain task | `on_write_request_data_drain` (HTTP) | `resume_request_data_stream` (`release_drain_task_ref`, JS); `release_at_shutdown` per `queued_drain_tasks` for nodes dropped unrun at exit (raw `deref_from_thread`, HTTP, JS thread parked) |
 ///
 /// # Lock invariants
 ///
@@ -199,6 +199,22 @@ pub struct FetchTasklet {
     /// Mirror of `result.is_http2`, stored by `callback` under the lock, read
     /// lock-free by `skip_chunked_framing` on the request-write path.
     is_http2: AtomicBool,
+    /// True while the request-body sink's ref on this tasklet (taken in
+    /// `start_request_stream`) is outstanding, i.e. until `release_sink_ref`
+    /// drops it. Written on the JS thread; read by `release_at_shutdown` on
+    /// the HTTP thread while the JS thread is parked in `shutdown_for_exit`
+    /// (race-free, same argument as `has_schedule_callback` there).
+    sink_ref_held: AtomicBool,
+    /// Number of `resume_request_data_stream` tasks currently parked in the
+    /// JS concurrent queue, each owning one drain-task ref. Incremented with
+    /// the ref on the HTTP thread (`on_write_request_data_drain`),
+    /// decremented with its release on the JS thread
+    /// (`release_drain_task_ref`). Read by `release_at_shutdown` on the HTTP
+    /// thread with the JS thread parked: those queue nodes are
+    /// `ManagedTask`-tagged, which `release_queued_tasks_for_shutdown`
+    /// cannot release (the ctx type is erased), so their refs are balanced
+    /// there instead.
+    queued_drain_tasks: AtomicU32,
     signal_store: http::signals::Store,
     signals: Signals,
 
@@ -707,16 +723,31 @@ impl FetchTasklet {
     }
 
     /// Sink ref taken in `start_request_stream`; released once per
-    /// `write_end_request` exit. JS thread both sides.
+    /// `write_end_request` exit. JS thread both sides (plus
+    /// `release_at_shutdown`'s balancing drop when the JS thread is parked —
+    /// that path derefs raw and relies on this clearing `sink_ref_held`
+    /// before the count can drop).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub(crate) fn release_sink_ref(this: *mut FetchTasklet) {
+        // SAFETY: the caller holds the sink ref being released, so `this` is
+        // live for the store; clear the marker before the deref below can
+        // free the allocation.
+        unsafe { (*this).sink_ref_held.store(false, Ordering::Release) };
         Self::deref(this);
     }
 
     /// Drain-task ref taken on the HTTP thread in `on_write_request_data_drain`;
-    /// released on the JS thread in `resume_request_data_stream`.
+    /// released on the JS thread in `resume_request_data_stream` (or balanced
+    /// by `release_at_shutdown` via `queued_drain_tasks` when the queued node
+    /// is dropped unrun at exit).
+    #[allow(clippy::not_unsafe_ptr_arg_deref)]
     #[inline]
     pub(crate) fn release_drain_task_ref(this: *mut FetchTasklet) {
+        // SAFETY: the caller holds the drain-task ref being released, so
+        // `this` is live for the store; decrement before the deref below can
+        // free the allocation.
+        unsafe { (*this).queued_drain_tasks.fetch_sub(1, Ordering::Release) };
         Self::deref(this);
     }
 
@@ -875,6 +906,14 @@ impl FetchTasklet {
     /// `callback` and the JS-thread `on_progress_update`; the JS thread is
     /// parked in `wait_timeout_while` here, so the load is race-free.
     ///
+    /// A streaming upload may hold further refs whose JS-thread release
+    /// sites will never run either: the sink ref (`sink_ref_held`; dropped
+    /// by `write_end_request` → `release_sink_ref`) and one ref per
+    /// `resume_request_data_stream` node parked in the JS concurrent queue
+    /// (`queued_drain_tasks`; those nodes are `ManagedTask`-tagged, which
+    /// `release_queued_tasks_for_shutdown` cannot release). Both are
+    /// balanced here under the same JS-thread-parked argument.
+    ///
     /// SAFETY: `this` is the live `*mut FetchTasklet` registered as
     /// `result_callback.ctx` in `get()`; HTTP-thread-only at this point.
     unsafe fn release_at_shutdown(this: *mut ()) {
@@ -888,6 +927,28 @@ impl FetchTasklet {
         // the JS thread is parked (see fn doc), so `get_mut`'s exclusivity
         // claim holds without taking the lock.
         unsafe { (*this).shared.get_mut().scheduled_response_buffer = MutableString::default() };
+        // A streaming upload's refs are normally dropped on the JS thread —
+        // the sink ref by `write_end_request`, each queued drain-task ref by
+        // `resume_request_data_stream` — but the JS thread is parked and its
+        // queue nodes will be dropped unrun (`ManagedTask`-tagged, which
+        // `release_queued_tasks_for_shutdown` cannot release). Balance them
+        // here too; otherwise the count never reaches zero and the tasklet ⇄
+        // `Box<AsyncHTTP>` chain (plus the sink and stream buffer it pins)
+        // is unreachable from any root and LSan reports it all as leaked at
+        // exit. The reads are race-free: the JS-side writers are serialized
+        // against the `global_exit` that parked the JS thread, and the
+        // HTTP-side writer (`on_write_request_data_drain`) runs on this
+        // thread. Dropped first so `this` stays live for every read below.
+        // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
+        if unsafe { (*this).sink_ref_held.load(Ordering::Acquire) } {
+            // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
+            FetchTasklet::deref_from_thread(this);
+        }
+        // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
+        for _ in 0..unsafe { (*this).queued_drain_tasks.load(Ordering::Acquire) } {
+            // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
+            FetchTasklet::deref_from_thread(this);
+        }
         // SAFETY: caller contract — `this` is live and HTTP-thread-exclusive.
         FetchTasklet::release_http_ref(this);
         if !queued_progress_update {
@@ -915,6 +976,10 @@ impl FetchTasklet {
 
             let global_this = t.js.global_this;
             Self::ref_ptr(t.task); // sink ref — released by `release_sink_ref` in `write_end_request`
+            // SAFETY: `t.task` is the live heap tasklet (`Parts` is only built
+            // from one); raw field projection so no `&FetchTasklet` is formed
+            // while the `Parts` split borrows are live.
+            unsafe { (*t.task).sink_ref_held.store(true, Ordering::Release) };
             // +1 because the task refs the sink
             let sink = ResumableSink::init_exact_refs(&global_this, stream, t.task, 2);
             t.js.sink = Some(sink);
@@ -1986,6 +2051,8 @@ impl FetchTasklet {
             has_schedule_callback: AtomicBool::new(false),
             ignore_data: AtomicBool::new(false),
             is_http2: AtomicBool::new(false),
+            sink_ref_held: AtomicBool::new(false),
+            queued_drain_tasks: AtomicU32::new(0),
             signal_store: http::signals::Store::default(),
             signals: Signals::default(),
             // Starts at 2: 1 for the JS thread, 1 for the HTTP thread.
@@ -2239,8 +2306,11 @@ impl FetchTasklet {
         if this_ref.javascript_vm.is_shutting_down() {
             return;
         }
-        // drain-task ref — released by `release_drain_task_ref` in `resume_request_data_stream`
+        // drain-task ref — released by `release_drain_task_ref` in
+        // `resume_request_data_stream`, or balanced by `release_at_shutdown`
+        // (via `queued_drain_tasks`) when exit drops the node unrun.
         this_ref.ref_();
+        this_ref.queued_drain_tasks.fetch_add(1, Ordering::Release);
         // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`; the queue
         // takes ownership of it.
         Self::enqueue_concurrent(

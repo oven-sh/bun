@@ -73,10 +73,43 @@ function set(contextValue: ReadonlyArray<any> | undefined) {
   return $putInternalField($asyncContext, 0, contextValue);
 }
 
+class RunScope {
+  #storage;
+  #previousStore;
+  #disposed = false;
+
+  constructor(storage, store) {
+    this.#storage = storage;
+    this.#previousStore = storage.getStore();
+    storage.enterWith(store);
+  }
+
+  dispose() {
+    if (this.#disposed) {
+      return;
+    }
+    this.#disposed = true;
+    this.#storage.enterWith(this.#previousStore);
+  }
+
+  [Symbol.dispose]() {
+    this.dispose();
+  }
+}
+
 class AsyncLocalStorage {
   #disabled = false;
+  #defaultValue = undefined;
+  #name = undefined;
 
-  constructor() {
+  constructor(options) {
+    if (options !== undefined) {
+      validateObject(options, "options");
+      this.#defaultValue = options.defaultValue;
+      if (options.name !== undefined) {
+        this.#name = `${options.name}`;
+      }
+    }
     setAsyncHooksEnabled(true);
 
     // In debug mode assign every AsyncLocalStorage a unique ID
@@ -178,19 +211,34 @@ class AsyncLocalStorage {
       if (!wasDisabled) {
         var context2 = get()! as any[]; // we make sure to .slice() before mutating
         if (context2 === context && contextWasAlreadyInit) {
-          $assert(context2.length === 2, "context was mutated without copy");
+          // Either unchanged, or disable() emptied it in place.
+          $assert(context2.length === 2 || context2.length === 0, "context was mutated without copy");
           set(undefined);
         } else {
-          context2 = context2.slice(); // array is cloned here
-          $assert(context2[i] === this);
-          if (hasPrevious) {
-            context2[i + 1] = previous_value;
+          // The context array can change shape during the callback (disable()
+          // splices storages out), so re-locate this storage by identity
+          // instead of trusting the index captured before the callback ran.
+          // This mirrors node's run(), whose finally is enterWith(prior):
+          // restore by value, re-adding the previous value even after a
+          // disable() during the callback.
+          context2 = context2 ? context2.slice() : []; // array is cloned here
+          const idx = context2.indexOf(this);
+          $assert(idx === -1 || idx % 2 === 0);
+          if (idx > -1) {
+            if (hasPrevious) {
+              context2[idx + 1] = previous_value;
+              set(context2);
+            } else {
+              context2.splice(idx, 2);
+              $assert(context2.length % 2 === 0);
+              set(context2.length ? context2 : undefined);
+            }
+          } else if (hasPrevious) {
+            // disable() removed us mid-callback; node still restores the
+            // previous value (and the storage becomes enabled again).
+            this.#disabled = false;
+            context2.push(this, previous_value);
             set(context2);
-          } else {
-            // i wonder if this is a fair assert to make
-            context2.splice(i, 2);
-            $assert(context2.length % 2 === 0);
-            set(context2.length ? context2 : undefined);
           }
         }
         $assert(
@@ -222,16 +270,26 @@ class AsyncLocalStorage {
     }
   }
 
+  get name() {
+    return this.#name || "";
+  }
+
   getStore() {
     $debug("getStore " + (this as any).__id__);
     // disabled AsyncLocalStorage always returns undefined https://nodejs.org/api/async_context.html#asynclocalstoragedisable
     if (this.#disabled) return;
     var context = get();
-    if (!context) return;
-    var { length } = context;
-    for (var i = 0; i < length; i += 2) {
-      if (context[i] === this) return context[i + 1];
+    if (context) {
+      var { length } = context;
+      for (var i = 0; i < length; i += 2) {
+        if (context[i] === this) return context[i + 1];
+      }
     }
+    return this.#defaultValue;
+  }
+
+  withScope(store) {
+    return new RunScope(this, store);
   }
 
   // Node.js internal function. In Bun's implementation, calling this is not
@@ -310,7 +368,25 @@ class AsyncResource {
 
   bind(fn, thisArg) {
     validateFunction(fn, "fn");
-    return this.runInAsyncScope.bind(this, fn, thisArg ?? this);
+    let bound;
+    if (thisArg === undefined) {
+      const resource = this;
+      bound = function (this: unknown, ...args) {
+        args.unshift(fn, this);
+        return resource.runInAsyncScope.$apply(resource, args);
+      };
+    } else {
+      bound = this.runInAsyncScope.bind(this, fn, thisArg);
+    }
+    Object.defineProperties(bound, {
+      length: {
+        configurable: true,
+        enumerable: false,
+        value: fn.length,
+        writable: false,
+      },
+    });
+    return bound;
   }
 
   static bind(fn, type, thisArg) {

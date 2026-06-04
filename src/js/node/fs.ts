@@ -848,14 +848,28 @@ realpathSync.native = fs.realpathNativeSync.bind(fs);
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 function cpSync(src, dest, options) {
-  if (!options) return fs.cpSync(src, dest);
-  if (typeof options !== "object") {
-    throw new TypeError("options must be an object");
+  const cpSyncImpl = require("internal/fs/cp-sync");
+  const opts = cpSyncImpl.validateCpOptions(options);
+  src = require("internal/validators").getValidatedPath(src);
+  dest = require("internal/validators").getValidatedPath(dest);
+  if (opts.dereference || opts.filter || opts.preserveTimestamps || opts.verbatimSymlinks) {
+    return cpSyncImpl(src, dest, opts);
   }
-  if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
-    return require("internal/fs/cp-sync")(src, dest, options);
+  // Mirror promises.cp: native fast path only for fresh copies where node's
+  // checkPaths/onLink semantics cannot fire.
+  let destStat = null;
+  try {
+    destStat = fs.lstatSync(dest);
+  } catch (e) {
+    if (e?.code !== "ENOENT") throw e;
   }
-  return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
+  if (destStat === null) {
+    const srcStat = fs.lstatSync(src);
+    if (srcStat.isFile() || (srcStat.isDirectory() && opts.recursive && !cpSyncImpl.isSrcSubdir(src, dest))) {
+      return fs.cpSync(src, dest, opts.recursive, opts.errorOnExist, opts.force, opts.mode);
+    }
+  }
+  return cpSyncImpl(src, dest, opts);
 }
 
 function cp(src, dest, options, callback) {
@@ -866,7 +880,10 @@ function cp(src, dest, options, callback) {
 
   ensureCallback(callback);
 
-  promises.cp(src, dest, options).then(() => callback(), callback);
+  // Validate synchronously so invalid options throw rather than reject.
+  options = require("internal/fs/cp-sync").validateCpOptions(options);
+
+  promises.cp(src, dest, options).then(() => callback(null), callback);
 }
 
 function _toUnixTimestamp(time: any, name = "time") {

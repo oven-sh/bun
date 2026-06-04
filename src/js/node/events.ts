@@ -30,6 +30,7 @@ const {
   validateNumber,
   validateBoolean,
   validateFunction,
+  validateString,
 } = require("internal/validators");
 
 const types = require("node:util/types");
@@ -791,26 +792,66 @@ function addAbortListener(signal, listener) {
   };
 }
 
+let EventEmitterReferencingAsyncResource;
+function lazyLoadAsyncResource() {
+  if (!AsyncResource) {
+    AsyncResource = require("node:async_hooks").AsyncResource;
+    EventEmitterReferencingAsyncResource = class EventEmitterReferencingAsyncResource extends AsyncResource {
+      #eventEmitter;
+
+      constructor(ee, type, options) {
+        super(type, options);
+        this.#eventEmitter = ee;
+      }
+
+      get eventEmitter() {
+        if (this.#eventEmitter === undefined) throw $ERR_INVALID_THIS("EventEmitterReferencingAsyncResource");
+        return this.#eventEmitter;
+      }
+    };
+  }
+}
+
 class EventEmitterAsyncResource extends EventEmitter {
-  triggerAsyncId;
-  asyncResource;
+  #asyncResource;
 
   constructor(options) {
-    if (!AsyncResource) {
-      AsyncResource = require("node:async_hooks").AsyncResource;
+    lazyLoadAsyncResource();
+    let name;
+    if (typeof options === "string") {
+      name = options;
+      options = undefined;
+    } else {
+      if (new.target === EventEmitterAsyncResource) {
+        validateString(options?.name, "options.name");
+      }
+      name = options?.name || new.target.name;
     }
-    var { captureRejections = false, triggerAsyncId, name = new.target.name, requireManualDestroy } = options || {};
-    super({ captureRejections });
-    this.triggerAsyncId = triggerAsyncId ?? 0;
-    this.asyncResource = new AsyncResource(name, { triggerAsyncId, requireManualDestroy });
+    super(options);
+    this.#asyncResource = new EventEmitterReferencingAsyncResource(this, name, options);
+  }
+
+  get asyncId() {
+    if (this.#asyncResource === undefined) throw $ERR_INVALID_THIS("EventEmitterAsyncResource");
+    return this.#asyncResource.asyncId();
+  }
+
+  get triggerAsyncId() {
+    if (this.#asyncResource === undefined) throw $ERR_INVALID_THIS("EventEmitterAsyncResource");
+    return this.#asyncResource.triggerAsyncId();
+  }
+
+  get asyncResource() {
+    if (this.#asyncResource === undefined) throw $ERR_INVALID_THIS("EventEmitterAsyncResource");
+    return this.#asyncResource;
   }
 
   emit(...args) {
-    this.asyncResource.runInAsyncScope(() => super.emit(...args));
+    return this.#asyncResource.runInAsyncScope(() => super.emit(...args));
   }
 
   emitDestroy() {
-    this.asyncResource.emitDestroy();
+    this.#asyncResource.emitDestroy();
   }
 }
 

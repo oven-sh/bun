@@ -103,14 +103,36 @@ function watch(
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 function cp(src, dest, options) {
-  if (!options) return fs.cp(src, dest);
-  if (typeof options !== "object") {
-    throw new TypeError("options must be an object");
+  const opts = require("internal/fs/cp-sync").validateCpOptions(options);
+  return cpImpl(src, dest, opts);
+}
+
+async function cpImpl(src, dest, opts) {
+  src = require("internal/validators").getValidatedPath(src);
+  dest = require("internal/validators").getValidatedPath(dest);
+  if (opts.dereference || opts.filter || opts.preserveTimestamps || opts.verbatimSymlinks) {
+    return require("internal/fs/cp")(src, dest, opts);
   }
-  if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
-    return require("internal/fs/cp")(src, dest, options);
+  // The native fast path skips node's checkPaths/onLink semantics
+  // (ERR_FS_CP_* validation, symlink handling), so use it only for fresh
+  // copies of regular files or whole directories — the cases where those
+  // checks cannot fire.
+  let destStat = null;
+  try {
+    destStat = await fs.lstat(dest);
+  } catch (e) {
+    if (e?.code !== "ENOENT") throw e;
   }
-  return fs.cp(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
+  if (destStat === null) {
+    const srcStat = await fs.lstat(src);
+    if (
+      srcStat.isFile() ||
+      (srcStat.isDirectory() && opts.recursive && !require("internal/fs/cp-sync").isSrcSubdir(src, dest))
+    ) {
+      return fs.cp(src, dest, opts.recursive, opts.errorOnExist, opts.force, opts.mode);
+    }
+  }
+  return require("internal/fs/cp")(src, dest, opts);
 }
 
 async function opendir(dir: string, options) {

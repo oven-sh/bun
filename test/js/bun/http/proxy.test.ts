@@ -139,7 +139,25 @@ let httpsServer: Server;
 let httpProxyServer: { server: net.Server; url: string; log: string[] };
 let httpsProxyServer: { server: net.Server; url: string; log: string[] };
 
+// Tests in this file that call fetch() in-process expect the explicit `proxy`
+// option to be honored against localhost targets. An ambient NO_PROXY /
+// HTTP_PROXY / HTTPS_PROXY in the environment (as some CI/dev containers set)
+// would make those localhost fetches bypass the proxy and the assertions fail.
+// Clear them for the duration of this file; subprocess-based tests below pass
+// their own explicit `env` and are unaffected.
+//
+// Assign "" rather than `delete`: the HTTP client reads these via getenv, and
+// (matching Node semantics) only an assignment propagates to it — a `delete`
+// leaves the native value stale. An empty value disables the proxy/bypass.
+const savedProxyEnv: Record<string, string | undefined> = {};
+const PROXY_ENV_KEYS = ["NO_PROXY", "no_proxy", "HTTP_PROXY", "http_proxy", "HTTPS_PROXY", "https_proxy"];
+
 beforeAll(async () => {
+  for (const key of PROXY_ENV_KEYS) {
+    savedProxyEnv[key] = process.env[key];
+    process.env[key] = "";
+  }
+
   httpServer = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -172,6 +190,11 @@ afterAll(() => {
   httpsServer.stop();
   httpProxyServer.server.close();
   httpsProxyServer.server.close();
+
+  for (const key of PROXY_ENV_KEYS) {
+    // Restore the prior value; an absent var maps back to "" (see note above).
+    process.env[key] = savedProxyEnv[key] ?? "";
+  }
 });
 
 for (const proxy_tls of [false, true]) {

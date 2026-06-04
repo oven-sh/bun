@@ -1510,7 +1510,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // statement begins at the opening quote only when it is a bare string
                     // literal; for a parenthesized expression it begins at `(`.
                     if let js_ast::expr::Data::EString(str_) = &expr.value.data {
-                        if !str_.prefer_template && Self::stmt_starts_with_quote(p.source, stmt.loc) {
+                        if !str_.prefer_template && Self::stmt_starts_with_quote(p.source, stmt.loc)
+                        {
                             is_directive_prologue = true;
 
                             // A directive's raw source form must contain no escape

@@ -605,6 +605,9 @@ function expectBundled(
   if (ESBUILD && allowUnresolved !== undefined) {
     throw new Error("allowUnresolved not possible in esbuild backend");
   }
+  if (ESBUILD && reactCompiler) {
+    throw new Error("reactCompiler not possible in esbuild backend");
+  }
   if (dryRun) {
     return testRef(id, opts);
   }

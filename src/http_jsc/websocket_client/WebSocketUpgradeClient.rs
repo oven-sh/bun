@@ -96,9 +96,7 @@ struct SslCtxOwned(*mut SslCtx);
 impl SslCtxOwned {
     /// Transfer ownership of the retained ref to the caller without freeing.
     fn into_raw(self) -> *mut SslCtx {
-        let p = self.0;
-        core::mem::forget(self);
-        p
+        core::mem::ManuallyDrop::new(self).0
     }
 }
 

@@ -116,7 +116,6 @@ pub mod features {
         };
         (@storage $(#[$doc:meta])* $ident:ident, $core:ident) => {
             $(#[$doc])*
-            #[allow(non_upper_case_globals)]
             pub use ::bun_core::Global::features::$core as $ident;
         };
         ( $( $(#[$doc:meta])* $idx:literal => ($ident:ident, $name:literal $(, core = $core:ident)?) ),* $(,)? ) => {

@@ -439,7 +439,7 @@ impl core::fmt::Debug for Token {
                 .field("end", &v.end)
                 .finish(),
             Token::Comma => f.write_str("Comma"),
-            Token::Text(s) => write!(f, "Text({:?})", String::from_utf8_lossy(s.slice())),
+            Token::Text(s) => write!(f, "Text({:?})", bstr::BStr::new(s.slice())),
             Token::Close => f.write_str("Close"),
             Token::Eof => f.write_str("Eof"),
         }

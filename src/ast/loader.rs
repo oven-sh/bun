@@ -15,7 +15,8 @@ use phf;
 /// - src/jsc/bindings/headers-handwritten.h
 #[repr(u8)]
 #[derive(
-    Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr, strum::VariantNames,
+    Copy, Clone, Default, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr,
+    strum::VariantNames,
 )]
 // The lower_snake names are exposed to JS (HTMLImportManifest
 // `"loader":`, BuildArtifact.loader) so the strum serialization must match exactly.
@@ -26,6 +27,7 @@ pub enum Loader {
     Ts = 2,
     Tsx = 3,
     Css = 4,
+    #[default]
     File = 5,
     Json = 6,
     Jsonc = 7,
@@ -56,11 +58,6 @@ bun_core::assert_ffi_discr!(
     Text = 13, Bunsh = 14, Sqlite = 15, SqliteEmbedded = 16, Html = 17,
 );
 
-impl Default for Loader {
-    fn default() -> Self {
-        Loader::File
-    }
-}
 
 /// `Loader.Optional` — `enum(u8) { none = 254, _ }` niche-packed optional.
 #[repr(transparent)]

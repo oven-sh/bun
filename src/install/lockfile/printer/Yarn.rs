@@ -21,7 +21,7 @@ pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), 
     // internal for debugging, print the lockfile as custom json
     // limited to debug because we don't want people to rely on this format.
     #[cfg(debug_assertions)]
-    if std::env::var_os("JSON").is_some() {
+    if bun_core::getenv_z(bun_core::zstr!("JSON")).is_some() {
         use crate::lockfile_real::lockfile_json_stringify_for_debugging::{
             WriteStream, WriteStreamOptions,
         };

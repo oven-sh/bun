@@ -1994,7 +1994,7 @@ impl<const SSL: bool, const HTTP3: bool> HTTPServerWritable<SSL, HTTP3> {
             // SAFETY: `this` is the live heap payload (refcounted via the JS
             // wrapper); momentary access only.
             unsafe { (*this).wrote_at_start_of_flush = (*this).wrote };
-            return Ok(result?);
+            return result;
         }
         Ok(())
     }

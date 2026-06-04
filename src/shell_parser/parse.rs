@@ -4621,7 +4621,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 // SAFETY: `slice_mut` covers exactly the initialized prefix;
                 // `[new_len..]` are the elements being discarded, and the len
                 // adjust below makes them unobservable afterwards.
-                unsafe { core::ptr::drop_in_place(&mut inlined.slice_mut()[new_len..]) };
+                unsafe { core::ptr::drop_in_place(&raw mut inlined.slice_mut()[new_len..]) };
                 inlined.len = u32::try_from(new_len).expect("int cast");
             }
             SmolList::Heap(heap) => {

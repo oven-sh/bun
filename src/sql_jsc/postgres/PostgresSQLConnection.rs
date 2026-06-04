@@ -794,10 +794,7 @@ impl PostgresSQLConnection {
             options: Data::Temporary(self.options),
         };
         if let Err(err) = msg.write_internal(self.writer()) {
-            self.fail(
-                b"Failed to write startup message",
-                AnyPostgresError::from(err),
-            );
+            self.fail(b"Failed to write startup message", err);
         }
     }
 

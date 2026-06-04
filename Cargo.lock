@@ -1592,6 +1592,7 @@ dependencies = [
  "bitflags",
  "bstr",
  "bun_ast",
+ "bun_collections",
  "bun_core",
  "bun_options_types",
  "const_format",

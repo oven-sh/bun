@@ -134,7 +134,7 @@ impl<'a> NoOpRenamer<'a> {
             Output::panic(format_args!(
                 "Invalid symbol {} in {}",
                 ref_,
-                String::from_utf8_lossy(self.source.path.text)
+                bstr::BStr::new(self.source.path.text)
             ));
         }
     }

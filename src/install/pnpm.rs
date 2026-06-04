@@ -1525,9 +1525,6 @@ fn parse_append_importer_dependencies(
                 let behavior: dependency::Behavior = group_behavior;
 
                 // TODO: find peerDependencies from package.json
-                if group_behavior.is_prod() {
-                }
-
                 let dep = Dependency {
                     name: name.value,
                     name_hash: name.hash,

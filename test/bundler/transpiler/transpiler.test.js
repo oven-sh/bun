@@ -1007,6 +1007,22 @@ function foo() {}
       exp("new (a.b.c)();", "new a.b.c");
       exp("new (a`bar`)();", "new a`bar`");
       exp("new (a.b.c.d)();", "new a.b.c.d");
+
+      // An optional chain that is already isolated below a non-optional access is
+      // wrapped by the printer's existing optional-chain handling, so the `new`
+      // callee needs no second pair of parens around the whole chain.
+      exp("new ((a?.b).c)();", "new (a?.b).c");
+      exp("new ((a?.b).c.d)();", "new (a?.b).c.d");
+      exp("new ((a?.b)[c])();", "new (a?.b)[c]");
+      exp("new ((a()?.b).c)();", "new (a()?.b).c");
+    });
+
+    it("wraps an optional-chain tag of a template literal", () => {
+      // `a?.b`tpl`` is a SyntaxError (an optional chain may not directly tag a
+      // template literal), so the tag must be parenthesized when printed.
+      ts.expectPrinted_("(a?.b)`tpl`;", "(a?.b)`tpl`");
+      ts.expectPrinted_("(a?.b())`tpl`;", "(a?.b())`tpl`");
+      ts.expectPrinted_("(a?.[b])`tpl`;", "(a?.[b])`tpl`");
     });
 
     it("modifiers", () => {
@@ -4801,7 +4817,7 @@ describe("new expression callee parenthesization", () => {
   // reparsed as `(new foo())`bar`` and the optional-chain form became an illegal
   // `new` inside an optional chain (a syntax error). Run the transpiled program
   // end-to-end and confirm it still builds the class instance.
-  test.each([
+  test.concurrent.each([
     ["tagged template tag with a call", "const foo = () => (args) => class A {}; console.log(new (foo()`bar`)());"],
     ["optional chain", "const baz = () => ({ qux: class A {} }); console.log(new (baz()?.qux)());"],
     ["optional chain with a call", "const a = () => ({ b: class A {} }); console.log(new (a()?.b)());"],

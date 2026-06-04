@@ -1476,27 +1476,41 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
 /// `new a.b.c()` is identical to `new (a.b.c)()` — a plain member chain binds
 /// into the `new` target — so those parens may be dropped. But `new (a().b)()`
 /// must stay parenthesized: unwrapped, `new a().b()` reparses as
-/// `(new a()).b()`. Likewise an optional chain (`new (a?.b)()`) is a syntax
-/// error without the parens (`new` may not appear in an optional chain).
+/// `(new a()).b()`. Likewise an optional chain that reaches the `new`
+/// (`new (a?.b)()`) is a syntax error without the parens (`new` may not appear
+/// in an optional chain).
 ///
-/// Walks the `EDot`/`EIndex`/`ETemplate` (tagged) chain and returns `true` when
-/// a descendant `ECall` or optional-chain node makes the parens load-bearing.
+/// Walks the `EDot`/`EIndex`/`ETemplate` (tagged) chain toward its base:
+///
+/// - a `ECall` anywhere always needs the parens — nothing else isolates a call
+///   from the `new` (`new a().b()` → `(new a()).b()`);
+/// - an optional-chain link needs the parens only while it still reaches the top
+///   of the chain. Once a non-optional access sits above it, the printer's
+///   `HasNonOptionalChainParent` handling already wraps that optional chain
+///   (`(a?.b).c`), and everything below it is inside those parens, so no outer
+///   wrap is needed and the walk can stop.
 fn new_callee_needs_parens(expr: &js_ast::Expr) -> bool {
     use js_ast::ExprData;
     let mut current = expr;
+    // Tracks whether a non-optional member/index access sits above `current`,
+    // which is exactly when `HasNonOptionalChainParent` isolates a nested
+    // optional chain for us.
+    let mut crossed_non_optional_access = false;
     loop {
         match &current.data {
             ExprData::ECall(_) => return true,
             ExprData::EDot(e) => {
                 if e.optional_chain.is_some() {
-                    return true;
+                    return !crossed_non_optional_access;
                 }
+                crossed_non_optional_access = true;
                 current = &e.target;
             }
             ExprData::EIndex(e) => {
                 if e.optional_chain.is_some() {
-                    return true;
+                    return !crossed_non_optional_access;
                 }
+                crossed_non_optional_access = true;
                 current = &e.target;
             }
             ExprData::ETemplate(e) => match &e.tag {
@@ -4225,15 +4239,10 @@ pub mod __gated_printer {
 
                     if let Some(tag) = &e.tag {
                         self.add_source_mapping(expr.loc);
-                        // Optional chains are forbidden in template tags
-                        // `Expr::is_optional_chain` is gated upstream; inline its body.
-                        let is_optional_chain = match &expr.data {
-                            ExprData::EDot(d) => d.optional_chain.is_some(),
-                            ExprData::EIndex(i) => i.optional_chain.is_some(),
-                            ExprData::ECall(c) => c.optional_chain.is_some(),
-                            _ => false,
-                        };
-                        if is_optional_chain {
+                        // An optional chain may not directly tag a template literal
+                        // (`a?.b`t`` is a SyntaxError), so wrap the tag in parens.
+                        // The check is on the tag, not on this `ETemplate` node.
+                        if tag.is_optional_chain() {
                             self.print(b"(");
                             self.print_expr(*tag, Level::Lowest, ExprFlag::none());
                             self.print(b")");

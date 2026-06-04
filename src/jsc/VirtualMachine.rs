@@ -4777,6 +4777,15 @@ impl VirtualMachine {
         // AbortSignal timeout in the heap belongs to the outgoing file (the
         // new global doesn't exist yet), so drop them eagerly, same as
         // `global_exit()`. Runs no user JS.
+        //
+        // The hook also runs `StatWatcherScheduler::shutdown_for_exit` first:
+        // it drains the (already-closed — see
+        // `close_all_watchers_for_isolation` above) watcher queue and retires
+        // the per-VM scheduler singleton, which the next file's first
+        // `fs.watchFile` lazily recreates. That per-file reset is intentional
+        // — the scheduler's queue and in-flight work-pool task belong to the
+        // outgoing file, and its brief spin-wait is bounded by at most one
+        // in-flight `stat()`.
         if let Some(hooks) = runtime_hooks() {
             // SAFETY: live per-thread VM on the JS thread; `runtime_state`
             // stays installed for the whole test run.

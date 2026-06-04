@@ -584,6 +584,11 @@ fn message_with_type_and_level_(
                     print_options.enable_colors = colors_prop.to_boolean();
                 }
             }
+            if let Some(max_array_length_prop) = opts.get(global, b"maxArrayLength")? {
+                if let Some(max) = resolve_max_array_length(max_array_length_prop) {
+                    print_options.max_array_length = max;
+                }
+            }
         }
     }
 
@@ -1303,6 +1308,37 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
 // FormatOptions
 // ───────────────────────────────────────────────────────────────────────────
 
+/// Default number of array elements printed before eliding the rest. Matches
+/// Node's `util.inspect` default (`maxArrayLength: 100`).
+pub const DEFAULT_MAX_ARRAY_LENGTH: u32 = 100;
+
+/// Resolve a user-supplied `maxArrayLength` option to the element cap.
+///
+/// Matches Node's `util.inspect` semantics: `null` means no limit
+/// (`Infinity`, represented here as `u32::MAX`), negative values clamp to 0,
+/// and non-integers / `NaN` are floored. A missing / `undefined` value leaves
+/// the current cap unchanged (handled by the caller via `JSValue::get`).
+fn resolve_max_array_length(value: JSValue) -> Option<u32> {
+    if value.is_null() {
+        return Some(u32::MAX);
+    }
+    if value.is_number() {
+        let v = value.as_number();
+        if v.is_nan() {
+            return Some(0);
+        }
+        if v >= f64::from(u32::MAX) {
+            return Some(u32::MAX);
+        }
+        if v <= 0.0 {
+            return Some(0);
+        }
+        // Node floors the value (`output.length` is integer-indexed).
+        return Some(v as u32);
+    }
+    None
+}
+
 #[derive(Clone, Copy)]
 pub struct FormatOptions {
     pub enable_colors: bool,
@@ -1311,6 +1347,7 @@ pub struct FormatOptions {
     pub ordered_properties: bool,
     pub quote_strings: bool,
     pub max_depth: u16,
+    pub max_array_length: u32,
     pub single_line: bool,
     pub default_indent: u16,
     pub error_display_level: ErrorDisplayLevel,
@@ -1325,6 +1362,7 @@ impl Default for FormatOptions {
             ordered_properties: false,
             quote_strings: false,
             max_depth: 2,
+            max_array_length: DEFAULT_MAX_ARRAY_LENGTH,
             single_line: false,
             default_indent: 0,
             error_display_level: ErrorDisplayLevel::Full,
@@ -1436,6 +1474,11 @@ impl FormatOptions {
             if let Some(opt) = arg1.get_boolean_loose(global_this, "compact")? {
                 self.single_line = opt;
             }
+            if let Some(opt) = arg1.get(global_this, "maxArrayLength")? {
+                if let Some(max) = resolve_max_array_length(opt) {
+                    self.max_array_length = max;
+                }
+            }
         } else {
             // formatOptions.show_hidden = arg1.toBoolean();
             if !arguments.is_empty() {
@@ -1491,6 +1534,7 @@ pub fn format2(
         fmt.ordered_properties = options.ordered_properties;
         fmt.quote_strings = options.quote_strings;
         fmt.max_depth = options.max_depth;
+        fmt.max_array_length = options.max_array_length;
         fmt.single_line = options.single_line;
         fmt.indent = u32::from(options.default_indent);
         fmt.stack_check = StackCheck::init();
@@ -1556,6 +1600,7 @@ pub fn format2(
     fmt.ordered_properties = options.ordered_properties;
     fmt.quote_strings = options.quote_strings;
     fmt.max_depth = options.max_depth;
+    fmt.max_array_length = options.max_array_length;
     fmt.single_line = options.single_line;
     fmt.indent = u32::from(options.default_indent);
     fmt.stack_check = StackCheck::init();
@@ -1753,6 +1798,7 @@ pub mod formatter {
         pub indent: u32,
         pub depth: u16,
         pub max_depth: u16,
+        pub max_array_length: u32,
         pub quote_strings: bool,
         pub quote_keys: bool,
         pub failed: bool,
@@ -1783,6 +1829,7 @@ pub mod formatter {
                 indent: 0,
                 depth: 0,
                 max_depth: 8,
+                max_array_length: DEFAULT_MAX_ARRAY_LENGTH,
                 quote_strings: false,
                 quote_keys: false,
                 failed: false,
@@ -1822,6 +1869,7 @@ pub mod formatter {
                 indent: self.indent,
                 depth: self.depth,
                 max_depth: self.max_depth,
+                max_array_length: self.max_array_length,
                 quote_strings: self.quote_strings,
                 quote_keys: self.quote_keys,
                 failed: self.failed,
@@ -4512,6 +4560,20 @@ pub mod formatter {
                 return Ok(());
             }
 
+            // `maxArrayLength: 0` elides every element. Node prints
+            // `[ ... N more items ]` inline (the per-element loop below always
+            // prints index 0, so this case is handled up front).
+            if self.max_array_length == 0 {
+                writer.write_all(b"[ ");
+                writer.pretty::<C>(
+                    "... N more items".len(),
+                    format_args!("{}... {} more items{}", pf!("<r><d>"), len, pf!("<r>")),
+                );
+                writer.write_all(b" ]");
+                writer.add_for_new_line(2);
+                return Ok(());
+            }
+
             let mut was_good_time = self.always_newline_scope ||
                 // heuristic: more than 10, probably should have a newline before it
                 len > 10;
@@ -4576,7 +4638,7 @@ pub mod formatter {
                         i += 1;
                         continue;
                     }
-                    if nonempty_count >= 100 {
+                    if nonempty_count >= self.max_array_length {
                         writer.print_comma::<C>();
                         writer.write_all(b"\n"); // we want the line break to be unconditional here
                         *writer.estimated_line_length = 0;

@@ -116,8 +116,8 @@ Then you can just set `ExecStart=/home/YOUR_NAME/.bun/bin/bun ...` knowing `bunn
 ```bash terminal icon="terminal"
 YOUR_NAME=$(whoami)
 sudo usermod -a -G bunny $YOUR_NAME   # put YOUR_NAME in bunny's group
-sudo chmod g+rwx /home/$YOUR_NAME     # allow everyone in bunny's group to do whatever they want to bunny's home
-sudo chmod g+rwx /home/$YOUR_NAME/... # replace ... with the exact path to your project. you may need to do this layer-by-layer.
+sudo chmod g+rwx /var/bunny           # allow everyone in bunny's group to do whatever they want to bunny's home
+sudo chmod g+rwx /var/bunny/...       # replace ... with the exact path to your project. you may need to do this layer-by-layer.
 ```
 
 Ports numbered lower than 1024 (such as the webserver 80 and 443) are considered a system-level resource not usually given to the ordinary user. For a non-`root` user to have `bun` listen on ports 80 or 443 by default, you need to mark `bun` as a something that could be trusted with ports:

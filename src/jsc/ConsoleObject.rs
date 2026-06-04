@@ -1312,6 +1312,13 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
 /// Node's `util.inspect` default (`maxArrayLength: 100`).
 pub const DEFAULT_MAX_ARRAY_LENGTH: u32 = 100;
 
+/// Pluralize the `... N more item(s)` elision message. Node prints the
+/// singular "item" only when exactly one element remains
+/// (`remaining === 1 ? "" : "s"` in `util.inspect`).
+fn more_items_plural(remaining: u64) -> &'static str {
+    if remaining == 1 { "" } else { "s" }
+}
+
 /// Resolve a user-supplied `maxArrayLength` option to the element cap.
 ///
 /// Matches Node's `util.inspect` semantics: `null` means no limit
@@ -4567,7 +4574,13 @@ pub mod formatter {
                 writer.write_all(b"[ ");
                 writer.pretty::<C>(
                     "... N more items".len(),
-                    format_args!("{}... {} more items{}", pf!("<r><d>"), len, pf!("<r>")),
+                    format_args!(
+                        "{}... {} more item{}{}",
+                        pf!("<r><d>"),
+                        len,
+                        more_items_plural(len),
+                        pf!("<r>")
+                    ),
                 );
                 writer.write_all(b" ]");
                 writer.add_for_new_line(2);
@@ -4639,6 +4652,7 @@ pub mod formatter {
                         continue;
                     }
                     if nonempty_count >= self.max_array_length {
+                        let remaining = len - u64::from(i);
                         writer.print_comma::<C>();
                         writer.write_all(b"\n"); // we want the line break to be unconditional here
                         *writer.estimated_line_length = 0;
@@ -4646,9 +4660,10 @@ pub mod formatter {
                         writer.pretty::<C>(
                             "... N more items".len(),
                             format_args!(
-                                "{}... {} more items{}",
+                                "{}... {} more item{}{}",
                                 pf!("<r><d>"),
-                                len - u64::from(i),
+                                remaining,
+                                more_items_plural(remaining),
                                 pf!("<r>")
                             ),
                         );

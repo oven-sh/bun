@@ -68,6 +68,18 @@ test("Bun.inspect maxArrayLength equal to the array length prints everything", (
   expect(Bun.inspect([1, 2, 3, 4, 5], { maxArrayLength: 5 })).toBe("[ 1, 2, 3, 4, 5 ]");
 });
 
+test("Bun.inspect uses singular 'item' when exactly one element is elided", () => {
+  // in-loop truncation: 6 elements, cap 5 -> 1 remaining
+  expect(Bun.inspect([1, 2, 3, 4, 5, 6], { maxArrayLength: 5 })).toMatchInlineSnapshot(`
+    "[ 1, 2, 3, 4, 5,
+      ... 1 more item ]"
+  `);
+  // maxArrayLength: 0 on a single-element array -> 1 remaining
+  expect(Bun.inspect([1], { maxArrayLength: 0 })).toBe("[ ... 1 more item ]");
+  // 2 remaining stays plural
+  expect(Bun.inspect([1, 2], { maxArrayLength: 0 })).toBe("[ ... 2 more items ]");
+});
+
 test.concurrent("console.dir honors maxArrayLength", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", "const a = Array.from({length:200}, (_,i)=>i); console.dir(a, {maxArrayLength: 5});"],

@@ -2776,6 +2776,35 @@ console.log(resolve.length)
     expectPrinted_("delete foo?.bar?.baz", "delete foo?.bar?.baz");
   });
 
+  // https://github.com/oven-sh/bun/issues/31812
+  it("new target keeps required parentheses", () => {
+    const { expectPrinted_ } = ts;
+    // A tagged template whose tag contains a call is a CallExpression, so the
+    // call must stay parenthesized inside a "new" target.
+    expectPrinted_("new (foo()`bar`)()", "new (foo())`bar`");
+    expectPrinted_("new (foo()`bar`)(1, 2)", "new (foo())`bar`(1, 2)");
+    expectPrinted_("new (foo()`bar`.baz)()", "new (foo())`bar`.baz");
+    // An optional chain is never a valid "new" target without parentheses.
+    expectPrinted_("new (baz()?.qux)()", "new (baz()?.qux)");
+    expectPrinted_("new (a?.b)()", "new (a?.b)");
+    expectPrinted_("new (a?.b.c)()", "new (a?.b.c)");
+    expectPrinted_("new (f()?.[0])()", "new (f()?.[0])");
+    expectPrinted_("new (f.g?.())()", "new (f.g?.())");
+    expectPrinted_("new (a.b?.().c)()", "new (a.b?.().c)");
+    // No parentheses are needed when the tag is a plain member expression or
+    // when parentheses already seal the chain before a member access.
+    expectPrinted_("new foo`bar`()", "new foo`bar`");
+    expectPrinted_("new (a.b`c`)()", "new a.b`c`");
+    expectPrinted_("new ((a?.b).c)()", "new (a?.b).c");
+  });
+
+  it("optional chain as template tag keeps parentheses", () => {
+    const { expectPrinted_ } = ts;
+    expectPrinted_("(a?.b)`c`", "(a?.b)`c`");
+    expectPrinted_("(a?.b())`c`", "(a?.b())`c`");
+    expectPrinted_("(a?.[0])`c`", "(a?.[0])`c`");
+  });
+
   it("useDefineForConst TypeScript class initialization", () => {
     var { expectPrinted_ } = ts;
     expectPrinted_(

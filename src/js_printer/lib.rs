@@ -3753,11 +3753,16 @@ pub mod __gated_printer {
                             return;
                         }
                     } else {
-                        if flags.contains(ExprFlag::HasNonOptionalChainParent) {
+                        // An optional chain is never a valid "new" target, so
+                        // the whole chain must be wrapped: "new (a()?.b)()".
+                        if flags.contains(ExprFlag::HasNonOptionalChainParent)
+                            || flags.contains(ExprFlag::ForbidCall)
+                        {
                             wrap = true;
                             self.print(b"(");
                         }
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
+                        flags.remove(ExprFlag::ForbidCall);
                     }
                     flags &= ExprFlag::HasNonOptionalChainParent | ExprFlag::ForbidCall;
 
@@ -3807,11 +3812,16 @@ pub mod __gated_printer {
                             }
                         }
                     } else {
-                        if flags.contains(ExprFlag::HasNonOptionalChainParent) {
+                        // An optional chain is never a valid "new" target, so
+                        // the whole chain must be wrapped: "new (a()?.[0])()".
+                        if flags.contains(ExprFlag::HasNonOptionalChainParent)
+                            || flags.contains(ExprFlag::ForbidCall)
+                        {
                             wrap = true;
                             self.print(b"(");
                         }
                         flags.remove(ExprFlag::HasNonOptionalChainParent);
+                        flags.remove(ExprFlag::ForbidCall);
                     }
 
                     // The index target is not directly followed by `of`.
@@ -4186,19 +4196,15 @@ pub mod __gated_printer {
                     if let Some(tag) = &e.tag {
                         self.add_source_mapping(expr.loc);
                         // Optional chains are forbidden in template tags
-                        // PORT NOTE: `Expr::is_optional_chain` is gated upstream; inline its body.
-                        let is_optional_chain = match &expr.data {
-                            ExprData::EDot(d) => d.optional_chain.is_some(),
-                            ExprData::EIndex(i) => i.optional_chain.is_some(),
-                            ExprData::ECall(c) => c.optional_chain.is_some(),
-                            _ => false,
-                        };
-                        if is_optional_chain {
+                        if tag.is_optional_chain() {
                             self.print(b"(");
                             self.print_expr(*tag, Level::Lowest, ExprFlag::none());
                             self.print(b")");
                         } else {
-                            self.print_expr(*tag, Level::Postfix, ExprFlag::none());
+                            // A tagged template whose tag contains a call is a
+                            // CallExpression, so a "new" target must keep the
+                            // call parenthesized: "new (foo())`bar`()".
+                            self.print_expr(*tag, Level::Postfix, flags & ExprFlag::forbid_call());
                         }
                     } else {
                         self.add_source_mapping(expr.loc);

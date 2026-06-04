@@ -426,7 +426,7 @@ describe.concurrent(() => {
     });
 
     let [out, exited] = await Promise.all([new Response(subprocess.stdout).text(), subprocess.exited]);
-    expect(out.trim()).toEqual("v24.3.0");
+    expect(out.trim()).toEqual("v24.16.0");
     expect(exited).toBe(0);
   });
 
@@ -1175,8 +1175,8 @@ it.each(["stdin", "stdout", "stderr"])("%s stream accessor should handle excepti
 });
 
 it("process.versions", () => {
-  expect(process.versions.node).toEqual("24.3.0");
-  expect(process.versions.v8).toEqual("13.6.233.10-node.18");
+  expect(process.versions.node).toEqual("24.16.0");
+  expect(process.versions.v8).toEqual("13.6.233.17-node.49");
   expect(process.versions.napi).toEqual("10");
   expect(process.versions.modules).toEqual("137");
 });

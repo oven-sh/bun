@@ -1,4 +1,4 @@
-use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc as _};
+use bun_jsc::{CallFrame, JSGlobalObject, JSUint8Array, JSValue, JsCell, JsResult, StringJsc as _};
 use bun_zlib::NodeMode;
 
 use crate::node::node_zlib_binding::{CompressionContext, Error};
@@ -139,130 +139,119 @@ impl CompressionStreamTransformer {
         Ok(transformer)
     }
 
-    /// `write(flush, in, inOff, inLen, out, outOff, outLen, state)` — the
-    /// node:zlib `writeSync` argument shape plus the `Uint32Array(2)` result
-    /// state as a trailing argument (node caches it on the handle at init
-    /// time instead). Runs the context synchronously and stores
-    /// `[availOut, availIn]` into `state`. Errors throw synchronously.
+    /// `transform(chunk, isFinish)` — run the full consume-input /
+    /// produce-output loop for one stream chunk and return a JS `Array` of
+    /// `Uint8Array`s, each its own exact-size allocation adopted without
+    /// copying. `isFinish` selects the family's finish operation (zlib
+    /// `Z_FINISH`, brotli `BROTLI_OPERATION_FINISH`, zstd `ZSTD_e_end`) for
+    /// the stream-end drain. Engine errors throw synchronously carrying
+    /// `message`/`code`/`errno`; the context stays open — the stream
+    /// teardown path (`cancel`/`close`) releases it.
     #[bun_jsc::host_fn(method)]
-    pub(crate) fn write(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        let args = frame.arguments_undef::<8>();
+    pub(crate) fn transform(
+        &self,
+        global: &JSGlobalObject,
+        frame: &CallFrame,
+    ) -> JsResult<JSValue> {
+        /// node:zlib's Z_DEFAULT_CHUNK — the per-output-buffer granularity.
+        const CHUNK: usize = 16384;
+
+        let args = frame.arguments_undef::<2>();
         let arguments = args.slice();
-        if arguments.len() != 8 {
+        if arguments.len() != 2 {
             return Err(global.throw_value(
-                bun_core::String::static_(
-                    b"write(flush, in, in_off, in_len, out, out_off, out_len, state)",
-                )
-                .to_error_instance(global),
+                bun_core::String::static_(b"transform(chunk, isFinish)")
+                    .to_error_instance(global),
             ));
         }
 
-        // Internal callers ($createCompressionTransform) always pass plain
-        // number arguments; mirror node_zlib_binding's `jsv_to_u32` casts.
-        #[expect(clippy::cast_possible_truncation)]
-        let flush = arguments[0].as_number() as i32;
-
-        let Some(in_buf) = arguments[1].as_array_buffer(global) else {
+        let Some(in_buf) = arguments[0].as_array_buffer(global) else {
             return Err(global.throw_invalid_argument_type_value(
-                "in",
+                "chunk",
                 "TypedArray or DataView",
-                arguments[1],
+                arguments[0],
             ));
         };
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let in_off = arguments[2].as_number() as u32 as usize;
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let in_len = arguments[3].as_number() as u32 as usize;
-        if in_buf.byte_len < in_off + in_len {
-            return Err(global.throw_invalid_argument_type_value(
-                "in_len",
-                "within input bounds",
-                arguments[3],
-            ));
-        }
-
-        let Some(mut out_buf) = arguments[4].as_array_buffer(global) else {
-            return Err(global.throw_invalid_argument_type_value(
-                "out",
-                "TypedArray or DataView",
-                arguments[4],
-            ));
-        };
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let out_off = arguments[5].as_number() as u32 as usize;
-        #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let out_len = arguments[6].as_number() as u32 as usize;
-        if out_buf.byte_len < out_off + out_len {
-            return Err(global.throw_invalid_argument_type_value(
-                "out_len",
-                "within output bounds",
-                arguments[6],
-            ));
-        }
-
-        let state_value = arguments[7];
-        let Some(mut state_buf) = state_value.as_array_buffer(global) else {
-            return Err(global.throw_invalid_argument_type_value(
-                "state",
-                "Uint32Array",
-                state_value,
-            ));
-        };
-        if state_buf.typed_array_type != bun_jsc::JSType::Uint32Array
-            || state_buf.as_u32().len() < 2
-        {
-            return Err(global.throw_invalid_argument_type_value(
-                "state",
-                "Uint32Array with at least 2 elements",
-                state_value,
-            ));
-        }
-
-        let mut avail_in = u32::try_from(in_len).expect("bounds-checked above");
-        let mut avail_out = u32::try_from(out_len).expect("bounds-checked above");
+        let is_finish = arguments[1].to_boolean();
 
         // No JS runs while the engine is borrowed: the whole drive is pure
-        // native work, and the error object is built after the borrow ends.
-        let result: Result<(), Error> = self.engine.with_mut(|engine| {
+        // native work; the output `Uint8Array`s and any error object are
+        // built after the borrow ends.
+        let result: Result<Vec<Box<[u8]>>, Error> = self.engine.with_mut(|engine| {
+            let finish_flush: i32 = match engine {
+                // Z_FINISH
+                Engine::Zlib(_) => 4,
+                // BROTLI_OPERATION_FINISH / ZSTD_e_end
+                Engine::Brotli(_) | Engine::Zstd(_) => 2,
+                Engine::Closed => 0,
+            };
             let Some(ctx) = engine.ctx() else {
                 return Err(Error::init(
-                    c"write after close".as_ptr(),
+                    c"transform after close".as_ptr(),
                     -1,
                     c"ERR_INVALID_STATE".as_ptr(),
                 ));
             };
-            // Bounds checked above; `byte_slice` accessors view the JS-owned
-            // backing stores rooted via the argument values on the call stack.
-            let in_ = &in_buf.byte_slice()[in_off..in_off + in_len];
-            let out = &mut out_buf.byte_slice_mut()[out_off..out_off + out_len];
-            ctx.set_buffers(Some(in_), Some(out));
-            ctx.set_flush(flush);
-            ctx.do_work();
-            ctx.update_write_result(&mut avail_in, &mut avail_out);
-            let err = ctx.get_error_info();
-            if err.is_error() {
-                // A failed write leaves the context in an undefined state —
-                // release it now (mirrors node's zlibOnError destroying the
-                // engine) so a buggy caller loops on ERR_INVALID_STATE
-                // instead of corrupt native state.
-                engine.close();
-                return Err(err);
+            let flush = if is_finish { finish_flush } else { 0 };
+
+            // `byte_slice` views the JS-owned backing store rooted via the
+            // argument value on the call stack.
+            let mut input: &[u8] = in_buf.byte_slice();
+            let mut outputs: Vec<Box<[u8]>> = Vec::new();
+
+            // The processChunkSync loop from node:zlib: run the context until
+            // it stops filling the output window — avail_out == 0 means more
+            // output is pending (regardless of input), avail_out > 0 means
+            // the engine consumed the input and drained its output.
+            loop {
+                // Zero-initialized so the window handed to the C engine is
+                // fully defined; full windows are adopted as-is below with no
+                // copy (len == capacity).
+                let mut out_vec = vec![0u8; CHUNK];
+                ctx.set_buffers(Some(input), Some(&mut out_vec));
+                ctx.set_flush(flush);
+                ctx.do_work();
+
+                let mut avail_in = u32::try_from(input.len()).expect("chunk fits u32");
+                let mut avail_out = u32::try_from(CHUNK).expect("constant");
+                ctx.update_write_result(&mut avail_in, &mut avail_out);
+                let err = ctx.get_error_info();
+                if err.is_error() {
+                    return Err(err);
+                }
+
+                let written = CHUNK - avail_out as usize;
+                if written == CHUNK {
+                    outputs.push(out_vec.into());
+                } else if written > 0 {
+                    outputs.push(out_vec[..written].into());
+                }
+
+                let consumed = input.len() - avail_in as usize;
+                input = &input[consumed..];
+
+                if avail_out == 0 {
+                    // Output window exhausted before the engine finished —
+                    // keep draining (input may already be empty).
+                    continue;
+                }
+                break;
             }
-            Ok(())
+
+            Ok(outputs)
         });
 
-        if let Err(err) = result {
-            return Err(throw_engine_error(global, err));
-        }
+        let outputs = match result {
+            Ok(outputs) => outputs,
+            Err(err) => return Err(throw_engine_error(global, err)),
+        };
 
-        let state = state_buf.as_u32();
-        state[0] = avail_out;
-        state[1] = avail_in;
-
-        Ok(JSValue::UNDEFINED)
+        JSValue::create_array_from_iter(global, outputs.into_iter(), |bytes| {
+            Ok(JSUint8Array::from_bytes(global, bytes))
+        })
     }
 
-    /// Release the native context. Idempotent; later `write` calls throw.
+    /// Release the native context. Idempotent; later `transform` calls throw.
     #[bun_jsc::host_fn(method)]
     pub(crate) fn close(&self, _global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         self.engine.with_mut(Engine::close);

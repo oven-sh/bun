@@ -9,9 +9,9 @@ export default [
     configurable: false,
     klass: {},
     proto: {
-      write: {
-        fn: "write",
-        length: 8,
+      transform: {
+        fn: "transform",
+        length: 2,
       },
       close: {
         fn: "close",

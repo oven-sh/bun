@@ -526,28 +526,28 @@ describe("CompressionStream Node.js compatibility", () => {
       }
     });
 
-    test("bytes reachable past a chunk's view are zeroed, never recycled heap memory", async () => {
-      // Chunks intentionally share one backing buffer, so chunk.buffer
-      // reaches past the view's window. Everything past the last written
-      // byte must be deterministic zeros — an allocUnsafe backing store
-      // would disclose previous heap contents there.
+    test("chunks expose no bytes beyond their view — no recycled heap memory reachable", async () => {
+      // Each output chunk is an exact-size allocation: chunk.buffer must not
+      // reach past the view's window at all, so there is no spare region
+      // that could disclose previous heap contents.
       const cs = new CompressionStream("gzip");
       const writer = cs.writable.getWriter();
       const collected = collect(cs.readable);
       await writer.write(Buffer.from("hello"));
       await writer.close();
       const chunks = await collected;
-      const last = chunks[chunks.length - 1];
-      const tail = new Uint8Array(last.buffer, last.byteOffset + last.byteLength);
-      expect(tail.length).toBeGreaterThan(0);
-      expect(tail.every(byte => byte === 0)).toBe(true);
+      for (const chunk of chunks) {
+        expect(chunk.byteOffset).toBe(0);
+        expect(chunk.buffer.byteLength).toBe(chunk.byteLength);
+      }
     });
 
-    test("small decompressed chunks are views over a shared buffer, not per-chunk copies", async () => {
+    test("byte-at-a-time decompression yields bounded exact-size chunks", async () => {
       // Incompressible input dribbled in byte-at-a-time makes the engine
-      // emit many small output chunks; they must land in one output buffer
-      // instead of each paying for its own copy (this is the allocation
-      // behavior the synchronous drive exists for).
+      // emit many small output chunks. Each is an independent exact-size
+      // allocation no larger than the native output granularity (16KB) —
+      // the native drive adopts the engine's output buffers instead of
+      // copying them into JS-side staging.
       const payload = new Uint8Array(1024);
       crypto.getRandomValues(payload);
       const gzipped = zlib.gzipSync(payload) as Buffer;
@@ -561,8 +561,10 @@ describe("CompressionStream Node.js compatibility", () => {
 
       expect(Buffer.concat(chunks)).toEqual(Buffer.from(payload));
       expect(chunks.length).toBeGreaterThan(1);
-      const distinctBuffers = new Set(chunks.map(chunk => chunk.buffer));
-      expect(distinctBuffers.size).toBeLessThan(chunks.length);
+      for (const chunk of chunks) {
+        expect(chunk.byteLength).toBeLessThanOrEqual(16384);
+        expect(chunk.buffer.byteLength).toBe(chunk.byteLength);
+      }
     });
 
     test("multi-chunk payloads round-trip for every format", async () => {

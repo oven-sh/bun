@@ -479,18 +479,7 @@ export function createCompressionTransform(mode) {
   const { Buffer } = require("node:buffer");
 
   const handle = new $CompressionStreamTransformer(mode);
-  const state = new Uint32Array(2);
-  const chunkSize = 16384; // node:zlib Z_DEFAULT_CHUNK
-  // Flush operations are per-family ints: zlib Z_NO_FLUSH(0)/Z_FINISH(4),
-  // brotli BROTLI_OPERATION_PROCESS(0)/FINISH(2), zstd ZSTD_e_continue(0)/
-  // ZSTD_e_end(2). Modes 8-11 are brotli/zstd.
-  const defaultFlushFlag = 0;
-  const finishFlushFlag = mode >= 8 ? 2 : 4;
-  // Output buffers must be zero-filled: chunks are enqueued as views, and a
-  // consumer reaching past the view through chunk.buffer must see stream
-  // output or zeros, never recycled heap memory (allocUnsafe).
-  let outBuffer = Buffer.alloc(chunkSize);
-  let outOffset = 0;
+  const chunkSize = 16384; // node:zlib Z_DEFAULT_CHUNK — the native output granularity
   let closed = false;
 
   function close() {
@@ -500,81 +489,47 @@ export function createCompressionTransform(mode) {
     }
   }
 
-  // The processChunkSync loop from node:zlib, reshaped to enqueue output
-  // views incrementally and keep the handle open across calls.
+  // The consume/produce loop lives in the native transformer; this wrapper
+  // only normalizes chunk types, wraps engine errors, and enqueues the
+  // returned output chunks (each an exact-size Uint8Array, ≤ chunkSize).
   // The accepted chunk types mirror node:zlib's Transform write path (which
   // node's CompressionStream exposes): notably a bare ArrayBuffer is
   // rejected and null gets its dedicated streams error.
-  function drive(chunk, flushFlag, controller) {
+  function drive(chunk, isFinish, controller) {
     if (typeof chunk === "string") chunk = Buffer.from(chunk);
-    else if (ArrayBuffer.isView(chunk)) chunk = Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-    else if (chunk === null) throw $ERR_STREAM_NULL_VALUES();
+    else if (ArrayBuffer.isView(chunk)) {
+      // A view over a detached buffer reports byteLength 0 but must reject
+      // like node (whose Buffer.from copy throws on detached buffers).
+      if (chunk.buffer.detached) throw $makeTypeError("Cannot perform Construct on a detached ArrayBuffer");
+    } else if (chunk === null) throw $ERR_STREAM_NULL_VALUES();
     else throw $ERR_INVALID_ARG_TYPE("chunk", ["string", "Buffer", "TypedArray", "DataView"], chunk);
 
-    let availInBefore = chunk.byteLength;
-    let availOutBefore = chunkSize - outOffset;
-    let inOff = 0;
-
-    while (true) {
-      try {
-        handle.write(
-          flushFlag,
-          chunk, // in
-          inOff, // in_off
-          availInBefore, // in_len
-          outBuffer, // out
-          outOffset, // out_off
-          availOutBefore, // out_len
-          state, // [availOut, availIn] result
-        );
-      } catch (error) {
-        // node surfaces engine failures as a TypeError carrying the error
-        // code (its webstreams adapter wraps them); match the class and
-        // code but keep the engine's message, which the adapter dropped.
-        const wrapped = $makeTypeError(error.message);
-        wrapped.code = error.code;
-        wrapped.errno = error.errno;
-        wrapped.cause = error;
-        throw wrapped;
-      }
-
-      const availOutAfter = state[0];
-      const availInAfter = state[1];
-
-      const have = availOutBefore - availOutAfter;
-      if (have > 0) {
-        // A plain Uint8Array view over the just-written output region.
-        // Regions are never rewritten: the cursor only advances, and a fresh
-        // buffer is allocated once this one is exhausted.
-        controller.enqueue(new Uint8Array(outBuffer.buffer, outBuffer.byteOffset + outOffset, have));
-        outOffset += have;
-      }
-
-      if (availOutAfter === 0 || outOffset >= chunkSize) {
-        availOutBefore = chunkSize;
-        outOffset = 0;
-        outBuffer = Buffer.alloc(chunkSize);
-      }
-
-      if (availOutAfter === 0) {
-        // Output buffer was exhausted before the input was consumed —
-        // reprocess the remainder.
-        inOff += availInBefore - availInAfter;
-        availInBefore = availInAfter;
-      } else {
-        break;
-      }
+    let outputs;
+    try {
+      outputs = handle.transform(chunk, isFinish);
+    } catch (error) {
+      // node surfaces engine failures as a TypeError carrying the error
+      // code (its webstreams adapter wraps them); match the class and
+      // code but keep the engine's message, which the adapter dropped.
+      const wrapped = $makeTypeError(error.message);
+      wrapped.code = error.code;
+      wrapped.errno = error.errno;
+      wrapped.cause = error;
+      throw wrapped;
     }
+    for (let i = 0; i < outputs.length; i++) controller.enqueue(outputs[i]);
   }
+
+  const emptyChunk = new Uint8Array(0);
 
   return new TransformStream(
     {
-      // Any failure (bad chunk type, writeSync error, enqueue on a torn-down
+      // Any failure (bad chunk type, engine error, enqueue on a torn-down
       // readable) errors the stream and the transformer is never invoked
       // again, so release the native handle on the way out.
       transform(chunk, controller) {
         try {
-          drive(chunk, defaultFlushFlag, controller);
+          drive(chunk, false, controller);
         } catch (e) {
           close();
           throw e;
@@ -582,7 +537,7 @@ export function createCompressionTransform(mode) {
       },
       flush(controller) {
         try {
-          drive(Buffer.alloc(0), finishFlushFlag, controller);
+          drive(emptyChunk, true, controller);
         } catch (e) {
           close();
           throw e;

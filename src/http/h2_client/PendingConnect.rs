@@ -10,7 +10,6 @@ use crate::HTTPClient;
 use crate::NewHTTPContext;
 use crate::ssl_config::SSLConfig;
 
-#[derive(Default)]
 pub struct PendingConnect {
     pub hostname: Box<[u8]>,
     pub port: u16,
@@ -23,6 +22,15 @@ pub struct PendingConnect {
     /// exists, so a strict caller never waits on a connect started by a lax one.
     pub reject_unauthorized: bool,
     pub host_header_hash: u64,
+    /// The context whose `pending_h2_connects` list owns this entry, recorded
+    /// at registration (`HTTPContext::connect`). `resolve_pending_h2` must
+    /// unregister from exactly this list — looking the context up through the
+    /// leader's `get_ssl_ctx()` at resolve time would miss (stranding the
+    /// entry and its waiters) if the leader's custom context ever changed in
+    /// between. BACKREF: the leader's `custom_ssl_ctx` strong ref (or the
+    /// static `https_context`) keeps the pointee alive while this entry is
+    /// registered.
+    pub ctx: NonNull<NewHTTPContext<true>>,
     // BACKREF: waiters are borrowed HTTP clients owned elsewhere; lifetime-erased.
     pub waiters: Vec<NonNull<HTTPClient<'static>>>,
 }

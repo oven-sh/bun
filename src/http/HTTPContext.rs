@@ -1058,7 +1058,11 @@ impl<const SSL: bool> HTTPContext<SSL> {
                     ssl_config: cfg,
                     reject_unauthorized: client.flags.reject_unauthorized,
                     host_header_hash: client.proxy_auth_hash(),
-                    ..Default::default()
+                    // `SSL` is true on this branch, so `Self` is
+                    // `HTTPContext<true>`; the cast only unifies the
+                    // const-generic instantiations (same layout).
+                    ctx: NonNull::from(&mut *self).cast::<HTTPContext<true>>(),
+                    waiters: Vec::new(),
                 });
                 // `client.pending_h2 = pc` stores a *borrowed* backref into the
                 // Vec-owned allocation so `resolve_pending_h2` can dispatch

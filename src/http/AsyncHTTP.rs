@@ -789,6 +789,11 @@ impl<'a> AsyncHTTP<'a> {
                         tunnel.deref();
                     }
                     debug_assert!(client.h2.is_none());
+                    // A leader must have resolved (and freed) its PendingConnect
+                    // before the terminal callback: the entry lives in the
+                    // context list we may be about to drop below, and its
+                    // `waiters` hold raw pointers to other in-flight clients.
+                    debug_assert!(client.pending_h2.is_none());
                     if let Some(ctx) = client.custom_ssl_ctx.take() {
                         // Release the strong ref the clone took in set_custom_ssl_ctx.
                         ctx.deref();

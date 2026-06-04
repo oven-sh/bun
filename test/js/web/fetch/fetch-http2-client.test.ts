@@ -1899,3 +1899,83 @@ test("await fetch() over HTTP/2 resolves on headers, before a content-length bod
     server.close();
   }
 });
+
+// Aborting the last in-flight request on an h2 session whose custom SSL
+// context was already evicted from the cache used to free the session out
+// from under `abortByHttpId`: failing the request runs the result callback
+// synchronously, the teardown drops the client's last ref on the custom
+// context, and the context's Drop force-closes the session socket — running
+// the session's onClose (and final deref) re-entrantly before abortByHttpId's
+// rearmTimeout/maybeRelease tail executes. Only observable under ASAN; in
+// release builds the freed read is silent heap corruption.
+// Serial: creates 61 distinct custom TLS contexts to overflow the 60-entry
+// context cache, which would evict concurrent siblings' contexts mid-test.
+test.skipIf(!isASAN)(
+  "aborting an h2 request after its custom TLS context is evicted does not use freed session memory",
+  async () => {
+    let heldStream: http2.ServerHttp2Stream | undefined;
+    const server = makeH2Server();
+    server.on("sessionError", () => {});
+    server.on("stream", (stream, headers) => {
+      stream.on("error", () => {});
+      if (headers[":path"] === "/hold") {
+        // Headers + one chunk, then hold the stream open so the client's
+        // stream (and its abort-tracker entry) stays live until the abort.
+        stream.respond({ ":status": 200 });
+        stream.write("chunk");
+        heldStream = stream;
+        return;
+      }
+      stream.respond({ ":status": 200 });
+      stream.end("ok");
+    });
+    server.listen(0);
+    await once(server, "listening");
+    const { port } = server.address() as import("node:net").AddressInfo;
+    try {
+      await using proc = await spawnFetch(`
+        const url = "https://localhost:${port}";
+        const ac = new AbortController();
+        // serverName forces a custom SSL context (distinct per value), so the
+        // held request's context is a refcounted cache entry.
+        const held = await fetch(url + "/hold", {
+          protocol: "http2",
+          signal: ac.signal,
+          tls: { serverName: "localhost", rejectUnauthorized: false },
+        });
+        const reader = held.body.getReader();
+        await reader.read(); // first chunk — the h2 stream is attached and live
+        // 61 more distinct configs overflow the 60-entry custom-context cache
+        // and evict the held request's entry; its context survives only on the
+        // held client's own ref.
+        for (let i = 0; i < 61; i += 8) {
+          const batch = [];
+          for (let j = i; j < Math.min(i + 8, 61); j++) {
+            batch.push(
+              fetch(url, { tls: { serverName: "evict-" + j + ".test", rejectUnauthorized: false } })
+                .then(r => r.arrayBuffer())
+                .catch(() => {}),
+            );
+          }
+          await Promise.all(batch);
+        }
+        // Abort tears down the last client of the evicted context: the context
+        // drop must not free the session while abortByHttpId is still on it.
+        ac.abort();
+        await reader.read().catch(() => {});
+        // Prove the HTTP thread survived processing the abort.
+        const after = await fetch(url, { tls: { rejectUnauthorized: false } });
+        await after.arrayBuffer();
+        console.log("aborted-ok");
+        process.exit(0);
+      `);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout.trim()).toBe("aborted-ok");
+      expect(exitCode).toBe(0);
+    } finally {
+      heldStream?.destroy();
+      server.close();
+    }
+  },
+);

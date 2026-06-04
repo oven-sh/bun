@@ -820,6 +820,18 @@ impl ClientSession {
     /// Called from the HTTP thread's shutdown queue when a fetch on this
     /// session is aborted. RST_STREAMs that one request; siblings continue.
     pub fn abort_by_http_id(&mut self, async_http_id: u32) {
+        // Failing the aborted request runs its result callback synchronously
+        // (`fail_from_h2` → `dispatch_result_and_reset` →
+        // `on_async_http_callback_raw`), and that teardown releases the
+        // client's strong ref on its custom SSL context. When the context
+        // cache entry was already evicted and this was the last in-flight
+        // request, the context Drop runs re-entrantly and force-closes every
+        // socket in its group — including this session's — so `on_close`
+        // releases both the registry and socket-ext refs underneath us. Hold
+        // a ref for the duration so the `rearm_timeout`/`maybe_release` tail
+        // below doesn't run on a freed session (same guard as `on_data`/
+        // `on_writable`/`on_close`).
+        let _guard = self.ref_scope();
         // Find the index via a raw-ptr field read first, then swap_remove, so
         // no `&mut HTTPClient` is held across the Vec mutation and no `&mut`
         // is materialised during iteration.

@@ -2321,7 +2321,8 @@ impl VirtualMachine {
                         // SAFETY: each entry borrows the C++ `WorkerOptions`
                         // array, kept alive by the owning `WebCore::Worker`
                         // for the worker's lifetime (see `WebWorker::argv`).
-                        !arg.is_null() && is_bootstrap_flag(unsafe { &*arg }.to_owned_slice_z().as_bytes())
+                        !arg.is_null()
+                            && is_bootstrap_flag(unsafe { &*arg }.to_owned_slice_z().as_bytes())
                     })
                 });
         if needs_pre_execution {

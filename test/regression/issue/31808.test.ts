@@ -4,7 +4,7 @@
 // ignored the `maxArrayLength` option: the native formatter always truncated
 // arrays at a hardcoded cap of 100 items regardless of the value passed.
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
 
 const makeArray = (length: number) => Array.from({ length }, (_, i) => i);
 
@@ -115,7 +115,12 @@ test.concurrent("console.dir honors maxArrayLength", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe("[\n  0, 1, 2, 3, 4,\n  ... 195 more items\n]\n");
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+    "[
+      0, 1, 2, 3, 4,
+      ... 195 more items
+    ]"
+  `);
   expect(exitCode).toBe(0);
 });
 
@@ -146,6 +151,6 @@ test.concurrent("node:console Console path still honors maxArrayLength", async (
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(stdout).toBe("[ 0, 1, 2, 3, 4, ... 195 more items ]\n");
+  expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`"[ 0, 1, 2, 3, 4, ... 195 more items ]"`);
   expect(exitCode).toBe(0);
 });

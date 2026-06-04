@@ -246,12 +246,11 @@ impl EventType {
 
 /// Per-handler duplicate suppression.
 ///
-/// The predicate is intentionally identical to `win_watcher.rs`
-/// so POSIX and Windows agree on which bursts are coalesced.
-/// It suppresses only when, within the same millisecond, *both* the hash and
-/// the event type match the previous emission — arguably too aggressive, but
-/// changing it here would diverge from Windows; fixing all three together is
-/// a separate change.
+/// Suppresses only exact duplicates: same path hash *and* same event type
+/// within a 1ms window. Distinct files changed in the same millisecond must
+/// each emit — node delivers both (see test/js/node/test/parallel
+/// fs-watch tests that write two files back-to-back). Kept identical to
+/// `win_watcher.rs` so POSIX and Windows agree on which bursts are coalesced.
 #[derive(Default)]
 pub(crate) struct ChangeEvent {
     #[cfg(not(windows))]
@@ -266,9 +265,7 @@ pub(crate) struct ChangeEvent {
 impl ChangeEvent {
     fn should_emit(&mut self, hash: u64, timestamp: i64, event_type: EventType) -> bool {
         let time_diff = timestamp - self.timestamp;
-        if (self.timestamp == 0 || time_diff > 1)
-            || (self.event_type_ != event_type && self.hash != hash)
-        {
+        if self.timestamp == 0 || time_diff > 1 || self.event_type_ != event_type || self.hash != hash {
             self.timestamp = timestamp;
             self.event_type_ = event_type;
             self.hash = hash;

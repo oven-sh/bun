@@ -88,6 +88,9 @@ var access = function access(path, mode, callback) {
       options = undefined;
     }
 
+    if (options?.recursive) {
+      throw $ERR_INVALID_ARG_VALUE("options.recursive", options.recursive, "is not supported, use fs.rm instead");
+    }
     fs.rmdir(path, options).then(nullcallback(callback), callback);
   },
   copyFile = function copyFile(src, dest, mode, callback) {
@@ -363,6 +366,12 @@ var access = function access(path, mode, callback) {
 
     ensureCallback(callback);
 
+    const signal = options?.signal;
+    if (signal?.aborted) {
+      process.nextTick(callback, $makeAbortError(undefined, { cause: signal.reason }));
+      return;
+    }
+
     fs.stat(path, options).then(function (stats) {
       callback(null, stats);
     }, callback);
@@ -447,6 +456,16 @@ var access = function access(path, mode, callback) {
   lstatSync = fs.lstatSync.bind(fs) as unknown as typeof import("node:fs").lstatSync,
   mkdirSync = fs.mkdirSync.bind(fs) as unknown as typeof import("node:fs").mkdirSync,
   mkdtempSync = fs.mkdtempSync.bind(fs) as unknown as typeof import("node:fs").mkdtempSync,
+  mkdtempDisposableSync = function mkdtempDisposableSync(prefix, options) {
+    const path = mkdtempSync(prefix, options);
+    // Stash the full path in case of process.chdir()
+    const fullPath = require("node:path").resolve(path);
+    function remove() {
+      // force makes repeated removal a no-op; real failures (EACCES) still throw
+      fs.rmSync(fullPath, { recursive: true, force: true });
+    }
+    return { path, remove, [Symbol.dispose]: remove };
+  },
   openSync = fs.openSync.bind(fs) as unknown as typeof import("node:fs").openSync,
   readSync = function readSync(fd, buffer, offsetOrOptions, length, position) {
     let offset = offsetOrOptions;
@@ -463,7 +482,32 @@ var access = function access(path, mode, callback) {
 
     return fs.readSync(fd, buffer, offset, length, position);
   },
-  writeSync = fs.writeSync.bind(fs),
+  writeSync = function writeSync(fd, buffer, offsetOrOptions, length, position) {
+    try {
+      if (types.isArrayBufferView(buffer)) {
+        let offset = offsetOrOptions;
+        if (typeof offset === "object" && offset !== null) {
+          ({ offset = 0, length = buffer.byteLength - offset, position = null } = offsetOrOptions);
+          return fs.writeSync(fd, buffer, offset, length, position);
+        }
+        return arguments.length <= 2 ? fs.writeSync(fd, buffer) : fs.writeSync(fd, buffer, offset, length, position);
+      }
+      if (typeof buffer !== "string") {
+        throw $ERR_INVALID_ARG_TYPE("buffer", ["string", "Buffer", "TypedArray", "DataView"], buffer);
+      }
+      return fs.writeSync(fd, buffer, offsetOrOptions, length);
+    } catch (err) {
+      // Node's fs binding reports sync write failures by assigning the error
+      // context onto a plain object with ordinary assignment semantics, so
+      // accessors installed on Object.prototype observe (and can replace) the
+      // error instead of crashing the process. Replicate that contract.
+      const ctx = {};
+      ctx.errno = err?.errno;
+      ctx.syscall = err?.syscall;
+      ctx.code = err?.code;
+      throw err;
+    }
+  },
   readdirSync = fs.readdirSync.bind(fs),
   readFileSync = fs.readFileSync.bind(fs),
   fdatasyncSync = fs.fdatasyncSync.bind(fs),
@@ -477,8 +521,33 @@ var access = function access(path, mode, callback) {
   unlinkSync = fs.unlinkSync.bind(fs),
   utimesSync = fs.utimesSync.bind(fs),
   lutimesSync = fs.lutimesSync.bind(fs),
-  rmSync = fs.rmSync.bind(fs),
-  rmdirSync = fs.rmdirSync.bind(fs),
+  rmSync = function rmSync(path, options) {
+    if (!options?.recursive) {
+      // node validates in JS and reports ERR_FS_EISDIR for directories
+      let stats;
+      try {
+        stats = fs.lstatSync(path);
+      } catch {
+        // let the native call produce the error (respects force/ENOENT)
+      }
+      if (stats?.isDirectory()) {
+        const err = new Error(`Path is a directory: rm returned EISDIR (is a directory) ${path}`);
+        err.code = "ERR_FS_EISDIR";
+        err.info = { code: "EISDIR", message: "is a directory", path, syscall: "rm", errno: 21 };
+        err.errno = 21;
+        err.syscall = "rm";
+        err.path = path;
+        throw err;
+      }
+    }
+    return fs.rmSync(path, options);
+  },
+  rmdirSync = function rmdirSync(path, options) {
+    if (options?.recursive) {
+      throw $ERR_INVALID_ARG_VALUE("options.recursive", options.recursive, "is not supported, use fs.rmSync instead");
+    }
+    return fs.rmdirSync(path, options);
+  },
   writev = function writev(fd, buffers, position, callback) {
     if (typeof position === "function") {
       callback = position;
@@ -514,7 +583,14 @@ var access = function access(path, mode, callback) {
       options = undefined;
     }
     validateFunction(callback, "callback");
-    const result = new Dir(1, path, options);
+    let result;
+    try {
+      result = new Dir(1, path, options);
+    } catch (err: any) {
+      if (err?.syscall !== "opendir") throw err; // validation errors are synchronous in node
+      callback(err);
+      return;
+    }
     callback(null, result);
   };
 
@@ -848,14 +924,25 @@ realpathSync.native = fs.realpathNativeSync.bind(fs);
 // and on MacOS, simple cases of recursive directory trees can be done in a single `clonefile()`
 // using filter and other options uses a lazily loaded js fallback ported from node.js
 function cpSync(src, dest, options) {
-  if (!options) return fs.cpSync(src, dest);
-  if (typeof options !== "object") {
-    throw new TypeError("options must be an object");
+  const { cpSyncFn, validateCpOptions, tryNativeFastPathSync } = require("internal/fs/cp-sync");
+  const { getValidatedPath } = require("internal/validators");
+  options = validateCpOptions(options);
+  src = getValidatedPath(src);
+  dest = getValidatedPath(dest);
+  if (
+    !options.filter &&
+    !options.dereference &&
+    !options.preserveTimestamps &&
+    !options.verbatimSymlinks &&
+    !options.mode &&
+    !options.errorOnExist &&
+    options.force
+  ) {
+    if (tryNativeFastPathSync(src, dest, options)) {
+      return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force, options.mode);
+    }
   }
-  if (options.dereference || options.filter || options.preserveTimestamps || options.verbatimSymlinks) {
-    return require("internal/fs/cp-sync")(src, dest, options);
-  }
-  return fs.cpSync(src, dest, options.recursive, options.errorOnExist, options.force ?? true, options.mode);
+  return cpSyncFn(src, dest, options);
 }
 
 function cp(src, dest, options, callback) {
@@ -866,7 +953,14 @@ function cp(src, dest, options, callback) {
 
   ensureCallback(callback);
 
-  promises.cp(src, dest, options).then(() => callback(), callback);
+  // node's callback form throws synchronously on invalid options/paths
+  const { validateCpOptions } = require("internal/fs/cp-sync");
+  const { getValidatedPath } = require("internal/validators");
+  options = validateCpOptions(options);
+  src = getValidatedPath(src);
+  dest = getValidatedPath(dest);
+
+  promises.cp(src, dest, options).then(() => callback(null), callback);
 }
 
 function _toUnixTimestamp(time: any, name = "time") {
@@ -907,13 +1001,74 @@ class Dir {
   constructor(handle, path: PathLike, options) {
     if ($isUndefinedOrNull(handle)) throw $ERR_MISSING_ARGS("handle");
     validateInteger(handle, "handle", 0);
+    const encoding = options?.encoding;
+    if (encoding != null && encoding !== "buffer" && !Buffer.isEncoding(encoding)) {
+      throw $ERR_INVALID_ARG_VALUE("encoding", encoding, "is invalid encoding");
+    }
+    if (options?.bufferSize !== undefined) {
+      validateInteger(options.bufferSize, "options.bufferSize", 1);
+    }
+    if (handle === 1) {
+      // node's opendir opens the directory eagerly and reports ENOTDIR/ENOENT
+      let stats;
+      try {
+        stats = fs.statSync(path);
+      } catch (err: any) {
+        if (typeof err?.errno !== "number") throw err; // argument validation errors throw as-is
+        err.syscall = "opendir";
+        err.message = `${err.code}: ${err.code === "ENOENT" ? "no such file or directory" : err.message}, opendir '${path}'`;
+        throw err;
+      }
+      if (!stats.isDirectory()) {
+        const err = new Error(`ENOTDIR: not a directory, opendir '${path}'`);
+        err.code = "ENOTDIR";
+        err.errno = -20;
+        err.syscall = "opendir";
+        err.path = path;
+        throw err;
+      }
+    }
     this.#handle = $toLength(handle);
     this.#path = path;
     this.#options = options;
   }
 
+  // Number of in-flight async operations; sync ops are forbidden while > 0,
+  // and async ops queue behind #pendingOp like node's operation queue.
+  #pendingCount = 0;
+  #pendingOp: Promise<any> | null = null;
+
+  #dirConcurrentError() {
+    const err = new Error("Cannot do synchronous work on directory handle with concurrent asynchronous operations");
+    err.code = "ERR_DIR_CONCURRENT_OPERATION";
+    return err;
+  }
+
+  #enqueue(run) {
+    const prev = this.#pendingOp;
+    let p;
+    if (prev) {
+      p = prev.then(run, run);
+    } else {
+      try {
+        const r = run();
+        p = $isPromise(r) ? r : Promise.$resolve(r);
+      } catch (e) {
+        p = Promise.$reject(e);
+      }
+    }
+    this.#pendingCount++;
+    this.#pendingOp = p;
+    const done = () => {
+      if (--this.#pendingCount === 0) this.#pendingOp = null;
+    };
+    p.then(done, done);
+    return p;
+  }
+
   readSync() {
     if (this.#handle < 0) throw $ERR_DIR_CLOSED();
+    if (this.#pendingCount > 0) throw this.#dirConcurrentError();
 
     let entries = (this.#entries ??= fs.readdirSync(this.#path, {
       withFileTypes: true,
@@ -924,56 +1079,64 @@ class Dir {
   }
 
   read(cb?: (err: Error | null, entry: DirentType) => void): any {
-    if (this.#handle < 0) throw $ERR_DIR_CLOSED();
-
     if (!$isUndefinedOrNull(cb)) {
       validateFunction(cb, "callback");
-      return this.read().then(entry => cb(null, entry));
+      return this.read().then(entry => cb(null, entry), cb);
     }
 
-    if (this.#entries) return Promise.$resolve(this.#entries.shift() ?? null);
-
-    return fs
-      .readdir(this.#path, {
-        withFileTypes: true,
-        encoding: this.#options?.encoding,
-        recursive: this.#options?.recursive,
-      })
-      .then(entries => {
-        this.#entries = entries;
-        return entries.shift() ?? null;
-      });
+    return this.#enqueue(() => {
+      if (this.#handle < 0) throw $ERR_DIR_CLOSED();
+      if (this.#entries) return this.#entries.shift() ?? null;
+      return fs
+        .readdir(this.#path, {
+          withFileTypes: true,
+          encoding: this.#options?.encoding,
+          recursive: this.#options?.recursive,
+        })
+        .then(entries => {
+          this.#entries = entries;
+          return entries.shift() ?? null;
+        });
+    });
   }
 
-  close(cb?: () => void) {
-    const handle = this.#handle;
-    if (handle < 0) throw $ERR_DIR_CLOSED();
+  close(cb?: (err?: Error) => void) {
     if (!$isUndefinedOrNull(cb)) {
       validateFunction(cb, "callback");
-      process.nextTick(cb);
+      this.close().then(() => cb(), cb);
+      return;
     }
-    if (handle > 2) fs.closeSync(handle);
-    this.#handle = -1;
+    return this.#enqueue(() => {
+      const handle = this.#handle;
+      if (handle < 0) throw $ERR_DIR_CLOSED();
+      if (handle > 2) fs.closeSync(handle);
+      this.#handle = -1;
+    });
   }
 
   closeSync() {
     const handle = this.#handle;
     if (handle < 0) throw $ERR_DIR_CLOSED();
+    if (this.#pendingCount > 0) throw this.#dirConcurrentError();
     if (handle > 2) fs.closeSync(handle);
     this.#handle = -1;
   }
 
   get path() {
+    if (!(#path in this)) throw $ERR_INVALID_THIS("Dir");
     return this.#path;
   }
 
   async *[Symbol.asyncIterator]() {
-    let entries = (this.#entries ??= (await fs.readdir(this.#path, {
-      withFileTypes: true,
-      encoding: this.#options?.encoding,
-      recursive: this.#options?.recursive,
-    })) as DirentType[]);
-    yield* entries;
+    try {
+      let entry;
+      while ((entry = await this.read()) !== null) {
+        yield entry;
+      }
+    } finally {
+      // node closes the directory when iteration ends or exits early
+      if (this.#handle >= 0) this.closeSync();
+    }
   }
 }
 
@@ -984,9 +1147,14 @@ function glob(pattern: string | string[], options, callback) {
   }
   validateFunction(callback, "callback");
 
-  Array.fromAsync(lazyGlob().glob(pattern, options ?? kEmptyObject))
-    .then(result => callback(null, result))
-    .catch(callback);
+  // Invoke the callback from process.nextTick so that an exception thrown by
+  // the callback surfaces as an uncaught exception instead of rejecting the
+  // internal promise chain (and is never routed back into `callback` as an
+  // error), matching Node.js.
+  Array.fromAsync(lazyGlob().glob(pattern, options ?? kEmptyObject)).then(
+    result => process.nextTick(callback, null, result),
+    err => process.nextTick(callback, err),
+  );
 }
 
 function globSync(pattern: string | string[], options): string[] {
@@ -1042,6 +1210,7 @@ var exports = {
   mkdirSync,
   mkdtemp,
   mkdtempSync,
+  mkdtempDisposableSync,
   open,
   openSync,
   read,
@@ -1142,7 +1311,11 @@ export default exports;
 
 // Preserve the names
 function setName(fn, value) {
-  Object.$defineProperty(fn, "name", { value, enumerable: false, configurable: true });
+  Object.$defineProperty(fn, "name", {
+    value,
+    enumerable: false,
+    configurable: true,
+  });
 }
 setName(Dirent, "Dirent");
 setName(Stats, "Stats");

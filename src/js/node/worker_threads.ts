@@ -87,7 +87,9 @@ function injectFakeEmitter(Class) {
   };
 
   Class.prototype.once = function (event, listener) {
-    this.addEventListener(event, functionForEventType(event, listener), { once: true });
+    this.addEventListener(event, functionForEventType(event, listener), {
+      once: true,
+    });
 
     return this;
   };
@@ -117,7 +119,124 @@ const MessagePort = _MessagePort;
 
 let resourceLimits = {};
 
-let workerData = _workerData;
+// Emulation of Node's JSTransferable protocol (kTransfer/kTransferList/kDeserialize) for
+// objects like FileHandle that are not natively transferable in Bun. On send, each such
+// object in the transferList is replaced inside workerData by a serializable marker object;
+// on receive, markers are swapped back for reconstructed instances.
+const kJSTransferableMarker = "__bunNodeWorkerJSTransferable";
+
+function isJSTransferableMarker(value: object): boolean {
+  return (
+    typeof (value as Record<string, unknown>)[kJSTransferableMarker] === "string" &&
+    Object.prototype.hasOwnProperty.$call(value, kJSTransferableMarker)
+  );
+}
+
+function deserializeJSTransferable(marker: Record<string, any>): unknown {
+  const deserializeInfo = marker[kJSTransferableMarker];
+  switch (deserializeInfo) {
+    case "internal/fs/promises:FileHandle": {
+      const { FileHandle, kDeserialize } = require("node:fs").promises.$data;
+      const handle = new FileHandle(-1);
+      handle[kDeserialize](marker.data);
+      return handle;
+    }
+    default:
+      return marker;
+  }
+}
+
+function unpackJSTransferables(value: unknown, seen?: Set<object>): unknown {
+  if (value === null || typeof value !== "object") return value;
+  if (isJSTransferableMarker(value)) {
+    return deserializeJSTransferable(value as Record<string, any>);
+  }
+  seen ??= new Set();
+  if (seen.has(value)) return value;
+  seen.add(value);
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      value[i] = unpackJSTransferables(value[i], seen);
+    }
+    return value;
+  }
+  const proto = Object.getPrototypeOf(value);
+  if (proto === Object.prototype || proto === null) {
+    for (const key of Object.keys(value)) {
+      (value as Record<string, unknown>)[key] = unpackJSTransferables((value as Record<string, unknown>)[key], seen);
+    }
+  }
+  return value;
+}
+
+function packJSTransferables(options: NodeWorkerOptions): NodeWorkerOptions {
+  const transferList = options?.transferList;
+  if (!transferList || !$isArray(transferList) || transferList.length === 0) return options;
+  // Avoid loading node:fs for transfer lists that only contain native transferables.
+  let hasCandidate = false;
+  for (const item of transferList) {
+    if (
+      item !== null &&
+      typeof item === "object" &&
+      !(item instanceof ArrayBuffer) &&
+      !(item instanceof _MessagePort) &&
+      !$isTypedArrayView(item)
+    ) {
+      hasCandidate = true;
+      break;
+    }
+  }
+  if (!hasCandidate) return options;
+
+  const { kTransfer, kTransferList } = require("node:fs").promises.$data;
+  let replacements: Map<object, object> | undefined;
+  const nativeTransferList: unknown[] = [];
+  for (const item of transferList) {
+    if (item !== null && typeof item === "object" && typeof item[kTransfer] === "function") {
+      const extraTransfers = item[kTransferList]?.();
+      // May throw DataCloneError (e.g. FileHandle in use); propagate synchronously like Node.
+      const { data, deserializeInfo } = item[kTransfer]();
+      (replacements ??= new Map()).set(item, {
+        [kJSTransferableMarker]: deserializeInfo,
+        data,
+      });
+      if ($isArray(extraTransfers)) nativeTransferList.push(...extraTransfers);
+    } else {
+      nativeTransferList.push(item);
+    }
+  }
+  if (!replacements) return options;
+
+  const seen = new Map<object, unknown>();
+  function replace(value: unknown): unknown {
+    if (value === null || typeof value !== "object") return value;
+    const replacement = replacements!.get(value);
+    if (replacement !== undefined) return replacement;
+    const cached = seen.get(value);
+    if (cached !== undefined) return cached;
+    if (Array.isArray(value)) {
+      const out = new Array(value.length);
+      seen.set(value, out);
+      for (let i = 0; i < value.length; i++) out[i] = replace(value[i]);
+      return out;
+    }
+    const proto = Object.getPrototypeOf(value);
+    if (proto === Object.prototype || proto === null) {
+      const out: Record<string, unknown> = {};
+      seen.set(value, out);
+      for (const key of Object.keys(value)) out[key] = replace((value as Record<string, unknown>)[key]);
+      return out;
+    }
+    return value;
+  }
+  return {
+    ...options,
+    workerData: replace(options.workerData),
+    transferList: nativeTransferList,
+  };
+}
+
+let workerData = unpackJSTransferables(_workerData);
 let threadId = _threadId;
 function receiveMessageOnPort(port: MessagePort) {
   let res = _receiveMessageOnPort(port);
@@ -235,6 +354,8 @@ class Worker extends EventEmitter {
   constructor(filename: string, options: NodeWorkerOptions = {}) {
     super();
 
+    options = packJSTransferables(options);
+
     const builtinsGeneratorHatesEval = "ev" + "a" + "l"[0];
     if (options && builtinsGeneratorHatesEval in options) {
       if (options[builtinsGeneratorHatesEval]) {
@@ -256,11 +377,15 @@ class Worker extends EventEmitter {
       }
       throw e;
     }
-    this.#worker.addEventListener("close", this.#onClose.bind(this), { once: true });
+    this.#worker.addEventListener("close", this.#onClose.bind(this), {
+      once: true,
+    });
     this.#worker.addEventListener("error", this.#onError.bind(this));
     this.#worker.addEventListener("message", this.#onMessage.bind(this));
     this.#worker.addEventListener("messageerror", this.#onMessageError.bind(this));
-    this.#worker.addEventListener("open", this.#onOpen.bind(this), { once: true });
+    this.#worker.addEventListener("open", this.#onOpen.bind(this), {
+      once: true,
+    });
 
     if (this.#urlToRevoke) {
       if (!urlRevokeRegistry) {

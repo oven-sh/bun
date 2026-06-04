@@ -29,7 +29,7 @@ describe("fs.Dir", () => {
     });
 
     afterAll(() => {
-      fs.rmdirSync(dirname, { recursive: true });
+      fs.rmSync(dirname, { recursive: true, force: true });
     });
 
     describe("when an empty directory is opened", () => {

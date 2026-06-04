@@ -42,7 +42,7 @@ for (const [name, copy] of impls) {
       });
 
       const e = await copyShouldThrow(basename + "/from", basename + "/result");
-      expect(e.code).toBe("EISDIR");
+      expect(e.code).toBe("ERR_FS_EISDIR");
       expect(e.path).toBe(join(basename, "from"));
     });
 
@@ -136,7 +136,7 @@ for (const [name, copy] of impls) {
         force: false,
         errorOnExist: true,
       });
-      expect(e.code).toBe("EEXIST");
+      expect(e.code).toBe("ERR_FS_CP_EEXIST");
       expect(e.path).toBe(join(basename, "result", "a.txt"));
 
       assertContent(basename + "/result/a.txt", "win");
@@ -520,7 +520,7 @@ test.skipIf(!isPosix)(
             console.log("UNEXPECTED-SUCCESS");
             process.exit(1);
           } catch (e) {
-            if (e?.code !== "EISDIR") {
+            if (e?.code !== "ERR_FS_CP_NON_DIR_TO_DIR") {
               console.log("UNEXPECTED-ERROR:" + (e?.code ?? e?.message));
               process.exit(1);
             }

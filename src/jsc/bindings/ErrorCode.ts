@@ -167,6 +167,7 @@ const errors: ErrorCodeMapping = [
   ["ERR_MODULE_NOT_FOUND", Error],
   ["ERR_MULTIPLE_CALLBACK", Error],
   ["ERR_NON_CONTEXT_AWARE_DISABLED", Error],
+  ["ERR_OPERATION_FAILED", Error],
   ["ERR_OUT_OF_RANGE", RangeError],
   ["ERR_PARSE_ARGS_INVALID_OPTION_VALUE", TypeError],
   ["ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL", TypeError],

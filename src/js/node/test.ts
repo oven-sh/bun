@@ -12,9 +12,237 @@ function run() {
   throwNotImplemented("run()", 5090, "Use `bun:test` in the interim.");
 }
 
-function mock() {
-  throwNotImplemented("mock()", 5090, "Use `bun:test` in the interim.");
+// https://nodejs.org/api/test.html#class-mocktracker
+class MockFunctionContext {
+  #calls: unknown[];
+  #implementation: Function | undefined;
+  #original: Function;
+  #onceImplementations: Map<number, Function>;
+  #restore: (() => void) | undefined;
+
+  constructor(original: Function, implementation: Function | undefined, restore?: () => void) {
+    this.#calls = [];
+    this.#original = original;
+    this.#implementation = implementation;
+    this.#onceImplementations = new Map();
+    this.#restore = restore;
+  }
+
+  get calls() {
+    return Array.from(this.#calls);
+  }
+
+  callCount(): number {
+    return this.#calls.length;
+  }
+
+  mockImplementation(implementation: Function) {
+    if (!$isCallable(implementation)) {
+      throw $ERR_INVALID_ARG_TYPE("implementation", "function", implementation);
+    }
+    this.#implementation = implementation;
+  }
+
+  mockImplementationOnce(implementation: Function, onCall?: number) {
+    if (!$isCallable(implementation)) {
+      throw $ERR_INVALID_ARG_TYPE("implementation", "function", implementation);
+    }
+    const nextCall = onCall ?? this.#calls.length;
+    this.#onceImplementations.set(nextCall, implementation);
+  }
+
+  resetCalls() {
+    this.#calls = [];
+  }
+
+  restore() {
+    this.#implementation = undefined;
+    this.#onceImplementations.clear();
+    const restore = this.#restore;
+    this.#restore = undefined;
+    restore?.();
+  }
+
+  static {
+    trackMockCall = (ctx: MockFunctionContext, thisArg: unknown, args: unknown[], target: unknown) => {
+      const callIndex = ctx.#calls.length;
+      let implementation = ctx.#onceImplementations.get(callIndex);
+      if (implementation !== undefined) {
+        ctx.#onceImplementations.delete(callIndex);
+      } else {
+        implementation = ctx.#implementation ?? ctx.#original;
+      }
+      const call: Record<string, unknown> = {
+        arguments: args,
+        error: undefined,
+        result: undefined,
+        stack: new Error(),
+        target,
+        this: thisArg,
+      };
+      ctx.#calls.push(call);
+      try {
+        const result =
+          target === undefined
+            ? (implementation as Function).$apply(thisArg, args)
+            : Reflect.construct(implementation as Function, args, target as Function);
+        call.result = result;
+        return result;
+      } catch (error) {
+        call.error = error;
+        throw error;
+      }
+    };
+  }
 }
+
+let trackMockCall: (ctx: MockFunctionContext, thisArg: unknown, args: unknown[], target: unknown) => unknown;
+
+function createMockFunction(original: Function, implementation: Function | undefined, restore?: () => void) {
+  const context = new MockFunctionContext(original, implementation, restore);
+  function mockFunction(this: unknown, ...args: unknown[]) {
+    return trackMockCall(context, this, args, new.target);
+  }
+  Object.defineProperty(mockFunction, "mock", {
+    value: context,
+    writable: false,
+    enumerable: false,
+  });
+  Object.defineProperty(mockFunction, "length", {
+    value: original.length,
+    configurable: true,
+  });
+  Object.defineProperty(mockFunction, "name", {
+    value: original.name,
+    configurable: true,
+  });
+  return mockFunction;
+}
+
+const kMockRestorers: (() => void)[] = [];
+
+function mockFn(original?: Function | object, implementation?: Function | object, options?: object) {
+  if (original !== undefined && !$isCallable(original) && typeof original === "object") {
+    options = implementation as object;
+    implementation = original;
+    original = undefined;
+  }
+  if (implementation !== undefined && !$isCallable(implementation) && typeof implementation === "object") {
+    options = implementation as object;
+    implementation = undefined;
+  }
+  if (original !== undefined && !$isCallable(original)) {
+    throw $ERR_INVALID_ARG_TYPE("original", "function", original);
+  }
+  if (implementation !== undefined && !$isCallable(implementation)) {
+    throw $ERR_INVALID_ARG_TYPE("implementation", "function", implementation);
+  }
+  return createMockFunction((original as Function) ?? function () {}, implementation as Function | undefined);
+}
+
+function mockMethod(
+  objectOrFunction: object | Function,
+  methodName: PropertyKey,
+  implementation?: Function | object,
+  options?: { getter?: boolean; setter?: boolean } | object,
+) {
+  if (implementation !== undefined && !$isCallable(implementation) && typeof implementation === "object") {
+    options = implementation;
+    implementation = undefined;
+  }
+  if (implementation !== undefined && !$isCallable(implementation)) {
+    throw $ERR_INVALID_ARG_TYPE("implementation", "function", implementation);
+  }
+  if ((typeof objectOrFunction !== "object" || objectOrFunction === null) && !$isCallable(objectOrFunction)) {
+    throw $ERR_INVALID_ARG_TYPE("object", "object", objectOrFunction);
+  }
+  const { getter = false, setter = false } = (options ?? kEmptyObject) as {
+    getter?: boolean;
+    setter?: boolean;
+  };
+
+  // Find the descriptor on the object or its prototype chain.
+  let target: object | null = objectOrFunction;
+  let descriptor: PropertyDescriptor | undefined;
+  while (target !== null) {
+    descriptor = Object.getOwnPropertyDescriptor(target, methodName);
+    if (descriptor !== undefined) break;
+    target = Object.getPrototypeOf(target);
+  }
+  if (descriptor === undefined) {
+    throw $ERR_INVALID_ARG_VALUE("methodName", methodName, "must be a method");
+  }
+
+  let original: Function;
+  if (getter) {
+    if (!$isCallable(descriptor.get)) {
+      throw $ERR_INVALID_ARG_VALUE("methodName", methodName, "must be a getter");
+    }
+    original = descriptor.get;
+  } else if (setter) {
+    if (!$isCallable(descriptor.set)) {
+      throw $ERR_INVALID_ARG_VALUE("methodName", methodName, "must be a setter");
+    }
+    original = descriptor.set;
+  } else {
+    if (!$isCallable(descriptor.value)) {
+      throw $ERR_INVALID_ARG_VALUE("methodName", methodName, "must be a method");
+    }
+    original = descriptor.value;
+  }
+
+  const restore = () => {
+    Object.defineProperty(objectOrFunction, methodName, descriptor!);
+  };
+  const mocked = createMockFunction(original, implementation as Function | undefined, restore);
+  kMockRestorers.push(restore);
+
+  const mockDescriptor: PropertyDescriptor = {
+    configurable: true,
+    enumerable: descriptor.enumerable,
+  };
+  if (getter || setter) {
+    if (getter) {
+      mockDescriptor.get = mocked;
+      mockDescriptor.set = descriptor.set;
+    } else {
+      mockDescriptor.get = descriptor.get;
+      mockDescriptor.set = mocked;
+    }
+  } else {
+    mockDescriptor.value = mocked;
+    mockDescriptor.writable = descriptor.writable;
+  }
+  Object.defineProperty(objectOrFunction, methodName, mockDescriptor);
+  return mocked;
+}
+
+const mock = {
+  fn: mockFn,
+  method: mockMethod,
+  getter(objectOrFunction: object | Function, methodName: PropertyKey, implementation?: Function, options?: object) {
+    return mockMethod(objectOrFunction, methodName, implementation, {
+      ...options,
+      getter: true,
+    });
+  },
+  setter(objectOrFunction: object | Function, methodName: PropertyKey, implementation?: Function, options?: object) {
+    return mockMethod(objectOrFunction, methodName, implementation, {
+      ...options,
+      setter: true,
+    });
+  },
+  reset() {
+    mock.restoreAll();
+  },
+  restoreAll() {
+    for (const restore of kMockRestorers) restore();
+    kMockRestorers.length = 0;
+  },
+  module() {
+    throwNotImplemented("mock.module()", 5090, "Use `bun:test` in the interim.");
+  },
+};
 
 function fileSnapshot(_value: unknown, _path: string, _options: { serializers?: Function[] } = kEmptyObject) {
   throwNotImplemented("fileSnapshot()", 5090, "Use `bun:test` in the interim.");

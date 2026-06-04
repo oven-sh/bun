@@ -81,6 +81,8 @@ pub enum HardcodedModule {
     NodeStream,
     #[strum(serialize = "node:stream/consumers")]
     NodeStreamConsumers,
+    #[strum(serialize = "node:stream/iter")]
+    NodeStreamIter,
     #[strum(serialize = "node:stream/promises")]
     NodeStreamPromises,
     #[strum(serialize = "node:stream/web")]
@@ -109,6 +111,8 @@ pub enum HardcodedModule {
     NodeWasi,
     #[strum(serialize = "node:zlib")]
     NodeZlib,
+    #[strum(serialize = "node:zlib/iter")]
+    NodeZlibIter,
     #[strum(serialize = "node:worker_threads")]
     NodeWorkerThreads,
     #[strum(serialize = "node:punycode")]
@@ -228,6 +232,7 @@ bun_core::comptime_string_map! {
         b"node:repl" => HardcodedModule::NodeRepl,
         b"node:stream" => HardcodedModule::NodeStream,
         b"node:stream/consumers" => HardcodedModule::NodeStreamConsumers,
+        b"node:stream/iter" => HardcodedModule::NodeStreamIter,
         b"node:stream/promises" => HardcodedModule::NodeStreamPromises,
         b"node:stream/web" => HardcodedModule::NodeStreamWeb,
         b"node:string_decoder" => HardcodedModule::NodeStringDecoder,
@@ -244,6 +249,7 @@ bun_core::comptime_string_map! {
         b"node:wasi" => HardcodedModule::NodeWasi,
         b"node:worker_threads" => HardcodedModule::NodeWorkerThreads,
         b"node:zlib" => HardcodedModule::NodeZlib,
+        b"node:zlib/iter" => HardcodedModule::NodeZlibIter,
         b"node:_stream_duplex" => HardcodedModule::NodeStreamDuplexInternal,
         b"node:_stream_passthrough" => HardcodedModule::NodeStreamPassthroughInternal,
         b"node:_stream_readable" => HardcodedModule::NodeStreamReadableInternal,
@@ -412,6 +418,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("node:repl"),
     node_entry!("node:stream"),
     node_entry!("node:stream/consumers"),
+    node_entry!("node:stream/iter"),
     node_entry!("node:stream/promises"),
     node_entry!("node:stream/web"),
     node_entry!("node:string_decoder"),
@@ -428,6 +435,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("node:wasi"),
     node_entry!("node:worker_threads"),
     node_entry!("node:zlib"),
+    node_entry!("node:zlib/iter"),
     // New Node.js builtins only resolve from the prefixed one.
     node_entry_only_prefix!("node:test"),
     //
@@ -468,6 +476,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("repl"),
     node_entry!("stream"),
     node_entry!("stream/consumers"),
+    node_entry!("stream/iter"),
     node_entry!("stream/promises"),
     node_entry!("stream/web"),
     node_entry!("string_decoder"),
@@ -484,6 +493,7 @@ const COMMON_ALIAS_KVS: &[AliasKv] = &[
     node_entry!("wasi"),
     node_entry!("worker_threads"),
     node_entry!("zlib"),
+    node_entry!("zlib/iter"),
     //
     node_entry!("node:_http_agent"),
     node_entry!("node:_http_client"),

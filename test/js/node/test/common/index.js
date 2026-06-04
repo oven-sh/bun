@@ -138,6 +138,11 @@ if (process.argv.length === 2 &&
         process.env.SKIP_FLAG_CHECK = "1";
         break;
       }
+      if (flag === "--experimental-stream-iter" && process.versions.bun) {
+        // stream/iter is always enabled in Bun; no flag needed.
+        process.env.SKIP_FLAG_CHECK = "1";
+        break;
+      }
       if (flag === "test") {
         process.env.SKIP_FLAG_CHECK = "1";
         break;
@@ -1127,6 +1132,15 @@ const common = {
 
   get hasOpenSSL31() {
     return hasOpenSSL(3, 1);
+  },
+
+  get isInsideDirWithUnusualChars() {
+    return __dirname.includes('%') ||
+           (!isWindows && __dirname.includes('\\')) ||
+           __dirname.includes('$') ||
+           __dirname.includes('\n') ||
+           __dirname.includes('\r') ||
+           __dirname.includes('\t');
   },
 
   get hasOpenSSL32() {

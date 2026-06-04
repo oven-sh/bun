@@ -33,6 +33,10 @@ let nextWorkerId = 1;
 // inspector-session (NodeTracing) collection, which delivers events over the
 // protocol instead of writing node_trace.*.log at exit.
 let fileWriteRequested = false;
+// True while the agent itself does fs work (writing/merging part files at
+// flush): the fs wrappers check it so the writer's own readdir/read/unlink
+// calls don't pollute the user's trace.
+let suppressFsEvents = false;
 
 const kAsyncHooksCat = "node,node.async_hooks";
 const kFsSyncCat = "node,node.fs,node.fs.sync";
@@ -232,6 +236,9 @@ function installInstrumentation() {
 
 function flush() {
   if (!fileWriteRequested) return;
+  // Everything below is the agent's own fs work — keep it out of the trace.
+  // No reset: flush runs once, at process/worker exit.
+  suppressFsEvents = true;
   let fileName = filePattern ?? "node_trace.${rotation}.log";
   fileName = fileName.replaceAll("${pid}", String(process.pid)).replaceAll("${rotation}", "1");
   if (!Bun.isMainThread) {
@@ -541,7 +548,7 @@ function installFsInstrumentation() {
 
 function wrapFsSyncMethod(original, names: string[]) {
   return function (...args) {
-    if (!isCategoryGroupEnabled(kFsSyncCat)) return original.$apply(this, args);
+    if (suppressFsEvents || !isCategoryGroupEnabled(kFsSyncCat)) return original.$apply(this, args);
     for (let i = 0; i < names.length; i++) emitEvent("B", kFsSyncCat, "fs.sync." + names[i]);
     try {
       return original.$apply(this, args);
@@ -557,7 +564,7 @@ function emitFsAsyncEnd(names: string[]) {
 
 function wrapFsAsyncMethod(original, names: string[]) {
   return function (...args) {
-    if (!isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, args);
+    if (suppressFsEvents || !isCategoryGroupEnabled(kFsAsyncCat)) return original.$apply(this, args);
     for (let i = 0; i < names.length; i++) emitEvent("b", kFsAsyncCat, names[i]);
     const result = original.$apply(this, args);
     if (result && typeof result.then === "function") {

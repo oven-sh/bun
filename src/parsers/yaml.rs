@@ -1385,8 +1385,7 @@ impl<'i, Enc: Encoding> ScalarResolverCtx<'i, Enc> {
             },
             FirstChar::Negative | FirstChar::Positive => {
                 if Enc::wide(parser.next()) == 0x2E
-                    && (Enc::wide(parser.peek(1)) == 0x69
-                        || Enc::wide(parser.peek(1)) == 0x49)
+                    && (Enc::wide(parser.peek(1)) == 0x69 || Enc::wide(parser.peek(1)) == 0x49)
                 {
                     self.append_source(parser, Enc::ch(b'.'), parser.pos)?;
                     parser.inc(1);

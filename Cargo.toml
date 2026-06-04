@@ -103,13 +103,15 @@ members = [
   "src/bunfig",
   "src/bun_bin",
 ]
-# `vendor/lolhtml/c-api` is consumed as a path dependency of
-# `bun_lolhtml_sys` so its `#[no_mangle]` C API ends up inside
-# `libbun_rust.a` (one Rust staticlib → one copy of std on the link line).
-# It is deliberately NOT a workspace member: keeping it excluded means its
-# `[profile]` section is ignored and its heavy dev-dependencies (criterion,
-# html5ever) never enter `Cargo.lock`. The source is fetched into `vendor/`
-# by the build system (`scripts/build/deps/lolhtml.ts`) before cargo runs.
+# `vendor/lolhtml/c-api` and `vendor/react-compiler/compiler/crates/*` are
+# consumed as path dependencies of `bun_lolhtml_sys` / `bun_react_compiler`
+# so their symbols end up inside `libbun_rust.a` (one Rust staticlib → one
+# copy of std on the link line). They are deliberately NOT workspace members:
+# keeping them excluded means their `[profile]` sections are ignored and
+# their heavy dev-dependencies (criterion, html5ever, walkdir fixtures)
+# never enter `Cargo.lock`. The sources are fetched into `vendor/` by the
+# build system (`scripts/build/deps/{lolhtml,react-compiler}.ts`) before
+# cargo runs.
 exclude = ["vendor"]
 
 [workspace.package]

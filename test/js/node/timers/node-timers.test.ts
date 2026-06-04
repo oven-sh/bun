@@ -190,6 +190,15 @@ describe("_onImmediate", () => {
     }
   });
 
+  it("fires the reassigned callback, not the original", async () => {
+    // Matches Node: the callback invoked at dispatch is whatever _onImmediate
+    // currently holds, so reassigning it before it fires swaps what runs.
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+    const immediate = setImmediate(() => reject(new Error("original callback fired"))) as any;
+    immediate._onImmediate = () => resolve("replacement");
+    expect(await promise).toBe("replacement");
+  });
+
   it("mirrors Timeout's _onTimeout", () => {
     const fn = () => {};
     const timeout = setTimeout(fn, 0) as any;

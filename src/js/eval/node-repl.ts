@@ -38,11 +38,15 @@ if (!Number.isNaN(size) && size > 0) {
 const term = "terminal" in opts ? opts.terminal : process.stdout.isTTY;
 const filePath = term ? process.env.NODE_REPL_HISTORY : "";
 
-const replServer = REPL.start(opts);
+// Standalone-REPL semantics (Node boots its CLI REPL through
+// internal/repl with kStandaloneREPL set): relaxed input validation,
+// repl.repl introspection, inspect.replDefaults writer wiring.
+const kStandaloneREPL = (REPL as Record<symbol, symbol>)[Symbol.for("bun.repl.kStandaloneREPL")];
+if (kStandaloneREPL) {
+  (opts as Record<symbol, boolean>)[kStandaloneREPL] = true;
+}
 
-// Match Node's standalone-REPL introspection: the running instance is
-// reachable as require('repl').repl.
-REPL.repl = replServer;
+const replServer = REPL.start(opts);
 
 replServer.setupHistory({
   filePath,

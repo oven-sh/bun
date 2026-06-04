@@ -24,7 +24,7 @@ var __node_module__ = { exports: {} };
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-("use strict");
+'use strict';
 
 const {
   DateNow,
@@ -38,13 +38,25 @@ const {
   SymbolDispose,
 } = primordials;
 
-const { clearLine, clearScreenDown, cursorTo, moveCursor } = require("internal/readline/callbacks");
+const {
+  clearLine,
+  clearScreenDown,
+  cursorTo,
+  moveCursor,
+} = require("internal/readline/callbacks");
 const emitKeypressEvents = require("internal/readline/emitKeypressEvents");
 const promises = require("node:readline/promises");
 
-const { AbortError } = require("internal/repl/node-errors");
-const { inspect } = require("internal/repl/node-inspect");
-const { kEmptyObject, promisify } = require("internal/repl/node-shims");
+const {
+  AbortError,
+} = require("internal/repl/node-errors");
+const {
+  inspect,
+} = require("internal/repl/node-inspect");
+const {
+  kEmptyObject,
+  promisify,
+} = require("internal/repl/node-shims");
 const { validateAbortSignal } = require("internal/validators");
 
 /**
@@ -96,17 +108,19 @@ function Interface(input, output, completer, terminal) {
     return new Interface(input, output, completer, terminal);
   }
 
-  if (input?.input && typeof input.completer === "function" && input.completer.length !== 2) {
+  if (input?.input &&
+      typeof input.completer === 'function' && input.completer.length !== 2) {
     const { completer } = input;
     input.completer = (v, cb) => cb(null, completer(v));
-  } else if (typeof completer === "function" && completer.length !== 2) {
+  } else if (typeof completer === 'function' && completer.length !== 2) {
     const realCompleter = completer;
     completer = (v, cb) => cb(null, realCompleter(v));
   }
 
-  FunctionPrototypeCall(InterfaceConstructor, this, input, output, completer, terminal);
+  FunctionPrototypeCall(InterfaceConstructor, this,
+                        input, output, completer, terminal);
 
-  if (process.env.TERM === "dumb") {
+  if (process.env.TERM === 'dumb') {
     this._ttyWrite = FunctionPrototypeBind(_ttyWriteDumb, this);
   }
 }
@@ -121,13 +135,13 @@ $toClass(Interface, "Interface", _Interface);
  * @returns {void}
  */
 Interface.prototype.question = function question(query, options, cb) {
-  cb = typeof options === "function" ? options : cb;
-  if (options === null || typeof options !== "object") {
+  cb = typeof options === 'function' ? options : cb;
+  if (options === null || typeof options !== 'object') {
     options = kEmptyObject;
   }
 
   if (options.signal) {
-    validateAbortSignal(options.signal, "options.signal");
+    validateAbortSignal(options.signal, 'options.signal');
     if (options.signal.aborted) {
       return;
     }
@@ -138,26 +152,24 @@ Interface.prototype.question = function question(query, options, cb) {
     addAbortListener ??= require("internal/repl/node-shims").addAbortListener;
     const disposable = addAbortListener(options.signal, onAbort);
     const originalCb = cb;
-    cb =
-      typeof cb === "function"
-        ? answer => {
-            disposable[SymbolDispose]();
-            return originalCb(answer);
-          }
-        : disposable[SymbolDispose];
+    cb = typeof cb === 'function' ? (answer) => {
+      disposable[SymbolDispose]();
+      return originalCb(answer);
+    } : disposable[SymbolDispose];
   }
 
-  if (typeof cb === "function") {
+  if (typeof cb === 'function') {
     this[kQuestion](query, cb);
   }
 };
 Interface.prototype.question[promisify.custom] = function question(query, options) {
-  if (options === null || typeof options !== "object") {
+  if (options === null || typeof options !== 'object') {
     options = kEmptyObject;
   }
 
   if (options.signal?.aborted) {
-    return PromiseReject(new AbortError(undefined, { cause: options.signal.reason }));
+    return PromiseReject(
+      new AbortError(undefined, { cause: options.signal.reason }));
   }
 
   return new Promise((resolve, reject) => {
@@ -169,7 +181,7 @@ Interface.prototype.question[promisify.custom] = function question(query, option
       };
       addAbortListener ??= require("internal/repl/node-shims").addAbortListener;
       const disposable = addAbortListener(options.signal, onAbort);
-      cb = answer => {
+      cb = (answer) => {
         disposable[SymbolDispose]();
         resolve(answer);
       };
@@ -424,7 +436,7 @@ Interface.prototype._addHistory = _Interface.prototype[kAddHistory];
 Interface.prototype._refreshLine = _Interface.prototype[kRefreshLine];
 Interface.prototype._normalWrite = _Interface.prototype[kNormalWrite];
 Interface.prototype._insertString = _Interface.prototype[kInsertString];
-Interface.prototype._tabComplete = function (lastKeypressWasTab) {
+Interface.prototype._tabComplete = function(lastKeypressWasTab) {
   // Overriding parent method because `this.completer` in the legacy
   // implementation takes a callback instead of being an async function.
   this.pause();
@@ -458,42 +470,44 @@ Interface.prototype._ttyWrite = _Interface.prototype[kTtyWrite];
 
 function _ttyWriteDumb(s, key) {
   key ||= kEmptyObject;
-  if (key.name === "escape") return;
+  if (key.name === 'escape') return;
 
-  if (this[kSawReturnAt] && key.name !== "enter") this[kSawReturnAt] = 0;
+  if (this[kSawReturnAt] && key.name !== 'enter')
+    this[kSawReturnAt] = 0;
 
   if (key.ctrl) {
-    if (key.name === "c") {
-      if (this.listenerCount("SIGINT") > 0) {
-        this.emit("SIGINT");
+    if (key.name === 'c') {
+      if (this.listenerCount('SIGINT') > 0) {
+        this.emit('SIGINT');
       } else {
         // This readline instance is finished
         this.close();
       }
 
       return;
-    } else if (key.name === "d") {
+    } else if (key.name === 'd') {
       this.close();
       return;
     }
   }
 
   switch (key.name) {
-    case "return": // Carriage return, i.e. \r
+    case 'return':  // Carriage return, i.e. \r
       this[kSawReturnAt] = DateNow();
       this._line();
       break;
 
-    case "enter":
+    case 'enter':
       // When key interval > crlfDelay
-      if (this[kSawReturnAt] === 0 || DateNow() - this[kSawReturnAt] > this.crlfDelay) {
+      if (this[kSawReturnAt] === 0 ||
+          DateNow() - this[kSawReturnAt] > this.crlfDelay) {
         this._line();
       }
       this[kSawReturnAt] = 0;
       break;
 
     default:
-      if (typeof s === "string" && s) {
+      if (typeof s === 'string' && s) {
         this.line += s;
         this.cursor += s.length;
         this._writeToOutput(s);
@@ -510,6 +524,15 @@ __node_module__.exports = {
   emitKeypressEvents,
   moveCursor,
   promises,
+};
+
+// Bun-internal hook consumed by pre-existing readline tests/utilities.
+__node_module__.exports[Symbol.for("__BUN_INTERNALS_DO_NOT_USE_OR_YOU_WILL_BE_FIRED__")] = {
+  CSI: require("internal/readline/utils").CSI,
+  utils: {
+    getStringWidth: require("internal/util/inspect").getStringWidth,
+    stripVTControlCharacters: require("node:util").stripVTControlCharacters,
+  },
 };
 
 export default __node_module__.exports;

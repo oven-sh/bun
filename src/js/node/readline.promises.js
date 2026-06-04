@@ -3,18 +3,32 @@
 // prettier-ignore
 const primordials = require("internal/repl/node-primordials");
 var __node_module__ = { exports: {} };
-("use strict");
+'use strict';
 
-const { Promise, SymbolDispose } = primordials;
+const {
+  Promise,
+  SymbolDispose,
+} = primordials;
 
-const { Readline } = require("internal/readline/promises");
+const {
+  Readline,
+} = require("internal/readline/promises");
 
-const { Interface: _Interface, kQuestion, kQuestionCancel, kQuestionReject } = require("internal/readline/interface");
+const {
+  Interface: _Interface,
+  kQuestion,
+  kQuestionCancel,
+  kQuestionReject,
+} = require("internal/readline/interface");
 
-const { AbortError } = require("internal/repl/node-errors");
+const {
+  AbortError,
+} = require("internal/repl/node-errors");
 const { validateAbortSignal } = require("internal/validators");
 
-const { kEmptyObject } = require("internal/repl/node-shims");
+const {
+  kEmptyObject,
+} = require("internal/repl/node-shims");
 let addAbortListener;
 
 class Interface extends _Interface {
@@ -23,9 +37,10 @@ class Interface extends _Interface {
       let cb = resolve;
 
       if (options?.signal) {
-        validateAbortSignal(options.signal, "options.signal");
+        validateAbortSignal(options.signal, 'options.signal');
         if (options.signal.aborted) {
-          return reject(new AbortError(undefined, { cause: options.signal.reason }));
+          return reject(
+            new AbortError(undefined, { cause: options.signal.reason }));
         }
 
         const onAbort = () => {
@@ -35,7 +50,7 @@ class Interface extends _Interface {
         addAbortListener ??= require("internal/repl/node-shims").addAbortListener;
         const disposable = addAbortListener(options.signal, onAbort);
 
-        cb = answer => {
+        cb = (answer) => {
           disposable[SymbolDispose]();
           resolve(answer);
         };

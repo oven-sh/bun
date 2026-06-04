@@ -53,3 +53,30 @@ test/js/bun/spawn/spawn-maxbuf.test.ts [ FLAKY ]
 [ ASAN ] test/cli/run/require-cache.test.ts [ LEAK ] # files transpiled and loaded don't leak file paths > via require()
 [ ASAN ] test/js/bun/http/req-url-leak.test.ts [ LEAK ] # req.url doesn't leak memory
 [ ASAN ] test/js/bun/io/bun-write-leak.test.ts [ LEAK ] # Bun.write should not leak the output data
+
+# node:repl vendored suite - remaining divergences (see PR #31827; 82/107 passing)
+test/js/node/test/parallel/test-repl-autocomplete.js [ FAIL ] # result previews need inspector side-effect-free eval
+test/js/node/test/parallel/test-repl-cli-eval.js [ FAIL ] # CLI child-process behavior divergence
+test/js/node/test/parallel/test-repl-custom-eval-previews.js [ FAIL ] # result previews need inspector side-effect-free eval
+test/js/node/test/parallel/test-repl-domain.js [ FAIL ] # node:domain integration incomplete
+test/js/node/test/parallel/test-repl-history-navigation.js [ FAIL ] # result previews need inspector side-effect-free eval
+test/js/node/test/parallel/test-repl-import-referrer.js [ FAIL ] # inspect renders module namespaces differently (JSC)
+test/js/node/test/parallel/test-repl-pretty-custom-stack.js [ FAIL ] # JSC stack frame format differs from V8
+test/js/node/test/parallel/test-repl-preview.js [ FAIL ] # result previews need inspector side-effect-free eval
+test/js/node/test/parallel/test-repl-programmatic-history-setup-history.js [ FAIL ] # setupHistory callback timing divergence
+test/js/node/test/parallel/test-repl-programmatic-history.js [ FAIL ] # setupHistory callback timing divergence
+test/js/node/test/parallel/test-repl-require-after-write.js [ FAIL ] # REPL module resolution edge cases
+test/js/node/test/parallel/test-repl-require.js [ FAIL ] # REPL module resolution edge cases
+test/js/node/test/parallel/test-repl-reverse-search.js [ FAIL ] # result previews need inspector side-effect-free eval
+test/js/node/test/parallel/test-repl-sigint-nested-eval.js [ FAIL ] # SIGINT-during-eval not interrupting vm execution yet
+test/js/node/test/parallel/test-repl-sigint.js [ FAIL ] # SIGINT-during-eval not interrupting vm execution yet
+test/js/node/test/parallel/test-repl-strict-mode-previews.js [ FAIL ] # result previews need inspector side-effect-free eval
+test/js/node/test/parallel/test-repl-tab-complete-nested-repls.js [ FAIL ] # completion subtests: getters/proxies edge cases
+test/js/node/test/parallel/test-repl-tab-complete-unary-expressions.js [ FAIL ] # completion subtests: getters/proxies edge cases
+test/js/node/test/parallel/test-repl-tab-complete.js [ FAIL ] # completion subtests: getters/proxies edge cases
+test/js/node/test/parallel/test-repl-top-level-await.js [ FAIL ] # JSC syntax-error wording differs from V8
+test/js/node/test/parallel/test-repl-unsafe-array-iteration.js [ FAIL ] # JSC error message wording differs from V8
+test/js/node/test/parallel/test-repl-unsupported-option.js [ FAIL ] # --input-type validation not implemented
+test/js/node/test/parallel/test-repl-user-error-handler.js [ FAIL ] # JSC stack frame format differs from V8
+test/js/node/test/parallel/test-repl.js [ FAIL ] # large integration test; multiple remaining divergences
+test/js/node/test/sequential/test-repl-timeout-throw.js [ FAIL ] # SIGINT-during-eval not interrupting vm execution yet

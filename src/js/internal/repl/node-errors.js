@@ -30,10 +30,6 @@ class ERR_CANNOT_WATCH_SIGINT extends Error {
     super('Cannot watch for interruptions when running asynchronously')
     this.name = 'Error [ERR_CANNOT_WATCH_SIGINT]'
     Error.captureStackTrace?.(this, ERR_CANNOT_WATCH_SIGINT)
-    // Node resets name to the base class after capturing the stack so the
-    // decorated form only appears in the stack header.
-    this.stack
-    this.name = 'Error'
   }
 }
 
@@ -43,10 +39,6 @@ class ERR_INSPECTOR_NOT_AVAILABLE extends Error {
     super('Inspector is not available')
     this.name = 'Error [ERR_INSPECTOR_NOT_AVAILABLE]'
     Error.captureStackTrace?.(this, ERR_INSPECTOR_NOT_AVAILABLE)
-    // Node resets name to the base class after capturing the stack so the
-    // decorated form only appears in the stack header.
-    this.stack
-    this.name = 'Error'
   }
 }
 
@@ -56,10 +48,6 @@ class ERR_INVALID_REPL_EVAL_CONFIG extends TypeError {
     super('Cannot specify both "breakEvalOnSigint" and "eval" for REPL')
     this.name = 'TypeError [ERR_INVALID_REPL_EVAL_CONFIG]'
     Error.captureStackTrace?.(this, ERR_INVALID_REPL_EVAL_CONFIG)
-    // Node resets name to the base class after capturing the stack so the
-    // decorated form only appears in the stack header.
-    this.stack
-    this.name = 'TypeError'
   }
 }
 
@@ -69,10 +57,6 @@ class ERR_INVALID_REPL_INPUT extends TypeError {
     super(message)
     this.name = 'TypeError [ERR_INVALID_REPL_INPUT]'
     Error.captureStackTrace?.(this, ERR_INVALID_REPL_INPUT)
-    // Node resets name to the base class after capturing the stack so the
-    // decorated form only appears in the stack header.
-    this.stack
-    this.name = 'TypeError'
   }
 }
 

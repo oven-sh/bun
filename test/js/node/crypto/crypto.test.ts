@@ -258,16 +258,24 @@ it("should send cipher events in the right order", async () => {
     const key = Buffer.from("3fad401bb178066f201b55368712530229d6329a5e2c05f48ff36ca65792d21d", "hex");
     const iv = Buffer.from("22371787d3e04a6589d8a1de50c81208", "hex");
 
+    // read() returns one buffered chunk per call (nodejs/node#60441).
+    function readAll(stream) {
+      const chunks = [];
+      let chunk;
+      while ((chunk = stream.read()) !== null) chunks.push(chunk);
+      return Buffer.concat(chunks);
+    }
+
     const cipher = crypto.createCipheriv("aes-256-cbc", key, iv);
     patchEmitter(cipher, "cipher");
     cipher.end(plaintext);
-    let ciph = cipher.read();
+    let ciph = readAll(cipher);
     console.log([1, ciph.toString("hex")]);
 
     const decipher = crypto.createDecipheriv("aes-256-cbc", key, iv);
     patchEmitter(decipher, "decipher");
     decipher.end(ciph);
-    let dciph = decipher.read();
+    let dciph = readAll(decipher);
     console.log([2, dciph.toString("hex")]);
     let txt = dciph.toString("utf8");
 
@@ -286,11 +294,11 @@ it("should send cipher events in the right order", async () => {
   const err = await stderr.text();
   expect(err).toBeEmpty();
   const out = await stdout.text();
-  // TODO: prefinish and readable (on both cipher and decipher) should be flipped
-  // This seems like a bug in our crypto code, which
+  // Event order verified byte-identical to node v26.3.0.
   expect(out.split("\n")).toEqual([
     `[ "cipher", "readable" ]`,
     `[ "cipher", "prefinish" ]`,
+    `[ "cipher", "data" ]`,
     `[ "cipher", "data" ]`,
     `[ 1, "dfb6b7e029be3ad6b090349ed75931f28f991b52ca9a89f5bf6f82fa1c87aa2d624bd77701dcddfcceaf3add7d66ce06ced17aebca4cb35feffc4b8b9008b3c4" ]`,
     `[ "decipher", "readable" ]`,

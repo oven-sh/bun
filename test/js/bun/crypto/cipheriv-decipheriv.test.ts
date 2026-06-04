@@ -65,13 +65,22 @@ it("should encrypt & decrypt using streaming interface", () => {
   const key = randomBytes(32);
   const iv = randomBytes(16);
 
+  // read() returns one buffered chunk per call (nodejs/node#60441), so
+  // drain the stream instead of assuming a single concatenated buffer.
+  function readAll(stream: ReturnType<typeof createCipheriv>): Buffer {
+    const chunks: Buffer[] = [];
+    let chunk: Buffer | null;
+    while ((chunk = stream.read()) !== null) chunks.push(chunk);
+    return Buffer.concat(chunks);
+  }
+
   const cipher = createCipheriv("aes-256-cbc", key, iv);
   cipher.end(plaintext);
-  let ciph = cipher.read();
+  const ciph = readAll(cipher);
 
   const decipher = createDecipheriv("aes-256-cbc", key, iv);
   decipher.end(ciph);
-  let txt = decipher.read().toString("utf8");
+  const txt = readAll(decipher).toString("utf8");
 
   expect(txt).toBe(plaintext);
 });

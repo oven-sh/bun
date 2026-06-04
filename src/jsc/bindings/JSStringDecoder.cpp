@@ -614,4 +614,4 @@ void JSStringDecoderConstructor::initializeProperties(VM& vm, JSC::JSGlobalObjec
 
 const ClassInfo JSStringDecoderConstructor::s_info = { "StringDecoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSStringDecoderConstructor) };
 
-} // namespace Bun
+} // namespace WebCore

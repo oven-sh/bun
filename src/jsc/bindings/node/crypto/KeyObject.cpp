@@ -19,7 +19,6 @@
 
 namespace Bun {
 
-using namespace Bun;
 using namespace JSC;
 using namespace ncrypto;
 using namespace WebCore;

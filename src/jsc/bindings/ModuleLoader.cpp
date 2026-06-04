@@ -45,7 +45,6 @@
 
 namespace Bun {
 using namespace JSC;
-using namespace Bun;
 using namespace WebCore;
 
 class ResolvedSourceCodeHolder {

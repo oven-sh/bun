@@ -62,6 +62,6 @@ public:
 
 // bun:internal-for-testing — returns the cached provider's sourceType name
 // for a resolved specifier, or null when not cached.
-JSC::JSValue createIsolatedModuleCacheSourceTypeForTesting(Zig::GlobalObject* globalObject);
+JSC::JSValue createIsolatedModuleCacheSourceTypeForTesting(Bun::GlobalObject* globalObject);
 
 } // namespace Bun

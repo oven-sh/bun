@@ -77,7 +77,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsolatedModuleCacheSourceType, (JSC::JSGlobal
     }
 }
 
-JSC::JSValue createIsolatedModuleCacheSourceTypeForTesting(Zig::GlobalObject* globalObject)
+JSC::JSValue createIsolatedModuleCacheSourceTypeForTesting(Bun::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     return JSC::JSFunction::create(vm, globalObject, 1, "isolatedModuleCacheSourceType"_s, jsFunctionIsolatedModuleCacheSourceType, JSC::ImplementationVisibility::Public);

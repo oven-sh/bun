@@ -467,4 +467,4 @@ JSValue getBufferList(Bun::GlobalObject* globalObject)
     return static_cast<Bun::GlobalObject*>(globalObject)->JSBufferList();
 }
 
-} // namespace Bun
+} // namespace WebCore

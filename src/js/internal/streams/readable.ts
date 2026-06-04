@@ -561,6 +561,9 @@ function howMuchToRead(n, state) {
   if (n <= 0 || (state.length === 0 && (state[kState] & kEnded) !== 0)) return 0;
   if ((state[kState] & kObjectMode) !== 0) return 1;
   if (NumberIsNaN(n)) {
+    // Fast path for buffers.
+    if ((state[kState] & kDecoder) === 0 && state.length) return state.buffer[state.bufferIndex].length;
+
     // Only flow one buffer at a time.
     if ((state[kState] & kFlowing) !== 0 && state.length) return state.buffer[state.bufferIndex].length;
     return state.length;

@@ -1060,12 +1060,10 @@ JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& throwScope, JSC::JSGlobalO
 
 JSC::EncodedJSValue UNKNOWN_ENCODING(JSC::ThrowScope& scope, JSGlobalObject* globalObject, JSValue encodingValue)
 {
-    WTF::String encodingString = encodingValue.toWTFString(globalObject);
-    RELEASE_RETURN_IF_EXCEPTION(scope, {});
-
     WTF::StringBuilder builder;
     builder.append("Unknown encoding: "_s);
-    builder.append(encodingString);
+    JSValueToStringSafe(globalObject, builder, encodingValue);
+    RELEASE_RETURN_IF_EXCEPTION(scope, {});
     scope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_UNKNOWN_ENCODING, builder.toString()));
     scope.release();
     return {};
@@ -1180,10 +1178,10 @@ JSC::EncodedJSValue CRYPTO_INVALID_KEYTYPE(JSC::ThrowScope& throwScope, JSC::JSG
 
 JSC::EncodedJSValue CRYPTO_UNKNOWN_CIPHER(JSC::ThrowScope& throwScope, JSC::JSGlobalObject* globalObject, const WTF::StringView& cipherName)
 {
-    WTF::StringBuilder builder;
-    builder.append("Unknown cipher: "_s);
-    builder.append(cipherName);
-    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_UNKNOWN_CIPHER, builder.toString()));
+    // Node dropped the cipher name from the message (exact-match asserted by
+    // test-crypto-cipheriv-decipheriv.js and test-crypto-keygen.js).
+    UNUSED_PARAM(cipherName);
+    throwScope.throwException(globalObject, createError(globalObject, ErrorCode::ERR_CRYPTO_UNKNOWN_CIPHER, "Unknown cipher"_s));
     throwScope.release();
     return {};
 }
@@ -1781,13 +1779,10 @@ JSC_DEFINE_HOST_FUNCTION(Bun::jsFunctionMakeErrorWithCode, (JSC::JSGlobalObject 
 
     case Bun::ErrorCode::ERR_UNKNOWN_ENCODING: {
         auto arg0 = callFrame->argument(1);
-        auto* jsString = arg0.toString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        auto param = jsString->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
         WTF::StringBuilder builder;
         builder.append("Unknown encoding: "_s);
-        builder.append(param);
+        JSValueToStringSafe(globalObject, builder, arg0);
+        RETURN_IF_EXCEPTION(scope, {});
         return JSC::JSValue::encode(createError(globalObject, error, builder.toString()));
     }
 

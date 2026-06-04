@@ -14,7 +14,7 @@ const Duplex = require("internal/streams/duplex");
 const { destroyer } = require("internal/streams/destroy");
 const { isDestroyed, isReadable, isWritable, isWritableEnded } = require("internal/streams/utils");
 const { kEmptyObject } = require("internal/shared");
-const { validateBoolean, validateObject } = require("internal/validators");
+const { validateBoolean, validateObject, validateOneOf } = require("internal/validators");
 const finished = require("internal/streams/end-of-stream");
 
 const normalizeEncoding = $newZigFunction("node_util_binding.zig", "normalizeEncoding", 1);
@@ -438,8 +438,13 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
     throw $ERR_INVALID_ARG_TYPE("streamReadable", "stream.Readable", streamReadable);
   }
 
+  if (options.type !== undefined) {
+    validateOneOf(options.type, "options.type", ["bytes", undefined]);
+  }
+  const isBYOB = options.type === "bytes";
+
   if (isDestroyed(streamReadable) || !isReadable(streamReadable)) {
-    const readable = new ReadableStream();
+    const readable = new ReadableStream({ type: options.type });
     readable.cancel();
     return readable;
   }
@@ -460,7 +465,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
     return new ByteLengthQueuingStrategy({ highWaterMark });
   };
 
-  const strategy = evaluateStrategyOrFallback(options?.strategy);
+  const strategy = isBYOB ? { highWaterMark } : evaluateStrategyOrFallback(options?.strategy);
 
   let controller;
   let wasCanceled = false;
@@ -474,7 +479,9 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
 
   streamReadable.pause();
 
-  const cleanup = finished(streamReadable, error => {
+  // When adapting a Duplex as a ReadableStream, readable completion should not
+  // wait for a half-open writable side to finish as well.
+  const cleanup = finished(streamReadable, { writable: false }, error => {
     error = handleKnownInternalErrors(error);
 
     cleanup();
@@ -487,12 +494,14 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
       return;
     }
     controller.close();
+    if (isBYOB) controller.byobRequest?.respond(0);
   });
 
   streamReadable.on("data", onData);
 
   return new ReadableStream(
     {
+      type: isBYOB ? "bytes" : undefined,
       start(c) {
         controller = c;
       },
@@ -538,7 +547,19 @@ function newStreamReadableFromReadableStream(readableStream, options: Record<str
   );
 }
 
-function newReadableWritablePairFromDuplex(duplex) {
+let dep0201Emitted = false;
+function emitDEP0201() {
+  if (dep0201Emitted) return;
+  dep0201Emitted = true;
+  process.emitWarning(
+    "Passing 'options.type' to Duplex.toWeb() is deprecated. " +
+      "To specify the ReadableStream type, use 'options.readableType'.",
+    "DeprecationWarning",
+    "DEP0201",
+  );
+}
+
+function newReadableWritablePairFromDuplex(duplex, options = kEmptyObject) {
   // Not using the internal/streams/utils isWritableNodeStream and
   // isReadableNodeStream utilities here because they will return false
   // if the duplex was created with writable or readable options set to
@@ -549,9 +570,18 @@ function newReadableWritablePairFromDuplex(duplex) {
     throw $ERR_INVALID_ARG_TYPE("duplex", "stream.Duplex", duplex);
   }
 
+  validateObject(options, "options");
+
+  const readableOptions = { type: options.readableType };
+  if (options.readableType == null && options.type != null) {
+    // 'options.type' is a deprecated alias for 'options.readableType'.
+    emitDEP0201();
+    readableOptions.type = options.type;
+  }
+
   if (isDestroyed(duplex)) {
     const writable = new WritableStream();
-    const readable = new ReadableStream();
+    const readable = new ReadableStream({ type: readableOptions.type });
     writable.close();
     readable.cancel();
     return { readable, writable };
@@ -561,7 +591,9 @@ function newReadableWritablePairFromDuplex(duplex) {
 
   if (!isWritable(duplex)) writable.close();
 
-  const readable = isReadable(duplex) ? newReadableStreamFromStreamReadable(duplex) : new ReadableStream();
+  const readable = isReadable(duplex)
+    ? newReadableStreamFromStreamReadable(duplex, readableOptions)
+    : new ReadableStream({ type: readableOptions.type });
 
   if (!isReadable(duplex)) readable.cancel();
 

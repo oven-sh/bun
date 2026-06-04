@@ -19,8 +19,8 @@
 // the in-flight state is established.
 
 import { expect, test } from "bun:test";
-import { join } from "node:path";
 import { bunEnv, bunExe } from "harness";
+import { join } from "node:path";
 
 async function runFixture(code: string) {
   await using proc = Bun.spawn({
@@ -49,8 +49,10 @@ async function runFixture(code: string) {
   return { stdout, stderr: filteredStderr, exitCode };
 }
 
-test.concurrent("process.exit() mid-download with more response body pending", async () => {
-  const { stdout, stderr, exitCode } = await runFixture(/* js */ `
+test.concurrent(
+  "process.exit() mid-download with more response body pending",
+  async () => {
+    const { stdout, stderr, exitCode } = await runFixture(/* js */ `
     import { createServer } from "net";
     import { once } from "events";
 
@@ -78,13 +80,17 @@ test.concurrent("process.exit() mid-download with more response body pending", a
     process.exit(42);
   `);
 
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("OK: body streaming, exiting mid-download");
-  expect(exitCode).toBe(42);
-}, 60_000);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK: body streaming, exiting mid-download");
+    expect(exitCode).toBe(42);
+  },
+  60_000,
+);
 
-test.concurrent("process.exit() with a request in flight before any response bytes", async () => {
-  const { stdout, stderr, exitCode } = await runFixture(/* js */ `
+test.concurrent(
+  "process.exit() with a request in flight before any response bytes",
+  async () => {
+    const { stdout, stderr, exitCode } = await runFixture(/* js */ `
     import { createServer } from "net";
     import { once } from "events";
 
@@ -106,13 +112,17 @@ test.concurrent("process.exit() with a request in flight before any response byt
     process.exit(42);
   `);
 
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("OK: request in flight with no response, exiting");
-  expect(exitCode).toBe(42);
-}, 60_000);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK: request in flight with no response, exiting");
+    expect(exitCode).toBe(42);
+  },
+  60_000,
+);
 
-test.concurrent("process.exit() mid streaming request-body upload", async () => {
-  const { stdout, stderr, exitCode } = await runFixture(/* js */ `
+test.concurrent(
+  "process.exit() mid streaming request-body upload",
+  async () => {
+    const { stdout, stderr, exitCode } = await runFixture(/* js */ `
     import { createServer } from "net";
     import { once } from "events";
 
@@ -156,7 +166,9 @@ test.concurrent("process.exit() mid streaming request-body upload", async () => 
     process.exit(42);
   `);
 
-  expect(stderr).toBe("");
-  expect(stdout.trim()).toBe("OK: upload in flight, exiting");
-  expect(exitCode).toBe(42);
-}, 60_000);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe("OK: upload in flight, exiting");
+    expect(exitCode).toBe(42);
+  },
+  60_000,
+);

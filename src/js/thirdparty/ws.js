@@ -80,7 +80,73 @@ const eventIds = {
   error: 4,
   ping: 5,
   pong: 6,
+  upgrade: 7,
+  "unexpected-response": 8,
 };
+
+// Stable singleton used by `#armNativeBridge` to install the native-side
+// forwarder through `#onOrOnce` without pushing a user-visible listener. It
+// must be identity-stable so `super.off` can remove it later if needed.
+function noopBridgeListener() {}
+
+// Headers for which Node's http.IncomingMessage keeps only the first value and
+// discards later duplicates, matching lib/_http_incoming.js matchKnownFields.
+// Real `ws` hands consumers that Node object, so the synthetic IncomingMessage
+// passed to 'unexpected-response' must coalesce the same way.
+const kSingletonHeaders = new Set([
+  "age",
+  "authorization",
+  "content-length",
+  "content-type",
+  "etag",
+  "expires",
+  "from",
+  "host",
+  "if-modified-since",
+  "if-unmodified-since",
+  "last-modified",
+  "location",
+  "max-forwards",
+  "proxy-authorization",
+  "referer",
+  "retry-after",
+  "server",
+  "user-agent",
+]);
+
+let lazyReadable;
+function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
+  lazyReadable ??= require("node:stream").Readable;
+  const res = new lazyReadable({ read() {} });
+  const headers = (res.headers = { __proto__: null });
+  res.rawHeaders = rawHeaders;
+  for (let i = 0; i < rawHeaders.length; i += 2) {
+    const lower = rawHeaders[i].toLowerCase();
+    const value = rawHeaders[i + 1];
+    const prev = headers[lower];
+    if (lower === "set-cookie") {
+      if (prev === undefined) headers[lower] = [value];
+      else prev.push(value);
+    } else if (prev === undefined) {
+      headers[lower] = value;
+    } else if (kSingletonHeaders.has(lower)) {
+      // Keep the first occurrence; discard the duplicate.
+    } else if (lower === "cookie") {
+      headers[lower] = prev + "; " + value;
+    } else {
+      headers[lower] = prev + ", " + value;
+    }
+  }
+  res.statusCode = statusCode;
+  res.statusMessage = statusMessage;
+  res.httpVersion = "1.1";
+  res.httpVersionMajor = 1;
+  res.httpVersionMinor = 1;
+  res.socket = res.connection = null;
+  if (body && body.length) res.push(body);
+  res.push(null);
+  return res;
+}
 
 const emittedWarnings = new Set();
 function emitWarning(type, message) {
@@ -124,6 +190,25 @@ class BunWebSocket extends EventEmitter {
   #paused = false;
   #fragments = false;
   #binaryType = "nodebuffer";
+  // True once an 'error' has already been surfaced to EventEmitter listeners
+  // (either a synthetic non-101 error or because 'unexpected-response' fired).
+  // Gates the bridge closure so the native 'Expected 101' error isn't
+  // re-emitted onto the EventEmitter a second time.
+  #unexpectedResponseEmitted = false;
+  // True only when 'unexpected-response' actually fired — i.e. the consumer
+  // handled the non-101 response, so real ws emits no 'error' at all. Gates
+  // the `addEventListener('error')` / `onerror` wrappers (which live on
+  // `this.#ws`, not the EventEmitter). Kept separate from
+  // `#unexpectedResponseEmitted` so a synthetic `emit('error')` to an
+  // `on('error')` listener doesn't also swallow a DOM-style handler's error.
+  #unexpectedResponseHandled = false;
+  // Wrappers for `addEventListener('error', h)` so the native 'Expected 101'
+  // error is suppressed after 'unexpected-response' (matching `on('error')`
+  // and real npm `ws`). Keyed by the user's listener so `removeEventListener`
+  // can still find and detach the wrapper.
+  #errorListenerWrappers;
+  // The user's `onerror` function (the native slot holds a suppression wrapper).
+  #onerror;
   // Bitset to track whether event handlers are set.
   #eventId = 0;
 
@@ -266,13 +351,116 @@ class BunWebSocket extends EventEmitter {
     }
     let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
+    // NOTE: the native 'handshake' listener is registered lazily from
+    // #ensureHandshakeListener() when the user subscribes to 'upgrade' or
+    // 'unexpected-response'. Keeping it off by default means callers that
+    // only listen to 'open'/'message'/'close' never exercise the Zig
+    // handshake-dispatch path (which has historically been fragile under
+    // ASAN, e.g. ws-proxy.test.ts).
 
     return ws;
   }
 
+  #handshakeListenerRegistered = false;
+  #ensureHandshakeListener() {
+    if (this.#handshakeListenerRegistered) return;
+    this.#handshakeListenerRegistered = true;
+    this.#ws.addEventListener("handshake", event => this.#onHandshake(event.data), onceObject);
+  }
+
+  // ws emits `'upgrade'` / `'unexpected-response'` with an `http.ClientRequest`
+  // as the first argument. We bypass node:http and talk to the native
+  // WebSocket directly, so there is no real ClientRequest to expose. Pass a
+  // minimal stub — `method`, `path`, and the no-op header helpers — so user
+  // code that inspects the request object (e.g. `req.getHeader(...)`) does
+  // not crash. Build it lazily on first emission to keep the common open/
+  // close path zero-cost.
+  #syntheticRequest;
+  #getSyntheticRequest() {
+    let req = this.#syntheticRequest;
+    if (req) return req;
+    const url = this.#ws?.url;
+    let path = "/";
+    try {
+      if (url) {
+        const parsed = new URL(url);
+        // Node's http.ClientRequest.path is pathname + search (no fragment)
+        // per RFC 7230 §5.3. Preserve the query string so handlers that log
+        // or reconstruct the failing URL see the full request target.
+        path = (parsed.pathname || "/") + (parsed.search || "");
+      }
+    } catch {}
+    req = this.#syntheticRequest = {
+      __proto__: Object.create(EventEmitter.prototype),
+      method: "GET",
+      path,
+      url,
+      headers: { __proto__: null },
+      rawHeaders: [],
+      getHeader() {},
+      getHeaders() {
+        return { __proto__: null };
+      },
+      setHeader() {},
+      removeHeader() {},
+      hasHeader() {
+        return false;
+      },
+      abort() {},
+      end() {},
+      write() {},
+      writeHead() {},
+      headersSent: true,
+      finished: true,
+      socket: null,
+      [Symbol.toStringTag]: "ClientRequest",
+    };
+    return req;
+  }
+
+  #onHandshake(data) {
+    const { statusCode, statusMessage, rawHeaders, body } = data;
+    // On 101, any bytes arriving after the header block are the first
+    // WebSocket frame, not HTTP response body — node's http layer delivers
+    // them as the `head` buffer on the 'upgrade' event and the native
+    // WebSocket client forwards them to the protocol reader on didConnect.
+    // Don't leak them into the `upgrade` event's IncomingMessage stream.
+    const res = makeHandshakeResponse(statusCode, statusMessage, rawHeaders, statusCode === 101 ? null : body);
+    if (statusCode === 101) {
+      // `upgrade` emits `(response)` per ws docs.
+      this.emit("upgrade", res);
+      return;
+    }
+    if (this.listenerCount("unexpected-response") > 0) {
+      // The consumer handled the response via 'unexpected-response'. Real ws
+      // emits no 'error' at all in this case, so suppress the native follow-up
+      // for every registration style (EventEmitter bridge AND the DOM-style
+      // wrappers).
+      this.#unexpectedResponseEmitted = true;
+      this.#unexpectedResponseHandled = true;
+      // `unexpected-response` emits `(request, response)` per ws docs.
+      this.emit("unexpected-response", this.#getSyntheticRequest(), res);
+    } else if (this.listenerCount("error") > 0) {
+      // An EventEmitter 'error' listener (on/once/addListener/...) gets a
+      // synthetic error here; mark it emitted so the bridge closure doesn't
+      // deliver the native follow-up to the EventEmitter a second time. We do
+      // NOT set #unexpectedResponseHandled — a DOM-style handler
+      // (addEventListener('error')/onerror) registered alongside still gets the
+      // native error exactly once, since its wrapper gates on that flag.
+      this.#unexpectedResponseEmitted = true;
+      this.emit("error", new Error("Unexpected server response: " + statusCode));
+    }
+  }
+
   #onOrOnce(event, listener, once) {
-    if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
+    if (event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
+    }
+    if (event === "upgrade" || event === "unexpected-response") {
+      // Lazy-register the native handshake listener so callers that never
+      // subscribe to these events don't exercise the Zig handshake dispatch.
+      this.#ensureHandshakeListener();
+      return once ? super.once(event, listener) : super.on(event, listener);
     }
     const mask = 1 << eventIds[event];
     const hasPersistentListener = mask && (this.#eventId & mask) === mask;
@@ -322,6 +510,7 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "error",
           err => {
+            if (this.#unexpectedResponseEmitted) return;
             this.emit("error", err);
           },
           once,
@@ -353,6 +542,57 @@ class BunWebSocket extends EventEmitter {
 
   once(event, listener) {
     return this.#onOrOnce(event, listener, onceObject);
+  }
+
+  // `on` is the conventional spelling, but ws / EventEmitter consumers also
+  // reach for `addListener` / `prependListener` / `prependOnceListener`. Each
+  // needs to arm the native bridge (the `#onOrOnce` path for standard events
+  // like 'open' / 'message', or `#ensureHandshakeListener()` for 'upgrade' /
+  // 'unexpected-response') — otherwise the handler sits on the EventEmitter
+  // list but the native event that would trigger `this.emit(...)` is never
+  // wired up, and the callback silently never fires.
+  addListener(event, listener) {
+    return this.#onOrOnce(event, listener, undefined);
+  }
+
+  prependListener(event, listener) {
+    this.#armNativeBridge(event);
+    return super.prependListener(event, listener);
+  }
+
+  prependOnceListener(event, listener) {
+    this.#armNativeBridge(event);
+    return super.prependOnceListener(event, listener);
+  }
+
+  // Install the native-side listener that eventually calls `this.emit(event,
+  // …)`, without pushing a new EventEmitter listener onto the list — that
+  // part is the caller's job (e.g. `super.prependListener`). Mirrors the
+  // bridge-installation branch of `#onOrOnce` for the cases where we need
+  // the side effect but not the `super.on`/`super.once` call.
+  #armNativeBridge(event) {
+    if (event === "upgrade" || event === "unexpected-response") {
+      this.#ensureHandshakeListener();
+      return;
+    }
+    // `1 << undefined` evaluates to `1` (ToInt32(undefined) = 0), so a
+    // naive `if (!mask) return` would silently fall through for unknown
+    // event names and install a spurious noopBridgeListener on bit 0.
+    // Guard explicitly against unknown events.
+    if (eventIds[event] === undefined) return;
+    const mask = 1 << eventIds[event];
+    const hasPersistentListener = (this.#eventId & mask) === mask;
+    if (hasPersistentListener) return;
+    // Install the native forwarder once. `#onOrOnce` flips the `#eventId`
+    // bit and registers the native listener as a side effect, but it also
+    // appends the listener we pass to the EventEmitter list. We only want
+    // the side effect here (the caller, e.g. `super.prependListener`, owns
+    // the real listener), so register `noopBridgeListener` and immediately
+    // remove it — leaving the native forwarder installed and the
+    // EventEmitter list untouched. Subsequent calls see
+    // `hasPersistentListener` and skip this branch.
+    this.#onOrOnce(event, noopBridgeListener, undefined);
+    super.off(event, noopBridgeListener);
   }
 
   send(data, opts, cb) {
@@ -422,10 +662,78 @@ class BunWebSocket extends EventEmitter {
 
   // deviation: this does not support `message` with `binaryType = "fragments"`
   addEventListener(type, listener, options) {
+    // 'upgrade' and 'unexpected-response' are Node-style events — they're
+    // emitted on the JS-side EventEmitter by `#onHandshake`, never by the
+    // native WebSocket. Register on `this` and arm the handshake listener.
+    // We deliberately don't wrap the handler in a DOM-style adapter: a
+    // wrapped closure would make `removeEventListener` fail to match the
+    // original listener, leaking the handler. Consumers that reach for
+    // `addEventListener` on a ws shim already accept a mixed API; for
+    // these two Node-only events they receive Node-style
+    // `(response)` / `(request, response)` args.
+    if (type === "upgrade" || type === "unexpected-response") {
+      this.#ensureHandshakeListener();
+      // DOM dedup: `addEventListener` with the same listener is a no-op.
+      // EventEmitter.on/once don't dedup, so check the current listeners
+      // ourselves — matching real ws, which scans listeners(type) for every
+      // event type (and the 'error' branch below, which dedups too).
+      if (this.listeners(type).includes(listener)) return;
+      // `addEventListener` returns undefined per the DOM spec / real ws —
+      // use statement form so we don't leak EventEmitter's `this` return.
+      if (options && options.once) {
+        super.once(type, listener);
+      } else {
+        super.on(type, listener);
+      }
+      return;
+    }
+    if (type === "error" && typeof listener === "function") {
+      // DOM dedup: re-registering the same listener is a no-op. We wrap below,
+      // so distinct wrappers would defeat the native EventTarget's identity
+      // dedup — check our own map instead (and avoid leaking the prior wrapper).
+      if (this.#errorListenerWrappers?.has(listener)) return;
+      // Suppress the native 'Expected 101' error only when 'unexpected-response'
+      // actually handled the non-101 (matching real ws, which emits no error
+      // then). Gate on #unexpectedResponseHandled — NOT #unexpectedResponse
+      // Emitted — so a synthetic emit to a co-registered `on('error')` listener
+      // doesn't also swallow this handler. Wrap in a gated closure and remember
+      // it so `removeEventListener` can detach it.
+      const self = this;
+      // With `{once:true}` the native EventTarget auto-removes the wrapper
+      // after it fires, so drop our dedup entry too — otherwise a later
+      // `addEventListener('error', listener)` would hit the guard above and
+      // silently no-op even though nothing is attached anymore.
+      const once = !!(options && options.once);
+      const wrapper = function (event) {
+        if (once) self.#errorListenerWrappers?.delete(listener);
+        if (self.#unexpectedResponseHandled) return;
+        return listener.$call(this, event);
+      };
+      (this.#errorListenerWrappers ??= new WeakMap()).set(listener, wrapper);
+      this.#ws.addEventListener(type, wrapper, options);
+      return;
+    }
     this.#ws.addEventListener(type, listener, options);
   }
 
   removeEventListener(type, listener) {
+    // Symmetric with addEventListener: upgrade/unexpected-response
+    // listeners live on `this` (the EventEmitter), not on the native
+    // WebSocket, so removing them means calling `super.off`.
+    if (type === "upgrade" || type === "unexpected-response") {
+      super.off(type, listener);
+      return;
+    }
+    if (type === "error") {
+      // `addEventListener('error', …)` registered a suppression wrapper, not
+      // the user's listener — detach the wrapper we stored for it.
+      const wrapper = this.#errorListenerWrappers?.get(listener);
+      if (wrapper !== undefined) {
+        this.#errorListenerWrappers.delete(listener);
+        this.#ws.removeEventListener(type, wrapper);
+        return;
+      }
+    }
     this.#ws.removeEventListener(type, listener);
   }
 
@@ -438,11 +746,26 @@ class BunWebSocket extends EventEmitter {
   }
 
   get onerror() {
-    return this.#ws.onerror;
+    // Return the user's function, not the suppression wrapper we installed.
+    return this.#onerror ?? this.#ws.onerror;
   }
 
   set onerror(value) {
-    this.#ws.onerror = value;
+    this.#onerror = typeof value === "function" ? value : undefined;
+    if (this.#onerror === undefined) {
+      this.#ws.onerror = value;
+      return;
+    }
+    // Suppress the native 'Expected 101' error only when 'unexpected-response'
+    // handled the non-101 (matching `addEventListener('error')` and real ws).
+    // Gate on #unexpectedResponseHandled so a co-registered `on('error')`
+    // listener's synthetic emit doesn't swallow this handler's error.
+    const self = this;
+    const fn = this.#onerror;
+    this.#ws.onerror = function (event) {
+      if (self.#unexpectedResponseHandled) return;
+      return fn.$call(this, event);
+    };
   }
 
   get onclose() {

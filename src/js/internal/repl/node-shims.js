@@ -159,7 +159,7 @@ const extensionFormatMap = {
 const cascadedLoader = {
   kEvaluationPhase: "evaluation",
   kSourcePhase: "source",
-  import(specifier, parentURL, importAttributes, phase) {
+  import(specifier, _parentURL, _importAttributes, _phase) {
     return import(specifier);
   },
 };
@@ -170,7 +170,7 @@ function getOrInitializeCascadedLoader() {
 
 // ---- internal/modules/helpers ----------------------------------------------
 
-function makeRequireFunction(mod) {
+function makeRequireFunction(_mod) {
   // `mod` is a CJS Module instance whose `paths` were initialized by the
   // REPL. Resolution is anchored to a synthetic file in the REPL's cwd so
   // relative requires behave like Node's REPL.
@@ -188,7 +188,7 @@ function getBuiltinLibs() {
   return builtinLibs;
 }
 
-function addBuiltinLibsToObject(object, dummy) {
+function addBuiltinLibsToObject(object, _dummy) {
   // Make built-in modules available directly (loaded lazily).
   getBuiltinLibs().forEach(name => {
     if (Object.getOwnPropertyDescriptor(object, name)) {
@@ -268,7 +268,7 @@ function makeContextifyScript(
   return script;
 }
 
-function runScriptInThisContext(script, displayErrors, breakOnFirstLine) {
+function runScriptInThisContext(script, displayErrors, _breakOnFirstLine) {
   return script.runInThisContext({ displayErrors });
 }
 
@@ -296,7 +296,6 @@ class CJSModuleShim {
     if (typeof Module._resolveLookupPaths === "function") {
       return Module._resolveLookupPaths(request, parent);
     }
-    const path = require("node:path");
     return Module._nodeModulePaths(process.cwd()).concat(Module.globalPaths ?? []);
   }
   static _resolveFilename(request, parent, isMain, options) {

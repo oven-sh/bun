@@ -1437,6 +1437,25 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(path)
     }
 
+    /// Returns true when the string-literal statement at `loc` has a raw source
+    /// form — the bytes between the quotes, before escape sequences are decoded —
+    /// exactly equal to `directive`. ECMA-262 requires a Directive Prologue entry
+    /// to contain no `EscapeSequence`, so e.g. `"use\x20strict"` is not a Use
+    /// Strict Directive: it must not enable strict mode, set the scope's
+    /// strict-mode flag (which also feeds CommonJS detection), or trip the
+    /// non-simple-parameter early error. `directive` is expected to be plain
+    /// ASCII (`use strict` / `use asm`); any escape makes the raw form differ.
+    fn directive_raw_eq(source: &bun_ast::Source, loc: bun_ast::Loc, directive: &[u8]) -> bool {
+        let range = source.range_of_string(loc);
+        // `range` spans both quotes, so the inner text is [start+1, end-1).
+        if range.len < 2 {
+            return false;
+        }
+        let start = loc.i() + 1;
+        let end = range.end_i().saturating_sub(1);
+        source.contents().get(start..end) == Some(directive)
+    }
+
     pub fn parse_stmts_up_to(
         &mut self,
         eend: T,
@@ -1480,7 +1499,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         if !str_.prefer_template {
                             is_directive_prologue = true;
 
-                            if str_.eql_comptime(b"use strict") {
+                            // A directive's raw source form must contain no escape
+                            // sequence (ECMA-262 Directive Prologue), so compare the raw
+                            // bytes between the quotes rather than the cooked value —
+                            // otherwise `"use\x20strict"` would be mistaken for `use strict`.
+                            if Self::directive_raw_eq(p.source, stmt.loc, b"use strict") {
                                 // Track "use strict" directives
                                 p.current_scope_mut().strict_mode =
                                     StrictModeKind::ExplicitStrictMode;
@@ -1506,9 +1529,20 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         stmt.loc,
                                     );
                                 }
-                            } else if str_.eql_comptime(b"use asm") {
+                            } else if Self::directive_raw_eq(p.source, stmt.loc, b"use asm") {
                                 skip = true;
                                 stmt.data = js_ast::stmt::Data::SEmpty(S::Empty {});
+                            } else if str_.eql_comptime(b"use strict")
+                                || str_.eql_comptime(b"use asm")
+                            {
+                                // The cooked value matches a reserved directive but the raw
+                                // form did not (it contained an escape), so per spec this is
+                                // NOT a directive. Emitting it as a directive with the cooked
+                                // value would spuriously enable strict mode; printing the raw
+                                // form would change the string's value. It is a side-effect-free
+                                // prologue string, so drop it — leaving the function sloppy,
+                                // which matches Node.
+                                skip = true;
                             } else {
                                 let bytes = str_.string(p.arena).expect("OOM");
                                 stmt = Stmt::alloc(

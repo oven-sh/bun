@@ -117,6 +117,18 @@ describe("X509Certificate.prototype accessor enumerability", () => {
     "validToDate",
   ];
 
+  const methods = [
+    "checkEmail",
+    "checkHost",
+    "checkIP",
+    "checkIssued",
+    "checkPrivateKey",
+    "toJSON",
+    "toLegacyObject",
+    "toString",
+    "verify",
+  ];
+
   test("accessors are non-enumerable", () => {
     const enumerable = accessors.filter(name => {
       const desc = Object.getOwnPropertyDescriptor(X509Certificate.prototype, name);
@@ -125,14 +137,31 @@ describe("X509Certificate.prototype accessor enumerability", () => {
     expect(enumerable).toEqual([]);
   });
 
+  test("methods are non-enumerable", () => {
+    const enumerable = methods.filter(name => {
+      const desc = Object.getOwnPropertyDescriptor(X509Certificate.prototype, name);
+      return desc?.enumerable;
+    });
+    expect(enumerable).toEqual([]);
+  });
+
+  test("Object.keys(prototype) is empty, matching Node", () => {
+    // Like a Node ES6 class, no own property of the prototype is enumerable.
+    expect(Object.keys(X509Certificate.prototype)).toEqual([]);
+  });
+
   test("walking the prototype does not invoke getters (no ERR_INVALID_THIS)", () => {
     // Mirrors Bluebird's promisifyAll: enumerate the prototype keys and read each value.
-    // The accessors must not be visited, so reading values must not throw.
+    // No own property is enumerable, so the loop body never runs and reading values
+    // (which would invoke the accessor getters with the prototype as `this`) must not throw.
+    const visited: string[] = [];
     expect(() => {
       for (const key in X509Certificate.prototype) {
+        visited.push(key);
         void (X509Certificate.prototype as any)[key];
       }
     }).not.toThrow();
+    expect(visited).toEqual([]);
   });
 });
 

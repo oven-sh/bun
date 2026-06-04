@@ -43,3 +43,49 @@ for (const ext of ["cjs", "js", "mjs"]) {
     expect(exitCode).not.toBe(0);
   });
 }
+
+// A Use Strict Directive must contain no escape sequence (ECMA-262). An escaped
+// form like "use\x20strict" or "\u0075se strict" is an ordinary string literal,
+// not a directive, so it must NOT enable strict mode and must NOT trip the
+// non-simple-parameter early error (matches Node).
+test(`escaped "use strict" is not a directive (runs sloppy, no early error)`, async () => {
+  using dir = tempDir("issue-31806-escaped", {
+    "index.cjs": String.raw`
+      // Escaped space — cooks to "use strict" but is not a directive.
+      const hexEscaped = (function () {
+        "use\x20strict";
+        return this === undefined;
+      })();
+      // Escaped "u" — same idea with a unicode escape.
+      const unicodeEscaped = (function () {
+        "\u0075se strict";
+        return this === undefined;
+      })();
+      // A non-simple parameter list with an escaped directive must NOT be a SyntaxError.
+      function withDefault(a = 1) {
+        "use\x20strict";
+        return a;
+      }
+      console.log(JSON.stringify({ hexEscaped, unicodeEscaped, withDefault: withDefault() }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  // Both escaped IIFEs run sloppy, so `this` is the global (not undefined).
+  expect(JSON.parse(stdout.trim())).toEqual({
+    hexEscaped: false,
+    unicodeEscaped: false,
+    withDefault: 1,
+  });
+  expect(exitCode).toBe(0);
+});

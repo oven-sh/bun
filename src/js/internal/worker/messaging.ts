@@ -57,6 +57,13 @@ function handleMessageFromThread(message) {
       // child, this takes care of relaying it, so any thread links to the main one.
       port.on("message", handleMessageFromThread);
 
+      // Self-clean when the peer dies without an UNREGISTER (e.g. a grandchild
+      // whose intermediate parent was terminated, so that parent's Worker#onClose
+      // never ran); otherwise the stale entry lingers in the hub forever.
+      port.on("close", () => {
+        if (threadsPorts.get(threadId) === port) threadsPorts.delete(threadId);
+      });
+
       // Never block the thread on this port.
       port.unref();
       break;

@@ -75,10 +75,13 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
     // simulated throw on asan/debug that must be consumed before any nested scope.
     auto& vm = state.vm();
     auto warnScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    // Reject a detached port in the transfer list before serialization, so the post
+    // Reject a bad port in the transfer list before serialization, so the post
     // aborts before any ArrayBuffer in the list is detached (transfer is atomic).
+    // Node checks each entry in order: source port first, then detached.
     for (auto& transferable : options.transfer) {
         if (auto* jsPort = dynamicDowncast<JSMessagePort>(transferable.get())) {
+            if (&jsPort->wrapped() == this)
+                return Exception { DataCloneError, "Transfer list contains source port"_s };
             if (jsPort->wrapped().isDetached())
                 return Exception { DataCloneError, "MessagePort in transfer list is already detached"_s };
         }
@@ -99,16 +102,13 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
 
     Vector<TransferredMessagePort> transferredPorts;
     if (!ports.isEmpty()) {
-        // A port may not be posted through itself; posting its own entangled
-        // peer instead targets the message at itself.
+        // Posting a port's own entangled peer targets the message at itself.
+        // (The source port itself was rejected before serialization above.)
         bool targetsEntangledPeer = false;
         for (auto& port : ports) {
             if (port->pipe() == m_pipe.ptr()) {
-                if (port.get() == this)
-                    return Exception { DataCloneError, "Transfer list contains source port"_s };
-                // Keep scanning: a later transfer-list entry could be the
-                // source port itself, which must throw regardless of order.
                 targetsEntangledPeer = true;
+                break;
             }
         }
         // Detach every transfer-list port up front: transfer is atomic in node, so a

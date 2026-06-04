@@ -30,7 +30,7 @@ function waitForDebugger() {
 // Sessions with the Runtime domain enabled receive Runtime.consoleAPICalled
 // notifications for console calls, like Node's in-process inspector sessions.
 const runtimeEnabledSessions = new Set<Session>();
-const hookedConsoleMethods: Array<[string, Function]> = [];
+const hookedConsoleMethods: Array<[string, Function, Function]> = [];
 
 const CONSOLE_API_TYPES: Record<string, string> = {
   log: "log",
@@ -107,8 +107,15 @@ function emitConsoleAPICalled(type: string, args: unknown[]) {
           timestamp,
         },
       };
-      session.emit("inspectorNotification", message);
-      session.emit("Runtime.consoleAPICalled", message);
+      // A throwing listener must not make the console call itself throw,
+      // suppress the underlying output, or starve later sessions; Node
+      // surfaces listener exceptions as process warnings.
+      try {
+        session.emit("inspectorNotification", message);
+        session.emit("Runtime.consoleAPICalled", message);
+      } catch (e) {
+        process.emitWarning(e instanceof Error ? e : new Error(String(e)));
+      }
     }
   } finally {
     emittingConsoleAPI = false;
@@ -128,15 +135,20 @@ function installConsoleHooks() {
   for (const method in CONSOLE_API_TYPES) {
     const original = consoleObject[method];
     if (typeof original !== "function") continue;
-    hookedConsoleMethods.push([method, original]);
-    consoleObject[method] = makeConsoleHook(CONSOLE_API_TYPES[method], original);
+    const hook = makeConsoleHook(CONSOLE_API_TYPES[method], original);
+    hookedConsoleMethods.push([method, original, hook]);
+    consoleObject[method] = hook;
   }
 }
 
 function removeConsoleHooks() {
   const consoleObject = globalThis.console;
-  for (const [method, original] of hookedConsoleMethods) {
-    consoleObject[method] = original;
+  for (const [method, original, hook] of hookedConsoleMethods) {
+    // Only restore slots that still hold our hook — user code may have
+    // reassigned the method since the Runtime domain was enabled.
+    if (consoleObject[method] === hook) {
+      consoleObject[method] = original;
+    }
   }
   hookedConsoleMethods.length = 0;
 }

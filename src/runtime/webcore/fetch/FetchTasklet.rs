@@ -125,8 +125,8 @@ struct HttpHandoff {
 /// |---|---|---|
 /// | JS baseline | `get` — `init_exact_refs(2)` (JS) | `on_progress_update` final-tick cleanup or shutdown early-out (`release_js_ref`, JS); `callback`'s shutdown branch and `release_at_shutdown` (raw `deref_from_thread`, HTTP, JS thread parked); `release_queued_tasks_for_shutdown` in dispatch.rs (`release_js_ref`, JS) |
 /// | HTTP baseline | `get` — `init_exact_refs(2)` (JS, on the HTTP thread's behalf) | final `callback` or `release_at_shutdown` (`release_http_ref`, HTTP) |
-/// | sink | `start_request_stream` (JS) | every `write_end_request` exit (`release_sink_ref`, JS); `release_at_shutdown` when still outstanding per `sink_ref_held` (raw `deref_from_thread`, HTTP, JS thread parked) |
-/// | drain task | `on_write_request_data_drain` (HTTP) | `resume_request_data_stream` (`release_drain_task_ref`, JS); `release_at_shutdown` per `queued_drain_tasks` for nodes dropped unrun at exit (raw `deref_from_thread`, HTTP, JS thread parked) |
+/// | sink | `start_request_stream` (JS) | every `write_end_request` exit (`release_sink_ref`, JS); at exit, when still outstanding per `sink_ref_held`: `release_at_shutdown` or `callback`'s shutdown branch if the final callback landed first (raw `deref_from_thread`, HTTP) |
+/// | drain task | `on_write_request_data_drain` (HTTP) | `resume_request_data_stream` (`release_drain_task_ref`, JS); at exit, per `queued_drain_tasks` for nodes dropped unrun: `release_at_shutdown` or `callback`'s shutdown branch if the final callback landed first (raw `deref_from_thread`, HTTP) |
 ///
 /// # Lock invariants
 ///
@@ -2606,12 +2606,34 @@ impl FetchTasklet {
                 .store(false, Ordering::Release);
             drop(shared);
             if is_done {
+                // A final callback in this window removes the entry from
+                // `in_flight` (`on_async_http_callback_raw`), so
+                // `release_at_shutdown` will never run for it — balance a
+                // still-attached sink's ref and any queued drain-task refs
+                // here too, mirroring that path, or the tasklet ⇄
+                // `Box<AsyncHTTP>` ⇄ sink chain leaks at exit. The invariant
+                // is weaker than `release_at_shutdown`'s: the JS thread is
+                // not parked yet (it is running `global_exit` cleanup between
+                // `is_shutting_down = true` and `shutdown_for_exit`), but it
+                // never ticks the event loop again, so the JS-side release
+                // sites (`release_sink_ref`, `release_drain_task_ref`) cannot
+                // race these loads.
+                let sink_ref_outstanding = task_ref.sink_ref_held.load(Ordering::Acquire);
+                let drain_refs = task_ref.queued_drain_tasks.load(Ordering::Acquire);
+                if sink_ref_outstanding {
+                    // SAFETY: `task` is the live heap tasklet; refs still held.
+                    FetchTasklet::deref_from_thread(task);
+                }
+                for _ in 0..drain_refs {
+                    // SAFETY: `task` is the live heap tasklet; refs still held.
+                    FetchTasklet::deref_from_thread(task);
+                }
                 // No on_progress_update will ever run for this final result, so
                 // release the JS-side ref it would have dropped (raw
-                // `deref_from_thread` — we are on the HTTP thread, JS parked),
-                // then the HTTP-side ref. The 1→0 transition runs
-                // `dealloc_for_shutdown` (Rust boxes only — JSC handles are
-                // leaked to destructOnExit).
+                // `deref_from_thread` — we are on the HTTP thread, the JS
+                // thread never runs fetch JS again), then the HTTP-side ref.
+                // The 1→0 transition runs `dealloc_for_shutdown` (Rust boxes
+                // only — JSC handles are leaked to destructOnExit).
                 // SAFETY: `task` is the live heap tasklet; both refs held.
                 FetchTasklet::deref_from_thread(task);
                 // SAFETY: second ref still held until this 1→0 transition.

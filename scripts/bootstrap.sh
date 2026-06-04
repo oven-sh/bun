@@ -819,7 +819,11 @@ install_nodejs() {
 
 	case "$abi" in
 	musl)
-		nodejs_mirror="https://bun-nodejs-release.s3.us-west-1.amazonaws.com"
+		# nodejs.org doesn't publish musl binaries; the unofficial-builds
+		# project (nodejs/unofficial-builds) ships both x64-musl and
+		# arm64-musl for current releases. (The old private S3 mirror at
+		# bun-nodejs-release predates arm64-musl being available there.)
+		nodejs_mirror="https://unofficial-builds.nodejs.org/download/release"
 		nodejs_foldername="node-v$nodejs_version-$nodejs_platform-$nodejs_arch-musl"
 		;;
 	*)

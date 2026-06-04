@@ -32,12 +32,15 @@ export const reactCompiler: Dependency = {
   // 0001: turn off oxc_codegen's default "sourcemap" feature — the optional
   //       oxc_sourcemap dep declares `crate-type = ["lib", "cdylib"]`, and the
   //       useless cdylib artifact fails to link under bun's rustflags.
-  // 0002: trim regex to std-only (drops aho-corasick's AVX2 Teddy kernels)
-  //       and force sha2's software path (drops the SHA-NI block fn) so
-  //       baseline builds pass verify-baseline-static.
+  // 0002: force sha2's software path (drops the CPUID-dispatched SHA-NI block
+  //       fn) so baseline builds pass verify-baseline-static.
+  // 0003: drop the regex crate — its one pattern (the `use memo if(...)`
+  //       dynamic-gating directive) is a literal prefix/suffix match, and the
+  //       regex stack costs ~130 KB of machine code.
   patches: [
     "patches/react-compiler/0001-codegen-no-sourcemap.patch",
     "patches/react-compiler/0002-baseline-safe-deps.patch",
+    "patches/react-compiler/0003-remove-regex-dep.patch",
   ],
 
   // No separate build — compiled as part of the workspace cargo build via

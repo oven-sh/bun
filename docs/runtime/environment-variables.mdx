@@ -207,7 +207,7 @@ These environment variables are read by Bun and configure aspects of its behavio
 
 ## Runtime transpiler caching
 
-For files larger than 50 KB, Bun caches transpiled output into `$BUN_RUNTIME_TRANSPILER_CACHE_PATH` or the platform-specific cache directory. This makes CLIs using Bun load faster.
+For files larger than 4 KB, Bun caches transpiled output into `$BUN_RUNTIME_TRANSPILER_CACHE_PATH` or the platform-specific cache directory. This makes CLIs using Bun load faster.
 
 This transpiler cache is global and shared across all projects. It is safe to delete the cache at any time. It is a content-addressable cache, so it will never contain duplicate entries. It is also safe to delete the cache while a Bun process is running.
 
@@ -225,7 +225,7 @@ BUN_RUNTIME_TRANSPILER_CACHE_PATH=0 bun run dev
 
 It caches:
 
-- The transpiled output of source files larger than 50 KB.
+- The transpiled output of source files larger than 4 KB.
 - The sourcemap for the transpiled output of the file
 
-The file extension `.pile` is used for these cached files.
+The file extension `.pile2` is used for these cached files (Bun 1.3.x uses `.pile`).

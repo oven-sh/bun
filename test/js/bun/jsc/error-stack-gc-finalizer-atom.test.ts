@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
 import { jscInternals } from "bun:internal-for-testing";
+import { expect, test } from "bun:test";
 
 // When an Error whose .stack was never accessed outlives its stack frames'
 // functions, ErrorInstance::finalizeUnconditionally materializes the stack

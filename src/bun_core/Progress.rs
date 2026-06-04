@@ -690,8 +690,7 @@ impl Progress {
 
     pub fn log(&mut self, args: fmt::Arguments<'_>) {
         let Some(file) = self.terminal else {
-            // TODO(port): std.debug.print → bun_core::Output debug print equivalent.
-            eprint!("{}", args);
+            let _ = File::stderr().write_fmt(args);
             return;
         };
         // TODO(port): Zig `file.writerStreaming(&.{})` — map to bun_sys::File writer.

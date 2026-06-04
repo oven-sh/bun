@@ -259,7 +259,6 @@ impl HmrSocket {
                             return;
                         }
 
-                        // TODO(port): std.time.Timer — `start_async_bundle` takes Instant.
                         let timer = std::time::Instant::now();
                         dev.start_async_bundle(event.entry_points, true, timer)
                             // bun.handleOom(err) — Rust aborts on OOM by default
@@ -301,16 +300,13 @@ impl HmrSocket {
                         super::error_report_request_body::sanitize_for_terminal(data, &arena);
                     match kind {
                         ConsoleLogKind::Log => {
-                            Output::pretty(format_args!(
-                                "<r><d>[browser]<r> {}<r>\n",
-                                bstr::BStr::new(data)
-                            ));
+                            bun_core::pretty!("<r><d>[browser]<r> {}<r>\n", bstr::BStr::new(data));
                         }
                         ConsoleLogKind::Err => {
-                            Output::pretty_error(format_args!(
+                            bun_core::pretty_error!(
                                 "<r><d>[browser]<r> {}<r>\n",
                                 bstr::BStr::new(data)
-                            ));
+                            );
                         }
                     }
                     Output::flush();
@@ -323,10 +319,10 @@ impl HmrSocket {
                 };
                 let source_map_id = source_map_store::Key::init(u64::from_le_bytes(bytes));
                 let Some(kv) = self.referenced_source_maps.remove_entry(&source_map_id) else {
-                    Output::debug_warn(format_args!(
+                    bun_core::debug_warn!(
                         "unref_source_map: no entry found: {:x}\n",
                         source_map_id.get()
-                    ));
+                    );
                     return; // no entry may happen.
                 };
                 // SAFETY: JS-thread only; sole `&mut DevServer` for this scope.

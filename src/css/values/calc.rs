@@ -885,7 +885,6 @@ impl<V: CalcValue> Calc<V> {
                 None
             }
         };
-        // TODO(port): Zig threaded `&closure` here; Rust captures via fn-pointer wrapper.
         Calc::<CSSNumber>::parse_atan2_args(input, ctx, parse_ident_fn)
     }
 
@@ -926,7 +925,6 @@ impl<V: CalcValue> Calc<V> {
                 None
             }
         };
-        // TODO(port): Zig threaded `&closure` here; same reshape as parse_trig/parse_atan2.
         let v: Calc<CSSNumber> = Calc::<CSSNumber>::parse_sum(input, ctx, parse_ident_fn)?;
         let val = match v {
             Calc::Number(n) => n,

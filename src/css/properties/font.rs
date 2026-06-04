@@ -340,9 +340,6 @@ pub enum FontFamily {
     FamilyName(*const [u8]),
 }
 
-// TODO(port): Zig defined `pub fn HashMap(comptime V: type) type` wrapping std.ArrayHashMapUnmanaged
-// with a custom Wyhash hasher over the family-name bytes. Module-level alias (inherent assoc types are nightly-only).
-// blocked_on: ArrayHashMap key trait bounds for FontFamily
 pub(crate) type FontFamilyHashMap<V> = bun_collections::ArrayHashMap<FontFamily, V>;
 
 impl FontFamily {
@@ -1170,7 +1167,6 @@ fn compatible_font_family(
         // perform the inserts using the captured index.
         if let Some(i) = families.slice_const().iter().position(is_system_ui) {
             for (j, name) in DEFAULT_SYSTEM_FONTS.iter().enumerate() {
-                // TODO(port): families.insert(arena, idx, val) — Vec::insert with arena
                 families.insert(
                     i + j + 1,
                     FontFamily::FamilyName(std::ptr::from_ref::<[u8]>(*name)),

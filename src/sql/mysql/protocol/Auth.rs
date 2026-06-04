@@ -326,7 +326,6 @@ pub mod caching_sha2_password {
             Ok(())
         }
 
-        // TODO(port): `pub const decode = decoderWrap(PublicKeyResponse, decodeInternal).decode;`
         pub fn decode<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,

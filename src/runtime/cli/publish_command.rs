@@ -84,8 +84,6 @@ use crate::cli::init_command::InitCommand;
 use crate::cli::open;
 use crate::run_command::RunCommand as Run;
 
-// TODO(port): inherent associated type `Digest = [u8; N]` requires nightly
-// `inherent_associated_types`; mirror pack_command.rs and spell the array out.
 type SHA1Digest = [u8; sha::SHA1::DIGEST];
 type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
@@ -137,8 +135,6 @@ pub enum FromTarballError {
 }
 bun_core::oom_from_alloc!(FromTarballError);
 
-// TODO(port): Zig defined this as a nested type alias on the Context struct;
-// inherent associated types are unstable (rust#8995) so hoist to module scope.
 pub(crate) type FromWorkspaceError = pack::PackError<true>;
 
 impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
@@ -226,7 +222,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     continue;
                 }
 
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "<b><cyan>packed<r> {} {}\n",
                     bun_fmt::size(
                         usize::try_from(size.max(0)).expect("int cast"),
@@ -235,7 +231,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                         }
                     ),
                     bun_fmt::fmt_os_path(stripped, Default::default()),
-                ));
+                );
 
                 if next.kind != FileKind::File {
                     continue;
@@ -298,7 +294,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                     }
                 }
             } else {
-                Output::pretty(format_args!(
+                bun_core::pretty!(
                     "<b><cyan>packed<r> {} {}\n",
                     bun_fmt::size(
                         usize::try_from(size.max(0)).expect("int cast"),
@@ -307,7 +303,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                         }
                     ),
                     bun_fmt::fmt_os_path(pathname, Default::default()),
-                ));
+                );
             }
         }
 
@@ -542,10 +538,10 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 impl PublishCommand {
     pub(crate) fn exec(ctx: Command::Context) -> Result<(), Error> {
         // TODO(port): narrow error set
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "<r><b>bun publish <r><d>v{}<r>",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
         let cli = install::CommandLineArguments::parse(Subcommand::Publish)?;
@@ -628,7 +624,7 @@ impl PublishCommand {
                 }
             }
 
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 "\n<green> +<r> {}@{}{}",
                 bstr::BStr::new(&context.package_name),
                 bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
@@ -637,7 +633,7 @@ impl PublishCommand {
                 } else {
                     ""
                 },
-            ));
+            );
 
             return Ok(());
         }
@@ -693,7 +689,7 @@ impl PublishCommand {
             }
         }
 
-        Output::prettyln(format_args!(
+        bun_core::prettyln!(
             "\n<green> +<r> {}@{}{}",
             bstr::BStr::new(&context.package_name),
             bstr::BStr::new(dependency::without_build_tag(&context.package_version)),
@@ -702,7 +698,7 @@ impl PublishCommand {
             } else {
                 ""
             },
-        ));
+        );
 
         if PackageManager::get()
             .options
@@ -906,16 +902,16 @@ impl PublishCommand {
             );
 
             if package_exists {
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "Registry already knows about version {}; skipping.",
                     bstr::BStr::new(version_without_build_tag),
-                ));
+                );
                 return Ok(());
             }
         }
 
         // continues from `printSummary`
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "<b><blue>Tag<r>: {}\n<b><blue>Access<r>: {}\n<b><blue>Registry<r>: {}\n",
             bstr::BStr::new(if !ctx.manager.options.publish_config.tag.is_empty() {
                 ctx.manager.options.publish_config.tag
@@ -928,7 +924,7 @@ impl PublishCommand {
                 "default"
             },
             bstr::BStr::new(registry.url.href()),
-        ));
+        );
 
         // dry-run stops here
         if ctx.manager.options.dry_run {
@@ -1048,7 +1044,7 @@ impl PublishCommand {
                     .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
                 {
                     Output::print_error(format_args!("\n"));
-                    Output::note(format_args!("{}", bstr::BStr::new(notice)));
+                    bun_core::note!("{}", bstr::BStr::new(notice));
                     Output::flush();
                 }
 
@@ -1110,7 +1106,7 @@ impl PublishCommand {
                             .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
                         {
                             Output::print_error(format_args!("\n"));
-                            Output::note(format_args!("{}", bstr::BStr::new(notice)));
+                            bun_core::note!("{}", bstr::BStr::new(notice));
                             Output::flush();
                         }
                     }
@@ -1200,9 +1196,9 @@ impl PublishCommand {
                 };
                 let done_url = URL::parse(crate::cli::cli_dupe(done_url_str));
 
-                Output::prettyln(format_args!(
+                bun_core::prettyln!(
                     "\nAuthenticate your account at (press <b>ENTER<r> to open in browser):\n",
-                ));
+                );
 
                 const PADDING: usize = 1;
 
@@ -1249,10 +1245,7 @@ impl PublishCommand {
                 for _ in 0..PADDING {
                     Output::print(format_args!(" "));
                 }
-                Output::pretty(format_args!(
-                    "<b>{}<r>",
-                    bstr::BStr::new(auth_url_str.as_bytes())
-                ));
+                bun_core::pretty!("<b>{}<r>", bstr::BStr::new(auth_url_str.as_bytes()));
                 for _ in 0..PADDING {
                     Output::print(format_args!(" "));
                 }
@@ -1266,7 +1259,6 @@ impl PublishCommand {
                 Output::flush();
 
                 // on another thread because pressing enter is not required
-                // TODO(port): Zig used std.Thread.spawn — bun_threading has no spawn; use std::thread::Builder
                 match std::thread::Builder::new()
                     .spawn(move || Self::press_enter_to_open_in_browser(auth_url_str))
                 {
@@ -1382,7 +1374,7 @@ impl PublishCommand {
                                 .get_if_other_is_absent(b"npm-notice", b"x-local-cache")
                             {
                                 Output::print_error(format_args!("\n"));
-                                Output::note(format_args!("{}", bstr::BStr::new(notice)));
+                                bun_core::note!("{}", bstr::BStr::new(notice));
                                 Output::flush();
                             }
 
@@ -1658,10 +1650,10 @@ impl PublishCommand {
                         b"./",
                     );
                     if !bun_sys::exists_at(workspace_root, normalized) {
-                        Output::warn(format_args!(
+                        bun_core::warn!(
                             "bin '{}' does not exist",
                             bstr::BStr::new(normalized.as_bytes()),
-                        ));
+                        );
                     }
 
                     bin_props.push(G::Property {
@@ -1676,7 +1668,6 @@ impl PublishCommand {
                         ..Default::default()
                     });
 
-                    // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
                     json.data
                         .e_object_mut()
                         .expect("infallible: variant checked")
@@ -1743,10 +1734,10 @@ impl PublishCommand {
                         }
 
                         if !bun_sys::exists_at(workspace_root, &value) {
-                            Output::warn(format_args!(
+                            bun_core::warn!(
                                 "bin '{}' does not exist",
                                 bstr::BStr::new(value.as_bytes()),
-                            ));
+                            );
                         }
 
                         bin_props.push(G::Property {
@@ -1762,7 +1753,6 @@ impl PublishCommand {
                         });
                     }
 
-                    // TODO(port): direct mutation of e_object.properties[i] — borrowck reshape may be needed
                     json.data
                         .e_object_mut()
                         .expect("infallible: variant checked")
@@ -1804,10 +1794,10 @@ impl PublishCommand {
                     Ok(fd) => fd,
                     Err(e) => {
                         if e.get_errno() == bun_sys::E::ENOENT {
-                            Output::warn(format_args!(
+                            bun_core::warn!(
                                 "bin directory '{}' does not exist",
                                 bstr::BStr::new(normalized_bin_dir.as_bytes()),
-                            ));
+                            );
                             return Ok(());
                         } else {
                             Output::err(
@@ -1820,7 +1810,6 @@ impl PublishCommand {
                     }
                 };
 
-                // TODO(port): Zig used std.fs.Dir here for openDirZ — using bun_sys::Fd instead
                 let mut dirs: Vec<(Fd, Box<[u8]>, bool)> = Vec::new();
 
                 dirs.push((bin_dir, normalized_bin_dir.as_bytes().into(), false));
@@ -1887,7 +1876,6 @@ impl PublishCommand {
                         });
 
                         if entry.kind == bun_sys::EntryKind::Directory {
-                            // TODO(port): Zig used dir.openDirZ — substituting bun_sys::openat
                             let Ok(subdir) = bun_sys::openat(dir, name, bun_sys::O::DIRECTORY, 0)
                             else {
                                 continue;

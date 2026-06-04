@@ -59,7 +59,6 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
             let path = bun_jsc::URL::path_from_file_url(source_url_string.dupe_ref());
 
             if path.is_dead() {
-                // TODO(port): verify ERR builder API shape (`global.ERR(.INVALID_URL, fmt, args).throw()`)
                 return Err(global.throw_value(global.err_invalid_url(format_args!(
                     "Invalid URL: {}",
                     BStr::new(source_url_slice.slice())

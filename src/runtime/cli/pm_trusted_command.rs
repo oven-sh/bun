@@ -34,7 +34,7 @@ impl DefaultTrustedCommand {
             DEFAULT_TRUSTED_DEPENDENCIES_LIST.len()
         ));
         for name in DEFAULT_TRUSTED_DEPENDENCIES_LIST.iter() {
-            Output::pretty(format_args!(" <d>-<r> {}\n", bstr::BStr::new(name)));
+            bun_core::pretty!(" <d>-<r> {}\n", bstr::BStr::new(name));
         }
 
         Ok(())
@@ -50,10 +50,10 @@ impl UntrustedCommand {
         args: &[&[u8]],
     ) -> Result<(), bun_core::Error> {
         let _ = args;
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "<r><b>bun pm untrusted <r><d>v{}<r>\n\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
         // PORT NOTE: reshaped for borrowck — `LoadResult` returned by
@@ -181,27 +181,27 @@ impl UntrustedCommand {
             let resolution = &lockfile.packages.items_resolution()[package_id as usize];
 
             scripts_list.print_scripts(resolution, buf, PrintFormat::Untrusted);
-            Output::pretty(format_args!("\n"));
+            bun_core::pretty!("\n");
         }
 
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "These dependencies had their lifecycle scripts blocked during install.\n\
              \n\
              If you trust them and wish to run their scripts, use <d>`<r><blue>bun pm trust<r><d>`<r>.\n"
-        ));
+        );
 
         let _ = ctx;
         Ok(())
     }
 
     fn print_zero_untrusted_dependencies_found() {
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "Found <b>0<r> untrusted dependencies with scripts.\n\
              \n\
              This means all packages with scripts are in \"trustedDependencies\" or none of your dependencies have scripts.\n\
              \n\
              For more information, visit <magenta>https://bun.com/docs/install/lifecycle#trusteddependencies<r>\n"
-        ));
+        );
     }
 }
 
@@ -236,7 +236,7 @@ impl TrustCommand {
                 (),
             );
             for arg in packages_to_trust {
-                Output::pretty_error(format_args!(" <d>-<r> {}\n", bstr::BStr::new(arg)));
+                bun_core::pretty_error!(" <d>-<r> {}\n", bstr::BStr::new(arg));
             }
         }
     }
@@ -246,10 +246,10 @@ impl TrustCommand {
         pm: &mut PackageManager,
         args: &[&[u8]],
     ) -> Result<(), bun_core::Error> {
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "<r><b>bun pm trust <r><d>v{}<r>\n",
             Global::package_json_version_with_sha,
-        ));
+        );
         Output::flush();
 
         if args.len() == 2 {
@@ -480,10 +480,10 @@ impl TrustCommand {
                     if unsafe { (*pm_raw).options.log_level.is_verbose() }
                         && PackageManager::has_enough_time_passed_between_waiting_messages()
                     {
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<d>[PackageManager]<r> waiting for {} scripts\n",
                             LifecycleScriptSubprocess::alive_count().load(Ordering::Relaxed)
-                        ));
+                        );
                     }
 
                     // SAFETY: `pm_raw` singleton.
@@ -683,7 +683,7 @@ impl TrustCommand {
         #[cfg(debug_assertions)]
         debug_assert!(total_scripts_ran > 0);
 
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             " <green>{}<r> script{} ran across {} package{} ",
             total_scripts_ran,
             if total_scripts_ran > 1 { "s" } else { "" },
@@ -693,18 +693,18 @@ impl TrustCommand {
             } else {
                 ""
             },
-        ));
+        );
 
         Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
         Output::print(format_args!("\n"));
 
         if total_skipped_packages > 0 {
             Output::print(format_args!("\n"));
-            Output::prettyln(format_args!(
+            bun_core::prettyln!(
                 " <yellow>{}<r> package{} with blocked scripts",
                 total_skipped_packages,
                 if total_skipped_packages > 1 { "s" } else { "" },
-            ));
+            );
         }
 
         Ok(())

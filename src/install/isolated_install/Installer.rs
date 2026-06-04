@@ -873,7 +873,6 @@ impl Task {
         let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
         let pkg_res = pkg_resolutions[pkg_id as usize];
 
-        // TODO(port): Zig labeled-switch `next_step:` modeled as loop+match
         let mut step =
             Step::from_u32(entry_steps[self.entry_id.get() as usize].load(Ordering::Acquire));
         'step: loop {
@@ -901,7 +900,6 @@ impl Task {
                             };
                             let _folder_dir_guard = sys::CloseOnDrop::new(folder_dir);
 
-                            // TODO(port): Zig labeled-switch `backend:` modeled as loop+match
                             let mut backend = InstallMethod::Hardlink;
                             'backend: loop {
                                 match backend {
@@ -931,7 +929,7 @@ impl Task {
                                                 }
 
                                                 if PackageManager::verbose_install() {
-                                                    Output::pretty_errorln(format_args!(
+                                                    bun_core::pretty_errorln!(
                                                         "<red><b>error<r><d>:<r>Failed to hardlink package folder\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                         err,
                                                         bun_core::fmt::fmt_os_path(
@@ -950,7 +948,7 @@ impl Task {
                                                                 escape_backslashes: false
                                                             }
                                                         ),
-                                                    ));
+                                                    );
                                                     Output::flush();
                                                 }
                                                 return Ok(Yield::failure(TaskError::LinkPackage(
@@ -1023,7 +1021,7 @@ impl Task {
                                             sys::Result::Ok(()) => {}
                                             sys::Result::Err(err) => {
                                                 if PackageManager::verbose_install() {
-                                                    Output::pretty_errorln(format_args!(
+                                                    bun_core::pretty_errorln!(
                                                         "<red><b>error<r><d>:<r>Failed to copy package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                         err,
                                                         bun_core::fmt::fmt_os_path(
@@ -1042,7 +1040,7 @@ impl Task {
                                                                 escape_backslashes: false
                                                             }
                                                         ),
-                                                    ));
+                                                    );
                                                     Output::flush();
                                                 }
                                                 return Ok(Yield::failure(TaskError::LinkPackage(
@@ -1243,7 +1241,7 @@ impl Task {
                                 #[cfg(target_os = "macos")]
                                 {
                                     if manager_ref.options.log_level.is_verbose() {
-                                        Output::pretty_errorln(format_args!(
+                                        bun_core::pretty_errorln!(
                                             "Cloning {} to {}",
                                             bun_core::fmt::fmt_os_path(
                                                 pkg_cache_dir_subpath.slice_z(),
@@ -1259,7 +1257,7 @@ impl Task {
                                                     ..Default::default()
                                                 },
                                             ),
-                                        ));
+                                        );
                                         Output::flush();
                                     }
 
@@ -1309,10 +1307,10 @@ impl Task {
                                     sys::Result::Ok(fd) => Some(fd),
                                     sys::Result::Err(err) => {
                                         if PackageManager::verbose_install() {
-                                            Output::pretty_errorln(format_args!(
+                                            bun_core::pretty_errorln!(
                                                 "Failed to open cache directory for hardlink: {}",
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
-                                            ));
+                                            );
                                             Output::flush();
                                         }
                                         return Ok(Yield::failure(TaskError::LinkPackage(err)));
@@ -1342,7 +1340,7 @@ impl Task {
                                             continue 'backend;
                                         }
                                         if PackageManager::verbose_install() {
-                                            Output::pretty_errorln(format_args!(
+                                            bun_core::pretty_errorln!(
                                                 "<red><b>error<r><d>:<r>Failed to hardlink package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
@@ -1353,7 +1351,7 @@ impl Task {
                                                         escape_backslashes: false
                                                     }
                                                 ),
-                                            ));
+                                            );
                                             Output::flush();
                                         }
                                         return Ok(Yield::failure(TaskError::LinkPackage(err)));
@@ -1373,7 +1371,7 @@ impl Task {
                                     sys::Result::Ok(fd) => Some(fd),
                                     sys::Result::Err(err) => {
                                         if PackageManager::verbose_install() {
-                                            Output::pretty_errorln(format_args!(
+                                            bun_core::pretty_errorln!(
                                                 "<red><b>error<r><d>:<r>Failed to open cache directory for copyfile\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
@@ -1384,7 +1382,7 @@ impl Task {
                                                         escape_backslashes: false
                                                     }
                                                 ),
-                                            ));
+                                            );
                                             Output::flush();
                                         }
                                         return Ok(Yield::failure(TaskError::LinkPackage(err)));
@@ -1406,7 +1404,7 @@ impl Task {
                                     sys::Result::Ok(()) => {}
                                     sys::Result::Err(err) => {
                                         if PackageManager::verbose_install() {
-                                            Output::pretty_errorln(format_args!(
+                                            bun_core::pretty_errorln!(
                                                 "<red><b>error<r><d>:<r>Failed to copy package\n{}\n<d>From: {}<r>\n<d>  To: {}<r>\n<r>",
                                                 err,
                                                 bstr::BStr::new(pkg_cache_dir_subpath.slice()),
@@ -1417,7 +1415,7 @@ impl Task {
                                                         escape_backslashes: false
                                                     }
                                                 ),
-                                            ));
+                                            );
                                             Output::flush();
                                         }
                                         return Ok(Yield::failure(TaskError::LinkPackage(err)));
@@ -1864,11 +1862,11 @@ impl Task {
                             strings::StringOrTinyString::init(dep_name);
 
                         if manager_ref.options.log_level.is_verbose() {
-                            Output::pretty_errorln(format_args!(
+                            bun_core::pretty_errorln!(
                                 "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
                                 bstr::BStr::new(dep_name),
                                 bstr::BStr::new(bin_linker.target_package_name.slice()),
-                            ));
+                            );
                         }
 
                         bin_linker.link(false);
@@ -2369,11 +2367,11 @@ impl<'a> Installer<'a> {
                 bin_linker.target_package_name = package_name;
 
                 if self.manager().options.log_level.is_verbose() {
-                    Output::pretty_errorln(format_args!(
+                    bun_core::pretty_errorln!(
                         "<d>[Bin Linker]<r> {} -> {} retrying without native bin link",
                         bstr::BStr::new(package_name.slice()),
                         bstr::BStr::new(target_package_name.slice()),
-                    ));
+                    );
                 }
 
                 bin_linker.link(false);

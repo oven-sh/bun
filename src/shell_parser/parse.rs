@@ -184,7 +184,7 @@ pub mod ast {
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-    #[strum(serialize_all = "kebab-case")] // TODO(port): tag names must match Zig exactly ("-a", "==", etc.)
+    #[strum(serialize_all = "kebab-case")]
     pub enum CondExprOp {
         /// -a file: True if file exists.
         #[strum(serialize = "-a")]
@@ -320,7 +320,6 @@ pub mod ast {
         }
 
         /// Single-arg ops: name starts with '-' and len == 2.
-        // TODO(port): Zig built this via @typeInfo reflection over enum fields. Hand-rolled here.
         pub const SINGLE_ARG_OPS: &'static [(&'static str, CondExprOp)] = &[
             ("-a", CondExprOp::DashA),
             ("-b", CondExprOp::DashB),
@@ -3559,7 +3558,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         // Set the cursor to decode the codepoint at new_idx.
         // Use width=0 so that nextCursor (which computes pos = width + i)
         // starts reading from exactly new_idx.
-        // TODO(port): direct field access on SrcUnicode cursor — encapsulate in helper.
         self.chars.src.set_unicode_cursor(new_idx);
         if let Some(pc) = prev_ascii_char {
             self.chars.prev = Some(InputChar {
@@ -3599,7 +3597,6 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 match bytes[i] {
                     b'0'..=b'9' => {
                         if digit_buf_count as usize >= digit_buf.len() {
-                            // TODO(port): Zig comptime concat for error string. Build at runtime.
                             let mut error_buf = Vec::new();
                             write!(
                                 &mut error_buf,
@@ -3927,8 +3924,6 @@ pub enum CharState {
     Double,
 }
 
-// TODO(port): Zig `Src = switch (encoding) { .ascii => SrcAscii, .wtf8/.utf16 => SrcUnicode }`
-// — Rust const-generic-on-enum can't pick a struct type. Use a tagged union and branch on ENCODING.
 #[derive(Clone, Copy)]
 pub enum Src<'a> {
     Ascii(SrcAscii<'a>),
@@ -4498,8 +4493,6 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         // equivalent of the previous `assume_init_read` + `ptr::copy` shift.
         self.slice_mut()[idx..].rotate_left(1);
         self.pop()
-        // TODO(port): Zig fn returns T but body falls off end without returning the removed item
-        // (likely a Zig bug). Here we return it.
     }
 
     pub(crate) fn swap_remove(&mut self, idx: usize) -> T {
@@ -4511,7 +4504,6 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         let last = self.len as usize - 1;
         self.slice_mut().swap(idx, last);
         self.pop()
-        // TODO(port): same Zig oddity — pop() decremented len already; restore by writing back.
     }
 
     pub(crate) fn pop(&mut self) -> T {
@@ -4567,7 +4559,6 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
         let mut cost = size_of::<Self>();
         match self {
             SmolList::Inlined(inlined) => {
-                // TODO(port): Zig branches on `@hasDecl(T, "memoryCost")` — express via trait/specialization.
                 for item in inlined.slice() {
                     cost += item.memory_cost();
                 }
@@ -4655,8 +4646,6 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                 // arena-backed and `!Drop`).
                 inlined.slice_mut().rotate_left(starting_idx);
                 inlined.len = u32::try_from(new_len).expect("int cast");
-                // TODO(port): Zig version copies into [0..starting_idx] which is a bug if
-                // new_len > starting_idx; mirroring intended semantics (shift-down) here.
             }
             SmolList::Heap(heap) => {
                 // `Vec::drain` shifts the tail down and drops the prefix.

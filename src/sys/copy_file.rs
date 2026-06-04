@@ -342,7 +342,6 @@ pub fn copy_file_range(
         && !copy_file_state.contains(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED)
     {
         loop {
-            // TODO(port): raw syscall binding `std.os.linux.copy_file_range`
             // SAFETY: raw syscall; fds valid, offset ptrs null
             let rc = unsafe {
                 crate::linux::copy_file_range(
@@ -385,7 +384,6 @@ pub fn copy_file_range(
     }
 
     while !copy_file_state.contains(LinuxCopyFileState::HAS_SENDFILE_FAILED) {
-        // TODO(port): raw syscall binding `std.os.linux.sendfile`
         // SAFETY: raw syscall; fds valid, offset ptr null
         let rc = unsafe { crate::linux::sendfile(out, in_, core::ptr::null_mut(), len) };
         crate::syslog!("sendfile({}, {}, {}) = {}", in_, out, len, rc);

@@ -51,8 +51,6 @@ use crate::options::{Loader, OutputKind};
 use crate::options_impl::LoaderExt as _;
 use crate::{BundleV2, Chunk, LinkerGraph};
 
-// TODO(port): lifetime — LIFETIMES.tsv has no rows for this file; classified as
-// BORROW_PARAM (transient formatter struct passed by value).
 #[derive(Clone, Copy)]
 pub struct HTMLImportManifest<'a> {
     pub index: u32,

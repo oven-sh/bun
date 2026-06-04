@@ -710,7 +710,6 @@ impl NumberRenamer {
     ) {
         let mut s: *mut NumberScope = initial_scope;
         let mut scope = scope_;
-        // TODO(port): defer cleanup of `s` if s != initial_scope — handled at end
 
         loop {
             let symbol_count = scope.members.count() + scope.generated.len_u32() as usize;

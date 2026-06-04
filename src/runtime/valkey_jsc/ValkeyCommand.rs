@@ -200,7 +200,7 @@ impl Meta {
 /// Promise for a Valkey command
 pub struct Promise {
     pub meta: Meta,
-    pub promise: jsc::JSPromiseStrong, // TODO(port): exact path for jsc.JSPromise.Strong
+    pub promise: jsc::JSPromiseStrong,
 }
 
 impl Promise {
@@ -214,7 +214,6 @@ impl Promise {
         global_object: &JSGlobalObject,
         value: &mut protocol::RESPValue,
     ) -> Result<(), jsc::JsTerminated> {
-        // TODO(port): bun.JSTerminated! mapping
         let options = ToJSOptions {
             return_as_buffer: self.meta.contains(Meta::RETURN_AS_BUFFER),
         };
@@ -235,7 +234,6 @@ impl Promise {
         global_object: &JSGlobalObject,
         jsvalue: JsResult<JSValue>,
     ) -> Result<(), jsc::JsTerminated> {
-        // TODO(port): bun.JSTerminated! mapping
         self.promise.reject(global_object, jsvalue)?;
         Ok(())
     }
@@ -261,7 +259,6 @@ impl PromisePair {
         global_object: &JSGlobalObject,
         jsvalue: JSValue,
     ) -> Result<(), jsc::JsTerminated> {
-        // TODO(port): bun.JSTerminated! mapping
         self.promise.reject(global_object, Ok(jsvalue))?;
         Ok(())
     }

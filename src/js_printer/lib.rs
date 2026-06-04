@@ -957,9 +957,6 @@ pub fn estimate_length_for_utf8(input: &[u8], ascii_only: bool, quote_char: u8) 
         // The branch above already handled the loop body; falling out of the loop with no
         // iterations means "no escapes anywhere".
     }
-    // TODO(port): the original `while ... else { return remaining.len + 2 }` returns early when
-    // index_of_needs_escape returns null at the *first* check. The current shape returns `len`
-    // (which equals 2) plus nothing for `remaining`. Match Zig precisely.
     len + remaining.len()
 }
 
@@ -1003,8 +1000,6 @@ pub fn write_pre_quoted_string_inner<W, const ENCODING: Encoding>(
 where
     W: Write + ?Sized,
 {
-    // TODO(port): for ENCODING == Utf16, Zig reinterprets `text_in` as []const u16 via bytesAsSlice.
-    // In Rust we keep `text_in: &[u8]` and index by code-unit width below.
     debug_assert!(
         !(json && quote_char != b'"'),
         "for json, quote_char must be '\"'"
@@ -1224,9 +1219,6 @@ pub fn write_json_string<W: Write + ?Sized, const ENCODING: Encoding>(
 // SourceMapHandler / Options — gated on bun_sourcemap::Chunk::Builder and the
 // real bun_js_parser::{runtime, Ast::*} surface.
 // ───────────────────────────────────────────────────────────────────────────
-// TODO(port): bun_sourcemap::Chunk::Builder
-// TODO(port): bun_ast::runtime::Runtime::Imports
-// TODO(port): bun_ast::Ast::CommonJSNamedExports
 pub struct SourceMapHandler<'a> {
     pub ctx: NonNull<()>,
     pub callback: fn(*mut (), SourceMap::Chunk, &bun_ast::Source) -> Result<(), bun_core::Error>,
@@ -1294,7 +1286,6 @@ pub struct Options<'a> {
     pub module_hash: u32,
     pub source_path: Option<FsPath<'a>>,
     // allocator dropped — global mimalloc (this is an AST crate but Options.allocator is the global default)
-    // TODO(port): source_map_allocator was Option<Allocator>; arena-backed in some callers
     pub source_map_handler: Option<SourceMapHandler<'a>>,
     pub source_map_builder: Option<&'a mut SourceMap::chunk::Builder>,
     // TODO(port): bun_options_types::schema::api::CssInJsBehavior — local stand-in.
@@ -4698,9 +4689,7 @@ pub mod __gated_printer {
                 initializer: item_in.initializer,
                 // PERF(port): Vec not Copy — re-slice instead of move.
                 ts_decorators: bun_alloc::AstAlloc::vec(),
-                // TODO(port): ts_decorators not used by the printer; Vec is !Copy so omit the copy.
                 ts_metadata: Default::default(),
-                // TODO(port): ts_metadata not used by the printer; not Copy.
             };
             if !IS_JSON {
                 if item.kind == G::PropertyKind::Spread {
@@ -6892,9 +6881,6 @@ pub mod __gated_printer {
             };
             self.print_decls(keyword, decls, ExprFlag::none(), tlm);
             self.print_semicolon_after_statement();
-            // TODO(port): bun_ast::runtime::Imports::__export — the
-            // full `runtime.rs` is ``-gated upstream; the active
-            // `parser.rs::Runtime::Imports` stub is a fieldless unit struct.
 
             if REWRITE_ESM_TO_CJS && is_export && !decls.is_empty() {
                 // PORT NOTE: Zig stored `?GeneratedSymbol`; the Rust `runtime::Imports`
@@ -7706,7 +7692,6 @@ pub struct DirectWriter {
 
 impl DirectWriter {
     pub fn write(&mut self, buf: &[u8]) -> Result<usize, bun_core::Error> {
-        // TODO(port): Zig used std.posix.write directly. Route via bun_sys::write.
         bun_sys::write(self.handle, buf)
             .map_err(|e| bun_core::Error::from_errno(i32::from(e.errno)))
     }
@@ -7976,7 +7961,6 @@ pub fn get_source_map_builder<const IS_BUN_PLATFORM: bool>(
     tree: &Ast,
 ) -> SourceMap::chunk::Builder {
     if generate_source_map == GenerateSourceMap::Disable {
-        // TODO(port): Zig returned `undefined` here.
         return SourceMap::chunk::Builder::default();
     }
 
@@ -8479,7 +8463,6 @@ pub fn print_with_writer_and_platform<
     if let Err(err) = printer.writer.done() {
         // In bundle_v2, this is backed by an arena, but incremental uses
         // `dev.allocator` for this buffer, so it must be freed.
-        // TODO(port): printer.source_map_builder.source_map.ctx.data.deinit() — Drop handles.
         return PrintResult::Err(err);
     }
 

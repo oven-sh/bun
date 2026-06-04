@@ -217,8 +217,6 @@ impl Default for Response {
     }
 }
 
-// TODO(port): WeakPtr is intrusive (embedded WeakPtrData field). Keep raw-pointer
-// semantics; do NOT map to std::rc::Weak (owner is intrusive-refcounted).
 impl bun_ptr::weak_ptr::HasWeakPtrData for Response {
     unsafe fn weak_ptr_data(this: *mut Self) -> *mut WeakPtrData {
         // SAFETY: caller guarantees `this` points to a live (possibly-finalized) allocation.
@@ -406,10 +404,6 @@ impl Response {
     }
 }
 
-// TODO(port): bun_jsc::* + bun_core::form_data — to_js, JsRef::try_get/
-// init_weak, js::gc::stream, ReadableStream::from_js, BodyValue::estimated_size,
-// JSValue methods. Everything below until `Init` is JSC integration.
-
 impl Response {
     #[inline]
     pub fn get_body_len(&self) -> usize {
@@ -487,8 +481,6 @@ impl Response {
         }
     }
 }
-
-// TODO(port): bun_jsc::* — host_fn, callframe.arguments_old, JSValue::as_.
 
 mod _jsc_host_fns {
     use super::*;
@@ -683,10 +675,6 @@ impl Response {
     }
 }
 
-// TODO(port): bun_jsc::* — write_format ConsoleFormatter, do_clone/
-// constructor/from_js paths (need codegen js::gc::stream slots, JsClass downcast,
-// Body::extract).
-
 impl Response {
     pub fn write_format<F, W, const ENABLE_ANSI_COLORS: bool>(
         &self,
@@ -735,11 +723,7 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>url<d>:<r> \"")
             )?;
-            write!(
-                writer,
-                "{}",
-                Output::pretty_fmt_args("<r><b>{}<r>", ENABLE_ANSI_COLORS, (self.url.get(),))
-            )?;
+            bun_core::write_pretty!(writer, ENABLE_ANSI_COLORS, "<r><b>{}<r>", self.url.get())?;
             writer.write_str("\"")?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
@@ -767,14 +751,11 @@ impl Response {
                 "{}",
                 Output::pretty_fmt::<ENABLE_ANSI_COLORS>("<r>statusText<d>:<r> ")
             )?;
-            write!(
+            bun_core::write_pretty!(
                 writer,
-                "{}",
-                Output::pretty_fmt_args(
-                    "<r>\"<b>{}<r>\"",
-                    ENABLE_ANSI_COLORS,
-                    (&self.init.get().status_text,)
-                )
+                ENABLE_ANSI_COLORS,
+                "<r>\"<b>{}<r>\"",
+                &self.init.get().status_text
             )?;
             formatter.print_comma::<_, ENABLE_ANSI_COLORS>(writer)?;
             writer.write_str("\n")?;
@@ -1029,8 +1010,6 @@ impl Response {
                         .get()
                         .value
                         .set(BodyValue::InternalBlob(InternalBlob {
-                            // TODO(port): Zig used Managed(u8).fromOwnedSlice; bytes.slice() ownership
-                            // transfers here as Vec<u8>.
                             bytes: bytes.into_vec(),
                             was_string: true,
                         }));
@@ -1499,8 +1478,6 @@ pub fn status_200(global_this: &JSGlobalObject) -> *mut Response {
 
 #[inline]
 fn empty_with_status(_global: &JSGlobalObject, status: u16) -> *mut Response {
-    // TODO(port): Zig signature says `Response` but body calls bun.new(Response, ...) —
-    // it actually returns *Response. Preserving the heap-alloc behavior.
     bun_core::heap::into_raw(Box::new(Response {
         body: JsCell::new(Body::new(BodyValue::Null)),
         init: JsCell::new(Init {

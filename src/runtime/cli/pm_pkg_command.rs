@@ -79,6 +79,8 @@ impl PmPkgCommand {
     }
 
     fn print_help() {
+        #[allow(clippy::disallowed_methods)]
+        // help-text const contains <tag> markup that must be tag-walked
         Output::prettyln(format_args!(
             "{}",
             const_format::concatcp!(
@@ -109,6 +111,8 @@ impl PmPkgCommand {
 
 <b>More info<r>: <magenta>https://bun.com/docs/cli/pm#pkg<r>
 "#;
+        #[allow(clippy::disallowed_methods)]
+        // help-text const contains <tag> markup and literal JSON braces
         Output::pretty(format_args!("{}", HELP_TEXT));
         Output::flush();
     }
@@ -418,10 +422,7 @@ impl PmPkgCommand {
                         >(pkg_dir, &mut buf, &[bin_path]);
 
                         if !bun_sys::exists_z(full_path) {
-                            Output::warn(format_args!(
-                                "No bin file found at {}",
-                                bstr::BStr::new(bin_path)
-                            ));
+                            bun_core::warn!("No bin file found at {}", bstr::BStr::new(bin_path));
                         }
                     }
                 }
@@ -533,7 +534,6 @@ impl PmPkgCommand {
                         }
 
                         current = arr.items.slice()[index];
-                        // TODO(port): Expr likely Copy via arena handle; verify.
                     } else {
                         if !matches!(current.data, ExprData::EObject(_)) {
                             return Err(err!("NotFound"));
@@ -939,7 +939,6 @@ impl PmPkgCommand {
         }
 
         let content = writer.ctx.written_without_trailing_zero();
-        // TODO(port): Zig used std.fs.cwd().writeFile; using bun_sys per porting rules (no std::fs).
         let path_z = bun_core::ZBox::from_bytes(path);
         if let Err(e) = bun_sys::File::write_file(bun_sys::Fd::cwd(), path_z.as_zstr(), content) {
             Output::err_generic(

@@ -8,7 +8,6 @@ pub enum ColumnIdentifier {
 
 impl ColumnIdentifier {
     pub fn init(name: Data) -> Result<Self, bun_alloc::AllocError> {
-        // TODO(port): narrow error set — only `try` site is name.to_owned()
         const U32_MAX_DIGITS: usize = "4294967295".len();
         let might_be_int = match name.slice().len() {
             1..=U32_MAX_DIGITS => true,

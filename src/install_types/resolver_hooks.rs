@@ -1416,7 +1416,6 @@ impl WakeHandler {
         // PORT NOTE: Zig casts `t.handler` (the wrong field) to the dep-error fn type — this is
         // a Zig bug. The port reads `on_dependency_error` instead; preserving the bug would
         // require an unsound transmute between fn-pointer signatures.
-        // TODO(port): upstream fix to PackageManager.zig
         self.on_dependency_error.unwrap()
     }
 }

@@ -37,7 +37,6 @@ pub struct Snapshots<'a> {
     pub _current_file: Option<File>,
     // TODO(port): lifetime — borrows Jest.runner.files[..].source.path; BACKREF (not owned, never freed).
     pub snapshot_dir_path: Option<core::ptr::NonNull<[u8]>>,
-    // TODO(port): LIFETIMES.tsv says `IndexMap<FileId, Vec<..>>`; PORTING.md prefers `bun_collections::ArrayHashMap`.
     pub inline_snapshots_to_write: &'a mut IndexMap<FileId, Vec<InlineSnapshotToWrite>>,
     pub last_error_snapshot_name: Option<Box<[u8]>>,
 }
@@ -89,7 +88,6 @@ impl InlineSnapshotToWrite {
 
 pub struct File {
     pub id: FileId,
-    // TODO(port): Zig used `std.fs.File` (via `fd.stdFile()`); std::fs is banned. Using bun_sys::File.
     pub file: bun_sys::File,
 }
 
@@ -164,7 +162,6 @@ impl<'a> Snapshots<'a> {
         // immutably for the whole fn body (NLL limitation with returned borrows), preventing
         // the later `insert`. Probe with `contains_key` first; re-lookup on hit.
         if self.values.contains_key(&name_hash) {
-            // TODO(port): returning &[u8] borrowing self.values; lifetime tied to &mut self.
             return Ok(Some(&**self.values.get(&name_hash).unwrap()));
         }
 
@@ -421,7 +418,6 @@ impl<'a> Snapshots<'a> {
                 let p = Jest::RUNNER.read().expect("Jest runner not set").as_ptr();
                 &(*p).files.items_source()[file_id as usize]
             };
-            // TODO(port): arena.dupeZ — using owned Vec<u8> with trailing NUL.
             let test_filename: Box<[u8]> = {
                 let mut v = test_file_source.path.text.to_vec();
                 v.push(0);

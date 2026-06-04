@@ -458,7 +458,7 @@ impl FetchTasklet {
         }
 
         if let Some(certificate) = self.result.certificate_info.take() {
-            drop(certificate); // TODO(port): CertificateInfo::deinit(allocator) -> Drop
+            drop(certificate);
         }
 
         // PORT NOTE: Zig `entries.deinit()` + `buf.deinit()`; Rust drop on
@@ -470,7 +470,7 @@ impl FetchTasklet {
         }
 
         if let Some(metadata) = self.metadata.take() {
-            drop(metadata); // TODO(port): HTTPResponseMetadata::deinit(allocator) -> Drop
+            drop(metadata);
         }
 
         self.response_buffer = MutableString::default();
@@ -1721,7 +1721,7 @@ impl FetchTasklet {
             metadata: None,
             javascript_vm: jsc_vm,
             global_this: GlobalRef::from(global_this),
-            request_body: fetch_options.body, // TODO(port): move semantics; FetchOptions consumed
+            request_body: fetch_options.body,
             request_body_streaming_buffer: None,
             response_buffer: MutableString::default(),
             scheduled_response_buffer: MutableString::default(),

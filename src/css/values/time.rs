@@ -68,7 +68,6 @@ impl Time {
         let token = input.next()?.clone();
         match &token {
             Token::Dimension(dim) => {
-                // TODO(port): Zig fn name has a typo (`ASCIII`); verify exact bun_str symbol.
                 if bun_core::strings::eql_case_insensitive_ascii_check_length(b"s", dim.unit) {
                     Ok(Time::Seconds(dim.num.value))
                 } else if bun_core::strings::eql_case_insensitive_ascii_check_length(

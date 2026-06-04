@@ -34,9 +34,6 @@ use core::sync::atomic::{AtomicU32, Ordering};
 #[cfg(debug_assertions)]
 use bun_core::StoredTrace;
 
-// TODO(port): `ThreadId` / `INVALID_THREAD_ID` / `current_thread_id()` come from the sibling
-// `src/safety/thread_id.zig` port + Zig's `std.Thread`. TODO(port): confirm the concrete integer
-// width and atomic type (Zig's `std.Thread.Id` is platform-dependent).
 #[cfg(debug_assertions)]
 use super::thread_id::{
     AtomicThreadId, INVALID as INVALID_THREAD_ID, ThreadId, current as current_thread_id,

@@ -1,7 +1,6 @@
 use core::mem::size_of;
 
 use bun_collections::DynamicBitSet as Bitset;
-use bun_core::Output;
 #[cfg(debug_assertions)]
 use bun_core::strings;
 
@@ -250,11 +249,7 @@ where
     macro_rules! save_generic_field {
         ($field:ident, $name:literal, $elem:ty, $prefix:literal) => {{
             if options.log_level.is_verbose() {
-                Output::pretty_errorln(format_args!(
-                    "Saving {} {}",
-                    buffers.$field.len(),
-                    $name
-                ));
+                bun_core::pretty_errorln!("Saving {} {}", buffers.$field.len(), $name);
             }
             // PORT NOTE: the Zig had `if (comptime Type == Tree)` here, but `Type`
             // was `@TypeOf(list.items)` i.e. `[]Elem`, never `Tree`, so that arm
@@ -274,7 +269,7 @@ where
     // -- trees --
     {
         if options.log_level.is_verbose() {
-            Output::pretty_errorln(format_args!("Saving {} {}", buffers.trees.len(), "trees"));
+            bun_core::pretty_errorln!("Saving {} {}", buffers.trees.len(), "trees");
         }
         // PORT NOTE: Zig's `if (comptime Type == Tree)` arm (Buffers.zig:248)
         // never fires because `Type` is `[]Tree`, so Zig writes raw `Tree`
@@ -322,11 +317,7 @@ where
     // -- dependencies --
     {
         if options.log_level.is_verbose() {
-            Output::pretty_errorln(format_args!(
-                "Saving {} {}",
-                buffers.dependencies.len(),
-                "dependencies"
-            ));
+            bun_core::pretty_errorln!("Saving {} {}", buffers.dependencies.len(), "dependencies");
         }
 
         // Dependencies have to be converted to .toExternal first
@@ -462,11 +453,7 @@ pub(crate) fn load(
             this.$field = read_array::<$elem>(stream)?;
             if let Some(pm) = pm_.as_deref() {
                 if pm.options.log_level.is_verbose() {
-                    Output::pretty_errorln(format_args!(
-                        "Loaded {} {}",
-                        this.$field.len(),
-                        $name
-                    ));
+                    bun_core::pretty_errorln!("Loaded {} {}", this.$field.len(), $name);
                 }
             }
             // #[cfg(debug_assertions)]
@@ -505,11 +492,11 @@ pub(crate) fn load(
         external_dependency_list_ = read_array::<dependency::External>(stream)?;
         if let Some(pm) = pm_.as_deref() {
             if pm.options.log_level.is_verbose() {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "Loaded {} {}",
                     external_dependency_list_.len(),
                     "dependencies"
-                ));
+                );
             }
         }
     }

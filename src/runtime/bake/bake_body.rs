@@ -765,9 +765,9 @@ impl Framework {
 
             // Deprecated
             if str.eql_comptime("react-server-components") {
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "deprecation notice: 'react-server-components' will be renamed to 'react'"
-                ));
+                );
                 return Ok(Framework::react(arena)?);
             }
 
@@ -781,14 +781,14 @@ impl Framework {
         }
 
         if opts.get(global, "serverEntryPoint")?.is_some() {
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "deprecation notice: 'framework.serverEntryPoint' has been replaced with 'fileSystemRouterTypes[n].serverEntryPoint'"
-            ));
+            );
         }
         if opts.get(global, "clientEntryPoint")?.is_some() {
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "deprecation notice: 'framework.clientEntryPoint' has been replaced with 'fileSystemRouterTypes[n].clientEntryPoint'"
-            ));
+            );
         }
 
         let react_fast_refresh: Option<ReactFastRefresh> = 'brk: {
@@ -1557,7 +1557,7 @@ pub struct PatternBuffer {
 
 impl PatternBuffer {
     pub const EMPTY: PatternBuffer = PatternBuffer {
-        bytes: PathBuffer::ZEROED, // TODO(port): Zig used `undefined`; uninit not const-safe
+        bytes: PathBuffer::ZEROED,
         i: core::mem::size_of::<PathBuffer>() as u32,
     };
 
@@ -1599,12 +1599,12 @@ pub fn print_warning() {
         .get()
         .is_none()
     {
-        Output::warn(format_args!(
+        bun_core::warn!(
             "Be advised that Bun Bake is highly experimental, and its API\n\
              will have breaking changes. Join the <magenta>#bake<r> Discord\n\
              channel to help us find bugs: <blue>https://bun.com/discord<r>\n\
              \n"
-        ));
+        );
         Output::flush();
     }
 }

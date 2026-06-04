@@ -20,8 +20,8 @@ use bun_ast::Index;
 use bun_bundler::{BundleV2, Transpiler};
 use bun_collections::{DynamicBitSet, StringHashMap, StringSet};
 use bun_core::PathBuffer as CorePathBuffer;
+use bun_core::strings;
 use bun_core::{self, Global, Output, env_var, fmt as bun_fmt};
-use bun_core::{PathString, strings};
 #[cfg(not(windows))]
 use bun_core::{ZBox, ZStr, getenv_z};
 #[cfg(not(windows))]
@@ -32,6 +32,7 @@ use bun_jsc::virtual_machine::VirtualMachine;
 #[cfg(not(windows))]
 use bun_paths::SEP;
 use bun_paths::{self, PathBuffer, platform, resolve_path};
+use bun_ptr::Interned;
 #[cfg(not(windows))]
 use bun_resolver::fs::RealFS;
 use bun_sys as sys;
@@ -46,7 +47,7 @@ use crate::api::bun_process::sync as spawn_sync;
 pub struct Result<'a> {
     /// The filtered list of test files. Slice of the original `test_files`
     /// allocation, owned by the caller.
-    pub test_files: &'a mut [PathString],
+    pub test_files: &'a mut [Interned],
     /// Number of files git reported as changed.
     pub changed_count: usize,
     /// Number of test files before filtering.
@@ -66,7 +67,7 @@ pub struct Result<'a> {
 pub(crate) fn filter<'a>(
     ctx: &Command::Context,
     vm: &mut VirtualMachine,
-    test_files: &'a mut [PathString],
+    test_files: &'a mut [Interned],
     changed_since: &[u8],
 ) -> core::result::Result<Result<'a>, bun_core::Error> {
     let top_level_dir: &[u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
@@ -110,7 +111,6 @@ pub(crate) fn filter<'a>(
     // With a clean working tree and no --watch, nothing can be affected and
     // there is no watcher to seed, so skip the module-graph scan entirely.
     if changed_files.count() == 0 && ctx.debug.hot_reload != HotReload::Watch {
-        // TODO(port): `HotReload::Watch` enum path — confirm crate::cli::Command::HotReload
         let total = test_files.len();
         return Ok(Result {
             test_files: &mut test_files[0..0],
@@ -120,8 +120,8 @@ pub(crate) fn filter<'a>(
         });
     }
 
-    // Convert PathString list to []const []const u8 for the bundler.
-    let entry_points: Vec<&[u8]> = test_files.iter().map(|p| p.slice()).collect();
+    // Convert the interned-path list to []const []const u8 for the bundler.
+    let entry_points: Vec<&[u8]> = test_files.iter().map(|p| p.as_bytes()).collect();
 
     // Build a dedicated transpiler for scanning. We do not reuse the VM's
     // transpiler because BundleV2.init takes ownership of the allocator and
@@ -179,10 +179,10 @@ pub(crate) fn filter<'a>(
         Ok(b) => b,
         Err(err) => {
             // Fall back to running every test rather than aborting the run.
-            Output::warn(format_args!(
+            bun_core::warn!(
                 "--changed: failed to build module graph ({}); running all tests",
                 err.name()
-            ));
+            );
             Output::flush();
             let total = test_files.len();
             return Ok(Result {
@@ -255,7 +255,7 @@ pub(crate) fn filter<'a>(
     let mut slot_to_source: Vec<Option<u32>> = vec![None; test_files.len()];
     debug_assert_eq!(test_files.len(), slot_to_source.len());
     for (tf, out) in test_files.iter().zip(slot_to_source.iter_mut()) {
-        *out = path_to_index.get(tf.slice()).copied();
+        *out = path_to_index.get(tf.as_bytes()).copied();
     }
 
     // BFS backward from every changed file that participates in the graph.
@@ -263,7 +263,6 @@ pub(crate) fn filter<'a>(
     let mut queue: Vec<u32> = Vec::new();
 
     {
-        // TODO(port): StringSet iteration API — Zig accesses `.map.iterator()`
         for changed_path in changed_files.keys() {
             if let Some(&idx) = path_to_index.get(changed_path.as_ref()) {
                 if !affected.is_set(idx as usize) {
@@ -294,7 +293,7 @@ pub(crate) fn filter<'a>(
     for i in 0..total {
         let tf = test_files[i];
         let maybe_source = slot_to_source[i];
-        let keep = changed_files.contains(tf.slice())
+        let keep = changed_files.contains(tf.as_bytes())
             || maybe_source.is_some_and(|src| affected.is_set(src as usize));
 
         if keep {
@@ -349,8 +348,6 @@ pub(crate) fn init_watch_trigger() {
         let path: ZBox = if let Some(existing) = getenv_z(TRIGGER_FILE_ENV_VAR_Z) {
             ZBox::from_bytes(existing)
         } else {
-            // TODO(port): std.Random.DefaultPrng / std.time.milliTimestamp / std.c.getpid —
-            // pick Rust equivalents (likely bun_core::time::milli_timestamp() ^ libc::getpid())
             // SAFETY: getpid is always safe.
             let seed: u64 =
                 bun_core::time::milli_timestamp() as u64 ^ unsafe { libc::getpid() } as u64;
@@ -699,7 +696,6 @@ fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
     }
 }
 
-// TODO(port): `HotReload` enum import — placeholder for `ctx.debug.hot_reload != .watch` check
 use crate::Command::HotReload;
 
 // ported from: src/cli/test/ChangedFilesFilter.zig

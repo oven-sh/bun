@@ -78,7 +78,7 @@ pub use self::bun_lockb as Serializer;
 pub use self::catalog_map::CatalogMap;
 pub use self::lockfile_json_stringify_for_debugging::json_stringify;
 pub use self::override_map::OverrideMap;
-pub use self::package::Package; // TODO(port): Zig was `Package(u64)` — generic instantiation
+pub use self::package::Package;
 pub use self::tree::Tree;
 pub use crate::padding_checker::assert_no_uninitialized_padding;
 // Bring the derive-generated `items_*` column accessors (`PackageColumns` for
@@ -176,7 +176,6 @@ pub struct Lockfile {
     pub meta_hash: MetaHash,
 
     pub packages: PackageList,
-    // TODO(port): Lockfile.Package.List is a MultiArrayList<Package>
     pub buffers: Buffers,
 
     /// name -> PackageID || [*]PackageID
@@ -219,7 +218,7 @@ pub struct Lockfile {
     /// exact pin is a deliberate choice, not an artifact of which manifest
     /// happened to land first. Runtime-only — never serialised; sized lazily
     /// in `mark_exact_pin`.
-    pub exact_pinned: Vec<bool>,
+    pub exact_pinned: DynamicBitSet,
 }
 
 /// Zig: `Lockfile.Package.List` — `MultiArrayList(Package)`.
@@ -630,7 +629,6 @@ impl Lockfile {
         log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
         let mut stream = Stream::new(buf);
-        // TODO(port): Stream{ .buffer = buf, .pos = 0 }
 
         self.format = FormatVersion::current();
         self.scripts = Scripts::default();
@@ -1195,6 +1193,9 @@ impl Lockfile {
         new.trusted_dependencies = old_trusted_dependencies;
         new.scripts = old_scripts;
         new.meta_hash = old.meta_hash;
+        // Carry the on-disk format version over from the lockfile we loaded so a
+        // re-save preserves it (a fresh `new` defaults to the current version).
+        new.text_lockfile_version = old.text_lockfile_version;
 
         if old.patched_dependencies.count() > 0 {
             clean_migrate_patched_dependencies_cold(old, &mut new)?;
@@ -1280,13 +1281,13 @@ fn clean_verbose_timer_start() -> Result<Timer, BunError> {
 #[cold]
 #[inline(never)]
 fn clean_verbose_report_cold(old: &Lockfile, new: &Lockfile, timer: Option<&Timer>) {
-    Output::pretty_errorln(format_args!(
+    bun_core::pretty_errorln!(
         "Clean lockfile: {} packages -> {} packages in {}\n",
         old.packages.len(),
         new.packages.len(),
         // SAFETY: only entered when `log_level.is_verbose()`, which set `timer = Some(..)`.
         bun_core::fmt::fmt_duration_one_decimal(timer.unwrap().read()),
-    ));
+    );
 }
 
 #[cold]
@@ -1430,9 +1431,6 @@ impl Lockfile {
     }
 
     /// Sets `buffers.trees` and `buffers.hoisted_dependencies`
-    // TODO(port): Zig uses `comptime method` to make several params conditionally `void`.
-    // Rust const-generic enums need #[derive(ConstParamTy)] on Tree::BuilderMethod and the
-    // value-level branching can't change param types. Consider two monomorphized fns.
     pub fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
@@ -1752,22 +1750,22 @@ impl<'a> Printer<'a> {
         match load_from_disk {
             crate::lockfile::LoadResult::Err(cause) => {
                 match cause.step {
-                    crate::lockfile::LoadStep::OpenFile => Output::pretty_errorln(format_args!(
+                    crate::lockfile::LoadStep::OpenFile => bun_core::pretty_errorln!(
                         "<r><red>error<r> opening lockfile:<r> {}.",
                         cause.value.name()
-                    )),
-                    crate::lockfile::LoadStep::ParseFile => Output::pretty_errorln(format_args!(
+                    ),
+                    crate::lockfile::LoadStep::ParseFile => bun_core::pretty_errorln!(
                         "<r><red>error<r> parsing lockfile:<r> {}",
                         cause.value.name()
-                    )),
-                    crate::lockfile::LoadStep::ReadFile => Output::pretty_errorln(format_args!(
+                    ),
+                    crate::lockfile::LoadStep::ReadFile => bun_core::pretty_errorln!(
                         "<r><red>error<r> reading lockfile:<r> {}",
                         cause.value.name()
-                    )),
-                    crate::lockfile::LoadStep::Migrating => Output::pretty_errorln(format_args!(
+                    ),
+                    crate::lockfile::LoadStep::Migrating => bun_core::pretty_errorln!(
                         "<r><red>error<r> while migrating lockfile:<r> {}",
                         cause.value.name()
-                    )),
+                    ),
                 }
                 if log.errors > 0 {
                     // `IntoLogWrite` is implemented for `*mut bun_core::io::Writer`,
@@ -1778,12 +1776,12 @@ impl<'a> Printer<'a> {
                 Global::crash();
             }
             crate::lockfile::LoadResult::NotFound => {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>lockfile not found:<r> {}",
                     bun_core::fmt::QuotedFormatter {
                         text: lockfile_path.as_bytes()
                     },
-                ));
+                );
                 Global::crash();
             }
             crate::lockfile::LoadResult::Ok(_) => {}
@@ -1920,10 +1918,10 @@ impl Lockfile {
         let save_format = load_result.save_format(options);
         if cfg!(debug_assertions) {
             if let Err(e) = self.verify_data() {
-                Output::pretty_errorln(format_args!(
+                bun_core::pretty_errorln!(
                     "<r><red>error:<r> failed to verify lockfile: {}",
                     e.name()
-                ));
+                );
                 Global::crash();
             }
             // Zig: `bun.assert(FileSystem.instance_loaded);`
@@ -2122,7 +2120,7 @@ impl Lockfile {
             // session-appended, so the order-independence guard in
             // `get_package_id` applies from id 0.
             loaded_package_count: 0,
-            exact_pinned: Vec::new(),
+            exact_pinned: DynamicBitSet::default(),
         }
     }
 
@@ -2139,10 +2137,10 @@ impl Lockfile {
     #[inline]
     pub fn mark_exact_pin(&mut self, id: PackageID) {
         let i = id as usize;
-        if self.exact_pinned.len() <= i {
-            self.exact_pinned.resize(i + 1, false);
+        if self.exact_pinned.bit_length() <= i {
+            bun_core::handle_oom(self.exact_pinned.resize(i + 1, false));
         }
-        self.exact_pinned[i] = true;
+        self.exact_pinned.set(i);
     }
 
     pub fn get_package_id(
@@ -2181,7 +2179,7 @@ impl Lockfile {
         let buf = self.buffers.string_bytes.as_slice();
 
         let loaded_watermark = self.loaded_package_count;
-        let exact_pinned = self.exact_pinned.as_slice();
+        let exact_pinned = &self.exact_pinned;
         let try_satisfies_dedupe = |id: PackageID| -> bool {
             let existing = &resolutions[id as usize];
             if existing.tag != ResolutionTag::Npm {
@@ -2209,7 +2207,8 @@ impl Lockfile {
             // flake: a wide range (`*`, `>=X`) collapsing onto a sibling's
             // *range-resolved* lower major depending on whose manifest landed
             // first ("text lockfile is hoisted").
-            if id >= loaded_watermark && !exact_pinned.get(id as usize).copied().unwrap_or(false) {
+            if id >= loaded_watermark && !exact_pinned.is_set_allow_out_of_bound(id as usize, false)
+            {
                 if let Some(floor) = resolved_npm_floor {
                     if existing_ver.order(floor, buf, buf) == Ordering::Less
                         && existing_ver.major != floor.major

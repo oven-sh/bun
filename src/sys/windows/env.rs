@@ -34,7 +34,6 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
 
     let mut num_vars: usize = 0;
     let wtf8_buf: Vec<u8> = 'blk: {
-        // TODO(port): Zig's wrapper returns OOM on null; verify `crate::windows::GetEnvironmentStringsW` signature.
         let wtf16_buf: *mut u16 = crate::windows::GetEnvironmentStringsW()?;
         let _free = scopeguard::guard(wtf16_buf, |p| {
             crate::windows::FreeEnvironmentStringsW(p);
@@ -85,7 +84,6 @@ pub fn convert_env_to_wtf8() -> Result<(), AllocError> {
     // SAFETY: single-threaded startup; statics are written exactly once here.
     unsafe {
         WTF8_ENV_BUF.write(Some(wtf8_buf));
-        // TODO(port): need Rust equivalent of Zig `std.os.environ` (process-global envp slice).
         ORIG_ENVIRON.write(Some(bun_core::os::take_environ()));
         bun_core::os::set_environ(envp_slice.as_mut_ptr(), envp_nonnull_len);
     }

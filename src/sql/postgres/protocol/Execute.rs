@@ -11,7 +11,6 @@ impl<'a> Default for Execute<'a> {
     fn default() -> Self {
         Self {
             max_rows: 0,
-            // TODO(port): PortalOrPreparedStatement has no Zig default; callers must set `p`.
             p: PortalOrPreparedStatement::Portal(b""),
         }
     }

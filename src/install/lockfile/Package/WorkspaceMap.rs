@@ -198,7 +198,6 @@ impl WorkspaceMap {
                 match process_workspace_name(json_cache, abs_package_json_path, log) {
                     Ok(e) => e,
                     Err(err) => {
-                        // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent (Zig error return traces)
                         if err == bun_core::err!("EISNOTDIR")
                             || err == bun_core::err!("EISDIR")
                             || err == bun_core::err!("EACCESS")
@@ -432,8 +431,6 @@ impl WorkspaceMap {
                     ) {
                         Ok(e) => e,
                         Err(err) => {
-                            // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent
-
                             let entry_base: &[u8] = path::basename(matched_path);
                             if err == bun_core::err!("FileNotFound")
                                 || err == bun_core::err!("PermissionDenied")
@@ -444,7 +441,6 @@ impl WorkspaceMap {
                                     Some(source),
                                     bun_ast::Loc::EMPTY,
                                     format_args!(
-                                        // TODO(port): comptime concat with sep_str — using runtime sep
                                         "Missing \"name\" from package.json in {}{}{}",
                                         BStr::new(entry_dir),
                                         SEP_STR,

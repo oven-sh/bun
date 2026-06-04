@@ -1158,8 +1158,6 @@ pub fn print_request(
     body: &[u8],
     curl: bool,
 ) {
-    // TODO(port): Zig built a clone with `path = url` for the curl formatter.
-    // picohttp::Request<'_> isn't `Clone`, so format the fields directly.
     if curl {
         let request_ = picohttp::Request {
             method: request.method,
@@ -1168,7 +1166,7 @@ pub fn print_request(
             headers: request.headers,
             bytes_read: request.bytes_read,
         };
-        Output::pretty_errorln(format_args!("{}", request_.curl(ignore_insecure, body)));
+        bun_core::pretty_errorln!("{}", request_.curl(ignore_insecure, body));
     }
 
     let ver: &str = match protocol {
@@ -1177,21 +1175,16 @@ pub fn print_request(
         Protocol::Http3 => "HTTP/3",
     };
     // TODO(port): pretty_fmt prefix elided pending Output::error_writer() in bun_core.
-    Output::pretty_errorln(format_args!(
-        "> {} {} {}",
-        ver,
-        BStr::new(request.method),
-        BStr::new(url),
-    ));
+    bun_core::pretty_errorln!("> {} {} {}", ver, BStr::new(request.method), BStr::new(url));
     for header in request.headers {
-        Output::pretty_errorln(format_args!("> {}", header));
+        bun_core::pretty_errorln!("> {}", header);
     }
     Output::flush();
 }
 
 #[cold]
 fn print_response(response: &picohttp::Response<'_>) {
-    Output::pretty_errorln(format_args!("{}", response));
+    bun_core::pretty_errorln!("{}", response);
     Output::flush();
 }
 
@@ -2442,8 +2435,6 @@ impl<'a> HTTPClient<'a> {
         // (it needs `&mut self`, which would alias every other `self.*` call in the body),
         // so it is reshaped as an explicit `self.complete_connecting_process()` before each return.
 
-        // TODO(port): allocator vtable identity check elided (no allocator param in Rust)
-
         // Aborted before connecting
         if self.signals.get(signals::Field::Aborted) {
             self.fail(err!(AbortedBeforeConnecting));
@@ -3125,7 +3116,37 @@ impl<'a> HTTPClient<'a> {
         } else {
             crate::ssl_config::SSLConfig::ZERO
         };
+        // Take ownership of the CONNECT accumulation buffer BEFORE entering
+        // ProxyTunnel::start. The envelope has been fully consumed by the
+        // caller (handle_on_data_headers); we leave an empty buffer behind so
+        // that when the tunnel later re-enters handle_on_data_headers with
+        // decrypted upstream bytes, the stale CONNECT envelope isn't re-parsed
+        // as the user-facing response (see #30381). Without this, a split
+        // CONNECT 200 response (envelope arriving across two TCP reads) stays
+        // buffered; the tunnel's re-entry appends the decrypted upstream bytes
+        // onto it, re-parses the envelope as the response (leaking
+        // proxy-agent / connection: close into response.headers), and hands
+        // the upstream's raw HTTP/1.1 bytes to the body unparsed.
+        //
+        // `start_payload` may alias into this buffer's heap storage on the
+        // split-read path, but `std::mem::take` swaps only the `Vec` header —
+        // the heap allocation (and thus the bytes `start_payload` points at)
+        // stays put until `envelope_buf` is dropped at the end of this
+        // function. ProxyTunnel::start copies `start_payload` into the TLS BIO
+        // via start_with_payload -> BIO_write before it returns, so the bytes
+        // are captured before the drop.
+        //
+        // We hold the buffer in a local and drop it AFTER start() rather than
+        // clearing `self.state.response_message_buffer` afterwards:
+        // ProxyTunnel::start has synchronous failure paths (SSLWrapper init
+        // error, or a handshake-traffic error that synchronously fires
+        // on_close) that call close_and_fail -> fail -> the result callback,
+        // which can free the AsyncHTTP that embeds `*self`. Touching `self`
+        // after start() returns would be a use-after-free.
+        let envelope_buf = std::mem::take(&mut self.state.response_message_buffer);
         ProxyTunnel::start::<IS_SSL>(self, socket, &ssl_options, start_payload);
+        // Must not reference `self` past this point — see comment above.
+        drop(envelope_buf);
     }
 
     #[inline]
@@ -3290,7 +3311,6 @@ impl<'a> HTTPClient<'a> {
             && !self.state.flags.did_set_content_encoding
         {
             // if it compressed with this header, it is no longer because we will decompress it
-            // TODO(port): Zig wrapped headers in ArrayListUnmanaged but never mutated; preserved as-is
             self.state.flags.did_set_content_encoding = true;
             self.state.content_encoding_i = u8::MAX;
             // we need to reset the pending response because we removed a header
@@ -3787,7 +3807,7 @@ impl<'a> HTTPClient<'a> {
         if PRINT_EVERY != 0 {
             let i = PRINT_EVERY_I.fetch_add(1, Ordering::Relaxed) + 1;
             if i.is_multiple_of(PRINT_EVERY) {
-                Output::prettyln(format_args!("Heap stats for HTTP thread\n"));
+                bun_core::prettyln!("Heap stats for HTTP thread\n");
                 Output::flush();
                 // PERF(port): MimallocArena dump_thread_stats — dropped (no DEFAULT_ARENA in Rust)
                 PRINT_EVERY_I.store(0, Ordering::Relaxed);

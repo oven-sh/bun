@@ -104,10 +104,6 @@ pub trait RunTasksCallbacks {
         unreachable!()
     }
 
-    // TODO(port): two distinct call shapes in Zig:
-    //   PackageInstaller: (ctx, task_id, dependency_id, *ExtractData, log_level)
-    //   Store.Installer:  (ctx, task_id)
-    // Model as two methods; only one is reachable per impl.
     fn on_extract_package_installer(
         _ctx: &mut Self::Ctx,
         _task_id: Task::Id,
@@ -1800,14 +1796,21 @@ pub fn generate_network_task_for_tarball<'a>(
     // first; the immutable `pkg_name`/`scope` borrows are taken afterwards and
     // live only through `for_tarball`, leaving `this` free for the streaming
     // tail.
-    let apply_patch_task = if let Some(h) = patch_name_and_version_hash {
-        let patch_hash = this
-            .lockfile
-            .patched_dependencies
-            .get(&h)
-            .unwrap()
-            .patchfile_hash()
-            .unwrap();
+    // The patched-dependency entry can be missing (or its hash not yet
+    // computed) when install state went stale — e.g. the patch was removed
+    // from package.json, leaving the hash only in
+    // `patched_dependencies_to_remove`. Install the package unpatched instead
+    // of panicking.
+    let patch = patch_name_and_version_hash.and_then(|h| {
+        Some((
+            h,
+            this.lockfile
+                .patched_dependencies
+                .get(&h)?
+                .patchfile_hash()?,
+        ))
+    });
+    let apply_patch_task = if let Some((h, patch_hash)) = patch {
         let task: *mut PatchTask =
             PatchTask::new_apply_patch_hash(this, package.meta.id, patch_hash, h);
         // SAFETY: `task` is a fresh non-null `heap::alloc` from

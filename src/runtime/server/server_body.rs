@@ -832,7 +832,6 @@ impl AnyRoute {
 }
 
 pub struct ServerInitContext<'a> {
-    // TODO(port): arena removed in non-AST crate; if needed for bulk-free, reintroduce bumpalo
     pub dedupe_html_bundle_map: HashMap<*const HTMLBundle, RefPtr<html_bundle::Route>>,
     pub js_string_allocations: bake::StringRefList,
     pub global: &'a JSGlobalObject,
@@ -1246,8 +1245,8 @@ fn on_timeout_for_idle_warn() {
     if !did_send_idletimeout_warning_once().swap(true, core::sync::atomic::Ordering::Relaxed)
         && !crate::cli::Command::get().debug.silent
     {
-        Output::pretty_errorln(
-            "<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure.",
+        bun_core::pretty_errorln!(
+            "<r><yellow>[Bun.serve]<r><d>:<r> request timed out after 10 seconds. Pass <d><cyan>`idleTimeout`<r> to configure."
         );
         Output::flush();
     }

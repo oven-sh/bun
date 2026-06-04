@@ -158,7 +158,6 @@ impl DOMFormData {
             ctx_(unsafe { *name_ }, value);
         }
 
-        // TODO(port): jsc.markBinding(@src()) — debug-only binding tracker; no Rust equivalent yet.
         // C++ invokes the callback synchronously and does not retain `ctx` or the fn
         // pointer past this call.
         DOMFormData__forEach(

@@ -43,9 +43,6 @@ pub struct Worker {
     /// Commands and results both flow through this channel; backpressure is
     /// handled by the loop, so a busy worker writing thousands of `test_done`
     /// frames never truncates and the coordinator never blocks.
-    // TODO(port): Zig `Channel(Worker, "ipc")` — second comptime arg is the
-    // field name for `container_of` recovery. Rust side likely uses
-    // `offset_of!(Worker, ipc)` or an explicit owner-ptr.
     pub ipc: Channel<Worker>,
     pub out: WorkerPipe,
     pub err: WorkerPipe,
@@ -375,7 +372,6 @@ impl Worker {
         f.str(file);
         self.ipc.send(f.finish());
         self.inflight = Some(file_idx);
-        // TODO(port): std.time.milliTimestamp() → confirm bun_core helper name.
         self.dispatched_at = bun_core::time::milli_timestamp();
     }
 
@@ -450,9 +446,6 @@ pub enum PipeRole {
 /// and flushes atomically with the next test result so console output from
 /// concurrent files never interleaves.
 pub struct WorkerPipe {
-    // TODO(port): Zig default `BufferedReader.init(WorkerPipe)` passes the
-    // owner type for callback vtable wiring. Rust side likely a generic param
-    // or trait impl.
     pub reader: bun_io::BufferedReader,
     pub worker: *const Worker,
     pub role: PipeRole,

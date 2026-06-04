@@ -749,7 +749,6 @@ impl ServerConfig {
 
                 for port_env in PORT_ENV {
                     if let Some(port) = env.get(port_env) {
-                        // TODO(port): std.fmt.parseInt(u16, port, 10) — using helper
                         if let Ok(_port) = bun_core::immutable::parse_int::<u16>(port, 10) {
                             break 'brk _port;
                         }

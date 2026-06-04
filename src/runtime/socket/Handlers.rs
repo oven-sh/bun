@@ -147,7 +147,6 @@ impl Handlers {
 
     // corker: Corker = .{},
 
-    // TODO(port): bun.JSTerminated!void — mapping to JsResult<()> (JsError::Terminated covers it)
     pub fn resolve_promise(&self, value: JSValue) -> JsResult<()> {
         let vm = self.vm;
         if vm.is_shutting_down() {
@@ -164,7 +163,6 @@ impl Handlers {
         Ok(())
     }
 
-    // TODO(port): bun.JSTerminated!bool — mapping to JsResult<bool>
     pub fn reject_promise(&self, value: JSValue) -> JsResult<bool> {
         let vm = self.vm;
         if vm.is_shutting_down() {
@@ -441,7 +439,6 @@ impl Scope {
     }
 }
 
-// TODO(port): GeneratedBinaryType is the enum in jsc.generated.SocketConfigHandlers.binary_type
 use bun_jsc::generated::SocketConfigHandlersBinaryType as GeneratedBinaryType;
 
 /// `handlers` is always `protect`ed in this struct.
@@ -465,9 +462,8 @@ impl SocketConfig {
 
     /// Deinitializes everything except `handlers`.
     pub fn deinit_excluding_handlers(&mut self) {
-        // TODO(port): in Zig this writes `undefined` to all non-handlers fields after
-        // freeing them, then restores `handlers`. In Rust we drop the owned non-handlers
-        // fields in place; `handlers` is left untouched so pointers into it remain valid.
+        // Drops the owned non-handlers fields in place; `handlers` is left
+        // untouched so pointers into it remain valid.
         self.hostname_or_unix = ZigStringSlice::empty();
         self.ssl = None;
         // other scalar fields need no cleanup
@@ -567,7 +563,6 @@ impl SocketConfig {
             result.port = Some(match generated.port {
                 Some(p) => p,
                 None => match bun_url::URL::parse(slice).get_port() {
-                    // TODO(port): bun.URL.parse — confirm crate path
                     Some(p) => p,
                     None => {
                         return Err(
@@ -600,7 +595,6 @@ impl SocketConfig {
     }
 }
 
-// TODO(port): GeneratedTls is the union(enum) at jsc.generated.SocketConfig.tls
 use bun_jsc::generated::SocketConfigTls as GeneratedTls;
 
 // ported from: src/runtime/socket/Handlers.zig

@@ -74,7 +74,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
             c: unsafe { bun_ptr::ParentRef::from_raw_mut(std::ptr::from_mut::<LinkerContext>(c)) },
             chunks: bun_ptr::BackRef::new_mut(chunks),
         };
-        // TODO(port): worker_pool.eachPtr signature — arena param dropped; Rust impl is infallible.
         // SAFETY: `parse_graph` is the `BundleV2.graph` backref (valid for the
         // link step); `pool` is the arena-allocated bundler ThreadPool.
         c.worker_pool()
@@ -820,7 +819,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         buf.extend_from_slice(b);
                         buf.push(b'\n');
 
-                        // TODO(port): Zig frees old code_result.buffer via allocatorForSize; relying on Drop here.
                         code_result.buffer = buf.into_boxed_slice();
                     }
 
@@ -864,7 +862,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                     let _ = bun_base64::encode(&mut buf[old_len..], &output_source_map);
 
                     buf.push(b'\n');
-                    // TODO(port): Zig frees old code_result.buffer via allocatorForSize; relying on Drop here.
                     code_result.buffer = buf.into_boxed_slice();
                     drop(output_source_map);
                 }
@@ -1079,7 +1076,6 @@ pub fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                 output_files.insert_for_chunk(options::OutputFile::init(options::OutputFileInit {
                     data: options::OutputFileData::Buffer {
                         data: code_result.buffer,
-                        // TODO(port): Zig stores Chunk.IntermediateOutput.allocatorForSize(len) for matched dealloc.
                     },
                     hash: chunk.template.placeholder.hash,
                     loader: chunk.content.loader(),

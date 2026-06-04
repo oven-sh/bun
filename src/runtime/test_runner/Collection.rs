@@ -11,7 +11,6 @@ use crate::test_runner::bun_test::{
     RefDataValue, StepResult,
 };
 use crate::test_runner::bun_test::debug::group;
-// TODO(port): jsc.Jest.Jest.runner / jsc.ConsoleObject live under bun_jsc::jest / bun_jsc::console_object — verify module paths.
 use crate::test_runner::jest::Jest;
 
 pub struct Collection {

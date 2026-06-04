@@ -171,7 +171,6 @@ impl PipeReader {
             // outlives the guard's drop on return.
             let _keepalive = unsafe { ScopedRef::new(std::ptr::from_mut::<PipeReader>(self)) };
 
-            // TODO(port): on POSIX `StdioResult` is `Option<Fd>`; `.unwrap()` mirrors Zig `.?`.
             match self.reader.start(self.stdio_result.unwrap(), true) {
                 bun_sys::Result::Err(err) => {
                     return bun_sys::Result::Err(err);
@@ -350,7 +349,6 @@ impl PipeReader {
         }
     }
 
-    // TODO(port): `loop` is a Rust keyword; renamed to `loop_`. Callers (BufferedReader vtable) must match.
     pub(crate) fn loop_(&self) -> *mut AsyncLoop {
         // `event_loop.virtual_machine` is set by the time a PipeReader is
         // created. The VM is the per-thread singleton owning `event_loop`, so

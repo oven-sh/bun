@@ -183,15 +183,32 @@ impl Stringifier {
         Self::save_from_binary_inner(lockfile, load_result, options, writer)
     }
 
-    /// Pick the `lockfileVersion` to stamp. `Version::CURRENT` (v2) adds
-    /// parse-time checks that reject entries older versions tolerated: an
-    /// off-registry npm tarball without a supported integrity hash, and an
-    /// unsafe git `.bun-tag`. The writer emits those fields verbatim (no
-    /// backfill), so stamping v2 on a lockfile that still carries such an entry
-    /// would make the *next* parse reject it. Only stamp v2 when every package
-    /// already satisfies the v2 invariants; otherwise stay at v1 so the file
-    /// round-trips (load → save → load) cleanly — across machines too, since a
-    /// lockfile is committed and shared. The decision is therefore made without
+    /// Pick the `lockfileVersion` to stamp. A lockfile loaded from disk keeps
+    /// the version it already carried — re-saving never silently upgrades an
+    /// existing `bun.lock` to a newer format. `text_lockfile_version` holds the
+    /// parsed version when the lockfile was loaded from text, and defaults to
+    /// `Version::CURRENT` otherwise (a fresh install, or a migration from
+    /// another lockfile format), which is the "no version previously" case that
+    /// does get the current version.
+    ///
+    /// The one version that is *not* preserved is v0: v0→v1 was a content-format
+    /// change (v1 stopped listing a workspace package's dependencies as a
+    /// trailing object), and the writer only ever emits the v1+ single-element
+    /// `["name@workspace:path"]` form. Stamping v0 on that output would make the
+    /// next parse fail ("Missing dependencies object"), so a v0 lockfile is
+    /// floored to v1 — the lowest version whose content matches what we write.
+    /// v1→v2, by contrast, only added parse-time strictness on identical
+    /// content, so v1 is preserved as-is.
+    ///
+    /// When the target is the current version (v2), it is stamped only if every
+    /// serialized package satisfies the v2 invariants. v2 added parse-time
+    /// checks that reject entries older versions tolerated: an off-registry npm
+    /// tarball without a supported integrity hash, and an unsafe git `.bun-tag`.
+    /// The writer emits those fields verbatim (no backfill), so stamping v2 on a
+    /// lockfile that still carries such an entry — possible for a migrated
+    /// lockfile — would make the *next* parse reject it. Those stay at v1 so the
+    /// file round-trips (load → save → load) cleanly, across machines too, since
+    /// a lockfile is committed and shared. That decision is made without
     /// consulting the writer's registry config: whether the *reader* will accept
     /// the file must not depend on the writer's `~/.npmrc` / scoped registries.
     ///
@@ -200,6 +217,19 @@ impl Stringifier {
     /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
     /// there that never reach the written `packages` object).
     fn version_to_write(lockfile: &BinaryLockfile) -> Version {
+        // An older on-disk lockfile keeps its version; only a no-prior-version
+        // lockfile (the `Version::CURRENT` default) is a candidate for v2. v0 is
+        // the exception: the writer can't emit v0-format workspace entries, so a
+        // v0 lockfile is upgraded to v1 rather than preserved verbatim.
+        let loaded = lockfile.text_lockfile_version;
+        if !loaded.at_least(Version::CURRENT) {
+            return if loaded.at_least(Version::V1) {
+                loaded
+            } else {
+                Version::V1
+            };
+        }
+
         let buf = lockfile.buffers.string_bytes.as_slice();
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();

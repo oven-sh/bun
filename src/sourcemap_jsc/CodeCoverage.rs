@@ -833,7 +833,6 @@ impl ByteRangeMapping {
         source_url: ZigStringSlice,
     ) -> ByteRangeMapping {
         ByteRangeMapping {
-            // TODO(port): VirtualMachine::get().allocator dropped — LineOffsetTable::generate uses global mimalloc
             line_offset_table: LineOffsetTable::generate(source_contents, 0)
                 .unwrap_or_else(|_| bun_alloc::out_of_memory()),
             source_id,
@@ -858,7 +857,6 @@ pub(crate) extern "C" fn ByteRangeMapping__generate(
 
     let slice = str_.to_utf8();
     let hash = bun_wyhash::hash(slice.slice());
-    // TODO(port): getOrPut → entry API; verify ByteRangeMapping is properly dropped on overwrite
     let source_contents = source_contents_str.to_utf8();
 
     let new_value = ByteRangeMapping::compute(source_contents.slice(), source_id, slice);

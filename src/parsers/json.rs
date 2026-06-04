@@ -55,7 +55,7 @@ mod hash_map_pool {
 
 fn new_expr<Ty>(t: Ty, loc: bun_ast::Loc) -> Expr
 where
-    Ty: js_ast::ExprInit, // TODO(port): bound to whatever trait Expr::init accepts
+    Ty: js_ast::ExprInit,
 {
     // Zig had: if @typeInfo(Type) == .pointer => @compileError — Rust's type system
     // already prevents passing a reference where a value is expected; no runtime check needed.
@@ -133,9 +133,6 @@ where
         // TODO(port): narrow error set
         Expr::data_store_assert();
         Stmt::data_store_assert();
-        // TODO(port): Zig calls Expr.Data.Store.assert() / Stmt.Data.Store.assert();
-        // map to whatever the typed-arena store assertion becomes in bun_js_parser.
-
         Ok(Self {
             lexer: js_lexer::Lexer::init(log, source_, bump, opts)?,
             bump,
@@ -428,7 +425,6 @@ pub struct PackageJSONVersionChecker<'a, 'bump> {
 }
 
 // Zig: const opts = if (LEXER_DEBUGGER_WORKAROUND) JSONOptions{} else JSONOptions{ is_json=true, json_warn_duplicate_keys=false, allow_trailing_commas=true, allow_comments=true }
-// TODO(port): wire as const-generic params on the lexer type once js_lexer::NewLexer is ported.
 const PKG_JSON_OPTS: js_lexer::JSONOptions = if LEXER_DEBUGGER_WORKAROUND {
     js_lexer::JSONOptions::DEFAULT
 } else {
@@ -1235,7 +1231,6 @@ pub fn parse_for_bundling(
     }
 
     // NOTE: Zig passes `source.*` (by value) here, unlike every other call site.
-    // TODO(port): verify whether JSONParser::init wants by-ref or by-value source.
     let mut parser = JSONLikeParser::init(JSON_OPTS, bump, source, log)?;
     let result = parser.parse_expr(false, true)?;
     Ok(JSONParseResult {
@@ -1403,7 +1398,6 @@ mod tests {
                 mangled_props: None,
             },
         )?;
-        // TODO(port): Zig accessed writer.ctx.buffer.list.items.ptr[0..written+1].
         let buf = writer.ctx.buffer.as_slice();
         let mut js = &buf[0..written + 1];
 

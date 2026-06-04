@@ -8,11 +8,10 @@ use bun_io::{self, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
+use crate::api::bun::process::Status as SpawnStatus;
 use crate::webcore::jsc::{CallFrame, EventLoopHandle, JSGlobalObject, JSValue, JsResult};
 use crate::webcore::readable_stream::{self, ReadableStream};
 use crate::webcore::{self, AutoFlusher, PathOrFileDescriptor, streams};
-// TODO(port): verify module path for `bun.spawn.Status`
-use crate::api::bun::process::Status as SpawnStatus;
 #[cfg(windows)]
 use bun_sys::windows::libuv as uv;
 #[cfg(windows)]
@@ -701,14 +700,11 @@ impl FileSink {
         let mut nonblocking_out = self.nonblocking.get();
         // `OpenForWritingInput` is impl'd for
         // `bun_io::PathOrFileDescriptor`, not `webcore::PathOrFileDescriptor`;
-        // bridge by-value here. `PathString::init` borrows `slice.slice()` for
-        // the duration of `open_for_writing` (the call only needs it for
-        // `openat_a`).
+        // bridge by-value here. The borrowed slice is valid for the duration of
+        // `open_for_writing` (the call only needs it for `openat_a`).
         let io_path = match &options.input_path {
             PathOrFileDescriptor::Fd(fd) => bun_io::PathOrFileDescriptor::Fd(*fd),
-            PathOrFileDescriptor::Path(slice) => {
-                bun_io::PathOrFileDescriptor::Path(bun_core::PathString::init(slice.slice()))
-            }
+            PathOrFileDescriptor::Path(slice) => bun_io::PathOrFileDescriptor::Path(slice.slice()),
         };
         let result = bun_io::open_for_writing(
             Fd::cwd(),

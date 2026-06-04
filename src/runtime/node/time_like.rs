@@ -88,8 +88,6 @@ fn from_milliseconds(milliseconds: f64) -> TimeLike {
 
 #[cfg(windows)]
 fn from_now() -> TimeLike {
-    // TODO(port): std.time.nanoTimestamp() — confirm bun_core/bun_sys provides a
-    // nanosecond-since-epoch helper; std::time::SystemTime is a fallback.
     let nanos = bun_core::time::nano_timestamp();
     (nanos as f64) / NS_PER_S
 }

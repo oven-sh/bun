@@ -3,9 +3,6 @@ use crate::postgres::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::data::Data;
 use bun_core::strings;
 
-// TODO(port): lifetime — `offset`/`message_start` are `*usize` fields not present in
-// LIFETIMES.tsv; classified here as BORROW_PARAM by inspection (struct is named
-// "StackReader" and is only ever constructed on the caller's stack via `init`).
 pub struct StackReader<'a> {
     pub buffer: &'a [u8],
     pub offset: &'a mut usize,

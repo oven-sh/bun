@@ -154,7 +154,6 @@ pub(crate) fn get_if_exists_longest_common_path_generic<'a, P: PlatformT>(
     }
 
     if index == 0 {
-        // TODO(port): Zig returned &[_]u8{separator} (static); needs per-platform &'static [u8; 1]
         return Some(P::P.separator_string().as_bytes());
     }
 
@@ -289,7 +288,6 @@ pub(crate) fn longest_common_path_generic<'a, P: PlatformT>(input: &[&'a [u8]]) 
     }
 
     if index == 0 {
-        // TODO(port): Zig returned &[_]u8{separator} (static one-byte slice)
         return P::P.separator_string().as_bytes();
     }
 
@@ -387,7 +385,6 @@ pub(crate) fn relative_to_common_path<'a, const ALWAYS_COPY: bool, P: PlatformT>
     normalized_to_: &'a [u8],
     buf: &'a mut [u8],
 ) -> &'a [u8] {
-    // TODO(port): return borrows either `buf` or `normalized_to_`; lifetimes need unification.
     let mut normalized_from = normalized_from_;
     let mut normalized_to = normalized_to_;
     let win_root_len: Option<usize> = if P::P == Platform::Windows {
@@ -613,7 +610,6 @@ pub fn dirname<P: PlatformT>(str: &[u8]) -> &[u8] {
         }
         Platform::Windows => {
             let Some(separator) = last_index_of_separator_windows(str) else {
-                // TODO(port): std.fs.path.diskDesignatorWindows
                 return crate::disk_designator_windows(str);
             };
             &str[..separator]
@@ -904,9 +900,6 @@ pub fn normalize_string_generic<
         is_separator,
     )
 }
-
-// TODO(port): `separatorAdapter(T, func)` wrapped a `fn(comptime T, char) bool`
-// into `fn(T) bool`. In Rust we pass closures directly; no adapter needed.
 
 pub fn normalize_string_generic_t<
     'a,
@@ -1257,9 +1250,6 @@ impl Platform {
         }
     }
 
-    // TODO(port): get_separator_func_t returned a generic fn-over-T; Rust cannot
-    // express that as a value. Callers use `is_separator_t::<T>` directly instead.
-
     pub const fn get_last_separator_func(self) -> LastSeparatorFunction {
         match self {
             Platform::Loose => last_index_of_separator_loose,
@@ -1267,9 +1257,6 @@ impl Platform {
             Platform::Posix => last_index_of_separator_posix,
         }
     }
-
-    // TODO(port): get_last_separator_func_t — same as above; callers dispatch
-    // via `last_index_of_separator_*_t::<T>` directly.
 
     #[inline(always)]
     pub fn is_separator(self, char: u8) -> bool {
@@ -2219,6 +2206,16 @@ impl PosixToWinNormalizer {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(maybe_posix_path) {
                     let source_root = windows_filesystem_root(source_dir);
+                    // The source root (arbitrarily long for UNC dirs) plus
+                    // the path must fit `buf` with one byte of headroom —
+                    // downstream normalization writes one past the input for
+                    // separator-less UNC roots. Such a join can't exist on NT
+                    // anyway, so fail safe to the un-joined input (which the
+                    // consuming lookup treats as nonexistent) instead of
+                    // writing past the buffer.
+                    if source_root.len() + maybe_posix_path.len() - 1 >= buf.len() {
+                        return maybe_posix_path;
+                    }
                     buf[0..source_root.len()].copy_from_slice(source_root);
                     buf[source_root.len()..source_root.len() + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
@@ -2252,6 +2249,11 @@ impl PosixToWinNormalizer {
                 debug_assert!(is_sep_any(root[0]));
                 if strings::is_windows_absolute_path_missing_drive_letter::<u8>(mp) {
                     let source_root = windows_filesystem_root(source_dir);
+                    // See resolve_with_external_buf: over-long joins fail
+                    // safe to the un-joined input (+ NUL accounted for here).
+                    if source_root.len() + mp.len() > buf.len() {
+                        return maybe_posix_path;
+                    }
                     buf[0..source_root.len()].copy_from_slice(source_root);
                     buf[source_root.len()..source_root.len() + mp.len() - 1]
                         .copy_from_slice(&mp[1..]);
@@ -2293,6 +2295,16 @@ impl PosixToWinNormalizer {
                         let cwd = bun_core::getcwd(buf)?;
                         windows_filesystem_root(cwd.as_bytes()).len()
                     };
+                    // The cwd root (arbitrarily long for UNC cwds) plus the
+                    // path must fit `buf` with one byte of headroom: the
+                    // joined result feeds `normalize_buf`, whose UNC-root
+                    // handling writes one past the input when the cwd is a
+                    // bare share root with no trailing separator. Such a
+                    // combination can't exist on NT anyway, so error out
+                    // instead of writing past a buffer.
+                    if sr_len + maybe_posix_path.len() - 1 >= buf.len() {
+                        return Err(bun_core::err!("NameTooLong"));
+                    }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     let res = &buf[0..sr_len + maybe_posix_path.len() - 1];
@@ -2329,6 +2341,13 @@ impl PosixToWinNormalizer {
                         let cwd = bun_core::getcwd(buf)?;
                         windows_filesystem_root(cwd.as_bytes()).len()
                     };
+                    // The cwd root (arbitrarily long for UNC cwds) plus the
+                    // path and its NUL must fit `buf`; such a combination
+                    // can't exist on NT anyway, so error out instead of
+                    // writing past it.
+                    if sr_len + maybe_posix_path.len() > buf.len() {
+                        return Err(bun_core::err!("NameTooLong"));
+                    }
                     buf[sr_len..sr_len + maybe_posix_path.len() - 1]
                         .copy_from_slice(&maybe_posix_path[1..]);
                     buf[sr_len + maybe_posix_path.len() - 1] = 0;
@@ -2349,6 +2368,9 @@ impl PosixToWinNormalizer {
             );
         }
 
+        if maybe_posix_path.len() + 1 > buf.len() {
+            return Err(bun_core::err!("NameTooLong"));
+        }
         buf[..maybe_posix_path.len()].copy_from_slice(maybe_posix_path);
         buf[maybe_posix_path.len()] = 0;
         // SAFETY: NUL at buf[maybe_posix_path.len()]

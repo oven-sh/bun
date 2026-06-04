@@ -63,28 +63,28 @@ pub fn do_patch_commit(
         lockfile::LoadResult::Err(cause) => {
             if log_level != LogLevel::Silent {
                 match cause.step {
-                    lockfile::LoadStep::OpenFile => Output::pretty_error(format_args!(
+                    lockfile::LoadStep::OpenFile => bun_core::pretty_error!(
                         "<r><red>error<r> opening lockfile:<r> {}\n<r>",
                         cause.value.name(),
-                    )),
-                    lockfile::LoadStep::ParseFile => Output::pretty_error(format_args!(
+                    ),
+                    lockfile::LoadStep::ParseFile => bun_core::pretty_error!(
                         "<r><red>error<r> parsing lockfile:<r> {}\n<r>",
                         cause.value.name(),
-                    )),
-                    lockfile::LoadStep::ReadFile => Output::pretty_error(format_args!(
+                    ),
+                    lockfile::LoadStep::ReadFile => bun_core::pretty_error!(
                         "<r><red>error<r> reading lockfile:<r> {}\n<r>",
                         cause.value.name(),
-                    )),
-                    lockfile::LoadStep::Migrating => Output::pretty_error(format_args!(
+                    ),
+                    lockfile::LoadStep::Migrating => bun_core::pretty_error!(
                         "<r><red>error<r> migrating lockfile:<r> {}\n<r>",
                         cause.value.name(),
-                    )),
+                    ),
                 }
 
                 if manager.options.enable.fail_early() {
-                    Output::pretty_error("<b><red>failed to load lockfile<r>\n");
+                    bun_core::pretty_error!("<b><red>failed to load lockfile<r>\n");
                 } else {
-                    Output::pretty_error("<b><red>ignoring lockfile<r>\n");
+                    bun_core::pretty_error!("<b><red>ignoring lockfile<r>\n");
                 }
 
                 Output::flush();
@@ -131,10 +131,10 @@ pub fn do_patch_commit(
     ) {
         Ok(fd) => Dir::from_fd(fd),
         Err(e) => {
-            Output::pretty_error(format_args!(
+            bun_core::pretty_error!(
                 "<r><red>error<r>: failed to open root <b>node_modules<r> folder: {}<r>\n",
                 e
-            ));
+            );
             Global::crash();
         }
     };
@@ -170,11 +170,11 @@ pub fn do_patch_commit(
                     Ok(j) => j,
                     Err(err) => {
                         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                             err.name(),
                             bstr::BStr::new(package_json_source.path.pretty_dir()),
-                        ));
+                        );
                         Global::crash();
                     }
                 };
@@ -186,10 +186,10 @@ pub fn do_patch_commit(
                             break 'version s;
                         }
                     }
-                    Output::pretty_error(format_args!(
+                    bun_core::pretty_error!(
                         "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {}<r>\n",
                         bstr::BStr::new(package_json_source.path.text()),
-                    ));
+                    );
                     Global::crash();
                 };
 
@@ -208,7 +208,7 @@ pub fn do_patch_commit(
 
                 let actual_package = match lockfile.package_index.get(&package.name_hash) {
                     None => {
-                        Output::pretty_error(
+                        bun_core::pretty_error!(
                             "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
                         );
                         Global::crash();
@@ -232,12 +232,12 @@ pub fn do_patch_commit(
                                 break 'brk pkg;
                             }
                         }
-                        Output::pretty_error(format_args!(
+                        bun_core::pretty_error!(
                             "<r><red>error<r>: could not find package with name:<r> {}\n<r>",
                             bstr::BStr::new(
                                 package.name.slice(lockfile.buffers.string_bytes.as_slice())
                             ),
-                        ));
+                        );
                         Global::crash();
                     }
                 };
@@ -429,10 +429,10 @@ pub fn do_patch_commit(
                     move_fallback: true,
                 },
             ) {
-                Output::warn(format_args!(
+                bun_core::warn!(
                     "failed renaming the bun patch tag, this may cause issues: {}",
                     e
-                ));
+                );
                 break 'has_bun_patch_tag None;
             }
             break 'has_bun_patch_tag Some(patch_tag);
@@ -444,11 +444,11 @@ pub fn do_patch_commit(
                 let new_folder_handle = match Dir::cwd().open_dir(new_folder, sys::OpenDirOptions::default()) {
                     Ok(h) => h,
                     Err(e) => {
-                        Output::pretty_error(format_args!(
+                        bun_core::pretty_error!(
                             "<r><red>error<r>: failed to open directory <b>{}<r> {}<r>\n",
                             bstr::BStr::new(new_folder),
                             e,
-                        ));
+                        );
                         Global::crash();
                     }
                 };
@@ -461,7 +461,7 @@ pub fn do_patch_commit(
                         b"node_modules",
                         sys::RenameOptions { move_fallback: true },
                     ) {
-                        Output::warn(format_args!("failed renaming nested node_modules folder, this may cause issues: {}", e));
+                        bun_core::warn!("failed renaming nested node_modules folder, this may cause issues: {}", e);
                     }
                 }
 
@@ -473,7 +473,7 @@ pub fn do_patch_commit(
                         patch_tag,
                         sys::RenameOptions { move_fallback: true },
                     ) {
-                        Output::warn(format_args!("failed renaming the bun patch tag, this may cause issues: {}", e));
+                        bun_core::warn!("failed renaming the bun patch tag, this may cause issues: {}", e);
                     }
                 }
             }
@@ -483,10 +483,7 @@ pub fn do_patch_commit(
         let cwd = match sys::getcwd_z(&mut cwdbuf) {
             Ok(fd) => fd,
             Err(e) => {
-                Output::pretty_error(format_args!(
-                    "<r><red>error<r>: failed to get cwd path {}<r>\n",
-                    e
-                ));
+                bun_core::pretty_error!("<r><red>error<r>: failed to get cwd path {}<r>\n", e);
                 Global::crash();
             }
         };
@@ -499,7 +496,7 @@ pub fn do_patch_commit(
         ) {
             Some(g) => g,
             None => {
-                Output::pretty_error(
+                bun_core::pretty_error!(
                     "<r><red>error<r>: git must be installed to use `bun patch --commit` <r>\n",
                 );
                 Global::crash();
@@ -511,18 +508,12 @@ pub fn do_patch_commit(
 
         let mut spawn_result = match bun_spawn::sync::spawn(&opts) {
             Err(e) => {
-                Output::pretty_error(format_args!(
-                    "<r><red>error<r>: failed to make diff {}<r>\n",
-                    e.name(),
-                ));
+                bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e.name(),);
                 Global::crash();
             }
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
-                Output::pretty_error(format_args!(
-                    "<r><red>error<r>: failed to make diff {}<r>\n",
-                    e
-                ));
+                bun_core::pretty_error!("<r><red>error<r>: failed to make diff {}<r>\n", e);
                 Global::crash();
             }
         };
@@ -530,10 +521,10 @@ pub fn do_patch_commit(
         let contents: Vec<u8> =
             match bun_patch::diff_post_process(&mut spawn_result, &paths[0], &paths[1]) {
                 Err(e) => {
-                    Output::pretty_error(format_args!(
+                    bun_core::pretty_error!(
                         "<r><red>error<r>: failed to make diff {}<r>\n",
                         e.name(),
-                    ));
+                    );
                     Global::crash();
                 }
                 Ok(Ok(stdout)) => stdout,
@@ -557,21 +548,21 @@ pub fn do_patch_commit(
                             }
                         }
                     }
-                    Output::pretty_error(format_args!(
+                    bun_core::pretty_error!(
                         "<r><red>error<r>: failed to make diff {}<r>\n",
                         Truncate { stderr: &stderr }
-                    ));
+                    );
                     drop(stderr);
                     Global::crash();
                 }
             };
 
         if contents.is_empty() {
-            Output::pretty(format_args!(
+            bun_core::pretty!(
                 "\n<r>No changes detected, comparing <red>{}<r> to <green>{}<r>\n",
                 bstr::BStr::new(old_folder),
                 bstr::BStr::new(new_folder)
-            ));
+            );
             Output::flush();
             drop(contents);
             return Ok(None);
@@ -791,11 +782,11 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                     Ok(j) => j,
                     Err(err) => {
                         let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                        Output::pretty_errorln(format_args!(
+                        bun_core::pretty_errorln!(
                             "<r><red>{}<r> parsing package.json in <b>\"{}\"<r>",
                             err.name(),
                             bstr::BStr::new(package_json_source.path.pretty_dir()),
-                        ));
+                        );
                         Global::crash();
                     }
                 };
@@ -807,10 +798,10 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                             break 'version s;
                         }
                     }
-                    Output::pretty_error(format_args!(
+                    bun_core::pretty_error!(
                         "<r><red>error<r>: invalid package.json, missing or invalid property \"version\": {}<r>\n",
                         bstr::BStr::new(package_json_source.path.text()),
-                    ));
+                    );
                     Global::crash();
                 };
 
@@ -840,7 +831,7 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
 
                 let actual_package = match lockfile.package_index.get(&package.name_hash) {
                     None => {
-                        Output::pretty_error(
+                        bun_core::pretty_error!(
                             "<r><red>error<r>: failed to find package in lockfile package index, this is a bug in Bun. Please file a GitHub issue.<r>\n",
                         );
                         Global::crash();
@@ -863,10 +854,10 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                                 break 'id pkg;
                             }
                         }
-                        Output::pretty_error(format_args!(
+                        bun_core::pretty_error!(
                             "<r><red>error<r>: could not find package with name:<r> {}\n<r>",
                             bstr::BStr::new(package.name.slice(strbuf)),
-                        ));
+                        );
                         Global::crash();
                     }
                 };
@@ -999,16 +990,16 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
     if let Err(e) =
         overwrite_package_in_node_modules_folder(cache_dir, cache_dir_subpath, module_folder)
     {
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "<r><red>error<r>: error overwriting folder in node_modules: {}\n<r>",
             e.name(),
-        ));
+        );
         Global::crash();
     }
 
     if not_in_workspace_root {
         let mut bufn = PathBuffer::uninit();
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "\nTo patch <b>{}<r>, edit the following folder:\n\n  <cyan>{}<r>\n",
             bstr::BStr::new(pkg_name),
             bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
@@ -1018,8 +1009,8 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                     module_folder
                 ]
             )),
-        ));
-        Output::pretty(format_args!(
+        );
+        bun_core::pretty!(
             "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
             bstr::BStr::new(resolve_path::join_string_buf::<platform::Posix>(
                 &mut bufn[..],
@@ -1028,17 +1019,17 @@ pub fn prepare_patch(manager: &mut PackageManager) -> Result<(), bun_core::Error
                     module_folder
                 ]
             )),
-        ));
+        );
     } else {
-        Output::pretty(format_args!(
+        bun_core::pretty!(
             "\nTo patch <b>{}<r>, edit the following folder:\n\n  <cyan>{}<r>\n",
             bstr::BStr::new(pkg_name),
             bstr::BStr::new(module_folder)
-        ));
-        Output::pretty(format_args!(
+        );
+        bun_core::pretty!(
             "\nOnce you're done with your changes, run:\n\n  <cyan>bun patch --commit '{}'<r>\n",
             bstr::BStr::new(module_folder)
-        ));
+        );
     }
 
     Ok(())
@@ -1303,10 +1294,10 @@ fn pkg_info_for_name_and_version(
     }
 
     if pairs.is_empty() {
-        Output::pretty_errorln(format_args!(
+        bun_core::pretty_errorln!(
             "\n<r><red>error<r>: package <b>{}<r> not found<r>",
             bstr::BStr::new(pkg_maybe_version_to_patch)
-        ));
+        );
         Global::crash();
     }
 
@@ -1317,10 +1308,10 @@ fn pkg_info_for_name_and_version(
             let folder = match node_modules_folder_for_dependency_id(iterator, dep_id) {
                 Some(f) => f,
                 None => {
-                    Output::pretty_error(format_args!(
+                    bun_core::pretty_error!(
                         "<r><red>error<r>: could not find the folder for <b>{}<r> in node_modules<r>\n<r>",
                         bstr::BStr::new(pkg_maybe_version_to_patch),
-                    ));
+                    );
                     Global::crash();
                 }
             };
@@ -1334,10 +1325,10 @@ fn pkg_info_for_name_and_version(
         let folder = match node_modules_folder_for_dependency_ids(iterator, &pairs) {
             Some(f) => f,
             None => {
-                Output::pretty_error(format_args!(
+                bun_core::pretty_error!(
                     "<r><red>error<r>: could not find the folder for <b>{}<r> in node_modules<r>\n<r>",
                     bstr::BStr::new(pkg_maybe_version_to_patch),
-                ));
+                );
                 Global::crash();
             }
         };
@@ -1353,10 +1344,10 @@ fn pkg_info_for_name_and_version(
         let folder = match node_modules_folder_for_dependency_id(iterator, dep_id) {
             Some(f) => f,
             None => {
-                Output::pretty_error(format_args!(
+                bun_core::pretty_error!(
                     "<r><red>error<r>: could not find the folder for <b>{}<r> in node_modules<r>\n<r>",
                     bstr::BStr::new(pkg_maybe_version_to_patch),
-                ));
+                );
                 Global::crash();
             }
         };
@@ -1386,20 +1377,20 @@ fn pkg_info_for_name_and_version(
         let folder = match node_modules_folder_for_dependency_ids(iterator, &pairs) {
             Some(f) => f,
             None => {
-                Output::pretty_error(format_args!(
+                bun_core::pretty_error!(
                     "<r><red>error<r>: could not find the folder for <b>{}<r> in node_modules<r>\n<r>",
                     bstr::BStr::new(pkg_maybe_version_to_patch),
-                ));
+                );
                 Global::crash();
             }
         };
         return (pkg_id, folder);
     }
 
-    Output::pretty_errorln(format_args!(
+    bun_core::pretty_errorln!(
         "\n<r><red>error<r>: Found multiple versions of <b>{}<r>, please specify a precise version from the following list:<r>",
         bstr::BStr::new(name),
-    ));
+    );
     let mut i: usize = 0;
     while i < pairs.len() {
         let (_, pkgid) = pairs[i];
@@ -1410,11 +1401,11 @@ fn pkg_info_for_name_and_version(
 
         let pkg = *lockfile.packages.get(pkgid as usize);
 
-        Output::pretty_error(format_args!(
+        bun_core::pretty_error!(
             "  {}@<blue>{}<r>\n",
             bstr::BStr::new(pkg.name.slice(strbuf)),
             pkg.resolution.fmt(strbuf, PathSep::Posix)
-        ));
+        );
 
         if i + 1 < pairs.len() {
             for p in &mut pairs[i + 1..] {

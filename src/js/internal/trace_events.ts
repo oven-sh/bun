@@ -419,9 +419,12 @@ function wrapTimerFunction(original, isInterval: boolean) {
     }
     return original(callback, delay, ...args);
   }
-  // Preserve extra own properties (e.g. the promisify custom symbol).
+  // Preserve the original's own properties — name/length (writable:false but
+  // configurable:true, so defineProperty works) and extras like the promisify
+  // custom symbol. Only `prototype` is skipped: it can be non-configurable,
+  // and the wrapper deliberately keeps its own.
   for (const key of Reflect.ownKeys(original)) {
-    if (key === "length" || key === "name" || key === "prototype") continue;
+    if (key === "prototype") continue;
     const desc = Object.getOwnPropertyDescriptor(original, key);
     if (desc) Object.defineProperty(wrapped, key, desc);
   }

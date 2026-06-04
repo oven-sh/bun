@@ -366,6 +366,25 @@ describe("errors", () => {
     }).toThrow("plugin target must be one of 'node', 'bun' or 'browser'");
   });
 
+  it("propagates exceptions thrown while stringifying 'target'", () => {
+    let setupCalled = false;
+    const opts = {
+      setup: () => {
+        setupCalled = true;
+      },
+      target: {
+        toString() {
+          throw new Error("failed to stringify target");
+        },
+      },
+    };
+
+    expect(() => {
+      plugin(opts as any);
+    }).toThrow("failed to stringify target");
+    expect(setupCalled).toBe(false);
+  });
+
   it("invalid loaders throw", () => {
     const invalidLoaders = ["blah", "blah2", "blah3", "blah4"];
     const inputs = ["body { background: red; }", "<h1>hi</h1>", '{"hi": "there"}', "hi"];

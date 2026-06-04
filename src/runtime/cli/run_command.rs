@@ -1502,6 +1502,38 @@ impl Run {
             }
         }
 
+        // Node emits this warning when NODE_V8_COVERAGE is set on a build
+        // without the V8 inspector. Bun cannot collect V8 coverage either, so
+        // warn instead of silently ignoring the variable.
+        if vm
+            .env_loader()
+            .get(b"NODE_V8_COVERAGE")
+            .is_some_and(|dir| !dir.is_empty())
+        {
+            let global = vm.global();
+            let mut warning = bun_core::String::static_(
+                b"The inspector is disabled, coverage could not be collected",
+            );
+            let mut warning_type = bun_core::String::static_(b"Warning");
+            let emitted = bun_jsc::bun_string_jsc::transfer_to_js(&mut warning, global).and_then(
+                |warning_js| {
+                    bun_jsc::bun_string_jsc::transfer_to_js(&mut warning_type, global).and_then(
+                        |warning_type_js| {
+                            global.emit_warning(
+                                warning_js,
+                                warning_type_js,
+                                JSValue::UNDEFINED,
+                                JSValue::UNDEFINED,
+                            )
+                        },
+                    )
+                },
+            );
+            if emitted.is_err() {
+                let _ = global.clear_exception_except_termination();
+            }
+        }
+
         match vm.load_entry_point(entry) {
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.

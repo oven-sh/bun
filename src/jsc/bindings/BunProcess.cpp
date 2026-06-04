@@ -3967,7 +3967,10 @@ static JSValue constructFeatures(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     auto* object = constructEmptyObject(globalObject);
 
-    object->putDirect(vm, Identifier::fromString(vm, "inspector"_s), jsBoolean(true));
+    // Bun does not ship the V8 inspector: node:inspector is a stub (Profiler only)
+    // and there is no CDP endpoint. Reporting false routes code that feature-detects
+    // the inspector (including node's test suite) onto its no-inspector path.
+    object->putDirect(vm, Identifier::fromString(vm, "inspector"_s), jsBoolean(false));
 #ifdef BUN_DEBUG
     object->putDirect(vm, Identifier::fromString(vm, "debug"_s), jsBoolean(true));
 #else

@@ -977,9 +977,7 @@ describe("unexpected-response (non-101 upgrade)", () => {
   });
 
   it("without a listener, emits 'error' then 'close' (Unexpected server response)", async () => {
-    const { server, port } = startServer(
-      "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-    );
+    const { server, port } = startServer("HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
 
     const events: string[] = [];
     const { promise, resolve, reject } = Promise.withResolvers<void>();

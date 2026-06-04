@@ -138,7 +138,7 @@ function validateSettings(settings: any) {
 
   if (settings.initialWindowSize !== undefined) {
     const v = settings.initialWindowSize;
-    if (typeof v !== "number" || v < 0 || v > kMaxInt || Number.isNaN(v)) {
+    if (typeof v !== "number" || v < 0 || v > kMaxWindowSize || Number.isNaN(v)) {
       throwSettingRangeError("initialWindowSize", v);
     }
   }
@@ -380,6 +380,13 @@ function emitErrorNT(self: any, error: any, destroy: boolean) {
 function emitOutofStreamErrorNT(self: any) {
   self.destroy($ERR_HTTP2_OUT_OF_STREAMS());
 }
+
+function goawaySessionError() {
+  const err = new Error("New streams cannot be created after receiving a GOAWAY");
+  (err as any).code = "ERR_HTTP2_GOAWAY_SESSION";
+  return err;
+}
+hideFromStack(goawaySessionError);
 function cache() {
   const d = new Date();
   utcCache = d.toUTCString();
@@ -2478,7 +2485,7 @@ class ServerHttp2Stream extends Http2Stream {
 
     if (headers == undefined) {
       headers = {};
-    } else if (!$isObject(headers)) {
+    } else if (!$isObject(headers) || $isArray(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };
@@ -2519,7 +2526,7 @@ class ServerHttp2Stream extends Http2Stream {
 
     if (headers == undefined) {
       headers = {};
-    } else if (!$isObject(headers)) {
+    } else if (!$isObject(headers) || $isArray(headers)) {
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };
@@ -2638,7 +2645,10 @@ class ServerHttp2Stream extends Http2Stream {
 
     if (headers == undefined) {
       headers = {};
-    } else if (!$isObject(headers)) {
+    } else if (!$isObject(headers) || $isArray(headers)) {
+      // TODO: support the v26 raw-headers array form ([name1, value1, name2, value2, ...]).
+      // Until then, reject arrays instead of spreading them into numeric-string keys
+      // and sending garbage header frames.
       throw $ERR_INVALID_ARG_TYPE("headers", "object", headers);
     } else {
       headers = { ...headers };
@@ -3898,8 +3908,11 @@ class ClientHttp2Session extends Http2Session {
 
   request(headers: any, options?: any) {
     try {
-      if (this.destroyed || this.closed) {
-        throw $ERR_HTTP2_INVALID_STREAM();
+      if (this.destroyed) {
+        throw $ERR_HTTP2_INVALID_SESSION();
+      }
+      if (this.closed) {
+        throw goawaySessionError();
       }
 
       if (this.sentTrailers) {
@@ -4109,14 +4122,14 @@ function initializeOptions(options) {
   }
 
   if (options.maxSessionInvalidFrames !== undefined)
-    validateUint32(options.maxSessionInvalidFrames, "maxSessionInvalidFrames");
+    validateUint32(options.maxSessionInvalidFrames, "options.maxSessionInvalidFrames");
 
   if (options.maxSessionRejectedStreams !== undefined) {
-    validateUint32(options.maxSessionRejectedStreams, "maxSessionRejectedStreams");
+    validateUint32(options.maxSessionRejectedStreams, "options.maxSessionRejectedStreams");
   }
 
   if (options.unknownProtocolTimeout !== undefined)
-    validateUint32(options.unknownProtocolTimeout, "unknownProtocolTimeout");
+    validateUint32(options.unknownProtocolTimeout, "options.unknownProtocolTimeout");
   else options.unknownProtocolTimeout = 10000;
 
   // Used only with allowHTTP1
@@ -4237,10 +4250,10 @@ class Http2SecureServer extends tls.Server {
       validateObject(settings, "options.settings");
     }
     if (options.maxSessionInvalidFrames !== undefined)
-      validateUint32(options.maxSessionInvalidFrames, "maxSessionInvalidFrames");
+      validateUint32(options.maxSessionInvalidFrames, "options.maxSessionInvalidFrames");
 
     if (options.maxSessionRejectedStreams !== undefined) {
-      validateUint32(options.maxSessionRejectedStreams, "maxSessionRejectedStreams");
+      validateUint32(options.maxSessionRejectedStreams, "options.maxSessionRejectedStreams");
     }
     super(options, connectionListener);
     this[kSessions] = new SafeSet();

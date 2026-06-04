@@ -1498,6 +1498,11 @@ fn new_callee_needs_parens(expr: &js_ast::Expr) -> bool {
     // which is exactly when `HasNonOptionalChainParent` isolates a nested
     // optional chain for us.
     let mut crossed_non_optional_access = false;
+    // `EDot`/`EIndex` forward `ForbidCall` to their target, so a call at the base
+    // of such a chain wraps itself (`new (require("m")).f`). A tagged template
+    // does not — it prints its tag with `ForbidCall` dropped — so a call reached
+    // only through template tags must be hoisted and wrapped here instead.
+    let mut crossed_template = false;
     loop {
         match &current.data {
             ExprData::ECall(e) => {
@@ -1510,11 +1515,12 @@ fn new_callee_needs_parens(expr: &js_ast::Expr) -> bool {
                 return true;
             }
             // `import(...)`, `require(...)`, and `require.resolve(...)` also print
-            // as calls and are captured by `new` the same way `ECall` is; none of
-            // them can be an optional chain.
+            // as calls. Through an `EDot`/`EIndex` chain the forwarded `ForbidCall`
+            // already wraps them, so only hoist the wrap when they are reached
+            // through a template tag (none of them can be an optional chain).
             ExprData::EImport(_)
             | ExprData::ERequireString(_)
-            | ExprData::ERequireResolveString(_) => return true,
+            | ExprData::ERequireResolveString(_) => return crossed_template,
             ExprData::EDot(e) => {
                 if e.optional_chain.is_some() {
                     return !crossed_non_optional_access;
@@ -1536,6 +1542,7 @@ fn new_callee_needs_parens(expr: &js_ast::Expr) -> bool {
                 // expression `new` accepts, so no outer wrap is needed below it.
                 Some(tag) => {
                     crossed_non_optional_access = true;
+                    crossed_template = true;
                     current = tag;
                 }
                 None => return false,

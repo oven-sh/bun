@@ -1,7 +1,7 @@
-use bun_ast::import_record;
 use bun_ast::Target;
-use bun_core::zstr;
+use bun_ast::import_record;
 use bun_core::ZStr;
+use bun_core::zstr;
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, strum::IntoStaticStr)]
 pub enum HardcodedModule {

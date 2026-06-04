@@ -1662,8 +1662,6 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
 
             if global_object.bun_vm().test_isolation_enabled {
                 if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                    // `bun test --isolate` teardown stops this server if the
-                    // test file leaks it; unregistered in `stop_listening`.
                     handles.servers.push(AnyServer::from(server.cast_const()));
                 }
             }

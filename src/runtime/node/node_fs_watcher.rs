@@ -1151,8 +1151,6 @@ impl FSWatcher {
         };
         if vm_ref.test_isolation_enabled {
             if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                // `bun test --isolate` teardown closes this watcher if the
-                // test file leaks it; unregistered in `detach`.
                 handles
                     .fs_watchers
                     .push(core::ptr::NonNull::new(ctx).expect("init: watcher"));

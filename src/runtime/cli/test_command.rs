@@ -3064,8 +3064,6 @@ impl TestCommand {
                         reporter.jest.default_timeout_override = u32::MAX;
                         Global::mimalloc_cleanup(false);
                         if isolate {
-                            // Close leaked watchers/servers through their own
-                            // lifecycle before the swap's blind fd close.
                             crate::jsc_hooks::close_isolation_handles();
                             vm.swap_global_for_test_isolation();
                             reporter

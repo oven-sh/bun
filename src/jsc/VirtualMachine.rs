@@ -4699,13 +4699,6 @@ impl VirtualMachine {
             .remove_listening_socket_for_watch_mode(socket);
     }
 
-    /// Spec VirtualMachine.zig:2505 `swapGlobalForTestIsolation`.
-    ///
-    /// Callers must run `bun_runtime::jsc_hooks::close_isolation_handles()`
-    /// first: the socket-group walk below blindly closes fds, which would
-    /// leave a leaked server's `has_listener()` true and its strong
-    /// `js_value` pinning the outgoing global (fetch handler closure and
-    /// all) for the rest of the run.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
 

@@ -1870,8 +1870,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // the JS VM terminates, it hypothetically might not call stop_listening.
         this_ref.notify_inspector_server_stopped();
         if this_ref.vm().test_isolation_enabled {
-            // Backstop for the same hypothetical — never leave a dangling
-            // registry entry behind the free below.
             if let Some(handles) = crate::jsc_hooks::isolation_handles() {
                 handles.remove_server(this.cast::<()>().cast_const());
             }

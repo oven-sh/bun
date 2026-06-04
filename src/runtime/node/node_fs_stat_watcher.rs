@@ -1033,8 +1033,6 @@ impl StatWatcher {
         // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
         if this_ref.ctx.test_isolation_enabled {
             if let Some(handles) = crate::jsc_hooks::isolation_handles() {
-                // `bun test --isolate` teardown closes this watcher if the
-                // test file leaks it; unregistered in `deinit`.
                 handles
                     .stat_watchers
                     .push(NonNull::new(this_ptr).expect("init: watcher"));

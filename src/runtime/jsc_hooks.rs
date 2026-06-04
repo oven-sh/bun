@@ -97,20 +97,9 @@ pub struct RuntimeState {
     /// Boxed because `HiveAllocator` is `Fallback<HiveRef<Body::Value, 256>, 256>`
     /// — far too large to construct on the stack inside `Box::new(RuntimeState{..})`.
     pub body_value_pool: Box<crate::webcore::body::HiveAllocator>,
-    /// `bun test --isolate` registries — see [`IsolationHandles`]. Drained by
-    /// [`close_isolation_handles`] right before each global swap.
     pub isolation_handles: IsolationHandles,
 }
 
-/// Handles a `bun test --isolate` file can leak whose teardown must run
-/// through the type's own lifecycle at the global swap: blind-closing their
-/// fds at the uws layer leaves `has_pending_activity()` / `has_listener()`
-/// true, and the handle's strong JS ref pins the outgoing global (cached
-/// listener or fetch-handler closure and all) for the rest of the run.
-///
-/// Entries unregister themselves (`FSWatcher::detach`, `StatWatcher::deinit`,
-/// `NewServer::{stop_listening, deinit}`) before they are freed, so every
-/// stored pointer is live.
 #[derive(Default)]
 pub struct IsolationHandles {
     pub fs_watchers: Vec<ptr::NonNull<crate::node::node_fs_watcher::FSWatcher>>,
@@ -211,21 +200,13 @@ pub(crate) fn timer_all_mut() -> &'static mut timer::All {
     unsafe { &mut (*state).timer }
 }
 
-/// This thread's [`IsolationHandles`] registries. `None` only before
-/// `init_runtime_state` / after `deinit_runtime_state` (no watcher or server
-/// can outlive that window, so callers just skip).
-///
-/// Same `&'static mut` contract as [`timer_all_mut`]: single JS thread, and
-/// every use is a single add/remove expression with no JS re-entry while the
-/// borrow is live. The drain ([`close_isolation_handles`]) re-enters JS, so it
-/// goes through the raw [`runtime_state`] pointer instead.
 #[inline]
 pub(crate) fn isolation_handles() -> Option<&'static mut IsolationHandles> {
     let state = runtime_state();
     if state.is_null() {
         return None;
     }
-    // SAFETY: `state` is the live boxed per-thread `RuntimeState`; see above.
+    // SAFETY: live boxed per-thread `RuntimeState`.
     Some(unsafe { &mut (*state).isolation_handles })
 }
 
@@ -1694,34 +1675,22 @@ unsafe fn cancel_all_timers(vm: *mut VirtualMachine) {
     }
 }
 
-/// `bun test --isolate` teardown: close every leaked `FSWatcher`/`StatWatcher`
-/// and stop every leaked server through its own lifecycle (see
-/// [`IsolationHandles`]). The test runner calls this right before
-/// `swap_global_for_test_isolation` — the swap's blind socket-group walk only
-/// closes fds, which would leave `has_listener()` true and the handles'
-/// strong JS refs pinning the outgoing global for the rest of the run.
 pub(crate) fn close_isolation_handles() {
     let state = runtime_state();
     if state.is_null() {
         return;
     }
-    // Each close/stop below may re-enter JS (close/error handlers), which can
-    // register new handles or unregister others mid-drain — pop one entry at
-    // a time through the raw `state` pointer so no `&mut` into the registry
-    // is live across the call.
     loop {
         let Some(w) = (unsafe { &mut (*state).isolation_handles.fs_watchers }).pop() else {
             break;
         };
-        // SAFETY: entries are live (unregistered in `detach` before free).
+        // SAFETY: live until it unregisters in `detach`.
         unsafe { w.as_ref() }.close_for_isolation();
     }
     loop {
         let Some(w) = (unsafe { &mut (*state).isolation_handles.stat_watchers }).pop() else {
             break;
         };
-        // BACKREF — entries are live (unregistered in `deinit` before free);
-        // `ParentRef` Deref gives safe `&StatWatcher`.
         bun_ptr::ParentRef::from(w).close();
     }
     loop {

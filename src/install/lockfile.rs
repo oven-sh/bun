@@ -136,7 +136,9 @@ pub enum Cleaned<'a> {
     New(Box<Lockfile>),
 }
 
-// TODO(port): std.io.FixedBufferStream([]u8) — replace with cursor over &mut [u8]
+// Zig: `std.io.FixedBufferStream([]u8)`. The Rust stream owns its backing
+// `Vec<u8>` — every load path hands the file contents to the stream anyway,
+// which avoids threading a `&mut [u8]` lifetime through the load call graph.
 pub type Stream = bun_io::FixedBufferStream<Vec<u8>>;
 
 /// Duck-typed surface that `Buffers::write_array`/`save` and
@@ -497,7 +499,7 @@ impl Lockfile {
     pub fn load_from_dir<'a, const ATTEMPT_LOADING_FROM_OTHER_LOCKFILE: bool>(
         &'a mut self,
         dir: Fd,
-        manager: Option<&mut PackageManager>,
+        mut manager: Option<&mut PackageManager>,
         log: &mut bun_ast::Log,
     ) -> LoadResult<'a> {
         // Zig: `bun.assert(FileSystem.instance_loaded);`
@@ -610,16 +612,70 @@ impl Lockfile {
             });
         }
 
-        // TODO(port): borrowck — `self` is reborrowed inside `result` via &'a mut Lockfile.
-        // PORT NOTE: reshaped for borrowck — the debug round-trip block below mutates `self`
-        // through `result.ok.lockfile` which already holds the &mut. The `BUN_DEBUG_TEST_
-        // TEXT_LOCKFILE` round-trip path (lockfile.zig:364-406) needs simultaneous access
-        // to `manager` (already moved into the call above for `Option<&mut PackageManager>`)
-        // and the `&mut Lockfile` inside `result`. Restoring it requires the
-        // `manager.as_deref_mut()` reborrow which today's `Option<&mut PackageManager>`
-        // surface forbids. Until reconciler-6, the debug round-trip is omitted.
-        // TODO(port): re-enable BUN_DEBUG_TEST_TEXT_LOCKFILE round-trip once borrowck reshape lands.
-        self.load_from_bytes(manager, buf, log)
+        let mut result = self.load_from_bytes(manager.as_deref_mut(), buf, log);
+
+        // Zig lockfile.zig: when BUN_DEBUG_TEST_TEXT_LOCKFILE is set, convert
+        // the freshly loaded binary lockfile into a text lockfile in memory,
+        // then parse it back into a binary lockfile, so the two codepaths
+        // cross-check each other in tests.
+        if bun_core::env_var::BUN_DEBUG_TEST_TEXT_LOCKFILE
+            .get()
+            .unwrap_or(false)
+        {
+            if let (LoadResult::Ok(ok), Some(manager)) = (&mut result, manager) {
+                let mut writer_buf: Vec<u8> = Vec::new();
+                // `save_from_binary` reads only `loaded_from_binary_lockfile()`
+                // from its `load_result` parameter. `result` itself cannot be
+                // passed while `ok.lockfile` is mutably borrowed (Zig aliases
+                // both freely), so hand it a stand-in that answers
+                // `format == Binary` the same way the real `Ok` result does.
+                let binary_origin = LoadResult::Err(LoadResultErr {
+                    step: LoadStep::ParseFile,
+                    value: err!("DebugTextLockfileRoundTrip"),
+                    lockfile_path: zstr!("bun.lockb"),
+                    format: LockfileFormat::Binary,
+                });
+                if let Err(e) = TextLockfile::Stringifier::save_from_binary(
+                    &mut *ok.lockfile,
+                    &binary_origin,
+                    &manager.options,
+                    &mut writer_buf,
+                ) {
+                    Output::panic(format_args!(
+                        "failed to convert binary lockfile to text lockfile: {}",
+                        e.name()
+                    ));
+                }
+
+                let source = bun_ast::Source::init_path_string(b"bun.lock", writer_buf.as_slice());
+                initialize_store();
+                let bump = bun_alloc::Arena::new();
+                let json = match JSON::parse_package_json_utf8(&source, log, &bump) {
+                    Ok(j) => j,
+                    Err(e) => Output::panic(format_args!(
+                        "failed to print valid json from binary lockfile: {}",
+                        e.name()
+                    )),
+                };
+
+                if let Err(e) = TextLockfile::parse_into_binary_lockfile(
+                    &mut *ok.lockfile,
+                    json,
+                    &source,
+                    log,
+                    Some(manager),
+                ) {
+                    Output::panic(format_args!(
+                        "failed to parse text lockfile converted from binary lockfile: {}",
+                        <&'static str>::from(e)
+                    ));
+                }
+
+                bun_core::analytics::Features::text_lockfile_inc();
+            }
+        }
+
+        result
     }
 
     pub fn load_from_bytes<'a>(
@@ -696,7 +752,6 @@ impl Lockfile {
         exact_versions: bool,
         log_level: LogLevel,
     ) -> Result<Cleaned<'a>, BunError> {
-        // TODO(port): narrow error set
         let old_packages = old.packages.slice();
         let old_dependencies_lists = old_packages.items_dependencies();
         let old_resolutions_lists = old_packages.items_resolutions();
@@ -747,7 +802,6 @@ impl Lockfile {
         updates: &mut [UpdateRequest],
         exact_versions: bool,
     ) -> Result<(), BunError> {
-        // TODO(port): narrow error set
         let workspace_package_id = manager
             .root_package_id
             .get(old, manager.workspace_name_hash);
@@ -755,7 +809,7 @@ impl Lockfile {
             old.packages.items_dependencies()[workspace_package_id as usize];
 
         if (root_deps_list.off as usize) < old.buffers.dependencies.len() {
-            // PORT NOTE: split-borrow — `string_builder!` only takes
+            // Split-borrow: `string_builder!` only takes
             // `old.buffers.string_bytes` + `old.string_pool`, leaving
             // `old.packages` / `old.buffers.{dependencies,resolutions}` free.
             let mut string_builder = string_builder!(old);
@@ -787,7 +841,7 @@ impl Lockfile {
 
                                 // TODO(dylan-conway): this will need to handle updating dependencies (exact, ^, or ~) and aliases
 
-                                // PORT NOTE: Zig's `switch (exact_versions) { else => |exact| ... }` is just a
+                                // Zig's `switch (exact_versions) { else => |exact| ... }` is just a
                                 // way to capture a comptime-ish bool; in Rust we use it directly.
                                 let npm_ver = res.npm().version;
                                 let len = bun_core::fmt::count(format_args!(
@@ -896,7 +950,6 @@ impl Lockfile {
         exact_versions: bool,
         log_level: LogLevel,
     ) -> Result<Box<Lockfile>, BunError> {
-        // TODO(port): narrow error set
         // This is wasteful, but we rarely log anything so it's fine.
         let mut log = bun_ast::Log::init();
         // defer { for (...) item.deinit(); log.deinit(); } — handled by Drop
@@ -1001,7 +1054,6 @@ impl Lockfile {
         exact_versions: bool,
         log_level: LogLevel,
     ) -> Result<Box<Lockfile>, BunError> {
-        // TODO(port): narrow error set
         // Zig names the receiver `old`; alias `self` so the body reads
         // identically to the spec (lockfile.zig:637).
         let old: &mut Lockfile = self;
@@ -1053,7 +1105,7 @@ impl Lockfile {
         old.scratch.dependency_list_queue.discard(queued);
 
         {
-            // PORT NOTE: reshaped for borrowck. Zig holds `&old.overrides` /
+            // Reshaped for borrowck. Zig holds `&old.overrides` /
             // `&old.catalogs` while also passing `*Lockfile old` and
             // `*Lockfile new` (the latter aliased again inside `builder`).
             // The Rust signatures take `&Lockfile` for `old` and read `new`
@@ -1074,7 +1126,7 @@ impl Lockfile {
 
         let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
         let clone_queue_ = PendingResolutions::new();
-        // PORT NOTE: explicit `&mut *` reborrows so `old`/`manager`/`new` are
+        // Explicit `&mut *` reborrows so `old`/`manager`/`new` are
         // released back to this scope once `cloner` is dropped.
         let mut cloner = Cloner {
             old: &mut *old,
@@ -1091,7 +1143,7 @@ impl Lockfile {
         // try clone_queue.ensureUnusedCapacity(root.dependencies.len);
         let _ = root.clone(&mut cloner)?;
 
-        // PORT NOTE: between here and `cloner.flush()`, `old`/`new`/`manager`
+        // Between here and `cloner.flush()`, `old`/`new`/`manager`
         // are live inside `cloner`. Reach them via `cloner.old` /
         // `cloner.lockfile` so borrowck sees disjoint field paths.
         {
@@ -1109,7 +1161,7 @@ impl Lockfile {
                 let mut workspace_paths_builder = string_builder!(new);
 
                 // Sort by name for determinism
-                // PORT NOTE: Zig defines a local `WorkspacePathSorter` struct; in Rust we use a closure.
+                // Zig defines a local `WorkspacePathSorter` struct; in Rust we use a closure.
                 {
                     let string_buf = old.buffers.string_bytes.as_slice();
                     // `ArrayHashMap::sort` mirrors Zig's `entries.sort(ctx)` —
@@ -1328,8 +1380,9 @@ impl<'a> fmt::Display for MetaHashFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let remain: &[u8] = &self.meta_hash[..];
 
-        // {X}-{x}-{X}-{x} — Zig's `{X}` on a slice prints uppercase hex, `{x}` lowercase.
-        // TODO(port): verify byte-slice hex formatting matches Zig std.fmt exactly.
+        // {X}-{x}-{X}-{x} — Zig's `{X}` on a byte slice prints each byte as two
+        // uppercase hex digits with no separators, `{x}` lowercase; `HexBytes`
+        // emits the identical encoding (two digits per byte, contiguous).
         write!(
             f,
             "{}-{}-{}-{}",
@@ -1434,7 +1487,7 @@ impl Lockfile {
     pub fn hoist<const METHOD: tree::BuilderMethod>(
         &mut self,
         log: &mut bun_ast::Log,
-        // PORT NOTE: Zig used `comptime method` to make these params `void` for
+        // Zig used `comptime method` to make these params `void` for
         // non-`.filter` builds. `tree::Builder` stores them unconditionally
         // (Option/slice), so accept the concrete shapes for all `METHOD`s.
         manager: Option<&PackageManager>,
@@ -1444,7 +1497,7 @@ impl Lockfile {
     ) -> Result<(), tree::SubtreeError> {
         let slice = self.packages.slice();
 
-        // PORT NOTE: `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
+        // `tree::Builder` stores `lockfile: ParentRef<Lockfile>` so
         // the `&mut buffers.resolutions` split-borrow below can coexist with
         // the read-only lockfile view inside the builder (see Tree.rs note).
         // `ParentRef::new` captures `SharedReadOnly` provenance from `&*self`,
@@ -1466,17 +1519,18 @@ impl Lockfile {
             list: Default::default(),
             sort_buf: Default::default(),
         };
-        // TODO(port): Tree::Builder field set may differ; verify against the Zig.
 
         Tree::default().process_subtree(tree::ROOT_DEP_ID, tree::INVALID_ID, &mut builder)?;
 
         // This goes breadth-first
         while let Some(item) = builder.queue.read_item() {
             use tree::BuilderEntryColumns as _;
-            // PORT NOTE: reshaped for borrowck — Zig indexes builder.list while passing &mut builder.
+            // Zig indexes `builder.list` in-place while passing `&mut builder`;
+            // copy the element instead. `process_subtree` only reads `this.id`
+            // (before appending to `builder.list`, which may reallocate), so the
+            // copy is equivalent — and avoids the dangling-element hazard.
             let tree = builder.list.items_tree()[item.tree_id as usize];
             tree.process_subtree(item.dependency_id, item.hoist_root_id, &mut builder)?;
-            // TODO(port): `tree` may need to be a reference into builder.list, not a copy.
         }
 
         let cleaned = builder.clean()?;
@@ -1516,7 +1570,7 @@ impl Lockfile {
         }
 
         let cache_ctx = manager.manifest_disk_cache_ctx();
-        // PORT NOTE: heavy borrowck overlap — Zig calls
+        // Heavy borrowck overlap — Zig calls
         // `manager.manifests.byNameHash(manager, …)` (manifests is a field of
         // manager) and then opens a `string_builder` on `manager.lockfile`
         // while still holding `&manifest`. Route the `manifests` projection
@@ -1532,7 +1586,7 @@ impl Lockfile {
         let mut pkgs = self.packages.slice();
         let len = pkgs.len();
 
-        // PORT NOTE: Zig takes `pkgs.items(.bin)` / `pkgs.items(.meta)` as
+        // Zig takes `pkgs.items(.bin)` / `pkgs.items(.meta)` as
         // simultaneous mutable column views; `split_mut()` yields disjoint
         // `&mut [_]` per column from one `&mut Slice` borrow.
         let self::package::PackageColumnsMut {
@@ -1543,7 +1597,7 @@ impl Lockfile {
             meta,
             ..
         } = pkgs.split_mut();
-        // PORT NOTE: Zig has two near-identical loops gated by `update_os_cpu`;
+        // Zig has two near-identical loops gated by `update_os_cpu`;
         // collapse to one loop and bind `pkg_metas` as an empty slice when the
         // const generic is false (Zig left it `undefined`).
         let pkg_metas: &mut [self::package::meta::Meta] =
@@ -1581,7 +1635,7 @@ impl Lockfile {
                         continue;
                     };
 
-                    // PORT NOTE: Zig opens the builder on `manager.lockfile`,
+                    // Zig opens the builder on `manager.lockfile`,
                     // which is the same `*Lockfile` as `this`/`self`. Re-deriving a
                     // whole `&mut Lockfile` from `manager_ptr` here would create a
                     // second mutable reference aliasing `self` (UB) — go through
@@ -1613,7 +1667,7 @@ impl Lockfile {
                     );
                     let new_len = extern_strings_list.len();
 
-                    // PORT NOTE: Zig passes both `extern_strings_list.items` (full slice)
+                    // Zig passes both `extern_strings_list.items` (full slice)
                     // and a tail subslice to `bin.clone()`; the full slice is only used to
                     // compute the tail's offset for `ExternalStringList::init`. In Rust the
                     // two views would alias, so `Bin::clone_with_buffers` takes the offset
@@ -1677,7 +1731,6 @@ impl<'a> Printer<'a> {
         input_lockfile_path: &[u8],
         format: PrinterFormat,
     ) -> Result<(), BunError> {
-        // TODO(port): narrow error set
 
         // We truncate longer than allowed paths. We should probably throw an error instead.
         let path = &input_lockfile_path[..input_lockfile_path.len().min(MAX_PATH_BYTES)];
@@ -1701,7 +1754,7 @@ impl<'a> Printer<'a> {
             // returns the length written into the caller-owned buffer.
             let cwd_len = bun_sys::getcwd(&mut lockfile_path_buf1[..])?;
             let parts = [path];
-            // PORT NOTE: reshaped for borrowck — copy `cwd` out of `buf1` so the
+            // Copy `cwd` out of `buf1` so the
             // join can write into `buf2` while `cwd` borrows `buf1` only.
             let cwd = &lockfile_path_buf1[..cwd_len];
             let lockfile_path__len = resolve_path::join_abs_string_buf::<platform::Auto>(
@@ -1803,7 +1856,6 @@ impl<'a> Printer<'a> {
         format: PrinterFormat,
         writer: W,
     ) -> Result<(), BunError> {
-        // TODO(port): narrow error set
         // `FileSystem::init` ran in the caller (`Printer::print`); this is the
         // process-static singleton (Zig `&FileSystem.instance`). Single-threaded
         // CLI path, no concurrent access.
@@ -1813,7 +1865,7 @@ impl<'a> Printer<'a> {
             ..Default::default()
         };
 
-        // PORT NOTE: reshaped for borrowck — capture the `'static` cwd slice
+        // Capture the `'static` cwd slice
         // before borrowing `fs.fs` mutably.
         let top_level_dir = fs.top_level_dir;
         let entries_option = fs.fs.read_directory(top_level_dir, None, 0, true)?;
@@ -1869,7 +1921,6 @@ impl<'a> Printer<'a> {
 
 impl Lockfile {
     pub fn verify_data(&self) -> Result<(), BunError> {
-        // TODO(port): narrow error set
         debug_assert!(self.format == FormatVersion::current());
         let mut i: usize = 0;
         while i < self.packages.len() {
@@ -1991,7 +2042,6 @@ impl Lockfile {
             let written = start_len - cursor.len();
             ZStr::from_buf(&tmpname_buf, written - 1)
         };
-        // TODO(port): Zig `{x}` on `&[8]u8` formats as lowercase hex of bytes; verify HexBytes matches.
 
         let file = match File::openat(Fd::cwd(), tmpname, sys::O::CREAT | sys::O::WRONLY, 0o777) {
             sys::Result::Err(e) => {
@@ -2058,7 +2108,7 @@ impl Lockfile {
 
     #[inline]
     pub fn str<'a, T: bun_semver::Slicable>(&'a self, slicable: &'a T) -> &'a [u8] {
-        // PORT NOTE: Zig had compile-time guards rejecting by-value String/ExternalString.
+        // Zig had compile-time guards rejecting by-value String/ExternalString.
         // In Rust we just take &T; the temporary-pointer hazard does not exist.
         slicable.slice(self.buffers.string_bytes.as_slice())
     }
@@ -2256,7 +2306,7 @@ impl Lockfile {
 
     /// Appends `pkg` to `this.packages`, and adds to `this.package_index`.
     ///
-    /// PORT NOTE: Zig takes `string_buf: []const u8` as a separate parameter
+    /// Zig takes `string_buf: []const u8` as a separate parameter
     /// (always `lockfile.buffers.string_bytes.items`). In Rust that aliases the
     /// `&mut self` borrow, so read it from `self` and split borrows at the
     /// field level (`package_index` / `packages` / `buffers.string_bytes` are
@@ -2488,7 +2538,6 @@ impl Lockfile {
             bytes: &mut self.buffers.string_bytes,
             pool: &mut self.string_pool,
         }
-        // TODO(port): String.Buf API in bun_semver — Zig also passed `allocator`.
     }
 }
 
@@ -2551,7 +2600,7 @@ pub struct LockfileFields<'a> {
 // StringBuilder
 // ────────────────────────────────────────────────────────────────────────────
 
-/// PORT NOTE: Zig stored `lockfile: *Lockfile` and reached `.buffers.string_bytes`
+/// Zig stored `lockfile: *Lockfile` and reached `.buffers.string_bytes`
 /// / `.string_pool` through it. In Rust that coarse `&mut Lockfile` borrow
 /// blocks every caller from touching disjoint fields (`packages`, `buffers
 /// .dependencies`, …) while a builder is alive. Hold the two fields the
@@ -2767,8 +2816,9 @@ impl<'a> bun_semver::StringBuilder for StringBuilder<'a> {
 pub mod package_index {
     use super::*;
 
+    // Zig: `std.HashMap(.., .., IdentityContext, 80)` — `bun_collections::HashMap`
+    // hard-codes the same 80% max load factor.
     pub type Map = BunHashMap<PackageNameHash, Entry, IdentityContext<PackageNameHash>>;
-    // TODO(port): Zig uses load factor 80; bun_collections::HashMap should match.
 
     #[repr(u8)]
     pub enum Tag {
@@ -3032,7 +3082,6 @@ impl Lockfile {
         print_name_version_string: bool,
         packages_len: usize,
     ) -> Result<bool, BunError> {
-        // TODO(port): narrow error set
         let previous_meta_hash = self.meta_hash;
         self.meta_hash = self.generate_meta_hash(print_name_version_string, packages_len)?;
         Ok(!strings::eql_long(
@@ -3047,7 +3096,6 @@ impl Lockfile {
         print_name_version_string: bool,
         packages_len: usize,
     ) -> Result<MetaHash, BunError> {
-        // TODO(port): narrow error set
         if packages_len <= 1 {
             return Ok(ZERO_HASH);
         }
@@ -3066,7 +3114,7 @@ impl Lockfile {
             let mut i: usize = 1;
 
             while i + 16 < packages_len {
-                // PORT NOTE: Zig used `inline while` to unroll 16 iterations. Plain loop here.
+                // Zig used `inline while` to unroll 16 iterations. Plain loop here.
                 // PERF(port): was comptime-unrolled inner loop — profile if it shows up on a hot path.
                 for j in 0..16usize {
                     alphabetized_names[(i + j) - 1] = (i + j) as PackageID; // @truncate

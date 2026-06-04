@@ -4,13 +4,12 @@ use bun_core::ZigString;
 use super::Expect;
 use super::get_signature;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_throw_error_matching_snapshot(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: Zig `defer this.postMatch(globalThis)` — guard runs post_match on Drop for every
+    // Zig `defer this.postMatch(globalThis)` — guard runs post_match on Drop for every
     // exit path (early `return Err`, `?`, fall-through), matching Zig semantics.
     let this = this.post_match_guard(global);
 

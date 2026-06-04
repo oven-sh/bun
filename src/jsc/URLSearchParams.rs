@@ -9,7 +9,6 @@ bun_opaque::opaque_ffi! {
     pub struct URLSearchParams;
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     safe fn URLSearchParams__create(global_object: &JSGlobalObject, init: &ZigString) -> JSValue;
     safe fn URLSearchParams__fromJS(value: JSValue) -> Option<NonNull<URLSearchParams>>;
@@ -28,13 +27,14 @@ impl URLSearchParams {
         URLSearchParams__create(global_object, &init)
     }
 
-    // TODO(port): lifetime — opaque handle is owned by the JS GC heap, not by `value`.
+    // The returned opaque handle is owned by the JS GC heap, not by `value`;
+    // callers must keep the JS object alive while using it.
     pub fn from_js(value: JSValue) -> Option<NonNull<URLSearchParams>> {
         URLSearchParams__fromJS(value)
     }
 
     pub fn to_string<Ctx>(&mut self, ctx: &mut Ctx, callback: fn(ctx: &mut Ctx, str: ZigString)) {
-        // PORT NOTE: reshaped — Zig captured `callback` at comptime so the C trampoline
+        // Reshaped from Zig — Zig captured `callback` at comptime so the C trampoline
         // only needed `ctx` through the void*. Rust cannot take a fn pointer as a const
         // generic, so pack (ctx, callback) on the stack and pass that instead.
         struct Wrap<'a, Ctx> {

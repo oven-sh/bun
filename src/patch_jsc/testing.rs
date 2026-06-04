@@ -10,7 +10,7 @@ use bun_sys::{Fd, FdExt};
 pub struct TestingAPIs;
 
 impl TestingAPIs {
-    // PORT NOTE: `#[bun_jsc::host_fn]` Free-kind shim emits an unqualified
+    // `#[bun_jsc::host_fn]` Free-kind shim emits an unqualified
     // `fn_name(g, f)` call, so it cannot wrap an associated fn. The C-ABI
     // shim is emitted at module scope below (`__jsc_host_*`).
     pub fn make_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -33,9 +33,8 @@ impl TestingAPIs {
         let old_folder = old_folder_bunstr.to_utf8();
         let new_folder = new_folder_bunstr.to_utf8();
 
-        // PORT NOTE: Zig `gitDiffInternal` used `std.process.Child` (no uv loop).
-        // Rust routes through `bun_spawn::sync`, which on Windows derefs
-        // `WindowsOptions.loop_` — supply the JS event loop.
+        // `git_diff_internal` routes through `bun_spawn::sync`, which on
+        // Windows derefs `WindowsOptions.loop_` — supply the JS event loop.
         // `global.bun_vm().event_loop()` is the live per-thread `jsc::EventLoop`.
         let mut loop_ = bun_jsc::AnyEventLoop::js(global.bun_vm().event_loop().cast());
         let diff = match git_diff_internal(old_folder.slice(), new_folder.slice(), &mut loop_) {

@@ -25,7 +25,7 @@ impl StringBuilder {
         }
     }
 
-    // PORT NOTE: Zig's `append(comptime append_type: Append, value: append_type.Type())`
+    // Note: Zig's `append(comptime append_type: Append, value: append_type.Type())`
     // dispatches on a comptime enum to pick the value's *type*. Rust const
     // generics cannot vary a parameter's type by enum value, and a trait would
     // collide (e.g. `String` is used for both `.string` and `.quoted_json_string`).
@@ -71,7 +71,7 @@ impl StringBuilder {
     }
 
     pub fn to_string(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // PORT NOTE: Zig wraps this in a TopExceptionScope. `from_js_host_call`
+        // Note: Zig wraps this in a TopExceptionScope. `from_js_host_call`
         // is the equivalent shape (call FFI → check pending exception); using it
         // here avoids the in-place-init / pinning dance TopExceptionScope needs.
         crate::from_js_host_call(global, || StringBuilder__toString(self, global))
@@ -88,8 +88,6 @@ impl Drop for StringBuilder {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
 // `StringBuilder` is `#[repr(C, align(8))]` with a single `[u8; SIZE]` field,
 // so `&mut StringBuilder` is ABI-identical to a non-null aligned `void*` to the
 // inline `WTF::StringBuilder` storage. The shims that take only that handle

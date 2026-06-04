@@ -421,8 +421,6 @@ impl<'a> Drop for ArgumentsSlice<'a> {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
 // `CallFrame`/`VM`/`JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles;
 // `&T` is ABI-identical to non-null `*const T`. Out-params are exclusive `&mut`
 // to plain `#[repr(C)]` PODs. `describeFrame` returns a raw C string that the

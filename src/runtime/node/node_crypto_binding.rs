@@ -173,7 +173,7 @@ pub trait CryptoJobCtx: Sized {
     fn init(&mut self, global: &JSGlobalObject) -> JsResult<()>;
     /// Zig calls `ctx.runTask(ctx.result)`; in Rust the impl reads its own
     /// `result` field directly.
-    // PORT NOTE: reshaped for borrowck — Zig passed `self.result` as a separate arg.
+    // Reshaped for borrowck — Zig passed `self.result` as a separate arg.
     fn run_task(&mut self);
     fn run_from_js(&mut self, global: &JSGlobalObject, callback: JSValue);
     fn deinit(&mut self);
@@ -721,7 +721,8 @@ pub(crate) struct Scrypt {
 
     // used in async mode
     buf: StrongOptional, // Strong.Optional, default .empty
-    // TODO(port): lifetime — `result` borrows the ArrayBuffer backing held alive by `buf`.
+    // Invariant: `result` borrows the ArrayBuffer backing kept alive by `buf`;
+    // `buf` must stay set for as long as `result` is dereferenced.
     result: *mut [u8],
     err: Option<u32>,
 }
@@ -740,7 +741,7 @@ mod _impl {
         /// Zig: `fromJS(..., comptime is_async: bool) JSError!if (is_async) struct{@This(),JSValue} else @This()`.
         /// Rust cannot vary the return type on a const-generic bool, so this always returns
         /// `(Self, JSValue)`; the sync caller ignores the second element.
-        // PORT NOTE: reshaped — return type unified across IS_ASYNC.
+        // Reshaped — return type unified across IS_ASYNC.
         pub(crate) fn from_js<const IS_ASYNC: bool>(
             global: &JSGlobalObject,
             call_frame: &CallFrame,
@@ -1112,7 +1113,7 @@ mod _impl {
     #[bun_jsc::host_fn]
     fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let data = PBKDF2::from_js(global_this, call_frame, false)?;
-        // PORT NOTE: Zig had `defer data.deinit()` plus an extra `data.deinit()` on
+        // Zig had `defer data.deinit()` plus an extra `data.deinit()` on
         // the OOM branch (double-deinit). `PBKDF2`'s `StringOrBuffer` fields release
         // on `Drop`, so the local just goes out of scope; the redundant call is gone.
         let mut data = data;
@@ -1223,7 +1224,7 @@ mod _impl {
         let mut hashes: CaseInsensitiveAsciiStringArrayHashMap<()> =
             CaseInsensitiveAsciiStringArrayHashMap::new();
 
-        // TODO(dylan-conway): cache the names
+        // Perf idea (dylan-conway): cache the names
         // SAFETY: `for_each_hash` matches the expected callback signature; `&mut hashes` is valid
         // for the duration of the call.
         unsafe {

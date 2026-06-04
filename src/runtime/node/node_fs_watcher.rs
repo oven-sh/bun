@@ -214,7 +214,7 @@ impl FSWatchTaskPosix {
 
         // if false is closed or detached (can still contain valid refs but will not create a new one)
         if self.ctx().ref_task() {
-            // PORT NOTE: reshaped for borrowck — clone self into a heap task, then reset.
+            // Reshaped for borrowck — clone self into a heap task, then reset.
             let that = bun_core::heap::into_raw(Box::new(FSWatchTaskPosix {
                 ctx: self.ctx,
                 count: self.count,
@@ -285,8 +285,6 @@ impl FSWatchTaskPosix {
 pub type EventPathString = StringOrBytesToDecode;
 #[cfg(not(windows))]
 pub type EventPathString = Box<[u8]>;
-// TODO(port): on posix, `EventPathString` is borrowed `&[u8]` at callback time
-// but owned `Box<[u8]>` after `dupe()`. Consider `Cow<'_, [u8]>`.
 
 pub enum Event {
     Rename(EventPathString),
@@ -325,7 +323,6 @@ impl EventType {
     }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn Bun__domEventNameToJS(global: &JSGlobalObject, event_type: EventType) -> JSValue;
 }
@@ -443,10 +440,13 @@ impl FSWatchTaskWindows {
         use bun_jsc::StringJsc;
         if ctx.encoding == Encoding::Utf8 {
             let StringOrBytesToDecode::String(s) = path else {
-                // TODO(port): Zig accesses `path.string` unconditionally here
+                // Producer invariant (win_watcher::on_path_update_windows): when
+                // `ctx.encoding == Utf8` the payload is always the `String`
+                // variant, and `encoding` is immutable after init. Zig accessed
+                // `path.string` unconditionally (safety-checked union access).
                 unreachable!()
             };
-            // PORT NOTE (spec divergence): Zig's `catch return` here
+            // Spec divergence: Zig's `catch return` here
             // (node_fs_watcher.zig:237) returns from `run()` itself, skipping
             // `ctx.unrefTask()` at zig:256 and leaving `pending_activity_count`
             // permanently elevated on a `transferToJS` failure. Returning from
@@ -606,8 +606,8 @@ impl<'a> Arguments<'a> {
             return Err(ctx
                 .throw_invalid_arguments(format_args!("filename must be a string or TypedArray")));
         };
-        // TODO(port): PathLike Drop — Zig had `defer if (should_deinit_path) path.deinit();`
-        // Once PathLike: Drop, `?` on the error paths below drops it automatically.
+        // Zig had `defer if (should_deinit_path) path.deinit();` — `PathLike: Drop`
+        // now covers it: `?` on the error paths below drops `path` automatically.
 
         let mut listener: JSValue = JSValue::ZERO;
         let mut signal: Option<&AbortSignal> = None;
@@ -786,7 +786,7 @@ impl FSWatcher {
             return;
         }
         self.pending_activity_count.fetch_add(1, Ordering::Relaxed);
-        // PORT NOTE: Zig has `defer this.close(); defer this.unrefTask();` — defers run LIFO,
+        // Zig has `defer this.close(); defer this.unrefTask();` — defers run LIFO,
         // so unref_task() executes before close(). No early returns below, so both calls are
         // inlined at the end of this function.
 
@@ -821,7 +821,7 @@ impl FSWatcher {
         if self.closed.get() {
             return;
         }
-        // PORT NOTE: reshaped for borrowck — `defer this.close()` moved to fn end.
+        // Reshaped for borrowck — `defer this.close()` moved to fn end.
 
         let js_this = self.js_this.get();
         if !js_this.is_empty() {
@@ -979,7 +979,9 @@ impl FSWatcher {
         } else {
             self.mutex.unlock();
         }
-        // TODO(port): bun.Mutex lock/unlock — verify RAII guard vs manual unlock semantics.
+        // Manual lock/unlock mirrors Zig `close()` exactly: the lock is released
+        // before `detach()` on the not-closed path and in the else branch — every
+        // path unlocks exactly once. `ref_task`/`unref_task` use the RAII guard.
     }
 
     // this can be called multiple times
@@ -1006,7 +1008,7 @@ impl FSWatcher {
         }
 
         if let Some(signal) = self.signal.replace(None) {
-            // PORT NOTE: Zig `signal.detach(this)` = `cleanNativeBindings` +
+            // Zig `signal.detach(this)` = `cleanNativeBindings` +
             // `unref`. `AbortSignalRef::Drop` already does the `unref`, so only
             // remove the listener here to avoid a double-unref.
             signal.clean_native_bindings(ctx_ptr);
@@ -1089,7 +1091,7 @@ impl FSWatcher {
         ctx_ref
             .path_watcher
             .set(if args.signal.is_none_or(|s| !s.aborted()) {
-                // PORT NOTE: Zig passes `comptime callback` / `comptime updateEnd`
+                // Zig passes `comptime callback` / `comptime updateEnd`
                 // and both backends `@compileError` if they aren't exactly
                 // `onPathUpdateFn` / `onUpdateEndFn`. The Windows port dropped
                 // those parameters (only one valid value each), so the call is

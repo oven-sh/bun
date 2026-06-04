@@ -79,7 +79,6 @@ impl Composes {
     }
 
     pub fn deep_clone(&self, bump: &Arena) -> Self {
-        // PORT NOTE: Zig `css.implementDeepClone` is comptime field reflection.
         // `CustomIdent` is `Copy` (arena-ptr payload), so an element-wise copy
         // into a fresh `SmallList` is the deep clone.
         let mut names = CustomIdentList::default();
@@ -95,7 +94,6 @@ impl Composes {
     }
 
     pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // PORT NOTE: Zig `css.implementEql` is comptime field reflection.
         if lhs.names.len() != rhs.names.len() {
             return false;
         }
@@ -139,7 +137,6 @@ impl crate::generics::CssEql for Specifier {
 
 impl Specifier {
     pub fn eql(lhs: Self, rhs: Self) -> bool {
-        // PORT NOTE: Zig `css.implementEql` (variant-wise reflection) → hand-match.
         match (lhs, rhs) {
             (Specifier::Global, Specifier::Global) => true,
             (Specifier::ImportRecordIndex(a), Specifier::ImportRecordIndex(b)) => a == b,
@@ -179,12 +176,11 @@ impl Specifier {
     }
 
     pub fn deep_clone(self, _bump: &Arena) -> Self {
-        // PORT NOTE: Zig `css.implementDeepClone` — variants are `Copy`.
+        // Variants are `Copy`; the deep clone is the value itself.
         self
     }
 
     pub fn hash(self, hasher: &mut Wyhash) {
-        // PORT NOTE: Zig `css.implementHash` (variant-wise reflection) → hand-match.
         match self {
             Specifier::Global => hasher.update(&0u32.to_ne_bytes()),
             Specifier::ImportRecordIndex(i) => {

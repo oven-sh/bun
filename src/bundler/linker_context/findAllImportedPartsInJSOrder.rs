@@ -66,11 +66,11 @@ pub fn find_imported_parts_in_js_order(
     part_ranges_shared.clear();
     parts_prefix_shared.clear();
 
-    // PORT NOTE: reshaped for borrowck — capture before constructing visitor
+    // Capture before constructing the visitor (borrowck).
     let with_code_splitting = this.graph.code_splitting;
     let with_scb = this.graph.is_scb_bitset.bit_length > 0;
 
-    // PORT NOTE: the Zig visitor holds a *LinkerContext alongside SoA column slices
+    // The Zig visitor holds a *LinkerContext alongside SoA column slices
     // borrowed from it, and mutates one column (`entry_point_chunk_index`). Rust
     // borrowck forbids the latter through a shared `&LinkerContext`, so cache that
     // single mutable column as a raw `*mut [u32]` (provenance via the
@@ -121,7 +121,6 @@ pub fn find_imported_parts_in_js_order(
         (visitor.files, parts_in_chunk_order)
     };
 
-    // PORT NOTE: `chunk.content.javascript` union field access → enum match.
     match &mut chunk.content {
         chunk::Content::Javascript(js) => {
             js.files_in_chunk_order = files_in_chunk_order.into_boxed_slice();
@@ -158,7 +157,7 @@ pub struct FindImportedPartsVisitor<'a, 'ctx> {
     pub entry_point: EntryPoint,
     pub chunk_index: u32,
     /// Raw column pointer into `c.graph.files` for the single mutable write in
-    /// `visit` (see PORT NOTE above).
+    /// `visit` (see the raw-pointer note above).
     entry_point_chunk_indices: *mut [u32],
 }
 

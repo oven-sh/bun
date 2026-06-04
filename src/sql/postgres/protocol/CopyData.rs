@@ -1,5 +1,6 @@
 use super::new_reader::NewReader;
 use super::new_writer::NewWriter;
+use crate::postgres::AnyPostgresError;
 use crate::postgres::types::int_types::int32;
 use crate::shared::Data;
 
@@ -9,11 +10,10 @@ pub struct CopyData {
 }
 
 impl CopyData {
-    // PORT NOTE: out-param constructor (`this.* = .{...}`) reshaped to return Self.
-    // TODO(port): narrow error set
+    // Zig out-param constructor (`this.* = .{...}`) reshaped to return Self.
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> Result<Self, AnyPostgresError> {
         let length = reader.length()?;
 
         let data = reader.read(usize::try_from(length.saturating_sub(5)).expect("int cast"))?;
@@ -24,16 +24,15 @@ impl CopyData {
     pub fn decode<Container: super::new_reader::ReaderContext>(
         &mut self,
         reader: NewReader<Container>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyPostgresError> {
         *self = Self::decode_internal(reader)?;
         Ok(())
     }
 
-    // TODO(port): narrow error set
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyPostgresError> {
         let data = self.data.slice();
         let count: u32 =
             u32::try_from(core::mem::size_of::<u32>() + data.len() + 1).expect("int cast");
@@ -55,7 +54,7 @@ impl CopyData {
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyPostgresError> {
         self.write_internal(writer)
     }
 }

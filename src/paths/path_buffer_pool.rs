@@ -4,11 +4,9 @@
 //! make the stack memory usage more predictable. We keep up to 4 path buffers
 //! alive per thread at a time.
 //!
-//! PORT NOTE: Zig used `bun.ObjectPool<T, null, true, 4>` (a thread-safe
-//! 4-slot freelist). Rewritten over `thread_local!` + `RefCell<Vec<Box<T>>>`
-//! per PORTING.md §Concurrency (init-once / per-thread → no lock needed).
-//! Same observable behavior: at most 4 buffers cached per thread; excess `put`s
-//! drop. RAII guard replaces the manual `get`/`put` pairing.
+//! Implemented over `thread_local!` + `RefCell<Vec<Box<T>>>` (per-thread, so no
+//! lock needed): at most 4 buffers cached per thread; excess `put`s drop. An
+//! RAII guard replaces manual `get`/`put` pairing.
 
 use core::cell::RefCell;
 use core::marker::PhantomData;

@@ -79,9 +79,8 @@ impl If {
     pub fn next(interp: &Interpreter, this: NodeId) -> Yield {
         let parent = interp.as_if(this).base.parent;
         loop {
-            // PORT NOTE: reshaped for borrowck — we read/mutate `state` via a
-            // short-lived borrow, decide an action, then drop the borrow
-            // before calling back into `interp`.
+            // Read/mutate `state` via a short-lived borrow, decide an action,
+            // then drop the borrow before calling back into `interp`.
             let action = {
                 let me = interp.as_if_mut(this);
                 // Copy the BackRef out so `n` borrows a local, leaving `me`

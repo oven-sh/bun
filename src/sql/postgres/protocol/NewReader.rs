@@ -19,7 +19,6 @@ pub trait ReaderContext {
 /// Helper trait for `int<Int>()` / `peek_int<Int>()` — Zig used `@sizeOf(Int)`,
 /// `@bitCast`, and `@byteSwap` to read a big-endian integer of arbitrary width.
 /// Rust has no std trait for `from_be_bytes`, so we mint a tiny one.
-// TODO(port): consider moving to a shared int-read helper if other protocol files need it
 pub trait ProtocolInt: Sized + Copy + Eq {
     const SIZE: usize;
     fn from_be_slice(bytes: &[u8]) -> Self;
@@ -168,7 +167,7 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
 
     pub fn length(&mut self) -> Result<PostgresInt32, AnyPostgresError> {
         let expected = self.int::<PostgresInt32>()?;
-        // PORT NOTE: Zig `expected > -1` — `int4` is u32 so always nonnegative; preserved
+        // Zig `expected > -1` — `int4` is u32 so always nonnegative; preserved
         // as the saturating sub guarding underflow when len < 4.
         self.ensure_capacity(expected.saturating_sub(4) as usize)?;
 
@@ -181,14 +180,16 @@ impl<Context: ReaderContext> NewReaderWrap<Context> {
         self.read(count)
     }
 
+    /// Returns a `BunString` that BORROWS the connection read buffer.
+    ///
+    /// Invariant: callers must not hold the returned `BunString` past the next
+    /// buffer fill — `borrow_utf8` stores a raw pointer with no lifetime, so
+    /// the string is only valid until more data is read into the buffer.
+    /// (Zig `borrowUTF8` had the same contract: it borrowed `result.slice()`
+    /// and dropped the `Temporary` `Data` wrapper via `defer result.deinit()`;
+    /// the bytes live in the connection buffer, not the wrapper.)
     pub fn string(&mut self) -> Result<BunString, AnyPostgresError> {
         let result = self.read_z()?;
-        // PORT NOTE: Zig `borrowUTF8` borrows `result.slice()` then drops `result`
-        // via `defer result.deinit()`. `Data` here is `Temporary` (points into the
-        // connection buffer), so the bytes outlive the `Data` wrapper itself;
-        // `borrow_utf8` stores a raw pointer (no lifetime) so this matches Zig
-        // semantics 1:1. TODO(audit): no caller may hold the returned
-        // `BunString` past the next buffer fill.
         Ok(BunString::borrow_utf8(result.slice()))
     }
 }

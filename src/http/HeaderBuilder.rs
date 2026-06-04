@@ -19,7 +19,6 @@ impl HeaderBuilder {
 
     pub fn allocate(&mut self) -> Result<(), AllocError> {
         self.content.allocate()?;
-        // TODO(port): narrow error set
         self.entries
             .ensure_total_capacity(self.header_count as usize)?;
         Ok(())
@@ -81,7 +80,7 @@ impl HeaderBuilder {
 
         let _ = self.content.append(name);
 
-        // PORT NOTE: reshaped for borrowck — `fmt` returns a borrow into the
+        // Note: reshaped for borrowck — `fmt` returns a borrow into the
         // builder buffer; capture its length, then re-read `content.len`.
         let value_len = self.content.fmt(args).len();
 
@@ -99,9 +98,9 @@ impl HeaderBuilder {
 
     pub fn apply(&mut self, client: &mut crate::HTTPClient) {
         client.header_entries = core::mem::take(&mut self.entries);
-        // TODO(port): lifetime — header_buf borrows from self.content's allocation; in Zig this
-        // is a non-owning slice into the StringBuilder's buffer. Decide whether
-        // HttpClient should take ownership of the buffer or borrow it.
+        // header_buf is a non-owning slice into self.content's allocation (in
+        // Zig, a slice of the StringBuilder's buffer); the builder's owner must
+        // keep `self.content` alive for as long as the client uses the slice.
         // SAFETY: content.ptr was set by allocate() and exactly content.len bytes have been written.
         // Cannot use `written_slice()` here — the borrow must outlive `&self` (`HTTPClient<'a>`
         // holds it past this call); the lifetime is intentionally unbound.

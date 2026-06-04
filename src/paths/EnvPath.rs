@@ -15,10 +15,9 @@ fn trim_path_delimiters(input: &[u8]) -> &[u8] {
 }
 
 // Zig: `pub fn EnvPath(comptime opts: EnvPathOptions) type { return struct { ... } }`
-// TODO(port): `EnvPathOptions` currently has no fields, so the comptime `opts`
-// parameter is vacuous. Re-introduce a `<const OPTS: EnvPathOptions>` const
-// generic (with `#[derive(core::marker::ConstParamTy)]` on `EnvPathOptions`)
-// once options are actually added.
+// `EnvPathOptions` currently has no fields, so the comptime `opts` parameter is
+// vacuous and is not ported. If options are ever added, reintroduce them as a
+// const-generic parameter here.
 #[derive(Default)]
 pub struct EnvPath {
     // Zig: `std.mem.Allocator param` — dropped (non-AST crate, global mimalloc).

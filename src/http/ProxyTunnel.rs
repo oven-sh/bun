@@ -38,10 +38,8 @@ pub(crate) fn raw_as_mut<'a>(ptr: *mut ProxyTunnel) -> &'a mut ProxyTunnel {
 type ProxyTunnelWrapper = SSLWrapper<*mut HTTPClient<'static>>;
 
 /// active socket is the socket that is currently being used
-// PORT NOTE: Zig used `NewHTTPContext(B).HTTPSocket`; inherent associated types
-// are unstable in Rust, so the free `HTTPSocket<SSL>` alias from http_context
-// is used instead. `HTTPSocket<B>` = `uws::SocketHandler<B>` = `NewSocketHandler<B>`,
-// so the canonical 3-arm enum lives in `bun_uws` next to its payload type.
+// `HTTPSocket<B>` = `uws::SocketHandler<B>` = `NewSocketHandler<B>`, so the
+// canonical 3-arm enum lives in `bun_uws` next to its payload type.
 pub use bun_uws::MaybeAnySocket as Socket;
 
 #[derive(bun_ptr::CellRefCounted)]
@@ -244,8 +242,6 @@ fn on_open(ctx: *mut HTTPClient) {
     if let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) {
         let _hostname = this.hostname.unwrap_or(this.url.hostname);
 
-        // PORT NOTE: Zig `configureHTTPClient` is `configureHTTPClientWithALPN(ssl, host, .h1)`;
-        // the Rust port already exposes the ALPN form in `crate::configure_http_client_with_alpn`.
         // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's SSLWrapper.
         let ssl = unsafe { &mut *ssl_ptr.as_ptr() };
         if bun_core::is_ip_address(_hostname) {
@@ -537,7 +533,7 @@ fn on_close(ctx: *mut HTTPClient) {
     let proxy_ptr = proxy_nn.as_ptr();
     // close_raw still holds `&mut SSLWrapper` on `(*proxy_ptr).wrapper`, so
     // bump refcount via the disjoint Cell projection.
-    // PORT NOTE: not a ScopedRef — the matching deref is deferred via
+    // Not a ScopedRef — the matching deref is deferred via
     // `schedule_proxy_deref` to avoid freeing within the callback.
     {
         let rc = ProxyTunnel::ref_count_of(proxy_nn);
@@ -720,9 +716,9 @@ impl ProxyTunnel {
         let self_nn = NonNull::from(&mut *self);
         let self_ptr = self_nn.as_ptr();
         let _guard = Self::ref_scope(self_nn);
-        // PORT NOTE: Zig `defer wrapper.flush()` runs AFTER the body but BEFORE
-        // `defer deref()` (LIFO). We mirror that order explicitly at the single
-        // exit. flush() → handle_traffic → write_encrypted reenters and touches
+        // flush() must run AFTER the body but BEFORE the guard's deref; that
+        // order is written out explicitly at the single exit below.
+        // flush() → handle_traffic → write_encrypted reenters and touches
         // `write_buffer`/`socket` via raw projection; we must not hold a
         // `&mut ProxyTunnel` (or any borrow overlapping those fields) across it.
         {

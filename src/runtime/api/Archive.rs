@@ -44,8 +44,9 @@ impl Default for GzipOptions {
     }
 }
 
-// TODO(port): #[bun_jsc::JsClass] derive — hand-written until the proc-macro
-// grows `no_finalize`/`no_construct` knobs Archive needs (custom `finalize`).
+// Hand-written JS class glue (not the `#[bun_jsc::JsClass]` derive): Archive
+// needs a custom `finalize` and no constructor, which the proc-macro does not
+// expose.
 #[repr(C)]
 pub struct Archive {
     /// The underlying data for the archive - uses Blob.Store for thread-safe ref counting
@@ -167,7 +168,7 @@ impl Archive {
     /// - compress: "gzip" - Enable gzip compression
     /// - level: number (1-12) - Compression level (default 6)
     /// When no options are provided, no compression is applied
-    // PORT NOTE: `#[bun_jsc::host_fn]` has no `constructor` kind yet; the
+    // NOTE: `#[bun_jsc::host_fn]` has no `constructor` kind yet; the
     // `JsClass` derive emits a `constructor` shim that calls this directly.
     pub fn constructor(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<Box<Archive>> {
         let [data_arg, options_arg] = callframe.arguments_as_array::<2>();
@@ -949,8 +950,14 @@ impl TaskContext for BlobContext {
                     PromiseResult::Resolve(unsafe { (*blob_ptr).to_js(global) })
                 }
                 BlobOutputType::Bytes => {
-                    let dup = self.store.shared_view().to_vec();
-                    // TODO(port): Zig matched OOM here and rejected; Rust Vec aborts on OOM.
+                    // Zig: `dupe(...) catch return .{ .reject = createOutOfMemoryError() }`
+                    // (Archive.zig:643) — reject the promise instead of aborting.
+                    let view = self.store.shared_view();
+                    let mut dup: Vec<u8> = Vec::new();
+                    if dup.try_reserve_exact(view.len()).is_err() {
+                        return Ok(PromiseResult::Reject(global.create_out_of_memory_error()));
+                    }
+                    dup.extend_from_slice(view);
                     PromiseResult::Resolve(JSValue::create_buffer_from_box(
                         global,
                         dup.into_boxed_slice(),
@@ -1181,7 +1188,7 @@ impl FilesContext {
                         // Read error - returned as a normal Result (not a Zig error), so the
                         // errdefer above won't fire. Free the current buffer and all previously
                         // collected entries manually to avoid leaking them.
-                        // PORT NOTE: in Rust both `data` and `entries` drop automatically here.
+                        // NOTE: in Rust both `data` and `entries` drop automatically here.
                         // SAFETY: `archive` is the live `read_new()` handle opened above.
                         return Ok(if let Some(err) = Self::clone_error_string(&archive) {
                             FilesResult::LibarchiveErr(err)
@@ -1420,7 +1427,6 @@ fn extract_to_disk_filtered(
     root: &[u8],
     glob_patterns: Option<&[Box<[u8]>]>,
 ) -> Result<u32, bun_core::Error> {
-    // TODO(port): narrow error set
     use libarchive::lib;
     let archive = lib::ReadArchive::new();
     configure_archive_reader(&archive);

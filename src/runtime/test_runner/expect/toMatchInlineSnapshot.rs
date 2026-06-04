@@ -3,13 +3,12 @@ use bun_core::ZigString;
 
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_match_inline_snapshot(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: `defer this.postMatch(globalThis)` — wrap `this` in a scopeguard that owns the
+    // `defer this.postMatch(globalThis)` — wrap `this` in a scopeguard that owns the
     // &mut Expect and runs post_match on drop, so the body can borrow through DerefMut without
     // overlapping with the deferred call (matches toThrowErrorMatchingInlineSnapshot.rs).
     let this = scopeguard::guard(this, |this| this.post_match(global));

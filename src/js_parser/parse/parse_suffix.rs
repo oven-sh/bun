@@ -100,8 +100,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 p.lexer.expect(T::TIdentifier)?;
             }
 
-            // TODO(port): `E::Dot::name` is `&'static [u8]` (arena-owned slice
-            // placeholder); lexer hands back `&'a [u8]`.
+            // `E::Dot::name` is spelled `&'static [u8]` but actually holds an
+            // arena-owned slice; the lexer hands back `&'a [u8]`.
             let name = E::Str::new(p.lexer.identifier);
             let name_loc = p.lexer.loc();
             p.lexer.next()?;
@@ -431,7 +431,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         let loc = left.loc;
         let prev = *left;
-        // PORT NOTE: Zig allocates an E::If with `undefined` yes/no then writes through the
+        // Zig allocates an E::If with `undefined` yes/no then writes through the
         // arena pointer (`ternary.data.e_if.yes`). The `Data::EIf(StoreRef<E::If>)` payload is a
         // boxed arena slot, so we mirror that: allocate first, then fill via DerefMut on StoreRef.
         let ternary = p.new_expr(
@@ -552,7 +552,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     // Zig used `inline` @field/@tagName comptime dispatch for the 30+ simple binary
     // operators below. Rust has no struct-field-name reflection; each is written out.
-    // PORT NOTE: bodies are uniform — `if level.gte(L) {Done}; next; new Binary{op,left,right}`.
+    // bodies are uniform — `if level.gte(L) {Done}; next; new Binary{op,left,right}`.
 
     fn sfx_t_plus(p: &mut Self, level: Level, left: &mut Expr) -> CResult {
         if level.gte(Level::Add) {
@@ -580,7 +580,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.next()?;
         let loc = left.loc;
         let prev = *left;
-        // PORT NOTE: Zig wrote `@enumFromInt(@intFromEnum(Op.Level.assign) - 1)`; equivalent to `Level::Assign.sub(1)`.
+        // Zig wrote `@enumFromInt(@intFromEnum(Op.Level.assign) - 1)`; equivalent to `Level::Assign.sub(1)`.
         let right = p.parse_expr(Level::Assign.sub(1))?;
         *left = p.new_expr(
             E::Binary {
@@ -1442,7 +1442,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         flags: EFlags,
     ) -> Result<(), Error> {
         let p = self;
-        // PORT NOTE: Zig kept a separate `left_value` local + `left = &left_value`
+        // Zig kept a separate `left_value` local + `left = &left_value`
         // to work around a Zig codegen bug ("creates a new address to stack locals
         // each & usage"). Rust has no such bug, so we mutate `left` directly and
         // drop the trailing/deferred `left_and_out.* = left_value` writebacks.
@@ -1450,7 +1450,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut optional_chain: Option<OptionalChain> = None;
         loop {
             if p.lexer.loc().start == p.after_arrow_body_loc.start {
-                // PORT NOTE: Zig labeled-switch `next_token: switch (...) { continue :next_token ... }`
+                // Zig labeled-switch `next_token: switch (...) { continue :next_token ... }`
                 // becomes a plain loop re-reading `p.lexer.token` each iteration.
                 loop {
                     match p.lexer.token {
@@ -1501,7 +1501,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // function with many scopes and local variables consumes
             // enormous amounts of stack space.
             //
-            // PORT NOTE: Zig used `inline ... => |tag| @field(@This(), @tagName(tag))(p, level, left)`
+            // Zig used `inline ... => |tag| @field(@This(), @tagName(tag))(p, level, left)`
             // for comptime name-based dispatch. Rust has no @field/@tagName reflection, so each
             // arm is written out explicitly.
             let continuation = match p.lexer.token {

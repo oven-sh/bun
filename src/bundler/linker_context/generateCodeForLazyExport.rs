@@ -37,7 +37,7 @@ pub fn generate_code_for_lazy_export(
     source_index: IndexInt,
 ) -> Result<(), AllocError> {
     let exports_kind = this.graph.ast.items_exports_kind()[source_index as usize];
-    // PORT NOTE: reshaped for borrowck — take `parts` as a raw pointer *before* the
+    // Take `parts` as a raw pointer *before* the
     // long-lived immutable `items_css()` borrow below; re-borrowed again later as needed.
     let parts: *mut [Part] = this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
     // SAFETY: parse_graph backref; raw deref because `all_sources` is held
@@ -170,7 +170,6 @@ pub fn generate_code_for_lazy_export(
                         .unwrap()
                         .loc;
 
-                    // PORT NOTE: was `catch |err| bun.handleOom(err)` — crash on OOM.
                     self.log.add_range_error_fmt_with_note(
                         Some(&self.all_sources[idx as usize]),
                         bun_ast::Range { loc: compose_loc, ..Default::default() },
@@ -306,7 +305,7 @@ pub fn generate_code_for_lazy_export(
                 }
             }
 
-            // PORT NOTE: Zig left `parts: undefined` and rebound per-iteration; Rust
+            // Zig left `parts: undefined` and rebound per-iteration; Rust
             // forbids uninit refs, so the Visitor is constructed inside the loop with
             // a fresh `parts` borrow each time (reshaped for borrowck).
             let all_symbols = this.graph.ast.items_symbols();
@@ -355,7 +354,7 @@ pub fn generate_code_for_lazy_export(
                         tail_loc: stmt.loc,
                         tail: E::TemplateContents::Cooked(E::String::init(b"")),
                     });
-                    // PORT NOTE: Zig used an arena-backed ArrayList and moved `.items`
+                    // Zig used an arena-backed ArrayList and moved `.items`
                     // into `E.Template`; mirror that by moving into the linker arena
                     // (freed when the linker arena drops).
                     let parts_slice =
@@ -430,13 +429,12 @@ pub fn generate_code_for_lazy_export(
         _ => {
             // Otherwise, generate ES6 export statements. These are added as additional
             // parts so they can be tree shaken individually.
-            // PORT NOTE: Zig `part.stmts.len = 0` truncates the slice.
             part.stmts = bun_ast::StoreSlice::EMPTY;
 
             if let ExprData::EObject(e_object) = &expr.data {
                 for property in e_object.properties.slice() {
                     let _: &G::Property = property;
-                    // PORT NOTE: `Expr`/`ExprData`/`StoreRef<_>` are `Copy`. Copy `key` out so
+                    // `Expr`/`ExprData`/`StoreRef<_>` are `Copy`. Copy `key` out so
                     // `key_str: StoreRef<E::EString>` is a mutable local — `slice()` resolves
                     // the rope in-place via `DerefMut` into the arena slot (matches Zig's
                     // `property.key.?.data.e_string.slice(...)` which takes `*String`).
@@ -493,7 +491,7 @@ pub fn generate_code_for_lazy_export(
                             },
                             key.loc,
                         )));
-                    // PORT NOTE: `parts.ptr[generated[1]]` — re-borrow `parts` here for borrowck.
+                    // Re-borrow `parts` here for borrowck.
                     let parts =
                         this.graph.ast.items_parts_mut()[source_index as usize].as_mut_slice();
                     parts[generated.1 as usize].stmts = bun_ast::StoreSlice::new_mut(new_stmts);

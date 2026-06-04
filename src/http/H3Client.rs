@@ -46,10 +46,9 @@ pub use stream::Stream;
 /// Live-object counters for the leak test in fetch-http3-client.test.ts.
 /// Incremented at allocation, decremented in deinit. Read from the JS thread
 /// via TestingAPIs.quicLiveCounts so they must be atomic.
-// PORT NOTE: Zig names are `live_sessions`/`live_streams` (snake_case module
-// vars). Kept verbatim so cross-crate readers (`bun_http_jsc`) and the gated
-// submodules see the same identifier the Zig uses; SCREAMING_SNAKE aliases
-// preserved for the existing internal references.
+// Lower-case names kept so cross-crate readers (`bun_http_jsc`) and the gated
+// submodules share one identifier; SCREAMING_SNAKE aliases preserved for the
+// existing internal references.
 #[allow(non_upper_case_globals)]
 pub static live_sessions: AtomicU32 = AtomicU32::new(0);
 #[allow(non_upper_case_globals)]

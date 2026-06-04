@@ -20,10 +20,9 @@ use crate::npm::{self};
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
 
-// PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
-// lockfile.stringBuf()` for the whole function, but in Rust that locks out
-// every other `lockfile.*` access. Construct a fresh `Buf` per append so the
-// mutable borrow ends immediately.
+// A single long-lived `Buf` for the whole function would lock out every other
+// `lockfile.*` access. Construct a fresh `Buf` per append so the mutable
+// borrow ends immediately.
 macro_rules! sbuf {
     ($lockfile:expr) => {
         semver::string::Buf {
@@ -33,12 +32,11 @@ macro_rules! sbuf {
     };
 }
 
-// PORT NOTE: Zig freely passes `lockfile.buffers.string_bytes.items` alongside
-// `&mut lockfile`. In Rust we keep the borrows field-disjoint instead — every
-// concurrent mutation in this file touches `buffers.dependencies`,
-// `buffers.resolutions`, `packages`, etc., never `string_bytes` itself, so a
-// plain `lockfile.buffers.string_bytes.as_slice()` at the use site is sound
-// and checked. The one exception (`append_package_dedupe` taking `&mut self`)
+// Borrows are kept field-disjoint — every concurrent mutation in this file
+// touches `buffers.dependencies`, `buffers.resolutions`, `packages`, etc.,
+// never `string_bytes` itself, so a plain
+// `lockfile.buffers.string_bytes.as_slice()` at the use site is sound and
+// checked. The one exception (`append_package_dedupe` taking `&mut self`)
 // reads the slice from `self` internally.
 macro_rules! string_bytes {
     ($lockfile:expr) => {
@@ -577,7 +575,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     Err(_) => return Err(invalid_pnpm_lockfile()),
                 };
 
-                // PORT NOTE: copy `Expr` out by value so the `&mut manager`
+                // Copy `Expr` out by value so the `&mut manager`
                 // borrow held by `workspace_pkg_json` ends here — `manager`
                 // is reborrowed below for `parse_append_importer_dependencies`.
                 let workspace_root: Expr = workspace_pkg_json.root;
@@ -640,7 +638,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
         for _pkg_id in 0..workspace_pkgs_end {
             let pkg_id: PackageID = u32::try_from(_pkg_id).expect("int cast");
 
-            // PORT NOTE: own the bytes — the `'next_dep` loop body mutates
+            // Own the bytes — the `'next_dep` loop body mutates
             // `lockfile.buffers.string_bytes` (via `sbuf!`) and takes
             // `&mut *lockfile` (`append_package_dedupe`), so a borrow that
             // spans the loop would conflict.
@@ -1496,9 +1494,9 @@ fn parse_append_importer_dependencies(
                 if strings::has_prefix(specifier_str, b"catalog:") {
                     let catalog_group_name_str = &specifier_str[b"catalog:".len()..];
                     let catalog_group_name = sbuf!(lockfile).append(catalog_group_name_str)?;
-                    // PORT NOTE: reshaped for borrowck — `CatalogMap::get` needs
-                    // both `&mut self.catalogs` and `&self`; temporarily move
-                    // catalogs out so the disjoint fields can be borrowed.
+                    // `CatalogMap::get` needs both `&mut self.catalogs` and
+                    // `&self`; temporarily move catalogs out so the disjoint
+                    // fields can be borrowed.
                     let catalogs = core::mem::take(&mut lockfile.catalogs);
                     let dep_result = catalogs.get(lockfile, catalog_group_name, name.value);
                     lockfile.catalogs = catalogs;

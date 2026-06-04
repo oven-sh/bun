@@ -16,7 +16,6 @@ impl AuthSwitchResponse {
         &self,
         writer: NewWriter<C>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         writer.write(self.auth_response.slice())?;
         Ok(())
     }

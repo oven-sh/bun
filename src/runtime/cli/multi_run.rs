@@ -124,8 +124,7 @@ impl<'a> ProcessHandle<'a> {
         let state = unsafe { &mut *self.state.cast_mut() };
         state.remaining_scripts += 1;
 
-        // TODO(port): argv as null-terminated array of `?[*:0]const u8` — exact ABI for
-        // spawnProcess. Using *const c_char placeholders.
+        // Null-terminated argv array, as required by spawnProcess.
         let argv: [*const c_char; 4] = [
             state.shell_bin.as_ptr().cast::<c_char>(),
             if cfg!(unix) {
@@ -138,7 +137,6 @@ impl<'a> ProcessHandle<'a> {
         ];
 
         self.start_time = Instant::now().into();
-        // TODO(port): narrow error set
         // PERF(port): was arena bulk-free — envp built into a temporary arena freed at scope
         // end; allocates on heap here. Profile if it shows up on a hot path.
         let envp;
@@ -181,7 +179,7 @@ impl<'a> ProcessHandle<'a> {
 
         self.stdout_reader.handle = std::ptr::from_ref(self);
         self.stderr_reader.handle = std::ptr::from_ref(self);
-        // PORT NOTE: compute parent ptrs before calling `set_parent` to avoid
+        // Compute parent ptrs before calling `set_parent` to avoid
         // borrowck seeing two simultaneous &mut borrows of the same field.
         let stdout_parent = (&raw mut self.stdout_reader).cast::<c_void>();
         self.stdout_reader.reader.set_parent(stdout_parent);
@@ -310,7 +308,6 @@ impl<'a> State<'a> {
         self.remaining_scripts == 0
     }
 
-    // TODO(port): narrow error set — was `(std.Io.Writer.Error || bun.OOM)!void`
     fn read_chunk(&mut self, pipe: &mut PipeReader<'a>, chunk: &[u8]) -> Result<(), Error> {
         pipe.line_buffer.extend_from_slice(chunk);
 
@@ -333,7 +330,6 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    // TODO(port): narrow error set — was `std.Io.Writer.Error!void`
     fn write_line_with_prefix(
         &self,
         handle: &ProcessHandle,
@@ -345,7 +341,6 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    // TODO(port): narrow error set — was `std.Io.Writer.Error!void`
     fn write_prefix(&self, handle: &ProcessHandle, writer: &mut OutputWriter) -> Result<(), Error> {
         if self.use_colors {
             writer.write_all(COLORS[handle.color_idx % COLORS.len()])?;
@@ -365,7 +360,6 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    // TODO(port): narrow error set — was `std.Io.Writer.Error!void`
     fn flush_pipe_buffer(
         &self,
         handle: &ProcessHandle<'a>,
@@ -388,12 +382,11 @@ impl<'a> State<'a> {
         Ok(())
     }
 
-    // TODO(port): narrow error set — was `std.Io.Writer.Error!void`
     fn process_exit(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), Error> {
         self.remaining_scripts -= 1;
 
         // Flush remaining buffers (stdout first, then stderr)
-        // PORT NOTE: reshaped for borrowck — `flush_pipe_buffer` would need both
+        // Reshaped for borrowck — `flush_pipe_buffer` would need both
         // `&ProcessHandle` and `&mut handle.stdout_reader` which overlap. Route
         // through a raw ptr (the State/handle backref pattern is already
         // raw-ptr-based throughout this file).
@@ -450,7 +443,7 @@ impl<'a> State<'a> {
 
         if failed {
             // Pre->main->post chain is broken -- skip group dependents.
-            // PORT NOTE: reshaped for borrowck — clone the dependent ptr slices to avoid
+            // Reshaped for borrowck — clone the dependent ptr slices to avoid
             // borrowing `handle` while iterating self.handles via the raw ptrs.
             let group = handle.group_dependents.clone();
             let next = handle.next_dependents.clone();
@@ -580,7 +573,6 @@ impl AbortHandler {
         }
         #[cfg(not(unix))]
         {
-            // TODO(port): move to <area>_sys
             let res = bun_sys::windows::SetConsoleCtrlHandler(
                 Some(Self::windows_ctrl_handler),
                 bun_sys::windows::TRUE,
@@ -653,7 +645,6 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     path: &[u8],
     label_prefix: Option<&[u8]>,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     let group_start = configs.len();
 
     let label: Box<[u8]> = if let Some(prefix) = label_prefix {
@@ -763,7 +754,7 @@ fn add_script_configs<V: core::ops::Deref<Target = [u8]>>(
     Ok(())
 }
 
-// TODO(port): `!noreturn` — Zig returns either an error or diverges. Using
+// Zig's return type was `!noreturn` — it returns either an error or diverges. Using
 // `Result<Infallible, Error>` so callers can `?` it; all Ok paths call Global::exit.
 pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infallible, Error> {
     // Validate flags
@@ -776,7 +767,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
 
     // Collect script names from positionals + passthrough
     // For RunCommand: positionals[0] is "run", skip it. For AutoCommand: no "run" prefix.
-    // PORT NOTE: cloned to owned so the &mut ctx borrow below doesn't conflict.
+    // Cloned to owned so the &mut ctx borrow below doesn't conflict.
     let mut script_names: Vec<Box<[u8]>> = Vec::new();
 
     let mut positionals: &[Box<[u8]>] = &ctx.positionals;
@@ -1175,7 +1166,7 @@ pub(crate) fn run(ctx: &mut Command::ContextData) -> Result<core::convert::Infal
         });
     }
     state.handles = handles.into_boxed_slice();
-    // PORT NOTE: `state` field of each handle was set above as a raw ptr before `state.handles`
+    // The `state` field of each handle was set above as a raw ptr before `state.handles`
     // was assigned — the address of `state` does not change, so the backref remains valid.
 
     // Set up pre->main->post chaining within each group

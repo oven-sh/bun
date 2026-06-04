@@ -4,6 +4,7 @@ use bun_core::String;
 
 use super::field_type::FieldType;
 use super::new_reader::NewReader;
+use crate::postgres::AnyPostgresError;
 
 /// Zig: `union(FieldType)` — every variant carries a `bun.String`.
 pub enum FieldMessage {
@@ -60,8 +61,7 @@ impl fmt::Display for FieldMessage {
 impl FieldMessage {
     pub fn decode_list<Context: super::new_reader::ReaderContext>(
         mut reader: NewReader<Context>,
-    ) -> Result<Vec<FieldMessage>, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<Vec<FieldMessage>, AnyPostgresError> {
         let mut messages: Vec<FieldMessage> = Vec::new();
         loop {
             let field_int: u8 = reader.int::<u8>()?;

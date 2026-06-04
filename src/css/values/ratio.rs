@@ -44,7 +44,6 @@ impl Ratio {
         Ok(())
     }
 
-    // PORT NOTE: dropped unused `std.mem.Allocator` param (was `_` in Zig).
     pub(crate) fn add_f32(self, other: f32) -> Ratio {
         Ratio {
             numerator: self.numerator + other,

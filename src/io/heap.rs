@@ -21,7 +21,7 @@ use core::ptr;
 /// [1]: https://en.wikipedia.org/wiki/Pairing_heap
 /// [2]: https://www.boost.org/doc/libs/1_64_0/doc/html/intrusive/intrusive_vs_nontrusive.html
 //
-// PORT NOTE: Zig's `Intrusive(T, Context, less)` takes `less` as a comptime fn-pointer
+// Zig's `Intrusive(T, Context, less)` takes `less` as a comptime fn-pointer
 // parameter. Rust cannot use fn pointers as const generics on stable, so the comparator
 // is folded into a trait on `Context` (`HeapContext<T>::less`). This preserves
 // monomorphization (no indirect call) at the cost of requiring the caller to impl the

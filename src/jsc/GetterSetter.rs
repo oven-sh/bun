@@ -10,7 +10,6 @@ impl GetterSetter {
     }
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     safe fn JSC__GetterSetter__isGetterNull(this: &GetterSetter) -> bool;
     safe fn JSC__GetterSetter__isSetterNull(this: &GetterSetter) -> bool;

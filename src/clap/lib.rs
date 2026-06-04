@@ -328,10 +328,10 @@ fn expect_param(expect: Param<Help>, actual: Param<Help>) {
 }
 
 /// Optional diagnostics used for reporting useful errors
-// PORT NOTE: Zig `Diagnostic` borrows `arg`/`name.long` from the arg iterator. Rust
-// can't tie that lifetime through `&mut Diagnostic` without invariance headaches, and
-// this is an error-path-only struct, so it owns its bytes instead. The `name: Names`
-// field is flattened to `short`/`long` because `Names.long` is `&'static`.
+// Zig `Diagnostic` borrows `arg`/`name.long` from the arg iterator. Rust can't tie
+// that lifetime through `&mut Diagnostic` without invariance headaches, and this is
+// an error-path-only struct, so it owns its bytes instead. The `name: Names` field
+// is flattened to `short`/`long` because `Names.long` is `&'static`.
 #[derive(Default)]
 pub struct Diagnostic {
     pub arg: Vec<u8>,
@@ -349,7 +349,6 @@ impl Diagnostic {
     #[cold]
     #[inline(never)]
     pub fn report<W>(&self, _stream: W, err: bun_core::Error) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let mut name_buf = [0u8; 1024];
         let name: &[u8] = if let Some(s) = self.short {
             name_buf[0] = b'-';
@@ -419,8 +418,6 @@ impl Default for Help {
 /// Options that can be set to customize the behavior of parsing.
 #[derive(Default)]
 pub struct ParseOptions<'a> {
-    // PORT NOTE: `mem.Allocator param` field deleted — non-AST crate uses
-    // the global mimalloc.
     pub diagnostic: Option<&'a mut Diagnostic>,
     pub stop_after_positional_at: usize,
 }
@@ -465,13 +462,9 @@ fn get_value_simple(param: &Param<Help>) -> &'static [u8] {
     param.id.value
 }
 
-// TODO(port): `comptime params: []const Param(Id)` as a type parameter has no
-// stable-Rust equivalent. `params` is carried at runtime; a proc-macro could
-// restore the per-table monomorphization.
+// Zig's `comptime params: []const Param(Id)` type parameter has no stable-Rust
+// equivalent; `params` is carried at runtime instead.
 pub struct Args<Id: 'static> {
-    // PORT NOTE: Zig stored `arena: bun.ArenaAllocator` here and `deinit` freed it.
-    // Non-AST crate → arena removed; `ComptimeClap` owns its allocations.
-    // PERF(port): was arena bulk-free — profile if hot.
     pub clap: ComptimeClap<Id>,
     pub exe_arg: Option<&'static [u8]>,
 }
@@ -514,13 +507,9 @@ pub fn parse<Id: 'static>(
     params: &'static [Param<Id>],
     opt: ParseOptions<'_>,
 ) -> Result<Args<Id>, bun_core::Error> {
-    // TODO(port): narrow error set
     let mut iter = args::OsIterator::init();
     let exe_arg = iter.exe_arg;
 
-    // PORT NOTE: Zig reused `iter.arena` as the allocator for `parseEx` and
-    // moved it into `res.arena`. Arena removed in port; ownership flows through
-    // `ComptimeClap` directly.
     let clap = parse_ex::<Id, _>(
         params,
         &mut iter,
@@ -566,7 +555,6 @@ pub fn parse_ex<Id: 'static, I>(
 where
     I: args::ArgIter<'static>,
 {
-    // TODO(port): narrow error set
     ComptimeClap::<Id>::parse(params, iter, opt)
 }
 
@@ -590,7 +578,6 @@ where
     Id: Copy,
     E: Into<bun_core::Error>,
 {
-    // TODO(port): narrow error set
     let max_spacing: usize = 'blk: {
         let mut res: usize = 0;
         for param in params {
@@ -706,8 +693,6 @@ where
 pub fn help_ex<W, Id>(
     stream: &mut W,
     params: &[Param<Id>],
-    // TODO(port): LIFETIMES.tsv classifies these as `fn(Param<Id>) -> &'static str`;
-    // using `&'static [u8]` to stay consistent with the bytes-not-str rule.
     help_text: fn(&Param<Id>) -> &'static [u8],
     value_text: fn(&Param<Id>) -> &'static [u8],
 ) -> Result<(), bun_core::Error>
@@ -743,7 +728,6 @@ where
 #[cold]
 #[inline(never)]
 pub fn simple_print_param(param: &Param<Help>) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
     bun_core::pretty!("\n");
     if let Some(s) = param.names.short {
         if param.takes_value != Values::None && param.names.long.is_none() {
@@ -836,10 +820,9 @@ pub fn simple_help(params: &[Param<Help>]) {
 #[cold]
 #[inline(never)]
 pub fn simple_help_bun_top_level(params: &[Param<Help>]) {
-    // TODO(port): Zig evaluates `computed_max_spacing` at `comptime` and emits
-    // `@compileError` on overflow, plus uses `inline for` + comptime string
-    // concat (`space_buf[..n] ++ desc_text`). None of that is const-evaluable
-    // in Rust over a slice param. Runtime equivalent below; could macro-gen.
+    // Zig evaluated `computed_max_spacing` at `comptime` and emitted
+    // `@compileError` on overflow; that is not const-evaluable in Rust over a
+    // slice param, so the overflow check is a runtime debug_assert below.
     const MAX_SPACING: usize = 30;
     const SPACE_BUF: &[u8; MAX_SPACING] = b"                              ";
 
@@ -901,7 +884,6 @@ where
     Id: Copy,
     E: Into<bun_core::Error>,
 {
-    // TODO(port): narrow error set
     let mut cos = CountingWriter::wrap(stream);
     for param in params {
         let Some(name) = param.names.short else {
@@ -912,8 +894,8 @@ where
         }
 
         if cos.count == 0 {
-            // PORT NOTE: Zig wrote "[-" to `stream` (not `cs`), bypassing the
-            // counter. Preserving that quirk by writing to the inner writer.
+            // Zig wrote "[-" to `stream` (not `cs`), bypassing the counter.
+            // Preserving that quirk by writing to the inner writer.
             write!(cos.inner(), "[-")?;
         }
         cos.write_char(name as char)?;

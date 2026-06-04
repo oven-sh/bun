@@ -9,9 +9,9 @@ use bun_core::{self as bstring, strings};
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, bun_string_jsc};
 use bun_sourcemap::{Mapping, Ordinal, ParseResult, ParsedSourceMap, mapping};
 
-// TODO(port): bun_jsc::JsClass — `#[bun_jsc::JsClass]` derive proc-macro not yet
-// implemented; the codegen-provided `to_js`/`from_js`/cached-setter accessors are
-// stubbed below until generate-classes.ts emits Rust.
+// generate-classes.ts does not emit Rust accessors yet, so the
+// `to_js`/cached-setter helpers below forward to the codegen-emitted C++
+// symbols by hand.
 pub struct JSSourceMap {
     pub sourcemap: Arc<ParsedSourceMap>,
     pub sources: Box<[bstring::String]>,
@@ -19,7 +19,7 @@ pub struct JSSourceMap {
 }
 
 /// TODO: when we implement --enable-source-map CLI flag, set this to true.
-// PORT NOTE: Zig `pub var @"--enable-source-maps"` — mutable global; use AtomicBool for safe mutation.
+// Zig `pub var @"--enable-source-maps"` — mutable global; use AtomicBool for safe mutation.
 pub(crate) static ENABLE_SOURCE_MAPS: AtomicBool = AtomicBool::new(false);
 
 /// Zig: `comptime { @export(&jsFunctionFindSourceMap, .{ .name = "Bun__JSSourceMap__find" }) }`
@@ -39,7 +39,7 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
         return Ok(JSValue::UNDEFINED);
     }
 
-    // PORT NOTE: reshaped for borrowck — `source_url_slice` borrows `source_url_string`;
+    // reshaped for borrowck — `source_url_slice` borrows `source_url_string`;
     // explicit deref/deinit calls become Drop on reassignment.
     let mut source_url_string = bun_string_jsc::from_js(source_url_value, global)?;
     let mut source_url_slice = source_url_string.to_utf8();
@@ -83,7 +83,7 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
     // Rust Box allocation aborts on OOM (handleOom semantics).
     let fake_sources_array: Box<[bstring::String]> = Box::new([source_url_string.dupe_ref()]);
 
-    // PORT NOTE: Zig stores an intrusive `*ParsedSourceMap` (+1 ref from
+    // Zig stores an intrusive `*ParsedSourceMap` (+1 ref from
     // `SavedSourceMap.get`) and `deinit` calls `sourcemap.deref()`. The Rust
     // port models that ownership as `Arc<ParsedSourceMap>` (LIFETIMES.tsv);
     // `SavedSourceMap::get` already hands back the +1 as an `Arc`, and `Drop`
@@ -97,7 +97,6 @@ pub(crate) fn find_source_map(global: &JSGlobalObject, frame: &CallFrame) -> JsR
 }
 
 impl JSSourceMap {
-    // TODO(port): verify JsClass constructor signature (Box<Self> vs *mut Self return)
     pub fn constructor(
         global: &JSGlobalObject,
         frame: &CallFrame,
@@ -119,7 +118,7 @@ impl JSSourceMap {
         }
 
         // Parse the payload to create a proper sourcemap
-        // PORT NOTE: Zig used a local ArenaAllocator solely for `mappings_str` UTF-8 transcode;
+        // Zig used a local ArenaAllocator solely for `mappings_str` UTF-8 transcode;
         // Rust `to_utf8()` owns its buffer, so the arena is dropped entirely.
 
         // Extract mappings string from payload
@@ -185,21 +184,20 @@ impl JSSourceMap {
         });
 
         if !payload_arg.is_empty() {
-            // TODO(port): codegen accessor — js.payloadSetCached
+            // Zig: js.payloadSetCached
             Self::payload_set_cached(this_value, global, payload_arg);
         }
         if !line_lengths.is_empty() {
-            // TODO(port): codegen accessor — js.lineLengthsSetCached
+            // Zig: js.lineLengthsSetCached
             Self::line_lengths_set_cached(this_value, global, line_lengths);
         }
 
         Ok(source_map)
     }
 
-    // ── codegen accessors (provided by `#[bun_jsc::JsClass]` once it lands) ──
-    // TODO(port): bun_jsc::JsClass — generate-classes.ts emits the real
-    // `*_set_cached`/`to_js` thunks; these forward to extern stubs so the
-    // constructor body type-checks today.
+    // ── codegen accessors ──
+    // generate-classes.ts emits the C++ side of `*SetCachedValue`/`__create`;
+    // these thunks forward to those extern symbols by hand.
     #[inline]
     fn to_js(this: Box<Self>, global: &JSGlobalObject) -> JSValue {
         // Codegen body (ZigGeneratedClasses.zig:21141): `SourceMap__create(global, this)`.
@@ -240,13 +238,11 @@ impl JSSourceMap {
     }
 
     // The cached value should handle this.
-    // TODO(port): bun_jsc::host_fn — `#[bun_jsc::host_fn(getter)]`
     pub fn get_payload(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
 
     // The cached value should handle this.
-    // TODO(port): bun_jsc::host_fn — `#[bun_jsc::host_fn(getter)]`
     pub fn get_line_lengths(&self, _global: &JSGlobalObject) -> JsResult<JSValue> {
         Ok(JSValue::UNDEFINED)
     }
@@ -275,7 +271,6 @@ impl JSSourceMap {
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(port): bun_jsc::host_fn — `#[bun_jsc::host_fn(method)]`
     pub fn find_origin(
         this: &Self,
         global: &JSGlobalObject,
@@ -305,7 +300,6 @@ impl JSSourceMap {
         })
     }
 
-    // TODO(port): bun_jsc::host_fn — `#[bun_jsc::host_fn(method)]`
     pub fn find_entry(
         this: &Self,
         global: &JSGlobalObject,
@@ -350,8 +344,6 @@ fn get_line_column(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<[i32;
     ])
 }
 
-// TODO(port): move to sourcemap_jsc_sys (or bun_jsc_sys)
-//
 // Codegen-emitted helpers (`SourceMap__create`, `*SetCachedValue`) are defined
 // in ZigGeneratedClasses.cpp with `extern JSC_CALLCONV` (= `"C" SYSV_ABI` on
 // Windows-x64), so they must be imported via `jsc_abi_extern!` to get the
@@ -401,7 +393,8 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-// `js = jsc.Codegen.JSSourceMap` and `fromJS`/`fromJSDirect`/`toJS` re-exports are
-// provided by the `#[bun_jsc::JsClass]` derive; no manual re-export needed.
+// Zig's `js = jsc.Codegen.JSSourceMap` re-exports (`fromJS`/`fromJSDirect`/
+// `toJS`) have no Rust equivalent; the Rust side calls straight into the
+// codegen-emitted C++ symbols declared in the extern blocks above.
 
 // ported from: src/sourcemap_jsc/JSSourceMap.zig

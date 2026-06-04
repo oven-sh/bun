@@ -148,7 +148,7 @@ pub(crate) struct Parser<'a> {
     json: Expr,
     source: &'a bun_ast::Source,
     log: &'a mut bun_ast::Log,
-    // PORT NOTE: Zig held both `bunfig: *api.TransformOptions` (= `&ctx.args`)
+    // Zig held both `bunfig: *api.TransformOptions` (= `&ctx.args`)
     // and `ctx: *Command.Context` simultaneously. Rust forbids the overlapping
     // borrow, so `bunfig` writes route through `self.ctx.args` directly.
     ctx: &'a mut ContextData,
@@ -348,7 +348,7 @@ impl<'a> Parser<'a> {
         Ok(api::StringMap { keys, values })
     }
 
-    // PORT NOTE: `comptime cmd: Command.Tag` demoted to a runtime arg —
+    // Zig's `comptime cmd: Command.Tag` is demoted to a runtime arg —
     // `bun_options_types::command_tag::Tag` does not derive `ConstParamTy` (it
     // already derives `enum_map::Enum`, which conflicts). The Zig original
     // monomorphised over `cmd` purely to dead-code-eliminate untaken arms; the
@@ -1168,7 +1168,7 @@ impl Bunfig {
             }
         };
 
-        // PORT NOTE: reshaped for borrowck — Zig stored both `&mut ctx` and
+        // Reshaped for borrowck: Zig stored both `&mut ctx` and
         // `&mut ctx.args` simultaneously inside Parser. In Rust we route bunfig
         // writes through `self.ctx.args` directly. `log` is derived from the
         // copied raw pointer above so it does not overlap the `&mut ctx` borrow.
@@ -1259,7 +1259,7 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_install(&mut self, install_obj: &Expr) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig held `*BunInstall` and `*Parser` simultaneously.
+        // Zig held `*BunInstall` and `*Parser` simultaneously.
         // The helper methods (`expect*`, `add_error`, `parse_registry`) take
         // `&mut self`, which under Stacked Borrows would invalidate any
         // long-lived `&mut` derived from `self.ctx.install`. Move the box

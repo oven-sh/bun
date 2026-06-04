@@ -21,13 +21,17 @@ use crate::options;
 use crate::package_json::PackageJSON;
 use crate::resolver::Dependency;
 
-// PORT NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
+// NOTE: `Path` in the body is the `'static`-interned variant (paths borrow
 // DirnameStore/FilenameStore). Alias here so the bare-`Path` use sites resolve
 // without a per-site lifetime annotation.
 type Path = crate::fs::Path<'static>;
 
 pub struct SideEffectsData {
-    pub source: Option<NonNull<bun_ast::Source>>, // TODO(port): lifetime — never instantiated
+    // Zig `source: *logger.Source` (resolver.zig:29-30, non-optional). Modeled as
+    // `Option<NonNull>` here as a deliberate loosening: no constructor ever
+    // populates the field in either language, so `None` stands in for the
+    // never-written pointer until lifetime modeling is actually needed.
+    pub source: Option<NonNull<bun_ast::Source>>,
     pub range: bun_ast::Range,
 
     // If true, "sideEffects" was an array. If false, "sideEffects" was false.
@@ -339,7 +343,8 @@ impl DebugMeta {
         r: bun_ast::Range,
         args: core::fmt::Arguments<'_>,
     ) -> core::result::Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+        // Zig declared a narrow inferred error set here; the port uses the
+        // broad `bun_core::Error` per repo-wide convention.
         if source.is_some() && !self.suggestion_message.is_empty() {
             let suggestion_range = if self.suggestion_range == SuggestionRange::End {
                 bun_ast::Range {
@@ -352,7 +357,7 @@ impl DebugMeta {
                 r
             };
             let data = bun_ast::range_data(source, suggestion_range, self.suggestion_message);
-            // PORT NOTE: Zig spec writes `data.location.?.suggestion = m.suggestion_text`
+            // NOTE: Zig spec writes `data.location.?.suggestion = m.suggestion_text`
             // here, but `logger.Location` (logger.zig:73) has no `suggestion` field —
             // `logErrorMsg` is uncalled in the Zig source so the field access is never
             // type-checked under lazy compilation. Mirror the effective behavior (no-op).
@@ -374,7 +379,7 @@ impl DebugMeta {
 
 pub struct DirEntryResolveQueueItem {
     pub result: allocators::Result,
-    // PORT NOTE: `RawSlice<u8>` (not `&'static [u8]`) — these point into the
+    // NOTE: `RawSlice<u8>` (not `&'static [u8]`) — these point into the
     // threadlocal `dir_info_uncached_path` buffer and are consumed before
     // `dir_info_cached_maybe_log` returns. `RawSlice` is `repr(transparent)`
     // over `*const [u8]` so the bit-level zero-init invariant for `Bufs` is
@@ -550,7 +555,7 @@ impl Default for PendingResolution {
 }
 
 impl PendingResolution {
-    // PORT NOTE: deinitListItems → Drop on MultiArrayList<PendingResolution>
+    // NOTE: deinitListItems → Drop on MultiArrayList<PendingResolution>
     // (Zig body only freed `dependency` + `string_buf` per item; both are owned fields with Drop.)
 
     // deinit → Drop (frees dependency + string_buf; both have Drop)
@@ -560,7 +565,7 @@ impl PendingResolution {
         dependency: Dependency::Version,
         resolution_id: Install::PackageID,
     ) -> core::result::Result<PendingResolution, bun_core::Error> {
-        // PORT NOTE: Zig body called `try esm.copy(allocator)` and left `string_buf`
+        // NOTE: Zig body called `try esm.copy(allocator)` and left `string_buf`
         // / `tag` defaulted; that fn was never compiled (Zig lazy-analyzes unreferenced
         // fns). `Package::copy` is the count→allocate→clone Builder dance the live
         // call sites open-code, so thread the freshly-allocated buffer into
@@ -584,7 +589,9 @@ pub enum PendingResolutionTag {
 }
 
 pub struct LoadResult {
-    pub path: &'static [u8], // TODO(port): lifetime — interned in dirname_store
+    /// Interned in `DirnameStore`/`FilenameStore` (process-lifetime singletons),
+    /// so the `'static` borrow is genuine.
+    pub path: &'static [u8],
     pub diff_case: Option<Fs::file_system::entry::lookup::DifferentCase<'static>>,
     pub dirname_fd: FD,
     pub file_fd: FD,

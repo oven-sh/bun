@@ -2,9 +2,9 @@ use core::ffi::c_ushort;
 
 use crate::h3::Request as H3Request;
 
-// PORT NOTE: `dateForHeader` (Request.zig:62) is NOT ported here. Parsing an
-// HTTP date needs `bun_jsc::VirtualMachine` (T6); rather than hook upward, the
-// sole caller (`bun_runtime::server::FileRoute`) does
+// `dateForHeader` (Request.zig:62) is intentionally not mirrored here. Parsing
+// an HTTP date needs `bun_jsc::VirtualMachine` (T6); rather than hook upward,
+// the sole caller (`bun_runtime::server::FileRoute`) does
 // `req.header(name).and_then(parse_http_date)` itself — call site moved UP per
 // docs/PORTING.md §"Low crate needs to call high crate" option (a).
 

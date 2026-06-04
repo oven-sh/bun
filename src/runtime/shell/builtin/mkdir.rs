@@ -87,7 +87,7 @@ impl Mkdir {
     }
 
     pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
-        // PORT NOTE: reshaped for borrowck — read scalars, drop the borrow,
+        // NOTE: reshaped for borrowck — read scalars, drop the borrow,
         // then act.
         let action = match &mut Self::state_mut(interp, cmd).state {
             State::Idle => panic!("Invalid state"),
@@ -198,11 +198,12 @@ impl OutputTaskVTable for Mkdir {
             exec.output_waiting += 1;
         }
         if let Some(safeguard) = Builtin::of(interp, cmd).stderr.needs_io() {
-            // TODO(port): IOWriter ChildPtr for OutputTask — needs a
-            // dedicated WriterTag once OutputTask is dispatchable. Until then
-            // stash `child` on `output_queue` so `on_io_writer_chunk` can
-            // route the completion back to the OutputTask state machine and
-            // reclaim the box (spec mkdir.zig:134 enqueues with childptr).
+            // OutputTask has no `WriterTag` of its own (it is not directly
+            // dispatchable as an IOWriter child), so the enqueue is tagged
+            // `WriterTag::Builtin` and `child` is stashed on `output_queue`;
+            // `on_io_writer_chunk` pops it to route the completion back to
+            // the OutputTask state machine and reclaim the box (spec
+            // mkdir.zig:134 enqueues with the OutputTask childptr directly).
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 exec.output_queue.push_back(child);
             }

@@ -1,5 +1,6 @@
 use super::field_description::FieldDescription;
 use super::new_reader::NewReader;
+use crate::postgres::AnyPostgresError;
 
 #[derive(Default)]
 pub struct RowDescription {
@@ -12,18 +13,17 @@ pub struct RowDescription {
 // needed.
 
 impl RowDescription {
-    // PORT NOTE: out-param constructor (`this.* = .{...}`) reshaped to return `Result<Self, _>`.
-    // TODO(port): narrow error set
+    // The Zig out-param constructor (`this.* = .{...}`) is reshaped to return `Result<Self, _>`.
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> Result<Self, AnyPostgresError> {
         let mut remaining_bytes = reader.length()?;
         remaining_bytes = remaining_bytes.saturating_sub(4);
         let _ = remaining_bytes;
 
         let field_count: usize = usize::from(reader.short()?);
 
-        // PORT NOTE: Zig allocates an uninit slice, fills it in-place, and uses
+        // Zig allocates an uninit slice, fills it in-place, and uses
         // an `errdefer` to deinit the filled prefix + free on failure. Reshaped
         // to `Vec::push` so `?` drops already-decoded elements automatically.
         let mut fields: Vec<FieldDescription> = Vec::with_capacity(field_count);

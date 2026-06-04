@@ -19,7 +19,7 @@ use js_ast::e::SetError;
 
 pub struct TOML<'a> {
     pub lexer: Lexer<'a>,
-    // PORT NOTE: Zig also stores `log: *logger.Log` on the parser, but it is
+    // Zig also stores `log: *logger.Log` on the parser, but it is
     // never read — all logging goes through `lexer.log`. Dropped here to avoid
     // a second `&mut Log` borrow overlapping `lexer.log`.
     pub bump: &'a Bump,
@@ -33,7 +33,6 @@ impl<'a> TOML<'a> {
         log: &'a mut bun_ast::Log,
         redact_logs: bool,
     ) -> Result<TOML<'a>, bun_core::Error> {
-        // TODO(port): narrow error set
         Ok(TOML {
             lexer: Lexer::init(log, source_, bump, redact_logs)?,
             bump,
@@ -62,7 +61,6 @@ impl<'a> TOML<'a> {
         bump: &'a Bump,
         redact_logs: bool,
     ) -> Result<Expr, bun_core::Error> {
-        // TODO(port): narrow error set
         match source_.contents.len() {
             // This is to be consisntent with how disabled JS files are handled
             0 => {
@@ -74,7 +72,7 @@ impl<'a> TOML<'a> {
             _ => {}
         }
 
-        // PORT NOTE: Zig copies the `Source` by value (`source_.*`). The Rust
+        // Zig copies the `Source` by value (`source_.*`). The Rust
         // `Lexer` borrows it (`&'a Source`) so `identifier`/`string_literal_slice`
         // can point into `source.contents` for `'a` without a self-referential
         // struct — no copy needed.
@@ -84,7 +82,6 @@ impl<'a> TOML<'a> {
     }
 
     pub fn parse_maybe_trailing_comma(&mut self, closer: T) -> Result<bool, bun_core::Error> {
-        // TODO(port): narrow error set
         self.lexer.expect(T::t_comma)?;
 
         if self.lexer.token == closer {
@@ -131,9 +128,9 @@ impl<'a> TOML<'a> {
 
     #[allow(clippy::mut_from_ref)]
     pub fn parse_key(&mut self, bump: &'a Bump) -> Result<&'a mut Rope, bun_core::Error> {
-        // TODO(port): lifetime — Zig returns `*Rope` allocated from `allocator`
-        // (a stack-fallback arena reset per-iteration). Here we allocate from the
-        // caller-provided bump and return `&mut Rope` borrowed from it.
+        // Zig returns `*Rope` allocated from `allocator` (a stack-fallback arena
+        // reset per-iteration). Here we allocate from the caller-provided bump
+        // and return `&mut Rope` borrowed from it.
         let rope: &mut Rope = bump.alloc(Rope {
             head: match self.parse_key_segment()? {
                 Some(seg) => seg,
@@ -167,7 +164,6 @@ impl<'a> TOML<'a> {
             }
             // SAFETY: `rope` points into `bump` and is live for this call; we are
             // the sole mutator. Raw pointers used to avoid stacked &mut reborrows.
-            // PORT NOTE: reshaped for borrowck
             unsafe {
                 rope = (*rope).append(seg, bump)?;
             }
@@ -184,7 +180,7 @@ impl<'a> TOML<'a> {
             .e_object()
             .expect("infallible: variant checked")
             .as_ptr();
-        // TODO(port): `head` aliases into `root.data`; using raw pointer to mirror
+        // SAFETY: `head` aliases into `root.data`; using a raw pointer to mirror
         // the Zig `*E.Object` and sidestep overlapping &mut on `root`.
 
         // PERF(port): was stack-fallback (std.heap.stackFallback(@sizeOf(Rope)*6)) —
@@ -301,7 +297,7 @@ impl<'a> TOML<'a> {
                     debug_assert!(loc.start > 0);
                     let start: u32 = u32::try_from(loc.start).expect("int cast");
                     // std.ascii.whitespace = { ' ', '\t', '\n', '\r', 0x0B, 0x0C }
-                    // PORT NOTE: reshaped for borrowck — `self.source()` returns
+                    // Reshaped for borrowck — `self.source()` returns
                     // `&'a Source` (independent of `&self`), so bind it before
                     // the `&mut self.lexer` borrow below.
                     let src: &'a bun_ast::Source = self.source();
@@ -394,7 +390,7 @@ impl<'a> TOML<'a> {
                     .e_object()
                     .expect("infallible: variant checked")
                     .as_ptr();
-                // TODO(port): `obj` aliases into `expr.data`; raw pointer mirrors Zig.
+                // SAFETY: `obj` aliases into `expr.data`; raw pointer mirrors Zig.
 
                 while self.lexer.token != T::t_close_brace {
                     // SAFETY: `obj` points into the AST store and is live here.
@@ -439,7 +435,7 @@ impl<'a> TOML<'a> {
                     .e_array()
                     .expect("infallible: variant checked")
                     .as_ptr();
-                // TODO(port): `array` aliases into `array_.data`; raw pointer mirrors Zig.
+                // SAFETY: `array` aliases into `array_.data`; raw pointer mirrors Zig.
                 let bump = self.bump;
                 self.lexer.allow_double_bracket = false;
 

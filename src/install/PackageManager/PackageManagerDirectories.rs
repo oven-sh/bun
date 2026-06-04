@@ -181,7 +181,7 @@ pub fn get_cache_directory_and_abs_path(this: &mut PackageManager) -> (Fd, AbsPa
 
 #[inline]
 pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryDirectory {
-    // PORT NOTE: Zig used `bun.once(...)`; `bun_core::Once<T, fn(A)->T>` can't
+    // Zig used `bun.once(...)`; `bun_core::Once<T, fn(A)->T>` can't
     // accept a non-`'static` `&mut PackageManager` argument, so use `OnceLock`
     // directly and split get/set so the closure doesn't need to capture `this`.
     if let Some(td) = GET_TEMPORARY_DIRECTORY_ONCE.get() {
@@ -247,7 +247,6 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
     let tmpname =
         FileSystem::tmpname(b"hm", &mut tmpbuf, bun_core::fast_random()).expect("unreachable");
 
-    // TODO(port): std.time.Timer — using bun_core::time::Timer placeholder
     let mut timer = if manager.options.log_level != LogLevel::Silent {
         Some(bun_core::time::Timer::start().expect("unreachable"))
     } else {
@@ -707,7 +706,7 @@ pub fn cached_npm_package_folder_name_print<'a>(
         cached_npm_package_folder_print_basename(buf, name, version, None, include_version_number)
             .as_bytes()
             .len();
-    // PORT NOTE: reshaped for borrowck — resume the cursor at the basename's
+    // reshaped for borrowck — resume the cursor at the basename's
     // tail instead of holding the returned `&ZStr` across the re-borrow.
     let scope_url = scope.url.url();
     let mut w = ByteCursor {
@@ -914,7 +913,6 @@ pub fn path_for_cached_npm_path<'a>(
     package_name: &[u8],
     version: Semver::Version,
 ) -> Result<&'a mut [u8], Error> {
-    // TODO(port): narrow error set
     let mut cache_path_buf = PathBuffer::uninit();
 
     let cache_path = cached_npm_package_folder_name_print(
@@ -925,7 +923,7 @@ pub fn path_for_cached_npm_path<'a>(
         None,
     );
     let cache_path_len = cache_path.as_bytes().len();
-    // PORT NOTE: reshaped for borrowck — drop borrow before mutating buffer
+    // reshaped for borrowck — drop borrow before mutating buffer
 
     if cfg!(debug_assertions) {
         debug_assert!(cache_path_buf[package_name.len()] == b'@');
@@ -975,13 +973,12 @@ pub fn path_for_resolution<'a>(
     resolution: &Resolution,
     buf: &'a mut PathBuffer,
 ) -> Result<&'a mut [u8], Error> {
-    // TODO(port): narrow error set
     // const folder_name = this.cachedNPMPackageFolderName(name, version);
     match resolution.tag {
         ResolutionTag::Npm => {
             let npm = *resolution.npm();
             let package_name_ = this.lockfile.packages.items_name()[package_id as usize];
-            // PORT NOTE: borrowck — `path_for_cached_npm_path` reborrows `this`
+            // borrowck — `path_for_cached_npm_path` reborrows `this`
             // mutably (for `get_cache_directory`), so the `&this.lockfile`
             // borrow can't be held across it. Copy the name out first.
             let package_name = this.lockfile.str(&package_name_).to_vec();
@@ -1069,7 +1066,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
         ResolutionTag::Symlink => {
             let directory = global_link_dir(manager);
 
-            // PORT NOTE: borrowck — `global_link_dir_path` below reborrows
+            // borrowck — `global_link_dir_path` below reborrows
             // `manager` mutably, so copy the symlink target out of the lockfile
             // string buffer first instead of holding a slice across that call.
             let folder = resolution
@@ -1110,7 +1107,6 @@ pub fn compute_cache_dir_and_subpath<'a>(
 // ─────────────────────────── package.json / lockfile ──────────────────────────
 
 pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
-    // TODO(port): narrow error set
     let package_json_file = match Dir::cwd().create_file_z(
         z_static(b"package.json\0"),
         sys::CreateFlags {
@@ -1131,7 +1127,6 @@ pub fn attempt_to_create_package_json_and_open() -> Result<File, Error> {
 }
 
 pub fn attempt_to_create_package_json() -> Result<(), Error> {
-    // TODO(port): narrow error set
     let file = attempt_to_create_package_json_and_open()?;
     let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
     Ok(())
@@ -1142,7 +1137,7 @@ pub fn save_lockfile(
     load_result: &LoadResult,
     save_format: LockfileFormat,
     had_any_diffs: bool,
-    // TODO(dylan-conway): this and `packages_len_before_install` can most likely be deleted
+    // NOTE(dylan-conway): this and `packages_len_before_install` can most likely be deleted
     // now that git dependnecies don't append to lockfile during installation.
     lockfile_before_install: &Lockfile,
     packages_len_before_install: usize,
@@ -1199,7 +1194,7 @@ pub fn save_lockfile(
         return Ok(());
     }
 
-    // PORT NOTE: Zig held `*Progress.Node` across the body; `Progress::start`
+    // Zig held `*Progress.Node` across the body; `Progress::start`
     // returns `&mut Node` borrowing `this.progress`, which would conflict with
     // the `&mut this` reborrows below. Stash as a raw pointer (mirrors Zig's
     // non-exclusive `*Node`; the node lives inside `this.progress.root`).
@@ -1263,12 +1258,11 @@ pub fn save_lockfile(
 
 pub fn update_lockfile_if_needed(
     manager: &mut PackageManager,
-    // PORT NOTE: Zig passed `Lockfile.LoadResult` by value (large structs are
+    // Zig passed `Lockfile.LoadResult` by value (large structs are
     // passed by const-ref under Zig's ABI). The Rust caller continues using
     // `load_result` after this call, so take it by shared reference.
     load_result: &LoadResult,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     if let LoadResult::Ok(ok) = load_result {
         if ok.serializer_result.packages_need_update {
             let mut slice = manager.lockfile.packages.slice();
@@ -1283,11 +1277,10 @@ pub fn update_lockfile_if_needed(
 }
 
 pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
-    // TODO(port): narrow error set
 
     let mut tmpname_buf = [0u8; 512];
     tmpname_buf[0..8].copy_from_slice(b"tmplock-");
-    // PORT NOTE: `FileSystem.RealFS.Tmpfile` (fs.zig) — POSIX path never used
+    // `FileSystem.RealFS.Tmpfile` (fs.zig) — POSIX path never used
     // its `*RealFS` arg; Windows opens via `get_default_temp_dir`.
     let mut tmpfile = bun_resolver::fs::RealFsTmpfile::default();
     let mut secret = [0u8; 32];
@@ -1323,12 +1316,12 @@ pub fn write_yarn_lock(this: &mut PackageManager) -> Result<(), Error> {
             lockfile: &this.lockfile,
             options: &this.options,
             successfully_installed: None,
-            // PORT NOTE: Zig leaves `.updates` at its default `&.{}`. `Yarn::print`
+            // Zig leaves `.updates` at its default `&.{}`. `Yarn::print`
             // never reads `updates`, but pass an empty slice to match the spec
             // exactly rather than `&this.update_requests`.
             updates: &[],
         };
-        // PORT NOTE: Zig used `file.writerStreaming(&[4096]u8)`. `bun_sys::File`
+        // Zig used `file.writerStreaming(&[4096]u8)`. `bun_sys::File`
         // has no `bun_io::Write` impl (and `bun_sys` ⊥ `bun_io`), so buffer the
         // entire output in a `Vec<u8>` (impls `bun_io::Write`) and flush once.
         let mut buf: Vec<u8> = Vec::with_capacity(4096);

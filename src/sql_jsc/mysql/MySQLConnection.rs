@@ -1,5 +1,5 @@
 use crate::jsc::{JSValue, VirtualMachineSqlExt as _};
-use bun_collections::{HashMap, OffsetByteList, VecExt};
+use bun_collections::{HashMap, IdentityContext, OffsetByteList, VecExt};
 use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
 
 use bun_sql::mysql::Capabilities;
@@ -72,7 +72,7 @@ pub struct MySQLConnection {
     _auth_state: AuthState,
 
     auth_data: Vec<u8>,
-    // TODO(perf): in Zig, database/user/password/options are sub-slices into options_buf
+    // PERF: in Zig, database/user/password/options are sub-slices into options_buf
     // (single backing allocation; only options_buf is freed in cleanup()). Per the
     // `[]const u8 struct field → look at deinit` rule, only options_buf should be
     // Box<[u8]>; the others should be ranges/raw `*const [u8]` into it. Restore the
@@ -231,7 +231,7 @@ impl MySQLConnection {
         Ok(())
     }
 
-    /// PORT NOTE: reshaped for borrowck — `self.queue.advance(js_connection)`
+    /// reshaped for borrowck — `self.queue.advance(js_connection)`
     /// would alias `&mut self.queue` with `&mut JSMySQLConnection` (which
     /// embeds `self`). Route through a single raw root:
     /// `MySQLRequestQueue::advance` takes only `*mut JSMySQLConnection` and
@@ -478,7 +478,7 @@ impl MySQLConnection {
 
     pub fn read_and_process_data(&mut self, data: &[u8]) -> Result<(), AnyMySQLError> {
         self.flags.insert(ConnectionFlags::IS_PROCESSING_DATA);
-        // PORT NOTE: reshaped for borrowck — Zig `defer this.flags.is_processing_data = false`
+        // reshaped for borrowck — Zig `defer this.flags.is_processing_data = false`
         // is hand-inlined before every return below (scopeguard would need &mut self.flags).
         // Clear the timeout.
         self.socket.set_timeout(0);
@@ -486,7 +486,7 @@ impl MySQLConnection {
         SocketMonitor::read(data);
 
         if self.read_buffer.remaining().is_empty() {
-            // PORT NOTE: StackReader takes `&Cell<usize>` (interior mutability)
+            // StackReader takes `&Cell<usize>` (interior mutability)
             // so the post-error read of `offset`/`consumed` doesn't conflict.
             let consumed = core::cell::Cell::new(0usize);
             let offset = core::cell::Cell::new(0usize);
@@ -514,9 +514,8 @@ impl MySQLConnection {
                             .write(&data[offset.get()..])
                             .unwrap_or_else(|_| panic!("failed to write to read buffer"));
                     } else {
-                        if cfg!(debug_assertions) {
-                            // TODO(port): bun.handleErrorReturnTrace — no Rust equivalent
-                        }
+                        // Zig: `bun.handleErrorReturnTrace(err, @errorReturnTrace())`
+                        bun_core::handle_error_return_trace(err);
                         self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
                         return Err(err);
                     }
@@ -532,7 +531,7 @@ impl MySQLConnection {
             self.read_buffer
                 .write(data)
                 .unwrap_or_else(|_| panic!("failed to write to read buffer"));
-            // PORT NOTE: reshaped for borrowck — `self.process_packets(self.buffered_reader())`
+            // reshaped for borrowck — `self.process_packets(self.buffered_reader())`
             // borrows `&mut self` twice. Construct the reader first; it holds a
             // `*mut Self` so the second borrow doesn't conflict.
             let reader = self.buffered_reader();
@@ -541,9 +540,8 @@ impl MySQLConnection {
                 Err(err) => {
                     debug!("processPackets with buffer: {}", <&'static str>::from(err));
                     if err != any_mysql_error::Error::ShortRead {
-                        if cfg!(debug_assertions) {
-                            // TODO(port): @errorReturnTrace — no Rust equivalent
-                        }
+                        // Zig: `bun.handleErrorReturnTrace(err, @errorReturnTrace())`
+                        bun_core::handle_error_return_trace(err);
                         self.flags.remove(ConnectionFlags::IS_PROCESSING_DATA);
                         return Err(err);
                     }
@@ -589,7 +587,7 @@ impl MySQLConnection {
             reader
                 .ensure_capacity(packet_length)
                 .map_err(|_| AnyMySQLError::ShortRead)?;
-            // PORT NOTE: Zig `defer reader.setOffsetFromStart(packet_length)` —
+            // Zig `defer reader.setOffsetFromStart(packet_length)` —
             // `NewReader<C>: Copy` so the scopeguard captures by copy; the inner
             // `C` writes through a raw pointer so the offset update still lands.
             // Always skip the full packet, we dont care about padding or unread bytes.
@@ -663,7 +661,7 @@ impl MySQLConnection {
             "Handshake\n   Server Version: {}\n   Connection ID:  {}\n   Character Set:  {} ({})\n   Server Capabilities:   [ {} ] 0x{:08x}\n   Negotiated Capabilities: [ {} ] 0x{:08x}\n   Status Flags:   [ {} ]\n",
             bstr::BStr::new(self.server_version.slice()),
             self.connection_id,
-            self.character_set as u32,
+            u32::from(self.character_set.to_int()),
             bstr::BStr::new(self.character_set.label()),
             handshake.capability_flags,
             handshake.capability_flags.to_int(),
@@ -762,7 +760,7 @@ impl MySQLConnection {
 
         match status {
             ConnectionState::Connected => {
-                // PORT NOTE: spec spelling — Zig defines `onConnectionEstabilished`
+                // spec spelling — Zig defines `onConnectionEstabilished`
                 // (sic, JSMySQLConnection.zig:654 / MySQLConnection.zig:491).
                 self.js_connection_ref().on_connection_estabilished();
             }
@@ -959,12 +957,14 @@ impl MySQLConnection {
 
         // Handle based on request type
         if let Some(statement) = request.get_statement() {
-            // Only the `status` discriminant is needed below; read it and drop
-            // the `&mut MySQLStatement` borrow immediately so `request` /
-            // `&mut self` are unconstrained inside the match arms (no raw-ptr
-            // downgrade needed for a single Copy field read).
-            // TODO(port): MySQLStatement intrusive ref_/deref_ (bun_ptr).
-            // Skipped here; the queue's ref on `request` keeps the statement
+            // The match reads `statement.status` (Copy), and the Failed arm
+            // also reads `statement.error_response.*` through this borrow to
+            // build an owned packet copy. The statement borrow ends (NLL)
+            // before any `&mut self` call or re-entrant JS, so `request` /
+            // `&mut self` stay unconstrained where the arms mutate the queue
+            // (no raw-ptr downgrade needed).
+            // MySQLStatement intrusive ref_/deref_ (bun_ptr) is deliberately
+            // skipped here; the queue's ref on `request` keeps the statement
             // alive for the duration of this call.
             match statement.status {
                 mysql_statement::Status::Pending => {
@@ -979,23 +979,33 @@ impl MySQLConnection {
                     self.handle_result_set(reader, header_length)?;
                 }
                 mysql_statement::Status::Failed => {
-                    // PORT NOTE: reshaped for borrowck — Zig `defer this.flushQueue()`
+                    // Zig passes `statement.error_response` by value (shallow
+                    // struct copy). `Data` is not `Clone`, so deep-copy the
+                    // message bytes into an owned packet up front — re-entrant
+                    // JS in `on_error_packet` may release the statement, so
+                    // the packet handed to it must not borrow into it.
+                    let error_response = ErrorPacket {
+                        header: statement.error_response.header,
+                        error_code: statement.error_response.error_code,
+                        sql_state_marker: statement.error_response.sql_state_marker,
+                        sql_state: statement.error_response.sql_state,
+                        error_message: Data::create(
+                            statement.error_response.error_message.slice(),
+                        )
+                        .unwrap_or(Data::Empty),
+                    };
+                    // Reshaped for borrowck — Zig `defer this.flushQueue()`
                     // moved to explicit call after `on_error_packet` below.
                     self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                     self.queue.mark_as_ready_for_query();
                     self.queue.mark_current_request_as_finished(request);
-                    // TODO(port): ErrorPacket is not Clone in bun_sql; the
-                    // Zig passes statement.error_response by value (struct copy).
-                    // Send a default packet as a placeholder until ErrorPacket
-                    // grows Clone or a borrowed-variant overload lands.
-                    //
                     // R-2: `on_error_packet` is `&self`; route through the
                     // audited `js_connection_ref()` container_of accessor (one
                     // centralised unsafe). `*self` sits inside the parent's
                     // `JsCell`, so re-entrant `connection_mut()` does not alias
                     // this outer shared borrow.
                     self.js_connection_ref()
-                        .on_error_packet(Some(request), &ErrorPacket::default());
+                        .on_error_packet(Some(request), &error_response);
                     let _ = self.flush_queue();
                 }
             }
@@ -1236,7 +1246,7 @@ impl MySQLConnection {
                 debug!("handlePreparedStatement ERROR");
                 let mut err = ErrorPacket::default();
                 err.decode_internal(reader)?;
-                // PORT NOTE: reshaped for borrowck — Zig `defer this.queue.advance(connection)`
+                // reshaped for borrowck — Zig `defer this.queue.advance(connection)`
                 // moved to explicit call after `on_error_packet` below.
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 statement.status = mysql_statement::Status::Failed;
@@ -1283,7 +1293,7 @@ impl MySQLConnection {
         Ok(())
     }
 
-    // PORT NOTE: reshaped for borrowck — `request` comes from `self.queue` so
+    // reshaped for borrowck — `request` comes from `self.queue` so
     // passing `&mut self` alongside `&mut JSMySQLQuery` would alias. `request`
     // is `&JSMySQLQuery` (R-2: fully interior-mutable, so a shared borrow is
     // sound across the re-entrant `on_query_result` callback). The statement is
@@ -1304,7 +1314,7 @@ impl MySQLConnection {
             status_flags.to_int(),
             is_last_result
         );
-        // PORT NOTE: Zig `defer this.flushQueue()` moved to explicit tail call.
+        // Zig `defer this.flushQueue()` moved to explicit tail call.
         self.flags
             .set(ConnectionFlags::IS_READY_FOR_QUERY, is_last_result);
         if is_last_result {
@@ -1376,7 +1386,7 @@ impl MySQLConnection {
             PacketType::ERROR => {
                 let mut err = ErrorPacket::default();
                 err.decode_internal(reader)?;
-                // PORT NOTE: reshaped for borrowck — Zig `defer this.flushQueue()`
+                // reshaped for borrowck — Zig `defer this.flushQueue()`
                 // moved to explicit tail call.
                 if let Some(statement) = request.get_statement() {
                     statement.reset();
@@ -1593,7 +1603,7 @@ impl Writer {
         //
         // Raw-pointer field projection (`addr_of_mut!`) avoids materializing
         // an intermediate `&mut MySQLConnection`, which could alias the
-        // caller's own `&mut self` (see the PORT NOTE on `Reader` below).
+        // caller's own `&mut self` (see the aliasing note on `Reader` below).
         // Callers never touch `write_buffer` through `&mut self` while a
         // `Writer` is live, so no two `&mut OffsetByteList` coexist.
         unsafe { &mut *core::ptr::addr_of_mut!((*self.connection).write_buffer) }
@@ -1630,7 +1640,7 @@ pub struct Reader {
     pub connection: *mut MySQLConnection,
 }
 
-// PORT NOTE (aliasing): `Reader` is constructed from `&mut MySQLConnection`
+// Aliasing: `Reader` is constructed from `&mut MySQLConnection`
 // and then threaded through `process_packets(&mut self, reader)` — i.e. the
 // raw `*mut` and a live `&mut self` coexist. Materializing a whole-struct
 // `&mut MySQLConnection` here would alias that `&mut self` (Stacked Borrows
@@ -1707,7 +1717,7 @@ impl ReaderContext for Reader {
             return Err(AnyMySQLError::ShortRead);
         }
 
-        // PORT NOTE: reshaped for borrowck — capture detached slice before skip().
+        // reshaped for borrowck — capture detached slice before skip().
         let slice = bun_ptr::RawSlice::new(&remaining[0..count]);
         self.skip(isize::try_from(count).expect("int cast"));
         Ok(Data::Temporary(slice))
@@ -1730,8 +1740,9 @@ impl ReaderContext for Reader {
 // `JSMySQLConnection::on_query_result(MySQLQueryResult)` without conversion.
 pub use bun_sql::mysql::MySQLQueryResult as QueryResult;
 
-// TODO(port): IdentityContext(u64) hasher — bun_collections::HashMap should support identity hash for u64 keys
-pub(crate) type PreparedStatementsMap = HashMap<u64, *mut MySQLStatement>;
+// Zig: `std.HashMap(u64, *MySQLStatement, IdentityContext(u64), 80)` — keys are
+// already wyhash values, so identity hash avoids re-hashing.
+pub(crate) type PreparedStatementsMap = HashMap<u64, *mut MySQLStatement, IdentityContext<u64>>;
 /// Result of `PreparedStatementsMap::get_or_put` — surfaced for
 /// `JSMySQLConnection::get_statement_from_signature_hash`.
 pub(crate) type PreparedStatementsMapGetOrPutResult<'a> =

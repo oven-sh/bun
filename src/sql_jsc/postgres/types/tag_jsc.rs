@@ -12,7 +12,8 @@ use bun_sql::shared::Data;
 // OID space), so it can't be `ConstParamTy`. Demoted to a runtime arg; the body
 // is a plain match and the only caller (DataCell) computes the tag at runtime
 // anyway.
-// TODO(port): narrow error set (Zig inferred `error{UnsupportedArrayType}`).
+// Zig's inferred `error{UnsupportedArrayType}` is collapsed to the crate-wide
+// `bun_core::Error` like the rest of the SQL port.
 pub(crate) fn to_js_typed_array_type(t: Tag) -> Result<JSType, bun_core::Error> {
     match t {
         Tag::int4_array => Ok(JSType::Int32Array),

@@ -192,11 +192,6 @@ impl ABIType {
     /// See [`ABI_TYPE_LABEL`].
     pub const LABEL: &'static phf::Map<&'static [u8], ABIType> = &ABI_TYPE_LABEL;
 
-    // TODO(port): map_to_js_object — Zig builds a comptime "{...}" string from
-    // `map` via EnumMapFormatter. Rust cannot iterate phf at const time;
-    // generate via build.rs or const_format!.
-    pub const MAP_TO_JS_OBJECT: &'static str = "";
-
     /// Zig `std.enums.fromInt(ABIType, int) orelse ...` — returns `None` for
     /// out-of-range discriminants. The enum is `#[repr(i32)]` with contiguous
     /// values `0..=MAX` plus `Buffer = 20`, so range-check then match.

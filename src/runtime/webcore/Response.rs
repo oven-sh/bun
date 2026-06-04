@@ -19,14 +19,13 @@ use super::blob::Internal as InternalBlob;
 use super::body::{Body, BodyMixin, Value as BodyValue};
 use super::{FetchHeaders, ReadableStream, Request};
 
-// PORT NOTE: codegen (`generated_classes.rs`) re-exports `Blob` from
+// Codegen (`generated_classes.rs`) re-exports `Blob` from
 // `crate::webcore::response` because the Zig `.classes.ts` source path is
 // `bun.jsc.WebCore.response.Blob`. Keep this `pub use` so that resolves.
 pub use super::blob::Blob;
 use bun_ptr::weak_ptr::WeakPtrData;
 
 // C++ helper functions for AsyncLocalStorage integration
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     pub safe fn Response__getAsyncLocalStorageStore(
         global: &JSGlobalObject,
@@ -182,7 +181,7 @@ bun_jsc::impl_js_class_via_generated!(Response => bun_jsc::generated::JSResponse
 pub struct Response {
     body: JsCell<Body>,
     init: JsCell<Init>,
-    // PORT NOTE: `OwnedString` is `#[repr(transparent)]` over `BunString`, so
+    // `OwnedString` is `#[repr(transparent)]` over `BunString`, so
     // the C ABI layout is unchanged. We use it (not raw `BunString`) so the
     // field's drop glue actually releases the WTF refcount — `BunString` is
     // `Copy` and has no `Drop`.
@@ -341,7 +340,7 @@ impl Response {
     /// matching Zig's `getUrl` (Response.zig:77). Caller must NOT `deref()`
     /// the result; call `.clone()` on it if a +1 is needed.
     ///
-    /// PORT NOTE: Zig had both `getUrl()` (returns the string) and `getURL()`
+    /// Zig had both `getUrl()` (returns the string) and `getURL()`
     /// (the JS getter). They collide under snake_case, so the JS getter keeps
     /// `get_url` (codegen calls that name) and this becomes `url()`.
     #[inline]
@@ -580,7 +579,7 @@ impl Response {
     }
 
     pub fn header(&self, name: HTTPHeaderName) -> Option<ZigString> {
-        // PORT NOTE: reshaped for borrowck — `FetchHeaders::fast_get` takes
+        // reshaped for borrowck — `FetchHeaders::fast_get` takes
         // `&mut self` (FFI writes through an out-param), so we return the
         // owned `ZigString` instead of a borrowed slice. Callers do
         // `.slice()` themselves. R-2 escape hatch via `init_mut()`.
@@ -592,7 +591,7 @@ impl Response {
         status_code >= 200 && status_code <= 299
     }
 
-    // PORT NOTE: Zig `getURL` (JS getter). The Zig `getUrl` accessor became `url()`
+    // Zig `getURL` (JS getter). The Zig `getUrl` accessor became `url()`
     // above; codegen calls this exact name.
     pub fn get_url(this: &Self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
@@ -685,7 +684,7 @@ impl Response {
         F: bun_jsc::ConsoleFormatter,
         W: core::fmt::Write,
     {
-        // PORT NOTE: return type narrowed to `core::fmt::Result`. The trait
+        // return type narrowed to `core::fmt::Result`. The trait
         // methods produce `fmt::Error`/`JsError`/`bun_core::Error`; none of
         // those convert into the others, so funnel everything through
         // `fmt::Error` (Zig's `anyerror!void` carried no payload either).
@@ -943,7 +942,7 @@ impl Response {
         let mut args =
             bun_jsc::ArgumentsSlice::init(global_this.bun_vm(), &args_list.ptr[0..args_list.len]);
 
-        // PORT NOTE: Zig tracked `did_succeed` and manually deinit'd body/init
+        // Zig tracked `did_succeed` and manually deinit'd body/init
         // on failure. `Init`'s field drop glue (HeadersRef + OwnedString)
         // releases its refs on `?`. `Body` has NO `Drop` and its
         // `WTFStringImpl` arm is a raw `*mut` (no drop glue), so wrap the
@@ -992,7 +991,7 @@ impl Response {
             }
 
             if !str.is_empty() {
-                // PORT NOTE: `bun_core::String.value` is private; use
+                // `bun_core::String.value` is private; use
                 // `leak_wtf_impl()` to take ownership of the +1 ref as a raw
                 // `*mut WTFStringImplStruct`. `String` is intentionally
                 // non-`Drop`, so consuming it here is the same as Zig's
@@ -1110,7 +1109,7 @@ impl Response {
                 url_string = url_string_value.get_zig_string(global_this)?;
             }
             url_string_slice = url_string.to_slice();
-            // PORT NOTE: Zig tracked `did_succeed` and manually deinit'd body/init on
+            // Zig tracked `did_succeed` and manually deinit'd body/init on
             // failure. In Rust, `Init`'s drop glue (HeadersRef + OwnedString)
             // handles cleanup on `?`.
 
@@ -1141,7 +1140,7 @@ impl Response {
         };
 
         let headers = response.get_or_create_headers(global_this)?;
-        // PORT NOTE: reshaped for borrowck — Zig assigned response.init.headers = ...
+        // reshaped for borrowck — Zig assigned response.init.headers = ...
         // then re-borrowed; here get_or_create_headers already populated init.headers.
         headers.put(
             HTTPHeaderName::Location,
@@ -1172,9 +1171,8 @@ impl Response {
         Ok(js_value)
     }
 
-    // TODO(port): codegen — constructor signature includes js_this (the pre-allocated
-    // JS wrapper). The `#[bun_jsc::host_fn]` macro needs a `constructor` variant that
-    // passes the wrapper through.
+    // Hand-written: the constructor signature includes js_this (the pre-allocated
+    // JS wrapper), which `#[bun_jsc::host_fn]` has no variant for.
     pub fn constructor(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -1267,7 +1265,7 @@ impl Response {
             if arguments[0].is_undefined_or_null() {
                 break 'brk Body::new(BodyValue::Null);
             }
-            // PORT NOTE: `Body::extract` is a free fn re-exported as `body::extract`.
+            // `Body::extract` is a free fn re-exported as `body::extract`.
             super::body::extract(global_this, arguments[0])?
         };
         // errdefer body.deinit() — `Body` has NO `Drop`; arm a guard so the
@@ -1315,7 +1313,7 @@ impl Response {
     }
 }
 
-// PORT NOTE: Zig had an explicit `Init.deinit()` (Response.zig:880-889) which
+// Zig had an explicit `Init.deinit()` (Response.zig:880-889) which
 // deref'd `headers` and `status_text`. In Rust, `headers: Option<HeadersRef>`
 // has `Drop` (releases the C++ ref) and `status_text: OwnedString` has `Drop`
 // (releases the WTF ref) — `BunString` itself is `Copy` and has NO `Drop`, so
@@ -1345,7 +1343,7 @@ impl Default for Init {
 impl Init {
     pub fn clone(&self, ctx: &JSGlobalObject) -> JsResult<Init> {
         let headers = match &self.headers {
-            // PORT NOTE: Zig `head.cloneThis(ctx)` returns `?*FetchHeaders` (deep
+            // Zig `head.cloneThis(ctx)` returns `?*FetchHeaders` (deep
             // copy on the C++ side, may be null on OOM/throw). Flatten the
             // `Option<HeadersRef>` so a null clone leaves `headers` empty.
             Some(head) => head.clone_this(ctx)?,
@@ -1406,7 +1404,7 @@ impl Init {
         }
 
         if let Some(headers) = response_init.fast_get(global_this, BuiltinName::headers)? {
-            // PORT NOTE: `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
+            // `JSValue::as_::<FetchHeaders>()` requires `JsClass`;
             // FetchHeaders is a hand-bound opaque, so use its dedicated
             // `cast()` (wraps `WebCore__FetchHeaders__cast_`).
             if let Some(orig) = FetchHeaders::cast(headers) {
@@ -1467,7 +1465,7 @@ impl Init {
     }
 }
 
-// PORT NOTE: Zig @"404"/@"200" — Rust idents cannot start with a digit
+// Zig @"404"/@"200" — Rust idents cannot start with a digit
 pub fn status_404(global_this: &JSGlobalObject) -> *mut Response {
     empty_with_status(global_this, 404)
 }

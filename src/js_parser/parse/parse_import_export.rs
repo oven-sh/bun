@@ -73,7 +73,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.allow_in = old_allow_in;
 
         if SCAN_ONLY {
-            // PORT NOTE: reshaped for borrowck — EString::slice takes &mut self (rope flatten),
+            // Reshaped for borrowck — EString::slice takes &mut self (rope flatten),
             // so capture the slice (arena-lifetime) before re-using `value` by-value below.
             let slice_opt: Option<&'a [u8]> = if let ExprData::EString(e_string) = &mut value.data {
                 if e_string.is_utf8() && e_string.is_present() {
@@ -113,12 +113,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn parse_import_clause(&mut self) -> Result<ImportClause<'a>, Error> {
         let p = self;
-        // TODO(port): narrow error set
         let mut items = bun_alloc::ArenaVec::<ClauseItem>::new_in(p.arena);
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;
         // this variable should not exist if we're not in a typescript file
-        // PORT NOTE: in Zig this var was comptime-gated to only exist when TS is enabled;
+        // In Zig this var was comptime-gated to only exist when TS is enabled;
         // in Rust we declare it unconditionally — dead-store elim removes it when !TS.
         let mut had_type_only_imports = false;
 
@@ -290,7 +289,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn parse_export_clause(&mut self) -> Result<ExportClauseResult<'a>, Error> {
         let p = self;
-        // TODO(port): narrow error set
         let mut items = bun_alloc::ArenaVec::<ClauseItem>::with_capacity_in(1, p.arena);
         p.lexer.expect(T::TOpenBrace)?;
         let mut is_single_line = !p.lexer.has_newline_before;

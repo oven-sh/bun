@@ -100,7 +100,7 @@ mod tty {
 
         // `file.getOrEnableAnsiEscapeSupport()` — on POSIX this is `isatty(fd)`;
         // on Windows it tries to enable VT processing on the console handle.
-        // PORT NOTE: btjs writes into a `Vec<u8>` returned to lldb, so the
+        // btjs writes into a `Vec<u8>` returned to lldb, so the
         // `.windows_api` variant (which calls `SetConsoleTextAttribute` mid-write)
         // cannot apply; fall through to escape_codes / no_color.
         if bun_sys::isatty(bun_sys::Fd::stdout()) {
@@ -206,7 +206,6 @@ fn print_source_at_address(
     tty_config: tty::Config,
     fp: usize,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     if !cfg!(debug_assertions) {
         unreachable!();
     }
@@ -285,7 +284,6 @@ fn print_unknown_source(
     address: usize,
     tty_config: tty::Config,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     if !cfg!(debug_assertions) {
         unreachable!();
     }
@@ -315,7 +313,6 @@ fn print_line_info(
     print_line_from_file: impl Fn(&mut Vec<u8>, &SourceLocation) -> Result<(), Error>,
     do_llint: bool,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     if !cfg!(debug_assertions) {
         unreachable!();
     }
@@ -382,16 +379,16 @@ fn print_line_from_file_any_os(
     out_stream: &mut Vec<u8>,
     source_location: &SourceLocation,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     if !cfg!(debug_assertions) {
         unreachable!();
     }
 
     // Need this to always block even in async I/O mode, because this could potentially
     // be called from e.g. the event loop code crashing.
-    // TODO(port): Zig used std.fs.cwd().openFile directly (bypassing bun.sys). PORTING.md
-    // forbids std::fs; using bun_sys here. Confirm bun_sys::File is safe to call
-    // from inside a crash handler / lldb (must not re-enter event loop).
+    // Zig used std.fs.cwd().openFile directly (bypassing bun.sys); PORTING.md
+    // forbids std::fs, so bun_sys is used here. `bun_sys::File::open_at`/`read`
+    // are direct openat(2)/read(2) wrappers with no event-loop involvement, so
+    // they are safe to call from inside a crash handler / lldb.
     let f = bun_sys::File::open_at(
         bun_sys::Fd::cwd(),
         &source_location.file_name,

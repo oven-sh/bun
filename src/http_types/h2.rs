@@ -20,15 +20,14 @@ pub const MAX_STREAM_ID: u32 = i32::MAX as u32;
 /// `std.math.maxInt(u24)`
 pub const MAX_FRAME_SIZE: u32 = 0x00FF_FFFF;
 pub const DEFAULT_WINDOW_SIZE: u32 = u16::MAX as u32;
-/// PORT NOTE: Zig type was `u24`; Rust has no `u24`, so widened to `u32`.
 pub const DEFAULT_MAX_FRAME_SIZE: u32 = 16384;
 
 // ─── frame type / flags ─────────────────────────
 //
-// PORT NOTE: Zig `enum(u8) { …, _ }` is non-exhaustive (any u8 is a valid
-// value). A `#[repr(u8)]` Rust enum is UB for unknown discriminants received
-// off the wire, so callers dispatch on the raw `u8` (`FrameHeader.type_`) and
-// only ever use this enum for *outbound* frame construction (`X as u8`).
+// Frame types are non-exhaustive on the wire (any u8 is a valid value). A
+// `#[repr(u8)]` Rust enum is UB for unknown discriminants received off the
+// wire, so callers dispatch on the raw `u8` (`FrameHeader.type_`) and only
+// ever use this enum for *outbound* frame construction (`X as u8`).
 
 #[repr(u8)]
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -130,7 +129,7 @@ pub fn u32_from_bytes(src: &[u8]) -> u32 {
 
 /// Zig: `packed struct(u32) { reserved: bool = false, uint31: u31 = 0 }`.
 ///
-/// PORT NOTE (intentional divergence): Zig's `toUInt32()` is `@bitCast` of
+/// Intentional divergence from the Zig original: Zig's `toUInt32()` is `@bitCast` of
 /// `packed struct(u32){ reserved: bool, uint31: u31 }`, which on little-endian
 /// places `reserved` in bit 0 and yields `(uint31 << 1) | reserved`. That is a
 /// latent RFC 7540 §6.3 bug in Zig's deprecated PRIORITY path — the wire
@@ -201,7 +200,7 @@ impl StreamPriority {
     pub fn from(dst: &mut StreamPriority, src: &[u8]) {
         bytemuck::bytes_of_mut(dst).copy_from_slice(src);
         // std.mem.byteSwapAllFields(StreamPriority, dst) — `weight: u8` is a no-op.
-        // PORT NOTE: brace-expr `{packed.field}` performs an unaligned copy;
+        // Brace-expr `{packed.field}` performs an unaligned copy;
         // assignment to a packed field is an unaligned store. No `unsafe`.
         dst.stream_identifier = u32::swap_bytes(dst.stream_identifier);
     }

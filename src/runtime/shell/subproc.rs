@@ -209,7 +209,7 @@ pub struct ShellIO {
     pub stderr: Option<Arc<IOWriter>>,
 }
 
-// PORT NOTE: Zig's `ShellIO.ref/deref` bumped intrusive IOWriter refcounts
+// Note: Zig's `ShellIO.ref/deref` bumped intrusive IOWriter refcounts
 // without producing a handle. With `Arc<IOWriter>` the only correct way to
 // retain is to *clone the Arc and keep it*; a freestanding `ref()` that
 // discards the clone is a no-op. Callers hold their own `Arc` clones and
@@ -618,7 +618,7 @@ impl ShellSubprocess {
             if !spawn_args.override_env && spawn_args.env_array.is_empty() {
                 // spawn_args.env_array.items = jsc_vm.transpiler.env.map.createNullDelimitedEnvMap(allocator);
                 let envmap = bun_core::handle_oom(event_loop.create_null_delimited_env_map());
-                // PORT NOTE: `as_slice()` *includes* the trailing null; strip it —
+                // Note: `as_slice()` *includes* the trailing null; strip it —
                 // the common tail below re-appends one null terminator.
                 let entries = envmap.as_slice();
                 spawn_args
@@ -757,7 +757,7 @@ impl ShellSubprocess {
 
         let mut spawn_result = spawn_result;
 
-        // PORT NOTE: Stdio impls Drop, so move out via mem::replace instead of clone.
+        // Note: Stdio impls Drop, so move out via mem::replace instead of clone.
         let stdio0 = core::mem::replace(&mut stdio_guard[0], Stdio::Ignore);
         let stdio1 = core::mem::replace(&mut stdio_guard[1], Stdio::Ignore);
         let stdio2 = core::mem::replace(&mut stdio_guard[2], Stdio::Ignore);
@@ -1042,7 +1042,7 @@ impl Writable {
     ) -> Result<Writable, WritableInitError> {
         assert_stdio_result!(result);
 
-        // PORT NOTE: `Stdio` impls Drop, so we cannot partially move out via
+        // Note: `Stdio` impls Drop, so we cannot partially move out via
         // match (E0509). Dispatch on `&mut` and `mem::take` / ManuallyDrop the
         // non-Copy payloads.
         let mut stdio = stdio;
@@ -1190,7 +1190,7 @@ impl Writable {
         }
     }
 
-    // PORT NOTE: `Writable::toJS` from the Zig spec is intentionally **not**
+    // Note: `Writable::toJS` from the Zig spec is intentionally **not**
     // ported. It references `subprocess.flags.has_stdin_destructor_called` and
     // `subprocess.weak_file_sink_stdin_ptr`, neither of which exist on
     // `ShellSubprocess` — the function is dead under Zig's lazy compilation
@@ -1198,7 +1198,7 @@ impl Writable {
     // never exposes its stdin Writable to JS.
 
     pub fn finalize(&mut self) {
-        // PORT NOTE: Zig recovered `*Subprocess` via `container_of` to gate on
+        // Note: Zig recovered `*Subprocess` via `container_of` to gate on
         // `subprocess.this_jsvalue != .zero`. That field is never assigned on
         // ShellSubprocess (dead code path under Zig lazy compilation) and was
         // dropped from the port, so the parent-pointer recovery is unnecessary.
@@ -1303,7 +1303,7 @@ impl Readable {
         }
     }
 
-    // PORT NOTE: `Readable::toSlice` from the Zig spec is intentionally **not**
+    // Note: `Readable::toSlice` from the Zig spec is intentionally **not**
     // ported. Its `.pipe` arm writes `this.pipe.buffer.fifo.close_on_empty_read`,
     // a field that does not exist on `PipeReader` (pre-BufferedReader-rewrite
     // leftover) — the function is dead under Zig's lazy compilation and has no
@@ -1323,7 +1323,7 @@ impl Readable {
     ) -> Readable {
         assert_stdio_result!(result);
 
-        // PORT NOTE: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
+        // Note: `Stdio` impls Drop, so dispatch on `&mut` and `mem::take`
         // Default-able payloads instead of partial moves (E0509).
         let mut stdio = stdio;
         #[cfg(windows)]
@@ -1603,7 +1603,7 @@ impl<'a> SpawnArgs<'a> {
         env_iter: &mut crate::shell::env_map::Iterator<'_>,
     ) {
         self.override_env = true;
-        // PORT NOTE: `bun_collections::array_hash_map::Iter` doesn't impl
+        // Note: `bun_collections::array_hash_map::Iter` doesn't impl
         // `ExactSizeIterator`; use `size_hint` for the reservation.
         self.env_array
             .reserve_exact(env_iter.size_hint().0.saturating_sub(self.env_array.len()));
@@ -1666,11 +1666,10 @@ pub struct PipeReader {
     /// `IOWriter::interp` / `IOReader::interp` for the same pattern. Wired
     /// from `Cmd::interp` at `PipeReader::create` time.
     pub interp: *mut crate::shell::interpreter::Interpreter,
-    // ref_count: handled by Arc<PipeReader> per LIFETIMES.tsv.
-    // TODO(port): Zig uses intrusive bun.ptr.RefCount and recovers *PipeReader via
-    // `container_of` from CapturedWriter — incompatible with Arc's header layout.
-    // Should switch to bun_ptr::IntrusiveRc<PipeReader> + Cell<u32> ref_count
-    // and update Readable::Pipe accordingly.
+    // ref_count: handled by Arc<PipeReader> (Zig used intrusive
+    // bun.ptr.RefCount and recovered *PipeReader via `container_of` from
+    // CapturedWriter — incompatible with Arc's header layout, hence the
+    // `arc_as_mut_ptr` interior-mutability helper below).
 }
 
 pub enum BufferedOutput {
@@ -1884,7 +1883,7 @@ impl CapturedWriter {
 
 impl Drop for CapturedWriter {
     fn drop(&mut self) {
-        // PORT NOTE: Zig called `e.deref()` on the SystemError; in Rust the
+        // Note: Zig called `e.deref()` on the SystemError; in Rust the
         // `bun_sys::SystemError` strings drop themselves.
         let _ = self.err.take();
         // self.writer Arc drops automatically.
@@ -2062,7 +2061,6 @@ impl PipeReader {
         }
     }
 
-    // TODO(port): move to shell_jsc
     pub const TO_JS: fn(Arc<Self>, &JSGlobalObject) -> jsc::JsResult<JSValue> =
         Self::to_readable_stream;
 
@@ -2242,7 +2240,7 @@ impl PipeReader {
                         }
                     }
                 }
-                // PORT NOTE: Zig ref'd + cloned the SystemError; `bun_sys::SystemError`
+                // Note: Zig ref'd + cloned the SystemError; `bun_sys::SystemError`
                 // isn't ref-counted nor `Clone`. Move it out (the only reader of
                 // `state.Err` after this point is `Drop`, which tolerates `None`).
                 if let PipeReaderState::Err(slot) = &mut me.state {
@@ -2309,12 +2307,11 @@ impl PipeReader {
         }
     }
 
-    // TODO(port): move to shell_jsc
     pub fn to_readable_stream(
         this: Arc<Self>,
         global_object: &JSGlobalObject,
     ) -> jsc::JsResult<JSValue> {
-        // PORT NOTE: Zig `defer this.deinit()` — `this: Arc<Self>` dropping at
+        // Note: Zig `defer this.deinit()` — `this: Arc<Self>` dropping at
         // scope end (all paths, including `?`) is that deref. Consumes the
         // caller's +1 strong ref.
         let me = arc_as_mut_ptr(&this);
@@ -2356,7 +2353,6 @@ impl PipeReader {
         }
     }
 
-    // TODO(port): move to shell_jsc
     pub fn to_buffer(&mut self, global_this: &JSGlobalObject) -> JSValue {
         match &mut self.state {
             PipeReaderState::Done(bytes) => {
@@ -2419,7 +2415,6 @@ impl PipeReader {
     }
 
     // Helper accessor used above to paper over Arc<PipeReader> interior mutability.
-    // TODO(port): remove once IntrusiveRc + Cell-wrapped fields land.
     //
     // Takes `*mut Self` (not `&self`) because `Arc<PipeReader>` only yields
     // `&Self`, and casting `&Self as *const Self as *mut Self` to write through is
@@ -2474,7 +2469,7 @@ impl Drop for PipeReader {
         }
 
         if let PipeReaderState::Err(slot) = &mut self.state {
-            // PORT NOTE: Zig `e.deref()`; Rust drops via take().
+            // Note: Zig `e.deref()`; Rust drops via take().
             *slot = None;
         }
 
@@ -2518,7 +2513,6 @@ macro_rules! assert_stdio_result {
 }
 pub(crate) use assert_stdio_result;
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     // `_PATH_DEFPATH` string literal emitted from C; immutable, load-time
     // initialized, never null. Reading the pointer value has no precondition.

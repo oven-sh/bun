@@ -38,10 +38,10 @@ pub(crate) fn erase_flush_callback<T: HasAutoFlusher>() -> DeferredRepeatingTask
     trampoline::<T>
 }
 
-// PORT NOTE (b0): Zig passed `*jsc.VirtualMachine` and reached
-// `vm.event_loop().deferred_tasks`. To break the event_loop→jsc upward edge,
-// callers now pass the `DeferredTaskQueue` directly (it lives in this crate).
-// Higher-tier call sites do `&mut vm.event_loop().deferred_tasks` themselves.
+// To avoid an event_loop→jsc upward edge, callers pass the
+// `DeferredTaskQueue` directly (it lives in this crate) rather than a VM
+// pointer. Higher-tier call sites do `&mut vm.event_loop().deferred_tasks`
+// themselves.
 pub(crate) fn register_deferred_microtask_with_type<T: HasAutoFlusher>(
     this: &mut T,
     deferred: &mut DeferredTaskQueue,
@@ -67,8 +67,8 @@ pub(crate) fn unregister_deferred_microtask_with_type_unchecked<T: HasAutoFlushe
     deferred: &mut DeferredTaskQueue,
 ) {
     debug_assert!(this.auto_flusher().registered);
-    // PORT NOTE: Zig `bun.assert(expr)` evaluates `expr` unconditionally; the
-    // *check* is debug-only but the side effect must run in release too.
+    // The *check* is debug-only but the `unregister_task` side effect must
+    // run in release too — don't fold this into the debug_assert.
     let removed =
         deferred.unregister_task(NonNull::new(std::ptr::from_mut::<T>(this).cast::<c_void>()));
     debug_assert!(removed);

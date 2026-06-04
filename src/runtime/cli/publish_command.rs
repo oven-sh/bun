@@ -89,7 +89,7 @@ type SHA512Digest = [u8; sha::SHA512::DIGEST];
 
 pub(crate) struct PublishCommand;
 
-// TODO(port): Zig used `if (directory_publish) ?[]const u8 else void` for the script fields
+// Zig used `if (directory_publish) ?[]const u8 else void` for the script fields
 // and `if (directory_publish) *DotEnv.Loader else void` for script_env. Rust const generics
 // cannot vary field types; we keep them as Option<> in both instantiations and rely on
 // invariants (always None / never used when DIRECTORY_PUBLISH == false).
@@ -325,7 +325,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         let package_json_contents =
             maybe_package_json_contents.ok_or(FromTarballError::MissingPackageJSON)?;
 
-        // PORT NOTE: adopt `package_json_contents` (already an owned `Box<[u8]>`)
+        // Note: adopt `package_json_contents` (already an owned `Box<[u8]>`)
         // into the process-lifetime side-table so the `Source` borrow stays
         // alive across `normalized_package` (Zig held an arena slice). Zero-copy.
         let package_json_contents: &'static [u8] = crate::cli::cli_adopt(package_json_contents);
@@ -355,7 +355,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             if let Some(config) = json.get(b"publishConfig") {
                 if manager.options.publish_config.tag.is_empty() {
                     if let Some(tag) = json_get_string_cloned(&config, &bump, b"tag")? {
-                        // PORT NOTE: `PublishConfig.tag` is `&'static [u8]`; dupe the
+                        // Note: `PublishConfig.tag` is `&'static [u8]`; dupe the
                         // bump-owned slice into the process-lifetime CLI arena.
                         manager.options.publish_config.tag = crate::cli::cli_dupe(tag);
                     }
@@ -456,7 +456,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
     /// `bun publish` without a tarball path. Automatically pack the current workspace and get
     /// information required for publishing
-    // PORT NOTE: Zig declares this on the comptime-generic `Context(directory_publish)`
+    // Note: Zig declares this on the comptime-generic `Context(directory_publish)`
     // but only ever instantiates it as `Context(true).fromWorkspace`; lazy comptime
     // evaluation hid the `pack(true) -> Context(true)` mismatch for the unused
     // `false` branch. Rust type-checks all monomorphisations, so pin the return
@@ -509,7 +509,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             }
         };
 
-        // PORT NOTE: capture the package.json path before constructing
+        // Note: capture the package.json path before constructing
         // `pack::Context` so the `&mut PackageManager` borrow doesn't conflict.
         // SAFETY: `manager_ptr` came from `&'a mut PackageManager`.
         let abs_pkg_json = bun_core::ZBox::from_bytes(
@@ -537,7 +537,6 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
 
 impl PublishCommand {
     pub(crate) fn exec(ctx: Command::Context) -> Result<(), Error> {
-        // TODO(port): narrow error set
         bun_core::prettyln!(
             "<r><b>bun publish <r><d>v{}<r>",
             Global::package_json_version_with_sha,
@@ -719,7 +718,7 @@ impl PublishCommand {
                 .put(b"npm_command", b"publish")
                 .map_err(|_| err!(OutOfMemory))?;
 
-            // PORT NOTE: reshaped for borrowck — `command_ctx: &mut ContextData`
+            // Note: reshaped for borrowck — `command_ctx: &mut ContextData`
             // is held by `context`; `run_package_script_foreground` needs
             // `&mut ContextData` too. Re-derive from the raw pointer (mirrors
             // Zig's freely-aliased `Command.Context`).
@@ -798,7 +797,7 @@ impl PublishCommand {
             return false;
         }
 
-        // PORT NOTE: `URL::parse` borrows; dupe into the process-lifetime CLI
+        // Note: `URL::parse` borrows; dupe into the process-lifetime CLI
         // arena so the URL outlives the local Vec (mirrors `allocPrint`
         // ownership in the Zig spec).
         let package_url = URL::parse(crate::cli::cli_dupe(&url_buf));
@@ -931,7 +930,7 @@ impl PublishCommand {
             return Ok(());
         }
 
-        // PORT NOTE: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
+        // Note: `AsyncHTTP::init_sync` requires `&'static [u8]` for the
         // request body (Zig had no lifetimes). Single-shot CLI path — adopt the
         // already-owned `Box<[u8]>` (base64-encoded tarball; can be multi-MB)
         // into the process-lifetime side-table. Zero-copy.
@@ -963,7 +962,7 @@ impl PublishCommand {
             bun_fmt::dependency_url(&ctx.package_name),
         )
         .map_err(|_| AllocError)?;
-        // PORT NOTE: `URL::parse` borrows; dupe into the process-lifetime CLI
+        // Note: `URL::parse` borrows; dupe into the process-lifetime CLI
         // arena so the URL outlives `print_buf.clear()` below (Zig's
         // `allocPrint` owned its buffer).
         let publish_url = URL::parse(crate::cli::cli_dupe(&print_buf));
@@ -1138,7 +1137,7 @@ impl PublishCommand {
             }
         }
 
-        // PORT NOTE: Zig used `std.process.Child.init(&.{Open.opener, auth_url})
+        // Note: Zig used `std.process.Child.init(&.{Open.opener, auth_url})
         // .spawnAndWait()`. Route through `bun.spawnSync` (PORTING.md §Spawning).
         let _ = spawn_sync::spawn(&spawn_sync::Options {
             argv: vec![Box::from(open::OPENER), Box::from(auth_url.as_bytes())],
@@ -1177,7 +1176,7 @@ impl PublishCommand {
                 let Some(auth_url_str) = json_get_string_cloned(&json, &bump, b"authUrl")? else {
                     break 'try_web;
                 };
-                // PORT NOTE: bump-owned `&[u8]` — dupe into the process-lifetime
+                // Note: bump-owned `&[u8]` — dupe into the process-lifetime
                 // CLI arena so the spawned thread (which outlives `bump`) can
                 // borrow it `'static`.
                 let auth_url_str: &'static ZStr = {
@@ -1285,7 +1284,7 @@ impl PublishCommand {
                 loop {
                     response_buf.reset();
 
-                    // PORT NOTE: Zig copied `done_url`/`auth_headers.entries` by value each
+                    // Note: Zig copied `done_url`/`auth_headers.entries` by value each
                     // loop turn; in Rust both move into `init_sync`, so re-clone per iteration.
                     let mut req = http::AsyncHTTP::init_sync(
                         http::Method::GET,
@@ -1318,7 +1317,7 @@ impl PublishCommand {
                                     'default: {
                                         let trimmed =
                                             strings::trim(retry, &strings::WHITESPACE_CHARS);
-                                        // PORT NOTE: std.fmt.parseInt(u32, _, 10) — header value is bytes,
+                                        // Note: std.fmt.parseInt(u32, _, 10) — header value is bytes,
                                         // not UTF-8; use the byte-slice parser per PORTING.md.
                                         let Ok(seconds) = strings::parse_int::<u32>(trimmed, 10)
                                         else {
@@ -1422,7 +1421,7 @@ impl PublishCommand {
         debug_assert!(json.is_object());
 
         let bump = bun_alloc::Arena::new();
-        // PORT NOTE: `E::String` stores `&'static [u8]` (lifetime erased per the
+        // Note: `E::String` stores `&'static [u8]` (lifetime erased per the
         // parser's Str convention); dupe formatted buffers into the
         // process-lifetime CLI arena so they outlive the AST nodes through printing.
         macro_rules! leak {
@@ -1629,7 +1628,7 @@ impl PublishCommand {
         package_name: &[u8],
         workspace_root: Fd,
     ) -> Result<(), AllocError> {
-        // PORT NOTE: see `normalized_package` — `E::String` stores
+        // Note: see `normalized_package` — `E::String` stores
         // `&'static [u8]` (lifetime erased per the parser's Str convention);
         // dupe into the process-lifetime CLI arena for buffers that flow into AST nodes.
         macro_rules! leak {
@@ -1839,7 +1838,7 @@ impl PublishCommand {
                             .map_err(|_| AllocError)?;
                             join.push(0);
                             let join_len = join.len() - 1;
-                            // PORT NOTE: reshaped for borrowck — Zig sliced into the same allocation for both name and subpath.
+                            // Note: reshaped for borrowck — Zig sliced into the same allocation for both name and subpath.
                             // Dupe into the process-lifetime CLI arena (bytes flow into long-lived `E::String` nodes).
                             let interned: &'static [u8] = crate::cli::cli_dupe(&join);
                             // SAFETY: NUL terminator at interned[join_len] (copied from `join`).

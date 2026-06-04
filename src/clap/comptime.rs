@@ -560,7 +560,6 @@ impl<Id> ComptimeClap<Id> {
     ) -> Result<Self, bun_core::Error>
     where
         I: ArgIter<'static>,
-        // TODO(port): narrow error set
     {
         // `opt.allocator` dropped — global mimalloc.
         let mut multis: Vec<Vec<&'static [u8]>> = (0..table.n_multi).map(|_| Vec::new()).collect();
@@ -588,8 +587,8 @@ impl<Id> ComptimeClap<Id> {
                 pos.push(arg.value.unwrap());
                 if opt.stop_after_positional_at > 0 && pos.len() >= opt.stop_after_positional_at {
                     let mut remaining_ = stream.iter.remain();
-                    // PORT NOTE: Zig called `bun.span` (NUL-scan) on `[:0]const u8` argv
-                    // entries. Our `ArgIter` already yields sized `&[u8]`, so `span` is a
+                    // Zig called `bun.span` (NUL-scan) on `[:0]const u8` argv entries.
+                    // Our `ArgIter` already yields sized `&[u8]`, so `span` is a
                     // no-op and is dropped.
                     let first: &[u8] = if !remaining_.is_empty() {
                         remaining_[0]
@@ -626,7 +625,6 @@ impl<Id> ComptimeClap<Id> {
 
         Ok(Self {
             single_options,
-            // PORT NOTE: Zig left these `undefined` and filled them post-loop.
             multi_options: multis.into_iter().map(Vec::into_boxed_slice).collect(),
             flags,
             pos: pos.into_boxed_slice(),

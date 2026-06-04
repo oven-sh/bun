@@ -36,13 +36,12 @@ pub struct ConcurrentPromiseTask<'a, Context: ConcurrentPromiseTaskContext> {
     /// BACKREF — captured from the JS-thread VM at create time; the VM (and its
     /// `EventLoop`) outlives every task scheduled on it.
     pub event_loop: BackRef<EventLoop>,
-    // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global mimalloc (non-AST crate)
     pub promise: JSPromiseStrong,
     pub global_this: &'a JSGlobalObject,
     pub concurrent_task: ConcurrentTask,
 
     // This is a poll because we want it to enter the uSockets loop
-    // PORT NOTE: `ref` is a Rust keyword; field renamed to `ref_`.
+    // (`ref` is a Rust keyword, hence `ref_`)
     pub ref_: KeepAlive,
 }
 

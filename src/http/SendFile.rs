@@ -22,9 +22,7 @@ impl SendFile {
         url.is_http() && url.href.len() > 0
     }
 
-    // PORT NOTE: reshaped — Zig took `NewHTTPContext(false).HTTPSocket` and only ever
-    // called `socket.fd()` on it. `NewHTTPContext` is part of the still-gated
-    // mutually-recursive cluster, so accept the resolved fd directly. Callers pass
+    // Takes the resolved fd directly rather than the socket; callers pass
     // `socket.fd()`.
     pub fn write(&mut self, socket_fd: Fd) -> Status {
         // Zig u63 max == i64::MAX. Clamp `remain` so the signed sendfile count cannot overflow.

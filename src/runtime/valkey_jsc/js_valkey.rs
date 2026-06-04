@@ -23,7 +23,7 @@ use bun_jsc::url::URL;
 use bun_valkey::valkey_protocol as protocol;
 
 /// `bun.JSTerminated!T`
-// PORT NOTE: widened to `JsResult<T>` to match `valkey.rs`; narrow once
+// Widened to `JsResult<T>` to match `valkey.rs`; can be narrowed once
 // `ValkeyClient::{fail,on_open,on_close,start}` are tightened to the
 // `jsc::JsTerminatedResult` alias from `bun_jsc::event_loop`.
 type JsTerminatedResult<T> = jsc::JsResult<T>;
@@ -32,8 +32,8 @@ type JsTerminatedResult<T> = jsc::JsResult<T>;
 /// alias) back to the spec'd `bun.JSTerminated!void`. The inner client only
 /// ever propagates `JsError::Terminated` (originating from `JSPromise::reject`
 /// / `resolve`); the other variants are unreachable on this path.
-// PORT NOTE: while `JsTerminatedResult` is widened to `JsResult` (see above),
-// this is effectively identity-with-OOM-crash. Once both aliases tighten to
+// While `JsTerminatedResult` is widened to `JsResult` (see above), this is
+// effectively identity-with-OOM-crash. Once both aliases tighten to
 // `jsc::JsTerminatedResult`, restore the `JsTerminated::JSTerminated` mapping.
 #[inline]
 fn narrow_terminated(r: JsResult<()>) -> JsTerminatedResult<()> {
@@ -230,7 +230,6 @@ impl SubscriptionCtx {
         let _guard = scopeguard::guard(parent_br, |p| {
             p.on_new_subscription_callback_insert();
         });
-        // PORT NOTE: Zig `defer` ≡ scopeguard-on-drop here.
         let map = self.subscription_callback_map();
 
         let handlers_array: JSValue;
@@ -335,7 +334,7 @@ impl SubscriptionCtx {
         Ok(self.parent().client.get().flags.finalized || !self.has_subscriptions(global_object)?)
     }
 
-    // PORT NOTE: cannot be Drop — takes global_object param. Exposed as explicit
+    // Cannot be `Drop` — takes a `global_object` param. Exposed as explicit
     // `close` per PORTING.md (never expose `pub fn deinit`).
     pub fn close(&self, global_object: &JSGlobalObject) {
         if cfg!(debug_assertions) {
@@ -358,7 +357,7 @@ impl SubscriptionCtx {
 // ───────────────────────────────────────────────────────────────────────────
 
 /// Valkey client wrapper for JavaScript
-// PORT NOTE: `#[bun_jsc::JsClass]` is hand-rolled in `mod.rs` (the codegen
+// `#[bun_jsc::JsClass]` is hand-rolled in `mod.rs` (the codegen
 // macro's 2-arg `constructor` shim doesn't fit the `js_this` flow here).
 // R-2 (host-fn re-entrancy): every JS-exposed method takes `&self`; per-field
 // interior mutability via `Cell` (Copy) / `JsCell` (non-Copy). The codegen
@@ -463,7 +462,7 @@ impl JSValkeyClient {
     }
 
     // Factory function to create a new Valkey client from JS
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the free-fn shim it emits
+    // No `#[bun_jsc::host_fn]` here — the free-fn shim it emits
     // calls `constructor(...)` unqualified (fails inside `impl`). Codegen
     // wires the constructor via `RedisClientImpl::constructor` (see
     // generated_classes.rs), which passes the freshly-allocated wrapper cell
@@ -531,8 +530,7 @@ impl JSValkeyClient {
                 use std::io::Write;
                 let mut cursor = &mut fallback_url_buf[..];
                 let start_len = cursor.len();
-                // PORT NOTE: bufPrintZ NUL-terminates; we don't need the NUL here since we
-                // immediately re-parse via fromUTF8.
+                // No NUL terminator needed here — we immediately re-parse via fromUTF8.
                 if write!(&mut cursor, "valkey://").is_err()
                     || cursor.write_all(url_byte_slice).is_err()
                 {
@@ -666,9 +664,9 @@ impl JSValkeyClient {
             let pass_sp = b.append_count(password_utf8.slice());
             let host_sp = b.append_count(hostname_slice);
             connection_strings = b.move_to_slice();
-            // PORT NOTE: in Zig these were `&[u8]` slices into
-            // `connection_strings` (self-referential). The Rust `ValkeyClient`
-            // owns each field as `Box<[u8]>`, so re-slice from the pointers.
+            // In Zig these were `&[u8]` slices into `connection_strings`
+            // (self-referential). The Rust `ValkeyClient` owns each field as
+            // `Box<[u8]>`, so re-slice from the pointers.
             username = Box::<[u8]>::from(user_sp.slice(&connection_strings));
             password = Box::<[u8]>::from(pass_sp.slice(&connection_strings));
             hostname = Box::<[u8]>::from(host_sp.slice(&connection_strings));
@@ -683,7 +681,7 @@ impl JSValkeyClient {
 
         bun_core::analytics::Features::VALKEY.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
 
-        // PORT NOTE: Zig used `undefined` for _subscription_ctx; initialized later by `create()`.
+        // `_subscription_ctx` is a placeholder here; properly initialized later by `create()`.
         Ok(JSValkeyClient::new(JSValkeyClient {
             ref_count: bun_ptr::RefCount::init(),
             _subscription_ctx: JsCell::new(SubscriptionCtx::default()),
@@ -778,8 +776,8 @@ impl JSValkeyClient {
         let client = self.client.get();
         let sub_ctx = self._subscription_ctx.get();
 
-        // PORT NOTE: in Zig, `username`/`password`/`address.hostname` are sub-slices
-        // into the single `connection_strings` allocation, so the spec dupes
+        // In Zig, `username`/`password`/`address.hostname` are sub-slices into the
+        // single `connection_strings` allocation, so the spec dupes
         // `connection_strings` once and `rebaseSlice`s the sub-slices into the copy.
         // The Rust `ValkeyClient` (see valkey.rs:290-299) instead owns each field
         // as an independent `Box<[u8]>`, so the rebase arithmetic would compute a
@@ -931,7 +929,7 @@ impl JSValkeyClient {
     }
 
     pub fn get_or_create_subscription_ctx(&self) -> JsResult<&SubscriptionCtx> {
-        // PORT NOTE: Zig treats _subscription_ctx as Optional here but the field is not
+        // Zig treats _subscription_ctx as Optional here but the field is not
         // optional in the struct definition above. Original:
         //   `if (this._subscription_ctx) |*ctx| { return ctx; }`
         // Preserve the return-existing intent so we don't unconditionally reinit.
@@ -1057,7 +1055,7 @@ impl JSValkeyClient {
         Ok(JSValue::UNDEFINED)
     }
 
-    // PORT NOTE: `onconnect`/`onclose` are declared with `this: true` in
+    // `onconnect`/`onclose` are declared with `this: true` in
     // valkey.classes.ts, so the codegen thunk passes the JS wrapper cell as
     // `this_value` (between `&self` and `global`). No `host_fn` attribute —
     // the extern "C" shim lives in generated_classes.rs. Setter now returns
@@ -1091,7 +1089,7 @@ impl JSValkeyClient {
             bun_core::TimespecMockMode::AllowMockedTime,
             i64::from(next_timeout_ms),
         );
-        // PORT NOTE: `bun_event_loop::Timespec` is a local stub distinct from
+        // `bun_event_loop::Timespec` is a local stub distinct from
         // `bun_core::Timespec`; convert by fields until they are unified.
         timer.with_mut(|t| {
             t.next = Timer::Timespec {
@@ -1510,7 +1508,6 @@ impl JSValkeyClient {
             // BACKREF — JSValkeyClient is intrusively ref-counted (RefCount + @fieldParentPtr
             // recovery in SubscriptionCtx::parent). The `self.ref_()` above / `(*ctx).deref()`
             // in run() keep it alive across the task hop, exactly as the Zig does.
-            // PORT NOTE: LIFETIMES.tsv lists this as SHARED; update to BACKREF.
             ctx: *const JSValkeyClient,
             task: jsc::AnyTask::AnyTask,
         }
@@ -1585,7 +1582,7 @@ impl JSValkeyClient {
         let _d = deref_guard(self);
 
         let is_tls = self.client.get().tls != valkey::TLS::None;
-        // PORT NOTE: `vm.rare_data()` needs `&mut VirtualMachine`; `client.vm`
+        // `vm.rare_data()` needs `&mut VirtualMachine`; `client.vm`
         // is `&'static`. Cast through raw — the per-thread VM is single-owner
         // on the JS thread, and `valkey_group` only touches the embedded
         // `SocketGroup` field + `vm.uws_loop()` (disjoint from anything we
@@ -1602,10 +1599,9 @@ impl JSValkeyClient {
             }
         };
 
-        // PORT NOTE: reshaped for borrowck — the Zig matched on `self.client.tls`
-        // and called `self.client_fail`/`on_valkey_close` from inside the arm.
         // Populate `_secure` first, then handle the failure branch outside the
-        // borrow of `self.client.tls`.
+        // borrow of `self.client.tls` (the Zig matched on `self.client.tls` and
+        // called `self.client_fail`/`on_valkey_close` from inside the arm).
         let tls_ctx_failed = if let valkey::TLS::Custom(ref custom) = self.client.get().tls {
             // Reuse across reconnect — the SSL_CTX is the only thing the
             // old `_socket_ctx` cache existed to preserve.
@@ -1663,7 +1659,7 @@ impl JSValkeyClient {
                 (*p).update_poll_ref();
             }
         });
-        // PORT NOTE: the socket ext slot is typed `ExtSlot<JSValkeyClient>`
+        // The socket ext slot is typed `ExtSlot<JSValkeyClient>`
         // (uws_handlers.rs `Valkey<SSL> = NsHandler<JSValkeyClient, …>`); store
         // the OUTER pointer, not the inner `ValkeyClient`, or dispatch will
         // mis-type and re-offset it (`on_open` → `this.client_mut()` adds
@@ -1844,7 +1840,7 @@ impl JSValkeyClient {
     }
 }
 
-// PORT NOTE: Zig's `pub const X = fns.X;` × ~160 binds each command host-fn
+// Zig's `pub const X = fns.X;` × ~160 binds each command host-fn
 // into the JSValkeyClient namespace. In Rust those are already inherent
 // methods on `JSValkeyClient` via the `impl JSValkeyClient` block in
 // `js_valkey_functions.rs`, so no re-export is needed (and `pub use` of impl
@@ -1858,14 +1854,13 @@ impl JSValkeyClient {
 /// Referenced by `dispatch.zig` (kind = `.valkey[_tls]`).
 pub struct SocketHandler<const SSL: bool>;
 
-// PORT NOTE: Zig `const SocketType = uws.NewSocketHandler(ssl)` is an inherent
-// associated type, which is unstable in Rust. Use a module-level alias instead
+// Inherent associated types are unstable in Rust, so use a module-level alias
 // and refer to it as `SocketType<SSL>` inside the impl.
 type SocketType<const SSL: bool> = uws::NewSocketHandler<SSL>;
 
 impl<const SSL: bool> SocketHandler<SSL> {
     fn _socket(s: SocketType<SSL>) -> Socket {
-        // PORT NOTE: `NewSocketHandler<SSL>` only differs by const generic; the
+        // `NewSocketHandler<SSL>` only differs by const generic; the
         // `socket` field is identical. Re-wrap the inner `InternalSocket` into
         // the right `AnySocket` variant.
         if SSL {

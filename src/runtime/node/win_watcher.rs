@@ -28,9 +28,13 @@ const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PA
 const on_update_end_fn: fn(Option<*mut c_void>) = FSWatcher::on_update_end;
 
 bun_output::declare_scope!(PathWatcherManager, visible);
-// Zig scope name is `.@"fs.watch"`; Rust identifiers cannot contain '.'.
-// TODO(port): declare_scope! should accept the original "fs.watch" string for BUN_DEBUG env matching.
-bun_output::declare_scope!(fs_watch, visible);
+// Zig scope name is `.@"fs.watch"`; Rust identifiers cannot contain '.', so
+// the static is declared by hand (instead of via `declare_scope!`) with the
+// original tag string, keeping `BUN_DEBUG_fs.watch` env matching and the
+// `[fs.watch]` log prefix identical to Zig.
+#[allow(non_upper_case_globals)]
+pub static fs_watch: bun_output::ScopedLogger =
+    bun_output::ScopedLogger::new("fs.watch", bun_output::Visibility::Visible);
 
 // ──────────────────────────────────────────────────────────────────────────
 
@@ -60,8 +64,8 @@ pub(crate) struct PathWatcherManager {
     // PathWatcher ptrs. `StringArrayHashMap` lets `get`/`insert` take `&[u8]` borrows.
     watchers: StringArrayHashMap<*mut PathWatcher>,
     // LIFETIMES.tsv: JSC_BORROW → `&VirtualMachine`. The manager is heap-allocated and stored in a
-    // process-global, so we spell the borrow as `'static`.
-    // TODO(port): revisit once VirtualMachine lifetime plumbing lands in bun_jsc.
+    // process-global, so we spell the borrow as `'static`; soundness relies on
+    // the owning VM outliving the manager (watchers are torn down before the VM).
     vm: &'static jsc::VirtualMachineRef,
     deinit_on_last_watcher: bool,
 }
@@ -275,7 +279,7 @@ impl PathWatcher {
         #[cfg(debug_assertions)]
         let mut debug_count: usize = 0;
 
-        // PORT NOTE: reshaped for borrowck — Zig iterates `values()` while indexing `keys()[i]`;
+        // reshaped for borrowck — Zig iterates `values()` while indexing `keys()[i]`;
         // here we snapshot `keys()` length-contract via index iteration.
         for i in 0..self.handlers.len() {
             let event = &mut self.handlers.values_mut()[i];
@@ -345,7 +349,7 @@ impl PathWatcher {
         // BACKREF field stays raw (LIFETIMES.tsv); capture the pointer once before further &mut use.
         let manager_ptr: *mut PathWatcherManager = manager as *mut PathWatcherManager;
 
-        // PORT NOTE: reshaped for borrowck — Zig uses `getOrPut` with a borrowed key, then
+        // reshaped for borrowck — Zig uses `getOrPut` with a borrowed key, then
         // overwrites `key_ptr.*` with an owned dupe on the not-found path. Rust maps own their
         // keys, so we do lookup-then-insert instead.
         if let Some(&existing) = manager.watchers.get(event_path.as_bytes()) {
@@ -391,7 +395,7 @@ impl PathWatcher {
             // `errdefer` doesn't fire on `return .{ .err = ... }` (that's a successful return of a
             // Maybe(T), not an error-union return). Clean up the map entry and the half-initialized
             // watcher inline. See #26254.
-            // PORT NOTE: no map entry was inserted yet in the Rust version (see reshape above),
+            // no map entry was inserted yet in the Rust version (see reshape above),
             // so there is nothing to swap_remove here.
             // SAFETY: `this` is the freshly heap-allocated pointer above; deinit consumes it.
             unsafe {
@@ -486,7 +490,7 @@ pub fn watch(
     vm: &'static jsc::VirtualMachineRef,
     path: &ZStr,
     recursive: bool,
-    // PORT NOTE: Zig takes `comptime callback` / `comptime updateEnd` and `@compileError`s if they
+    // Zig takes `comptime callback` / `comptime updateEnd` and `@compileError`s if they
     // are not exactly `onPathUpdateFn` / `onUpdateEndFn`. There is only one valid value for each,
     // so the Rust port drops the parameters entirely.
     ctx: *mut c_void,

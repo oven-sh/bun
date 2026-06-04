@@ -13,7 +13,7 @@
 //!
 //! This type is a `GenericAllocator`; see `src/allocators.zig`.
 //!
-//! PORT NOTE: Zig modelled this over `Nullable<A>` / `Borrowed<A>` allocator
+//! The Zig original modelled this over `Nullable<A>` / `Borrowed<A>` allocator
 //! adaptors. With `#[global_allocator]`, "owned" reduces to "drop the box,
 //! borrowed = leak"; the generic allocator threading is dropped. The struct
 //! keeps the `Option<A>` shape so callers that pattern-match on

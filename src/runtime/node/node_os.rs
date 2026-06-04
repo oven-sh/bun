@@ -2,12 +2,10 @@ use core::ffi::c_int;
 #[cfg(not(windows))]
 use core::ffi::{c_char, c_uint, c_void};
 
-// TODO(port): bun_jsc — using crate-local opaque shim until `bun_jsc` is a dep.
-use crate::jsc::{JSGlobalObject, JSValue, JsResult};
+use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 use bun_core;
 use bun_core::String as BunString;
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn bun_sysconf__SC_NPROCESSORS_ONLN() -> i32;
 }
@@ -23,7 +21,6 @@ pub(crate) struct CPUTimes {
 
 pub(crate) fn freemem() -> u64 {
     // OsBinding.cpp
-    // TODO(port): move to <area>_sys
     unsafe extern "C" {
         safe fn Bun__Os__getFreeMemory() -> u64;
     }
@@ -81,7 +78,7 @@ mod _impl {
         }
     }
 
-    /// `bun_jsc::SystemError` has no `Default` (TODO in src/jsc/SystemError.rs).
+    /// `bun_jsc::SystemError` has no `Default` (see src/jsc/SystemError.rs).
     /// Local zero-value matching Zig's extern-struct field defaults.
     #[inline]
     fn system_error_default() -> SystemError {
@@ -127,7 +124,6 @@ mod _impl {
     // `bun.HOST_NAME_MAX` (bun.zig) — `std.posix.HOST_NAME_MAX` on unix, 256 on
     // Windows. Neither `bun_core` nor `bun_sys` re-export it yet; 256 is a safe
     // upper bound for the stack buffer on every platform.
-    // TODO(port): hoist into `bun_sys` once that crate grows a `HOST_NAME_MAX`.
     const HOST_NAME_MAX: usize = 256;
 
     // Generated bindings (`bun.gen.node_os` in Zig, emitted from
@@ -213,7 +209,6 @@ mod _impl {
     }
 
     pub(crate) fn create_node_os_binding(global: &JSGlobalObject) -> JsResult<JSValue> {
-        // TODO(port): JSObject::create struct-literal API — define a builder/macro
         let obj = JSValue::create_empty_object(global, 14);
         // SAFETY: pure FFI getter
         obj.put(
@@ -373,7 +368,6 @@ mod _impl {
                 //NOTE: libuv assumes this is fixed on Linux, not sure that's actually the case
                 let scale: u64 = 10;
 
-                // TODO(port): narrow error set
                 let times = CPUTimes {
                     user: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
                     nice: scale * parse_u64(toks.next().ok_or_else(|| bun_core::err!("eol"))?)?,
@@ -566,7 +560,6 @@ mod _impl {
         Ok(values)
     }
 
-    // TODO(port): move to <area>_sys
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     unsafe extern "C" {
         safe fn bun_sysconf__SC_CLK_TCK() -> isize;
@@ -715,7 +708,6 @@ mod _impl {
         Ok(values)
     }
 
-    // TODO(port): move to <area>_sys
     unsafe extern "C" {
         safe fn get_process_priority(pid: i32) -> i32;
     }
@@ -1080,7 +1072,7 @@ mod _impl {
                 //  the address and cidr values can be slices into this same buffer
                 // e.g. addr_str = "192.168.88.254", cidr_str = "192.168.88.254/24"
                 let mut buf = [0u8; 64];
-                // PORT NOTE: reshaped for borrowck — capture buf base ptr/len before
+                // Reshaped for borrowck — capture buf base ptr/len before
                 // format_ip's mutable borrow, and reduce addr_str to (start, len)
                 // immediately so subsequent buf accesses don't alias the returned slice.
                 let buf_ptr = buf.as_ptr() as usize;
@@ -1298,7 +1290,6 @@ mod _impl {
                 // Format the address and then, if valid, the CIDR suffix; both
                 //  the address and cidr values can be slices into this same buffer
                 // e.g. addr_str = "192.168.88.254", cidr_str = "192.168.88.254/24"
-                // TODO(port): std.net.Address → bun_sys::net::Address
                 let addr_str = bun_fmt::format_ip(
                     // bun_sys::net::Address will do ptrCast depending on the family so this is ok
                     // SAFETY: the address union backs a valid sockaddr_in/sockaddr_in6; pointer derived
@@ -1455,7 +1446,6 @@ mod _impl {
         BunString::clone_utf8(value)
     }
 
-    // TODO(port): move to <area>_sys
     unsafe extern "C" {
         pub(crate) safe fn set_process_priority(pid: i32, priority: i32) -> i32;
     }

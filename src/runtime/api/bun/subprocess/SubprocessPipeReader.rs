@@ -183,10 +183,6 @@ impl PipeReader {
                             // will drop the last ref and deinit() closes the handle.
                             return bun_sys::Result::Ok(());
                         }
-                        // PORT NOTE: `PollOrFd` is an enum in the Rust port; the Zig
-                        // `this.reader.handle.poll` field projection becomes a variant
-                        // pattern. `FilePoll` is an opaque vtable-backed handle (Copy)
-                        // with `set_flag` standing in for `poll.flags.insert(...)`.
                         if let Some(poll) = self.reader.handle.get_poll() {
                             poll.set_flag(FilePollFlag::Socket);
                             poll.set_flag(FilePollFlag::Nonblocking);
@@ -238,8 +234,8 @@ impl PipeReader {
 
     pub(crate) fn to_owned_slice(&mut self) -> Vec<u8> {
         if let State::Done(bytes) = core::mem::replace(&mut self.state, State::Pending) {
-            // PORT NOTE: reshaped for borrowck — Zig reads `state.done` in place; here we
-            // take it out and restore Pending (caller immediately overwrites state anyway).
+            // Take the bytes out and restore Pending — the caller immediately
+            // overwrites the state anyway.
             return bytes;
         }
         // we do not use .toOwnedSlice() because we don't want to reallocate memory.
@@ -283,15 +279,15 @@ impl PipeReader {
 
         match &self.state {
             State::Pending => {
-                // PORT NOTE: `_parent` is unused in `from_pipe` (Zig `anytype` discard); pass the
-                // raw ptr instead of `self` so borrowck allows `&mut self.reader` alongside it.
+                // `_parent` is unused in `from_pipe`; pass the raw ptr instead
+                // of `self` so borrowck allows `&mut self.reader` alongside it.
                 let stream = ReadableStream::from_pipe(global_object, this_ptr, &mut self.reader);
                 self.state = State::Done(Vec::new());
                 stream
             }
             State::Done(_) => {
-                // PORT NOTE: reshaped for borrowck — take the payload only in this arm so the
-                // Pending arm above observes `state == Pending` when `from_pipe` reads `self`.
+                // Take the payload only in this arm so the Pending arm above
+                // observes `state == Pending` when `from_pipe` reads `self`.
                 let State::Done(bytes) =
                     core::mem::replace(&mut self.state, State::Done(Vec::new()))
                 else {
@@ -315,7 +311,7 @@ impl PipeReader {
             State::Done(bytes) => {
                 let bytes = core::mem::take(bytes);
                 // `defer this.state = .{ .done = &.{} }` — state.done is now empty via take().
-                // PORT NOTE: `MarkedArrayBuffer::from_bytes` takes a borrowed `&mut [u8]`
+                // `MarkedArrayBuffer::from_bytes` takes a borrowed `&mut [u8]`
                 // with `owns_buffer = true` (freed via mimalloc on the JS side); leak the
                 // boxed slice so JS becomes the owner — same pattern as
                 // `MarkedArrayBuffer::from_string`.

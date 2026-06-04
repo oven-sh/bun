@@ -12,7 +12,7 @@ pub(crate) struct HtmlRenderer<'src> {
     // allocator dropped — non-AST crate uses global mimalloc
     pub src_text: &'src [u8],
     pub image_nesting_level: u32,
-    // PORT NOTE: was `&'src [u8]` borrowing parser content; owned now so the
+    // Owned (rather than `&'src [u8]` borrowing parser content) so the
     // RendererImpl trait does not entangle SpanDetail's lifetime with 'src.
     pub saved_img_title: Box<[u8]>,
     pub tag_filter: bool,
@@ -159,7 +159,7 @@ impl<'src> HtmlRenderer<'src> {
                     }
                     if lang_end > info_beg {
                         self.write(b" class=\"language-");
-                        // PORT NOTE: reshaped for borrowck — capture slice before &mut self call.
+                        // Capture the slice before the &mut self call.
                         let src_text = self.src_text;
                         self.write_with_entity_decoding(&src_text[info_beg..lang_end]);
                         self.write(b"\"");
@@ -340,7 +340,7 @@ impl<'src> HtmlRenderer<'src> {
                     self.write(b"\"");
                     if !self.saved_img_title.is_empty() {
                         self.write(b" title=\"");
-                        // PORT NOTE: reshaped for borrowck — take field before &mut self call.
+                        // Take the field before the &mut self call.
                         let title = core::mem::take(&mut self.saved_img_title);
                         self.write_title_with_escapes(&title);
                         self.write(b"\"");
@@ -643,8 +643,6 @@ impl<'src> HtmlRenderer<'src> {
 // Static helpers
 // ========================================
 
-// PORT NOTE: Zig's manual `*anyopaque + VTable` is collapsed into the
-// `RendererImpl` trait (see types.rs); the static VTABLE is no longer needed.
 impl RendererImpl for HtmlRenderer<'_> {
     fn enter_block(&mut self, block_type: BlockType, data: u32, flags: u32) -> JsResult<()> {
         HtmlRenderer::enter_block(self, block_type, data, flags);

@@ -35,8 +35,8 @@ pub struct Graph<'a> {
     pub input_files: MultiArrayList<InputFile>,
     /// Every source index has an associated Ast
     /// When a parse is in progress / queued, it is `Ast.empty`
-    // PORT NOTE: BundledAst<'arena> borrows from self.heap (sibling-field self-ref);
-    // 'static here is a placeholder. TODO(refactor): thread the lifetime via raw ptr or Ouroboros.
+    // `JSAst<'a>` borrows from the arena behind `self.heap`; `'a` ties the AST
+    // entries to that arena's lifetime (sibling-field relationship).
     pub ast: MultiArrayList<JSAst<'a>>,
 
     /// During the scan + parse phase, this value keeps a count of the remaining
@@ -103,9 +103,9 @@ pub struct InputFile {
     pub secondary_path: AstVec<u8>,
     pub loader: options::Loader,
     pub side_effects: SideEffects,
-    // PORT NOTE: Zig stored `arena: std.mem.Allocator = bun.default_allocator`
-    // here so deinit could free `source`/`secondary_path` with the right alloc.
-    // In Rust the owned fields (Box/Vec) carry their arena; field dropped.
+    // No `arena` field (Zig kept one so deinit could free `source`/
+    // `secondary_path` with the right allocator); in Rust the owned fields
+    // (Box/Vec) carry their allocator.
     pub additional_files: AstVec<AdditionalFile>,
     pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,

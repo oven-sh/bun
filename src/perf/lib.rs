@@ -103,15 +103,10 @@ pub(crate) fn is_enabled() -> bool {
 ///
 /// When instruments is not connected, this is a no-op.
 ///
-/// When adding a new event, you must run `scripts/generate-perf-trace-events.sh` to update the list of trace events.
-///
-/// Tip: Make sure you write bun.perf.trace() with a string literal exactly instead of passing a variable.
-///
-/// It has to be compile-time known this way because they need to become string literals in C.
-// PORT NOTE: Zig took `comptime name: [:0]const u8` and used `@hasField(PerfEvent, name)` +
-// `@compileError` to validate membership at compile time, then `@field(PerfEvent, name)` to get
-// the enum value. In Rust, taking `PerfEvent` directly gives the same compile-time guarantee via
-// the type system — the @hasField/@compileError block is dropped.
+/// Pass a `PerfEvent` variant; the type system guarantees the event is a
+/// compile-time-known member of the generated set. Event names must become
+/// string literals in C, so when adding a new event you must run
+/// `scripts/generate-perf-trace-events.sh` to regenerate the list.
 pub fn trace(event: PerfEvent) -> Ctx {
     if !is_enabled() {
         // PERF(port): @branchHint(.likely) — profile if it shows up on a hot path.

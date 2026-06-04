@@ -10,10 +10,12 @@ use super::execution::{ConcurrentGroup, ExecutionSequence};
 pub struct Order {
     pub groups: Vec<ConcurrentGroup>,
     pub sequences: Vec<ExecutionSequence>,
-    // TODO(port): Zig stored `arena: std.mem.Allocator` here. test_runner is not an
+    // Zig stored `arena: std.mem.Allocator` here; test_runner is not an
     // AST/arena crate per PORTING.md, so the field is dropped and `bun.create(arena, ...)`
-    // calls below become `heap::alloc(Box::new(...))`. In Zig these ExecutionEntry
-    // clones were bulk-freed by the arena; revisit ownership.
+    // calls below become `heap::into_raw(Box::new(...))`. In Zig these ExecutionEntry
+    // clones were bulk-freed by the arena; in Rust, `BunTest` collects them into
+    // `cloned_hook_entries` after `generate_order_describe` and reclaims the Box
+    // headers (without running `Drop`) in `Drop for BunTest`.
     pub previous_group_was_concurrent: bool,
     pub cfg: Config,
 }
@@ -98,7 +100,7 @@ impl Order {
         }
 
         // gather children
-        // PORT NOTE: reshaped for borrowck — iterate by index since generate_order_sub borrows &mut self.
+        // reshaped for borrowck — iterate by index since generate_order_sub borrows &mut self.
         let scope_only = current.base.only;
         for i in 0..current.entries.len() {
             if scope_only == Only::Contains && current.entries[i].base().only == Only::No {
@@ -151,10 +153,11 @@ impl Order {
                 while i > 0 {
                     let src: *const ExecutionEntry = &raw const *p.before_each[i - 1];
                     // PERF(port): was arena bulk-free — Zig allocated this clone in `this.arena`.
-                    // TODO(port): ownership — heap::alloc leaks without the arena; decide whether
-                    // test_runner keeps an arena or tracks these for cleanup.
+                    // Ownership: `BunTest` collects these clones into `cloned_hook_entries`
+                    // (the post-`generate_order_describe` walk) and frees only the Box
+                    // headers in `Drop for BunTest` — `Drop` must not run on the bitwise
+                    // copy or the originals' Strong/Box fields would be freed twice.
                     // SAFETY: bitwise copy of *ExecutionEntry — matches Zig `bun.create(arena, T, src.*)`.
-                    // The clone is leaked (heap::alloc) so its Strong/Box fields are never dropped twice.
                     let cloned = bun_core::heap::into_raw(Box::new(unsafe { core::ptr::read(src) }));
                     list.prepend(cloned);
                     i -= 1;
@@ -222,7 +225,7 @@ impl Order {
         sequences_start: usize,
         sequences_end: usize,
     ) -> JsResult<()> {
-        // PORT NOTE: reshaped for borrowck — Zig used `defer this.previous_group_was_concurrent = concurrent;`.
+        // reshaped for borrowck — Zig used `defer this.previous_group_was_concurrent = concurrent;`.
         // We capture the old value first, then assign immediately so it applies on every exit path.
         let prev_was_concurrent = self.previous_group_was_concurrent;
         self.previous_group_was_concurrent = concurrent;
@@ -264,8 +267,9 @@ impl AllOrderResult {
 
 pub struct Config {
     pub always_use_hooks: bool,
-    // TODO(port): `std.Random` interface mapped to the concrete `DefaultPrng` (xoshiro256++);
-    // bun_core has no type-erased Random vtable yet and the only call site seeds a DefaultPrng.
+    // Zig's type-erased `std.Random` interface maps to the concrete
+    // `DefaultPrng` (xoshiro256++); the only call site seeds a DefaultPrng, so
+    // no type-erased Random vtable is needed.
     pub randomize: Option<bun_core::rand::DefaultPrng>,
 }
 

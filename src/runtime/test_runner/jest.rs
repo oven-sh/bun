@@ -50,7 +50,7 @@ impl CurrentFile {
             return;
         }
         if reporter.reporters.dots || reporter.reporters.only_failures {
-            // PORT NOTE: Zig's freeAndClear() freed the old allocations; in Rust,
+            // Zig's freeAndClear() freed the old allocations; in Rust,
             // assigning into the Box<[u8]> fields below drops the previous values.
             self.title = Box::<[u8]>::from(title);
             self.prefix = Box::<[u8]>::from(prefix);
@@ -122,13 +122,15 @@ pub struct TestRunner<'a> {
     /// shuffle PRNG from hash(seed, file_path) so within-file test order is
     /// independent of which worker (and which prior files) ran it.
     pub randomize_seed: Option<u32>,
-    // TODO(port): lifetime — likely borrowed from test_options
+    /// Borrowed view over `ctx.test_options.concurrent_test_glob` (owned
+    /// `Vec<Box<[u8]>>` with process lifetime); see the detach in
+    /// `test_command.rs` where this is populated.
     pub concurrent_test_glob: Option<&'a [&'a [u8]]>,
     pub last_file: u64,
     pub bail: u32,
     pub max_concurrency: u32,
 
-    // PORT NOTE: `std.mem.Allocator param` field deleted — global mimalloc.
+    // `std.mem.Allocator param` field deleted — global mimalloc.
     pub drainer: jsc::AnyTask::AnyTask,
 
     pub has_pending_tests: bool,
@@ -164,7 +166,7 @@ impl<'a> TestRunner<'a> {
         {
             return bun_core::Timespec::EPOCH;
         }
-        // PORT NOTE: bun_event_loop carries a local Timespec stub with the
+        // bun_event_loop carries a local Timespec stub with the
         // same `{sec, nsec}` shape as bun_core::Timespec; convert by field
         // until the lower tier unifies on bun_core::Timespec (see
         // src/runtime/timer/mod.rs ElTimespec alias).
@@ -289,7 +291,7 @@ bun_collections::multi_array_columns! {
         log: bun_ast::Log,
     }
 }
-// PORT NOTE: Zig used ArrayIdentityContext; u32 keys hash as identity in bun_collections.
+// Zig used ArrayIdentityContext; u32 keys hash as identity in bun_collections.
 pub(crate) type FileMap = ArrayHashMap<u32, u32>;
 
 #[allow(non_snake_case)]
@@ -450,7 +452,6 @@ pub mod Jest {
         fake_timers::put_timers_fns(global_object, jest, vi);
     }
 
-    // TODO(port): move to <area>_sys
     unsafe extern "C" {
         pub(crate) safe fn Bun__Jest__testModuleObject(global: &JSGlobalObject) -> JSValue;
     }
@@ -522,7 +523,7 @@ pub mod on_unhandled_rejection {
         rejection: JSValue,
     ) {
         if let Some(buntest_strong) = bun_test::clone_active_strong() {
-            // PORT NOTE: `defer buntest_strong.deinit()` — Rc::drop handles this.
+            // `defer buntest_strong.deinit()` — Rc::drop handles this.
             // SAFETY: single-threaded JS VM; `buntest_strong` is the only handle
             // dereferenced for this scope and is dropped before `BunTest::run`
             // re-borrows. Const→mut projection is centralized in `buntest_as_mut`
@@ -530,7 +531,7 @@ pub mod on_unhandled_rejection {
             let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
             // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
             let mut current_state_data = buntest.get_current_state_data();
-            // PORT NOTE: split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
+            // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
                 .entry(buntest)
                 .map(std::ptr::from_mut::<bun_test::ExecutionEntry>);
@@ -549,11 +550,11 @@ pub mod on_unhandled_rejection {
                 &current_state_data,
             );
             buntest.add_result(current_state_data);
-            if let Err(e) = bun_test::BunTest::run(&buntest_strong, global_object) {
-                // TODO(blocked_on: bun_jsc::JSGlobalObject::report_uncaught_exception_from_error):
-                // the inherent method lives in the cfg-gated JSGlobalObject.rs impl.
-                let _ = e;
-            }
+            // Zig: `catch |e| globalObject.reportUncaughtExceptionFromError(e)`.
+            // `report_unhandled` is that call plus a guard for `Terminated`
+            // (which carries no pending exception to take).
+            use bun_jsc::JsResultExt as _;
+            bun_test::BunTest::run(&buntest_strong, global_object).report_unhandled(global_object);
             return;
         }
 
@@ -576,7 +577,6 @@ fn consume_arg(
     arg: JSValue,
     fallback: &[u8],
 ) -> JsResult<()> {
-    // TODO(port): narrow error set
     if should_write {
         let owned_slice = arg.to_slice_or_null(global_this)?;
         array_list.extend_from_slice(owned_slice.slice());
@@ -595,7 +595,6 @@ pub(crate) fn format_label(
     function_args: &[JSValue],
     test_idx: usize,
 ) -> JsResult<Box<[u8]>> {
-    // TODO(port): narrow error set
     let mut idx: usize = 0;
     let mut args_idx: usize = 0;
     let mut list: Vec<u8> = Vec::with_capacity(label.len());
@@ -634,7 +633,6 @@ pub(crate) fn format_label(
                 let var_path = &label[var_start..var_end];
                 let value = function_args[0].get_if_property_exists_from_path(
                     global_this,
-                    // TODO(port): move to *_jsc
                     bun_core::String::init(var_path).to_js(global_this)?,
                 )?;
                 if !value.is_empty_or_undefined_or_null() {
@@ -645,7 +643,7 @@ pub(crate) fn format_label(
                         list.extend_from_slice(owned_slice.slice());
                     } else {
                         let mut formatter = crate::test_runner::expect::make_formatter(global_this);
-                        // PORT NOTE: `defer formatter.deinit()` — Drop handles this.
+                        // `defer formatter.deinit()` — Drop handles this.
                         write!(&mut list, "{}", value.to_fmt(&mut formatter)).unwrap();
                     }
                     idx = var_end;
@@ -713,7 +711,7 @@ pub(crate) fn format_label(
                 }
                 b'j' | b'o' => {
                     let mut str = bun_core::String::empty();
-                    // PORT NOTE: `defer str.deref()` — Drop handles this.
+                    // `defer str.deref()` — Drop handles this.
                     // Use jsonStringifyFast for SIMD-optimized serialization
                     current_arg.json_stringify_fast(global_this, &mut str)?;
                     let owned_slice = str.to_owned_slice();
@@ -752,7 +750,6 @@ pub(crate) fn format_label(
 pub(crate) fn capture_test_line_number(callframe: &CallFrame, global_this: &JSGlobalObject) -> u32 {
     if let Some(runner) = Jest::runner() {
         if runner.test_options.reporters.junit {
-            // TODO(port): move to <area>_sys
             unsafe extern "C" {
                 fn Bun__CallFrame__getLineNumber(
                     callframe: *const CallFrame,

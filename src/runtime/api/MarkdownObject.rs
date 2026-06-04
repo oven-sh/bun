@@ -2,7 +2,7 @@
 
 use bun_core::StackCheck;
 use bun_jsc::{ArrayBuffer, CallFrame, JSGlobalObject, JSValue, JsResult, MarkedArgumentBuffer};
-// PORT NOTE: Zig's `bun.md` is `src/md/root.zig`; the Rust crate's lib.rs is a
+// Note: Zig's `bun.md` is `src/md/root.zig`; the Rust crate's lib.rs is a
 // thin mod-decl shim, so alias the `root` module (which re-exports BlockType,
 // SpanType, TextType, SpanDetail, Renderer, helpers, types, ansi, …) as `md`.
 use crate::node::StringOrBuffer;
@@ -218,12 +218,10 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
             }
         }
 
-        // Handle remaining boolean options (autolinks/headings are only settable via compound options above)
-        // TODO(port): comptime reflection over md::Options bool fields — Zig used
-        // `inline for (@typeInfo(md.Options).@"struct".fields)` to iterate every bool
-        // field (excluding the six handled above), checking both camelCase and
-        // snake_case keys. This list could be generated from md::Options
-        // (proc-macro or hand-maintained const slice in bun_md).
+        // Handle remaining boolean options (autolinks/headings are only settable via
+        // compound options above). `md::Options::BOOL_FIELD_SETTERS` is a hand-maintained
+        // table in bun_md that carries each bool field's snake_case and camelCase names
+        // plus a setter, replacing Zig's comptime field reflection.
         for (snake, camel, set) in md::Options::BOOL_FIELD_SETTERS {
             // skip the compound-only fields
             if matches!(
@@ -249,11 +247,9 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
     Ok(options)
 }
 
-// TODO(port): `camelCaseOf` was a comptime fn producing `&'static [u8]` from a
-// snake_case literal. In Rust this should be `const_format::map_ascii_case!` or
-// a `macro_rules!` mapper. The only caller is the reflection loop above, which
-// is itself TODO'd to use a precomputed table that already carries the camelCase
-// form, so this helper is intentionally omitted.
+// Zig's `camelCaseOf` comptime helper is intentionally omitted: the option loop
+// above uses `md::Options::BOOL_FIELD_SETTERS`, a precomputed table that already
+// carries each field's camelCase form.
 
 /// `Bun.markdown.render(text, callbacks, options?)` — render markdown with custom callbacks.
 ///
@@ -314,9 +310,9 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
 
 /// `Bun.markdown.react(text, components?, options?)` — returns a React Fragment element
 /// containing the parsed markdown as children.
-// TODO(port): Zig used `jsc.MarkedArgumentBuffer.wrap(renderReactImpl)` to generate
-// the host-fn shim that allocates a MarkedArgumentBuffer. Here we hand-roll the
-// equivalent until bun_jsc provides a `#[marked_args]` attribute.
+// Hand-rolled equivalent of Zig's `jsc.MarkedArgumentBuffer.wrap(renderReactImpl)`:
+// the closure scopes a MarkedArgumentBuffer around the impl so every JSValue it
+// accumulates stays GC-visible for the duration of the call.
 #[bun_jsc::host_fn]
 pub(crate) fn render_react(
     global_this: &JSGlobalObject,
@@ -325,7 +321,6 @@ pub(crate) fn render_react(
     MarkedArgumentBuffer::new(|marked_args| render_react_impl(global_this, callframe, marked_args))
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn JSReactElement__createFragment(
         global_object: &JSGlobalObject,
@@ -432,7 +427,7 @@ fn render_ast(
 struct ParseRenderer<'a> {
     global_object: &'a JSGlobalObject,
     marked_args: &'a mut MarkedArgumentBuffer,
-    // PORT NOTE: JSValue in Vec is safe here — every entry.children is also appended to self.marked_args (GC root).
+    // Note: JSValue in Vec is safe here — every entry.children is also appended to self.marked_args (GC root).
     stack: Vec<ParseStackEntry>,
     stack_check: StackCheck,
     src_text: &'a [u8],
@@ -441,7 +436,6 @@ struct ParseRenderer<'a> {
     react_version: Option<u8>,
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn JSReactElement__create(
         global_object: &JSGlobalObject,
@@ -485,13 +479,13 @@ struct Components {
     u: JSValue,
     br: JSValue,
 }
-// PORT NOTE: `Default` for JSValue must be `JSValue::ZERO` (encoded 0), matching Zig's `.zero` initializers.
+// Note: `Default` for JSValue must be `JSValue::ZERO` (encoded 0), matching Zig's `.zero` initializers.
 
 struct ParseStackEntry {
     children: JSValue,
     data: u32,
     flags: u32,
-    // PORT NOTE: `SpanDetail` borrows from `src_text`; the `RendererImpl`
+    // Note: `SpanDetail` borrows from `src_text`; the `RendererImpl`
     // trait erases that lifetime, so we extend it to `'static` at the
     // `enter_span` boundary (see SAFETY note there). Entries are popped
     // and consumed strictly before `src_text` is dropped.
@@ -509,7 +503,7 @@ impl Default for ParseStackEntry {
     }
 }
 
-// PORT NOTE: Zig used a hand-rolled `*anyopaque + VTable`; the Rust `bun_md`
+// Note: Zig used a hand-rolled `*anyopaque + VTable`; the Rust `bun_md`
 // `Renderer` is `&mut dyn RendererImpl`, so the trait already gives us
 // `&mut self` — the `*_impl` bodies below are plain methods, no pointer
 // round-trip needed.
@@ -572,7 +566,7 @@ impl<'a> ParseRenderer<'a> {
         Ok(self_)
     }
 
-    // PORT NOTE: deinit() dropped — Vec<ParseStackEntry> and HeadingIdTracker free via Drop.
+    // Note: deinit() dropped — Vec<ParseStackEntry> and HeadingIdTracker free via Drop.
 
     /// Extract component overrides from options. Any non-boolean truthy value
     /// (function, class, string, etc.) keyed by an HTML tag name is stored
@@ -718,7 +712,7 @@ impl<'a> ParseRenderer<'a> {
         let tag_index = get_block_type_tag(block_type, entry.data);
 
         // For headings, compute slug before counting props
-        // PORT NOTE: own the slug bytes — leave_heading() borrows the tracker mutably,
+        // Note: own the slug bytes — leave_heading() borrows the tracker mutably,
         // and we need self again below for get_block_component(). Mirrors the Zig
         // path which allocator-allocated the slug.
         let slug: Option<Vec<u8>> = if block_type == md::BlockType::H {
@@ -973,7 +967,7 @@ impl<'a> ParseRenderer<'a> {
         if self.stack.is_empty() {
             return Ok(());
         }
-        // PORT NOTE: reshaped for borrowck — capture parent.children (Copy JSValue) instead of holding &mut into self.stack.
+        // Note: reshaped for borrowck — capture parent.children (Copy JSValue) instead of holding &mut into self.stack.
         let parent_children = self.stack.last().unwrap().children;
 
         match text_type {
@@ -1024,7 +1018,7 @@ impl<'a> ParseRenderer<'a> {
 /// callback's return value to the parent buffer.
 struct JsCallbackRenderer<'a> {
     global_object: &'a JSGlobalObject,
-    // PORT NOTE: #allocator field dropped — global mimalloc.
+    // Note: #allocator field dropped — global mimalloc.
     src_text: &'a [u8],
     stack: Vec<CallbackStackEntry>,
     callbacks: Callbacks,
@@ -1056,7 +1050,7 @@ struct Callbacks {
     strikethrough: JSValue,
     text: JSValue,
 }
-// PORT NOTE: `Default` for JSValue must be `JSValue::ZERO`.
+// Note: `Default` for JSValue must be `JSValue::ZERO`.
 
 struct CallbackStackEntry {
     buffer: Vec<u8>,
@@ -1066,7 +1060,7 @@ struct CallbackStackEntry {
     /// For ul/ol: number of li children seen so far (next li's index).
     /// For li: this item's 0-based index within its parent list.
     child_index: u32,
-    // PORT NOTE: `SpanDetail` borrows from `src_text`; the `RendererImpl`
+    // Note: `SpanDetail` borrows from `src_text`; the `RendererImpl`
     // trait erases that lifetime, so we extend it to `'static` at the
     // `enter_span` boundary (see SAFETY note there). Entries are popped
     // and consumed strictly before `src_text` is dropped.
@@ -1173,7 +1167,7 @@ impl<'a> JsCallbackRenderer<'a> {
         Ok(())
     }
 
-    // PORT NOTE: deinit() dropped — Vec<CallbackStackEntry> (with Vec<u8> buffers) and HeadingIdTracker free via Drop.
+    // Note: deinit() dropped — Vec<CallbackStackEntry> (with Vec<u8> buffers) and HeadingIdTracker free via Drop.
 
     fn renderer(&mut self) -> md::Renderer<'_> {
         md::Renderer { ptr: self }
@@ -1283,7 +1277,7 @@ impl<'a> JsCallbackRenderer<'a> {
         }
 
         let callback = self.get_block_callback(block_type);
-        // PORT NOTE: reshaped for borrowck — clone the saved entry (cheap; buffer not used) instead of holding a borrow across method calls.
+        // Note: reshaped for borrowck — clone the saved entry (cheap; buffer not used) instead of holding a borrow across method calls.
         let saved = if self.stack.len() > 1 {
             CallbackStackEntry {
                 buffer: Vec::new(),
@@ -1386,7 +1380,7 @@ impl<'a> JsCallbackRenderer<'a> {
         let mut buf = [0u8; 8];
         let decoded =
             md::helpers::decode_entity_to_utf8(entity_text, &mut buf).unwrap_or(entity_text);
-        // PORT NOTE: reshaped for borrowck — copy the (≤8-byte) decoded slice out of `buf`
+        // Note: reshaped for borrowck — copy the (≤8-byte) decoded slice out of `buf`
         // before calling &mut self method, to avoid overlapping borrows when the
         // borrow checker tracks `buf` as borrowed by `decoded`.
         self.append_text_or_raw(decoded)
@@ -1654,7 +1648,6 @@ pub(crate) enum TagIndex {
     Br = 29,
 }
 
-// TODO(port): move to <area>_sys
 // `JSGlobalObject` is `#[repr(C)]` with `UnsafeCell<[u8; 0]>`, so `&JSGlobalObject`
 // is ABI-identical to a non-null pointer; all other params are value types.
 unsafe extern "C" {

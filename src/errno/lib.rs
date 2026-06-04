@@ -220,9 +220,8 @@ pub mod posix {
     /// Kernel errno enum. Zig's `std.posix.E` and Bun's `SystemErrno` share the
     /// exact same discriminant space on each POSIX target; alias rather than
     /// duplicate. Resolves to the per-OS `SystemErrno` via the glob re-export
-    /// above. TODO(port): Zig's `E` uses unprefixed variant names (`PERM`,
-    /// `NOENT`); `SystemErrno` uses `EPERM`, `ENOENT`. Callers matching on
-    /// `E::PERM` must migrate to `E::EPERM` (or this becomes a distinct enum).
+    /// above. Note: Zig's `E` uses unprefixed variant names (`PERM`, `NOENT`);
+    /// `SystemErrno` uses `EPERM`, `ENOENT` — callers spell `E::EPERM`.
     pub type E = crate::SystemErrno;
 
     /// `stat` mode-flag constants and predicates (Zig: `std.posix.S`).
@@ -305,9 +304,8 @@ impl SystemErrno {
 
 #[cfg(not(windows))]
 impl SystemErrno {
-    // TODO(port): Zig `anytype` accepted any integer width (signed or unsigned).
-    // i64 covers every concrete call site (errno-range values); revisit if a
-    // caller passes u64/usize directly.
+    // Zig `anytype` accepted any integer width (signed or unsigned); `i64`
+    // covers every concrete call site (errno-range values).
     //
     // Windows defines its own `init<C: SystemErrnoInit>` (typed dispatch over
     // DWORD/c_int/Win32Error) in windows_errno.rs, so this impl is POSIX-only.
@@ -379,12 +377,34 @@ pub(crate) const fn system_errno_max_dense() -> u32 {
     SystemErrno::MAX as u32
 }
 
+/// Raw Win32 `GetLastError()` code → `SystemErrno` tag name, via the same
+/// `Win32Error.toSystemErrno()` table Zig runs FIRST (windows_errno.zig:290),
+/// before any `errno_map` lookup. Restores `error.code` fidelity (ENOENT,
+/// EACCES, ...) for `?`-propagated `std::io::Error`s on Windows. Exists on all
+/// platforms because the `ErrnoNames` link-interface is platform-independent;
+/// always `None` off Windows.
+#[inline]
+pub(crate) fn win32_errno_name(code: u32) -> Option<&'static str> {
+    #[cfg(windows)]
+    {
+        let code = u16::try_from(code).ok()?;
+        SystemErrno::init_win32_error(windows_errno::Win32Error::from_raw(code))
+            .map(<&'static str>::from)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = code;
+        None
+    }
+}
+
 // Wire the above into bun_core's `ErrnoNames` hook. `()` owner — pure
 // stateless functions; the handle is the const `ErrnoNames::SYS`.
 bun_core::link_impl_ErrnoNames! {
     Sys for () => |_this| {
         name(errno) => system_errno_name(errno),
         max_dense() => system_errno_max_dense(),
+        win32_name(code) => win32_errno_name(code),
     }
 }
 

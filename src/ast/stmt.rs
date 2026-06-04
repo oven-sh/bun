@@ -28,10 +28,12 @@ impl Stmt {
         data::Store::create();
     }
 
-    /// Zig: `Stmt.Data.Store.assert()` — debug-only re-entrancy guard.
+    /// Zig: `Stmt.Data.Store.assert()` — debug-only "Store must be init'd"
+    /// guard (stmt.zig:120). The re-entrancy `Disabler` check lives in
+    /// `Store::append`, mirroring stmt.zig:166.
     #[inline]
     pub fn data_store_assert() {
-        crate::DebugOnlyDisabler::<Stmt>::assert();
+        data::Store::assert();
     }
 
     pub fn assign(a: Expr, b: Expr) -> Stmt {
@@ -95,7 +97,7 @@ impl Default for Stmt {
 
 const NONE: S::Empty = S::Empty {};
 
-// PORT NOTE: Zig `pub var icount: usize = 0;` is a plain mutable global (not
+// Zig `pub var icount: usize = 0;` is a plain mutable global (not
 // threadlocal), never read. Debug-only here so release doesn't pay a contended
 // `lock xadd` per Stmt across the bundler worker pool.
 #[cfg(debug_assertions)]
@@ -210,7 +212,10 @@ macro_rules! impl_statement_data {
                 }
                 #[inline]
                 fn arena_alloc(self, bump: &bun_alloc::Arena) -> Data {
-                    // TODO(port): StoreRef vs &'bump — unify the arena ref type.
+                    // `StoreRef::from_bump` is the settled crate-wide arena-ref
+                    // convention (see its docs in nodes.rs); expr.rs
+                    // `arena_alloc` does the same. No separate `&'bump` ref
+                    // type is planned.
                     Data::$variant(StoreRef::from_bump(bump.alloc(self)))
                 }
             }
@@ -991,10 +996,10 @@ pub mod data {
     crate::thread_local_ast_store!(stmt_store::Store, "Stmt");
 }
 
-// Zig `pub fn StoredData(tag: Tag) type` — returns the payload type for a tag,
-// dereferencing pointer variants. Rust has no type-returning fns.
-// TODO(port): callers should use the `StatementData` trait or a per-variant
-// associated type; revisit once call sites are known.
+// Zig `pub fn StoredData(tag: Tag) type` — comptime type-level function
+// returning the payload type for a tag (dereferencing pointer variants).
+// Rust has no type-returning fns and no caller needs it; the
+// `StatementData` trait covers the per-payload dispatch.
 
 impl Stmt {
     pub fn cares_about_scope(&self) -> bool {

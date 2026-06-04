@@ -169,7 +169,7 @@ impl fmt::Display for ShellErr {
     }
 }
 
-// PORT NOTE: no `impl Drop for ShellErr`. Zig's `ShellErr.deinit` is *manual*
+// Note: no `impl Drop for ShellErr`. Zig's `ShellErr.deinit` is *manual*
 // and asymmetric — `throwJS` deliberately skips `.sys.deref()` because
 // `toErrorInstance` already consumed those refs. An unconditional `Drop` would
 // re-introduce the double-deref. Ownership is instead expressed by `throw_js` /
@@ -186,7 +186,7 @@ pub enum ShellResult<T> {
 
 impl<T: Default> ShellResult<T> {
     pub fn success() -> Self {
-        // PORT NOTE: Zig used std.mem.zeroes(T). PORTING.md forbids zeroed::<T>() for generic T
+        // Note: Zig used std.mem.zeroes(T). PORTING.md forbids zeroed::<T>() for generic T
         // (no #[repr(C)] POD guarantee, may contain NonNull/NonZero/enum). Default is the safe
         // mapping; dropped `const` since Default::default is not const-callable on generic T.
         ShellResult::Result(T::default())
@@ -397,7 +397,7 @@ impl<'a> GlobalMini<'a> {
     pub fn enqueue_task_concurrent_wait_pid<T: 'static>(
         self,
         task: *mut T,
-        // PORT NOTE: Zig `.from(task, "runFromMainThreadMini")` resolves the callback by
+        // Note: Zig `.from(task, "runFromMainThreadMini")` resolves the callback by
         // comptime decl-name lookup. Rust cannot reflect on a method by string, so callers
         // pass `T::run_from_main_thread_mini` explicitly (mirrors AnyTaskWithExtraContext::from).
         run_from_main_thread_mini: fn(*mut T, *mut ()),
@@ -493,7 +493,7 @@ impl CmdEnvKey<'_> {
 
 impl<'a> CmdEnvIter<'a> {
     pub fn from_env(env: &'a mut bun_collections::StringArrayHashMap<Box<ZStr>>) -> Self {
-        // PORT NOTE: `iterator()` borrows `&mut self`; rebind through a raw ptr so the
+        // Note: `iterator()` borrows `&mut self`; rebind through a raw ptr so the
         // struct can hold both the map ref and the iterator (Zig had no aliasing rules).
         let env_ptr: *mut _ = env;
         // SAFETY: `env` outlives `'a` and is not mutated through `self.env` while `iter`
@@ -506,19 +506,17 @@ impl<'a> CmdEnvIter<'a> {
         self.env.len()
     }
 
-    pub fn next(&mut self) -> Result<Option<CmdEnvEntry<'a>>, bun_core::Error> {
-        // TODO(port): narrow error set — Zig sig is `!?Entry` but body never errors.
-        let Some(entry) = self.iter.next() else {
-            return Ok(None);
-        };
-        Ok(Some(CmdEnvEntry {
+    // Zig sig was `!?Entry`, but the body never errors; narrowed to `Option`.
+    pub fn next(&mut self) -> Option<CmdEnvEntry<'a>> {
+        let entry = self.iter.next()?;
+        Some(CmdEnvEntry {
             key: CmdEnvKey {
                 val: &**entry.key_ptr,
             },
             value: CmdEnvValue {
                 val: &**entry.value_ptr,
             },
-        }))
+        })
     }
 }
 
@@ -752,7 +750,7 @@ pub fn shell_cmd_from_js(
                     return Err(global.throw(format_args!("Shell script is missing JSValue arg")));
                 }
             };
-            // PORT NOTE: builder holds &mut out_script/jsstrings; NLL releases the
+            // Note: builder holds &mut out_script/jsstrings; NLL releases the
             // borrow here (builder is reassigned below before next use).
             handle_template_value(
                 global,
@@ -1027,9 +1025,8 @@ impl<'a> ShellSrcBuilder<'a> {
         &mut self,
         utf8: &[u8],
     ) -> Result<bool, bun_core::Error> {
-        // TODO(port): narrow error set
         let invalid = simdutf::validate::utf8(utf8);
-        // PORT NOTE: Zig variable name `invalid` is misleading — it holds the validity bool.
+        // Note: Zig variable name `invalid` is misleading — it holds the validity bool.
         if !invalid {
             return Ok(false);
         }
@@ -1049,7 +1046,9 @@ impl<'a> ShellSrcBuilder<'a> {
         let size = simdutf::length::utf8::from::utf16::le(utf16);
         self.outbuf.reserve(size);
         strings::convert_utf16_to_utf8_append(self.outbuf, utf16);
-        // TODO(port): error mapping — Zig propagates encoding error directly.
+        // Zig's only error here was OOM (invalid UTF-16 takes the WTF-8
+        // fallback inside the conversion in both ports); Rust aborts on OOM,
+        // so this is infallible.
         Ok(())
     }
 

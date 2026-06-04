@@ -78,9 +78,8 @@ impl MaxHeapAllocator {
         MaxHeapScope { inner: self }
     }
 
-    // PORT NOTE: reshaped out-param constructor. Zig's `init(self: *Self, allocator) -> std.mem.Allocator`
-    // both initialized `self` and returned a vtable+ptr pair. In Rust the caller constructs
-    // `MaxHeapAllocator::init()` and obtains `&dyn Allocator` by borrowing the result.
+    // The caller constructs `MaxHeapAllocator::init()` and obtains
+    // `&dyn Allocator` by borrowing the result.
     pub fn init() -> Self {
         Self {
             ptr: None,

@@ -33,9 +33,10 @@ impl Property {
 }
 
 /// Ordered single-bit prefix flags for the `inline for (VendorPrefix.FIELDS)`
-/// Zig idiom. The crate-root `VendorPrefix::FIELDS` is a `&[&str]` name list;
-/// the to_css loops here need the bitflag values directly, in Zig declaration
-/// order (webkit, moz, ms, o, none).
+/// Zig idiom. The crate-root `VendorPrefix::FIELDS` is a
+/// `&'static [VendorPrefix]` with the same values in the same declaration
+/// order (webkit, moz, ms, o, none); kept duplicated here as a fixed-size
+/// array for the to_css loops.
 pub(super) const PREFIX_FLAGS: [VendorPrefix; 5] = [
     VendorPrefix::WEBKIT,
     VendorPrefix::MOZ,
@@ -51,9 +52,8 @@ pub(super) mod property_id_mixin {
         let name = this.name();
         let prefix_value = this.prefix().or_none();
 
-        // PORT NOTE: Zig `inline for (VendorPrefix.FIELDS) |field|` + `@field` iterates each
-        // bitflag field and tests it. `PREFIX_FLAGS` is the same set in the same order;
-        // `contains` replaces the `@field` test.
+        // `PREFIX_FLAGS` mirrors Zig's `VendorPrefix.FIELDS` — same set, same
+        // order; serialization order of prefixed names depends on it.
         dest.write_comma_separated(
             PREFIX_FLAGS
                 .iter()
@@ -67,8 +67,6 @@ pub(super) mod property_id_mixin {
     }
 
     pub(crate) fn parse(input: &mut css::Parser) -> css::Result<PropertyId> {
-        // PORT NOTE: `css::Result<T>` is assumed to alias `Result<T, css::ParserError>`;
-        // the Zig `.result`/`.err` switch collapses to `?`.
         let name = input.expect_ident()?;
         Ok(from_string(name))
     }
@@ -101,7 +99,6 @@ pub(super) mod property_mixin {
         }
         let (name, prefix) = this.__to_css_helper();
 
-        // PORT NOTE: see property_id_mixin::to_css for the `inline for` + `@field` mapping.
         dest.write_separated(
             PREFIX_FLAGS.iter().copied().filter(|p| prefix.contains(*p)),
             |d| {

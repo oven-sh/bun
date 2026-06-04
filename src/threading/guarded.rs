@@ -156,8 +156,6 @@ impl<'a, Value, M: RawMutex> Drop for GuardedLock<'a, Value, M> {
 }
 
 /// Trait for the `M` parameter of `GuardedBy`: a raw mutex with `lock`/`unlock`.
-// TODO(port): move to bun_threading if not already there; both `bun_threading::Mutex`
-// and `bun_safety::ThreadLock` must impl this.
 pub trait RawMutex {
     fn lock(&self);
     fn unlock(&self);
@@ -171,6 +169,17 @@ impl RawMutex for Mutex {
     #[inline]
     fn unlock(&self) {
         Mutex::unlock(self)
+    }
+}
+
+impl RawMutex for ThreadLock {
+    #[inline]
+    fn lock(&self) {
+        ThreadLock::lock(self)
+    }
+    #[inline]
+    fn unlock(&self) {
+        ThreadLock::unlock(self)
     }
 }
 

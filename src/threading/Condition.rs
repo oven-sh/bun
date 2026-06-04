@@ -58,7 +58,7 @@ use crate::guarded::GuardedLock;
 
 #[derive(Default)]
 pub struct Condition {
-    // PORT NOTE: Zig field name `impl` is a Rust keyword; renamed to `impl_`.
+    // Zig field name `impl` is a Rust keyword; renamed to `impl_`.
     impl_: Impl,
 }
 
@@ -185,7 +185,7 @@ type Impl = WindowsImpl;
 #[cfg(not(windows))]
 type Impl = FutexImpl;
 
-// PORT NOTE: Zig passed `comptime notify: Notify`. Stable Rust forbids enum
+// Zig passed `comptime notify: Notify`. Stable Rust forbids enum
 // const-generic params (`adt_const_params`), so `wake()` takes it at runtime;
 // the two-variant match optimizes equivalently.
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -257,7 +257,7 @@ mod windows_impl {
             #[cfg(debug_assertions)]
             {
                 // The internal state of the DebugMutex needs to be handled here as well.
-                // TODO(port): Mutex internals — Zig: mutex.impl.locking_thread.store(0, .unordered)
+                // Zig: mutex.impl.locking_thread.store(0, .unordered)
                 mutex.impl_.locking_thread.store(0, Ordering::Relaxed);
             }
             // SAFETY: `condition` and `srwlock` are UnsafeCell-wrapped OS sync primitives;
@@ -266,7 +266,7 @@ mod windows_impl {
             let rc = unsafe {
                 kernel32::SleepConditionVariableSRW(
                     self.condition.get(),
-                    // TODO(port): Mutex internals — debug build wraps an inner impl with `srwlock`.
+                    // The debug build's DebugMutex wraps an inner impl holding `srwlock`.
                     #[cfg(debug_assertions)]
                     {
                         mutex.impl_.impl_.srwlock.get()
@@ -349,7 +349,7 @@ impl FutexImpl {
         state += Self::ONE_WAITER;
 
         mutex.unlock();
-        // PORT NOTE: Zig `defer mutex.lock()` — re-acquire on every exit path (Ok and Err).
+        // Zig `defer mutex.lock()` — re-acquire on every exit path (Ok and Err).
         // Condvar wait semantics (unlock, block, re-lock) are the inverse of MutexGuard,
         // so the re-lock is expressed as a one-off defer rather than an RAII guard type.
         scopeguard::defer! { mutex.lock(); }

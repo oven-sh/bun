@@ -48,7 +48,6 @@ pub(crate) const DIGEST_BUF_LEN: usize = {
 };
 
 impl Integrity {
-    // TODO(port): narrow error set (Zig: `!Integrity` inferred — only error.InvalidCharacter)
     pub fn parse_sha_sum(buf: &[u8]) -> Result<Integrity, bun_core::Error> {
         if buf.is_empty() {
             return Ok(Integrity {
@@ -255,7 +254,7 @@ impl fmt::Display for Integrity {
     }
 }
 
-// PORT NOTE: Zig `enum(u8) { ..., _ }` is non-exhaustive (any u8 is a valid bit
+// Zig `enum(u8) { ..., _ }` is non-exhaustive (any u8 is a valid bit
 // pattern, since this is read from on-disk lockfiles). A Rust `#[repr(u8)] enum`
 // would be UB for unknown discriminants, so we use a transparent newtype with
 // associated consts instead.
@@ -283,7 +282,7 @@ impl Tag {
     }
 
     pub fn parse(buf: &[u8]) -> (Tag, usize) {
-        // PORT NOTE: Zig used strings.ExactSizeMatcher(8); a byte-slice match is
+        // Zig used strings.ExactSizeMatcher(8); a byte-slice match is
         // equivalent and const-propagated.
         let Some(i) = strings::index_of_char(&buf[0..buf.len().min(7)], b'-') else {
             return (Tag::UNKNOWN, 0);

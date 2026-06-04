@@ -13,10 +13,8 @@ pub struct MediaRule<R> {
 }
 
 // ─── behavior bodies ──────────────────────────────────────────────────────
-// PORT NOTE: `minify` lives in `rules/mod.rs` (hoisted next to `CssRuleList::
-// minify` so the dispatch can call it without re-exporting `MinifyContext`
-// here). `to_css` un-gated this round — `MediaList::{always_matches,to_css}`
-// and `CssRuleList::to_css` are both real now.
+// `minify` lives in `rules/mod.rs` (hoisted next to `CssRuleList::minify` so
+// the dispatch can call it without re-exporting `MinifyContext` here).
 impl<R> MediaRule<R> {
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         if dest.minify && self.query.always_matches() {
@@ -40,7 +38,6 @@ impl<R> MediaRule<R> {
     where
         R: crate::generics::DeepClone<'bump>,
     {
-        // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             query: super::dc::media_list(&self.query, bump),
             rules: self.rules.deep_clone(bump),

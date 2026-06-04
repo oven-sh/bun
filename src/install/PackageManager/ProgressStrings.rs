@@ -10,8 +10,8 @@ use super::PackageManager;
 pub struct ProgressStrings;
 
 impl ProgressStrings {
-    // PORT NOTE: base *_NO_EMOJI_ / *_EMOJI consts stay &str because concatcp! requires str
-    // inputs; derived consts and fn returns are &[u8] per type-map ([]const u8 → &[u8]).
+    // The base *_NO_EMOJI_ / *_EMOJI consts stay &str because concatcp! requires str
+    // inputs; derived consts and fn returns are &[u8].
     pub const DOWNLOAD_NO_EMOJI_: &'static str = "Resolving";
     const DOWNLOAD_NO_EMOJI: &'static [u8] =
         concatcp!(ProgressStrings::DOWNLOAD_NO_EMOJI_, "\n").as_bytes();
@@ -139,7 +139,7 @@ impl PackageManager {
 
     pub fn start_progress_bar(&mut self) {
         self.progress.supports_ansi_escape_codes = Output::enable_ansi_colors_stderr();
-        // PORT NOTE: `Progress::start` returns `&mut Node` borrowing `self.progress`;
+        // `Progress::start` returns `&mut Node` borrowing `self.progress`;
         // decay to a raw ptr immediately so the exclusive borrow ends before we
         // re-borrow `&mut self` for `set_node_name` / `progress.refresh()`.
         let node: *mut ProgressNode = self.progress.start(ProgressStrings::download(), 0);

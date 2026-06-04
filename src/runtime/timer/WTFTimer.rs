@@ -1,7 +1,7 @@
 //! `WTFTimer` — a timer created by WTF (WebKit) code and invoked by Bun's
 //! event loop. Backs `WTF::RunLoop::TimerBase` on the Bun runloop.
 //!
-//! PORT NOTE (jsc/runtime crate cycle): Zig stores `vm: *VirtualMachine` and reaches the
+//! jsc/runtime crate cycle: Zig stores `vm: *VirtualMachine` and reaches the
 //! timer heap via `vm.timer.{remove,update}`. The low-tier
 //! `bun_jsc::VirtualMachine.timer` is a `()` placeholder, so this port
 //! resolves the heap through [`crate::jsc_hooks::runtime_state`] instead —
@@ -40,7 +40,10 @@ impl RunLoopTimer {
 
 /// A timer created by WTF code and invoked by Bun's event loop.
 pub struct WTFTimer {
-    // TODO(port): lifetime — backref to the owning VirtualMachine; never owned here.
+    // Backref to the owning VirtualMachine (captured from the thread-local VM
+    // in `WTFTimer__create`); never owned here. Zig stored the same raw
+    // `*VirtualMachine`. The C++ `RunLoop::TimerBase` that owns this wrapper
+    // lives on the VM's run loop, so the VM outlives the timer.
     vm: NonNull<VirtualMachine>,
     // FFI handle into WebKit's RunLoop::TimerBase; owned by C++.
     run_loop_timer: NonNull<RunLoopTimer>,
@@ -117,7 +120,7 @@ impl WTFTimer {
         let _g = self.lock.lock_guard();
         if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
             let next = &self.event_loop_timer.next;
-            // PORT NOTE: bun_event_loop carries a local `Timespec` stub; re-pack
+            // bun_event_loop carries a local `Timespec` stub; re-pack
             // into bun_core::Timespec to call `duration`.
             let until = Timespec {
                 sec: next.sec,
@@ -335,7 +338,6 @@ pub(crate) unsafe extern "C" fn WTFTimer__cancel(this: *mut WTFTimer) {
     unsafe { WTFTimer::cancel(this) };
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn WTFTimer__fire(this: NonNull<RunLoopTimer>);
 }

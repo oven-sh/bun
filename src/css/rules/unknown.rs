@@ -40,9 +40,8 @@ impl UnknownAtRule {
 
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
         use crate::generics::DeepClone as _;
-        // PORT NOTE: `css.implementDeepClone` field-walk. `name: &'static [u8]`
-        // is an arena-owned slice → identity copy (generics.zig "const strings"
-        // rule); `TokenList` carries `#[derive(DeepClone)]`.
+        // `name` is an arena-owned slice → identity copy (generics.zig
+        // "const strings" rule); `TokenList` carries `#[derive(DeepClone)]`.
         Self {
             name: self.name,
             prelude: self.prelude.deep_clone(bump),

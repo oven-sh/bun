@@ -17,7 +17,6 @@ bun_core::declare_scope!(Auth, hidden);
 pub mod mysql_native_password {
     use super::*;
 
-    // TODO(port): narrow error set
     pub(crate) fn scramble(password: &[u8], nonce: &[u8]) -> Result<[u8; 20], bun_core::Error> {
         // SHA1( password ) XOR SHA1( nonce + SHA1( SHA1( password ) ) ) )
         let mut stage1 = [0u8; 20];
@@ -35,10 +34,11 @@ pub mod mysql_native_password {
         }
 
         // Stage 1: SHA1(password)
-        // TODO(port): Zig passed `jsc.VirtualMachine.get().rareData().boringEngine()`;
-        // engine is optional and bun_jsc is higher-tier — pass null (matches
-        // bun_install::integrity / bun_exe_format::macho precedent). Revisit if
-        // profiling shows the engine matters here (it accelerates HW SHA only).
+        // Zig passed `jsc.VirtualMachine.get().rareData().boringEngine()`;
+        // the engine is optional and bun_jsc is higher-tier, so pass null
+        // (matches bun_install::integrity / bun_exe_format::macho precedent).
+        // The engine only accelerates hardware SHA; null is functionally
+        // identical.
         // SAFETY: engine is null (default).
         unsafe { SHA1::hash(password, &mut stage1, core::ptr::null_mut()) };
 
@@ -67,7 +67,6 @@ pub mod mysql_native_password {
 pub mod caching_sha2_password {
     use super::*;
 
-    // TODO(port): narrow error set
     pub(crate) fn scramble(password: &[u8], nonce: &[u8]) -> Result<[u8; 32], bun_core::Error> {
         // XOR(SHA256(password), SHA256(SHA256(SHA256(password)), nonce))
         let mut digest1 = [0u8; 32];
@@ -76,7 +75,7 @@ pub mod caching_sha2_password {
         let mut result: [u8; 32] = [0u8; 32];
 
         // SHA256(password)
-        // TODO(port): see note in mysql_native_password::scramble re: ENGINE*.
+        // Null ENGINE — see note in mysql_native_password::scramble.
         // SAFETY: engine is null (default).
         unsafe { SHA256::hash(password, &mut digest1, core::ptr::null_mut()) };
 
@@ -133,7 +132,6 @@ pub mod caching_sha2_password {
         // Zig `deinit` only freed `self.data` — Data's own Drop handles that, so no
         // explicit Drop impl needed here.
 
-        // TODO(port): narrow error set
         pub fn decode_internal<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
@@ -175,7 +173,6 @@ pub mod caching_sha2_password {
         // https://mariadb.com/kb/en/sha256_password-plugin/#rsa-encrypted-password
         // RSA encrypted value of XOR(password, seed) using server public key (RSA_PKCS1_OAEP_PADDING).
 
-        // TODO(port): narrow error set
         pub fn write_internal<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,
@@ -313,7 +310,6 @@ pub mod caching_sha2_password {
     impl PublicKeyResponse {
         // Zig `deinit` only freed `self.data` — Data's own Drop handles that.
 
-        // TODO(port): narrow error set
         pub fn decode_internal<Context: ReaderContext>(
             &mut self,
             reader: NewReader<Context>,
@@ -337,7 +333,6 @@ pub mod caching_sha2_password {
     pub struct PublicKeyRequest;
 
     impl PublicKeyRequest {
-        // TODO(port): narrow error set
         pub fn write_internal<Context: WriterContext>(
             &self,
             writer: NewWriter<Context>,

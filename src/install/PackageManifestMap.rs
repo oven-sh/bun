@@ -150,11 +150,11 @@ impl PackageManifestMap {
 
     /// Zig: `byNameHashAllowExpired(this, pm: *PackageManager, ...)`.
     ///
-    /// PORT NOTE: reshaped for borrowck — Zig passes `pm` and reads
-    /// `pm.options.enable.*`, `pm.getCacheDirectory()`, and
-    /// `pm.timestamp_for_manifest_cache_control` on the disk-fallback arm.
-    /// Those scalars are hoisted into [`DiskCacheCtx`] so callers never hold
-    /// `&mut pm.manifests` and a `PackageManager` borrow simultaneously.
+    /// The `PackageManager` scalars read on the disk-fallback arm
+    /// (`options.enable.*`, the cache directory, and
+    /// `timestamp_for_manifest_cache_control`) are hoisted into
+    /// [`DiskCacheCtx`] so callers never hold `&mut pm.manifests` and a
+    /// `PackageManager` borrow simultaneously.
     pub fn by_name_hash_allow_expired(
         &mut self,
         ctx: DiskCacheCtx,
@@ -180,14 +180,11 @@ impl PackageManifestMap {
             };
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig's `getOrPut` returns `{ found_existing, value_ptr }`;
-        // Rust splits into Occupied/Vacant arms.
         match self.hash_map.entry(name_hash) {
             Entry::Occupied(occ) => {
                 let value_ptr = occ.into_mut();
-                // PORT NOTE: reshaped for borrowck — Zig mutated `value_ptr.*` in
-                // place from `.manifest` to `.expired`. Compute the demote decision
-                // first without holding a borrow that escapes the fn.
+                // Compute the demote decision first without holding a borrow
+                // that escapes the fn.
                 let demote = matches!(
                     value_ptr,
                     Value::Manifest(m)

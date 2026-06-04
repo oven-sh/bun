@@ -19,7 +19,7 @@ use bun_core::io::Write as _;
 
 // ── route_param (moved from bun_router) ───────────────────────────────────
 pub mod route_param {
-    // PORT NOTE: name/value borrow from the route template + the live request
+    // name/value borrow from the route template + the live request
     // path; lifetime-generic so `bun_router` (the only producer) can fill them
     // from non-'static buffers. Downstream that only stores literals can use
     // `Param<'static>`.
@@ -28,8 +28,8 @@ pub mod route_param {
         pub name: &'a [u8],
         pub value: &'a [u8],
     }
-    // TODO(port): bun_collections::MultiArrayList — derive(MultiArrayElement)
-    // proc-macro not yet available. Using Vec; SoA layout is a perf concern only.
+    // SoA (`MultiArrayList`) layout would be a perf optimization only; a plain
+    // Vec is semantically identical.
     pub type List<'a> = Vec<Param<'a>>;
 }
 pub use route_param::List as ParamsList;
@@ -49,8 +49,7 @@ pub mod whatwg {
         _opaque: [u8; 0],
     }
 
-    // TODO(port): move to <area>_sys
-    // PORT NOTE: getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
+    // Getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
     // WTF::URL on read. `URL__deinit` keeps `*mut` (it `delete`s). `BunString*` inputs stay
     // `*mut` to match the C ABI; callers pass a mutable local copy (see below).
     // SAFETY (safe fn): `URL` is an opaque ZST handle (never null when behind `&`);
@@ -79,7 +78,7 @@ pub mod whatwg {
         fn URL__originLength(latin1_slice: *const u8, len: usize) -> u32;
     }
 
-    // PORT NOTE: Zig takes `bun.String` by value then `var input = str; f(&input)` to
+    // Zig takes `bun.String` by value then `var input = str; f(&input)` to
     // obtain a mutable address for C ABI. We take `&String` (matching existing call sites
     // in this crate) and — since `bun_core::String: Copy` — bit-copy into a mutable
     // local and pass `&mut local`. This mirrors the Zig spec exactly and avoids casting
@@ -195,7 +194,7 @@ pub use whatwg::{
     file_url_from_string, href_from_string, join, origin_from_slice, path_from_file_url,
 };
 
-// PORT NOTE: URL is a pure view struct — every field is a slice into `href` (or a
+// URL is a pure view struct — every field is a slice into `href` (or a
 // literal default). Zig expresses this with `[]const u8` fields borrowing the
 // caller-provided `base`.
 #[derive(Clone)]
@@ -360,7 +359,7 @@ impl<'a> URL<'a> {
         self.href.len() == Self::BLOB_SPECIFIER_LEN && self.href.starts_with(b"blob:")
     }
 
-    // PORT NOTE: ownership — Zig returns a `URL` borrowing from a freshly-allocated
+    // Ownership: Zig returns a `URL` borrowing from a freshly-allocated
     // owned slice (`href.toOwnedSlice`); caller frees `url.href` later. Per
     // PORTING.md §Forbidden (no Box::leak / mem::forget / unsafe lifetime
     // extension), Rust returns an `OwnedURL` that owns the buffer; callers borrow
@@ -562,7 +561,6 @@ impl<'a> URL<'a> {
         basename: &[u8],
         extname: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let mut out = [0u8; 2048];
         let normalized_path = Self::join_normalize(&mut out, prefix, dirname, basename, extname);
 
@@ -581,7 +579,6 @@ impl<'a> URL<'a> {
         extname: &[u8],
         absolute_path: &[u8],
     ) -> Result<Box<[u8]>, bun_core::Error> {
-        // TODO(port): narrow error set
         let has_uplevels = strings::index_of(dirname, b"../").is_some();
 
         if has_uplevels {
@@ -611,7 +608,7 @@ impl<'a> URL<'a> {
             href: base,
             ..Default::default()
         };
-        // PORT NOTE: Zig uses u31; Rust has no u31 — using u32 (values never approach 2^31).
+        // Zig uses u31; Rust has no u31 — using u32 (values never approach 2^31).
         let mut offset: u32 = 0;
         match base[0] {
             b'@' => {
@@ -901,16 +898,13 @@ pub struct Param {
     pub value: api::StringPointer,
 }
 
-// PERF(port): Zig uses `std.MultiArrayList(Param)` for SoA cache-friendly column
-// scans. bun_collections::MultiArrayList exists but requires `MultiArrayElement`
-// (no derive macro yet). Using Vec<Param> (AoS) for now — semantically identical;
-// revisit once `` lands.
-// TODO(port): bun_collections::MultiArrayList derive
+// Zig uses `std.MultiArrayList(Param)` for SoA cache-friendly column scans.
+// Vec<Param> (AoS) is semantically identical; SoA would be a perf optimization only.
 pub(crate) type ParamList = Vec<Param>;
 
 /// QueryString array-backed hash table that does few allocations and preserves the original order
 pub struct QueryStringMap {
-    // PORT NOTE: allocator field dropped — global mimalloc per PORTING.md.
+    // Allocator field dropped — global mimalloc per PORTING.md.
     // TODO(port): `slice` is self-referential (points into `buffer`) when decoding
     // happened, otherwise borrows the caller's query_string. Stored as raw fat ptr.
     slice: *const [u8],
@@ -947,7 +941,7 @@ impl Clone for QueryStringMap {
 }
 
 thread_local! {
-    // PORT NOTE: unused in current code (commented-out path in get_name_count)
+    // Unused in current code (commented-out path in get_name_count).
     static NAME_COUNT_BUF: RefCell<[*const [u8]; 8]> = const { RefCell::new([std::ptr::from_ref::<[u8]>(&[]); 8]) };
 }
 
@@ -1222,7 +1216,7 @@ impl QueryStringMap {
         let mut buf: Vec<u8> = Vec::with_capacity(estimated_str_len);
         let mut buf_writer_pos: u32 = 0;
 
-        // PORT NOTE: reshaped for borrowck — Zig captured `list.slice()` once outside
+        // Reshaped for borrowck — Zig captured `list.slice()` once outside
         // the loop; here we re-slice per iteration to avoid holding a borrow across push().
         while let Some(result) = scanner.next() {
             if list.len() >= MAX_QUERY_STRING_PARAMS {
@@ -1288,7 +1282,7 @@ impl QueryStringMap {
 }
 
 // Browsers typically limit URL lengths to around 64k
-// PORT NOTE: Zig `StaticBitSet(2048)` resolves to `ArrayBitSet(usize, 2048)`.
+// Zig `StaticBitSet(2048)` resolves to `ArrayBitSet(usize, 2048)`.
 // bun_collections::StaticBitSet currently aliases IntegerBitSet (≤64 bits), so
 // pick ArrayBitSet directly. 2048 / 64 == 32 masks.
 /// Hard cap on parsed query-string parameters, enforced in `init` /
@@ -1318,7 +1312,7 @@ impl<'a> Iterator<'a> {
         }
     }
 
-    // TODO(port): lifetime on `target`/return — values borrow target, name borrows map.slice
+    // Lifetimes: values borrow `target` ('t), name borrows `map.slice` ('a).
     pub fn next<'t>(&mut self, target: &'t mut [&'a [u8]]) -> Option<IteratorResult<'a, 't>>
     where
         'a: 't,
@@ -1501,10 +1495,8 @@ impl PercentEncoding {
     }
 }
 
-// TODO(port): FormData re-export removed — bun_runtime (T6) is upward.
-// Callers should import from bun_runtime::webcore::form_data
-// directly (or move-in pass relocates FormData here if it belongs at T2).
-// pub use bun_runtime::webcore::form_data::FormData;
+// FormData intentionally not re-exported here: bun_runtime (T6) is upward of
+// this crate. Callers import from bun_runtime::webcore::form_data directly.
 
 // ══════════════════════════════════════════════════════════════════════════
 // Scanners
@@ -1667,7 +1659,7 @@ impl<'a> Scanner<'a> {
     /// Get the next query string parameter without allocating memory.
     pub fn next(&mut self) -> Option<ScannerResult> {
         let mut relative_i: usize = 0;
-        // PORT NOTE: Zig used `defer this.i += relative_i;` — emulated by applying
+        // Zig used `defer this.i += relative_i;` — emulated by applying
         // the deferred add at every return point.
 
         // reuse stack space

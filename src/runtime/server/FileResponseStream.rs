@@ -235,7 +235,7 @@ impl FileResponseStream {
             return false;
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig captured `*max` mutably across the block.
+        // Borrowck: Zig captured `*max` mutably across the block.
         let (chunk, state) = 'brk: {
             if let Some(max) = self.max_size.as_mut() {
                 let c = &chunk_[..chunk_

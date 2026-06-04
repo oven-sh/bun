@@ -77,7 +77,7 @@ impl PollOrFd {
             // 7) ON ANOTHER THREAD: close(3) = 0,
             // 8) kevent(2, EVFILT_READ, EV_ADD | EV_ENABLE | EV_DISPATCH, 0, 0, 0) = 0
             // 9) ??? No more events for fd 2
-            // PORT NOTE: reshaped for borrowck — take ownership of the Box before
+            // Take ownership of the Box before
             // calling deinit_force_unregister, then leave self = Closed.
             let old = core::mem::replace(self, PollOrFd::Closed);
             if let PollOrFd::Poll(poll) = old {

@@ -1,12 +1,10 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::FormatterTestExt;
 use bun_jsc::console_object::Formatter;
-// TODO(port): verify path for JSMockFunction__getReturns FFI binding
 
 use super::DiffFormatter;
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_have_last_returned_with(
     this: &Expect,
     global_this: &JSGlobalObject,
@@ -108,7 +106,7 @@ pub(crate) fn to_have_last_returned_with(
         return this.throw(global_this, signature, format_args!("\n\n{}\n", diff_format));
     }
 
-    // PORT NOTE: Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
+    // Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
     // `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
     // the same backing formatter. Use a second formatter for the received value —
     // `make_formatter` is a trivial struct init with no shared state between values.

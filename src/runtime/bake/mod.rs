@@ -68,7 +68,7 @@ pub enum Mode {
 
 /// `bake.Framework.ServerComponents`.
 ///
-/// PORT NOTE: string fields are arena-backed at runtime (freed via
+/// String fields are arena-backed at runtime (freed via
 /// `UserOptions.arena.deinit()`, bake.zig:23) but default to static literals
 /// (bake.zig:360-367). `Cow<'static, [u8]>` covers both without leaking.
 #[derive(Clone)]
@@ -81,7 +81,7 @@ pub struct ServerComponents {
     pub server_register_server_reference: Cow<'static, [u8]>,
     pub client_register_server_reference: Cow<'static, [u8]>,
 }
-// PORT NOTE: no `Default` impl — `server_runtime_import` is a required field
+// No `Default` impl — `server_runtime_import` is a required field
 // in the spec (bake.zig:360 has no `= "..."` initializer). Callers must
 // supply it explicitly (`Framework::react()` sets `"react-server-dom-bun/server"`).
 impl ServerComponents {
@@ -113,7 +113,7 @@ impl Default for ReactFastRefresh {
 /// `bake.Framework.FileSystemRouterType`. Full body (with `Style` enum and
 /// `from_js`) lives in the gated `bake_body.rs` draft; only the field set
 /// DevServer touches is named here.
-// PORT NOTE: dropped `#[derive(Clone)]` — `framework_router::Style` is now the
+// Deliberately not `Clone` — `framework_router::Style` is the
 // body enum (carries `JavascriptDefined(jsc::Strong)`, not `Clone`). Spec
 // `Style` has a `deinit()` (FrameworkRouter.zig), so it was never trivially
 // copyable.
@@ -573,7 +573,7 @@ impl From<bake_body::Framework> for Framework {
 }
 impl From<bake_body::BuildConfigSubset> for BuildConfigSubset {
     fn from(src: bake_body::BuildConfigSubset) -> Self {
-        // PORT NOTE: keystone `BuildConfigSubset` mirrors the field-set
+        // `BuildConfigSubset` mirrors the field-set
         // `Framework::init_transpiler` reads (everything except `loader` /
         // `source_map`, which only `init_transpiler_with_options` honours).
         Self {
@@ -649,14 +649,9 @@ pub use bake_body::StringRefList;
 // FrameworkRouter
 // ══════════════════════════════════════════════════════════════════════════
 pub mod framework_router {
-    // PORT NOTE: this module used to carry duplicate "keystone" stub structs
-    // (`Route`, `Type`, `FrameworkRouter`, `MatchedParams`, `EncodedPattern`)
-    // alongside the real defs in `framework_router_body` (FrameworkRouter.rs).
-    // The two nominal type sets diverged and forced placeholder shims. The body
-    // module is now fully ported and un-gated, so re-export everything so
-    // `framework_router::X` ≡ `framework_router_body::X` and the real method
-    // bodies (`init_empty`, `match_slow`, `memory_cost`, `to_js`, …) resolve
-    // directly.
+    // Everything is re-exported from `framework_router_body`
+    // (FrameworkRouter.rs) so `framework_router::X` ≡
+    // `framework_router_body::X` and the real method bodies resolve directly.
     /// `generated_js2native.rs` lowers `JSFrameworkRouter.getBindings` to
     /// `framework_router::js_framework_router::get_bindings`; alias the type so
     /// the associated-fn path resolves.

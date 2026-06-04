@@ -5,7 +5,7 @@ use std::io::Write as _;
 
 use bstr::BStr;
 
-// PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
+// `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
 // uws wrapper — `WindowsLoop` on Windows, `PosixLoop` on POSIX), not
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. The inherent `loop_()` projects `.uv_loop` from the uws wrapper
@@ -72,8 +72,8 @@ pub struct SecurityScanResults {
     pub warn_count: usize,
     pub packages_scanned: usize,
     pub duration_ms: i64,
-    // TODO(port): Zig borrows this from manager.options.security_scanner; using Box<[u8]> to avoid
-    // a struct lifetime. Revisit if the copy matters.
+    // Owned copy of `manager.options.security_scanner` (Zig borrows it);
+    // owning avoids a struct lifetime and the copy is tiny.
     pub security_scanner: Box<[u8]>,
 }
 
@@ -100,7 +100,6 @@ pub(crate) fn do_partial_install_of_security_scanner(
     security_scanner_pkg_id: PackageID,
     original_cwd: &[u8],
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     let (workspace_filters, install_root_dependencies) =
         InstallWithManager::get_workspace_filters(manager, original_cwd)?;
     // `defer manager.allocator.free(workspace_filters)` — workspace_filters is now owned, drops at scope exit.
@@ -714,7 +713,7 @@ impl<'a> JSONBuilder<'a> {
         json_buf.extend_from_slice(b"[\n");
 
         let mut first = true;
-        // PORT NOTE: `ArrayHashMap::iterator()` takes `&mut self`, but we only
+        // `ArrayHashMap::iterator()` takes `&mut self`, but we only
         // need shared access. Iterate by index over the parallel key/value
         // slices instead (insertion-ordered, matches Zig's `iterator()`).
         let path_keys = self.collector.package_paths.keys();
@@ -849,7 +848,7 @@ fn attempt_security_scan_with_retry(
     let json_data = json_builder.build_package_json()?;
     // `defer manager.allocator.free(json_data)` — Box<[u8]> drops at scope exit.
 
-    // PORT NOTE: destructure `collector` here to release its `&PackageManager`
+    // destructure `collector` here to release its `&PackageManager`
     // borrow before constructing `SecurityScanSubprocess` (which needs `&mut`).
     // Only `package_paths` is read past this point.
     let PackageCollector { package_paths, .. } = collector;
@@ -878,7 +877,7 @@ fn attempt_security_scan_with_retry(
             b"false"
         });
         new_code.extend_from_slice(&temp_source[index + suppress_placeholder.len()..]);
-        // PORT NOTE: reshaped for borrowck — drop borrow of `code` (via `temp_source`) before reassigning.
+        // reshaped for borrowck — drop borrow of `code` (via `temp_source`) before reassigning.
         code = new_code;
     }
 
@@ -902,7 +901,7 @@ fn attempt_security_scan_with_retry(
 
     scanner.spawn()?;
 
-    // PORT NOTE: Zig used a local `struct { scanner, isDone }` closure for sleepUntil.
+    // Zig used a local `struct { scanner, isDone }` closure for sleepUntil.
     // `sleep_until` now takes `*mut PackageManager` + `fn(&mut C) -> bool`; pass the
     // boxed scanner as the closure context and a fn pointer that probes `is_done`.
     fn scanner_is_done(scanner: &mut Box<SecurityScanSubprocess>) -> bool {
@@ -1265,7 +1264,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     /// start the fd 4 JSON writer, and begin watching for exit.
     fn finish_spawn(
         &mut self,
-        // PORT NOTE: Zig `spawned: anytype` — concrete type is the platform-dependent
+        // Zig `spawned: anytype` — concrete type is the platform-dependent
         // SpawnResult; Rust uses the unified `spawn::SpawnResult`.
         spawned: &mut spawn::SpawnResult,
         ipc_read_fd: Fd,
@@ -1295,7 +1294,7 @@ impl<'a> SecurityScanSubprocess<'a> {
             .start(ipc_read_fd, true)
             .map_err(|e| e.to_zig_err())?;
 
-        // PORT NOTE: `to_process` consumes `SpawnResult` by value on POSIX (and
+        // `to_process` consumes `SpawnResult` by value on POSIX (and
         // `&mut self` on Windows); take ownership of the result and let the
         // moved-from `*spawned` drop empty (`extra_pipes` already read).
         let event_loop = EventLoopHandle::from_any(&mut self.manager.event_loop);
@@ -1330,7 +1329,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         unsafe { (*parent).json_writer = Some(writer) };
 
         // errdefer if (this.json_writer) |w| { w.source.detach(); w.deref(); this.json_writer = null; }
-        // PORT NOTE: guard mirrors the Zig errdefer over the FIELD (not a local),
+        // guard mirrors the Zig errdefer over the FIELD (not a local),
         // including its `if (this.json_writer)` check — `start()` may already
         // have re-entered and nulled it. State is the `parent` backref; disarmed
         // via `into_inner` on the success path.
@@ -1415,7 +1414,7 @@ impl<'a> SecurityScanSubprocess<'a> {
     }
 
     pub fn get_read_buffer(&mut self) -> &mut [core::mem::MaybeUninit<u8>] {
-        // PORT NOTE: Zig returns `unusedCapacitySlice()` (uninitialized spare
+        // Zig returns `unusedCapacitySlice()` (uninitialized spare
         // capacity as `[]u8`); Rust forbids `&mut [u8]` over uninit bytes, so
         // expose `&mut [MaybeUninit<u8>]`. Caller (BufferedReader) only writes
         // into this region, never reads uninit bytes.
@@ -1433,7 +1432,7 @@ impl<'a> SecurityScanSubprocess<'a> {
         self.exit_status = Some(status);
 
         if !self.has_received_ipc {
-            // PORT NOTE (intentional divergence from Zig spec): the spec tears
+            // Intentional divergence from Zig spec: the spec tears
             // down `ipc_reader` here unconditionally. That races process-exit
             // against fd-3-readable: `ipc_reader.start()` only registers a
             // poll on POSIX (no sync read), and `MiniEventLoop::tick_once`

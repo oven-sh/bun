@@ -30,7 +30,6 @@ impl Timer {
             )
         };
         NonNull::new(t).unwrap_or_else(|| {
-            // TODO(port): use bun_sys errno accessor instead of std::io
             panic!(
                 "us_create_timer: returned null: {}",
                 std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
@@ -51,7 +50,6 @@ impl Timer {
             )
         };
         NonNull::new(t).unwrap_or_else(|| {
-            // TODO(port): use bun_sys errno accessor instead of std::io
             panic!(
                 "us_create_timer: returned null: {}",
                 std::io::Error::last_os_error().raw_os_error().unwrap_or(0)
@@ -75,7 +73,7 @@ impl Timer {
         }
     }
 
-    // PORT NOTE: not `impl Drop` — FFI opaque handle with a const-generic param;
+    // Not `impl Drop` — FFI opaque handle with a const-generic param;
     // destruction is an explicit C call and Drop cannot take parameters. Per PORTING.md
     // FFI-handle exception, expose `unsafe fn close(*mut Self)` instead of `deinit(&mut self)`.
     pub unsafe fn close<const FALLTHROUGH: bool>(this: *mut Self) {
@@ -95,7 +93,7 @@ impl Timer {
         }
     }
 
-    // PORT NOTE: Zig name is `as`, which is a Rust keyword.
+    // Zig name is `as`, which is a Rust keyword.
     pub fn as_<T>(&mut self) -> T {
         unsafe {
             // SAFETY: @setRuntimeSafety(false) in Zig — reinterpret the ext slot

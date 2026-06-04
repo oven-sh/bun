@@ -65,8 +65,9 @@ pub struct WindowsNamedPipe {
     pub pipe: Option<NonNull<uv::Pipe>>, // any duplex
     #[cfg(not(windows))]
     pub pipe: (),
-    // TODO(port): lifetime — JSC_BORROW; VM outlives this struct. Using &'static for now;
-    // create a timeout version that doesn't need the jsc VM
+    /// The per-thread VM singleton outlives this struct (it is torn down only
+    /// at thread exit, after every named pipe is closed), so `&'static` is the
+    /// honest model here rather than a threaded lifetime.
     pub vm: &'static VirtualMachine,
     /// Typed enum mirror of `vm.event_loop()` for the io-layer FilePoll vtable
     /// (`bun_io::EventLoopHandle` wraps `*const EventLoopHandle`).
@@ -205,7 +206,7 @@ impl WindowsNamedPipe {
     /// `handle_queue` with no `uv_close` ever scheduled (loop never drains).
     /// `close_and_destroy` covers both states via its `loop_.is_null()` branch.
     ///
-    /// PORT NOTE: the Zig spec has the same gap (WindowsNamedPipe.zig
+    /// The Zig spec has the same gap (WindowsNamedPipe.zig
     /// L334-401); this is a deliberate divergence to plug a pre-existing leak,
     /// not a transcription mismatch.
     ///
@@ -242,7 +243,7 @@ impl WindowsNamedPipe {
         &mut spare[..suggested_size]
     }
 
-    // PORT NOTE: takes `nread` (not the libuv `buffer` slice) because that
+    // takes `nread` (not the libuv `buffer` slice) because that
     // slice points *into* `self.incoming` — see `StreamReader::on_read` below
     // for the Stacked-Borrows split. The Zig `is_slice_in_buffer` debug assert
     // is dropped: libuv guarantees the read buffer is the one returned from
@@ -425,7 +426,7 @@ impl WindowsNamedPipe {
         bun_output::scoped_log!(WindowsNamedPipe, "onClose");
         #[cfg(windows)]
         {
-            // PORT NOTE: `self.pipe` is a non-owning `NonNull` alias of the
+            // `self.pipe` is a non-owning `NonNull` alias of the
             // `Box<uv::Pipe>` owned by `writer.source`. By the time the writer
             // invokes this `on_close` hook it has already `take()`n that Box and
             // scheduled `uv_close` → `Box::from_raw` on it (PipeWriter::close),
@@ -653,7 +654,7 @@ impl WindowsNamedPipe {
 
     #[cfg(windows)]
     fn on_connect(&mut self, status: uv::ReturnCode) {
-        // PORT NOTE: reshaped — Zig `defer this.deref()` cannot be a scopeguard here (would need
+        // reshaped — Zig `defer this.deref()` cannot be a scopeguard here (would need
         // to capture &mut self alongside body uses). Call deref() explicitly at each return.
 
         #[cfg(windows)]
@@ -662,7 +663,7 @@ impl WindowsNamedPipe {
         }
 
         if let Some(err) = status.to_error(bun_sys::Tag::connect) {
-            // PORT NOTE: divergence from Zig spec — on async connect failure the
+            // divergence from Zig spec — on async connect failure the
             // leaked `Box<uv::Pipe>` was never adopted by `writer.source`
             // (`start_with_pipe` only runs on the success branch below), so
             // `on_error → close → writer.end()` is a no-op for it. Reclaim it
@@ -988,7 +989,6 @@ impl WindowsNamedPipe {
         ssl_options: &SSLConfig,
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         self.flags.set_is_ssl(true);
         if self.start(is_client) {
             self.wrapper = Some(ssl_wrapper::init(
@@ -1296,7 +1296,7 @@ impl WindowsNamedPipe {
         }
 
         // reschedule the timer
-        // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
+        // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
         // bridge from `bun_core::Timespec` until the lower tier switches.
         let next = timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);
         self.event_loop_timer.next = ElTimespec {
@@ -1313,7 +1313,7 @@ impl WindowsNamedPipe {
     }
 
     /// Free internal resources, it can be called multiple times.
-    // PORT NOTE: Zig `pub fn deinit` → private idempotent helper invoked from on_close and Drop.
+    // Zig `pub fn deinit` → private idempotent helper invoked from on_close and Drop.
     // Owned fields (writer, wrapper, ssl_error) free themselves via their own Drop impls; only
     // the side effects (timer cancel, read_stop, take()) remain explicit here.
     fn release_resources(&mut self) {

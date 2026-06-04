@@ -30,8 +30,8 @@ impl Default for PBKDF2 {
             salt: StringOrBuffer::default(),
             iteration_count: 1,
             length: 0,
-            // PORT NOTE: Zig had no default for `algorithm` (callers always set it).
-            // Sha256 is an arbitrary placeholder so `Default` compiles.
+            // Callers always set `algorithm`; Sha256 is an arbitrary placeholder
+            // so `Default` compiles.
             algorithm: Algorithm::Sha256,
         }
     }

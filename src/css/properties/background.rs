@@ -14,7 +14,7 @@ use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 
 /// A value for the [background](https://www.w3.org/TR/css-backgrounds-3/#background) shorthand property.
-// PORT NOTE: Clone derive gated on `Image` gaining `Clone` upstream.
+// Clone derive gated on `Image` gaining `Clone` upstream.
 #[cfg_attr(any(), derive(Clone))]
 pub struct Background {
     /// The background image.
@@ -244,7 +244,6 @@ impl Background {
 
     #[inline]
     pub(crate) fn deep_clone(&self, arena: &Bump) -> Self {
-        // PORT NOTE: `css.implementDeepClone` reflection — expanded field-wise.
         // `Image` is the only non-`Clone` field; it provides its own `deep_clone`.
         Self {
             image: self.image.deep_clone(arena),
@@ -606,7 +605,7 @@ pub struct BackgroundHandler {
     pub has_any: bool,
 }
 
-// PORT NOTE: the Zig uses comptime field-name strings + @field for `flushHelper` /
+// The Zig uses comptime field-name strings + @field for `flushHelper` /
 // `initSmallListHelper` / `push`. Rust cannot index struct fields by string at runtime;
 // these helpers are expanded into small per-field macros below. A derive macro
 // could replace them.
@@ -699,7 +698,7 @@ impl BackgroundHandler {
             Property::BackgroundClip(x) => {
                 let val: &SmallList<BackgroundClip, 1> = &x.0;
                 let vendor_prefix: VendorPrefix = x.1;
-                // PORT NOTE: reshaped for borrowck — Zig held &mut into self.clips
+                // Reshaped for borrowck: Zig held &mut into self.clips
                 // across self.flush(). Compute the predicate first, then dispatch.
                 let needs_flush = if let Some((clips, vp)) = &self.clips {
                     vendor_prefix != *vp && !SmallList::eql(val, clips)
@@ -737,7 +736,7 @@ impl BackgroundHandler {
                     clips.append_assume_capacity(b.clip);
                 }
                 let mut clips_vp = VendorPrefix::NONE;
-                // PORT NOTE: reshaped for borrowck — drop borrow before calling flush().
+                // Drop the `self.clips` borrow before calling flush().
                 let needs_flush = if let Some((existing_clips, existing_vp)) = &self.clips {
                     clips_vp != *existing_vp && !SmallList::eql(&clips, existing_clips)
                 } else {
@@ -905,7 +904,7 @@ impl BackgroundHandler {
                 };
 
                 let mut backgrounds: SmallList<Background, 1> = SmallList::init_capacity(len);
-                // PORT NOTE: reshaped for borrowck — Zig zipped 8 slices by value; here we
+                // Reshaped for borrowck: Zig zipped 8 slices by value; here we
                 // index by `i` and clone each element to avoid 8 simultaneous borrows.
                 for i in 0..(len as usize) {
                     backgrounds.append_assume_capacity(Background {
@@ -939,8 +938,12 @@ impl BackgroundHandler {
                 if self.flushed_properties.is_empty() {
                     let mut fallbacks =
                         crate::small_list::get_fallbacks(&mut backgrounds, arena, &context.targets);
-                    // PORT NOTE: Vec has no owning iterator; pop in reverse then
-                    // re-reverse via a temp Vec to preserve order.
+                    // Pop in reverse then re-reverse via a temp Vec to
+                    // preserve order while consuming the list. Shape kept from
+                    // the Zig port, where the fallback list was an arena
+                    // SmallList with no owning iterator; `fallbacks` is a plain
+                    // Vec here, so a direct `for fb in fallbacks` would also
+                    // work.
                     let mut tmp: Vec<SmallList<Background, 1>> =
                         Vec::with_capacity(fallbacks.len());
                     while let Some(fb) = fallbacks.pop() {
@@ -1001,8 +1004,11 @@ impl BackgroundHandler {
             if !self.flushed_properties.contains(BackgroundProperty::IMAGE) {
                 let mut fallbacks =
                     crate::small_list::get_fallbacks(&mut images, arena, &context.targets);
-                // PORT NOTE: Vec has no owning iterator; pop in reverse then
-                // re-reverse via a temp Vec to preserve order.
+                // Pop in reverse then re-reverse via a temp Vec to preserve
+                // order while consuming the list. Shape kept from the Zig
+                // port, where the fallback list was an arena SmallList with no
+                // owning iterator; `fallbacks` is a plain Vec here, so a
+                // direct `for fb in fallbacks` would also work.
                 let mut tmp: Vec<SmallList<Image, 1>> = Vec::with_capacity(fallbacks.len());
                 while let Some(fb) = fallbacks.pop() {
                     tmp.push(fb);
@@ -1156,7 +1162,7 @@ impl BackgroundHandler {
 
         let arena = dest.bump();
         for decl in self.decls.drain(..) {
-            // PORT NOTE: Zig was `appendSlice` (bitwise copy of arena-backed
+            // Zig was `appendSlice` (bitwise copy of arena-backed
             // values). `Property` is not `Clone` here, so move out via drain.
             let _ = arena;
             dest.push(decl);

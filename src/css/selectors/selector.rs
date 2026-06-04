@@ -230,9 +230,8 @@ fn downlevel_dir<'bump>(bump: &'bump Bump, dir: parser::Direction, targets: &Tar
 }
 
 fn lang_list_to_selectors<'bump>(_bump: &'bump Bump, langs: &[&'static [u8]]) -> Box<[Selector]> {
-    // PORT NOTE: Zig returned `[]Selector` (mutable arena slice). Here
-    // `Component::Is`/`Negation` carry `Box<[Selector]>`; could re-thread
-    // `&'bump [Selector]` once the arena lifetime is plumbed.
+    // `Component::Is`/`Negation` carry `Box<[Selector]>`; this could become
+    // `&'bump [Selector]` once the arena lifetime is plumbed through.
     let mut selectors: Vec<Selector> = Vec::with_capacity(langs.len());
     for lang in langs {
         selectors.push(Selector::from_component(Component::NonTsPseudoClass(
@@ -545,8 +544,8 @@ fn is_selector_unused(
     for component in selector.components.iter() {
         match component {
             Component::Class(ident) | Component::Id(ident) => {
-                // PORT NOTE: `IdentOrRef::as_original_string` is
-                // ``-gated (blocked_on bun_ast::symbol::List::at
+                // `IdentOrRef::as_original_string` is
+                // gated (blocked_on bun_ast::symbol::List::at
                 // + Symbol.original_name). Inline the ident arm; the ref arm
                 // (CSS-modules symbol-table lookup) is unreachable until
                 // `Parser::add_symbol_for_name` un-gates (see
@@ -559,9 +558,8 @@ fn is_selector_unused(
                         continue; // blocked_on: as_original_string ref arm
                     }
                 };
-                // PORT NOTE: Zig `unused_symbols.contains(actual_ident)` —
-                // adapted lookup to compare the borrowed `&[u8]` against
-                // owned `Box<[u8]>` keys without allocating.
+                // Look up the borrowed `&[u8]` against the map's owned
+                // `Box<[u8]>` keys without allocating.
                 struct SliceAdapter;
                 impl bun_collections::array_hash_map::ArrayHashAdapter<[u8], Box<[u8]>> for SliceAdapter {
                     #[inline]
@@ -865,9 +863,8 @@ pub mod serialize {
                     let mut id: Vec<u8> = Vec::new();
                     let _ = css::serializer::serialize_identifier(value_bytes, &mut id);
 
-                    // PORT NOTE: Zig routed through `css.to_css.string(CSSString, ...)`, which
-                    // dispatches to `CSSStringFns.toCss` → `serialize_string`. Inline that here
-                    // since `CssString` (`*const [u8]`) does not implement `generic::ToCss`.
+                    // `serialize_string` is called directly here since `CssString`
+                    // (`*const [u8]`) does not implement `generic::ToCss`.
                     let mut s: Vec<u8> = Vec::new();
                     let _ = css::serializer::serialize_string(value_bytes, &mut s);
 

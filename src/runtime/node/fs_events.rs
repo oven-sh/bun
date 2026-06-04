@@ -426,7 +426,6 @@ impl FSEventsLoop {
     }
 
     pub fn init() -> Result<*mut FSEventsLoop, bun_core::Error> {
-        // TODO(port): narrow error set
         let this = bun_core::heap::into_raw(Box::new(FSEventsLoop {
             signal_source: ptr::null_mut(),
             mutex: Mutex::new(),
@@ -467,7 +466,7 @@ impl FSEventsLoop {
         // SAFETY: this is a valid freshly-boxed pointer
         unsafe {
             (*this).signal_source = signal_source;
-            // PORT NOTE: Zig std.Thread.spawn. The raw `this` pointer is moved
+            // The raw `this` pointer is moved
             // into the closure; the FSEventsLoop is heap-allocated and outlives
             // the thread (joined in Drop).
             let this_addr = this as usize;
@@ -607,7 +606,7 @@ impl FSEventsLoop {
         self.has_scheduled_watchers = false;
         let watcher_count = self.watcher_count;
 
-        // PORT NOTE: reshaped for borrowck — defer slicing self.watchers until after
+        // Reshaped for borrowck — defer slicing self.watchers until after
         // the early-exit checks so the &mut self for fsevent_stream/paths doesn't conflict.
 
         let cf = CoreFoundation::get();
@@ -768,7 +767,7 @@ impl FSEventsLoop {
                 return;
             }
         }
-        // PORT NOTE: reshaped for borrowck — enqueue after dropping the guard so we
+        // Reshaped for borrowck — enqueue after dropping the guard so we
         // can take &mut self twice. Zig held the lock through enqueueTaskConcurrent;
         // safe to release first since enqueue only pushes to a lock-free queue and
         // signals CF, and `_schedule` re-acquires the mutex on the CF thread.
@@ -779,7 +778,7 @@ impl FSEventsLoop {
     fn unregister_watcher(&mut self, watcher: *mut FSEventsWatcher) {
         {
             let _guard = self.mutex.lock_guard();
-            // PORT NOTE: reshaped for borrowck — capture len before mutable iteration
+            // Reshaped for borrowck — capture len before mutable iteration
             let len = self.watchers.len() as usize;
             let watchers = self.watchers.slice_mut();
             for i in 0..len {
@@ -807,7 +806,7 @@ impl FSEventsLoop {
                 return;
             }
         }
-        // PORT NOTE: reshaped for borrowck — see register_watcher
+        // Reshaped for borrowck — see register_watcher
         let task = Task::new(self, FSEventsLoop::_schedule);
         self.enqueue_task_concurrent(task);
     }
@@ -823,7 +822,7 @@ impl FSEventsLoop {
 impl Drop for FSEventsLoop {
     fn drop(&mut self) {
         // signal close and wait
-        // PORT NOTE: reshaped for borrowck — build Task (stores raw ptr) before re-borrowing &mut self
+        // Reshaped for borrowck — build Task (stores raw ptr) before re-borrowing &mut self
         let stop_task = Task::new(self, FSEventsLoop::_stop);
         self.enqueue_task_concurrent(stop_task);
         if let Some(thread) = self.thread.take() {
@@ -933,7 +932,6 @@ pub fn watch(
     update_end: UpdateEndCallback,
     ctx: *mut c_void,
 ) -> Result<Box<FSEventsWatcher>, bun_core::Error> {
-    // TODO(port): narrow error set
     let loop_ = FSEVENTS_DEFAULT_LOOP.load(Ordering::Acquire);
     if let Some(loop_) = NonNull::new(loop_) {
         // SAFETY: `loop_` is the heap-allocated global default loop published

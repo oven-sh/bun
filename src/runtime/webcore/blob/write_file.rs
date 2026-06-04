@@ -21,8 +21,10 @@ use crate::webcore::body;
 
 bun_output::declare_scope!(WriteFile, hidden);
 
-// TODO(port): SystemError::Maybe(T) is a tagged { result: T } | { err: SystemError } union;
-// modeled here as a plain Rust enum. Verify layout if it crosses FFI.
+// Zig `SystemError.Maybe(SizeType)` — a tagged result-or-error union. Modeled
+// as a plain Rust enum: it only ever travels through the Rust fn-pointer
+// callbacks below (`WriteFileOnWriteFileCallback`), never across FFI, so the
+// layout is unconstrained.
 pub enum WriteFileResultType {
     Result(SizeType),
     Err(Box<SystemError>),
@@ -194,7 +196,7 @@ impl FileCloser for WriteFile {
             let this = unsafe { bun_ptr::callback_ctx::<WriteFile>(ctx.cast()) };
             <WriteFile as FileCloser>::on_io_request_closed(this);
         }
-        // PORT NOTE: reshaped for borrowck — compute the parent raw pointer
+        // reshaped for borrowck — compute the parent raw pointer
         // before mutably borrowing `io_poll` so the two borrows do not overlap.
         let ctx = std::ptr::from_mut::<WriteFile>(this).cast::<()>();
         let fd = this.opened_fd;
@@ -308,7 +310,7 @@ impl WriteFile {
             close_after_io: false,
             mkdirp_if_not_exists,
         }));
-        // PORT NOTE: Zig follows with `file_blob.store.?.ref()` because the Zig
+        // Zig follows with `file_blob.store.?.ref()` because the Zig
         // caller bitwise-copies `Blob` (no ref bump, no dtor) and `bun.destroy`
         // in `then` does not deref. In Rust the caller passes a `+1` Blob (via
         // `borrowed_view()`'s `StoreRef::clone`) and `heap::take(this)` in
@@ -324,7 +326,7 @@ impl WriteFile {
         callback: WriteFileOnWriteFileCallback,
         mkdirp_if_not_exists: bool,
     ) -> Result<*mut WriteFile, Error> {
-        // PORT NOTE: Zig generated a per-`Type` `Handler.run` thunk that
+        // Zig generated a per-`Type` `Handler.run` thunk that
         // `@ptrCast` the *anyopaque ctx back. In Rust the caller supplies a
         // `*mut c_void`-typed callback directly (see `WriteFilePromise::run`)
         // so the thunk collapses to a `.cast()` on `context`.
@@ -337,7 +339,7 @@ impl WriteFile {
         )
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig passed `buffer: []const u8` borrowed from
+    // reshaped for borrowck — Zig passed `buffer: []const u8` borrowed from
     // self.bytes_blob alongside &mut self. Take (off, len) here and re-derive the slice
     // internally so callers don't hold a borrow of self across the &mut self call.
     pub fn do_write(&mut self, off: usize, len: usize, wrote: &mut usize) -> bool {
@@ -556,7 +558,7 @@ impl WriteFile {
     fn do_write_loop_posix(&mut self) {
         while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
             let remain_full = self.bytes_blob.shared_view();
-            // PORT NOTE: reshaped for borrowck — capture len/offset before mut borrow
+            // reshaped for borrowck — capture len/offset before mut borrow
             let off = self.total_written.min(remain_full.len());
             let remain_len = remain_full.len() - off;
 
@@ -699,7 +701,7 @@ mod windows_impl {
                 owned_fd: false,
             });
             // SAFETY: just allocated, sole owner until returned.
-            // PORT NOTE: Zig's `file_blob.store.?.ref()` / `bytes_blob.store.?.ref()`
+            // Zig's `file_blob.store.?.ref()` / `bytes_blob.store.?.ref()`
             // are omitted — the Rust caller passes `+1` Blobs via
             // `borrowed_view()` and `deinit` releases them via
             // `heap::take → StoreRef::drop`.
@@ -997,7 +999,7 @@ mod windows_impl {
             // SAFETY: caller contract — `this` is live.
             let err = unsafe { (*this).err.take() };
             if let Some(err_) = err {
-                // PORT NOTE: Zig `defer bun.default_allocator.free(err_.path)` — handled by Drop of
+                // Zig `defer bun.default_allocator.free(err_.path)` — handled by Drop of
                 // sys::Error.path (owned Box<[u8]>); no explicit free needed.
                 // SAFETY: caller contract — `this` is live; `throw` consumes it.
                 match unsafe { Self::throw(this, err_) } {
@@ -1256,7 +1258,7 @@ mod windows_impl {
                 if fd > 0 && (*this).owned_fd {
                     aio::Closer::close(Fd::from_uv(fd), (*this).io_request.loop_);
                 }
-                // PORT NOTE: Zig `file_blob.store.?.deref()` / `bytes_blob.store.?.deref()`
+                // Zig `file_blob.store.?.deref()` / `bytes_blob.store.?.deref()`
                 // are subsumed by `StoreRef::drop` when the Box is reclaimed below
                 // (paired with the RAII note in `create_with_ctx`).
                 (*this).poll_ref.disable();
@@ -1276,7 +1278,7 @@ mod windows_impl {
             callback: WriteFileOnWriteFileCallback,
             mkdirp_if_not_exists: bool,
         ) -> Result<*mut WriteFileWindows, WriteFileWindowsError> {
-            // PORT NOTE: see `WriteFile::create` — caller supplies an erased
+            // see `WriteFile::create` — caller supplies an erased
             // `*mut c_void` callback directly; `context` is just `.cast()`ed.
             WriteFileWindows::create_with_ctx(
                 file_blob,
@@ -1367,7 +1369,7 @@ impl WriteFileWaitFromLockedValueTask {
         // (must coexist with `&mut this_ref` and survive `heap::take(this)`).
         let global_ref = this_ref.global_this;
         let global_this = global_ref.get();
-        // PORT NOTE: Zig `var file_blob = this.file_blob;` is a non-owning
+        // Zig `var file_blob = this.file_blob;` is a non-owning
         // bitwise copy — both bindings alias the same `*Store` with no ref
         // bump, and `bun.destroy(this)` later frees raw memory without running
         // field destructors. In Rust `heap::take(this)` *does* drop fields,
@@ -1423,7 +1425,7 @@ impl WriteFileWaitFromLockedValueTask {
                     }
                 };
 
-                // PORT NOTE: Zig `defer bun.destroy(this); defer this.promise.deinit();
+                // Zig `defer bun.destroy(this); defer this.promise.deinit();
                 // defer file_blob.detach();` — defers run in reverse order at scope
                 // exit. Reclaim the Box now so it drops last; `file_blob` (a local
                 // declared after) drops first.

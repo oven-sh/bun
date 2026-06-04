@@ -18,9 +18,9 @@ use bun_url::URL;
 use crate::cli::Command;
 use crate::cli::package_manager_command::PackageManagerCommand;
 
-// TODO(port): in Zig these `[]const u8` fields borrow from the JSON parse arena (and a few are
-// `allocator.dupe`d). Boxed here to avoid a struct lifetime param; revisit if
-// the extra clones show up in profiling.
+// In Zig these `[]const u8` fields borrow from the JSON parse arena (and a few
+// are `allocator.dupe`d). Boxed here to avoid a struct lifetime param; the
+// clones are per-vulnerability, terminal-UI-bound, and not perf-relevant.
 struct VulnerabilityInfo {
     severity: Box<[u8]>,
     title: Box<[u8]>,
@@ -67,7 +67,7 @@ impl AuditCommand {
         ctx: Command::Context,
     ) -> Result<core::convert::Infallible, bun_core::Error> {
         let cli = CommandLineArguments::parse(Subcommand::Audit)?;
-        // PORT NOTE: `init` consumes `cli`; capture the fields read after it.
+        // Note: `init` consumes `cli`; capture the fields read after it.
         let audit_level = cli.audit_level;
         let production = cli.production;
         let audit_ignore_list = cli.audit_ignore_list;
@@ -123,7 +123,7 @@ impl AuditCommand {
         );
         Output::flush();
 
-        // PORT NOTE: Zig `pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true)`
+        // Note: Zig `pm.lockfile.loadFromCwd(pm, ctx.allocator, ctx.log, true)`
         // is a self-referential split borrow; encapsulated upstream as
         // `PackageManager::load_lockfile_from_cwd`.
         {
@@ -243,7 +243,7 @@ fn build_dependency_tree(
 
             let resolved_name = pkg_names[resolved_pkg_id as usize].slice(buf);
 
-            // PORT NOTE: Zig `getOrPut` then `dupe` key only when not found.
+            // Note: Zig `getOrPut` then `dupe` key only when not found.
             // `StringHashMap::get_or_put` always boxes the key on miss, so the
             // separate `allocator.dupe` is folded in.
             let result = dependency_tree.get_or_put(resolved_name)?;
@@ -331,7 +331,7 @@ fn collect_packages_for_audit(
         prod_packages = Some(set);
     }
 
-    // PORT NOTE: reshaped for borrowck — column slices borrow `pm.lockfile`
+    // Note: reshaped for borrowck — column slices borrow `pm.lockfile`
     // immutably for the loop, so resolve `root_id` / `prod_packages` (which
     // need `&mut pm`) above, and split-borrow `pm.options` for the scope lookup
     // (disjoint from `pm.lockfile`; Zig had no aliasing model).
@@ -488,7 +488,7 @@ fn send_audit_request(
 
     let http_proxy = pm.http_proxy(&url);
 
-    // PORT NOTE: Zig passed `headers.content.ptr.?[0..headers.content.len]`.
+    // Note: Zig passed `headers.content.ptr.?[0..headers.content.len]`.
     let headers_buf: &[u8] = headers.content.written_slice();
 
     // PERF(port): Zig used MutableString with initial capacity 1024.

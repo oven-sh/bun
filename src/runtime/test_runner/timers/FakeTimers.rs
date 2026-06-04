@@ -10,7 +10,7 @@ use crate::timer::{
     TimerObjectInternals, TimeoutObject, TimerHeap,
 };
 
-// TODO(port): move to test_runner_sys / jsc_sys
+// JSMock C++ bindings (fake timers are only used by bun:test, so these stay local).
 unsafe extern "C" {
     safe fn JSMock__setOverridenDateNow(global: &JSGlobalObject, value: f64);
     safe fn JSMock__getCurrentUnixTimeMs() -> f64;
@@ -26,7 +26,7 @@ pub struct FakeTimers {
     pub timers: TimerHeap,
 }
 
-// PORT NOTE: Zig `pub var current_time: struct { ... } = .{}` — anonymous-typed mutable global.
+// Zig `pub var current_time: struct { ... } = .{}` — anonymous-typed mutable global.
 // Reshaped: `offset_lock` + `offset_raw` folded into `RwLock<Timespec>`; `date_now_offset`
 // stored as `AtomicU64` (f64 bits) so the static is `Sync` without `static mut`.
 pub struct CurrentTime {
@@ -51,7 +51,7 @@ impl CurrentTime {
         Some(value)
     }
 
-    // PORT NOTE: Zig took `v: struct { offset: *const timespec, js: ?f64 = null }` —
+    // Zig took `v: struct { offset: *const timespec, js: ?f64 = null }` —
     // anonymous param struct inlined as separate args. LIFETIMES.tsv: offset = BORROW_PARAM → &Timespec.
     pub fn set(&self, global: &JSGlobalObject, offset: &Timespec, js: Option<f64>) {
         let vm = global.bun_vm().as_mut();
@@ -70,7 +70,7 @@ impl CurrentTime {
         // SAFETY: FFI call into C++ JSMock; global is a valid &JSGlobalObject
         JSMock__setOverridenDateNow(global, date_now_offset + timespec_ms);
 
-        // PORT NOTE: Zig stored `@bitCast(v.offset.ns())` (i128 → u128). The Rust
+        // Zig stored `@bitCast(v.offset.ns())` (i128 → u128). The Rust
         // `VirtualMachine.overridden_performance_now` is `Option<u64>` and
         // `Timespec::ns()` already returns `u64`, so no bitcast needed.
         vm.overridden_performance_now = Some(offset.ns());
@@ -189,7 +189,7 @@ impl FakeTimers {
         pinned
     }
 
-    // PORT NOTE (noalias re-entrancy): `execute_*` / `fire` do NOT take
+    // noalias re-entrancy: `execute_*` / `fire` do NOT take
     // `&mut self`. `EventLoopTimer::fire` dispatches into JS; a `setInterval`
     // callback's reschedule (`timer::All::update` → `insert_lock_held` →
     // `(*timer_all()).fake_timers.timers.insert`) writes back into *this
@@ -525,7 +525,7 @@ const FAKE_TIMERS_FNS: &[(&str, u32, JSHostFn)] = &[
 pub(crate) const TIMER_FNS_COUNT: usize = FAKE_TIMERS_FNS.len();
 
 pub(crate) fn put_timers_fns(global: &JSGlobalObject, jest: JSValue, vi: JSValue) {
-    // PORT NOTE: Zig `inline for` over homogeneous tuples → plain `for` over const slice.
+    // Zig `inline for` over homogeneous tuples → plain `for` over const slice.
     for &(name, arity, func) in FAKE_TIMERS_FNS {
         let jsvalue = JSFunction::create(global, name, func, arity, Default::default());
         vi.put(global, name.as_bytes(), jsvalue);

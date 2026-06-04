@@ -35,7 +35,7 @@ pub struct PostgresSQLStatement {
 
 impl Default for PostgresSQLStatement {
     fn default() -> Self {
-        // TODO(port): `signature` has no default in Zig; callers must set it. This Default
+        // `signature` has no default in Zig; callers must set it. This Default
         // exists only to mirror the per-field `= ...` initializers.
         Self {
             cached_structure: PostgresCachedStructure::default(),
@@ -115,11 +115,11 @@ impl PostgresSQLStatement {
             let field: &mut protocol::FieldDescription = &mut self.fields[remaining];
             match &field.name_or_index {
                 ColumnIdentifier::Name(name) => {
-                    // PORT NOTE: reshaped for borrowck — compute `found_existing`
+                    // Note: reshaped for borrowck — compute `found_existing`
                     // before mutating `field.name_or_index`.
-                    // TODO(port): Zig `getOrPut` keys on the borrowed slice;
-                    // StringHashMap clones to an owned `Box<[u8]>` key. Fine for
-                    // a transient dedup set; revisit if profiling flags it.
+                    // Zig `getOrPut` keys on the borrowed slice; StringHashMap
+                    // clones to an owned `Box<[u8]>` key. Fine for a transient
+                    // dedup set.
                     let found_existing = seen_fields
                         .get_or_put(name.slice())
                         .expect("OOM")
@@ -151,7 +151,7 @@ impl PostgresSQLStatement {
         self.fields_flags = flags;
     }
 
-    // PORT NOTE: Zig returns `CachedStructure` by value (struct copy). Returning
+    // Note: Zig returns `CachedStructure` by value (struct copy). Returning
     // `&CachedStructure` here to avoid moving out of `self` (CachedStructure owns
     // a `Box<[ExternColumnIdentifier]>` and a `StrongOptional`, neither `Copy`).
     pub fn structure(

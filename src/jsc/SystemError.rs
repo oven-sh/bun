@@ -60,7 +60,6 @@ impl From<bun_sys::SystemError> for SystemError {
 /// `core::result::Result` alias in Phase F so callers get `?` for free.
 pub type Maybe<R> = core::result::Result<R, SystemError>;
 
-// TODO(port): move to jsc_sys
 // SAFETY (safe fn): `SystemError` is `#[repr(C)]` and read-only on the C++ side;
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed handle, so `&JSGlobalObject`
 // is ABI-identical to a non-null `JSGlobalObject*` with write provenance.
@@ -184,7 +183,7 @@ pub fn verify_error_to_js(
 
 impl fmt::Display for SystemError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // PORT NOTE: bun.Output.prettyFmt is a comptime color-tag → ANSI transformer that
+        // Note: bun.Output.prettyFmt is a comptime color-tag → ANSI transformer that
         // takes (fmt_str, comptime enable_colors) and returns a comptime-expanded format
         // string; `bun_core::pretty_fmt!` is the Rust equivalent. The runtime bool → comptime
         // dispatch (`switch (b) { inline else => |c| ... }`) is preserved as an if/else.

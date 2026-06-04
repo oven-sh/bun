@@ -63,10 +63,7 @@ impl Hardlinker {
         #[cfg(windows)]
         {
             let mut cwd_buf = bun_paths::w_path_buffer_pool::get();
-            // PORT NOTE: Zig spelt `FD.cwd().getFdPathW(buf)`; the Rust `Fd`
-            // newtype lives in `bun_core` and has no sys-layer methods, so call
-            // the free fn.
-            // PORT NOTE: `get_fd_path_w` writes the raw `\\?\C:\...` result into
+            // `get_fd_path_w` writes the raw `\\?\C:\...` result into
             // `cwd_buf` and returns a SUB-SLICE (offset 4, or 6 for UNC) after
             // stripping the long-path prefix. We can't keep that slice borrowed
             // across the loop (borrowck vs `cwd_buf`), so capture both its start
@@ -101,12 +98,11 @@ impl Hardlinker {
                     sys::Result::Err(err) => return Ok(sys::Result::Err(err)),
                 };
 
-                // PORT NOTE: reshaped for borrowck — Zig's `var s = path.save();
-                // defer s.restore();` returns a `ResetScope` that holds `&mut Path`,
-                // which would keep `self.src`/`self.dest` exclusively borrowed for
-                // the rest of the iteration. Capture the saved length directly and
-                // restore via `set_length` after the body (and before any error
-                // return) so the truncation happens on every exit, matching `defer`.
+                // A `path.save()` ResetScope would hold `&mut Path` and keep
+                // `self.src`/`self.dest` exclusively borrowed for the rest of
+                // the iteration. Capture the saved length directly and restore
+                // via `set_length` after the body (and before any error return)
+                // so the truncation happens on every exit.
                 let src_saved_len = self.src.len();
                 // `OsAbsPath`/`OsPath` use `CheckLength::ASSUME`, so `append`'s
                 // `Err(MaxPathExceeded)` arm is statically unreachable (Zig returns
@@ -130,11 +126,8 @@ impl Hardlinker {
                             // `dest` may already be absolute (global virtual store
                             // entries live under the cache, not cwd); only prefix the
                             // working-directory path when it's project-relative.
-                            // PORT NOTE: borrowck — Zig held both `dest_cwd` and
-                            // `self.dest.slice()` simultaneously; here `dest_cwd`
-                            // borrows `cwd_buf` and `self.dest.slice()` borrows
-                            // `self`, which is fine, but stash the dest slice once
-                            // so the borrow doesn't span the buffer-mut below.
+                            // Stash the dest slice once so the `&self` borrow
+                            // doesn't span the buffer-mut below.
                             let dest_slice: &[u16] = self.dest.slice();
                             let dest_parts: &[&[u16]] = if !dest_slice.is_empty()
                                 && bun_paths::Platform::Windows.is_absolute_t::<u16>(dest_slice)
@@ -254,11 +247,10 @@ impl Hardlinker {
                     sys::Result::Err(err) => return Ok(sys::Result::Err(err)),
                 };
 
-                // PORT NOTE: reshaped for borrowck — Zig's `var s = dest.save();
-                // defer s.restore();` returns a `ResetScope` holding `&mut Path`,
-                // which would keep `self.dest` exclusively borrowed across the
-                // body. Capture `len()` and restore via `set_length()` after the
-                // body so the truncation runs on every exit, matching `defer`.
+                // A `dest.save()` ResetScope would hold `&mut Path` and keep
+                // `self.dest` exclusively borrowed across the body. Capture
+                // `len()` and restore via `set_length()` after the body so the
+                // truncation runs on every exit.
                 let dest_saved_len = self.dest.len();
                 let _ = self.dest.append(entry.path.as_bytes()); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 

@@ -16,10 +16,10 @@ use crate::{
 #[crate::JsClass]
 pub struct ResolveMessage {
     pub msg: bun_ast::Msg,
-    // PORT NOTE: Zig stored `allocator: std.mem.Allocator` here; dropped — fields own their
+    // Note: Zig stored `allocator: std.mem.Allocator` here; dropped — fields own their
     // allocations and free on Drop / finalize.
     //
-    // PORT NOTE: Zig stored `referrer: ?Fs.Path` and only ever read `.text`;
+    // Note: Zig stored `referrer: ?Fs.Path` and only ever read `.text`;
     // store the duped text directly so we don't pull in `bun_paths::fs::Path`
     // (which is lifetime-parameterised over its backing buffer).
     pub referrer: Option<Box<[u8]>>,
@@ -149,7 +149,7 @@ impl ResolveMessage {
             .ok();
             return out;
         }
-        // PORT NOTE: matching against interned bun_core::Error consts (Zig: `switch (err)`).
+        // Note: matching against interned bun_core::Error consts (Zig: `switch (err)`).
         if err == bun_core::err!("ModuleNotFound") {
             if referrer == b"bun:main" {
                 write!(&mut out, "Module not found '{}'", BStr::new(specifier)).ok();
@@ -237,8 +237,9 @@ impl ResolveMessage {
             return out;
         }
 
-        // TODO(port): `toExternalValue` transfers ownership of `text` to JSC; ensure
-        // `ZigString::to_external_value` consumes the Vec without double-free.
+        // `to_external_value` transfers ownership of `text` to JSC: the Box is
+        // leaked here (single transfer via `heap::release`) and freed exactly
+        // once by JSC's external-string finalizer with the global allocator.
         let leaked = text.into_boxed_slice();
         let mut str = ZigString::init(bun_core::heap::release(leaked));
         str.set_output_encoding();

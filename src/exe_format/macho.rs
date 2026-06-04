@@ -94,7 +94,7 @@ impl MachoFile {
 
         let mut found_bun = false;
 
-        // PORT NOTE: reshaped for borrowck — capture base ptr as usize before iterating so we can
+        // reshaped for borrowck — capture base ptr as usize before iterating so we can
         // compute byte offsets without holding a borrow of self.data across the mutable writes below.
         let base_addr = self.data.as_ptr() as usize;
         let mut iter = self.iterator();
@@ -473,7 +473,7 @@ impl MachoFile {
     }
 
     pub fn build(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig used `writer: anytype`; std::io::Write is the canonical
+        // Zig used `writer: anytype`; std::io::Write is the canonical
         // Rust equivalent (bun_io has no Write trait).
         writer.write_all(&self.data)?;
         Ok(())
@@ -498,8 +498,10 @@ impl MachoFile {
         Ok(())
     }
 
+    // Returns `bun_core::Error` (the repo-wide union type) rather than a bespoke
+    // `MachoError | io::Error` enum: `From<MachoError>` routes through
+    // `Error::from_name`, so variant names survive into the caller's `e.name()`.
     pub fn build_and_sign(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         if self.header.cputype == macho::CPU_TYPE_ARM64
             && feature_flag::BUN_NO_CODESIGN_MACHO_BINARY.get() != Some(true)
         {
@@ -664,8 +666,8 @@ impl MachoSigner {
         super_blob_header_size + blob_index_size + code_dir_length
     }
 
+    // `bun_core::Error` union return — see the note on `build_and_sign`.
     pub(crate) fn sign(&mut self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         const PAGE_SIZE: usize = MachoSigner::SIGNATURE_PAGE_SIZE;
         const HASH_SIZE: usize = MachoSigner::SIGNATURE_HASH_SIZE;
 
@@ -751,7 +753,7 @@ impl MachoSigner {
         self.data.extend_from_slice(id);
 
         // Hash and write pages
-        // PORT NOTE: reshaped for borrowck — index instead of slicing self.data while pushing.
+        // reshaped for borrowck — index instead of slicing self.data while pushing.
         let mut off: usize = 0;
         let end = self.sig_off;
         while end - off >= PAGE_SIZE {

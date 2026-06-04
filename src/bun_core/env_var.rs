@@ -26,14 +26,12 @@
 //!                      everything. This means that we potentially scan through envp a lot of
 //!                      times, even though we could only do it once.
 
-// TODO(port): The Zig original uses comptime type-returning functions (`New`, `PlatformSpecificNew`)
+// The Zig original uses comptime type-returning functions (`New`, `PlatformSpecificNew`)
 // that take comptime string keys + option structs and return a unique type per env var with an
 // embedded `static` cache. Rust cannot parameterize a generic type on `&'static str` + a struct
 // value in stable, so this port models `New`/`PlatformSpecificNew` as `macro_rules!` that emit a
 // module per env var. In Zig the declarations come first and the type-generator fns come last;
-// here the macros must be defined (or `#[macro_use]`d) before the declarations. The macro
-// definitions could move into a sibling `env_var_impl.rs` and be `#[macro_use]`d to restore Zig
-// declaration order in this file.
+// here the macros must be defined (or `#[macro_use]`d) before the declarations.
 
 use core::sync::atomic::{AtomicPtr, AtomicU8, AtomicU64, AtomicUsize, Ordering};
 
@@ -508,9 +506,9 @@ pub(crate) mod kind {
         // `const fn new()` time.
         pub(crate) struct Cache {
             value: AtomicU64,
-            // TODO(port): in Zig `ip` is a comptime param baked into the type; here it lives as
-            // runtime data on the static. The `default_fallback` arm in handle_error was a
-            // `@compileError` when no default was set — that compile-time check is lost.
+            // In Zig `ip` is a comptime param baked into the type; here it lives as runtime
+            // data on the static. The `default_fallback` arm in handle_error was a
+            // `@compileError` when no default was set — that check is runtime-only here.
             ip: Input,
         }
 
@@ -645,10 +643,10 @@ pub(crate) use new;
 #[macro_export]
 #[doc(hidden)]
 macro_rules! platform_specific_new {
-    // TODO(port): this macro is a draft of the Zig comptime type-generator. It expands to a
+    // Port of the Zig comptime type-generator. It expands to a
     // `pub mod $name { pub fn get() / key() / platform_get() / ... }` so call sites read
     // `env_var::HOME::get()` like Zig's `env_var.HOME.get()`. The opts-parsing arms below cover
-    // exactly the option shapes used in this file; harden / generalize if new shapes appear.
+    // exactly the option shapes used in this file; new shapes need new arms.
     (
         $vis:vis $name:ident : $kind:ident,
         posix = $posix:tt, windows = $windows:tt,
@@ -670,9 +668,9 @@ macro_rules! platform_specific_new {
             );
 
             // Zig computed `DefaultType`/`ReturnType` at comptime from whether `opts.default` is
-            // set. We expose the default + a const HAS_DEFAULT and always return Option<ValueType>;
-            // a thin `pub fn get() -> ValueType` wrapper that `.unwrap()`s is added when a default
-            // exists. TODO(port): restore the non-nullable `get()` return type for defaulted vars.
+            // set, making `get()` non-optional for defaulted vars. A `macro_rules!` expansion
+            // can't vary the return type on an optional opt, so `get()` always returns
+            // `Option<ValueType>` (always `Some` when `DEFAULT` is `Some`).
             pub(crate) const DEFAULT: Option<K::ValueType> =
                 $crate::env_var::__default_opt!($kind, { $($opts)* });
 
@@ -726,9 +724,9 @@ macro_rules! platform_specific_new {
                 None
             }
 
-            // TODO(port): `getNotEmpty` only makes sense for string-kind vars (it calls `.len`).
-            // In Zig, lazy compilation means it simply isn't instantiated for non-string vars.
-            // Could gate this fn on `$kind == string` via a separate macro arm.
+            // `getNotEmpty` only makes sense for string-kind vars (it calls `.len`). In Zig,
+            // lazy compilation means it simply isn't instantiated for non-string vars; here the
+            // `HasLen` bound does the same gating — calls on non-string kinds fail to compile.
             pub fn get_not_empty() -> Option<K::ValueType>
             where
                 K::ValueType: $crate::env_var::HasLen,
@@ -802,18 +800,15 @@ macro_rules! platform_specific_new {
             }
 
             fn assert_platform_supported() {
-                // Zig: `@compileError` when the current platform's key is null.
-                // TODO(port): Rust cannot `compile_error!` from inside a const-evaluated `if cfg!`
-                // without separate macro arms per (posix=None / windows=None) combination. Could
-                // split the macro so e.g. `posix = None` emits `#[cfg(unix)] compile_error!`.
+                // Zig: `@compileError` when the current platform's key is null. Zig only
+                // instantiates this lazily (per call site); a Rust `compile_error!` here would
+                // fire unconditionally on the unsupported platform even when nothing calls
+                // `get()`, so the closest faithful port is a debug assertion.
                 debug_assert!(
                     platform_key().is_some(),
-                    concat!(
-                        "Cannot retrieve the value of ",
-                        // TODO(port): COMPTIME_KEY is &[u8]; concat! wants literals
-                        "<env var>",
-                        " since no key is associated with it on this platform."
-                    )
+                    "Cannot retrieve the value of {} since no key is associated with it on this platform.",
+                    ::core::str::from_utf8($crate::env_var::__first_key!($posix, $windows))
+                        .unwrap_or("<env var>")
                 );
             }
         }
@@ -822,8 +817,6 @@ macro_rules! platform_specific_new {
 pub(crate) use platform_specific_new;
 
 // ─── helper macros for platform_specific_new! ───
-// TODO(port): these are scaffolding for the draft macro; could be replaced with a cleaner
-// trait-based design once the call-site shape is settled.
 
 #[doc(hidden)]
 #[macro_export]

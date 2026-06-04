@@ -13,11 +13,12 @@ use crate::dependency as Dependency;
 use crate::hosted_git_info;
 use crate::install::{self as Install, ExtractData, PackageManager};
 
-// TODO(port): bun.ThreadlocalBuffers — Zig returns a raw pointer into thread-local
-// storage so callers can return slices that outlive the access. Rust thread_local!
-// closures cannot express this without unsafe. TODO(refactor): either (a) make
-// try_ssh/try_https take an out-buffer, or (b) wrap in a type that hands out
-// a raw `*mut PathBuffer` via UnsafeCell with documented single-use invariant.
+// bun.ThreadlocalBuffers — Zig returns a raw pointer into thread-local storage so
+// callers can return slices that outlive the access (`try_ssh`/`try_https` hand a
+// slice straight to `download`). Rust `thread_local!` closures cannot express that
+// without unsafe, so this mirrors the Zig scheme: a leaked per-thread allocation
+// with per-field projection accessors and a documented single-use-per-field
+// invariant (see `tl_bufs()` / the `TlBufs` accessor docs below).
 struct TlBufs {
     final_path_buf: PathBuffer,
     ssh_path_buf: PathBuffer,
@@ -230,7 +231,7 @@ pub(crate) struct SharedEnv {
     env: Option<bun_dotenv::Map>,
 }
 
-// PORT NOTE: Zig's `pub var shared_env` is a process-global anon-struct whose
+// Zig's `pub var shared_env` is a process-global anon-struct whose
 // `get()` lazily clones `other.map` once and returns the `DotEnv.Map` handle by
 // value (Zig struct copy — both copies alias the same backing storage). Rust's
 // `Map` owns its storage and is not `Copy`, so we hand out a `&'static Map` into
@@ -369,12 +370,11 @@ pub trait RepositoryExt: Sized {
 /// free fn because trait methods cannot be private; called only from this
 /// file's `download`/`find_commit`/`checkout`.
 fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
-    // PORT NOTE: Zig passed `DotEnv.Map` by struct-copy (shallow). Rust's
+    // Zig passed `DotEnv.Map` by struct-copy (shallow). Rust's
     // `Map` is move-only; clone via `clone_with_allocator` so callers can
     // hand us a shared `&Map` (matches `PackageManagerTask` call sites).
     let mut env = bun_core::handle_oom(env.clone_with_allocator());
     let std_map = env.std_env_map()?;
-    // TODO(port): narrow error set
 
     // Zig used `std.process.Child.run` on both Windows and POSIX (identical
     // arms). `bun_spawn::run` is its Rust port — POSIX argv/envp marshalling
@@ -491,7 +491,7 @@ impl RepositoryExt for Repository {
         string_buf: &[u8],
         dep: &Install::Dependency,
     ) -> Vec<u8> {
-        // PORT NOTE: Zig took `*Lockfile` and indexed `buffers.dependencies[dep_id]`
+        // Zig took `*Lockfile` and indexed `buffers.dependencies[dep_id]`
         // / `string_bytes`. Callers (`parse_with_json`) hold a split `StringBuilder`
         // borrow on `string_bytes`, so accept the two pieces directly.
         let buf = string_buf;
@@ -558,7 +558,8 @@ impl RepositoryExt for Repository {
     }
 
     fn try_ssh(url: &[u8]) -> Option<&[u8]> {
-        // TODO(port): lifetime — returns slice into thread-local buffer; see tl_bufs().
+        // May return a slice into the thread-local `ssh_path_buf` (see `tl_bufs()`);
+        // it is only valid until the next `try_ssh` call on this thread.
         let ssh_path_buf = TlBufs::ssh_path_buf();
         // Do not cast explicit http(s) URLs to SSH
         if url.starts_with(b"http") {
@@ -628,7 +629,9 @@ impl RepositoryExt for Repository {
     }
 
     fn try_https(url: &[u8]) -> Option<&[u8]> {
-        // TODO(port): lifetime — returns slice into thread-local buffer; see tl_bufs().
+        // May return a slice into the thread-local `final_path_buf` (see `tl_bufs()`);
+        // it is only valid until the next use of `TlBufs::final_path_buf()` on this
+        // thread (another `try_https` call, or `checkout`'s `get_fd_path`).
         let final_path_buf = TlBufs::final_path_buf();
         if url.starts_with(b"http") {
             return Some(url);
@@ -700,7 +703,6 @@ impl RepositoryExt for Repository {
                 bun_core::fmt::hex_int_lower::<16>(task_id.get())
             )
             .map_err(|_| err!("NoSpaceLeft"))?;
-            // TODO(port): narrow error set
             let written = total - cursor.len() - 1;
             bun_core::ZStr::from_buf(&folder_name_buf[..], written)
         };
@@ -779,7 +781,6 @@ impl RepositoryExt for Repository {
                 bun_core::fmt::hex_int_lower::<16>(task_id.get())
             )
             .map_err(|_| err!("NoSpaceLeft"))?;
-            // TODO(port): narrow error set
             let written = total - cursor.len();
             &folder_name_buf[..written]
         };
@@ -825,9 +826,9 @@ impl RepositoryExt for Repository {
             }
         };
 
+        // Zig returned a (possibly interior) slice into `exec`'s allocation; here the
+        // trimmed bytes are copied so the return value owns its storage.
         Ok(strings::trim(&out, b" \t\r\n").to_vec())
-        // TODO(port): Zig returned a slice into `exec`'s allocation without trimming
-        // in-place; here we own `out` and copy the trimmed slice. Revisit ownership.
     }
 
     fn checkout(

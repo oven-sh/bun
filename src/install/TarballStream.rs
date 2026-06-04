@@ -61,7 +61,7 @@ enum Phase {
     Done,
 }
 
-// PORT NOTE: `extract_task` / `package_manager` are raw pointers, not
+// `extract_task` / `package_manager` are raw pointers, not
 // `&'a mut` / `&'a`. The Zig original stores `*Task` / `*PackageManager`
 // (freely-aliasing). This struct is heap-allocated (`heap::alloc`),
 // crosses threads via `drain_task`, and self-destroys in `finish()`, so a
@@ -966,7 +966,7 @@ impl TarballStream {
         // are live raw pointers; this fn is the sole owner. After
         // `heap::take(this)` nothing touches `this`.
         unsafe {
-            // Fields are already raw pointers (see struct PORT NOTE), so copying
+            // Fields are already raw pointers (see the struct-level note), so copying
             // them out before `heap::take(this)` is just a pointer copy — no
             // reborrow of `&mut Task` is ever materialised from a stored `&mut`.
             let task: *mut Task = (*this).extract_task.as_mut_ptr();
@@ -1511,7 +1511,6 @@ fn apply_windows_npm_path_escapes(path: OSPathZMut) {
 // current index (vendor/zig/lib/std/mem.zig) before returning
 // `buffer[index..]`, so for `"package/index.js"` the result is `"index.js"`
 // (no leading `/`).
-// TODO(port): Phase B — hoist into bun_str or bun_paths if reused elsewhere.
 fn tokenize_rest_after_first(s: &[OSPathChar]) -> &[OSPathChar] {
     let mut i = 0;
     while i < s.len() && s[i] == ('/' as OSPathChar) {

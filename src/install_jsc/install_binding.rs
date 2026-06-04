@@ -22,7 +22,7 @@ pub mod bun_install_js_bindings {
         obj
     }
 
-    // PORT NOTE: lives at module scope (not in an `impl`) because the
+    // Lives at module scope (not in an `impl`) because the
     // `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
     // a `Self::` qualifier, so the wrapped fn must resolve unqualified.
     #[bun_jsc::host_fn]
@@ -67,7 +67,7 @@ pub mod bun_install_js_bindings {
 
         let mut lockfile_ = Lockfile::default();
 
-        // PORT NOTE: reshaped for borrowck — Zig walked
+        // Reshaped for borrowck — Zig walked
         // `globalObject.bunVM().transpiler.resolver` through chained pointer
         // dereferences. `bun_vm()` returns `*mut VirtualMachine` (raw, mirroring
         // Zig's `*VirtualMachine`); deref locally so the env-loader fixup and the

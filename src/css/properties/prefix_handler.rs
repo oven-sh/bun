@@ -9,7 +9,9 @@ use bun_alloc::ArenaVecExt as _;
 pub struct FallbackHandler {
     pub color: Option<usize>,
     pub text_shadow: Option<usize>,
-    // TODO: add these back plz
+    // The remaining fallback fields are not implemented yet. This mirrors the Zig
+    // source (prefix_handler.zig), which has the same fields commented out; add them
+    // here when they are added there.
     // filter: Option<usize>,
     // backdrop_filter: Option<usize>,
     // fill: Option<usize>,
@@ -28,12 +30,10 @@ impl FallbackHandler {
         // The Zig source does `inline for (std.meta.fields(FallbackHandler))` and uses
         // `@field` / `@unionInit` keyed on the field name. Rust has no field reflection,
         // so we expand each (field, Property variant, has_vendor_prefix) pair via macro.
-        // TODO(port): proc-macro — if the field list grows, generate these arms from a
-        // single source of truth shared with `Property`/`PropertyIdTag`.
 
         let arena = dest.bump();
 
-        // PORT NOTE: Zig's `inline for` over `std.meta.fields(FallbackHandler)` dispatched
+        // Zig's `inline for` over `std.meta.fields(FallbackHandler)` dispatched
         // each (field, Property variant) pair via a single generic body using `@field` /
         // `@unionInit` + `css.generic.{deepClone,isCompatible,hasGetFallbacks}`. Rust has
         // no field reflection and the generic-trait surface (`DeepClone`/`IsCompatible`/
@@ -53,7 +53,7 @@ impl FallbackHandler {
                     let mut val = ($dc)(payload, arena);
 
                     if $self_field.is_none() {
-                        // PORT NOTE: `has_fallbacks` only used in the vendor-prefixed branch in Zig.
+                        // Zig only consulted `has_fallbacks` in the vendor-prefixed branch.
                         ($fb)(&mut val, arena, &context.targets, dest);
                     }
 
@@ -75,7 +75,7 @@ impl FallbackHandler {
             };
         }
 
-        // PORT NOTE: reshaped for borrowck — pre-borrow each self.<field> as &mut so the
+        // Reshaped for borrowck — pre-borrow each self.<field> as &mut so the
         // macro body can both read and assign it without re-borrowing `self`.
         let this = &mut *self;
         let color = &mut this.color;
@@ -138,11 +138,7 @@ impl FallbackHandler {
                 return false;
             };
 
-            // TODO(port): re-enable once `PropertyHandlerContext::add_unparsed_fallbacks`
-            // un-gates (blocked on `SupportsCondition::eql` in context.rs).
-
             context.add_unparsed_fallbacks(arena, &mut unparsed);
-            let _ = &mut unparsed;
             if let Some(i) = *index {
                 dest[i] = Property::Unparsed(unparsed);
             } else {

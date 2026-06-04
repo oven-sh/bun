@@ -196,7 +196,11 @@ pub fn convert_stmts_for_chunk(
                             ));
 
                             if let Some(mod_) = module_exports_for_export {
-                                // TODO(port): Zig writes args[3] which is out-of-bounds (len is 3); preserved as args[2] — verify intent.
+                                // The Zig source wrote `args[3]`, out of bounds
+                                // for the len-3 slice it allocated; the intent —
+                                // per the "__reExport(exports, ns, module.exports)"
+                                // call shape above — is the third argument, so
+                                // append at index 2.
                                 args.push(mod_);
                             }
 

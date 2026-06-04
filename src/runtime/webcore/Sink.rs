@@ -7,7 +7,7 @@ use bun_core::strings;
 use bun_jsc::{JSGlobalObject, JSValue};
 use bun_sys::{self as sys, Error as SysError};
 
-// PORT NOTE: re-export the real ArrayBufferSink so `crate::webcore::sink::ArrayBufferSink`
+// Re-export the real ArrayBufferSink so `crate::webcore::sink::ArrayBufferSink`
 // resolves to the full type (with `bytes`/`signal`/`destroy`) for Body.rs.
 pub use crate::webcore::array_buffer_sink::ArrayBufferSink;
 
@@ -18,7 +18,7 @@ impl JSSink<ArrayBufferSink> {
     /// instantiation. Unprotects the controller cell stashed in `signal.ptr`
     /// and tells C++ to drop its back-pointer. Called from
     /// `Body::ValueBufferer` Drop / reject paths.
-    // PORT NOTE: renamed from `detach` to avoid colliding with the generic
+    // Renamed from `detach` to avoid colliding with the generic
     // `JSSink<T: JsSinkAbi>::detach(signal, global)` associated fn — Rust
     // forbids same-name items across impl blocks for the same type even with
     // different signatures (E0592).
@@ -43,13 +43,15 @@ pub struct Sink<'a> {
 }
 
 impl<'a> Sink<'a> {
-    // TODO(port): `pending` uses @ptrFromInt(0xaaaaaaaa) as a sentinel non-null pointer
-    // and `vtable: undefined`. Cannot express as `&'a mut ()` safely; should
-    // re-evaluate `ptr` field type (likely `NonNull<c_void>` for the vtable-erased
-    // pattern) or provide `Sink::pending()` constructing with a dangling NonNull.
+    // Zig used `@ptrFromInt(0xaaaaaaaa)` as a sentinel non-null pointer and
+    // `vtable: undefined`. `ptr` stays `&'a mut ()`: a reference to a
+    // zero-sized type only needs a non-null, aligned address, so a dangling
+    // pointer is a *valid* `&mut ()` (the same rule `Box<()>` relies on).
     pub fn pending() -> Sink<'static> {
-        // SAFETY: sentinel address never dereferenced; status == Closed gates all dispatch
-        // so neither `ptr` nor `vtable` is used before being overwritten by init_with_type.
+        // SAFETY: `()` is zero-sized, so `NonNull::dangling()` (non-null,
+        // aligned) is valid to reborrow as `&mut ()`; nothing is ever read or
+        // written through it. status == Closed gates all dispatch so neither
+        // `ptr` nor `vtable` is used before being overwritten by init_with_type.
         //
         // The Zig original used `vtable: undefined`. In Rust, both `zeroed()` and
         // `MaybeUninit::uninit().assume_init()` are immediate UB for a struct of
@@ -59,7 +61,7 @@ impl<'a> Sink<'a> {
         // `undefined` would have hidden) into a loud, deterministic crash.
         unsafe {
             Sink {
-                ptr: &mut *(0xaaaa_aaaa_usize as *mut ()),
+                ptr: &mut *core::ptr::NonNull::<()>::dangling().as_ptr(),
                 vtable: VTable::PENDING,
                 status: Status::Closed,
                 used: false,
@@ -189,7 +191,6 @@ pub struct UTF8Fallback;
 // html_rewriter (Zig nested-type style). Expose via inherent-impl associated
 // type alias once inherent associated types are stable; for now consumers
 // should reference `crate::webcore::sink::UTF8Fallback` directly.
-// TODO(port): inherent associated type — `impl Sink { pub type UTF8Fallback = UTF8Fallback; }`.
 
 impl UTF8Fallback {
     const STACK_SIZE: usize = 1024;
@@ -223,12 +224,15 @@ impl UTF8Fallback {
 
         {
             // Zig: bun.default_allocator.alloc(u8, str.len) catch return .{ .err = Syscall.Error.oom }
-            // TODO(port): allocation-failure handling — Rust Vec aborts on OOM (no unwind);
-            // should route through bun_alloc fallible alloc to preserve `.err = oom`.
-            let mut slice = vec![0u8; str_.len()];
-            slice[..str_.len()].copy_from_slice(str_);
+            // — allocate fallibly so memory pressure surfaces as `.err = oom`
+            // instead of aborting the process.
+            let mut slice: Vec<u8> = Vec::new();
+            if slice.try_reserve_exact(str_.len()).is_err() {
+                return streams::result::Writable::Err(SysError::oom());
+            }
+            slice.extend_from_slice(str_);
 
-            strings::replace_latin1_with_utf8(&mut slice[..str_.len()]);
+            strings::replace_latin1_with_utf8(&mut slice[..]);
             if input.is_done() {
                 write_fn(
                     ctx,
@@ -273,11 +277,24 @@ impl UTF8Fallback {
         }
 
         {
-            // TODO(port): allocation-failure handling — `bun_core::strings::to_utf8_alloc`
-            // re-exports the bun_core variant which aborts on OOM (returns Vec<u8>, not
-            // Result). Should route through a fallible allocator to preserve
-            // `.err = oom`.
-            let allocated = strings::to_utf8_alloc(str_);
+            // Zig: strings.toUTF8Alloc(...) catch return .{ .err = Syscall.Error.oom }.
+            // UTF-8 (and the WTF-8 lone-surrogate fallback) needs at most 3
+            // bytes per UTF-16 code unit; reserving that fallibly up front
+            // (plus the 16-byte slack `to_utf8_append_to_list` asks for) makes
+            // the append below allocation-free, so memory pressure surfaces
+            // as `.err = oom` instead of aborting the process.
+            let Some(worst_case) = str_
+                .len()
+                .checked_mul(3)
+                .and_then(|n| n.checked_add(16))
+            else {
+                return streams::result::Writable::Err(SysError::oom());
+            };
+            let mut allocated: Vec<u8> = Vec::new();
+            if allocated.try_reserve_exact(worst_case).is_err() {
+                return streams::result::Writable::Err(SysError::oom());
+            }
+            strings::to_utf8_append_to_list(&mut allocated, str_);
             if input.is_done() {
                 write_fn(
                     ctx,
@@ -688,7 +705,7 @@ impl<T: JsSinkAbi> JSSink<T> {
 /// a `streams::Signal`. The pointer stored in `Signal.ptr` is the encoded
 /// JSValue bits, never dereferenced; vtable thunks bitcast back and call the
 /// generated `${abi_name}__onClose` / `__onReady` externs.
-// PORT NOTE: Zig nested-type `JSSink(SinkType, abi).SinkSignal` would be an
+// Zig nested-type `JSSink(SinkType, abi).SinkSignal` would be an
 // inherent associated type in Rust (unstable). Expose as a free generic and
 // let each caller alias via `type SinkSignal = sink::SinkSignal<Self>;`.
 #[repr(C)]
@@ -697,7 +714,7 @@ pub struct SinkSignal<T>(core::marker::PhantomData<T>);
 impl<T: JsSinkAbi> SinkSignal<T> {
     pub fn init(cpp: crate::webcore::jsc::JSValue) -> Signal {
         use crate::webcore::jsc::JSValue;
-        // PORT NOTE: bypass `Signal::init_with_type` (which would form a fake
+        // Bypass `Signal::init_with_type` (which would form a fake
         // `&mut SinkSignal<T>` ref); build the vtable directly so `this` stays
         // a raw bit-pattern (`@setRuntimeSafety(false)` in Zig).
         fn close<T: JsSinkAbi>(this: *mut c_void, _err: Option<SysError>) {
@@ -957,7 +974,7 @@ impl<T: JsSinkType + JsSinkAbi> JSSink<T> {
             return Err(global.throw_value(err));
         }
 
-        // PORT NOTE: Zig's `defer { if (done) unprotect() }` — `unprotect` is a
+        // Zig's `defer { if (done) unprotect() }` — `unprotect` is a
         // no-op in the current port, so the guard is folded out.
 
         if T::HAS_FLUSH_FROM_JS {
@@ -1153,7 +1170,7 @@ bun_opaque::opaque_ffi! {
     pub struct Detached;
 }
 
-// PORT NOTE: `bun_ptr::impl_tagged_ptr_union!` would impl the foreign
+// `bun_ptr::impl_tagged_ptr_union!` would impl the foreign
 // `TypeList` trait for a tuple type, hitting orphan rules from this crate.
 // Hand-roll a local marker struct + impls instead (matches the
 // `AnyServerTypes` pattern in server_body.rs). The second variant
@@ -1201,16 +1218,16 @@ pub extern "C" fn Bun__onSinkDestroyed(ptr_value: *mut c_void, sink_ptr: *mut c_
         return;
     }
 
-    // TODO(port): TaggedPtrUnion tag matching — Zig uses `@typeName(Detached)` /
-    // `@typeName(Subprocess)` as tag values via `@field(DestructorPtr.Tag, ...)`.
-    // bun_collections::TaggedPtrUnion should expose typed `as::<T>() -> Option<&mut T>`.
+    // Zig matched tags via `@typeName(Detached)` / `@typeName(Subprocess)`
+    // (`@field(DestructorPtr.Tag, ...)`); here `is::<Detached>()` covers the
+    // typed member and the Subprocess arm is matched by `is_valid()` below.
     if ptr.is::<Detached>() {
         return;
     }
     if ptr.is_valid() {
-        // TODO(port): `Subprocess<'_>` cannot implement `UnionMember` (lifetime
-        // param), so it isn't part of `DestructorPtr`'s type list yet — cast the raw
-        // pointer directly until the second variant is restored.
+        // `Subprocess<'_>` cannot implement `UnionMember` (lifetime param), so
+        // it isn't part of `DestructorPtr`'s type list — cast the raw pointer
+        // directly (see `destructor_ptr_subprocess`, which encodes it).
         //
         // Spec Sink.zig:641 `ptr.as(Subprocess)` → `TaggedPointer.get`, which
         // masks to the low 49 address bits. `DestructorPtr::ptr()` is

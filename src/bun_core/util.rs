@@ -250,7 +250,7 @@ impl ZStr {
     // The slice metadata of the returned `Box<ZStr>` covers `bytes.len() + 1`
     // (i.e. INCLUDES the trailing NUL) so `Drop` deallocates the full
     // allocation; `as_bytes()` will therefore include the trailing NUL.
-    // TODO(port): retire once all `Box<ZStr>` fields are migrated to `ZBox`.
+    // Retire once all `Box<ZStr>` fields are migrated to `ZBox`.
     pub fn boxed(bytes: &[u8]) -> Box<ZStr> {
         let mut v = Vec::with_capacity(bytes.len() + 1);
         v.extend_from_slice(bytes);
@@ -1464,9 +1464,10 @@ pub unsafe fn fd_path_raw(fd: Fd, buf: *mut u8, cap: usize) -> isize {
 }
 
 /// Wide-char fd → path (Windows `GetFinalPathNameByHandleW`). Returns code
-/// units written (>0), <0 on error, 0 on non-Windows. Body is a single
-/// kernel32 call, so it lives at T0 — moved down from `bun_sys` per
-/// PORTING.md (no cross-crate extern).
+/// units written (>0), -1 on lookup failure (Zig `error.FileNotFound`),
+/// -2 when the buffer is too small (Zig `error.NameTooLong`), 0 on
+/// non-Windows. Body is a single kernel32 call, so it lives at T0 — moved
+/// down from `bun_sys` per PORTING.md (no cross-crate extern).
 ///
 /// SAFETY: `buf` must be valid for `cap` writable `u16` units.
 pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
@@ -1487,8 +1488,13 @@ pub unsafe fn fd_path_raw_w(fd: Fd, buf: *mut u16, cap: usize) -> isize {
         // out_buffer.len) return error.NameTooLong;` — `>=` because a return
         // value equal to `cap` is the buffer-too-small sentinel (required size
         // including NUL), not a successful write of `cap` chars.
-        if n == 0 || n >= cap {
+        if n == 0 {
+            // Lookup failure → Zig `error.FileNotFound`.
             return -1;
+        }
+        if n >= cap {
+            // Buffer too small → Zig `error.NameTooLong`.
+            return -2;
         }
         // Strip the `\\?\` prefix if present so callers see a plain DOS path
         // (matches `bun_sys::windows::GetFinalPathNameByHandle` post-processing).
@@ -2835,7 +2841,7 @@ pub fn is_writable(fd: Fd) -> Pollable {
         result,
         polls[0].revents
     );
-    // PORT NOTE: faithful port of bun.zig:679 — yes, the `WRNORM`-set branch
+    // Faithful port of bun.zig:679 — yes, the `WRNORM`-set branch
     // returns `.hup` (not `.ready`). Kept verbatim to match upstream behaviour.
     if result && (polls[0].revents & ws2_32::POLLWRNORM) != 0 {
         Pollable::Hup
@@ -2911,7 +2917,7 @@ pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
     static CELL: Once<Result<ZBox, crate::Error>> = Once::new();
     let r = CELL.get_or_init(|| {
         let path = std::env::current_exe().map_err(crate::Error::from)?;
-        // PORT NOTE: Zig's `std.fs.selfExePath` resolves symlinks. Rust's
+        // Zig's `std.fs.selfExePath` resolves symlinks. Rust's
         // `current_exe()` already does on Linux (`readlink /proc/self/exe`),
         // but on Darwin it returns the raw `_NSGetExecutablePath` result and on
         // Windows it returns the raw `GetModuleFileNameW` result — neither
@@ -2931,7 +2937,7 @@ pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
         }
         #[cfg(windows)]
         {
-            // PORT NOTE: Zig stored the WTF-8 form. `into_string()` rejects unpaired
+            // Zig stored the WTF-8 form. `into_string()` rejects unpaired
             // surrogates; fall back to the lossy form (Windows exe paths are valid
             // Unicode in practice).
             let mut s = path
@@ -3227,7 +3233,7 @@ macro_rules! __runtime_embed_impl {
 // for building a single contiguous buffer. Allocator param dropped per
 // PORTING.md §Allocators (always `bun.default_allocator`).
 //
-// PORT NOTE: returned sub-slices borrow `*self`, but in Zig they alias the
+// Returned sub-slices borrow `*self`, but in Zig they alias the
 // final `allocated_slice()` and outlive the builder. To keep that pattern
 // without self-referential lifetimes, callers stash `(offset, len)` via
 // `StringPointer` (see install/hosted_git_info.rs).
@@ -4502,7 +4508,9 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         }
         #[cfg(not(unix))]
         {
-            // TODO(port): Windows X_OK via GetFileAttributesW; defer to bun_which.
+            // No X_OK probe here: this tier-0 helper is only reached from the
+            // linux/freebsd `spawn_sync_inherit` path. Windows callers resolve
+            // executables via `bun_which` (PATHEXT-aware) instead.
         }
         None
     };
@@ -4881,7 +4889,34 @@ pub mod spawn_ffi {
     }
 }
 
+/// Stdin disposition for [`spawn_sync_inherit`] / [`spawn_sync_inherit_no_stdin`].
+/// Mirrors Zig `std.process.Child.stdin_behavior` (`.Inherit` / `.Ignore`);
+/// the `.Ignore` case wires fd 0 to `/dev/null` (`NUL` on Windows) so the
+/// child never blocks on a TTY read.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StdinBehavior {
+    Inherit,
+    Ignore,
+}
+
+/// Spawn argv, inherit stdout/stderr, **ignore stdin** (fd 0 ← /dev/null),
+/// wait. Port of Zig `std.process.Child` with `stdin_behavior = .Ignore`,
+/// `stdout_behavior = .Inherit`, `stderr_behavior = .Inherit` (e.g.
+/// init_command.zig:1211-1222).
+pub fn spawn_sync_inherit_no_stdin(
+    argv: &[impl AsRef<[u8]>],
+) -> Result<SpawnStatus, crate::Error> {
+    spawn_sync_inherit_impl(argv, StdinBehavior::Ignore)
+}
+
 pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
+    spawn_sync_inherit_impl(argv, StdinBehavior::Inherit)
+}
+
+fn spawn_sync_inherit_impl(
+    argv: &[impl AsRef<[u8]>],
+    stdin: StdinBehavior,
+) -> Result<SpawnStatus, crate::Error> {
     #[cfg(unix)]
     // SAFETY: argv strings are owned `ZBox`es (NUL-terminated) kept alive in
     // `cargs` for the duration of the spawn; `ptrs`/`environ` are null-
@@ -4920,12 +4955,24 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
             // dup2(n, n) for fds 0..=2 — posix_spawn_bun's Dup2 same-fd path
             // clears CLOEXEC and bumps the close-range floor past stdio. An
             // empty actions list would start the close-range at fd 1.
-            let inherit_stdio: [spawn_ffi::Action; 3] =
+            // StdinBehavior::Ignore swaps the fd-0 action for an Open of
+            // /dev/null (posix_spawn_bun: open(path, flags, mode) → dup2 onto
+            // fds[0]), matching Zig `stdin_behavior = .Ignore`.
+            let mut inherit_stdio: [spawn_ffi::Action; 3] =
                 core::array::from_fn(|fd| spawn_ffi::Action {
                     kind: spawn_ffi::FileActionType::Dup2,
                     fds: [fd as core::ffi::c_int, fd as core::ffi::c_int],
                     ..Default::default()
                 });
+            if stdin == StdinBehavior::Ignore {
+                inherit_stdio[0] = spawn_ffi::Action {
+                    kind: spawn_ffi::FileActionType::Open,
+                    path: c"/dev/null".as_ptr(),
+                    fds: [0, 0],
+                    flags: libc::O_RDONLY,
+                    mode: 0,
+                };
+            }
             let req = spawn_ffi::BunSpawnRequest {
                 actions: spawn_ffi::ActionsList {
                     ptr: inherit_stdio.as_ptr(),
@@ -4951,15 +4998,42 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
         // for the non-PTY inherit case. PTY spawns go through spawn_sys.
         #[cfg(target_os = "macos")]
         let pid: libc::pid_t = {
+            // StdinBehavior::Ignore → file action opening /dev/null onto fd 0
+            // (Zig `stdin_behavior = .Ignore`); stdout/stderr stay inherited.
+            let mut actions: libc::posix_spawn_file_actions_t = core::ptr::null_mut();
+            let actions_ptr: *const libc::posix_spawn_file_actions_t =
+                if stdin == StdinBehavior::Ignore {
+                    let rc = libc::posix_spawn_file_actions_init(&raw mut actions);
+                    if rc != 0 {
+                        return Err(crate::Error::from_errno(rc));
+                    }
+                    let rc = libc::posix_spawn_file_actions_addopen(
+                        &raw mut actions,
+                        0,
+                        c"/dev/null".as_ptr(),
+                        libc::O_RDONLY,
+                        0,
+                    );
+                    if rc != 0 {
+                        libc::posix_spawn_file_actions_destroy(&raw mut actions);
+                        return Err(crate::Error::from_errno(rc));
+                    }
+                    &raw const actions
+                } else {
+                    core::ptr::null()
+                };
             let mut pid: libc::pid_t = 0;
             let rc = libc::posix_spawnp(
                 &raw mut pid,
                 ptrs[0],
-                core::ptr::null(),
+                actions_ptr,
                 core::ptr::null(),
                 ptrs.as_ptr().cast::<*mut core::ffi::c_char>(),
                 environ.cast::<*mut core::ffi::c_char>(),
             );
+            if !actions_ptr.is_null() {
+                libc::posix_spawn_file_actions_destroy(&raw mut actions);
+            }
             if rc != 0 {
                 return Err(crate::Error::from_errno(rc));
             }
@@ -4980,6 +5054,16 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
                 // Child. execvp inherits stdio + environ, which is exactly the
                 // "inherit" contract this helper promises. On failure, _exit
                 // (no destructors / atexit hooks in a forked child).
+                if stdin == StdinBehavior::Ignore {
+                    // Zig `stdin_behavior = .Ignore`: fd 0 ← /dev/null.
+                    let devnull = libc::open(c"/dev/null".as_ptr(), libc::O_RDONLY);
+                    if devnull < 0 || libc::dup2(devnull, 0) < 0 {
+                        libc::_exit(127);
+                    }
+                    if devnull != 0 {
+                        libc::close(devnull);
+                    }
+                }
                 libc::execvp(ptrs[0], ptrs.as_ptr());
                 libc::_exit(127);
             }
@@ -4994,7 +5078,7 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
             target_os = "android",
         )))]
         let pid: libc::pid_t = {
-            let _ = (&ptrs, environ);
+            let _ = (&ptrs, environ, stdin);
             return Err(crate::err!(Unexpected));
         };
 
@@ -5045,6 +5129,10 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
             cmd.arg(to_os(arg.as_ref()));
         }
         // Inherit stdio + environ (Command default), matching Zig `.Inherit`.
+        // StdinBehavior::Ignore → NUL device, matching Zig `.Ignore`.
+        if stdin == StdinBehavior::Ignore {
+            cmd.stdin(std::process::Stdio::null());
+        }
         let status = cmd.status().map_err(|e| match e.kind() {
             std::io::ErrorKind::NotFound => crate::err!("FileNotFound"),
             std::io::ErrorKind::PermissionDenied => crate::err!("AccessDenied"),
@@ -5055,7 +5143,7 @@ pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crat
     }
     #[cfg(not(any(unix, windows)))]
     {
-        let _ = argv;
+        let _ = (argv, stdin);
         Err(crate::err!(Unexpected))
     }
 }
@@ -5661,7 +5749,7 @@ pub mod form_data {
     }
 
     /// `FormData.AsyncFormData` — heap-allocated, owns its `Encoding`.
-    /// PORT NOTE: Zig stored `std.mem.Allocator param`; deleted (non-AST
+    /// Zig stored a `std.mem.Allocator` param; deleted (non-AST
     /// crate, global mimalloc per §Allocators). `deinit` becomes `Drop` on the
     /// `Box`/`Box<[u8]>` fields — no explicit impl needed.
     #[derive(Debug)]

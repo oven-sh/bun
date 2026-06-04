@@ -13,7 +13,7 @@ use bun_alloc::Arena as Bump;
 use bun_alloc::ArenaVecExt as _;
 use bun_core::{String as BunString, immutable as strings};
 
-// PORT NOTE: `strings::Cursor` (immutable.zig CodepointIterator.Cursor). Aliased
+// `strings::Cursor` (immutable.zig CodepointIterator.Cursor). Aliased
 // as `CodepointCursor` so the body reads identically to the Zig source.
 type CodepointCursor = strings::Cursor;
 
@@ -64,7 +64,7 @@ pub mod ast {
     // (mirrors Zig's nesting where `SmolList` lives under the AST namespace).
     pub use super::SmolList;
 
-    // PORT NOTE: Zig AST nodes hold `[]T` slices (ptr+len, copyable). The Rust
+    // Zig AST nodes hold `[]T` slices (ptr+len, copyable). The Rust
     // port uses `&'arena [T]` so the whole tree is `Clone`/`Copy`-able like
     // Zig — required by `Atom::merge` and `SmolList::init_with_slice`.
 
@@ -115,7 +115,7 @@ pub mod ast {
     }
 
     #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
-    // PORT NOTE: must match Zig `@tagName(AST.Expr.Tag)` exactly — used in
+    // must match Zig `@tagName(AST.Expr.Tag)` exactly — used in
     // user-visible parser errors (see add_error_expected_pipeline_item).
     #[strum(serialize_all = "snake_case")]
     pub(crate) enum ExprTag {
@@ -623,7 +623,7 @@ pub mod ast {
             self.contains(Self::DUPLICATE_OUT)
         }
 
-        // PORT NOTE: shell.zig RedirectFlags.isEmpty() — bitflags already
+        // shell.zig RedirectFlags.isEmpty() — bitflags already
         // generates `is_empty()`; expose under the Zig spelling for parity.
         #[inline]
         pub fn isEmpty(self) -> bool {
@@ -648,14 +648,6 @@ pub mod ast {
                     }
                 }
             }
-        }
-
-        // TODO(port): Zig fns @"2>&1"/@"1>&2" reference nonexistent `.duplicate` field — likely dead code.
-        pub fn two_gt_amp_one() -> RedirectFlags {
-            Self::STDERR | Self::DUPLICATE_OUT
-        }
-        pub fn one_gt_amp_two() -> RedirectFlags {
-            Self::STDOUT | Self::DUPLICATE_OUT
         }
 
         pub fn to_flags(self) -> i32 {
@@ -762,7 +754,7 @@ pub mod ast {
             use SimpleAtom as SA;
             match (&self, right) {
                 (Atom::Simple(l), Atom::Simple(r)) => {
-                    // PORT NOTE: Zig `try allocator.alloc(SimpleAtom, 2)` —
+                    // Zig `try allocator.alloc(SimpleAtom, 2)` —
                     // bumpalo has no fill_default for non-Default types, so
                     // seed with `QuotedEmpty` then overwrite.
                     let atoms = bump.alloc_slice_fill_with(2, |_| SimpleAtom::QuotedEmpty);
@@ -889,8 +881,6 @@ pub mod ast {
         pub script: Script<'arena>,
         pub quoted: bool,
     }
-    // TODO(port): Script contains &'arena mut — Clone is wrong; revisit.
-
     impl<'arena> CmdSubst<'arena> {
         pub fn memory_cost(&self) -> usize {
             let mut cost = size_of::<Self>();
@@ -976,7 +966,6 @@ pub struct ParserError<'bump> {
 }
 
 type ParseResult<T> = Result<T, bun_core::Error>;
-// TODO(port): narrow error set — Zig uses inferred error sets that include ParseError + OOM.
 
 impl<'bump> Parser<'bump> {
     pub fn new(
@@ -1000,7 +989,7 @@ impl<'bump> Parser<'bump> {
     /// If you make a subparser and call some fallible functions on it, you need to catch the errors
     /// and call `.continue_from_subparser()`, otherwise errors will not propagate upwards to the parent.
     pub fn make_subparser(&mut self, kind: SubshellKind) -> Parser<'bump> {
-        // PORT NOTE: reshaped for borrowck — Zig copies `self.errors` (the ArrayList struct) into
+        // reshaped for borrowck — Zig copies `self.errors` (the ArrayList struct) into
         // the subparser by value, then writes it back in continue_from_subparser. We move it out
         // via mem::take and restore it later.
         Parser {
@@ -1008,7 +997,7 @@ impl<'bump> Parser<'bump> {
             tokens: self.tokens,
             js_string_ranges: self.js_string_ranges,
             alloc: self.alloc,
-            // PORT NOTE: reshaped for borrowck — Zig copies the slice value; we move the
+            // reshaped for borrowck — Zig copies the slice value; we move the
             // exclusive borrow into the subparser and restore it in continue_from_subparser.
             jsobjs: core::mem::take(&mut self.jsobjs),
             current: self.current,
@@ -2133,7 +2122,7 @@ impl<'bump> Parser<'bump> {
     }
 
     fn add_error(&mut self, args: fmt::Arguments<'_>) -> ParseResult<()> {
-        // PORT NOTE: bumpalo::collections::Vec<u8> doesn't impl io::Write.
+        // bumpalo::collections::Vec<u8> doesn't impl io::Write.
         // Format into a stack String, then bump-copy. PERF(port): collapse to
         // a bumpalo `String` writer once available.
         let s = bun_alloc::ArenaString::from_str_in(&std::fmt::format(args), self.alloc);
@@ -2322,7 +2311,7 @@ impl TextRange {
 
 impl Token {
     pub fn as_human_readable(self, strpool: &[u8]) -> &[u8] {
-        // PORT NOTE: Zig builds varargv_strings as a 10x[2]u8 stack array; in Rust we'd need
+        // Zig builds varargv_strings as a 10x[2]u8 stack array; in Rust we'd need
         // a thread_local or to return Cow. Use a static lookup instead.
         const VARARGV_STRINGS: [&[u8]; 10] = [
             b"$0", b"$1", b"$2", b"$3", b"$4", b"$5", b"$6", b"$7", b"$8", b"$9",
@@ -2539,7 +2528,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
 
     fn make_sublexer(&mut self, kind: SubShellKind) -> Self {
         log!("[lex] make sublexer");
-        // PORT NOTE: reshaped for borrowck — Zig copies ArrayLists by value (shared backing buffer
+        // reshaped for borrowck — Zig copies ArrayLists by value (shared backing buffer
         // until reallocation). In Rust we move them out via mem::take and restore in
         // continue_from_sublexer.
         let bump = self.strpool.bump();
@@ -2557,7 +2546,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
             word_start: self.word_start,
             j: self.j,
             delimit_quote: false,
-            // PORT NOTE: reshaped for borrowck — move the exclusive borrow into the sublexer
+            // reshaped for borrowck — move the exclusive borrow into the sublexer
             // and restore it in continue_from_sublexer (avoids aliased &mut).
             string_refs: core::mem::take(&mut self.string_refs),
             jsobjs_len: self.jsobjs_len,
@@ -2585,7 +2574,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
     }
 
     fn make_snapshot(&self) -> BacktrackSnapshot<'bump, ENCODING> {
-        // PORT NOTE: explicit `'bump` so the snapshot borrows the arena, not
+        // explicit `'bump` so the snapshot borrows the arena, not
         // `&self` — otherwise holding a snapshot would freeze the lexer.
         BacktrackSnapshot {
             chars: self.chars,
@@ -3158,7 +3147,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 if fell_through {
                     continue;
                 }
-                // PORT NOTE: Zig has `continue;` after the switch in `else escaped:`, but only when
+                // Zig has `continue;` after the switch in `else escaped:`, but only when
                 // the case did NOT `break :escaped`. We model that with `fell_through`. Cases that
                 // break 'escaped fall through to appendCharToStrPool below.
             }
@@ -3449,7 +3438,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
         let start = self.strpool.len();
         if bunstr.is_utf16() {
             let utf16 = bunstr.utf16();
-            // PORT NOTE: Zig calls simdutf for the exact length then
+            // Zig calls simdutf for the exact length then
             // `convertUTF16ToUTF8Append` directly into the bump-backed
             // ArrayList. The Rust transcoding helpers in bun_core take
             // `&mut Vec<u8>` (global allocator), so go through a scratch Vec
@@ -3469,7 +3458,7 @@ impl<'bump, const ENCODING: StringEncoding> Lexer<'bump, ENCODING> {
                 if non_ascii_idx > 0 {
                     self.strpool.extend_from_slice(&bytes[..non_ascii_idx]);
                 }
-                // PORT NOTE: `allocateLatin1IntoUTF8WithList` round-trips
+                // `allocateLatin1IntoUTF8WithList` round-trips
                 // through a std Vec; encode directly here instead (same
                 // mapping: 0x00–0x7F passthrough, 0x80–0xFF → 2-byte UTF-8).
                 self.strpool.reserve((bytes.len() - non_ascii_idx) * 2);
@@ -3820,7 +3809,8 @@ impl<'a> SrcAscii<'a> {
             return None;
         }
         Some(SrcAsciiIndexValue(self.bytes[self.i] & 0x7F))
-        // TODO(port): Zig @intCast to u7 — high bit truncated; assumes ASCII input.
+        // `& 0x7F` mirrors Zig's `@intCast` to u7 — high bit truncated; callers
+        // must guarantee ASCII input.
     }
 
     #[inline]
@@ -3839,7 +3829,7 @@ impl<'a> SrcAscii<'a> {
 
 pub(crate) type CodepointIterator<'a> = strings::UnsignedCodepointIterator<'a>;
 
-// PORT NOTE: Zig holds a `CodepointIterator` by value (whose only state used
+// Zig holds a `CodepointIterator` by value (whose only state used
 // by `next(cursor)` is `bytes`). The Rust `NewCodePointIterator` lacks
 // `Clone`/`Copy`, so store the underlying `&[u8]` instead and rebuild the
 // iterator on demand — keeps `SrcUnicode` (and thus `BacktrackSnapshot`)
@@ -4109,7 +4099,7 @@ pub fn is_valid_var_name(var_name: &[u8]) -> bool {
         return false;
     }
 
-    // PORT NOTE: `Cursor.c` is `i32` (`CodePoint`). Widen to `u32` for the
+    // `Cursor.c` is `i32` (`CodePoint`). Widen to `u32` for the
     // ASCII-range matches below; negative sentinel never matches anyway.
     match cursor.c as u32 {
         c if c == u32::from(b'=') || (u32::from(b'0')..=u32::from(b'9')).contains(&c) => {
@@ -4156,7 +4146,7 @@ fn is_valid_var_name_ascii(var_name: &[u8]) -> bool {
     true
 }
 
-// PORT NOTE: shell.zig declares a `stderr_mutex: bun.Mutex` here. It is only
+// shell.zig declares a `stderr_mutex: bun.Mutex` here. It is only
 // used by the `Test` namespace's debug-dump path (gated to `bun_runtime`), so
 // the lower-tier parser crate omits it.
 
@@ -4222,7 +4212,7 @@ pub const SPECIAL_CHARS: [u8; 34] = [
     SPECIAL_JS_CHAR,
 ];
 
-// PORT NOTE: Zig uses `bit_set.IntegerBitSet(256)`. The Rust
+// Zig uses `bit_set.IntegerBitSet(256)`. The Rust
 // `bun_collections::IntegerBitSet<N>` is single-`usize`-backed (≤64 bits), so a
 // 256-entry membership table is materialised as `[bool; 256]` instead — same
 // O(1) byte-indexed lookup, const-evaluable.
@@ -4317,7 +4307,7 @@ pub fn escape_utf16<const ADD_QUOTES: bool>(
                 i += 1;
                 break 'brk c as u32;
             }
-            // PORT NOTE: Zig calls `bun.strings.utf16Codepoint` (never sets `.fail`),
+            // Zig calls `bun.strings.utf16Codepoint` (never sets `.fail`),
             // so the `is_invalid` early-return is dead in spec; use the non-FFFD variant.
             let ret = strings::utf16_codepoint(&str[i..]);
             i += ret.len as usize;
@@ -4514,7 +4504,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
     }
 }
 
-// PORT NOTE: Zig's `SmolList.memoryCost` branched on `@hasDecl(T, "memoryCost")`
+// Zig's `SmolList.memoryCost` branched on `@hasDecl(T, "memoryCost")`
 // at comptime. Expressed as a trait + per-type forwarding impls below.
 pub trait MemoryCost {
     fn memory_cost(&self) -> usize;
@@ -4593,7 +4583,8 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
         SmolList::Heap(heap)
     }
 
-    // TODO(port): jsonStringify — wire up serde or a custom JSON writer.
+    // Zig's `jsonStringify` lives in `json_fmt.rs` (`write_stmt_smol` writes the
+    // slice as a JSON array).
 
     #[inline]
     pub fn len(&self) -> usize {
@@ -4639,12 +4630,15 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
                     return;
                 }
                 let new_len = inlined.len as usize - starting_idx;
-                // Rotate the suffix to the front; the old prefix lands at
-                // `[new_len..]` and is abandoned by the len adjust (same
-                // leak-on-Drop caveat as the original `ptr::copy` version —
-                // see `clear_retaining_capacity` TODO; all current `T` are
-                // arena-backed and `!Drop`).
+                // Rotate the suffix to the front; the rotated-out prefix
+                // lands at `[new_len..]` and must be dropped before the len
+                // adjust so `T: Drop` elements are not leaked (matching
+                // `clear_retaining_capacity` and the `Drop` impl).
                 inlined.slice_mut().rotate_left(starting_idx);
+                // SAFETY: `slice_mut` covers exactly the initialized prefix;
+                // `[new_len..]` are the elements being discarded, and the len
+                // adjust below makes them unobservable afterwards.
+                unsafe { core::ptr::drop_in_place(&mut inlined.slice_mut()[new_len..]) };
                 inlined.len = u32::try_from(new_len).expect("int cast");
             }
             SmolList::Heap(heap) => {
@@ -4727,7 +4721,10 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     pub fn clear_retaining_capacity(&mut self) {
         match self {
             SmolList::Inlined(i) => {
-                // TODO(port): drop initialized elements if T: Drop
+                // SAFETY: `slice_mut` covers exactly the initialized prefix
+                // (first `len` elements); dropping it then resetting `len`
+                // leaves no element observable twice.
+                unsafe { core::ptr::drop_in_place(i.slice_mut()) };
                 i.len = 0;
             }
             SmolList::Heap(h) => h.clear(),
@@ -4762,11 +4759,16 @@ impl<T, const N: usize> core::ops::Index<usize> for SmolList<T, N> {
 
 impl<T, const N: usize> Drop for SmolList<T, N> {
     fn drop(&mut self) {
-        if let SmolList::Heap(_) = self {
-            // Vec drops itself
+        // Heap: the Vec drops itself (Zig deinit only freed heap storage).
+        // Inlined: drop the initialized prefix so `T: Drop` elements are not
+        // leaked.
+        if let SmolList::Inlined(i) = self {
+            // SAFETY: `slice_mut` covers exactly the initialized prefix
+            // (first `len` elements); we are in `drop`, so nothing observes
+            // the elements afterwards.
+            unsafe { core::ptr::drop_in_place(i.slice_mut()) };
+            i.len = 0;
         }
-        // Inlined: TODO(port): drop initialized elements if T: Drop. Zig deinit only freed heap.
-        // Reset to zeroes is implicit.
     }
 }
 

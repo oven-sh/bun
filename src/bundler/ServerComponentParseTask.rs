@@ -56,7 +56,7 @@ pub struct ReferenceProxy {
 }
 
 pub struct ClientEntryWrapper {
-    // TODO(port): lifetime — Zig `[]const u8` borrowed from caller; never freed in this file.
+    // Owned copy (Zig borrowed the caller's `[]const u8`).
     pub path: Box<[u8]>,
 }
 
@@ -82,7 +82,7 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
         .ctx
         .expect("ServerComponentParseTask.ctx set at enqueue");
     let worker = Worker::get(ctx.get());
-    // PORT NOTE: `defer worker.unget()` — handled at end of fn (no early returns).
+    // `defer worker.unget()` — handled at end of fn (no early returns).
     let mut log = Log::new();
 
     // SAFETY: `worker.arena` is set in `Worker::create` to point at the
@@ -165,7 +165,7 @@ fn task_callback(
         .ctx
         .as_deref()
         .expect("ServerComponentParseTask.ctx set at enqueue");
-    // PORT NOTE: `Source` is not `Clone`; the original is consumed here
+    // `Source` is not `Clone`; the original is consumed here
     // (Zig copied by value). Take it up-front so `ab`'s borrow of it ends
     // (via NLL) before we move it into `Success`.
     let source = core::mem::take(&mut task.source);

@@ -220,7 +220,7 @@ impl<'a, const TS: bool, const SCAN: bool> P<'a, TS, SCAN> {
                         ));
 
                         // Convert class declaration to assignment: ClassName = class ClassName {}
-                        // PORT NOTE: G::Class is non-Copy (owns a Vec); the original
+                        // G::Class is non-Copy (owns a Vec); the original
                         // S::Class store entry is dead after this rewrite, so move it out.
                         let class_value = core::mem::take(&mut class.class);
                         let class_expr = self.new_expr(class_value, stmt.loc);

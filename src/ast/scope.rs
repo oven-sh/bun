@@ -16,7 +16,7 @@ use crate::ts::TSNamespaceScope;
 /// never runs, every member map leaked.
 pub(crate) type MemberHashMap = StringHashMap<Member, AstAlloc>;
 
-// PORT NOTE: Zig `Scope` is a value type — `Ast.module_scope` / `BundledAst.module_scope`
+// `Scope` is a value type — `Ast.module_scope` / `BundledAst.module_scope`
 // hold it by value and `toAST` / `init` bitwise-copy it (`this.module_scope`). Vec no
 // longer derives `Clone` (private `origin` field); callers that need a shallow copy must
 // `core::mem::take` or `core::ptr::read` instead.

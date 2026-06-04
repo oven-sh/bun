@@ -28,7 +28,6 @@ impl<R> NestingRule<R> {
     where
         R: crate::generics::DeepClone<'bump>,
     {
-        // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             style: self.style.deep_clone(bump),
             loc: self.loc,

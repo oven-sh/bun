@@ -160,12 +160,6 @@ pub(crate) trait JSGlobalObjectSqlExt {
     /// only need shared access.
     fn sql_vm(&self) -> &VirtualMachine;
     fn sql_vm_ptr(&self) -> *mut VirtualMachine;
-
-    // PORT NOTE: `validate_integer_range` / `validate_big_int_range` /
-    // `gregorian_date_time_to_ms` were duplicated here while gated in
-    // `bun_jsc`; all three are now inherent on `bun_jsc::JSGlobalObject`, so
-    // the trait copies are removed (inherent methods always win in
-    // resolution, so the trait versions were dead code anyway).
 }
 
 impl JSGlobalObjectSqlExt for JSGlobalObject {

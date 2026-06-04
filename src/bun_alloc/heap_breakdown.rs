@@ -7,7 +7,8 @@ use core::ffi::{c_int, c_uint};
 type vm_size_t = usize;
 
 // Environment.allow_assert and Environment.isMac and !Environment.enable_asan
-// TODO(port): `enable_asan` mapped to a cargo feature; verify the build wires this the same way.
+// (`bun_asan` is set via RUSTFLAGS `--cfg=bun_asan` in scripts/build/rust.ts,
+// matching Zig's `enable_asan` build option.)
 pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos") && !cfg!(bun_asan);
 
 /// Zig: `pub fn getZone(comptime name: [:0]const u8) *Zone`
@@ -20,8 +21,6 @@ pub const ENABLED: bool = cfg!(debug_assertions) && cfg!(target_os = "macos") &&
 /// Runtime `getZone(name)` — looks up (or creates) the per-name zone. The
 /// `get_zone!` macro is the zero-cost form. This runtime path keys a
 /// process-global map for callers that pass a non-literal name.
-// TODO(port): could be replaced with a `#[heap_label]` derive that expands
-// `get_zone!` directly.
 #[allow(clippy::assertions_on_constants)]
 pub fn get_zone(name: &[u8]) -> &'static Zone {
     debug_assert!(
@@ -154,9 +153,6 @@ impl Zone {
     // `impl crate::Allocator for Zone` (see below); the raw vtable struct is a
     // Zig-ism and is not materialized here, so the `resize`/`free` vtable thunks
     // (and the `malloc_size` helper they used) are not ported.
-    // TODO(port): if `bun_alloc::Allocator` ever becomes a literal vtable struct
-    // (to match `std.mem.Allocator` ABI), reintroduce a `pub static VTABLE`
-    // along with the `resize`/`raw_free` thunks.
 
     /// Zig: `pub fn allocator(zone: *Zone) std.mem.Allocator`
     pub fn allocator(&'static self) -> &'static dyn crate::Allocator {
@@ -174,7 +170,7 @@ impl Zone {
     #[inline]
     pub fn try_create<T>(&self, data: T) -> Result<*mut T, crate::AllocError> {
         let alignment = core::mem::align_of::<T>();
-        // TODO(port): Zig passed `@returnAddress()` as the ret_addr hint; Rust has no
+        // Zig passed `@returnAddress()` as the ret_addr hint; Rust has no
         // stable equivalent. Passing 0 — the macOS zone API ignores it anyway.
         let raw = Zone::raw_alloc(
             // SAFETY: vtable context pointer — `as_mut_ptr()` yields the
@@ -216,8 +212,8 @@ impl Zone {
 // for `is_instance` identity checks.
 impl crate::Allocator for Zone {}
 
-// TODO(port): move to bun_alloc_sys (or keep here gated `#[cfg(target_os = "macos")]`
-// since these are macOS-only libc symbols).
+// macOS-only libmalloc symbols, kept here (gated on `target_os = "macos"`)
+// since heap_breakdown is their only consumer.
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     /// No preconditions; returns the process default malloc zone.

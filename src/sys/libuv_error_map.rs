@@ -4,11 +4,10 @@ use crate::SystemErrno;
 
 /// This map is derived off of uv.h's definitions, and is what Node.js uses in printing errors.
 //
-// PORT NOTE: Zig builds this at comptime via a labeled block + `@hasField`/`@field` reflection
-// over `SystemErrno` (whose variant set differs per target OS). Rust has no comptime enum-variant
-// reflection, so the per-OS `@hasField` filter is expressed as `#[cfg]` guards on the few entries
-// whose variants are not present on every target. The `EAI_*` and `UNKNOWN` rows from uv.h are
-// dropped: no `SystemErrno` on any target carries them, so Zig's `@hasField` skipped them too.
+// `SystemErrno`'s variant set differs per target OS, so the per-OS filter is
+// expressed as `#[cfg]` guards on the few entries whose variants are not
+// present on every target. The `EAI_*` and `UNKNOWN` rows from uv.h are
+// dropped: no `SystemErrno` on any target carries them.
 //
 // Built at const-eval time so the whole `[&str; N]` payload lives in `.rodata` with no `Once`
 // guard or init code on the startup path (matches Zig `std.EnumArray` comptime init).

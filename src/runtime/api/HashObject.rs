@@ -318,12 +318,9 @@ fn hash_wrap<H: HashAlgorithm>(global: &JSGlobalObject, frame: &CallFrame) -> Js
         }
     }
 
-    // std.hash has inconsistent interfaces
-    //
-    // PORT NOTE: the Zig used `@hasDecl`/`ArgsTuple`/`bun.trait.isNumber` to
-    // pick between `hash` vs `hashWithSeed`, 1-arg vs 2-arg, and seed-first
-    // vs bytes-first. That dispatch is absorbed into `HashAlgorithm::hash`
-    // per-impl above; here we always read an optional seed and pass it.
+    // The per-algorithm hash/hashWithSeed signature differences are absorbed
+    // into `HashAlgorithm::hash` per-impl above; here we always read an
+    // optional seed and pass it.
     let mut seed: u64 = 0;
     if let Some(arg) = args.next_eat() {
         if arg.is_number() || arg.is_big_int() {

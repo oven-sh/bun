@@ -2,6 +2,7 @@ use bun_core::String;
 
 use super::super::types::int_types::Int4;
 use super::new_reader::NewReader;
+use crate::postgres::AnyPostgresError;
 
 #[derive(Default)]
 pub struct NegotiateProtocolVersion {
@@ -10,11 +11,10 @@ pub struct NegotiateProtocolVersion {
 }
 
 impl NegotiateProtocolVersion {
-    // PORT NOTE: reshaped from out-param `fn(this: *@This(), ...) !void` to `-> Result<Self, E>`.
-    // TODO(port): narrow error set
+    // Reshaped from the Zig out-param `fn(this: *@This(), ...) !void` to `-> Result<Self, E>`.
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> Result<Self, AnyPostgresError> {
         let length = reader.length()?;
         debug_assert!(length >= 4);
 

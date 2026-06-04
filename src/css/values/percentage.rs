@@ -30,7 +30,7 @@ impl Percentage {
     pub(crate) fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
         let x = self.v * 100.0;
         let int_value: Option<i32> = if (x - x.trunc()) == 0.0 {
-            // PORT NOTE: Rust `as` saturates on overflow/NaN where Zig is UB.
+            // Rust `as` saturates on overflow/NaN where Zig is UB.
             Some(self.v as i32)
         } else {
             None
@@ -152,15 +152,10 @@ impl<D: PartialEq + Clone> PartialEq for DimensionPercentage<D> {
 }
 
 // `Zero`/`MulF32`/`TryAdd`/`Parse` protocol traits live in
-// `crate::values::protocol` until `generics::parse_tocss_numeric_gated`
-// un-gates. The bound set below mirrors the full Zig comptime-method surface
-// on `D`; per-method `where` clauses narrow further so plain
-// `DimensionPercentage<D>` (no behavior) needs only `D: Clone`.
-impl<D> DimensionPercentage<D>
-where
-    // TODO(port): narrow these bounds; mirroring methods called on D below.
-    D: Clone,
-{
+// `crate::values::protocol`. The Zig comptime-method surface on `D` is
+// expressed via per-method `where` clauses, so plain
+// `DimensionPercentage<D>` (no behavior) needs no bounds at all.
+impl<D> DimensionPercentage<D> {
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self>
     where
         Self: crate::values::calc::CalcValue,
@@ -209,9 +204,12 @@ where
         }
     }
 
-    pub(crate) fn deep_clone(&self) -> Self {
+    pub(crate) fn deep_clone(&self) -> Self
+    where
+        D: Clone,
+    {
         match self {
-            // PORT NOTE: Zig branched on `comptime needs_deepclone` to avoid cloning POD types.
+            // Zig branched on `comptime needs_deepclone` to avoid cloning POD types.
             // In Rust, D: Clone covers both — Copy types' clone is a bitwise copy.
             Self::Dimension(d) => Self::Dimension(d.clone()),
             Self::Percentage(p) => Self::Percentage(*p),
@@ -220,7 +218,7 @@ where
         }
     }
 
-    // PORT NOTE: `deinit` dropped — Box<Calc<...>> frees via Drop; D's Drop (if any) runs
+    // `deinit` dropped — Box<Calc<...>> frees via Drop; D's Drop (if any) runs
     // automatically. Zig body only freed owned fields, so no explicit `impl Drop` needed.
 
     pub(crate) fn zero() -> Self
@@ -289,9 +287,11 @@ where
             (Self::Calc(this_calc), _) => match this_calc.as_ref() {
                 Calc::Value(v) => return v.add_recursive(other),
                 Calc::Sum { left, right } => {
-                    // PORT NOTE: reshaped for borrowck — Zig wrapped sum.left/right (raw ptrs)
-                    // directly in This{.calc = ...}. Here we deep_clone since Box is owning.
-                    // TODO(port): lifetime — sum.left/right ownership semantics need review.
+                    // Reshaped for borrowck — Zig wrapped sum.left/right (raw ptrs)
+                    // directly in This{.calc = ...} (aliasing the same heap nodes);
+                    // with owning Boxes we deep_clone instead. The values are only
+                    // read during this computation, so the clone is semantically
+                    // equivalent (just extra allocation).
                     let left_calc = Self::Calc(left.deep_clone_boxed());
                     if let Some(res) = left_calc.add_recursive(other) {
                         return Some(res.add_impl(Self::Calc(right.deep_clone_boxed())));
@@ -454,7 +454,7 @@ pub enum NumberOrPercentage {
 }
 
 impl NumberOrPercentage {
-    // PORT NOTE: Zig used `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
+    // Zig used `css.DeriveParse(@This()).parse` / `css.DeriveToCss(@This()).toCss`
     // (comptime reflection derives). Hand-rolled here as the trivial two-variant
     // try-parse cascade so `AlphaValue::parse` doesn't panic at runtime.
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<NumberOrPercentage> {

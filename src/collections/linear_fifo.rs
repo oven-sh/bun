@@ -10,8 +10,8 @@ use core::ptr;
 
 use bun_alloc::AllocError;
 
-// TODO(port): std.heap.page_size_min — Zig resolves this per-target; 4096 is the
-// conservative minimum on every platform Bun ships on.
+// Zig resolves `std.heap.page_size_min` per-target; 4096 is the conservative
+// minimum on every platform Bun ships on.
 const PAGE_SIZE_MIN: usize = 4096;
 
 /// Mirrors Zig's `LinearFifoBufferType = union(enum)`.
@@ -32,9 +32,10 @@ pub enum LinearFifoBufferType {
 /// Backing-storage abstraction replacing Zig's `comptime buffer_type` switch.
 /// `POWERS_OF_TWO` mirrors the Zig `powers_of_two` const inside the returned
 /// struct; `DYNAMIC` mirrors `buffer_type == .Dynamic`.
-// TODO(port): the Zig fn returns structurally different layouts per variant;
-// trait+assoc-consts is the closest stable-Rust encoding. Phase B: confirm all
-// in-tree callers are covered by the three impls below.
+// The Zig fn returns structurally different layouts per variant; trait +
+// assoc-consts is the closest stable-Rust encoding. No in-tree caller
+// instantiates `SliceBuffer` directly; `threading::Channel::init_slice` wraps
+// it for `.Slice` API parity.
 pub trait LinearFifoBuffer<T> {
     const POWERS_OF_TWO: bool;
     const DYNAMIC: bool;
@@ -61,9 +62,12 @@ pub trait LinearFifoBuffer<T> {
 
 /// Reinterpret `&[MaybeUninit<T>]` as `&[T]`. `MaybeUninit<T>` has identical
 /// layout to `T`; exposing uninitialized bytes as `T` is sound only when any
-/// bit pattern is a valid `T` (in-tree LinearFifo users are byte buffers —
-/// see the `StaticBuffer` TODO below). Centralises the four per-buffer-kind
-/// casts behind one audited block.
+/// bit pattern is a valid `T`. NOT every in-tree element type satisfies this:
+/// besides byte buffers and raw pointers, fifos today store `NonNull`-bearing
+/// enums (`bun_test::RefDataValue`), `JSPromiseStrong`-bearing structs
+/// (`ValkeyCommand::PromisePair`), and the `event_loop::Task` enum — see the
+/// `StaticBuffer` note below for the pending MaybeUninit accessor rework.
+/// Centralises the four per-buffer-kind casts behind one audited block.
 #[inline(always)]
 fn assume_init_slice<T>(s: &[MaybeUninit<T>]) -> &[T] {
     // SAFETY: see fn doc.
@@ -112,10 +116,19 @@ fn poison<T>(slice: &mut [T], n: usize) {
 // ── .Static ───────────────────────────────────────────────────────────────────
 
 /// `buffer_type == .Static` — inline `[T; N]` storage.
-// TODO(port): Zig leaves the array `undefined`; we use MaybeUninit and expose
-// it as &[T] via pointer cast. Sound only for `T` whose any-bit-pattern is
-// valid (in-tree users are byte buffers). Phase B: bound `T: Copy` or rework
-// accessors to MaybeUninit if a non-POD T appears.
+// INVARIANT: Zig leaves the array `undefined`; we use MaybeUninit and expose
+// it as &[T] via pointer cast (`assume_init_slice`). The Zig-parity public API
+// (`writable_slice` hands out `&mut [T]` over not-yet-written slots) bakes in
+// the same exposure for every buffer kind. Sound only for `T` whose
+// any-bit-pattern is valid — and in-tree element types ALREADY violate that:
+// `RefDataValue` (NonNull<DescribeScope> payload), `PromisePair`
+// (JSPromiseStrong), and the `Task` enum are stored in fifos today, so
+// materialising `&[T]` over uninitialized slots for those types is latent UB.
+// The fix is reworking the accessors to operate on `&[MaybeUninit<T>]` and
+// only assume-init the logically-written subranges. That cannot be done by
+// touching this file alone — `writable_slice`-family callers in other crates
+// see the signature change — so it is deferred to a dedicated change with
+// Miri coverage for a NonNull-bearing element type.
 pub struct StaticBuffer<T, const N: usize>([MaybeUninit<T>; N]);
 
 impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {
@@ -198,14 +211,17 @@ pub struct LinearFifo<T, B: LinearFifoBuffer<T>> {
     _marker: PhantomData<T>,
 }
 
-// PORT NOTE: Zig's `SliceSelfArg = if (.Static) *Self else Self` exists because
+// Zig's `SliceSelfArg = if (.Static) *Self else Self` exists because
 // returning a slice into a by-value `Self` would dangle when buf is inline. In
 // Rust every accessor takes `&self`/`&mut self`, so the distinction disappears.
 
-// TODO(port): Reader/Writer std.Io adapters. Zig exposes
-// `pub const Reader = std.Io.GenericReader(*Self, error{}, readFn)` and a
-// matching Writer. Phase B: impl `bun_io::Read`/`bun_io::Write` (and
-// `core::fmt::Write`) on `LinearFifo<u8, B>`.
+// Zig exposes `pub const Reader = std.Io.GenericReader(*Self, error{}, readFn)`
+// and a matching Writer. The Rust equivalents are the impls on
+// `LinearFifo<u8, B>` after the inherent impl below: `bun_core::write::Write`
+// (the canonical byte sink, re-exported as `bun_io::Write` — Zig's
+// `std.Io.Writer` port), plus `std::io::Read`, `std::io::Write`, and
+// `core::fmt::Write` for std interop. There is no canonical in-tree Read
+// trait, so `std::io::Read` stands in for the Zig reader.
 
 impl<T, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
     /// `init` for `.Static`.
@@ -357,7 +373,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// Ensure that the buffer can fit at least `size` items
-    // TODO(port): narrow error set
     pub fn ensure_total_capacity(&mut self, size: usize) -> Result<(), AllocError> {
         if self.buf_len() >= size {
             return Ok(());
@@ -447,7 +462,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         #[cfg(debug_assertions)]
         {
             // set old range to undefined. Note: may be wrapped around
-            // PORT NOTE: reshaped for borrowck — capture len, then re-borrow.
+            // reshaped for borrowck — capture len, then re-borrow.
             let slice_len = self.readable_slice_mut(0).len();
             if slice_len >= count {
                 poison(self.readable_slice_mut(0), count);
@@ -497,7 +512,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             }
             let n = slice.len().min(dst_left.len());
             dst_left[..n].copy_from_slice(&slice[..n]);
-            // PORT NOTE: NLL drops `slice` borrow here before `&mut self`.
+            // NLL drops `slice` borrow here before `&mut self`.
             self.discard(n);
             dst_left = &mut dst_left[n..];
         }
@@ -505,7 +520,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         total - dst_left.len()
     }
 
-    // TODO(port): `pub fn reader(self: *Self) Reader` — see Reader/Writer note.
+    // Zig `pub fn reader(self: *Self) Reader` → the `std::io::Read` impl below.
 
     /// Returns number of items available in fifo
     #[inline]
@@ -535,12 +550,11 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Returns a writable buffer of at least `size` items, allocating memory as needed.
     /// Use `fifo.update` once you've written data to it.
-    // TODO(port): narrow error set
     pub fn writable_with_size(&mut self, size: usize) -> Result<&mut [T], AllocError> {
         self.ensure_unused_capacity(size)?;
 
         // try to avoid realigning buffer
-        // PORT NOTE: reshaped for borrowck — check len, drop borrow, maybe
+        // reshaped for borrowck — check len, drop borrow, maybe
         // realign, then take the final borrow.
         if self.writable_slice(0).len() < size {
             self.realign();
@@ -566,7 +580,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
         let mut src_left = src;
         while !src_left.is_empty() {
-            // PORT NOTE: reshaped for borrowck — scoped block drops the
+            // reshaped for borrowck — scoped block drops the
             // `writable` borrow before `self.update`.
             let n = {
                 let writable = self.writable_slice(0);
@@ -581,7 +595,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// Write a single item to the fifo
-    // TODO(port): narrow error set
     pub fn write_item(&mut self, item: T) -> Result<(), AllocError> {
         self.ensure_unused_capacity(1)?;
         self.write_item_assume_capacity(item);
@@ -605,7 +618,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Appends the data in `src` to the fifo.
     /// Allocates more memory as necessary
-    // TODO(port): narrow error set
     pub fn write(&mut self, src: &[T]) -> Result<(), AllocError>
     where
         T: Copy,
@@ -615,7 +627,9 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         Ok(())
     }
 
-    // TODO(port): `pub fn writer(self: *Self) Writer` — see Reader/Writer note.
+    // Zig `pub fn writer(self: *Self) Writer` → the `bun_core::write::Write`
+    // (canonical, = `bun_io::Write`), `std::io::Write`, and `core::fmt::Write`
+    // impls below.
 
     /// Make `count` items available before the current read location
     fn rewind(&mut self, count: usize) {
@@ -632,7 +646,6 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// Place data back into the read stream
-    // TODO(port): narrow error set
     pub fn unget(&mut self, src: &[T]) -> Result<(), AllocError>
     where
         T: Copy,
@@ -641,7 +654,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
         self.rewind(src.len());
 
-        // PORT NOTE: reshaped for borrowck — copy into first chunk in a scoped
+        // reshaped for borrowck — copy into first chunk in a scoped
         // block, drop borrow, then re-borrow for the wrapped chunk.
         let slice_len = {
             let s = self.readable_slice_mut(0);
@@ -737,9 +750,11 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     /// Pump data from a reader into a writer
     /// stops when reader returns 0 bytes (EOF)
     /// Buffer size must be set before calling; a buffer length of 0 is invalid.
-    // TODO(port): `src_reader: anytype, dest_writer: *std.Io.Writer`. Phase B:
-    // bind to `bun_io::Read`/`bun_io::Write` (or whatever the byte-stream traits
-    // land as). Stubbed with generic bounds matching the called methods.
+    // Zig signature: `src_reader: anytype, dest_writer: *std.Io.Writer`. The
+    // closure bounds are the stable-Rust encoding of those duck-typed streams:
+    // `src_reader(buf)` ≙ `reader.read(buf)`, `dest_writer(buf)` ≙
+    // `writer.write(buf)`, both returning a count (`Ok(0)` from the reader
+    // means EOF). This keeps `pump` generic over `T`, which `std::io` cannot.
     pub fn pump<R, W, E>(&mut self, mut src_reader: R, dest_writer: &mut W) -> Result<(), E>
     where
         R: FnMut(&mut [T]) -> Result<usize, E>,
@@ -748,7 +763,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         debug_assert!(self.buf_len() > 0);
         loop {
             if self.writable_length() > 0 {
-                // PORT NOTE: reshaped for borrowck.
+                // reshaped for borrowck.
                 let n = {
                     let ws = self.writable_slice(0);
                     src_reader(ws)?
@@ -772,6 +787,52 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             };
             self.discard(written);
         }
+        Ok(())
+    }
+}
+
+// ── Reader/Writer adapters (Zig `reader()` / `writer()`) ─────────────────────
+
+impl<B: LinearFifoBuffer<u8>> std::io::Read for LinearFifo<u8, B> {
+    /// Zig `readFn` — drains up to `dst.len()` buffered bytes. `Ok(0)` means
+    /// the fifo is empty (Zig `error{}` reader: EOF, never an error).
+    #[inline]
+    fn read(&mut self, dst: &mut [u8]) -> std::io::Result<usize> {
+        Ok(LinearFifo::read(self, dst))
+    }
+}
+
+impl<B: LinearFifoBuffer<u8>> std::io::Write for LinearFifo<u8, B> {
+    /// Zig `appendWrite` — appends the whole buffer, growing if `.Dynamic`.
+    #[inline]
+    fn write(&mut self, src: &[u8]) -> std::io::Result<usize> {
+        LinearFifo::write(self, src)
+            .map_err(|AllocError| std::io::Error::from(std::io::ErrorKind::OutOfMemory))?;
+        Ok(src.len())
+    }
+
+    #[inline]
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
+
+/// Zig `fifo.writer().print(fmt, args)` equivalent: `write!(fifo, ...)`.
+impl<B: LinearFifoBuffer<u8>> core::fmt::Write for LinearFifo<u8, B> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        LinearFifo::write(self, s.as_bytes()).map_err(|AllocError| core::fmt::Error)
+    }
+}
+
+/// Canonical in-tree byte sink (port of Zig `std.Io.Writer`, re-exported as
+/// `bun_io::Write`), so a `LinearFifo<u8, _>` can be passed to every
+/// `impl bun_io::Write` consumer. `written_len` keeps its panicking default:
+/// a fifo drains, so it does not track total bytes written.
+impl<B: LinearFifoBuffer<u8>> bun_core::write::Write for LinearFifo<u8, B> {
+    /// Zig `appendWrite` — appends the whole buffer, growing if `.Dynamic`.
+    #[inline]
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), bun_core::Error> {
+        LinearFifo::write(self, buf)?;
         Ok(())
     }
 }
@@ -854,43 +915,99 @@ mod tests {
 
         fifo.shrink(0);
 
-        // TODO(port): writer().print / reader().readUntilDelimiterOrEof tests
-        // depend on the std.Io adapter port.
+        // Zig: `fifo.writer().print("{s}, {s}!", .{ "Hello", "World" })`.
+        {
+            use core::fmt::Write as _;
+            write!(fifo, "{}, {}!", "Hello", "World").unwrap();
+            let mut result = [0u8; 30];
+            let n = fifo.read(&mut result);
+            assert_eq!(b"Hello, World!", &result[..n]);
+            assert_eq!(0usize, fifo.readable_length());
+        }
 
-        // TODO(port): pump test depends on std.io.fixedBufferStream port.
+        // Zig: `fifo.writer().writeAll(...)` then
+        // `fifo.reader().readUntilDelimiterOrEof(&result, ' ')` four times.
+        {
+            std::io::Write::write_all(&mut fifo, b"This is a test").unwrap();
+            let mut drained = Vec::new();
+            std::io::Read::read_to_end(&mut fifo, &mut drained).unwrap();
+            let words: Vec<&[u8]> = drained.split(|&c| c == b' ').collect();
+            assert_eq!(vec![&b"This"[..], b"is", b"a", b"test"], words);
+        }
+
+        // Zig: pump from `fixedBufferStream("pump test")` into a fixed output
+        // buffer. The closures play the reader/writer roles.
+        {
+            fifo.ensure_total_capacity(1).unwrap();
+            let input: &[u8] = b"pump test";
+            let mut cursor = 0usize;
+            let mut out: Vec<u8> = Vec::new();
+            fifo.pump(
+                |buf: &mut [u8]| -> Result<usize, ()> {
+                    let n = buf.len().min(input.len() - cursor);
+                    buf[..n].copy_from_slice(&input[cursor..cursor + n]);
+                    cursor += n;
+                    Ok(n)
+                },
+                &mut |bytes: &[u8]| {
+                    out.extend_from_slice(bytes);
+                    Ok(bytes.len())
+                },
+            )
+            .unwrap();
+            assert_eq!(input, &out[..]);
+        }
     }
 
-    // `inline for ([_]type{u1,u8,u16,u64}) |T|` × `inline for (buffer types)`
-    // — expanded for one representative element type; the rest are mechanical.
-    // TODO(port): macro-generate the full T×buffer_type matrix in Phase B.
-    #[test]
-    fn linear_fifo_generic_u8_static() {
-        let mut fifo = LinearFifo::<u8, StaticBuffer<u8, 32>>::init();
+    // Shared body for the T×buffer_type matrix below (Zig's inner test block).
+    fn run_generic_fifo_test<T, B>(mut fifo: LinearFifo<T, B>)
+    where
+        T: Copy + PartialEq + core::fmt::Debug + From<u8>,
+        B: LinearFifoBuffer<T>,
+    {
+        let zero = T::from(0u8);
+        let one = T::from(1u8);
 
-        fifo.write(&[0, 1, 1, 0, 1]).unwrap();
+        fifo.write(&[zero, one, one, zero, one]).unwrap();
         assert_eq!(5usize, fifo.readable_length());
 
         {
-            assert_eq!(0u8, fifo.read_item().unwrap());
-            assert_eq!(1u8, fifo.read_item().unwrap());
-            assert_eq!(1u8, fifo.read_item().unwrap());
-            assert_eq!(0u8, fifo.read_item().unwrap());
-            assert_eq!(1u8, fifo.read_item().unwrap());
+            assert_eq!(zero, fifo.read_item().unwrap());
+            assert_eq!(one, fifo.read_item().unwrap());
+            assert_eq!(one, fifo.read_item().unwrap());
+            assert_eq!(zero, fifo.read_item().unwrap());
+            assert_eq!(one, fifo.read_item().unwrap());
             assert_eq!(0usize, fifo.readable_length());
         }
 
         {
-            fifo.write_item(1).unwrap();
-            fifo.write_item(1).unwrap();
-            fifo.write_item(1).unwrap();
+            fifo.write_item(one).unwrap();
+            fifo.write_item(one).unwrap();
+            fifo.write_item(one).unwrap();
             assert_eq!(3usize, fifo.readable_length());
         }
 
         {
-            let mut read_buf = [0u8; 3];
+            let mut read_buf = [zero; 3];
             let n = fifo.read(&mut read_buf);
             assert_eq!(3usize, n); // NOTE: It should be the number of items.
         }
+    }
+
+    // Zig: `inline for ([_]type{u1,u8,u16,u64}) |T|` × `inline for (buffer
+    // types)`. `u1` has no Rust equivalent; the remaining element types are
+    // crossed with all three buffer kinds.
+    #[test]
+    fn linear_fifo_generic_matrix() {
+        macro_rules! per_type {
+            ($($T:ty),* $(,)?) => {$(
+                run_generic_fifo_test(LinearFifo::<$T, StaticBuffer<$T, 32>>::init());
+                run_generic_fifo_test(LinearFifo::<$T, DynamicBuffer<$T>>::init());
+                let mut backing = [<$T>::from(0u8); 32];
+                run_generic_fifo_test(LinearFifo::<$T, SliceBuffer<$T>>::init(&mut backing));
+            )*};
+        }
+        per_type!(u8, u16, u64);
     }
 
     // 16-slot static buffer: `POWERS_OF_TWO` is true, matching the in-tree

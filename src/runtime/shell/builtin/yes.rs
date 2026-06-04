@@ -60,7 +60,6 @@ impl Yes {
         let mut copies = bufalloc / copysize;
         while copies > 1 {
             let to_copy = copysize.min(bufalloc - filled);
-            // PORT NOTE: Zig @memcpy on disjoint subslices → copy_within.
             buf.copy_within(0..to_copy, filled);
             filled += to_copy;
             copies -= 1;
@@ -193,9 +192,8 @@ impl Yes {
     }
 }
 
-// PORT NOTE: Zig `deinit` freed `buffer` and ended the alloc scope. In the
-// Rust port `buffer: Vec<u8>` drops with the owning `Box<Yes>`; no explicit
-// `Drop` impl needed (PORTING.md §Allocators).
+// `buffer: Vec<u8>` drops with the owning `Box<Yes>`; no explicit `Drop` impl
+// needed (PORTING.md §Allocators).
 
 /// Re-queues `yes` onto the event loop after a burst of no-IO writes so we
 /// don't block the main thread forever. Spec: yes.zig `YesTask`.

@@ -51,7 +51,6 @@ impl HMAC {
     }
 
     pub fn copy(&mut self) -> Result<Box<HMAC>, bun_core::Error> {
-        // TODO(port): narrow error set
         let mut ctx = MaybeUninit::<boringssl::HMAC_CTX>::uninit();
         // SAFETY: HMAC_CTX_init writes the entire struct; ctx is valid uninit memory.
         unsafe { boringssl::HMAC_CTX_init(ctx.as_mut_ptr()) };

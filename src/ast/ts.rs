@@ -37,8 +37,9 @@ use crate::e::String as EString;
 /// hierarchical scope-based identifier lookup in JavaScript. Lookup now needs
 /// to search sibling scopes in addition to parent scopes. This is accomplished
 /// by sharing the map of exported members between all matching sibling scopes.
-// PORT NOTE: 'arena lifetime dropped — `EnumString` payload is a `StoreRef<EString>`
-// rather than an arena-borrowed reference (see the TODO on that variant).
+// The Zig 'arena lifetime is dropped here — the `EnumString` payload is a
+// `StoreRef<EString>` (AST-store back-pointer) rather than an arena-borrowed
+// reference, matching the rest of the AST crate.
 pub struct TSNamespaceScope {
     /// This is specific to this namespace block. It's the argument of the
     /// immediately-invoked function expression that the namespace block is
@@ -131,7 +132,6 @@ pub enum Data {
     EnumNumber(f64),
     /// "enum ns { it = 'it' }"
     // LIFETIMES.tsv: ARENA — assigned from Expr.Data.e_string payload (AST Expr store).
-    // TODO(port): &'bump EString once 'bump threaded crate-wide.
     EnumString(crate::nodes::StoreRef<EString>),
     /// "enum ns { it = something() }"
     EnumProperty,
@@ -139,8 +139,8 @@ pub enum Data {
 
 impl Data {
     pub fn is_enum(&self) -> bool {
-        // PORT NOTE: Zig used `inline else` + comptime `@tagName` prefix check ("enum_").
-        // Expanded to an explicit match over the enum_* variants.
+        // Zig used `inline else` + comptime `@tagName` prefix check ("enum_");
+        // expanded to an explicit match over the enum_* variants.
         matches!(
             self,
             Data::EnumNumber(_) | Data::EnumString(_) | Data::EnumProperty
@@ -174,9 +174,9 @@ pub enum Metadata {
     MSymbol,
     MPromise,
     MIdentifier(Ref),
-    // TODO(port): Zig used `std.ArrayListUnmanaged(Ref)`. This is an AST crate;
-    // if this list is arena-backed in practice, switch to
-    // `bun_alloc::ArenaVec<'bump, Ref>`.
+    // Zig used `std.ArrayListUnmanaged(Ref)` (parser-arena-backed); a heap
+    // `Vec` is used here because `Metadata` is lifetime-free. Decorator
+    // metadata is rare and the lists are tiny.
     MDot(Vec<Ref>),
 }
 
@@ -223,7 +223,7 @@ impl Metadata {
                     _ => Metadata::MObject,
                 };
             } else {
-                // PORT NOTE: reshaped for borrowck — copy Ref out before reassigning *result
+                // Reshaped for borrowck — copy Ref out before reassigning *result
                 if let Metadata::MIdentifier(r) = result {
                     let r = *r;
                     if let Metadata::MIdentifier(l) = left {
@@ -282,7 +282,7 @@ impl Metadata {
                     _ => Metadata::MObject,
                 };
             } else {
-                // PORT NOTE: reshaped for borrowck — copy Ref out before reassigning *result
+                // Reshaped for borrowck — copy Ref out before reassigning *result
                 if let Metadata::MIdentifier(r) = result {
                     let r = *r;
                     if let Metadata::MIdentifier(l) = left {

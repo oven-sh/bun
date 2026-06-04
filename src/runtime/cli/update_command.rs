@@ -9,8 +9,6 @@ pub(crate) struct UpdateCommand;
 
 impl UpdateCommand {
     pub(crate) fn exec(ctx: Context) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: dropped `ctx.allocator` arg — global mimalloc per §Allocators.
         let cli = CommandLineArguments::parse(Subcommand::Update)?;
 
         if cli.interactive {

@@ -40,12 +40,11 @@ use core::ptr;
 use std::sync::Once;
 
 use crate::image::codecs;
-// TODO(port): move to runtime_sys / bun_sys::windows
 use bun_sys::windows;
 
-/// `codecs::Error || error{BackendUnavailable}`
-// TODO(port): narrow error set — Zig flat-unions codecs::Error with BackendUnavailable;
-// variants used in this file are inlined here. Reconcile with codecs::Error.
+/// `codecs::Error || error{BackendUnavailable}` — Zig flat-unions the two
+/// error sets; the variants used in this file are inlined here and `split()`
+/// below maps them back onto `codecs::Error` for the caller.
 #[derive(Debug, Copy, Clone, Eq, PartialEq, thiserror::Error, strum::IntoStaticStr)]
 pub enum BackendError {
     #[error("BackendUnavailable")]
@@ -373,7 +372,6 @@ struct IUnknown {
 // VARIANT/PROPBAG2 layout is fiddly enough (union padding, BRECORD/DECIMAL
 // arms) that hand-rolling it as `extern struct` is asking for an ABI drift.
 // The C++ shim uses the SDK's own headers; we just hand it the bag pointer.
-// TODO(port): move to runtime_sys
 unsafe extern "C" {
     fn bun_wic_propbag_write_f32(props: *mut c_void, name: *const u16, value: f32) -> i32;
     fn bun_wic_propbag_write_u8(props: *mut c_void, name: *const u16, value: u8) -> i32;
@@ -836,7 +834,6 @@ fn container_guid(f: codecs::Format) -> Option<*const GUID> {
 
 // ───────────────────────────── lazy factory ─────────────────────────────────
 
-// TODO(port): move to runtime_sys
 #[link(name = "ole32")]
 unsafe extern "system" {
     fn CoInitializeEx(reserved: *mut c_void, flags: u32) -> HRESULT;
@@ -952,7 +949,6 @@ fn load_factory() {
 // the clipboard omits. Either way the result is bytes the regular Bun.Image
 // decoder understands; nothing is decoded here.
 
-// TODO(port): move to runtime_sys
 #[link(name = "user32")]
 unsafe extern "system" {
     fn OpenClipboard(hwnd: *mut c_void) -> c_int;
@@ -999,7 +995,9 @@ pub(crate) fn has_clipboard_image() -> bool {
     false
 }
 
-// TODO(port): narrow error set — Zig: error{BackendUnavailable, OutOfMemory}!?[]u8
+// Zig error set: `error{BackendUnavailable, OutOfMemory}!?[]u8` — subset of
+// BackendError; the wider type matches the macOS backend so the caller in
+// Image.rs handles both identically.
 pub(crate) fn clipboard() -> Result<Option<Vec<u8>>, BackendError> {
     // hwnd=null associates the open with the current task; fine for read-only.
     // SAFETY: null hwnd is documented as valid.

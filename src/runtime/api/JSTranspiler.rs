@@ -47,15 +47,13 @@ pub struct JSTranspiler {
     pub scan_pass_result: JsCell<ScanPassResult>,
     pub buffer_writer: JsCell<Option<JSPrinter::BufferWriter>>,
     pub log_level: bun_ast::Level,
-    // TODO(port): non-AST crate keeps an arena field for bulk-freeing config strings.
-    // Consider replacing with per-field Box ownership.
-    // Boxed so its address is stable across the move into `Box<JSTranspiler>` —
+    // Arena bulk-frees the config strings (matching the Zig). Boxed so its
+    // address is stable across the move into `Box<JSTranspiler>` —
     // `transpiler.arena` holds a `&'static Arena` pointing into it.
     pub arena: Box<Arena>,
-    // Intrusive refcount field for `bun_ptr::IntrusiveRc<JSTranspiler>`.
-    // TODO(port): LIFETIMES.tsv classifies the consumer (`TransformTask.js_instance`) as
-    // `Arc<JSTranspiler>`, but `bun.ptr.RefCount` is single-thread intrusive and `*JSTranspiler`
-    // crosses FFI as `m_ctx`. Reconcile (likely IntrusiveRc, not Arc).
+    // Intrusive refcount field for `bun_ptr::IntrusiveRc<JSTranspiler>`:
+    // single-thread intrusive `bun.ptr.RefCount` because `*JSTranspiler`
+    // crosses FFI as `m_ctx` (per PORTING.md §Pointers; not `Arc`).
     pub ref_count: bun_ptr::RefCount<JSTranspiler>,
 }
 
@@ -160,7 +158,7 @@ const PROP_ITER_OPTS: JSPropertyIteratorOptions = JSPropertyIteratorOptions {
 };
 
 impl Config {
-    // PORT NOTE: out-param constructor kept as `&mut self` because `self` is a pre-initialized
+    // NOTE: out-param constructor kept as `&mut self` because `self` is a pre-initialized
     // field on `JSTranspiler` (in-place mutation), not a fresh value to return.
     pub fn from_js(
         &mut self,
@@ -563,14 +561,13 @@ impl Config {
                 if iter.len > 0 {
                     bun_core::handle_oom(replacements.ensure_unused_capacity(iter.len));
 
-                    // We cannot set the exception before `?` because it could be
-                    // a double free with the errdefer.
-                    // TODO(port): the Zig `defer if (globalThis.hasException()) { free keys; clear }`
-                    // is a conditional cleanup at scope exit. Model with scopeguard
-                    // (captures &mut replacements + &global; borrowck conflict with the loop
-                    // below — needs restructuring). Keys are Box<[u8]> in Rust, so dropping
-                    // `replacements` on `?` already frees them; only the explicit
-                    // `clear_and_free` on the has_exception path is unported.
+                    // Zig's `defer if (globalThis.hasException()) { free keys; clear }`
+                    // is fully covered by RAII here: a pending exception always
+                    // surfaces as `Err(JsError::Thrown)` through `?`, and
+                    // `replacements` is a local (moved into
+                    // `self.runtime.replace_exports` only on success), so the
+                    // early return drops it — freeing the `Box<[u8]>` keys and
+                    // clearing the map exactly as the Zig defer did.
 
                     while let Some(key_) = iter.next()? {
                         let value = iter.value;
@@ -589,7 +586,7 @@ impl Config {
                         }
 
                         // PERF(port): was getOrPutAssumeCapacity — profile if hot.
-                        // PORT NOTE: reshaped — `StringArrayHashMap::get_or_put` is gated on
+                        // NOTE: reshaped — `StringArrayHashMap::get_or_put` is gated on
                         // `V: Default` upstream and `ReplaceableExport` has no Default. Compute
                         // the value first, then `put` (which upserts without needing a default
                         // slot). The Zig getOrPut left the slot uninitialized on the error path
@@ -675,9 +672,8 @@ pub(crate) struct TransformTask<'a> {
     /// `js_instance`, which is kept alive by the `IntrusiveRc` below for the
     /// task's lifetime. `ManuallyDrop` prevents double-free; the original owns.
     pub transpiler: core::mem::ManuallyDrop<Transpiler::Transpiler<'static>>,
-    // TODO(port): LIFETIMES.tsv says Arc<JSTranspiler> — reconcile. JSTranspiler uses
-    // single-thread intrusive `bun.ptr.RefCount` and crosses FFI as `m_ctx`, so per
-    // PORTING.md §Pointers this must be IntrusiveRc, not Arc.
+    // `IntrusiveRc` (not `Arc`): JSTranspiler uses single-thread intrusive
+    // `bun.ptr.RefCount` and crosses FFI as `m_ctx` (PORTING.md §Pointers).
     pub js_instance: bun_ptr::IntrusiveRc<JSTranspiler>,
     pub log: bun_ast::Log,
     pub err: Option<Error>,
@@ -864,9 +860,9 @@ impl<'a> TransformTask<'a> {
 
         if printed > 0 {
             buffer_writer = printer.ctx;
-            // TODO(port): `buffer_writer.buffer.list.items = buffer_writer.written;` —
-            // Zig truncates the Vec's view to `written`. Map to `.truncate(written.len())` or
-            // a slice copy depending on BufferWriter shape.
+            // Zig re-sliced `buffer.list.items = buffer_writer.written` before
+            // copying; Rust's `written()` reslices via `written_len`, so the
+            // copied bytes are identical and the local writer is then dropped.
             self.output_code = BunString::clone_utf8(buffer_writer.written());
         } else {
             self.output_code = BunString::empty();
@@ -874,9 +870,11 @@ impl<'a> TransformTask<'a> {
     }
 
     pub(crate) fn then(&mut self, promise: &mut JSPromise) -> Result<(), bun_jsc::JsTerminated> {
-        // defer this.deinit() — handled by caller / Drop on Box<TransformTask>
-        // TODO(port): Zig `defer this.deinit()` here destroys self at end of `then`. In Rust,
-        // ConcurrentPromiseTask should own the Box and drop it after `then` returns.
+        // Zig `defer this.deinit()`: after `then` returns, the dispatcher
+        // (`run_then_destroy!` for `task_tag::AsyncTransformTask` in
+        // runtime/dispatch.rs) unconditionally calls
+        // `ConcurrentPromiseTask::destroy`, dropping the owned `ctx`
+        // (this `TransformTask`) and running its `Drop` (transpiler deref etc.).
 
         if self.log.has_any() || self.err.is_some() {
             let error_value: JsResult<JSValue> = 'brk: {
@@ -987,12 +985,17 @@ impl JSTranspiler {
     ) -> JsResult<*mut JSTranspiler> {
         let arguments = callframe.arguments_old::<3>();
 
-        // PORT NOTE: reshaped — Zig allocates `this` first with `transpiler = undefined` and
+        // NOTE: reshaped — Zig allocates `this` first with `transpiler = undefined` and
         // assigns it later. Rust cannot leave a non-POD field uninitialized in a live Box
         // (zeroed()/assume_init() on Transpiler is UB), so build `config` + `transpiler` on the
-        // stack first, then move both into the Box.
-        // TODO(port): in-place init — if the Box must be allocated up-front (e.g. stable
-        // address for resolver backrefs), switch the field to `MaybeUninit<Transpiler>`.
+        // stack first, then move both into the Box. Nothing observes the
+        // `Box<JSTranspiler>` address before construction completes. The
+        // address-sensitive pointers are `transpiler.arena` (points into the
+        // separately-boxed `arena`, whose address is move-stable) and
+        // `transpiler.log` (initially points at the stack-local `config.log`;
+        // it is re-pointed via `set_log` once the Box exists — see the NOTE
+        // below), so no up-front allocation / `MaybeUninit` in-place init is
+        // needed.
         let mut config = Config {
             log: bun_ast::Log::init(),
             ..Default::default()
@@ -1056,7 +1059,7 @@ impl JSTranspiler {
         });
         // errdefer past this point → `this: Box<_>` drops and runs Drop for JSTranspiler.
 
-        // PORT NOTE: reshaped — Zig allocated `this` on the heap FIRST and passed `&this.config.log`
+        // NOTE: reshaped — Zig allocated `this` on the heap FIRST and passed `&this.config.log`
         // into `Transpiler::init`, giving a stable address. We built `config` on the stack and
         // moved it into the Box, so `transpiler.log` (a `*mut Log`) still points at the moved-from
         // stack slot. Re-point it at the heap-stable field now that the Box exists.
@@ -1556,7 +1559,7 @@ impl JSTranspiler {
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(&arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        // PORT NOTE: spec snapshots the WHOLE `this.transpiler` by value
+        // NOTE: spec snapshots the WHOLE `this.transpiler` by value
         // (`prev_bundler = this.transpiler`) and restores it on exit. `Transpiler` is not
         // bitwise-copyable in Rust, so explicitly snapshot the fields the body mutates
         // (`allocator`, `log`, `macro_context`) and restore them via RAII guard.
@@ -1641,7 +1644,7 @@ fn named_exports_to_js(
     }
 
     // PERF(port): was stack-fallback allocator — profile if hot.
-    // PORT NOTE: Zig sorted the map in-place via `StringArrayByIndexSorter` then iterated.
+    // NOTE: Zig sorted the map in-place via `StringArrayByIndexSorter` then iterated.
     // `StringArrayHashMap` in Rust has no in-place sort, so collect the keys, sort them
     // lexicographically (matching `strings.order`), then emit `BunString`s in that order.
     let mut keys: Vec<&[u8]> = Vec::with_capacity(named_exports.count());
@@ -1796,7 +1799,7 @@ impl JSTranspiler {
         // the parser borrows it for the arena lifetime (Zig held `*const Define`).
         let define = &*transpiler.options.define;
 
-        // PORT NOTE: spec calls `transpiler.resolver.caches.js.scan`. The
+        // NOTE: spec calls `transpiler.resolver.caches.js.scan`. The
         // resolver-side `cache::JavaScript` is a fieldless shell with
         // no `scan` body; the real `scan` lives on `bun_bundler::cache::JavaScript`.
         // Both are stateless unit structs, so calling the bundler-crate one

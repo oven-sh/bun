@@ -99,7 +99,7 @@ pub struct RunCommand;
 impl RunCommand {
     /// `bun run --help` body.
     pub fn print_help(package_json: Option<&PackageJSON>) {
-        // PORT NOTE: templates are passed as *string literals* so the
+        // templates are passed as *string literals* so the
         // `pretty_fmt!` proc-macro rewrites the `<tag>` color markup at compile
         // time. Routing them through a `const &str` + `{}` prints the raw
         // `<b>`/`<r>` tags verbatim.
@@ -200,7 +200,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
     /// Find the "best" shell to use. Cached to only run once.
     pub fn find_shell(path: &[u8], cwd: &[u8]) -> Option<&'static ZStr> {
-        // PORT NOTE: Zig used `bun.once` over a module-level `var shell_buf`
+        // Zig used `bun.once` over a module-level `var shell_buf`
         // (run_command.zig:73). Process-lifetime; written exactly once on the
         // CLI thread. PORTING.md §Global mutable state: scratch buffer behind
         // a `Once` gate → RacyCell.
@@ -235,7 +235,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     /// Port of `runPackageScriptForeground` (run_command.zig:209). Spawns the
     /// script body via the bun-shell or system shell and exits on non-zero.
     ///
-    /// PORT NOTE: `allocator` parameter dropped (PORTING.md §Allocators —
+    /// `allocator` parameter dropped (PORTING.md §Allocators —
     /// always global mimalloc); `passthrough` is `&[Box<[u8]>]` to match
     /// `ctx.passthrough` directly (Zig was `[]const string`).
     pub fn run_package_script_foreground(
@@ -597,12 +597,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
     ) -> Result<bun_resolver::DirInfoRef, bun_core::Error> {
         let args = ctx.args.clone();
         let env_is_none = env.is_none();
-        // PORT NOTE: process-lifetime arena singleton for the runner's
-        // transpiler. Zig passed `ctx.allocator` (== `bun.default_allocator`);
-        // the Rust port threads an `&'static Arena` per PORTING.md §AST crates.
-        // TODO(port): allocator — collapse once Transpiler::init drops the arena arg.
+        // Process-lifetime arena singleton for the runner's transpiler. Zig
+        // passed `ctx.allocator` (== `bun.default_allocator`); the Rust port
+        // threads an `&'static Arena` per PORTING.md §AST crates.
         let arena: &'static bun_alloc::Arena = runner_arena();
-        // PORT NOTE: out-param constructor — Zig: `var this_transpiler: Transpiler
+        // Out-param constructor — Zig: `var this_transpiler: Transpiler
         // = undefined;` then `configureEnvForRun` writes the whole struct.
         // `Transpiler` holds `&Arena`/`Box`/enum fields (non-null invariants),
         // so callers MUST pass a `MaybeUninit` slot (PORTING.md §std.mem.zeroes).
@@ -798,7 +797,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         use bun_options_types::context::MacroOptions;
         use bun_options_types::offline_mode::OfflineMode;
 
-        // PORT NOTE: `BundleOptions::install` is a raw `NonNull` backref into
+        // `BundleOptions::install` is a raw `NonNull` backref into
         // the CLI's `Box<BunInstall>` (process-lifetime — Zig stored the raw
         // `?*BunInstall`). `as_deref` yields `&BunInstall`, which
         // `NonNull::from` converts without the lifetime tie.
@@ -811,7 +810,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online);
         b.resolver.opts.prefer_offline_install = offline == OfflineMode::Offline;
-        // PORT NOTE: resolver's forward-decl `BundleOptions` lacks
+        // resolver's forward-decl `BundleOptions` lacks
         // `prefer_latest_install`; only the bundler-side mirror carries it.
         b.options.global_cache = ctx.debug.global_cache;
         b.options.prefer_offline_install = offline == OfflineMode::Offline;
@@ -821,14 +820,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
-        // PORT NOTE: resolver's forward-decl `BundleOptions` does not project
+        // resolver's forward-decl `BundleOptions` does not project
         // `minify_*` (resolver never reads them); Zig assigned both because the
         // resolver carried the full struct.
 
         match &mut ctx.debug.macros {
             MacroOptions::Disable => b.options.no_macros = true,
             MacroOptions::Map(macros) => {
-                // PORT NOTE: `ContextData::MacroMap` and
+                // `ContextData::MacroMap` and
                 // `BundleOptions::macro_remap` are both
                 // `ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
                 // but with different hasher contexts (`Auto` vs
@@ -957,7 +956,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             Global::exit(exit_code as u32);
         }
 
-        // PORT NOTE: `jsc::initialize(false)` + `Expr/Stmt::Store::create()` +
+        // `jsc::initialize(false)` + `Expr/Stmt::Store::create()` +
         // `MimallocArena::init()` precede VM init in Zig. `bun_jsc::initialize`
         // is now real (calls `JSCInitialize` over `bun_sys::environ()`); the
         // dispatch hooks (`jsc_hooks::install_jsc_hooks`) are installed by
@@ -979,14 +978,14 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: `init` returns the unique freshly-boxed VM on this thread.
         let vm = unsafe { &mut *vm_ptr };
 
-        // PORT NOTE: `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` on both sides;
+        // `vm.preload`/`vm.argv` are `Vec<Box<[u8]>>` on both sides;
         // hand the CLI's vectors over wholesale (process-lifetime, never freed).
         vm.preload = std::mem::take(&mut ctx.preloads);
         vm.argv = std::mem::take(&mut ctx.passthrough);
         // Zig passes `store_fd = ctx.debug.hot_reload != .none` to `init`;
         // `InitOptions` lacks the field so set it on the resolver directly.
         vm.transpiler.resolver.store_fd = ctx.debug.hot_reload != cli::command::HotReload::None;
-        // PORT NOTE: `vm.dns_result_order` is a `u8` until the b2-cycle widens
+        // `vm.dns_result_order` is a `u8` until the b2-cycle widens
         // it to `bun_dns::Order`; the enum is `#[repr(u8)]` so `as u8` is the
         // exact `@intFromEnum` Zig would have done.
         vm.dns_result_order =
@@ -1035,7 +1034,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 path = bstr::BStr::new(&escaped_path),
                 period = bstr::BStr::new(&escaped_period),
             );
-            // PORT NOTE: process-lifetime (runner never returns) — store both
+            // process-lifetime (runner never returns) — store both
             // the script bytes and the synthetic entry path in the runner arena
             // so the `Source` stored in the VM can backref into them (Zig:
             // `allocPrint` + `dupe` + never-free).
@@ -1062,7 +1061,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         }
 
         // ctx → transpiler/resolver option mapping (bun.js.zig:247-275).
-        // PORT NOTE: reshaped for borrowck — `b` borrows `vm.transpiler`
+        // reshaped for borrowck — `b` borrows `vm.transpiler`
         // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
         // capture the defines result, drop `b`, then branch.
         let defines_ok = {
@@ -1127,7 +1126,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
                 entry_path: entry_ptr,
             });
         }
-        // PORT NOTE: `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
+        // `ctx.debug.hot_reload` → `vm.hot_reload` (a `u8` until the
         // b2-cycle widens it to `cli::HotReload`); `Run::start` re-reads it
         // from `self.ctx` to drive the hot-reloader enable.
         vm.hot_reload = ctx.debug.hot_reload as u8;
@@ -1178,7 +1177,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             )?;
         }
 
-        // PORT NOTE: layering — `Options::graph` is the resolver's trait object
+        // layering — `Options::graph` is the resolver's trait object
         // (`&'static dyn bun_resolver::StandaloneModuleGraph`); the concrete
         // `bun_standalone_graph::Graph` implements it. The graph is the
         // process-global singleton (`StandaloneModuleGraph::set` in
@@ -1196,7 +1195,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             graph: Some(graph_dyn),
             is_main_thread: true,
             smol: ctx.runtime_options.smol,
-            // PORT NOTE: `Options::dns_result_order` is `u8` until the
+            // `Options::dns_result_order` is `u8` until the
             // b2-cycle widens it to `bun_dns::Order`; the enum is
             // `#[repr(u8)]` so `as u8` matches Zig's `@intFromEnum`.
             dns_result_order: bun_dns::Order::from_string_or_die(
@@ -1220,7 +1219,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // SAFETY: freshly-allocated heap bytes, never freed (see above).
         vm.set_main(unsafe { &*entry_ptr });
 
-        // PORT NOTE: reshaped for borrowck — `b` borrows `vm.transpiler`
+        // reshaped for borrowck — `b` borrows `vm.transpiler`
         // exclusively; `fail_with_build_error(vm)` needs the whole `vm`, so
         // capture the defines result, drop `b`, then branch.
         let defines_ok = {
@@ -1321,7 +1320,7 @@ static RUN: bun_core::RacyCell<Run> = bun_core::RacyCell::new(Run {
     entry_path: ::core::ptr::slice_from_raw_parts(::core::ptr::null(), 0),
 });
 
-// PORT NOTE: Zig writes `run.any_unhandled = true` from inside the
+// Zig writes `run.any_unhandled = true` from inside the
 // unhandled-rejection callback while `Run::start` holds `&mut self` (via the
 // `holdAPILock` trampoline). Storing the flag on `Run` and writing through a
 // fresh `&raw mut RUN` would alias that exclusive borrow (PORTING.md
@@ -1373,7 +1372,7 @@ impl Run {
     /// lock via `hold_api_lock`.
     // `printed_…` writes before `global_exit` are intentional Zig-shape.
     fn start(&mut self) -> ! {
-        // PORT NOTE: deref the raw VM/ctx pointers once so the rest of this
+        // deref the raw VM/ctx pointers once so the rest of this
         // body can borrow `vm` and `ctx` alongside `self.entry_path`.
         // SAFETY: `self.vm` is the boxed-and-leaked main-thread VM; `self.ctx`
         // is the CLI's process-lifetime `ContextData`. Both are written by
@@ -1823,7 +1822,7 @@ impl RunCommand {
         // SAFETY: `ctx.log` was set in `create_context_data` (single-threaded
         // CLI startup) and is process-lifetime.
         //
-        // PORT NOTE: `Log::print` is generic over `IntoLogWrite`, which is
+        // `Log::print` is generic over `IntoLogWrite`, which is
         // implemented for `*mut io::Writer` (not `&mut`). `error_writer()`
         // returns the process-global writer; cast to the raw pointer the
         // trait expects.
@@ -2401,7 +2400,7 @@ impl RunCommand {
             positionals = &positionals[1..];
         }
 
-        // PORT NOTE: `target_name` borrows `ctx.positionals`, but the boot path
+        // `target_name` borrows `ctx.positionals`, but the boot path
         // mutates `ctx` (takes `preloads`/`passthrough`). Dupe up-front to
         // dodge the borrowck split; the string is short and `exec` is cold.
         let target_name: Box<[u8]> = if !positionals.is_empty() {
@@ -2443,7 +2442,7 @@ impl RunCommand {
         }
 
         // ── setup (unconditional — zig:1694-1699) ───────────────────────────
-        // PORT NOTE: out-param init — Zig: `var this_transpiler: Transpiler
+        // out-param init — Zig: `var this_transpiler: Transpiler
         // = undefined;`. `Transpiler` is NOT all-zero-valid POD (holds
         // `&Arena`/`Box`/enum fields), so use `MaybeUninit` and let
         // `configure_env_for_run` `.write()` the whole struct (PORTING.md
@@ -2526,7 +2525,7 @@ impl RunCommand {
                             .expect("unreachable");
 
                         // allocate enough to hold "post${scriptname}"
-                        // PORT NOTE: byte 0 is a placeholder so the "pre" slice
+                        // byte 0 is a placeholder so the "pre" slice
                         // (`[1..]`) and the in-place "post" overwrite share one
                         // buffer (run_command.zig:1749-1794).
                         let mut temp_script_buffer: Vec<u8> =
@@ -2545,7 +2544,7 @@ impl RunCommand {
                             bstr::BStr::new(package_json_dir)
                         );
 
-                        // PORT NOTE: borrowck reshape — `ctx.passthrough` is a
+                        // borrowck reshape — `ctx.passthrough` is a
                         // field of `ctx` but `run_package_script_foreground`
                         // takes `&mut ContextData`; clone the slice up-front.
                         let passthrough: Vec<Box<[u8]>> = ctx.passthrough.clone();
@@ -2658,7 +2657,7 @@ impl RunCommand {
                     .unwrap_or(Loader::Tsx);
                 if loader.can_be_run_by_bun() || loader == Loader::Html || loader == Loader::Md {
                     bun_core::scoped_log!(RUN_LOG, "Resolved to: `{}`", bstr::BStr::new(path.text));
-                    // PORT NOTE: borrowck — `_boot_and_handle_error` takes
+                    // borrowck — `_boot_and_handle_error` takes
                     // `&mut ctx`; copy `path.text` out of the resolver borrow.
                     let text: Box<[u8]> = path.text.to_vec().into_boxed_slice();
                     return Ok(Self::_boot_and_handle_error(ctx, &text, Some(loader)));
@@ -2827,7 +2826,7 @@ impl RunCommand {
     /// path does not exist / is a directory, so the caller can fall through to
     /// script lookup.
     ///
-    /// PORT NOTE: the Zig version reads `ctx.args.entry_points[0]`; this tier
+    /// The Zig version reads `ctx.args.entry_points[0]`; this tier
     /// has not wired `Arguments::parse` to populate `entry_points` yet, so we
     /// take the target slice explicitly.
     fn maybe_open_with_bun_js(ctx: &mut ContextData, target: &[u8]) -> bool {
@@ -2835,7 +2834,7 @@ impl RunCommand {
             return false;
         }
 
-        // PORT NOTE (run_command.zig:1586-1640): Zig OPENS the file (rather than
+        // Spec note (run_command.zig:1586-1640): Zig OPENS the file (rather than
         // just stat()ing the path), fstat()s the fd, then derives the canonical
         // absolute path via `bun.getFdPath(fd, &buf)` before booting. The
         // get_fd_path step matters: it resolves symlinks so module-relative
@@ -2947,7 +2946,7 @@ impl RunCommand {
         // read from stdin
         // PERF(port): Zig `stackFallback(2048, …)` — could swap to
         // `SmallVec<[u8; 2048]>` if profiled hot; cold CLI path here.
-        // PORT NOTE: `read_to_end_into` is the cursor-relative streaming reader
+        // `read_to_end_into` is the cursor-relative streaming reader
         // (stdin is a pipe/tty, not seekable; `read_to_end` would `pread(0)`).
         let mut list: Vec<u8> = Vec::new();
         if bun_sys::File::stdin().read_to_end_into(&mut list).is_err() {
@@ -2978,7 +2977,7 @@ impl RunCommand {
         ctx.passthrough = passthrough_list;
 
         // Zig: `Run.boot(ctx, dupe(entry_path), null) catch |err| { … }`.
-        // PORT NOTE: NOT routed through `_boot_and_handle_error` — the spec
+        // NOT routed through `_boot_and_handle_error` — the spec
         // stdin path (run_command.zig:1740-1749) skips the
         // `configureAllocator(.long_running=true)` / `.md` checks and prints
         // `basename(target_name)` (= "-"), not `basename(entry_path)`
@@ -2997,7 +2996,7 @@ impl RunCommand {
     /// path-buffer dance.
     pub fn exec_eval(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
         // Zig: `ctx.passthrough = concat(ctx.positionals, ctx.passthrough)`.
-        // PORT NOTE: prepend positionals into the existing passthrough vec
+        // prepend positionals into the existing passthrough vec
         // (cold path, single allocation).
         if !ctx.positionals.is_empty() {
             let mut merged: Vec<Box<[u8]>> =
@@ -3045,14 +3044,14 @@ impl RunCommand {
             Self::exec_as_if_node_missing_script();
         }
 
-        // PORT NOTE: borrowck — `_boot_and_handle_error` takes `&mut ctx`, so
+        // borrowck — `_boot_and_handle_error` takes `&mut ctx`, so
         // dupe the positional out before the call.
         let filename: Box<[u8]> = ctx.positionals[0].clone();
 
         let normalized: Box<[u8]> = if paths::is_absolute(&filename) {
             filename
         } else {
-            // PORT NOTE (run_command.zig:1976-1984): the spec writes
+            // Spec note (run_command.zig:1976-1984): the spec writes
             // `path_buf[cwd.len] = std.fs.path.sep_posix` (always `/`, NOT the
             // platform separator) and then runs the result through
             // `resolve_path.joinAbsStringBuf(.., .loose)` to collapse `.`/`..`.
@@ -3069,7 +3068,7 @@ impl RunCommand {
             joined.to_vec().into_boxed_slice()
         };
 
-        // PORT NOTE (run_command.zig:1987-1992): this arm calls `Run.boot`
+        // Spec note (run_command.zig:1987-1992): this arm calls `Run.boot`
         // directly — NOT `_bootAndHandleError` — so it (a) does not call
         // `Global::configure_allocator` and (b) uses the
         // `Output.err(err, "Failed to run script \"...\"")` form.
@@ -3326,7 +3325,7 @@ impl RunCommand {
             let Ok(response_buffer) = bun_core::MutableString::init(8 * 1024) else {
                 continue;
             };
-            // PORT NOTE: Zig wrote `.async_http = undefined` then overwrote it.
+            // Zig wrote `.async_http = undefined` then overwrote it.
             // `AsyncHTTP` holds non-nullable `fn()` pointers (result_callback,
             // task.callback), so `mem::zeroed()` would be instant UB. Allocate
             // an uninit `Box`, write the cheap fields first to obtain stable
@@ -3470,7 +3469,7 @@ impl RunCommand {
                 continue;
             }
             // Dupe d.url for the map key — `collector.urls` owns the backing
-            // PORT NOTE: reshaped — Zig frees `key`/`path` and unlinks on
+            // reshaped — Zig frees `key`/`path` and unlinks on
             // `put` failure. Check capacity first while `path` is still
             // borrowable for `unlink_staged_path`.
             if out_map.try_reserve(1).is_err() {
@@ -3918,7 +3917,7 @@ impl RunCommand {
         this_transpiler.resolver.care_about_bin_folder = false;
         this_transpiler.resolver.care_about_scripts = false;
 
-        // PORT NOTE: `ShellCompletions` stores `&'static [&'static [u8]]`; the
+        // `ShellCompletions` stores `&'static [&'static [u8]]`; the
         // keys interned into `filename_store` / boxed from static tables outlive
         // the process. The owning `results` ArrayHashMap is held in a process-
         // lifetime arena slot so the borrowed keys remain valid (Zig never

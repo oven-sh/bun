@@ -33,7 +33,7 @@ impl JSUint8Array {
     }
 
     pub fn slice(&mut self) -> &mut [u8] {
-        // PORT NOTE: detached/empty JSUint8Array has ptr=null, len=0. Zig `ptr[0..0]` is
+        // Note: detached/empty JSUint8Array has ptr=null, len=0. Zig `ptr[0..0]` is
         // valid for any ptr; `ffi::slice_mut` tolerates `(null, 0)` so no extra guard.
         // SAFETY: JSC guarantees `ptr()` is valid for `len()` bytes while the cell is alive.
         unsafe { bun_core::ffi::slice_mut(self.ptr(), self.len()) }
@@ -41,7 +41,7 @@ impl JSUint8Array {
 
     /// `bytes` must come from `bun.default_allocator` (the global mimalloc allocator);
     /// ownership is transferred to the returned JS Uint8Array.
-    // PORT NOTE: Zig took `[]u8` + a doc comment requiring default_allocator provenance.
+    // Note: Zig took `[]u8` + a doc comment requiring default_allocator provenance.
     // In Rust the global allocator IS mimalloc, so `Box<[u8]>` encodes that ownership.
     pub fn from_bytes(global: &JSGlobalObject, bytes: Box<[u8]>) -> JSValue {
         let len = bytes.len();
@@ -69,7 +69,6 @@ impl JSUint8Array {
     }
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     fn JSUint8Array__fromDefaultAllocator(
         global: *const JSGlobalObject,

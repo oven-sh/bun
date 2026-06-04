@@ -73,7 +73,6 @@ impl PmVersionCommand {
         positionals: &[&[u8]],
         original_cwd: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let package_json_dir = Self::find_package_dir(original_cwd)?;
 
         if positionals.len() <= 1 {
@@ -105,7 +104,7 @@ impl PmVersionCommand {
             package_json_path.as_bytes(),
             &*package_json_contents,
         );
-        // PORT NOTE: Zig passed `ctx.allocator`; Rust ctx dropped allocator (global mimalloc),
+        // Note: Zig passed `ctx.allocator`; Rust ctx dropped allocator (global mimalloc),
         // so we hand the parser a local bump arena for its scratch allocations.
         let json_bump = Arena::new();
         let json_result = match JSON::parse_package_json_utf8_with_opts::<
@@ -346,7 +345,7 @@ impl PmVersionCommand {
     }
 
     fn get_current_version(ctx: &command::ContextData, cwd: &[u8]) -> Option<Vec<u8>> {
-        // PORT NOTE: reshaped — Zig returned a slice borrowing from ctx.allocator-owned
+        // Note: reshaped — Zig returned a slice borrowing from ctx.allocator-owned
         // package.json bytes (leaked for process lifetime). Return owned Vec<u8> instead.
         let mut path_buf = PathBuffer::uninit();
         let package_json_path = path::join_abs_string_buf_z::<path_platform::Auto>(
@@ -924,7 +923,7 @@ impl PmVersionCommand {
     }
 }
 
-// PORT NOTE: helper for `std.fmt.allocPrint` — builds into Vec<u8> (never `format!`).
+// Note: helper for `std.fmt.allocPrint` — builds into Vec<u8> (never `format!`).
 #[inline]
 fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
     let mut v = Vec::new();
@@ -932,7 +931,7 @@ fn fmt_bytes(args: core::fmt::Arguments<'_>) -> Vec<u8> {
     v
 }
 
-// PORT NOTE: build `sync::Options.argv: Vec<Box<[u8]>>` from a slice of byte
+// Note: build `sync::Options.argv: Vec<Box<[u8]>>` from a slice of byte
 // slices (Zig was `&.{...}` of `[]const u8`).
 #[inline]
 fn build_argv(parts: &[&[u8]]) -> Vec<Box<[u8]>> {

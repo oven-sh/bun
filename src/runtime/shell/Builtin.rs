@@ -157,7 +157,7 @@ macro_rules! shell_builtins {
 
             /// Hoisted dispatch: start the builtin's state machine.
             pub fn start(interp: &Interpreter, cmd: NodeId) -> Yield {
-                // PORT NOTE: reshaped for borrowck — match on a copied Kind, then
+                // Match on a copied Kind, then
                 // call the per-builtin `start(interp, cmd)`. Each builtin reaches its
                 // own state via `Builtin::of_mut(interp, cmd).impl_`.
                 match Self::kind_of(interp, cmd) {
@@ -259,8 +259,8 @@ pub enum BuiltinIO {
     /// Async writer (real fd). `needs_io()` returns Some.
     Fd(OutFd),
     /// Captured pipe — writes go to the shell env's `_buffered_{stdout,stderr}`.
-    /// PORT NOTE: Zig kept a local `ArrayList(u8)` here and flushed it in
-    /// `done()`; the NodeId port writes through immediately (see module doc).
+    /// Unlike the Zig original (local `ArrayList(u8)` flushed in `done()`),
+    /// the NodeId port writes through immediately (see module doc).
     /// The payload names which shell-env bytelist to append to — set at
     /// `from_out_kind` and copied verbatim by `dup_ref` so `2>&1` keeps
     /// stderr aimed at stdout's buffer.
@@ -391,7 +391,7 @@ impl BuiltinIO {
                 panic!("write_no_io called on fd output; caller must check needs_io()")
             }
             BuiltinIO::Buf(target) => {
-                // PORT NOTE: Zig appended to a local `io.buf` and flushed in
+                // The Zig original appended to a local `io.buf` and flushed in
                 // `done()` to `buffered_{stdout,stderr}` keyed on which field
                 // the buffer lives in. The NodeId port writes straight through;
                 // `target` is that field identity, fixed at construction and
@@ -587,7 +587,7 @@ impl Builtin {
 
                 // `redirection_file` was NUL-terminated by Expansion; build a
                 // `&ZStr` over it (path = bytes excluding the trailing NUL).
-                // PORT NOTE: reshaped for borrowck — clone path bytes so the
+                // Clone the path bytes so the
                 // `&mut interp` open call below doesn't overlap a borrow into
                 // the Cmd node.
                 let path_buf: Vec<u8> = {
@@ -895,7 +895,7 @@ impl Builtin {
     /// Spec: Builtin.zig `done`.
     pub fn done(interp: &Interpreter, cmd: NodeId, exit_code: ExitCode) -> Yield {
         Self::of_mut(interp, cmd).exit_code = Some(exit_code);
-        // PORT NOTE: Zig `done` flushes `.buf` into `shell.buffered_stdout()`
+        // Zig's `done` flushes `.buf` into `shell.buffered_stdout()`
         // here. The NodeId port writes through immediately in `write_no_io`,
         // so there is nothing to flush.
         Cmd::on_exec_done(interp, cmd, exit_code)
@@ -951,7 +951,7 @@ impl Builtin {
         if buf.is_empty() {
             return Ok(0);
         }
-        // PORT NOTE: reshaped for borrowck — split-borrow the Cmd so `shell`
+        // Split-borrow the Cmd so `shell`
         // and the builtin's stdout/stderr are accessible simultaneously.
         let cmd_node = interp.as_cmd_mut(cmd);
         let shell = cmd_node.base.shell;
@@ -1184,7 +1184,7 @@ impl Builtin {
         Self::of_mut(interp, cmd).exit_code = Some(exit_code);
         if let Some(safeguard) = Self::of(interp, cmd).stderr.needs_io() {
             let child = io_writer::ChildPtr::new(cmd, io_writer::WriterTag::Builtin);
-            // PORT NOTE: reshaped for borrowck — clone buf so the &mut on
+            // Clone buf so the &mut on
             // `stderr` doesn't overlap a borrow into `err_buf`.
             let owned = buf.to_vec();
             return Self::of_mut(interp, cmd)

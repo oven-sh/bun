@@ -60,9 +60,7 @@ fn create_buffer_with_ctx(
 
 // ── DOM-call C++ put helpers (generated in ZigLazyStaticFunctions-inlines.h) ──
 // In Zig these are `@extern`ed by the comptime `DOMCall(...)` type-generator;
-// here we declare them directly since the `#[bun_jsc::dom_call]` proc-macro is
-// not yet implemented.
-// TODO(port): move to <area>_sys
+// here we declare them directly.
 #[allow(non_snake_case)]
 unsafe extern "C" {
     fn FFI__ptr__put(global: *mut JSGlobalObject, value: JSValue);
@@ -96,11 +94,10 @@ pub(crate) fn new_cstring(
     }
 }
 
-// TODO(port): `DOMCall("FFI", @This(), "ptr", ...)` is a comptime type-generator that
-// emits a DOMJIT fast-path descriptor + slow-path host fn. Needs a proc-macro
-// or codegen step (`bun_jsc::dom_call!`). Represented here as a const descriptor.
-// PORT NOTE: the `DOMEffect.forRead(.TypedArrayProperties)` argument is consumed by
-// the C++ codegen, not the runtime descriptor; it lives in the generated
+// Zig's `DOMCall("FFI", @This(), "ptr", ...)` comptime type-generator emits a
+// DOMJIT fast-path descriptor + slow-path host fn; represented here as a const
+// descriptor. The `DOMEffect.forRead(.TypedArrayProperties)` argument is consumed
+// by the C++ codegen, not the runtime descriptor; it lives in the generated
 // `ZigLazyStaticFunctions-inlines.h` already.
 pub(crate) const DOM_CALL: DomCall = DomCall {
     class_name: "FFI",
@@ -152,11 +149,11 @@ pub fn to_js(global_object: &JSGlobalObject) -> JSValue {
 pub mod reader {
     use super::*;
 
-    // TODO(port): same DOMCall codegen note as `DOM_CALL` above. In Zig this is an
-    // anonymous struct of 12 `DOMCall(...)` values iterated via `inline for`.
-    // PORT NOTE: the `DOMEffect.forRead(.World)` argument is encoded on the C++ side
-    // (generated `Reader__*__put` in ZigLazyStaticFunctions-inlines.h); the runtime
-    // descriptor here only needs the `put` extern.
+    // Same DOMCall shape as `DOM_CALL` above. In Zig this is an anonymous
+    // struct of 12 `DOMCall(...)` values iterated via `inline for`. The
+    // `DOMEffect.forRead(.World)` argument is encoded on the C++ side
+    // (generated `Reader__*__put` in ZigLazyStaticFunctions-inlines.h); the
+    // runtime descriptor here only needs the `put` extern.
     pub(crate) const DOM_CALLS: &[(&str, DomCall)] = &[
         (
             "u8",
@@ -269,7 +266,6 @@ pub mod reader {
 
     #[inline(always)]
     fn addr_from_args(global_object: &JSGlobalObject, arguments: &[JSValue]) -> JsResult<usize> {
-        // PORT NOTE: hoisted from repeated inline checks; identical body in every reader.
         if arguments.is_empty() || !arguments[0].is_number() {
             return Err(global_object.throw_invalid_arguments(format_args!("Expected a pointer")));
         }
@@ -417,10 +413,9 @@ pub mod reader {
         Ok(JSValue::from_uint64_no_truncate(global_object, value))
     }
 
-    // ── fast-path (DOMJIT, no type checks) readers ────────────────────────────
-    // These are `callconv(jsc.conv)` in Zig — called directly from JIT code.
-    // TODO(port): `#[bun_jsc::host_call]` emits the correct ABI ("sysv64" on
-    // win-x64, "C" elsewhere). Raw pointers are intentional (FFI boundary).
+    // The DOMJIT fast-path (no type checks) readers — `callconv(jsc.conv)` in
+    // Zig, called directly from JIT code — live on the C++ side (generated
+    // `ZigLazyStaticFunctions-inlines.h`); only the slow paths above are here.
 }
 
 pub(crate) fn ptr(global_this: &JSGlobalObject, _: JSValue, arguments: &[JSValue]) -> JSValue {
@@ -437,7 +432,6 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
     }
 
     let Some(array_buffer) = value.as_array_buffer(global_this) else {
-        // PORT NOTE: `JSType` derives `Debug` only; Zig used `@tagName`.
         return global_this.to_invalid_arguments(format_args!(
             "Expected ArrayBufferView but received {:?}",
             value.js_type()
@@ -499,8 +493,13 @@ fn ptr_(global_this: &JSGlobalObject, value: JSValue, byte_offset: Option<JSValu
 
 /// `union(enum)` → Rust enum.
 /// `Slice` carries a raw (ptr, len) because it points at caller-owned FFI memory
-/// of unknown lifetime — never freed by Rust.
-// TODO(port): lifetime — verify all consumers treat this as borrow-of-FFI-memory.
+/// of unknown lifetime.
+// Consumer audit: `new_cstring` copies the bytes into a JS string;
+// `to_array_buffer` wraps the pointer with the caller's optional finalizer and
+// never frees it from Rust; `to_buffer` does the same when a finalizer is
+// given, but WITHOUT one it falls back to `JSValue::create_buffer`, which
+// installs `MarkedArrayBuffer_deallocator` and `mi_free`s the caller-owned
+// slice on GC — Zig-parity free-foreign-memory footgun, see PR #31753.
 enum ValueOrError {
     Err(JSValue),
     Slice(*mut u8, usize),
@@ -814,7 +813,7 @@ macro_rules! wrap_host_fn {
 
 mod fields {
     use super::*;
-    // PORT NOTE: `print`/`callback`/`link_symbols`/`close_callback` live on
+    // `print`/`callback`/`link_symbols`/`close_callback` live on
     // `ffi_body::FFI` — not yet hoisted onto the canonical `crate::ffi::FFI`.
     // They are static (no `&self`), so type identity is irrelevant; route to
     // them directly until the two `FFI` structs merge.
@@ -908,7 +907,7 @@ mod fields {
 }
 
 // Represented here as a const slice of (name, JSHostFn) so `to_js` can iterate.
-// PORT NOTE: cannot be `const` — `wrap_host_fn!` expands to a block expression
+// Cannot be `const` — `wrap_host_fn!` expands to a block expression
 // (item + cast), which const-eval rejects in array-literal position. The slice
 // is tiny and only built once in `to_js`, so the runtime cost is nil.
 #[allow(non_snake_case)]

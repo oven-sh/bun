@@ -18,10 +18,9 @@ pub struct Base {
     /// `deinit` it. Owned when created via `dupe_for_subshell` (Script,
     /// pipeline children, subshells, command substitutions); otherwise
     /// borrows the parent's env.
-    // TODO(port): lifetime — enum Owned(Box)/Borrowed once ShellExecEnv body
-    // is un-gated. Kept raw because the env may outlive this node's slot
-    // (shared across multiple children) and is freed by the owning node, not
-    // by Drop on Base.
+    // Kept raw (not an Owned(Box)/Borrowed enum) because the env may outlive
+    // this node's slot (shared across multiple children) and is freed by the
+    // owning node, not by Drop on Base.
     pub shell: *mut ShellExecEnv,
 }
 

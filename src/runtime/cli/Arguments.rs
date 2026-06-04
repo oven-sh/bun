@@ -48,7 +48,7 @@ pub(crate) fn loader_resolver(input: &[u8]) -> Result<api::Loader, bun_core::Err
 /// Resolve `filename` against `cwd`, open it, read its full contents, close it,
 /// and return the buffer.
 ///
-/// PORT NOTE: the Zig original (`std.fs.path.resolve` + `std.posix.toPosixPath`
+/// The Zig original (`std.fs.path.resolve` + `std.posix.toPosixPath`
 /// + `bun.openFileZ` + `readToEndAlloc`) is itself non-idiomatic for the Bun
 /// codebase. Reimplemented on top of `bun_paths::resolve_path` +
 /// `bun_sys::File::read_from`, which is the cross-platform path the rest of the
@@ -102,7 +102,7 @@ macro_rules! maybe_debug_params {
     };
 }
 
-// PORT NOTE: `builtin.have_error_return_tracing` is a Zig-only concept. Rust
+// `builtin.have_error_return_tracing` is a Zig-only concept. Rust
 // has no error-return tracing, but `bun_crash_handler::VERBOSE_ERROR_TRACE`
 // still gates extra crash diagnostics. Expose the flag in crash-trace builds
 // (debug/test/asan), which is the closest analogue.
@@ -712,7 +712,7 @@ pub use bun_bunfig::arguments::{load_config, load_config_path, load_config_with_
 
 /// Parse `argv` into `api::TransformOptions` for the given subcommand.
 ///
-/// PORT NOTE: `comptime cmd: Command.Tag` demoted to runtime arg (no
+/// `comptime cmd: Command.Tag` is demoted to runtime arg (no
 /// `ConstParamTy` on `Tag`). The Zig original monomorphised over `cmd` so each
 /// subcommand got a dedicated param-table reference and dead-code-eliminated the
 /// other arms; here `command::tag_params(cmd)` does the runtime lookup, and the
@@ -758,14 +758,14 @@ pub fn parse(cmd: CommandTag, ctx: Context<'_>) -> Result<api::TransformOptions,
         }
     }
 
-    // PORT NOTE: Zig gated on `builtin.have_error_return_tracing`; see
+    // Zig gated on `builtin.have_error_return_tracing`; see
     // `maybe_verbose_error_trace!` above for the Rust mapping.
     if bun_core::env::SHOW_CRASH_TRACE && args.flag(b"--verbose-error-trace") {
         bun_crash_handler::VERBOSE_ERROR_TRACE.store(true, core::sync::atomic::Ordering::Relaxed);
     }
 
     // ── --cwd ────────────────────────────────────────────────────────────────
-    // PORT NOTE: Zig stored a `[:0]u8` (NUL-terminated, owned). The Rust
+    // Zig stored a `[:0]u8` (NUL-terminated, owned). The Rust
     // `api::TransformOptions.absolute_working_dir` is `Option<Box<[u8]>>`
     // (sentinel dropped per schema.rs), so we dupe into a plain `Box<[u8]>`.
     let cwd: Box<[u8]> = if let Some(cwd_arg) = args.option(b"--cwd") {

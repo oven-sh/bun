@@ -442,7 +442,6 @@ impl Group {
     }
 
     pub fn json_stringify(&self, writer: &mut impl core::fmt::Write) -> fmt::Result {
-        // TODO(port): std.json.encodeJsonString — needs a JSON string encoder in bun_core/serde.
         let temp = {
             use std::io::Write as _;
             let mut v: Vec<u8> = Vec::new();
@@ -453,13 +452,11 @@ impl Group {
             let _ = write!(&mut v, "{}", self.fmt(input));
             v
         };
-        // TODO(port): writes raw bytes; should JSON-escape.
-        writer.write_str("\"")?;
-        write!(writer, "{}", bstr::BStr::new(&temp))?;
-        writer.write_str("\"")
+        // Zig: `std.json.encodeJsonString(temp, .{}, writer)`.
+        bun_core::fmt::encode_json_string(writer, &temp)
     }
 
-    // PORT NOTE: `deinit` deleted — `next: Option<Box<..>>` chains are freed by the
+    // `deinit` deleted — `next: Option<Box<..>>` chains are freed by the
     // iterative `Drop` impls on `Query` and `List`.
 
     pub fn get_exact_version(&self) -> Option<Version> {

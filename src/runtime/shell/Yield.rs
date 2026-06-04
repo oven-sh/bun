@@ -32,7 +32,9 @@ pub enum Yield {
     OnIoWriterChunk {
         child: crate::shell::io_writer::ChildPtr,
         written: usize,
-        // TODO(port): bun_jsc::SystemError — opaque until jsc compiles.
+        // `bun_sys::SystemError`, consistent with the rest of the shell
+        // subsystem (IOWriter/IOReader/Builtin); converted to a JS error at
+        // the throw boundary.
         err: Option<bun_sys::SystemError>,
     },
     /// Execution is waiting on async IO (epoll/kqueue/uv). The caller's task

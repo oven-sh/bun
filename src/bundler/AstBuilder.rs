@@ -60,8 +60,10 @@ pub struct AstBuilder<'a, 'bump> {
 //
 // Zig used `comptime` zero-sized fields (`options`, `import_items_for_namespace`)
 // and a `parser_features` decl so `ImportScanner.scan` could duck-type over both
-// the real parser and `AstBuilder`. In Rust this becomes a trait that both impl.
-// TODO(port): define `ImportScannerHost` trait in `bun_js_parser` and impl it here.
+// the real parser and `AstBuilder`. The Rust port instead open-codes the
+// scanner transform in `to_bundled_ast` for the stmt shapes AstBuilder emits;
+// if `ImportScanner` ever grows a host trait in `bun_js_parser`, these stubs
+// are the surface it would formalize.
 impl<'a, 'bump> AstBuilder<'a, 'bump> {
     // stub for ImportScanner duck typing — Zig: `comptime import_items_for_namespace: struct { fn get(_, _) ?Map { return null; } }`
     pub fn import_items_for_namespace_get(
@@ -123,7 +125,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         unsafe { &mut *self.current_scope }
     }
 
-    // PORT NOTE: Zig signature lacks `!` but body uses `try` — porting as fallible.
+    // Zig signature lacks `!` but body uses `try` — ported as fallible.
     pub fn push_scope(&mut self, kind: ScopeKind) -> Result<*mut Scope, OOM> {
         self.scopes.reserve(1);
         self.current_scope_mut().children.ensure_unused_capacity(1);
@@ -199,7 +201,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let non_unique =
             MutableString::ensure_valid_identifier(path_name.non_unique_name_string_base())?;
         let name = strings::append(b"import_", &non_unique);
-        // PORT NOTE: copy into the arena so the raw `*const [u8]` stored on the
+        // Copy into the arena so the raw `*const [u8]` stored on the
         // Symbol outlives this stack frame (Zig used the parser arena arena).
         let name: &[u8] = self.bump.alloc_slice_copy(&name);
         let namespace_ref = self.new_symbol(SymbolKind::Other, name)?;
@@ -273,7 +275,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         Ok(ref_)
     }
 
-    // PORT NOTE: returns `BundledAst<'static>` (== `JSAst`) directly. The only
+    // Returns `BundledAst<'bump>` (== `JSAst`) directly. The only
     // `'arena`-carrying field, `url_for_css`, is always set to `b""` here, and
     // every other field stores arena data via raw pointers / `StoreSlice`, so
     // nothing borrows `&mut self` past this call.
@@ -286,7 +288,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let module_scope = self.current_scope;
 
         let mut parts = bun_ast::PartList::with_capacity_in(2, self.bump);
-        // PORT NOTE: Zig grew len then wrote `parts.mut(i).* = ...`, which is a
+        // Zig grew len then wrote `parts.mut(i).* = ...`, which is a
         // bitwise store on the SoA slot. In Rust `*parts.mut_(i) = ...` first
         // *drops* the (uninitialized) prior `Part` — and `Part` carries Drop
         // fields (`Vec`/`HashMap`), so that drop frees garbage and corrupts the
@@ -323,7 +325,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         let module_scope_ref = unsafe { &*module_scope };
         let generated_len = module_scope_ref.generated.len();
         top_level_symbols_to_parts.ensure_total_capacity(generated_len)?;
-        // PORT NOTE: reshaped — Zig grew `entries` then wrote keys/values columns
+        // Reshaped — Zig grew `entries` then wrote keys/values columns
         // in lockstep + `reIndex`. Rust `ArrayHashMap` keeps keys/values in private
         // `Vec`s and rebuilds hashes on every `put_assume_capacity`, so a plain
         // pre-reserved insert loop is equivalent (and `re_index` is a no-op here).
@@ -338,7 +340,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // For more details on this section, look at js_parser.toAST
         // This is mimicking how it calls ImportScanner
         //
-        // PORT NOTE: Zig duck-typed `ImportScanner.scan(AstBuilder, ...)` and
+        // Zig duck-typed `ImportScanner.scan(AstBuilder, ...)` and
         // `ConvertESMExportsForHmr.{convertStmt,finalize}` over `AstBuilder`
         // via `anytype`. The Rust `ImportScanner` is currently monomorphized
         // over the concrete `P<'_, TS, J, SCAN>` parser only (see
@@ -347,11 +349,11 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         // `S.Local{is_export}`, `S.ExportDefault(expr)`). Without this, the
         // generated server-component proxy keeps raw `export` keywords inside
         // the HMR function wrapper and JSC rejects the chunk with
-        // `SyntaxError: Unexpected keyword 'export'`.
-        // TODO(port): replace with a `ParserLike` trait so the real
-        // `ImportScanner`/`ConvertESMExportsForHmr` can accept `AstBuilder`.
+        // `SyntaxError: Unexpected keyword 'export'`. If `ImportScanner` /
+        // `ConvertESMExportsForHmr` ever grow a `ParserLike` host trait, this
+        // open-coded transform can be replaced by the real implementations.
         //
-        // PORT NOTE: Zig assigned `p.stmts.items` directly — its
+        // Zig assigned `p.stmts.items` directly — its
         // `ArrayListUnmanaged` storage is owned by `worker.allocator` and
         // outlives the `AstBuilder` stack value. Rust's `Vec<Stmt>` would
         // drop with `self`, leaving `parts[1].stmts` dangling once the
@@ -521,7 +523,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
             // `named_imports` / `import_records_for_current_part`; without it
             // the linker can't bind imports against this generated module
             // (e.g. `import { ssrManifest } from "bun:bake/server"` →
-            // "No matching export"). See PORT NOTE above re: monomorphization.
+            // "No matching export"). See the note above re: monomorphization.
             let in_stmts = core::mem::take(&mut self.stmts);
             for stmt in in_stmts.iter() {
                 match stmt.data {
@@ -640,7 +642,7 @@ impl<'a, 'bump> AstBuilder<'a, 'bump> {
         match binding.data {
             B::BMissing(_) => {}
             B::BIdentifier(ident) => {
-                // PORT NOTE: reshaped for borrowck — capture original_name before calling &mut self method
+                // Reshaped for borrowck — capture original_name before calling &mut self method
                 let original_name = self.symbols[ident.r#ref.inner_index() as usize].original_name;
                 self.record_export(binding.loc, original_name.slice(), ident.r#ref)
                     .expect("unreachable");

@@ -23,6 +23,7 @@ pub enum Error {
     Overflow,
 
     WrongNumberOfParametersProvided,
+    TooManyParameters,
 
     UnsupportedColumnType,
 

@@ -66,7 +66,7 @@ pub struct Blob {
     pub store: JsCell<Option<StoreRef>>,
     /// Either a `&'static [u8]` (mime constant / literal) or a heap allocation
     /// owned by this Blob, discriminated by `content_type_allocated`.
-    // TODO(port): model as Cow<'static, [u8]> once callers are audited.
+    /// (`Cow<'static, [u8]>` is not `#[repr(C)]`, so the manual encoding stays.)
     pub content_type: Cell<*const [u8]>,
     pub content_type_allocated: Cell<bool>,
     pub content_type_was_set: Cell<bool>,
@@ -509,7 +509,7 @@ pub mod store {
         pub mime_type: MimeType,
         pub ref_count: bun_ptr::ThreadSafeRefCount<Store>,
         pub is_all_ascii: Option<bool>,
-        // PORT NOTE: `allocator: std.mem.Allocator` field dropped — global
+        // Zig's `allocator: std.mem.Allocator` field dropped — global
         // mimalloc everywhere (PORTING.md §Allocators).
     }
 
@@ -886,7 +886,7 @@ pub mod store {
         }
     }
 
-    // PORT NOTE: `S3.deinit` body deleted — only freed owned fields
+    // Zig's `S3.deinit` body deleted — only freed owned fields
     // (`pathlike`, `credentials.deref()`), all handled by `PathLike::drop` /
     // `Option<Arc<_>>::drop`. Per PORTING.md §Idiom map, no explicit `Drop`.
 

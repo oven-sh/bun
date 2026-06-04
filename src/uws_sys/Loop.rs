@@ -10,10 +10,14 @@ bun_core::declare_scope!(Loop, visible);
 
 // ───────────────────────────── PosixLoop ─────────────────────────────
 
-// TODO(port): Zig has field-level `align(16)` on `internal_loop_data` and
-// `ready_polls`. Rust cannot align individual fields directly; `#[repr(C, align(16))]`
-// covers the struct head, but `ready_polls` may need explicit padding to match
-// the C layout in usockets. Verify with a static size/offset assertion.
+// Mirrors C `struct us_loop_t` (packages/bun-usockets/src/internal/eventing/
+// epoll_kqueue.h). The C struct has `alignas(LIBUS_EXT_ALIGNMENT /* 16 */)` on
+// both `data` and `ready_polls`; Rust cannot align individual fields, so the
+// struct head gets `#[repr(C, align(16))]` and `ready_polls` is preceded by a
+// zero-sized align(16) field that forces the same offset rounding the C
+// `alignas` performs (`libc::epoll_event` is `packed`/align(1) on x86-64
+// Linux, so the element type alone would not pad). Layout is verified by the
+// static assertions below the struct.
 #[repr(C, align(16))]
 pub struct PosixLoop {
     pub internal_loop_data: InternalLoopData,
@@ -37,9 +41,46 @@ pub struct PosixLoop {
     /// If non-zero, the event loop will return immediately so we can skip the GC safepoint.
     pub pending_wakeups: u32,
 
+    /// Forces `ready_polls` to the next 16-byte boundary, matching the C
+    /// `alignas(LIBUS_EXT_ALIGNMENT)` on `us_loop_t::ready_polls`.
+    _ready_polls_align: ReadyPollsAlign,
+
     /// The list of ready polls
     pub ready_polls: [EventType; 1024],
 }
+
+/// Zero-sized, 16-byte-aligned marker field type (see `_ready_polls_align`).
+/// The zero-length array member keeps `improper_ctypes` satisfied (a
+/// field-less struct is rejected in `extern` signatures) without changing
+/// size (still 0) or alignment.
+#[repr(C, align(16))]
+struct ReadyPollsAlign {
+    _unused: [u8; 0],
+}
+
+// Static layout verification against the C `us_loop_t` rules: scalar fields
+// packed after `data`, `ready_polls` at the next 16-byte boundary, struct size
+// padded to its 16-byte alignment.
+#[cfg(not(windows))]
+const _: () = {
+    use core::mem::{align_of, offset_of, size_of};
+    assert!(align_of::<PosixLoop>() == 16);
+    assert!(offset_of!(PosixLoop, num_polls) == size_of::<InternalLoopData>());
+    assert!(offset_of!(PosixLoop, num_ready_polls) == offset_of!(PosixLoop, num_polls) + 4);
+    assert!(offset_of!(PosixLoop, current_ready_poll) == offset_of!(PosixLoop, num_polls) + 8);
+    assert!(offset_of!(PosixLoop, fd) == offset_of!(PosixLoop, num_polls) + 12);
+    assert!(offset_of!(PosixLoop, active) == offset_of!(PosixLoop, num_polls) + 16);
+    assert!(offset_of!(PosixLoop, pending_wakeups) == offset_of!(PosixLoop, num_polls) + 20);
+    assert!(
+        offset_of!(PosixLoop, ready_polls)
+            == (offset_of!(PosixLoop, pending_wakeups) + 4).next_multiple_of(16)
+    );
+    assert!(
+        size_of::<PosixLoop>()
+            == (offset_of!(PosixLoop, ready_polls) + 1024 * size_of::<EventType>())
+                .next_multiple_of(16)
+    );
+};
 
 // Android shares the Linux kernel's epoll ABI (uSockets' `epoll_kqueue.h` only
 // branches on `LIBUS_USE_EPOLL` vs `LIBUS_USE_KQUEUE`, not on libc).
@@ -170,7 +211,6 @@ impl PosixLoop {
     }
 
     pub fn get() -> *mut Loop {
-        // TODO(port): wrap in a safe handle type in bun_uws (higher-level crate)
         c::uws_get_loop()
     }
 
@@ -192,7 +232,6 @@ impl PosixLoop {
         };
         assert!(!p.is_null(), "us_create_loop returned null");
         p
-        // TODO(port): wrap in a safe handle type in bun_uws (higher-level crate)
     }
 
     pub fn wakeup(&mut self) {
@@ -241,7 +280,7 @@ impl PosixLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
-    // PORT NOTE: Zig `nextTick` took a `comptime deferCallback: fn(UserType) void` and
+    // Zig `nextTick` took a `comptime deferCallback: fn(UserType) void` and
     // synthesized a per-callsite `extern "C"` trampoline that casts `*anyopaque` → `UserType`.
     // Rust cannot monomorphize an `extern "C"` fn over a fn-pointer const generic on stable,
     // so callers provide the C-ABI trampoline directly.
@@ -254,7 +293,7 @@ impl PosixLoop {
         unsafe { c::uws_loop_defer(self, user_data, defer_callback) };
     }
 
-    // TODO(port): same trampoline-synthesis limitation as `next_tick` — callers pass the
+    // Same trampoline-synthesis limitation as `next_tick` — callers pass the
     // C-ABI callback directly. The returned `Handler` stores it for later removal.
     //
     // Takes `this: *mut Self` (not `&mut self`) so the stored `Handler.loop_` inherits the
@@ -339,7 +378,7 @@ impl Handler {
     }
 
     pub fn remove_pre(&self) {
-        // PORT NOTE: Zig also called `uws_loop_removePostHandler` here (likely a bug
+        // Zig also called `uws_loop_removePostHandler` here (likely a bug
         // upstream); preserving behavior verbatim.
         // SAFETY: `loop_` is the original C-allocated raw pointer (from
         // `us_create_loop`/`uws_get_loop`) stored by `add_*_handler`, with provenance
@@ -374,7 +413,6 @@ impl WindowsLoop {
 
     pub fn get() -> *mut WindowsLoop {
         // SAFETY: uv::Loop::get() returns the libuv default loop; uws wraps it
-        // TODO(port): wrap in a safe handle type in bun_uws (higher-level crate)
         unsafe { c::uws_get_loop_with_native(uv::Loop::get() as *mut c_void) }
     }
 
@@ -456,7 +494,6 @@ impl WindowsLoop {
         };
         assert!(!p.is_null(), "us_create_loop returned null");
         p
-        // TODO(port): wrap in a safe handle type in bun_uws (higher-level crate)
     }
 
     pub fn run(&mut self) {
@@ -501,7 +538,7 @@ impl WindowsLoop {
         unsafe { c::us_loop_close_all_groups(self) != 0 }
     }
 
-    // TODO(port): see PosixLoop::next_tick — same trampoline-synthesis limitation.
+    // See PosixLoop::next_tick — same trampoline-synthesis limitation.
     pub fn next_tick(
         &mut self,
         user_data: *mut c_void,
@@ -524,7 +561,7 @@ impl WindowsLoop {
         unsafe { c::us_loop_free(this) };
     }
 
-    // TODO(port): see PosixLoop::add_post_handler — same trampoline-synthesis limitation.
+    // See PosixLoop::add_post_handler — same trampoline-synthesis limitation.
     // Takes `this: *mut Self` (not `&mut self`) so the stored `Handler.loop_` inherits the
     // long-lived raw-pointer provenance from `us_create_loop`/`uws_get_loop_with_native`
     // rather than a transient `&mut` reborrow (which Stacked Borrows would invalidate on the
@@ -625,5 +662,16 @@ mod c {
 // `us_wakeup_loop` concurrently; routing either through a `&mut self`
 // receiver would create two live `&mut Loop` to the same singleton (UB).
 pub use c::{us_loop_run, us_wakeup_loop};
+
+unsafe extern "C" {
+    // safe: no args; clears the C side's thread-local loop pointer — no preconditions.
+    safe fn bun_clear_loop_at_thread_exit();
+}
+
+/// Clears the C side's thread-local loop pointer. Call when a thread that ran
+/// a uws loop (e.g. a Worker thread) exits.
+pub fn on_thread_exit() {
+    bun_clear_loop_at_thread_exit()
+}
 
 // ported from: src/uws_sys/Loop.zig

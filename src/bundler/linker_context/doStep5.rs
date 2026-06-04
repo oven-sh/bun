@@ -1,6 +1,6 @@
 //! Port of `src/bundler/linker_context/doStep5.zig`.
 //!
-//! PORT NOTE: like `scanImportsAndExports.rs`, the Zig body holds many
+//! Like `scanImportsAndExports.rs`, the Zig body holds many
 //! overlapping `&mut` column slices out of `LinkerGraph.{ast,meta}` while also
 //! calling `&self` methods. The SoA columns are physically disjoint and never
 //! reallocate during this step, so we cache raw column pointers and deref at
@@ -203,7 +203,7 @@ impl LinkerContext<'_> {
         // Each part tracks the other parts it depends on within this file
         let mut local_dependencies: HashMap<u32, u32> = HashMap::default();
 
-        // PORT NOTE: reshaped for borrowck — multiple `&mut` into graph SoA;
+        // Reshaped from the Zig for borrowck — multiple `&mut` into graph SoA;
         // raw per-row pointers via `split_raw()` so concurrent tasks never
         // hold overlapping `&mut [T]`.
         let parts_slice: *mut [Part] = row_mut!(ast.parts, bun_ast::PartList, id).as_mut_slice();
@@ -249,7 +249,7 @@ impl LinkerContext<'_> {
             // Now that all files have been parsed, determine which property
             // accesses off of imported symbols are inlined enum values and
             // which ones aren't
-            // PORT NOTE: reshaped for borrowck — Zig iterates keys()/values() while
+            // Reshaped from the Zig for borrowck — Zig iterates keys()/values() while
             // holding a mutable getPtr into part.symbol_uses; collect refs first.
             // PERF(port): the property-use map is empty for the overwhelming
             // majority of parts (it only fills for `import * as ns`/enum
@@ -404,7 +404,7 @@ impl LinkerContext<'_> {
     /// WARNING: This method is run in parallel over all files. Do not mutate data
     /// for other files within this method or you will create a data race.
     ///
-    /// PORT NOTE: takes `&self` (read-only) plus the three SoA row cells it
+    /// Takes `&self` (read-only) plus the three SoA row cells it
     /// mutates as explicit `&mut` params, so the parallel `do_step5` dispatch
     /// never forms a concurrent `&mut LinkerContext` / whole-column `&mut [T]`.
     #[allow(clippy::too_many_arguments)]
@@ -420,10 +420,17 @@ impl LinkerContext<'_> {
         ast_flags: &mut AstFlags,
         ast_parts: &mut bun_ast::PartList,
     ) {
-        // PORT NOTE: Zig toggled `Stmt.Disabler`/`Expr.Disabler` (debug-only
-        // re-entrancy guards around the global Store). `Disabler::scope()`
-        // calls `disable()` and re-`enable()`s on drop — currently no-op stubs
-        // until the thread-local toggle lands (`js_parser/ast/mod.rs`).
+        // Zig toggled `Stmt.Disabler`/`Expr.Disabler` (debug-only guards
+        // around the global thread-local block store). `Disabler::scope()`
+        // calls `disable()` and re-`enable()`s on drop. In debug builds the
+        // disabler only fires when `Store::append` falls through to that
+        // global slab — i.e. when no `ASTMemoryAllocator` scope is installed.
+        // Bundler workers always install one (`Worker::get` pushes
+        // `ast_memory_store`), so appends in this step — including
+        // `Stmt::assign` below — route to the worker allocator and bypass the
+        // check entirely, exactly as in Zig (expr.zig:3189-3195). The guard
+        // exists to catch accidental global-slab use if this code ever runs
+        // without that allocator installed.
         let _stmt_guard = bun_ast::stmt::Disabler::scope();
         let _expr_guard = bun_ast::expr::Disabler::scope();
 
@@ -451,7 +458,7 @@ impl LinkerContext<'_> {
             // + 1 if we need to do module.exports = __toCommonJS(exports)
             force_include_exports_for_entry_point as usize;
 
-        // PORT NOTE: Zig used `Stmt.Batcher` (preallocated arena slice +
+        // Zig used `Stmt.Batcher` (preallocated arena slice +
         // cursor). `Batcher::<T>::init` requires `T: Default` which `Stmt`
         // doesn't satisfy, so we hand-roll the same shape: one arena slab of
         // `stmts_count` `MaybeUninit<Stmt>`, sliced front-to-back. `eat1`
@@ -562,7 +569,7 @@ impl LinkerContext<'_> {
         let all_export_stmts_len = needs_exports_variable as usize
             + (!properties.is_empty()) as usize
             + force_include_exports_for_entry_point as usize;
-        // PORT NOTE: the trailing `all_export_stmts_len` slots of `stmts_slab`
+        // The trailing `all_export_stmts_len` slots of `stmts_slab`
         // (after the per-export `eat1`s above) are filled below in the order
         // {var exports={}, __export(...), module.exports=__toCommonJS(...)}.
         let all_export_stmts_base = stmts_head;
@@ -602,7 +609,7 @@ impl LinkerContext<'_> {
         let mut export_ref = Ref::NONE;
         if !properties.is_empty() {
             export_ref = self.runtime_function(b"__export");
-            // PORT NOTE: `bumpalo::Vec` → `Vec` via the global heap;
+            // `bumpalo::Vec` → `Vec` via the global heap;
             // `G::PropertyList` is `Vec<Property>` and currently has no
             // arena-backed `move_from_list`, so re-own. PERF(port).
             let mut owned_props: Vec<G::Property> = Vec::with_capacity(properties.len());

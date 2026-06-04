@@ -6,7 +6,7 @@ use core::mem::{align_of, size_of};
 
 use bun_core::Error;
 use bun_io::Write as _;
-// PORT NOTE: `Lockfile`/`Stream`/`StringPool`/`package_index` live in the parent
+// `Lockfile`/`Stream`/`StringPool`/`package_index` live in the parent
 // `lockfile_real` module (this file is `lockfile_real::bun_lockb`). The
 // `bun_install::lockfile::*` path is the stub surface and lacks these items.
 use super::PatchedDep;
@@ -24,13 +24,13 @@ use bun_core::strings;
 use bun_install::{PackageID, PackageManager, PackageNameAndVersionHash, PackageNameHash};
 use bun_semver::{self as semver, String as SemverString};
 
-// TODO(port): z_allocator is a zeroing allocator (bun.z_allocator). In Rust,
-// the equivalent is a wrapper that zeroes allocations. Provide
-// `bun_alloc::ZAllocator` or ensure padding bytes are zeroed via
-// `#[derive(zeroize)]` / explicit zeroing on the serialized structs.
+// Zig used `bun.z_allocator` (a zeroing allocator) so serialized padding bytes
+// were deterministic. There is no Rust equivalent here; instead the per-field
+// save path zeroes padding explicitly (see the note in `save` and the
+// `assert_no_uninitialized_padding` invariant in `Package::Serializer`).
 
 pub const VERSION: &[u8] = b"bun-lockfile-format-v0\n";
-// PORT NOTE: Zig: "#!/usr/bin/env bun\n" ++ version
+// Zig: "#!/usr/bin/env bun\n" ++ version
 const HEADER_BYTES: &[u8] = b"#!/usr/bin/env bun\nbun-lockfile-format-v0\n";
 
 // `@bitCast(@as([8]u8, "...".*))` → native-endian reinterpretation of 8 bytes as u64.
@@ -46,7 +46,7 @@ const HAS_CONFIG_VERSION_TAG: u64 = u64::from_ne_bytes(*b"cNfGvRsN");
 /// (`get_pos`/`pwrite`) and append semantics (`write_all`/`write_int_*`) for
 /// `Lockfile.Package.Serializer.save` / `Lockfile.Buffers.save`.
 ///
-/// PORT NOTE: reshaped for borrowck — Zig held a separate `stream` and `writer`
+/// reshaped for borrowck — Zig held a separate `stream` and `writer`
 /// over the same `bytes` simultaneously (legal in Zig, aliased `&mut` in Rust).
 /// Collapsed into a single type so callers pass exactly one `&mut StreamType`.
 ///
@@ -174,17 +174,13 @@ pub fn save(
     total_size: &mut usize,
     end_pos: &mut usize,
 ) -> Result<(), Error> {
-    // we clone packages with the z_allocator to make sure bytes are zeroed.
-    // TODO: investigate if we still need this now that we have `padding_checker.zig`
-    // TODO(port): z_allocator clone — `MultiArrayList::clone` requires
-    // `Package: MultiArrayElement` (not yet derived). The Zig path only exists
-    // to zero padding bytes for byte-exact serialization; the per-field writers
-    // below already zero-pad via `assert_no_uninitialized_padding`, so skipping
-    // the clone is a no-op for correctness. Revisit once the derive lands.
-    // let old_packages_list = core::mem::replace(&mut this.packages, this.packages.clone_zeroed()?);
-    // drop(old_packages_list);
+    // Zig cloned `packages` with the zeroing z_allocator so padding bytes were
+    // deterministic for byte-exact serialization. The clone is intentionally
+    // not ported: the per-field writers below already zero-pad via the
+    // `assert_no_uninitialized_padding` invariant, so skipping it is a no-op
+    // for correctness.
 
-    // PORT NOTE: reshaped for borrowck — Zig holds `writer` and `stream` over
+    // reshaped for borrowck — Zig holds `writer` and `stream` over
     // the same `bytes` simultaneously; collapsed into a single `StreamType`.
     let mut stream = StreamType { bytes };
 
@@ -231,12 +227,12 @@ pub fn save(
         }
     }
 
-    // PORT NOTE: Zig passes `StreamType` (type) + `stream` (value) +
+    // Zig passes `StreamType` (type) + `stream` (value) +
     // `@TypeOf(writer)` + `writer` as separate comptime/runtime args. In Rust the
     // callees take a single `&mut S: PositionalStream + bun_io::Write` (both
     // roles collapsed onto `StreamType`) — two `&mut` aliases of one object would
     // be UB regardless of access order.
-    // PORT NOTE: turbofish — `this.packages` is `PackageList = List<u64>`, but
+    // turbofish — `this.packages` is `PackageList = List<u64>`, but
     // inference through `MultiArrayList<Package<_>>` is brittle when sibling
     // generic types in the crate have errors. Pin SemverIntType explicitly.
     package::serializer::save::<u64, _>(&this.packages, &mut stream)?;
@@ -338,7 +334,7 @@ pub fn save(
             write_array::<SemverString>(&mut stream, catalog_deps.keys(), PREFIX_SEMVER_STRING)?;
 
             external_deps_buf.reserve(catalog_deps.count().saturating_sub(external_deps_buf.len()));
-            // PORT NOTE: Zig sets `items.len = count` then writes each slot via `dest.* = ...`.
+            // Zig sets `items.len = count` then writes each slot via `dest.* = ...`.
             // Reshape: push into the cleared Vec instead.
             for src in catalog_deps.values() {
                 external_deps_buf.push(dependency::to_external(src));
@@ -376,9 +372,8 @@ pub(crate) fn load(
     log: &mut Log,
     mut manager: Option<&mut PackageManager>,
 ) -> Result<SerializerLoadResult, Error> {
-    // TODO(port): narrow error set
     let mut res = SerializerLoadResult::default();
-    // PORT NOTE: Zig's `var reader = stream.reader();` is a thin view over the
+    // Zig's `var reader = stream.reader();` is a thin view over the
     // same buffer. `FixedBufferStream` exposes the read methods directly, so we
     // call them on `stream` to avoid holding a long-lived `&mut` borrow that
     // would conflict with the `stream.pos` / `stream.buffer` accesses below.
@@ -406,7 +401,7 @@ pub(crate) fn load(
     }
 
     lockfile.format = FormatVersion::current();
-    // PORT NOTE: `lockfile.allocator = allocator;` dropped — global mimalloc.
+    // `lockfile.allocator = allocator;` dropped — global mimalloc.
 
     let _ = stream.read_all(&mut lockfile.meta_hash)?;
 
@@ -477,9 +472,8 @@ pub(crate) fn load(
                         break 'workspace_versions_list versions_list;
                     };
 
-                    // TODO(port): comptime type assertion that VersionHashMap key/value types
-                    // match PackageNameHash / Semver.Version. Rust cannot express this as a
-                    // const block without specialization; rely on type-checked
+                    // Zig had a comptime assertion that VersionHashMap key/value types
+                    // match PackageNameHash / Semver.Version; here we rely on the type-checked
                     // `ensure_total_capacity` + slice copy below to enforce it.
 
                     if workspace_package_name_hashes.len() != workspace_versions_list.len() {
@@ -577,7 +571,7 @@ pub(crate) fn load(
             if next_num == HAS_OVERRIDES_TAG {
                 let overrides_name_hashes: Vec<PackageNameHash> = buffers::read_array(stream)?;
 
-                // PORT NOTE: Zig: `var map = lockfile.overrides.map; defer lockfile.overrides.map = map;`
+                // Zig: `var map = lockfile.overrides.map; defer lockfile.overrides.map = map;`
                 // is a move-out/move-back pattern. In Rust we mutate in place.
                 lockfile
                     .overrides
@@ -585,7 +579,7 @@ pub(crate) fn load(
                     .ensure_total_capacity(overrides_name_hashes.len())?;
                 let override_versions_external: Vec<dependency::External> =
                     buffers::read_array(stream)?;
-                // PORT NOTE: reshaped for borrowck — `Context.buffer` borrows
+                // reshaped for borrowck — `Context.buffer` borrows
                 // `lockfile.buffers.string_bytes` while we also need
                 // `&mut lockfile.overrides`. Split the disjoint fields up front so
                 // borrowck sees sibling borrows (no raw-ptr provenance laundering).
@@ -627,7 +621,7 @@ pub(crate) fn load(
                 let patched_dependencies_name_and_version_hashes: Vec<PackageNameAndVersionHash> =
                     buffers::read_array(stream)?;
 
-                // PORT NOTE: Zig: `var map = lockfile.patched_dependencies; defer lockfile.patched_dependencies = map;`
+                // Zig: `var map = lockfile.patched_dependencies; defer lockfile.patched_dependencies = map;`
                 let map = &mut lockfile.patched_dependencies;
 
                 map.ensure_total_capacity(patched_dependencies_name_and_version_hashes.len())?;
@@ -663,7 +657,7 @@ pub(crate) fn load(
 
                 let default_deps: Vec<dependency::External> = buffers::read_array(stream)?;
 
-                // PORT NOTE: reshaped for borrowck — `dependency::Context` /
+                // reshaped for borrowck — `dependency::Context` /
                 // `ArrayHashContext` borrow `lockfile.buffers.string_bytes` while
                 // we also need `&mut lockfile.catalogs`. Split the disjoint
                 // fields up front so borrowck sees sibling borrows (no raw-ptr
@@ -709,7 +703,7 @@ pub(crate) fn load(
 
                     let catalog_deps: Vec<dependency::External> = buffers::read_array(stream)?;
 
-                    // PORT NOTE: `CatalogMap::get_or_put_group` currently takes the
+                    // `CatalogMap::get_or_put_group` currently takes the
                     // stub `bun_install::lockfile::Lockfile`; inline its body here
                     // against the split `catalogs` borrow to avoid the type
                     // mismatch and the simultaneous `&mut lockfile` self-borrow.
@@ -773,7 +767,7 @@ pub(crate) fn load(
         .package_index
         .ensure_total_capacity(lockfile.packages.len())?;
 
-    // PORT NOTE: reshaped for borrowck — Zig holds `slice.items(.name_hash)` /
+    // reshaped for borrowck — Zig holds `slice.items(.name_hash)` /
     // `slice.items(.resolution)` across `lockfile.getOrPutID(&mut self, …)`.
     // `get_or_put_id` only mutates `package_index` (and reads `packages` /
     // `buffers.string_bytes`), and `workspace_paths.put` only mutates

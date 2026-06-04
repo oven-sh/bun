@@ -7,7 +7,7 @@ use core::cell::Cell;
 use core::ptr::NonNull;
 
 use crate::mysql::js_mysql_query::JSMySQLQuery;
-// PORT NOTE: Zig re-exports `MySQLConnection` from JSMySQLConnection.zig — the
+// Zig re-exports `MySQLConnection` from JSMySQLConnection.zig — the
 // queue's "connection" param is the JS-wrapper type (it calls
 // `reset_connection_timeout`/`on_error` which live on the wrapper, plus
 // `is_able_to_write` which forwards to the inner protocol struct).
@@ -68,8 +68,8 @@ impl MySQLRequestQueue {
 
     #[inline]
     pub(crate) fn can_pipeline(&self, connection: &MySQLConnection) -> bool {
-        // TODO(port): env_var feature_flag::get() returns Option<bool> until the
-        // non-nullable defaulted-var get() wrapper is restored (see env_var.rs).
+        // Feature flags are unset by default; `unwrap_or(false)` matches Zig's
+        // non-nullable defaulted `get()`.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SQL_AUTO_PIPELINING
             .get()
             .unwrap_or(false)
@@ -100,7 +100,7 @@ impl MySQLRequestQueue {
         }
     }
 
-    /// PORT NOTE: takes only `connection` (the embedding `JSMySQLConnection`)
+    /// takes only `connection` (the embedding `JSMySQLConnection`)
     /// as a **raw pointer** and derives the queue backref locally. The queue is
     /// a field of `*connection` — but every `MySQLRequestQueue` field is
     /// interior-mutable (`Cell` / `JsCell`), so a `ParentRef<Self>` (yields
@@ -126,7 +126,7 @@ impl MySQLRequestQueue {
         // momentary `Deref` lifetime. All queue mutation below goes through
         // `Cell`/`JsCell` interior mutability — `&Self` is sufficient.
         let queue_ref: ParentRef<Self> = ParentRef::new(&conn_ref.connection.get().queue);
-        // PORT NOTE: reshaped for borrowck — Zig `defer { while ... }` cleanup
+        // reshaped for borrowck — Zig `defer { while ... }` cleanup
         // became a post-block pass; early `return`s in the Zig loop become
         // `break 'advance` so cleanup always runs at function exit.
         'advance: {
@@ -345,7 +345,7 @@ impl MySQLRequestQueue {
 
 impl Drop for MySQLRequestQueue {
     fn drop(&mut self) {
-        // PORT NOTE: reshaped for borrowck — Zig iterates readableSlice(0) while
+        // reshaped for borrowck — Zig iterates readableSlice(0) while
         // discard(1)'ing, which in Rust would overlap & / &mut borrows on
         // self.requests. read_item() peeks+discards in one &mut call.
         while let Some(request) = self.requests.with_mut(|q| q.read_item()) {

@@ -156,10 +156,9 @@ impl MutableString {
     /// identifier, you're going to potentially cause trouble with non-BMP code
     /// points in target environments that don't support bracketed Unicode escapes.
     pub fn ensure_valid_identifier(str: &[u8]) -> Result<Box<[u8]>, AllocError> {
-        // TODO(port): Zig returned `[]const u8` which could be either the input
-        // borrow or a fresh allocation. Rust cannot express that without a
-        // lifetime + Cow; for now we always return owned `Box<[u8]>` and copy
-        // on the borrow paths. Consider `Cow<'a, [u8]>`.
+        // Zig returned `[]const u8` which could be either the input borrow or a
+        // fresh allocation; Rust cannot express that without a lifetime + Cow,
+        // so we always return owned `Box<[u8]>` and copy on the borrow paths.
         if str.is_empty() {
             return Ok(Box::<[u8]>::from(b"_".as_slice()));
         }
@@ -175,7 +174,6 @@ impl MutableString {
             return Ok(Box::<[u8]>::from(b"_".as_slice()));
         }
 
-        // TODO(port): lexer / lexer_tables arrive from move-in (MOVE_DOWN bun_js_parser::{lexer,lexer_tables} → string)
         use crate::string::lexer as js_lexer;
         use crate::string::lexer_tables as js_lexer_tables;
 
@@ -257,8 +255,8 @@ impl MutableString {
             // Zig: list.insertSlice(allocator, 0, str)
             self.list.extend_from_slice(str);
         } else {
-            // Zig: list.replaceRange(allocator, 0, str.len, str)
-            // TODO(port): verify Vec::splice matches ArrayList.replaceRange semantics
+            // Zig: list.replaceRange(allocator, 0, str.len, str) — the manual
+            // overwrite-then-extend below is the same operation for range [0, str.len).
             let n = str.len().min(self.list.len());
             self.list[..n].copy_from_slice(&str[..n]);
             if str.len() > n {
@@ -385,9 +383,8 @@ impl MutableString {
     }
 
     pub fn to_dynamic_owned(&mut self) -> Box<[u8]> {
-        // TODO(port): Zig `DynamicOwned([]u8)` carried its allocator; with the
-        // global allocator this collapses to `Box<[u8]>`. Revisit if a distinct
-        // `bun_ptr::DynamicOwned` type is introduced.
+        // Zig `DynamicOwned([]u8)` carried its allocator; with the global
+        // allocator this collapses to `Box<[u8]>`.
         self.to_owned_slice()
     }
 
@@ -433,9 +430,9 @@ impl MutableString {
     }
 
     pub fn index_of(&self, str: u8) -> Option<usize> {
-        // TODO(port): Zig signature is `str: u8` but body calls
-        // `std.mem.indexOf(u8, items, str)` which expects a slice — looks like
-        // a latent bug in the Zig source. Porting as single-byte search.
+        // Zig signature is `str: u8` but its body called
+        // `std.mem.indexOf(u8, items, str)` which expects a slice — a latent
+        // bug in the (frozen) Zig source. Implemented as single-byte search.
         self.list.iter().position(|&b| b == str)
     }
 
@@ -513,8 +510,6 @@ impl<'a> BufferedWriter<'a> {
             if pending.len() + self.pos > Self::MAX {
                 self.flush()?;
             }
-            // PORT NOTE: reshaped for borrowck (cannot call self.remain() while
-            // borrowing pending.len() against self.pos).
             let pos = self.pos;
             self.buffer[pos..pos + pending.len()].copy_from_slice(pending);
             self.pos += pending.len();
@@ -543,13 +538,11 @@ impl<'a> BufferedWriter<'a> {
 
         if pending.len() >= Self::MAX {
             self.flush()?;
-            // PORT NOTE: Zig wrote into `this.remain()[0..bytes.len*2]` here,
+            // The (frozen) Zig wrote into `this.remain()[0..bytes.len*2]` here,
             // which after `flush()` is `this.buffer[0..bytes.len*2]` — but
-            // `bytes.len*2 > MAX`, so that indexes past the stack buffer. This
-            // looks like a latent bug in the Zig (should write into
-            // `context.list`). Porting the apparent intent: write into the
-            // freshly-reserved context.list tail.
-            // TODO(port): confirm and fix upstream.
+            // `bytes.len*2 > MAX`, so that indexed past the stack buffer (a
+            // latent Zig bug). This implements the apparent intent: write into
+            // the freshly-reserved context.list tail.
             let old = self.context.list.len();
             // SAFETY: copy_utf16_into_utf8 writes <= bytes.len*2; trimmed below.
             let tail =

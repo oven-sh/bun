@@ -467,7 +467,7 @@ pub fn contains_char(self_: &[u8], char: u8) -> bool {
 
 #[inline]
 pub fn contains_char_t<T: crate::NoUninit + Eq + Into<u32>>(self_: &[T], char: u8) -> bool {
-    // TODO(port): Zig dispatched on T at comptime; in Rust we branch on size_of.
+    // Zig dispatched on T at comptime; here we branch on size_of (const-folded).
     if core::mem::size_of::<T>() == 1 {
         contains_char(reinterpret_to_u8(self_), char)
     } else {
@@ -511,9 +511,9 @@ pub fn index_of_any16(self_: &[u16], str: &'static [u16]) -> Option<OptionalUsiz
 }
 
 pub fn index_of_any_t<T: Copy + Eq>(str: &[T], chars: &'static [T]) -> Option<OptionalUsize> {
-    // TODO(port): Zig specialized T==u8 → index_of_any (highway). Rust cannot
-    // dispatch on type identity without specialization; callers with u8 should
-    // call index_of_any directly.
+    // Zig specialized T==u8 → index_of_any (highway). Rust cannot dispatch on
+    // type identity without specialization; callers with u8 should call
+    // index_of_any directly.
     for (i, c) in str.iter().enumerate() {
         // PERF(port): was `inline for` over chars — profile if hot.
         for a in chars {
@@ -572,7 +572,8 @@ pub fn in_map_case_insensitive<V: Copy>(
 
 #[inline]
 pub fn contains_any(in_: &[&[u8]], target: &[u8]) -> bool {
-    // TODO(port): Zig accepted `anytype` and handled both `[]const u8` and `u8` elements.
+    // Zig accepted `anytype` (both `[]const u8` and `u8` elements); Rust
+    // callers pass slices — use `contains_char` for single-byte targets.
     for str in in_ {
         if contains(str, target) {
             return true;
@@ -680,7 +681,7 @@ pub fn index_equal_any(in_: &[&[u8]], target: &[u8]) -> Option<usize> {
 }
 
 pub fn repeating_alloc(count: usize, char: u8) -> Result<Box<[u8]>, AllocError> {
-    // PORT NOTE: allocator param dropped (global mimalloc).
+    // allocator param dropped (global mimalloc).
     Ok(vec![char; count].into_boxed_slice())
 }
 
@@ -773,8 +774,8 @@ pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
 }
 
 pub fn index_of_t<T: Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
-    // TODO(port): Zig specialized T==u8 → index_of (memmem). Callers with u8
-    // should call index_of directly; generic path uses naive search.
+    // Zig specialized T==u8 → index_of (memmem). Callers with u8 should call
+    // index_of directly; this generic path uses naive search.
     if needle.is_empty() {
         return Some(0);
     }
@@ -832,7 +833,7 @@ impl<'a> SplitIterator<'a> {
 }
 
 pub fn cat(first: &[u8], second: &[u8]) -> Result<Box<[u8]>, AllocError> {
-    // PORT NOTE: allocator param dropped (global mimalloc).
+    // allocator param dropped (global mimalloc).
     let mut out = Vec::with_capacity(first.len() + second.len());
     out.extend_from_slice(first);
     out.extend_from_slice(second);
@@ -906,9 +907,9 @@ impl StringOrTinyString {
         }
     }
 
-    // PORT NOTE: Zig deinit was a no-op (commented-out free). No Drop impl.
+    // Zig deinit was a no-op (commented-out free). No Drop impl.
 
-    // PORT NOTE: plain `#[inline]` (not `#[inline(always)]`). These are tiny
+    // plain `#[inline]` (not `#[inline(always)]`). These are tiny
     // generic delegators: a length check plus a tail call into the non-generic
     // `init`/`init_lower_case` or the `Appender` method. `#[inline]` lets the
     // small fast path fold into callers (and lets duplicate `A` instantiations
@@ -1230,7 +1231,8 @@ pub fn eql(self_: &[u8], other: &[u8]) -> bool {
 }
 
 pub fn eql_comptime_t<T: crate::NoUninit + Eq>(self_: &[T], alt: &'static [u8]) -> bool {
-    // TODO(port): Zig dispatched on T at comptime (u16 → eql_comptime_utf16).
+    // Zig dispatched on T at comptime (u16 → eql_comptime_utf16); here we
+    // branch on size_of (const-folded).
     if core::mem::size_of::<T>() == 2 {
         // `NoUninit` + size_of::<T>()==2 lets bytemuck prove the &[T]→&[u16]
         // reinterpret is sound (align checked at runtime; T is u16 in practice).
@@ -1276,7 +1278,7 @@ pub fn has_prefix_comptime_utf16(self_: &[u16], alt: &'static [u8]) -> bool {
 }
 
 pub fn has_prefix_comptime_type<T: crate::NoUninit + Eq>(self_: &[T], alt: &'static [T]) -> bool {
-    // TODO(port): Zig accepted heterogeneous `alt: anytype` and widened u8→u16 via `w(alt)`.
+    // Zig accepted heterogeneous `alt: anytype` and widened u8→u16 via `w(alt)`.
     // Rust callers must pass the correctly-typed literal (use `crate::string::w!` for u16).
     self_.len() >= alt.len()
         && eql_comptime_check_len_with_type::<T, false>(&self_[0..alt.len()], alt)
@@ -1322,7 +1324,7 @@ pub fn eql_comptime_check_len_with_type<T: crate::NoUninit + Eq, const CHECK_LEN
     a: &[T],
     b: &[T],
 ) -> bool {
-    // PORT NOTE: Zig coerced array-by-value `b` to a pointer here. The Zig
+    // Zig coerced array-by-value `b` to a pointer here. The Zig
     // version's `comptime` literal is unenforceable in Rust, so accept any
     // slice; callers are still expected to pass literals.
     eql_comptime_check_len_with_known_type::<T, CHECK_LEN>(a, b)
@@ -1341,7 +1343,7 @@ pub fn eql_case_insensitive_asciii_check_length(a: &[u8], b: &[u8]) -> bool {
     eql_case_insensitive_ascii(a, b, true)
 }
 
-// PORT NOTE: Zig's `comptime check_len: bool` was first ported as a const
+// Zig's `comptime check_len: bool` was first ported as a const
 // generic, but the dominant call shape across the tree passes it as a runtime
 // 3rd arg (`eql_case_insensitive_ascii(a, b, true)`). Accept it at runtime —
 // the branch is trivially predicted/inlined; callers wanting the
@@ -1409,7 +1411,7 @@ pub fn eql_long_t<T: crate::NoUninit, const CHECK_LEN: bool>(a_str: &[T], b_str:
     eql_long(reinterpret_to_u8(a_str), reinterpret_to_u8(b_str), false)
 }
 
-// PORT NOTE: same rationale as `eql_case_insensitive_ascii` — Zig's
+// same rationale as `eql_case_insensitive_ascii` — Zig's
 // `comptime check_len: bool` becomes a runtime 3rd arg to match the dominant
 // ported call shape (`eql_long(a, b, true)`).
 #[inline]
@@ -1495,7 +1497,7 @@ pub fn append(self_: &[u8], other: &[u8]) -> Box<[u8]> {
 
 #[inline]
 pub fn concat_alloc_t<T: Copy>(strs: &[&[T]]) -> Result<Box<[T]>, AllocError> {
-    // PORT NOTE: Zig took `strs: anytype` (tuple) and inline-for'd. Slice-of-slices here.
+    // Zig took `strs: anytype` (tuple) and inline-for'd. Slice-of-slices here.
     let len: usize = strs.iter().map(|s| s.len()).sum();
     let mut buf = Vec::with_capacity(len);
     for s in strs {
@@ -1616,7 +1618,7 @@ pub fn index_of_space_or_newline_or_non_ascii(slice_: &[u8], offset: u32) -> Opt
     }
 
     let i = highway::index_of_space_or_newline_or_non_ascii(remaining)?;
-    // PORT NOTE: Zig uses @truncate here (immutable.zig:1194); match wrapping semantics
+    // Zig uses @truncate here (immutable.zig:1194); match wrapping semantics
     // instead of try_from().unwrap() which would panic on >4GB inputs.
     Some(i as u32 + offset)
 }
@@ -1641,7 +1643,7 @@ pub fn index_of_newline_or_non_ascii_check_start<const CHECK_START: bool>(
     }
 
     let i = highway::index_of_newline_or_non_ascii(remaining)?;
-    // PORT NOTE: Zig uses @truncate here (immutable.zig:1212); match wrapping semantics
+    // Zig uses @truncate here (immutable.zig:1212); match wrapping semantics
     // instead of try_from().unwrap() which would panic on >4GB inputs.
     Some(i as u32 + offset)
 }
@@ -1700,7 +1702,7 @@ pub fn index_of_needs_url_encode(slice: &[u8]) -> Option<u32> {
             || char == b'|'
             || char == b'~'
         {
-            // PORT NOTE: Zig uses @truncate (immutable.zig:1292); match wrapping semantics.
+            // Zig uses @truncate (immutable.zig:1292); match wrapping semantics.
             return Some(i as u32);
         }
     }
@@ -1714,7 +1716,7 @@ pub fn index_of_char_z(slice_z: &crate::string::ZStr, char: u8) -> Option<u64> {
 }
 
 pub fn index_of_char(slice: &[u8], char: u8) -> Option<u32> {
-    // PORT NOTE: Zig uses @truncate (immutable.zig:1304); match wrapping semantics.
+    // Zig uses @truncate (immutable.zig:1304); match wrapping semantics.
     index_of_char_usize(slice, char).map(|i| i as u32)
 }
 
@@ -1760,7 +1762,7 @@ pub fn index_of_not_char(slice: &[u8], char: u8) -> Option<u32> {
     // PERF(port): Zig used @Vector(16,u8) != splat + @ctz. Scalar loop here.
     for (i, &current) in slice.iter().enumerate() {
         if current != char {
-            // PORT NOTE: Zig uses @truncate (immutable.zig:1360); match wrapping semantics.
+            // Zig uses @truncate (immutable.zig:1360); match wrapping semantics.
             return Some(i as u32);
         }
     }
@@ -2010,7 +2012,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
             // PERF(port): was assume_capacity
             let _ = ranges.push(LineRange {
                 start: 0,
-                // PORT NOTE: Zig uses @truncate(text.len) (immutable.zig:1595); match wrapping semantics.
+                // Zig uses @truncate(text.len) (immutable.zig:1595); match wrapping semantics.
                 end: text.len() as u32,
             }); // OOM/capacity: Zig aborts; port keeps fire-and-forget
         }
@@ -2048,7 +2050,7 @@ pub fn index_of_line_ranges<const LINE_RANGE_COUNT: usize>(
         }
         let _ = ranges.push(LineRange {
             start: 0,
-            // PORT NOTE: Zig uses @truncate(text.len) (immutable.zig:1635); match wrapping semantics.
+            // Zig uses @truncate(text.len) (immutable.zig:1635); match wrapping semantics.
             end: text.len() as u32,
         });
         return ranges;
@@ -2141,7 +2143,7 @@ pub fn first_non_ascii16(slice: &[u16]) -> Option<u32> {
     // loop here; consider portable_simd or a simdutf utf16 validator if hot.
     for (i, &char) in slice.iter().enumerate() {
         if char > 127 {
-            // PORT NOTE: Zig uses @truncate(i) (immutable.zig:1766); match wrapping semantics.
+            // Zig uses @truncate(i) (immutable.zig:1766); match wrapping semantics.
             return Some(i as u32);
         }
     }
@@ -2181,7 +2183,7 @@ pub fn length_of_leading_whitespace_ascii(slice: &[u8]) -> usize {
 }
 
 pub fn join(slices: &[&[u8]], delimiter: &[u8]) -> Result<Box<[u8]>, AllocError> {
-    // PORT NOTE: std.mem.join — reimplemented over Vec<u8> (no allocator param).
+    // std.mem.join — reimplemented over Vec<u8> (no allocator param).
     if slices.is_empty() {
         return Ok(Box::default());
     }
@@ -2235,12 +2237,12 @@ pub fn cmp_strings_desc(_: (), a: &[u8], b: &[u8]) -> bool {
 pub type U3Fast = u8;
 
 pub fn sort_asc(in_: &mut [&[u8]]) {
-    // TODO: experiment with simd to see if it's faster
+    // Perf: a SIMD comparator might be faster here; never measured.
     in_.sort_unstable_by(|a, b| order(a, b));
 }
 
 pub fn sort_desc(in_: &mut [&[u8]]) {
-    // TODO: experiment with simd to see if it's faster
+    // Perf: a SIMD comparator might be faster here; never measured.
     in_.sort_unstable_by(|a, b| order(b, a));
 }
 
@@ -2529,7 +2531,7 @@ pub fn concat_if_needed(
         let mut remain: &[u8] = dest;
 
         for arg in args {
-            // PORT NOTE: Zig has `args.len` here (likely a bug); preserved verbatim.
+            // Zig has `args.len` here (likely a bug); preserved verbatim.
             if args.len() > remain.len() {
                 break 'brk true;
             }
@@ -2626,7 +2628,8 @@ impl core::fmt::Display for QuoteEscapeFormat<'_> {
 /// Generic. Works on &[u8], &[u16], etc
 #[inline]
 pub fn index_of_scalar<T: crate::NoUninit + Eq>(input: &[T], scalar: T) -> Option<usize> {
-    // TODO(port): Zig specialized T==u8 → index_of_char_usize (highway).
+    // Zig specialized T==u8 → index_of_char_usize (highway); here we branch
+    // on size_of (const-folded).
     if core::mem::size_of::<T>() == 1 {
         let scalar_u8 = reinterpret_to_u8(core::slice::from_ref(&scalar))[0];
         return index_of_char_usize(reinterpret_to_u8(input), scalar_u8);
@@ -2750,12 +2753,10 @@ pub fn percent_encode_write(
 
 // ───────────── re-exports from sibling modules ─────────────
 
-// Unicode core is re-exported at the top of the file; the remaining submodule
-// re-exports below are still incomplete.
+// Unicode core is re-exported at the top of the file. Further transcoding
+// helpers (unicode_draft) and path helpers (bun_paths) are re-exported on
+// demand as callers need them — see the `crate::strings` re-export block below.
 pub use crate::string::escape_reg_exp::{escape_reg_exp, escape_reg_exp_for_package_name_matching};
-// TODO(port): re-export the rest of the transcoding suite from unicode_draft —
-//   to_utf8_alloc / to_utf16_alloc / convert_* / copy_*_into_* / EncodeIntoResult / BOM / etc.
-// TODO(port): re-export paths::{to_w_path, basename, add_nt_path_prefix, ...}
 
 crate::declare_scope!(STR, hidden);
 // `log` is `bun.Output.scoped(.STR, .hidden)` — use `crate::scoped_log!(STR, ...)`.
@@ -2828,7 +2829,6 @@ impl ANSIIterator {
     }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     // `&mut ANSIIterator` is ABI-identical to the C++ `ANSIIterator*` (thin
     // non-null pointer to a `#[repr(C)]` POD struct); C++ reads `input`/
@@ -3086,7 +3086,7 @@ pub fn to_utf8_list_with_type(mut list: Vec<u8>, utf16: &[u16]) -> Result<Vec<u8
     // segfaults writing to it. The +16 padding mirrors Zig's SIMD over-read slack.
     let length = simdutf::length::utf8::from::utf16::le(utf16);
     list.try_reserve(length + 16).map_err(|_| AllocError)?;
-    // PORT NOTE: Zig's path validates UTF-16 first then falls back to a manual
+    // Zig's path validates UTF-16 first then falls back to a manual
     // loop on failure (`toUTF8ListWithTypeBun`). Here we route through
     // `crate::strings::convert_utf16_to_utf8_append`, which already replaces
     // unpaired surrogates with U+FFFD — semantically equivalent.

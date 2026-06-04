@@ -47,8 +47,9 @@ pub mod npm {
 
         /// `bun.Wyhash11.hash(0, strings.withoutTrailingSlash(default_url))`
         /// — i.e. hash of `b"https://registry.npmjs.org"` (no trailing `/`).
-        // TODO(port): once bun_wyhash::Wyhash11::hash is `const fn`, fold this
-        // back to a `pub const`. For now compute on first use.
+        // Computed on use because `bun_wyhash::Wyhash11::hash` is not a
+        // `const fn` (only `Wyhash::hash_const` — a different algorithm —
+        // exists). Cheap and cold; not worth a cached static.
         #[inline]
         pub fn default_url_hash() -> u64 {
             use bun_wyhash::Wyhash11;
@@ -287,9 +288,8 @@ impl PnpmMatcher {
             return false;
         }
 
-        // PORT NOTE: Zig `bun.String.fromBytes(name)`. `from_bytes` not yet on
-        // bun_string surface; package names are ASCII so `borrow_utf8` is an
-        // equivalent zero-copy borrow for the regex match call.
+        // Zig used `bun.String.fromBytes(name)`; package names are ASCII so
+        // `borrow_utf8` is an equivalent zero-copy borrow for the regex match.
         let name_str = BunString::borrow_utf8(name);
 
         match self.behavior {

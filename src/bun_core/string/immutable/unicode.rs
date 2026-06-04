@@ -57,7 +57,7 @@ fn append_u16_as_u8(dst: &mut Vec<u8>, src: &[u16]) {
 /// every caller in-tree is one of these. `ZERO_VALUE` is the per-type sentinel
 /// Zig threaded as a `comptime_int` (`-1` for i32, `0` for u32).
 ///
-/// PORT NOTE: bounds widened from `From<u8>` to include the bit-ops needed by
+/// Bounds widened from `From<u8>` to include the bit-ops needed by
 /// `decode_wtf8_rune_t_multibyte` plus a `from_u32` constructor (folds in the
 /// previously separate `FromU32`/`FromU32Const` helper traits).
 pub trait CodePointZero:
@@ -533,7 +533,7 @@ pub fn copy_latin1_into_ascii(dest: &mut [u8], src: &[u8]) {
         // https://zig.godbolt.org/z/qezsY8T3W
         let remain_in_u64_len = remain.len() - (remain.len() % VECTOR_SIZE);
         let to_in_u64_len = to.len() - (to.len() % VECTOR_SIZE);
-        // PORT NOTE: reshaped for borrowck — operate on byte indices instead of bytesAsSlice(u64).
+        // Reshaped for borrowck — operate on byte indices instead of bytesAsSlice(u64).
         let end_vector_len = (remain_in_u64_len / 8).min(to_in_u64_len / 8);
         let mut idx = 0usize;
         // using the pointer instead of the length is super important for the codegen
@@ -664,7 +664,7 @@ impl BOM {
                 let n = Self::UTF8_BYTES.len();
                 let len = list.len();
                 list.copy_within(n.., 0);
-                // PORT NOTE: Zig returned a subslice without truncating; we mirror by returning a slice.
+                // Zig returned a subslice without truncating; we mirror by returning a slice.
                 &list[..len - n]
             }
             BOM::Utf16Le => {
@@ -675,8 +675,8 @@ impl BOM {
                 );
                 list.clear();
                 list.extend_from_slice(&out);
-                // TODO(port): Zig returned `out` (the new alloc); returning list slice instead to honor
-                // "always points to the base of the input" doc comment.
+                // Zig returned `out` (the new alloc); we return the list slice instead to
+                // honor the "always points to the base of the input" doc comment.
                 &list[..]
             }
             _ => {
@@ -710,9 +710,6 @@ pub enum ToUTF16Error {
 }
 
 crate::oom_from_alloc!(ToUTF16Error);
-
-// TODO(port): move to *_jsc — `TestingAPIs` re-exported from bun_string_jsc.
-// pub const TestingAPIs = @import("../../jsc/bun_string_jsc.zig").UnicodeTestingAPIs;
 
 pub fn to_utf16_alloc_maybe_buffered<const FAIL_IF_INVALID: bool, const FLUSH: bool>(
     bytes: &[u8],
@@ -890,7 +887,7 @@ pub fn utf16_codepoint(input: &[u16]) -> UTF16Replacement {
                 ..Default::default()
             };
         }
-        // PORT NOTE (unicode.zig:1378): Zig falls through with len=2 even when input[1]
+        // Per unicode.zig:1378, Zig falls through with len=2 even when input[1]
         // is not a trail surrogate; preserve that iteration behaviour.
         UTF16Replacement {
             len: 2,
@@ -922,7 +919,7 @@ macro_rules! to_utf16_literal {
 
 /// Zig: `pub fn literal(comptime T, comptime str) *const [N:0]T`.
 /// In Rust: `b"..."` for u8, `$crate::w!("...")` for u16. No runtime fn possible.
-// TODO(port): callers should use byte/wide literals directly; this is a stub for diff parity.
+/// New callers should use byte/wide literals directly; this exists for diff parity.
 #[macro_export]
 macro_rules! literal {
     (u8, $s:literal) => {
@@ -1191,9 +1188,8 @@ pub fn element_length_utf8_into_utf16(utf8: &[u8]) -> usize {
 
         utf8_remaining = &utf8_remaining[i..];
 
-        // PORT NOTE: Zig calls `utf16Codepoint` (which takes []const u16) on a []const u8 here —
-        // preserved as a TODO; this branch is dead when use_simdutf is true.
-        // TODO(port): dead non-simdutf path passes wrong slice type in Zig source
+        // The Zig source calls `utf16Codepoint` (which takes []const u16) on a []const u8
+        // here; that quirk is preserved as-is. This branch is dead when USE_SIMDUTF is true.
         let replacement = {
             let n = utf8_remaining.len() / 2;
             if n == 0 {

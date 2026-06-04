@@ -153,7 +153,7 @@ impl Default for IndentInfo {
 /// the JSON parser reads directly (`token`, `number`, `has_newline_before`,
 /// `source`, `end`, `is_ascii_only`, `identifier`, `indent_info`).
 ///
-/// PORT NOTE — borrowck/Stacked Borrows: Zig stored `log: *logger.Log` on
+/// borrowck/Stacked Borrows: Zig stored `log: *logger.Log` on
 /// both the lexer *and* the parser (json.zig:103,119). The Rust port keeps a
 /// single `*mut Log` here as the sole provenance chain; the parser does **not**
 /// hold its own `&mut Log` (that would alias this pointer and any parser-side
@@ -161,7 +161,7 @@ impl Default for IndentInfo {
 /// time the lexer reports an error). Parser-side log writes go through
 /// `log_mut()`. Matches the toml lexer's shape.
 pub struct Lexer<'a, 'bump> {
-    // PORT NOTE: raw ptr — see struct doc.
+    // raw ptr — see struct doc.
     log: *mut bun_ast::Log,
     pub source: &'a bun_ast::Source,
     bump: &'bump Bump,
@@ -384,7 +384,7 @@ where
 
     #[cold]
     fn expected_string(&mut self, text: &str) -> LexResult {
-        // PORT NOTE: the `prev_token_was_await_keyword` branch is JS-only and
+        // the `prev_token_was_await_keyword` branch is JS-only and
         // dropped here.
         let r = self.range();
         if self.source.contents.len() != self.start {
@@ -602,10 +602,12 @@ where
     /// Zig: `decodeEscapeSequences`. Ported for the `is_json = true` arm only —
     /// legacy-octal, template `\r\n` normalization and tagged-template raw
     /// preservation are JS-only and dropped.
-    // TODO(port): JSON spec only permits `\" \\ \/ \b \f \n \r \t \uXXXX`; the
-    // Zig path additionally accepts `\0` `\v` `\x` `\u{…}` etc. and then errors
-    // post-hoc via `is_json` checks. Mirror that once the surrogate-pair
-    // handling in `bun_str` is wired.
+    // Lenient-escape parity with the Zig `is_json` arms: `\v`, `\x`, `\8`/`\9`
+    // are accepted (Zig has no `is_json` gate there); `\0`–`\7` (legacy octal)
+    // and `\u{…}` hit `syntaxError` in Zig's `is_json` path and likewise reach
+    // `syntax_error()` here via the fallthrough/non-hex-digit arms. Astral
+    // codepoints in raw text are surrogate-pair encoded by `push_codepoint`
+    // (`strings::push_codepoint_utf16`), matching Zig's tail switch.
     fn decode_escape_sequences(
         &mut self,
         _start: usize,
@@ -969,7 +971,7 @@ where
         }
 
         // Handle bigint literals after the underscore-at-end check above;
-        // PORT NOTE: bigint `'n'` falls through to the identifier-start check
+        // bigint `'n'` falls through to the identifier-start check
         // below (T::TBigIntegerLiteral is JS-only and not in this token enum).
 
         // An identifier can't immediately follow a number.
@@ -1032,7 +1034,7 @@ where
         let utf8 = strings::to_utf8_alloc(&buf);
         let contents: &'a [u8] = self.bump.alloc_slice_copy(&utf8);
 
-        // PORT NOTE: full Unicode `isIdentifier` validation omitted — JSON only
+        // full Unicode `isIdentifier` validation omitted — JSON only
         // recognises `true`/`false`/`null`; anything else is `t_identifier`
         // and the parser will reject it.
         self.identifier = contents;
@@ -1374,7 +1376,7 @@ fn is_identifier_start(cp: CodePoint) -> bool {
     matches!(cp, 0x24 /* $ */ | 0x5F /* _ */)
         || (cp >= 'a' as CodePoint && cp <= 'z' as CodePoint)
         || (cp >= 'A' as CodePoint && cp <= 'Z' as CodePoint)
-    // PORT NOTE: full Unicode ID_Start table omitted — JSON only ever
+    // full Unicode ID_Start table omitted — JSON only ever
     // recognises `true`/`false`/`null` here, all ASCII.
 }
 

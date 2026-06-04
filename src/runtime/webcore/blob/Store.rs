@@ -35,8 +35,6 @@ pub use bun_jsc::webcore_types::store::{
     Bytes, Data, DataTag, File, S3, SerializeTag, Store, StoreRef,
 };
 
-// TODO(port): IdentityContext(u64) hasher — bun_collections::HashMap needs an
-// identity-hasher variant; load factor 80 is the std default in Zig.
 pub type Map = HashMap<u64, *mut Store>;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -219,12 +217,11 @@ impl StoreExt for Store {
         }))
     }
 
-    // PORT NOTE: Zig `deinit` body became `impl Drop for Store` below. The manual
+    // Zig `deinit` body became `impl Drop for Store` below. The manual
     // `allocator.free(file.pathlike.path.slice())` / `s3.deinit(allocator)` paths are
     // now handled by the owned types' own `Drop` impls.
 
     fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         match &self.data {
             Data::File(file) => {
                 let pathlike_tag: PathOrFileDescriptorSerializeTag =
@@ -237,7 +234,7 @@ impl StoreExt for Store {
 
                 match &file.pathlike {
                     PathOrFileDescriptor::Fd(fd) => {
-                        // PORT NOTE: Zig `writer.writeStruct(fd)` writes the raw
+                        // Zig `writer.writeStruct(fd)` writes the raw
                         // bytes of the FD wrapper. `bun_sys::Fd` is
                         // `#[repr(transparent)]` over an integer (`i32` posix /
                         // `u64` windows), so its native-endian byte image is
@@ -280,7 +277,7 @@ impl FileExt for File {
     fn unlink(&self, global_this: &JSGlobalObject) -> JsResult<JSValue> {
         match &self.pathlike {
             PathOrFileDescriptor::Path(path_like) => {
-                // PORT NOTE: Zig `slice.toOwned()` / `toSliceClone()` are
+                // Zig `slice.toOwned()` / `toSliceClone()` are
                 // fallible only on OOM; the Rust ports return the slice
                 // directly (mimalloc aborts on OOM), so no `?`.
                 let encoded_slice = match path_like {
@@ -387,7 +384,7 @@ impl S3Ext for S3 {
             }
         }
 
-        // PORT NOTE: Wrapper.deinit body deleted — store.deref() handled by StoreRef::drop,
+        // Wrapper.deinit body deleted — store.deref() handled by StoreRef::drop,
         // promise.deinit() handled by JSPromiseStrong::drop, bun.destroy(wrap) handled by
         // heap::take + drop in resolve().
 
@@ -483,7 +480,7 @@ impl S3Ext for S3 {
             }
         }
 
-        // PORT NOTE: Wrapper.deinit/destroy bodies deleted — store.deref() via StoreRef::drop,
+        // Wrapper.deinit/destroy bodies deleted — store.deref() via StoreRef::drop,
         // promise.deinit() via JSPromiseStrong::drop, resolvedlistOptions.deinit() via
         // S3ListObjectsOptions::drop, bun.destroy(self) via heap::take + drop.
 
@@ -503,7 +500,7 @@ impl S3Ext for S3 {
 
         let options = s3_client::get_list_objects_options_from_js(global_this, list_options)?;
 
-        // PORT NOTE: Zig passed `options` by-value to both `bun.S3.listObjects`
+        // Zig passed `options` by-value to both `bun.S3.listObjects`
         // and `Wrapper.resolvedlistOptions` (implicit struct copy).
         // `S3ListObjectsOptions` is not `Clone` in Rust (owns `Utf8Slice`s);
         // box the wrapper first so the options live on the heap, then hand a
@@ -566,8 +563,8 @@ impl BytesExt for Bytes {
     }
 
     fn from_array_list(list: Vec<u8>) -> Result<Bytes, bun_core::Error> {
-        // TODO(port): Zig signature returns `!*Bytes` but body returns `Bytes` by value —
-        // mirroring the by-value return here.
+        // Zig's signature returned `!*Bytes`; returning `Bytes` by value is a
+        // deliberate deviation — the caller decides where the value lives.
         Ok(Bytes::init(list))
     }
 

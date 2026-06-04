@@ -324,15 +324,13 @@ impl PackageManager {
                             Global::crash();
                         }
                     };
-                    // PORT NOTE (spec parity): Zig writes
-                    //   var scripts = manager.lockfile.packages.items(.scripts)[package_id.*];
-                    // which COPIES the `Scripts` struct into a local; the
-                    // subsequent `parseAlloc` / `.filled = true` mutate the
-                    // local and are never stored back, so
-                    // `lockfile.packages[id].scripts` is not updated. This is
-                    // a latent dead-store bug in processDependencyList.zig,
-                    // but we match it exactly so .rs/.zig observable behavior
-                    // agree. The `builder` appends still land in
+                    // Intentional dead store: `scripts` is a local copy of
+                    // `lockfile.packages[id].scripts`, and the `parse_alloc` /
+                    // `.filled = true` mutations are never stored back, so
+                    // `lockfile.packages[id].scripts` is not updated. The
+                    // original implementation had this same latent dead-store
+                    // bug, and we match it exactly so observable behavior
+                    // agrees. The `builder` appends still land in
                     // `lockfile.buffers.string_bytes`, preserving that side
                     // effect. (Hoisted above `string_builder()` for borrowck —
                     // `parse_count`/`allocate` don't touch `packages`.)
@@ -360,8 +358,8 @@ impl PackageManager {
     ) -> Result<(), bun_core::Error> {
         match *item {
             TaskCallbackContext::Dependency(dependency_id) => {
-                // PORT NOTE: reshaped for borrowck — clone the dependency row
-                // out of the buffer before re-borrowing `self` for enqueue.
+                // Clone the dependency row out of the buffer before
+                // re-borrowing `self` for enqueue.
                 let dependency = Clone::clone(
                     &self.lockfile.buffers.dependencies.as_slice()[dependency_id as usize],
                 );
@@ -408,8 +406,8 @@ impl PackageManager {
 
     pub fn process_peer_dependency_list(&mut self) -> Result<(), bun_core::Error> {
         while let Some(peer_dependency_id) = self.peer_dependencies.read_item() {
-            // PORT NOTE: reshaped for borrowck — clone the dependency row out
-            // of the buffer before re-borrowing `self` for enqueue.
+            // Clone the dependency row out of the buffer before re-borrowing
+            // `self` for enqueue.
             let dependency = Clone::clone(
                 &self.lockfile.buffers.dependencies.as_slice()[peer_dependency_id as usize],
             );

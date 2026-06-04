@@ -35,7 +35,7 @@ pub(crate) fn throw_err_invalid_arg_type_with_message(
         .throw()
 }
 
-// PORT NOTE: Zig took `comptime name_fmt: string, name_args: anytype` and did
+// Zig took `comptime name_fmt: string, name_args: anytype` and did
 // comptime string concatenation (`"The \"" ++ name_fmt ++ "\" ..."`) plus tuple
 // concatenation (`name_args ++ .{expected_type, actual_type}`). Rust cannot
 // concat a caller-supplied format string at compile time, so callers pass the
@@ -100,7 +100,7 @@ fn throw_range_error_min_max<V: bun_core::fmt::OutOfRangeValue>(
     )
 }
 
-// PORT NOTE: Zig had `comptime min_value: ?i64, comptime max_value: ?i64` with a
+// Zig had `comptime min_value: ?i64, comptime max_value: ?i64` with a
 // `comptime { @compileError }` bounds check. `Option<i64>` is not a valid const-
 // generic type on stable, so demoted to runtime params + debug_assert.
 // PERF(port): was comptime monomorphization.
@@ -432,7 +432,7 @@ pub(crate) fn validate_array(
         ));
     }
     if let Some(min_length) = min_length {
-        // PORT NOTE: Zig compared `usize < ?i32` (peer-type widened); cast to i64 to match.
+        // Zig compared `usize < ?i32` (peer-type widened); cast to i64 to match.
         if (value.get_length(global_this)? as i64) < i64::from(min_length) {
             return Err(throw_err_invalid_arg_value(
                 global_this,

@@ -62,8 +62,6 @@ impl SmolStr {
 
     // ---- public API -------------------------------------------------------
 
-    // TODO(port): Zig `jsonStringify` participates in std.json's structural protocol;
-    // map to bun's JSON-serialize trait once one exists.
     pub fn json_stringify<W>(&self, writer: &mut W) -> Result<(), crate::Error>
     where
         W: JsonWriter,
@@ -140,7 +138,6 @@ impl SmolStr {
 
     pub fn from_slice(values: &[u8]) -> Result<SmolStr, AllocError> {
         if values.len() > Inlined::MAX_LEN {
-            // TODO(port): verify Vec::<u8>::init_capacity / append_slice_assume_capacity API.
             let mut baby_list = Vec::<u8>::with_capacity(values.len());
             baby_list.extend_from_slice(values);
             // PERF(port): was appendSliceAssumeCapacity — profile if hot.
@@ -234,7 +231,6 @@ impl Drop for SmolStr {
     fn drop(&mut self) {
         if !self.is_inlined() {
             // SAFETY: ptr/len/cap describe a Vec<u8> allocation we own; reconstruct to free.
-            // TODO(port): verify Vec<u8> Drop frees; else dealloc via global allocator directly.
             let list = unsafe {
                 Vec::<u8>::from_raw_parts(
                     self.ptr(),
@@ -247,7 +243,7 @@ impl Drop for SmolStr {
     }
 }
 
-// TODO(port): placeholder for the std.json `writer: anytype` protocol used by json_stringify.
+/// Minimal byte-writer protocol used by `json_stringify` (Zig: std.json's `writer: anytype`).
 pub trait JsonWriter {
     fn write(&mut self, bytes: &[u8]) -> Result<(), crate::Error>;
 }
@@ -384,7 +380,7 @@ mod tests {
 
     #[test]
     fn inlined_does_not_allocate() {
-        // TODO(port): Zig used std.testing.allocator to assert no allocation; no direct
+        // Zig used std.testing.allocator to assert no allocation; no direct
         // equivalent here. The is_inlined() check is the observable proxy.
         let hello = SmolStr::from_slice(b"hello").unwrap();
         assert_eq!(5, hello.len());

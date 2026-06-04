@@ -8,7 +8,7 @@ use bun_ast::Log;
 use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
 use bun_collections::HashMap;
 use bun_paths::{self, SEP};
-// PORT NOTE: two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
+// two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
 // the singleton `FileSystem` / `DirnameStore`; `bun_paths::fs` (`PFs`) defines
 // the `Path`/`PathName` value types that `ImportRecord.path` is typed against.
 // Both port `src/resolver/fs.zig`; B-3 collapses them. Until then, construct
@@ -35,7 +35,7 @@ bun_core::named_error_set!(CSSResolveError);
 
 type HashedFileNameMap = HashMap<u64, &'static [u8]>;
 
-// PORT NOTE: `_transpiler.Transpiler.isCacheEnabled` is gated in the draft body
+// `_transpiler.Transpiler.isCacheEnabled` is gated in the draft body
 // (`transpiler.rs:1111`). The Zig value is a hard `false` (`const isCacheEnabled
 // = false;`); inline it here so `get_hashed_filename` compiles without depending
 // on the gated `Transpiler` impl.
@@ -43,7 +43,7 @@ const IS_CACHE_ENABLED: bool = false;
 
 pub struct Linker {
     // arena field dropped — global mimalloc (callers pass `bun.default_allocator`)
-    // PORT NOTE: Zig stored borrowed `*BundleOptions` / `*Log` / `*Resolver` /
+    // Zig stored borrowed `*BundleOptions` / `*Log` / `*Resolver` /
     // `*ResolveQueue` / `*ResolveResults` / `*FileSystem`. The un-gated
     // `Transpiler` struct owns those values directly and also owns `linker:
     // crate::Linker` by value, so storing Rust references here would alias
@@ -82,7 +82,7 @@ pub struct TaggedResolution {
 //
 // `bun_alloc::BSSStringList<COUNT, ITEM_LENGTH>` encodes the Zig generics as
 // `COUNT = _COUNT * 2`, `ITEM_LENGTH = _ITEM_LENGTH + 1` (see `bun_alloc/lib.rs`).
-// PORT NOTE: `bss_string_list!` would be the canonical declare-site macro but
+// `bss_string_list!` would be the canonical declare-site macro but
 // expands to `core::cell::SyncUnsafeCell`, and `bun_bundler` does not (yet)
 // enable `#![feature(sync_unsafe_cell)]`. Use the heap-allocating `init()`
 // fallback under a `LazyLock` instead — same lifetime semantics
@@ -325,7 +325,7 @@ impl Linker {
     }
 
     // ── getModKey / getHashedFilename ────────────────────────────────────
-    // PORT NOTE: Zig's `Fs.FileSystem.RealFS.ModKey` is a nested decl; the
+    // Zig's `Fs.FileSystem.RealFS.ModKey` is a nested decl; the
     // Rust port hoists `ModKey` to module scope (`bun_resolver::fs::ModKey`)
     // alongside `RealFS`. `file_path` is typed `PFs::Path` (not `Fs::Path`)
     // so `get_hashed_filename` — whose callers all build `PFs::Path` — can
@@ -352,7 +352,7 @@ impl Linker {
         };
         let file = bun_sys::File::borrow(&raw_fd);
         Fs::FileSystem::set_max_fd(file.handle().native());
-        // PORT NOTE: spec called `Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs,
+        // spec called `Fs.FileSystem.RealFS.ModKey.generate(&this.fs.fs,
         // path, file)`; both leading args are unread (fs.rs:1386). The inline
         // `bun_resolver::fs::RealFS` (which `self.fs.fs` is) and the full-port
         // `fs_full::RealFS` are distinct types, so route through the
@@ -374,15 +374,25 @@ impl Linker {
         }
 
         let modkey = self.get_mod_key(file_path, fd)?;
-        // PORT NOTE: `ModKey::hash_name` writes into a 1 KiB threadlocal and
-        // returns a `'static` slice into it (matches Zig's `hash_name_buf`
-        // threadlocal). Spec passes `file_path.text` even though the param is
-        // named `basename`; preserved verbatim.
-        let hash_name = modkey.hash_name(file_path.text)?;
+        // `ModKey::hash_name` writes into a caller-supplied buffer (1 KiB,
+        // matching the capacity of the threadlocal Zig's `hash_name_buf`
+        // used) and returns a borrow of it; `dupe` copies the bytes into the
+        // process-lifetime interner to satisfy this fn's `'static` return.
+        // Note: `IS_CACHE_ENABLED` is a hard `const false` (see above), so
+        // the `hashed_filenames` cache never dedups — every call interns a
+        // fresh copy for the life of the process. Accepted: the `'static`
+        // return contract forces a copy anyway, and the alternative (the old
+        // threadlocal slice return) was unsound. `dupe` also aborts on OOM
+        // where the old path propagated `?` — consistent with the
+        // `bun.handleOom` idiom for interner allocations.
+        // Spec passes `file_path.text` even though the param is named
+        // `basename`; preserved verbatim.
+        let mut hash_name_buf = [0u8; 1024];
+        let hash_name = dupe(modkey.hash_name(file_path.text, &mut hash_name_buf)?);
 
         if IS_CACHE_ENABLED {
             let hashed = bun_wyhash::hash(file_path.text);
-            self.hashed_filenames.insert(hashed, dupe(hash_name));
+            self.hashed_filenames.insert(hashed, hash_name);
         }
 
         Ok(hash_name)
@@ -391,7 +401,7 @@ impl Linker {
     /// This modifies the Ast in-place! It resolves import records and
     /// generates paths.
     ///
-    /// PORT NOTE: `comptime import_path_format` demoted to a runtime arg —
+    /// `comptime import_path_format` demoted to a runtime arg —
     /// `options::ImportPathFormat` doesn't derive `ConstParamTy`, and the
     /// crate doesn't enable `adt_const_params`. All callers pass a literal,
     /// and the inner `generate_import_path` body is a single `match` either
@@ -423,7 +433,7 @@ impl Linker {
             | options::Loader::Js
             | options::Loader::Ts
             | options::Loader::Tsx => {
-                // PORT NOTE: reshaped for borrowck — Zig iterated
+                // reshaped for borrowck — Zig iterated
                 // `result.ast.import_records.slice()` while also reading other
                 // `result.*` fields and (in the not-found branch) borrowing
                 // `&result.source`. Iterate by index, take field-disjoint
@@ -573,7 +583,7 @@ impl Linker {
         Ok(())
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig passed `&mut self` + `&mut
+    // reshaped for borrowck — Zig passed `&mut self` + `&mut
     // ImportRecord` (a sub-borrow of `result.ast`) + `&mut ParseResult`. In
     // Rust those overlap; pass the disjoint pieces explicitly.
     fn when_module_not_found<const IS_BUN: bool>(
@@ -660,7 +670,7 @@ impl Linker {
                 }
 
                 if namespace == b"bun" || namespace == b"file" || namespace.is_empty() {
-                    // PORT NOTE: `linker.fs.relative` is a thin wrapper over
+                    // `linker.fs.relative` is a thin wrapper over
                     // `bun.path.relative`; the inline `bun_resolver::fs`
                     // module doesn't expose it yet, so call the path layer
                     // directly. The threadlocal-buffer result must be
@@ -729,7 +739,7 @@ impl Linker {
                         }
                     }
 
-                    // PORT NOTE: `fs.relativeTo(source_path)` ==
+                    // `fs.relativeTo(source_path)` ==
                     // `relative(fs.top_level_dir, source_path)` in Zig.
                     let top_level_dir = self.fs().top_level_dir;
                     let mut base: &[u8] =
@@ -780,7 +790,7 @@ impl Linker {
     ) -> Result<bool, bun_core::Error> {
         let hash_key = self.resolve_result_hash_key(&resolve_result);
 
-        // PORT NOTE: Zig `getOrPut` → `HashMap::entry`; `found_existing` is
+        // Zig `getOrPut` → `HashMap::entry`; `found_existing` is
         // whether the key was already present. Matches Zig
         // `linker.resolve_results.getOrPut` / `linker.resolve_queue.writeItem`
         // (linker.zig:387-390).

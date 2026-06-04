@@ -97,7 +97,6 @@ pub enum ParseError {
     #[error("InvalidTarget")]
     InvalidTarget,
 }
-// TODO(port): impl From<ParseError> for bun_core::Error
 
 impl CompileTarget {
     pub fn eql(&self, other: &CompileTarget) -> bool {
@@ -113,17 +112,11 @@ impl CompileTarget {
     }
 
     pub fn to_npm_registry_url<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], bun_core::Error> {
-        // TODO(port): narrow error set
         if let Some(url) = env_var::BUN_COMPILE_TARGET_TARBALL_URL.get() {
             if strings::has_prefix(url, b"http://") || strings::has_prefix(url, b"https://") {
-                // TODO(port): lifetime — Zig returns the env var slice directly (`return url;`),
-                // which is not tied to `buf`. Could change the return type to allow returning a
-                // non-buf slice (e.g. Cow<'_, [u8]>). For now copy into buf without truncation.
-                if url.len() > buf.len() {
-                    return Err(bun_core::err!("BufferTooSmall"));
-                }
-                buf[..url.len()].copy_from_slice(url);
-                return Ok(&buf[..url.len()]);
+                // Matches Zig (`return url;`): the env var slice is `&'static [u8]`,
+                // which outlives `'a`, so return it directly instead of copying into `buf`.
+                return Ok(url);
             }
         }
 
@@ -135,7 +128,6 @@ impl CompileTarget {
         buf: &'a mut [u8],
         registry_url: &[u8],
     ) -> Result<&'a [u8], bun_core::Error> {
-        // TODO(port): narrow error set
         // Validate the target is supported before building URL
         if !self.is_supported() {
             return Err(bun_core::err!("UnsupportedTarget"));
@@ -400,8 +392,6 @@ impl CompileTarget {
                 } else if strings::contains(input, b"wasm") {
                     bun_core::err_generic!("invalid target, WebAssembly is not supported. Sorry!");
                 } else if strings::contains(input, b"v") {
-                    // PORT NOTE: Zig used a comptime-concat format string with VERSION_STRING.
-                    // `format_args!` requires a literal; pass the version as a runtime arg.
                     bun_core::err_generic!(
                         "Please pass a complete version number to --target. For example, --target=bun-v{}",
                         Environment::VERSION_STRING,

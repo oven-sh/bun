@@ -188,7 +188,6 @@ pub extern "C" fn FileSink__assertLive(_ptr: *const c_void) {}
 pub mod testing_apis {
     use super::*;
 
-    // TODO(port): #[bun_jsc::host_fn]
     pub fn file_sink_live_count(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         Ok(JSValue::js_number(LIVE_COUNT.load(Ordering::Relaxed) as f64))
     }
@@ -682,7 +681,7 @@ impl FileSink {
             return sys::Result::Ok(());
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig passed `self` + a closure that
+        // reshaped for borrowck — Zig passed `self` + a closure that
         // mutated `self.force_sync`. Split into a local capture and apply after.
         // R-2: out-params for `bun_io::open_for_writing` are local then `Cell::set`.
         let mut force_sync_out = self.force_sync.get();
@@ -985,8 +984,8 @@ impl FileSink {
     }
 
     pub fn finalize(&mut self) {
-        // TODO(port): `.classes.ts` finalize — see PORTING.md §JSC. Runs during
-        // lazy sweep; must not touch live JS cells.
+        // `.classes.ts` finalize — see PORTING.md §JSC. Runs during lazy sweep;
+        // must not touch live JS cells.
 
         // ── #53265 magic check (must be FIRST — before any field deref) ──────
         #[cfg(windows)]
@@ -1072,7 +1071,7 @@ impl FileSink {
         // `ref_count=1` and that +1 belongs to the wrapper it's about to be
         // stored in, so no extra `ref_()` there.
         //
-        // PORT NOTE: Zig's `FileSink.toJS` does *not* `self.ref()` — it relies
+        // Zig's `FileSink.toJS` does *not* `self.ref()` — it relies
         // on the caller's existing +1 transferring to the wrapper. The Rust
         // port makes the per-wrapper +1 explicit so the protocol is locally
         // verifiable (N wrappers ⇒ N `ref_()` ⇒ N `finalize` ⇒ N `deref()`),
@@ -1180,8 +1179,9 @@ impl FileSink {
         this
     }
 
-    // TODO(port): in-place init — `construct` is called by JSSink codegen on a
-    // pre-allocated `m_ctx` slot. May need `&mut MaybeUninit<Self>`.
+    // Called by JSSink codegen on a pre-allocated `m_ctx` slot via
+    // `JsSinkType::construct(&mut MaybeUninit<Self>)`, which `write`s this
+    // by-value result into the slot.
     pub fn construct() -> FileSink {
         let this = FileSink {
             ref_count: Cell::new(1),
@@ -1309,7 +1309,7 @@ impl FileSink {
         }
         #[cfg(windows)]
         self_.magic.set(FILESINK_DEAD);
-        // PORT NOTE: pending/readable_stream/js_sink_ref are dropped by Box drop
+        // pending/readable_stream/js_sink_ref are dropped by Box drop
         // below; explicit `.deinit()` calls from the Zig are subsumed.
         if let Some(global) = self_.js_global() {
             // SAFETY: `bun_vm()` is non-null when `js_global()` returned Some.
@@ -1329,7 +1329,7 @@ impl FileSink {
     pub fn to_js_with_destructor(
         &mut self,
         global_this: &JSGlobalObject,
-        // PORT NOTE: `sink::DestructorPtr` is `TaggedPtrUnion<(Detached, Detached)>`
+        // `sink::DestructorPtr` is `TaggedPtrUnion<(Detached, Detached)>`
         // which does not satisfy `bun_ptr::TypeList` yet (sibling Sink.rs); accept
         // the encoded usize directly until that lands.
         destructor: Option<usize>,
@@ -1528,16 +1528,16 @@ impl FileSink {
         }
     }
 
-    // Helper for struct-init defaults (Zig field defaults).
-    // TODO(port): replace with `impl Default for FileSink` once all field types
-    // implement `Default`; kept private to avoid exposing a half-initialized state.
+    // Helper for struct-init defaults (Zig field defaults). `EventLoopHandle` has
+    // no `Default`, so `impl Default for FileSink` is not possible; kept private
+    // to avoid exposing a half-initialized state.
     fn default_fields() -> FileSink {
         FileSink {
             ref_count: Cell::new(1),
             #[cfg(windows)]
             magic: Cell::new(FILESINK_LIVE),
             writer: JsCell::new(IOWriter::default()),
-            // PORT NOTE: `EventLoopHandle` has no `Default`; null Js variant is the
+            // `EventLoopHandle` has no `Default`; null Js variant is the
             // closest sentinel — every constructor overwrites this field.
             // SAFETY: sentinel only; never dispatched (overwritten before use).
             event_loop_handle: EventLoopHandle::init(core::ptr::null_mut()),
@@ -1619,7 +1619,6 @@ impl FileSink {
     }
 }
 
-// TODO(port): #[bun_jsc::host_fn]
 fn on_resolve_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     bun_core::scoped_log!(FileSink, "onResolveStream");
     let args = callframe.arguments();
@@ -1631,7 +1630,6 @@ fn on_resolve_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
     Ok(JSValue::UNDEFINED)
 }
 
-// TODO(port): #[bun_jsc::host_fn]
 fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     bun_core::scoped_log!(FileSink, "onRejectStream");
     let args = callframe.arguments();
@@ -1660,7 +1658,7 @@ impl FileSink {
 
         self.readable_stream
             .set(readable_stream::Strong::init(*stream, global_this));
-        // PORT NOTE: reshaped for borrowck — re-derive `signal_ptr` after
+        // reshaped for borrowck — re-derive `signal_ptr` after
         // assigning `readable_stream`. `JsCell::as_ptr` yields the stable
         // address of the inner `Signal` (`#[repr(transparent)]` over
         // `UnsafeCell`).
@@ -1690,7 +1688,7 @@ impl FileSink {
 
         if !promise_result.is_empty_or_undefined_or_null() {
             if let Some(promise) = promise_result.as_any_promise() {
-                // PORT NOTE: `bun_jsc::AnyPromise` (the active raw-ptr variant in
+                // `bun_jsc::AnyPromise` (the active raw-ptr variant in
                 // lib.rs) does not yet expose `status()`/`result()`; recover the
                 // underlying `JSPromise` (JSInternalPromise subclasses JSPromise
                 // in C++, so the cast is layout-safe).
@@ -1705,7 +1703,7 @@ impl FileSink {
                             .with_mut(|w| w.enable_keeping_process_alive(self.io_evtloop()));
                         self.ref_();
                         // TODO: properly propagate exception upwards
-                        // PORT NOTE: `JSValue::then` takes already-wrapped C-ABI
+                        // `JSValue::then` takes already-wrapped C-ABI
                         // host fns; the `toJSHostFunction` step is the manual
                         // shims at the bottom of this file.
                         promise_result.then(
@@ -1745,9 +1743,6 @@ impl FileSink {
 // `Zig::GlobalObject::promiseHandlerID`. A `pub static …: JSHostFn = shim`
 // exports the address of an 8-byte data slot, which never equals the shim's
 // code address → RELEASE_ASSERT_NOT_REACHED at runtime.
-//
-// TODO(refactor): replace with `#[bun_jsc::host_fn]` and gate on an
-// `export_cpp_apis` feature.
 bun_jsc::jsc_host_abi! {
     #[unsafe(export_name = "Bun__FileSink__onResolveStream")]
     unsafe fn on_resolve_stream_shim(

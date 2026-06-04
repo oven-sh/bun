@@ -93,7 +93,7 @@ fn split(
     let mut lines: Vec<OwnedString> = Vec::new();
 
     // Zig: `const Char = switch (encoding) { .utf8, .latin1 => u8, .utf16 => u16 };`
-    // PORT NOTE: reshaped — comptime enum cannot select an associated type in
+    // A comptime enum cannot select an associated type in
     // stable Rust; split into two arms over the buffer's element type.
     match encoding {
         EncodingNonAscii::Utf16 => {

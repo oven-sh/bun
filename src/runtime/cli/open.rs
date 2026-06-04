@@ -37,7 +37,7 @@ pub enum Editor {
     Other,
 }
 
-// PORT NOTE: Zig's `std.EnumMap(Editor, string)` / `std.EnumMap(Editor, []const [:0]const u8)`
+// Note: Zig's `std.EnumMap(Editor, string)` / `std.EnumMap(Editor, []const [:0]const u8)`
 // were comptime-initialized sparse maps. `bin_name` ported per PORTING.md as
 // `enum_map::EnumMap<E, Option<V>>`; `bin_path` kept as a match-fn because of `#[cfg]` gating.
 
@@ -87,14 +87,14 @@ impl Editor {
     ) -> Option<Editor> {
         let path_env = env.get(b"PATH")?;
 
-        // PORT NOTE: borrowck — `which` ties its return to `&'a mut *buf`; on a
+        // Note: borrowck — `which` ties its return to `&'a mut *buf`; on a
         // miss we need `buf` again next iteration but NLL conservatively keeps
         // the borrow live (Polonius case). Re-borrow through a raw pointer; on
         // a hit we return immediately so only one `&mut` is ever live.
         let buf_ptr: *mut PathBuffer = buf;
         for &editor in &DEFAULT_PREFERENCE_LIST {
             if let Some(path) = BIN_NAME[editor] {
-                // SAFETY: see PORT NOTE above — exclusive per-iteration reborrow.
+                // SAFETY: see note above — exclusive per-iteration reborrow.
                 if let Some(bin) = which(unsafe { &mut *buf_ptr }, path_env, cwd, path) {
                     *out = bin.as_bytes();
                     return Some(editor);
@@ -153,7 +153,7 @@ impl Editor {
         cwd: &[u8],
         out: &mut &'a [u8],
     ) -> Option<Editor> {
-        // PORT NOTE: borrowck — see `by_path` above; same Polonius-case reborrow.
+        // Note: borrowck — see `by_path` above; same Polonius-case reborrow.
         let buf_ptr: *mut PathBuffer = buf;
         for &editor in &DEFAULT_PREFERENCE_LIST {
             // SAFETY: exclusive per-iteration reborrow; we return immediately on hit.
@@ -161,7 +161,7 @@ impl Editor {
                 return Some(editor);
             }
 
-            // PORT NOTE: reshaped for borrowck — by_fallback_path_for_editor writes a
+            // Note: reshaped for borrowck — by_fallback_path_for_editor writes a
             // 'static slice; we widen `out` to accept it via a temporary.
             let mut static_out: &'static [u8] = b"";
             if Self::by_fallback_path_for_editor(editor, Some(&mut static_out)) {
@@ -184,12 +184,11 @@ impl Editor {
         line: Option<&[u8]>,
         column: Option<&[u8]>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let mut spawned = Box::new(SpawnedEditorContext::default());
         // errdefer default_allocator.destroy(spawned) — handled by Box Drop on `?`.
 
         let mut cursor = std::io::Cursor::new(&mut spawned.file_path_buf[..]);
-        // PORT NOTE: `args_buf` entries borrow both static strings and `file_path_buf`
+        // Note: `args_buf` entries borrow both static strings and `file_path_buf`
         // (self-referential once boxed). Kept as raw byte-slice ptrs; reconstructed
         // as slices when handed to the child process.
         let mut i: usize = 0;
@@ -248,7 +247,7 @@ impl Editor {
                 cursor.write_all(file).or_write_failed()?;
                 let file_path_len = usize::try_from(cursor.position()).expect("int cast");
 
-                // PORT NOTE: borrowck — `cursor` holds `&mut spawned.file_path_buf`;
+                // Note: borrowck — `cursor` holds `&mut spawned.file_path_buf`;
                 // hoist all writes/position reads above the slice reads so NLL can
                 // end the cursor borrow before we re-borrow `file_path_buf` immutably.
                 let mut end_pos = file_path_len;
@@ -291,7 +290,7 @@ impl Editor {
 
         spawned.argc = i;
         let spawned_ptr = bun_core::heap::into_raw(spawned);
-        // PORT NOTE: Zig used `std.Thread.spawn(.{}, autoClose, .{spawned})` then `.detach()`.
+        // Note: Zig used `std.Thread.spawn(.{}, autoClose, .{spawned})` then `.detach()`.
         // bun_threading has no detached-spawn helper; std::thread::spawn matches semantics
         // (the JoinHandle is dropped, detaching the thread).
         // SAFETY: `spawned_ptr` is a uniquely-owned Box raw pointer; ownership is
@@ -323,7 +322,7 @@ pub(super) const DEFAULT_PREFERENCE_LIST: [Editor; 8] = [
     Editor::Vim,
 ];
 
-// PORT NOTE: was `pub const bin_name: std.EnumMap(Editor, string)` built in a comptime block.
+// Note: was `pub const bin_name: std.EnumMap(Editor, string)` built in a comptime block.
 pub(super) static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option<&'static [u8]>>> =
     std::sync::LazyLock::new(|| {
         enum_map::EnumMap::from_fn(|k| match k {
@@ -341,7 +340,7 @@ pub(super) static BIN_NAME: std::sync::LazyLock<enum_map::EnumMap<Editor, Option
         })
     });
 
-// PORT NOTE: was `pub const bin_path: std.EnumMap(Editor, []const [:0]const u8)`.
+// Note: was `pub const bin_path: std.EnumMap(Editor, []const [:0]const u8)`.
 pub(super) fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
     #[cfg(target_os = "macos")]
     {
@@ -385,7 +384,7 @@ pub(super) fn bin_path(editor: Editor) -> Option<&'static [&'static ZStr]> {
     }
 }
 
-// PORT NOTE: `buf` stores (ptr, len) pairs because entries point into `file_path_buf`
+// Note: `buf` stores (ptr, len) pairs because entries point into `file_path_buf`
 // (self-referential) as well as caller-provided/static slices. Reconstructed as slices
 // in `auto_close`.
 pub(super) struct SpawnedEditorContext {
@@ -454,7 +453,7 @@ fn auto_close(spawned: *mut SpawnedEditorContext) {
 
 pub struct EditorContext {
     pub editor: Option<Editor>,
-    // PORT NOTE: `name`/`path` are never freed in Zig; `path` is backed by
+    // Note: `name`/`path` are never freed in Zig; `path` is backed by
     // `Fs.FileSystem.instance.dirname_store` (process-lifetime arena) or aliases `name`.
     pub name: &'static [u8],
     pub path: &'static [u8],
@@ -502,7 +501,6 @@ impl EditorContext {
         line: &[u8],
         column: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let mut basename_buf = [0u8; 512];
         let mut basename = bun_paths::basename(id);
         if strings::ends_with(basename, b".bun") && basename.len() < 499 {
@@ -535,7 +533,7 @@ impl EditorContext {
 
     pub fn detect_editor(&mut self, env: &mut dot_env::Loader) {
         let mut buf = PathBuffer::uninit();
-        // PORT NOTE: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime
+        // Note: borrowck — `by_path_for_editor`/`by_fallback` tie `out`'s lifetime
         // to `&'a mut buf`. On the `false` path NLL conservatively keeps `buf` borrowed
         // (Polonius case). Re-borrow through a raw pointer at each call site; on a hit
         // we return immediately so only one `&mut` is ever live.
@@ -557,7 +555,7 @@ impl EditorContext {
                 if Editor::by_path_for_editor(
                     env,
                     editor_,
-                    // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
+                    // SAFETY: see note above — exclusive per-call reborrow.
                     unsafe { &mut *buf_ptr },
                     Fs::FileSystem::instance().top_level_dir,
                     &mut out,
@@ -588,7 +586,7 @@ impl EditorContext {
             if Editor::by_path_for_editor(
                 env,
                 editor_,
-                // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
+                // SAFETY: see note above — exclusive per-call reborrow.
                 unsafe { &mut *buf_ptr },
                 Fs::FileSystem::instance().top_level_dir,
                 &mut out,
@@ -616,7 +614,7 @@ impl EditorContext {
         // Don't know, so we will just guess based on what exists
         if let Some(editor_) = Editor::by_fallback(
             env,
-            // SAFETY: see PORT NOTE above — exclusive per-call reborrow.
+            // SAFETY: see note above — exclusive per-call reborrow.
             unsafe { &mut *buf_ptr },
             Fs::FileSystem::instance().top_level_dir,
             &mut out,

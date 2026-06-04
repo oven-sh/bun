@@ -1,10 +1,9 @@
 use bun_sql::postgres::protocol::field_message::FieldMessage;
 
 /// Zig `switch (msg) { inline else => |m| ... }` — every `FieldMessage` variant
-/// carries a single `bun.String` payload. `bun_sql::FieldMessage` doesn't (yet)
-/// expose a `payload()` accessor, so match locally.
-// TODO(port): bun_sql::postgres::protocol::field_message::FieldMessage::payload
-// — once landed, replace this whole match with `msg.payload()`.
+/// carries a single `bun.String` payload, so an exhaustive match collapses to
+/// the single binding. The match lives here (not as a `payload()` accessor on
+/// `bun_sql::FieldMessage`) because this is its only consumer.
 pub(crate) fn field_message_payload(msg: &FieldMessage) -> &bun_core::String {
     match msg {
         FieldMessage::Severity(s)

@@ -198,7 +198,6 @@ impl Angle {
 
     pub(crate) fn op<C>(self, other: Angle, ctx: C, op_fn: fn(C, f32, f32) -> f32) -> Angle {
         // PERF: not sure if this is faster
-        // PORT NOTE: reshaped for borrowck — Zig used packed-tag bit-twiddling switch; Rust match on (tag, tag) is equivalent.
         match (self, other) {
             (Angle::Deg(a), Angle::Deg(b)) => Angle::Deg(op_fn(ctx, a, b)),
             (Angle::Rad(a), Angle::Rad(b)) => Angle::Rad(op_fn(ctx, a, b)),

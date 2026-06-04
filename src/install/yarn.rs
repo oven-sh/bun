@@ -1,4 +1,5 @@
 use bun_collections::VecExt;
+use std::borrow::Cow;
 use std::io::Write as _;
 
 use bun_collections::{HashMap, StringHashMap};
@@ -7,7 +8,7 @@ use bun_install::bin::Bin;
 use bun_install::dependency::{self, Dependency, DependencyExt as _};
 use bun_install::install::{self, DependencyID, PackageID, PackageManager};
 use bun_install::integrity::Integrity;
-// PORT NOTE: `bun_install::lockfile` is the column-accessor stub used by the
+// `bun_install::lockfile` is the column-accessor stub used by the
 // audit/why CLI walkers; the yarn migrator needs the real Lockfile/Tree/
 // LoadResult enum, so import from `lockfile_real` and alias it back to
 // `lockfile` so the qualified `lockfile::DependencySlice` etc. paths below
@@ -19,7 +20,7 @@ use crate::lockfile_real::package::{
 };
 use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile, tree, tree::Tree};
 use bun_install::npm;
-// PORT NOTE: `Package.resolution` is the file-backed `resolution_real::ResolutionType<u64>`
+// `Package.resolution` is the file-backed `resolution_real::ResolutionType<u64>`
 // (tag + zero-padded `Value` union), constructed via `init(TaggedValue::*)`; the
 // `bun_install::resolution` stub keeps `Value` as a struct-of-fields and has no `init`.
 use crate::bun_json;
@@ -31,10 +32,9 @@ use bun_paths::PathBuffer;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
 use bun_sys::Fd;
 
-// TODO(port): lifetime — Entry/YarnLock borrow from the input `data: &[u8]` passed to
-// `migrate_yarn_lockfile`. LIFETIMES.tsv had no rows for this file (no *T fields), so
-// `'a` here is the BORROW_PARAM classification applied to slice fields. Verify the few
-// owned slices (specs inner strings, file, git_repo_name) don't need `Box<[u8]>` instead.
+// Entry/YarnLock borrow from the input `data: &[u8]` passed to `migrate_yarn_lockfile`;
+// `resolved` may instead own a rewritten URL (see `Cow` below) and `git_repo_name` is
+// always owned.
 
 pub struct YarnLock<'a> {
     pub entries: Vec<Entry<'a>>,
@@ -43,7 +43,9 @@ pub struct YarnLock<'a> {
 pub struct Entry<'a> {
     pub specs: Vec<&'a [u8]>,
     pub version: &'a [u8],
-    pub resolved: Option<&'a [u8]>,
+    // Usually borrows from the input; owned when `parse_git_url` rewrites a
+    // `github:` spec to a `https://github.com/...` URL.
+    pub resolved: Option<Cow<'a, [u8]>>,
     pub integrity: Option<&'a [u8]>,
     pub dependencies: Option<StringHashMap<&'a [u8]>>,
     pub optional_dependencies: Option<StringHashMap<&'a [u8]>>,
@@ -84,9 +86,10 @@ pub struct ParsedGitUrl<'a> {
     pub commit: Option<&'a [u8]>,
     pub owner: Option<&'a [u8]>,
     pub repo: Option<&'a [u8]>,
-    // TODO(port): in Zig, `url` may be either a borrow into `version` or a freshly
-    // allocPrint'd "https://github.com/{path}". Here we keep an optional owned buffer
-    // so the borrow case stays zero-copy. Callers must check `owned_url` first.
+    // In Zig, `url` may be either a borrow into `version` or a freshly allocPrint'd
+    // "https://github.com/{path}". Here we keep an optional owned buffer so the borrow
+    // case stays zero-copy. Callers must check `owned_url` first: when it is `Some`,
+    // it supersedes `url` (see `into_resolved`).
     pub owned_url: Option<Vec<u8>>,
 }
 
@@ -212,7 +215,6 @@ impl<'a> Entry<'a> {
         _yarn_lock: &YarnLock<'a>,
         version: &'a [u8],
     ) -> Result<ParsedGitUrl<'a>, Error> {
-        // TODO(port): narrow error set
         let mut url: &[u8] = version;
         let mut commit: Option<&[u8]> = None;
         let mut owner: Option<&[u8]> = None;
@@ -245,7 +247,8 @@ impl<'a> Entry<'a> {
             buf.extend_from_slice(b"https://github.com/");
             buf.extend_from_slice(path_without_commit);
             owned_url = Some(buf);
-            // url now points into owned_url; callers must read owned_url when Some
+            // `url` still borrows the stripped input; callers must prefer
+            // `owned_url` when it is Some (Zig reassigns `url` to this buffer).
         } else if strings::index_of(url, b"github.com").is_some() {
             let mut remaining = url;
             if let Some(idx) = strings::index_of(remaining, b"github.com/") {
@@ -335,7 +338,6 @@ impl<'a> YarnLock<'a> {
     }
 
     pub(crate) fn parse(&mut self, content: &'a [u8]) -> Result<(), Error> {
-        // TODO(port): narrow error set
         let mut lines = strings::split(content, b"\n");
         let mut current_entry: Option<Entry<'a>> = None;
         let mut current_specs: Vec<&'a [u8]> = Vec::new();
@@ -469,36 +471,37 @@ impl<'a> YarnLock<'a> {
                             );
                         } else if Entry::is_git_dependency(value) {
                             let git_info = Entry::parse_git_url(self, value)?;
-                            // TODO(port): dropped logic — Zig reassigns `url` to the
-                            // allocPrint'd `https://github.com/{path}` buffer for the
-                            // `github:` branch and stores that as `resolved`. Here
-                            // `git_info.url` still borrows the stripped input slice and
-                            // `owned_url` is discarded, so github: URLs resolve INCORRECTLY.
-                            // Fix: change Entry.resolved to Cow<'a, [u8]> (or store the
-                            // owned buffer on Entry) so `owned_url` can be assigned here.
-                            entry.resolved = Some(git_info.url);
                             entry.commit = git_info.commit;
                             if let Some(repo_name) = git_info.repo {
                                 entry.git_repo_name = Some(Box::<[u8]>::from(repo_name));
                             }
+                            // Zig reassigns `url` to the allocPrint'd
+                            // `https://github.com/{path}` buffer for the `github:`
+                            // branch; that buffer is `owned_url` here.
+                            entry.resolved = Some(match git_info.owned_url {
+                                Some(owned) => Cow::Owned(owned),
+                                None => Cow::Borrowed(git_info.url),
+                            });
                         } else if Entry::is_npm_alias(value) {
                             let alias_info = Entry::parse_npm_alias(value);
                             entry.version = alias_info.version;
                         } else if Entry::is_remote_tarball(value) {
-                            entry.resolved = Some(value);
+                            entry.resolved = Some(Cow::Borrowed(value));
                         }
                     } else if key == b"resolved" {
-                        entry.resolved = Some(value);
+                        entry.resolved = Some(Cow::Borrowed(value));
                         if Entry::is_git_dependency(value) {
                             let git_info = Entry::parse_git_url(self, value)?;
-                            // TODO(port): same github: owned_url issue as the `version` branch
-                            // above — Entry.resolved needs Cow<'a, [u8]> to hold the rewritten
-                            // `https://github.com/...` buffer.
-                            entry.resolved = Some(git_info.url);
                             entry.commit = git_info.commit;
                             if let Some(repo_name) = git_info.repo {
                                 entry.git_repo_name = Some(Box::<[u8]>::from(repo_name));
                             }
+                            // As in the `version` branch: prefer the rewritten
+                            // `https://github.com/...` buffer for `github:` specs.
+                            entry.resolved = Some(match git_info.owned_url {
+                                Some(owned) => Cow::Owned(owned),
+                                None => Cow::Borrowed(git_info.url),
+                            });
                         }
                     } else if key == b"integrity" {
                         entry.integrity = Some(value);
@@ -535,7 +538,7 @@ impl<'a> YarnLock<'a> {
     }
 
     fn find_entry_by_spec(&self, spec: &[u8]) -> Option<&Entry<'a>> {
-        // PORT NOTE: Zig returns `?*Entry` (mutable ptr) but every caller only
+        // Zig returns `?*Entry` (mutable ptr) but every caller only
         // reads `.workspace` / `.specs`, so `&self` suffices and avoids the
         // borrowck conflict with the outer `entries.iter()` loops.
         for entry in self.entries.iter() {
@@ -597,8 +600,7 @@ fn process_deps(
     manager: &mut PackageManager,
     yarn_entry_to_package_id: &[PackageID],
 ) -> Result<usize, Error> {
-    // TODO(port): narrow error set
-    // PORT NOTE: returns count instead of slice to avoid borrowck conflict with caller's bufs
+    // Returns count instead of slice to avoid borrowck conflict with caller's bufs.
     let mut count: usize = 0;
     // PERF(port): was stack-fallback alloc (1024 bytes) — profile if it shows up on a hot path
 
@@ -670,8 +672,8 @@ struct RootDep {
 #[derive(Clone)]
 struct VersionInfo {
     version: Vec<u8>,
-    // TODO(port): Zig stores `string` (borrow from input). Using Vec<u8> here to avoid
-    // a second lifetime on the local map; could switch to &'a [u8].
+    // Zig stores a borrow from the input; an owned Vec<u8> avoids a second
+    // lifetime on the local map.
     package_id: PackageID,
     yarn_idx: usize,
 }
@@ -683,8 +685,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     data: &[u8],
     dir: Fd,
 ) -> Result<LoadResult<'a>, Error> {
-    // TODO(port): narrow error set
-    // todo yarn v2+ support
+    // yarn v2+ (berry) lockfiles are not supported; only the v1 format migrates.
     if !strings::index_of(data, b"# yarn lockfile v1").is_some() {
         return Err(bun_core::err!("UnsupportedYarnLockfileVersion"));
     }
@@ -696,7 +697,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     install::initialize_store();
     bun_core::analytics::Features::yarn_migration_inc(1);
 
-    // PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
+    // reshaped for borrowck. Zig keeps a single `var string_buf =
     // this.stringBuf()` for the whole function, but in Rust that would hold
     // `&mut this.buffers.string_bytes` + `&mut this.string_pool` for the
     // function's lifetime and lock out every other `this.*` access. Instead,
@@ -742,7 +743,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         };
         drop(package_json_fd); // close now; fd no longer needed past path resolution
 
-        // PORT NOTE: Zig passes `comptime opts: js_lexer.JSONOptions`; the Rust
+        // Zig passes `comptime opts: js_lexer.JSONOptions`; the Rust
         // port spells the 8 option flags out as const generics (stable Rust has
         // no struct const-generics). Unspecified Zig fields default to false.
         let json_bump = bun_alloc::Arena::new();
@@ -940,7 +941,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             }
         }
 
-        let name: &[u8] = if let (true, Some(resolved)) = (is_npm_alias, entry.resolved) {
+        let name: &[u8] = if let (true, Some(resolved)) = (is_npm_alias, entry.resolved.as_deref())
+        {
             Entry::get_package_name_from_resolved_url(resolved)
                 .unwrap_or_else(|| Entry::get_name_from_spec(entry.specs[0]))
         } else if is_direct_url {
@@ -1036,12 +1038,13 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             }
         }
 
-        let base_name: &[u8] = if let (true, Some(resolved)) = (is_npm_alias, entry.resolved) {
-            Entry::get_package_name_from_resolved_url(resolved)
-                .unwrap_or_else(|| Entry::get_name_from_spec(entry.specs[0]))
-        } else {
-            Entry::get_name_from_spec(entry.specs[0])
-        };
+        let base_name: &[u8] =
+            if let (true, Some(resolved)) = (is_npm_alias, entry.resolved.as_deref()) {
+                Entry::get_package_name_from_resolved_url(resolved)
+                    .unwrap_or_else(|| Entry::get_name_from_spec(entry.specs[0]))
+            } else {
+                Entry::get_name_from_spec(entry.specs[0])
+            };
         let package_id = yarn_entry_to_package_id[yarn_idx];
 
         if (package_id as usize) < package_id_to_yarn_idx.len()
@@ -1055,7 +1058,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let name_to_use: &[u8] = 'blk: {
             if entry.commit.is_some() && entry.git_repo_name.is_some() {
                 break 'blk entry.git_repo_name.as_deref().unwrap();
-            } else if let Some(resolved) = entry.resolved {
+            } else if let Some(resolved) = entry.resolved.as_deref() {
                 if is_direct_url_dep
                     || Entry::is_remote_tarball(resolved)
                     || resolved.ends_with(b".tgz")
@@ -1084,7 +1087,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
         let name_hash = string_hash(name_to_use);
 
-        // PORT NOTE: reshaped for borrowck — compute the resolution before the
+        // reshaped for borrowck — compute the resolution before the
         // `this.packages.append(...)` call so the per-field `sbuf!()` borrows of
         // `this.buffers.string_bytes` don't overlap the two-phase reservation
         // on `this.packages`.
@@ -1103,7 +1106,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     break 'blk Resolution::init(ResolutionValue::Folder(sbuf!().append(file)?));
                 }
             } else if let Some(commit) = entry.commit {
-                if let Some(resolved) = entry.resolved {
+                if let Some(resolved) = entry.resolved.as_deref() {
                     let mut owner_str: &[u8] = b"";
                     let mut repo_str: &[u8] = resolved;
 
@@ -1146,7 +1149,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     }
                 }
                 break 'blk Resolution::default();
-            } else if let Some(resolved) = entry.resolved {
+            } else if let Some(resolved) = entry.resolved.as_deref() {
                 if is_direct_url_dep {
                     break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                         sbuf!().append(resolved)?,
@@ -1228,7 +1231,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         })?;
     }
 
-    // PORT NOTE: Zig holds two `items(.field)` slices simultaneously; the
+    // Zig holds two `items(.field)` slices simultaneously; the
     // derive's `&mut self` accessors can't alias, so we re-borrow per write
     // below via `this.packages.items_*_mut()[idx] = …` instead of caching.
 
@@ -1309,7 +1312,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         let dependencies_start = dependencies_buf.as_mut_ptr();
         let resolutions_start = resolutions_buf.as_mut_ptr();
 
-        // PORT NOTE: reshaped for borrowck — iterate by index and re-borrow
+        // reshaped for borrowck — iterate by index and re-borrow
         // `yarn_lock.entries[yarn_idx]` for each map so the shared borrow of
         // `yarn_lock` passed into `process_deps` doesn't overlap an iterator.
         if let Some(deps) = yarn_lock.entries[yarn_idx].dependencies.as_ref() {
@@ -1440,7 +1443,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 )
                 .expect("unreachable");
 
-                // PORT NOTE: reshaped for borrowck — find_entry_by_spec via index search
+                // reshaped for borrowck — find_entry_by_spec via index search
                 // instead of returning &mut to avoid overlapping borrow with the loop below.
                 let dep_entry_specs: Option<Vec<&[u8]>> = {
                     let mut found: Option<Vec<&[u8]>> = None;
@@ -1511,7 +1514,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         versions.sort_by_key(|a| a.package_id);
 
         let original_name_hash = string_hash(base_name);
-        // PORT NOTE: reshaped for borrowck — Zig matches on the entry only to
+        // reshaped for borrowck — Zig matches on the entry only to
         // call `existing_ids.deinit()` before `remove`; Rust's `remove` drops
         // the value (and thus the `Ids` Vec) automatically, so the match is
         // unnecessary and we avoid the overlapping `get_mut`/`remove` borrow.
@@ -1712,7 +1715,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             continue;
         }
 
-        if let Some(resolved) = entry.resolved {
+        if let Some(resolved) = entry.resolved.as_deref() {
             if let Some(real_name) = Entry::get_package_name_from_resolved_url(resolved) {
                 for spec in entry.specs.iter() {
                     let alias_name = Entry::get_name_from_spec(spec);
@@ -2043,7 +2046,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     let result = LoadResult::Ok(lockfile::LoadResultOk {
         lockfile: this,
-        // TODO(port): LoadResult.ok stores *Lockfile; lifetime/ownership not yet resolved
         migrated: lockfile::Migrated::Yarn,
         loaded_from_binary_lockfile: false,
         serializer_result: Default::default(),

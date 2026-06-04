@@ -16,54 +16,18 @@ use std::rc::Rc;
 // Options
 // ───────────────────────────────────────────────────────────────────────────────
 
-/// Options for `WithOptions`.
-///
-/// In the Rust port these collapse to the std `Rc`/`Arc` knobs:
-///
-/// * `Allocator` — std `Rc`/`Arc` always use the global allocator (mimalloc via
-///   `#[global_allocator]`). `Rc::new_in`/`Arc::new_in` are nightly-only
-///   (`feature(allocator_api)`); see `// TODO(port)` on `SharedIn` below.
-/// * `atomic` — picks `Rc` vs `Arc`.
-/// * `allow_weak` — `Rc`/`Arc` always carry a weak count, so this is always
-///   effectively `true`. The Zig flag existed only to save 4 bytes when weak
-///   pointers were not needed.
-/// * `deinit` — `Rc`/`Arc` always run `Drop` on the inner `T`. To suppress
-///   `Drop`, wrap the payload in `ManuallyDrop<T>` at the call site.
+// Zig's `Options` struct (the parameter of `WithOptions`) has no Rust value:
+// each knob collapses to a std `Rc`/`Arc` choice made at the use site.
 //
-// TODO(port): this struct is kept only as documentation of the Zig surface; no
-// Rust code should construct it. Remove once all `WithOptions` call sites are
-// migrated to plain `Rc<T>`/`Arc<T>`.
-pub struct Options {
-    // If non-null, the shared pointer will always use the provided allocator. This saves a small
-    // amount of memory, but it means the shared pointer will be a different type from shared
-    // pointers that use different allocators.
-    // (Rust: global mimalloc; allocator_api is unstable.)
-    //
-    /// Whether to use an atomic type to store the ref count. This makes the shared pointer
-    /// thread-safe, assuming the underlying data is also thread-safe.
-    pub atomic: bool,
-
-    /// Whether to allow weak pointers to be created. This uses slightly more memory but is often
-    /// negligible due to padding.
-    ///
-    /// There is no point in enabling this if `deinit` is false, or if your data type doesn't have
-    /// a `deinit` method, since the sole purpose of weak pointers is to allow `deinit` to be called
-    /// before the memory is freed.
-    pub allow_weak: bool,
-
-    /// Whether to call `deinit` on the data before freeing it, if such a method exists.
-    pub deinit: bool,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self {
-            atomic: false,
-            allow_weak: false,
-            deinit: true,
-        }
-    }
-}
+// * `Allocator` — std `Rc`/`Arc` always use the global allocator (mimalloc via
+//   `#[global_allocator]`). `Rc::new_in`/`Arc::new_in` are nightly-only
+//   (`feature(allocator_api)`).
+// * `atomic` — picks `Rc` vs `Arc`.
+// * `allow_weak` — `Rc`/`Arc` always carry a weak count, so this is always
+//   effectively `true`. The Zig flag existed only to save 4 bytes when weak
+//   pointers were not needed.
+// * `deinit` — `Rc`/`Arc` always run `Drop` on the inner `T`. To suppress
+//   `Drop`, wrap the payload in `ManuallyDrop<T>` at the call site.
 
 // ───────────────────────────────────────────────────────────────────────────────
 // Shared / AtomicShared
@@ -79,7 +43,7 @@ impl Default for Options {
 /// | Zig                         | Rust                                          |
 /// |-----------------------------|-----------------------------------------------|
 /// | `Shared(*T).alloc(v)`       | `Rc::new(v)` (infallible; aborts on OOM)      |
-/// | `Shared(*T).allocIn(v, a)`  | — (allocator_api unstable; `// TODO(port)`)   |
+/// | `Shared(*T).allocIn(v, a)`  | — (allocator_api unstable; allocator deleted) |
 /// | `Shared(*T).new(v)`         | `Rc::new(v)`                                  |
 /// | `s.get()`                   | `&*s` / `Rc::as_ptr(&s)`                      |
 /// | `s.clone()`                 | `Rc::clone(&s)`                               |
@@ -151,10 +115,6 @@ pub type Weak<T> = std::rc::Weak<T>;
 //
 // The `fromValuePtr` (`@fieldParentPtr("value", ptr)`) recovery is provided by
 // `Rc::from_raw` / `Arc::from_raw`, which subtract the header offset internally.
-//
-// TODO(port): if profiling shows the std weak-count word is measurable in a
-// hot array, revisit with a `#[repr(C)]` hand-rolled inner — but per
-// PORTING.md this is explicitly deprioritized.
 
 // `RawCount` was `u32` in Zig; std uses `usize`. The overflow assertion
 // (`old != maxInt(RawCount)`) is replaced by std's own abort-on-overflow check

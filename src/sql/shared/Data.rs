@@ -8,10 +8,11 @@ pub(crate) type InlineStorage = BoundedArray<u8, 15>;
 #[derive(Default)]
 pub enum Data {
     Owned(Vec<u8>),
-    // TODO(port): lifetime — `Temporary` borrows external bytes (see `substring`, which
-    // returns a `Data` aliasing `self`). Stored as a `RawSlice` (encapsulated fat
-    // pointer; safe `.slice()` projection under the borrowed-backing-outlives-holder
-    // invariant). TODO(refactor): revisit whether a `<'a>` lifetime on `Data` is acceptable.
+    // `Temporary` borrows external bytes (see `substring`, which returns a
+    // `Data` aliasing `self`). Stored as a `RawSlice` (encapsulated fat
+    // pointer; safe `.slice()` projection). Invariant: the borrowed backing
+    // bytes must outlive the holder — `Data` carries no lifetime, so this is
+    // enforced by callers, not the compiler.
     Temporary(RawSlice<u8>),
     InlineStorage(InlineStorage),
     #[default]
@@ -103,7 +104,7 @@ impl Data {
     }
 }
 
-// PORT NOTE: Zig `deinit` freed `Owned`'s buffer. In Rust, `Vec<T>: Drop`
+// Zig `deinit` freed `Owned`'s buffer. In Rust, `Vec<T>: Drop`
 // already frees on drop, so an explicit `impl Drop for Data` is redundant (and
 // would prevent moving fields out in `to_owned`). The other variants own no heap.
 

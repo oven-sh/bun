@@ -28,7 +28,7 @@ const PAGE_SIZE: usize = 16384;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// All strings point to the original patch file text
-// PORT NOTE: lifetime — every `&'a [u8]` in this module borrows from the
+// lifetime — every `&'a [u8]` in this module borrows from the
 // original patch file text. The port generally avoids struct lifetimes, but
 // this parser's whole output is borrowed; raw `*const [u8]` everywhere would
 // be worse.
@@ -71,7 +71,7 @@ impl ApplyState {
         }
         match sys::get_fd_path(fd, &mut self.pathbuf) {
             sys::Result::Ok(p) => {
-                // PORT NOTE: reshaped for borrowck — capture len, drop `p`,
+                // reshaped for borrowck — capture len, drop `p`,
                 // then re-borrow `self.pathbuf` to write the sentinel.
                 let len = p.len();
                 // Zig `state.pathbuf[0..p.len :0]` asserts a NUL sentinel; on
@@ -136,7 +136,7 @@ impl<'a> PatchFile<'a> {
                     let mode = file_creation.mode;
 
                     if !filedir.is_empty() {
-                        // PORT NOTE: Zig calls `NodeFS.mkdirRecursive` with the bare relative
+                        // Zig calls `NodeFS.mkdirRecursive` with the bare relative
                         // `filedir` (resolved against process CWD), then immediately `openat`s
                         // the same path against `patch_dir`. That is internally inconsistent
                         // when `patch_dir != cwd`. We intentionally diverge and create the
@@ -442,7 +442,7 @@ fn apply_patch(patch: &FilePatch<'_>, patch_dir: Fd, state: &mut ApplyState) -> 
 }
 
 fn read_file_alloc(dir: Fd, path: &ZStr, max: usize) -> sys::Result<Vec<u8>> {
-    // PORT NOTE: Zig's `std.fs.Dir.readFileAlloc` opens, fstats, allocates
+    // Zig's `std.fs.Dir.readFileAlloc` opens, fstats, allocates
     // `min(size, max)` and errors `error.FileTooBig` past `max`. Enforce the
     // same cap so a pathological multi-GiB target file errors instead of
     // allocating unboundedly. (`error.FileTooBig` would surface as `.INVAL` at
@@ -940,7 +940,7 @@ pub fn parse_patch_file(file: &[u8]) -> Result<PatchFile<'_>, ParseErr> {
         }
     }
 
-    // PORT NOTE: reshaped for borrowck — take ownership of result vec instead of slicing.
+    // reshaped for borrowck — take ownership of result vec instead of slicing.
     let mut files = mem::take(&mut lines_parser.result);
     patch_file_second_pass(&mut files)
 }
@@ -1189,7 +1189,7 @@ impl<'a> PatchLinesParser<'a> {
     // In Rust, Drop handles freeing; `reset()` handles the retain-capacity case.
 
     fn reset(&mut self) {
-        // PORT NOTE: reshaped for borrowck — take result vec, clear it, reinit self.
+        // reshaped for borrowck — take result vec, clear it, reinit self.
         let mut result = mem::take(&mut self.result);
         result.clear();
         *self = Self {
@@ -1665,7 +1665,7 @@ fn parse_diff_line_paths(line: &[u8]) -> Option<(&[u8], &[u8])> {
 // spawnOpts / diffPostProcess / gitDiff*
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: Zig returns `bun.spawn.sync.Options` with `argv`/`envp` allocated on
+// Zig returns `bun.spawn.sync.Options` with `argv`/`envp` allocated on
 // `bun.default_allocator` and freed by the caller. `bun_spawn::sync::Options` owns
 // `argv` (`Vec<Box<[u8]>>`) but borrows `envp` (`Option<*const *const c_char>`), so
 // the null-terminated envp array is returned alongside as the second tuple element —
@@ -1719,7 +1719,7 @@ pub fn spawn_opts(
             envp_buf.push(s.as_ptr().cast::<core::ffi::c_char>());
         }
         if let Some(p) = path {
-            // PORT NOTE: `env_var::PATH.get()` yields a slice into the C env
+            // `env_var::PATH.get()` yields a slice into the C env
             // block (NUL byte immediately follows on POSIX — see
             // `bun_core::getenv_z`), matching Zig's `@ptrCast(p.ptr)`.
             envp_buf.push(p.as_ptr().cast::<core::ffi::c_char>());
@@ -1761,7 +1761,7 @@ pub fn diff_post_process(
     mem::swap(&mut stdout, &mut result.stdout);
     mem::swap(&mut stderr, &mut result.stderr);
 
-    // PORT NOTE: errdefer-style flags replaced by Drop semantics; on early return
+    // errdefer-style flags replaced by Drop semantics; on early return
     // the unreturned vec is dropped automatically.
 
     if !stderr.is_empty() {
@@ -1773,7 +1773,7 @@ pub fn diff_post_process(
     Ok(Ok(stdout))
 }
 
-// PORT NOTE: Zig signature returns `[2]if (sentinel) [:0]const u8 else []const u8` —
+// Zig signature returns `[2]if (sentinel) [:0]const u8 else []const u8` —
 // return type depends on a comptime bool. Rust cannot express this without GAT-ish
 // traits, so we return owned `Vec<u8>` pairs (NUL-appended when SENTINEL).
 pub fn git_diff_preprocess_paths<const SENTINEL: bool>(
@@ -1902,7 +1902,7 @@ pub fn git_diff_internal(
         stderr: bun_spawn::sync::Stdio::Buffer,
         envp: Some(envp_buf.as_ptr()),
         argv,
-        // PORT NOTE: Zig used `std.process.Child` (no uv loop). The Rust port
+        // Zig used `std.process.Child` (no uv loop). The Rust port
         // routes through `bun_spawn::sync::spawn`, whose Windows path
         // unconditionally derefs `windows.loop_` (process.rs spawn_windows_*).
         // `WindowsOptions::default()` is `zeroed_unchecked()`, so leaving this
@@ -1966,7 +1966,6 @@ fn git_diff_postprocess(
     old_folder: &[u8],
     new_folder: &[u8],
 ) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
     let old_folder_trimmed = strings::trim(old_folder, b"/");
     let new_folder_trimmed = strings::trim(new_folder, b"/");
 
@@ -2002,7 +2001,7 @@ fn git_diff_postprocess(
     let mut saw_b_folder: Option<usize> = None;
     let mut line_idx: u32 = 0;
 
-    // PORT NOTE: reshaped for borrowck — Zig mutated `stdout` while iterating
+    // reshaped for borrowck — Zig mutated `stdout` while iterating
     // `std.mem.splitScalar` over it (relying on the iterator's by-value buffer
     // pointer staying valid because replaceRange only shrinks). In Rust we
     // re-implement the cursor manually so we can mutate `stdout` between lines.

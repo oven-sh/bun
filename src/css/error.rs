@@ -5,7 +5,6 @@ use crate::{Location, SourceLocation, Token};
 
 // Arena-owned byte slice. CSS is an AST crate (see PORTING.md §Allocators); these
 // slices point into the parser arena / source text and are never individually freed.
-// TODO(port): arena slice lifetime — thread `<'bump>` or switch to StoreRef.
 use crate::Str;
 
 #[inline(always)]
@@ -194,7 +193,6 @@ impl ErrorLocation {
         &self,
         source: &bun_ast::Source,
     ) -> Result<bun_ast::Location, bun_core::Error> {
-        // TODO(port): narrow error set (Zig narrowed to alloc-only).
         // SAFETY: `'bump`-erasure — `bun_ast::Location.line_text` is `Option<&'static [u8]>`
         // (`Str` placeholder per src/logger/lib.rs); the slice borrows
         // `source.contents` which outlives the diagnostic. Re-thread once

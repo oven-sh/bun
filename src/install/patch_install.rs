@@ -21,16 +21,10 @@ use crate::{
     resolution::Resolution,
 };
 
-// Thin re-exports (mirroring Zig `pub const X = @import(...)` lines).
+// Thin re-export (mirroring the Zig `pub const PatchedDep = @import(...)` line). The other
+// Zig same-name re-exports are dropped: their canonical paths (`crate::DependencyID`,
+// `crate::PackageID`, `crate::resolution::Resolution`, ...) are what callers use.
 pub use crate::lockfile::PatchedDep;
-pub use crate::resolution::Resolution as ResolutionExport;
-pub use crate::{
-    DependencyID as DependencyIDExport, PackageID as PackageIDExport,
-    PackageInstall as PackageInstallExport, bun_hash_tag as bun_hash_tag_export,
-};
-// TODO(port): the Zig file re-exports these under the same names; Rust cannot re-export and `use`
-// the same identifier twice in one module without aliasing. Collapse the duplicate
-// `*Export` aliases above once module layout is settled.
 
 bun_output::declare_scope!(InstallPatch, visible);
 
@@ -152,7 +146,7 @@ impl PatchTask {
     /// Destroy a heap-allocated `PatchTask` previously created by
     /// `new_calc_patch_hash` / `new_apply_patch_hash`.
     ///
-    /// PORT NOTE: Zig `deinit` freed each owned field then `bun.destroy(this)`. In Rust the
+    /// Zig `deinit` freed each owned field then `bun.destroy(this)`. In Rust the
     /// owned fields (`Box<[u8]>`, `Vec<u8>`, `Log`, `Option<...>`) drop automatically, so no
     /// `impl Drop` body is needed. Per PORTING.md, `deinit` is never exposed as the public API;
     /// because `PatchTask` is held via raw pointer through the intrusive `next`/thread-pool
@@ -188,7 +182,7 @@ impl PatchTask {
             "runFromThreadPoolImpl {}",
             <&'static str>::from(&self.callback)
         );
-        // PORT NOTE: Zig used nested `defer { defer wake(); push(this); }`. There are no early
+        // Zig used nested `defer { defer wake(); push(this); }`. There are no early
         // returns in the body, so the equivalent ordering (body → push → wake) is inlined below.
         match &mut self.callback {
             Callback::CalcHash(_) => {
@@ -196,7 +190,7 @@ impl PatchTask {
                 if let Callback::CalcHash(ch) = &mut self.callback {
                     ch.result = result;
                 }
-                // PORT NOTE: reshaped for borrowck — `calc_hash` borrows `&mut self`, so we
+                // Reshaped for borrowck — `calc_hash` borrows `&mut self`, so we
                 // cannot hold a `&mut ch` across the call.
             }
             Callback::Apply(_) => {
@@ -222,7 +216,6 @@ impl PatchTask {
         manager: &mut PackageManager,
         log_level: LogLevel,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         bun_output::scoped_log!(
             InstallPatch,
             "runFromThreadMainThread {}",
@@ -264,11 +257,10 @@ impl PatchTask {
             let _ = apply
                 .logger
                 .print(std::ptr::from_mut(Output::error_writer()));
-            // PORT NOTE: Zig called `apply.logger.deinit()` here under `defer`. The `Log` is a
-            // field and will be dropped with the task; explicit early drop is skipped to avoid
-            // double-drop. If `Log::deinit` is reset-to-empty (idempotent), an explicit
-            // `apply.logger.clear()` could be restored here.
-            // TODO(port): confirm Log drop semantics
+            // Zig called `apply.logger.deinit()` here under `defer`; that deinit is
+            // reset-to-empty (`msgs.clearAndFree()`), so the later deinit in Zig's
+            // `PatchTask.deinit` is a no-op. In Rust the `Log` field simply drops with
+            // the task — same semantics, just freed marginally later.
         }
     }
 
@@ -277,7 +269,6 @@ impl PatchTask {
         manager: &mut PackageManager,
         log_level: LogLevel,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // TODO only works for npm package
         // need to switch on version.tag and handle each case appropriately
         let Callback::CalcHash(calc_hash) = &mut self.callback else {
@@ -317,7 +308,7 @@ impl PatchTask {
             let dep_id = state.dependency_id;
 
             let pkg: Package = *manager.lockfile.packages.get(pkg_id as usize);
-            // PORT NOTE: `Package` is not `Copy` in the Rust port; capture the
+            // `Package` is not `Copy` in the Rust port; capture the
             // scalar fields we need after `determine_preinstall_state` consumes
             // it (Zig's `packages.get()` returns by-value-copy).
             let pkg_meta_id = pkg.meta.id;
@@ -447,7 +438,7 @@ impl PatchTask {
                     return Ok(());
                 }
             };
-        // PORT NOTE: `defer this.manager.allocator.free(patchfile_txt)` — `patchfile_txt` is owned
+        // Zig: `defer this.manager.allocator.free(patchfile_txt)` — `patchfile_txt` is owned
         // (`Vec<u8>`/`Box<[u8]>`) and drops at end of scope.
         let patchfile = match bun_patch::parse_patch_file(&patchfile_txt) {
             Ok(p) => p,
@@ -459,7 +450,7 @@ impl PatchTask {
                 return Ok(());
             }
         };
-        // PORT NOTE: `defer patchfile.deinit(bun.default_allocator)` — handled by Drop.
+        // Zig: `defer patchfile.deinit(bun.default_allocator)` — handled by Drop.
 
         // 2. Create temp dir to do all the modifications
         let mut tmpname_buf = [0u8; 1024];
@@ -481,7 +472,7 @@ impl PatchTask {
 
         let (resolution_label, resolution_tag) = {
             // TODO: fix this threadsafety issue.
-            // PORT NOTE: not `self.manager()` — `&mut self.callback` is live.
+            // Not `self.manager()` — `&mut self.callback` is live.
             // BACKREF; the lockfile is read-only while apply tasks run
             // off-thread (same contract as the Zig pointer dereference here).
             let manager = self.manager.get();
@@ -500,11 +491,11 @@ impl PatchTask {
             .expect("OOM");
             (label, resolution.tag)
         };
-        // PORT NOTE: `defer allocator.free(resolution_label)` — Vec drops at scope end.
+        // Zig: `defer allocator.free(resolution_label)` — Vec drops at scope end.
 
         // 3. copy the unpatched files into temp dir
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath_without_patch_hash.as_zstr();
-        // PORT NOTE: borrowck — `tempdir_name` borrows `tmpname_buf` mutably, but
+        // Borrowck — `tempdir_name` borrows `tmpname_buf` mutably, but
         // `PackageInstall` also wants `&mut tmpname_buf[..]` for
         // `destination_dir_subpath_buf`. Zig aliased the two; `PackageInstall`
         // assumes `destination_dir_subpath` is a prefix slice *into*
@@ -516,7 +507,7 @@ impl PatchTask {
         let mut dest_subpath_buf = [0u8; 1024];
         dest_subpath_buf[..tempdir_name.len() + 1]
             .copy_from_slice(tempdir_name.as_bytes_with_nul());
-        // PORT NOTE: not `self.manager()` — `&mut self.callback` is live.
+        // Not `self.manager()` — `&mut self.callback` is live.
         // BACKREF — read-only lockfile access; same contract as the Zig
         // pointer dereference here.
         let lockfile = &self.manager.get().lockfile;
@@ -662,7 +653,7 @@ impl PatchTask {
         let stat: sys::Stat = match sys::stat(absolute_patchfile_path) {
             sys::Result::Err(e) => {
                 if e.get_errno() == sys::Errno::ENOENT {
-                    // PORT NOTE: not `self.manager()` — `&mut self.callback` is live.
+                    // Not `self.manager()` — `&mut self.callback` is live.
                     // BACKREF — read-only lockfile access on the worker thread;
                     // same contract as the Zig pointer dereference here.
                     let manager = self.manager.get();
@@ -755,7 +746,7 @@ impl PatchTask {
     }
 
     pub fn notify(&mut self) {
-        // PORT NOTE: Zig `defer this.manager.wake()` then `push`. No early returns; inline order.
+        // Zig: `defer this.manager.wake()` then `push`. No early returns; inline order.
         let mgr = self.manager.as_ptr();
         // SAFETY: `self.manager` is a long-lived BACKREF (Zig `*PackageManager`);
         // only touches the lock-free queue and event-loop wake atomics.
@@ -783,8 +774,8 @@ impl PatchTask {
             .unwrap_or_else(|| panic!("This is a bug"));
         let patchfile_path: Box<[u8]> =
             Box::from(patchdep.path.slice(&manager.lockfile.buffers.string_bytes));
-        // TODO(port): Zig used `dupeZ` (NUL-terminated). The field is typed `[]const u8` and only
-        // used as a byte slice, so `Box<[u8]>` without trailing NUL should be equivalent. Verify.
+        // Zig used `dupeZ` (NUL-terminated), but the field is typed `[]const u8` and only ever
+        // consumed as a byte slice (`join_z_buf` input, log formatting), so no trailing NUL.
 
         let tempdir = manager.get_temporary_directory().handle.fd();
         let pt = Box::new(PatchTask {
@@ -817,13 +808,13 @@ impl PatchTask {
     ) -> *mut PatchTask {
         let pkg_name = pkg_manager.lockfile.packages.items_name()[pkg_id as usize];
 
-        // PORT NOTE: borrowck — `compute_cache_dir_and_subpath` borrows `&mut PackageManager`
+        // Borrowck — `compute_cache_dir_and_subpath` borrows `&mut PackageManager`
         // while `pkg_name.slice(..)` and `resolution` borrow `pkg_manager.lockfile` immutably.
         // Clone the slice/resolution out first.
         let pkg_name_slice = pkg_name
             .slice(&pkg_manager.lockfile.buffers.string_bytes)
             .to_vec();
-        // PORT NOTE: `Resolution` is `Copy`; copy out so the lockfile borrow ends
+        // `Resolution` is `Copy`; copy out so the lockfile borrow ends
         // before `compute_cache_dir_and_subpath` reborrows `pkg_manager` mutably.
         let resolution_clone: Resolution =
             pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize];

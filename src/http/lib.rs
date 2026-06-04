@@ -69,7 +69,7 @@ pub use thread_safe_stream_buffer::ThreadSafeStreamBuffer;
 #[path = "ssl_config.rs"]
 pub mod ssl_config;
 pub use ssl_config::SSLConfig;
-// PORT NOTE: SSLWrapper was MOVE_DOWN to bun_uws (tier 4); re-export here so
+// SSLWrapper was MOVE_DOWN to bun_uws (tier 4); re-export here so
 // `crate::ssl_wrapper::SSLWrapper` resolves for ProxyTunnel/HTTPContext.
 pub use bun_uws::ssl_wrapper;
 pub use bun_uws::ssl_wrapper::SSLWrapper;
@@ -123,7 +123,7 @@ pub const EXTREMELY_VERBOSE: bool = false;
 
 /// Cloned response metadata (headers + url + status). Ownership transfers to
 /// the user once the headers phase completes.
-// PORT NOTE: hoisted so `InternalState` can name it.
+// hoisted so `InternalState` can name it.
 // The `picohttp::Response<'static>` borrows into `owned_buf`.
 pub struct HTTPResponseMetadata {
     // Borrows `owned_buf` (sibling field) — `RawSlice` carries the
@@ -180,7 +180,7 @@ pub enum HTTPUpgradeState {
     Upgraded = 2,
 }
 
-// PORT NOTE: was `packed struct(u32)` with mixed bool + 2-bit enum fields.
+// was `packed struct(u32)` with mixed bool + 2-bit enum fields.
 // Kept as a plain struct since it never crosses FFI; restore packing
 // if the 32-byte vs 4-byte size difference shows up in profiling.
 // PERF(port): was packed struct(u32) — profile if hot.
@@ -511,7 +511,7 @@ impl HTTPClientResultCallback {
         (self.function)(self.ctx, async_http, result);
     }
 
-    // PORT NOTE: `Callback.New(comptime Type, comptime callback)` was a
+    // `Callback.New(comptime Type, comptime callback)` was a
     // type-returning fn that wrapped a typed callback in *anyopaque erasure.
     pub fn new<T>(
         this: *mut T,
@@ -564,8 +564,8 @@ pub trait SocketTimeout {
 
 // lowercase hash header names so that we can be sure
 pub fn hash_header_name(name: &[u8]) -> u64 {
-    // Also fixes the Wyhash11→Wyhash port bug noted in the deleted TODO; safe —
-    // `hash_header_const` at :809 is computed by this same fn at runtime, no
+    // Uses the std Wyhash algorithm (matches Zig `std.hash.Wyhash`); safe —
+    // every comparison hash is computed by this same fn at runtime, no
     // persisted hashes.
     bun_wyhash::hash_ascii_lowercase(0, name)
 }
@@ -610,7 +610,8 @@ pub struct HTTPClient<'a> {
     /// until `do_redirect` has released the socket, so it is freed there rather
     /// than at the assignment site. Also freed in `Drop` for error paths.
     pub prev_redirect: Vec<u8>,
-    // TODO(port): lifetime — &mut Progress::Node owned by caller; raw to avoid <'a>
+    // Non-owning back-reference to a `Progress::Node` owned by the caller;
+    // raw to avoid threading another lifetime param.
     pub progress_node: Option<NonNull<bun_core::Progress::Node>>,
 
     pub flags: Flags,
@@ -775,12 +776,9 @@ use bun_core::StringBuilder;
 use bun_core::{FeatureFlags, Global, Output, err};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, immutable as strings};
 use bun_uws as uws;
-// TODO(port): spec http.zig:829 uses `std.hash.Wyhash` (NOT Wyhash11 — see
-// PORTING.md §Crate-map). bun_wyhash currently only exports Wyhash11; swap
-// once `bun_wyhash::Wyhash` (std algorithm) lands so proxy_auth_hash() and
-// header-name hashing match any component still computing the Zig hash.
 use bun_http_types::ETag::StringPointer;
-use bun_wyhash::Wyhash11 as Wyhash;
+// spec http.zig:829 uses `std.hash.Wyhash` (the std algorithm, not Wyhash11).
+use bun_wyhash::Wyhash;
 
 use crate::http_context::HTTPSocket as HttpSocket;
 use crate::internal_state::{RequestStage, ResponseStage, Stage};
@@ -827,11 +825,11 @@ fn get_user_agent_header() -> picohttp::Header {
 }
 
 // ── header-hash constants ───────────────────────────────────────────────
-// PORT NOTE: Zig computed these at comptime via `Wyhash + lowerString`.
-// Wyhash11 is not yet `const fn`, so use a runtime alias of `hash_header_name`
-// and cache the three values that are looked up on every request via
-// `LazyLock`. The per-header `match` arms inside `build_request` /
-// `handle_response_metadata` already call `hash_header_const` at runtime.
+// Zig computed these at comptime via `Wyhash + lowerString`. `Wyhash` is not
+// `const fn`, so use a runtime alias of `hash_header_name` and cache the three
+// values that are looked up on every request via `LazyLock`. The per-header
+// `match` arms inside `build_request` / `handle_response_metadata` already
+// call `hash_header_const` at runtime.
 #[inline(always)]
 fn hash_header_const(name: &[u8]) -> u64 {
     hash_header_name(name)
@@ -899,9 +897,8 @@ mod scratch {
 pub use scratch::temp_hostname;
 
 // ── ALPN offer enum ─────────────────────────────────────────────────────
-// PORT NOTE: Zig used `boringssl.SSL.AlpnOffer`; bun_boringssl doesn't yet
-// expose one, so define it locally and TODO(port) wire through to
-// `configure_http_client_with_alpn` once that lands.
+// Zig used `boringssl.SSL.AlpnOffer`; bun_boringssl doesn't expose one, so
+// it is defined locally next to `configure_http_client_with_alpn`.
 #[derive(Copy, Clone, PartialEq, Eq)]
 pub enum AlpnOffer {
     H1,
@@ -1174,7 +1171,6 @@ pub fn print_request(
         Protocol::Http2 => "HTTP/2",
         Protocol::Http3 => "HTTP/3",
     };
-    // TODO(port): pretty_fmt prefix elided pending Output::error_writer() in bun_core.
     bun_core::pretty_errorln!("> {} {} {}", ver, BStr::new(request.method), BStr::new(url));
     for header in request.headers {
         bun_core::pretty_errorln!("> {}", header);
@@ -1232,7 +1228,7 @@ fn write_to_socket_with_buffer_fallback<const IS_SSL: bool>(
 /// onto a `bun_core::Error` whose name is the upper-snake Zig error-set tag
 /// (e.g. `CERT_HAS_EXPIRED`). JS-side `error.code` matches on this exact
 /// string, so do NOT substitute `X509_verify_cert_error_string` output here.
-// PORT NOTE: constants are the BoringSSL `X509_V_ERR_*` values from
+// constants are the BoringSSL `X509_V_ERR_*` values from
 // `<openssl/x509.h>` (see boringssl.zig:17302-17370). Inlined as literals so
 // this file doesn't grow a dep on a header-generated const set.
 pub(crate) fn get_cert_error_from_no(error_no: i32) -> bun_core::Error {
@@ -1354,7 +1350,7 @@ impl<'a> HTTPClient<'a> {
     /// every fail site.
     fn dispatch_result_and_reset(&mut self, clear_proxy_tunneling: bool) {
         let callback = self.result_callback;
-        // PORT NOTE: reshaped for borrowck — `to_result()`'s `body` field is a
+        // reshaped for borrowck — `to_result()`'s `body` field is a
         // `&mut MutableString` derived from a NonNull (caller-owned, disjoint
         // from `self`'s storage), but its lifetime is tied to `&mut self`.
         // Detach so the `state.reset()` reborrow below compiles.
@@ -1750,7 +1746,7 @@ impl<'a> HTTPClient<'a> {
             };
             if alpn == b"h2" {
                 bun_core::scoped_log!(fetch, "ALPN negotiated h2 {}", BStr::new(self.url.href));
-                // PORT NOTE: `comptime is_ssl` made this arm `HttpSocket<true>`; in
+                // `comptime is_ssl` made this arm `HttpSocket<true>`; in
                 // Rust the const-generic isn't unified, so rebuild from the InternalSocket.
                 let tls_socket = uws::SocketTLS::from_any(socket.socket);
                 let ctx = self.get_ssl_ctx::<true>();
@@ -1890,7 +1886,7 @@ impl<'a> HTTPClient<'a> {
             return;
         }
         bun_core::scoped_log!(fetch, "Timeout  {}\n", BStr::new(self.url.href));
-        // PORT NOTE: reshaped for borrowck — Zig used `defer terminateSocket(socket)`
+        // reshaped for borrowck — Zig used `defer terminateSocket(socket)`
         self.fail(err!(Timeout));
         GenHttpContext::<IS_SSL>::terminate_socket(socket);
     }
@@ -2023,8 +2019,7 @@ impl<'a> HTTPClient<'a> {
     /// Returns the SSL context for this client - either the custom context
     /// (for mTLS/custom TLS) or the default global context.
     pub fn get_ssl_ctx<const IS_SSL: bool>(&self) -> *mut GenHttpContext<IS_SSL> {
-        // TODO(refactor): returns raw ptr because the global/Arc lifetimes differ;
-        // unify behind a borrow.
+        // Returns a raw ptr because the global/Arc lifetimes differ.
         if IS_SSL {
             if let Some(ctx) = self.custom_ssl_ctx.as_ref() {
                 return ctx.as_ptr().cast::<GenHttpContext<IS_SSL>>();
@@ -2131,7 +2126,6 @@ impl<'a> HTTPClient<'a> {
                 }
                 h if h == hash_header_const(b"if-modified-since") => {
                     if self.flags.force_last_modified && self.if_modified_since.is_empty() {
-                        // TODO(port): lifetime — borrows self.header_buf
                         // SAFETY: header_str() returns a slice into self.header_buf which outlives
                         // this client; lifetime is erased here only because we don't yet thread
                         // struct lifetime params. The borrow is valid for the life of `self`.
@@ -2299,7 +2293,7 @@ impl<'a> HTTPClient<'a> {
             self.flags.is_streaming_request_body = false;
         }
 
-        // PORT NOTE: Zig deinit'd then assigned `.empty` here; the bitwise
+        // Zig deinit'd then assigned `.empty` here; the bitwise
         // `task.http.?.* = async_http.*` copy-back later overwrote the
         // JS-thread original's slice with `.empty`, so the buffer was freed
         // exactly once. The Rust port has no struct copy-back
@@ -2323,7 +2317,7 @@ impl<'a> HTTPClient<'a> {
 
         self.state.response_message_buffer = MutableString::default();
 
-        // PORT NOTE: copy the NonNull, do NOT `.take()` — http.zig:1098 reads
+        // copy the NonNull, do NOT `.take()` — http.zig:1098 reads
         // `this.state.body_out_str.?` without clearing it, so the
         // TooManyRedirects `fail()` below still sees a populated body pointer.
         let body_out_str = self.state.body_out_str.unwrap();
@@ -2412,7 +2406,6 @@ impl<'a> HTTPClient<'a> {
     }
 
     pub fn start(&mut self, body: HTTPRequestBody<'a>, body_out_str: &mut MutableString) {
-        // TODO(port): body_out_str ownership — Zig stores *MutableString in state
         body_out_str.reset();
 
         debug_assert!(self.state.response_message_buffer.list.capacity() == 0);
@@ -2431,7 +2424,7 @@ impl<'a> HTTPClient<'a> {
         // mark that we are connecting
         self.flags.defer_fail_until_connecting_is_complete = true;
         // this will call .fail() if the connection fails in the middle of the function avoiding UAF with can happen when the connection is aborted
-        // PORT NOTE: Zig `defer this.completeConnectingProcess()` cannot be a Drop guard here
+        // Zig `defer this.completeConnectingProcess()` cannot be a Drop guard here
         // (it needs `&mut self`, which would alias every other `self.*` call in the body),
         // so it is reshaped as an explicit `self.complete_connecting_process()` before each return.
 
@@ -2548,7 +2541,6 @@ impl<'a> HTTPClient<'a> {
                 return;
             }
             Err(err) => {
-                // TODO(port): bun.handleErrorReturnTrace(err) — error traces not yet wired in Rust
                 self.fail(err);
                 self.complete_connecting_process();
                 return;
@@ -2598,9 +2590,9 @@ impl<'a> HTTPClient<'a> {
         socket: HttpSocket<IS_SSL>,
     ) -> Result<InitialRequestPayloadResult, bun_core::Error> {
         let mut request_body_buffer = self.get_request_body_send_buffer();
-        // PORT NOTE: request_body_buffer drops at scope exit (was `defer .deinit()`)
+        // request_body_buffer drops at scope exit (was `defer .deinit()`)
         let mut temporary_send_buffer = request_body_buffer.to_array_list();
-        // PORT NOTE: temporary_send_buffer drops at scope exit
+        // temporary_send_buffer drops at scope exit
 
         let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
 
@@ -2729,7 +2721,7 @@ impl<'a> HTTPClient<'a> {
 
     pub fn write_to_stream<const IS_SSL: bool>(&mut self, socket: HttpSocket<IS_SSL>, data: &[u8]) {
         bun_core::scoped_log!(fetch, "flushStream");
-        // PORT NOTE: reshaped for borrowck — copy out the Copy bits we need
+        // reshaped for borrowck — copy out the Copy bits we need
         // (`upgrade_state`, the stream-buffer NonNull, `ended`) so the
         // `&mut self.state.original_request_body` borrow is dropped before any
         // call that takes `&mut self`. The stream is re-borrowed only at the
@@ -2938,7 +2930,7 @@ impl<'a> HTTPClient<'a> {
                             );
                         }
 
-                        // PORT NOTE: sendfile.write() takes the raw fd, not the socket handle.
+                        // sendfile.write() takes the raw fd, not the socket handle.
                         match sendfile.write(socket.fd()) {
                             crate::send_file::Status::Done => {
                                 self.state.request_stage = RequestStage::Done;
@@ -2949,7 +2941,7 @@ impl<'a> HTTPClient<'a> {
                                 return;
                             }
                             crate::send_file::Status::Again => {
-                                // PORT NOTE: mark_needs_more_for_sendfile is `const SSL=false`-only;
+                                // mark_needs_more_for_sendfile is `const SSL=false`-only;
                                 // this arm is unreachable for SSL (panic above).
                                 uws::SocketTCP::from_any(socket.socket)
                                     .mark_needs_more_for_sendfile();
@@ -3178,7 +3170,7 @@ impl<'a> HTTPClient<'a> {
             "handleOnDataHeader data: {}",
             BStr::new(incoming_data)
         );
-        // PORT NOTE: reshaped for borrowck — `to_read` aliases either
+        // reshaped for borrowck — `to_read` aliases either
         // `incoming_data` or `self.state.response_message_buffer`; hold it as a
         // `RawSlice` (encapsulated outlives-holder backref, safe `.slice()`)
         // so subsequent `&mut self` calls don't trip the checker.
@@ -3542,7 +3534,7 @@ impl<'a> HTTPClient<'a> {
     // We have to clone metadata immediately after use
     pub fn clone_metadata(&mut self) {
         debug_assert!(self.state.pending_response.is_some());
-        // PORT NOTE: `Response<'static>` is `Copy`; bind by value so no borrow
+        // `Response<'static>` is `Copy`; bind by value so no borrow
         // of `self.state` is held across the `pending_response = None` write
         // below (Zig nulls it mid-block, which would trip borrowck on a `&`).
         if let Some(response) = self.state.pending_response {
@@ -3554,7 +3546,7 @@ impl<'a> HTTPClient<'a> {
             builder.count(self.url.href);
             let _ = builder.allocate();
             // headers_buf is owned by the cloned_response (aka cloned_response.headers)
-            // PORT NOTE: `Response::clone` ties its return lifetime to
+            // `Response::clone` ties its return lifetime to
             // `headers: &'a mut [Header]`; leak the box to obtain `'static` so
             // the cloned response can be stored in `HTTPResponseMetadata`.
             // Reclaimed by `Drop for HTTPResponseMetadata` (mirrors Zig
@@ -3640,7 +3632,7 @@ impl<'a> HTTPClient<'a> {
         if self.flags.protocol != Protocol::Http1_1 {
             return self.send_progress_update_multiplexed();
         }
-        // PORT NOTE: reshaped for borrowck — `to_result()` returns an
+        // reshaped for borrowck — `to_result()` returns an
         // `HTTPClientResult<'_>` whose lifetime is tied to `&mut self` (via the
         // `body: &mut MutableString` borrow). Holding that result across the
         // `is_done` mutations below would require a second live `&mut Self`,
@@ -3708,7 +3700,7 @@ impl<'a> HTTPClient<'a> {
                 true
             };
 
-            // PORT NOTE (diverges from Zig): the same early-reply hazard
+            // Diverges from Zig: the same early-reply hazard
             // described above for tunnels applies to direct connections — a
             // server may answer (200, Content-Length: 0) before a large PUT
             // body has finished writing (e.g. S3 multipart UploadPart against
@@ -3820,7 +3812,7 @@ impl<'a> HTTPClient<'a> {
     /// transport, so there is no `ctx`/`socket` to hand back to the pool here.
     fn send_progress_update_multiplexed(&mut self) {
         debug_assert!(self.flags.protocol != Protocol::Http1_1);
-        // PORT NOTE: reshaped for borrowck — `to_result()` ties `result`'s
+        // reshaped for borrowck — `to_result()` ties `result`'s
         // lifetime to `&mut self`, so holding it across the `is_done` mutations
         // would require a second live `&mut Self` (aliased UB). Instead snapshot
         // every owned/Copy field out of the result, drop it, mutate `self`
@@ -3916,7 +3908,7 @@ impl<'a> HTTPClient<'a> {
             b""
         };
         self.state.response_message_buffer = MutableString::default();
-        // PORT NOTE: copy the NonNull, do NOT `.take()` — http.zig:2360 reads
+        // copy the NonNull, do NOT `.take()` — http.zig:2360 reads
         // `this.state.body_out_str.?` without clearing it, so the
         // TooManyRedirects `fail()` below still sees a populated body pointer.
         let body_out_str = self.state.body_out_str.unwrap();
@@ -4106,7 +4098,7 @@ impl<'a> HTTPClient<'a> {
                 self.state.total_body_received
             );
         }
-        // PORT NOTE: Zig `defer` block moved to end of fn (no early returns after this point that skip it)
+        // Zig `defer` block moved to end of fn (no early returns after this point that skip it)
         // we can ignore the body data in redirects
         if !self.state.flags.is_redirect_pending {
             if self.state.encoding.is_compressed() {
@@ -4140,7 +4132,7 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         incoming_data: &[u8],
     ) -> Result<bool, bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — get_body_buffer() may return
+        // reshaped for borrowck — get_body_buffer() may return
         // `&mut self.state.compressed_body`, so its borrow must be scoped
         // tightly and not held across other `self.state.*` accesses (would be
         // aliased `&mut`). Read the Copy fields first, then borrow the buffer
@@ -4181,7 +4173,7 @@ impl<'a> HTTPClient<'a> {
             || content_length.is_none()
         {
             let is_final_chunk = is_done;
-            // PORT NOTE: Zig passes `buffer.*` BY VALUE (http.zig:2614). Mirror that by
+            // Zig passes `buffer.*` BY VALUE (http.zig:2614). Mirror that by
             // moving the body buffer's bytes out — process_body_buffer takes `&mut self.state`
             // and may mutate `compressed_body` (via decompress_bytes' reset) or `body_out_str`,
             // so any `&` into `self.state` held across the call would be aliased UB.
@@ -4217,7 +4209,7 @@ impl<'a> HTTPClient<'a> {
         &mut self,
         incoming_data: &[u8],
     ) -> Result<bool, bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — `chunked_decoder` and the body
+        // reshaped for borrowck — `chunked_decoder` and the body
         // buffer (`compressed_body` / `body_out_str`) are disjoint fields of
         // `self.state`, so borrow them once together via the split accessor and
         // operate on safe references. The Zig `var buffer = buffer_ptr.*` was a
@@ -4268,7 +4260,7 @@ impl<'a> HTTPClient<'a> {
                 if self.signals.get(signals::Field::ResponseBodyStreaming) {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
-                    // PORT NOTE: Zig passes the by-value struct copy (http.zig:2681). Move the
+                    // Zig passes the by-value struct copy (http.zig:2681). Move the
                     // bytes out so no `&` into self.state aliases the `&mut self.state` call.
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
                     return self.state.process_body_buffer(buffer_snap, false);
@@ -4279,7 +4271,7 @@ impl<'a> HTTPClient<'a> {
             // Done
             _ => {
                 self.state.flags.received_last_chunk = true;
-                // PORT NOTE: Zig passes the by-value struct copy (http.zig:2689). Move the
+                // Zig passes the by-value struct copy (http.zig:2689). Move the
                 // bytes out so no `&` into self.state aliases the `&mut self.state` call.
                 let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
                 let _ = self.state.process_body_buffer(buffer_snap, true)?;
@@ -4355,7 +4347,7 @@ impl<'a> HTTPClient<'a> {
                     // If we're streaming, we cannot use the libdeflate fast path
                     self.state.flags.is_libdeflate_fast_path_disabled = true;
 
-                    // PORT NOTE: Zig passes `body_buffer.*` BY VALUE (http.zig:2763). Move
+                    // Zig passes `body_buffer.*` BY VALUE (http.zig:2763). Move
                     // the bytes out so no `&` into self.state aliases the `&mut self.state`
                     // taken by process_body_buffer (which mutates compressed_body/body_out_str).
                     let buffer_snap = core::mem::take(&mut self.state.get_body_buffer().list);
@@ -4864,7 +4856,7 @@ impl<'a> HTTPClient<'a> {
                                 name: &'static [u8],
                                 hash: u64,
                             }
-                            // PORT NOTE: was a `const` table in Zig; LazyLock hashes
+                            // was a `const` table in Zig; LazyLock hashes
                             // aren't const, so build at runtime.
                             let headers_to_remove: [H; 4] = [
                                 H {

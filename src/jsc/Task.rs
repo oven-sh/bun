@@ -52,10 +52,14 @@ pub fn report_error_or_terminate(
     if ex.is_termination_exception() {
         return Err(JsTerminated::JSTerminated);
     }
-    // TODO(port): `global.report_uncaught_exception(ex.as_exception(vm))` —
-    // `JSValue::as_exception` / `JSGlobalObject::report_uncaught_exception`
-    // surface lands when JSGlobalObject.rs un-gates.
-    let _ = (global, ex);
+    // Zig: `_ = global.reportUncaughtException(ex)` (Task.zig reportErrorOrTerminate).
+    let vm = std::ptr::from_ref::<crate::VM>(global.vm()).cast_mut();
+    let exc = ex
+        .as_exception(vm)
+        .expect("exception value must be an Exception cell");
+    // `as_exception` returned a non-null cell pointer rooted on the VM;
+    // `Exception` is an opaque ZST handle — safe deref (panics on null).
+    let _ = crate::js_global_object::report_uncaught_exception(global, crate::Exception::opaque_ref(exc));
     Ok(())
 }
 

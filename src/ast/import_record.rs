@@ -24,11 +24,10 @@ pub struct ImportRecord {
 
     pub source_index: Index,
 
-    /// `js_printer::printBundledImport` reads this. The Zig field was removed
-    /// from `ImportRecord` but the printer body referencing it is dead (never
-    /// analysed by Zig's lazy compilation). Kept here so the eagerly-compiled
-    /// Rust port of that body type-checks; always 0 in practice.
-    // TODO(port): delete once `printBundledImport` is confirmed dead and removed.
+    /// Dead field: the Zig `ImportRecord` removed it, and the only reader
+    /// (`js_printer`'s `print_bundled_import`, dead code in Zig too) has been
+    /// deleted. Always 0. Remove together with the `module_id: 0` initializers
+    /// in the parser/bundler/css constructors when those files are next touched.
     pub module_id: u32,
 
     /// The original import specifier as written in source code (e.g., "./foo.js").

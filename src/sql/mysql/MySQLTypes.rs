@@ -1,10 +1,10 @@
 use strum::IntoStaticStr;
 
-// TODO(port): Zig source is `enum(u8) { ..., _ }` (non-exhaustive — any u8 is a valid
-// CharacterSet). A Rust `#[repr(u8)] enum` is UB for unnamed discriminants. Either
-// (a) keep this enum and guarantee all decode sites range-check before `from_raw`, or
-// (b) switch to `#[repr(transparent)] pub struct CharacterSet(pub u8)` with associated
-// consts. `label()` below already assumes out-of-range values are possible.
+// Zig source is `enum(u8) { ..., _ }` (non-exhaustive — any u8 is a valid
+// CharacterSet). This Rust enum is exhaustive, so constructing it from a raw
+// wire byte is only allowed through a checked constructor — never `transmute`.
+// The live decode path uses the separate non-exhaustive `protocol::CharacterSet`
+// type (protocol/CharacterSet.rs); nothing decodes into this enum.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, IntoStaticStr)]
 pub enum CharacterSet {
@@ -253,8 +253,9 @@ impl Default for CharacterSet {
 
 // MySQL field types
 // https://dev.mysql.com/doc/dev/mysql-server/latest/binary__log__types_8h.html#a8935f33b06a3a88ba403c63acd806920
-// TODO(port): Zig source is `enum(u8) { ..., _ }` (non-exhaustive). See note on CharacterSet
-// above — same decision applies (range-checked `from_raw` vs newtype-over-u8).
+// Zig source is `enum(u8) { ..., _ }` (non-exhaustive). This Rust enum is
+// exhaustive: all wire decoding must go through the range-checked `from_raw`
+// below (returns `None` for unknown bytes) — never `transmute`.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug, IntoStaticStr)]
 pub enum FieldType {

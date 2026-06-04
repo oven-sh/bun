@@ -12,10 +12,9 @@ use bun_core::RawSlice;
 use crate::IndexStringMap::IndexStringMap;
 use crate::{ImportTracker, Index, JSAst, Part, Ref, UseDirective, import_record, index, part};
 // `items_<field>()` column accessors — bring the `*ListExt` traits into scope.
-// PORT NOTE: `BundledAstColumns` is emitted by ``
-// on `BundledAst`; un-gating here is paired with that derive landing in
-// `crate::bundled_ast` (same dependency `scanImportsAndExports.rs`
-// already imports as `BundledAstField`).
+// Note: `BundledAstColumns` is emitted by `bun_collections::multi_array_columns!`
+// on `BundledAst` in `crate::bundled_ast` (the same macro output
+// `scanImportsAndExports.rs` already imports as `BundledAstField`).
 bun_core::declare_scope!(LinkerGraph, visible);
 
 pub mod entry_point {
@@ -200,12 +199,12 @@ pub struct LinkerGraph<'a> {
     pub entry_points: entry_point::List,
     pub symbols: symbol::Map,
 
-    // PORT NOTE: lifetime-erased. Zig stores `std.mem.Allocator`; the Rust
+    // Note: lifetime-erased. Zig stores `std.mem.Allocator`; the Rust
     // arena is owned by `BundleV2` and outlives every `LinkerGraph` — kept as
     // a raw pointer (matching `LinkerContext.parse_graph: *mut Graph`) so the
     // struct stays `'static`-ish and `LinkerContext`/`Chunk` callers don't
-    // grow a `'bump` parameter yet. TODO(refactor): thread `'bump` once `Chunk`
-    // and `html_import_manifest` gain lifetimes.
+    // grow a `'bump` parameter; threading `'bump` would require `Chunk` and
+    // `html_import_manifest` to gain lifetimes first.
     pub bump: bun_ptr::BackRef<Arena>,
 
     pub code_splitting: bool,
@@ -277,7 +276,6 @@ impl<'a> LinkerGraph<'a> {
 
 impl<'a> LinkerGraph<'a> {
     pub fn init(bump: &Arena, file_count: usize) -> Result<Self, bun_core::Error> {
-        // TODO(port): narrow error set
         Ok(LinkerGraph {
             files: FileList::default(),
             files_live: BitSet::init_empty(file_count)?,
@@ -304,7 +302,7 @@ impl Default for LinkerGraph<'_> {
             parts_live: Vec::new(),
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
-            // PORT NOTE: `bump` is a backref assigned in `init`/`LinkerContext::load`;
+            // Note: `bump` is a backref assigned in `init`/`LinkerContext::load`;
             // dangling sentinel mirrors Zig's `undefined` (never read before assignment).
             bump: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
             code_splitting: false,
@@ -345,7 +343,7 @@ pub fn generate_new_symbol(
 ) -> Ref {
     let source_symbols = &mut symbols.symbols_for_source.slice_mut()[source_index as usize];
 
-    // PORT NOTE: Zig built `Ref.init(..)` then assigned `ref.tag = .symbol`.
+    // Note: Zig built `Ref.init(..)` then assigned `ref.tag = .symbol`.
     // The Rust `Ref` is a packed `u64` with no public `tag` field, so use
     // the `Ref::new` constructor that takes the tag explicitly.
     let ref_ = Ref::new(
@@ -357,7 +355,7 @@ pub fn generate_new_symbol(
     // TODO: will this crash on resize due to using threadlocal mimalloc heap?
     source_symbols.push(Symbol {
         kind,
-        // PORT NOTE: `Symbol.original_name` is a `StoreStr` —
+        // Note: `Symbol.original_name` is a `StoreStr` —
         // arena-owned slice whose lifetime is erased (matches the Zig
         // `[]const u8`); caller guarantees it outlives the symbol table.
         original_name: bun_ast::StoreStr::new(original_name),
@@ -393,7 +391,7 @@ pub(crate) fn add_part_to_file(
     let part_id = parts[id as usize].len() as u32; // @truncate (u32)
     parts[id as usize].push(part);
 
-    // PORT NOTE: borrowck reshape. The Zig closure simultaneously holds
+    // Note: borrowck reshape. The Zig closure simultaneously holds
     //   * `&mut parts[part_id].declared_symbols`   (column `parts` of `ast`)
     //   * `&meta.top_level_symbol_to_parts_overlay[id]` (`meta`)
     //   * `&ast.top_level_symbols_to_parts[id]`    (another `ast` column)
@@ -447,7 +445,7 @@ pub fn generate_symbol_import_and_use(
     part_index: u32,
     ref_: Ref,
     use_count: u32,
-    // PORT NOTE: callers are split between `crate::Index` (options_types)
+    // Note: callers are split between `crate::Index` (options_types)
     // and the structurally identical `bun_ast::Index` until the two newtypes
     // unify. Accept either via `Into` and normalize once.
     source_index_to_import_from: impl Into<Index>,
@@ -514,7 +512,7 @@ pub fn generate_symbol_import_and_use(
     debug_assert_eq!(part_ids.len(), new_dependencies.len());
     for (part_id, dependency) in part_ids.iter().zip(new_dependencies.iter_mut()) {
         *dependency = Dependency {
-            // PORT NOTE: `Dependency.source_index` is the structurally
+            // Note: `Dependency.source_index` is the structurally
             // identical `bun_ast::Index`; convert by value until the
             // two `Index` newtypes unify.
             source_index: bun_ast::Index::init(source_index_to_import_from.get()),
@@ -663,7 +661,6 @@ impl<'a> LinkerGraph<'a> {
         dynamic_import_entry_points: &[index::Int],
         entry_point_original_names: &IndexStringMap,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let scb = server_component_boundaries.slice();
         self.files.set_capacity(sources.len())?;
         self.files.zero();
@@ -671,7 +668,7 @@ impl<'a> LinkerGraph<'a> {
         // SAFETY: capacity reserved above; columns zeroed by `zero()`.
         unsafe { self.files.set_len(sources.len()) };
 
-        // PORT NOTE: `Slice<T>` caches raw column pointers and does not borrow
+        // Note: `Slice<T>` caches raw column pointers and does not borrow
         // `self.files`, so the `split_mut()` borrows (tied to the local
         // `files_slice`) can stay live across other `&mut self.*` accesses
         // below. The columns are not reallocated during `load`.
@@ -690,7 +687,7 @@ impl<'a> LinkerGraph<'a> {
             // SAFETY: capacity reserved; columns initialized below.
             unsafe { self.entry_points.set_len(entry_points.len()) };
 
-            // PORT NOTE: borrowck reshape — Zig held `source_indices` /
+            // Note: borrowck reshape — Zig held `source_indices` /
             // `path_strings` / `output_path_was_auto_generated` simultaneously
             // (disjoint columns of the same `MultiArrayList`). `split_mut()`
             // hands out all three at once; `self.entry_points` is not
@@ -746,7 +743,7 @@ impl<'a> LinkerGraph<'a> {
 
             let import_records_len = self.ast.items_import_records().len();
             self.meta.set_capacity(import_records_len)?;
-            // PORT NOTE: Zig does `meta.len = ast.len; meta.zero()` — a raw
+            // Note: Zig does `meta.len = ast.len; meta.zero()` — a raw
             // memset(0) is the valid empty state for Zig's unmanaged
             // containers. Rust `Vec`/`Box` require a non-null dangling
             // pointer when empty, so zeroed bytes violate their invariants
@@ -823,7 +820,7 @@ impl<'a> LinkerGraph<'a> {
         // Setup files
         {
             // set it to max value so that if we access an invalid one, it crashes
-            // PORT NOTE: Zig used `@memset(sliceAsBytes(...), 255)` to fill raw
+            // Note: Zig used `@memset(sliceAsBytes(...), 255)` to fill raw
             // bytes; here we fill with `Index::INVALID` whose bytes are all
             // 0xFF (`#[repr(transparent)]` over `u32::MAX`).
             let stable_source_indices = self
@@ -842,7 +839,7 @@ impl<'a> LinkerGraph<'a> {
         }
 
         {
-            // PORT NOTE: Zig built a borrowed `Symbol.NestedList` over the
+            // Note: Zig built a borrowed `Symbol.NestedList` over the
             // `ast.items(.symbols)` column then `clone`d it (memcpy). The Rust
             // `Vec::clone` requires `T: Clone` which `Symbol` does not
             // derive (it carries a raw `*const [u8]`), so spell out the
@@ -895,7 +892,7 @@ impl<'a> LinkerGraph<'a> {
                     debug_assert_eq!(ts_enums.keys().len(), ts_enums.values().len());
                     for (key, value) in ts_enums.keys().iter().zip(ts_enums.values().iter()) {
                         // PERF(port): was assume_capacity_no_clobber
-                        // PORT NOTE: Zig copied the inner `StringHashMap` by
+                        // Note: Zig copied the inner `StringHashMap` by
                         // value (shallow struct copy). Rust clones the backing
                         // `HashMap`; the per-file maps are not mutated after
                         // this point so aliasing is not required.
@@ -962,7 +959,6 @@ impl<'a> LinkerGraph<'a> {
     }
 
     pub fn propagate_async_dependencies(&mut self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         struct State<'a> {
             visited: AutoBitSet,
             import_records: &'a [import_record::List<'a>],
@@ -1076,7 +1072,7 @@ impl File {
 impl Default for File {
     fn default() -> Self {
         Self {
-            // PORT NOTE: Zig had `entry_bits: AutoBitSet = undefined` — using an
+            // Note: Zig had `entry_bits: AutoBitSet = undefined` — using an
             // empty static-arm bitset here; load() overwrites before any read.
             entry_bits: AutoBitSet::init_empty(0).expect("static AutoBitSet"),
             input_file: Index::source(0u32),

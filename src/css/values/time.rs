@@ -157,8 +157,6 @@ impl Time {
     }
 
     pub fn add(self, other: Self) -> Time {
-        // Zig arena param dropped (unused).
-        // PORT NOTE: Zig passes `void` ctx + free fn; Rust closure captures nothing.
         self.op(other, |a, b| a + b)
     }
 
@@ -182,10 +180,6 @@ impl Time {
     }
 
     pub fn op(self, other: Time, op_fn: impl Fn(f32, f32) -> f32) -> Time {
-        // PORT NOTE: Zig uses `ctx: anytype` + comptime fn-pointer (its closure idiom).
-        // Rust closures capture ctx directly, so the `ctx` param is dropped.
-        // PORT NOTE: reshaped bit-packed `switch_val` into an exhaustive tuple match;
-        // semantics are identical, `unreachable` arm is unnecessary.
         let _ = (self.tag(), TAG_SECONDS, TAG_MILLISECONDS); // keep tag consts referenced
         match (self, other) {
             (Time::Seconds(a), Time::Seconds(b)) => Time::Seconds(op_fn(a, b)),
@@ -196,7 +190,6 @@ impl Time {
     }
 
     pub fn op_to<R>(self, other: Time, op_fn: impl Fn(f32, f32) -> R) -> R {
-        // PORT NOTE: see `op` — ctx param folded into closure; bit-packed switch reshaped.
         match (self, other) {
             (Time::Seconds(a), Time::Seconds(b)) => op_fn(a, b),
             (Time::Milliseconds(a), Time::Milliseconds(b)) => op_fn(a, b),

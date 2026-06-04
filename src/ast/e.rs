@@ -63,9 +63,6 @@ impl Default for Array {
         }
     }
 }
-// TODO(port): Array methods call `Vec::init_capacity(bump, n)`
-// (signature mismatch: Vec takes only `n`; AST-crate variant with bump
-// arena pending) and `Expr::Data::*` deep matches. Un-gate with parser round.
 // Live subset of `Array` accessors needed by downstream crates.
 impl Array {
     pub const EMPTY: Array = Array {
@@ -105,7 +102,7 @@ impl Array {
         // same allocation profile (one upfront `with_capacity`), no uninit.
         let mut out: ExprNodeList =
             ExprNodeList::init_capacity(estimated_count + self.items.len_u32() as usize);
-        // PORT NOTE: reshaped for borrowck — iterate items via index so the &mut
+        // Reshaped for borrowck — iterate items via index so the &mut
         // borrow of `out` does not overlap a shared borrow of `self`.
         let items_len = self.items.len_u32() as usize;
         for idx in 0..items_len {
@@ -327,7 +324,8 @@ pub enum CallUnwrap {
 pub struct Dot {
     // target is Node
     pub target: ExprNodeIndex,
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub name: Str,
     pub name_loc: crate::Loc,
     pub optional_chain: Option<OptionalChain>,
@@ -355,9 +353,9 @@ impl Default for Dot {
 }
 impl Dot {
     pub fn has_same_flags_as(&self, b: &Dot) -> bool {
-        // TODO(port): Zig refers to `a.is_direct_eval` which does not exist on Dot;
-        // mirroring the (likely buggy) Zig literally would not compile. Preserving
-        // the three fields that DO exist; revisit.
+        // Zig refers to `a.is_direct_eval`, which does not exist on Dot (likely a
+        // copy/paste bug in the Zig source); mirroring it literally would not
+        // compile. Compare the three flag fields that DO exist on Dot.
         self.optional_chain == b.optional_chain
             && self.can_be_removed_if_unused == b.can_be_removed_if_unused
             && self.call_can_be_unwrapped_if_unused == b.call_can_be_unwrapped_if_unused
@@ -843,7 +841,8 @@ macro_rules! impl_number_cast {
 impl_number_cast!(u16, u32, u64, usize);
 
 pub struct BigInt {
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub value: Str,
 }
 impl BigInt {
@@ -1303,7 +1302,7 @@ fn package_json_sort_is_less_than(lhs: &G::Property, rhs: &G::Property) -> Order
 
     match lhs_key_size.cmp(&rhs_key_size) {
         Ordering::Equal => {
-            // PORT NOTE: Zig `cmpStringsAsc` is `std.mem.order(u8, a, b) == .lt`; lifted to
+            // Zig `cmpStringsAsc` is `std.mem.order(u8, a, b) == .lt`; lifted to
             // a full `Ordering` so this is usable with `sort_by`.
             let a = lhs
                 .key
@@ -1356,7 +1355,8 @@ pub struct EString {
     // A version of this where `utf8` and `value` are stored in a packed union, with len as a single u32 was attempted.
     // It did not improve benchmarks. Neither did converting this from a heap-allocated type to a stack-allocated type.
     // TODO: change this to *const anyopaque and change all uses to either .slice8() or .slice16()
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub data: Str,
     pub prefer_template: bool,
 
@@ -2086,7 +2086,8 @@ impl Template {
 }
 
 pub struct RegExp {
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub value: Str,
 
     /// This exists for JavaScript bindings
@@ -2172,7 +2173,8 @@ pub struct RequireResolveString {
 
 pub struct InlinedEnum {
     pub value: ExprNodeIndex,
-    // TODO(port): arena-owned slice
+    // Arena-owned slice (`StoreStr`: lifetime-erased arena ownership, bulk-freed
+    // at `Store::reset()` — see `nodes.rs` StoreStr docs).
     pub comment: Str,
 }
 

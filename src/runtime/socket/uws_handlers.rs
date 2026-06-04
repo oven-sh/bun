@@ -63,8 +63,6 @@ impl<E> Swallow for Result<(), E> {
 /// `Result<(), _>` so consumer impls may return either — but to avoid
 /// associated-type contortions every default returns `bun_jsc::JsResult<()>`
 /// and plain-`void` consumers just `Ok(())`.
-// TODO(port): if a consumer's `on_*` is infallible, the trait default forces a
-// `Result` wrap; revisit once consumer crates are ported.
 pub trait SocketEvents<const SSL: bool> {
     fn on_open(&mut self, _s: NewSocketHandler<SSL>) -> bun_jsc::JsResult<()> {
         Ok(())
@@ -539,7 +537,7 @@ impl_ns_socket_events_forward!(
 impl_ns_socket_events_forward!(js_valkey::JSValkeyClient, js_valkey::SocketHandler<SSL>);
 
 // ── Bun.connect / Bun.listen ────────────────────────────────────────────────
-// PORT NOTE (noalias re-entrancy): routed through `RawPtrHandler`, not
+// Noalias re-entrancy: routed through `RawPtrHandler`, not
 // `PtrHandler`. `NewSocket::on_*` re-enter JS (`socket.write/end/reload`) which
 // re-derives `&mut NewSocket` via the wrapper's `m_ptr`; a `&mut NewSocket`
 // argument formed by `PtrHandler` and protected through the dispatch frame

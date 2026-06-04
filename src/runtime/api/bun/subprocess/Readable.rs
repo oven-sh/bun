@@ -113,7 +113,6 @@ impl Readable {
         max_size: Option<NonNull<MaxBuf>>,
         _is_sync: bool,
     ) -> Readable {
-        // PORT NOTE: Zig `allocator` param dropped (was unused / autofix); global mimalloc assumed.
         super::assert_stdio_result!(result);
 
         // Ownership of any resource inside `stdio` (notably `.memfd`) is being
@@ -214,7 +213,6 @@ impl Readable {
                 *self = Readable::Closed;
             }
             Readable::Pipe(_) => {
-                // PORT NOTE: reshaped for borrowck — Zig captures `pipe` by-copy then overwrites `this.*`.
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
@@ -240,8 +238,8 @@ impl Readable {
                 Self::pipe_detach(&pipe);
             }
             Readable::Buffer(_) => {
-                // PORT NOTE: Zig calls `buf.deinit(default_allocator)` without resetting the tag.
-                // In Rust, dropping the CowString (via overwrite) is the equivalent; finalize is terminal.
+                // Dropping the CowString (via the overwrite) frees the buffer;
+                // finalize is terminal.
                 *self = Readable::Closed;
             }
             _ => {}
@@ -255,7 +253,6 @@ impl Readable {
 
             Readable::Fd(fd) => Ok(fd.to_js(global)),
             Readable::Pipe(_) => {
-                // PORT NOTE: reshaped for borrowck.
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
@@ -264,7 +261,6 @@ impl Readable {
                 result
             }
             Readable::Buffer(_) => {
-                // PORT NOTE: reshaped for borrowck — `defer this.* = .closed` becomes take-then-use.
                 let Readable::Buffer(mut buffer) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
@@ -297,7 +293,6 @@ impl Readable {
                 }
             }
             Readable::Pipe(_) => {
-                // PORT NOTE: reshaped for borrowck.
                 let Readable::Pipe(pipe) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
@@ -306,7 +301,6 @@ impl Readable {
                 Ok(result)
             }
             Readable::Buffer(_) => {
-                // PORT NOTE: reshaped for borrowck.
                 let Readable::Buffer(mut buf) = mem::replace(self, Readable::Closed) else {
                     unreachable!()
                 };
@@ -315,9 +309,8 @@ impl Readable {
                     Err(_) => return Err(global.throw_out_of_memory()),
                 };
 
-                // PORT NOTE: ownership of the mimalloc-backed buffer transfers to
-                // JSC (freed via `MarkedArrayBuffer_deallocator`) — matches Zig
-                // `fromBytes(own, .Uint8Array)`.
+                // Ownership of the mimalloc-backed buffer transfers to JSC
+                // (freed via `MarkedArrayBuffer_deallocator`).
                 Ok(jsc::MarkedArrayBuffer {
                     buffer: jsc::ArrayBuffer::from_owned_bytes(own, jsc::JSType::Uint8Array),
                     owns_buffer: true,

@@ -33,9 +33,10 @@ impl Exit {
                 return Self::fail(interp, cmd, b"exit: too many arguments\n");
             }
         };
-        // TODO(port): bash `exit` should unwind the whole script, not just the
-        // current Cmd. The Zig version sets a flag on the interpreter; preserve
-        // that once `Interpreter::request_exit` exists.
+        // Spec parity: exit.zig `start` also just completes the current Cmd
+        // via `bltn().done(exit_code)` — it does not unwind the whole script
+        // either. Diverging from bash's whole-script exit is upstream Bun
+        // shell behavior, not a port gap.
         Builtin::done(interp, cmd, code)
     }
 

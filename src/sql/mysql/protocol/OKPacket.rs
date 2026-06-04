@@ -1,5 +1,6 @@
 // OK Packet
 use crate::mysql::StatusFlags;
+use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
 
@@ -23,15 +24,14 @@ pub struct OKPacket {
 // `impl Drop` needed.
 
 impl OKPacket {
-    // TODO(port): narrow error set (InvalidOKPacket + reader errors)
     pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyMySQLError> {
         let mut read_size: usize = 5; // header + status flags + warnings
         self.header = reader.int::<u8>()?;
         if self.header != 0x00 && self.header != 0xfe {
-            return Err(bun_core::err!("InvalidOKPacket"));
+            return Err(AnyMySQLError::InvalidOKPacket);
         }
 
         // Affected rows (length encoded integer)

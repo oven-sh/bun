@@ -81,7 +81,6 @@ impl CryptoHasher {
     }
 
     // ── Extern: For using only CryptoHasherZig in c++ ──────────────────────
-    // TODO(port): move to <runtime>_sys (these are exported C ABI fns)
 
     #[unsafe(no_mangle)]
     pub extern "C" fn Bun__CryptoHasherExtern__getByName(
@@ -337,7 +336,7 @@ impl CryptoHasher {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, tag)
     }
 
-    // PORT NOTE: `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
+    // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
     // which cannot resolve to an associated fn inside an `impl` block. The shim
     // for this static prop getter is wired by `#[bun_jsc::JsClass]` codegen.
     pub fn get_algorithms(
@@ -402,7 +401,7 @@ impl CryptoHasher {
                     size
                 )));
             }
-            // PORT NOTE: reshaped for borrowck — Zig rebinds the slice into the output buffer.
+            // Reshaped for borrowck — Zig rebinds the slice into the output buffer.
             // SAFETY: `output_buf.ptr` is the JSC-owned writable backing store
             // (`bytes_len >= size` checked above; not detached since len > 0);
             // borrowed for this frame only. Build the `&mut` directly from the
@@ -471,7 +470,7 @@ impl CryptoHasher {
     }
 
     // Bun.CryptoHasher(algorithm, hmacKey?: string | Buffer)
-    // PORT NOTE: `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
+    // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
     // which cannot resolve to an associated fn inside an `impl` block. The
     // constructor shim is wired by `#[bun_jsc::JsClass]` codegen.
     pub fn constructor(
@@ -718,7 +717,7 @@ impl CryptoHasher {
                     boring_ssl::EVP_MAX_MD_SIZE
                 )));
             }
-            // PORT NOTE: reshaped for borrowck.
+            // Reshaped for borrowck.
             // SAFETY: `bytes_len >= EVP_MAX_MD_SIZE` checked above; `output_buf.ptr`
             // is the JSC-owned writable backing store, outliving this frame. Build
             // the `&mut` directly from the raw `*mut u8` field — never via
@@ -770,7 +769,7 @@ impl CryptoHasher {
                     return Err(Self::throw_hmac_consumed(global));
                 };
                 // `this.hmac = null; defer hmac.deinit();` — `replace(None)` + Drop on `hmac`.
-                // PORT NOTE: `HMAC::r#final<'a>(&mut self, out: &'a mut [u8]) -> &'a mut [u8]`
+                // `HMAC::r#final<'a>(&mut self, out: &'a mut [u8]) -> &'a mut [u8]`
                 // returns a subslice of `out`, not `self`, so dropping `hmac` at scope end
                 // does not invalidate the returned borrow.
                 break 'brk Ok(hmac.r#final(output_digest_slice));
@@ -964,7 +963,7 @@ impl CryptoHasherZig {
         let mut h = A::init();
         h.update(input.slice());
 
-        // PORT NOTE: const-generic array length from trait assoc const requires
+        // Const-generic array length from trait assoc const requires
         // `feature(generic_const_exprs)` — use a stack buffer of EVP_MAX_MD_SIZE
         // sliced to A::DIGEST_LENGTH instead.
         let mut out = [0u8; EVP_MAX_MD_SIZE_USIZE];
@@ -1187,7 +1186,7 @@ impl_static_hasher!(hashers::SHA384, "SHA384", JSSHA384, 48);
 impl_static_hasher!(hashers::SHA512, "SHA512", JSSHA512, 64);
 impl_static_hasher!(hashers::SHA512_256, "SHA512_256", JSSHA512_256, 32);
 
-// PORT NOTE: `#[bun_jsc::JsClass]` cannot expand over a generic struct (it emits
+// `#[bun_jsc::JsClass]` cannot expand over a generic struct (it emits
 // `*mut StaticCryptoHasher` without `<H>`). In Zig each `StaticCryptoHasher(Hasher, name)`
 // instantiation gets its own `.classes.ts` codegen; the Rust equivalent must apply
 // `JsClass` to each concrete monomorphization (MD4/MD5/SHA1/…) once the macro grows
@@ -1336,7 +1335,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         output: Option<ArrayBuffer>,
     ) -> JsResult<JSValue> {
         let mut output_digest_buf: H::Digest = H::new_digest();
-        // PORT NOTE: reshaped for borrowck — Zig used `*Hasher.Digest` rebound into output buffer.
+        // Reshaped for borrowck — Zig used `*Hasher.Digest` rebound into output buffer.
         let output_digest_slice: &mut H::Digest;
         if let Some(output_buf) = &output {
             let bytes_len = output_buf.byte_slice().len();
@@ -1409,7 +1408,7 @@ impl<H: StaticHasher> StaticCryptoHasher<H> {
         }
     }
 
-    // PORT NOTE: `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
+    // `#[bun_jsc::host_fn]` (Free) emits a bare `fn_name(g, f)` call,
     // which cannot resolve to an associated fn inside an `impl` block. The
     // constructor shim is wired by per-monomorphization `#[bun_jsc::JsClass]` codegen.
     pub fn constructor(_: &JSGlobalObject, _: &CallFrame) -> JsResult<Box<Self>> {

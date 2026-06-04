@@ -215,7 +215,7 @@ impl Default for Pragma {
 
 impl Pragma {
     pub fn hash_for_runtime_transpiler(&self, hasher: &mut bun_wyhash::Wyhash) {
-        // PORT NOTE: spec options.zig:1213 takes `*std.hash.Wyhash`, which is the
+        // The original (options.zig:1213) takes `*std.hash.Wyhash`, which is the
         // algorithm behind `bun.hash` — distinct from `bun.Wyhash11`. Using
         // `Wyhash11` would yield a different cache key than the Zig path.
         for factory in self.factory.iter() {

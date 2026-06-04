@@ -17,7 +17,12 @@ pub struct Async {
     pub io: IO,
     pub state: AsyncState,
     pub event_loop: EventLoopHandle,
-    // TODO(port): bun_jsc::EventLoopTask — concurrent_task field
+    /// Heap payload for the main-thread bounce (Zig: `concurrent_task:
+    /// jsc.EventLoopTask` embedded in the Async struct). The Rust node lives
+    /// in the reallocatable `Interpreter::nodes` arena, so the intrusive
+    /// concurrent-task node must live in a stable heap allocation instead.
+    /// Allocated in `init`, freed in `actually_deinit`.
+    task: *mut crate::shell::dispatch_tasks::ShellAsyncTask,
 }
 
 #[derive(Default, strum::IntoStaticStr)]
@@ -42,13 +47,22 @@ impl Async {
             .async_commands_executing
             .set(interp.async_commands_executing.get() + 1);
         let evtloop = interp.event_loop;
-        interp.alloc_node(Node::Async(Async {
+        let id = interp.alloc_node(Node::Async(Async {
             base: Base::new(StateKind::Async, parent, shell),
             node: bun_ptr::BackRef::new(node),
             io,
             state: AsyncState::Idle,
             event_loop: evtloop,
-        }))
+            task: core::ptr::null_mut(),
+        }));
+        // The payload needs the NodeId, so it's allocated after the node.
+        interp.as_async_mut(id).task =
+            bun_core::heap::alloc(crate::shell::dispatch_tasks::ShellAsyncTask {
+                interp: interp.as_ctx_ptr(),
+                node: id,
+                concurrent_task: Default::default(),
+            });
+        id
     }
 
     pub fn start(interp: &Interpreter, this: NodeId) -> Yield {
@@ -138,9 +152,42 @@ impl Async {
         Yield::suspended()
     }
 
-    fn enqueue_self(_interp: &Interpreter, _this: NodeId) {
-        // TODO(port): bun_jsc::EventLoopHandle/EventLoopTask — schedule
-        // `run_from_main_thread` on the JS or mini event loop.
+    /// Spec: Async.zig `enqueueSelf` — bounce `run_from_main_thread` through
+    /// the event loop so the async body runs on subsequent ticks while the
+    /// parent proceeds.
+    fn enqueue_self(interp: &Interpreter, this: NodeId) {
+        use bun_event_loop::{ConcurrentTask::AutoDeinit, EventLoopTaskPtr};
+        let me = interp.as_async_mut(this);
+        let task = me.task;
+        debug_assert!(!task.is_null());
+        match me.event_loop {
+            EventLoopHandle::Js { .. } => {
+                // SAFETY: `task` is the live heap payload allocated in `init`
+                // and freed only in `actually_deinit`. The embedded
+                // `ConcurrentTask` is reused for each bounce and is never
+                // in-flight twice: every enqueue is dispatched (dequeued)
+                // before the state machine can enqueue again (Zig reuses the
+                // embedded `concurrent_task` the same way, `.manual_deinit`).
+                unsafe {
+                    let ct = (*task).concurrent_task.from(task, AutoDeinit::ManualDeinit);
+                    me.event_loop.enqueue_task_concurrent(EventLoopTaskPtr {
+                        js: std::ptr::from_mut(ct),
+                    });
+                }
+            }
+            EventLoopHandle::Mini(_) => {
+                // Zig: `concurrent_task.mini.from(this, "runFromMainThreadMini")`.
+                // The payload embeds only the JS-arm `ConcurrentTask`, so the
+                // mini arm heap-allocates an auto-deinit wrapper per bounce
+                // (same shape as `GlobalMini::enqueue_task_concurrent_wait_pid`).
+                let any = bun_jsc::AnyTaskWithExtraContext::AnyTaskWithExtraContext::from_callback_auto_deinit(
+                    task,
+                    run_from_main_thread_mini,
+                );
+                me.event_loop
+                    .enqueue_task_concurrent(EventLoopTaskPtr { mini: any });
+            }
+        }
     }
 
     /// `deinit` is purposefully empty: an `Async` appears "done" to its parent
@@ -148,6 +195,13 @@ impl Async {
     /// happens in `actually_deinit` once the background body finishes.
     pub fn actually_deinit(interp: &Interpreter, this: NodeId) {
         let me = interp.as_async_mut(this);
+        if !me.task.is_null() {
+            // SAFETY: allocated in `init`; the final bounce that reached
+            // `async_cmd_done` (and thus here) has already been dequeued and
+            // dispatched, so nothing else references the payload.
+            drop(unsafe { bun_core::heap::take(me.task) });
+            me.task = core::ptr::null_mut();
+        }
         me.base.end_scope();
     }
 
@@ -161,6 +215,27 @@ enum NextAction {
     StartChild(NodeId),
     SpawnChild,
     Finish,
+}
+
+// `runtime::dispatch::run_task`'s `task_tag::ShellAsync` arm casts the
+// enqueued pointer back to `ShellAsyncTask`; both sides MUST agree.
+impl bun_event_loop::Taskable for crate::shell::dispatch_tasks::ShellAsyncTask {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ShellAsync;
+}
+
+/// Mini-loop trampoline (Zig: `Async.runFromMainThreadMini`).
+fn run_from_main_thread_mini(
+    task: *mut crate::shell::dispatch_tasks::ShellAsyncTask,
+    _: *mut core::ffi::c_void,
+) {
+    // SAFETY: `task` is the live payload owned by the Async node; it is freed
+    // only in `actually_deinit`, which runs at the tail of this bounce chain
+    // (after the final `next()` dispatch), and `interp` outlives every node.
+    unsafe {
+        let interp = &*(*task).interp;
+        let node = (*task).node;
+        Async::run_from_main_thread(interp, node);
+    }
 }
 
 // ported from: src/shell/states/Async.zig

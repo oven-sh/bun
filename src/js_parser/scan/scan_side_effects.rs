@@ -6,10 +6,6 @@ use bun_ast::symbol;
 use bun_ast::{self, Binding, E, Expr, ExprData, G, Op, Stmt, StmtData, StoreRef};
 use bun_collections::VecExt;
 
-// PORT NOTE: round-E un-gate. SideEffects in Zig is an enum with associated fns that
-// take `p: anytype`. Round-E converts the unbounded `<P>` generic to concrete
-// `P<'a, TS, SCAN>`. Method bodies gated; the `Result` type and enum surface are real.
-
 #[repr(u8)] // Zig: enum(u1) — Rust has no u1 repr; u8 is the smallest
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum SideEffects {
@@ -151,7 +147,7 @@ impl SideEffects {
             p.report_stack_overflow(expr.loc);
             return Some(expr);
         }
-        // PORT NOTE: `Expr`/`ExprData`/`StoreRef<_>` are all `Copy`. We match on
+        // `Expr`/`ExprData`/`StoreRef<_>` are all `Copy`. We match on
         // `expr.data` *by value* so `expr` itself is never borrowed across a
         // recursive `simplify_unused_expr(p, ..)` call. Mutations to boxed
         // payloads write through `StoreRef::DerefMut` into the arena, so they
@@ -403,9 +399,9 @@ impl SideEffects {
                             }
                         }
 
-                        // PORT NOTE: G::Property is not Copy (Vec ts_decorators
-                        // field). The Zig spec does an in-place struct copy; here we
-                        // swap so the kept property lands at `end` without cloning.
+                        // G::Property is not Copy (Vec ts_decorators field). The Zig
+                        // original does an in-place struct copy; here we swap so the
+                        // kept property lands at `end` without cloning.
                         e_object.properties.slice_mut().swap(end, j);
                         end += 1;
                     }
@@ -536,7 +532,7 @@ impl SideEffects {
             Op::Code::BinStrictEq | Op::Code::BinStrictNe | Op::Code::BinComma
         ));
 
-        // PORT NOTE: Zig threads `p.binary_expression_simplify_stack` (a reusable
+        // The Zig original threads `p.binary_expression_simplify_stack` (a reusable
         // ArrayList on `P`) to avoid per-call allocation. The Rust `P` field is
         // currently `ListManaged<'a, ()>` (placeholder element type — see P.rs:537),
         // so until that's reshaped to `BinaryExpressionSimplifyVisitor` we use a

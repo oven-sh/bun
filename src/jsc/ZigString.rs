@@ -66,14 +66,14 @@ pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObje
     if len > BunString::max_length() {
         // SAFETY: caller contract — `ptr` came from the default (global) allocator.
         unsafe { bun_alloc::default_alloc::free(ptr.cast_mut().cast::<core::ffi::c_void>()) };
-        // TODO(port): Zig used `global.ERR(.STRING_TOO_LONG, msg).throw()`;
-        // the codegen'd `ErrorCode::ERR_STRING_TOO_LONG` builder hasn't landed
-        // yet, so throw a plain RangeError with the same message. Propagation
-        // is swallowed (matches Zig's `catch {}`).
-        let err = global.create_range_error_instance(format_args!(
-            "Cannot create a string longer than 2^32-1 characters"
-        ));
-        let _ = global.throw_value(err);
+        // Zig: `global.ERR(.STRING_TOO_LONG, msg).throw()`; propagation is
+        // swallowed (matches Zig's `catch {}`).
+        let _ = global
+            .err(
+                crate::ErrorCode::STRING_TOO_LONG,
+                format_args!("Cannot create a string longer than 2^32-1 characters"),
+            )
+            .throw();
         return JSValue::ZERO;
     }
     // SAFETY: ptr/len describe a globally-allocated UTF-16 buffer; ownership
@@ -92,8 +92,11 @@ pub(crate) unsafe extern "C" fn ZigString__free(
     let Some(allocator_) = core::ptr::NonNull::new(allocator_) else {
         return;
     };
-    // TODO(port): Zig dereferenced *std.mem.Allocator from opaque ptr — Rust uses global mimalloc;
-    // verify no callers pass a non-default allocator here.
+    // Zig dereferenced `*std.mem.Allocator` from the opaque pointer; on the
+    // Rust side the buffer is always owned by the global allocator. Verified:
+    // no C++ call site passes a non-default allocator — the only reference to
+    // this symbol outside this file is the declaration in
+    // headers-handwritten.h (helpers.h frees via `ZigString__freeGlobal`).
     let _ = allocator_;
     // SAFETY: raw/len describe a valid slice allocated by the caller-provided allocator.
     let s = unsafe { bun_core::ffi::slice(raw, len) };

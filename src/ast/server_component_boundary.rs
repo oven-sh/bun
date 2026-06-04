@@ -75,9 +75,9 @@ impl List {
             reference_source_index,
             ssr_source_index,
         })?;
-        // PORT NOTE: reshaped for borrowck — Zig built `Adapter` from
-        // `m.list.slice()` while also borrowing `m.map` mutably. Here we hand
-        // the adapter just the `source_index` column it needs.
+        // The Zig original built `Adapter` from `m.list.slice()` while also
+        // borrowing `m.map` mutably; for borrowck we hand the adapter just
+        // the `source_index` column it needs.
         let gop = self.map.get_or_put_adapted(
             &source_index,
             &Adapter {
@@ -148,7 +148,7 @@ impl<'a> Slice<'a> {
     }
 }
 
-// PORT NOTE: Zig stored the full `MultiArrayList.Slice` and called
+// The Zig original stored the full `MultiArrayList.Slice` and called
 // `.items(.source_index)` on each compare. The Rust `Slice<T>` is not `Copy`,
 // so we cache just the `source_index` column the adapter actually needs.
 pub(crate) struct Adapter<'a> {

@@ -144,9 +144,9 @@ pub struct Terminal {
     event_loop_handle: EventLoopHandle,
 
     /// Global object reference. Read-only after construction.
-    // PORT NOTE: LIFETIMES.tsv says JSC_BORROW → `&JSGlobalObject`, but Terminal
-    // is a heap-allocated `.classes.ts` m_ctx payload and cannot carry a lifetime
-    // param. Stored as a `BackRef`; deref via `self.global()`.
+    // Terminal is a heap-allocated `.classes.ts` m_ctx payload and cannot
+    // carry a lifetime param, so the global is stored as a `BackRef` rather
+    // than `&JSGlobalObject`; deref via `self.global()`.
     global_this: bun_ptr::BackRef<JSGlobalObject>,
 
     /// Writer for sending data to the terminal
@@ -697,9 +697,8 @@ impl Terminal {
     /// before the thread completes.
     #[cfg(windows)]
     fn close_pseudoconsole_off_thread(&self, hpcon: windows::HPCON) {
-        // PORT NOTE: Zig used `std.Thread.spawn(.{}, fn, .{hpcon})` then
-        // `.detach()`. PORTING.md bans std::process but not std::thread; a raw
-        // detached OS thread matches the Zig (no event-loop integration needed).
+        // PORTING.md bans std::process but not std::thread; a raw detached OS
+        // thread is intentional here (no event-loop integration needed).
         let hpcon_addr = hpcon as usize;
         match std::thread::Builder::new().spawn(move || {
             // SAFETY: hpcon was a valid HPCON when taken; ClosePseudoConsole is
@@ -794,9 +793,9 @@ mod lib_util {
     use super::*;
     use bun_core::ZStr;
 
-    // PORT NOTE: Zig used non-atomic file-level vars (single-threaded init).
-    // PORTING.md §Global mutable state: bool→AtomicBool; handle slot is an
-    // AtomicPtr (null ⇔ None — dlopen never yields a null Some). JS-thread-only.
+    // Per PORTING.md §Global mutable state: the flag is an AtomicBool and the
+    // handle slot an AtomicPtr (null ⇔ None — dlopen never yields a null Some).
+    // JS-thread-only.
     static HANDLE: core::sync::atomic::AtomicPtr<c_void> =
         core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
     static LOADED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
@@ -834,8 +833,8 @@ fn get_open_pty_fn() -> Option<OpenPtyFn> {
     // On macOS, openpty is in libc, so we can use it directly
     #[cfg(target_os = "macos")]
     {
-        // PORT NOTE: declared locally (not via the `libc` crate) so the
-        // `OpenPtyFn` type unifies with the Linux dlsym path.
+        // Declared locally (not via the `libc` crate) so the `OpenPtyFn`
+        // type unifies with the Linux dlsym path.
         unsafe extern "C" {
             // SAFETY precondition: out-param fd pointers must be writable and
             // termp/winp must be null or valid — raw-pointer contract. Kept
@@ -902,9 +901,6 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
             let mut t = termios;
 
             // Input flags: standard terminal input processing
-            // PORT NOTE: Zig used struct-literal flag init on std.posix tc_iflag_t;
-            // Rust libc termios uses raw tcflag_t bitfields, so these are bit-ORs
-            // of the libc constants (identical values).
             t.c_iflag = libc::ICRNL // Map CR to NL on input
                 | libc::IXON // Enable XON/XOFF flow control on output
                 | libc::IXANY // Any character restarts output
@@ -954,8 +950,7 @@ fn create_pty_posix(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError> {
             t.c_cc[libc::VTIME] = 0; // Timeout for non-canonical read
 
             // Set baud rate to 38400 (standard for PTYs)
-            // PORT NOTE: Zig assigned `.B38400` to ispeed/ospeed enum fields;
-            // libc termios on Linux encodes speed in c_cflag, so use
+            // libc termios on Linux encodes speed in c_cflag; use
             // cfsetispeed/cfsetospeed (the portable way to set both).
             // SAFETY: `t` is a fully-initialized termios from tcgetattr.
             unsafe {
@@ -1111,10 +1106,9 @@ fn create_pty_windows(cols: u16, rows: u16) -> Result<PtyResult, CreatePtyError>
     let mut hpcon: Option<windows::HPCON> = None;
 
     // errdefer block: scopeguard captures &mut to all of the above.
-    // PORT NOTE: reshaped for borrowck — using a single closure that reads the
-    // Option cells at drop-time would require interior mutability. Instead,
-    // inline the cleanup at each early-return point. This matches the Zig
-    // errdefer semantics exactly (cleanup runs on every `return Err`).
+    // Cleanup is inlined at each early-return point (a single drop-time
+    // closure reading the Option cells would require interior mutability);
+    // it must run on every `return Err`.
     macro_rules! cleanup {
         () => {
             // SAFETY: every Some(h) is a valid open Win32 handle still owned by
@@ -1262,9 +1256,6 @@ impl Terminal {
             let Some(termios_data) = get_termios(self.master_fd.get()) else {
                 return JSValue::js_number(0.0);
             };
-            // PORT NOTE: Zig used @typeInfo to extract the packed-struct backing
-            // integer of std.posix tc_*flag_t. In Rust/libc these are already raw
-            // integers (tcflag_t), so read the field directly.
             let raw: u64 = match FIELD {
                 TermiosField::Iflag => termios_data.c_iflag as u64,
                 TermiosField::Oflag => termios_data.c_oflag as u64,
@@ -1294,8 +1285,6 @@ impl Terminal {
             let Some(mut termios_data) = get_termios(self.master_fd.get()) else {
                 return Ok(());
             };
-            // PORT NOTE: Zig computed maxInt of the packed-struct backing integer
-            // via @typeInfo. tcflag_t::MAX is the same value (platform width).
             let max_val: f64 = libc::tcflag_t::MAX as f64;
             let clamped = num.max(0.0).min(max_val);
             let bits = clamped as libc::tcflag_t;

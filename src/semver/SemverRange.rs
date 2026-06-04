@@ -29,8 +29,9 @@ impl fmt::Display for Range {
         }
 
         if self.right.op == Op::Unset {
-            // TODO(port): Zig used `{}` on Comparator directly but Comparator has no
-            // top-level `format` in the source — likely dead/broken upstream. Mirroring shape.
+            // Zig used `{}` on Comparator directly, but Comparator has no top-level
+            // `format` in the source — an effectively dead upstream path. Mirroring shape;
+            // the real formatting path is the buffered `Range::fmt(buf)` Formatter below.
             write!(f, "{}", ComparatorDisplay)
         } else {
             write!(f, "{} {}", ComparatorDisplay, ComparatorDisplay,)
@@ -38,11 +39,13 @@ impl fmt::Display for Range {
     }
 }
 
-// PORT NOTE: helper for Range's Display impl above (Zig relied on default struct formatting).
+// Helper for Range's Display impl above (Zig relied on default struct formatting).
 struct ComparatorDisplay;
 impl fmt::Display for ComparatorDisplay {
     fn fmt(&self, _f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // TODO(port): no buffer available here; upstream Zig path appears unused.
+        // Intentionally emits nothing: no source buffer is available here, so the
+        // version's prerelease/build slices can't be rendered. Use `Comparator::fmt(buf)`
+        // (the buffered Formatter) for real output; this mirrors the unused upstream path.
         Ok(())
     }
 }

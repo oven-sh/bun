@@ -3,18 +3,11 @@ use core::ptr::NonNull;
 use bun_core::String;
 use bun_jsc::{JSGlobalObject, JSValue, JsResult};
 
-// PORT NOTE: `jsc.markBinding(@src())` calls were dropped — debug-only binding-trace
-// helper with no Rust equivalent; a `mark_binding!()` macro could be added if wanted.
-
 bun_opaque::opaque_ffi! {
     /// Opaque handle to a WebKit `WTF::URL` allocated on the C++ side.
     pub struct URL;
 }
 
-// TODO(port): move to jsc_sys
-// PORT NOTE: getters take `*const URL` — the C++ side (BunString.cpp) never mutates the
-// WTF::URL on read. `JSGlobalObject` is an opaque FFI handle whose state Rust never
-// observes directly, so it is passed `*const` per the JSGlobalObject.rs convention.
 // Getters take `&URL` (non-null `*const URL` at the C ABI; BunString.cpp never
 // mutates the WTF::URL on read). `&mut String` for the in/out params is
 // ABI-identical to non-null `*mut String`. `URL__deinit` consumes the C++
@@ -95,8 +88,8 @@ impl URL {
         let mut input = str;
         NonNull::new(URL__fromString(&mut input))
     }
-    // TODO(port): from_js/from_string/from_utf8 return an owned C++ heap pointer that
-    // the caller must destroy(). Consider an RAII wrapper instead of NonNull<URL>.
+    // from_js/from_string/from_utf8 return an owned C++ heap pointer that the
+    // caller must destroy().
 
     pub fn protocol(&self) -> String {
         URL__protocol(self)
@@ -148,7 +141,7 @@ impl URL {
         URL__port(self)
     }
 
-    // PORT NOTE: kept as explicit destroy (not Drop) — URL is an opaque #[repr(C)] FFI
+    // Kept as explicit destroy (not Drop) — URL is an opaque #[repr(C)] FFI
     // handle constructed/destroyed across the C++ boundary.
     pub unsafe fn destroy(this: *mut Self) {
         // SAFETY: `this` is a valid *URL from C++; freed exactly once

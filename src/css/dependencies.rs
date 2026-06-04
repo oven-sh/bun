@@ -33,25 +33,21 @@ impl Location {
             column: loc.column,
         }
     }
-
-    // PORT NOTE: Zig `hash` / `eql` methods called `css.implementHash` / `css.implementEql`
-    // (comptime struct-field reflection). Replaced by `#[derive(Hash, PartialEq, Eq)]` above
-    // per PORTING.md §Comptime reflection.
 }
 
 /// An `@import` dependency.
 pub struct ImportDependency {
     /// The url to import.
-    // TODO(port): lifetime — arena-borrowed from `rule.url` (CSS arena); consider `&'bump [u8]`.
+    // Lifetime: arena-borrowed from `rule.url` (CSS arena); valid until the arena is reset.
     pub url: *const [u8],
     /// The placeholder that the URL was replaced with.
-    // TODO(port): lifetime — arena-allocated by `css_modules::hash`.
+    // Lifetime: arena-allocated by `css_modules::hash`.
     pub placeholder: *const [u8],
     /// An optional `supports()` condition.
-    // TODO(port): lifetime — arena-allocated by `to_css::string`.
+    // Lifetime: arena-allocated by `to_css::string`.
     pub supports: Option<*const [u8]>,
     /// A media query.
-    // TODO(port): lifetime — arena-allocated by `to_css::string`.
+    // Lifetime: arena-allocated by `to_css::string`.
     pub media: Option<*const [u8]>,
     /// The location of the dependency in the source file.
     pub loc: SourceRange,
@@ -109,7 +105,6 @@ impl ImportDependency {
 
         let placeholder = crate::css_modules::hash(
             bump,
-            // PORT NOTE: Zig "{s}_{s}", .{ filename, rule.url } → fmt::Arguments
             format_args!(
                 "{}_{}",
                 bstr::BStr::new(filename),
@@ -119,7 +114,7 @@ impl ImportDependency {
         );
 
         ImportDependency {
-            // TODO(zack): should we clone this? lightningcss does that
+            // lightningcss clones this; we borrow from the arena instead.
             url: std::ptr::from_ref::<[u8]>(rule.url),
             placeholder: std::ptr::from_ref::<[u8]>(placeholder),
             supports,
@@ -130,9 +125,12 @@ impl ImportDependency {
                     line: rule.loc.line + 1,
                     column: rule.loc.column,
                 },
+                // Assumes the `@import "url"` form: 8 = len of `@import `, +2 for the
+                // quotes. The `@import url(...)` form yields a slightly-off range —
+                // a limitation inherited from lightningcss (and the Zig port).
                 8,
                 rule.url.len() + 2,
-            ), // TODO: what about @import url(...)?
+            ),
         }
     }
 }
@@ -140,10 +138,10 @@ impl ImportDependency {
 /// A `url()` dependency.
 pub struct UrlDependency {
     /// The url of the dependency.
-    // TODO(port): lifetime — arena-borrowed from `import_records[..].path.pretty`.
+    // Lifetime: arena-borrowed from `import_records[..].path.pretty`.
     pub url: *const [u8],
     /// The placeholder that the URL was replaced with.
-    // TODO(port): lifetime — arena-allocated by `css_modules::hash`.
+    // Lifetime: arena-allocated by `css_modules::hash`.
     pub placeholder: *const [u8],
     /// The location of the dependency in the source file.
     pub loc: SourceRange,
@@ -173,7 +171,7 @@ impl UrlDependency {
 /// Represents the range of source code where a dependency was found.
 pub struct SourceRange {
     /// The filename in which the dependency was found.
-    // TODO(port): lifetime — borrowed from caller (printer's filename); arena/static.
+    // Lifetime: borrowed from the caller (printer's filename); arena- or statically-backed.
     pub file_path: *const [u8],
     /// The starting line and column position of the dependency.
     pub start: Location,

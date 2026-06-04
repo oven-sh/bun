@@ -116,7 +116,7 @@ impl core::fmt::Display for ConsoleObject {
 }
 
 impl ConsoleObject {
-    // PORT NOTE: `adapt_to_new_api(&mut self.stderr_buffer)` captures a raw
+    // `adapt_to_new_api(&mut self.stderr_buffer)` captures a raw
     // pointer into the buffer field, so the struct is self-referential once
     // initialized. The previous out-param shape (`&mut MaybeUninit<Self>`)
     // still let the caller move the value afterwards (e.g.
@@ -131,9 +131,6 @@ impl ConsoleObject {
     // `VirtualMachine.console` stores the raw pointer (`*mut c_void`), so
     // callers leak via `heap::alloc(Pin::into_inner_unchecked(..))` — the
     // VM owns it for the process lifetime.
-    //
-    // TODO(port): make `QuietWriterAdapter` own its 4 KiB buffer so
-    // the self-reference disappears and this can become `-> Self`.
     pub fn init(
         error_writer: Output::StreamType,
         writer: Output::StreamType,
@@ -673,7 +670,7 @@ impl<'a> TablePrinter<'a> {
             is_iterable: tabular_data.is_iterable(global_object)?,
             jstype: tabular_data.js_type(),
             value_formatter: {
-                // PORT NOTE: `Formatter` has a `Drop` impl, so struct-update
+                // `Formatter` has a `Drop` impl, so struct-update
                 // from a temporary is rejected (E0509).
                 let mut f = Formatter::new(global_object);
                 f.single_line = true;
@@ -781,7 +778,7 @@ impl<'a> TablePrinter<'a> {
                     let column: &mut Column = 'brk: {
                         let col_str = BunString::init(col_key);
 
-                        // PORT NOTE: reshaped for borrowck — split find/append.
+                        // reshaped for borrowck — split find/append.
                         if let Some(idx) =
                             columns[1..].iter().position(|col| col.name.eql(&col_str))
                         {
@@ -898,7 +895,7 @@ impl<'a> TablePrinter<'a> {
                 ));
 
                 // `defer` block: release pooled visit map after formatting.
-                // PORT NOTE: Zig's `defer` body also nulls
+                // Zig's `defer` body also nulls
                 // `this.value_formatter.map_node`, but `shallow_clone()`
                 // already guarantees the source's `map_node` is `None`, so
                 // only the local clone needs draining. `Formatter::Drop` does
@@ -948,7 +945,7 @@ impl<'a> TablePrinter<'a> {
                 col.name.deref();
             }
         });
-        // PORT NOTE: reshaped for borrowck — re-borrow through the guard.
+        // reshaped for borrowck — re-borrow through the guard.
         let columns: &mut Vec<Column> = &mut **_deref_names;
 
         // create the first column " " which is always present
@@ -1270,7 +1267,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         let exception = holder.zig_exception();
         err.to_zig_exception(global, exception);
     }
-    // PORT NOTE: reshaped for borrowck — Zig held `exception` and
+    // reshaped for borrowck — Zig held `exception` and
     // `&holder.need_to_clear_parser_arena_on_deinit` simultaneously; in Rust
     // those are two `&mut` into `holder`. Capture the flag in a local and
     // write it back after.
@@ -1485,7 +1482,7 @@ pub fn format2(
 
     if len == 1 {
         // initialized later in this function.
-        // PORT NOTE: `Formatter` has a `Drop` impl, so struct-update from a
+        // `Formatter` has a `Drop` impl, so struct-update from a
         // temporary is rejected (E0509). Construct via `new()` then mutate.
         let mut fmt = Formatter::new(global);
         fmt.ordered_properties = options.ordered_properties;
@@ -1519,7 +1516,7 @@ pub fn format2(
 
             let _ = writer.flush();
         } else {
-            // PORT NOTE: Zig `defer if (options.flush) writer.flush()`.
+            // Zig `defer if (options.flush) writer.flush()`.
             // Reborrow through the guard so SB sees body writes as children
             // of the guard's borrow (see `FlushOnDrop` doc).
             let mut _flush = FlushOnDrop {
@@ -1540,7 +1537,7 @@ pub fn format2(
         return Ok(());
     }
 
-    // PORT NOTE: Zig `defer if (options.flush) writer.flush()`.
+    // Zig `defer if (options.flush) writer.flush()`.
     // Reborrow through the guard so SB sees body writes as children of the
     // guard's borrow (see `FlushOnDrop` doc).
     let mut _flush = FlushOnDrop {
@@ -1550,7 +1547,7 @@ pub fn format2(
     let writer: &mut dyn bun_io::Write = &mut *_flush.writer;
 
     let mut this_value: JSValue = vals[0];
-    // PORT NOTE: see E0509 note above.
+    // see E0509 note above.
     let mut fmt = Formatter::new(global);
     fmt.remaining_values = bun_ptr::RawSlice::new(&vals[1..]);
     fmt.ordered_properties = options.ordered_properties;
@@ -2558,7 +2555,7 @@ pub mod formatter {
                             break;
                         }
 
-                        // PORT NOTE: borrowck — `writer` holds `&mut self.estimated_line_length`,
+                        // borrowck — `writer` holds `&mut self.estimated_line_length`,
                         // so route `remaining_values` reads/writes through the `RawSlice`
                         // field directly instead of the `&self` helper methods.
                         if self.remaining_values.is_empty() {
@@ -2580,7 +2577,7 @@ pub mod formatter {
                                 // then skip the second % so we dont hit it again
                                 slice = &slice[slice.len().min((i + 1) as usize)..];
                                 len = slice.len() as u32;
-                                // PORT NOTE: replicates Zig's `while : (i += 1)` continue-
+                                // replicates Zig's `while : (i += 1)` continue-
                                 // expression — Zig's `i = 0; continue;` is bumped to 1 by
                                 // the continue-expr, so the next iteration inspects
                                 // `slice[1]`, not `slice[0]`. (This is itself an upstream
@@ -2889,10 +2886,9 @@ pub mod formatter {
             }
         }
 
-        // TODO(port): Zig computed `length_ignoring_formatted_values` at
-        // comptime by walking the format string. We'd need a `const fn` /
-        // proc-macro to recover that; for now the count is a runtime
-        // argument computed by the `pretty!` macro.
+        // Zig computed `length_ignoring_formatted_values` at comptime by
+        // walking the format string; Rust has no equivalent, so the count is a
+        // runtime argument computed by the `pretty!` macro.
         pub fn pretty<const ENABLE_ANSI_COLOR: bool>(
             &mut self,
             fmt_len: usize,
@@ -5079,7 +5075,7 @@ pub mod formatter {
                 }
             };
 
-            // PORT NOTE: Zig `@tagName(event_type)`. `EventType` is a transparent
+            // Zig `@tagName(event_type)`. `EventType` is a transparent
             // u8 newtype (non-exhaustive enum), so there is no derived `From<EventType>
             // for &str`; only the two arms above can reach here.
             let event_tag_name: &'static str = match event_type {
@@ -5217,12 +5213,10 @@ pub mod formatter {
             Ok(())
         }
 
-        // TODO(port): JSX printing is large (≈230 LOC) and entirely
-        // self-contained string formatting over `value.get("type"/"key"/"props"
-        // /"children")`. The logic is reproduced here at the same control-flow
-        // shape; verify against existing JSX snapshot tests
-        // (`test/js/bun/util/inspect.test.js`) before trusting the borrow-reseat
-        // points.
+        // JSX printing is large (≈230 LOC) and entirely self-contained string
+        // formatting over `value.get("type"/"key"/"props"/"children")`; the
+        // logic is reproduced here at the same control-flow shape as the Zig
+        // original (covered by `test/js/bun/util/inspect.test.js` snapshots).
         #[inline(never)]
         fn print_jsx<const C: bool>(
             &mut self,
@@ -5247,13 +5241,13 @@ pub mod formatter {
             writer.write_all(pf!("<r>").as_bytes());
             writer.write_all(b"<");
 
-            // PORT NOTE: Zig initialized `needs_space = false` / `tag_name_slice = .empty`,
+            // Zig initialized `needs_space = false` / `tag_name_slice = .empty`,
             // but both arms of the `type` if/else below assign them, so deferred init
             // avoids the dead-store warning while keeping semantics identical.
             let mut needs_space: bool;
             let mut tag_name_str = ZigString::init(b"");
 
-            // PORT NOTE: Zig spelled this `ZigString.Slice` with an explicit
+            // Zig spelled this `ZigString.Slice` with an explicit
             // `defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit()`.
             // The Rust `ZigStringSlice` enum frees on `Drop`, so the scopeguard
             // is unnecessary.
@@ -5753,7 +5747,7 @@ pub mod formatter {
                 return Ok(());
             }
 
-            // PORT NOTE: `ArrayBuffer.typed_array_type` is `JSType` in the Rust
+            // `ArrayBuffer.typed_array_type` is `JSType` in the Rust
             // port (see array_buffer.rs), not the C-API `TypedArrayType` enum.
             writer.write_all(
                 if array_buffer.typed_array_type == jsc::JSType::Uint8Array
@@ -5813,7 +5807,7 @@ pub mod formatter {
             Ok(())
         }
 
-        // PORT NOTE: associated fn (no `&mut self`) so callers can pass a
+        // associated fn (no `&mut self`) so callers can pass a
         // `WrappedWriter` that already borrows `&mut self.estimated_line_length`
         // without tripping E0499. The only `self` use was `print_comma`, which
         // `WrappedWriter` mirrors.
@@ -6089,7 +6083,7 @@ pub extern "C" fn Bun__ConsoleObject__timeLog(
     Output::flush();
 
     // print the arguments
-    // PORT NOTE: `Formatter` has a `Drop` impl, so struct-update from a
+    // `Formatter` has a `Drop` impl, so struct-update from a
     // temporary is rejected (E0509). Construct via `new()` then mutate.
     let mut fmt = Formatter::new(global);
     fmt.max_depth = bun_options_types::context::try_get()

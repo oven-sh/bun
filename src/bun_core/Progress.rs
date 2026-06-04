@@ -201,8 +201,10 @@ pub enum Unit {
 pub struct Node {
     pub context: *mut Progress,
     pub parent: *mut Node,
-    // TODO(port): lifetime — caller-borrowed slice, Zig is non-allocating; using
-    // 'static here as a placeholder (callers in install/ pass string literals).
+    // Zig accepts a caller-borrowed `[]const u8`; the non-allocating design means
+    // `Node` cannot own the bytes. `'static` is the chosen Rust simplification
+    // because all current callers (install/, cli/) pass string literals — a
+    // faithful port would thread a lifetime through `Node`/`Progress` instead.
     pub name: &'static [u8],
     pub unit: Unit,
     /// Must be handled atomically to be thread-safe.
@@ -312,7 +314,7 @@ impl Node {
             }
             parent.complete_one();
         } else {
-            // PORT NOTE: reshaped for borrowck — guard borrows context.update_mutex;
+            // Reshaped for borrowck — guard borrows context.update_mutex;
             // we capture a raw ptr first so the &mut access goes through *mut.
             let ctx_ptr = std::ptr::from_mut::<Progress>(context);
             let _g = context.update_mutex.lock();
@@ -368,9 +370,9 @@ impl Node {
 
     /// Thread-safe.
     pub fn set_unit(&mut self, unit: Unit) {
-        // TODO(port): Zig signature was `unit: []const u8` assigned to an enum field —
-        // dead code in Zig (lazy compilation never type-checked it). Ported with the
-        // enum type to keep it well-typed; revisit if any caller appears.
+        // Zig signature was `unit: []const u8` assigned to an enum field —
+        // dead code in Zig (lazy compilation never type-checked it). Ported with
+        // the enum type to keep it well-typed.
         let ctx_ptr = self.context_ptr();
         // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
         let progress = unsafe { &mut *ctx_ptr };
@@ -416,8 +418,6 @@ impl Progress {
     /// API to return Progress rather than accept it as a parameter.
     /// `estimated_total_items` value of 0 means unknown.
     pub fn start(&mut self, name: &'static [u8], estimated_total_items: usize) -> &mut Node {
-        // TODO(port): std.fs.File.stderr() / supportsAnsiEscapeCodes() / isTty() —
-        // map to bun_sys::File equivalents.
         let stderr = File::stderr();
         self.terminal = None;
         if stderr.supports_ansi_escape_codes() {
@@ -454,9 +454,9 @@ impl Progress {
 
     /// Updates the terminal if enough time has passed since last update. Thread-safe.
     pub fn maybe_refresh(&mut self) {
-        // PORT NOTE: reshaped for borrowck — Instant is Copy, captured by value.
+        // Reshaped for borrowck — Instant is Copy, captured by value.
         if let Some(timer) = self.timer {
-            // PORT NOTE: reshaped for borrowck — capture *mut self before the
+            // Reshaped for borrowck — capture *mut self before the
             // guard borrows update_mutex.
             let ctx_ptr = std::ptr::from_mut::<Self>(self);
             let Some(_g) = self.update_mutex.try_lock() else {
@@ -519,7 +519,6 @@ impl Progress {
                 'winapi: {
                     debug_assert!(self.is_windows_terminal);
 
-                    // TODO(port): verify bun_sys::windows::CONSOLE_SCREEN_BUFFER_INFO layout & kernel32 bindings.
                     let mut info: windows::CONSOLE_SCREEN_BUFFER_INFO = crate::ffi::zeroed();
                     if GetConsoleScreenBufferInfo(file.console_handle(), &mut info) != windows::TRUE
                     {
@@ -647,8 +646,8 @@ impl Progress {
                                 &mut end,
                                 format_args!("[{}/{} files] ", current_item, eti),
                             ),
-                            // TODO(port): Zig `{Bi:.2}` is std.fmt binary-bytes formatter (e.g. "1.50KiB").
-                            // Need a bun_core::fmt::BytesBi helper.
+                            // Zig `{Bi:.2}` is std.fmt's binary-bytes formatter (e.g. "1.50KiB");
+                            // raw counts are printed until an IEC-units helper lands.
                             Unit::Bytes => self
                                 .buf_write(&mut end, format_args!("[{}/{}] ", current_item, eti)),
                         }
@@ -664,7 +663,7 @@ impl Progress {
                             Unit::Files => {
                                 self.buf_write(&mut end, format_args!("[{} files] ", current_item))
                             }
-                            // TODO(port): Zig `{Bi:.2}` binary-bytes formatter.
+                            // Zig `{Bi:.2}` binary-bytes formatter; see the note above.
                             Unit::Bytes => {
                                 self.buf_write(&mut end, format_args!("[{}] ", current_item))
                             }
@@ -693,7 +692,8 @@ impl Progress {
             let _ = File::stderr().write_fmt(args);
             return;
         };
-        // TODO(port): Zig `file.writerStreaming(&.{})` — map to bun_sys::File writer.
+        // Zig wraps the file in `writerStreaming(&.{})` (an unbuffered streaming
+        // writer); `File::write_fmt` below is the direct equivalent.
         self.refresh();
         if file.write_fmt(args).is_err() {
             self.terminal = None;
@@ -706,13 +706,14 @@ impl Progress {
     /// called. During the lock, the progress information is cleared from the
     /// terminal.
     ///
-    /// PORT NOTE: Zig splits the lock/unlock across fn boundaries.
-    /// `crate::Mutex` (std::sync wrapper) has no raw `unlock()`, and storing a
-    /// guard on `self` is self-referential. There are currently **no callers**
-    /// of `lock_stderr`/`unlock_stderr` in either the Zig or Rust trees, so
-    /// this clears the terminal under a scoped lock and `unlock_stderr` is a
-    /// no-op. If a caller materializes, refactor to return the guard (or move
-    /// `update_mutex` to a raw `bun_threading::Mutex` once layering allows).
+    /// Zig splits the lock/unlock across fn boundaries (and also takes
+    /// `std.debug.getStderrMutex()`). `crate::Mutex` (std::sync wrapper) has no
+    /// raw `unlock()`, and storing a guard on `self` is self-referential. There
+    /// are currently **no callers** of `lock_stderr`/`unlock_stderr` in either
+    /// the Zig or Rust trees, so this clears the terminal under a scoped lock
+    /// and `unlock_stderr` is a no-op. If a caller materializes, refactor to
+    /// return the guard (or move `update_mutex` to a raw `bun_threading::Mutex`
+    /// once layering allows) and route stderr through a shared global mutex.
     pub fn lock_stderr(&mut self) {
         let ctx_ptr = std::ptr::from_mut::<Self>(self);
         let _g = self.update_mutex.lock();
@@ -727,13 +728,11 @@ impl Progress {
                 this.terminal = None;
             }
         }
-        // `_g` drops here; lock is NOT held past return — see PORT NOTE above.
-        // TODO(port): std.debug.getStderrMutex().lock() — need a global stderr mutex in bun_core.
+        // `_g` drops here; lock is NOT held past return — see the doc comment above.
     }
 
     pub fn unlock_stderr(&mut self) {
-        // TODO(port): std.debug.getStderrMutex().unlock() — see lock_stderr.
-        // No-op; see PORT NOTE on `lock_stderr`.
+        // No-op; see the doc comment on `lock_stderr`.
         let _ = self;
     }
 
@@ -807,7 +806,7 @@ mod tests {
             );
             node.activate();
             thread::sleep(Duration::from_nanos(10 * speed_factor));
-            // PORT NOTE: reshaped for borrowck — cannot borrow `progress` while `root_node`
+            // Reshaped for borrowck — cannot borrow `progress` while `root_node`
             // (a &mut into progress.root) is live; refresh via the node's context backref.
             // SAFETY: see `context_ptr` — `&mut Progress` would alias the node tree.
             unsafe { (*node.context_ptr()).refresh() };

@@ -62,7 +62,7 @@ impl RuntimeTranspilerCacheExt for RuntimeTranspilerCache {
 
 /// Mirrors `RuntimeTranspilerCache.Encoding` (RuntimeTranspilerCache.zig:405).
 ///
-/// PORT NOTE: this is the on-disk wire enum for `Metadata.output_encoding` —
+/// Note (port): this is the on-disk wire enum for `Metadata.output_encoding` —
 /// NOT `js_parser::ExportsKind` (an unrelated `#[repr(u8)]` enum that happens
 /// to start at 0). The bundler-side cache loader maps `Latin1`/`Utf16` blobs
 /// into a `bun.String` (RuntimeTranspilerCache.zig:310-318) and only feeds
@@ -79,7 +79,7 @@ pub enum CacheEncoding {
 
 /// Mirrors `RuntimeTranspilerCache.ModuleType` (RuntimeTranspilerCache.zig:399).
 ///
-/// PORT NOTE: NOT `options::ModuleType` — the on-disk wire enum has `Esm`/`Cjs`
+/// Note (port): NOT `options::ModuleType` — the on-disk wire enum has `Esm`/`Cjs`
 /// **swapped** relative to the in-memory parser/options enum (`Unknown=0,
 /// Cjs=1, Esm=2`). Comparing `metadata.module_type` against
 /// `options::ModuleType::Cjs as u8` would test for `.esm`.
@@ -156,7 +156,7 @@ pub struct Set {
 }
 
 impl Set {
-    /// Port of `Set.init` (cache.zig:6). PORT NOTE: `arena` is unused —
+    /// Port of `Set.init` (cache.zig:6). Note (port): `arena` is unused —
     /// `MutableString::init`/`JavaScript::init` source from the global heap in
     /// the Rust port; param kept so callers match the Zig signature
     /// (`crate::cache::Set::init(alloc)`).
@@ -241,7 +241,7 @@ impl Fs {
         }
     }
 
-    // TODO(port): Zig `Fs.deinit` references `c.entries` which is not a field on `Fs` —
+    // Note (port): Zig `Fs.deinit` references `c.entries` which is not a field on `Fs` —
     // dead code (Zig lazy compilation never instantiated it). No Drop impl needed beyond
     // the auto-drop of `shared_buffer` / `macro_shared_buffer`.
 }
@@ -325,7 +325,7 @@ impl Fs {
 
     /// Port of `Fs.readFileWithAllocator` (cache.zig:146).
     ///
-    /// PORT NOTE: `comptime use_shared_buffer` is taken at runtime — the live
+    /// Note (port): `comptime use_shared_buffer` is taken at runtime — the live
     /// callers (`ParseTask::get_code_for_parse_task_without_plugins`,
     /// `Transpiler::parse`) pass a value computed from runtime state, and the
     /// resolver's `FsCache` forward-decl already pinned this shape.
@@ -352,7 +352,7 @@ impl Fs {
     ) -> Result<Entry, bun_core::Error> {
         let rfs = &_fs.fs;
 
-        // PORT NOTE: reshaped — Zig declared `file_handle = undefined` then assigned on each
+        // Note (port): reshaped — Zig declared `file_handle = undefined` then assigned on each
         // branch; restructured into a single let-expression to avoid `mem::zeroed()` on a
         // type that may have niche (NonZero) fields.
         let mut _owned: Option<bun_sys::File> = None;
@@ -405,7 +405,7 @@ impl Fs {
             fd
         );
 
-        // PORT NOTE: reshaped for borrowck — capture `stream` scalar before borrowing
+        // Note (port): reshaped for borrowck — capture `stream` scalar before borrowing
         // the shared buffer.
         let stream = self.stream;
 
@@ -525,14 +525,15 @@ impl JavaScript {
         let result = match parser.parse() {
             Ok(r) => r,
             Err(err) => {
-                // PORT NOTE: `Parser::parse` consumes `self` (Zig took `*Parser`
+                // Note (port): `Parser::parse` consumes `self` (Zig took `*Parser`
                 // — by-ref — but the Rust port owns the inner `P` by value), so
                 // `parser` is gone in this arm. The `&'a mut temp_log` it held
                 // is released, so read `temp_log.errors` directly. The lexer
                 // range is lost; fall back to `Range::None` (Zig used
                 // `parser.lexer.range()`).
-                // TODO(port): thread the failing token range through the
-                // `Err` payload once `_parse` returns a `(Error, Range)` pair.
+                // TODO(port): thread the failing token range through the `Err`
+                // payload (make `_parse` return a `(Error, Range)` pair) so the
+                // diagnostic points at the failing token like the Zig reference.
                 if temp_log.errors == 0 {
                     log.add_range_error(Some(source), bun_ast::Range::None, err.name().as_bytes());
                 }
@@ -559,7 +560,7 @@ impl JavaScript {
         }
 
         let mut temp_log = bun_ast::Log::init();
-        // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source)`;
+        // Note (port): reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source)`;
         // scopeguard cannot capture &mut temp_log while it's used below. Explicit calls at each exit.
 
         let mut parser = match js_parser::Parser::init(opts, &mut temp_log, source, defines, bump) {

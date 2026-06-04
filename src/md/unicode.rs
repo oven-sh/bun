@@ -1,6 +1,3 @@
-// PORT NOTE: Zig `u21` (codepoint) → `u32`; Zig `u2` (count) → `u8`.
-// Rust has no arbitrary-bit-width integers; the next natural width is used.
-
 pub(crate) struct FoldInfo {
     pub codepoints: [u32; 3],
     pub n_codepoints: u8,

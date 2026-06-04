@@ -26,7 +26,6 @@ extern crate self as bun_css;
 ///     _                            => Err(location.new_unexpected_token_error(token)),
 /// }}
 /// ```
-// TODO(port): swap body to phf when CI hasher lands.
 #[macro_export]
 macro_rules! match_ignore_ascii_case {
     ($name:expr, { $( $($lit:literal)|+ $(if $guard:expr)? => $arm:expr ,)* _ => $fallback:expr $(,)? }) => {{
@@ -387,15 +386,16 @@ pub struct Num {
 pub struct Dimension {
     pub num: Num,
     /// e.g. "px"
-    // TODO(port): arena lifetime — &'static placeholder per PORTING.md §AST crates.
+    // Borrows the parser arena/source; `&'static` placeholder per PORTING.md §AST crates.
     pub unit: &'static [u8],
 }
 
 /// CSS lexer token. Data-only definition hoisted out of `css_parser.rs`; the
 /// `to_css*`/`eql`/`hash` impls stay in `css_parser.rs` (gated) since they
 /// depend on `serializer::*` and `generics`.
-// TODO(port): every &'static [u8] payload borrows the parser arena/source;
-// thread `<'a>` once the bumpalo arena lifetime is plumbed.
+// Every `&'static [u8]` payload actually borrows the parser arena/source text and
+// must not outlive the arena; `&'static` is the crate-wide placeholder until the
+// bumpalo arena lifetime is plumbed through.
 #[derive(Clone, Debug)]
 pub enum Token {
     Ident(&'static [u8]),

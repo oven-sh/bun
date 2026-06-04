@@ -21,7 +21,6 @@ impl<'a> ArrayList<'a> {
     }
 }
 
-// PORT NOTE: Zig methods took `@This()` by value (a `*ArrayList(u8)` is Copy).
 // `WriterContext` requires `Copy`, so the context wraps a `BackRef` to the
 // caller's `Vec<u8>`; the `'a` borrow is the safety invariant (Vec outlives ctx).
 #[derive(Clone, Copy)]

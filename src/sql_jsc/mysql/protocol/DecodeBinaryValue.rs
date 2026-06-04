@@ -13,7 +13,6 @@ bun_core::declare_scope!(MySQLDecodeBinaryValue, visible);
 /// with binary collations (e.g., utf8mb4_bin) which have different character_set values.
 pub(crate) const BINARY_CHARSET: u16 = 63;
 
-// TODO(port): narrow error set
 pub fn decode_binary_value<Context: ReaderContext>(
     global_object: &JSGlobalObject,
     field_type: types::FieldType,
@@ -278,7 +277,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
                         let remaining = w.len();
                         break 'brk &buffer[..32 - remaining];
                     };
-                    // PORT NOTE: reshaped for borrowck — compute remaining before re-borrowing buffer
+                    // reshaped for borrowck — compute remaining before re-borrowing buffer
                     Ok(SQLDataCell {
                         tag: CellTag::String,
                         value: CellValue {
@@ -309,7 +308,7 @@ pub fn decode_binary_value<Context: ReaderContext>(
             l @ (11 | 7 | 4) => {
                 let data = reader.read(l as usize)?;
                 let time = DateTime::from_data(&data)?;
-                // PORT NOTE: Zig's `!SQLDataCell` is anyerror; map JsError variants to their
+                // Zig's `!SQLDataCell` is anyerror; map JsError variants to their
                 // interned bun_core::Error names so `?` can widen here.
                 let ts = time.to_js_timestamp(global_object).map_err(|e| match e {
                     bun_jsc::JsError::OutOfMemory => bun_core::err!("OutOfMemory"),

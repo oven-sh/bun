@@ -20,7 +20,9 @@ pub struct LayerName {
 }
 
 // The inline hash/eql context is replaced by `Hash`/`PartialEq` impls on `LayerName` below.
-// TODO(port): ArrayHashMap must use wyhash (u32-truncated) to match Zig iteration order.
+// Iteration order is insertion order in both Zig's `ArrayHashMap` and this
+// port (collections/array_hash_map.rs) regardless of hash function, so the
+// hasher does not need to match Zig's wyhash.
 pub type LayerNameHashMap<V> = ArrayHashMap<LayerName, V>;
 
 impl core::hash::Hash for LayerName {
@@ -39,7 +41,7 @@ impl PartialEq for LayerName {
 }
 impl Eq for LayerName {}
 
-// PORT NOTE: trait `Clone` (not just inherent `deep_clone`) so the bundler's
+// Trait `Clone` (not just inherent `deep_clone`) so the bundler's
 // `Chunk::Layers::to_owned` can `deep_clone_with(|l| l.clone())`. Segments are
 // arena-borrowed `&'static [u8]` (Copy), so this is the same shallow
 // `SmallList` copy as `deep_clone` / `clone_with_import_records`.
@@ -116,7 +118,7 @@ impl LayerName {
     }
 
     pub fn deep_clone(&self, _bump: &Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` — `[]const u8` segments are
+        // `css.implementDeepClone` — `[]const u8` segments are
         // arena-owned (identity copy per generics.zig "const strings"). Same
         // body as `clone_with_import_records` above.
         LayerName { v: self.v.clone() }
@@ -163,7 +165,7 @@ impl<R> LayerBlockRule<R> {
     where
         R: css::generics::DeepClone<'bump>,
     {
-        // PORT NOTE: `css.implementDeepClone` field-walk.
+        // `css.implementDeepClone` field-walk.
         Self {
             name: self.name.as_ref().map(|n| n.deep_clone(bump)),
             rules: self.rules.deep_clone(bump),
@@ -200,7 +202,7 @@ pub struct LayerStatementRule {
 
 impl LayerStatementRule {
     pub fn deep_clone(&self, bump: &Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk.
+        // `css.implementDeepClone` field-walk.
         let mut names = SmallList::<LayerName, 1>::default();
         for n in self.names.slice() {
             names.append(n.deep_clone(bump));

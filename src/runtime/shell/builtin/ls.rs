@@ -61,8 +61,7 @@ impl Ls {
     }
 
     pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
-        // PORT NOTE: reshaped for borrowck — match on a tag, drop the
-        // borrow, then act.
+        // Match on a tag, drop the borrow, then act.
         enum Tag {
             Idle,
             Exec,

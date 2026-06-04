@@ -88,6 +88,30 @@ enum State {
     Done,
 }
 
+/// Owned +1 reference to a `us_ssl_ctx_t` (`SSL_CTX*`); releases the ref via
+/// `SSL_CTX_free` on drop (BoringSSL decrements its internal refcount).
+/// Plays the role of Zig's `SslCtxRef` for the upgrade-client lifecycle:
+/// either dropped here, or transferred to the connected `WebSocket` via
+/// `into_raw()` after the upgrade completes.
+struct SslCtxOwned(*mut SslCtx);
+
+impl SslCtxOwned {
+    /// Transfer ownership of the retained ref to the caller without freeing.
+    fn into_raw(self) -> *mut SslCtx {
+        let p = self.0;
+        core::mem::forget(self);
+        p
+    }
+}
+
+impl Drop for SslCtxOwned {
+    fn drop(&mut self) {
+        // SAFETY: `self.0` is an owned retained ref (returned with +1 by
+        // `ssl_ctx_cache_get_or_create`) that has not been transferred out.
+        unsafe { boringssl::c::SSL_CTX_free(self.0) };
+    }
+}
+
 /// `NewHTTPUpgradeClient(comptime ssl: bool) type` — generic over `SSL`.
 ///
 /// `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})` — intrusive single-thread
@@ -101,7 +125,7 @@ pub struct HTTPClient<const SSL: bool> {
     outgoing_websocket: Option<*mut CppWebSocket>,
     /// Owned request bytes. Freed via `clear_input`.
     input_body_buf: Vec<u8>,
-    // PORT NOTE: reshaped for borrowck — Zig `to_send: []const u8` is always a
+    // Reshaped for borrowck — Zig `to_send: []const u8` is always a
     // suffix of `input_body_buf`; stored here as the suffix length so we don't
     // hold a self-referential slice.
     to_send_len: usize,
@@ -122,11 +146,8 @@ pub struct HTTPClient<const SSL: bool> {
     /// `us_ssl_ctx_t` built from `ssl_config` when it carries a custom CA.
     /// Heap-allocated because ownership transfers to the connected
     /// `WebSocket` after the upgrade completes (so the `SSL_CTX` outlives
-    /// this struct).
-    // TODO(port): Zig held a strong `SslCtxRef` (RAII over `SSL_CTX_up_ref`/
-    // `SSL_CTX_free`). No such wrapper exists in `bun_uws` yet; store the raw
-    // retained pointer and release in `clear_data`/Drop callers.
-    secure: Option<*mut SslCtx>,
+    /// this struct). RAII: dropping the wrapper releases the retained ref.
+    secure: Option<SslCtxOwned>,
 
     /// Expected Sec-WebSocket-Accept value for handshake validation per RFC 6455 §4.2.2.
     /// This is base64(SHA-1(Sec-WebSocket-Key + "258EAFA5-E914-47DA-95CA-C5AB0DC85B11")).
@@ -139,33 +160,18 @@ pub struct HTTPClient<const SSL: bool> {
     offered_permessage_deflate: bool,
 }
 
-// Handler set referenced by `dispatch.zig` (kind = `.ws_client_upgrade[_tls]`).
+// Handler set referenced by the dispatch table (kind = `.ws_client_upgrade[_tls]`).
 // The `register()` C++ round-trip that previously installed these on a
 // shared `us_socket_context_t` is gone — sockets are stamped with the
-// kind at connect time and routed here statically.
+// kind at connect time and routed via the `RawSocketEvents<SSL>` impl in
+// `bun_runtime::socket::uws_handlers`, which forwards to the `pub
+// handle_*` methods below.
 //
-// TODO(port): expose these as a `uws::SocketHandlerSet` const for the dispatch
-// table; in Zig these were `pub const onOpen = handleOpen;` etc.
-//
-// These take `*mut Self` (not `&mut Self`) because uSockets dispatches them
-// from the raw userdata pointer and several of them can free `Self` (via
+// The handlers take `*mut Self` (not `&mut Self`) because uSockets dispatches
+// them from the raw userdata pointer and several of them can free `Self` (via
 // `deref` reaching zero) or be re-entered synchronously by `tcp.close()` /
 // C++ callbacks. Holding a `&mut Self` function-argument across either of
 // those is UB under Stacked Borrows (argument protectors / aliased `&mut`).
-impl<const SSL: bool> HTTPClient<SSL> {
-    pub const ON_OPEN: unsafe fn(*mut Self, Socket<SSL>) = Self::handle_open;
-    pub const ON_CLOSE: unsafe fn(*mut Self, Socket<SSL>, c_int, *mut c_void) = Self::handle_close;
-    pub const ON_DATA: unsafe fn(*mut Self, Socket<SSL>, &[u8]) = Self::handle_data;
-    pub const ON_WRITABLE: unsafe fn(*mut Self, Socket<SSL>) = Self::handle_writable;
-    pub const ON_TIMEOUT: unsafe fn(*mut Self, Socket<SSL>) = Self::handle_timeout;
-    pub const ON_LONG_TIMEOUT: unsafe fn(*mut Self, Socket<SSL>) = Self::handle_timeout;
-    pub const ON_CONNECT_ERROR: unsafe fn(*mut Self, Socket<SSL>, c_int) =
-        Self::handle_connect_error;
-    pub const ON_END: unsafe fn(*mut Self, Socket<SSL>) = Self::handle_end;
-    pub const ON_HANDSHAKE: unsafe fn(*mut Self, Socket<SSL>, i32, uws::us_bun_verify_error_t) =
-        Self::handle_handshake;
-}
-
 impl<const SSL: bool> HTTPClient<SSL> {
     /// Zig: `meta.typeName(T)` keeps the full path because the name contains `(`.
     const TYPE_NAME: &'static str = if SSL {
@@ -391,7 +397,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             using_proxy
         );
 
-        // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `vm` mutably and
+        // Reshaped for borrowck — `rare_data()` borrows `vm` mutably and
         // `ws_upgrade_group` also wants a `vm` reference. See websocket_client.rs.
         let group = {
             // SAFETY: `rare_data()` returns `&mut RareData` reached through a
@@ -445,8 +451,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         };
                         // Owned ref; transferred to the connected WebSocket on
                         // upgrade, freed in `deinit` if we never get that far.
-                        client_ref.secure = Some(ctx);
-                        break 'brk client_ref.secure;
+                        client_ref.secure = Some(SslCtxOwned(ctx));
+                        break 'brk Some(ctx);
                     }
                 }
                 // SAFETY: `vm_ptr` is the live per-thread VM; JS thread.
@@ -591,14 +597,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
         // ssl_config: Option<Box<SSLConfig>> — Drop runs SSLConfig::deinit + frees the box.
         self.ssl_config = None;
-        // secure: raw retained `SSL_CTX*` (no RAII wrapper yet — see field
-        // TODO(port)). Release the ref taken in `connect`.
-        if let Some(s) = self.secure.take() {
-            // SAFETY: `s` was returned by `create_ssl_client_context_for`
-            // (one owned ref) and has not been freed; SSL_CTX_free decrements
-            // BoringSSL's internal refcount.
-            unsafe { boringssl::c::SSL_CTX_free(s) };
-        }
+        // secure: Option<SslCtxOwned> — Drop releases the ref taken in `connect`.
+        self.secure = None;
     }
 
     /// # Safety
@@ -856,7 +856,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     pub fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
-        // PORT NOTE: `InternalSocket` has no `PartialEq`; compare native handles.
+        // `InternalSocket` has no `PartialEq`; compare native handles.
         socket.get_native_handle() == self.tcp.get_native_handle()
     }
 
@@ -973,7 +973,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         };
 
         let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
-        // PORT NOTE: reshaped for borrowck — copy remain_buf out before mutating self.
+        // Reshaped for borrowck — copy remain_buf out before mutating self.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
         // PERF(port): was zero-copy slice into self.body.
         // SAFETY: `me`'s last use is the `body` slice above (now copied out);
@@ -1052,7 +1052,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         log!("Proxy tunnel established");
 
         let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
-        // PORT NOTE: reshaped for borrowck — copy remain_buf before clearing self.body.
+        // Reshaped for borrowck — copy remain_buf before clearing self.body.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
         // PERF(port): was zero-copy slice.
 
@@ -1161,7 +1161,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        // PORT NOTE: reshaped for borrowck — re-borrow proxy after uses above.
+        // Reshaped for borrowck — re-borrow proxy after uses above.
         // SAFETY: re-derive a fresh `&mut`.
         let me = unsafe { &mut *this };
         let Some(p) = &mut me.proxy else {
@@ -1283,7 +1283,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         };
 
         let bytes_read = usize::try_from(response.bytes_read).expect("int cast");
-        // PORT NOTE: reshaped for borrowck — copy remain_buf out before mutating self.
+        // Reshaped for borrowck — copy remain_buf out before mutating self.
         let remain_buf: Vec<u8> = body[bytes_read..].to_vec();
         // PERF(port): was zero-copy slice.
         // SAFETY: `me`'s last use is the `body` slice above (now copied out);
@@ -1693,8 +1693,9 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         } else {
                             None
                         },
-                        // ownership transferred; suppress the drop above
-                        saved_secure.take().map(|p| &mut *p),
+                        // ownership transferred; `into_raw` suppresses the
+                        // RAII release at fn end.
+                        saved_secure.take().map(|s| &mut *s.into_raw()),
                     )
                 };
             } else {
@@ -1719,12 +1720,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         }
         // Zig: `defer if (saved_secure) |s| bun.BoringSSL.c.SSL_CTX_free(s);`
         // Any arm above that didn't transfer ownership to `did_connect` left
-        // the retained `SSL_CTX*` in `saved_secure`; release it now.
-        if let Some(s) = saved_secure {
-            // SAFETY: `s` is the owned ref taken out of `self.secure` above;
-            // not aliased after this point.
-            unsafe { boringssl::c::SSL_CTX_free(s) };
-        }
+        // the retained ref in `saved_secure`; RAII drop releases it now.
+        drop(saved_secure);
     }
 
     pub fn memory_cost(&self) -> usize {
@@ -1850,7 +1847,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 /// (no allocation) or allocates a UTF-8 copy. The resulting slices are stored
 /// here so build_request_body / build_connect_request can index them by &[u8].
 ///
-// PORT NOTE: reshaped for borrowck — Zig stored parallel `name_slices` /
+// Reshaped for borrowck — Zig stored parallel `name_slices` /
 // `value_slices` arrays of `[]const u8` borrowing into `slices`. That is
 // self-referential in Rust; instead store only the `Utf8Slice` array (len =
 // 2*count, names at even indices, values at odd) and yield pairs via `iter()`.
@@ -2194,9 +2191,19 @@ fn compute_accept_value(key: &[u8]) -> [u8; 28] {
 // extern "C" export shims for the generic `connect`/`cancel`/`memoryCost`.
 // Zig's `exportAll()` does `@export(&connect, .{ .name = ... })` per `ssl`.
 // Rust cannot `#[no_mangle]` a generic, so monomorphize both here.
-// TODO(port): full C-ABI parameter mapping for `connect` (Option<&T> niche,
-// Option<Box<T>> niche, raw `*const BunString` arrays). Verify against the
-// C++ caller in JSWebSocket.cpp / WebSocket.cpp.
+//
+// C-ABI mapping (verified against the declarations in
+// src/jsc/bindings/headers.h and the call sites in WebSocket.cpp):
+//   - non-null `const BunString*` params (host/path/protocols) → `&BunString`;
+//   - nullable `const BunString*` params (proxyHost/proxyAuthorization/
+//     targetAuthorization/unixSocketPath, passed as `nullptr` or `&local`)
+//     → `Option<&BunString>` (guaranteed null-pointer niche);
+//   - `BunString*` array + `size_t` count pairs → `*const BunString` + `usize`
+//     (count may be 0 with a dangling/null begin(); never dereferenced then);
+//   - `void* sslConfig` (ownership transferred, boxed by
+//     `Bun__WebSocket__parseSSLConfig`) → `Option<Box<SSLConfig>>`
+//     (null-pointer niche; Box matches the transferred ownership).
+// Keep these signatures in sync with headers.h if either side changes.
 // ──────────────────────────────────────────────────────────────────────────
 
 macro_rules! export_http_client {
@@ -2275,7 +2282,7 @@ macro_rules! export_http_client {
         };
     };
 }
-// PORT NOTE: `${concat(...)}` metavar-expr is unstable; hand-expand the two
+// `${concat(...)}` metavar-expr is unstable; hand-expand the two
 // instantiations by passing the pre-concatenated idents.
 
 export_http_client!(

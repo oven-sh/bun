@@ -98,7 +98,6 @@ impl DotEnvBehavior {
 /// this T2 crate names no `bun_s3_signing` types — see PORTING.md §Dispatch (cold-path,
 /// upward dep). The high-tier caller constructs the real refcounted `S3Credentials` from
 /// this POD at the call site.
-// TODO(port): once bun_s3_signing TYPE_ONLY move-down lands ≤T2, re-export that struct here.
 #[derive(Clone, Default)]
 pub struct S3Credentials {
     pub access_key_id: Box<[u8]>,
@@ -239,7 +238,7 @@ impl<'a> Loader<'a> {
 
     pub fn get_s3_credentials(&mut self) -> &S3Credentials {
         if self.aws_credentials.is_none() {
-            // PORT NOTE: reshaped for borrowck — Zig stored borrowed `[]const u8` slices into
+            // reshaped for borrowck — Zig stored borrowed `[]const u8` slices into
             // the env map; here we copy to `Box<[u8]>` so the cached struct owns its bytes and
             // we can release the `&self` borrow before writing `&mut self.aws_credentials`.
             // PERF(port): one-shot, cached — copies are negligible.
@@ -473,7 +472,7 @@ impl<'a> Loader<'a> {
             Some(p) => p,
             None => return Ok(()),
         };
-        // PORT NOTE: borrowck — `path` borrows `self.map`; `which` writes into `buf` and
+        // borrowck — `path` borrows `self.map`; `which` writes into `buf` and
         // returns a borrow of `buf`. Copy the result before mutating `self.map`.
         let ccache_path: Box<[u8]> = which(&mut buf, path, fs.top_level_dir(), b"ccache")
             .map(|z| Box::<[u8]>::from(z.as_bytes()))
@@ -528,7 +527,7 @@ impl<'a> Loader<'a> {
                 let Some(node) = self.get_node_path(fs, &mut buf) else {
                     return Ok(false);
                 };
-                // PORT NOTE: Zig used `fs.dirname_store.append` (interning arena
+                // Zig used `fs.dirname_store.append` (interning arena
                 // returning 'static slice). RwLock owns a Box; just box here.
                 Box::from(node.as_bytes())
             }
@@ -647,7 +646,7 @@ impl<'a> Loader<'a> {
         &mut self,
         str: &[u8],
     ) -> Result<(), AllocError> {
-        // PORT NOTE: Zig built a `logger.Source` here; the only field `Parser`
+        // Zig built a `logger.Source` here; the only field `Parser`
         // reads is `.contents`, so go straight to `parse_bytes` and avoid the
         // `Source.contents: &'static [u8]` lifetime constraint (callers like
         // `node:util.parseEnv` pass JS-owned non-'static buffers).
@@ -728,7 +727,7 @@ impl<'a> Loader<'a> {
     ) -> Result<(), bun_core::Error> {
         let dir_handle = bun_sys::Fd::cwd();
 
-        // PORT NOTE: Zig calls `dir.hasComptimeQuery(...)` on a
+        // Zig calls `dir.hasComptimeQuery(...)` on a
         // `*FileSystem.DirEntry` (env_loader.zig). `bun_dotenv` sits below
         // `bun_resolver` in the crate graph, so the directory entry is taken
         // generically — `bun_resolver::fs::DirEntry` impls `DirEntryProbe`.
@@ -834,7 +833,7 @@ impl<'a> Loader<'a> {
             }
         }
 
-        // PORT NOTE: `iterator()` requires `&mut self`; iterate `keys()` slice instead.
+        // `iterator()` requires `&mut self`; iterate `keys()` slice instead.
         for k in self.custom_files_loaded.keys() {
             loaded_i += 1;
             if count == 1 || (loaded_i >= count && count > 1) {
@@ -874,7 +873,7 @@ impl<'a> Loader<'a> {
             return Ok(());
         }
 
-        // PORT NOTE: Zig used `std.fs.Dir.openFile` whose error set names
+        // Zig used `std.fs.Dir.openFile` whose error set names
         // (`error.FileNotFound`, `error.FileBusy`, …) don't map 1:1 to errno.
         // `bun_sys` is errno-based, so the match arms below approximate the Zig
         // error groups by errno. Any errno not listed propagates (matches the
@@ -925,12 +924,11 @@ impl<'a> Loader<'a> {
             }
         }
 
-        // TODO(port): Zig retained the file buffer in `Source.contents`; here we
-        // drop it after parsing because `bun_ast::Source.contents` is
-        // `&'static [u8]` and §Forbidden bans `Box::leak`. The stored `Source`
-        // is only ever checked for `.is_some()` / its path printed, so dropping
-        // the bytes is observationally identical. Revisit once `bun_logger`
-        // grows an owning `contents`.
+        // Zig retained the file buffer in `Source.contents`; here we drop it
+        // after parsing because `bun_ast::Source.contents` is `&'static [u8]`
+        // and §Forbidden bans `Box::leak`. The stored `Source` is only ever
+        // checked for `.is_some()` / its path printed, so dropping the bytes
+        // is observationally identical.
         *self.default_file_slot(base) = Some(bun_ast::Source::init_path_string(base, b""));
         Ok(())
     }
@@ -948,7 +946,7 @@ impl<'a> Loader<'a> {
             Ok(f) => f,
             Err(_) => {
                 // prevent retrying
-                // PORT NOTE: `Source::init_path_string` requires a `'static` path; the
+                // `Source::init_path_string` requires a `'static` path; the
                 // map key already carries `file_path` (boxed), and the value is never
                 // read for its path/contents — only `.contains()` and key iteration —
                 // so an empty placeholder is observationally identical.
@@ -974,8 +972,8 @@ impl<'a> Loader<'a> {
             }
         }
 
-        // TODO(port): see `load_env_file` — `Source.contents` not retained
-        // pending the `bun_logger` owning-`Str` rework.
+        // See `load_env_file` — `Source.contents` is not retained; only
+        // `.contains()` / key iteration are ever observed.
         self.custom_files_loaded
             .put(file_path, bun_ast::Source::default())?;
         Ok(())
@@ -1149,7 +1147,7 @@ impl<'a> Parser<'a> {
                         return Ok(Some(self.value_buffer.as_slice()));
                     }
                     self.pos = start;
-                    // PORT NOTE: fallthrough to outer loop's `end += 1` (Zig switch fallthrough)
+                    // fallthrough to outer loop's `end += 1` (Zig switch fallthrough)
                 }
                 _ => {}
             }
@@ -1165,7 +1163,7 @@ impl<'a> Parser<'a> {
         if end >= self.src.len() {
             return Ok(&self.src[self.src.len()..]);
         }
-        // PORT NOTE: reshaped for borrowck — `parse_quoted` returns a borrow of
+        // reshaped for borrowck — `parse_quoted` returns a borrow of
         // `self.value_buffer`; capture only its length, then re-borrow the buffer
         // after the match so the unquoted fallthrough can re-borrow `self`.
         let quoted_len: Option<usize> = match self.src[end] {
@@ -1279,7 +1277,7 @@ impl<'a> Parser<'a> {
                 continue;
             };
             let value = self.parse_value::<IS_PROCESS>()?;
-            // PORT NOTE: reshaped for borrowck — value borrows self.value_buffer; copy before map mut.
+            // reshaped for borrowck — value borrows self.value_buffer; copy before map mut.
             let value_owned: Box<[u8]> = Box::from(value);
             let entry = map.map.get_or_put(key)?;
             if entry.found_existing {
@@ -1298,7 +1296,7 @@ impl<'a> Parser<'a> {
             };
         }
         if !IS_PROCESS && EXPAND {
-            // PORT NOTE: borrowck — Zig iterates `map` while calling `map.get` inside expandValue.
+            // borrowck — Zig iterates `map` while calling `map.get` inside expandValue.
             // Reshaped to index-based iteration: clone the value bytes, run expansion against an
             // immutable `&Map`, then write back via `values_mut()`. The clone matches the Zig:
             // values are dupe'd by `_parse` above, so length is bounded by file size.
@@ -1323,7 +1321,7 @@ impl<'a> Parser<'a> {
     /// Same as [`parse`] but takes the source bytes directly. Exists so
     /// `load_env_file*` can parse a transient `Vec<u8>` without constructing a
     /// `bun_ast::Source` (whose `contents` field is currently `&'static [u8]`).
-    // PORT NOTE: Zig built a `logger.Source` and passed `&source` — the only
+    // Zig built a `logger.Source` and passed `&source` — the only
     // field `Parser` reads is `.contents`, so this is observationally identical.
     pub(crate) fn parse_bytes<const OVERRIDE: bool, const IS_PROCESS: bool, const EXPAND: bool>(
         src: &[u8],
@@ -1347,8 +1345,9 @@ pub type Value = HashTableValue;
 
 #[derive(Default, Clone)]
 pub struct HashTableValue {
-    // TODO(port): Zig stored borrowed `[]const u8`; values are sometimes allocator.dupe'd, sometimes
-    // borrowed from environ. Using Box<[u8]> here for owned-by-default; may want Cow if the copies matter.
+    // Zig stored borrowed `[]const u8` (sometimes allocator.dupe'd, sometimes
+    // borrowed from environ); `Box<[u8]>` is owned-by-default, trading some
+    // copies for uniform ownership.
     pub value: Box<[u8]>,
     pub conditional: bool,
 }
@@ -1405,9 +1404,9 @@ impl Map {
 
     /// Returns a wrapper around the std.process.EnvMap that does not duplicate the memory of
     /// the keys and values, but instead points into the memory of the bun env map.
-    // TODO(refactor): `bun_sys::EnvMap` is `HashMap<String, String>`, which copies and is
-    // UTF-8-lossy. Zig's `std.process.EnvMap` stored `[]const u8` borrows. Replace
-    // `bun_sys::EnvMap` with a `&[u8]`-keyed map and drop the lossy round-trip here.
+    // `bun_sys::EnvMap` is `HashMap<String, String>`, which copies and is
+    // UTF-8-lossy (Zig's `std.process.EnvMap` stored `[]const u8` borrows);
+    // the lossy round-trip is accepted here.
     #[allow(clippy::disallowed_methods)] // lossy round-trip documented above
     pub fn std_env_map(&mut self) -> Result<StdEnvMapWrapper, AllocError> {
         let mut env_map = bun_sys::EnvMap::default();
@@ -1541,9 +1540,9 @@ impl Map {
 
     #[inline]
     pub fn put_alloc_key(&mut self, key: &[u8], value: &[u8]) -> Result<(), AllocError> {
-        // TODO(port): Zig stored borrowed `value` here without dupe; Box<[u8]> forces a copy.
-        // If `HashTableValue.value` ever becomes `Cow`/borrowed storage, re-diverge from
-        // `put_alloc_key_and_value` (which dupes both key and value).
+        // Zig stored borrowed `value` here without dupe; `Box<[u8]>` storage
+        // forces a copy, making this equivalent to `put_alloc_key_and_value`
+        // (which dupes both key and value).
         self.put_alloc_key_and_value(key, value)
     }
 
@@ -1565,7 +1564,7 @@ impl Map {
     }
 
     pub fn json_stringify(&self, writer: &mut impl core::fmt::Write) -> core::fmt::Result {
-        // PORT NOTE: `iterator()` requires `&mut self`; iterate parallel slices instead.
+        // `iterator()` requires `&mut self`; iterate parallel slices instead.
         let count = self.map.count();
         writer.write_str("{")?;
         for (i, (k, v)) in self
@@ -1664,7 +1663,7 @@ impl StdEnvMapWrapper {
 // Drop replaces deinit (only frees hash_map storage; Rust does this automatically)
 
 // Zig: `pub var instance: ?*Loader = null;` — global mutable raw pointer, freely re-assignable.
-// PORT NOTE: Loader is !Sync (holds `&mut Map`); same single-thread invariant the Zig had.
+// Loader is !Sync (holds `&mut Map`); same single-thread invariant the Zig had.
 // We store a raw `*mut` in an AtomicPtr (overwritable, matches `pub var` semantics) and hand
 // the raw pointer back to callers so the no-alias `&mut` proof obligation lives at the *call
 // site*, not here — manufacturing `&'static mut` inside an accessor is aliased-&mut UB the

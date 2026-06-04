@@ -236,7 +236,7 @@ impl SourceContentPtr {
 impl ParsedSourceMap {
     /// Thread-safe ref-count helpers (Zig: `ThreadSafeRefCount.ref/deref`).
     ///
-    /// PORT NOTE: Zig uses an *intrusive* count (`bun.new` + embedded
+    /// Zig uses an *intrusive* count (`bun.new` + embedded
     /// `ref_count`, freed via `bun.destroy`). The Rust port allocates every
     /// table-stored `ParsedSourceMap` via `Arc::into_raw` (see
     /// `SavedSourceMap::get_with_content` and `ParseUrl.map:
@@ -375,7 +375,7 @@ impl ParsedSourceMap {
     }
 }
 
-// PORT NOTE: Zig `deinit` conditionally skipped freeing `internal` when
+// Zig `deinit` conditionally skipped freeing `internal` when
 // `is_standalone_module_graph` (the blob borrows bytes from the standalone
 // module graph section). The current `InternalSourceMap` stub has no Drop, so
 // the conditional is a no-op. When `InternalSourceMap.rs` is un-gated, retype

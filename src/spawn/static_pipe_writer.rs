@@ -49,11 +49,12 @@ pub struct StaticPipeWriter<P: StaticPipeWriterProcess> {
     /// True while `start()`'s `+1` ref is outstanding.
     pub started: bool,
     /// Slice into `self.source`'s storage, advanced as bytes are written.
-    // TODO(refactor): self-borrow into `self.source`; consider storing an
-    // offset+len pair and re-slicing from `self.source` instead of a raw self-pointer.
-    // `RawSlice` (typed `*const [u8]` with safe `.slice()`) replaces the raw fat
-    // pointer so the per-access unsafe derefs are gone; the backing storage
-    // (`self.source`) outlives `self` by construction.
+    ///
+    /// Self-borrow invariant: this aliases `self.source`'s storage, which
+    /// outlives `self` by construction; every path that detaches/frees the
+    /// source (`on_error`, `on_close`, `Drop`) must reset this to
+    /// `RawSlice::EMPTY` first. `RawSlice` (typed `*const [u8]` with safe
+    /// `.slice()`) keeps the per-access unsafe derefs out of the call sites.
     pub buffer: RawSlice<u8>,
 }
 
@@ -124,7 +125,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
 
     /// Zig: `pub fn create(event_loop: anytype, subprocess: *ProcessType, result: StdioResult, source: Source) *This`
     ///
-    /// PORT NOTE: Zig's `anytype` dispatched on type (`EventLoopHandle`,
+    /// Zig's `anytype` dispatched on type (`EventLoopHandle`,
     /// `*VirtualMachine`, `*MiniEventLoop`) inside `EventLoopHandle.init`. The
     /// Rust port splits that into separate overloads, so callers resolve to an
     /// `EventLoopHandle` before calling and we accept it directly.
@@ -181,7 +182,7 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
         // Zig `this.ref()` — intrusive-refcount increment.
         // SAFETY: `self` is a live `Self` (created via `create()`/`heap::alloc`).
         unsafe { RefCount::<Self>::ref_(std::ptr::from_mut::<Self>(self)) };
-        // TODO(port): self-borrow — see `buffer` field note.
+        // Self-borrow into `self.source` — see `buffer` field invariant.
         self.buffer = RawSlice::new(self.source.slice());
         #[cfg(windows)]
         {
@@ -314,6 +315,9 @@ impl<P: StaticPipeWriterProcess> StaticPipeWriter<P> {
 impl<P: StaticPipeWriterProcess> Drop for StaticPipeWriter<P> {
     fn drop(&mut self) {
         self.writer.end();
+        // `buffer` aliases `self.source`'s storage; clear it before detach()
+        // frees that storage (upholds the field's documented invariant).
+        self.buffer = RawSlice::EMPTY;
         self.source.detach();
     }
 }

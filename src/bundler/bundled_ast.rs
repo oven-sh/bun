@@ -39,7 +39,7 @@ pub(crate) type NamedExports = bun_ast::ast_result::NamedExports;
 pub(crate) type NamedImports = bun_ast::ast_result::NamedImports;
 pub type TopLevelSymbolToParts = bun_ast::ast_result::TopLevelSymbolToParts;
 
-// PORT NOTE: Zig stores `MultiArrayList(BundledAst)` on `Graph.ast` /
+// Zig stores `MultiArrayList(BundledAst)` on `Graph.ast` /
 // `LinkerGraph.ast` and the bundler indexes columns via `.items(.field)`
 // (see `linker_context/scanImportsAndExports.zig`, `LinkerContext.zig`).
 // `` generates the `BundledAstField` enum +
@@ -59,7 +59,7 @@ pub struct BundledAst<'arena> {
     /// they can be manipulated efficiently without a full AST traversal
     pub import_records: import_record::List<'arena>,
 
-    // PORT NOTE: Ast.hashbang is `StoreStr`; mirror it here so init/to_ast can
+    // Ast.hashbang is `StoreStr`; mirror it here so init/to_ast can
     // round-trip.
     pub hashbang: StoreStr,
     pub parts: part::List<'arena>,
@@ -69,7 +69,8 @@ pub struct BundledAst<'arena> {
     pub url_for_css: &'arena [u8],
     pub symbols: symbol::List<'arena>,
     pub module_scope: Scope,
-    // TODO(port): Zig used `= undefined`; only valid when flags.HAS_CHAR_FREQ is set.
+    // Zig used `= undefined`; only meaningful when flags.HAS_CHAR_FREQ is set
+    // (the Rust port zero-initializes instead of leaving it undefined).
     pub char_freq: CharFreq,
     pub exports_ref: Ref,
     pub module_ref: Ref,
@@ -189,7 +190,7 @@ impl<'arena> BundledAst<'arena> {
         }
     }
 
-    // PORT NOTE: Zig's `*const BundledAst` bitwise-copies every field; the Rust
+    // Zig's `*const BundledAst` bitwise-copies every field; the Rust
     // collection types aren't Copy, so consume `self` to move them (toAST is a
     // one-shot conversion back to the fat Ast).
     pub fn to_ast(self) -> Ast<'arena> {
@@ -370,7 +371,7 @@ impl<'arena> BundledAst<'arena> {
                 let total_buffer_len = data_url_prefix_len + encode_len;
                 // PERF(port): was arena alloc via `arena.alloc(u8, n)`; using bumpalo here.
                 let encoded: &mut [u8] = bump.alloc_slice_fill_copy(total_buffer_len, 0u8);
-                // PORT NOTE: Zig's std.fmt.bufPrint with `{s}` writes raw bytes; BStr's Display
+                // Zig's std.fmt.bufPrint with `{s}` writes raw bytes; BStr's Display
                 // would emit 3-byte U+FFFD for non-UTF-8 input and overflow the fixed prefix slice.
                 encoded[..5].copy_from_slice(b"data:");
                 encoded[5..5 + mime_type.len()].copy_from_slice(mime_type);

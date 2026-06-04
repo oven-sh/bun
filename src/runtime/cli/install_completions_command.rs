@@ -8,18 +8,13 @@ use bun_paths::PathBuffer;
 use bun_paths::WPathBuffer;
 #[cfg(not(windows))]
 use bun_paths::{platform, resolve_path};
-use bun_sys::{self, Dir, E, File};
+use bun_sys::{self, E, File};
 
 use crate::shell_completions::{Shell, ShellCompletionsExt as _};
 
 pub struct InstallCompletionsCommand;
 
 impl InstallCompletionsCommand {
-    pub fn test_path(_: &[u8]) -> Result<Dir, bun_core::Error> {
-        // TODO(port): Zig body is empty (`pub fn testPath(_: string) !std.fs.Dir {}`)
-        unreachable!()
-    }
-
     #[cfg(not(windows))]
     const BUNX_NAME: &'static str = if cfg!(debug_assertions) {
         "bunx-debug"
@@ -218,7 +213,6 @@ impl InstallCompletionsCommand {
     }
 
     pub fn exec() -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // Fail silently on auto-update.
         let fail_exit_code: u32 = if !env_var::IS_BUN_AUTO_UPDATE.get().unwrap_or(false) {
             1
@@ -232,7 +226,6 @@ impl InstallCompletionsCommand {
 
         let mut shell = Shell::Unknown;
         if let Some(shell_name) = env_var::SHELL.platform_get() {
-            // TODO(port): Shell.fromEnv(@TypeOf(shell_name), shell_name) — generic over u8/u16
             shell = Shell::from_env(shell_name);
         }
 

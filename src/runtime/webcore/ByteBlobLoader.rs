@@ -18,7 +18,7 @@ pub struct ByteBlobLoader {
     /// https://github.com/oven-sh/bun/issues/14988
     /// Necessary for converting a ByteBlobLoader from a Blob -> back into a Blob
     /// Especially for DOMFormData, where the specific content-type might've been serialized into the data.
-    // TODO(port): Zig stored either an owned dupe or a borrowed slice from `blob` gated by
+    // Zig stored either an owned dupe or a borrowed slice from `blob` gated by
     // `content_type_allocated`. Collapsed to always-owned `Box<[u8]>`; the flag is kept for
     // structural parity (transferred to Blob in to_any_blob).
     pub content_type: Box<[u8]>,
@@ -82,9 +82,9 @@ bun_core::impl_field_parent! { ByteBlobLoader => Source.context; pub fn parent_c
 
 impl ByteBlobLoader {
     pub fn setup(&mut self, blob: &Blob, user_chunk_size: blob::SizeType) {
-        // TODO(port): in-place init — `self` is a pre-allocated slot inside `Source`
+        // In-place init — `self` is a pre-allocated slot inside `Source`.
         let store = blob.store.get().as_ref().unwrap().clone();
-        // PORT NOTE: Zig did `var blobe = blob.*; blobe.resolveSize();` — `Blob` is not
+        // Zig did `var blobe = blob.*; blobe.resolveSize();` — `Blob` is not
         // `Clone` in Rust, so use the non-mutating `resolved_size()` helper instead.
         let (offset, size) = blob.resolved_size();
         // Zig borrowed `blob.content_type` when `!blob.content_type_allocated`
@@ -164,7 +164,7 @@ impl ByteBlobLoader {
     }
 
     pub fn to_any_blob(&mut self, global: &JSGlobalObject) -> Option<blob::Any> {
-        // PORT NOTE: reshaped for borrowck — Zig captured `store` then called detachStore();
+        // reshaped for borrowck — Zig captured `store` then called detachStore();
         // here we take ownership via detach_store() up front.
         let store = self.detach_store()?;
         if self.offset == 0 && self.remain == store.size() && self.content_type.is_empty() {

@@ -131,9 +131,6 @@ macro_rules! owned_task {
     };
 }
 
-// PORT NOTE: Zig used `bun.once` (a `Lock`+bool+data lazy-init pattern). Per
-// PORTING.md §Concurrency, that maps to `std::sync::OnceLock<T>` — std handles
-// the double-checked locking and gives a `&'static ThreadPool` directly.
 static POOL: OnceLock<ThreadPool> = OnceLock::new();
 
 #[cold]

@@ -696,8 +696,8 @@ impl<T: VersionInt> VersionType<T> {
             return match T::parse_ascii(&bytes[0..byte_i as usize]) {
                 Some(v) => Some(v),
                 None => {
-                    // TODO(port): Output.prettyErrorln with @errorName — Rust parse
-                    // error doesn't carry a Zig-style tag name.
+                    // Zig printed `@errorName(err)` here; the Rust parse error carries
+                    // no tag name, so the message omits it.
                     bun_core::pretty_errorln!(
                         "ERROR parsing version: \"{}\", bytes: {}",
                         bstr::BStr::new(input),
@@ -1079,7 +1079,7 @@ impl Tag {
         } else {
             let pre_slice = self.pre.slice(slice);
             buf[..pre_slice.len()].copy_from_slice(pre_slice);
-            // PORT NOTE: reshaped for borrowck — Zig does
+            // reshaped for borrowck — Zig does
             // `String.init(buf.*, buf.*[0..pre_slice.len])` then advances buf.
             // We capture the init args before advancing.
             pre = SemverString::init(buf, &buf[0..pre_slice.len()]);

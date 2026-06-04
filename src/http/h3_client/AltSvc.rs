@@ -131,7 +131,7 @@ struct Record {
     expires_at: i64,
 }
 
-// PORT NOTE: module-level mutable state. Zig used a plain `var`; safe because
+// module-level mutable state. Zig used a plain `var`; safe because
 // every access is on the single HTTP thread (see module doc).
 // PORTING.md §Global mutable state: HTTP-thread-only map → RacyCell.
 static CACHE: bun_core::RacyCell<Option<StringHashMap<Record>>> = bun_core::RacyCell::new(None);
@@ -163,32 +163,16 @@ fn key<'a>(buf: &'a mut [u8], hostname: &[u8], port: u16) -> &'a [u8] {
     // hostname verbatim, then format only the port.
     cursor.write_all(hostname).expect("unreachable");
     write!(cursor, ":{}", port).expect("unreachable");
-    // PORT NOTE: reshaped for borrowck — capture remaining len before reborrowing buf.
+    // reshaped for borrowck — capture remaining len before reborrowing buf.
     let remaining = cursor.len();
     let written = buf.len() - remaining;
     &buf[..written]
 }
 
 fn sweep_expired(now: i64) {
-    let cache = cache();
-    // Unmanaged hash-map iteration is not removal-safe; restart after each removal.
-    // TODO(port): `StringHashMap` API — assumes `iter()` yielding `(&Box<[u8]>, &Record)`
-    // and `remove(&[u8])` that drops the owned key. Adjust to actual bun_collections API.
-    'outer: loop {
-        let mut to_remove: Option<Box<[u8]>> = None;
-        for (k, v) in cache.iter() {
-            if now >= v.expires_at {
-                to_remove = Some(Box::<[u8]>::from(&**k));
-                break;
-            }
-        }
-        match to_remove {
-            Some(k) => {
-                cache.remove(&k[..]);
-            }
-            None => break 'outer,
-        }
-    }
+    // `retain` (hashbrown, via DerefMut) is removal-safe during iteration;
+    // dropping each removed entry frees its owned key.
+    cache().retain(|_, v| now < v.expires_at);
 }
 
 /// Remember (or refresh / clear) the h3 alternative for `origin_host:origin_port`
@@ -221,7 +205,7 @@ pub(crate) fn record(origin_host: &[u8], origin_port: u16, field_value: &[u8]) {
             return;
         }
     }
-    // PORT NOTE: `StringHashMap::put` dupes the key on insert (matches Zig getOrPut).
+    // `StringHashMap::put` dupes the key on insert (matches Zig getOrPut).
     let _ = cache().put(
         k,
         Record {

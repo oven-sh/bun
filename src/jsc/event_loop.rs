@@ -63,7 +63,7 @@ pub struct EventLoop {
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
     ///
-    /// PORT NOTE (§Dispatch): payload is `*mut ()` — the real
+    /// Note (§Dispatch): payload is `*mut ()` — the real
     /// `bun_runtime::timer::ImmediateObject` lives in the higher-tier crate
     /// (cycle). Low tier stores the erased pointer; the high-tier hook
     /// (link-time `__bun_run_immediate_task`) casts it back.
@@ -71,16 +71,16 @@ pub struct EventLoop {
     pub next_immediate_tasks: Vec<*mut ()>,
 
     pub concurrent_tasks: ConcurrentQueue,
-    // TODO(port): lifetime — *JSGlobalObject backref owned by VM
+    // BACKREF — `*JSGlobalObject` owned by the VM; outlives this EventLoop.
     pub global: Option<NonNull<JSGlobalObject>>,
-    // TODO(port): lifetime — *VirtualMachine backref (EventLoop is a field of VirtualMachine)
+    // BACKREF — owning `*VirtualMachine` (EventLoop is a value field of it).
     pub virtual_machine: Option<NonNull<VirtualMachine>>,
     pub waker: Option<Waker>,
-    // TODO(port): lifetime — ?*uws.Timer FFI handle
+    // `?*uws.Timer` FFI handle.
     pub forever_timer: Option<NonNull<uws::Timer>>,
     pub deferred_tasks: DeferredTaskQueue::DeferredTaskQueue,
     #[cfg(windows)]
-    // TODO(port): lifetime — ?*uws.Loop FFI handle
+    // `?*uws.Loop` FFI handle.
     pub uws_loop: Option<NonNull<uws::Loop>>,
     #[cfg(not(windows))]
     pub uws_loop: (),
@@ -90,7 +90,7 @@ pub struct EventLoop {
     pub concurrent_ref: AtomicI32,
     /// `std.atomic.Value(?*Timer.WTFTimer)` — atomic nullable pointer.
     ///
-    /// PORT NOTE (§Dispatch): payload is `*mut ()` — the real
+    /// Note (§Dispatch): payload is `*mut ()` — the real
     /// `bun_runtime::timer::WTFTimer` lives in the higher-tier crate (cycle).
     /// Low tier stores the erased pointer; the high-tier hook installed via
     /// (link-time `__bun_run_wtf_timer`) casts it back.
@@ -216,8 +216,6 @@ mod drain_result {
     pub(super) const JS_TERMINATED: u8 = 1;
 }
 
-// TODO(port): move to jsc_sys
-//
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; C++ mutating
 // the microtask queue through it is interior mutation invisible to Rust.
 unsafe extern "C" {
@@ -335,7 +333,7 @@ impl EventLoop {
 
         self.entered_event_loop_count -= 1;
         self.debug.exit();
-        // PORT NOTE: reshaped for borrowck — Zig `defer this.debug.exit()` moved to tail; no early returns
+        // Note: reshaped for borrowck — Zig `defer this.debug.exit()` moved to tail; no early returns
     }
 
     /// `enter()` now, `exit()` on drop. Takes the raw VM-owned pointer so the
@@ -365,7 +363,7 @@ impl EventLoop {
             Ok(())
         };
 
-        // PORT NOTE: spec event_loop.zig:92-103 uses `try drainMicrotasksWithGlobal(...)`
+        // Note: spec event_loop.zig:92-103 uses `try drainMicrotasksWithGlobal(...)`
         // which returns BEFORE reaching `entered_event_loop_count -= 1`; only
         // `defer this.debug.exit()` runs on the error path. Mirror that here.
         if result.is_ok() {
@@ -422,7 +420,7 @@ impl EventLoop {
         self.deferred_tasks.run();
         vm.is_inside_deferred_task_queue.set(false);
 
-        // PORT NOTE: spec event_loop.zig:144-146 guards on `event_loop_handle != null`
+        // Note: spec event_loop.zig:144-146 guards on `event_loop_handle != null`
         // but then calls `this.virtual_machine.uwsLoop().drainQuicIfNecessary()`.
         // On Windows `uwsLoop()` returns `uws.Loop.get()` (NOT `event_loop_handle`,
         // which is the libuv loop). Mirror that here.
@@ -489,7 +487,7 @@ impl EventLoop {
         let this: *mut Self = core::hint::black_box(this);
         // SAFETY: as above.
         unsafe { (*this).exit() };
-        // PORT NOTE: reshaped for borrowck — `defer this.exit()` moved to tail; no early returns
+        // Note: reshaped for borrowck — `defer this.exit()` moved to tail; no early returns
     }
 
     pub fn run_callback_with_result(
@@ -513,7 +511,7 @@ impl EventLoop {
         let this: *mut Self = core::hint::black_box(this);
         // SAFETY: as above.
         unsafe { (*this).exit() };
-        // PORT NOTE: reshaped for borrowck — `defer this.exit()` moved to tail
+        // Note: reshaped for borrowck — `defer this.exit()` moved to tail
         result
     }
 
@@ -571,7 +569,7 @@ impl EventLoop {
 
         let mut iter = concurrent.iterator();
         let start_count = self.tasks.readable_length();
-        // PORT NOTE: Zig resets `head = 0` when empty as a micro-opt; LinearFifo
+        // Note: Zig resets `head = 0` when empty as a micro-opt; LinearFifo
         // realigns internally on grow, so this is folded into `ensure_unused_capacity`.
 
         let _ = self.tasks.ensure_unused_capacity(count);
@@ -610,7 +608,7 @@ impl EventLoop {
     }
 
     fn update_counts(&mut self) {
-        // PORT NOTE: spec event_loop.zig:283-284 unwraps `event_loop_handle.?`
+        // Note: spec event_loop.zig:283-284 unwraps `event_loop_handle.?`
         // (panic). Do NOT silently drop the swapped delta when the handle is
         // missing — refs queued via `ref_concurrently()` would be lost forever.
         let delta = self.concurrent_ref.swap(0, Ordering::SeqCst);
@@ -686,7 +684,7 @@ impl EventLoop {
         crate::top_scope!(scope, self.global_ref());
         self.entered_event_loop_count += 1;
         self.debug.enter();
-        // PORT NOTE: reshaped for borrowck — Zig
+        // Note: reshaped for borrowck — Zig
         //   `defer scope.deinit(); defer { entered_event_loop_count -= 1; debug.exit() }`
         // is inlined at each return site below (a scopeguard closure would
         // alias `&mut self`).
@@ -695,7 +693,7 @@ impl EventLoop {
         self.tick_concurrent();
         self.process_gc_timer();
 
-        // PORT NOTE: reshaped for borrowck — `vm_ref()` is `&'static`, so the
+        // Note: reshaped for borrowck — `vm_ref()` is `&'static`, so the
         // global borrow detaches from `&self` and survives the `&mut self` call.
         let global = self.vm_ref().global();
         let global_vm = self.vm_ref().jsc_vm();
@@ -747,7 +745,7 @@ impl EventLoop {
         }
 
         self.vm_ref().suppress_microtask_drain.set(prev);
-        // PORT NOTE: reshaped for borrowck — `defer vm.suppress_microtask_drain = prev` moved to tail
+        // Note: reshaped for borrowck — `defer vm.suppress_microtask_drain = prev` moved to tail
     }
 
     pub fn enqueue_task(&mut self, task: Task) {
@@ -858,7 +856,7 @@ impl EventLoop {
                 requeue.push(task);
             }
         }
-        // PORT NOTE: Zig's `tasks.deinit()` / `clearAndFree()` map to dropping
+        // Note: Zig's `tasks.deinit()` / `clearAndFree()` map to dropping
         // the owned buffers; reassigning a fresh value drops the old in place.
         self.tasks = Queue::init();
         for task in requeue {
@@ -875,7 +873,7 @@ impl EventLoop {
         }
     }
 
-    /// PORT NOTE (§Dispatch): `task` is an erased
+    /// Note (§Dispatch): `task` is an erased
     /// `*mut bun_runtime::timer::ImmediateObject` — see [`RunImmediateFn`].
     pub fn enqueue_immediate_task(&mut self, task: *mut ()) {
         self.immediate_tasks.push(task);
@@ -885,7 +883,7 @@ impl EventLoop {
     /// immediate queues, drains the now-current batch, then recycles the
     /// drained Vec as the next-tick buffer.
     ///
-    /// PORT NOTE: the real `ImmediateObject` lives in `bun_runtime` (cycle), so
+    /// Note: the real `ImmediateObject` lives in `bun_runtime` (cycle), so
     /// the per-task body dispatches through `__bun_run_immediate_task` (link-
     /// time, definer in `bun_runtime`). The swap always happens — this is
     /// load-bearing for `auto_tick`'s `has_pending_immediate` read, which must
@@ -962,7 +960,7 @@ impl EventLoop {
             let vm = self.vm();
             // SAFETY: `vm` is the live owning VM.
             unsafe { (*vm).event_loop_handle = Some(Async::Loop::get()) };
-            // PORT NOTE: reshaped for borrowck — Zig passes `vm.gc_controller` and
+            // Note: reshaped for borrowck — Zig passes `vm.gc_controller` and
             // `vm` simultaneously; route through raw addr_of to avoid stacked-borrow
             // aliasing of the embedded field with its parent.
             // SAFETY: `vm` is the live owning VM; gc_controller is embedded.
@@ -978,7 +976,7 @@ impl EventLoop {
                 self.uws_loop = NonNull::new(uws::Loop::get());
             }
         }
-        // PORT NOTE: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
+        // Note: `EventLoopHandle` lives in `bun_event_loop` (lower tier),
         // which cannot name `jsc::EventLoop`, so it stores `*mut ()`. The
         // typed `set_parent_event_loop` extension trait in `bun_uws` expects
         // a `ParentEventLoopHandle` impl, but `EventLoopHandle` already
@@ -1081,11 +1079,9 @@ impl EventLoop {
     }
 
     // ──────────── private helpers (port-only; not in Zig) ────────────
-    // TODO(port): lifetime — these unwrap NonNull backrefs; replace with
-    // proper borrow plumbing.
     //
-    // PORT NOTE: returns a raw pointer, NOT `&mut VirtualMachine`. `EventLoop`
-    // is a value field of `VirtualMachine`, so materializing `&mut VM` while a
+    // `vm()` returns a raw pointer, NOT `&mut VirtualMachine`. `EventLoop` is a
+    // value field of `VirtualMachine`, so materializing `&mut VM` while a
     // `&EventLoop`/`&mut EventLoop` is live would alias (PORTING.md §Forbidden).
     // Callers must dereference per-field at use sites.
     #[inline(always)]

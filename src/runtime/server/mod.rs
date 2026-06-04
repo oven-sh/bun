@@ -143,7 +143,7 @@ pub fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, st
 }
 
 // ─── AnyRoute ────────────────────────────────────────────────────────────────
-// PORT NOTE (§Pointers): Zig variants are `bun.ptr.RefCount` payloads. All
+// §Pointers: Zig variants are `bun.ptr.RefCount` payloads. All
 // three concrete route types carry an intrusive `ref_count: Cell<u32>` and are
 // heap-allocated via `heap::alloc`; their pointers round-trip through uws
 // callback userdata (`ctx: *mut c_void`), so `Rc<T>` is unsuitable (would add
@@ -242,7 +242,7 @@ const N_HTTP_METHODS: usize = 36;
 pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     pub app: Option<*mut uws_sys::NewApp<SSL>>,
     pub listener: Option<*mut uws_sys::app::ListenSocket<SSL>>,
-    // TODO(port): conditional field — Zig `if (has_h3) ?*H3.App else void`.
+    // Zig: conditional field `if (has_h3) ?*H3.App else void`.
     // Kept as Option; never set when !SSL.
     pub h3_app: Option<*mut uws_sys::h3::App>,
     pub h3_listener: Option<*mut uws_sys::h3::ListenSocket>,
@@ -325,7 +325,7 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
     }
 }
 
-// PORT NOTE: Zig `UserRoute.deinit()` only freed `self.route`; RouteDeclaration
+// Zig `UserRoute.deinit()` only freed `self.route`; RouteDeclaration
 // drops automatically, so an explicit `impl Drop` would double-free.
 
 /// Const-generic adapter: `AnyResponse: From<*mut Response<SSL>>` is only
@@ -333,7 +333,7 @@ impl<const SSL: bool, const DEBUG: bool> Drop for NewServer<SSL, DEBUG> {
 /// blanket impl alongside them), so dispatch at the call boundary.
 #[inline]
 fn any_response_from<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>) -> uws::AnyResponse {
-    // PORT NOTE: `*mut Response<SSL>` and `*mut Response<true|false>` are
+    // `*mut Response<SSL>` and `*mut Response<true|false>` are
     // distinct types to rustc; route through `.cast()` (the underlying handle
     // is opaque and layout-identical for both instantiations).
     if SSL {
@@ -577,7 +577,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     }
 
     /// Per-monomorphization static (Zig: `var did_send_idletimeout_warning_once = false;`).
-    /// PORT NOTE: Rust statics cannot be const-generic; routed through a
+    /// Rust statics cannot be const-generic; routed through a
     /// `&'static AtomicBool` so the four (SSL,DEBUG) instantiations share one
     /// flag — the warning is process-global by intent (printed at most once
     /// regardless of how many servers are running).
@@ -678,7 +678,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         server.on_pending_request();
 
-        // PORT NOTE: `vm.eventLoop().debug.enter()/exit()` is debug-build
+        // `vm.eventLoop().debug.enter()/exit()` is debug-build
         // re-entrancy bookkeeping; `Debug::enter_scope` is the RAII pairing
         // (no-op enter/exit in release builds).
         let vm_ptr = server.vm_mut();
@@ -756,7 +756,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // SAFETY: `signal.ref_()` bumps the intrusive count and returns +1.
         let signal_ref =
             unsafe { jsc::AbortSignalRef::adopt(bun_opaque::opaque_deref_mut(signal).ref_()) };
-        // PORT NOTE (ownership): `Request::new` is `bun.TrivialNew` — the heap
+        // ownership: `Request::new` is `bun.TrivialNew` — the heap
         // allocation is handed to the JS GC via `to_js`/`to_js_for_bake` (C++
         // wrapper finalizer frees it), or, for `CreateJsRequest::No`, retained
         // by `ctx.request_weakref` until `RequestContext::deinit` releases it.
@@ -862,7 +862,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     ) {
         let prepared: PreparedRequest<SSL, DEBUG> = match &req {
             SavedRequestUnion::Stack(r) => {
-                // PORT NOTE: reshaped for borrowck — decouple the inner
+                // reshaped for borrowck — decouple the inner
                 // `&mut uws::Request` lifetime from the `req` match guard.
                 let r = std::ptr::from_ref::<uws::Request>(*r).cast_mut();
                 match Self::prepare_js_request_context(
@@ -1156,7 +1156,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// then drive the returned promise / [`NodeHTTPResponse`] through the same
     /// completion / abort / error paths the Zig spec encodes.
     ///
-    /// PORT NOTE: receiver is `*mut Self` (not `&mut self`) — the body
+    /// receiver is `*mut Self` (not `&mut self`) — the body
     /// re-enters JS (`drain_microtasks`, `then2`) which may call back into
     /// other server methods, so a long-lived `&mut Self` would alias. Each use
     /// site below derives a short-lived borrow that ends before the next
@@ -1319,7 +1319,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                                 &mut strong_promise,
                                 jsc::StrongOptional::empty(),
                             ));
-                            // PORT NOTE: `#[host_fn(export = …)]` emits its
+                            // `#[host_fn(export = …)]` emits its
                             // C-ABI shim as `__jsc_host_<fn>`; the export name
                             // is link-only.
                             result.then2(
@@ -1357,7 +1357,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
                             {
-                                // PORT NOTE: matches server.zig:2173 verbatim.
+                                // matches server.zig:2173 verbatim.
                                 // The Zig spec writes a 500 status when
                                 // `isHttpStatusCalled()` is *true* and
                                 // `endStream`s otherwise; NodeHTTPResponse.zig:680
@@ -1418,7 +1418,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
         }
 
-        // PORT NOTE: Zig `defer` cleanup, hoisted out of scopeguards (no early
+        // Zig `defer` cleanup, hoisted out of scopeguards (no early
         // returns above). Reverse-decl order: strong_promise, drain, deref.
         strong_promise.deinit();
         if needs_to_drain {
@@ -1489,7 +1489,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.config
             .websocket
             .as_ref()
-            .map_or(0, |ws| ws.handler.active_connections as u32)
+            .map_or(0, |ws| ws.handler.active_connections.get() as u32)
     }
 
     pub fn has_active_web_sockets(&self) -> bool {
@@ -1842,7 +1842,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.h3_alt_svc = format!("h3=\":{port}\"; ma=86400")
             .into_bytes()
             .into_boxed_slice();
-        // PORT NOTE: spec increments `Analytics.Features.http3_server`; that
+        // spec increments `Analytics.Features.http3_server`; that
         // counter is not (yet) declared in `bun_analytics` (the Zig side
         // dropped it too — see analytics.zig). No-op until it is.
     }
@@ -1864,7 +1864,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // the JS VM terminates, it hypothetically might not call stop_listening.
         this_ref.notify_inspector_server_stopped();
 
-        // PORT NOTE: owned-field cleanup (all_closed_promise / user_routes /
+        // owned-field cleanup (all_closed_promise / user_routes /
         // config / on_clienterror / h3_alt_svc / dev_server / plugins) is
         // handled by the heap::take drop below — see `impl Drop for NewServer`.
         if Self::HAS_H3 {
@@ -1945,7 +1945,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             (*server).any_server_packed = AnyServer::from(server.cast_const()).to_packed() as usize;
         }
 
-        // PORT NOTE: Zig captured `&config.bake.?` then did `.config = config.*`,
+        // Zig captured `&config.bake.?` then did `.config = config.*`,
         // so the bake options (and the arena that backs `root`) live in
         // `(*server).config.bake` for the server's lifetime. Initialise
         // DevServer AFTER the server box exists so the `Options::arena` borrow
@@ -2007,7 +2007,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let app = bun_opaque::opaque_deref_mut(self.app.unwrap());
         let self_ptr: *mut Self = self;
         let any_server = AnyServer::from(self_ptr.cast_const());
-        // PORT NOTE: reshaped for borrowck — `dev_server` is `Option<Box<..>>`;
+        // reshaped for borrowck — `dev_server` is `Option<Box<..>>`;
         // snapshot the raw `*mut DevServer` so per-iteration `&mut` derives
         // don't conflict with `&mut self.config` / `&mut self.user_routes`.
         let dev_server: Option<*mut crate::bake::DevServer::DevServer> =
@@ -2059,7 +2059,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
         // --- 2. WebSocket handler app reference ---
         if let Some(websocket) = self.config.websocket.as_mut() {
-            websocket.global_object = self.global_this;
+            websocket.global_object =
+                bun_ptr::BackRef::new(bun_opaque::opaque_deref(self.global_this));
             websocket.handler.app = Some(std::ptr::from_mut(app).cast::<c_void>());
             websocket
                 .handler
@@ -2072,7 +2073,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         let mut has_any_user_route_for_star_path = false;
         let mut has_any_ws_route_for_star_path = false;
 
-        // PORT NOTE: reshaped for borrowck — `app.ws(..)` reads `to_behavior()`
+        // reshaped for borrowck — `app.ws(..)` reads `to_behavior()`
         // (borrows `self.config.websocket`) while iterating `self.user_routes`.
         // Snapshot as a `BackRef` (pointee = `self.config.websocket`, which is
         // pinned in the server allocation and outlives every use below — the
@@ -2296,7 +2297,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if needs_plugins && self.plugins.is_none() {
             // SAFETY: `vm_mut()` is the process-static `*mut VirtualMachine`
             // (non-null for the server's lifetime); single-threaded JS context.
-            // PORT NOTE: Zig reads `serve_plugins` by reference (server.zig:2917);
+            // Zig reads `serve_plugins` by reference (server.zig:2917);
             // cloning here (not `.take()`) so subsequent `Bun.serve()` calls in
             // the same process — and `DevServer`'s tailwind-hack probe of the
             // same field — still see the bunfig-configured plugin list.
@@ -2452,7 +2453,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
     /// `set_routes()`, and bind the listen socket. On any failure the server
     /// is `deinit()`ed synchronously and `.zero` is returned with an exception
     /// pending on `global_this`.
-    // TODO(port): make this return JsResult<JSValue> and let the caller errdefer-deinit.
     /// # Safety
     /// `this` must point to the live heap-allocated `NewServer` returned by
     /// [`Self::init`], with no other `&`/`&mut` borrow live for the duration
@@ -2463,7 +2463,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         Self: ServerPools<SSL, DEBUG>,
     {
         httplog!("listen");
-        // PORT NOTE: reshaped for borrowck (PORTING.md §Forbidden — aliased
+        // reshaped for borrowck (PORTING.md §Forbidden — aliased
         // `&mut`). No long-lived `&mut Self` is held across re-derives from
         // `this`; each use site reborrows fresh and the borrow ends before the
         // next derive. The serverName / SNI loop extracts raw `(ptr, len)` so
@@ -2543,7 +2543,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             route_list_value = unsafe { &mut *this }.set_routes();
 
             // add serverName to the SSL context using the default ssl options
-            // PORT NOTE: extract raw (ptr, len) so no `&self.config` borrow
+            // extract raw (ptr, len) so no `&self.config` borrow
             // outlives the `set_routes()` call below. set_routes() does not
             // touch `config.ssl_config`, so the bytes remain valid.
             let server_name_raw = this_ref
@@ -2594,7 +2594,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             }
 
             // SNI: per-hostname contexts
-            // PORT NOTE: iterate by index and reborrow `&*this` per iteration so
+            // iterate by index and reborrow `&*this` per iteration so
             // the `set_routes()` `&mut` at the bottom of the loop body never
             // overlaps an outstanding `&self.config.sni` borrow.
             let sni_len = this_ref.config.sni.as_ref().map_or(0, |s| s.slice().len());
@@ -2688,7 +2688,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             unsafe { &mut *this }.set_using_custom_expect_handler(true);
         }
 
-        // PORT NOTE: the listen_* trampolines re-derive `&mut *this` synchronously
+        // the listen_* trampolines re-derive `&mut *this` synchronously
         // inside the C callback (writing `self.listener` / `self.h3_listener`).
         // Under Stacked Borrows, holding any `&*this` / `&mut *this` across a
         // listen call would have its tag popped by that re-derive and become UB
@@ -3129,7 +3129,7 @@ fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
     let err_code = bun_boringssl_sys::ERR_get_error();
     if err_code != 0 {
         let _ = global.throw_value(crate::crypto::create_crypto_error(global, err_code));
-        // PORT NOTE: Zig had `defer ERR_clear_error()`; no early return
+        // Zig had `defer ERR_clear_error()`; no early return
         // between there and here, so a tail call is equivalent.
         bun_boringssl_sys::ERR_clear_error();
         return true;
@@ -3237,7 +3237,7 @@ pub type DebugHTTPServer = NewServer<false, true>;
 pub type DebugHTTPSServer = NewServer<true, true>;
 
 // ─── AnyServer ───────────────────────────────────────────────────────────────
-// PORT NOTE (§Dispatch): Zig used `bun.ptr.TaggedPointerUnion(...)`. The
+// §Dispatch: Zig used `bun.ptr.TaggedPointerUnion(...)`. The
 // `bun_ptr::impl_tagged_ptr_union!` macro would impl a foreign trait for a
 // foreign tuple type (orphan rule), so it can only be invoked from inside
 // `bun_ptr`. Per §Dispatch ("store `(tag: u8, ptr: *mut ())` as two fields"),
@@ -3529,7 +3529,7 @@ impl AnyServer {
             // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` via
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
             Some(app) => bun_opaque::opaque_deref_mut(app).num_subscribers(topic),
-            // PORT NOTE: Zig spec uses `app.?` (panic on null). Defensive 0
+            // Zig spec uses `app.?` (panic on null). Defensive 0
             // here for the post-stop window; assert in debug to catch misuse.
             None => {
                 debug_assert!(false, "num_subscribers on server with no app");
@@ -3550,7 +3550,7 @@ impl AnyServer {
             // `bun_opaque::opaque_deref_mut` (const-asserted ZST/align-1).
             Some(app) =>
                 bun_opaque::opaque_deref_mut(app).publish(topic, message, opcode, compress),
-            // PORT NOTE: Zig spec uses `app.?` (panic on null). Defensive false
+            // Zig spec uses `app.?` (panic on null). Defensive false
             // here for the post-stop window; assert in debug to catch misuse.
             None => {
                 debug_assert!(false, "publish on server with no app");
@@ -3635,7 +3635,6 @@ impl AnyServer {
         route: AnyRoute,
         method: server_config::MethodOptional,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         any_server_dispatch_mut!(self, |s| s.config.append_static_route(path, route, method))
     }
 
@@ -3680,7 +3679,7 @@ pub mod http_server_agent {
                 instance.ptr.cast(),
             );
         }
-        // PORT NOTE: `BunString` derefs in `Drop`.
+        // `BunString` derefs in `Drop`.
     }
 
     /// `HTTPServerAgent.zig:notifyServerStopped`.
@@ -3705,7 +3704,7 @@ pub mod http_server_agent {
         let mut routes: Vec<Route> = Vec::new();
         let mut max_id: u32 = 0;
 
-        // PORT NOTE: Zig's `inline switch (server.userRoutes()) { inline else => |list| ... }`
+        // Zig's `inline switch (server.userRoutes()) { inline else => |list| ... }`
         // monomorphized over the four `*UserRoute<SSL,DEBUG>` slice types.
         // Dispatch through the same macro the rest of `AnyServer` uses.
         any_server_dispatch!(&server, |s| {

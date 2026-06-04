@@ -7,8 +7,7 @@ pub trait ByteaToJs {
     fn bytea_to_js(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError>;
 }
 
-// PORT NOTE: reshaped `value: *Data` + `defer value.deinit()` → owned `Data`;
-// Drop at scope exit replaces the explicit deinit.
+// Takes `Data` by value; Drop at scope exit frees the decode buffer.
 impl ByteaToJs for Data {
     fn bytea_to_js(self, global: &JSGlobalObject) -> Result<JSValue, AnyPostgresError> {
         // var slice = value.slice()[@min(1, value.len)..];

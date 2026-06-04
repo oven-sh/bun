@@ -130,7 +130,7 @@ pub fn copy_env_for_define(
         }
     }
 
-    // PORT NOTE: Zig pre-counted `key_buf_len`/`e_strings_to_allocate` to size two bump
+    // Zig pre-counted `key_buf_len`/`e_strings_to_allocate` to size two bump
     // allocations, then `iter.reset()` and re-walked. With per-entry copies the pre-sizing
     // pass is dead — emit directly. PERF(port): was single-buffer key arena; now per-entry Vec reuse.
     if behavior != DotEnvBehavior::Disable && behavior != DotEnvBehavior::LoadAllWithoutInlining {
@@ -138,7 +138,7 @@ pub fn copy_env_for_define(
             debug_assert!(!prefix.is_empty());
         }
 
-        // PORT NOTE: Zig's `if (key_buf_len > 0)` gate (env_loader.zig:455) is behavioral,
+        // Zig's `if (key_buf_len > 0)` gate (env_loader.zig:455) is behavioral,
         // not just a sizing optimization — when `behavior == .prefix` and NO env key starts
         // with `prefix`, the entire second walk (including the framework-hash `else` arm)
         // is skipped. Mirror that by pre-scanning for a prefix match before emitting.
@@ -154,7 +154,7 @@ pub fn copy_env_for_define(
 
         if any_prefix_match {
             let mut key_buf: Vec<u8> = Vec::new();
-            // PORT NOTE: borrowck — iterate parallel slices instead of `iterator()` so the
+            // borrowck — iterate parallel slices instead of `iterator()` so the
             // map borrow stays shared while we write into the define stores.
             let keys = env.map.map.keys();
             let values = env.map.map.values();
@@ -232,7 +232,7 @@ impl DefineExt for Define {
     ) -> Result<(), bun_alloc::AllocError> {
         let key = global[global.len() - 1];
         let parts: Vec<Box<[u8]>> = global.iter().map(|p| Box::<[u8]>::from(*p)).collect();
-        // PORT NOTE: reshaped for borrowck — getOrPut split into entry-style match.
+        // reshaped for borrowck — getOrPut split into entry-style match.
         if let Some(existing) = self.dots.get_mut(key) {
             let mut list: Vec<DotDefine> = Vec::with_capacity(existing.len() + 1);
             // PERF(port): was appendSliceAssumeCapacity — profile if hot.
@@ -413,7 +413,6 @@ impl DefineDataExt for DefineData {
         log: &mut bun_ast::Log,
         bump: &bun_alloc::Arena,
     ) -> Result<DefineData, bun_core::Error> {
-        // TODO(port): narrow error set
         let mut key_splitter = key.split(|b| *b == b'.');
         while let Some(part) = key_splitter.next() {
             if !js_lexer::is_identifier(part) {
@@ -465,7 +464,7 @@ impl DefineDataExt for DefineData {
 
             return Ok(DefineData {
                 value,
-                // PORT NOTE: upstream `DefineData` now owns `original_name:
+                // upstream `DefineData` now owns `original_name:
                 // Option<Box<[u8]>>` (js_parser/lib.rs:1369) instead of the
                 // borrowed `ptr`/`len` pair (Zig's 48→40-byte packing). Dupe
                 // the value bytes — these are tiny startup-time copies.

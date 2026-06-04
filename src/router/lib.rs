@@ -185,10 +185,10 @@ impl RouteConfig {
 }
 
 // const index_route_hash = @truncate(bun.hash("$$/index-route$$-!(@*@#&*%-901823098123"))
-// TODO(port): make this a true const once bun_wyhash::hash is const fn
-fn index_route_hash() -> u32 {
-    wyhash(b"$$/index-route$$-!(@*@#&*%-901823098123") as u32
-}
+// `hash_const` is byte-identical to the runtime `bun_wyhash::hash` (seed 0);
+// `tests::hash_const_matches_runtime` in `bun_wyhash` guards drift.
+const INDEX_ROUTE_HASH: u32 =
+    bun_wyhash::hash_const(0, b"$$/index-route$$-!(@*@#&*%-901823098123") as u32;
 
 // Param/List are lifetime-parameterized: `name` borrows the route name
 // (DirnameStore-backed) and `value` borrows the *request URL buffer*. The Zig
@@ -234,7 +234,7 @@ impl<'a> Router<'a> {
     }
 
     pub fn route_index_by_hash(&self, hash: u32) -> Option<usize> {
-        if hash == index_route_hash() {
+        if hash == INDEX_ROUTE_HASH {
             return self.routes.index_id;
         }
 
@@ -503,7 +503,7 @@ impl Routes {
                     path: index.abs_path.as_bytes(),
                     pathname: url_path.pathname,
                     basename: index.basename,
-                    hash: index_route_hash(),
+                    hash: INDEX_ROUTE_HASH,
                     file_path: index.abs_path.as_bytes(),
                     query_string: url_path.query_string,
                     client_framework_enabled: self.client_framework_enabled,
@@ -514,7 +514,7 @@ impl Routes {
             return None;
         }
 
-        // PORT NOTE: Zig moved params into a local MatchContextType then back via
+        // NOTE: Zig moved params into a local MatchContextType then back via
         // defer; in Rust a plain reborrow suffices.
         if let Some(route_ptr) = self.match_(path, params) {
             // SAFETY: pointers from static_/dynamic alias Box<Route> stored in
@@ -596,7 +596,7 @@ struct RouteLoader<'a> {
 
     dedupe_dynamic: ArrayHashMap<u32, &'static [u8]>,
     log: &'a mut bun_ast::Log,
-    // PORT NOTE: raw NonNull (not &'a Route) because it points into self.all_routes
+    // NOTE: raw NonNull (not &'a Route) because it points into self.all_routes
     // (self-referential); `Routes` co-owns it with `list`.
     index: Option<NonNull<Route>>,
     static_list: StringHashMap<*const Route>,
@@ -611,7 +611,7 @@ impl<'a> RouteLoader<'a> {
         use bun_collections::hash_map::Entry;
 
         // /index.js
-        if route.full_hash == index_route_hash() {
+        if route.full_hash == INDEX_ROUTE_HASH {
             let new_route = Box::new(route);
             // SAFETY: Box contents have stable address; never removed from all_routes until consumed by load_all
             self.index = Some(NonNull::from(&*new_route));
@@ -621,7 +621,7 @@ impl<'a> RouteLoader<'a> {
 
         // static route
         if route.param_count == 0 {
-            // PORT NOTE: Zig getOrPut → std Entry API (StringHashMap = std HashMap).
+            // NOTE: Zig getOrPut → std Entry API (StringHashMap = std HashMap).
             if let Some(existing) = self.static_list.get(route.match_name.as_bytes()) {
                 let source = bun_ast::Source::init_empty_file(route.abs_path.as_bytes());
                 self.log.add_error_fmt(
@@ -755,7 +755,7 @@ impl<'a> RouteLoader<'a> {
                 dynamic_start = Some(i);
             }
 
-            if route.full_hash == index_route_hash() {
+            if route.full_hash == INDEX_ROUTE_HASH {
                 index_id = Some(i);
             }
 
@@ -812,7 +812,7 @@ impl<'a> RouteLoader<'a> {
         if let Some(entries) = root_dir_info.get_entries_const() {
             let iter = entries.iter();
             'outer: for entry_ptr in iter {
-                // PORT NOTE: `iter()` yields raw `*mut Entry` (matching Zig's
+                // NOTE: `iter()` yields raw `*mut Entry` (matching Zig's
                 // `*Entry` map value type, fs.zig:117). Reborrow locally for
                 // each access so `&` reads and the `&mut` `kind()` call do not
                 // overlap. Single iterator active for this scan; serialized via
@@ -1010,7 +1010,7 @@ impl Route {
     /// # Safety
     /// `entry` must point to a live `Fs::Entry` (EntryStore-owned) with no
     /// other active `&mut` borrow for the duration of the call. `base_` and
-    /// `extname` may borrow `(*entry).base_`; see the PORT NOTE below.
+    /// `extname` may borrow `(*entry).base_`; see the NOTE below.
     pub unsafe fn parse(
         base_: &[u8],
         extname: &[u8],
@@ -1019,7 +1019,7 @@ impl Route {
         public_dir_: &[u8],
         routes_dirname_len: u16,
     ) -> Option<Route> {
-        // PORT NOTE: `entry` is a raw `*mut Entry` (matching Zig's `*Entry`)
+        // NOTE: `entry` is a raw `*mut Entry` (matching Zig's `*Entry`)
         // because `base_`/`extname` may borrow `(*entry).base_` (tiny inline
         // string, fs.zig:333) and a `&mut Entry` parameter would alias them.
         // Reads go through `unsafe { &*entry }`; the single mutation
@@ -1052,7 +1052,7 @@ impl Route {
                 let mut buf: &mut [u8] = &mut route_file_buf[..];
 
                 if !public_dir.is_empty() {
-                    // PORT NOTE: reshaped for borrowck — `buf` already aliases
+                    // NOTE: reshaped for borrowck — `buf` already aliases
                     // route_file_buf[..]; write through it instead of re-borrowing.
                     buf[0] = b'/';
                     buf = &mut buf[1..];
@@ -1098,7 +1098,7 @@ impl Route {
             let is_index = name.is_empty();
 
             let mut has_uppercase = false;
-            // PORT NOTE: reshaped for borrowck — both arms intern via DirnameStore
+            // NOTE: reshaped for borrowck — both arms intern via DirnameStore
             // (process-lifetime arena → `&'static`), so the post-if bindings are
             // 'static and the route_file_buf borrow is dropped before the
             // abs-path block below needs it mutably.
@@ -1118,7 +1118,7 @@ impl Route {
                     let name_offset = name.as_ptr() as usize - public_path.as_ptr() as usize;
                     let name_len = name.len();
 
-                    // PORT NOTE: DirnameStore::append returns `&'static [u8]` (process-
+                    // NOTE: DirnameStore::append returns `&'static [u8]` (process-
                     // lifetime arena), so rebinding here drops the borrow on
                     // `route_file_buf` and avoids needing lifetime transmutes
                     // below.
@@ -1149,7 +1149,7 @@ impl Route {
                 };
 
             if abs_path_str.is_empty() {
-                // PORT NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
+                // NOTE: reshaped for borrowck — `defer if (needs_close) file.close()`
                 // becomes a scopeguard owning the Option<File>; `needs_close` is a
                 // Cell so the drop closure can read it while the body still mutates.
                 // The guard is inverted: when the fd belongs to the cache
@@ -1164,12 +1164,12 @@ impl Route {
                     }
                 });
 
-                // SAFETY: see fn-level PORT NOTE — read-only reborrow.
+                // SAFETY: see fn-level NOTE — read-only reborrow.
                 if let Some(valid) = unsafe { &*entry }.cache().fd.unwrap_valid() {
                     *file = Some(bun_sys::File::from_fd(valid));
                     needs_close.set(false);
                 } else {
-                    // SAFETY: see fn-level PORT NOTE — read-only reborrow.
+                    // SAFETY: see fn-level NOTE — read-only reborrow.
                     let entry_r = unsafe { &*entry };
                     let parts = [entry_r.dir(), entry_r.base()];
                     let abs_len = FileSystem::instance().abs_buf(&parts, route_file_buf).len();
@@ -1261,7 +1261,7 @@ impl Route {
                 debug_assert!(!strings::index_of_char(unsafe { &*entry }.base(), b'\\').is_some());
             }
 
-            // PORT NOTE: name/match_name/public_path are already `&'static` via
+            // NOTE: name/match_name/public_path are already `&'static` via
             // DirnameStore::append above. `entry.base()` borrows the entry (it
             // may be inline-stored for ≤31-byte names, fs.zig:333); intern it
             // explicitly to get `&'static` without a lifetime transmute.
@@ -1277,7 +1277,7 @@ impl Route {
                 public_path: Interned::from_static(public_path),
                 match_name: Interned::from_static(match_name),
                 full_hash: if is_index {
-                    index_route_hash()
+                    INDEX_ROUTE_HASH
                 } else {
                     wyhash(name) as u32
                 },
@@ -1363,7 +1363,7 @@ pub mod sorter {
     }
 }
 
-// PORT NOTE: Zig nested `Sorter` under `Route`; Rust has no `impl Route { pub use Sorter }`
+// NOTE: Zig nested `Sorter` under `Route`; Rust has no `impl Route { pub use Sorter }`
 // equivalent, so callers use `crate::sorter` directly.
 
 struct RouteBufs {
@@ -1398,7 +1398,7 @@ pub struct Match<'a> {
     pub basename: &'a [u8],
 
     pub hash: u32,
-    // PORT NOTE: raw `*mut` (not `&'a mut`) to match Zig's `*Param.List`.
+    // NOTE: raw `*mut` (not `&'a mut`) to match Zig's `*Param.List`.
     // `MatchedRoute` (bun_runtime) stores this self-referentially — a
     // `&'a mut List` here would be invalidated under Stacked Borrows the
     // moment any `&mut MatchedRoute` is taken. Callers that need a borrow
@@ -1569,7 +1569,7 @@ pub mod pattern {
                         let segment =
                             &path_[0..path_.iter().position(|&b| b == b'/').unwrap_or(path_.len())];
                         if !str_.eql_bytes(segment) {
-                            params.truncate(0); // TODO(b1): was shrink_retaining_capacity (MultiArrayList API)
+                            params.truncate(0); // shrinkRetainingCapacity(0)
                             return false;
                         }
 
@@ -1592,7 +1592,7 @@ pub mod pattern {
                             path_ = &path_[i + 1..];
 
                             if pattern.is_end(name) {
-                                params.truncate(0); // TODO(b1): was shrink_retaining_capacity (MultiArrayList API)
+                                params.truncate(0); // shrinkRetainingCapacity(0)
                                 return false;
                             }
 
@@ -1917,7 +1917,6 @@ pub mod pattern {
         pub kind: Tag,
     }
 
-    // TODO(b1): thiserror not in deps; manual Display/Error impl.
     #[derive(strum::IntoStaticStr, Debug, Clone, Copy)]
     pub enum PatternParseError {
         CatchAllMustBeAtTheEnd,
@@ -2047,7 +2046,7 @@ mod tests {
     }
 
     fn make_test(cwd_path: &[u8], data: &[(&str, &str)]) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig used comptime field iteration over an anonymous struct.
+        // NOTE: Zig used comptime field iteration over an anonymous struct.
         // Ported as runtime slice of (path, content) pairs.
         Output::init_test();
         debug_assert!(cwd_path.len() > 1 && cwd_path != b"/" && !cwd_path.ends_with(b"bun"));
@@ -2066,7 +2065,7 @@ mod tests {
         for (name, value) in data {
             let name_b = name.as_bytes();
             // if (std.fs.path.dirname(field.name)) |dir| { try cwd.makePath(dir); }
-            // PORT NOTE: `std.fs.path.dirname` returns null for paths without a
+            // NOTE: `std.fs.path.dirname` returns null for paths without a
             // separator; replicate with rposition on '/' (test fixture paths
             // are always forward-slash).
             if let Some(slash) = name_b.iter().rposition(|&c| c == b'/') {
@@ -2137,7 +2136,7 @@ mod tests {
             )?;
 
             let mut log = bun_ast::Log::init();
-            // PORT NOTE: `errdefer logger.print(Output.errorWriter())` — Rust has
+            // NOTE: `errdefer logger.print(Output.errorWriter())` — Rust has
             // no errdefer; the test harness panics on error anyway, but the guard
             // still flushes diagnostics on early-return for parity.
             let _err_dump = scopeguard::guard(core::ptr::from_mut(&mut log), |log| {
@@ -2146,7 +2145,7 @@ mod tests {
             });
 
             // const opts = Options.BundleOptions{ .target = .browser, ... };
-            // PORT NOTE: the resolver-side `BundleOptions` subset omits
+            // NOTE: the resolver-side `BundleOptions` subset omits
             // `loaders`/`define`/`log`/`routes`/`entry_points`/`out_extensions`/
             // `transform_options` — none are read by `Resolver::init1` or the
             // dir-info walk, so `Default` + `target` is the faithful projection.
@@ -2465,29 +2464,12 @@ mod tests {
         assert!(run(optional_catch_all) == 0);
     }
 
-    #[test]
-    #[ignore = "TODO(port): depends on Test::make filesystem fixture harness"]
-    fn github_api_route_loader() {
-        // TODO(port): port body once Test::make is implemented; see router.zig:1571-1678
-    }
-
-    #[test]
-    #[ignore = "TODO(port): depends on Test::make filesystem fixture harness"]
-    fn sample_route_loader() {
-        // TODO(port): port body once Test::make is implemented; see router.zig:1680-1782
-    }
-
-    #[test]
-    #[ignore = "TODO(port): depends on Test::make filesystem fixture harness"]
-    fn routes_basic() {
-        // TODO(port): port body once Test::make is implemented; see router.zig:1784-1832
-    }
-
-    #[test]
-    #[ignore = "TODO(port): depends on Test::make filesystem fixture harness"]
-    fn dynamic_routes() {
-        // TODO(port): port body once Test::make is implemented; see router.zig:1834-1868
-    }
+    // The route-loader integration tests from router.zig:1571-1868 ("Github
+    // API Route Loader", "Sample Route Loader", "Routes Basic", "Dynamic
+    // Routes") are not ported: they assert through `ctx.matched_route`, which
+    // `Router::match_` does not yet populate (the JavaScriptHandler enqueue
+    // path is still commented out), and they consume fixture route lists that
+    // live in the test-runner harness crate.
 
     #[test]
     fn pattern() {

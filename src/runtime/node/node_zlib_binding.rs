@@ -26,7 +26,7 @@ bun_output::declare_scope!(zlib, hidden);
 /// (write_in_progress, pending_close, pending_reset, closed, stream, this_value,
 /// write_result, task, poll_ref, globalThis) plus `T.js.*` codegen accessors and
 /// `T.ref()/deref()`.
-// PORT NOTE: expressed as a marker struct + trait bound. Field accesses on
+// Expressed as a marker struct + trait bound. Field accesses on
 // `T` go through the [`CompressionStreamImpl`] trait below.
 pub(crate) struct CompressionStream<T>(PhantomData<T>);
 
@@ -267,7 +267,7 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     /// Decrement the intrusive refcount and free `*this` (via `Self::deinit` /
     /// `heap::take`) when it hits zero.
     ///
-    /// PORT NOTE: raw-pointer receiver so the destroy path keeps the
+    /// Raw-pointer receiver so the destroy path keeps the
     /// allocation's full write provenance (routing through `&self` and casting
     /// back to `*mut` would be UB under Stacked Borrows when `Box::from_raw`
     /// reclaims). Every call site that may hit zero (`run_from_js_thread`,
@@ -513,7 +513,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let global: &JSGlobalObject = this.global_this();
         // SAFETY: `bun_vm()` never returns null for a Bun-owned global.
         let vm = global.bun_vm();
-        // PORT NOTE: reshaped — Zig used `defer this.deref(); defer
+        // Zig used `defer this.deref(); defer
         // this.poll_ref.unref(vm);` (run at scope exit in reverse order). We
         // call them explicitly on every return path.
 

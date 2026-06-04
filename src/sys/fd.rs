@@ -321,7 +321,7 @@ impl FdOptionalExt for Optional {
 // methods in `bun_sys_jsc`.
 
 // `fromStdFile` / `fromStdDir` / `stdFile` / `stdDir` wrap `std.fs.File`/`Dir`.
-// TODO(port): no Rust equivalent (std::fs is banned). Callers use
+// They deliberately have no Rust equivalent (std::fs is banned). Callers use
 // `Fd::from_native(handle)` / `fd.native()` directly.
 
 // The following functions are from bun.sys but with the 'f' prefix dropped

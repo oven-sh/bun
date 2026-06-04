@@ -91,8 +91,6 @@ impl RefString {
     /// SAFETY: `this` must be the unique live reference to a `RefString`
     /// previously allocated via `heap::alloc` (or equivalent). After this
     /// call `this` is dangling.
-    // TODO(port): revisit ownership — intrusive refcount via
-    // WTF::StringImpl; may become `impl Drop` if `RefString` ends up `Box`-owned.
     pub unsafe fn destroy(this: *mut RefString) {
         // SAFETY: caller contract — `this` is the unique live pointer to a
         // `Box<RefString>`-allocated value whose `ptr`/`len` describe a

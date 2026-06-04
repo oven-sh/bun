@@ -73,9 +73,9 @@ pub(crate) fn myers_diff(
         let _actual_utf8 = actual.to_utf8_without_ref();
         let _expected_utf8 = expected.to_utf8_without_ref();
 
-        // PORT NOTE: Zig passes `actual.byteSlice()` / `expected.byteSlice()` here (the
-        // originals), not the just-computed utf8 slices. Preserved verbatim for behavioral
-        // parity; likely a pre-existing bug in the Zig source.
+        // Intentionally diffs the original byte slices, not the just-computed utf8
+        // slices — preserved verbatim for behavioral parity with the original
+        // implementation, which did the same (likely a pre-existing bug there).
         return diff_chars::<u8>(global, actual.byte_slice(), expected.byte_slice());
     }
 

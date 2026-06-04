@@ -24,9 +24,10 @@ use crate::{
 /// `PhantomData<*const ()>` enforces `!Send + !Sync` (negative impls are
 /// nightly-only and not used here for portability of the auto-trait inference).
 //
-// TODO(port): inner type should be `i64` per spec; kept `usize` (same width on
-// all supported 64-bit targets) to avoid a cascading bit-twiddle / pointer-cast
-// rewrite across already-un-gated leaf modules that pattern-match on `.0`.
+// The spec encoding is `i64` (Zig: `enum(i64)`); the inner field is `usize`
+// (same width on all supported 64-bit targets — see the size assert below)
+// because leaf modules pattern-match on `.0` with pointer/unsigned arithmetic.
+// `BackingInt`/`from_raw` are the signed views where sign-correct math matters.
 #[repr(transparent)]
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct JSValue(pub usize, PhantomData<*const ()>);
@@ -1202,7 +1203,7 @@ impl JSValue {
         if prop.is_symbol() {
             // JSValue.zig:1693 — `throwInvalidPropertyTypeValue(property, "string", prop)`
             // (Node-style ERR_INVALID_ARG_TYPE TypeError including received value's type).
-            // PORT NOTE: routed via `throw_invalid_arguments` until
+            // Note: routed via `throw_invalid_arguments` until
             // `JSGlobalObject::throw_invalid_property_type_value` is ported.
             return Err(global.throw_invalid_arguments(format_args!(
                 "The \"{}\" property must be of type string. Received a symbol",
@@ -1659,7 +1660,7 @@ impl JSValue {
         this_value: JSValue,
         args: &[JSValue],
     ) -> JsResult<JSValue> {
-        // PORT NOTE: debug-only event-loop bookkeeping (JSValue.zig:251-258) is
+        // Note: debug-only event-loop bookkeeping (JSValue.zig:251-258) is
         // omitted while VirtualMachine.rs is gated; restore when it un-gates.
         host_fn::from_js_host_call(global, || {
             // SAFETY: `global` is live; `args` is a contiguous slice of valid

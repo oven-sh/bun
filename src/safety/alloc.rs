@@ -142,7 +142,7 @@ impl CheckedAllocator {
             self.allocator = NullableAllocator::init(Some(alloc));
             #[cfg(debug_assertions)]
             {
-                // PORT NOTE: Zig passes `@returnAddress()`. Rust has no stable
+                // Zig passes `@returnAddress()`. Rust has no stable
                 // equivalent; `None` lets `StoredTrace::capture` start from the
                 // immediate caller frame instead.
                 self.trace = StoredTrace::capture(None);
@@ -207,7 +207,7 @@ impl CheckedAllocator {
         {
             let new_std = new_alloc.allocator();
 
-            // PORT NOTE: Zig uses `defer self.* = .init(new_std)`. A scopeguard
+            // Zig uses `defer self.* = .init(new_std)`. A scopeguard
             // would need a `&mut self` capture overlapping the reads below, so
             // the assignment is hoisted to both early returns instead.
             let Some(old_allocator) = self.allocator.get() else {

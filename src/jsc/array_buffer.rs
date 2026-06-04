@@ -44,9 +44,7 @@ impl Default for ArrayBuffer {
     }
 }
 
-// TODO(port): move to <jsc>_sys
-//
-// PORT NOTE (aliasing): Zig declares these with `*jsc.JSGlobalObject` (mutable
+// Aliasing: Zig declares these with `*jsc.JSGlobalObject` (mutable
 // pointer), but `JSGlobalObject` is an opaque ZST handle on the Rust side — the
 // `&JSGlobalObject` reference covers zero bytes, and all mutation happens inside
 // C++ on memory Rust never observes. Declaring the FFI parameter as
@@ -295,7 +293,8 @@ impl ArrayBuffer {
 
     #[inline]
     pub fn stream(self) -> ArrayBufferStream<'static> {
-        // TODO(port): lifetime — Zig returns a stream over self.slice() (raw ptr-backed).
+        // Lifetime: Zig returns a stream over self.slice() (raw ptr-backed); the
+        // caller must keep the backing JSValue alive for the stream's lifetime.
         // Spec routes through `slice()` which yields `&.{}` for detached buffers; mirror
         // that here to avoid passing a null ptr to `from_raw_parts_mut` (UB even at len 0).
         if self.is_detached() {
@@ -307,7 +306,7 @@ impl ArrayBuffer {
         std::io::Cursor::new(slice)
     }
 
-    // PORT NOTE: Zig took `comptime kind: JSType`. Restored via
+    // Zig took `comptime kind: JSType`. Restored via
     // `#![feature(adt_const_params)]` — `JSType` derives `ConstParamTy`, so
     // `KIND` is a true const-generic and the `match` const-folds (Zig's
     // `@compileError` arm becomes a post-mono `panic!` on the unreachable arm).
@@ -403,7 +402,7 @@ impl ArrayBuffer {
             JSType::ArrayBuffer => unsafe {
                 JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len())
             },
-            // PORT NOTE: `JSUint8Array::from_bytes` takes `Box<[u8]>`; reconstruct
+            // `JSUint8Array::from_bytes` takes `Box<[u8]>`; reconstruct
             // ownership from the mimalloc-backed slice the caller hands us.
             JSType::Uint8Array => {
                 // SAFETY: caller guarantees `bytes` is exactly a `Box<[u8]>`
@@ -474,7 +473,7 @@ impl ArrayBuffer {
                 self.ptr.cast(),
                 self.byte_len,
                 Some(MarkedArrayBuffer_deallocator),
-                // PORT NOTE: Zig passes `&bun.default_allocator` as opaque ctx; the
+                // Zig passes `&bun.default_allocator` as opaque ctx; the
                 // deallocator ignores it (mi_free needs no ctx). Any non-null
                 // sentinel would do; pass the data ptr itself for symmetry with
                 // `MarkedArrayBuffer::to_js`.
@@ -570,7 +569,7 @@ impl ArrayBuffer {
     /// ```js
     ///    new ArrayBuffer(view.buffer, view.byteOffset, view.byteLength)
     /// ```
-    // PORT NOTE: Zig `byteSlice(self: *const @This()) []u8` is sound under Zig's
+    // Zig `byteSlice(self: *const @This()) []u8` is sound under Zig's
     // aliasing model but cannot be transliterated to `&self -> &mut [_]` in Rust
     // (forbidden aliased-`&mut` per PORTING.md §Forbidden). Split into a shared
     // accessor (`&self -> &[u8]`) and an exclusive one (`&mut self -> &mut [u8]`).
@@ -674,9 +673,9 @@ impl Default for ArrayBufferStrong {
 
 impl ArrayBufferStrong {
     pub fn clear(&mut self) {
-        // TODO(port): Zig source references `this.ref` which is not a field on this struct
-        // (only `array_buffer` and `held` exist). This appears to be dead/broken code upstream.
-        // Porting as a no-op matching the orelse-return on a missing field.
+        // Zig source references `this.ref`, which is not a field on this struct
+        // (only `array_buffer` and `held` exist) — dead/broken code upstream.
+        // Deliberately ported as a no-op matching the orelse-return on a missing field.
         let _ = self;
     }
 
@@ -820,7 +819,7 @@ impl BinaryType {
                 let buffer = ArrayBuffer::create::<{ JSType::ArrayBuffer }>(global, bytes)?;
                 // SAFETY: FFI — `global` is a live opaque ZST handle; `JSGlobalObject` is
                 // a ZST on the Rust side so the `*const` → `*mut` cast launders no
-                // provenance (see PORT NOTE on the extern block above). `buffer` is a
+                // provenance (see the aliasing note on the extern block above). `buffer` is a
                 // fresh ArrayBuffer JSValue (cell pointer), so `as_object_ref` yields a
                 // valid `JSObjectRef`.
                 let obj = unsafe {
@@ -909,7 +908,8 @@ pub(crate) type ArrayBufferStream<'a> = std::io::Cursor<&'a mut [u8]>;
 impl MarkedArrayBuffer {
     #[inline]
     pub fn stream(&mut self) -> ArrayBufferStream<'_> {
-        // TODO(port): see ArrayBuffer::stream lifetime note.
+        // See the ArrayBuffer::stream lifetime note: caller must keep the
+        // backing JSValue alive for the stream's lifetime.
         std::io::Cursor::new(self.buffer.byte_slice_mut())
     }
 

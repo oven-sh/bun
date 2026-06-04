@@ -1,6 +1,5 @@
 use bun_core::strings;
 
-// PORT NOTE: Zig anonymous return struct `{ tag: []const u8, is_weak: bool }`.
 // Borrows from the input slice; not a persistent heap struct.
 struct Parsed<'a> {
     tag: &'a [u8],
@@ -16,8 +15,8 @@ fn parse(tag_str: &[u8]) -> Parsed<'_> {
     if str.starts_with(b"W/") {
         is_weak = true;
         str = &str[2..];
-        // PORT NOTE: Zig `std.mem.trimLeft(u8, str, " \t")` — bun_string has no
-        // multi-char trim_left; inline it (trailing was already stripped above).
+        // bun_string has no multi-char trim_left; inline it (trailing
+        // whitespace was already stripped above).
         while let [b' ' | b'\t', rest @ ..] = str {
             str = rest;
         }
@@ -39,8 +38,7 @@ fn weak_match(tag1: &[u8], is_weak1: bool, tag2: &[u8], is_weak2: bool) -> bool 
     tag1 == tag2
 }
 
-pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
+pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) {
     let hash: u64 = xxhash64(0, bytes);
 
     let mut etag_buf = [0u8; 40];
@@ -54,7 +52,6 @@ pub fn append_to_headers(bytes: &[u8], headers: &mut Headers) -> Result<(), bun_
     };
     let etag_str = &etag_buf[..len];
     headers.append(b"etag", etag_str);
-    Ok(())
 }
 
 #[inline]
@@ -151,12 +148,11 @@ impl HeaderEntryColumns for HeaderEntryList {
 pub struct Headers {
     pub entries: HeaderEntryList,
     pub buf: Vec<u8>,
-    // PORT NOTE: Zig stored `std.mem.Allocator param`; non-AST crate →
-    // global mimalloc, field dropped (PORTING.md §allocators).
+    // No allocator field: non-AST crate → global mimalloc (PORTING.md §allocators).
 }
 
 impl Clone for Headers {
-    // PORT NOTE: Zig `!Headers`; only fallible calls were allocations — abort on OOM.
+    // The only fallible calls are allocations — abort on OOM.
     fn clone(&self) -> Headers {
         Headers {
             entries: self
@@ -185,7 +181,7 @@ impl Headers {
         None
     }
 
-    // PORT NOTE: was `!void`; only `try` sites were allocations — abort on OOM.
+    // The only fallible calls are allocations — abort on OOM.
     pub fn append(&mut self, name: &[u8], value: &[u8]) {
         let mut offset: u32 = u32::try_from(self.buf.len()).unwrap();
         self.buf.reserve(name.len() + value.len());
@@ -209,8 +205,6 @@ impl Headers {
             })
             .unwrap_or_else(|_| bun_alloc::out_of_memory());
     }
-
-    // PORT NOTE: Zig `deinit()` — handled by Drop on Vec/MultiArrayList.
 
     pub fn get_content_disposition(&self) -> Option<&[u8]> {
         self.get(b"content-disposition")

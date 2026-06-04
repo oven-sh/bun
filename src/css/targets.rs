@@ -77,8 +77,8 @@ impl Targets {
         {
             let mut browsers = Browsers::default();
             let mut has_any = false;
-            // PORT NOTE: Zig used `inline for (std.meta.fields(Browsers))` reflection.
-            // Expanded manually per field.
+            // Zig used `inline for (std.meta.fields(Browsers))` reflection;
+            // expanded manually per field.
             macro_rules! check_field {
                 ($field:ident, $env:literal) => {
                     if let Some(val) = bun_core::getenv_z_any_case(bun_core::zstr!($env)) {
@@ -216,10 +216,13 @@ impl Browsers {
                 // Zig: `try std.fmt.parseInt(u16, number_part, 10)` — propagates
                 // error.InvalidCharacter / error.Overflow. Preserve the tag for
                 // @errorName snapshot compat (do NOT collapse to UnsupportedCSSTarget).
-                // TODO(port): narrow error set (InvalidCharacter | Overflow)
-                let year = strings::parse_int::<u16>(number_part, 10)
-                    .ok()
-                    .ok_or_else(|| bun_core::err!("InvalidCharacter"))?;
+                let year =
+                    strings::parse_int::<u16>(number_part, 10).map_err(|e| match e {
+                        strings::ParseIntError::Overflow => bun_core::err!("Overflow"),
+                        strings::ParseIntError::InvalidCharacter => {
+                            bun_core::err!("InvalidCharacter")
+                        }
+                    })?;
                 match year {
                     // https://caniuse.com/?search=es2015
                     2015 => {
@@ -391,7 +394,7 @@ impl Browsers {
 
                     let version: u32 = ((major as u32) << 16) | ((minor as u32) << 8);
                     // Zig: `switch (browser.?) { inline else => |b| @field(browsers, @tagName(b)) ... }`
-                    // PORT NOTE: reflection expanded into a direct match yielding a field ref.
+                    // — reflection expanded into a direct match yielding a field ref.
                     let slot: &mut Option<u32> = match browser {
                         Browser::Chrome => &mut browsers.chrome,
                         Browser::Edge => &mut browsers.edge,

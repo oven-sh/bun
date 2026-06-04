@@ -24,11 +24,12 @@ extern "C" fn deep_equals_iterator(
     };
     if eq {
         *entry.pass = true;
-        // TODO(perf): break out of the `forEach` when a match is found
+        // PERF: break out of the `forEach` when a match is found
     }
 }
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
 pub(crate) fn to_contain_equal(
     this: &Expect,
     global: &JSGlobalObject,
@@ -104,7 +105,7 @@ pub(crate) fn to_contain_equal(
     }
 
     // handle failure
-    // PORT NOTE: Zig shared one Formatter for both `toFmt` calls; Rust borrowck forbids two
+    // Zig shared one Formatter for both `toFmt` calls; Rust borrowck forbids two
     // live `&mut formatter` borrows, so allocate a second Formatter for the expected value.
     let mut formatter = super::make_formatter(global);
     let mut formatter2 = super::make_formatter(global);

@@ -131,7 +131,6 @@ type SpawnOptionsStdio = spawn::PosixStdio;
 #[cfg(windows)]
 type SpawnOptionsStdio = spawn::WindowsStdio;
 
-// TODO(port): move to runtime_sys
 // Reading the symbol address has no precondition (the value itself is a
 // rodata `const char*`); kept `safe` to match the identical declaration in
 // `runtime/shell/subproc.rs` so the two extern blocks don't diverge.
@@ -432,7 +431,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
         },
     );
-    // PORT NOTE: reshaped for borrowck — re-borrow through the guard tuple.
+    // Note: reshaped for borrowck — re-borrow through the guard tuple.
     let (abort_signal, terminal_info) = &mut *defer_guard;
 
     // Owned ZBox for `cwd` held here so the `&[u8]` borrow stays valid until
@@ -706,7 +705,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
                                 i32::try_from((timeout_int as u32) & 0x7FFF_FFFF)
                                     .expect("int cast"),
                             );
-                            // PORT NOTE: Zig `@intCast(@as(u31, @truncate(timeout_int)))` — truncate to u31 then widen to i32.
+                            // Note: Zig `@intCast(@as(u31, @truncate(timeout_int)))` — truncate to u31 then widen to i32.
                         }
                     }
                 }
@@ -863,7 +862,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             Ok(m) => m,
             Err(_) => return Err(global_this.throw_out_of_memory()),
         };
-        // PORT NOTE: Zig assigned `env_array.items = envp` (sentinel slice — the
+        // Note: Zig assigned `env_array.items = envp` (sentinel slice — the
         // trailing `null` lives at `[len]`, outside `.items`). The Rust port's
         // `as_slice()` *includes* the trailing null, so strip it; the common
         // tail below re-appends one after the optional NODE_CHANNEL_* entries.
@@ -873,7 +872,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
     let _ = &inherited_env_storage;
 
-    // PORT NOTE: Zig `inline for (0..stdio.len)` — unrolled here as a regular for; const N=3.
+    // Note: Zig `inline for (0..stdio.len)` — unrolled here as a regular for; const N=3.
     for fd_index in 0..stdio.len() {
         if stdio[fd_index].can_use_memfd(IS_SYNC, fd_index > 0 && max_buffer.is_some()) {
             if stdio[fd_index].use_memfd(fd_index as u32) {
@@ -889,7 +888,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             if *should_close_memfd {
                 for fd_index in 0..stdio.len() {
                     if matches!(stdio[fd_index], Stdio::Memfd(_)) {
-                        // PORT NOTE: Zig closes the fd then writes
+                        // Note: Zig closes the fd then writes
                         // `stdio[i] = .ignore`. In Rust that assignment would
                         // Drop the old `Stdio::Memfd` and re-close the same fd
                         // (EBADF → fd.rs debug_assert). `Stdio`'s Drop already
@@ -901,7 +900,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             }
         },
     );
-    // PORT NOTE: reshaped for borrowck — re-borrow through the guard tuple so the guard
+    // Note: reshaped for borrowck — re-borrow through the guard tuple so the guard
     // stays armed (runs on every early return) until disarmed by `**should_close_memfd = false` below.
     let (should_close_memfd, stdio) = &mut *memfd_guard;
 
@@ -959,7 +958,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
             // PERF(port): was assume_capacity
             env_array.push(match ipc_mode {
-                // PORT NOTE: Zig `inline else => |t| "..." ++ @tagName(t)` — written out per variant.
+                // Note: Zig `inline else => |t| "..." ++ @tagName(t)` — written out per variant.
                 IPC::Mode::Json => c"NODE_CHANNEL_SERIALIZATION_MODE=json".as_ptr(),
                 IPC::Mode::Advanced => c"NODE_CHANNEL_SERIALIZATION_MODE=advanced".as_ptr(),
             });
@@ -1008,7 +1007,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // For spawnSync, use an isolated event loop to prevent JavaScript timers from firing
     // and to avoid interfering with the main event loop.
     //
-    // PORT NOTE: borrowck — `rare_data()` borrows `jsc_vm` mutably and the
+    // Note: borrowck — `rare_data()` borrows `jsc_vm` mutably and the
     // returned `&mut SpawnSyncEventLoop` keeps that borrow alive, so we cannot
     // also pass `jsc_vm` into `spawn_sync_event_loop`/`prepare`/`cleanup` while
     // holding it. Route through a raw `*mut VirtualMachineRef` for the duration.
@@ -1018,7 +1017,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     // instead of the main loop — matches Zig
     // `&jsc_vm.rareData().spawnSyncEventLoop(jsc_vm).event_loop`.
     let event_loop: *mut jsc::event_loop::EventLoop = if IS_SYNC {
-        // SAFETY: see PORT NOTE above; `spawn_sync_event_loop` re-borrows the
+        // SAFETY: see note above; `spawn_sync_event_loop` re-borrows the
         // same VM via the raw pointer for its `vm` arg.
         unsafe {
             let sync_loop = (*jsc_vm_ptr)
@@ -1037,7 +1036,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         jsc_vm.event_loop()
     };
 
-    // PORT NOTE: reshaped for borrowck — `defer!` is non-`move`, so the closure
+    // Note: reshaped for borrowck — `defer!` is non-`move`, so the closure
     // would capture the *place* `*jsc_vm_ptr` and conflict with later
     // `&mut *jsc_vm_ptr` re-borrows below. Copy the raw pointer into a sibling
     // local so the closure's captured place is disjoint.
@@ -1177,7 +1176,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // Use the isolated loop for spawnSync operations
     //
-    // PORT NOTE: `PosixSpawnResult::to_process` consumes `self` but only reads
+    // Note: `PosixSpawnResult::to_process` consumes `self` but only reads
     // `pid`/`pidfd`/`has_exited`. Zig kept using `spawned.stdin/stdout/stderr/
     // extra_pipes` afterward; in Rust, take those fields out first so the
     // partial move is explicit.
@@ -1201,7 +1200,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     // When run synchronously, subprocess isn't garbage collected.
     //
-    // PORT NOTE: Zig built a placeholder struct, took its address for
+    // Note: Zig built a placeholder struct, took its address for
     // `MaxBuf::create_for_subprocess`, then overwrote `subprocess.*` with the
     // real aggregate. In Rust that whole-struct reassignment would (a) move
     // `process` twice and (b) run Drop on every field of the placeholder. Build
@@ -1344,7 +1343,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
             subprocess.stderr_maxbuf.set(mb);
             subprocess.deref();
             subprocess.deref();
-            // PORT NOTE: Zig returned `err` directly (`bun.JSError` or
+            // Note: Zig returned `err` directly (`bun.JSError` or
             // `error.OutOfMemory`); the Rust port's `Writable::init` returns
             // `bun_core::Error`. Map non-thrown to OOM.
             if global_this.has_exception() {
@@ -1355,7 +1354,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // PORT NOTE: Zig passed `allocator` (unused/autofix) — dropped in Rust port of Readable::init.
+    // Note: Zig passed `allocator` (unused/autofix) — dropped in Rust port of Readable::init.
     // event_loop points to the live JSC EventLoop for this thread.
     let event_loop_nn = NonNull::new(event_loop).expect("event_loop is null");
     subprocess.stdout.set(Readable::init(
@@ -1417,7 +1416,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         return Err(global_this.throw_value(err));
     }
 
-    // PORT NOTE: Zig left this `undefined` and only read it on the assigned path; Rust uses
+    // Note: Zig left this `undefined` and only read it on the assigned path; Rust uses
     // Option since `IPC::Socket` is a tagged union (zeroed enum is UB).
     #[cfg(unix)]
     let mut posix_ipc_info: Option<IPC::Socket> = None;
@@ -1516,7 +1515,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if matches!(subprocess.stdin.get(), Writable::Pipe(_)) && promise_for_stream == JSValue::ZERO {
-        // PORT NOTE: Zig writes `subprocess.stdin.pipe.signal =
+        // Note: Zig writes `subprocess.stdin.pipe.signal =
         // Signal.init(&subprocess.stdin)` and the callback `@fieldParentPtr`s
         // back to the `Subprocess`. In Rust the SignalHandler impl is on
         // `Subprocess` and the stored back-pointer is the `*mut Subprocess`
@@ -1563,7 +1562,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         if let Some(timeout_val) = timeout {
             let ts =
                 Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(timeout_val));
-            // PORT NOTE: `EventLoopTimer.next` is a local-stub Timespec until
+            // Note: `EventLoopTimer.next` is a local-stub Timespec until
             // `bun_event_loop` switches to `bun_core::Timespec`; copy fieldwise.
             subprocess.event_loop_timer.with_mut(|t| {
                 t.next = crate::timer::ElTimespec {
@@ -1621,7 +1620,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         }
     }
 
-    // PORT NOTE: reshaped for borrowck — copy `subprocess_ptr` so the
+    // Note: reshaped for borrowck — copy `subprocess_ptr` so the
     // non-`move` `defer!` closure captures a disjoint place from the
     // `(*subprocess_ptr).abort_signal = …` writes that follow.
     let subprocess_ptr_exit = subprocess_ptr;
@@ -1651,7 +1650,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if let Readable::Pipe(pipe) = subprocess.stdout.get() {
-        // PORT NOTE: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
+        // Note: pass `subprocess_nn` (the `NonNull<Subprocess<'static>>`
         // captured above) instead of the live `&mut subprocess`, which would
         // alias with the `&mut subprocess.stdout` borrow held by `pipe`.
         if let Err(err) = Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn) {
@@ -1667,7 +1666,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     if let Readable::Pipe(pipe) = subprocess.stderr.get() {
-        // PORT NOTE: see stdout arm above — avoid aliased &mut.
+        // Note: see stdout arm above — avoid aliased &mut.
         if let Err(err) = Readable::pipe_reader_mut(pipe).start(subprocess_nn, event_loop_nn) {
             let _ = subprocess.try_kill(subprocess.kill_signal);
             let _ = global_this.throw_value(err.to_js(global_this));
@@ -1711,7 +1710,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         return Ok(out);
     }
 
-    // PORT NOTE: Zig `comptime bun.assert(is_sync)` — anonymous const items cannot capture
+    // Note: Zig `comptime bun.assert(is_sync)` — anonymous const items cannot capture
     // const-generic params, so use a runtime debug_assert (the !IS_SYNC path returned above).
     debug_assert!(IS_SYNC);
 
@@ -1773,7 +1772,7 @@ pub(crate) fn spawn_maybe_sync<const IS_SYNC: bool>(
         // This does mean if an AbortSignal times out it will throw
         if let Some(signal) = subprocess.abort_signal_ref() {
             if let Some(abort_signal_timeout) = signal.get_timeout() {
-                // PORT NOTE: `AbortSignal::Timeout.event_loop_timer` uses the
+                // Note: `AbortSignal::Timeout.event_loop_timer` uses the
                 // bun_event_loop-local `Timespec` stub; convert fieldwise.
                 if abort_signal_timeout.event_loop_timer.state
                     == crate::timer::EventLoopTimerState::ACTIVE
@@ -2039,7 +2038,7 @@ pub(crate) fn append_envp_from_js(
                 .throw());
         }
 
-        // PORT NOTE: Zig `std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{key, value}, 0)`
+        // Note: Zig `std.fmt.allocPrintSentinel(envp.allocator, "{f}={f}", .{key, value}, 0)`
         // PERF(port): was arena bulk-free — profile if it shows up on a hot path.
         let line: ZBox = {
             let mut buf: Vec<u8> = Vec::new();

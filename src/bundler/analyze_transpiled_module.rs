@@ -232,7 +232,7 @@ impl ModuleInfoDeserialized {
         unsafe {
             match (*this).owner {
                 Owner::ModuleInfo(mi) => {
-                    // PORT NOTE: Zig recovered the parent via
+                    // Zig recovered the parent via
                     // `@fieldParentPtr("_deserialized", self)`. The Rust port
                     // stores the `*mut ModuleInfo` directly because the printer
                     // crate's `ModuleInfo` no longer embeds this struct.
@@ -342,14 +342,13 @@ impl ModuleInfoDeserialized {
     /// cache or standalone module graph). Returns `None` instead of panicking on
     /// corrupt/truncated data.
     pub fn create_from_cached_record(source: &[u8]) -> Option<Box<ModuleInfoDeserialized>> {
-        // PORT NOTE: Zig matched on error.OutOfMemory → bun.outOfMemory(); in
+        // Zig matched on error.OutOfMemory → bun.outOfMemory(); in
         // Rust, allocation failure aborts via the global arena, so only
         // BadModuleInfo remains.
         Self::create(source).ok()
     }
 
     pub fn serialize(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let record_kinds = self.record_kinds();
         writer.write_all(&(record_kinds.len() as u32).to_le_bytes())?;
         writer.write_all(slice_as_bytes(record_kinds))?;
@@ -482,14 +481,14 @@ impl ModuleInfoExt for ModuleInfo {
         drop(unsafe { bun_core::heap::take(this) });
     }
     fn into_deserialized(mut self: Box<Self>) -> Box<ModuleInfoDeserialized> {
-        // PORT NOTE: Zig wrote a self-referential `_deserialized` view inside
+        // Zig wrote a self-referential `_deserialized` view inside
         // `ModuleInfo` during `finalize()`. The Rust printer-crate `ModuleInfo`
         // exposes a borrowed `as_deserialized()` instead; here we materialise the
         // raw-pointer FFI shape and tie its lifetime to the leaked `Box<ModuleInfo>`.
         if !self.finalized {
             let _ = self.finalize();
         }
-        // PORT NOTE: reshaped for borrowck — capture lifetime-erased `RawSlice`
+        // Reshaped for borrowck — capture lifetime-erased `RawSlice`
         // views before `heap::into_raw(self)` consumes the box.
         let (strings_buf, strings_lens, rm_keys, rm_values, rm_phases, buffer, record_kinds, flags);
         {

@@ -269,7 +269,7 @@ impl<'a> Task<'a> {
                     // SAFETY: tag == PackageManifest discriminates the union
                     let manifest = unsafe { &mut *this.request.package_manifest };
 
-                    // PORT NOTE: split-borrow `manifest.network` so the mutable
+                    // split-borrow `manifest.network` so the mutable
                     // `response_buffer` borrow doesn't overlap the immutable
                     // `response`/`callback` reads below.
                     let network = &mut *manifest.network;
@@ -301,7 +301,7 @@ impl<'a> Task<'a> {
                         break 'body;
                     };
 
-                    // PORT NOTE: Zig accessed the bare-union field
+                    // Zig accessed the bare-union field
                     // `network.callback.package_manifest.*` directly; in Rust
                     // `Callback` is a tagged enum, so destructure the variant.
                     // SAFETY: tag == PackageManifest ⇒ the network task was
@@ -568,7 +568,7 @@ impl<'a> Task<'a> {
             if let Some(mut pt) = this.apply_patch_task.take() {
                 // `defer pt.deinit()` → Box<PatchTask> drops at end of this block
                 pt.apply().expect("OOM"); // bun.handleOom → panic on OOM
-                // PORT NOTE: Zig accessed bare-union field `pt.callback.apply`;
+                // Zig accessed bare-union field `pt.callback.apply`;
                 // `apply_patch_task` is only ever populated with the Apply
                 // variant (see `new_apply_patch_hash`), so destructure it.
                 let crate::patch_install::Callback::Apply(apply) = &mut pt.callback else {
@@ -607,7 +607,6 @@ fn read_and_extract(
     normalize: bool,
     log: &mut Log,
 ) -> Result<ExtractData, bun_core::Error> {
-    // TODO(port): narrow error set
     let bytes = if normalize {
         // Zig `File.readFromUserInput(std.fs.cwd(), tarball_path, allocator)` resolves
         // a user-provided relative path against `bun.fs.FileSystem.instance.top_level_dir`
@@ -647,8 +646,6 @@ pub enum Status {
 }
 
 /// Bare Zig `union` (untagged). Discriminated externally by `Task.tag`.
-/// // TODO(port): Phase B — consider folding `Tag` + `Request` + `Data` into a
-/// single Rust `enum` (one discriminant instead of tag + 2 untagged unions).
 pub union Data {
     pub package_manifest: ManuallyDrop<npm::PackageManifest>,
     pub extract: ManuallyDrop<ExtractData>,
@@ -684,7 +681,7 @@ pub struct ExtractRequest<'a> {
 pub struct GitCloneRequest {
     pub name: StringOrTinyString,
     pub url: StringOrTinyString,
-    // PORT NOTE: Zig stores `DotEnv.Map` by value (handle copy of the global
+    // Zig stores `DotEnv.Map` by value (handle copy of the global
     // `Repository.shared_env`). Rust's `Map` owns its storage; store a
     // `&'static` into the global instead — see `SharedEnv::get`.
     pub env: &'static dot_env::Map,
@@ -699,7 +696,7 @@ pub struct GitCheckoutRequest {
     pub url: StringOrTinyString,
     pub resolved: StringOrTinyString,
     pub resolution: Resolution,
-    // See PORT NOTE on `GitCloneRequest.env`.
+    // See the note on `GitCloneRequest.env`.
     pub env: &'static dot_env::Map,
 }
 

@@ -23,7 +23,7 @@ use bun_install::{
 use bun_install_types::DependencyGroup;
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter, PrintJsonOptions};
 use bun_resolver::fs::FileSystem;
-// PORT NOTE (layering): `Expr`/`E` here are the *lower-tier* `bun_ast::js_ast`
+// Layering: `Expr`/`E` here are the *lower-tier* `bun_ast::js_ast`
 // types, NOT `bun_js_parser`. `WorkspacePackageJsonCacheEntry.root` is the
 // logger-tier `Expr` (see WorkspacePackageJSONCache.rs), so the catalog-edit
 // helpers below must operate on that type. The earlier draft imported
@@ -86,7 +86,7 @@ struct OutdatedPackage {
     /// Snapshot of `manager.options.scope.url_hash == DEFAULT_URL_HASH &&
     /// manager.scope_for_package_name(name).url_hash == DEFAULT_URL_HASH`.
     ///
-    /// PORT NOTE: Zig stores `*PackageManager` here and reads
+    /// Zig stores `*PackageManager` here and reads
     /// `pkg.manager.options.scope` / `scopeForPackageName(pkg.name)` at render
     /// time. In Rust the caller's exclusive `&mut PackageManager` in
     /// `update_interactive` is live across the prompt loop, so any
@@ -113,7 +113,8 @@ struct PackageUpdate {
 }
 
 pub(crate) struct CatalogUpdateRequest {
-    // TODO(port): lifetime — these borrow from caller in Zig; using owned for now
+    // Zig borrowed these from the caller; owned copies keep the type
+    // lifetime-free (a few small allocations in an interactive UI).
     package_name: Box<[u8]>,
     new_version: Box<[u8]>,
     catalog_name: Option<Box<[u8]>>,
@@ -173,7 +174,7 @@ impl UpdateInteractiveCommand {
     }
 
     // Helper to update a catalog entry at a specific path in the package.json AST
-    // PORT NOTE: Zig threads `*PackageManager` only for `manager.allocator`;
+    // Zig threads `*PackageManager` only for `manager.allocator`;
     // the Rust port has no per-manager allocator, so the parameter is dropped.
     // This also avoids overlapping `&mut PackageManager` with the live
     // `&mut MapEntry` borrow of `manager.workspace_package_json_cache` at the
@@ -194,7 +195,7 @@ impl UpdateInteractiveCommand {
         buffer_writer.append_newline = preserve_trailing_newline;
         let mut package_json_writer = BufferPrinter::init(buffer_writer);
 
-        // PORT NOTE (layering): `MapEntry.root` is the T2 `bun_ast::Expr`;
+        // Layering: `MapEntry.root` is the T2 `bun_ast::Expr`;
         // `js_printer::print_json` consumes the T4 `bun_ast::Expr`. Lift via
         // the existing `From<T2> for T4` deep-rebuild (same as
         // `updatePackageJSONAndInstall` / pnpm migration). The T2 entry is not
@@ -217,7 +218,7 @@ impl UpdateInteractiveCommand {
             Box::from(package_json_writer.ctx.written_without_trailing_zero());
 
         // Write the updated package.json
-        // PORT NOTE: Zig used `std.fs.cwd().createFile(path).writeAll(..)`; the
+        // Zig used `std.fs.cwd().createFile(path).writeAll(..)`; the
         // Rust port routes through `bun_sys::File::write_file` (cwd-relative
         // open + write + close) per src/CLAUDE.md.
         let mut path_zbuf = PathBuffer::uninit();
@@ -235,7 +236,7 @@ impl UpdateInteractiveCommand {
         // Update the cache so installWithManager sees the new package.json
         // This is critical - without this, installWithManager will use the cached old version
         //
-        // PORT NOTE: cached `root` AST slices still borrow the *old*
+        // Cached `root` AST slices still borrow the *old*
         // `source.contents`; stash it instead of `mem::forget`-ing so it's
         // freed when the entry drops (`PackageManager::deinit_caches()`).
         let old = core::mem::replace(
@@ -306,7 +307,7 @@ impl UpdateInteractiveCommand {
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
             // Load and parse the package.json
-            // PORT NOTE: reshaped for borrowck — `log_mut()` returns a borrow
+            // Reshaped for borrowck — `log_mut()` returns a borrow
             // decoupled from `&self`, so it can overlap the disjoint
             // `workspace_package_json_cache` field borrow below.
             let log = manager.log_mut();
@@ -365,7 +366,7 @@ impl UpdateInteractiveCommand {
                     preserve_version_prefix(original_version, &update.target_version)?;
 
                 // Update the version using hash map put
-                // PORT NOTE: Zig `Expr.init(E.String, …).clone(allocator)` —
+                // Zig `Expr.init(E.String, …).clone(allocator)` —
                 // the `.clone(manager.allocator)` re-allocates the `E.String`
                 // *node* outside the resettable Store. `Expr::init` would put
                 // it in the Store, which `install_with_manager` resets via
@@ -479,7 +480,7 @@ impl UpdateInteractiveCommand {
         original_cwd: &[u8],
         manager: &mut PackageManager,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — capture `log_level` / `ctx.log`
+        // Reshaped for borrowck — capture `log_level` / `ctx.log`
         // before borrowing `&mut manager.lockfile`.
         let not_silent = manager.options.log_level != LogLevel::Silent;
         let ctx_log_ptr: *mut bun_ast::Log = ctx.log;
@@ -523,7 +524,7 @@ impl UpdateInteractiveCommand {
                 Global::crash();
             }
             LoadResult::Ok(_) => {
-                // PORT NOTE: Zig reassigns `manager.lockfile = ok.lockfile`
+                // Zig reassigns `manager.lockfile = ok.lockfile`
                 // (pointer field). `load_lockfile_from_cwd` populates
                 // `manager.lockfile` (Box) in place, so no reassignment.
             }
@@ -551,7 +552,7 @@ impl UpdateInteractiveCommand {
 
         // Get outdated packages
         let mut outdated_packages = Self::get_outdated_packages(manager, &workspace_pkg_ids)?;
-        // PORT NOTE: `defer { allocator.free(...) }` is implicit via Drop on
+        // `defer { allocator.free(...) }` is implicit via Drop on
         // `Vec<OutdatedPackage>` (Box<[u8]> fields).
 
         if outdated_packages.is_empty() {
@@ -702,7 +703,7 @@ impl UpdateInteractiveCommand {
                 // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set once during
                 // `PackageManager::init` (single-threaded CLI startup).
                 let root_pkg_json = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
-                // PORT NOTE: Zig passes `manager.root_dir.dir` (cwd dir handle);
+                // Zig passes `manager.root_dir.dir` (cwd dir handle);
                 // the Rust port of `install_with_manager` takes the original cwd
                 // path slice instead. Snapshot before the `&mut manager` borrow.
                 let root_dir_path: &'static [u8] = manager.root_dir.dir;
@@ -848,7 +849,7 @@ impl UpdateInteractiveCommand {
         }
 
         // Add grouped catalog dependencies
-        // PORT NOTE: `StringHashMap` is a Deref newtype over `std::HashMap` with no
+        // `StringHashMap` is a Deref newtype over `std::HashMap` with no
         // owning `IntoIterator`; `.drain()` (via `DerefMut`) yields owned `(K, V)`.
         let mut iter = catalog_map.drain();
         while let Some((_k, catalog_packages)) = iter.next() {
@@ -860,7 +861,7 @@ impl UpdateInteractiveCommand {
                 // Build combined workspace name
                 let mut workspace_names: Vec<u8> = Vec::new();
 
-                // PORT NOTE: Zig checks `if (catalog_packages.len > 0)` again here which is always
+                // Zig checks `if (catalog_packages.len > 0)` again here which is always
                 // true; preserve behavior of the true branch.
                 if let Some(catalog_name) = &first.catalog_name {
                     workspace_names.extend_from_slice(b"catalog:");
@@ -895,7 +896,7 @@ impl UpdateInteractiveCommand {
         manager: &mut PackageManager,
         workspace_pkg_ids: &[PackageID],
     ) -> Result<Vec<OutdatedPackage>, bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — Zig threads `*PackageManager`
+        // Reshaped for borrowck — Zig threads `*PackageManager`
         // into `manifests.byNameAllowExpired`, freely aliasing the receiver.
         // Hoist the four scalars that path reads into a by-value
         // `DiskCacheCtx` so the loop body holds only disjoint field borrows
@@ -944,7 +945,7 @@ impl UpdateInteractiveCommand {
 
                 let scope = manager.options.scope_for_package_name(package_name).clone();
                 // Snapshot for `OutdatedPackage.uses_default_registry` (see
-                // field PORT NOTE) — Zig defers this to render time via
+                // field comment) — Zig defers this to render time via
                 // `pkg.manager`, which we cannot soundly alias.
                 let uses_default_registry = global_uses_default_registry
                     && manager.options.scope_for_package_name(name_slice).url_hash
@@ -1177,17 +1178,9 @@ impl UpdateInteractiveCommand {
         // Try to get terminal size
         #[cfg(unix)]
         {
-            // TODO(port): replace std.posix.system.ioctl with bun_sys
-            // SAFETY: all-zero is a valid Winsize (#[repr(C)] POD, no NonNull/NonZero fields).
-            let mut size: bun_core::Winsize = bun_core::ffi::zeroed();
-            // SAFETY: ioctl with TIOCGWINSZ on stdout fd; size is a valid out-ptr.
-            if unsafe {
-                libc::ioctl(
-                    libc::STDOUT_FILENO,
-                    libc::TIOCGWINSZ,
-                    (&raw mut size).cast::<libc::c_void>(),
-                )
-            } == 0
+            // TIOCGWINSZ on stdout, routed through the output sink (bun_sys).
+            if let Some(size) =
+                bun_core::output::File::from(bun_core::Fd::stdout()).winsize()
             {
                 // Reserve space for prompt (1 line) + scroll indicators (2 lines) + some buffer
                 let usable_height = if size.row > 6 { size.row - 4 } else { 20 };
@@ -1316,7 +1309,7 @@ impl UpdateInteractiveCommand {
         };
 
         Output::flush();
-        // PORT NOTE: reshaped for borrowck — Zig returns the same `selected` slice via state;
+        // Reshaped for borrowck — Zig returns the same `selected` slice via state;
         // we clone the borrowed slice into an owned Box here.
         Ok(Box::from(result))
     }
@@ -2244,7 +2237,7 @@ fn leak_dup(bytes: &[u8]) -> &'static [u8] {
 }
 
 /// Edit catalog definitions in package.json
-// PORT NOTE: Zig threads `manager` only for `manager.allocator`; the Rust port
+// Zig threads `manager` only for `manager.allocator`; the Rust port
 // uses a local `Bump` (`E::Object::put` ignores its allocator arg), so the
 // parameter is dropped to keep `update_catalog_definitions` borrowck-clean.
 pub(crate) fn edit_catalog_definitions(
@@ -2254,7 +2247,7 @@ pub(crate) fn edit_catalog_definitions(
     // using data store is going to result in undefined memory issues as
     // the store is cleared in some workspace situations. the solution
     // is to always avoid the store
-    // PORT NOTE: `Expr.Disabler` is a debug-only guard around the T4
+    // `Expr.Disabler` is a debug-only guard around the T4
     // `bun_js_parser` Store; the lower-tier `bun_ast::js_ast` `Expr` used
     // here boxes via its own thread-local `DATA_STORE` (see js_ast.rs), so
     // toggling the parser-tier disabler is a no-op for these allocations.
@@ -2323,7 +2316,7 @@ fn update_default_catalog(
 ) -> Result<(), bun_core::Error> {
     // Get or create the catalog object
     // First check if catalog is under workspaces.catalog
-    // PORT NOTE: reshaped — Zig copies `data.e_object.*` (struct bytes,
+    // Reshaped — Zig copies `data.e_object.*` (struct bytes,
     // aliasing the `Vec` ptr) and writes the mutated copy back via
     // `parent.put("catalog", Expr.allocate(obj))`. Rust `Vec<T>` has a
     // `Drop` that frees its buffer, so a shallow copy would double-free.
@@ -2414,7 +2407,7 @@ fn update_named_catalog(
 ) -> Result<(), bun_core::Error> {
     // Get or create the catalogs object
     // First check if catalogs is under workspaces.catalogs (newer structure)
-    // PORT NOTE: reshaped — see `update_default_catalog` for the
+    // Reshaped — see `update_default_catalog` for the
     // shallow-copy-vs-in-place + lookup-vs-placement rationale.
     let mut fresh_catalogs = E::Object::default();
     let (existing_catalogs, source) = find_catalog_object(package_json, b"catalogs");

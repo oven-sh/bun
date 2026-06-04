@@ -699,7 +699,7 @@ impl<Unit: DiffUnit> DiffMatchPatch<Unit> {
                     // Upon reaching an equality, check for prior redundancies.
                     if count_delete >= 1 && count_insert >= 1 {
                         // Delete the offending records and add the merged ones.
-                        // PORT NOTE: Zig freeRangeDiffList + replaceRangeAssumeCapacity → drain
+                        // Zig freeRangeDiffList + replaceRangeAssumeCapacity → drain
                         diffs.drain(
                             pointer - count_delete - count_insert
                                 ..pointer - count_delete - count_insert
@@ -737,12 +737,11 @@ pub(crate) struct HalfMatchResult<Unit: DiffUnit> {
 }
 // `deinit` → Drop handles `Box<[Unit]>` fields automatically.
 
-pub(crate) struct LinesToCharsResult<Unit: DiffUnit> {
+pub(crate) struct LinesToCharsResult<'a, Unit: DiffUnit> {
     pub chars_1: Box<[usize]>,
     pub chars_2: Box<[usize]>,
-    // TODO(port): lifetime — borrows slices from the input texts; raw ptr here
-    // (no struct lifetime params). May promote to BORROW_PARAM in LIFETIMES.tsv.
-    pub line_array: Vec<*const [Unit]>,
+    /// Borrows line slices from the input texts.
+    pub line_array: Vec<&'a [Unit]>,
 }
 // `deinit` → Drop handles all fields automatically.
 
@@ -753,20 +752,21 @@ pub(crate) struct LinesToCharsResult<Unit: DiffUnit> {
 /// @return Three element Object array, containing the encoded text1, the
 ///     encoded text2 and the List of unique strings.  The zeroth element
 ///     of the List of unique strings is intentionally blank.
-pub(crate) fn diff_lines_to_chars<Unit: DiffUnit>(
-    text1: &[Unit],
-    text2: &[Unit],
-) -> Result<LinesToCharsResult<Unit>, DiffError> {
-    let mut line_array: Vec<*const [Unit]> = Vec::new();
-    // TODO(port): `bun.StringHashMapUnmanaged(usize)` keyed by borrowed `&[u8]` —
-    // `bun_collections::StringHashMap` may need a `&[u8]`-borrowing variant.
+pub(crate) fn diff_lines_to_chars<'a, Unit: DiffUnit>(
+    text1: &'a [Unit],
+    text2: &'a [Unit],
+) -> Result<LinesToCharsResult<'a, Unit>, DiffError> {
+    let mut line_array: Vec<&'a [Unit]> = Vec::new();
+    // Zig's `bun.StringHashMapUnmanaged(usize)` keyed the map with borrowed
+    // slices; `bun_collections::StringHashMap` copies each key into an owned
+    // `Box<[u8]>` (one allocation per unique line).
     let mut line_hash: StringHashMap<usize> = StringHashMap::default();
     // e.g. line_array[4] == "Hello\n"
     // e.g. line_hash.get("Hello\n") == 4
 
     // "\x00" is a valid character, but various debuggers don't like it.
     // So we'll insert a junk entry to avoid generating a null character.
-    line_array.push(std::ptr::from_ref::<[Unit]>(&[]));
+    line_array.push(&[]);
 
     // Allocate 2/3rds of the space for text1, the rest for text2.
     let chars1 = diff_lines_to_chars_munge(text1, &mut line_array, &mut line_hash)?;
@@ -785,9 +785,9 @@ pub(crate) fn diff_lines_to_chars<Unit: DiffUnit>(
 /// @param lineHash Map of strings to indices.
 /// @param maxLines Maximum length of lineArray.
 /// @return Encoded string.
-fn diff_lines_to_chars_munge<Unit: DiffUnit>(
-    text: &[Unit],
-    line_array: &mut Vec<*const [Unit]>,
+fn diff_lines_to_chars_munge<'a, Unit: DiffUnit>(
+    text: &'a [Unit],
+    line_array: &mut Vec<&'a [Unit]>,
     line_hash: &mut StringHashMap<usize>,
 ) -> Result<Box<[usize]>, DiffError> {
     if TypeId::of::<Unit>() != TypeId::of::<u8>() {
@@ -820,10 +820,11 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
                 line = &text[usize::try_from(line_start).unwrap()..];
                 line_end = isize::try_from(text.len()).unwrap();
             }
-            line_array.push(std::ptr::from_ref::<[Unit]>(line));
+            line_array.push(line);
             // Unit == u8 verified above; bytemuck statically checks the layout.
             let line_u8: &[u8] = bytemuck::cast_slice::<Unit, u8>(line);
-            // TODO(port): StringHashMap key ownership — Zig stored a borrowed slice.
+            // `put_assume_capacity` copies the key into an owned `Box<[u8]>`
+            // (Zig stored a borrowed slice; see `diff_lines_to_chars`).
             line_hash.put_assume_capacity(line_u8, line_array.len() - 1);
             chars.push(line_array.len() - 1);
         }
@@ -838,7 +839,7 @@ fn diff_lines_to_chars_munge<Unit: DiffUnit>(
 /// @param lineArray List of unique strings.
 pub(crate) fn diff_chars_to_lines<Unit: DiffUnit>(
     char_diffs: &DiffList<usize>,
-    line_array: &[*const [Unit]],
+    line_array: &[&[Unit]],
 ) -> Result<DiffList<Unit>, DiffError> {
     let mut diffs: DiffList<Unit> = Vec::with_capacity(char_diffs.len());
     let mut text: Vec<Unit> = Vec::new();
@@ -846,8 +847,7 @@ pub(crate) fn diff_chars_to_lines<Unit: DiffUnit>(
     for d in char_diffs.iter() {
         let mut j: usize = 0;
         while j < d.text.len() {
-            // SAFETY: line_array entries borrow from input texts which outlive this call.
-            text.extend_from_slice(unsafe { &*line_array[d.text[j]] });
+            text.extend_from_slice(line_array[d.text[j]]);
             j += 1;
         }
         // PERF(port): was assume_capacity
@@ -936,7 +936,7 @@ pub(crate) fn diff_cleanup_merge<Unit: DiffUnit>(
                     // Delete the offending records and add the merged ones.
                     pointer -= count_delete + count_insert;
                     if count_delete + count_insert > 0 {
-                        // PORT NOTE: freeRangeDiffList + replaceRangeAssumeCapacity → drain
+                        // freeRangeDiffList + replaceRangeAssumeCapacity → drain
                         diffs.drain(pointer..pointer + count_delete + count_insert);
                     }
 
@@ -1008,7 +1008,7 @@ pub(crate) fn diff_cleanup_merge<Unit: DiffUnit>(
                 diffs[pointer].text = pt;
                 let p1t = concat(&[&diffs[pointer - 1].text, &diffs[pointer + 1].text]);
                 diffs[pointer + 1].text = p1t;
-                // PORT NOTE: freeRangeDiffList + replaceRangeAssumeCapacity → remove
+                // freeRangeDiffList + replaceRangeAssumeCapacity → remove
                 diffs.remove(pointer - 1);
                 changes = true;
             } else if diffs[pointer].text.starts_with(&diffs[pointer + 1].text) {
@@ -1017,7 +1017,7 @@ pub(crate) fn diff_cleanup_merge<Unit: DiffUnit>(
                 let next_len = diffs[pointer + 1].text.len();
                 let pt = concat(&[&diffs[pointer].text[next_len..], &diffs[pointer + 1].text]);
                 diffs[pointer].text = pt;
-                // PORT NOTE: freeRangeDiffList + replaceRangeAssumeCapacity → remove
+                // freeRangeDiffList + replaceRangeAssumeCapacity → remove
                 diffs.remove(pointer + 1);
                 changes = true;
             }
@@ -1041,7 +1041,7 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
     // Stack of indices where equalities are found.
     let mut equalities: Vec<isize> = Vec::new();
     // Always equal to equalities[equalitiesLength-1][1]
-    // PORT NOTE: reshaped for borrowck — owned copy of last_equality
+    // reshaped for borrowck — owned copy of last_equality
     let mut last_equality: Option<Box<[Unit]>> = None;
     let mut pointer: isize = 0; // Index of current position.
     // Number of characters that changed prior to the equality.
@@ -1123,7 +1123,7 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
     while usize::try_from(pointer).unwrap() < diffs.len() {
         let p = usize::try_from(pointer).unwrap();
         if diffs[p - 1].operation == Operation::Delete && diffs[p].operation == Operation::Insert {
-            // PORT NOTE: reshaped for borrowck — take owned copies of deletion/insertion
+            // reshaped for borrowck — take owned copies of deletion/insertion
             let deletion: Box<[Unit]> = core::mem::take(&mut diffs[p - 1].text);
             let insertion: Box<[Unit]> = core::mem::take(&mut diffs[p].text);
             let overlap_length1: usize = diff_common_overlap(&deletion, &insertion);
@@ -1146,7 +1146,7 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
                     diffs[p + 1].text = dupe(&insertion[overlap_length1..]);
                     pointer += 1;
                 } else {
-                    // PORT NOTE: restore taken values (no-op in Zig).
+                    // restore taken values (no-op in Zig).
                     diffs[p - 1].text = deletion;
                     diffs[p].text = insertion;
                 }
@@ -1172,7 +1172,7 @@ pub(crate) fn diff_cleanup_semantic<Unit: DiffUnit>(
                     diffs[p + 1].text = new_plus;
                     pointer += 1;
                 } else {
-                    // PORT NOTE: restore taken values (no-op in Zig).
+                    // restore taken values (no-op in Zig).
                     diffs[p - 1].text = deletion;
                     diffs[p].text = insertion;
                 }
@@ -1431,7 +1431,6 @@ fn diff_common_suffix<Unit: DiffUnit>(before: &[Unit], after: &[Unit]) -> usize 
     n
 }
 
-// TODO(port): replace with bun_core time source. `std::time` not on the I/O ban list.
 fn milli_timestamp() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

@@ -179,7 +179,7 @@ bun_core::opaque_extern!(
 // `extern "C"` symbols which the runtime crate exports with `#[no_mangle]`.
 // This is the same link-time-dispatch pattern as other `*_sys` crates use for
 // their C backends — only here the "backend" is Rust in a higher tier.
-// PORT NOTE: signatures mirror `src/runtime/socket/UpgradedDuplex.rs`.
+// Signatures must stay in sync with `src/runtime/socket/UpgradedDuplex.rs`.
 // SAFETY (safe fn): `UpgradedDuplex` is an `opaque_extern!` ZST handle (`!Freeze`
 // via `UnsafeCell`), so `&`/`&mut` carry no `readonly`/`noalias` and are
 // ABI-identical to non-null `*const`/`*mut`. Shims taking only the handle +

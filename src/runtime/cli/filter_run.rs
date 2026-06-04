@@ -18,15 +18,15 @@ use bun_io::{BufferedReader, ReadState};
 use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_sys as sys;
 
-// TODO(port): several `[]const u8` fields below are leaked in Zig (program exits). In Zig,
-// `script_content` and `combined` alias the same `copy_script` buffer; here they are split
-// into separate owned boxes. Revisit ownership.
+// In Zig several of the `[]const u8` fields below are leaked (the program exits).
+// Here they are owned boxes, except `combined` which is interned in the
+// process-lifetime CLI arena.
 struct ScriptConfig {
     package_json_path: Box<[u8]>,
     package_name: Box<[u8]>,
     script_name: Box<[u8]>,
     script_content: Box<[u8]>,
-    combined: &'static ZStr, // TODO(port): lifetime — points into leaked copy_script buffer
+    combined: &'static ZStr, // interned via `cli_dupe` into the process-lifetime CLI arena
     // Owned dep names; `DependencyMap.source_buf` would dangle once the
     // parsed `PackageJSON` (which owns the file bytes) drops.
     deps: Vec<Box<[u8]>>,
@@ -49,7 +49,7 @@ struct ProcessInfo {
     status: Status,
 }
 
-// PORT NOTE: `state` is a backref into the owning `State` (which holds `handles: []ProcessHandle`),
+// `state` is a backref into the owning `State` (which holds `handles: []ProcessHandle`),
 // and `dependents` holds raw pointers into that same `handles` slice. This is self-referential in
 // Zig; kept as raw pointers per LIFETIMES.tsv (BACKREF).
 pub(crate) struct ProcessHandle<'a> {
@@ -101,7 +101,7 @@ impl<'a> ProcessHandle<'a> {
             let env_ptr = state.env;
             // SAFETY: state.env is the process-lifetime DotEnv loader (Transpiler::env).
             let env = unsafe { &mut *env_ptr };
-            // PORT NOTE: copy to owned — `original_path` borrows env.map which is
+            // Copy to owned — `original_path` borrows env.map which is
             // mutated by put() below (Zig aliased freely).
             let original_path: Box<[u8]> = env.map.get(b"PATH").unwrap_or(b"").into();
             let _ = env.map.put(b"PATH", &handle.config.PATH);
@@ -273,7 +273,7 @@ struct State<'a> {
     draw_buf: Vec<u8>,
     last_lines_written: usize,
     pretty_output: bool,
-    shell_bin: &'static ZStr, // TODO(port): lifetime — leaked in Zig (findShell/selfExePath)
+    shell_bin: &'static ZStr, // intentionally leaked (process exits), as in Zig findShell/selfExePath
     aborted: bool,
     // Raw `*mut` (Zig: `*bun.DotEnv.Loader`) — process-lifetime singleton owned
     // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
@@ -297,7 +297,6 @@ impl<'a> State<'a> {
         handle: &mut ProcessHandle<'a>,
         chunk: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         if self.pretty_output {
             handle.buffer.extend_from_slice(chunk);
             let _ = self.redraw(false);
@@ -343,7 +342,6 @@ impl<'a> State<'a> {
     }
 
     fn process_exit(&mut self, handle: &mut ProcessHandle<'a>) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         self.remaining_scripts -= 1;
         if !self.aborted {
             for &dependent in &handle.dependents {
@@ -448,7 +446,6 @@ impl<'a> State<'a> {
     }
 
     fn redraw(&mut self, is_abort: bool) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         if !self.pretty_output {
             return Ok(());
         }
@@ -463,7 +460,7 @@ impl<'a> State<'a> {
                 self.draw_buf.extend_from_slice(b"\x1b[1A\x1b[K");
             }
         }
-        // PORT NOTE: reshaped for borrowck — iterating handles by index since draw_buf is also &mut self.
+        // Reshaped for borrowck — iterating handles by index since draw_buf is also &mut self.
         for idx in 0..self.handles.len() {
             let handle = &self.handles[idx];
             // normally we truncate the output to 10 lines, but on abort we print everything to aid debugging
@@ -620,7 +617,7 @@ impl<'a> State<'a> {
 struct AbortHandler;
 
 static SHOULD_ABORT: AtomicBool = AtomicBool::new(false);
-// PORT NOTE: Zig used a non-atomic `var should_abort = false` set from a signal handler;
+// Zig used a non-atomic `var should_abort = false` set from a signal handler;
 // Rust requires atomics for signal-handler-safe access.
 
 impl AbortHandler {
@@ -661,7 +658,6 @@ impl AbortHandler {
         }
         #[cfg(not(unix))]
         {
-            // TODO(port): move to <area>_sys
             let res = bun_sys::c::SetConsoleCtrlHandler(
                 Some(Self::windows_ctrl_handler),
                 bun_sys::windows::TRUE,
@@ -693,8 +689,8 @@ fn windows_is_terminal() -> bool {
 pub(crate) fn run_scripts_with_filter(
     ctx: Command::Context,
 ) -> Result<core::convert::Infallible, bun_core::Error> {
-    // TODO(port): Zig return type is `!noreturn`; using Result<Infallible, _> for `?` support.
-    // PORT NOTE: own the slice — `ctx` is reborrowed `&mut` for
+    // Zig's return type was `!noreturn`; using Result<Infallible, _> for `?` support.
+    // Own the slice — `ctx` is reborrowed `&mut` for
     // `configure_env_for_run` below while `script_name` is still live.
     let script_name_owned: Box<[u8]> = if ctx.positionals.len() > 1 {
         ctx.positionals[1].clone()
@@ -719,7 +715,7 @@ pub(crate) fn run_scripts_with_filter(
     // these things are leaked because we are going to exit
     // When --workspaces is set, we want to match all workspace packages
     // Otherwise use the provided filters
-    // PORT NOTE: `FilterSet::init` takes `&[&[u8]]`; ctx.filters is
+    // `FilterSet::init` takes `&[&[u8]]`; ctx.filters is
     // `Vec<Box<[u8]>>` so build a borrowed-slice view.
     let filters_to_use: Vec<&[u8]> = if ctx.workspaces {
         // Use "*" as filter to match all packages in the workspace
@@ -777,8 +773,6 @@ pub(crate) fn run_scripts_with_filter(
             bun_core::warn!("Failed to read package.json\n");
             continue;
         };
-        // TODO(port): PackageJSON::parse signature — enum args are placeholders.
-
         let Some(pkgscripts) = &pkgjson.scripts else {
             continue;
         };
@@ -832,7 +826,7 @@ pub(crate) fn run_scripts_with_filter(
             }
             copy_script.push(0);
 
-            // PORT NOTE: in Zig, `script_content` and `combined` both alias
+            // In Zig, `script_content` and `combined` both alias
             // `copy_script.items`. Route through the process-lifetime CLI arena
             // and derive the `ZStr` from the arena slice.
             let interned: &'static [u8] = crate::cli::cli_dupe(&copy_script);
@@ -910,7 +904,7 @@ pub(crate) fn run_scripts_with_filter(
     };
 
     let handles: Box<[ProcessHandle]> = Vec::with_capacity(scripts.len()).into();
-    // PORT NOTE: reshaped for borrowck — Zig allocates uninit slice then writes each element.
+    // Reshaped for borrowck — Zig allocates uninit slice then writes each element.
     // We build into a Vec first, but need stable addresses for `&state` backref and `&mut handles[i]`
     // pointers stored in `map`. This is self-referential; raw pointers used below.
 
@@ -937,7 +931,7 @@ pub(crate) fn run_scripts_with_filter(
     };
 
     // initialize the handles
-    // PORT NOTE: self-referential — each `state.handles[i].state` points back at
+    // Self-referential — each `state.handles[i].state` points back at
     // `state`, and `map` stores `*mut ProcessHandle` into `state.handles`. Derive
     // the backref with mutable provenance (`addr_of_mut!`) so writes through it
     // in `ProcessHandle::start` / `State::process_exit` are sound under Stacked
@@ -979,7 +973,7 @@ pub(crate) fn run_scripts_with_filter(
                     ..Default::default()
                 },
                 stream: true,
-                ..Default::default() // TODO(port): SpawnOptions remaining fields
+                ..Default::default()
             },
             start_time: None,
             end_time: None,

@@ -521,8 +521,12 @@ fn run_task_cold(task: Task) {
             unsafe { ShellTask::run_from_main_thread::<$ty>(cast_ptr!($ty)) };
         }};
         // `.task.task.runFromMainThread()` shape (cond-expr wraps an inner
-        // `task: ShellTask`-embedding struct one level deeper). Not a
-        // `ShellTaskCtx` implementor, so unref + interp-recovery are inlined.
+        // `task: ShellTask`-embedding struct one level deeper, mirroring
+        // Zig's two-hop dispatch). The type *does* implement `ShellTaskCtx`
+        // (with a two-hop `TASK_OFFSET`, needed for `ShellTask::schedule`),
+        // so this arm is behaviorally identical to the plain arm; the unref +
+        // interp-recovery are inlined here only to keep the `.task.task`
+        // shape explicit at the dispatch site.
         (nested $ty:ty) => {{
             let t = cast_ptr!($ty);
             // SAFETY: see above; `task.task` is the embedded ShellTask.
@@ -620,9 +624,8 @@ pub fn tick_queue_with_count(
     if el.debug.js_call_count_outside_tick_queue
         > el.debug.drain_microtasks_count_outside_tick_queue
     {
-        // PORT NOTE: Zig `bun.Output.panic` with the long advisory string.
-        // We keep the assert + short message; the full text is debug-only and
-        // can be expanded when `Output::panic` lands.
+        // Zig uses `bun.Output.panic` with a long advisory string; we keep
+        // the assert + short message (debug-only).
         panic!(
             "{} JavaScript functions were called outside of the microtask queue without draining microtasks. Use EventLoop.runCallback().",
             el.debug.js_call_count_outside_tick_queue
@@ -631,7 +634,7 @@ pub fn tick_queue_with_count(
     }
 
     while let Some(task) = el.tasks.read_item() {
-        // PORT NOTE: Zig increments `counter` via `defer counter.* += 1;` at
+        // Zig increments `counter` via `defer counter.* += 1;` at
         // the top of the loop body, so it fires on every scope exit including
         // the HotReloadTask `return`. Hoisting it before dispatch keeps the
         // Continue path identical and avoids a scopeguard.
@@ -845,7 +848,7 @@ pub(crate) unsafe fn __bun_io_pollable_on_io_error(
         bun_io::PollableTag::WriteFile => {
             // SAFETY: per fn contract.
             let this = unsafe { bun_core::from_field_ptr!(WriteFile, io_poll, poll) };
-            // PORT NOTE: WriteFile::on_io_error already takes `*mut ()` (it
+            // WriteFile::on_io_error already takes `*mut ()` (it
             // self-recovers via the io_request path elsewhere); reuse that
             // shape rather than reborrowing `&mut`.
             WriteFile::on_io_error(this.cast(), err);

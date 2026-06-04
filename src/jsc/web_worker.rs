@@ -98,7 +98,6 @@ pub struct WebWorker {
     eval_mode: bool,
     store_fd: bool,
     /// Borrowed from C++ `WorkerOptions` (kept alive by the owning `Worker`).
-    // TODO(port): lifetime — borrowed from cpp_worker (BACKREF).
     argv_ptr: *const WTFStringImpl,
     argv_len: usize,
     exec_argv_ptr: *const WTFStringImpl,
@@ -121,8 +120,6 @@ pub struct WebWorker {
     /// Rust's aliasing model still requires interior mutability. `*mut T` is
     /// `Copy`, so `Cell` (not `UnsafeCell`) suffices and every read/write is
     /// safe `.get()`/`.set()`.
-    // TODO(port): intrusive doubly-linked list node — `bun_collections` has no
-    // `IntrusiveList` yet; raw next/prev pointers used directly.
     live_next: Cell<*mut WebWorker>,
     live_prev: Cell<*mut WebWorker>,
 
@@ -201,7 +198,6 @@ pub enum Status {
     Terminated,
 }
 
-// TODO(port): move to <area>_sys
 // `JSGlobalObject` is an opaque FFI handle (ZST); per codebase convention
 // (see JSGlobalObject.rs externs) it crosses FFI as `*const` even when C++
 // mutates — Rust never reads/writes bytes through it, so no `*mut` needed.
@@ -217,7 +213,7 @@ unsafe extern "C" {
     // by-value scalars/`#[repr(C)]` PODs.
     safe fn WebWorker__dispatchExit(cpp_worker: *mut c_void, exit_code: i32);
     // Re-declared here (also private in VM.rs) so `thread_main` can take the
-    // API lock as a raw FFI call with NO RAII guard — see PORT NOTE there.
+    // API lock as a raw FFI call with NO RAII guard — see the note there.
     safe fn JSC__VM__getAPILock(vm: &jsc::VM);
     safe fn WebWorker__dispatchOnline(cpp_worker: *mut c_void, global: &JSGlobalObject);
     safe fn WebWorker__fireEarlyMessages(cpp_worker: *mut c_void, global: &JSGlobalObject);
@@ -239,11 +235,8 @@ unsafe extern "C" {
 mod live_workers {
     use super::*;
 
-    // PORT NOTE: `Mutex::new()` is the prevailing const-init spelling across
-    // un-gated jsc modules (ConsoleObject.rs, bundler/ThreadPool.rs); the
-    // `bun_threading` crate provides it.
     pub(super) static MUTEX: Mutex = Mutex::new();
-    // TODO(port): std.DoublyLinkedList — intrusive, nodes are `WebWorker.live_{next,prev}`
+    // Intrusive doubly-linked list head; nodes are `WebWorker.live_{next,prev}`.
     // PORTING.md §Global mutable state: list head, every read/write is under
     // `MUTEX` above. `AtomicCell` so the slot itself is `Sync` with safe
     // load/store (the mutex still provides the actual happens-before for the
@@ -591,7 +584,7 @@ impl WebWorker {
         // worker whose thread is already running.
         live_workers::register(worker);
 
-        // PORT NOTE: Zig's `std.Thread.spawn(.{ .stack_size }, threadMain, .{worker})`.
+        // Zig's `std.Thread.spawn(.{ .stack_size }, threadMain, .{worker})`.
         // `std::thread` is permitted (only `std::{fs,net,process}` are banned);
         // bun_threading has no generic spawn helper.
         struct SendPtr(*mut WebWorker);
@@ -792,7 +785,7 @@ impl WebWorker {
             }
         };
 
-        // PORT NOTE: `start_vm()` may have observed `requested_terminate` and
+        // `start_vm()` may have observed `requested_terminate` and
         // run `shutdown()` itself (which now returns instead of `noreturn`).
         // In that case it returns `Ok(null)` and there is nothing left to do —
         // fall out of `thread_main` so the thread exits cleanly. We must NOT
@@ -811,7 +804,7 @@ impl WebWorker {
         // the safe thread-local accessor returns the same allocation.
         debug_assert!(core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
         let global = VirtualMachine::get().global();
-        // PORT NOTE: Zig calls `holdAPILock(this, OpaqueWrap(spin))`; the
+        // Zig calls `holdAPILock(this, OpaqueWrap(spin))`; the
         // callback ends in `bun.exitThread()` (`pthread_exit`), whose forced
         // unwind cannot walk Zig frames (no unwind tables), so glibc falls
         // back to a longjmp and the C++ `JSLockHolder` destructor never
@@ -819,7 +812,7 @@ impl WebWorker {
         // accounts for that abandoned ref by `deref`ing twice.
         //
         // In Rust we cannot use `pthread_exit` (its forced unwind aborts at
-        // the first `extern "C"` boundary — see `shutdown` PORT NOTE), so
+        // the first `extern "C"` boundary — see the `shutdown` note), so
         // `spin()` returns. To preserve the Zig invariant that the API lock
         // is simply abandoned along with the destroyed VM, take the lock via
         // raw FFI (NOT the `Lock<'_>` RAII guard) and never release it.
@@ -893,7 +886,7 @@ impl WebWorker {
         // state.
         let mut temp_proxy_slots = jsc::rare_data::ProxyEnvSlots::default();
 
-        // PORT NOTE: Zig allocated Map/Loader on the worker arena (bulk-freed
+        // Zig allocated Map/Loader on the worker arena (bulk-freed
         // in shutdown). Rust's `Arena = bumpalo::Bump` doesn't run Drop, so
         // box on the global heap instead and hand ownership to the VM via
         // `transpiler.env`; reclaimed in `vm.destroy()` in `shutdown()`.
@@ -1026,7 +1019,7 @@ impl WebWorker {
     /// Phase 2: load the entry point, dispatch 'online', run the event loop.
     /// Runs inside `holdAPILock`. Always ends by calling `shutdown()`.
     ///
-    /// PORT NOTE: Zig's `spin` is `noreturn` (every path ends in `shutdown`
+    /// Zig's `spin` is `noreturn` (every path ends in `shutdown`
     /// → `bun.exitThread`). The Rust port returns `()` so the thread can
     /// unwind-free fall out of the `extern "C"` trampoline — see `shutdown`.
     fn spin(&self) {
@@ -1060,7 +1053,7 @@ impl WebWorker {
         }
 
         // `preloads` is owned by `self` (heap `WebWorker` outlives the VM).
-        // PORT NOTE: Zig's slice-copy assignment; here `preload: Vec<Box<[u8]>>`
+        // Zig's slice-copy assignment; here `preload: Vec<Box<[u8]>>`
         // so clone the boxes (cheap, ≤handful).
         vm.as_mut().preload.clone_from(&self.preloads);
 
@@ -1205,8 +1198,8 @@ impl WebWorker {
     ///   3. `teardownJSCVM()`         — collectNow + vm.deref (single — Zig
     ///                                  derefs ×2 because `JSLockHolder` holds
     ///                                  a `RefPtr<VM>`; the Rust API-lock path
-    ///                                  takes no extra ref, see `thread_main`
-    ///                                  PORT NOTE); can re-enter via
+    ///                                  takes no extra ref, see the `thread_main`
+    ///                                  note); can re-enter via
     ///                                  finalizers, so must precede step 5.
     ///   4. `dispatchExit()`          — posts close task → parent releases
     ///                                  parent_poll_ref + thread-held Worker ref.
@@ -1215,7 +1208,7 @@ impl WebWorker {
     ///
     /// Does NOT free `this` — see ownership rule in the file header.
     ///
-    /// PORT NOTE: Zig's `shutdown` is `noreturn` (ends in `bun.exitThread`).
+    /// Zig's `shutdown` is `noreturn` (ends in `bun.exitThread`).
     /// The Rust port returns `()` and lets the thread fall out of the spawn
     /// closure instead — see the note at the bottom of this fn.
     fn shutdown(&self) {
@@ -1270,7 +1263,7 @@ impl WebWorker {
             // closeAll() fires on_close → JS callbacks. RareData.deinit() runs
             // after teardownJSCVM and only deinit()s (asserts empty in debug).
             if let Some(rare) = vm.rare_data.as_deref_mut() {
-                // PORT NOTE: reshaped for borrowck — `close_all_socket_groups`
+                // reshaped for borrowck — `close_all_socket_groups`
                 // wants `&VirtualMachine` while `rare` is `&mut` borrowed from
                 // `vm`. Re-derive `vm` through the raw ptr (sole owner).
 
@@ -1374,7 +1367,7 @@ impl WebWorker {
         bun_uws::on_thread_exit();
         drop(arena.take());
 
-        // PORT NOTE: Zig calls `bun.exitThread()` (`pthread_exit`) here. In
+        // Zig calls `bun.exitThread()` (`pthread_exit`) here. In
         // Rust we MUST NOT — glibc's `pthread_exit` throws a `__forced_unwind`
         // C++ exception to run destructors, and unwinding that across an
         // `extern "C"` (`nounwind`) Rust frame on the way out to
@@ -1503,15 +1496,15 @@ fn on_unhandled_rejection(
         }
         error_instance = global_object.try_take_exception().unwrap();
     }
-    // PORT NOTE: Zig's `writer.flush()` — `Vec<u8>` writer is unbuffered, so
+    // Zig's `writer.flush()` — `Vec<u8>` writer is unbuffered, so
     // there is nothing to flush; the `bun.outOfMemory()` arm is unreachable.
     jsc::mark_binding();
-    // PORT NOTE: Zig calls `WebWorker__dispatchError` bare here because the
+    // Zig calls `WebWorker__dispatchError` bare here because the
     // very next statement is `worker.shutdown()` (noreturn — `bun.exitThread`
     // longjmps), so the C++ `DECLARE_THROW_SCOPE` inside
     // `SerializedScriptValue::create` (reached via `dispatchErrorWithValue`)
     // never has its simulated-throw bookkeeping validated. Rust RETURNS through
-    // the live C++ frames (see PORT NOTE below), so that simulated throw must
+    // the live C++ frames (see the note below), so that simulated throw must
     // be checked before unwinding, or the next `TopExceptionScope` ctor on the
     // stack — `performMicrotaskCheckpoint` / NodeTimerObject `call()` — trips
     // `verifyExceptionCheckNeedIsSatisfied`. Wrap in `from_js_host_call_generic`
@@ -1533,7 +1526,7 @@ fn on_unhandled_rejection(
         let _ = global_object.try_take_exception();
     }
     let _ = worker.set_requested_terminate();
-    // PORT NOTE: Zig calls `worker.shutdown()` here, which is `noreturn`
+    // Zig calls `worker.shutdown()` here, which is `noreturn`
     // (`bun.exitThread` longjmps out, abandoning the C++ frames on the
     // stack). In Rust `shutdown()` RETURNS — calling it here would destroy
     // the `JSC::VM`, free the Bun `VirtualMachine` + arena, and post
@@ -1606,7 +1599,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                 );
                 let base_len = base.len();
                 let extname_len = bun_paths::extension(base).len();
-                // PORT NOTE: reshaped for borrowck — Zig held `extname` as a
+                // reshaped for borrowck — Zig held `extname` as a
                 // sub-slice of `pathbuf` while writing into `pathbuf`. Compare
                 // by re-slicing after dropping the mutable borrow.
                 let extname = &pathbuf[base_len - extname_len..base_len];

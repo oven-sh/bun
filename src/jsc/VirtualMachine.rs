@@ -142,15 +142,17 @@ pub struct VirtualMachine {
     pub global: *mut JSGlobalObject,
     // allocator dropped per §Allocators (global mimalloc)
     pub has_loaded_constructors: bool,
-    // TODO(port): lifetime — `Transpiler<'a>` borrows `log`/`allocator`; VM is
+    // LIFETIME-ERASED: `Transpiler<'a>` borrows `log`/`allocator`; VM is
     // self-referential and cannot carry `<'a>`, so we erase to `'static` and the
     // owner guarantees the borrowed `log` outlives the VM (see `init`).
     pub transpiler: Transpiler<'static>,
-    // TODO(b2-cycle): `bun_watcher` is `ImportWatcher` from hot_reloader.rs (gated sibling).
-    pub bun_watcher: *mut c_void,
+    /// Hot-reload import watcher (heap `Box`, installed by
+    /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`]); null when
+    /// hot reload is disabled. Read via [`Self::bun_watcher_ptr`].
+    pub bun_watcher: *mut crate::hot_reloader::ImportWatcher,
     pub console: *mut crate::console_object::ConsoleObject,
-    // TODO(port): lifetime — LIFETIMES.tsv says BORROW_PARAM (`&'a mut bun_ast::Log`);
-    // raw NonNull used because VM is self-referential and cannot carry `<'a>`.
+    // BORROW_PARAM (`&'a mut bun_ast::Log` per LIFETIMES.tsv) — raw NonNull
+    // used because VM is self-referential and cannot carry `<'a>`.
     pub log: Option<NonNull<bun_ast::Log>>,
     /// Path of the entry module. BACKREF — borrows process-argv, the resolver's
     /// process-lifetime `dirname_store`/`filename_store`, the standalone module
@@ -166,7 +168,9 @@ pub struct VirtualMachine {
     pub overridden_main: crate::strong::Optional,
     pub entry_point: bun_bundler::entry_points::ServerEntryPoint,
     pub origin: bun_url::URL<'static>,
-    // TODO(b2-cycle): `node_fs` is `Option<Box<bun_runtime::node::fs::NodeFS>>`.
+    // LAYERING: real type is `Option<Box<bun_runtime::node::fs::NodeFS>>`, but
+    // `bun_runtime` is a forward dep of this crate; stored type-erased and
+    // cast back by the `bun_runtime` consumers.
     pub node_fs: Option<*mut c_void>,
     /// Opaque per-VM `bun_runtime` state (boxed `timer::All` +
     /// `Body::Value::HiveAllocator` + …). Set by
@@ -174,30 +178,35 @@ pub struct VirtualMachine {
     /// `RuntimeHooks::deinit_runtime_state` in [`destroy`]. Null when no high
     /// tier is installed (e.g. `bun_jsc` unit tests).
     ///
-    /// PORT NOTE: the Zig `timer: api.Timer.All` and
+    /// Note: the Zig `timer: api.Timer.All` and
     /// `body_value_pool: webcore.Body.Value.HiveAllocator` value
     /// fields live inside this box rather than as `()` shadows here — both
     /// types are owned by `bun_runtime` (forward dep). Access goes through
     /// [`RuntimeHooks::timer_insert`] / [`RuntimeHooks::body_value_hive_ref`].
     pub runtime_state: *mut c_void,
     pub event_loop_handle: Option<*mut PlatformEventLoop>,
-    pub pending_unref_counter: i32,
+    /// Pending `unref` count drained by the event-loop thread. Atomic because
+    /// `KeepAlive::unref_on_next_tick_concurrently` increments it from OTHER
+    /// threads (Zig: `@atomicRmw(.Add, .monotonic)` on `pending_unref_counter`).
+    pub pending_unref_counter: core::sync::atomic::AtomicI32,
     pub preload: Vec<Box<[u8]>>,
     pub unhandled_pending_rejection_to_capture: Option<*mut JSValue>,
-    // PORT NOTE: layering — the concrete `bun_standalone_graph::Graph` lives
+    // Note: layering — the concrete `bun_standalone_graph::Graph` lives
     // in a higher-tier crate. The resolver already broke that cycle with the
     // `bun_resolver::StandaloneModuleGraph` trait; we hold the same trait
     // object here so `init_with_module_graph` can hand it straight to
     // `transpiler.resolver.standalone_module_graph` without a downcast.
     pub standalone_module_graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
     pub smol: bool,
-    // TODO(b2-cycle): `dns_result_order` is `bun_runtime::api::dns::Resolver::Order`.
+    // LAYERING: real type is `bun_runtime::api::dns::Resolver::Order` (forward
+    // dep); stored as its `u8` repr.
     pub dns_result_order: u8,
     pub cpu_profiler_config: Option<crate::bun_cpu_profiler::CPUProfilerConfig>,
     pub heap_profiler_config: Option<crate::bun_heap_profiler::HeapProfilerConfig>,
     pub counters: Counters,
 
-    // TODO(b2-cycle): `hot_reload` is `bun_runtime::cli::Command::HotReload`.
+    // LAYERING: real type is `bun_runtime::cli::Command::HotReload` (forward
+    // dep); stored as its `u8` repr (see `HOT_RELOAD_*` constants).
     pub hot_reload: u8,
     pub jsc_vm: *mut VM,
 
@@ -217,7 +226,8 @@ pub struct VirtualMachine {
     pub exit_handler: ExitHandler,
 
     pub default_tls_reject_unauthorized: Option<bool>,
-    // TODO(b2-cycle): `default_verbose_fetch` is `Option<http::HTTPVerboseLevel>`.
+    // LAYERING: real type is `Option<http::HTTPVerboseLevel>` (forward dep);
+    // stored as the enum's `u8` repr.
     pub default_verbose_fetch: Option<u8>,
 
     /// Do not access this field directly! It exists in the VirtualMachine struct so
@@ -226,7 +236,8 @@ pub struct VirtualMachine {
     pub saved_source_map_table: crate::saved_source_map::HashTable,
     pub source_mappings: SavedSourceMap,
 
-    // TODO(port): lifetime — `&'a mut Arena`; caller-owned (web_worker).
+    // BACKREF — `&'a mut Arena` in spirit; caller-owned (web_worker) and
+    // outlives the VM.
     pub arena: Option<NonNull<bun_alloc::Arena>>,
     pub has_loaded: bool,
 
@@ -235,7 +246,8 @@ pub struct VirtualMachine {
     pub had_errors: bool,
 
     pub macros: MacroMap,
-    // TODO(b2-cycle): `MacroEntryPoint` from `bun_bundler::entry_points` (gated).
+    // LAYERING: values are `MacroEntryPoint` from `bun_bundler::entry_points`
+    // (forward dep); stored type-erased and cast back by the consumers.
     pub macro_entry_points: bun_collections::ArrayHashMap<i32, *mut c_void>,
     pub macro_mode: bool,
     /// Depth of live [`MacroModeGuard`]s on this thread. Nonzero exactly while
@@ -265,7 +277,7 @@ pub struct VirtualMachine {
 
     pub argv: Vec<Box<[u8]>>,
 
-    pub origin_timer: std::time::Instant, // TODO(port): std.time.Timer
+    pub origin_timer: std::time::Instant, // Zig: `std.time.Timer` (monotonic elapsed)
     pub origin_timestamp: u64,
     /// For fake timers: override performance.now() with a specific value (in nanoseconds).
     pub overridden_performance_now: Option<u64>,
@@ -297,7 +309,6 @@ pub struct VirtualMachine {
     pub is_handling_uncaught_exception: bool,
     pub exit_on_uncaught_exception: bool,
 
-    // TODO(b2): `modules` is `ModuleLoader::AsyncModule::Queue` (AsyncModule.rs gated).
     pub modules: crate::async_module::Queue,
     pub aggressive_garbage_collection: GCLevel,
 
@@ -315,7 +326,7 @@ pub struct VirtualMachine {
 
     #[cfg(debug_assertions)]
     pub debug_thread_id: std::thread::ThreadId,
-    // PORT NOTE: Zig `if (Environment.isDebug) std.Thread.Id else void` — the
+    // Note: Zig `if (Environment.isDebug) std.Thread.Id else void` — the
     // release-build ZST is intentional spec parity, not a placeholder.
     #[cfg(not(debug_assertions))]
     pub debug_thread_id: (),
@@ -348,8 +359,6 @@ pub struct VirtualMachine {
 // FFI declarations
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): move to jsc_sys
-//
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle, so
 // `&JSGlobalObject` is ABI-identical to a non-null `JSGlobalObject*` and C++
 // mutating VM/process state through it is interior mutation invisible to Rust.
@@ -407,7 +416,7 @@ impl UnhandledRejectionScope {
 /// crate-level `VirtualMachine::get()`/`set_current()` accessors.
 pub(crate) struct VMHolder;
 
-// PORT NOTE: Zig nests `pub var main_thread_vm` inside the struct namespace;
+// Note: Zig nests `pub var main_thread_vm` inside the struct namespace;
 // Rust forbids associated `static`s, so it lives at module scope and is
 // re-exported as `VMHolder::MAIN_THREAD_VM` via a const fn accessor.
 pub(crate) static MAIN_THREAD_VM: core::sync::atomic::AtomicPtr<VirtualMachine> =
@@ -499,7 +508,7 @@ impl ExitHandler {
         vm.exit_handler.exit_code = code;
     }
 
-    /// PORT NOTE: spec calls `this.exit_handler.dispatchOnExit()` from a
+    /// Note: spec calls `this.exit_handler.dispatchOnExit()` from a
     /// `*VirtualMachine`. Taking `&mut self: ExitHandler` and recovering the
     /// parent via `container_of` would escape the provenance of `&mut self`
     /// (which only covers the `ExitHandler` field). Callers pass the VM
@@ -792,7 +801,7 @@ impl VirtualMachine {
     }
 
     /// Raw accessor for the hot-reload import watcher. `bun_watcher` is the
-    /// type-erased `*mut ImportWatcher` installed by
+    /// `*mut ImportWatcher` installed by
     /// [`crate::hot_reloader::HotReloaderCtx::install_bun_watcher`] (separate
     /// `Box` heap allocation), or null when hot reload is disabled.
     ///
@@ -807,7 +816,6 @@ impl VirtualMachine {
     #[inline]
     pub fn bun_watcher_ptr(&self) -> *mut crate::hot_reloader::ImportWatcher {
         self.bun_watcher
-            .cast::<crate::hot_reloader::ImportWatcher>()
     }
 
     /// `event_loop().enter()` now, `.exit()` on drop. Safe wrapper over
@@ -902,17 +910,13 @@ impl VirtualMachine {
         self.event_loop_handle.map(|h| unsafe { &mut *h })
     }
 
-    /// Read-then-zero `pending_unref_counter`. Wraps the common
-    /// `let n = vm.pending_unref_counter; if n > 0 { vm.pending_unref_counter = 0; ... }`
-    /// pattern so callers don't open-code two raw-ptr writes.
+    /// Read-then-zero `pending_unref_counter`. `swap(0)` so a concurrent
+    /// `increment_pending_unref_counter()` from another thread can't be lost
+    /// between the read and the reset.
     #[inline]
     pub fn take_pending_unref(&self) -> i32 {
-        let this = self.as_mut();
-        let n = this.pending_unref_counter;
-        if n > 0 {
-            this.pending_unref_counter = 0;
-        }
-        n
+        self.pending_unref_counter
+            .swap(0, core::sync::atomic::Ordering::Relaxed)
     }
 
     /// Safe shared accessor for the per-VM `bun_ast::Log`. The log is
@@ -951,13 +955,13 @@ impl VirtualMachine {
     /// Returns a small adaptor whose `get()` produces the erased
     /// `js_printer::SourceMapHandler` for `print_with_source_map`.
     ///
-    /// PORT NOTE: takes `*mut BufferPrinter` (raw), not `&'a mut`, because the
+    /// Note: takes `*mut BufferPrinter` (raw), not `&'a mut`, because the
     /// SAME `BufferPrinter` is also passed as the live `writer` to
     /// `print_with_source_map`. Creating an `&'a mut` here would alias with
     /// that writer borrow for the entire print; instead we stash the raw
     /// pointer and only reborrow inside `on_source_map_chunk` once the
     /// writer's last use (`print_slice`) has retired. See jsc_hooks.rs
-    /// `print_with_source_map` call-site PORT NOTE.
+    /// `print_with_source_map` call-site Note.
     #[inline]
     pub fn source_map_handler<'a>(
         &'a mut self,
@@ -1114,7 +1118,7 @@ impl VirtualMachine {
         _: &JSGlobalObject,
         value: JSValue,
     ) {
-        // SAFETY: BORROW_PARAM ptr set by caller, outlives this call (TODO(port): lifetime)
+        // SAFETY: BORROW_PARAM ptr set by caller; outlives this call.
         let list = this
             .on_unhandled_rejection_exception_list
             .map(|mut p| unsafe { p.as_mut() });
@@ -1232,7 +1236,7 @@ impl VirtualMachine {
     {
         use core::mem::{ManuallyDrop, MaybeUninit};
 
-        // PORT NOTE: Zig's `OpaqueWrap(Context, function)` synthesizes a
+        // Note: Zig's `OpaqueWrap(Context, function)` synthesizes a
         // `fn(*anyopaque) void` that casts back and calls the body. The Rust
         // closure carries its own context, so the trampoline state is just
         // `{ closure, out-slot }`. `ManuallyDrop` lets us move the `FnOnce`
@@ -1311,7 +1315,7 @@ impl VirtualMachine {
             let _ = writer.flush();
         }
 
-        // PORT NOTE: Zig `defer this.had_errors = prev_had_errors;` — the hook
+        // Note: Zig `defer this.had_errors = prev_had_errors;` — the hook
         // does not unwind across the dispatch boundary, so restore linearly.
         self.had_errors = prev_had_errors;
     }
@@ -1353,7 +1357,7 @@ impl VirtualMachine {
             }
         };
 
-        // PORT NOTE: Zig used a `MacroEntryPointLoader` struct + `OpaqueWrap`
+        // Note: Zig used a `MacroEntryPointLoader` struct + `OpaqueWrap`
         // because `runWithAPILock` only accepts `fn(*Ctx) void`. The Rust
         // `run_with_api_lock` already takes a closure, so the loader struct
         // collapses into a captured local.
@@ -1443,7 +1447,7 @@ impl VirtualMachine {
             self.exit_handler.exit_code = 1;
             (self.on_unhandled_rejection)(self, global_object, err);
         }
-        // PORT NOTE: Zig `defer this.is_handling_uncaught_exception = false;`
+        // Note: Zig `defer this.is_handling_uncaught_exception = false;`
         // (VirtualMachine.zig:707) covers BOTH the FFI call and the
         // `onUnhandledRejection` callback above. The flag must stay raised
         // while that callback runs so a re-entrant `uncaught_exception` from
@@ -1460,11 +1464,8 @@ impl VirtualMachine {
         if self.hot_reload != HOT_RELOAD_HOT {
             return None;
         }
-        // TODO(b2-cycle): spec lazy-inits via `RareData::hotMap(allocator)`;
-        // that accessor is gated in `rare_data.rs::_accessor_body`. Until it
-        // un-gates, return whatever the field already holds (callers that need
-        // the lazy-init path are themselves gated on `bun_runtime`).
-        self.rare_data.as_deref_mut()?.hot_map.as_mut()
+        // Zig: `this.rareData().hotMap(this.allocator)` — lazy-init.
+        Some(self.rare_data().hot_map())
     }
 
     pub fn on_before_exit(&mut self) {
@@ -1516,7 +1517,7 @@ impl VirtualMachine {
 
         // Make sure we run new cleanup hooks introduced by running cleanup
         // hooks.
-        // PORT NOTE: each iteration re-fetches `rare_data` so the FFI hook
+        // Note: each iteration re-fetches `rare_data` so the FFI hook
         // bodies (which may re-enter `VirtualMachine` and push more hooks) do
         // not run while a `&mut RareData` is live — the borrow ends after
         // `mem::take` returns the owned `Vec`.
@@ -1586,7 +1587,7 @@ impl VirtualMachine {
             // alive (closeAll() fires on_close → JS). After JSC teardown,
             // RareData's Drop only deinit()s the groups (asserts empty).
             if self.rare_data.is_some() {
-                // PORT NOTE: reshaped for borrowck — `close_all_socket_groups`
+                // Note: reshaped for borrowck — `close_all_socket_groups`
                 // walks the loop's group list via `vm.uws_loop()` and never
                 // touches `vm.rare_data`, so the disjoint reborrow is sound.
                 // SAFETY: `self` is the live per-thread VM; the shared borrow
@@ -1855,7 +1856,7 @@ pub struct RuntimeHooks {
 /// half of `bun_io`'s cycle-break manual vtable. Every slot is implementable
 /// from in-crate data (spec posix_event_loop.zig:100-104 / RareData.zig:441),
 /// so this is the single fully-populated instance; `aio::get_vm_ctx(.Js)` and
-/// the websocket-client adapters resolve to it. PORT NOTE: in Zig the
+/// the websocket-client adapters resolve to it. Note: in Zig the
 /// `KeepAlive::ref(anytype)` accepted `*VirtualMachine` directly.
 /// Recover `&mut VirtualMachine` from the erased vtable `owner`. Private to
 /// this module — every caller is an `unsafe fn` slot in
@@ -1876,10 +1877,13 @@ bun_io::link_impl_EventLoopCtx! {
         },
         // CROSS-THREAD: reached via `KeepAlive::unref_on_next_tick_concurrently`.
         // Do NOT route through `vm_from_owner()` — that mints `&mut VM`, which
-        // would alias the JS thread's `&mut`. Raw place RMW only (the
-        // field-level non-atomic race is pre-existing; TODO: make
-        // `pending_unref_counter` an `AtomicI32` with `fetch_add`).
-        increment_pending_unref_counter() => (*this).pending_unref_counter += 1,
+        // would alias the JS thread's `&mut`. Atomic RMW through a shared ref
+        // (Zig: `@atomicRmw(.Add, .monotonic)`).
+        increment_pending_unref_counter() => {
+            (*this)
+                .pending_unref_counter
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        },
         // CROSS-THREAD: reached via `KeepAlive::{,un}ref_concurrently`. Do NOT
         // use `vm_from_owner()` / `event_loop_mut()` — both mint `&mut`, UB
         // against the JS thread's borrow. `event_loop()` takes `&self` (Sync)
@@ -1970,7 +1974,6 @@ pub fn runtime_hooks() -> Option<&'static RuntimeHooks> {
     Some(&__BUN_RUNTIME_HOOKS)
 }
 
-// TODO(port): move to jsc_sys
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
     // Spec JSGlobalObject.zig:863 / headers.h:435 — note the real symbol is
@@ -2020,7 +2023,7 @@ fn get_origin_timestamp() -> u64 {
 impl VirtualMachine {
     /// `VirtualMachine.init(opts)` — allocate + wire the per-thread VM.
     ///
-    /// PORT NOTE: every step that names a `bun_runtime` / `bun_webcore` type
+    /// Note: every step that names a `bun_runtime` / `bun_webcore` type
     /// (`Timer.All.init`, `Body.Value.HiveAllocator`, `configureDebugger`,
     /// `Config.configureTransformOptionsForBunVM`, `ParentDeathWatchdog`) is
     /// dispatched through `RuntimeHooks::init_runtime_state` so `bun_jsc` does
@@ -2040,7 +2043,7 @@ impl VirtualMachine {
         // allocation lives for the thread lifetime (never freed on the main
         // thread; worker `destroy()` frees it explicitly).
         //
-        // PORT NOTE (validity): the zeroed bytes are NOT a valid
+        // Note (validity): the zeroed bytes are NOT a valid
         // `VirtualMachine` — `origin_timer: Instant`, `on_unhandled_rejection:
         // fn(...)`, (debug) `debug_thread_id: ThreadId`, every `Vec`/`Box`/
         // `HashMap`/`ArrayHashMap` field (NonNull dangling-when-empty), `URL`
@@ -2172,7 +2175,7 @@ impl VirtualMachine {
         }
 
         // High-tier per-VM state — Transpiler / Timer::All / entry_point.
-        // PORT NOTE (init order): spec VirtualMachine.zig:1241/1259 builds
+        // Note (init order): spec VirtualMachine.zig:1241/1259 builds
         // `Transpiler.init` and `.timer = bun.api.Timer.All.init()` as part of
         // the struct initializer BEFORE `JSGlobalObject.create`. The C++ body
         // of `Zig__GlobalObject__create` re-enters via `WTFTimer__create`/
@@ -2397,7 +2400,7 @@ impl VirtualMachine {
                 }
             }
 
-            // PORT NOTE: reshaped for borrowck — capture raw ptr before &self call.
+            // Note: reshaped for borrowck — capture raw ptr before &self call.
             let global = self.global;
             let global_ref = self.global();
             let promise = if !self.main_is_html_entrypoint {
@@ -2553,7 +2556,7 @@ pub fn process_fetch_log(
         }
 
         1 => {
-            // PORT NOTE: Zig copied `log.msgs.items[0]` by value; `Msg` is not
+            // Note: Zig copied `log.msgs.items[0]` by value; `Msg` is not
             // `Copy` here, so move it out — the caller `defer log.deinit()`s
             // immediately after, so consuming the vec is sound.
             let msg = log.msgs.swap_remove(0);
@@ -2615,7 +2618,7 @@ pub fn process_fetch_log(
 /// `source_mappings` (fast path) or `self` (debugger / inline-sourcemap path)
 /// without the two `&mut` borrows colliding.
 ///
-/// PORT NOTE: Zig stored `*VirtualMachine` / `*BufferPrinter` directly. Here
+/// Note: Zig stored `*VirtualMachine` / `*BufferPrinter` directly. Here
 /// we keep raw pointers + a `PhantomData<&'a mut ()>` so the getter's lifetime
 /// is tied to the `&'a mut VirtualMachine` it was built from in
 /// `source_map_handler`, but `get()` can still hand out a
@@ -2806,19 +2809,21 @@ impl<'a> bun_js_printer::OnSourceMapChunk for SourceMapHandlerGetter<'a> {
 pub struct Options {
     pub args: bun_options_types::schema::api::TransformOptions,
     pub log: Option<NonNull<bun_ast::Log>>,
-    // TODO(port): lifetime — `&'a mut bun_dot_env::Loader`.
+    // BORROW_PARAM (`&'a mut bun_dotenv::Loader`) — caller-owned; the loader
+    // outlives the VM, so the inner lifetime is erased to `'static`.
     pub env_loader: Option<NonNull<bun_dotenv::Loader<'static>>>,
     pub store_fd: bool,
     pub smol: bool,
-    // TODO(b2-cycle): real type is `bun_runtime::api::dns::Resolver::Order`.
+    // LAYERING: real type is `bun_runtime::api::dns::Resolver::Order` (forward
+    // dep); stored as its `u8` repr.
     pub dns_result_order: u8,
     /// `--print` needs the result from evaluating the main module.
     pub eval: bool,
-    // PORT NOTE: layering — concrete `bun_standalone_graph::Graph` is in a
+    // Note: layering — concrete `bun_standalone_graph::Graph` is in a
     // forward-dep crate; callers pass it as the resolver's trait object so
     // both VM and resolver can hold it without the cycle.
     pub graph: Option<&'static dyn bun_resolver::StandaloneModuleGraph>,
-    // PORT NOTE: Zig `debugger: bun.cli.Command.Debugger` dropped — debugger
+    // Note: Zig `debugger: bun.cli.Command.Debugger` dropped — debugger
     // configuration is plumbed through `RuntimeHooks::ensure_debugger` (the
     // CLI option struct lives in `bun_cli`, a forward dep). See
     // `runtime/jsc_hooks.rs` for the spec :1321 `configureDebugger` call site.
@@ -2957,7 +2962,10 @@ impl crate::ipc::SendQueueOwner for IPCInstance {
 #[derive(Default)]
 pub struct ResolveFunctionResult {
     pub result: Option<bun_resolver::Result>,
-    pub path: &'static [u8], // TODO(port): lifetime — borrows resolver arena
+    // LIFETIME-ERASED: `path`/`query_string` borrow argv or the resolver's
+    // process-lifetime arena (`detach_lifetime` in `resolve_maybe_need_dirname_uncached`),
+    // which outlives every `ResolveFunctionResult`.
+    pub path: &'static [u8],
     pub query_string: &'static [u8],
 }
 
@@ -3213,7 +3221,7 @@ impl VirtualMachine {
     pub fn get_verbose_fetch(&mut self) -> bun_http::HTTPVerboseLevel {
         use bun_http::HTTPVerboseLevel as L;
         if let Some(v) = self.default_verbose_fetch {
-            // PORT NOTE: field is `Option<u8>` until the b2-cycle widens it;
+            // Note: field is `Option<u8>` until the b2-cycle widens it;
             // map ordinals back.
             return match v {
                 1 => L::Headers,
@@ -3272,7 +3280,7 @@ impl VirtualMachine {
                 .map(|i| map.map.swap_remove_at(i).1)
                 .and_then(|v| crate::ipc::Mode::from_string(&v.value))
                 .unwrap_or(crate::ipc::Mode::Json);
-            // PORT NOTE: Zig `IPC.log()` debug-only; the `IPC` scope static
+            // Note: Zig `IPC.log()` debug-only; the `IPC` scope static
             // lives in `crate::ipc` and `scoped_log!` requires a bare ident,
             // so the log line is dropped here.
             // Spec: `std.fmt.parseInt(u31, fd_s, 10)` — accept only
@@ -3351,7 +3359,7 @@ impl VirtualMachine {
             return;
         }
 
-        // PORT NOTE: Zig `defer eventLoop().drainMicrotasks()` per-arm —
+        // Note: Zig `defer eventLoop().drainMicrotasks()` per-arm —
         // hoisted into a closure.
         let drain = |this: &mut Self| {
             let _ = this.event_loop_mut().drain_microtasks();
@@ -3367,7 +3375,7 @@ impl VirtualMachine {
             });
             if let Err(e) = r {
                 let exc = global_object.take_exception(e);
-                // PORT NOTE: Zig went `exc.asException(vm)` → `reportUncaughtException`,
+                // Note: Zig went `exc.asException(vm)` → `reportUncaughtException`,
                 // which itself just does `uncaughtException(global, exception.value(), false)`.
                 // `JSValue::as_exception` is not yet ported; inline the body — `exc` is
                 // already the exception's value.
@@ -3403,7 +3411,7 @@ impl VirtualMachine {
                 if handled {
                     return;
                 }
-                // PORT NOTE: Zig returned unconditionally after warn; mirror it.
+                // Note: Zig returned unconditionally after warn; mirror it.
                 return;
             }
             Mode::Strict => {
@@ -3443,7 +3451,7 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:718 `reportExceptionInHotReloadedModuleIfNeeded`.
     pub fn report_exception_in_hot_reloaded_module_if_needed(&mut self) {
-        // PORT NOTE: Zig `defer this.addMainToWatcherIfNeeded()`.
+        // Note: Zig `defer this.addMainToWatcherIfNeeded()`.
         let promise = match self.pending_internal_promise {
             Some(p) => p,
             None => {
@@ -3581,7 +3589,7 @@ impl VirtualMachine {
         }
         // reload_entry_point() stores into pending_internal_promise on every return path.
         let main = self.main;
-        // PORT NOTE: reshaped for borrowck — copy the `RawSlice` first to avoid
+        // Note: reshaped for borrowck — copy the `RawSlice` first to avoid
         // overlapping `&self`/`&mut self` borrows.
         if self.reload_entry_point(main.slice()).is_err() {
             panic!("Failed to reload");
@@ -3619,7 +3627,7 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:1016 `enqueueImmediateTask`.
     ///
-    /// PORT NOTE (§Dispatch): `task` is an erased
+    /// Note (§Dispatch): `task` is an erased
     /// `*mut bun_runtime::timer::ImmediateObject` — see
     /// [`crate::event_loop::RunImmediateFn`].
     #[inline]
@@ -3675,7 +3683,7 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:1107 `initWithModuleGraph`.
     ///
-    /// PORT NOTE: shares ~90% with [`init`]; the differences are (a) the
+    /// Note: shares ~90% with [`init`]; the differences are (a) the
     /// transpiler is built without `Config::configureTransformOptionsForBunVM`,
     /// (b) `standalone_module_graph` is mandatory and propagated into the
     /// resolver, (c) `configureLinkerWithAutoJSX(false)` instead of
@@ -3707,7 +3715,7 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:1394 `initWorker`.
     ///
-    /// PORT NOTE: takes `&WebWorker` (not `&mut`) — the worker thread may only
+    /// Note: takes `&WebWorker` (not `&mut`) — the worker thread may only
     /// hold a shared reference to its `WebWorker` (the parent / main thread
     /// concurrently observes it; see `web_worker.rs` worker-thread `&self`
     /// note). All accesses on `worker` here are read-only.
@@ -3733,7 +3741,7 @@ impl VirtualMachine {
             mini_mode: worker.mini(),
             ..Default::default()
         };
-        // PORT NOTE: Zig open-coded the full struct init; we route through
+        // Note: Zig open-coded the full struct init; we route through
         // [`init`] (which already wires console / event-loop / global / jsc_vm
         // / RuntimeHooks) and then patch the worker-specific fields.
         let vm = Self::init(init_opts)?;
@@ -3772,7 +3780,7 @@ impl VirtualMachine {
             is_main_thread: opts.is_main_thread,
             ..Default::default()
         };
-        // PORT NOTE: shares the console / log / event-loop wiring with `init`;
+        // Note: shares the console / log / event-loop wiring with `init`;
         // the only delta is the global is created via `BakeCreateProdGlobal`
         // instead of `ZigGlobalObject__create`. Route through `init` then
         // swap the global.
@@ -3830,7 +3838,7 @@ impl VirtualMachine {
                 ..Default::default()
             };
         }
-        // PORT NOTE: Zig `refCountedString(code, hash_, !add_double_ref)` —
+        // Note: Zig `refCountedString(code, hash_, !add_double_ref)` —
         // const-generic bool can't be `!ADD_DOUBLE_REF`, so branch.
         let source = if ADD_DOUBLE_REF {
             self.ref_counted_string::<false>(code, hash_)
@@ -3868,10 +3876,10 @@ impl VirtualMachine {
         jsc::mark_binding();
         debug_assert!(!input_.is_empty());
         let hash = hash_.unwrap_or_else(|| RefString::compute_hash(input_));
-        // PORT NOTE: Zig `lock(); defer unlock()` — RAII guard releases on every
+        // Note: Zig `lock(); defer unlock()` — RAII guard releases on every
         // exit (including the early-return `Occupied` arm).
         let _unlock = self.ref_strings_mutex.lock_guard();
-        // PORT NOTE: reshaped for borrowck — capture the back-pointer before
+        // Note: reshaped for borrowck — capture the back-pointer before
         // `ref_strings.entry()` takes its unique borrow on `self`.
         let self_ctx = NonNull::new(std::ptr::from_mut::<VirtualMachine>(self).cast::<c_void>());
 
@@ -3932,7 +3940,7 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:1656 `fetchWithoutOnLoadPlugins`.
-    // PORT NOTE: Zig `comptime flags: FetchFlags` lowered to a runtime arg —
+    // Note: Zig `comptime flags: FetchFlags` lowered to a runtime arg —
     // `FetchFlags` would need `ConstParamTy` (unstable derive on the enum's
     // owning module) to stay a const generic; the only branches are cheap
     // equality tests so the runtime form is fine. PERF(port): revisit.
@@ -4000,7 +4008,7 @@ impl VirtualMachine {
             .map(|pkg| pkg.module_type)
             .unwrap_or(bun_bundler::options::ModuleType::Unknown);
 
-        // PORT NOTE: Zig `defer if (flags != .print_source) resetArena();
+        // Note: Zig `defer if (flags != .print_source) resetArena();
         // errdefer if (flags == .print_source) resetArena()`. Model with a
         // drop-guard so both paths reset on the right edge.
         struct ArenaReset<'a>(&'a mut VirtualMachine, bool);
@@ -4019,7 +4027,7 @@ impl VirtualMachine {
             .get()
             .expect("source_code_printer not initialized");
 
-        // PORT NOTE: Zig passes path/loader/module_type/printer/promise_ptr as
+        // Note: Zig passes path/loader/module_type/printer/promise_ptr as
         // positional params to `transpileSourceCode`; the §Dispatch shim takes
         // them bundled as `TranspileExtra` behind `args.extra` (see
         // ModuleLoader.rs `TranspileArgs`).
@@ -4072,7 +4080,7 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:1724 `_resolve`.
     ///
-    /// PORT NOTE: Zig has `comptime is_a_file_path: bool`; folded to a runtime
+    /// Note: Zig has `comptime is_a_file_path: bool`; folded to a runtime
     /// arg here to avoid duplicating the body for both monomorphizations.
     pub fn _resolve(
         &mut self,
@@ -4085,10 +4093,10 @@ impl VirtualMachine {
         use bun_js_parser::Macro;
         use bun_resolver::{ResultUnion, node_fallbacks};
 
-        // SAFETY: PORT — `specifier`/`source` borrow argv / resolver-arena
-        // bytes that outlive `ResolveFunctionResult` (`'static` per the
-        // struct's TODO(port) lifetime note). Erase to `'static` to seat the
-        // result paths without threading a lifetime parameter through the VM.
+        // SAFETY: `specifier`/`source` borrow argv / resolver-arena bytes that
+        // outlive `ResolveFunctionResult` (see the struct's lifetime-erasure
+        // note). Erase to `'static` to seat the result paths without threading
+        // a lifetime parameter through the VM.
         let specifier: &'static [u8] = unsafe { bun_ptr::detach_lifetime(specifier) };
 
         // `Runtime.Runtime.Imports.{alt_name, Name}` are both `"bun:wrap"`
@@ -4166,7 +4174,7 @@ impl VirtualMachine {
             top_level_dir
         };
 
-        // PORT NOTE: Zig modeled this as a labeled `while (true)` with
+        // Note: Zig modeled this as a labeled `while (true)` with
         // `continue` after a successful cache bust. Expressed as a `loop`
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
@@ -4254,7 +4262,8 @@ impl VirtualMachine {
             .path_const()
             .ok_or_else(|| bun_core::err!("ModuleNotFound"))?;
         // SAFETY: `result_path.text` borrows the resolver's arena, which
-        // outlives `ResolveFunctionResult` (see field TODO(port) lifetime).
+        // outlives `ResolveFunctionResult` (see the struct's lifetime-erasure
+        // note).
         ret.path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
         ret.result = Some(result);
         self.resolved_count += 1;
@@ -4377,7 +4386,7 @@ impl VirtualMachine {
             // (sole impl — see `VirtualMachine::package_manager`).
             unsafe { (*pm.cast::<bun_install::PackageManager>().as_ptr()).log = &raw mut log };
         }
-        // PORT NOTE: Zig `defer { restore old_log }` — fires on every exit
+        // Note: Zig `defer { restore old_log }` — fires on every exit
         // (including `?` from `ResolveMessage::create` below), so the VM's
         // `log` cannot be left pointing at the dropped stack `log`. Hand-roll
         // a drop guard (no captured borrows) so the unique `&mut *jsc_vm_ptr`
@@ -4411,7 +4420,7 @@ impl VirtualMachine {
             vm: bun_ptr::BackRef::from(NonNull::new(jsc_vm_ptr).expect("vm non-null")),
             old_log,
         };
-        // PORT NOTE: reshaped for borrowck — re-derive from raw so the unique
+        // Note: reshaped for borrowck — re-derive from raw so the unique
         // borrow doesn't span the guard's drop.
         // SAFETY: per-thread VM is live for this synchronous call.
         let jsc_vm = unsafe { &mut *jsc_vm_ptr };
@@ -4485,13 +4494,13 @@ impl VirtualMachine {
         self.regular_event_loop.deinit();
         self.macro_event_loop.deinit();
 
-        // PORT NOTE: Zig `auto_killer.deinit()` — `ProcessAutoKiller`'s `Drop`
+        // Note: Zig `auto_killer.deinit()` — `ProcessAutoKiller`'s `Drop`
         // is the deinit body; take()+drop runs it without dropping `self`.
         drop(core::mem::take(&mut self.auto_killer));
 
         drop_source_code_printer();
 
-        // PORT NOTE: `SavedSourceMap`'s `Drop` is the Zig `deinit()`; it frees
+        // Note: `SavedSourceMap`'s `Drop` is the Zig `deinit()`; it frees
         // each stored map and `deinit()`s the sibling `saved_source_map_table`.
         drop(core::mem::take(&mut self.source_mappings));
 
@@ -4509,7 +4518,7 @@ impl VirtualMachine {
             drop(rare);
         }
 
-        // PORT NOTE: Zig `proxy_env_storage.deinit()` — drops all `Arc`-held
+        // Note: Zig `proxy_env_storage.deinit()` — drops all `Arc`-held
         // proxy strings; `ProxyEnvStorage: Default` so take()+drop suffices.
         drop(core::mem::take(&mut self.proxy_env_storage));
 
@@ -4528,7 +4537,7 @@ impl VirtualMachine {
 
         self.overridden_main.deinit();
 
-        // PORT NOTE: Zig frees `timer`/`entry_point` as value fields of `self`;
+        // Note: Zig frees `timer`/`entry_point` as value fields of `self`;
         // here they live in the high-tier `RuntimeState` box, so dispatch the
         // reclaim through the hook. PERF(port): was inline switch.
         if let Some(hooks) = runtime_hooks() {
@@ -4542,7 +4551,7 @@ impl VirtualMachine {
     }
     /// Spec VirtualMachine.zig:2134 `printException`.
     ///
-    /// PORT NOTE: Zig is `comptime Writer`-generic; collapse to the concrete
+    /// Note: Zig is `comptime Writer`-generic; collapse to the concrete
     /// `bun_core::io::Writer` since every call site passes
     /// `Output.errorWriterBuffered()`.
     pub fn print_exception(
@@ -4613,7 +4622,7 @@ impl VirtualMachine {
             }
         }
 
-        // PORT NOTE: reshaped for borrowck.
+        // Note: reshaped for borrowck.
         let global = self.global;
         let main_str = bun_core::String::from_bytes(self.main());
         let promise = jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str))
@@ -4826,7 +4835,7 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:2663 `printErrorlikeObject`.
     ///
-    /// PORT NOTE: Zig is `comptime Writer` + `comptime allow_ansi_color` +
+    /// Note: Zig is `comptime Writer` + `comptime allow_ansi_color` +
     /// `comptime allow_side_effects` — collapse to runtime bools and the
     /// concrete `bun_core::io::Writer`.
     pub fn print_errorlike_object(
@@ -4839,7 +4848,7 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) {
-        // PORT NOTE: Zig declared `was_internal` and ran the
+        // Note: Zig declared `was_internal` and ran the
         // exception-stack-trace `defer` after the body. Reshape: handle the
         // post-print stack/exception_list block at the tail instead of via a
         // drop guard (the body has no early-`?` returns once the AggregateError
@@ -4847,7 +4856,7 @@ impl VirtualMachine {
         let global_ref = self.global();
 
         if value.is_aggregate_error(global_ref) {
-            // PORT NOTE: Zig comptime-generated `AggregateErrorIterator` with
+            // Note: Zig comptime-generated `AggregateErrorIterator` with
             // `extern "C"` callbacks. `JSValue::for_each` takes a C-ABI fn
             // pointer + erased ctx, so thread the captures through a struct.
             // The C trampoline erases lifetimes via `*mut c_void`; round-trip
@@ -4910,7 +4919,7 @@ impl VirtualMachine {
             return;
         }
 
-        // PORT NOTE: reborrow so the Zig `defer { addToErrorList(exception_list) }`
+        // Note: reborrow so the Zig `defer { addToErrorList(exception_list) }`
         // tail can still see it after `print_error_from_maybe_private_data`.
         let mut exception_list = exception_list;
         let was_internal = self.print_error_from_maybe_private_data(
@@ -4925,7 +4934,7 @@ impl VirtualMachine {
         if was_internal {
             if let Some(exception_) = exception {
                 let mut holder = crate::zig_exception::Holder::init();
-                // PORT NOTE: Zig calls `holder.deinit(this)` *before*
+                // Note: Zig calls `holder.deinit(this)` *before*
                 // `getStackTrace` (no-op on the empty holder); reordered to
                 // the tail for borrowck — semantics unchanged because
                 // `need_to_clear_parser_arena_on_deinit` is false here.
@@ -5044,7 +5053,7 @@ impl VirtualMachine {
 
     /// Spec VirtualMachine.zig:2813 `printStackTrace`.
     ///
-    /// PORT NOTE: Zig is `comptime Writer` + `comptime allow_ansi_colors`;
+    /// Note: Zig is `comptime Writer` + `comptime allow_ansi_colors`;
     /// collapse to runtime bool + concrete writer.
     pub fn print_stack_trace(
         writer: &mut bun_core::io::Writer,
@@ -5081,7 +5090,7 @@ impl VirtualMachine {
                 !probe.is_empty()
             };
 
-            // PORT NOTE: Zig used `comptime Output.prettyFmt(...)` per arm;
+            // Note: Zig used `comptime Output.prettyFmt(...)` per arm;
             // route through `bun_core::pretty_fmt!` with a local wrapper that
             // dispatches on the runtime `allow_ansi_colors` flag.
             macro_rules! pretty_write {
@@ -5133,11 +5142,11 @@ impl VirtualMachine {
         }
         // **Warning** this method can be called in the heap collector thread!!
         self.remap_stack_frames_mutex.lock();
-        // PORT NOTE: Zig `defer unlock()`.
+        // Note: Zig `defer unlock()`.
 
         self.source_mappings.lock();
 
-        // PORT NOTE: the Zig body caches the last `(hash → InternalSourceMap)`
+        // Note: the Zig body caches the last `(hash → InternalSourceMap)`
         // pair across the loop and falls back to `resolve_source_mapping` on a
         // miss. The cache is purely a perf optimization (most stacks repeat
         // the same source); port the straightforward per-frame resolve and
@@ -5209,7 +5218,7 @@ impl VirtualMachine {
                         .unwrap_or(false)),
         );
 
-        // PORT NOTE: Zig modeled the two `defer` blocks below at fn-top; in
+        // Note: Zig modeled the two `defer` blocks below at fn-top; in
         // Rust we run them on the way out via this guard so every early
         // `return` is covered.
         struct Tail<'a> {
@@ -5322,7 +5331,7 @@ impl VirtualMachine {
                     {
                         continue;
                     }
-                    // PORT NOTE: `frames[j] = frame`. `ZigStackFrame` impls
+                    // Note: `frames[j] = frame`. `ZigStackFrame` impls
                     // `Drop` so `copy_within` is unavailable; swap instead —
                     // the discarded tail past `j` is never read after we
                     // truncate `frames_len` below.
@@ -5449,12 +5458,12 @@ impl VirtualMachine {
                     return;
                 };
                 *must_reset_parser_arena_later = true;
-                // PORT NOTE: spec ModuleLoader.zig:358 *borrows*
+                // Note: spec ModuleLoader.zig:358 *borrows*
                 // `parse_result.source.contents` for `.print_source`
                 // (`bun.String.init`), so the Zig caller has nothing to
                 // release. The Rust transpile path must `clone_utf8` instead
                 // (the backing `parse_result` drops on return — see
-                // jsc_hooks.rs PORT NOTE at the `PrintSource` arm), leaving
+                // jsc_hooks.rs Note at the `PrintSource` arm), leaving
                 // `source_code` with a +1 strong ref this caller never
                 // consumed. `to_utf8()` takes its own ref via
                 // `ZigStringSlice::WTF`, so balance the clone here. Also
@@ -5581,7 +5590,7 @@ impl VirtualMachine {
         allow_ansi_color: bool,
         allow_side_effects: bool,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: stack-safety guard for the Error recursion path.
+        // Note: stack-safety guard for the Error recursion path.
         // Zig's `printErrorInstance` is `comptime Writer`/`allow_ansi_color`/
         // `allow_side_effects`-monomorphized so each instantiation carries
         // only one branch's locals. The Rust port collapses those to runtime
@@ -5616,13 +5625,13 @@ impl VirtualMachine {
             return Ok(());
         }
 
-        // PORT NOTE: `Holder` is ~4 KB (32 ZigStackFrames + 6 source lines +
+        // Note: `Holder` is ~4 KB (32 ZigStackFrames + 6 source lines +
         // ZigException). Zig stack-allocates it inside a small monomorphized
         // function; here it sits next to the large runtime-dispatched body, so
         // box it to keep the per-level recursion frame small enough for the
         // 16K-deep `bun-inspect.test.ts` Error chain on Windows debug.
         let mut exception_holder = Box::new(crate::zig_exception::Holder::init());
-        // PORT NOTE: reshaped for borrowck — `zig_exception()` returns a
+        // Note: reshaped for borrowck — `zig_exception()` returns a
         // `&mut` into the holder; we need to also borrow
         // `need_to_clear_parser_arena_on_deinit` disjointly. Route through a
         // raw pointer (the holder is heap-pinned for the call).
@@ -5644,7 +5653,7 @@ impl VirtualMachine {
             // SAFETY: see above.
             unsafe { &mut *exception },
             error_instance,
-            None, // PORT NOTE: spec passes `exception_list` but it was already
+            None, // Note: spec passes `exception_list` but it was already
             // consumed by `remap_zig_exception` above (only writer).
             formatter,
             writer,
@@ -5684,7 +5693,7 @@ impl VirtualMachine {
 
         let prev_had_errors = self.had_errors;
         self.had_errors = true;
-        // PORT NOTE: Zig `defer this.had_errors = prev_had_errors;` — restore on
+        // Note: Zig `defer this.had_errors = prev_had_errors;` — restore on
         // every exit (including `?` from `JSError` paths). `BackRef` holds the
         // VM without a live borrow; the write at drop routes through
         // `VirtualMachine::as_mut` (thread-local provenance).
@@ -5709,7 +5718,7 @@ impl VirtualMachine {
             }
         }
 
-        // PORT NOTE: Zig `defer if (allow_side_effects and Output.is_github_action)
+        // Note: Zig `defer if (allow_side_effects and Output.is_github_action)
         // printGithubAnnotation(exception);`.
         struct DeferGhAnnotation {
             run: bool,
@@ -5827,7 +5836,7 @@ impl VirtualMachine {
         // `Formatter<'2>::format`, which requires an unbounded (VM-lifetime)
         // borrow. `global()` returns `&'static` so the borrow detaches.
         let global_ref = self.global();
-        // PORT NOTE: Zig keeps a borrowed `[]const u8` whose backing
+        // Note: Zig keeps a borrowed `[]const u8` whose backing
         // `bun.String` is `defer .deref()`-ed; hold the owning `bun_core::String`
         // alongside the slice so the latin1 view stays live for this fn.
         // `bun_core::String` is `Copy` (no `Drop`), so use a scopeguard to
@@ -5998,7 +6007,7 @@ impl VirtualMachine {
 
         // This is usually unsafe to do, but we are protecting them each time first.
         let mut errors_to_append: Vec<JSValue> = Vec::new();
-        // PORT NOTE: Zig `defer { for (..) |e| e.unprotect(); deinit(); }`.
+        // Note: Zig `defer { for (..) |e| e.unprotect(); deinit(); }`.
         // `BackRef` (constructed from `&raw mut` via `NonNull` so the tag is
         // not popped by later `errors_to_append.push` reborrows) lets the drop
         // body read the Vec safely.
@@ -6065,7 +6074,7 @@ impl VirtualMachine {
                     formatter.max_depth = 1;
                     formatter.quote_strings = true;
                     formatter.disable_inspect_custom = true;
-                    // PORT NOTE: Zig `defer { restore }` — hand-rolled drop guard.
+                    // Note: Zig `defer { restore }` — hand-rolled drop guard.
                     struct RestoreFmt<'a, 'f> {
                         f: &'a mut crate::console_object::Formatter<'f>,
                         d: bool,
@@ -6489,7 +6498,7 @@ impl VirtualMachine {
 
         self.event_loop_mut().ensure_waker();
 
-        // PORT NOTE: reshaped for borrowck — `rare_data()` borrows `self` and
+        // Note: reshaped for borrowck — `rare_data()` borrows `self` and
         // `spawn_ipc_group` then needs `&mut VirtualMachine`. Split via raw
         // pointers (disjoint fields) per the existing `Bun__RareData__*`
         // accessors in virtual_machine_exports.rs.

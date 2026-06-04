@@ -434,7 +434,7 @@ mod _impl {
         }
 
         pub fn get_error_info(&mut self) -> Error {
-            // PORT NOTE: reshaped `defer this.remaining = 0;` — compute result, then clear, then return.
+            // Zig: `defer this.remaining = 0;` — compute result, then clear, then return.
             let err = c::ZSTD_getErrorCode(self.remaining as usize);
             let result = if err == 0 {
                 Error::OK

@@ -173,7 +173,7 @@ impl DebugImpl {
     fn try_lock(&self) -> bool {
         let locking = self.impl_.try_lock();
         if locking {
-            // PORT NOTE: Zig uses .unordered; Rust's weakest is Relaxed.
+            // Zig uses .unordered; Rust's weakest is Relaxed.
             self.locking_thread
                 .store(current_thread_id(), Ordering::Relaxed);
         }
@@ -274,7 +274,7 @@ pub(crate) struct OsUnfairLock {
     _opaque: u32,
 }
 
-// TODO(port): move to bun_sys (darwin libc externs)
+// Darwin libc externs.
 // `&UnsafeCell<OsUnfairLock>` is ABI-identical to `os_unfair_lock_t` (thin
 // non-null pointer to a `#[repr(C)]` u32; `UnsafeCell` is `#[repr(transparent)]`).
 // The type encodes the only pointer-validity precondition, and Apple's runtime

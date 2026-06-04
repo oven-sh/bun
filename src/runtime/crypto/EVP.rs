@@ -328,7 +328,7 @@ impl EVP {
                 return Some(EVP::init(algorithm, md.cast::<boringssl::EVP_MD>(), engine));
             }
 
-            // PORT NOTE: Zig's `@tagName(algorithm)` is `[:0]const u8` (NUL-terminated).
+            // Zig's `@tagName(algorithm)` is `[:0]const u8` (NUL-terminated).
             // strum's `<&'static str>::from(algorithm)` is NOT NUL-terminated, so use the
             // explicit `tag_cstr()` table for the C-string FFI.
             // SAFETY: FFI into BoringSSL; EVP_get_digestbyname expects a NUL-terminated
@@ -374,12 +374,10 @@ impl Drop for EVP {
 
 pub(crate) type Digest = [u8; boringssl::EVP_MAX_MD_SIZE as usize];
 
-// PORT NOTE: Zig nests `PBKDF2`/`pbkdf2` inside the `EVP` struct; the
-// `crypto::EVP` re-export (module alias) lets `crypto::EVP::pbkdf2` resolve
-// through this module. The `pbkdf2` submodule is gated (blocked on bun_jsc
-// arg-parsing surface), so re-export the standalone helper from the parent
-// stub for now.
-// TODO(port): bun_jsc — un-gate `super::pbkdf2` and swap to `pub use super::pbkdf2 as PBKDF2;`.
+// Zig nests `PBKDF2`/`pbkdf2` inside the `EVP` struct; the `crypto::EVP`
+// re-export (module alias) lets `crypto::EVP::pbkdf2` / `crypto::EVP::PBKDF2`
+// resolve through this module.
 pub use super::pbkdf2;
+pub use super::pbkdf2 as PBKDF2;
 
 // ported from: src/runtime/crypto/EVP.zig

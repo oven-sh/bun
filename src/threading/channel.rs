@@ -22,12 +22,12 @@ bun_core::oom_from_alloc!(ChannelError);
 
 bun_core::named_error_set!(ChannelError);
 
-// PORT NOTE: reshaped for borrowck / thread-safety. In Zig all methods take
+// Reshaped for borrowck / thread-safety. In Zig all methods take
 // `*Self` and the mutex guards `buffer`/`is_closed`. In Rust we need `&self`
 // (Channel is shared across threads), so `buffer` is wrapped in `UnsafeCell`
 // and `is_closed` in `Cell`, both accessed only while `mutex` is held.
 //
-// PORT NOTE: Zig's `comptime buffer_type: LinearFifoBufferType` const-enum
+// Zig's `comptime buffer_type: LinearFifoBufferType` const-enum
 // param is unstable in Rust (`adt_const_params`). `bun_collections::LinearFifo`
 // already lowers it to a `LinearFifoBuffer<T>` trait param, so `Channel`
 // follows the same shape: `Channel<T, B: LinearFifoBuffer<T>>`. The original
@@ -69,13 +69,13 @@ impl<'a, T: Copy> Channel<T, SliceBuffer<'a, T>> {
 impl<T: Copy> Channel<T, DynamicBuffer<T>> {
     #[inline]
     pub fn init_dynamic() -> Self {
-        // PORT NOTE: Zig took `std.mem.Allocator param`; dropped per
+        // Zig took a `std.mem.Allocator` param; dropped per
         // §Allocators (non-AST crate uses global mimalloc).
         Self::with_buffer(LinearFifo::<T, DynamicBuffer<T>>::init())
     }
 }
 
-// PORT NOTE: `T: Copy` because `LinearFifo::write`/`read` are slice-copy
+// `T: Copy` because `LinearFifo::write`/`read` are slice-copy
 // based (mirrors Zig's `[]const T` semantics for POD payloads). All in-tree
 // channel payloads are POD; revisit if a non-`Copy` T appears.
 impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
@@ -102,23 +102,19 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         self.getters.broadcast();
     }
 
-    // TODO(port): narrow error set
     pub fn try_write_item(&self, item: T) -> Result<bool, ChannelError> {
         let wrote = self.write(core::slice::from_ref(&item))?;
         Ok(wrote == 1)
     }
 
-    // TODO(port): narrow error set
     pub fn write_item(&self, item: T) -> Result<(), ChannelError> {
         self.write_all(core::slice::from_ref(&item))
     }
 
-    // TODO(port): narrow error set
     pub fn write(&self, items: &[T]) -> Result<usize, ChannelError> {
         self.write_items(items, false)
     }
 
-    // TODO(port): narrow error set
     pub fn try_read_item(&self) -> Result<Option<T>, ChannelError> {
         let mut items: [MaybeUninit<T>; 1] = [MaybeUninit::uninit()];
         // SAFETY: `read` only writes initialized `T` into the first `n` slots
@@ -131,7 +127,6 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         Ok(Some(unsafe { items[0].assume_init_read() }))
     }
 
-    // TODO(port): narrow error set
     pub fn read_item(&self) -> Result<T, ChannelError> {
         let mut items: [MaybeUninit<T>; 1] = [MaybeUninit::uninit()];
         // SAFETY: see try_read_item.
@@ -141,26 +136,22 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         Ok(unsafe { items[0].assume_init_read() })
     }
 
-    // TODO(port): narrow error set
     pub fn read(&self, items: &mut [T]) -> Result<usize, ChannelError> {
         self.read_items(items, false)
     }
 
-    // TODO(port): narrow error set
     pub fn write_all(&self, items: &[T]) -> Result<(), ChannelError> {
         let n = self.write_items(items, true)?;
         debug_assert!(n == items.len());
         Ok(())
     }
 
-    // TODO(port): narrow error set
     pub fn read_all(&self, items: &mut [T]) -> Result<(), ChannelError> {
         let n = self.read_items(items, true)?;
         debug_assert!(n == items.len());
         Ok(())
     }
 
-    // TODO(port): narrow error set
     fn write_items(&self, items: &[T], should_block: bool) -> Result<usize, ChannelError> {
         let _guard = self.mutex.lock_guard();
 
@@ -204,7 +195,6 @@ impl<T: Copy, B: LinearFifoBuffer<T>> Channel<T, B> {
         Ok(pushed)
     }
 
-    // TODO(port): narrow error set
     fn read_items(&self, items: &mut [T], should_block: bool) -> Result<usize, ChannelError> {
         let _guard = self.mutex.lock_guard();
 

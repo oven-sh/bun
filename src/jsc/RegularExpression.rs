@@ -28,8 +28,6 @@ pub enum RegularExpressionError {
 
 bun_core::named_error_set!(RegularExpressionError);
 
-// TODO(port): move to bun_jsc_sys
-//
 // `RegularExpression` is an opaque `UnsafeCell`-backed ZST handle, so
 // `&RegularExpression` is ABI-identical to a non-null `*const` and C++ mutating
 // internal Yarr state through it is interior mutation invisible to Rust. The
@@ -61,7 +59,6 @@ impl RegularExpression {
             unsafe { Self::destroy(regex) };
             return Err(RegularExpressionError::InvalidRegExp);
         }
-        // TODO(port): consider an owning wrapper with Drop instead of returning a raw *mut.
         Ok(regex)
     }
 

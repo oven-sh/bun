@@ -1,6 +1,6 @@
 use bun_sys::{O, posix};
 
-// PORT NOTE: the Zig `get(comptime name)` helper used `@hasDecl(bun.O, name)` +
+// The Zig `get(comptime name)` helper used `@hasDecl(bun.O, name)` +
 // `@field(bun.O, name)` to look up an open-flag by string at comptime, with a
 // `@compileError` fallback. Rust has no struct-field reflection; since every
 // call site names a constant that exists on `bun_sys::O`, we reference those
@@ -14,7 +14,7 @@ pub const W_OK: i32 = posix::W_OK;
 pub const X_OK: i32 = posix::X_OK;
 
 // File Copy Constants
-// PORT NOTE: Zig `enum(i32) { _ }` (non-exhaustive, no variants) is a newtype
+// Zig `enum(i32) { _ }` (non-exhaustive, no variants) is a newtype
 // over i32 with associated decls — modelled here as a transparent tuple struct.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -97,7 +97,8 @@ pub const S_IROTH: i32 = posix::S::IROTH as i32;
 /// Constant for fs.Stats mode property for determining access permissions for a file. File mode indicating executable by others.
 pub const S_IXOTH: i32 = posix::S::IXOTH as i32;
 
-// TODO(port): verify constant types — Zig left these as comptime_int / inherited
-// from bun.O / std.posix.S; align with bun_sys's actual repr (u32 vs i32).
+// Repr check: `posix::R_OK/W_OK/X_OK` are `c_int` and `O::*` are `i32` in
+// bun_sys, used directly; `posix::S::*` is `Mode = u32` whose values are all
+// ≤ 0o170000, so the `as i32` casts above are lossless.
 
 // ported from: src/runtime/node/node_fs_constant.zig

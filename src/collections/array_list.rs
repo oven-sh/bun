@@ -1,7 +1,7 @@
 #![forbid(unsafe_code)]
 //! Managed `ArrayList` wrappers.
 //!
-//! PORT NOTE: The Zig original wraps `std.ArrayListAlignedUnmanaged` to add two things:
+//! The Zig original wraps `std.ArrayListAlignedUnmanaged` to add two things:
 //!   1. A stored allocator (managed vs unmanaged split).
 //!   2. "Deep" semantics — `deinit`/`clear`/`shrink`/`replaceRange` call `deinit` on each
 //!      removed item, with `*Shallow` variants that skip that.
@@ -22,28 +22,28 @@ use super::vec_ext::VecExt;
 /// Prefer using a concrete type, like `ArrayListDefault`.
 ///
 /// NOTE: Unlike Zig's `std.ArrayList`, dropping this type runs `Drop` on each of the items.
-// PORT NOTE: `std.mem.Allocator` type param dropped — global mimalloc (non-AST crate).
+// Zig's `std.mem.Allocator` type param is dropped — global mimalloc (non-AST crate).
 pub type ArrayList<T> = ArrayListAlignedIn<T>;
 
 /// Managed `ArrayList` using the default allocator. No overhead compared to an unmanaged
 /// `ArrayList`.
 ///
 /// NOTE: Unlike Zig's `std.ArrayList`, dropping this type runs `Drop` on each of the items.
-// PORT NOTE: `bun.DefaultAllocator` type param dropped — global mimalloc.
+// Zig's `bun.DefaultAllocator` type param is dropped — global mimalloc.
 pub type ArrayListDefault<T> = ArrayListAlignedIn<T>;
 
 /// Managed `ArrayList` using a specific kind of allocator.
 ///
 /// NOTE: Unlike Zig's `std.ArrayList`, dropping this type runs `Drop` on each of the items.
-// PORT NOTE: `Allocator` type param dropped — global mimalloc.
+// Zig's `Allocator` type param is dropped — global mimalloc.
 pub type ArrayListIn<T> = ArrayListAlignedIn<T>;
 
 /// Managed `ArrayListAligned` using an arbitrary allocator.
 ///
 /// NOTE: Unlike Zig's `std.ArrayList`, dropping this type runs `Drop` on each of the items.
-// TODO(port): const-generic alignment param. Rust `Vec<T>` uses `align_of::<T>()` and has no
-// over-alignment knob; if any caller passes a non-null `alignment`, that call site needs a
-// `#[repr(align(N))]` newtype wrapper around `T` instead.
+// Zig's const-generic alignment param is dropped: Rust `Vec<T>` uses `align_of::<T>()` and has
+// no over-alignment knob. A call site that needs a non-null `alignment` must wrap `T` in a
+// `#[repr(align(N))]` newtype instead.
 pub type ArrayListAligned<T> = ArrayListAlignedIn<T>;
 
 /// Managed `ArrayListAligned` using the default allocator.
@@ -54,8 +54,8 @@ pub type ArrayListAlignedDefault<T> = ArrayListAlignedIn<T>;
 /// Managed `ArrayListAligned` using a specific kind of allocator.
 ///
 /// NOTE: Unlike Zig's `std.ArrayList`, dropping this type runs `Drop` on each of the items.
-// PORT NOTE: Zig's `fn(...) type` factory → generic struct (PORTING.md §Idiom map).
-// Allocator type param dropped; alignment param dropped (see ArrayListAligned TODO above).
+// Zig's `fn(...) type` factory → generic struct (PORTING.md §Idiom map).
+// Allocator type param dropped; alignment param dropped (see `ArrayListAligned` above).
 #[derive(Default)]
 pub struct ArrayListAlignedIn<T> {
     /// Zig: `#unmanaged: Unmanaged = .empty`
@@ -67,19 +67,19 @@ pub struct ArrayListAlignedIn<T> {
 pub(crate) type Unmanaged<T> = Vec<T>;
 
 /// Zig: `Slice = Unmanaged.Slice` (= `[]align(alignment) T`, an owned slice when detached).
-// TODO(port): Zig `Slice` is used both as a borrow (`items()`) and as an owned return
-// (`toOwnedSlice`). Rust splits these: borrows are `&[T]`/`&mut [T]`, owned is `Box<[T]>`.
+// Zig `Slice` is used both as a borrow (`items()`) and as an owned return (`toOwnedSlice`).
+// Rust splits these: borrows are `&[T]`/`&mut [T]`, owned is `Box<[T]>`.
 pub type Slice<T> = Box<[T]>;
 
-// TODO(port): `SentinelSlice` — sentinel-terminated slices have no std Rust equivalent; only
-// needed if a caller uses `fromOwnedSliceSentinel`. Map to `bun_core::ZStr`/`WStr` at call site.
+// Zig `SentinelSlice` is not ported — sentinel-terminated slices have no std Rust equivalent.
+// A caller that needs one maps to `bun_core::ZStr`/`WStr` at the call site.
 
 impl<T> ArrayListAlignedIn<T> {
     pub fn items(&self) -> &[T] {
         self.unmanaged.as_slice()
     }
 
-    // PORT NOTE: Zig `items()` returns a mutable `[]T`; Rust splits const/mut borrows.
+    // Zig `items()` returns a mutable `[]T`; Rust splits const/mut borrows.
     pub fn items_mut(&mut self) -> &mut [T] {
         self.unmanaged.as_mut_slice()
     }
@@ -121,19 +121,12 @@ impl<T> ArrayListAlignedIn<T> {
         }
     }
 
-    // TODO(port): `from_owned_slice_sentinel` — sentinel-terminated owned slices are not a Rust
-    // type. If needed, accept `Box<[T]>` with the sentinel already stripped, or `ZStr`/`WStr`.
+    // Sentinel-terminated owned slices are not a Rust type, so unlike Zig's
+    // `fromOwnedSliceSentinel` this takes a `Box<[T]>` with the sentinel already stripped.
     pub fn from_owned_slice_sentinel(/* sentinel: T, */ slice: Slice<T>) -> Self {
         Self {
             unmanaged: Vec::from(slice),
         }
-    }
-
-    // TODO(port): `writer()` — Zig returns an `std.io.Writer` that appends bytes. For `T = u8`
-    // this is `impl std::io::Write for Vec<u8>` (already in std). For other `T` there is no
-    // meaningful writer. TODO(port): expose only on `ArrayListAlignedIn<u8>`.
-    pub fn writer(&mut self) -> &mut Vec<T> {
-        &mut self.unmanaged
     }
 
     /// This method empties `self`.
@@ -161,9 +154,9 @@ impl<T> ArrayListAlignedIn<T> {
 
     /// Creates a copy of this `ArrayList` with copies of its items.
     ///
-    /// PORT NOTE: Zig makes *bitwise* (shallow) copies regardless of whether `T` has a
-    /// `deinit`. Rust cannot bit-copy a non-`Copy` `T` safely. This is bound on `T: Clone`;
-    /// callers that relied on shallow-copy-then-`deinitShallow` need a redesign.
+    /// Zig makes *bitwise* (shallow) copies regardless of whether `T` has a `deinit`. Rust
+    /// cannot bit-copy a non-`Copy` `T` safely. This is bound on `T: Clone`; callers that
+    /// relied on shallow-copy-then-`deinitShallow` need a redesign.
     pub fn clone(&self) -> Result<Self, AllocError>
     where
         T: Clone,
@@ -218,21 +211,19 @@ impl<T> ArrayListAlignedIn<T> {
         &mut self.unmanaged[index..index + count]
     }
 
-    /// This method takes ownership of all elements in `new_items`.
+    /// Note that this `Clone`s each element of `new_items` (Zig took `[]const T` and
+    /// bit-copied, transferring ownership; a borrowed Rust slice cannot transfer ownership).
     pub fn insert_slice(&mut self, index: usize, new_items: &[T]) -> Result<(), AllocError>
     where
         T: Clone,
     {
-        // TODO(port): Zig takes `[]const T` and bit-copies, transferring ownership. Rust must
-        // `Clone` from a borrowed slice. If callers own the data, change signature to
-        // `impl IntoIterator<Item = T>` to avoid the clone.
         self.unmanaged
             .splice(index..index, new_items.iter().cloned());
         Ok(())
     }
 
     /// This method `Drop`s the removed items.
-    /// This method takes ownership of all elements in `new_items`.
+    /// Note that this `Clone`s each element of `new_items` (see `insert_slice`).
     pub fn replace_range(
         &mut self,
         start: usize,
@@ -242,7 +233,7 @@ impl<T> ArrayListAlignedIn<T> {
     where
         T: Clone,
     {
-        // PORT NOTE: Zig deinits `items[start..start+len]` then calls the shallow path.
+        // Zig deinits `items[start..start+len]` then calls the shallow path.
         // `Vec::splice` already drops the removed range, so deep == direct splice.
         self.unmanaged
             .splice(start..start + len, new_items.iter().cloned());
@@ -250,7 +241,7 @@ impl<T> ArrayListAlignedIn<T> {
     }
 
     /// This method `Drop`s the removed items.
-    /// This method takes ownership of all elements in `new_items`.
+    /// Note that this `Clone`s each element of `new_items` (see `insert_slice`).
     pub fn replace_range_assume_capacity(&mut self, start: usize, len: usize, new_items: &[T])
     where
         T: Clone,
@@ -277,17 +268,16 @@ impl<T> ArrayListAlignedIn<T> {
         self.unmanaged.swap_remove(i)
     }
 
-    /// This method takes ownership of all elements in `new_items`.
+    /// Note that this `Clone`s each element of `new_items` (see `insert_slice`).
     pub fn append_slice(&mut self, new_items: &[T]) -> Result<(), AllocError>
     where
         T: Clone,
     {
-        // TODO(port): see `insert_slice` note re: Clone vs ownership transfer.
         self.unmanaged.extend_from_slice(new_items);
         Ok(())
     }
 
-    /// This method takes ownership of all elements in `new_items`.
+    /// Note that this `Clone`s each element of `new_items` (see `insert_slice`).
     pub fn append_slice_assume_capacity(&mut self, new_items: &[T])
     where
         T: Clone,
@@ -296,19 +286,19 @@ impl<T> ArrayListAlignedIn<T> {
         self.unmanaged.extend_from_slice(new_items);
     }
 
-    /// This method takes ownership of all elements in `new_items`.
+    /// Note that this `Clone`s each element of `new_items` (see `insert_slice`).
     pub fn append_unaligned_slice(&mut self, new_items: &[T]) -> Result<(), AllocError>
     where
         T: Clone,
     {
-        // TODO(port): Zig `[]align(1) const T` allows reading T from an under-aligned address.
-        // Rust `&[T]` is always naturally aligned. If a caller truly has unaligned bytes, it
-        // needs `ptr::read_unaligned` at the call site. Treat as aligned here.
+        // Zig `[]align(1) const T` allows reading T from an under-aligned address. Rust `&[T]`
+        // is always naturally aligned, so this is identical to `append_slice`; a caller that
+        // truly has unaligned bytes needs `ptr::read_unaligned` at the call site.
         self.unmanaged.extend_from_slice(new_items);
         Ok(())
     }
 
-    /// This method takes ownership of all elements in `new_items`.
+    /// Note that this `Clone`s each element of `new_items` (see `insert_slice`).
     pub fn append_unaligned_slice_assume_capacity(&mut self, new_items: &[T])
     where
         T: Clone,
@@ -345,7 +335,7 @@ impl<T> ArrayListAlignedIn<T> {
     where
         T: Clone,
     {
-        // PORT NOTE: Zig calls `resizeWithoutDeinit` first, *then* deinits the tail via a raw
+        // Zig calls `resizeWithoutDeinit` first, *then* deinits the tail via a raw
         // pointer past `len` (`items().ptr[new_len..len]`). That ordering is to avoid a failed
         // realloc leaving already-deinited items in the list. `Vec::resize` already drops the
         // truncated tail in the shrink case and never fails, so the ordering concern vanishes.
@@ -356,7 +346,7 @@ impl<T> ArrayListAlignedIn<T> {
     /// This method `Drop`s the removed items.
     pub fn shrink_and_free(&mut self, new_len: usize) {
         self.prepare_for_deep_shrink(new_len);
-        // PORT NOTE: `prepare_for_deep_shrink` already truncated (dropping items); now free.
+        // `prepare_for_deep_shrink` already truncated (dropping items); now free.
         self.unmanaged.shrink_to_fit();
     }
 
@@ -417,7 +407,7 @@ impl<T> ArrayListAlignedIn<T> {
         &items[items.len() - 1]
     }
 
-    // PORT NOTE: Zig returns `*T` (mutable) from a `*const Self` receiver via interior aliasing.
+    // Zig returns `*T` (mutable) from a `*const Self` receiver via interior aliasing.
     // Rust splits this into `&T` / `&mut T` accessors.
     pub fn get_last_mut(&mut self) -> &mut T {
         let len = self.unmanaged.len();
@@ -450,7 +440,16 @@ impl<T> ArrayListAlignedIn<T> {
     // Zig `getStdAllocator` — dropped (no allocator field).
 }
 
-// PORT NOTE: Zig `pub fn deinit` → `impl Drop`. The Zig body is
+impl ArrayListAlignedIn<u8> {
+    /// Zig `writer()` returns an `std.io.Writer` that appends bytes; the Rust equivalent is
+    /// `impl std::io::Write for Vec<u8>` (already in std), so hand out the backing `Vec<u8>`.
+    /// Only exposed for `T = u8` — there is no meaningful writer for other element types.
+    pub fn writer(&mut self) -> &mut Vec<u8> {
+        &mut self.unmanaged
+    }
+}
+
+// Zig `pub fn deinit` → `impl Drop`. The Zig body is
 //   `bun.memory.deinit(self.items()); self.deinitShallow();`
 // i.e. drop every item, then free the backing buffer. `Vec<T>`'s own `Drop` does both, so per
 // PORTING.md ("If the body only frees/deinits owned fields, delete the body entirely") no

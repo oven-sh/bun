@@ -4,7 +4,6 @@ use core::mem::ManuallyDrop;
 use crate::{JSCell, JSGlobalObject, JSValue, JsError, JsResult};
 use bun_core::{String as BunString, ZigString};
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     // safe: read-only `const unsigned` exported by C++ (link-time constant).
     safe static JSC__JSObject__maxInlineCapacity: c_uint;
@@ -92,9 +91,9 @@ impl JSObject {
         pojo: &T,
         global: &JSGlobalObject,
     ) -> JsResult<&'static mut JSObject> {
-        // TODO(port): Zig used `@typeInfo(T).@"struct"` to enumerate fields at
-        // comptime. Rust has no field reflection; `PojoFields` is expected to be
-        // provided by a `#[derive(PojoFields)]` proc-macro that emits an inline
+        // Zig used `@typeInfo(T).@"struct"` to enumerate fields at comptime.
+        // Rust has no field reflection; `PojoFields` impls are hand-written
+        // (see trait docs) and emit an inline
         // `put(b"name", JSValue::from_any(global, &self.name)?)?;` per field.
 
         let val = if NULL_PROTOTYPE {
@@ -111,7 +110,7 @@ impl JSObject {
         let obj = JSObject::opaque_mut(val.0 as *mut JSObject);
 
         let cell = obj.to_js();
-        // PORT NOTE: Zig used `inline for` — each `fromAny` result is `put()` immediately
+        // Zig used `inline for` — each `fromAny` result is `put()` immediately
         // before the next field is encoded. The callback shape preserves that ordering and
         // keeps every intermediate JSValue on the stack (never collected into a Vec).
         pojo.put_fields(global, |name, value| {
@@ -147,9 +146,9 @@ impl JSObject {
         global: &JSGlobalObject,
         properties: &T,
     ) -> JsResult<()> {
-        // TODO(port): Zig used `std.meta.fieldNames(@TypeOf(properties))` +
-        // `@field(properties, field)`. Relies on the `JSValueFields` derive.
-        // PORT NOTE: Zig's `put` signature forces each field to already be a JSValue —
+        // Zig used `std.meta.fieldNames(@TypeOf(properties))` +
+        // `@field(properties, field)`; here types hand-implement `JSValueFields`.
+        // Zig's `put` signature forces each field to already be a JSValue —
         // there is NO `fromAny` encoding here (unlike `create`). Hence a separate trait
         // from `PojoFields` that yields raw JSValues without conversion.
         properties.put_fields(|name, value| self.put(global, name, value))
@@ -324,16 +323,15 @@ extern "C" fn initializer_call<Ctx: ObjectInitializer>(
 ///
 /// Zig used `@typeInfo(T)` to iterate struct fields and called
 /// `JSValue.fromAny(global, @TypeOf(property), property)` per field.
-/// Rust has no built-in reflection, so types opt in via
-/// `#[derive(bun_jsc::PojoFields)]`.
+/// Rust has no built-in reflection, so types opt in by hand-implementing
+/// this trait (no derive macro exists today).
 ///
-/// The derive must emit a sequence of
+/// Implementations must emit a sequence of
 /// `put(b"name", JSValue::from_any(global, &self.name)?)?;` calls — one per
 /// field, in declaration order — so each encoded JSValue lives only on the
 /// stack between `from_any` and `put` (matching Zig's `inline for`; never
 /// collected into a `Vec<JSValue>`, which would sit on the Rust heap and be
 /// invisible to JSC's conservative stack scan).
-// TODO(port): proc-macro — implement `#[derive(PojoFields)]` in bun_jsc.
 pub trait PojoFields {
     const FIELD_COUNT: usize;
     /// Invoke `put(field_name, encoded_value)` once per struct field, encoding
@@ -351,7 +349,6 @@ pub trait PojoFields {
 /// straight to `put()` with no `fromAny` encoding).
 ///
 /// Separate from [`PojoFields`] because that trait encodes; this one does not.
-// TODO(port): proc-macro — implement `#[derive(JSValueFields)]` in bun_jsc.
 pub trait JSValueFields {
     /// Invoke `put(field_name, self.<field>)` once per struct field. Fields are
     /// `JSValue` and forwarded as-is.

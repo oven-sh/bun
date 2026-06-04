@@ -53,7 +53,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             'parse_attributes: loop {
                 match p.lexer.token {
                     T::TIdentifier => {
-                        // PORT NOTE: `defer i += 1` inlined at each exit point of this arm.
+                        // `i` must be incremented whenever this arm pushes a property (Zig used
+                        // `defer i += 1`). The early `continue` for an ignored bare `key` prop
+                        // intentionally skips the increment: no property is pushed there, so
+                        // `key_prop_i`/`first_spread_prop_i` stay valid indices into `props`.
                         // Parse the prop name
                         let key_range = p.lexer.range();
                         let prop_name_literal = p.lexer.identifier;
@@ -104,7 +107,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         i += 1; // defer i += 1
                     }
                     T::TOpenBrace => {
-                        // PORT NOTE: `defer i += 1` inlined at end of this arm.
+                        // This arm must increment `i` once before exiting (Zig used `defer i += 1`).
                         // Use Next() not ExpectInsideJSXElement() so we can parse "..."
                         p.lexer.next()?;
 

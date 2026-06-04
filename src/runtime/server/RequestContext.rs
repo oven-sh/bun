@@ -36,7 +36,7 @@ impl AdditionalOnAbortCallback {
     }
 }
 
-// PORT NOTE (transport selection): Zig `NewRequestContext` is a comptime
+// NOTE (transport selection): Zig `NewRequestContext` is a comptime
 // type-function over `(ssl_enabled, debug_mode, ThisServer, http3)` and picks
 // `Resp = uws.H3.Response | uws.NewApp(ssl).Response` / `Req = uws.H3.Request |
 // uws.Request` at comptime. Stable Rust cannot drive an associated type from a
@@ -111,20 +111,23 @@ pub type ResponseStreamJSSink<const SSL_ENABLED: bool, const HTTP3: bool> =
 
 /// This pre-allocates up to 2,048 RequestContext structs.
 /// It costs about 655,632 bytes.
-// TODO(port): bun.HiveArray(RequestContext, if (bun.heap_breakdown.enabled) 0 else 2048).Fallback
+// Zig: `bun.HiveArray(RequestContext, if (bun.heap_breakdown.enabled) 0 else
+// 2048).Fallback` — capacity 0 routes every allocation through the fallback
+// heap path so the per-type malloc zones can attribute them.
+pub const REQUEST_CONTEXT_POOL_CAPACITY: usize = if bun_alloc::heap_breakdown::ENABLED {
+    0
+} else {
+    2048
+};
 pub type RequestContextStackAllocator<
     ThisServer,
     const SSL: bool,
     const DBG: bool,
     const H3: bool,
-> = bun_collections::hive_array::Fallback<RequestContext<ThisServer, SSL, DBG, H3>, 2048>;
-
-thread_local! {
-    // TODO(port): Zig `pub threadlocal var pool: ?*RequestContextStackAllocator = null;` is
-    // per-monomorphization. Rust thread_local! cannot be generic; Phase B: move into ThisServer
-    // or use a per-instantiation static via macro.
-    static POOL: core::cell::Cell<*mut c_void> = const { core::cell::Cell::new(core::ptr::null_mut()) };
-}
+> = bun_collections::hive_array::Fallback<
+    RequestContext<ThisServer, SSL, DBG, H3>,
+    REQUEST_CONTEXT_POOL_CAPACITY,
+>;
 
 pub struct RequestContext<
     ThisServer,
@@ -139,7 +142,7 @@ pub struct RequestContext<
     pub resp: Option<uws::AnyResponse>,
     pub req: Option<*mut Req<SSL_ENABLED, HTTP3>>,
     pub request_weakref: request::WeakRef,
-    // PORT NOTE: Zig `?*AbortSignal`. `Arc<AbortSignal>` was wrong —
+    // NOTE: Zig `?*AbortSignal`. `Arc<AbortSignal>` was wrong —
     // `AbortSignal` is an opaque ZST FFI handle; an `Arc` of a ZST never owns
     // the C++ allocation. Store the raw pointer. The request holds TWO counts:
     // the intrusive C++ `RefPtr` (+1 from `AbortSignal::new()`/`ref_()`) and a
@@ -157,8 +160,11 @@ pub struct RequestContext<
 
     /// We can only safely free once the request body promise is finalized
     /// and the response is rejected
-    // TODO(port): bare JSValue heap field — kept alive via manual protect()/unprotect()
-    // (response_protected flag); revisit bun_jsc::Strong in Phase B.
+    // Deliberately a bare JSValue with manual protect()/unprotect() gated by
+    // the `response_protected` flag (mirrors Zig): plain Blob/InternalBlob
+    // bodies intentionally leave the value unprotected on the hot path and
+    // fall back to `response_weakref` (see its doc below), so a `Strong`
+    // here would root the Response unconditionally and change GC behavior.
     pub response_jsvalue: JSValue,
     pub ref_count: u8,
 
@@ -426,7 +432,7 @@ use bun_options_types::schema::api as Api;
 
 use bun_js_parser::parser::Runtime::Fallback;
 
-/// PORT NOTE: `Api.JsException` is split across two crates in the Rust port —
+/// NOTE: `Api.JsException` is split across two crates in the Rust port —
 /// `bun_jsc::schema_api::JsException` (carries `stack`, used by
 /// `VirtualMachine::run_error_handler`) and `bun_options_types::schema::api::
 /// JsException` (peechy-encodable, `stack` omitted to break the dep cycle). In
@@ -464,7 +470,7 @@ macro_rules! stream_log { ($($t:tt)*) => { bun_core::scoped_log!(ReadableStream,
 /// (not the inner generic shims), so `Self::ON_RESOLVE` and the C++ side agree
 /// on the function-pointer identity and `promiseHandlerID` resolves.
 ///
-/// PORT NOTE (layering): expressed as a trait (not inherent consts) so
+/// NOTE (layering): expressed as a trait (not inherent consts) so
 /// downstream `where`-clauses that already name it keep type-checking.
 pub trait RequestContextHostFns {
     const ON_RESOLVE: bun_jsc::JSHostFn;
@@ -714,22 +720,35 @@ where
                     "Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.",
                 );
             } else if !value.is_empty() && !global_this.has_exception() {
-                // TODO(port): jsc::ConsoleObject::Formatter has no Default;
-                // JSValue::to_fmt lives on a trait not in scope here. Fall back
-                // to the generic message until those land.
-                let _ = value;
-                bun_core::err_generic!("Expected a Response object");
+                let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
+                formatter.quote_strings = true;
+                bun_core::err_generic!(
+                    "Expected a Response object, but received '{}'",
+                    jsc::console_object::formatter::ZigFormatter::new(&mut formatter, value),
+                );
+                // `formatter` drops here (Zig: `defer formatter.deinit()`).
             } else {
                 bun_core::err_generic!("Expected a Response object");
             }
 
             Output::flush();
             if !global_this.has_exception() {
-                let _ = writer;
-                // TODO(port): write_trace wants `impl bun_io::Write`; Output::error_writer()
-                // returns a raw `*mut Writer`. Skip the JS stack trace for now.
+                jsc::ConsoleObject::write_trace(writer, global_this);
             }
             Output::flush();
+        }
+        // The formatter and `write_trace` above re-enter JS (getters, proxy
+        // traps, Error.prepareStackTrace), which can synchronously abort or
+        // end this request (e.g. AbortController.abort() inside a getter).
+        // Zig calls `ctx.renderMissing()` unconditionally here, but its
+        // receiver is a raw `*RequestContext`; in Rust we hold `&mut self`
+        // for the whole call, matching the rest of this promise-resolve path
+        // (`on_resolve` → `handle_resolve` also re-enter JS through `&mut`).
+        // The `RequestContextRef` guard taken in `on_resolve` keeps the
+        // allocation alive across the re-entry; re-check the request state so
+        // we never render onto a response that was ended underneath us.
+        if self.is_aborted_or_ended() {
+            return;
         }
         self.render_missing();
     }
@@ -901,7 +920,6 @@ where
         self.ref_count += 1;
     }
 
-    // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_reject(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         ctx_log!("onReject");
 
@@ -1058,9 +1076,13 @@ where
             }),
         });
 
-        // TODO(port): `if (comptime fmt.len > 0)` — fmt::Arguments has no const len; always print.
-        #[allow(clippy::disallowed_methods)] // fmt is a caller-provided Arguments parameter
-        Output::pretty_errorln(fmt);
+        // Zig: `if (comptime fmt.len > 0) Output.prettyErrorln(fmt, args)`.
+        // `fmt::Arguments` has no const len, but an empty format string is
+        // detectable at runtime via `as_str() == Some("")`.
+        if fmt.as_str() != Some("") {
+            #[allow(clippy::disallowed_methods)] // fmt is a caller-provided Arguments parameter
+            Output::pretty_errorln(fmt);
+        }
         Output::flush();
 
         // Explicitly use the global allocator and *not* the arena
@@ -1523,7 +1545,7 @@ where
         }
 
         // Copy to stack memory to prevent aliasing issues in release builds
-        // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
+        // NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
         // SAFETY: `this.blob`'s backing bytes are owned by the context and
         // outlive `send_writable_bytes_for_blob`; detaching the borrow lets
@@ -1644,15 +1666,14 @@ where
                 if auto_close {
                     fd.close();
                 }
-                // TODO(port): Zig `withPathLike(file.pathlike)` also sets
-                // `.fd` for the Fd arm; `bun_sys::Error` only carries a path
-                // slice, so render the fd as bytes for the error path.
+                // Zig `withPathLike(file.pathlike)`: attach the path for the
+                // Path arm and the fd for the Fd arm.
                 let js_err = match &file.pathlike {
                     crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
                         err.with_path(p.slice()).to_js(global_this)
                     }
-                    crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => {
-                        err.to_js(global_this)
+                    crate::webcore::node_types::PathOrFileDescriptor::Fd(pathlike_fd) => {
+                        err.with_fd(*pathlike_fd).to_js(global_this)
                     }
                 };
                 return self.run_error_handler(js_err);
@@ -1672,21 +1693,22 @@ where
                 if auto_close {
                     fd.close();
                 }
-                // TODO(port): Zig `withPathLike(file.pathlike)` also sets `.fd`
-                // for the Fd arm; `bun_sys::Error::with_path` only carries a
-                // path slice, so the fd arm gets no path attached.
-                let path_bytes: &[u8] = match &file.pathlike {
-                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => p.slice(),
-                    crate::webcore::node_types::PathOrFileDescriptor::Fd(_) => b"",
-                };
-                let mut sys: jsc::SystemError = bun_sys::Error {
+                // Zig `withPathLike(file.pathlike)`: attach the path for the
+                // Path arm and the fd for the Fd arm.
+                let base_err = bun_sys::Error {
                     errno: bun_sys::E::EISDIR as _,
                     syscall: bun_sys::Tag::read,
                     ..Default::default()
-                }
-                .with_path(path_bytes)
-                .to_system_error()
-                .into();
+                };
+                let err = match &file.pathlike {
+                    crate::webcore::node_types::PathOrFileDescriptor::Path(p) => {
+                        base_err.with_path(p.slice())
+                    }
+                    crate::webcore::node_types::PathOrFileDescriptor::Fd(pathlike_fd) => {
+                        base_err.with_fd(*pathlike_fd)
+                    }
+                };
+                let mut sys: jsc::SystemError = err.to_system_error().into();
                 sys.message = BunString::static_("Cannot stream a directory as a response body");
                 return self.run_error_handler(sys.to_error_instance(global_this));
             }
@@ -1912,7 +1934,7 @@ where
         ctx_log!("doRenderStream");
         // SAFETY: pair is a stack local threaded through cork user-data.
         let pair = unsafe { &mut *pair };
-        // PORT NOTE: reshaped for borrowck — split the two fields up front so
+        // NOTE: reshaped for borrowck — split the two fields up front so
         // `this` and `stream` are independent borrows of `*pair`.
         let this: &mut Self = &mut *pair.this;
         let stream = &mut pair.stream;
@@ -1947,7 +1969,7 @@ where
                 ..Default::default()
             },
         });
-        // PORT NOTE: reshaped for borrowck — own via raw ptr so `this.sink` and the
+        // NOTE: reshaped for borrowck — own via raw ptr so `this.sink` and the
         // local `response_stream` view can coexist with `&mut *this` calls below.
         let response_stream_ptr = bun_core::heap::into_raw_nn(response_stream_box);
         this.sink = Some(response_stream_ptr);
@@ -2069,7 +2091,7 @@ where
                         stream_log!("promise Fulfilled");
                         let mut readable_ref =
                             core::mem::take(&mut this.response_body_readable_stream_ref);
-                        // PORT NOTE: reshaped for borrowck — Zig `defer` runs
+                        // NOTE: reshaped for borrowck — Zig `defer` runs
                         // after handle_resolve_stream; emulate by running the
                         // body first then the deferred cleanup.
                         Self::handle_resolve_stream(this);
@@ -2670,7 +2692,6 @@ where
         req.end_stream(req.should_close_connection());
     }
 
-    // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_resolve_stream(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         stream_log!("onResolveStream");
         let args = callframe.arguments_old::<2>();
@@ -2682,7 +2703,6 @@ where
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(port): #[bun_jsc::host_fn] — see note on `on_resolve`.
     pub fn on_reject_stream(
         global_this: &JSGlobalObject,
         callframe: &CallFrame,
@@ -2728,7 +2748,7 @@ where
         }
 
         if let Some(resp) = req.response_weakref.get() {
-            // PORT NOTE: Zig captures `bodyValue` ptr first then derefs after
+            // NOTE: Zig captures `bodyValue` ptr first then derefs after
             // the stream calls; reordered here for borrowck (semantically
             // identical — the Zig check reads through the pointer post-detach).
             if let Some(stream) = resp.get_body_readable_stream(global_this) {
@@ -2854,7 +2874,7 @@ where
                 let readable_stream: Option<WebCore::ReadableStream> = 'brk: {
                     if let Some(stream) = lock.readable.get(global_this) {
                         // we hold the stream alive until we're done with it
-                        // PORT NOTE: Zig `= lock.readable` is a bitwise struct copy (no
+                        // NOTE: Zig `= lock.readable` is a bitwise struct copy (no
                         // dtor); Rust `Strong` is move-only — take() transfers ownership.
                         this.response_body_readable_stream_ref =
                             core::mem::take(&mut lock.readable);
@@ -2996,7 +3016,7 @@ where
             WebCore::streams::Result::Owned(_) | WebCore::streams::Result::OwnedAndDone(_)
         );
         let is_done = stream.is_done();
-        // PORT NOTE: reshaped for borrowck — the defer reads `stream` through a
+        // NOTE: reshaped for borrowck — the defer reads `stream` through a
         // raw ptr so the body below can keep borrowing it.
         let stream_ptr: *mut WebCore::streams::Result = &raw mut stream;
         // Drop one ref only when the stream signals completion.
@@ -3080,7 +3100,7 @@ where
         if self.is_aborted_or_ended() {
             return;
         }
-        // PORT NOTE: WeakPtr::get borrows `&mut self`, and `do_render_with_body`
+        // NOTE: WeakPtr::get borrows `&mut self`, and `do_render_with_body`
         // also needs `&mut self` plus a `&mut BodyValue` from the response. The
         // response lives in a separate allocation (held by the WeakRef) so the
         // borrows are disjoint at runtime; route through a raw ptr to express that.
@@ -3159,7 +3179,7 @@ where
 
             let exception_list = jsc_exceptions_to_api(exception_list_upstream);
             let log = vm.log_mut().unwrap();
-            // PORT NOTE: format eagerly so `format_args!` doesn't hold an
+            // NOTE: format eagerly so `format_args!` doesn't hold an
             // immutable borrow of `self` across the `&mut self` call.
             let msg = format!(
                 "<r><red>{:?}<r> - <b>{}<r> failed",
@@ -3332,7 +3352,7 @@ where
 
         let (content_type, needs_content_type, content_type_needs_free) =
             get_content_type(response.get_init_headers_mut(), &self.blob);
-        // PORT NOTE: Zig `defer if (content_type_needs_free) content_type.deinit()`.
+        // NOTE: Zig `defer if (content_type_needs_free) content_type.deinit()`.
         // `MimeType` owns a `Cow<'static, [u8]>`; Drop handles the owned case.
         // Hold the value past all reads below, then let it drop at scope end.
         let _ct_guard = scopeguard::guard(content_type_needs_free, |_needs| {
@@ -3498,7 +3518,7 @@ where
 
     pub fn render_bytes(&mut self) {
         // copy it to stack memory to prevent aliasing issues in release builds
-        // PORT NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
+        // NOTE: AnyBlob is not Copy in Rust; reborrow through a raw ptr
         // so the slice borrow doesn't conflict with `&mut self` below.
         // SAFETY: `self.blob`'s backing bytes are owned by the context and
         // outlive the `try_end`/`on_writable` calls below; detaching the
@@ -3721,7 +3741,8 @@ where
                     //     body.value = .{ .InlineBlob = jsc.WebCore.InlineBlob.concat(bytes.items, chunk) };
                     //     this.request_body_buf.clearAndFree(this.allocator);
                     // } else {
-                    // TODO(port): ensureTotalCapacityPrecise can OOM in Zig; Rust Vec aborts.
+                    // Zig surfaced ensureTotalCapacityPrecise OOM as an error;
+                    // Rust Vec aborts on OOM (repo-wide abort-on-OOM policy).
                     bytes.reserve_exact(total.saturating_sub(bytes.len()));
                     bytes.extend_from_slice(chunk);
                     debug_assert_eq!(bytes.len(), total);

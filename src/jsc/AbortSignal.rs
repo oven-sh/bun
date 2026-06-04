@@ -23,8 +23,6 @@ bun_opaque::opaque_ffi! {
     pub struct AbortSignal;
 }
 
-// TODO(port): move to jsc_sys
-//
 // `AbortSignal` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST
 // handles, so `&AbortSignal` is ABI-identical to a non-null `AbortSignal*`
 // and C++ mutating through it (refcount, listener list, abort flag) is
@@ -158,11 +156,12 @@ impl AbortSignal {
         self.unref();
     }
 
+    /// Lifetime: the returned pointer is borrowed from the JS wrapper and is
+    /// valid only while `value` remains reachable. Use [`AbortSignal::ref_from_js`]
+    /// to take refcounted ownership instead.
     pub fn from_js(value: JSValue) -> Option<*mut AbortSignal> {
         let ptr = WebCore__AbortSignal__fromJS(value);
         if ptr.is_null() { None } else { Some(ptr) }
-        // TODO(port): lifetime — returned ptr is borrowed from the JS wrapper;
-        // valid only while the JSValue is reachable.
     }
 
     pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
@@ -188,8 +187,6 @@ impl AbortSignal {
     /// to `this` for the duration (e.g., `this.ref_(); defer this.unref();`) and avoid
     /// caching the pointer across turns.
     pub fn get_timeout(&self) -> Option<&Timeout> {
-        // TODO(port): lifetime — callers that run/cancel/deinit need `*mut`; revisit
-        // whether `&mut Timeout` (or raw ptr) is the right shape once call sites port.
         let ptr = WebCore__AbortSignal__getTimeout(self);
         // SAFETY: returned Timeout is owned by `self` and valid while `self` is held
         // (see doc comment).
@@ -256,7 +253,7 @@ impl AbortReason {
         }
     }
 
-    // PORT NOTE (phase-d): `to_body_value_error` reaches into
+    // `to_body_value_error` reaches into
     // `bun_runtime::webcore::body::value::ValueError` (forward dep on
     // `bun_runtime`). The conversion is trivial and is reconstructed at the
     // call-site in `bun_runtime` once that tier un-gates.
@@ -283,7 +280,7 @@ pub struct Timeout {
 
     /// The `Timeout`'s lifetime is owned by the AbortSignal.
     /// But this does have a ref count increment.
-    // PORT NOTE: AbortSignal is an opaque C++ type with intrusive WebCore
+    // AbortSignal is an opaque C++ type with intrusive WebCore
     // refcounting (ref/unref) that crosses FFI — PORTING.md §Pointers: never
     // Arc here. Kept as raw `*mut` with manual unref (matches Zig).
     pub signal: *mut AbortSignal,
@@ -304,8 +301,8 @@ impl Timeout {
         let deadline = bun_core::Timespec::now_allow_mocked_time()
             .add_ms(i64::try_from(milliseconds).expect("AbortSignal.timeout(ms) overflows i64"));
 
-        // PORT NOTE: `bun.TrivialNew` → `heap::alloc(Box::new(...))` (mimalloc
-        // is the global allocator per PORTING.md §Prereq).
+        // Zig `bun.TrivialNew` → `heap::into_raw(Box::new(...))` (mimalloc is
+        // the global allocator).
         let this: *mut Timeout = bun_core::heap::into_raw(Box::new(Timeout {
             event_loop_timer: EventLoopTimer {
                 next: ElTimespec {
@@ -373,7 +370,7 @@ impl Timeout {
             }
 
             // Dispatching the signal may cause the Timeout to get freed.
-            // PORT NOTE: capture raw ptr before `this` may dangle.
+            // Capture the raw ptr before `this` may dangle.
             let signal_ptr: *mut AbortSignal = (*this).signal;
             Self::dispatch(vm, signal_ptr);
         }
@@ -382,7 +379,7 @@ impl Timeout {
     fn dispatch(vm: *mut VirtualMachine, signal_ptr: *mut AbortSignal) {
         let _ = vm;
         let vm = VirtualMachine::get();
-        // PORT NOTE: `loop.enter(); defer loop.exit();` — RAII guard `exit`s on
+        // Zig `loop.enter(); defer loop.exit();` — RAII guard `exit`s on
         // drop even if `signal` unwinds, and holds the raw VM-owned pointer so
         // borrowck doesn't see two live `&mut EventLoop` across re-entrant JS.
         let _guard = vm.enter_event_loop_scope();
@@ -394,7 +391,7 @@ impl Timeout {
     }
 
     // This may run inside the "signal" call.
-    // PORT NOTE: not `impl Drop` — Timeout is constructed/destroyed across FFI
+    // Deliberately not `impl Drop` — Timeout is constructed/destroyed across FFI
     // (see export fns below) and `deinit` needs a `vm` parameter.
     unsafe fn deinit(this: *mut Timeout, vm: *mut VirtualMachine) {
         // SAFETY: caller guarantees `this` came from `heap::alloc` in `init`.

@@ -98,10 +98,6 @@ impl TextDecoder {
         ZigString::init(EncodingLabel::get_label(self.encoding)).to_js(global_this)
     }
 
-    // const Vector16 = std.meta.Vector(16, u16);
-    // const max_16_ascii: Vector16 = @splat(@as(u16, 127));
-    // PORT NOTE: SIMD vector constants are unused in this file's hot paths in current Zig.
-
     #[inline(always)]
     fn process_code_unit_utf16(
         &self,
@@ -226,8 +222,8 @@ impl TextDecoder {
             false
         };
 
-        // PORT NOTE: hoisted out of the labeled block — `ArrayBuffer::slice` borrows
-        // from the by-value `ArrayBuffer`, so it must outlive the `'input_slice` block.
+        // Hoisted out of the labeled block — `ArrayBuffer::slice` borrows from
+        // the by-value `ArrayBuffer`, so it must outlive the `'input_slice` block.
         let array_buffer;
         let input_slice: &[u8] = 'input_slice: {
             if arguments.is_empty() || arguments[0].is_undefined() {
@@ -294,7 +290,6 @@ impl TextDecoder {
                 })
             }
             EncodingLabel::Utf8 => {
-                // PORT NOTE: reshaped for borrowck — Zig used a labeled tuple-destructuring block.
                 let maybe_without_bom =
                     if !self.ignore_bom && buffer_slice.starts_with(b"\xef\xbb\xbf") {
                         &buffer_slice[3..]

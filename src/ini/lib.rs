@@ -1,8 +1,9 @@
 #![warn(unused_must_use)]
 // ──────────────────────────────────────────────────────────────────────────
-// Pieces that transitively need the JS-AST (`Expr`/`E::Object`/`Rope`) or the
-// schema (`BunInstall`/`NpmRegistry`) are gated behind `// TODO(port):`
-// markers pointing at the missing lower-tier symbol.
+// The remaining `'static` lifetime erasures and raw-pointer borrow splits in
+// this file are documented at each site; removing them is tracked by the
+// bun_ini Parser lifetime-restructure work item (external arena, split `env`
+// lifetime, `Source` lifetime threading in bun_ast).
 // ──────────────────────────────────────────────────────────────────────────
 use core::fmt;
 
@@ -269,13 +270,13 @@ mod draft {
         pub env: &'a mut DotEnvLoader<'a>,
     }
 
-    // PORT NOTE: Zig `prepareStr` switches its *return type* on a comptime enum
+    // Zig `prepareStr` switches its *return type* on a comptime enum
     // param (`.section -> *Rope`, `.key -> []const u8`, `.value -> Expr`). Rust
     // const generics cannot select a return type, so we keep a single
     // `prepare_str::<USAGE>()` body for diffability and wrap the result in
     // `PrepareResult`. Callers unwrap with `.into_*()`.
     //
-    // PORT NOTE: `#[derive(ConstParamTy)]` requires nightly `adt_const_params`.
+    // `#[derive(ConstParamTy)]` requires nightly `adt_const_params`.
     // Dropped to a runtime arg (the body never uses USAGE in a type position).
     // PERF(port): was comptime monomorphization.
     #[derive(PartialEq, Eq, Clone, Copy)]
@@ -361,7 +362,7 @@ mod draft {
                         let Some(close_bracket_idx) = line.iter().position(|&b| b == b']') else {
                             // Zig: `orelse continue` — skip the whole line
                             break 'treat_as_key;
-                            // PORT NOTE: reshaped — Zig `continue` from inside labeled block;
+                            // Reshaped — Zig `continue` from inside labeled block;
                             // we set treat_as_key=false and fall through to `continue` below.
                         };
                         // Make sure the rest is just whitespace
@@ -563,7 +564,7 @@ mod draft {
             usage: Usage,
             bump: &'a Arena,
             ropealloc: &'a Arena,
-            val_: &[u8],
+            val_: &'a [u8],
             offset_: i32,
         ) -> OOM<PrepareResult<'a>> {
             let mut offset = offset_;
@@ -875,9 +876,9 @@ mod draft {
                 )));
             }
             if usage == Usage::Key {
-                // TODO(port): lifetime — `val` borrows `val_` (caller line slice);
-                // Zig returns it directly. Dupe into the bump for now.
-                return Ok(PrepareResult::Key(bump.alloc_slice_copy(val)));
+                // `val` is a subslice of `val_: &'a [u8]`; return the borrow
+                // directly (matches Zig).
+                return Ok(PrepareResult::Key(val));
             }
             Ok(PrepareResult::Section(Self::str_to_rope(ropealloc, val)?))
         }
@@ -889,11 +890,11 @@ mod draft {
         /// - ${VAR} - if VAR is undefined, leave as "${VAR}" (no expansion)
         /// - ${VAR?} - if VAR is undefined, expand to empty string
         /// - Backslash escaping is already handled by JSON parsing
-        fn expand_env_vars(&mut self, bump: &'a Arena, val: &[u8]) -> OOM<&'a [u8]> {
+        fn expand_env_vars(&mut self, bump: &'a Arena, val: &'a [u8]) -> OOM<&'a [u8]> {
             // Quick check if there are any env vars to expand
             if bun_core::index_of(val, b"${").is_none() {
-                // TODO(port): lifetime — Zig returns `val` directly (arena-borrowed).
-                return Ok(bump.alloc_slice_copy(val));
+                // Nothing to expand: return the borrow directly (matches Zig).
+                return Ok(val);
             }
 
             let mut result = ArenaVec::<u8>::with_capacity_in(val.len(), bump);
@@ -1167,7 +1168,7 @@ mod draft {
             if let Some(keyexpr) = prop.key {
                 if let Some(key) = keyexpr.as_utf8_string_literal() {
                     if bun_core::has_prefix(key, b"//") {
-                        // PORT NOTE: Zig builds this list at comptime by reversing
+                        // Zig builds this list at comptime by reversing
                         // `std.meta.fieldNames(Item.Opt)` so that `_authToken` is
                         // matched before `_auth`. We hard-code the reversed order.
                         const OPTNAMES: &[(&[u8], ConfigOpt)] = &[
@@ -1563,7 +1564,7 @@ mod draft {
                 count
             };
 
-            // PORT NOTE: Zig's `defer install.scoped = registry_map;` is a shallow
+            // Zig's `defer install.scoped = registry_map;` is a shallow
             // write-back at scope end while later code keeps mutating `registry_map`.
             // Reshaped for borrowck: the single write-back happens at the bottom of
             // `load_npmrc` after the registry-configuration block.
@@ -1600,7 +1601,7 @@ mod draft {
                 break 'out;
             }
 
-            // PORT NOTE: `URL<'a>` borrows its input. The Zig `default_registry_url`
+            // `URL<'a>` borrows its input. The Zig `default_registry_url`
             // points into `install.default_registry.url` while the loop below
             // mutates that same field; copy the two fields we compare against so
             // the borrow ends before the `install.default_registry` mutation.
@@ -1741,7 +1742,7 @@ mod draft {
                     }
                 }
 
-                // PORT NOTE: Zig iterated `registry_map.scopes` and looked up `url_map[k]`
+                // Zig iterated `registry_map.scopes` and looked up `url_map[k]`
                 // by key. In Rust `keys()`/`values_mut()` on the same map alias; since
                 // `url_map` was filled in lockstep with `registry_map.scopes` (same
                 // ArrayHashMap insertion order), zip its values directly instead.
@@ -1800,9 +1801,14 @@ mod draft {
             drop(url_map);
         }
 
-        // TODO(port): Zig's `defer install.scoped = registry_map;` (in the scope-processing
-        // block) writes back the *final* registry_map after the registry-configuration block
-        // mutates it. Mirror that here.
+        // Zig's `defer install.scoped = registry_map;` takes a shallow copy at
+        // the end of the scope-processing block; the later registry-config loop
+        // mutates the scope *values* in place through shared heap storage, so
+        // the deferred copy observes those mutations. Moving the single
+        // write-back here (after all mutation) yields the same final state on
+        // the success path. (Zig's defer also fired on mid-block OOM; here an
+        // OOM `?` leaves `install.scoped` as `None`, which is moot — install
+        // aborts on OOM.)
         install.scoped = Some(registry_map);
 
         Ok(())

@@ -51,7 +51,7 @@ fn start_manifest_task(
     needs_extended_manifest: bool,
 ) -> Result<(), StartManifestTaskError> {
     let task_id = Task::Id::for_manifest(pkg_name);
-    // PORT NOTE: Zig passes the *raw packed-struct bit* `dep.behavior.optional`
+    // Zig passes the *raw packed-struct bit* `dep.behavior.optional`
     // — not `Behavior.isOptional()` (which is `optional && !peer`). For
     // optional-peer deps the raw bit is `true` but `is_optional()` is `false`,
     // which would flip both the dedupe-map `is_required` bookkeeping and
@@ -63,14 +63,13 @@ fn start_manifest_task(
     }
     manager.start_progress_bar_if_none();
 
-    // PORT NOTE: reshaped for borrowck — Zig writes the whole struct via `.* = .{}`
+    // reshaped for borrowck — Zig writes the whole struct via `.* = .{}`
     // and reads `manager` again for `scopeForPackageName`. `get_network_task()`
     // borrows `&mut manager.preallocated_network_tasks`, so compute everything
     // that needs `&manager` *before* taking that borrow, then populate the pool
     // slot through a raw pointer (matches `runTasks::generate_network_task_for_tarball`).
     let scope = bun_ptr::BackRef::new(manager.scope_for_package_name(pkg_name));
     // Backref address only — stored, not dereffed in this function.
-    // TODO(port): lifetime — BACKREF.
     let manager_backref: *mut PackageManager = manager;
 
     // Take the pool slot as a raw pointer so borrowck releases `manager` for the
@@ -123,10 +122,9 @@ pub fn populate_manifest_cache(
     manager: &mut PackageManager,
     packages: Packages<'_>,
 ) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
     let log_level = manager.options.log_level;
 
-    // PORT NOTE: heavy borrowck overlap — Zig holds slices into
+    // heavy borrowck overlap — Zig holds slices into
     // `manager.lockfile` while the loop body calls `&mut`-taking methods on
     // `manager`. The lockfile lives in `Box<Lockfile>` (stable address) and is
     // not resized by anything below, so derive the slices through a raw
@@ -283,7 +281,7 @@ pub fn populate_manifest_cache(
 
     if run_tasks::pending_task_count(manager) > 0 {
         struct RunClosure {
-            // PORT NOTE: Zig stores `*PackageManager` non-exclusively;
+            // Zig stores `*PackageManager` non-exclusively;
             // `sleep_until` also receives this raw pointer, so storing
             // `&mut PackageManager` here would alias under Stacked Borrows.
             manager: *mut PackageManager,
@@ -296,7 +294,7 @@ pub fn populate_manifest_cache(
                 // callback, so this is the unique live borrow.
                 let manager = unsafe { &mut *closure.manager };
                 let log_level = manager.options.log_level;
-                // PORT NOTE: void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass
+                // void RunTasksCallbacks — `extract_ctx` is unit. Do NOT pass
                 // `manager` as both receiver and ctx (aliased &mut). Zig passed
                 // `(comptime *PackageManager, closure.manager)`; the generic context
                 // pair collapses to `&mut ()` in Rust.

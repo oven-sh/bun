@@ -1,6 +1,6 @@
 //! Port of `src/bundler/linker_context/scanImportsAndExports.zig`.
 //
-// PORT NOTE: the Zig body takes ~20 simultaneous mutable column slices
+// The Zig body takes ~20 simultaneous mutable column slices
 // (`this.graph.ast.items(.field)`) and freely interleaves them with
 // `&mut LinkerContext` method calls. Rust's borrowck forbids both holding
 // overlapping `&mut [T]` columns from the same `MultiArrayList` and holding
@@ -84,7 +84,7 @@ pub fn scan_imports_and_exports(
     let _outer_trace = perf::trace("Bundler.scanImportsAndExports");
     let output_format = this.options.output_format;
 
-    // PORT NOTE: `reachable_files` is borrowed out of `this.graph` while the
+    // `reachable_files` is borrowed out of `this.graph` while the
     // body also calls `&mut this.graph` methods. Snapshot the indices.
     // PERF(port): was zero-copy slice; profile.
     let mut reachable: Vec<Index> = this.graph.reachable_files.slice().to_vec();
@@ -131,7 +131,7 @@ pub fn scan_imports_and_exports(
     let cjs_export_copies: *mut [js_meta::CjsExportCopies] = meta.cjs_export_copies;
     let entry_point_part_indices: *mut [Index] = meta.entry_point_part_index;
 
-    // PORT NOTE: Zig copies `symbols` to a local and `defer`-writes it back.
+    // Zig copies `symbols` to a local and `defer`-writes it back.
     // In Rust `this.graph.symbols` is the same storage, so no copy-back needed.
 
     {
@@ -317,8 +317,6 @@ pub fn scan_imports_and_exports(
                     output_format,
                 }
             };
-            // PORT NOTE: `defer dependency_wrapper.export_star_map.deinit()` → Drop handles it.
-
             for source_index_ in &reachable {
                 let source_index = source_index_.get();
                 let id = source_index as usize;
@@ -363,9 +361,6 @@ pub fn scan_imports_and_exports(
         {
             let mut export_star_ctx: Option<ExportStarContext> = None;
             let _trace = perf::trace("Bundler.ResolveExportStarStatements");
-            // PORT NOTE: `defer { if (export_star_ctx) |*export_ctx| export_ctx.source_index_stack.deinit(); }`
-            // → Drop on `export_star_ctx` handles freeing `source_index_stack: Vec<u32>`.
-
             for source_index_ in &reachable {
                 let source_index = source_index_.get();
                 let id = source_index as usize;
@@ -491,7 +486,7 @@ pub fn scan_imports_and_exports(
         // imported using an import star statement.
         // Note: `do` will wait for all to finish before moving forward
         //
-        // PORT NOTE: Zig dispatched via `worker_pool.each(arena, this,
+        // Zig dispatched via `worker_pool.each(arena, this,
         // doStep5, reachable_files)` (parallel fan-out, blocks until done).
         // `do_step5` only touches distinct SoA rows per `source_index` (the
         // columns are pre-sized and never reallocate during this step),
@@ -614,7 +609,7 @@ pub fn scan_imports_and_exports(
                 .graph
                 .arena()
                 .alloc_slice_fill_default::<u8>(string_buffer_len);
-            // PORT NOTE: `StringBuilder::drop` reconstructs a `Box<[u8]>` from
+            // `StringBuilder::drop` reconstructs a `Box<[u8]>` from
             // `ptr`/`cap` and frees it via the global arena. Here the
             // backing buffer is arena-owned (bumpalo), so dropping would hand
             // mimalloc a pointer it never allocated. Wrap in `ManuallyDrop` —
@@ -701,8 +696,8 @@ pub fn scan_imports_and_exports(
                 }
             }
 
-            // PORT NOTE: Zig `defer bun.assert(builder.len == builder.cap)` —
-            // moved to end-of-scope assert (no early returns inside this block).
+            // End-of-scope assert (Zig used `defer`); relies on there being no
+            // early returns inside this block.
             debug_assert!(builder.len == builder.cap);
 
             // Include the "__export" symbol from the runtime if it was used in the
@@ -727,7 +722,7 @@ pub fn scan_imports_and_exports(
             {
                 let imports_to_bind = &col_ref!(imports_to_bind_list)[id];
                 debug_assert_eq!(imports_to_bind.keys().len(), imports_to_bind.values().len());
-                // PORT NOTE: reshaped for borrowck — iterate by index so we can
+                // Iterate by index so we can
                 // re-borrow `parts` after each `top_level_symbol_to_parts` call.
                 for itb_i in 0..imports_to_bind.keys().len() {
                     let r#ref: Ref = col_ref!(imports_to_bind_list)[id].keys()[itb_i];
@@ -822,7 +817,7 @@ pub fn scan_imports_and_exports(
                     for part_index in top_to_parts {
                         // PERF(port): was appendAssumeCapacity
                         dependencies.push(Dependency {
-                            // PORT NOTE: `crate::Index` ↔ `bun_ast::Index` are both
+                            // `crate::Index` ↔ `bun_ast::Index` are both
                             // `#[repr(transparent)] u32` newtypes ported from the
                             // same Zig `ast.Index`; bridge by `.value` until B-3
                             // collapses them to a single re-export.
@@ -861,8 +856,6 @@ pub fn scan_imports_and_exports(
                         ..Default::default()
                     },
                 )?;
-                // PORT NOTE: `catch |err| bun.handleOom(err)` dropped — `?` propagates OOM.
-
                 col!(entry_point_part_indices)[id] = Index::part(entry_point_part_index);
 
                 // Pull in the "__toCommonJS" symbol if we need it due to being an entry point
@@ -892,7 +885,7 @@ pub fn scan_imports_and_exports(
                 let mut runtime_require_uses: u32 = 0;
 
                 // Imports of wrapped files must depend on the wrapper
-                // PORT NOTE: iterate by index so each iteration re-borrows
+                // Iterate by index so each iteration re-borrows
                 // `import_records` (the body calls `&mut this.graph` methods).
                 let import_record_indices_len = col_ref!(parts_list)[id].as_slice()[part_index]
                     .import_record_indices
@@ -909,7 +902,7 @@ pub fn scan_imports_and_exports(
                     let other_id = rec_source_index.value() as usize;
 
                     // Don't follow external imports (this includes import() expressions)
-                    // PORT NOTE: short-circuit — `is_external_dynamic_import` indexes by
+                    // Short-circuit: `is_external_dynamic_import` indexes by
                     // `record.source_index`, so it must only run when that index is valid.
                     let is_external_dyn = rec_source_index.is_valid() && {
                         let record = &col_ref!(import_records_list)[id].as_slice()
@@ -1320,7 +1313,7 @@ impl<'a> ExportStarContext<'a> {
                 continue;
             }
 
-            // PORT NOTE: reshaped for borrowck — collect (alias, name) pairs so the
+            // Collect (alias, name) pairs so the
             // loop body can mutably borrow `resolved_exports` / `imports_to_bind`.
             // PERF(port): was zero-copy `iter()` over StringArrayHashMap; profile.
             let exports_len = col_ref!(self.named_exports)[other_id].keys().len();
@@ -1375,7 +1368,6 @@ impl<'a> ExportStarContext<'a> {
                             },
                         )
                         .expect("oom");
-                    // PORT NOTE: `catch |err| bun.handleOom(err)` dropped — aborts on OOM.
                 } else if gop.value_ptr.data.source_index.get() != other_source_index {
                     // Two different re-exports colliding makes it potentially ambiguous
                     gop.value_ptr
@@ -1388,7 +1380,6 @@ impl<'a> ExportStarContext<'a> {
                             },
                             ..Default::default()
                         });
-                    // PORT NOTE: `catch |err| bun.handleOom(err)` dropped — aborts on OOM.
                 }
             }
 
@@ -1396,7 +1387,7 @@ impl<'a> ExportStarContext<'a> {
             self.add_exports(resolved_exports, target_id, other_source_index);
         }
 
-        // PORT NOTE: Zig `defer this.source_index_stack.shrinkRetainingCapacity(stack_end_pos - 1)`
+        // Zig: `defer this.source_index_stack.shrinkRetainingCapacity(stack_end_pos - 1)`
         // — inlined at scope end (no early returns after the push).
         self.source_index_stack.truncate(stack_end_pos - 1);
     }
@@ -1539,8 +1530,6 @@ mod __css_validation {
             log: &'a mut Log,
         }
 
-        // PORT NOTE: `pub fn deinit` → Drop on `visited` / `properties` handles cleanup.
-
         impl<'a, 'bump> Visitor<'a, 'bump> {
             fn add_property_or_warn(
                 &mut self,
@@ -1619,8 +1608,6 @@ mod __css_validation {
                     ),
                     ..Default::default()
                 });
-                // PORT NOTE: nested `catch |err| bun.handleOom(err)` chain dropped — aborts on OOM.
-
                 // Don't warn more than once
                 entry.value_ptr.source_index = Index::INVALID.get();
             }

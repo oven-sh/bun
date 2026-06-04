@@ -19,8 +19,6 @@ impl ContainerName {
 impl ContainerName {
     #[inline]
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk — `CustomIdent`
-        // identity-copy (arena-owned slice pointer).
         Self {
             v: self.v.deep_clone(bump),
         }
@@ -71,7 +69,7 @@ pub enum ContainerSizeFeatureId {
 // delegate to `enum_property_util` (driven by the `EnumProperty` derive).
 impl crate::media_query::FeatureIdTrait for ContainerSizeFeatureId {
     // Zig: pub const valueType = css.DeriveValueType(@This(), ValueTypeMap).valueType;
-    // PORT NOTE: DeriveValueType is comptime reflection over ValueTypeMap; expanded inline.
+    // `DeriveValueType` is comptime reflection over `ValueTypeMap`; expanded inline.
     fn value_type(&self) -> MediaFeatureType {
         match self {
             Self::Width => MediaFeatureType::Length,
@@ -153,8 +151,8 @@ impl QueryCondition for StyleQuery {
         let property_id = crate::properties::PropertyId::parse(input)?;
         input.expect_colon()?;
         input.skip_whitespace();
-        // PORT NOTE: Zig threaded `(input.arena(), null)` here; re-thread
-        // `&Bump` once `ParserOptions` carries the arena.
+        // Zig threaded `(input.arena(), null)` here; the arena gets re-threaded
+        // as part of the crate-wide `'bump` lifetime work (see css_parser.rs).
         let opts = css::ParserOptions::default(None);
         let feature = StyleQuery::Feature(Box::new(Property::parse(property_id, input, &opts)?));
         let _ = input.try_parse(css::css_parser::parse_important);
@@ -184,9 +182,8 @@ impl QueryCondition for StyleQuery {
 
 impl StyleQuery {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` variant-walk. `Operator` is `Copy`;
-        // `Property` routes through `dc::property` until the per-variant
-        // `DeepClone` derives land in `properties_generated.rs`.
+        // `Operator` is `Copy`; `Property` routes through `dc::property` until
+        // the per-variant `DeepClone` derives land in `properties_generated.rs`.
         match self {
             Self::Feature(p) => Self::Feature(Box::new(super::dc::property(p, bump))),
             Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
@@ -305,9 +302,8 @@ impl QueryCondition for ContainerCondition {
 
 impl ContainerCondition {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` variant-walk. `QueryFeature<F>`
-        // routes through `dc::query_feature` (Clone is faithful — see note
-        // there); `Operator` is `Copy`.
+        // `QueryFeature<F>` routes through `dc::query_feature` (Clone is
+        // faithful — see note there); `Operator` is `Copy`.
         match self {
             Self::Feature(f) => Self::Feature(Box::new(super::dc::query_feature(f, bump))),
             Self::Not(c) => Self::Not(Box::new(c.deep_clone(bump))),
@@ -376,7 +372,6 @@ impl<R> ContainerRule<R> {
     where
         R: css::generics::DeepClone<'bump>,
     {
-        // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             name: self.name.as_ref().map(|n| n.deep_clone(bump)),
             condition: self.condition.deep_clone(bump),

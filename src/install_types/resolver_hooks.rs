@@ -1413,7 +1413,7 @@ impl WakeHandler {
     pub fn get_on_dependency_error(
         &self,
     ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, bun_core::Error) {
-        // PORT NOTE: Zig casts `t.handler` (the wrong field) to the dep-error fn type — this is
+        // Zig casts `t.handler` (the wrong field) to the dep-error fn type — this is
         // a Zig bug. The port reads `on_dependency_error` instead; preserving the bug would
         // require an unsound transmute between fn-pointer signatures.
         self.on_dependency_error.unwrap()

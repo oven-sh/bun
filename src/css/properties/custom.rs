@@ -79,8 +79,8 @@ mod ext {
     /// Vec<u8>`, which this round adds in css_parser.rs).
     pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
         let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
-            // PORT NOTE: reshaped for borrowck — `get_import_records` borrows
-            // &mut *dest, so capture arena/filename first.
+            // `get_import_records` borrows &mut *dest, so capture
+            // arena/filename first.
             let arena = dest.arena;
             // SAFETY: filename borrows the printer arena/options which outlive `dest`.
             let filename: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(dest.filename()) };
@@ -102,7 +102,6 @@ mod ext {
             dest.write_char(b')')?;
 
             if let Some(dependencies) = &mut dest.dependencies {
-                // PORT NOTE: bun.handleOom dropped — Vec::push aborts on OOM via global arena
                 dependencies.push(crate::Dependency::Url(d));
             }
 
@@ -111,8 +110,8 @@ mod ext {
 
         let import_record = dest.import_record(this.import_record_idx)?;
         let is_internal = import_record.tag.is_internal();
-        // PORT NOTE: reshaped for borrowck — `get_import_record_url` reborrows
-        // &mut *dest, so capture `is_internal` first.
+        // `get_import_record_url` reborrows &mut *dest, so capture
+        // `is_internal` first.
         let url: &'static [u8] = {
             let u = dest.get_import_record_url(this.import_record_idx)?;
             // SAFETY: import-record paths are arena/source-owned and outlive `dest`.
@@ -482,7 +481,7 @@ impl TokenList {
             if tokens[tokens.len() - 1].is_whitespace() {
                 end -= 1;
             }
-            // PORT NOTE: Zig does `insertSlice(0, slice)` (shallow memcpy) then `tokens.deinit()`
+            // Zig does `insertSlice(0, slice)` (shallow memcpy) then `tokens.deinit()`
             // (frees only the backing array). `drain` moves the elements out without deep-cloning.
             let newlist: Vec<TokenOrValue> = tokens.drain(start..end).collect();
             return Ok(TokenList { v: newlist });
@@ -567,7 +566,7 @@ impl TokenList {
             let Ok(tok) = input.next_including_whitespace() else {
                 break;
             };
-            // PORT NOTE: reshaped for borrowck — clone the token so we can call &mut methods on `input` below.
+            // Clone the token so we can call &mut methods on `input` below.
             let tok = tok.clone();
             match &tok {
                 Token::Whitespace(_) | Token::Comment(_) => {
@@ -1191,7 +1190,7 @@ impl EnvironmentVariableName {
 }
 
 /// A UA-defined environment variable name.
-// PORT NOTE: Zig `css.DefineEnumProperty(@This())` provides eql/hash/parse/
+// Zig `css.DefineEnumProperty(@This())` provides eql/hash/parse/
 // to_css/deep_clone via comptime reflection over @tagName. Replaced by an
 // `EnumProperty` impl below (kebab-case match) — same protocol surface.
 #[derive(Clone, Copy, PartialEq, Eq, strum::IntoStaticStr, CssHash)]
@@ -1336,7 +1335,7 @@ impl TokenOrValue {
 // `TokenList` payload, and `media_query::MediaFeatureValue` derives
 // `Debug + Clone` over an `EnvironmentVariable` payload. The leaf value types
 // (`Url`, `CustomIdent`, …) don't all `#[derive(Clone)]` yet, so hand-roll
-// the structural clone here. PORT NOTE: Zig had no `Clone` distinction —
+// the structural clone here. Zig had no `Clone` distinction —
 // shallow struct copy was implicit; arena-slice payloads (`*const [u8]`) are
 // `Copy`, and the only owning fields are `Vec<TokenOrValue>` / `Vec<i32>`.
 
@@ -1538,7 +1537,7 @@ pub enum CustomPropertyName {
     Unknown(Ident),
 }
 
-// PORT NOTE: `DashedIdent`/`Ident` carry `*const [u8]` arena slices and
+// `DashedIdent`/`Ident` carry `*const [u8]` arena slices and
 // intentionally don't derive `PartialEq` (pointer-eq would be wrong).
 // `PropertyId` derives `PartialEq`, so compare the underlying bytes here.
 impl PartialEq for CustomPropertyName {

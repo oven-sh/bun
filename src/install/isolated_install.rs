@@ -226,7 +226,7 @@ pub(crate) fn install_isolated_packages(
 ) -> Result<crate::package_install::Summary, AllocError> {
     analytics::features::isolated_bun_install.fetch_add(1, Ordering::Relaxed);
 
-    // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` while also
+    // Reshaped for borrowck — Zig holds `*Lockfile` while also
     // passing `*PackageManager` (which owns it); take a raw pointer so column
     // borrows below don't tie up `&mut manager`.
     let lockfile: *mut Lockfile = &raw mut *manager.lockfile;
@@ -418,7 +418,7 @@ pub(crate) fn install_isolated_packages(
             'check_cycle: {
                 // check for cycles
                 let mut nodes_slice = nodes.slice();
-                // PORT NOTE: Zig grabbed multiple mutable column views from one
+                // Zig grabbed multiple mutable column views from one
                 // Slice; `split_mut()` yields disjoint `&mut [_]` per column.
                 let store::node::NodeColumnsMut {
                     pkg_id: node_pkg_ids,
@@ -493,7 +493,7 @@ pub(crate) fn install_isolated_packages(
 
                 'dont_dedupe: {
                     let mut nodes_slice = nodes.slice();
-                    // PORT NOTE: disjoint-column views via `split_mut`.
+                    // disjoint-column views via `split_mut`.
                     let store::node::NodeColumnsMut {
                         nodes: node_nodes,
                         dep_id: node_dep_ids,
@@ -594,7 +594,7 @@ pub(crate) fn install_isolated_packages(
                             string_buf,
                             pkg_names,
                         };
-                        // PORT NOTE: reshaped for borrowck — clone the dedupe peers slice
+                        // Reshaped for borrowck — clone the dedupe peers slice
                         // before mutating node_peers.
                         let dedupe_peers: Vec<_> =
                             node_peers[dedupe_node_id.get() as usize].list.clone();
@@ -640,7 +640,7 @@ pub(crate) fn install_isolated_packages(
             })?;
 
             let mut nodes_slice = nodes.slice();
-            // PORT NOTE: disjoint-column views via `split_mut`.
+            // disjoint-column views via `split_mut`.
             let store::node::NodeColumnsMut {
                 parent_id: node_parent_ids,
                 dependencies: node_dependencies,
@@ -967,7 +967,7 @@ pub(crate) fn install_isolated_packages(
                         // dedupe! depend on the already created entry
 
                         let mut entries = store_entries.slice();
-                        // PORT NOTE: disjoint-column views via `split_mut`.
+                        // disjoint-column views via `split_mut`.
                         let store::entry::EntryColumnsMut {
                             dependencies: entry_dependencies,
                             parents: entry_parents,
@@ -1166,7 +1166,7 @@ pub(crate) fn install_isolated_packages(
     let global_store_path: Option<Vec<u8>> = if manager.options.enable.global_virtual_store() {
         'global_store_path: {
             let mut entries = store.entries.slice();
-            // PORT NOTE: disjoint-column views via `split_mut`.
+            // disjoint-column views via `split_mut`.
             let store::entry::EntryColumnsMut {
                 entry_hash: entry_hashes,
                 node_id: entry_node_ids,
@@ -1214,7 +1214,7 @@ pub(crate) fn install_isolated_packages(
 
                 while !stack.is_empty() {
                     let top_idx = stack.len() - 1;
-                    // PORT NOTE: reshaped for borrowck — re-borrow `top` after each
+                    // Reshaped for borrowck — re-borrow `top` after each
                     // potential `stack.push()` realloc.
                     let id = stack[top_idx].id;
                     let idx = id.get() as usize;
@@ -1487,7 +1487,7 @@ pub(crate) fn install_isolated_packages(
                                 }
                                 unreachable!();
                             };
-                            // PORT NOTE: reshaped for borrowck — copy members to
+                            // Reshaped for borrowck — copy members to
                             // avoid holding a borrow into scc_stack while mutating.
                             let members: Vec<u32> = scc_stack[start..].to_vec();
                             for &m in &members {
@@ -1663,7 +1663,7 @@ pub(crate) fn install_isolated_packages(
             if cache_dir_path.is_empty() {
                 break 'global_store_path None;
             }
-            // PORT NOTE: Zig allocated a `[:0]u8` via `joinAbsStringBufZ`; here
+            // Zig allocated a `[:0]u8` via `joinAbsStringBufZ`; here
             // we own a Vec<u8> with a trailing NUL so it can be re-borrowed as
             // a `&ZStr` for `Installer.global_store_path` below.
             let joined = paths::resolve_path::join_abs_string::<paths::platform::Auto>(
@@ -1709,7 +1709,7 @@ pub(crate) fn install_isolated_packages(
                     // 2. for each entry in 'node_modules' rename into 'node_modules/.old_modules-{hex}'
                     // 3. for each workspace 'node_modules' rename into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
 
-                    // PORT NOTE: Zig builds a separate `RelPath(.{.unit=.u16})`
+                    // Zig builds a separate `RelPath(.{.unit=.u16})`
                     // for `mkdirat` because Zig's `sys.mkdirat` on Windows takes
                     // `[:0]const u16`. The Rust `sys::mkdirat`/`renameat` take
                     // `&ZStr` (u8) and widen internally, so a single u8
@@ -1759,7 +1759,7 @@ pub(crate) fn install_isolated_packages(
                             continue;
                         }
 
-                        // PORT NOTE: reshaped for borrowck — Zig `save()/restore()`
+                        // Reshaped for borrowck — Zig `save()/restore()`
                         // holds `*Path`; capture lengths and truncate manually so
                         // the paths stay unborrowed across the loop body.
                         let entry_path_save = entry_path.len();
@@ -1785,14 +1785,14 @@ pub(crate) fn install_isolated_packages(
                             AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes))
                                 .assume_ok();
 
-                        // PORT NOTE: reshaped for borrowck — clone basename before
+                        // Reshaped for borrowck — clone basename before
                         // mutating `workspace_node_modules` (Zig held a slice into
                         // the buffer across an append-with-separator).
                         let basename = workspace_node_modules.basename().to_vec();
 
                         workspace_node_modules.append(b"node_modules").assume_ok();
 
-                        // PORT NOTE: reshaped for borrowck — capture length instead
+                        // Reshaped for borrowck — capture length instead
                         // of `save()` so `rename_path` stays unborrowed.
                         let rename_path_save = rename_path.len();
                         rename_path
@@ -1896,14 +1896,14 @@ pub(crate) fn install_isolated_packages(
                             AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes))
                                 .assume_ok();
 
-                        // PORT NOTE: reshaped for borrowck — clone basename before
+                        // Reshaped for borrowck — clone basename before
                         // mutating `workspace_node_modules` (Zig held a slice into
                         // the buffer across an append-with-separator).
                         let basename = workspace_node_modules.basename().to_vec();
 
                         workspace_node_modules.append(b"node_modules").assume_ok();
 
-                        // PORT NOTE: reshaped for borrowck — Zig `save()/restore()`
+                        // Reshaped for borrowck — Zig `save()/restore()`
                         // holds a `*Path`; capture the length and truncate manually
                         // so `rename_path` stays unborrowed between save/restore.
                         let rename_path_save = rename_path.len();
@@ -1940,8 +1940,8 @@ pub(crate) fn install_isolated_packages(
     };
 
     {
-        // TODO(port): Progress.Node locals are conditionally initialized in Zig;
-        // model with Option.
+        // Conditionally initialized (only when progress is shown); definite-
+        // initialization analysis guarantees no use before assignment.
         let mut download_node: ProgressNode;
         let mut install_node: ProgressNode = ProgressNode::default();
         let mut scripts_node: ProgressNode;
@@ -1977,7 +1977,7 @@ pub(crate) fn install_isolated_packages(
         let entry_dependencies = entries.items_dependencies();
         let entry_hoisted = entries.items_hoisted();
 
-        // PORT NOTE: reshaped for borrowck — Zig holds `*Lockfile` (mut) while
+        // Reshaped for borrowck — Zig holds `*Lockfile` (mut) while
         // also keeping immutable column slices into it. Reborrow through a
         // `BackRef` so `string_buf` / `pkgs` don't tie up `&mut lockfile` for
         // the `Installer { lockfile, .. }` move below. `BackRef` is the
@@ -2002,7 +2002,7 @@ pub(crate) fn install_isolated_packages(
         // TODO: delete
         let mut seen_workspace_ids: HashMap<PackageID, ()> = HashMap::default();
 
-        // PORT NOTE: reshaped — Zig does `allocator.alloc(Task, n)` then
+        // Reshaped — Zig does `allocator.alloc(Task, n)` then
         // `task.* = .{..}` in-place, which is safe because Zig has no drop
         // glue and no validity invariants on uninit memory. In Rust,
         // `installer::Task` carries `result: Result` (Drop via `TaskError`
@@ -2086,7 +2086,7 @@ pub(crate) fn install_isolated_packages(
         // per-statement instead.
         // (Drop handles installer.deinit())
 
-        // PORT NOTE: reshaped for borrowck — Zig writes `installer: &installer`
+        // Reshaped for borrowck — Zig writes `installer: &installer`
         // into `installer.tasks[i]`; in Rust the back-pointer is taken before
         // the `tasks` borrow. `Task.installer` is typed
         // `BackRef<Installer<'static>>` (raw back-ref, no real `'static` data),
@@ -2100,7 +2100,7 @@ pub(crate) fn install_isolated_packages(
             task.installer = installer_backref;
         }
 
-        // PORT NOTE: hoisted — Zig lazily calls `globalLinkDirPath()` inside
+        // hoisted — Zig lazily calls `globalLinkDirPath()` inside
         // `appendStorePath` (worker threads, via `*const Installer`). Rust
         // can't take `&mut PackageManager` from `&self` there, so ensure the
         // global link dir once on the main thread before any `.symlink`
@@ -2212,7 +2212,7 @@ pub(crate) fn install_isolated_packages(
                 | ResolutionTag::Github
                 | ResolutionTag::LocalTarball
                 | ResolutionTag::RemoteTarball => {
-                    // PORT NOTE: Zig used `inline ... => |pkg_res_tag|` to monomorphize the
+                    // Zig used `inline ... => |pkg_res_tag|` to monomorphize the
                     // body per-tag. Rust collapses to a single arm with a runtime
                     // `pkg_res.tag` re-match where the body branches. // PERF(port): was
                     // comptime monomorphization — profile if hot.
@@ -2282,7 +2282,7 @@ pub(crate) fn install_isolated_packages(
                                     .unwrap_or(false);
                             }
                             installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
-                            // PORT NOTE: reshaped for borrowck — Zig `save()` returns a
+                            // Reshaped for borrowck — Zig `save()` returns a
                             // `ResetScope` holding `*Path`; capture the length instead so
                             // `store_path` stays unborrowed.
                             let scope_for_patch_tag_path = store_path.len();
@@ -2384,7 +2384,7 @@ pub(crate) fn install_isolated_packages(
                             if matches!(patch_info, installer::PatchInfo::None) {
                                 let exists = match pkg_res_tag {
                                     ResolutionTag::Npm => {
-                                        // PORT NOTE: reshaped for borrowck — capture length
+                                        // Reshaped for borrowck — capture length
                                         // instead of `save()` so the path stays unborrowed.
                                         let cache_dir_path_save = pkg_cache_dir_subpath.len();
                                         pkg_cache_dir_subpath.append(b"package.json").assume_ok();

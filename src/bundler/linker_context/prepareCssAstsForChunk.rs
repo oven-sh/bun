@@ -20,7 +20,7 @@ use bun_resolver::DataURL;
 
 use crate::chunk::{Content, CssImportOrderKind};
 
-// PORT NOTE: Zig stores `*Chunk` / `*LinkerContext` (freely-aliasing mutable
+// Zig stores `*Chunk` / `*LinkerContext` (freely-aliasing mutable
 // pointers). We mirror that with raw pointers rather than `&mut` / `&` so that
 // (a) the container_of `container_of` recovery of `*mut BundleV2` from
 // `linker` retains write provenance over the whole bundle, and (b) multiple
@@ -91,7 +91,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
     // Remove duplicate rules across files. This must be done in serial, not
     // in parallel, and must be done from the last rule to the first rule.
     {
-        // PORT NOTE: Zig accesses `chunk.content.css.{imports_in_chunk_in_order,asts}`
+        // Zig accesses `chunk.content.css.{imports_in_chunk_in_order,asts}`
         // through the union field at each use site while also holding `entry` as a raw
         // pointer into `imports_in_chunk_in_order`. In Rust, every `chunk.content.css.*`
         // re-enters the `Content` enum and re-borrows `chunk.content` as a whole, which
@@ -105,14 +105,14 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
         while i != 0 {
             i -= 1;
             let entry = css_chunk.imports_in_chunk_in_order.mut_(i);
-            // PORT NOTE: reshaped for borrowck — match on entry.kind while also touching
+            // Reshaped for borrowck — match on entry.kind while also touching
             // entry.conditions / entry.condition_import_records relies on disjoint field borrows.
             match &mut entry.kind {
                 CssImportOrderKind::Layers(layers) => {
                     let inner = layers.inner();
                     let len = inner.len();
                     let rules = if len > 0 {
-                        // PORT NOTE: Zig `SmallList(LayerName,1).fromBabyListNoDeinit(layers.inner().*)`
+                        // Zig `SmallList(LayerName,1).fromBabyListNoDeinit(layers.inner().*)`
                         // is a bitwise Vec→SmallList header transfer. In Rust the
                         // `Chunk::Layers` payload is the lifetime-erased shadow
                         // `bun_css::LayerName { v: Vec<Box<[u8]>> }`,
@@ -133,7 +133,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                     shadow.v.slice().iter().map(|seg| {
                                         // `seg` borrows arena-owned bytes that outlive this
                                         // stylesheet; route through `StoreStr` for the lifetime
-                                        // erasure (see layer.rs TODO(port)).
+                                        // erasure (see the corresponding note in layer.rs).
                                         bun_ast::StoreStr::new(seg).slice()
                                     }),
                                 ),
@@ -162,7 +162,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                     css_chunk.asts[i] = ast;
                 }
                 CssImportOrderKind::ExternalPath(p) => {
-                    // PORT NOTE: Zig keeps `conditions: ?*ImportConditions` as a raw
+                    // Zig keeps `conditions: ?*ImportConditions` as a raw
                     // pointer to index 0 while the `while j != 1` loop reads
                     // `entry.conditions.len` / `.at(j)`. Taking `&mut` at index 0 here
                     // would exclusively borrow the whole `entry.conditions` Vec for
@@ -195,7 +195,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                         while j != 1 {
                             j -= 1;
 
-                            // PORT NOTE: Zig has no destructors, so when `ast_import` falls
+                            // Zig has no destructors, so when `ast_import` falls
                             // out of scope the bitwise-duplicated `ImportConditions` inside
                             // it (see `ptr::read` below) is simply abandoned. In Rust,
                             // dropping `ast_import` would run `Drop` on that aliased
@@ -283,7 +283,7 @@ fn prepare_css_asts_for_chunk_impl(c: &LinkerContext, chunk: &mut Chunk, bump: &
                                 b"text/css",
                                 strings::trim(print_result.code.as_slice(), b" \n\r\t"),
                             );
-                            // PORT NOTE: Zig allocated into the worker arena (`arena`).
+                            // Zig allocated into the worker arena (`arena`).
                             // `encode_string_as_shortest_data_url` returns a heap `Vec<u8>`;
                             // copy it into the worker bump so ownership matches Zig (freed
                             // at bundle teardown via arena reset). SAFETY: arena outlives

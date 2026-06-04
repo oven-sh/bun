@@ -10,13 +10,11 @@ pub struct Size2D<T> {
     pub b: T,
 }
 
-// PORT NOTE: Zig's `switch (T) { f32 => ..., LengthPercentage => ..., else => T.parse }`
+// Zig's `switch (T) { f32 => ..., LengthPercentage => ..., else => T.parse }`
 // is comptime type dispatch. In Rust this is expressed via trait bounds — `f32` and
-// `LengthPercentage` must impl the same `Parse`/`ToCss`/`Eql` traits as other CSS value
+// `LengthPercentage` impl the same `Parse`/`ToCss` traits as other CSS value
 // types (the `f32` impls delegate to `CSSNumberFns`). The per-type `switch` arms are
 // therefore collapsed into trait method calls below.
-// TODO(port): confirm trait names match the crate API once `generics::
-// parse_tocss_numeric_gated` un-gates; for now bound on `values::protocol`.
 impl<T> Size2D<T>
 where
     T: Clone + PartialEq,
@@ -25,7 +23,7 @@ where
     where
         T: Parse,
     {
-        // PORT NOTE: f32 → CSSNumberFns::parse, LengthPercentage → LengthPercentage::parse,
+        // f32 → CSSNumberFns::parse, LengthPercentage → LengthPercentage::parse,
         // else → T::parse — all unified under the `Parse` trait in Rust.
         T::parse(input)
     }
@@ -60,14 +58,13 @@ where
     where
         T: ToCss,
     {
-        // PORT NOTE: f32 → CSSNumberFns::to_css, else → val.to_css — unified under `ToCss` trait.
+        // f32 → CSSNumberFns::to_css, else → val.to_css — unified under `ToCss` trait.
         val.to_css(dest)
     }
 
     pub(crate) fn deep_clone(&self, _bump: &Arena) -> Self {
-        // TODO(port): css::implement_deep_clone is @typeInfo-based reflection in Zig;
-        // replace with #[derive(DeepClone)] or arena-aware deep_clone.
-        // For now `T: Clone` covers it (Box payloads deep-clone via their Clone impls).
+        // Zig's `css.implementDeepClone` was @typeInfo-based reflection;
+        // `T: Clone` covers it (Box payloads deep-clone via their Clone impls).
         Size2D {
             a: self.a.clone(),
             b: self.b.clone(),
@@ -76,13 +73,13 @@ where
 
     #[inline]
     pub(crate) fn val_eql(lhs: &T, rhs: &T) -> bool {
-        // PORT NOTE: f32 → `lhs.* == rhs.*`, else → `lhs.eql(rhs)` — unified under PartialEq.
+        // f32 → `lhs.* == rhs.*`, else → `lhs.eql(rhs)` — unified under PartialEq.
         lhs == rhs
     }
 
     #[inline]
     pub(crate) fn eql(lhs: &Self, rhs: &Self) -> bool {
-        // PORT NOTE: preserved verbatim from Zig — compares lhs.a against rhs.b only
+        // Preserved verbatim from Zig — compares lhs.a against rhs.b only
         // (not a/a && b/b). Suspect upstream bug, but ported faithfully.
         lhs.a == rhs.b
     }

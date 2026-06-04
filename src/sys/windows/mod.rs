@@ -369,7 +369,6 @@ pub use bun_windows_sys::externs::OPEN_EXISTING;
 
 pub use bun_windows_sys::externs::CommandLineToArgvW;
 
-// TODO(port): move to windows_sys
 unsafe extern "system" {
     // safe: `HANDLE` is a by-value opaque; bad handle → FILE_TYPE_UNKNOWN +
     // GetLastError, no UB.
@@ -3266,7 +3265,6 @@ pub fn GetProcAddressA(ptr: Option<*mut c_void>, utf8: &bun_core::ZStr) -> Optio
 
 pub use bun_windows_sys::externs::LoadLibraryA;
 
-// TODO(port): move to windows_sys
 unsafe extern "system" {
     #[link_name = "CreateHardLinkW"]
     fn CreateHardLinkW_raw(
@@ -4043,7 +4041,6 @@ pub fn edit_win32_binary_subsystem(
 pub mod rescle {
     use super::*;
 
-    // TODO(port): move to windows_sys
     unsafe extern "C" {
         fn rescle__setIcon(exe_path: *const u16, icon_path: *const u16) -> c_int;
         fn rescle__setWindowsMetadata(
@@ -4598,7 +4595,8 @@ pub use bun_windows_sys::externs::windows_enable_stdio_inheritance;
 ///
 /// NOTE: THE FILE MUST BE OPENED WITH ACCESS_MASK "DELETE" OR THIS WILL FAIL
 pub fn delete_opened_file(fd: Fd) -> bun_sys::Result<()> {
-    // TODO(port): comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+    // Relies on Bun's minimum supported Windows version being >= win10_rs5
+    // (Zig asserted this at comptime via builtin.target.os.version_range).
     let mut info = win32::FILE_DISPOSITION_INFORMATION_EX {
         Flags: FILE_DISPOSITION_DELETE
             | FILE_DISPOSITION_POSIX_SEMANTICS
@@ -4644,7 +4642,8 @@ pub fn move_opened_file_at(
     // supported in order to avoid either (1) using a redundant call that we can know in advance will return
     // STATUS_NOT_SUPPORTED or (2) only setting IGNORE_READONLY_ATTRIBUTE when >= rs5
     // and therefore having different behavior when the Windows version is >= rs1 but < rs5.
-    // TODO(port): comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+    // Bun's minimum supported Windows version is >= win10_rs5 (Zig asserted
+    // this at comptime via builtin.target.os.version_range).
 
     if cfg!(debug_assertions) {
         debug_assert!(!new_file_name.contains(&(b'/' as u16))); // Call moveOpenedFileAtLoose
@@ -4855,7 +4854,6 @@ pub fn rename_at_w(
 
 mod kernel32_2 {
     use super::*;
-    // TODO(port): move to windows_sys
     unsafe extern "system" {
         /// No preconditions; allocates and returns the env block (or null).
         pub(super) safe fn GetEnvironmentStringsW() -> LPWSTR;

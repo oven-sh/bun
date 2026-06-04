@@ -1,3 +1,4 @@
+use crate::postgres::AnyPostgresError;
 use crate::postgres::protocol::new_writer::NewWriter;
 use crate::postgres::types::int_types::int32;
 use crate::shared::Data;
@@ -23,8 +24,7 @@ impl SASLInitialResponse {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), AnyPostgresError> {
         let mechanism = self.mechanism.slice();
         let data = self.data.slice();
         let count: usize = core::mem::size_of::<u32>()

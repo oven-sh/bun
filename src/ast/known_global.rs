@@ -112,7 +112,7 @@ impl KnownGlobal {
         js_ast::Expr::init(call, loc)
     }
 
-    // PORT NOTE: `_bump` is kept for call-site shape parity with the Zig
+    // `_bump` is kept for call-site shape parity with the Zig
     // `std.mem.Allocator` arg. The `Vec` uses the global arena.
     #[inline(never)]
     pub fn minify_global_constructor(

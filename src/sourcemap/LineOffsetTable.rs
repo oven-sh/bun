@@ -157,9 +157,8 @@ impl LineOffsetTable {
         Self::generate_in::<Global>(contents, approximate_line_count)
     }
 
-    // PORT NOTE: Zig threaded `std.mem.Allocator` through MultiArrayList/Vec.
-    // Callers in Zig pass mixed allocators (printer/bundler arenas vs VM default
-    // allocator in CodeCoverage.zig); the bundler routes `A = AstAlloc` so the
+    // Callers pass mixed allocators (printer/bundler arenas vs VM default
+    // allocator in code coverage): the bundler routes `A = AstAlloc` so the
     // table bulk-frees with the per-worker AST heap, everyone else uses
     // [`generate`] (`A = Global`).
     pub fn generate_in<A: Allocator + Copy + Default + 'static>(

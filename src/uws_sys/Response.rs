@@ -523,7 +523,6 @@ impl<const SSL: bool> Response<SSL> {
     /// Run `handler` while the response is corked. Zig signature took
     /// `comptime handler: anytype, args_tuple: ArgsTuple(@TypeOf(handler))`;
     /// in Rust callers pass a closure capturing what would have been the args tuple.
-    // PORT NOTE: reshaped — `(handler, args_tuple)` collapsed to `FnOnce()`.
     pub fn corked<F: FnOnce()>(&mut self, f: F) {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr op explicitly.

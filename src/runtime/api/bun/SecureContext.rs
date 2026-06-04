@@ -53,7 +53,7 @@ pub(crate) fn js_live_count(_global: &JSGlobalObject, _callframe: &CallFrame) ->
 }
 
 impl SecureContext {
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the `Free` shim it emits calls
+    // Note: no `#[bun_jsc::host_fn]` here — the `Free` shim it emits calls
     // a bare `constructor(...)` which cannot resolve inside an `impl`. The
     // `#[bun_jsc::JsClass]` macro already emits the `<Self>::constructor` shim.
     pub fn constructor(
@@ -81,7 +81,7 @@ impl SecureContext {
     /// `SSLContextCache`) on miss. Returning the same cell is what makes
     /// `secureContext === createSecureContext(opts)` hold and lets `Listener.zig`
     /// pointer-compare without a JS-side WeakRef map.
-    // PORT NOTE: codegen (`generated_classes.rs::SecureContextClass__intern`)
+    // Note: codegen (`generated_classes.rs::SecureContextClass__intern`)
     // wraps this in `host_fn_result` and exports the C-ABI shim, so no
     // `#[bun_jsc::host_fn]` here — that macro's Free shim calls by bare name
     // and cannot resolve an associated fn.
@@ -140,7 +140,7 @@ impl SecureContext {
         d: [u8; 32],
     ) -> JsResult<Box<SecureContext>> {
         let mut err = uws::create_bun_socket_error_t::none;
-        // PORT NOTE: spec is `global.bunVM().rareData().sslCtxCache()`. In the
+        // Note: spec is `global.bunVM().rareData().sslCtxCache()`. In the
         // Rust crate split, `bun_jsc::RareData::ssl_ctx_cache()` returns an
         // opaque cycle-break stub; the concrete per-VM `SSLContextCache` lives
         // on this crate's `RuntimeState` (one per JS thread, same lifetime as
@@ -206,7 +206,6 @@ use bun_uws_sys::socket_context::c;
 
 mod cpp {
     use super::*;
-    // TODO(port): move to runtime_sys
     unsafe extern "C" {
         pub(super) safe fn Bun__SecureContextCache__get(
             global: &JSGlobalObject,

@@ -11,23 +11,32 @@ use bun_install::PackageID;
 use bun_install::Resolution;
 use bun_install::dependency::{self, Behavior, VersionExt as _};
 use bun_install::lockfile::package;
-// PORT NOTE: `lockfile.packages.slice()` returns
+// `lockfile.packages.slice()` returns
 // `bun_collections::multi_array_list::Slice<Package<_>>`; the `items_<field>()`
 // column accessors are an extension trait (Zig's `slice.items(.field)` is
 // comptime-dispatched, Rust models it as a hand-expanded trait per Package.rs).
 use crate::integrity;
 use crate::lockfile_real::Printer;
 
-// TODO(port): narrow error set (only writer + alloc errors are produced)
 pub fn print(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
     // internal for debugging, print the lockfile as custom json
     // limited to debug because we don't want people to rely on this format.
+    // Zig: `std.json.Stringify.write(this.lockfile)` dispatches to Lockfile's
+    // custom `jsonStringify`; the Rust port calls it directly.
     #[cfg(debug_assertions)]
-    {
-        // TODO(port): std.process.hasEnvVarConstant("JSON") + std.json.Stringify
-        // have no direct equivalent here; wire up bun_core::env_var + a JSON
-        // serializer for Lockfile if this debug path is still wanted.
-        let _ = &this.lockfile;
+    if std::env::var_os("JSON").is_some() {
+        use crate::lockfile_real::lockfile_json_stringify_for_debugging::{
+            WriteStream, WriteStreamOptions,
+        };
+        let mut stream = WriteStream::new(WriteStreamOptions {
+            indent: 2,
+            emit_null_optional_fields: true,
+            emit_nonportable_numbers_as_strings: true,
+        });
+        crate::lockfile_real::json_stringify(this.lockfile, &mut stream)?;
+        writer.write_all(&stream.into_bytes())?;
+        writer.write_all(b"\n")?;
+        return Ok(());
     }
 
     writer.write_all(
@@ -53,7 +62,7 @@ fn packages(this: &mut Printer, writer: &mut impl bun_io::Write) -> Result<(), b
     let dependencies_buffer: &[Dependency] = this.lockfile.buffers.dependencies.as_slice();
 
     // Zig: std.HashMap(PackageID, []Dependency.Version, IdentityContext(PackageID), 80)
-    // PORT NOTE: reshaped for borrowck — store (start, len) into
+    // Reshaped for borrowck — store (start, len) into
     // `all_requested_versions_buf` instead of overlapping &mut [Version] slices.
     let mut requested_versions: HashMap<PackageID, (usize, usize)> = HashMap::default();
 

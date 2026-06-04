@@ -1,5 +1,6 @@
 use super::field_message::FieldMessage;
 use super::new_reader::NewReader;
+use crate::postgres::AnyPostgresError;
 
 #[derive(Default)]
 pub struct NoticeResponse {
@@ -13,8 +14,7 @@ pub struct NoticeResponse {
 impl NoticeResponse {
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
-    ) -> Result<Self, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<Self, AnyPostgresError> {
         let mut remaining_bytes = reader.length()?;
         remaining_bytes = remaining_bytes.saturating_sub(4);
 
@@ -29,7 +29,7 @@ impl NoticeResponse {
     // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         context: Container,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> Result<Self, AnyPostgresError> {
         Self::decode_internal(NewReader { wrapped: context })
     }
 }

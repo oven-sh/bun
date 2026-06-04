@@ -53,7 +53,7 @@ pub(crate) fn get_truthy_string_utf8(
     Ok(Some(utf8))
 }
 
-// PORT NOTE: Zig stores `str.toUTF8()` results in `_*_slice` fields and then
+// Zig stores `str.toUTF8()` results in `_*_slice` fields and then
 // borrows `.slice()` into `credentials.*` — a self-referential struct. The
 // Rust `S3Credentials` fields are owned `Box<[u8]>`, so for credential strings
 // we deep-copy into the `Box` directly and skip the `_*_slice` ownership
@@ -81,7 +81,7 @@ pub(crate) fn get_credentials_with_options(
 ) -> JsResult<S3CredentialsWithOptions> {
     bun_analytics::features::s3.fetch_add(1, Ordering::Relaxed);
     // get ENV config
-    // PORT NOTE: Zig takes `this` by value (struct copy). `S3Credentials`
+    // Zig takes `this` by value (struct copy). `S3Credentials`
     // carries an intrusive ref-count and is not `Copy`; `Clone` performs the
     // matching deep field copy with a fresh ref-count.
     let mut new_credentials = S3CredentialsWithOptions {

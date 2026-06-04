@@ -76,7 +76,7 @@ impl Mv {
 
     /// Spec: mv.zig `next`.
     pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
-        // PORT NOTE: reshaped for borrowck — read tag, drop borrow, act.
+        // Read the tag, drop the borrow, then act.
         enum Tag {
             Idle,
             CheckTarget,

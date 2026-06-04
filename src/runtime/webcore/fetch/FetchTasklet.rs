@@ -37,7 +37,7 @@ use crate::webcore::{
 };
 
 use bun_jsc::JsTerminatedResult;
-// PORT NOTE: `bun_event_loop::JsResult` (cycle-broken erased error) — used by
+// `bun_event_loop::JsResult` (cycle-broken erased error) — used by
 // ConcurrentTask/AnyTask callbacks at the tier-3 layer.
 type ElJsResult<T> = bun_event_loop::JsResult<T>;
 
@@ -56,7 +56,7 @@ pub(crate) type ResumableSink = ResumableFetchSink;
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 #[ref_count(destroy = FetchTasklet::deinit)]
 pub struct FetchTasklet {
-    // PORT NOTE: ResumableSink is intrusively refcounted (`ref_count: Cell<u32>` +
+    // ResumableSink is intrusively refcounted (`ref_count: Cell<u32>` +
     // heap::alloc); `Arc` can't be mutably borrowed for `cancel/drain`, so model
     // as a raw pointer like Zig's `?*ResumableSink`.
     pub sink: Option<*mut ResumableSink>,
@@ -68,7 +68,7 @@ pub struct FetchTasklet {
     pub javascript_vm: &'static VirtualMachine,
     pub global_this: GlobalRef,
     pub request_body: HTTPRequestBody,
-    // PORT NOTE: ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
+    // ThreadSafeStreamBuffer is intrusively refcounted (`ref_count: AtomicU32`,
     // starts at 2) and shared with the HTTP thread via raw ptr; `Arc` can't be mutably
     // borrowed for `acquire/release`. Model as a raw pointer like Zig's
     // `?*http.ThreadSafeStreamBuffer`.
@@ -81,7 +81,7 @@ pub struct FetchTasklet {
     /// response weak ref we need this to track the response JS lifetime
     pub response: jsc::Weak<FetchTasklet>,
     /// native response ref if we still need it when JS is discarted
-    // PORT NOTE: Response is intrusively refcounted; raw ptr matches Zig `?*Response`.
+    // Response is intrusively refcounted; raw ptr matches Zig `?*Response`.
     pub native_response: Option<*mut Response>,
     pub ignore_data: bool,
     /// stream strong ref if any is available
@@ -100,7 +100,7 @@ pub struct FetchTasklet {
     /// We always clone url and proxy (if informed)
     pub url_proxy_buffer: Box<[u8]>,
 
-    // PORT NOTE: WebCore::AbortSignal is C++-refcounted (intrusive). Model as
+    // WebCore::AbortSignal is C++-refcounted (intrusive). Model as
     // raw ptr like Zig's `?*AbortSignal`; ref/unref via `bun_jsc::AbortSignal`
     // methods (see clear_abort_signal / queue).
     pub signal: Option<*mut AbortSignal>,
@@ -139,7 +139,7 @@ pub enum HTTPRequestBody {
 
 impl Default for HTTPRequestBody {
     fn default() -> Self {
-        // PORT NOTE: Zig `= .{ .AnyBlob = .{} }`; `Blob` has no `const EMPTY`
+        // Zig `= .{ .AnyBlob = .{} }`; `Blob` has no `const EMPTY`
         // (non-Copy fields), so use the runtime `Default` instead of a const.
         HTTPRequestBody::AnyBlob(AnyBlob::Blob(Blob::default()))
     }
@@ -190,7 +190,7 @@ impl HTTPRequestBody {
         }
         if let BodyValue::Locked(locked) = &mut body_value {
             if locked.readable.has() {
-                // PORT NOTE: `BodyValue` now has `Drop` (H3), so we cannot move
+                // `BodyValue` now has `Drop` (H3), so we cannot move
                 // `l.readable` out by value (E0509). `mem::take` leaves a default
                 // readable; `Value::drop` on the residual `Locked` then runs
                 // `readable.deinit()` on that default — a no-op.
@@ -204,7 +204,7 @@ impl HTTPRequestBody {
             if !readable.is_empty_or_undefined_or_null() {
                 if let BodyValue::Locked(l) = &mut body_value {
                     if l.readable.has() {
-                        // See PORT NOTE above re: E0509 and `Value::drop`.
+                        // See note above re: E0509 and `Value::drop`.
                         return Ok(HTTPRequestBody::ReadableStream(core::mem::take(
                             &mut l.readable,
                         )));
@@ -412,7 +412,7 @@ impl FetchTasklet {
         );
     }
 
-    // PORT NOTE: ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
+    // ConcurrentTask::from_callback takes `fn(*mut T) -> bun_event_loop::JsResult<()>`
     // (cycle-broken erased error); Zig coerced `error{}!void` automatically.
     fn deinit_callback(this: *mut FetchTasklet) -> ElJsResult<()> {
         // SAFETY: enqueued with last ref; exclusive access on main thread
@@ -420,7 +420,7 @@ impl FetchTasklet {
         Ok(())
     }
 
-    // PORT NOTE: Zig `pub fn init(_: std.mem.Allocator) anyerror!FetchTasklet { return FetchTasklet{}; }`
+    // Zig `pub fn init(_: std.mem.Allocator) anyerror!FetchTasklet { return FetchTasklet{}; }`
     // was dead code — `FetchTasklet{}` would not compile if analyzed (promise/mutex/tracker lack
     // defaults). All callers use `get()` directly. Dropped in the port.
 
@@ -461,7 +461,7 @@ impl FetchTasklet {
             drop(certificate);
         }
 
-        // PORT NOTE: Zig `entries.deinit()` + `buf.deinit()`; Rust drop on
+        // Zig `entries.deinit()` + `buf.deinit()`; Rust drop on
         // assignment runs the same cleanup. MultiArrayList has no `clear()`.
         self.request_headers = Headers::default();
 
@@ -649,7 +649,7 @@ impl FetchTasklet {
             success,
             self.result.has_more
         );
-        // PORT NOTE: Zig `defer { if (buffer_reset) ...reset() }` runs on `try` failure paths too.
+        // Zig `defer { if (buffer_reset) ...reset() }` runs on `try` failure paths too.
         // Capture a raw ptr so the defer can reset on every exit (incl. `?`) without holding a
         // long-lived &mut borrow of self.
         let scheduled_buf: *mut MutableString = &raw mut self.scheduled_response_buffer;
@@ -690,7 +690,7 @@ impl FetchTasklet {
                 // body value now owns the error (Zig: `need_deinit = false`)
                 let err = scopeguard::ScopeGuard::into_inner(err);
                 let body = response.get_body_value();
-                // PORT NOTE: Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
+                // Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
                 // now; narrow back to the real `JsTerminated` here (Zig: `try body.toErrorInstance`).
                 body.to_error_instance(err, &global_this)
                     .map_err(|_| bun_jsc::JsTerminated::JSTerminated)?;
@@ -748,7 +748,7 @@ impl FetchTasklet {
             if !self.result.has_more {
                 let scheduled_response_buffer =
                     core::mem::take(&mut self.scheduled_response_buffer.list);
-                // PORT NOTE: `body` (&mut response.body.value) and `get_fetch_headers()`
+                // `body` (&mut response.body.value) and `get_fetch_headers()`
                 // (&response.init.headers) are disjoint fields, but borrowck can't see
                 // through the accessor methods. Hold `body` as a raw ptr (Zig pattern).
                 let body: *mut BodyValue = response.get_body_value();
@@ -781,7 +781,7 @@ impl FetchTasklet {
                     // erase the borrow into a raw NonNull. Disjoint from `body` (response.init vs
                     // response.body) and outlives this block.
                     let headers = response.get_fetch_headers().map(core::ptr::NonNull::from);
-                    // PORT NOTE: Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
+                    // Body.rs aliases its `JsTerminated<T>` to `JsResult<T>` for
                     // now; narrow back to the real `JsTerminated` here.
                     // SAFETY: `body` points into `response.body`, disjoint from `headers`
                     // (response.init); both live for this block.
@@ -820,7 +820,7 @@ impl FetchTasklet {
         }
 
         let global_this = self.global_this;
-        // PORT NOTE: reshaped for borrowck — Zig defer block split into explicit cleanup at each return
+        // reshaped for borrowck — Zig defer block split into explicit cleanup at each return
         let cleanup = |this: &mut FetchTasklet| {
             this.mutex.unlock();
             // if we are not done we wait until the next call
@@ -1227,7 +1227,7 @@ impl FetchTasklet {
 
         if let Some(signal) = self.abort_signal() {
             if let Some(reason) = signal.reason_if_aborted(&self.global_this) {
-                // PORT NOTE: `AbortReason::to_body_value_error` lives in bun_jsc but
+                // `AbortReason::to_body_value_error` lives in bun_jsc but
                 // would forward-depend on bun_runtime; reconstruct the trivial
                 // mapping at the call site (per AbortSignal.rs note).
                 let out = match reason {
@@ -1489,7 +1489,7 @@ impl FetchTasklet {
             )),
         };
 
-        // PORT NOTE: `jsc::SystemError` has no `Default` impl upstream — spell out
+        // `jsc::SystemError` has no `Default` impl upstream — spell out
         // every field with its Zig default (SystemError.zig:1).
         let fetch_error = jsc::SystemError {
             errno: 0,
@@ -1531,7 +1531,7 @@ impl FetchTasklet {
         }
 
         this.mutex.lock();
-        // PORT NOTE: Zig `defer this.mutex.unlock()` — reshaped to explicit unlock at each return
+        // Zig `defer this.mutex.unlock()` — reshaped to explicit unlock at each return
         // (no `?` paths between lock and unlock, so a guard is unnecessary).
         let size_hint = this.get_size_hint();
 
@@ -1613,7 +1613,7 @@ impl FetchTasklet {
         let metadata = self.metadata.as_ref().unwrap();
         let http_response = &metadata.response;
         self.is_waiting_body = self.result.has_more;
-        // PORT NOTE: reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
+        // reshaped for borrowck — capture metadata fields before to_body_value() takes &mut self
         let headers = FetchHeaders::create_from_pico_headers(http_response.headers.list);
         let status_code = http_response.status_code as u16;
         // status_text and url must NOT be atomized: the Response can be
@@ -1707,13 +1707,12 @@ impl FetchTasklet {
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> Result<*mut FetchTasklet, BunError> {
-        // TODO(port): narrow error set
         // SAFETY: bun_vm() returns the FFI `*mut VirtualMachine`; the VM outlives
         // this tasklet (process-lifetime singleton on the JS thread).
         let jsc_vm: &'static VirtualMachine = global_this.bun_vm();
         let mut fetch_tasklet = Box::new(FetchTasklet {
             sink: None,
-            // PORT NOTE: Zig used `bun.new(AsyncHTTP, undefined)` then `init()` below.
+            // Zig used `bun.new(AsyncHTTP, undefined)` then `init()` below.
             // Rust `AsyncHTTP` has no `Default`/zero-init; defer the Box until
             // `AsyncHTTP::init` produces the value.
             http: None,
@@ -1758,7 +1757,7 @@ impl FetchTasklet {
 
         fetch_tasklet.tracker.did_schedule(global_this);
 
-        // PORT NOTE: Zig followed with `if (request_body.store()) |store| store.ref()`.
+        // Zig followed with `if (request_body.store()) |store| store.ref()`.
         // That +1 balanced fetch.zig's local `body` (bitwise-copied into `http_body`)
         // calling `body.detach()` after `queue()` returned. In Rust, `body` is *moved*
         // through `FetchOptions` into `request_body` (no shallow alias, no post-queue
@@ -1810,7 +1809,6 @@ impl FetchTasklet {
                     let buf = unsafe { &*buf_ptr };
                     url = ZigURL::parse(&buf[0..old_url_len]);
                     proxy = Some(ZigURL::parse(&buf[old_url_len..]));
-                    // TODO(port): self-referential borrow into url_proxy_buffer; needs raw ptr or owned URL.
                 } else {
                     proxy = Some(env_proxy);
                 }
@@ -1831,7 +1829,7 @@ impl FetchTasklet {
         let fetch_tasklet = unsafe { &mut *fetch_tasklet_ptr };
 
         // This task gets queued on the HTTP thread.
-        // PORT NOTE: `AsyncHTTP::init` takes several `&'static [u8]` borrows
+        // `AsyncHTTP::init` takes several `&'static [u8]` borrows
         // (headers_buf, request_body, hostname) that in Zig were plain slices
         // into FetchTasklet-owned storage. The tasklet is now heap-pinned via
         // `heap::alloc`, so erase the borrow lifetimes through raw pointers.
@@ -1860,11 +1858,11 @@ impl FetchTasklet {
             // SAFETY: see block note above — same `FetchTasklet` owner.
             .map(|s| unsafe { bun_ptr::Interned::assume(s) }.as_bytes());
         let response_buffer: *mut MutableString = &raw mut fetch_tasklet.response_buffer;
-        // PORT NOTE: Zig passed `fetch_options.headers.entries` by value (shallow
+        // Zig passed `fetch_options.headers.entries` by value (shallow
         // struct copy → shared backing storage). `MultiArrayList` in Rust owns its
         // allocation, so clone; AsyncHTTP::init clones again for the client.
         let header_entries = bun_core::handle_oom(fetch_tasklet.request_headers.entries.clone());
-        // PORT NOTE: `url` is moved into `AsyncHTTP::init`; capture the one
+        // `url` is moved into `AsyncHTTP::init`; capture the one
         // post-move query (`is_http()`, debug-assert only) up front.
         let url_is_http = url.is_http();
 
@@ -2010,7 +2008,7 @@ impl FetchTasklet {
     }
 
     /// This is ALWAYS called from the main thread
-    // PORT NOTE: in Zig 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void';
+    // in Zig 'fn (*FetchTasklet) error{}!void' coerces to 'fn (*FetchTasklet) bun.JSError!void';
     // ConcurrentTask::from_callback expects `fn(*mut T) -> bun_event_loop::JsResult<()>`.
     pub(crate) fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
         let this_ref = Self::from_raw_mut(this);
@@ -2046,7 +2044,7 @@ impl FetchTasklet {
         if self.signal_aborted() {
             return ResumableSinkBackpressure::Done;
         }
-        // PORT NOTE: reshaped for borrowck — read sink HWM (Copy) before
+        // reshaped for borrowck — read sink HWM (Copy) before
         // borrowing the stream buffer so `self` is unborrowed during the
         // mutex critical section below.
         let high_water_mark: usize = match self.sink_mut() {
@@ -2150,7 +2148,6 @@ impl FetchTasklet {
         fetch_options: FetchOptions,
         promise: jsc::JSPromiseStrong,
     ) -> Result<*mut FetchTasklet, BunError> {
-        // TODO(port): narrow error set
         http::http_thread::init(&http::http_thread::InitOpts::default());
         let node = Self::get(global, fetch_options, promise)?;
 
@@ -2186,7 +2183,7 @@ impl FetchTasklet {
 
         task_ref.mutex.lock();
         // we need to unlock before task.deref();
-        // PORT NOTE: reshaped for borrowck — explicit unlock + deref at end instead of nested defers
+        // reshaped for borrowck — explicit unlock + deref at end instead of nested defers
         // Zig: `task.http.?.* = async_http.*; task.http.?.response_buffer = async_http.response_buffer;`
         // — bitwise struct copy of HTTP-thread state back into the JS-side instance.
         // `AsyncHTTP` is not `Copy` in Rust (`HTTPClient: Drop`, owned Vecs), so use the
@@ -2210,7 +2207,7 @@ impl FetchTasklet {
         );
 
         // Zig: `task.response_buffer = result.body.?.*` — verify the aliasing invariant
-        // that makes that bitwise copy a no-op (see PORT NOTE below at the original site).
+        // that makes that bitwise copy a no-op (see comment below at the original site).
         debug_assert!(
             result
                 .body
@@ -2251,7 +2248,7 @@ impl FetchTasklet {
         task_ref.body_size = task_ref.result.body_size;
 
         let success = task_ref.result.is_success();
-        // PORT NOTE: Zig `task.response_buffer = result.body.?.*` is a bitwise self-copy of
+        // Zig `task.response_buffer = result.body.?.*` is a bitwise self-copy of
         // the Vec header — `result.body` always aliases `task_ref.response_buffer` (the
         // `*mut MutableString` passed to `AsyncHTTP::init` at FetchTasklet::create flows
         // through `HTTPClient.state.body_out_str` and back out in the result). Asserted
@@ -2420,7 +2417,7 @@ pub struct FetchOptions {
 
 impl Default for FetchOptions {
     fn default() -> Self {
-        // PORT NOTE: Zig FetchOptions had per-field defaults for the optional half of the struct;
+        // Zig FetchOptions had per-field defaults for the optional half of the struct;
         // the required fields (method/headers/body/url/bools/unix_socket_path/globalThis) had none.
         // We supply zero-values for those so callers can use `..Default::default()` struct-update
         // syntax while still overriding the required fields explicitly.

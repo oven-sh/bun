@@ -231,7 +231,11 @@ impl ImportRule {
         // The pointer is derived from `self` (not `&self.layer`) so its provenance
         // covers all three fields — going through a field reference would narrow
         // provenance to just `layer` and make sibling-field reads UB under SB.
-        // TODO(port): replace with an actual `conditions: ImportConditions` field on ImportRule
+        //
+        // Long-term, the pun should be replaced with an actual
+        // `conditions: ImportConditions` field on `ImportRule` (see the struct
+        // doc on `ImportConditions`); that touches every `.layer`/`.supports`/
+        // `.media` access crate-wide, so it is deferred.
         unsafe {
             &*std::ptr::from_ref(self)
                 .byte_add(core::mem::offset_of!(Self, layer))
@@ -278,7 +282,7 @@ impl ImportRule {
     }
 
     pub fn deep_clone(&self, bump: &Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `url: &'static [u8]`
+        // `css.implementDeepClone` field-walk. `url: &'static [u8]`
         // is an arena-owned slice → identity copy (generics.zig "const
         // strings" rule); `media` routes through `dc::media_list` until
         // `MediaList` gains an arena-aware `deep_clone`.

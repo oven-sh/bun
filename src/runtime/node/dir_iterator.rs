@@ -58,7 +58,7 @@ pub type Result = sys::Result<Option<IteratorResult>>;
 
 /// The `u16` twin of `IteratorResult.name` (`RawSlice<u16>` + `slice_assume_z()`),
 /// kept separate so callers avoid an `if (Environment.isWindows) ...` split.
-// TODO(port): lifetime — borrows iterator's internal `name_data` buffer; invalidated on next()
+// Lifetime: borrows the iterator's internal `name_data` buffer; invalidated on next().
 pub struct IteratorResultWName {
     // `RawSlice` invariant: the iterator's `name_data` outlives this result
     // (streaming-iterator contract — invalidated on next `next()` call).
@@ -574,7 +574,8 @@ mod platform {
         /// Optional kernel-side wildcard filter passed to NtQueryDirectoryFile.
         /// Evaluated by FsRtlIsNameInExpression (case-insensitive, supports `*` and `?`).
         /// Only honored on the first call (RestartScan=TRUE); sticky for the handle lifetime.
-        // TODO(port): lifetime — caller-owned UTF-16 slice; stored as raw ptr+len.
+        // Lifetime: caller-owned UTF-16 slice, stored as raw ptr+len; the caller
+        // must keep it alive for the iterator's lifetime.
         pub name_filter: Option<(*const u16, usize)>,
     }
 

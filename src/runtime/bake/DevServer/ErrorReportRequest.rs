@@ -41,7 +41,7 @@ pub(crate) struct ErrorReportRequest {
     // BACKREF: heap-allocated request; DevServer owns the server lifecycle and
     // outlives every in-flight request (BackRef invariant).
     dev: bun_ptr::BackRef<DevServer>,
-    // PORT NOTE: BodyReaderMixin is a Zig comptime mixin parameterized by
+    // Note: BodyReaderMixin is a Zig comptime mixin parameterized by
     // (Self, "body", run_with_body, finalize). Modeled as a generic helper that
     // stores the buffered body and dispatches to the two callbacks below.
     body: uws::BodyReaderMixin<ErrorReportRequest>,
@@ -110,10 +110,8 @@ impl ErrorReportRequest {
         body: &[u8],
         r: AnyResponse,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-
         // .finalize has to be called last, but only in the non-error path.
-        // PORT NOTE: Zig used `defer if (should_finalize_self) ctx.finalize()`
+        // Note: Zig used `defer if (should_finalize_self) ctx.finalize()`
         // with `should_finalize_self` flipped to true only at the very end.
         // On error return, BodyReaderMixin calls `on_error` → `finalize`, so
         // here we simply call `finalize` directly at the success tail.
@@ -184,7 +182,7 @@ impl ErrorReportRequest {
         let mut parsed_source_maps: ArrayHashMap<SourceMapKey, Option<GetResult<'_>>> =
             ArrayHashMap::new();
         bun_core::handle_oom(parsed_source_maps.ensure_total_capacity(4));
-        // PORT NOTE: `defer for (parsed_source_maps.values()) |*v| v.deinit()` deleted —
+        // Note: `defer for (parsed_source_maps.values()) |*v| v.deinit()` deleted —
         // `GetResult` drops its owned `mappings` automatically.
 
         let mut runtime_lines: Option<[&[u8]; 5]> = None;
@@ -192,7 +190,7 @@ impl ErrorReportRequest {
         let mut top_frame_position = ZigStackFramePosition::INVALID;
         let mut region_of_interest_line: u32 = 0;
         for frame in frames.iter_mut() {
-            // PORT NOTE: Zig read `frame.source_url.value.ZigString.slice()` —
+            // Note: Zig read `frame.source_url.value.ZigString.slice()` —
             // every `source_url` here is `Tag::ZigString` (built via
             // `String::init(&[u8])`), so `byte_slice()` is the equivalent view.
             let source_url: &[u8] = frame.source_url.byte_slice();
@@ -298,7 +296,7 @@ impl ErrorReportRequest {
             // Ensure that trimming will not remove ALL frames.
             let mut all_runtime = true;
             for frame in frames.iter() {
-                // PORT NOTE: Zig compared `slice().ptr == runtime_name` —
+                // Note: Zig compared `slice().ptr == runtime_name` —
                 // pointer-identity on the borrowed RUNTIME_NAME slice.
                 let is_runtime = frame.position.is_invalid()
                     && frame.source_url.byte_slice().as_ptr() == RUNTIME_NAME.as_ptr();
@@ -312,7 +310,7 @@ impl ErrorReportRequest {
             }
 
             // Move all frames up
-            // PORT NOTE: reshaped — Zig copied items down then truncated; Rust
+            // Note: reshaped — Zig copied items down then truncated; Rust
             // `Vec::retain` does the same in-place compaction with the same
             // relative order.
             frames.retain(|frame| {
@@ -416,7 +414,7 @@ impl ErrorReportRequest {
                 ..Default::default()
             },
         );
-        // `should_finalize_self = true;` — see PORT NOTE at fn top.
+        // `should_finalize_self = true;` — see Note at fn top.
         // `ctx` is the original heap-allocated pointer (caller contract); the
         // only borrow derived from it (`dev`) points into a separate DevServer
         // allocation, so freeing `*ctx` does not invalidate any live reference.
@@ -430,7 +428,7 @@ pub(crate) fn parse_id(source_url: &[u8], browser_url: &[u8]) -> Option<source_m
         return None;
     }
     let after_host = &source_url[strings::without_trailing_slash(browser_url).len()..];
-    // PORT NOTE: `client_prefix ++ "/"` is comptime string concat in Zig.
+    // Note: `client_prefix ++ "/"` is comptime string concat in Zig.
     if !(after_host.starts_with(CLIENT_PREFIX.as_bytes())
         && after_host.get(CLIENT_PREFIX.len()) == Some(&b'/'))
     {
@@ -455,7 +453,6 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
     target_line: u32,
     arena: &'a Arena,
 ) -> Result<Option<[&'a [u8]; N]>, bun_core::Error> {
-    // TODO(port): narrow error set
     let mut line: usize = 0;
     let mut prev: usize = 0;
     let index_of_first_line: usize = if target_line == 0 {
@@ -491,7 +488,7 @@ fn extract_json_encoded_source_code<'a, const N: usize>(
     // This function expects but does not assume the escape sequences
     // given are valid, and does not bubble errors up.
     //
-    // PORT NOTE: `Lexer<'a>` borrows `&'a mut Log` and `&'a Source`; allocate
+    // Note: `Lexer<'a>` borrows `&'a mut Log` and `&'a Source`; allocate
     // both from the caller's arena so their lifetime matches the decoded
     // `ArenaVec<'a, u8>` slices we hand back in `result`.
     let log: &'a mut Log = arena.alloc(Log::init());

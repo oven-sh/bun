@@ -6,8 +6,8 @@ use bun_jsc::{JSGlobalObject, JSType as JsType, JSValue, JsResult};
 pub type TimeLike = f64;
 #[cfg(not(windows))]
 pub type TimeLike = libc::timespec;
-// TODO(port): Zig's `std.posix.timespec` uses field names `sec`/`nsec`; libc::timespec
-// uses `tv_sec`/`tv_nsec`. Confirm bun_sys exposes a wrapper or stick with libc.
+// Zig's `std.posix.timespec` uses field names `sec`/`nsec`; `libc::timespec`
+// uses `tv_sec`/`tv_nsec` (this file uses the latter consistently).
 
 const NS_PER_S: f64 = bun_core::time::NS_PER_S as f64;
 #[cfg(not(windows))]
@@ -59,7 +59,7 @@ fn from_seconds(seconds: f64) -> TimeLike {
 #[cfg(not(windows))]
 fn from_seconds(seconds: f64) -> TimeLike {
     libc::timespec {
-        // PORT NOTE: Rust `as` saturates on overflow/NaN where Zig @intFromFloat is UB.
+        // Rust `as` saturates on overflow/NaN where Zig @intFromFloat is UB.
         tv_sec: seconds as _,
         tv_nsec: (seconds.rem_euclid(1.0) * NS_PER_S) as _,
     }

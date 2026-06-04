@@ -56,8 +56,9 @@ mod _impl {
     // write / runFromJSThread / writeSync / reset / close / setOnError / getOnError /
     // finalize onto this type. In Rust these are provided as inherent methods on
     // `CompressionStream::<NativeZlib>` in node_zlib_binding.rs (a generic mixin
-    // struct, not a trait).
-    // TODO(port): verify CompressionStream<T> surface matches the Zig mixin re-exports.
+    // struct, not a trait); `__compression_stream_mixin_reexports!` re-exports the
+    // same JS-exposed surface (write / writeSync / reset / close / setOnError /
+    // getOnError / finalize); runFromJSThread and emitError stay internal.
 
     impl NativeZlib {
         // NB: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]` derive emits
@@ -344,7 +345,7 @@ impl Context {
 
     pub fn set_dictionary(&mut self) -> Error {
         use c::NodeMode::*;
-        // PORT NOTE: reshaped for borrowck — capture raw ptr/len before
+        // Reshaped for borrowck — capture raw ptr/len before
         // re-borrowing `self.state` mutably.
         let (dict_ptr, dict_len) = {
             let dict = self.dictionary();
@@ -536,7 +537,7 @@ impl Context {
             && self.err == c::ReturnCode::NeedDict
             && !self.dictionary().is_empty()
         {
-            // PORT NOTE: reshaped for borrowck — capture raw ptr/len before
+            // Reshaped for borrowck — capture raw ptr/len before
             // re-borrowing `self.state` mutably.
             let (dict_ptr, dict_len) = {
                 let dict = self.dictionary();

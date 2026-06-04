@@ -109,13 +109,11 @@ pub struct PerMessageDeflate {
     pub compress_stream: zlib::z_stream,
     pub decompress_stream: zlib::z_stream,
     pub params: Params,
-    // PORT NOTE: Zig borrowed `&RareData` from VM `bun_jsc::RareData` (pooled
-    // libdeflate handles, shared across connections). `bun_jsc::RareData::
-    // websocket_deflate()` currently returns an opaque placeholder (the real
-    // type is *this* `RareData`, which would be a dep cycle), so own a
-    // per-connection instance instead.
-    // PERF(port): per-connection libdeflate alloc — restore VM-pooled instance
-    // once `bun_jsc::rare_data::WebSocketDeflateRareData` is wired to this type.
+    // Zig borrowed `&RareData` from VM `bun_jsc::RareData` (pooled libdeflate
+    // handles, shared across connections). `bun_jsc::RareData::websocket_deflate()`
+    // returns an opaque placeholder (the real type is *this* `RareData`, which
+    // would be a dep cycle), so each connection owns a fresh instance instead —
+    // a per-connection libdeflate allocation, not a correctness divergence.
     pub rare_data: RareData,
 }
 
@@ -159,16 +157,14 @@ impl PerMessageDeflate {
         params: Params,
         rare_data: &mut JscRareData,
     ) -> Result<Box<Self>, bun_core::Error> {
-        // TODO(port): narrow error set
         let mut self_ = Box::new(Self {
             params,
             compress_stream: bun_core::ffi::zeroed::<zlib::z_stream>(),
             decompress_stream: bun_core::ffi::zeroed::<zlib::z_stream>(),
-            // TODO(port): bun_jsc::rare_data::WebSocketDeflateRareData —
             // `rare_data.websocket_deflate()` returns an opaque `{ _opaque: () }`
-            // placeholder in bun_jsc; the real type is `self::RareData` (this
-            // module), which bun_jsc cannot import without a dep cycle. Until a
-            // re-export shim lands, fall back to a fresh per-connection instance.
+            // placeholder in bun_jsc (the real type is `self::RareData`, which
+            // bun_jsc cannot import without a dep cycle), so use a fresh
+            // per-connection instance — see the `rare_data` field note.
             rare_data: {
                 let _ = rare_data;
                 RareData::default()

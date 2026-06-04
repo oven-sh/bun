@@ -79,8 +79,8 @@ impl Default for FileReader {
             total_readed: Cell::new(0),
             started: Cell::new(false),
             waiting_for_on_reader_done: Cell::new(false),
-            // TODO(port): event_loop has no Zig default; callers must overwrite before use
-            // sentinel only; never dispatched (overwritten before use).
+            // `event_loop` has no Zig default; callers must overwrite before use.
+            // Sentinel only; never dispatched (overwritten before use).
             event_loop: Cell::new(EventLoopHandle::init(core::ptr::null_mut())),
             lazy: JsCell::new(Lazy::None),
             buffered: JsCell::new(Vec::new()),
@@ -141,7 +141,6 @@ impl Default for OpenedFileBlob {
     }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     pub safe fn open_as_nonblocking_tty(fd: i32, flags: i32) -> i32;
 }
@@ -328,10 +327,9 @@ impl FileReader {
         self.event_loop().native_loop()
     }
 
-    // TODO(port): in-place init — `self` is the `context` field of an already-allocated
+    // In-place init — `self` is the `context` field of an already-allocated
     // `Source`; the Zig writes `this.* = FileReader{...}` then reads `parent()`. Note the
-    // Zig struct literal omits `event_loop` (no default) — likely dead code or relies on
-    // a quirk; preserved as-is.
+    // Zig struct literal omits `event_loop` (no default); preserved as-is.
     // R-2: kept `&mut self` — init-time constructor that runs before any
     // host-fn could re-enter; `*self =` requires unique access.
     pub fn setup(&mut self, fd: Fd) {
@@ -371,7 +369,7 @@ impl FileReader {
                     panic!("Invalid state in FileReader: expected file ")
                 }
                 blob::store::Data::File(file) => {
-                    // PORT NOTE: reshaped for borrowck — Zig `defer { deref; lazy = none }`
+                    // reshaped for borrowck — Zig `defer { deref; lazy = none }`
                     // is hoisted after the match below since both arms fall through.
                     let open_result = Lazy::open_file_blob(file);
                     // drop the StoreRef (Zig: this.lazy.blob.deref()); `lazy` was already cleared above
@@ -588,7 +586,7 @@ impl FileReader {
             return false;
         }
         let mut close = false;
-        // PORT NOTE: Zig `defer if (close) this.reader.close();` — handled at each return
+        // Zig `defer if (close) this.reader.close();` — handled at each return
         // site below via `close_if_needed`. Reshaped for borrowck (scopeguard would alias &mut self).
         macro_rules! close_if_needed {
             () => {
@@ -667,7 +665,7 @@ impl FileReader {
                 return true;
             }
 
-            // PORT NOTE: reshaped for borrowck — Zig `defer { clear; run() }` becomes a
+            // reshaped for borrowck — Zig `defer { clear; run() }` becomes a
             // labeled block computing `ret`, then cleanup + run + return.
             let ret: bool = 'pending: {
                 let global = self.parent_global();
@@ -685,7 +683,7 @@ impl FileReader {
                         self.buffered.set(unsafe { mem::take(&mut *reader_buffer) }); // moveToUnmanaged
                     }
 
-                    // PORT NOTE: nested `defer buffer.clearAndFree` folded into the arms.
+                    // nested `defer buffer.clearAndFree` folded into the arms.
                     let buffer = self.buffered.replace(Vec::new());
                     if !buffer.is_empty() {
                         if pending_buf.len() >= buffer.len() {
@@ -874,7 +872,7 @@ impl FileReader {
                 .set(ReadDuringJSOnPullResult::Js(buffer));
             self.reader().read();
 
-            // PORT NOTE: Zig `defer this.read_inside_on_pull = .none` — replaced via
+            // Zig `defer this.read_inside_on_pull = .none` — replaced via
             // replace so the field is reset before matching, covering all return paths.
             let pulled = self
                 .read_inside_on_pull
@@ -902,7 +900,7 @@ impl FileReader {
                     if self.reader().is_done() {
                         return streams::Result::Done;
                     }
-                    // PORT NOTE: fallthrough — but `buffer` was moved into read_inside_on_pull.
+                    // fallthrough — but `buffer` was moved into read_inside_on_pull.
                     // Recover it from `remaining_buf` (amount_read == 0 ⇒ same slice).
                     let global = self.parent_global();
                     self.pending_value.with_mut(|p| p.set(&global, array));
@@ -1044,8 +1042,10 @@ impl FileReader {
     pub fn set_raw_mode(&self, _flag: bool) -> sys::Result<()> {
         #[cfg(not(windows))]
         {
-            // TODO(port): comptime string concat with Environment.os.displayString()
-            panic!("FileReader.setRawMode must not be called on this platform");
+            panic!(
+                "FileReader.setRawMode must not be called on {}",
+                std::env::consts::OS
+            );
         }
         #[cfg(windows)]
         {

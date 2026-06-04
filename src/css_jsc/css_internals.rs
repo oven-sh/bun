@@ -24,9 +24,9 @@ pub(crate) enum TestCategory {
     ParserOptions,
 }
 
-// `#[bun_jsc::host_fn]` proc-macro not yet available; wrappers are plain fns
-// for now and re-gain the attribute when bun_jsc::host_fn lands.
-// TODO(port): bun_jsc::host_fn (proc-macro attribute)
+// These test-only wrappers are consumed as plain safe fns through
+// `dispatch_js2native.rs` re-exports, so they don't use the
+// `#[bun_jsc::host_fn]` C-ABI shim.
 
 pub fn minify_error_test_with_options(
     global: &JSGlobalObject,
@@ -102,8 +102,8 @@ pub(crate) fn testing_impl(
     // PERF(port): was arena bulk-free — CSS parser allocates into this bump
     //
     // SAFETY: `StyleSheet::parse` requires `&'static Bump` / `ParserOptions<'static>`
-    // because the rule tree stores lifetime-erased refs (see css_parser.rs PORT
-    // NOTE on `'bump` threading). The arena strictly outlives every value parsed
+    // because the rule tree stores lifetime-erased refs (see the css_parser.rs
+    // notes on `'bump` threading). The arena strictly outlives every value parsed
     // out of it below.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
@@ -313,8 +313,8 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
     // AST into this bump; freed when `arena` drops at end of scope.
     //
     // SAFETY: `StyleAttribute` stores `DeclarationBlock<'static>` (lifetime
-    // erased crate-wide until 'bump threads through the rule tree — see
-    // css_parser.rs PORT NOTE). The arena strictly outlives the parsed
+    // erased crate-wide until 'bump threads through the rule tree — see the
+    // css_parser.rs notes). The arena strictly outlives the parsed
     // `stylesheet` below.
     let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref(&arena) };
 
@@ -374,7 +374,8 @@ pub fn attr_test(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue
                 Ok(r) => r,
                 Err(_e) => {
                     // Zig: bun.handleErrorReturnTrace(e, @errorReturnTrace()); return .js_undefined;
-                    // TODO(port): handleErrorReturnTrace — debug-only error trace dump; no Rust equivalent yet
+                    // (handleErrorReturnTrace was a Zig debug-only trace dump with no
+                    // Rust equivalent — the error is intentionally swallowed here.)
                     return Ok(JSValue::UNDEFINED);
                 }
             };

@@ -18,14 +18,13 @@ pub struct PrepareOK {
 }
 
 impl PrepareOK {
-    // TODO(port): narrow error set
     pub fn decode_internal<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), any_mysql_error::Error> {
         self.status = reader.int::<u8>()?;
         if self.status != 0 {
-            return Err(bun_core::err!("InvalidPrepareOKPacket"));
+            return Err(any_mysql_error::Error::InvalidPrepareOKPacket);
         }
 
         self.statement_id = reader.int::<u32>()?;
@@ -40,7 +39,7 @@ impl PrepareOK {
     pub fn decode<C: ReaderContext>(
         &mut self,
         reader: NewReader<C>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), any_mysql_error::Error> {
         self.decode_internal(reader)
     }
 }
@@ -60,13 +59,12 @@ pub struct Execute<'a> {
     pub params: ExecuteParams<'a>,
 }
 
-/// Stand-in for the `params: []Value` field while `Value` lives in the
-/// higher-tier `bun_sql_jsc` crate. Carries the borrowed slice as raw bytes so
-/// `len()` is real; encoding goes through the `is_null` / `to_data` hooks
-/// which the jsc-side caller fills in. TODO(refactor): replace this with a trait
-/// or move `Execute` itself up-tier (matches the Query::Execute precedent of
-/// taking `&mut [Data]`).
-// TODO(port): bun_sql_jsc::mysql::mysql_value::Value
+/// Stand-in for Zig's `params: []Value` field
+/// (`bun_sql_jsc::mysql::mysql_value::Value`): `Value` lives in the
+/// higher-tier `bun_sql_jsc` crate, which this crate cannot depend on. The
+/// borrowed slice is carried behind a context pointer so `len` is real;
+/// encoding goes through the `is_null` / `to_data` hooks the jsc-side caller
+/// fills in.
 pub struct ExecuteParams<'a> {
     pub len: usize,
     pub ctx: *mut core::ffi::c_void,
@@ -81,7 +79,7 @@ pub struct ExecuteParams<'a> {
     pub _marker: core::marker::PhantomData<&'a ()>,
 }
 
-// PORT NOTE: Zig `deinit` freed `params` (and each Value inside) via default_allocator.
+// Zig `deinit` freed `params` (and each Value inside) via default_allocator.
 // Ownership of params stays with the caller (borrowed slice) — no Drop here.
 
 impl<'a> Execute<'a> {
@@ -146,7 +144,7 @@ impl<'a> Execute<'a> {
                 }
 
                 let value = (self.params.to_data)(self.params.ctx, i, param_type.r#type)?;
-                // PORT NOTE: Zig `defer value.deinit()` — handled by Drop on `value`.
+                // Zig `defer value.deinit()` — handled by Drop on `value`.
                 if param_type.r#type.is_binary_format_supported() {
                     writer.write(value.slice())?;
                 } else {

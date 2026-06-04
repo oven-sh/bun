@@ -23,7 +23,7 @@ fn create_external_globally_allocated_utf16(bytes: Vec<u16>) -> BunString {
 }
 
 // ────────────────────────────────────────────────────────────────────────────
-// PORT NOTE: Zig used `comptime encoding: Encoding`. Stable Rust does not allow
+// Zig used `comptime encoding: Encoding`. Stable Rust does not allow
 // enum-typed const generics without `#![feature(adt_const_params)]`, so per
 // PORTING.md we reshape to `const ENCODING: u8` and reconstitute the enum
 // inside each body via `encoding_from_u8(ENCODING)` (the optimizer folds the
@@ -515,7 +515,6 @@ fn encode_base64_to_bun_string(input: &[u8], url_safe: bool) -> BunString {
     create_external_globally_allocated_latin1(to)
 }
 
-// TODO(port): narrow error set — Zig signature is `!usize` but body never fails.
 /// # Safety
 /// `input` must be valid for reading `len` bytes and `to_ptr` must be valid for
 /// writing `to_len` bytes; the two ranges must not overlap.
@@ -585,7 +584,7 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8>(
                 let written = strings::copy_latin1_into_utf16(output, buf).written as usize;
                 Ok(written * 2)
             } else {
-                // PORT NOTE: Zig used `[]align(1) u16` and a generic Buffer type. Rust
+                // Zig used `[]align(1) u16` and a generic Buffer type. Rust
                 // `&mut [u16]` requires natural alignment, so inline the (trivial) widen
                 // loop with `write_unaligned` for the misaligned-dest case — matches
                 // `copyLatin1IntoUTF16` body 1:1 (each Latin-1 byte → one u16).
@@ -659,7 +658,6 @@ pub(crate) fn encode_into_from8<const ENCODING: u8>(
     unsafe { write_u8::<ENCODING>(input.as_ptr(), input.len(), to.as_mut_ptr(), to.len()) }
 }
 
-// TODO(port): narrow error set
 /// # Safety
 /// `input` must be valid for reading `len` `u16`s and `to` must be valid for
 /// writing `to_len` bytes. For `Ucs2`/`Utf16le` the ranges may overlap (memmove
@@ -729,7 +727,7 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
                 let input_u8 = input.cast::<u8>();
                 // SAFETY: ranges may overlap; use ptr::copy (memmove).
                 unsafe { core::ptr::copy(input_u8, to, fixed_len) };
-                // PORT NOTE: Zig wrote `to[0..written]` from `input_u8[0..fixed_len]` (mismatched
+                // Zig wrote `to[0..written]` from `input_u8[0..fixed_len]` (mismatched
                 // lengths into bun.memmove). Preserving fixed_len bytes copied as that is what is
                 // returned; revisit if behavior diverges.
                 Ok(fixed_len)
@@ -765,14 +763,10 @@ pub(crate) unsafe fn write_u16<const ENCODING: u8, const ALLOW_PARTIAL_WRITE: bo
     }
 }
 
-// PORT NOTE: Zig `constructFrom(comptime T: type, input: []const T, ...)` dispatched on
+// Zig `constructFrom(comptime T: type, input: []const T, ...)` dispatched on
 // T == u8 vs u16 to constructFromU8/constructFromU16. A u8-only wrapper here would silently
 // drop the u16 path, so the generic entry point is omitted — callers use `construct_from_u8`
 // / `construct_from_u16` directly.
-// TODO(port): if a generic entry point is needed, introduce a sealed trait
-// `ConstructFromEncoding` impl'd for u8/u16 so
-// `construct_from<T: ConstructFromEncoding, const ENCODING: u8>(input: &[T]) -> Vec<u8>`
-// dispatches correctly.
 
 /// # Safety
 /// `input` must be valid for reading `len` bytes.
@@ -789,7 +783,7 @@ pub(crate) unsafe fn construct_from_u8<const ENCODING: u8>(
 
     match encoding_from_u8(ENCODING) {
         Encoding::Buffer => {
-            // TODO(port): Zig returned &[] on OOM; Rust aborts.
+            // Zig returned `&[]` on OOM; Rust aborts on OOM (workspace-wide policy).
             let mut to = vec![0u8; len];
             to.copy_from_slice(input_slice);
             to

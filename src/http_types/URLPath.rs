@@ -40,7 +40,7 @@ impl URLPath {
     }
 }
 
-// PORT NOTE: Zig uses two threadlocal fixed `[1024]u8`/`[16384]u8` buffers and
+// Design note: Zig uses two threadlocal fixed `[1024]u8`/`[16384]u8` buffers and
 // decodes in-place via `fixedBufferStream`, then returns slices into that
 // threadlocal storage. A growable shared buffer cannot uphold that contract in
 // Rust (the next `parse()` may reallocate it and dangle every prior URLPath),
@@ -49,8 +49,7 @@ impl URLPath {
 // percent-encoded path, which is the rare case.
 // PERF(port): was zero-alloc fixed buffers — profile if it shows up on a hot path.
 
-pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_core::Error> {
-    // TODO(port): narrow error set
+pub fn parse(possibly_encoded_pathname_: &[u8]) -> Result<URLPath, bun_url::DecodeError> {
     let mut decoded_pathname: &[u8] = possibly_encoded_pathname_;
     let mut decoded_storage: Option<Box<[u8]>> = None;
     let mut needs_redirect = false;

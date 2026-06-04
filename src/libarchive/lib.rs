@@ -939,7 +939,7 @@ pub mod lib {
     /// Port of `Archive.Iterator` (src/libarchive_sys/bindings.zig).
     pub struct Iterator {
         pub archive: *mut Archive,
-        // PORT NOTE: Zig had a `filter: std.EnumSet(std.fs.File.Kind)` field
+        // Zig had a `filter: std.EnumSet(std.fs.File.Kind)` field
         // that every caller leaves at `.initEmpty()` and never sets. Dropped
         // here (would need `EnumSetType` on `FileKind`); re-add if a caller
         // ever needs it.
@@ -1097,7 +1097,7 @@ impl BufferReadStream {
     /// (including its `Drop`). Violating this makes [`buf()`], [`buf_left()`],
     /// and [`open_read()`] dereference a dangling pointer (UB).
     pub unsafe fn init(buf: &[u8]) -> Self {
-        // PORT NOTE: was an out-param constructor (`this.* = ...`)
+        // was an out-param constructor (`this.* = ...`)
         Self {
             buf: std::ptr::from_ref::<[u8]>(buf),
             pos: 0,
@@ -1442,11 +1442,22 @@ pub mod archiver {
         pub all_files: EntryMap,
     }
 
-    // TODO(port): Zig used a custom U64Context (hash = truncate u64→u32, eql = ==).
-    // bun_collections::ArrayHashMap should accept a custom hasher; encode that here.
-    pub type EntryMap = ArrayHashMap<u64, *mut u8>;
+    // Zig used a custom U64Context (hash = truncate u64→u32, eql = ==); the
+    // keys are already wyhash u64s, so truncation is the entire hash.
+    pub type EntryMap = ArrayHashMap<u64, *mut u8, U64Context>;
 
+    #[derive(Default, Clone, Copy)]
     pub struct U64Context;
+    impl bun_collections::array_hash_map::ArrayHashContext<u64> for U64Context {
+        #[inline]
+        fn hash(&self, k: &u64) -> u32 {
+            *k as u32 // @truncate
+        }
+        #[inline]
+        fn eql(&self, a: &u64, b: &u64, _: usize) -> bool {
+            a == b
+        }
+    }
     impl bun_collections::array_hash_map::ArrayHashAdapter<u64, u64> for U64Context {
         #[inline]
         fn hash(&self, k: &u64) -> u32 {
@@ -1470,7 +1481,6 @@ pub mod archiver {
             filepath: &[OSPathChar],
             estimated_size: usize,
         ) -> Result<Plucker, bun_core::Error> {
-            // TODO(port): narrow error set
             Ok(Plucker {
                 contents: MutableString::init(estimated_size)?,
                 filename_hash: hash(slice_as_bytes(filepath)),
@@ -1535,7 +1545,6 @@ impl Archiver {
         ctx: &mut Context,
         appender: &mut A,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
@@ -1543,7 +1552,7 @@ impl Archiver {
         let _ = stream.open_read();
         let archive = stream.archive;
 
-        // PORT NOTE: std.fs.Dir / openDirAbsolute / cwd().openDir — mapped to
+        // std.fs.Dir / openDirAbsolute / cwd().openDir — mapped to
         // bun_sys directory-fd helpers (open_dir_absolute / open_dir_at).
         let dir: Fd = 'brk: {
             let cwd = Fd::cwd();
@@ -1561,7 +1570,7 @@ impl Archiver {
                 break 'brk d;
             }
         };
-        // PORT NOTE: Zig spec also lacks `defer dir.close()` here (pre-existing leak).
+        // Zig spec also lacks `defer dir.close()` here (pre-existing leak).
         // Fd has no Drop impl; close explicitly on every return path to avoid leaking
         // a directory HANDLE on Windows. Mirrors the guard pattern in extract_to_disk.
         let _close_dir_guard = scopeguard::guard(dir, |d| d.close());
@@ -1584,9 +1593,10 @@ impl Archiver {
                     let pathname_full = lib::Entry::opaque_ref(entry).pathname();
                     let pathname_bytes = pathname_full.as_bytes();
 
-                    // TODO(port): std.mem.tokenizeScalar + .rest() — approximated by
-                    // skipping DEPTH_TO_SKIP separator-delimited tokens then taking the
-                    // remainder. TODO: verify edge cases (leading/trailing seps).
+                    // Zig: std.mem.tokenizeScalar + .rest(). `next()` skips leading
+                    // separators and returns null only when no token remains;
+                    // `rest()` also skips leading separators — both behaviors are
+                    // reproduced below (leading/trailing-separator edge cases match).
                     let mut remaining = pathname_bytes;
                     let mut depth_i = 0usize;
                     while depth_i < DEPTH_TO_SKIP {
@@ -1625,14 +1635,14 @@ impl Archiver {
                     let size: usize =
                         usize::try_from(lib::Entry::opaque_ref(entry).size().max(0)).unwrap();
                     if size > 0 {
-                        // PORT NOTE: Zig used `dir.openFile(pathname, .{ .mode = .write_only })`.
+                        // Zig used `dir.openFile(pathname, .{ .mode = .write_only })`.
                         let Ok(opened) = bun_sys::openat_a(dir, pathname, bun_sys::O::WRONLY, 0)
                         else {
                             continue 'loop_;
                         };
-                        // PORT NOTE: defer opened.close()
+                        // defer opened.close()
                         let _close_guard = scopeguard::guard(opened, |fd| fd.close());
-                        // PORT NOTE: Zig `opened.getEndPos()` → bun_sys::get_file_size.
+                        // Zig `opened.getEndPos()` → bun_sys::get_file_size.
                         let stat_size = bun_sys::get_file_size(opened)?;
 
                         if stat_size > 0 {
@@ -1676,7 +1686,6 @@ impl Archiver {
         appender: &mut A,
         options: ExtractOptions,
     ) -> Result<u32, bun_core::Error> {
-        // TODO(port): narrow error set
         let mut entry: *mut lib::Entry = ptr::null_mut();
 
         // SAFETY: `file_buffer` outlives `stream` (stack-local, dropped at fn exit).
@@ -1686,7 +1695,7 @@ impl Archiver {
         let mut count: u32 = 0;
         let dir_fd = dir;
 
-        // PORT NOTE: reshaped for borrowck — ctx is Option<&mut>, rebound as needed
+        // reshaped for borrowck — ctx is Option<&mut>, rebound as needed
         let mut ctx = ctx;
 
         #[cfg(unix)]
@@ -1925,7 +1934,7 @@ impl Archiver {
                                         // It's possible for some tarballs to return a directory twice, with and
                                         // without `./` in the beginning. So if it already exists, continue to the
                                         // next entry.
-                                        // PORT NOTE: Zig matched error.PathAlreadyExists / error.NotDir.
+                                        // Zig matched error.PathAlreadyExists / error.NotDir.
                                         match err.get_errno() {
                                             bun_sys::E::EEXIST | bun_sys::E::ENOTDIR => continue,
                                             _ => {}
@@ -1973,7 +1982,7 @@ impl Archiver {
                                 };
                                 match bun_sys::symlinkat(link_target, dir_fd, path_z) {
                                     Ok(()) => {}
-                                    // PORT NOTE: Zig matched error.EPERM / error.ENOENT (errnoToZigErr maps 1:1).
+                                    // Zig matched error.EPERM / error.ENOENT (errnoToZigErr maps 1:1).
                                     Err(err) => match err.get_errno() {
                                         bun_sys::E::EPERM | bun_sys::E::ENOENT => {
                                             let dirname = bun_paths::dirname_simple(path_slice);
@@ -2051,14 +2060,14 @@ impl Archiver {
 
                             #[cfg(not(windows))]
                             let file_handle_native: Fd = {
-                                // PORT NOTE: dir.createFileZ(.{truncate, mode}) → bun_sys::openat
+                                // dir.createFileZ(.{truncate, mode}) → bun_sys::openat
                                 // SAFETY: normalized_buf[path_slice.len()] == 0 (written above).
                                 let path_z: &ZStr = unsafe {
                                     ZStr::from_raw(path_slice.as_ptr(), path_slice.len())
                                 };
                                 match bun_sys::openat(dir_fd, path_z, flags, mode) {
                                     Ok(fd) => fd,
-                                    // PORT NOTE: Zig matched error.AccessDenied / error.FileNotFound.
+                                    // Zig matched error.AccessDenied / error.FileNotFound.
                                     Err(err) => match err.get_errno() {
                                         bun_sys::E::EACCES
                                         | bun_sys::E::EPERM
@@ -2085,7 +2094,7 @@ impl Archiver {
                                 owned
                             };
 
-                            // PORT NOTE: reshaped for borrowck — `plucked_file` is captured by
+                            // reshaped for borrowck — `plucked_file` is captured by
                             // the guard tuple; mutate via close_guard.1.
                             let mut close_guard =
                                 scopeguard::guard((file_handle, false), |(fh, plucked)| {
@@ -2241,7 +2250,6 @@ impl Archiver {
         appender: &mut A,
         options: ExtractOptions,
     ) -> Result<u32, bun_core::Error> {
-        // TODO(port): narrow error set
         let dir: Fd = 'brk: {
             let cwd = Fd::cwd();
             let _ = cwd.make_path_u8(root);

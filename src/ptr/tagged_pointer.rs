@@ -141,10 +141,11 @@ pub trait UnionMember<Ts: TypeList> {
 
 /// Generates `TypeList` for `($($T,)*)` and `UnionMember<($($T,)*)>` for each
 /// `$T`, assigning tags `1024 - i` to match Zig's `TagTypeEnumWithTypeMap`.
-// TODO(port): proc-macro — Zig uses `@typeName` for both the tag enum field
-// name and the `name` string. `stringify!($T)` is the closest analogue but
-// won't match Zig's fully-qualified `@typeName` output; confirm no caller
-// depends on the exact string.
+// Zig uses `@typeName` for both the tag enum field name and the `name`
+// string; `stringify!($T)` is the closest analogue but doesn't match Zig's
+// fully-qualified `@typeName` output. That is fine: no caller consumes the
+// strings (`type_name`/`type_name_from_tag` have no users outside debug
+// output), so the exact spelling is not load-bearing.
 #[macro_export]
 macro_rules! impl_tagged_ptr_union {
     ($($T:ty),+ $(,)?) => {
@@ -204,8 +205,8 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     }
 
     // `typeFromTag(comptime the_tag) type` has no Rust equivalent (cannot
-    // return a type from a const value). Callers must name the type directly.
-    // TODO(port): if any callsite needs this, it becomes a trait associated type.
+    // return a type from a const value). Callers must name the type directly;
+    // no callsite needs it.
 
     pub fn type_name_from_tag(the_tag: TagType) -> Option<&'static str> {
         Ts::type_name_from_tag(the_tag)
@@ -240,7 +241,7 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
     }
 
     /// unsafely cast a tagged pointer to a specific type, without checking that it's really that type
-    // PORT NOTE: Zig name is `as`, which is a Rust keyword.
+    // Zig name is `as`, which is a Rust keyword.
     #[inline]
     pub fn as_unchecked<Type: UnionMember<Ts>>(self) -> *mut Type {
         self.repr.get::<Type>()
@@ -318,12 +319,12 @@ impl<Ts: TypeList> TaggedPtrUnion<Ts> {
         self.repr.ptr_bits() == 0
     }
 
-    // TODO(port): `call(comptime fn_name, args, comptime Ret)` dispatches by
-    // tag and invokes `@field(entry.ty, fn_name)` reflectively. Rust cannot
-    // look up a method by string at compile time. Port pattern: define a trait
-    // with the target method, bound every `Ti: TheTrait`, and have callers
-    // `match self.tag()` (or use a per-instantiation `dispatch!` macro). Each
-    // callsite of `.call(...)` needs to be rewritten by hand.
+    // Zig's `call(comptime fn_name, args, comptime Ret)` dispatches by tag and
+    // invokes `@field(entry.ty, fn_name)` reflectively. Rust cannot look up a
+    // method by string at compile time, so it is intentionally not provided.
+    // Equivalent pattern at a callsite: define a trait with the target method,
+    // bound every `Ti: TheTrait`, and `match self.tag()` (or use a
+    // per-instantiation `dispatch!` macro).
 }
 
 // ported from: src/ptr/tagged_pointer.zig

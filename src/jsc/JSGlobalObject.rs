@@ -253,7 +253,6 @@ impl JSGlobalObject {
 
     #[inline]
     pub fn throw_missing_arguments_value(&self, arg_names: &[&str]) -> JsError {
-        // PORT NOTE: Zig version is comptime over `arg_names.len` (0 => @compileError).
         match arg_names.len() {
             0 => unreachable!("requires at least one argument"),
             1 => self
@@ -291,8 +290,6 @@ impl JSGlobalObject {
         field: &'static str,
         typename: &'static str,
     ) -> JSValue {
-        // PORT NOTE: Zig used std.fmt.comptimePrint here; const_format::formatcp!
-        // requires the literals at the macro callsite, so we format at runtime.
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!("Expected {} to be a {} for '{}'.", field, typename, name_),
@@ -301,8 +298,6 @@ impl JSGlobalObject {
     }
 
     pub fn to_js<T: Into<JSValue>>(&self, value: T) -> JsResult<JSValue> {
-        // PORT NOTE: Zig `JSValue.fromAny(this, @TypeOf(value), value)` reflects on the
-        // type. Rust callers go through `From<T> for JSValue` impls (i32, f64, bool, …).
         Ok(value.into())
     }
 
@@ -655,9 +650,8 @@ impl JSGlobalObject {
     }
 
     pub fn create_error_instance(&self, args: Arguments<'_>) -> JSValue {
-        // PORT NOTE: Zig branched at comptime on whether `args` is empty. With
-        // `core::fmt::Arguments`, `as_str()` returns `Some(&'static str)` when
-        // there are no interpolated args — equivalent fast path.
+        // `core::fmt::Arguments::as_str()` returns `Some(&'static str)` when
+        // there are no interpolated args — fast path for constant messages.
         if let Some(fmt) = args.as_str() {
             if strings::is_all_ascii(fmt.as_bytes()) {
                 return BunString::static_str(fmt).to_error_instance(self);
@@ -795,13 +789,11 @@ impl JSGlobalObject {
     }
 
     pub fn throw_pretty(&self, args: Arguments<'_>) -> JsError {
-        // PORT NOTE: Zig switched on `Output.enable_ansi_colors_stderr` and
-        // rewrote the *format string* at comptime (`Output.prettyFmt(fmt,
-        // enabled)`). Rust can't rewrite the format string of an
-        // already-captured `Arguments<'_>`, so render first, then run the
-        // `<tag>` → ANSI/strip pass at runtime via `pretty_fmt_rt`.
+        // The format string of an already-captured `Arguments<'_>` can't be
+        // rewritten, so render first, then run the `<tag>` → ANSI/strip pass
+        // at runtime via `pretty_fmt_rt`.
         //
-        // Zig routed through `createErrorInstance` which catches a mid-format
+        // The Zig original routed through `createErrorInstance` which catches a mid-format
         // `WriteFailed` (e.g. user `Symbol.toPrimitive` throws while
         // stringifying the Received value). `pretty_fmt_rt` would `format!`
         // into a `String`, and `format!` panics if a `Display` impl returns
@@ -1237,11 +1229,6 @@ impl JSGlobalObject {
         .throw()
     }
 
-    // PORT NOTE: Zig's `validateBigIntRange` / `validateIntegerRange` / `getInteger`
-    // take `comptime T: type` plus a `comptime range: IntegerRange` with
-    // `comptime_int` bounds and use @typeInfo for signedness, comptime @max/@min
-    // clamping, and @compileError on bad ranges. Ported as plain generics over
-    // `T: bun_core::Integer`; the comptime bounds checks become `debug_assert!`.
     pub fn validate_big_int_range<T: bun_core::Integer>(
         &self,
         value: JSValue,
@@ -1306,11 +1293,9 @@ impl JSGlobalObject {
         let min_t: i128 = range.min.max(T::MIN_I128).max(i128::from(MIN_SAFE_INTEGER));
         let max_t: i128 = range.max.min(T::MAX_I128).min(i128::from(MAX_SAFE_INTEGER));
 
-        // PORT NOTE: comptime { if (min_t > max_t) @compileError(...) } — became debug_assert.
-        debug_assert!(min_t <= max_t, "max must be less than min");
+        debug_assert!(min_t <= max_t, "min must be less than or equal to max");
 
         let field_name = range.field_name;
-        // PORT NOTE: comptime field_name.len == 0 → @compileError.
         debug_assert!(!field_name.is_empty(), "field_name must not be empty");
         let always_allow_zero = range.always_allow_zero;
         // Zig passes the *unclamped* `range.min`/`range.max` to `throwRangeError`
@@ -1401,8 +1386,6 @@ impl JSGlobalObject {
     ///
     /// The set of errors accepted by `err()` is defined in `ErrorCode.ts`.
     pub fn err<'a>(&'a self, code: JscError, args: Arguments<'a>) -> ErrorBuilder<'a, Self> {
-        // PORT NOTE: Zig `ERR` returns a comptime-monomorphized `ErrorBuilder(code, fmt, @TypeOf(args))`.
-        // The Rust ErrorBuilder carries the code + Arguments at runtime.
         ErrorBuilder {
             global: self,
             code,
@@ -1516,8 +1499,8 @@ pub use crate::GregorianDateTime;
 /// type — no mirror enum, no transmute.
 pub use bun_bundler::transpiler::BunPluginTarget;
 
-// PORT NOTE: no `Default` derive — Zig's `code: jsc.Node.ErrorCode` has NO default
-// (only `errno`/`name` default to null). Callers must always supply `code`.
+// No `Default` derive — `code` has no default (only `errno`/`name` are
+// optional). Callers must always supply `code`.
 pub struct SysErrOptions {
     pub code: NodeErrorCode,
     pub errno: Option<i32>,
@@ -1611,7 +1594,7 @@ pub(crate) extern "C" fn Zig__GlobalObject__onCrash() {
     panic!("A C++ exception occurred");
 }
 
-// PORT NOTE (LAYERING): `getBodyStreamOrBytesForWasmStreaming` deals entirely
+// LAYERING: `getBodyStreamOrBytesForWasmStreaming` deals entirely
 // in `webcore` types (`Response`, `Body.Value`, `Blob`, `ReadableStream`)
 // which live in `bun_runtime`. The exported `extern "C"` symbol
 // `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming` is therefore

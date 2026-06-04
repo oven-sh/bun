@@ -7,7 +7,6 @@ use bun_core::{self, Environment, Global};
 use bun_jsc::zig_string::ZigString;
 use bun_jsc::{JSGlobalObject, JSValue, ZigStringJsc as _};
 
-// TODO(port): move to <area>_sys — extern decls colocated for now
 unsafe extern "C" {
     safe fn Bun__Process__getArgv(global: &JSGlobalObject) -> JSValue;
     safe fn Bun__Process__getExecArgv(global: &JSGlobalObject) -> JSValue;
@@ -48,13 +47,13 @@ pub(crate) extern "C" fn get_exec_argv(global: &JSGlobalObject) -> JSValue {
 
 // ───────────────────────────── exit ─────────────────────────────
 
-// TODO(@190n) this may need to be noreturn
+// @190n: this may need to be noreturn
 #[unsafe(export_name = "Bun__Process__exit")]
 pub extern "C" fn exit(global_object: &JSGlobalObject, code: u8) {
     let vm = global_object.bun_vm().as_mut();
     vm.exit_handler.exit_code = code;
     if let Some(worker) = vm.worker_ref() {
-        // TODO(@190n) we may need to use requestTerminate or throwTerminationException
+        // @190n: we may need to use requestTerminate or throwTerminationException
         // instead to terminate the worker sooner
         worker.exit();
     } else {
@@ -80,7 +79,7 @@ pub(crate) extern "C" fn Bun__suppressCrashOnProcessKillSelfIfDesired() {
     }
 }
 
-// PORT NOTE: Zig `export const Foo: [*:0]const u8 = "..."` exports a static
+// Zig `export const Foo: [*:0]const u8 = "..."` exports a static
 // pointing at rodata. Rust raw-pointer statics are `!Sync`; wrap in a
 // `#[repr(transparent)]` newtype so the C++ side still sees a single
 // `const char*`-sized symbol.
@@ -165,7 +164,7 @@ mod _impl {
         // `OwnedString`'s Drop release the ref (Zig: `defer newvalue.deref()`).
         let newvalue = bun_core::OwnedString::new(unsafe { *newvalue });
 
-        // PORT NOTE: `to_owned_slice` is infallible (Vec<u8>) in the Rust port, so
+        // `to_owned_slice` is infallible (Vec<u8>) in the Rust port, so
         // the Zig OOM-throw path is unreachable here.
         let new_title: Box<[u8]> = newvalue.to_owned_slice().into_boxed_slice();
 
@@ -276,12 +275,11 @@ mod _impl {
 
             // A set of execArgv args consume an extra argument, so we do not want to
             // confuse these with script names.
-            // TODO(port): the Zig builds this set at comptime by iterating
+            // The Zig builds this set at comptime by iterating
             // `bun.cli.Arguments.auto_params` and emitting `--long` / `-s` for every
             // param with `takes_value != .none`. Rust cannot reflect over that list
             // at compile time, so build the set lazily at runtime from the same
-            // `AUTO_PARAMS` table. Could swap this for a phf::Set via
-            // build.rs or a proc-macro.
+            // `AUTO_PARAMS` table.
             static MAP: std::sync::LazyLock<bun_collections::StringSet> =
                 std::sync::LazyLock::new(|| {
                     let mut set = bun_collections::StringSet::new();
@@ -350,7 +348,7 @@ mod _impl {
             // PERF(port): was assume_capacity
         }
 
-        // PORT NOTE: bun.pathLiteral inlined — bun_paths has no path_literal! macro yet.
+        // bun.pathLiteral inlined — bun_paths has no path_literal! macro yet.
         const EVAL_SUFFIX: &[u8] = if cfg!(windows) {
             b"\\[eval]"
         } else {

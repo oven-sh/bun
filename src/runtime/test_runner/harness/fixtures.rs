@@ -2,8 +2,6 @@
 
 use phf::phf_map;
 
-// TODO(port): Zig source has a duplicate `"simple-component.tsx"` entry (lines 5-6); phf rejects
-// duplicate keys at compile time so the second one is dropped here. Verify upstream intent.
 pub static FIXTURES: phf::Map<&'static [u8], &'static [u8]> = phf_map! {
     b"package.json" => include_bytes!("./fixtures/package.json"),
     b"tsconfig.json" => include_bytes!("./fixtures/tsconfig.json"),

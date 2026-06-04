@@ -145,7 +145,7 @@ impl Bin {
     /// Zig: `Bin.clone(buf, prev_external_strings, all_extern_strings,
     /// extern_strings_slice, Builder, builder)`.
     ///
-    /// PORT NOTE: the Zig API takes both the full `all_extern_strings` buffer
+    /// the Zig API takes both the full `all_extern_strings` buffer
     /// and a writable tail subslice into the **same** buffer — the full slice
     /// is only used by `ExternalStringList::init` to compute the tail's
     /// offset. In Rust those two views alias (`&[T]` overlapping `&mut [T]` is
@@ -247,7 +247,7 @@ impl Bin {
                             (current_len + num_props).saturating_sub(extern_strings.len()),
                         )
                         .map_err(|_| AllocError)?;
-                    // PORT NOTE: reshaped for borrowck — Zig bumped `items.len += num_props`
+                    // reshaped for borrowck — Zig bumped `items.len += num_props`
                     // up-front and wrote into the spare-capacity region by raw pointer
                     // (leaving partially-init slots on mid-loop bailout); here we push
                     // incrementally so a bailout leaves only the slots actually written.
@@ -692,7 +692,7 @@ impl<'a> NamesIterator<'a> {
     }
 }
 
-// PORT NOTE: BACKREF — Zig stores `*const ArrayList(Dependency)` /
+// BACKREF — Zig stores `*const ArrayList(Dependency)` /
 // `*const ArrayList(u8)` (non-exclusive). `PackageInstaller` holds a
 // `&mut Lockfile` alongside a `Box<[TreeContext]>` whose `binaries` queues
 // alias into `lockfile.buffers`; a `&'a Vec<_>` borrow here would force the
@@ -731,7 +731,7 @@ impl bun_collections::PriorityCompare<DependencyID> for PriorityQueueContext {
 // Min-heap keyed by `PriorityQueueContext::less_than` (string-order of dep names).
 pub(crate) type PriorityQueue = bun_collections::PriorityQueue<DependencyID, PriorityQueueContext>;
 
-// PORT NOTE: Zig's `Bin.PriorityQueue.Context` is an inherent associated type;
+// Zig's `Bin.PriorityQueue.Context` is an inherent associated type;
 // `inherent_associated_types` is unstable, so callers use `Bin::PriorityQueueContext`.
 pub type Context = PriorityQueueContext;
 
@@ -805,7 +805,7 @@ pub struct Linker<'a> {
     /// Usually will be the same as `node_modules_path`.
     /// Used to support native bin linking.
     ///
-    /// PORT NOTE: Zig uses `*bun.AbsPath(.{})` and intentionally aliases this
+    /// Zig uses `*bun.AbsPath(.{})` and intentionally aliases this
     /// with `node_modules_path` (the common case). A `&'a AbsPath` would
     /// conflict with the `&'a mut AbsPath` borrow on `node_modules_path`, so
     /// keep it as a raw pointer; the only read site dereferences it under a
@@ -922,7 +922,7 @@ impl<'a> Linker<'a> {
         }
 
         if let Some(seen) = self.seen.as_deref_mut() {
-            // PORT NOTE: StringHashMap::get_or_put boxes the key on insert; the
+            // StringHashMap::get_or_put boxes the key on insert; the
             // Zig wrote `entry.key_ptr.* = dupe(abs_dest)` which is implicit here.
             let _ = seen.get_or_put(abs_dest.as_bytes());
         }
@@ -1021,7 +1021,7 @@ impl<'a> Linker<'a> {
             return;
         }
 
-        // PORT NOTE: reshaped for borrowck — bind the owned buffer first, then
+        // reshaped for borrowck — bind the owned buffer first, then
         // borrow `content` from it (or fall back to the stack `chunk`).
         let content_to_free: Box<[u8]>;
         let content: &[u8] = if chunk.len() >= shebang_buf.len() {
@@ -1116,7 +1116,7 @@ impl<'a> Linker<'a> {
         abs_dest: &ZStr,
         global: bool,
     ) {
-        // PORT NOTE: Zig declares `var shim_buf: [65536]u8` and later
+        // Zig declares `var shim_buf: [65536]u8` and later
         // `@ptrCast(@alignCast(...))`s it to `[*]u16` inside encode_into. In Zig
         // `@alignCast` is a *runtime safety check* (panics in safe builds on
         // misalignment), but in Rust constructing a `&mut [u16]` from a pointer
@@ -1158,7 +1158,7 @@ impl<'a> Linker<'a> {
                         return;
                     }
 
-                    // PORT NOTE: borrowck — Zig's `save()`/`defer restore()` returns a
+                    // borrowck — Zig's `save()`/`defer restore()` returns a
                     // `ResetScope` holding `&mut Path`, which would keep
                     // `node_modules_path` exclusively borrowed across `append()`.
                     // Snapshot the length and restore via `set_length` after.
@@ -1197,8 +1197,9 @@ impl<'a> Linker<'a> {
 
         let shebang = 'shebang: {
             let first_content_chunk: Option<&[u8]> = 'contents: {
-                // TODO(port): target.stdFile().readerStreaming(&.{}) + readVec
-                let read = match target.read(&mut read_in_buf) {
+                // Loop-fill via `read_all` so a short read can't truncate the
+                // shebang sniff (Zig used a streaming reader's readVec here).
+                let read = match target.read_all(&mut read_in_buf) {
                     sys::Result::Ok(n) => n,
                     sys::Result::Err(_) => break 'contents None,
                 };
@@ -1266,7 +1267,7 @@ impl<'a> Linker<'a> {
 
     #[cfg(not(windows))]
     fn create_symlink(&mut self, abs_target: &ZStr, abs_dest: &ZStr, global: bool) {
-        // PORT NOTE: hoisted from `defer { if (this.err == null) chmod }` — scopeguard
+        // hoisted from `defer { if (this.err == null) chmod }` — scopeguard
         // cannot capture `&mut self.err` without conflicting with the body's writes,
         // so each return path calls `Self::chmod_on_ok` explicitly instead.
 
@@ -1292,7 +1293,7 @@ impl<'a> Linker<'a> {
                         return;
                     }
 
-                    // PORT NOTE: reshaped for borrowck — Zig's `var s = path.save();
+                    // reshaped for borrowck — Zig's `var s = path.save();
                     // defer s.restore();` returns a `ResetScope` holding `&mut Path`;
                     // capture `len()` and restore via `set_length()` so the path
                     // can be re-borrowed for `append`/`slice` in between.
@@ -1336,7 +1337,7 @@ impl<'a> Linker<'a> {
 
     #[cfg(not(windows))]
     fn chmod_on_ok(err: Option<Error>, abs_target: &ZStr) {
-        // PORT NOTE: hoisted from `defer` block in create_symlink
+        // hoisted from `defer` block in create_symlink
         if err.is_none() {
             let mode = 0o777 & !(UMASK.load(Ordering::Acquire) as Mode);
             let _ = sys::lchmod(abs_target, mode);
@@ -1467,7 +1468,7 @@ impl<'a> Linker<'a> {
     ///
     /// Falls through to (1) when nothing exists so the existing
     /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
-    // PORT NOTE: reshaped for borrowck — Zig took `*const Linker` but only read
+    // reshaped for borrowck — Zig took `*const Linker` but only read
     // `is_native_binlink_redirect()`. Hoist that bool to a parameter so the
     // caller can drop its `&self` borrow before mutably calling
     // `link_bin_or_create_shim`. Result borrows the threadlocal join buffer
@@ -1510,7 +1511,7 @@ impl<'a> Linker<'a> {
         let dest_dir_without_trailing_slash =
             strings::without_trailing_slash(unsafe { (*self.target_node_modules_path).slice() });
 
-        // PORT NOTE: reshaped for borrowck — track offset instead of remain.ptr arithmetic
+        // reshaped for borrowck — track offset instead of remain.ptr arithmetic
         let mut off: usize = 0;
         let buf = &mut *self.abs_target_buf;
 
@@ -1531,7 +1532,7 @@ impl<'a> Linker<'a> {
 
     /// Returns the offset into `self.abs_dest_buf` where the destination dir ends
     /// (i.e. where the bin name should be written).
-    // PORT NOTE: reshaped — Zig returned a `[]u8` view (remain) into abs_dest_buf;
+    // reshaped — Zig returned a `[]u8` view (remain) into abs_dest_buf;
     // returning an offset avoids overlapping &mut borrows of self.
     pub fn build_destination_dir(&mut self, global: bool) -> usize {
         let dest_dir_without_trailing_slash =
@@ -1570,7 +1571,7 @@ impl<'a> Linker<'a> {
 
         debug_assert!(self.bin.tag != Tag::None);
 
-        // PORT NOTE: reshaped for borrowck — `link_bin_or_create_shim(&mut self, ..)`
+        // reshaped for borrowck — `link_bin_or_create_shim(&mut self, ..)`
         // is called while `abs_target` / `abs_dest` borrow `self.abs_target_buf`
         // / `self.abs_dest_buf`. The Zig holds raw `[]u8` views (no exclusivity
         // implied) and `link_bin_or_create_shim` never reads or writes those two
@@ -1625,7 +1626,7 @@ impl<'a> Linker<'a> {
                     dest_off += unscoped_package_name.len();
                     self.abs_dest_buf[dest_off] = 0;
                     let abs_dest_len = dest_off;
-                    // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see PORT NOTE.
+                    // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see note above.
                     let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
                     self.link_bin_or_create_shim(
@@ -1670,7 +1671,7 @@ impl<'a> Linker<'a> {
                     dest_off += normalized_name.len();
                     self.abs_dest_buf[dest_off] = 0;
                     let abs_dest_len = dest_off;
-                    // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see PORT NOTE.
+                    // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see note above.
                     let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
                     self.link_bin_or_create_shim(
@@ -1725,7 +1726,7 @@ impl<'a> Linker<'a> {
                         dest_off += normalized_bin_dest.len();
                         self.abs_dest_buf[dest_off] = 0;
                         let abs_dest_len = dest_off;
-                        // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see PORT NOTE.
+                        // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see note above.
                         let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
                         self.link_bin_or_create_shim(
@@ -1808,7 +1809,7 @@ impl<'a> Linker<'a> {
                                 dest_off += entry_name.len();
                                 self.abs_dest_buf[dest_off] = 0;
                                 let abs_dest_len = dest_off;
-                                // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see PORT NOTE.
+                                // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see note above.
                                 let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
                                 self.link_bin_or_create_shim(
@@ -1832,7 +1833,7 @@ impl<'a> Linker<'a> {
 
         debug_assert!(self.bin.tag != Tag::None);
 
-        // PORT NOTE: see `link()` — detach abs_target_buf borrow via raw ptr.
+        // see `link()` — detach abs_target_buf borrow via raw ptr.
         let abs_target_buf_ptr: *const u8 = self.abs_target_buf.as_ptr();
         // SAFETY: abs_target_buf is not written between here and use.
         let package_dir = unsafe { bun_core::ffi::slice(abs_target_buf_ptr, package_dir_len) };

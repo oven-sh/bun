@@ -5,7 +5,6 @@ bun_opaque::opaque_ffi! {
     pub struct JSArray;
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     // TODO: this can throw
     fn JSArray__constructArray(
@@ -19,7 +18,7 @@ unsafe extern "C" {
 impl JSArray {
     #[track_caller]
     pub fn create(global: &JSGlobalObject, items: &[JSValue]) -> JsResult<JSValue> {
-        // PORT NOTE: `fromJSHostCall(global, @src(), fn, .{args})` is a comptime-reflection
+        // `fromJSHostCall(global, @src(), fn, .{args})` is a comptime-reflection
         // wrapper that calls `fn(args...)` then checks the VM for a pending exception.
         // Modeled as a closure-taking helper here.
         crate::from_js_host_call(global, || unsafe {

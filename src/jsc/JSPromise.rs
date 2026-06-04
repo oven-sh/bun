@@ -26,8 +26,6 @@ pub enum Status {
     Rejected = 2,
 }
 
-// TODO(port): move to jsc_sys
-//
 // `JSPromise` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles
 // (so `&T` is ABI-identical to non-null `*const T` and C++ mutating through
 // the pointer is interior mutation invisible to Rust). The shims that take
@@ -118,7 +116,7 @@ impl<T> Weak<T> {
         ref_type: WeakRefType,
         ctx: &mut T,
     ) -> Self {
-        // PORT NOTE: Zig threaded a `comptime finalizer` fn-ptr; the Rust
+        // Zig threaded a `comptime finalizer` fn-ptr; the Rust
         // `Weak<T>` encodes that via `WeakRefType` (one variant per finalizer
         // — see Weak.rs). PERF(port): was comptime monomorphization.
         Self {
@@ -258,7 +256,7 @@ impl Strong {
     }
 
     /// Wrap an existing promise `JSValue` in a fresh Strong handle.
-    /// PORT NOTE: Zig copies `JSPromise.Strong` by value (HandleSlot ptr is
+    /// Zig copies `JSPromise.Strong` by value (HandleSlot ptr is
     /// shared); Rust `Strong` owns its slot, so a literal copy would
     /// double-free. Callers that need a second owner of the same promise
     /// (e.g. `bake::DevServer::PromiseEnsureRouteBundledCtx::ensurePromise`)
@@ -333,9 +331,12 @@ impl JSPromise {
     /// and built a `callconv(.c)` trampoline via `jsc.toJSHostCall`. That is the
     /// host-fn reflection pattern — in Rust it collapses to a monomorphized closure
     /// + extern-C trampoline.
-    // TODO(port): proc-macro — the Zig version threads `@src()` and uses
-    // `jsc.toJSHostCall` for exception-scope plumbing. Verify the
-    // closure form below is ABI-equivalent or replace with `#[bun_jsc::host_fn]`.
+    //
+    // The closure form below is equivalent to Zig's (JSPromise.zig:187-209):
+    // the trampoline routes through `crate::to_js_host_call` (= `jsc.toJSHostCall`,
+    // with `#[track_caller]` standing in for `@src()`), and the surrounding
+    // `top_scope!` + `assert_no_exception_except_termination` match the Zig
+    // exception-scope plumbing exactly.
     pub fn wrap<F>(global: &JSGlobalObject, f: F) -> Result<JSValue, JsTerminated>
     where
         F: FnOnce(&JSGlobalObject) -> JsResult<JSValue>,

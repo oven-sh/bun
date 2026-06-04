@@ -53,17 +53,22 @@ pub(crate) fn set_is_allowed_to_use_internal_testing_apis(v: bool) {
 impl ModuleLoader {
     /// This must be called after calling transpileSourceCode
     ///
-    /// PORT NOTE: takes only `&mut VirtualMachine` (not `&mut self,
+    /// Takes only `&mut VirtualMachine` (not `&mut self,
     /// &mut VirtualMachine`) — `ModuleLoader` is a value field of
     /// `VirtualMachine`, so passing both would alias (PORTING.md §Forbidden).
     /// Access `module_loader` through `jsc_vm` instead.
     pub fn reset_arena(jsc_vm: &mut VirtualMachine) {
         // Spec ModuleLoader.zig:24-29: `if (smol) reset() else
-        // reset(.{.retain_with_limit = 8M})`. The port collapses both arms to
-        // `reset()` — `MimallocArena` is not a bump allocator, so there is no
-        // capacity to retain (see `MimallocArena::reset_retain_with_limit`
-        // PORT NOTE); mimalloc's per-thread segment cache already provides the
-        // warm-page reuse Zig's `.retain_with_limit` was after.
+        // reset(.{.retain_with_limit = 8M})`. The port currently collapses
+        // both arms to `reset()`. That DIVERGES from the spec: per
+        // `MimallocArena::reset_retain_with_limit`'s doc comment, the
+        // "mimalloc's segment cache keeps pages warm anyway" theory behind
+        // unconditional `reset()` proved wrong (purged pages get re-committed
+        // and re-zeroed each cycle), which is why the cap-gated retain exists
+        // and the other call sites use `reset_retain_with_limit(8 MiB)`.
+        // Restoring the `!smol` arm here is a perf-sensitive change that
+        // needs benchmarking (transpile arena RSS vs cycle cost), so it is
+        // tracked as a dedicated work order rather than changed inline.
         if let Some(arena) = jsc_vm.module_loader.transpile_source_code_arena.as_mut() {
             arena.reset();
         }
@@ -149,9 +154,9 @@ pub struct TranspileArgs<'a> {
 /// `bun_runtime`) so both tiers agree on layout; every field type is already a
 /// `bun_jsc` dep (`bun_resolver`, `bun_bundler::options`, `bun_js_printer`).
 ///
-/// PORT NOTE: Zig passed these as positional params to `transpileSourceCode`
-/// (ModuleLoader.zig:90-96). They're bundled because the §Dispatch fn-ptr
-/// signature must be stable across the crate boundary.
+/// Bundled into one struct (rather than positional params, as in
+/// ModuleLoader.zig:90-96) because the §Dispatch fn-ptr signature must be
+/// stable across the crate boundary.
 #[repr(C)]
 pub struct TranspileExtra {
     pub path: bun_resolver::fs::Path<'static>,
@@ -362,10 +367,9 @@ pub fn resolve_maybe_needs_trailing_slash(
 /// ModuleLoader.cpp:473) rejects the import promise with a real Error instead
 /// of `undefined`.
 ///
-/// PORT NOTE: previously routed through `LoaderHooks` on the assumption the
-/// body needed `bun_runtime` types; it doesn't — `BuildMessage` /
-/// `ResolveMessage` live in this crate — so the hook slot was dropped and this
-/// forwards to the real impl in [`crate::virtual_machine::process_fetch_log`].
+/// No `LoaderHooks` indirection is needed here — `BuildMessage` /
+/// `ResolveMessage` live in this crate — so this forwards to the real impl in
+/// [`crate::virtual_machine::process_fetch_log`].
 pub fn process_fetch_log(
     global: &JSGlobalObject,
     specifier: bun_core::String,
@@ -440,7 +444,7 @@ pub(crate) unsafe extern "C" fn Bun__fetchBuiltinModule(
             &mut *ret,
         )
     };
-    // PORT NOTE: spec ModuleLoader.zig:861-876 — when `fetchBuiltinModule`
+    // Spec ModuleLoader.zig:861-876: when `fetchBuiltinModule`
     // ERRORS, it calls `VirtualMachine.processFetchLog(..., ret, err)` and
     // returns **true** (so C++ surfaces the error instead of falling through to
     // filesystem resolution). The hook writes `ret` directly on Found/Errored.
@@ -529,15 +533,15 @@ pub(crate) unsafe extern "C" fn ModuleLoader__isBuiltin(data: *const u8, len: us
     bun_aliases_get(str).is_some()
 }
 
-// PORT NOTE (spec bundler_jsc/PluginRunner.zig:11-32): the pure byte-string
+// Spec bundler_jsc/PluginRunner.zig:11-32: the pure byte-string
 // `extractNamespace` / `couldBePlugin` helpers live in
 // `bun_bundler::transpiler::PluginRunner` — `bun_bundler` is already a
 // `bun_jsc` dep, so `Bun__runVirtualModule` calls them directly rather than
 // duplicating them here.
 use bun_bundler::transpiler::PluginRunner;
 
-// PORT NOTE: `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71)
-// has been MOVED to `bun_runtime::jsc_hooks::resolve_embedded_file_to_buf`
+// `ModuleLoader.resolveEmbeddedFile` (spec ModuleLoader.zig:33-71)
+// lives in `bun_runtime::jsc_hooks::resolve_embedded_file_to_buf`
 // per PORTING.md §Forbidden ("dep-cycle: MOVE the code to the right crate") —
 // the body reaches into `bun_standalone_graph` + `bun_sys::Tmpfile` +
 // `node::fs`, none of which are `bun_jsc` deps. Three Zig callers live in

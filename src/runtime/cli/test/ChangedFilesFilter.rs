@@ -41,7 +41,7 @@ use bun_which::which;
 use crate::Command;
 use crate::api::bun_process::sync as spawn_sync;
 
-// PORT NOTE: named `Result` in Zig; kept verbatim for side-by-side diffing.
+// named `Result` in Zig; kept verbatim for side-by-side diffing.
 // `core::result::Result` is fully qualified throughout this file to avoid the
 // shadow.
 pub struct Result<'a> {
@@ -63,7 +63,6 @@ pub struct Result<'a> {
 /// Filter `test_files` in place to only the entries whose module graph
 /// reaches a changed file. On success, `test_files` is compacted (preserving
 /// order) and the new length is returned via `Result.test_files`.
-// TODO(port): narrow error set
 pub(crate) fn filter<'a>(
     ctx: &Command::Context,
     vm: &mut VirtualMachine,
@@ -128,7 +127,7 @@ pub(crate) fn filter<'a>(
     // log, and we want the runtime transpiler left untouched for actually
     // executing tests afterward.
     //
-    // PORT NOTE: `BundleV2::scan_module_graph_from_cli` takes
+    // `BundleV2::scan_module_graph_from_cli` takes
     // `&'a mut Transpiler<'a>` (invariant), so the arena, log, and transpiler
     // are process-lifetime. The Zig original does the same — see the comment
     // after the call about intentionally leaving the ThreadLocalArena and
@@ -287,7 +286,7 @@ pub(crate) fn filter<'a>(
     // affected, or (b) the test file itself is in the changed set (covers
     // test files that failed to enter the graph for any reason).
     let mut write: usize = 0;
-    // PORT NOTE: reshaped for borrowck — capture len before re-borrowing test_files
+    // reshaped for borrowck — capture len before re-borrowing test_files
     let total = test_files.len();
     debug_assert_eq!(test_files.len(), slot_to_source.len());
     for i in 0..total {
@@ -351,8 +350,9 @@ pub(crate) fn init_watch_trigger() {
             // SAFETY: getpid is always safe.
             let seed: u64 =
                 bun_core::time::milli_timestamp() as u64 ^ unsafe { libc::getpid() } as u64;
+            // wyhash of a time^pid seed; only used to make a unique temp
+            // trigger-file name (Zig used DefaultPrng for the same purpose).
             let rand: u64 = bun_wyhash::hash(&seed.to_ne_bytes());
-            // TODO(port): Zig used DefaultPrng (xoshiro256++); wyhash-of-seed is a placeholder
             let tmpdir = RealFS::tmpdir_path();
             let mut fresh: Vec<u8> = Vec::new();
             {
@@ -391,7 +391,6 @@ pub(crate) fn init_watch_trigger() {
     }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     #[allow(dead_code)]
     pub(crate) fn setenv(name: *const c_char, value: *const c_char, overwrite: c_int) -> c_int;
@@ -458,7 +457,7 @@ pub(crate) enum GitError {
     GitNotFound,
     #[error("GitFailed")]
     GitFailed,
-    // PORT NOTE: Zig union'd `std.mem.Allocator.Error` here; allocator params
+    // Zig union'd `std.mem.Allocator.Error` here; allocator params
     // were dropped (global mimalloc aborts on OOM), so OutOfMemory is gone.
 }
 
@@ -629,7 +628,7 @@ fn run_git(git_path: &[u8], cwd: &[u8], args: &[&[u8]]) -> GitResult {
         // Windows rather than spinning up a MiniEventLoop.
         #[cfg(windows)]
         windows: spawn_sync::WindowsOptions {
-            // PORT NOTE: Zig `EventLoopHandle.init(anytype)` accepted a
+            // Zig `EventLoopHandle.init(anytype)` accepted a
             // `*VirtualMachine` and called `vm.eventLoop()` internally; the
             // Rust split keeps `init` taking the erased `*mut ()` event-loop
             // pointer directly, so unwrap it here.

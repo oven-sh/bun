@@ -175,8 +175,11 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
                 if body.len().saturating_add(chunk.len()) > MAX_BODY_SIZE {
                     return Err(bun_core::err!(RequestBodyTooLarge));
                 }
-                // TODO(port): Zig handled OOM gracefully here; Vec::extend_from_slice aborts.
-                // Consider try_reserve if graceful 500 on OOM is required.
+                // Zig handled OOM gracefully here (error → 500); use try_reserve so
+                // allocation failure surfaces as an error instead of an abort.
+                if body.try_reserve(chunk.len()).is_err() {
+                    return Err(bun_core::err!(OutOfMemory));
+                }
                 body.extend_from_slice(chunk);
                 // SAFETY: wrap is the original heap-allocated pointer; the &mut to
                 // mixin.body has ended, so on_body receives sole ownership of the
@@ -197,6 +200,12 @@ impl<Wrap: BodyReaderHandler> BodyReaderMixin<Wrap> {
             let body = &mut Self::mixin_of(wrap).body;
             if body.len().saturating_add(chunk.len()) > MAX_BODY_SIZE {
                 return Err(bun_core::err!(RequestBodyTooLarge));
+            }
+            // Zig propagated OOM from `try ctx.body.appendSlice(chunk)` here too
+            // (error → 500); use try_reserve so allocation failure surfaces as an
+            // error instead of an abort.
+            if body.try_reserve(chunk.len()).is_err() {
+                return Err(bun_core::err!(OutOfMemory));
             }
             body.extend_from_slice(chunk);
             Ok(())

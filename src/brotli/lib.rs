@@ -25,7 +25,6 @@ pub struct DecoderOptions {
 
 /// Zig: `std.enums.EnumFieldStruct(c.BrotliDecoderParameter, bool, false)` —
 /// one `bool` per `BrotliDecoderParameter` variant, default `false`.
-// TODO(port): if BrotliDecoderParameter grows more variants, mirror them here.
 #[derive(Default)]
 pub struct DecoderParams {
     pub large_window: bool,
@@ -49,7 +48,7 @@ impl Default for DecoderOptions {
 
 pub struct BrotliReaderArrayList<'a> {
     pub input: &'a [u8],
-    // PORT NOTE: reshaped for borrowck — Zig kept a by-value copy of the
+    // Reshaped for borrowck — Zig kept a by-value copy of the
     // ArrayListUnmanaged in `list` and wrote it back to `*list_ptr` on every
     // `readAll` (defer). `Vec<u8>` is not `Copy`, so we operate on `list_ptr`
     // directly and drop the redundant `list` + `list_allocator` fields.
@@ -98,7 +97,6 @@ impl<'a> BrotliReaderArrayList<'a> {
         list: &'a mut Vec<u8>,
         options: &DecoderOptions,
     ) -> Result<Box<Self>, Error> {
-        // TODO(port): narrow error set
         Ok(Self::new(Self::init_with_options(
             input,
             list,
@@ -117,7 +115,6 @@ impl<'a> BrotliReaderArrayList<'a> {
         finish_flush_op: c::BrotliEncoderOperation,
         full_flush_op: c::BrotliEncoderOperation,
     ) -> Result<Self, Error> {
-        // TODO(port): narrow error set
         if !BrotliDecoder::initialize_brotli() {
             return Err(err!("BrotliFailedToLoad"));
         }
@@ -166,8 +163,7 @@ impl<'a> BrotliReaderArrayList<'a> {
     }
 
     pub fn read_all(&mut self, is_done: bool) -> Result<(), Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: Zig's `defer this.list_ptr.* = this.list;` is gone — we
+        // Zig's `defer this.list_ptr.* = this.list;` is gone — we
         // mutate through `list_ptr` directly (see field note above).
 
         if self.state == ReaderState::End || self.state == ReaderState::Error {
@@ -266,7 +262,7 @@ impl<'a> Drop for BrotliReaderArrayList<'a> {
             // Created by BrotliDecoder::create_instance; destroyed exactly once here.
             BrotliDecoder::destroy_instance(self.brotli_mut());
         }
-        // PORT NOTE: Zig's `bun.destroy(this)` is implicit — callers hold a
+        // Zig's `bun.destroy(this)` is implicit — callers hold a
         // `Box<Self>` and dropping it frees the allocation.
     }
 }
@@ -298,7 +294,6 @@ impl BrotliCompressionStream {
         finish_flush_op: c::BrotliEncoderOperation,
         full_flush_op: c::BrotliEncoderOperation,
     ) -> Result<Self, Error> {
-        // TODO(port): narrow error set
         // SAFETY: brotli FFI constructor; alloc/free are valid extern "C"
         // fns and opaque is null (unused by our allocator).
         let instance = unsafe {
@@ -336,7 +331,6 @@ impl BrotliCompressionStream {
     // next compress_stream/destroy call. Tying it to `&mut self` prevents
     // overlapping calls that would invalidate it.
     pub fn write_chunk(&mut self, input: &[u8], last: bool) -> Result<&[u8], Error> {
-        // TODO(port): narrow error set
         self.total_in += input.len();
         let op = if last {
             self.finish_flush_op
@@ -360,7 +354,6 @@ impl BrotliCompressionStream {
     }
 
     pub fn write(&mut self, input: &[u8], last: bool) -> Result<&[u8], Error> {
-        // TODO(port): narrow error set
         if self.state == CompressionState::End || self.state == CompressionState::Error {
             return Ok(b"");
         }
@@ -369,9 +362,8 @@ impl BrotliCompressionStream {
     }
 
     pub fn end(&mut self) -> Result<&[u8], Error> {
-        // TODO(port): narrow error set
         // Zig: `defer this.state = .End` — runs on BOTH ok and error paths.
-        // PORT NOTE: reshaped for borrowck — `compress_stream`'s output borrows
+        // Reshaped for borrowck — `compress_stream`'s output borrows
         // `&mut *self.brotli`, so we set `self.state` first and inline
         // write/write_chunk("", true). Net state matches Zig (defer overrides
         // any intermediate `Error` back to `End`).
@@ -395,8 +387,9 @@ impl BrotliCompressionStream {
         BrotliWriter::init(self, writable)
     }
 
-    // TODO(port): Zig's `writer()` returned a `std.Io.GenericWriter` adapter.
-    // Rust callers should use `writer_context()` directly (it impls Write).
+    // Zig's `writer()` returned a `std.Io.GenericWriter` adapter; in Rust the
+    // returned `BrotliWriter` implements `bun_io::Write` itself, so this is
+    // just an alias for `writer_context()`.
     pub fn writer<W: bun_io::Write>(&mut self, writable: W) -> BrotliWriter<'_, W> {
         self.writer_context(writable)
     }
@@ -419,7 +412,8 @@ pub struct BrotliWriter<'a, W> {
 
 impl<'a, W: bun_io::Write> BrotliWriter<'a, W> {
     // Zig: `WriteError = error{BrotliCompressionError} || InputWriter.Error`
-    // PORT NOTE: error-set union collapsed to `bun_core::Error`.
+    // — the error-set union is collapsed to `bun_core::Error` (error names
+    // are preserved through `err!`), like the rest of this file.
 
     pub fn init(compressor: &'a mut BrotliCompressionStream, input_writer: W) -> Self {
         Self {
@@ -435,15 +429,30 @@ impl<'a, W: bun_io::Write> BrotliWriter<'a, W> {
     }
 
     pub fn end(&mut self) -> Result<(), Error> {
-        // PORT NOTE: Zig declared `!usize` but the body has no return — the
+        // Zig declared `!usize` but the body has no return — the
         // Zig fn would fail to compile if ever instantiated. Port as `()`.
         let decompressed = self.compressor.end()?;
         self.input_writer.write_all(decompressed)?;
         Ok(())
     }
+}
 
-    // TODO(port): `std.Io.GenericWriter` adapter — provide `impl bun_io::Write`
-    // if any caller needs the trait object.
+// Zig: `std.Io.GenericWriter` adapter returned by `writer()` — in Rust the
+// `BrotliWriter` is the writer, so it implements `bun_io::Write` directly.
+impl<W: bun_io::Write> bun_io::Write for BrotliWriter<'_, W> {
+    fn write_all(&mut self, buf: &[u8]) -> Result<(), Error> {
+        self.write(buf).map(|_| ())
+    }
+
+    fn flush(&mut self) -> Result<(), Error> {
+        // Drain the encoder first so compressed-so-far bytes reach the sink:
+        // an empty write runs `compress_stream` with the stream's configured
+        // `flush_op` (emits pending output for FLUSH-configured streams; a
+        // no-op for PROCESS). `end()` is still required to finalize.
+        let out = self.compressor.write(b"", false)?;
+        self.input_writer.write_all(out)?;
+        self.input_writer.flush()
+    }
 }
 
 // ported from: src/brotli/brotli.zig

@@ -32,8 +32,9 @@ pub(crate) extern "C" fn Resolver__propForRequireMainPaths(global: &JSGlobalObje
     node_module_paths_js_value(in_str, global, false)
 }
 
-// TODO(port): C++ callers pass `in_str` by value without transferring a ref; verify
-// `bun_core::String` Drop semantics match (Zig callee did not `deref`).
+// C++ callers pass `in_str` by value without transferring a ref. That matches
+// the Zig callee (which did not `deref`): `bun_core::String` is `Copy` with no
+// `Drop` impl, so receiving it by value never releases the caller's ref.
 #[unsafe(export_name = "Resolver__nodeModulePathsJSValue")]
 pub(crate) extern "C" fn node_module_paths_js_value(
     in_str: BunString,
@@ -68,7 +69,7 @@ pub(crate) extern "C" fn node_module_paths_js_value(
     };
     let mut root_path: &[u8] = &full_path[0..root_index];
     if full_path.len() > root_path.len() {
-        // PORT NOTE: reshaped for borrowck — `std.mem.splitBackwardsScalar` exposes
+        // Note: reshaped for borrowck — `std.mem.splitBackwardsScalar` exposes
         // `.buffer` and `.index`, which Rust's `rsplit` does not. Manual iteration
         // mirrors the Zig SplitBackwardsIterator state machine exactly.
         let suffix: &[u8] = &full_path[root_index..];

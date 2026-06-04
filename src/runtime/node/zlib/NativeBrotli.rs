@@ -3,7 +3,6 @@ use core::ptr::{self, NonNull};
 
 use bun_brotli::c;
 type Op = c::BrotliEncoderOperation;
-// TODO(port): exact path — Zig: bun.brotli.c.BrotliEncoder.Operation
 
 // ─── type defs (real) ─────────────────────────────────────────────────────
 
@@ -46,12 +45,7 @@ impl Default for Context {
     }
 }
 
-// ─── gated: JsClass payload + host fns + Context method bodies ────────────
-// `NativeBrotli` carries `#[bun_jsc::JsClass]`; `impl Context` calls
-// `Error::init(&str, ..)` and uses brotli-C variant names that diverge from
-// `bun_brotli_sys` (e.g. `BrotliDecoderResult::Error` vs `::err`). Unblocking
-// requires aligning those signatures.
-// TODO(blocked): un-gate once bun_jsc JsClass + Error::init str overload + brotli_c variant names settle.
+// ─── JsClass payload + host fns + Context method bodies ───────────────────
 
 mod _impl {
     use super::*;
@@ -100,7 +94,7 @@ mod _impl {
     // fns on `CompressionStream::<NativeBrotli>` (see node_zlib_binding.rs).
 
     impl NativeBrotli {
-        // PORT NOTE: no `#[bun_jsc::host_fn]` — the free-fn shim it emits calls
+        // No `#[bun_jsc::host_fn]` — the free-fn shim it emits calls
         // a bare `constructor(...)` which cannot resolve inside an `impl` block.
         // The `#[bun_jsc::JsClass]` derive already emits the construct shim that
         // calls `<Self>::constructor(__g, __f)`.
@@ -289,9 +283,9 @@ mod _impl {
         /// RefCount destructor body (called when ref_count → 0).
         fn deinit(&mut self) {
             // this_value / poll_ref have Drop impls; explicit calls kept for
-            // ordering parity with Zig.
-            // TODO(port): confirm Strong/CountedKeepAlive Drop ordering is benign
-            // and remove explicit deinit calls.
+            // ordering parity with Zig. The `stream` close below is load-bearing:
+            // `Context` has no Drop, so the brotli encoder/decoder state would
+            // leak without it.
             self.this_value.set(StrongOptional::empty());
             drop(self.poll_ref.replace(CountedKeepAlive::default()));
             self.stream.with_mut(|s| match s.mode {
@@ -394,7 +388,7 @@ mod _impl {
         pub fn set_buffers(&mut self, in_: Option<&[u8]>, out: Option<&mut [u8]>) {
             self.next_in = in_.map_or(ptr::null(), |p| p.as_ptr());
             self.avail_in = in_.map_or(0, |p| p.len());
-            // PORT NOTE: reshaped for borrowck — compute ptr/len before consuming `out`.
+            // Reshaped for borrowck — compute ptr/len before consuming `out`.
             match out {
                 Some(p) => {
                     self.avail_out = p.len();

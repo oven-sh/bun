@@ -3,12 +3,10 @@
 // Main implementation is in src/codegen/ci_info.ts
 
 use bun_core::env_var;
-// PORT NOTE: `@import("ci_info")` was a build.zig-registered generated module (output of
-// src/codegen/ci_info.ts). The Rust build hand-ports the table as `cli::ci_info_generated`.
+// The CI table in `cli::ci_info_generated` is a hand-port of the generated module
+// produced by src/codegen/ci_info.ts (a build.zig-registered module in the Zig build).
 use super::ci_info_generated as generated;
 
-// PORT NOTE: `bun.once(fn)` stores the fn at construction and `.call(.{})` invokes it once,
-// caching the result. Mapped here to `bun_core::Once<T>` with `.call(init_fn)` (≈ OnceLock).
 static DETECT_CI_ONCE: bun_core::Once<Option<&'static [u8]>> =
     <bun_core::Once<Option<&'static [u8]>>>::new();
 static IS_CI_ONCE: bun_core::Once<bool> = <bun_core::Once<bool>>::new();

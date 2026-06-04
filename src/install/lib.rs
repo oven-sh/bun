@@ -229,7 +229,7 @@ pub(crate) mod install {
 /// `windows-shim/BinLinkingShim.zig` — `.bunx` shim encoder consumed by
 /// `bin::Linker` (Windows only at runtime, but the encoder types are
 /// referenced unconditionally so the module must exist on all targets).
-// PORT NOTE: `#[path]` inside an inline `mod {}` resolves relative to the
+// `#[path]` inside an inline `mod {}` resolves relative to the
 // synthetic `windows_shim/` directory, which doesn't exist on disk. Hoist the
 // file-backed module to crate level with an absolute-ish path and re-export
 // through the inline mod so `windows_shim::bin_linking_shim` keeps resolving.
@@ -388,7 +388,10 @@ pub struct PackageJSON {
 #[derive(Default)]
 pub struct PackageJSONDependencyMap {
     pub map: bun_collections::ArrayHashMap<bun_semver::String, Dependency>,
-    // TODO(port): lifetime — borrows the package.json source contents
+    // Erased borrow of the package.json source contents (mirrors
+    // `bun_resolver::package_json::DependencyMap::source_buf`, which is
+    // likewise `'static`-erased); kept alive by the originating
+    // `PackageJSON::source_contents` for the lifetime of the map.
     pub source_buf: &'static [u8],
 }
 
@@ -480,7 +483,7 @@ impl RunCommand {
     /// therefore re-points a stale link on EEXIST instead of trusting it.
     #[cfg(not(windows))]
     pub const BUN_NODE_DIR: &'static str = {
-        // PORT NOTE: Zig used comptime `++`; `const_format::concatcp!` cannot host
+        // Zig used comptime `++`; `const_format::concatcp!` cannot host
         // `if` expressions inline, so split into helper consts.
         use const_format::concatcp;
         const TMP: &str = if cfg!(target_os = "macos") {
@@ -747,7 +750,7 @@ impl RunCommand {
                 // ALREADY_EXISTS short-circuit below never reuses a stale
                 // hardlink at a previous debug binary.
                 //
-                // PORT NOTE: Zig's `@panic("huh?")` assumes the wipe always
+                // Zig's `@panic("huh?")` assumes the wipe always
                 // leaves the path absent. `bun-run.test.ts` now uses
                 // `describe.concurrent`, so multiple debug processes race on
                 // this shared dir and `make_dir` can legitimately observe
@@ -764,7 +767,7 @@ impl RunCommand {
             let image_path = win::exe_path_w();
             for name in [strings::w!("\\node.exe\0"), strings::w!("\\bun.exe\0")] {
                 target_path_buffer[dir_slice_len..][..name.len()].copy_from_slice(name);
-                // PORT NOTE: Zig held a `[]const u16` into `target_path_buffer`
+                // Zig held a `[]const u16` into `target_path_buffer`
                 // across in-place mutation (the dir-NUL/backslash toggle below).
                 // Under Stacked Borrows a `*const` derived via `Deref::deref`
                 // is invalidated by the intervening `&mut` from `IndexMut`, so
@@ -975,7 +978,7 @@ impl<'a> StorePathFormatter<'a> {
 
 impl<'a> fmt::Display for StorePathFormatter<'a> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // PORT NOTE: `core::fmt` cannot emit non-UTF-8 bytes. The Zig spec writes raw
+        // `core::fmt` cannot emit non-UTF-8 bytes. The Zig spec writes raw
         // bytes via `writer.writeByte(c)`; routing through `to_str_lossy()` here was wrong
         // (it silently expanded each invalid byte to U+FFFD = 3 bytes, changing on-disk
         // store directory names). We now build the raw byte sequence via `write_to` and
@@ -1034,7 +1037,7 @@ pub(crate) fn initialize_mini_store() {
             // to the allocation for its entire scope — no aliasing. Mirrors Zig's
             // `threadlocal var instance: ?*MiniStore` single-owner deref.
             let mini_store = unsafe { &mut *instance.get().unwrap() };
-            // PORT NOTE: Zig checked `stack_allocator.fixed_buffer_allocator.end_index >=
+            // Zig checked `stack_allocator.fixed_buffer_allocator.end_index >=
             // buffer.len() - 1` to decide whether to recycle the heap arena. The Rust
             // `ASTMemoryAllocator` collapses SFA+fallback into a single bumpalo arena,
             // so there is no stack-buffer watermark to inspect — `reset()` already

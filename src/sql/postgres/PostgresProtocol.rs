@@ -29,8 +29,7 @@ pub const NO_DATA: [u8; 5] = tag_len(b'n', 4);
 pub fn write_query<Context: WriterContext>(
     query: &[u8],
     writer: &mut NewWriter<Context>,
-) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
+) -> Result<(), crate::postgres::AnyPostgresError> {
     let count: u32 =
         core::mem::size_of::<u32>() as u32 + u32::try_from(query.len()).expect("int cast") + 1;
     let header: [u8; 5] = {

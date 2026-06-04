@@ -9,9 +9,8 @@ pub struct Counters {
 
 impl Counters {
     pub fn mark(&mut self, tag: Field) {
-        // PORT NOTE: Zig used `comptime tag` + `@field(this, @tagName(tag))` reflection;
-        // Rust dispatches via match. Demoted to runtime arg (not used in a type position).
-        // PERF(port): was comptime monomorphization — profile if it shows up on a hot path.
+        // Zig used `comptime tag` + `@field(this, @tagName(tag))` reflection;
+        // Rust dispatches via match on a runtime arg.
         let slot = match tag {
             Field::SpawnSyncBlocking => &mut self.spawn_sync_blocking,
             Field::SpawnMemfd => &mut self.spawn_memfd,
@@ -20,7 +19,7 @@ impl Counters {
     }
 
     pub fn to_js(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        // PORT NOTE: Zig used `JSObject::create(struct_value, global)` (field reflection
+        // Zig used `JSObject::create(struct_value, global)` (field reflection
         // builds an object with one property per struct field). Hand-rolled `put` calls here.
         let obj = JSValue::create_empty_object(global, 2);
         obj.put(
@@ -37,9 +36,9 @@ impl Counters {
     }
 }
 
-// TODO(port): proc-macro — `#[bun_jsc::host_fn]` emits the `extern "sysv64"`/"C"
-// trampoline. Until the macro crate exists, expose the Zig-shape signature
-// directly; the trampoline is wired by codegen.
+// Called through the `$zig(...)` js2native codegen, which emits the extern
+// trampoline (`generate-js2native.ts` wraps this in `host_fn::host_fn_static`),
+// so no `#[bun_jsc::host_fn]` attribute is needed here.
 pub fn create_counters_object(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
     // SAFETY: bun_vm() returns the per-thread VirtualMachine singleton; caller is on the JS thread.
     global.bun_vm().counters.to_js(global)

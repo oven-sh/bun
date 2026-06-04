@@ -276,7 +276,7 @@ pub fn convert_stmts_for_chunk_for_dev_server<'bump>(
                 Loc::EMPTY,
             ))?;
         // hmr.onUpdate = [ ... ];
-        // PORT NOTE: reshaped for borrowck — capture len before moving esm_callbacks
+        // Capture len before moving `esm_callbacks` (borrowck).
         let callbacks_len = esm_callbacks.len();
         stmts
             .inside_wrapper_prefix

@@ -401,10 +401,12 @@ fn generate_compile_result_for_html_chunk_impl<'a>(
     let import_records = c.graph.ast.items_import_records();
     let source_index = chunk.entry_point.source_index();
 
-    // HTML bundles for dev server must be allocated to it, as it must outlive
-    // the bundle task. See `DevServer.RouteBundle.HTML.bundled_html_text`
-    // TODO(port): Zig used `dev.arena()` vs `worker.arena` to control output ownership.
-    // In Rust with global mimalloc this distinction collapses; verify DevServer ownership.
+    // HTML bundles for the dev server must outlive the bundle task (see
+    // `DevServer.RouteBundle.HTML.bundled_html_text`). Zig picked `dev.arena()`
+    // vs `worker.arena` for the output buffer; here the output is built in a
+    // plain `Vec<u8>` and returned as an owned `Box<[u8]>` inside
+    // `CompileResult::Html`, so it lives as long as whoever holds the
+    // `CompileResult` — no arena-lifetime distinction needed.
 
     // `c.log` is now `*mut Log` (raw backref); copy directly. The HTMLLoader.log
     // field is currently dead_code, so no write actually occurs through this

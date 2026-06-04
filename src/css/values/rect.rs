@@ -3,7 +3,7 @@ use crate::css_parser::{CssResult as Result, PrintErr, Printer};
 use crate::targets::Browsers;
 use crate::values::protocol::{IsCompatible, Parse, ToCss};
 
-// PORT NOTE: the Zig `needsDeinit(comptime T: type) bool` switch and the
+// The Zig `needsDeinit(comptime T: type) bool` switch and the
 // `deinit(this, arena)` method are dropped entirely. They existed to
 // thread per-field `arena.free` through a comptime type table; in Rust,
 // `T: Drop` on the four fields handles this automatically (and arena-owned
@@ -40,11 +40,10 @@ impl<T> Rect<T> {
     where
         T: Clone,
     {
-        // PORT NOTE: Zig branched on `comptime needs_deinit` to decide between
+        // Zig branched on `comptime needs_deinit` to decide between
         // bitwise copy and per-field `.deepClone(arena)`. In Rust this is
-        // just the `DeepClone`/`Clone` trait on `T` — the cheap-copy types
+        // just the `Clone` trait on `T` — the cheap-copy types
         // (`f32`, `NumberOrPercentage`, `LineStyle`) impl it as a bit copy.
-        // TODO(port): narrow trait bound once css::generic::DeepClone lands.
         Self {
             top: self.top.clone(),
             right: self.right.clone(),

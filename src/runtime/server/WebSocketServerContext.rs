@@ -4,9 +4,10 @@ use crate::server::jsc::{JSGlobalObject, JSValue, JsResult, VirtualMachine};
 use bun_uws as uws;
 
 pub struct WebSocketServerContext {
-    // TODO(port): lifetime — Zig leaves this `undefined` and server.zig:2784 assigns it later.
-    // LIFETIMES.tsv = JSC_BORROW; raw ptr until bun_jsc is a dep (shim type is opaque/Copy).
-    pub global_object: *const JSGlobalObject,
+    // Zig leaves this `undefined` and server.zig:2784 assigns it later; Rust
+    // sets it provisionally in `on_create` and the server overwrites it on
+    // adoption. LIFETIMES.tsv = JSC_BORROW — the global outlives the context.
+    pub global_object: bun_ptr::BackRef<JSGlobalObject>,
     pub handler: Handler,
 
     pub max_payload_length: u32, // default 16MB
@@ -34,7 +35,10 @@ pub struct Handler {
     // LIFETIMES.tsv = STATIC (vm) / JSC_BORROW (global_object) — both outlive the handler.
     pub vm: bun_ptr::BackRef<VirtualMachine>,
     pub global_object: bun_ptr::BackRef<JSGlobalObject>,
-    pub active_connections: usize,
+    /// Mutated through `&Handler` (the field is owned by
+    /// `ServerConfig.websocket` and only ever touched on the JS thread), so
+    /// it's a `Cell` — Zig mutated a plain `usize` through `*Handler`.
+    pub active_connections: core::cell::Cell<usize>,
 
     /// used by publish()
     pub flags: HandlerFlags,
@@ -51,45 +55,32 @@ bitflags::bitflags! {
 }
 
 impl Handler {
-    /// Deref the raw `global_object` pointer.
-    /// SAFETY: `global_object` is set by the server before any websocket
-    /// connection exists and outlives every `ServerWebSocket`.
+    /// `global_object` is a `BackRef` set by the server before any websocket
+    /// connection exists; the global outlives every `ServerWebSocket`.
     #[inline]
     pub fn global_object(&self) -> &JSGlobalObject {
         self.global_object.get()
     }
 
-    /// Deref the raw `vm` pointer.
-    /// SAFETY: `vm` is `'static` per LIFETIMES.tsv (set in `from_js`).
+    /// `vm` is a `BackRef`; the VM is `'static` per LIFETIMES.tsv (set in
+    /// `from_js`).
     #[inline]
     pub fn vm(&self) -> &VirtualMachine {
         self.vm.get()
     }
 
     /// Zig: `handler.active_connections +|= n` through a `*Handler`.
-    /// PORT NOTE: takes `&self` and casts away const — the field is owned by
-    /// `ServerConfig.websocket` and only ever touched on the JS thread, so the
-    /// data race the borrow-checker would flag here is a false positive.
-    /// TODO(port): convert `active_connections` to `Cell<usize>`.
     #[inline]
     pub fn active_connections_saturating_add(&self, n: usize) {
-        // SAFETY: single-threaded JS heap; see PORT NOTE above. `addr_of!` avoids
-        // materializing an intermediate `&usize` (invalid_reference_casting lint).
-        unsafe {
-            let p = core::ptr::addr_of!(self.active_connections).cast_mut();
-            *p = (*p).saturating_add(n);
-        }
+        self.active_connections
+            .set(self.active_connections.get().saturating_add(n));
     }
 
     /// Zig: `handler.active_connections -|= n` — see `active_connections_saturating_add`.
     #[inline]
     pub fn active_connections_saturating_sub(&self, n: usize) {
-        // SAFETY: single-threaded JS heap; see PORT NOTE above. `addr_of!` avoids
-        // materializing an intermediate `&usize` (invalid_reference_casting lint).
-        unsafe {
-            let p = core::ptr::addr_of!(self.active_connections).cast_mut();
-            *p = (*p).saturating_sub(n);
-        }
+        self.active_connections
+            .set(self.active_connections.get().saturating_sub(n));
     }
 
     pub fn run_error_callback(
@@ -130,13 +121,13 @@ impl Handler {
             app: None,
             vm: bun_ptr::BackRef::new(VirtualMachine::get()),
             global_object: bun_ptr::BackRef::new(global_object),
-            active_connections: 0,
+            active_connections: core::cell::Cell::new(0),
             flags: HandlerFlags::empty(),
         };
 
         let mut valid = false;
 
-        // PORT NOTE: Zig used `inline for` over a tuple of (key, field-name) pairs with
+        // NOTE: Zig used `inline for` over a tuple of (key, field-name) pairs with
         // `@field(handler, pair[1]) = cb`. Rust has no field-by-name reflection, so we
         // iterate over (key, &mut field) pairs instead — disjoint field borrows are allowed.
         let pairs: [(&'static str, &mut JSValue); 7] = [
@@ -252,22 +243,23 @@ static DECOMPRESS_TABLE: phf::Map<&'static [u8], i32> = phf::phf_map! {
     b"256KB" => uws::DEDICATED_COMPRESSOR_256KB,
 };
 
-// TODO(port): phf custom hasher — Zig used `.getWithEql(zig_string, ZigString.eqlComptime)`,
-// which compares a ZigString (possibly UTF-16) against the literal keys. Here we go through
-// `ZigString::as_bytes_if_latin1()` (or equivalent) and look up in the phf map; verify
-// UTF-16-backed ZigStrings still match.
+// Zig used `.getWithEql(zig_string, ZigString.eqlComptime)`, which compares a
+// ZigString (possibly UTF-16) against the literal keys. Derive a UTF-8 view
+// first (`to_slice_fast` allocates only for 16-bit-backed strings) so
+// UTF-16-backed option strings like `compression: "16KB"` still match.
 fn lookup_zig_string(
     table: &phf::Map<&'static [u8], i32>,
     key: &bun_core::ZigString,
 ) -> Option<i32> {
-    table.get(key.slice()).copied()
+    let utf8 = key.to_slice_fast();
+    table.get(utf8.slice()).copied()
 }
 
 pub(crate) fn on_create(
     global_object: &JSGlobalObject,
     object: JSValue,
 ) -> JsResult<WebSocketServerContext> {
-    // PORT NOTE: Zig wrote `var server = WebSocketServerContext{};` (all field defaults,
+    // NOTE: Zig wrote `var server = WebSocketServerContext{};` (all field defaults,
     // `globalObject`/`handler.vm`/`handler.globalObject` left `undefined`) and then assigned
     // `server.handler` on the next line. Rust cannot leave `&JSGlobalObject` fields
     // uninitialized, so we construct the struct with the handler and explicit defaults
@@ -275,7 +267,7 @@ pub(crate) fn on_create(
     // overwrites it after `on_create` returns anyway.
     let handler = Handler::from_js(global_object, object)?;
     let mut server = WebSocketServerContext {
-        global_object,
+        global_object: bun_ptr::BackRef::new(global_object),
         handler,
         max_payload_length: 1024 * 1024 * 16, // 16MB
         max_lifetime: 0,

@@ -4,9 +4,9 @@ pub use crate::css_parser as css;
 /// determine the interior of a `polygon()` shape.
 ///
 /// See [Polygon](Polygon).
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` —
-// a placeholder that compile-errors on use. Left as an uninhabited stub until the
-// CSS shapes module is actually implemented.
+// Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` —
+// a placeholder that compile-errors on use. Mirrored as an uninhabited enum
+// until the CSS shapes module is actually implemented.
 pub enum FillRule {}
 
 /// A CSS [`<alpha-value>`](https://www.w3.org/TR/css-color-4/#typedef-alpha-value),

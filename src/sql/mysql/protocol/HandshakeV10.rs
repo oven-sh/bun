@@ -2,6 +2,7 @@
 
 use crate::mysql::Capabilities;
 use crate::mysql::StatusFlags;
+use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::CharacterSet;
 use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
@@ -38,15 +39,14 @@ impl Default for HandshakeV10 {
 // `Data` / `Box<[u8]>` fields automatically, so no explicit `impl Drop` is needed.
 
 impl HandshakeV10 {
-    // TODO(port): narrow error set
     pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyMySQLError> {
         // Protocol version
         self.protocol_version = reader.int::<u8>()?;
         if self.protocol_version != 10 {
-            return Err(bun_core::err!("UnsupportedProtocolVersion"));
+            return Err(AnyMySQLError::UnsupportedProtocolVersion);
         }
 
         // Server version (null-terminated string)
@@ -66,8 +66,8 @@ impl HandshakeV10 {
         // Capability flags (lower 2 bytes)
         let capabilities_lower = reader.int::<u16>()?;
 
-        // Character set — Zig uses non-exhaustive `enum(u8)` so any byte is valid;
-        // Rust enum is exhaustive, so route through the range-checked constructor.
+        // Character set — like Zig's non-exhaustive `enum(u8)`, any byte is valid
+        // and unknown collation ids are preserved.
         self.character_set = CharacterSet::from_raw(reader.int::<u8>()?);
 
         // Status flags

@@ -109,7 +109,6 @@ impl BrotliDecoder {
                 decoded_ptr,
             )
         };
-        // PORT NOTE: reshaped for borrowck — Zig mutated `decoded.len` in place via `*[]u8`
         // SAFETY: decoded_ptr points to the same allocation; decoded_size <= original len per brotli contract
         *decoded = unsafe { core::slice::from_raw_parts_mut(decoded_ptr, decoded_size) };
         result
@@ -389,8 +388,8 @@ impl<'a> Default for CompressionResult<'a> {
     }
 }
 
-// PORT NOTE: Zig's `BrotliEncoder.Operation` flattened to module-level alias
-// (inherent associated types are unstable in Rust).
+// `BrotliEncoder.Operation` is a module-level alias because inherent
+// associated types are unstable in Rust.
 pub type Operation = BrotliEncoderOperation;
 
 impl BrotliEncoder {

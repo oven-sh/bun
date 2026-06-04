@@ -458,9 +458,6 @@ pub const package_json_version_with_canary: &str = if cfg!(debug_assertions) {
     version_string
 };
 
-// PORT NOTE: Zig sliced `git_sha[0..@min(len, 8)]` inline; we use the
-// pre-computed `GIT_SHA_SHORT` (same value) since const slicing of a const
-// `&str` by a runtime-ish min() is awkward in stable Rust.
 /// The version and a short hash in parenthesis.
 pub const package_json_version_with_sha: &str = if env::GIT_SHA.is_empty() {
     package_json_version
@@ -581,8 +578,8 @@ pub fn set_thread_name(name: &ZStr) {
 // no memory-safety preconditions, so the call site needs no `unsafe` block.
 pub type ExitFn = extern "C" fn();
 
-// PORT NOTE: Zig used an unsynchronized global `ArrayListUnmanaged`. Registration
-// can happen from any thread (FFI `Bun__atexit`), so guard with a Mutex.
+// Registration can happen from any thread (FFI `Bun__atexit`), so this is
+// guarded with a Mutex (the Zig original used an unsynchronized global list).
 static ON_EXIT_CALLBACKS: crate::Mutex<Vec<ExitFn>> = crate::Mutex::new(Vec::new());
 
 #[unsafe(no_mangle)]

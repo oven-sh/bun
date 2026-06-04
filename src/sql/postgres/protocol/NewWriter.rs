@@ -123,8 +123,7 @@ impl<C: WriterContext> NewWriter<C> {
         self.int4(PostgresInt32::MAX)
     }
 
-    // PORT NOTE: Zig name is `String` (capital S); snake_cased it collides with
-    // `string(&[u8])` above. Renamed to `bun_string`.
+    // Named `bun_string` (not `string`) to avoid colliding with `string(&[u8])` above.
     pub fn bun_string(self, value: &bun_core::String) -> Result<(), AnyPostgresError> {
         if value.is_empty() {
             self.write(&[0u8])?;

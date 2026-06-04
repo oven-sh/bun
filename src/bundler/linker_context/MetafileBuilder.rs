@@ -396,7 +396,7 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>
         first_output = false;
 
         j.push_static(b"\n    ");
-        // PORT NOTE: Zig pushes a borrowed slice; push_static borrows for the
+        // `push_static` borrows for the
         // lifetime of the joiner (`chunk.metafile_chunk_json: Box<[u8]>` outlives `j`).
         j.push_static(&chunk.metafile_chunk_json);
     }
@@ -422,7 +422,7 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>
     )?;
 
     // Get final output with all chunk references resolved.
-    // PORT NOTE: Zig passes `&chunks[0]` as the dummy chunk and `chunks` as the
+    // The Zig original passes `&chunks[0]` as the dummy chunk and `chunks` as the
     // full slice (aliased). `code()` takes both as `&` now, so pass `&chunks[0]`
     // directly — overlapping shared borrows are fine.
     let code_result = intermediate.code(
@@ -451,7 +451,7 @@ fn write_json_string(writer: &mut impl Write, str: &[u8]) -> std::io::Result<()>
 // ──────────────────────────────────────────────────────────────────────────
 // Minimal `std.json.Value`-shaped tree for `generate_markdown`.
 //
-// PORT NOTE: Zig's `generateMarkdown` re-parses the metafile JSON via
+// Zig's `generateMarkdown` re-parses the metafile JSON via
 // `std.json.parseFromSlice(std.json.Value, …)` — a generic dynamic-tree parse.
 // The Rust crates available here (`bun_parsers::json`) only expose an
 // AST-expr parser, so a small self-contained Value/parser is provided below
@@ -712,9 +712,7 @@ impl<'a> JsonParser<'a> {
 
 // ──────────────────────────────────────────────────────────────────────────
 // generate_markdown helper structs (local to the function in Zig; hoisted here)
-// PORT NOTE: lifetime <'a> ties borrowed slices to the parsed JSON value's
-// lifetime. The Zig originals were anonymous structs holding []const u8 that
-// borrowed from the std.json parse arena.
+// Lifetime <'a> ties borrowed slices to the parsed JSON value's lifetime.
 // ──────────────────────────────────────────────────────────────────────────
 
 struct InputFileInfo<'a> {

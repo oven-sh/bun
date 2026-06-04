@@ -11,7 +11,7 @@ use bun_semver::String as SemverString;
 use bun_sys::{self, Fd};
 
 use crate::bun_json::{self, Expr};
-// PORT NOTE: Zig used `comptime Builder: type` duck-typing for the builder
+// Zig used `comptime Builder: type` duck-typing for the builder
 // param. The only concrete instantiation in install is `*Lockfile.StringBuilder`,
 // so we take `crate::lockfile_real::StringBuilder` directly (matches Meta.rs).
 use crate::lockfile_real::{Lockfile as RealLockfile, StringBuilder as LockfileStringBuilder};
@@ -120,7 +120,7 @@ impl Scripts {
     }
 
     /// return: (first_index, total, entries)
-    /// PORT NOTE: Zig also passed `*const Lockfile` (for `allocator`); the
+    /// Zig also passed `*const Lockfile` (for `allocator`); the
     /// allocator is gone in Rust and the parameter was already unused — drop
     /// it so callers can split-borrow `lockfile.{packages, scripts}` while
     /// this only reads `lockfile_buf`.
@@ -264,13 +264,13 @@ impl Scripts {
     // builder with `.count` / `.append`. Generic over `bun_semver::StringBuilder`
     // so both `lockfile_real::StringBuilder` and `bun_semver::semver_string::Builder`
     // are accepted (both impl the trait).
-    // PORT NOTE: `json` is `Copy` (matches Zig by-value `Expr`).
+    // `json` is `Copy` (matches Zig by-value `Expr`).
     pub fn parse_count<B: bun_semver::StringBuilder>(builder: &mut B, json: Expr) {
         if let Some(scripts_prop) = json.as_property(b"scripts") {
             if scripts_prop.expr.is_object() {
                 for script_name in LockfileScripts::NAMES {
                     if let Some(script) = scripts_prop.expr.get(script_name.as_bytes()) {
-                        // PORT NOTE: Zig `script.asString(allocator)` — JSON parser
+                        // Zig `script.asString(allocator)` — JSON parser
                         // produces UTF-8 `EString`s, so the alloc-free literal accessor
                         // is sufficient here.
                         if let Some(input) = script.as_utf8_string_literal() {
@@ -307,7 +307,6 @@ impl Scripts {
         folder_name: &[u8],
         resolution: &Resolution,
     ) -> Result<Option<List>, bun_core::Error> {
-        // TODO(port): narrow error set
         if self.has_any() {
             let add_node_gyp_rebuild_script =
                 if lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
@@ -351,8 +350,7 @@ impl Scripts {
         log: &mut bun_ast::Log,
         folder_path: &mut bun_paths::AutoAbsPath,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: Zig threaded `allocator` for JSON parsing; the Rust JSON
+        // Zig threaded `allocator` for JSON parsing; the Rust JSON
         // parser uses a bump arena. Scoped here since the AST is consumed
         // immediately into the string builder. `json_buf` is hoisted so the
         // source bytes outlive the parsed `Expr` (which may borrow them).
@@ -386,7 +384,6 @@ impl Scripts {
         folder_name: &[u8],
         resolution_tag: ResolutionTag,
     ) -> Result<Option<List>, bun_core::Error> {
-        // TODO(port): narrow error set
         // Zig: `var tmp: Lockfile = undefined; tmp.initEmpty(allocator)`.
         let mut tmp = RealLockfile::init_empty_value();
         // `defer tmp.deinit()` — `tmp` stays empty (only `string_builder` borrows it), so field
@@ -425,7 +422,7 @@ pub enum PrintFormat {
     Untrusted,
 }
 
-// PORT NOTE: `Clone` — Zig had borrowed slices so `list.*` was a shallow
+// `Clone` — Zig had borrowed slices so `list.*` was a shallow
 // pointer copy. The Rust port owns `cwd`/`package_name`/`items`, but
 // `runTasks.rs` (`.run_scripts` arm) and `lifecycle_script_runner` need a
 // by-value copy while the original allocation in `Store.entries.scripts`

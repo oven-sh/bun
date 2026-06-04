@@ -15,12 +15,7 @@ use super::package::scripts::Scripts as PackageScripts;
 use super::tree::{DepthBuf, IteratorPathStyle, MAX_DEPTH};
 use super::{FormatVersion, Lockfile, Package, package_index, tree};
 
-// TODO(refactor): `w: anytype` is a `std.json.WriteStream`-shaped writer. Introduce a
-// `JsonWriter` trait in bun_core (or bun_collections) with the methods used below:
-// begin_object/end_object/begin_array/end_array/object_field/write/write_null/print.
-// `write` is generic over JSON-encodable scalars (bool, integers, &[u8]).
-//
-// PORT NOTE: Zig used `defer w.endObject() catch {}` so that closing braces are emitted
+// Zig used `defer w.endObject() catch {}` so that closing braces are emitted
 // on both success and error paths (with the close error swallowed). In Rust the `?`
 // early-return drops the borrow on `w`, and a scopeguard would need a second `&mut w`.
 // Since this output is debug-only and an error mid-stream already yields malformed JSON,
@@ -34,7 +29,6 @@ fn json_stringify_dependency<W>(
     dep: &Dependency,
     res: PackageID,
 ) -> Result<(), bun_core::Error>
-// TODO(port): narrow error set
 where
     W: JsonWriter,
 {
@@ -195,7 +189,6 @@ where
 }
 
 pub fn json_stringify<W>(this: &Lockfile, w: &mut W) -> Result<(), bun_core::Error>
-// TODO(port): narrow error set
 where
     W: JsonWriter,
 {

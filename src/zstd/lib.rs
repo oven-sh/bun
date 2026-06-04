@@ -4,8 +4,8 @@ use core::ffi::{c_ulonglong, c_void};
 use bun_core::ZStr;
 
 // ─── FFI bindings ─────────────────────────────────────────────────────────
-// TODO(port): move to zstd_sys once that crate exists. PORTING.md §FFI:
-// "If your file has externs and isn't already *_sys, leave them in place".
+// Externs stay in this crate per PORTING.md §FFI: "If your file has externs
+// and isn't already *_sys, leave them in place".
 #[allow(non_camel_case_types, non_snake_case, non_upper_case_globals)]
 pub mod c {
     use core::ffi::{c_char, c_int, c_uint, c_ulonglong, c_void};
@@ -258,7 +258,6 @@ pub fn decompress(dest: &mut [u8], src: &[u8]) -> Result {
 /// Handles both frames with known and unknown content sizes.
 /// For safety, if the reported decompressed size exceeds 16MB, streaming decompression is used instead.
 pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> {
-    // TODO(port): narrow error set
     let size = get_decompressed_size(src);
 
     const ZSTD_CONTENTSIZE_UNKNOWN: usize = c_ulonglong::MAX as usize; // 0ULL - 1
@@ -274,18 +273,18 @@ pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> 
     // 2. Reported size exceeds safety limit (to prevent malicious inputs claiming huge sizes)
     if size == ZSTD_CONTENTSIZE_UNKNOWN || size > MAX_PREALLOCATE_SIZE {
         let mut list: Vec<u8> = Vec::new();
-        // PORT NOTE: Zig's `errdefer list.deinit(allocator)` is implicit — `list` drops on `?`.
+        // Zig's `errdefer list.deinit(allocator)` is implicit — `list` drops on `?`.
         let mut reader = ZstdReaderArrayList::init(src, &mut list)?;
 
         reader.read_all(true)?;
         drop(reader);
         return Ok(list);
-        // PORT NOTE: Zig `.toOwnedSlice()` → just return the Vec; caller owns it.
+        // Zig `.toOwnedSlice()` → just return the Vec; caller owns it.
     }
 
     // Fast path: size is known and within reasonable limits
     let mut output = vec![0u8; size];
-    // PORT NOTE: `errdefer allocator.free(output)` is implicit via Vec Drop.
+    // `errdefer allocator.free(output)` is implicit via Vec Drop.
 
     match decompress(&mut output, src) {
         Result::Success(actual_size) => {
@@ -306,12 +305,12 @@ pub use bun_core::compress::State;
 
 pub struct ZstdReaderArrayList<'a> {
     pub input: &'a [u8],
-    // PORT NOTE: reshaped for borrowck — Zig kept a by-value copy of the
+    // reshaped for borrowck — Zig kept a by-value copy of the
     // ArrayListUnmanaged in `list` and wrote it back through `list_ptr` at the
     // end of `readAll`. In Rust we operate on the caller's Vec directly via
     // the `&mut` borrow; the redundant `list` cache field is dropped.
     pub list_ptr: &'a mut Vec<u8>,
-    // PORT NOTE: `list_allocator` / `allocator` params deleted — global mimalloc.
+    // `list_allocator` / `allocator` params deleted — global mimalloc.
     pub zstd: *mut c::ZSTD_DStream,
     pub state: State,
     pub total_out: usize,
@@ -322,7 +321,7 @@ pub struct ZstdReaderArrayList<'a> {
 }
 
 impl<'a> ZstdReaderArrayList<'a> {
-    // PORT NOTE: `pub const new = bun.TrivialNew(...)` → Box::new; no associated const needed.
+    // `pub const new = bun.TrivialNew(...)` → Box::new; no associated const needed.
 
     pub fn init(
         input: &'a [u8],
@@ -334,7 +333,7 @@ impl<'a> ZstdReaderArrayList<'a> {
     pub fn init_with_list_allocator(
         input: &'a [u8],
         list: &'a mut Vec<u8>,
-        // PORT NOTE: list_allocator / allocator params deleted (global mimalloc).
+        // list_allocator / allocator params deleted (global mimalloc).
     ) -> core::result::Result<Box<ZstdReaderArrayList<'a>>, ZstdError> {
         let zstd = c::ZSTD_createDStream();
         if zstd.is_null() {
@@ -364,7 +363,7 @@ impl<'a> ZstdReaderArrayList<'a> {
     }
 
     pub fn read_all(&mut self, is_done: bool) -> core::result::Result<(), ZstdError> {
-        // PORT NOTE: Zig's `defer this.list_ptr.* = this.list;` is unnecessary —
+        // Zig's `defer this.list_ptr.* = this.list;` is unnecessary —
         // we mutate the caller's Vec through `list_ptr` directly.
 
         if self.state == State::End || self.state == State::Error {

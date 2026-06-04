@@ -427,8 +427,8 @@ impl Process {
             let watchfd = self.pid;
 
             let poll: *mut FilePoll = if matches!(self.poller, Poller::Fd(_)) {
-                // already have a poll
-                // PORT NOTE: reshaped for borrowck — take existing pointer out
+                // already have a poll; take the existing pointer out (reshaped
+                // from the Zig for borrowck)
                 core::mem::replace(&mut self.poller, Poller::Detached)
                     .into_fd()
                     .unwrap()
@@ -716,9 +716,9 @@ impl Process {
     }
 }
 
-// PORT NOTE: not `Copy` — `bun_sys::Error` carries `Box<[u8]>` path/dest. The
-// Zig `union(enum)` is copyable because its `.err` arm borrows the path; the
-// Rust port owns it (see Error.rs TODO). Callers use `.clone()`.
+// Not `Copy` — `bun_sys::Error` carries `Box<[u8]>` path/dest. The Zig
+// `union(enum)` is copyable because its `.err` arm borrows the path; the
+// Rust port owns it. Callers use `.clone()`.
 #[derive(Clone, Default)]
 pub enum Status {
     #[default]
@@ -1014,7 +1014,7 @@ pub mod waiter_thread_posix {
     /// Zig: `fn NewQueue(comptime T: type) type` → generic struct.
     pub struct NewQueue<T: 'static> {
         pub queue: ConcurrentQueue<T>,
-        // PORT NOTE: Zig active list holds raw `*T` whose strong ref was taken
+        // The active list holds raw `*T` whose strong ref was taken
         // by the caller before `append()` (Process::watch does `self.ref_()`).
         // The matching `deref()` happens in `on_wait_pid_from_waiter_thread`.
         //
@@ -1251,7 +1251,7 @@ pub mod waiter_thread_posix {
                                         )),
                                     );
                                 }
-                                // PORT NOTE: `out` is now owned by the mini queue;
+                                // `out` is now owned by the mini queue;
                                 // freed in `run_from_main_thread_mini`.
                             }
                         }
@@ -1860,7 +1860,7 @@ mod spawn_process_body {
         // SAFETY: cwd_buf[options.cwd.len()] == 0 written above
         let cwd = bun_core::ZStr::from_buf(&cwd_buf[..], options.cwd.len());
 
-        // PORT NOTE: Zig spec passes `cwd.ptr` unconditionally, but every Zig
+        // Zig spec passes `cwd.ptr` unconditionally, but every Zig
         // `bun.spawnSync` Windows caller sets `.cwd` explicitly so the latent
         // empty-cwd path is never hit there. The Rust port routes
         // `git_diff_internal` (originally `std.process.Child`, which inherits cwd)
@@ -1877,8 +1877,8 @@ mod spawn_process_body {
         let mut uv_files_to_close: Vec<uv::uv_file> = Vec::new();
 
         // defer: close uv_files_to_close — handled at each return site below.
-        // PORT NOTE: Zig's `errdefer failed = true` + `defer { if (failed) ... }`
-        // pair is flattened to explicit cleanup calls at each error return; no
+        // Zig's `errdefer failed = true` + `defer { if (failed) ... }` pair is
+        // flattened to explicit cleanup calls at each error return; no
         // `failed` flag is needed.
 
         if let Some(hpcon) = options.pseudoconsole {
@@ -1915,8 +1915,7 @@ mod spawn_process_body {
         let mut dup_src: Option<u32> = None;
         let mut dup_tgt: Option<u32> = None;
 
-        // PORT NOTE: Zig uses `inline for (0..3)` for comptime fd_i; we use a runtime loop.
-        // PERF(port): was comptime monomorphization — profile if it shows up on a hot path.
+        // Zig uses `inline for (0..3)` for comptime fd_i; we use a runtime loop.
         for fd_i in 0..3usize {
             let pipe_flags = uv::UV_CREATE_PIPE | uv::UV_READABLE_PIPE | uv::UV_WRITABLE_PIPE;
             let stdio: &mut uv::uv_stdio_container_t = &mut stdio_containers[fd_i];
@@ -2452,7 +2451,7 @@ mod spawn_process_body {
             }
 
             // ── libuv C trampolines ──────────────────────────────────────────
-            // PORT NOTE: Zig's `StreamMixin.readStart` (libuv.zig:3067) takes
+            // Zig's `StreamMixin.readStart` (libuv.zig:3067) takes
             // `comptime alloc_cb / error_cb / read_cb` and emits one monomorphised
             // `extern "C"` wrapper pair per (Context, callback-triple). Stable Rust
             // can't take fn-pointers as const generics, but here there is exactly
@@ -2942,7 +2941,6 @@ mod spawn_process_body {
 
         #[cfg(unix)]
         unsafe extern "C" {
-            // TODO(port): move to runtime_sys
             // All by-value c_int/pid_t args; the kernel validates fd/pid/signal —
             // no memory-safety preconditions, so `safe fn` (Rust 2024) discharges
             // the link-time proof here and callers need no unsafe block.
@@ -3213,10 +3211,6 @@ mod spawn_process_body {
                     }
                 }
             });
-            // TODO(refactor): errdefer — the above scopeguards capture `jc`/`no_orphans_kq`/
-            // `siblings` by reference while still mutated below. Restructure into a single
-            // RAII state struct (or run cleanup inline at each return).
-
             Bun__sendPendingSignalIfNecessary();
 
             let mut out: [Vec<u8>; 2] = [Vec::new(), Vec::new()];
@@ -3225,8 +3219,8 @@ mod spawn_process_body {
                 process.stderr.unwrap_or(Fd::INVALID),
             ];
             let mut success = false;
-            // defer cleanup — handled at end / via guards below
-            // TODO(port): errdefer — manual cleanup at each error return below
+            // defer cleanup — handled at end / via guards below; error returns
+            // run their cleanup manually (Zig used errdefer)
 
             let mut out_fds_to_wait_for: [Fd; 2] = [
                 process.stdout.unwrap_or(Fd::INVALID),
@@ -3686,9 +3680,6 @@ mod spawn_process_body {
                 let restore = scopeguard::guard(old_mask, |old| {
                     libc::sigprocmask(libc::SIG_SETMASK, &raw const old, core::ptr::null_mut());
                 });
-                // TODO(port): kernel sigset_t vs libc sigset_t — Zig uses
-                // std.os.linux.sigemptyset/sigaddset for the signalfd mask. Could
-                // use the raw syscall with a u64 mask instead.
                 let fd = {
                     // SAFETY: POD, zero-valid — sigemptyset overwrites it immediately.
                     let mut kmask: libc::sigset_t = bun_core::ffi::zeroed();

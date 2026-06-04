@@ -19,8 +19,6 @@ use bun_ptr::BackRef;
 /// Spec PluginRunner.zig:7.
 pub struct PluginRunner {
     pub global_object: BackRef<JSGlobalObject>,
-    // PORT NOTE: Zig stored `allocator: std.mem.Allocator`; dropped per
-    // PORTING.md (global mimalloc).
 }
 
 // Re-export the JSC-free static helpers so callers in this crate can keep
@@ -149,8 +147,6 @@ impl PluginResolver for PluginRunner {
         // Spec PluginRunner.zig:121 `defer user_namespace.deref()`.
         let user_namespace = OwnedString::new(user_namespace);
 
-        // PORT NOTE: Zig used `std.fmt.allocPrint(this.allocator, …)` and
-        // returned the allocator-owned slice by value inside `Fs.Path`.
         // `FsPath<'static>` borrows, so the formatted buffer is leaked to
         // model the same caller-owns-forever contract (the Zig path also
         // never frees these — the linker arena owns them for the build).

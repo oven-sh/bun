@@ -8,8 +8,10 @@ pub struct MySQLContext {
     pub on_query_reject_fn: StrongOptional,
 }
 
-// TODO(port): bun_jsc::host_fn proc-macro
-// (Zig: `@export(&JSC.toJSHostFn(init), .{ .name = "MySQLContext__init" })`).
+// Zig exported this as `MySQLContext__init` via
+// `@export(&JSC.toJSHostFn(init), ...)` for the C++-built binding object. The
+// Rust port builds the binding object in Rust (`mysql.rs` registers this fn
+// through `put_host_functions!`/`IntoJSHostFn`), so no C symbol is needed.
 pub(crate) fn init(global: &JSGlobalObject, frame: &CallFrame) -> JSValue {
     // `bun_vm()` → `&'static VirtualMachine` (per-thread singleton); `as_mut()`
     // is the canonical safe escape hatch for the shrinking set of `&mut self`

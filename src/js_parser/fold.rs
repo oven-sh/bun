@@ -139,7 +139,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     // module linking just to rewrite these EDot expressions.
                     if p.options.bundle {
                         if p.import_items_for_namespace.contains_key(&id.ref_) {
-                            // PORT NOTE: reshaped for borrowck — Zig held `*ImportItemForNamespaceMap`
+                            // Note: reshaped for borrowck — Zig held `*ImportItemForNamespaceMap`
                             // across `p.newSymbol`; split into lookup → (maybe new_symbol) → re-borrow.
                             let existing = p
                                 .import_items_for_namespace
@@ -389,7 +389,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                     return None;
                                 }
 
-                                // PORT NOTE: reshaped for borrowck — Zig held the
+                                // Note: reshaped for borrowck — Zig held the
                                 // `getOrPut` entry across `p.newSymbol`.
                                 let ref_ = if let Some(existing) =
                                     p.commonjs_named_exports.get(name)
@@ -619,7 +619,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                         return None;
                                     }
 
-                                    // PORT NOTE: reshaped for borrowck — see exports_ref arm above.
+                                    // Note: reshaped for borrowck — see exports_ref arm above.
                                     let ref_ = if let Some(existing) =
                                         p.commonjs_named_exports.get(name)
                                     {
@@ -818,7 +818,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn check_if_defined_helper(&mut self, expr: Expr) -> Result<Expr, bun_core::Error> {
         let p = self;
-        // TODO(port): narrow error set
         let flags = if matches!(expr.data, js_ast::ExprData::EIdentifier(_)) {
             E::UnaryFlags::WAS_ORIGINALLY_TYPEOF_IDENTIFIER
         } else {
@@ -845,7 +844,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn maybe_defined_helper(&mut self, identifier_expr: Expr) -> Result<Expr, bun_core::Error> {
         let p = self;
-        // TODO(port): narrow error set
         let test_ = Self::check_if_defined_helper(p, identifier_expr)?;
         let object_ref = p
             .find_symbol(bun_ast::Loc::EMPTY, b"Object")

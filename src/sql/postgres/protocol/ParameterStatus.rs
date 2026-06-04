@@ -1,4 +1,5 @@
 use super::new_reader::NewReader;
+use crate::postgres::AnyPostgresError;
 use crate::shared::Data;
 
 #[derive(Default)]
@@ -11,12 +12,11 @@ pub struct ParameterStatus {
 // fields drop automatically, so no explicit `impl Drop` is needed.
 
 impl ParameterStatus {
-    // PORT NOTE: reshaped from out-param `fn(this: *@This(), ...) !void` to
+    // Reshaped from the Zig out-param `fn(this: *@This(), ...) !void` to a
     // value-returning constructor per PORTING.md.
-    // TODO(port): narrow error set
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> Result<Self, AnyPostgresError> {
         let length = reader.length()?;
         debug_assert!(length >= 4);
 
@@ -29,7 +29,7 @@ impl ParameterStatus {
     // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         context: Container,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> Result<Self, AnyPostgresError> {
         Self::decode_internal(NewReader { wrapped: context })
     }
 }

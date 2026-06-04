@@ -1,6 +1,6 @@
 use bun_core::MutableString;
 
-// PORT NOTE: Zig used `bun.ObjectPool(MutableString, initMutableString, false, 4)` and
+// Zig used `bun.ObjectPool(MutableString, initMutableString, false, 4)` and
 // recovered the node via `container_of`. `MutableString` is a foreign type so we
 // cannot impl `ObjectPoolType` for it directly (orphan rule); a `#[repr(transparent)]`
 // newtype lets us cast `*mut PooledMutableString` ↔ `*mut MutableString` at the API
@@ -26,8 +26,8 @@ mod buffer_pool {
     bun_collections::object_pool!(pub BufferPool: PooledMutableString, global, 4);
 
     pub fn get() -> *mut MutableString {
-        // TODO(port): Zig returns `*MutableString` borrowed from a pool node; consider an RAII
-        // guard so callers don't hand-pair get/put.
+        // Callers hand-pair get/put (matching Zig's pool API): the pointer is
+        // stored in long-lived struct fields, so a scoped RAII guard does not fit.
         // SAFETY: `first()` returns a valid `*mut PooledMutableString` whose data is initialized
         // (INIT is Some); #[repr(transparent)] makes the cast to `*mut MutableString` sound.
         BufferPool::first().cast::<MutableString>()

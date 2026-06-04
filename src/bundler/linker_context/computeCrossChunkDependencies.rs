@@ -31,7 +31,7 @@ pub fn compute_cross_chunk_dependencies(
     // defer { meta.*.deinit(); free(chunk_metas) } — handled by Drop
 
     {
-        // PORT NOTE: Zig heap-allocated this via c.arena().create() and destroyed it at
+        // Zig heap-allocated this via c.arena().create() and destroyed it at
         // scope end; in Rust we construct on the stack and let it drop.
         //
         // `ctx` / `symbols` / `chunks` are stored as raw pointers so the struct does not
@@ -47,7 +47,7 @@ pub fn compute_cross_chunk_dependencies(
         // Lifetime-erase the `LinkerContext<'_>` so the struct's `'a` (which
         // ties only the local SoA-column borrows) is not forced to equal the
         // LinkerContext's invariant `'_`. `NonNull::from(&mut *c)` preserves
-        // `c`'s Unique provenance (see PORT NOTE above).
+        // `c`'s Unique provenance (see note above).
         let ctx_ref = bun_ptr::BackRef::from(
             core::ptr::NonNull::from(&mut *c).cast::<LinkerContext<'static>>(),
         );
@@ -86,7 +86,7 @@ pub fn compute_cross_chunk_dependencies(
 
 pub(crate) struct CrossChunkDependencies<'a, 'bump> {
     chunk_meta: &'a mut [ChunkMeta],
-    // PORT NOTE: `BackRef` — the same `[Chunk]` slice is also iterated mutably by
+    // `BackRef` — the same `[Chunk]` slice is also iterated mutably by
     // the caller's sequential `walk` loop; `walk` only reads `chunks[other].unique_key`
     // (disjoint from the per-iteration `&mut Chunk`). The slice outlives the struct
     // (caller stack frame).
@@ -100,7 +100,7 @@ pub(crate) struct CrossChunkDependencies<'a, 'bump> {
     exports_refs: &'a [Ref],
     sorted_and_filtered_export_aliases: &'a [js_meta::SortedAndFilteredExportAliases],
     resolved_exports: &'a [ResolvedExports],
-    // PORT NOTE: `BackRef` — Zig stores `*LinkerContext` / `*Symbol.Map` and freely
+    // `BackRef` — Zig stores `*LinkerContext` / `*Symbol.Map` and freely
     // aliases `c.graph` columns alongside; borrowck cannot express that split, so
     // opt out here via `BackRef` (safe `Deref` at each use site in `walk`). Lifetime
     // erased (`'static`) so the outer `CrossChunkDependencies<'_>` borrow is not tied
@@ -128,7 +128,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
     pub(crate) fn walk(&mut self, chunk: &mut Chunk, chunk_index: usize) {
         let deps = self;
         // `ctx` / `chunks` are `BackRef`s into `LinkerContext` / the caller's chunk
-        // slice, valid for the link pass (see PORT NOTE on the struct fields).
+        // slice, valid for the link pass (see note on the struct fields).
         // `chunks` aliases the slice the caller iterates mutably but is only read here.
         let ctx: &LinkerContext<'_> = deps.ctx.get();
         // `BackRef` into `LinkerContext.graph.symbols`, valid for the link
@@ -137,7 +137,7 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
         let symbols: &bun_ast::symbol::Map = deps.symbols.get();
         let _chunks: &[Chunk] = deps.chunks.get();
         let chunk_meta = &mut deps.chunk_meta[chunk_index];
-        // PORT NOTE: reshaped for borrowck — Zig held `&chunk_meta` and `&chunk_meta.imports`
+        // reshaped for borrowck — Zig held `&chunk_meta` and `&chunk_meta.imports`
         // simultaneously; here we go through `chunk_meta.imports` / `chunk_meta.dynamic_imports`.
         let entry_point_chunk_indices = deps.entry_point_chunk_indices;
 
@@ -172,9 +172,11 @@ impl<'a, 'bump> CrossChunkDependencies<'a, 'bump> {
                     {
                         let other_chunk_index =
                             entry_point_chunk_indices[import_record.source_index.get() as usize];
+                        // Slice copy (fat pointer) — same as Zig's by-pointer
+                        // assignment: `path.text` borrows the chunk's
+                        // `unique_key` backing buffer (`LinkerContext.unique_key_buf`),
+                        // which outlives the link pass.
                         import_record.path.text = _chunks[other_chunk_index as usize].unique_key;
-                        // TODO(port): Zig assigns the slice by pointer (no copy); decide
-                        // ownership of `path.text` vs `unique_key`.
                         import_record.source_index = Index::INVALID;
 
                         // Track this cross-chunk dynamic import so we make sure to
@@ -326,7 +328,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
     chunk_metas: &mut [ChunkMeta],
 ) -> Result<(), bun_alloc::AllocError> {
     // Mark imported symbols as exported in the chunk from which they are declared
-    // PORT NOTE: reshaped for borrowck — Zig zips (chunks, chunk_metas, 0..) and also indexes
+    // reshaped for borrowck — Zig zips (chunks, chunk_metas, 0..) and also indexes
     // chunk_metas[other_chunk_index] / chunks[other_chunk_index] inside the loop body. We
     // iterate by index and re-borrow per access.
     debug_assert_eq!(chunks.len(), chunk_metas.len());
@@ -336,7 +338,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         }
 
         // Find all uses in this chunk of symbols from other chunks
-        // PORT NOTE: reshaped for borrowck — collect keys first to avoid holding a borrow on
+        // reshaped for borrowck — collect keys first to avoid holding a borrow on
         // chunk_metas[chunk_index] while mutating chunk_metas[other_chunk_index].
         let import_refs: Vec<Ref> = chunk_metas[chunk_index].imports.keys().to_vec();
         // PERF(port): was direct iteration over .keys() without copy — profile if it shows up on a hot path
@@ -507,7 +509,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
                             original_name: bun_ast::StoreStr::new(b"" as &[u8]),
                         });
 
-                        // `alias` points into the link-pass arena (see PORT NOTE above),
+                        // `alias` points into the link-pass arena (see note above),
                         // which outlives `exports_to_other_chunks`; `.slice()` re-borrows
                         // under the StoreStr arena contract.
                         let _ = repr.exports_to_other_chunks.put(ref_, alias.slice()); // OOM-only Result (Zig: catch unreachable)
@@ -544,7 +546,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
         debug!("Generating cross-chunk imports");
         let mut list: Vec<CrossChunkImport> = Vec::new();
         // defer list.deinit() — handled by Drop
-        // PORT NOTE: reshaped for borrowck — Zig's `for (chunks) |*chunk|` aliases the same
+        // reshaped for borrowck — Zig's `for (chunks) |*chunk|` aliases the same
         // slice it passes to `sortedCrossChunkImports`. We move the per-chunk fields we
         // mutate (`imports_from_other_chunks`, `cross_chunk_imports`) out via `take`, drop
         // the `chunk` borrow, hand the whole `chunks` slice to `sorted_cross_chunk_imports`
@@ -562,7 +564,7 @@ fn compute_cross_chunk_dependencies_with_chunk_metas(
             );
             let mut cross_chunk_imports =
                 core::mem::take(&mut chunks[chunk_index].cross_chunk_imports);
-            // PORT NOTE: reshaped for borrowck — Zig copies the Vec by value, mutates,
+            // reshaped for borrowck — Zig copies the Vec by value, mutates,
             // then writes back; we `take` to express the same move-out/move-in.
             let mut cross_chunk_prefix_stmts = Vec::<bun_ast::Stmt>::default();
 

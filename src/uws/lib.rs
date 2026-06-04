@@ -16,9 +16,6 @@ use bun_core::ZStr;
 // `InternalSocket`, `AnySocket`, `ConnectError`, `CloseKind`, owned
 // `SocketAddress`) stay defined here; `bun_uws_sys::socket` has lifetime-
 // bearing variants of the same names that are not yet reconciled.
-//
-// `bun_runtime::*` items (dispatch, WindowsNamedPipe, UpgradedDuplex) are
-// upward refs into a higher tier and intentionally remain local stub modules.
 
 pub use bun_uws_sys::{
     AnyWebSocket, BodyReaderMixin, ConnectingSocket, ListenSocket, NewApp, RawWebSocket, Request,
@@ -34,12 +31,6 @@ pub use bun_jsc_macros::uws_callback;
 pub use bun_uws_sys::response::State;
 pub use bun_uws_sys::{h3 as H3, quic, udp, vtable};
 pub type Socket = us_socket_t;
-
-// Upward refs into `bun_runtime` (higher tier) — kept as empty namespace stubs.
-// TODO(port): bun_runtime::socket::{uws_dispatch, windows_named_pipe, upgraded_duplex}
-pub mod dispatch {}
-pub mod WindowsNamedPipe {}
-pub mod UpgradedDuplex {}
 
 /// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
 /// policy (verify mode, reneg limits) is encoded on the SSL_CTX itself via
@@ -112,15 +103,7 @@ pub struct SocketAddress {
     pub is_ipv6: bool,
 }
 
-// TODO(port): move to uws_sys
-unsafe extern "C" {
-    // safe: no args; clears thread-local loop pointer — no preconditions.
-    safe fn bun_clear_loop_at_thread_exit();
-}
-
-pub fn on_thread_exit() {
-    bun_clear_loop_at_thread_exit()
-}
+pub use bun_uws_sys::loop_::on_thread_exit;
 
 /// # Safety
 /// `filename` and `error_msg` must be valid NUL-terminated C strings.

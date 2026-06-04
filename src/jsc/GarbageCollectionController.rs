@@ -28,14 +28,15 @@ use crate::VM;
 use crate::virtual_machine::VirtualMachine;
 
 pub struct GarbageCollectionController {
-    // TODO(port): lifetime — FFI handle created by uws::Timer::create_fallthrough, freed in Drop.
-    // Stored as `Option<NonNull<Timer>>` (None = uninit; Some after `init`).
+    // Raw FFI handle created by `uws::Timer::create_fallthrough` in `init`,
+    // freed in Drop. Stored as `Option<NonNull<Timer>>` (None = uninit).
     pub gc_timer: Option<core::ptr::NonNull<uws::Timer>>,
     pub gc_last_heap_size: usize,
     pub gc_last_heap_size_on_repeating_timer: usize,
     pub heap_size_didnt_change_for_repeating_timer_ticks_count: u8,
     pub gc_timer_state: GCTimerState,
-    // TODO(port): lifetime — FFI handle created by uws::Timer::create_fallthrough, freed in Drop
+    // Raw FFI handle created by `uws::Timer::create_fallthrough` in `init`,
+    // freed in Drop.
     pub gc_repeating_timer: Option<core::ptr::NonNull<uws::Timer>>,
     pub gc_timer_interval: i32,
     pub gc_repeating_timer_fast: bool,
@@ -128,7 +129,7 @@ impl GarbageCollectionController {
             }
         }
 
-        // PORT NOTE: in the Zig spec `vm.transpiler` is fully constructed
+        // In the Zig spec `vm.transpiler` is fully constructed
         // before `JSGlobalObject.create` → `ensureWaker` → this `init`. The
         // Rust port defers `Transpiler::init` to the high-tier
         // `init_runtime_state` hook (which runs *after* `ensure_waker`), so

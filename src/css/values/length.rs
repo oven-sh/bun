@@ -526,7 +526,7 @@ impl Length {
                 right: Box::new(b.into_calc()),
             })),
         }
-        // PORT NOTE: reshaped for borrowck — Zig matched on tags then accessed
+        // Reshaped for borrowck — Zig matched on tags then accessed
         // `a.calc.value` / `b.calc.value` while both were still bound; Rust needs
         // to move out of the Box, so the conditions are folded into match guards.
     }
@@ -557,9 +557,8 @@ impl Length {
                 }
                 _ => return None,
             }
-            // TODO(port): the Zig builds `Length{ .calc = s.left }` without
-            // cloning (alias of the same heap node). With `Box` ownership we
-            // must clone here; revisit if Calc nodes become arena-backed refs.
+            // The Zig builds `Length{ .calc = s.left }` without cloning (alias
+            // of the same heap node); with `Box` ownership we must clone here.
         }
 
         if let Self::Calc(c) = other {
@@ -596,7 +595,7 @@ impl Length {
             },
             _ => length,
         }
-        // PORT NOTE: reshaped for borrowck — Zig rebinds `c` while reading `c.*`;
+        // Reshaped for borrowck — Zig rebinds `c` while reading `c.*`;
         // Rust moves out of the Box once and rebuilds.
     }
 
@@ -699,7 +698,7 @@ impl protocol::TryMap for LengthValue {
 impl protocol::TryOp for LengthValue {
     #[inline]
     fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
-        // PORT NOTE: `LengthValue::try_op` takes a 2-arg closure (ctx folded
+        // `LengthValue::try_op` takes a 2-arg closure (ctx folded
         // in by caller); the `protocol::TryOp` shape passes `C` by-value with
         // no `Copy` bound, so we can't capture `ctx` in an `Fn` closure that
         // might be called more than once. Inline the same-unit + px-convert
@@ -708,7 +707,7 @@ impl protocol::TryOp for LengthValue {
             let v = f(ctx, self.value(), rhs.value());
             return Some(self.map_value(|_| v));
         }
-        // PORT NOTE: Zig calls `this.toPx()` for BOTH operands here (length.zig:447) —
+        // Zig calls `this.toPx()` for BOTH operands here (length.zig:447) —
         // preserving that behavior verbatim; likely an upstream bug.
         if let (Some(a), Some(b)) = (self.to_px(), self.to_px()) {
             return Some(LengthValue::Px(f(ctx, a, b)));
@@ -722,7 +721,7 @@ impl protocol::TryOpTo for LengthValue {
         if core::mem::discriminant(self) == core::mem::discriminant(rhs) {
             return Some(f(ctx, self.value(), rhs.value()));
         }
-        // PORT NOTE: Zig calls `this.toPx()` for BOTH operands here (length.zig:473) —
+        // Zig calls `this.toPx()` for BOTH operands here (length.zig:473) —
         // preserving that behavior verbatim; likely an upstream bug.
         if let (Some(a), Some(b)) = (self.to_px(), self.to_px()) {
             return Some(f(ctx, a, b));
@@ -799,7 +798,7 @@ impl protocol::TryMap for Angle {
 impl protocol::TryOp for Angle {
     #[inline]
     fn try_op<C>(&self, rhs: &Self, ctx: C, f: impl Fn(C, f32, f32) -> f32) -> Option<Self> {
-        // PORT NOTE: `Angle::op` takes a `fn(C, f32, f32)` pointer (Zig
+        // `Angle::op` takes a `fn(C, f32, f32)` pointer (Zig
         // `comptime`-monomorphized fn arg), so we can't pass the generic
         // closure through it. Inline the per-variant dispatch here instead.
         Some(match (self, rhs) {

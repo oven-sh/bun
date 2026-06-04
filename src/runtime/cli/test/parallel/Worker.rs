@@ -26,12 +26,19 @@ use super::file_range::FileRange;
 use super::frame;
 
 pub struct Worker {
-    // TODO(port): LIFETIMES.tsv classifies this BACKREF → *const, but the Zig
-    // mutates through it (live_workers, onWorkerExit, frame). Should use either
-    // *mut or interior mutability on Coordinator.
-    // PORT NOTE: `Coordinator<'a>` carries borrowed slices; the lifetime is
-    // erased to `'static` here because this is a raw backref pointer that is
-    // only ever dereferenced unsafely (constructor casts via `as *const _`).
+    // BACKREF to the owning Coordinator. Stored as `*const` for LIFETIMES.tsv
+    // parity, but mutation sites (`live_workers`, `on_worker_exit`, `frame`)
+    // go through `cast_mut()`. The pointer is created from `&raw mut coord` in
+    // runner.rs, so it carries write provenance (preserved across const casts);
+    // that removes the read-only-provenance layer of UB but does NOT make the
+    // pattern fully sound: runner.rs takes a fresh `&mut coord` to call
+    // `coord.drive()` after the backref is stored, and every backref write
+    // happens during drive(), so the aliasing remains UB-adjacent under
+    // Stacked/Tree Borrows. The full fix is a `*mut` backref (or interior
+    // mutability) threaded through runner.rs/Coordinator.rs together.
+    // `Coordinator<'a>` carries borrowed slices; the lifetime is erased to
+    // `'static` here because this is a raw backref pointer that is only ever
+    // dereferenced unsafely.
     pub coord: *const Coordinator<'static>,
     pub idx: u32,
     // Intrusive-refcounted (`ThreadSafeRefCount`); `to_process` returns a
@@ -70,7 +77,6 @@ pub struct Worker {
 }
 
 impl Worker {
-    // TODO(port): narrow error set
     pub fn start(&mut self) -> Result<(), bun_core::Error> {
         debug_assert!(!self.alive);
         let coord_ptr = self.coord;
@@ -106,8 +112,10 @@ impl Worker {
             // Reset to fresh state after deinit so reapWorker's `!respawned`
             // cleanup (which can't tell whether start() ran) doesn't deinit on
             // undefined ArrayList memory.
-            // PORT NOTE: assignment drops the old value (≡ Zig deinit + reinit).
-            let self_ptr: *const Worker = std::ptr::from_ref::<Worker>(this);
+            // Assignment drops the old value (≡ Zig deinit + reinit). Take the
+            // backref from `&mut` so the stored `*const` keeps write provenance
+            // (on_read_chunk mutates `captured` through it).
+            let self_ptr: *const Worker = std::ptr::from_mut::<Worker>(this).cast_const();
             this.ipc = Channel::default();
             this.out = WorkerPipe::new(PipeRole::Stdout, self_ptr);
             this.err = WorkerPipe::new(PipeRole::Stderr, self_ptr);
@@ -117,7 +125,7 @@ impl Worker {
         {
             // `.buffer` extra_fd creates an AF_UNIX socketpair; the parent end is
             // adopted into a usockets `Channel`.
-            // PORT NOTE: SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
+            // SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
             // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
             this.extra_fd_stdio = [Stdio::Buffer];
             let options = SpawnOptions {
@@ -206,7 +214,7 @@ impl Worker {
                 unsafe { uv::Pipe::close_and_destroy(p) };
             });
 
-            // PORT NOTE: SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
+            // SpawnOptions.extra_fds is `Box<[Stdio]>` (owned) in the
             // Rust port, so the `extra_fd_stdio` field is no longer borrowed here.
             this.extra_fd_stdio = [Stdio::Ipc(ipc_pipe)];
             let options = SpawnOptions {
@@ -309,7 +317,9 @@ impl Worker {
             }
         }
         this.alive = true;
-        // SAFETY: see coord_ptr note above; mutation requires *mut cast (TODO(port): interior mutability).
+        // SAFETY: see coord_ptr note above; the backref carries write
+        // provenance, but see the `coord` field doc for the residual
+        // &mut-Coordinator-during-drive aliasing caveat.
         unsafe { (*coord_ptr.cast_mut()).live_workers += 1 };
         // SAFETY: `this` is the live `Box<Worker>` slot in
         // `Coordinator.workers`; it outlives `process`.
@@ -342,7 +352,7 @@ impl Worker {
 
     pub fn on_process_exit(&mut self, _: &Process, status: Status, _: &Rusage) {
         self.alive = false;
-        // SAFETY: coord backref valid for worker lifetime; mutation — see field TODO.
+        // SAFETY: coord backref valid for worker lifetime; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).on_worker_exit(self, status) };
     }
 
@@ -365,7 +375,7 @@ impl Worker {
     }
 
     pub fn dispatch(&mut self, file_idx: u32, file: &[u8]) {
-        // SAFETY: coord backref valid; frame mutation — see field TODO.
+        // SAFETY: coord backref valid; frame mutation — see `coord` field doc (provenance caveats).
         let f = unsafe { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Run);
         f.u32_(file_idx);
@@ -376,7 +386,7 @@ impl Worker {
     }
 
     pub fn shutdown(&mut self) {
-        // SAFETY: coord backref valid; frame mutation — see field TODO.
+        // SAFETY: coord backref valid; frame mutation — see `coord` field doc (provenance caveats).
         let f = unsafe { &mut (*self.coord.cast_mut()).frame };
         f.begin(frame::Kind::Shutdown);
         self.ipc.send(f.finish());
@@ -387,7 +397,7 @@ impl Worker {
 
     /// `Channel` owner callback: a decoded frame arrived.
     pub fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
-        // SAFETY: coord backref valid; mutation — see field TODO.
+        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
     }
 
@@ -403,7 +413,7 @@ impl Worker {
                 let _ = unsafe { (*p).kill(9) };
             }
         }
-        // SAFETY: coord backref valid; mutation — see field TODO.
+        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).try_reap(self) };
     }
 }
@@ -418,7 +428,7 @@ bun_spawn::link_impl_ProcessExit! {
 bun_core::intrusive_field!(Worker, ipc: Channel<Worker>);
 impl ChannelOwner for Worker {
     fn on_channel_frame(&mut self, kind: frame::Kind, rd: &mut frame::Reader<'_>) {
-        // SAFETY: coord backref valid; mutation — see field TODO.
+        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).on_frame(self, kind, rd) };
     }
 
@@ -431,7 +441,7 @@ impl ChannelOwner for Worker {
                 let _ = unsafe { (*p).kill(9) };
             }
         }
-        // SAFETY: coord backref valid; mutation — see field TODO.
+        // SAFETY: coord backref valid; mutation — see `coord` field doc (provenance caveats).
         unsafe { (*self.coord.cast_mut()).try_reap(self) };
     }
 }
@@ -465,8 +475,14 @@ impl WorkerPipe {
 
     pub fn on_read_chunk(&mut self, chunk: &[u8], _: bun_io::ReadState) -> bool {
         // SAFETY: worker backref valid while WorkerPipe is embedded in Worker.
-        // TODO(port): LIFETIMES.tsv says *const Worker but we mutate `captured`;
-        // may need *mut or Cell/UnsafeCell on Worker.captured.
+        // Mutating `captured` through cast_mut requires write provenance on
+        // the stored pointer; all backref creation sites (the runner.rs
+        // coord_ptr, the Worker.rs start() errdefer guard, and the
+        // Coordinator.rs spawn_worker/respawn sites via
+        // `std::ptr::from_mut(..).cast_const()`) now establish it. The
+        // residual `&mut Coordinator`-during-drive aliasing caveat described
+        // in the `Worker::coord` field doc applies to this backref too. No
+        // other reference to `captured` is live during the read callback.
         unsafe { (*self.worker.cast_mut()).captured.extend_from_slice(chunk) };
         true
     }

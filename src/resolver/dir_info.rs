@@ -106,7 +106,7 @@ pub struct DirInfo {
     // A pointer to the enclosing dirInfo with a valid "browser" field in
     // package.json. We need this to remap paths after they have been resolved.
     pub enclosing_browser_scope: Index,
-    // PORT NOTE: lifetime — `&'static` borrows below are ARENA-backed (the
+    // lifetime — `&'static` borrows below are ARENA-backed (the
     // resolver-owned PackageJSON/TSConfigJSON caches outlive every DirInfo).
     // Fields Zig typed `?*const T` (`package_json_for_browser_field`,
     // `enclosing_tsconfig_json` — dir_info.zig:12-13) are `Option<&'static T>`.
@@ -122,32 +122,32 @@ pub struct DirInfo {
     /// it's the deepest one in the hierarchy with a "name" field
     /// or, if using `bun run`, the name field is optional
     /// https://github.com/oven-sh/bun/issues/229
-    // PORT NOTE: Zig `?*PackageJSON` (mutable, dir_info.zig:19) but no write
+    // Zig `?*PackageJSON` (mutable, dir_info.zig:19) but no write
     // site exists in resolver.zig or any caller — kept `Option<&'static>` for
     // ergonomics. If a write is ever ported, retype to `Option<NonNull<_>>`.
     pub enclosing_package_json: Option<&'static PackageJSON>,
 
-    // PORT NOTE: Zig `?*PackageJSON` (mutable, dir_info.zig:21). `NonNull` (not
+    // Zig `?*PackageJSON` (mutable, dir_info.zig:21). `NonNull` (not
     // `&'static`) so `enqueue_dependency_to_resolve` can write
     // `package_manager_package_id` back through it (resolver.zig:2394) without
     // a const→mut provenance cast. Read via `.package_json_for_dependencies()`.
     pub package_json_for_dependencies: Option<NonNull<PackageJSON>>,
 
-    // TODO(port): lifetime — slice into BSS-backed path storage; never individually freed
+    // lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_path: &'static [u8],
     pub entries: Index,
     /// Is there a "package.json" file?
-    // PORT NOTE: Zig `?*PackageJSON` (mutable). `NonNull` (not `&'static`) so
+    // Zig `?*PackageJSON` (mutable). `NonNull` (not `&'static`) so
     // `reset()` can `drop_in_place` without a const→mut provenance cast. Read
     // via `.package_json()`.
     pub package_json: Option<NonNull<PackageJSON>>,
     /// Is there a "tsconfig.json" file in this directory or a parent directory?
-    // PORT NOTE: Zig `?*TSConfigJSON` (mutable). `NonNull` (not `&'static`) so
+    // Zig `?*TSConfigJSON` (mutable). `NonNull` (not `&'static`) so
     // `reset()` can `drop_in_place` without a const→mut provenance cast. Read
     // via `.tsconfig_json()`.
     pub tsconfig_json: Option<NonNull<TSConfigJSON>>,
     /// If non-empty, this is the real absolute path resolving any symlinks
-    // TODO(port): lifetime — slice into BSS-backed path storage; never individually freed
+    // lifetime — slice into BSS-backed path storage; never individually freed
     pub abs_real_path: &'static [u8],
 
     pub flags: Flags,
@@ -163,7 +163,7 @@ impl Default for DirInfo {
             enclosing_package_json: None,
             package_json_for_dependencies: None,
             abs_path: b"",
-            // PORT NOTE: Zig left this `= undefined`; using a zero-value placeholder.
+            // Zig left this `= undefined`; using a zero-value placeholder.
             entries: Index::default(),
             package_json: None,
             tsconfig_json: None,
@@ -299,7 +299,7 @@ impl DirInfo {
     }
 }
 
-// PORT NOTE: Zig `BSSMap` is a per-monomorphization singleton (`var instance` inside
+// Zig `BSSMap` is a per-monomorphization singleton (`var instance` inside
 // the comptime-returned struct). Rust `BSSMapInner<DirInfo, ..>` cannot host a
 // per-generic-instantiation static on stable, so the singleton pointer lives here at
 // the use site and `bun_alloc::BSSMapInner::init()` hands back the storage.
@@ -392,7 +392,7 @@ impl DirInfo {
 // 3. Store whether a directory has been queried and whether that query was successful.
 // 4. Allocate onto the https://en.wikipedia.org/wiki/.bss#BSS_in_C instead of the heap, so we can avoid memory leaks
 //
-// PORT NOTE: Zig `BSSMap(DirInfo, COUNT, store_keys=false, est_key_len=128, rm_slash=true)`;
+// Zig `BSSMap(DirInfo, COUNT, store_keys=false, est_key_len=128, rm_slash=true)`;
 // Rust splits the comptime branch — `store_keys=false` → `BSSMapInner<V, COUNT, RM_SLASH>`.
 // `est_key_len` is unused on the inner shape. COUNT mirrors `fs::preallocate::counts::DIR_ENTRY`.
 pub type HashMap = allocators::BSSMapInner<DirInfo, 2048, true>;

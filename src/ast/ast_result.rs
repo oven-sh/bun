@@ -96,7 +96,7 @@ pub struct Ast<'a> {
     pub import_meta_ref: Ref,
 }
 
-// PORT NOTE: Zig field defaults reference named constants (`Ref.None`, `logger.Range.None`,
+// Zig field defaults reference named constants (`Ref.None`, `logger.Range.None`,
 // `ExportsKind.none`, `Target.browser`) whose equivalence to the Rust types' `Default::default()`
 // is unverified across crates, so spell them out here instead of `#[derive(Default)]`.
 //
@@ -188,9 +188,9 @@ impl<'a> Ast<'a> {
 
     // Zig `deinit` only freed `parts`, `symbols`, `import_records` via `bun.default_allocator`,
     // and was guarded by "Do not call this if it wasn't globally allocated!".
-    // In Rust those fields own their storage and free on Drop; no explicit body needed.
-    // TODO(port): Vec<T> Drop semantics must distinguish arena-backed vs heap-backed to
-    // preserve the Zig conditional-free behavior. Revisit.
+    // In Rust those fields are `ArenaVec`s (`BabyVec`) whose `Drop` deallocates
+    // through the allocator each instance was constructed with, so the Zig
+    // arena-vs-heap conditional-free is encoded in the type — no explicit body needed.
 }
 
 pub use crate::g::Class;

@@ -84,7 +84,7 @@ pub(crate) trait NativePromiseContextType {
     const TAG: Tag;
 }
 
-// PORT NOTE (layering): blanket-impl over `ThisServer` so that ANY server
+// Layering note: blanket-impl over `ThisServer` so that ANY server
 // type (mod.rs::NewServer or server_body::NewServer) yields the same Tag —
 // the tag depends only on (SSL, DBG, H3), never on the server type. This is
 // the Zig semantics (the Zig Tag enum cases name the (ssl,debug,h3) tuple).
@@ -110,7 +110,6 @@ impl NativePromiseContextType for body::ValueBufferer<'_> {
     const TAG: Tag = Tag::BodyValueBufferer;
 }
 
-// TODO(port): move to <runtime>_sys
 // `&JSGlobalObject` is ABI-identical to a non-null pointer. `ctx` is stored
 // opaquely (never dereferenced by the C++ side), so the FFI itself has no
 // pointer-validity precondition — the ref-count contract is documented on

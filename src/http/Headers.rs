@@ -23,7 +23,7 @@ pub use bun_http_types::Method::HeaderName;
 // `bun_jsc::FetchHeaders`).
 pub use bun_http_types::ETag::{HeaderEntry as Entry, HeaderEntryList as EntryList, Headers};
 
-// PORT NOTE: `pub const toFetchHeaders = @import("../http_jsc/headers_jsc.zig").toFetchHeaders;`
+// Note (port): `pub const toFetchHeaders = @import("../http_jsc/headers_jsc.zig").toFetchHeaders;`
 // deleted — to_fetch_headers lives as an extension-trait method in bun_http_jsc.
 
 /// Extension constructors for `Headers` that depend on T5 crates
@@ -34,7 +34,7 @@ pub trait HeadersExt {
 }
 
 impl HeadersExt for Headers {
-    // PORT NOTE: was `!Headers`; all fallible calls were bun.handleOom-wrapped allocations.
+    // Note (port): was `!Headers`; all fallible calls were bun.handleOom-wrapped allocations.
     fn from_pico_http_headers(headers: &[picohttp::Header]) -> Headers {
         let header_count = headers.len();
         let mut result = Headers {
@@ -54,14 +54,14 @@ impl HeadersExt for Headers {
         for header in headers {
             let name = header.name();
             let value = header.value();
-            // PORT NOTE: Zig used `@truncate` for offsets/lengths; mirror with `as u32`
+            // Note (port): Zig used `@truncate` for offsets/lengths; mirror with `as u32`
             // (silent wrap on >4GiB aggregate headers) rather than `try_from().unwrap()`.
             let name_offset = result.buf.len() as u32;
             result.buf.extend_from_slice(name);
             let value_offset = result.buf.len() as u32;
             result.buf.extend_from_slice(value);
 
-            // PORT NOTE: Zig pre-set `entries.len = headers.len` then `set(i, ..)`.
+            // Note (port): Zig pre-set `entries.len = headers.len` then `set(i, ..)`.
             // Rust `MultiArrayList` lacks `set_len`; capacity was reserved above
             // so use `append_assume_capacity` which is equivalent.
             result.entries.append_assume_capacity(Entry {
@@ -79,14 +79,14 @@ impl HeadersExt for Headers {
     }
 }
 
-// PORT NOTE: `pub fn deinit` only freed `entries` and `buf`; both are Drop types now — no explicit Drop impl needed.
+// Note (port): `pub fn deinit` only freed `entries` and `buf`; both are Drop types now — no explicit Drop impl needed.
 
 /// Compute the ETag for `bytes` (xxhash64, hex-lowered, quoted) and append it as
 /// an `etag` header. Re-exported from `bun_http_types` now that `Headers` is
 /// the same type in both crates.
 #[inline]
 pub fn append_etag(bytes: &[u8], headers: &mut Headers) {
-    let _ = bun_http_types::ETag::append_to_headers(bytes, headers);
+    bun_http_types::ETag::append_to_headers(bytes, headers);
 }
 
 // ported from: src/http/Headers.zig

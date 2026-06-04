@@ -44,8 +44,6 @@ impl Z {
         if !c_allocator.raw_resize(buf, alignment, new_len, return_address) {
             return false;
         }
-        // PORT NOTE: reshaped for borrowck — capture len before re-deriving the
-        // tail pointer (Zig: `buf.ptr[buf.len..new_len]`).
         let old_len = buf.len();
         // Only zero on grow. On shrink (`new_len < old_len`), `new_len - old_len`
         // would underflow to ~usize::MAX and `write_bytes` would corrupt the heap.

@@ -78,8 +78,11 @@ pub enum EventType {
     CloseEvent,
     ErrorEvent,
     OpenEvent,
+    // Zig's enum was non-exhaustive (`_`); in Rust this variant absorbs any
+    // unrecognized event name. Values are only ever constructed via the MAP
+    // lookup below (never transmuted from a raw u8), so no other catch-all is
+    // needed.
     Unknown = 254,
-    // TODO(port): Zig non-exhaustive enum (`_`); other values are valid u8.
 }
 
 impl EventType {
@@ -119,7 +122,6 @@ pub enum MessageLevel {
     Error = 2,
     Debug = 3,
     Info = 4,
-    // TODO(port): Zig non-exhaustive enum (`_`).
 }
 
 #[repr(u32)]
@@ -139,7 +141,6 @@ pub enum MessageType {
     Profile = 11,
     ProfileEnd = 12,
     Image = 13,
-    // TODO(port): Zig non-exhaustive enum (`_`).
 }
 
 #[derive(Copy, Clone, Default)]
@@ -287,7 +288,7 @@ impl JestPrettyFormat {
 pub mod visited {
     use super::*;
 
-    // PORT NOTE: JSValue keys live on heap; safe because every visited value is also
+    // JSValue keys live on heap; safe because every visited value is also
     // on the stack frame during format() — conservative scan still sees them. Mirrors Zig 1:1.
     //
     // `HashMap<JSValue, ()>` is a foreign type, so we cannot impl the foreign
@@ -439,7 +440,7 @@ impl core::fmt::Display for ZigFormatter<'_, '_> {
             .take()
             .expect("ZigFormatter::fmt re-entered or used after consumption");
 
-        // PORT NOTE (.zig:249): `self.formatter.remaining_values = &[_]JSValue{self.value}` —
+        // .zig:249: `self.formatter.remaining_values = &[_]JSValue{self.value}` —
         // assigning a stack-local slice into `Formatter<'b>` would require `'b: 'local`,
         // which borrowck rejects. The single-value path never reads `remaining_values`
         // (only `StringPossiblyFormatted` consumes it, and `ZigFormatter` always emits a
@@ -689,8 +690,9 @@ impl<'a> Formatter<'a> {
         slice_: S,
         global_this: &'a JSGlobalObject,
     ) where
+        // Zig's `Slice` was generic over u8/u16; the sole caller here passes a
+        // UTF-8 byte slice (`to_slice`), so only the byte path is needed.
         S: AsRef<[u8]>,
-        // TODO(port): Zig `Slice` is generic over u8/u16; this draft handles bytes only.
     {
         let mut writer = WrappedWriter::new(writer_);
         let mut slice = slice_.as_ref();
@@ -874,7 +876,7 @@ impl<'a> Formatter<'a> {
     }
 }
 
-// PORT NOTE: split lifetimes — `&'a mut Formatter<'a>` is invariant and forces
+// split lifetimes — `&'a mut Formatter<'a>` is invariant and forces
 // the borrow of `self` at the call site to outlive `'a`, cascading into bogus
 // borrowck errors throughout `print_as`. Using a distinct `'f` for the
 // Formatter's own lifetime keeps the iter borrow local.
@@ -1051,7 +1053,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         if tag.cell.is_hidden() {
             return;
         }
-        // PORT NOTE: reshaped for borrowck — `handle_first_property` needs `&mut *ctx`,
+        // reshaped for borrowck — `handle_first_property` needs `&mut *ctx`,
         // so the split borrows of `ctx.formatter`/`ctx.writer` are taken *after* it.
         if ctx.i == 0 {
             let parent = ctx.parent;
@@ -1065,7 +1067,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
         let this = &mut *ctx.formatter;
         let mut writer = WrappedWriter::new(&mut *ctx.writer);
 
-        // PORT NOTE: defer ctx.i += 1 — incremented at end of fn.
+        // defer ctx.i += 1 — incremented at end of fn.
         if ctx.i > 0 {
             if ctx.always_newline || this.always_newline_scope || this.good_time_for_a_new_line() {
                 writer.write_all(b"\n");
@@ -1169,7 +1171,7 @@ impl<'a> Formatter<'a> {
         if self.failed {
             return Ok(());
         }
-        // PORT NOTE: reshaped for borrowck — `WrappedWriter` borrows both writer_
+        // reshaped for borrowck — `WrappedWriter` borrows both writer_
         // and &mut self.estimated_line_length; we use a local wrapper and sync
         // `failed` at scope exit. estimated_line_length is unused by WrappedWriter
         // methods in this file, so we leave it None here.
@@ -1177,7 +1179,7 @@ impl<'a> Formatter<'a> {
 
         if FORMAT.can_have_circular_references() {
             if self.map_node.is_none() {
-                // PORT NOTE: `visited::Pool::get()` returns an RAII `PoolGuard` that
+                // `visited::Pool::get()` returns an RAII `PoolGuard` that
                 // would release on scope exit; the Zig spec stashes the raw node on
                 // `self` and releases it from `JestPrettyFormat::format`'s defer, so
                 // take the raw node directly. `data` is initialized by
@@ -1185,7 +1187,7 @@ impl<'a> Formatter<'a> {
                 let node = core::ptr::NonNull::new(visited::Pool::get_node())
                     .expect("ObjectPool::get_node never returns null");
                 self.map_node = Some(node);
-                // PORT NOTE: Zig (.zig:878-880) does a struct copy aliasing the same
+                // Zig (.zig:878-880) does a struct copy aliasing the same
                 // backing buffer. Rust takes the map here and swaps it back into
                 // `node.data` at release time (see JestPrettyFormat::format tail),
                 // so the pooled allocation is retained across uses.
@@ -1211,7 +1213,7 @@ impl<'a> Formatter<'a> {
             }
         }
 
-        // PORT NOTE: Zig `defer { if (Format.canHaveCircularReferences()) _ = this.map.remove(value); }`
+        // Zig `defer { if (Format.canHaveCircularReferences()) _ = this.map.remove(value); }`
         // (.zig:890-894) is realized by wrapping the match in a closure and unconditionally
         // calling `self.map.remove(&value)` after it returns (Ok or Err). A scopeguard
         // cannot be used here because it would hold `&mut self` across the match body.
@@ -1320,7 +1322,7 @@ impl<'a> Formatter<'a> {
                         if has_newline {
                             writer.write_all(b"\n");
                         }
-                        // PORT NOTE: Zig registers the `<r>` reset as a `defer` (.zig:942-943)
+                        // Zig registers the `<r>` reset as a `defer` (.zig:942-943)
                         // before the body, so it fires AFTER the trailing `\n` at .zig:975.
                         // Emit it last here to keep byte-for-byte parity with colored output.
                         if ENABLE_ANSI_COLORS {
@@ -1543,7 +1545,7 @@ impl<'a> Formatter<'a> {
                         let prev_quote_strings = self.quote_strings;
                         self.quote_strings = true;
 
-                        // PORT NOTE: Zig registers `defer this.indent -|= 1` (.zig:1120) and
+                        // Zig registers `defer this.indent -|= 1` (.zig:1120) and
                         // `defer this.quote_strings = prev_quote_strings` (.zig:1128) so state is
                         // restored even when `Tag.get` / `format` throw. Wrap the fallible body in
                         // a closure and restore unconditionally afterward to match.
@@ -1891,7 +1893,7 @@ impl<'a> Formatter<'a> {
                     writer.print(format_args!("\n{} {{\n", map_name));
                     {
                         self.indent += 1;
-                        // PORT NOTE: hoist global_this (Copy &ref) before iter mutably
+                        // hoist global_this (Copy &ref) before iter mutably
                         // borrows `self`/`writer.ctx`; NLL releases both once `iter`
                         // is dead after `for_each` returns.
                         let global = self.global_this;
@@ -1904,7 +1906,7 @@ impl<'a> Formatter<'a> {
                             (&raw mut iter).cast::<c_void>(),
                             MapIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                         );
-                        // PORT NOTE: Zig `defer this.indent -|= 1` / `defer this.quote_strings = prev`
+                        // Zig `defer this.indent -|= 1` / `defer this.quote_strings = prev`
                         // run on every exit, including thrown exceptions — restore before propagating.
                         self.indent = self.indent.saturating_sub(1);
                         self.quote_strings = prev_quote_strings;
@@ -1947,7 +1949,7 @@ impl<'a> Formatter<'a> {
                             (&raw mut iter).cast::<c_void>(),
                             SetIterator::<W, ENABLE_ANSI_COLORS>::for_each,
                         );
-                        // PORT NOTE: Zig `defer this.indent -|= 1` / `defer this.quote_strings = prev`
+                        // Zig `defer this.indent -|= 1` / `defer this.quote_strings = prev`
                         // run on every exit, including thrown exceptions — restore before propagating.
                         self.indent = self.indent.saturating_sub(1);
                         self.quote_strings = prev_quote_strings;
@@ -2027,7 +2029,7 @@ impl<'a> Formatter<'a> {
                         self.indent += 1;
                         let old_quote_strings = self.quote_strings;
                         self.quote_strings = true;
-                        // PORT NOTE: Zig registers `defer this.indent -|= 1` and
+                        // Zig registers `defer this.indent -|= 1` and
                         // `defer this.quote_strings = old_quote_strings` here so state
                         // is restored even when `fastGet` / `Tag.get` / `format` throw.
                         // Wrap the fallible body and restore unconditionally afterward.
@@ -2126,7 +2128,7 @@ impl<'a> Formatter<'a> {
                     let tag_name_slice: ZigStringSlice;
                     let mut is_tag_kind_primitive = false;
 
-                    // PORT NOTE: defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit()
+                    // defer if (tag_name_slice.isAllocated()) tag_name_slice.deinit()
                     // — ZigString::Slice has Drop in Rust.
 
                     if let Some(type_value) = value.get(self.global_this, "type")? {
@@ -2198,7 +2200,7 @@ impl<'a> Formatter<'a> {
                         let prev_quote_strings = self.quote_strings;
                         self.quote_strings = true;
 
-                        // PORT NOTE: Zig registers `defer this.quote_strings = prev_quote_strings`
+                        // Zig registers `defer this.quote_strings = prev_quote_strings`
                         // (and nested `defer this.indent -|= 1` scopes) so state is restored on
                         // every exit, including thrown exceptions. Wrap the fallible body in a
                         // closure (Ok(true) ⇒ children path printed the closing tag, so the
@@ -2222,7 +2224,7 @@ impl<'a> Formatter<'a> {
                                     props_iter.len - usize::from(children_prop.is_some());
 
                                 let loop_result: JsResult<()> = (|| {
-                                // PORT NOTE: `JSPropertyIterator::i` is private upstream;
+                                // `JSPropertyIterator::i` is private upstream;
                                 // track the 1-based iteration index locally (matches the
                                 // post-`next()` value of the Zig spec's `props_iter.i`).
                                 let mut iter_i: usize = 0;
@@ -2489,7 +2491,7 @@ impl<'a> Formatter<'a> {
 
                     let iter_i = iter.i;
                     let iter_always_newline = iter.always_newline;
-                    // PORT NOTE: Zig `defer this.always_newline_scope = prev` /
+                    // Zig `defer this.always_newline_scope = prev` /
                     // `defer this.quote_strings = prev` run on every exit — restore
                     // before propagating any exception from the property iterator.
                     self.always_newline_scope = prev_always_newline_scope;
@@ -2656,7 +2658,7 @@ impl<'a> Formatter<'a> {
         global_this: &'a JSGlobalObject,
     ) -> JsResult<()> {
         let prev_global_this = self.global_this;
-        // PORT NOTE: defer this.globalThis = prevGlobalThis — restored at end.
+        // defer this.globalThis = prevGlobalThis — restored at end.
         self.global_this = global_this;
 
         // This looks incredibly redundant. We make the JestPrettyFormat.Formatter.Tag a
@@ -2930,7 +2932,7 @@ impl JestPrettyFormat {
         M: AsymmetricMatcherFormatter,
         W: bun_io::Write,
     {
-        // PORT NOTE: Zig (.zig:2005-2013) passes both `*WrappedWriter` and the raw inner
+        // Zig (.zig:2005-2013) passes both `*WrappedWriter` and the raw inner
         // writer, which alias. In Rust that would be two live `&mut W` to the same target
         // (UB / borrowck violation), so we accept only the wrapped writer and reach the
         // raw `&mut W` via `writer.ctx` for `print_as` calls — single borrow chain.

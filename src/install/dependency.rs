@@ -213,7 +213,6 @@ impl DependencyExt for Dependency {
         buf: &[u8],
         builder: &mut SB,
     ) -> Result<Dependency, bun_core::Error> {
-        // TODO(port): narrow error set
         self.clone_with_different_buffers(package_manager, buf, buf, builder)
     }
 
@@ -224,8 +223,7 @@ impl DependencyExt for Dependency {
         version_buf: &[u8],
         builder: &mut SB,
     ) -> Result<Dependency, bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: reshaped for borrowck — Zig captured `out_slice` first, but
+        // reshaped for borrowck — Zig captured `out_slice` first, but
         // `append_string` may reallocate `string_bytes`, invalidating the slice.
         // Append first, then borrow the (now-stable) buffer.
         let new_literal = builder.append_string(self.version.literal.slice(version_buf));
@@ -317,7 +315,7 @@ pub trait StringBuilderLike: bun_semver::StringBuilder {
     fn string_bytes(&self) -> &[u8];
 }
 
-// PORT NOTE: single-impl monomorphization is intentional. Every Zig call site
+// single-impl monomorphization is intentional. Every Zig call site
 // of `Dependency.count`/`clone`/`*WithDifferentBuffers` passes
 // `*Lockfile.StringBuilder` (Package.zig, OverrideMap.zig, CatalogMap.zig,
 // install_with_manager.zig) — `semver_string::Builder` is never used here, and
@@ -649,7 +647,6 @@ impl VersionExt for Version {
         buf: &[u8],
         builder: &mut SB,
     ) -> Result<Version, bun_core::Error> {
-        // TODO(port): narrow error set
         Ok(Version {
             tag: self.tag,
             literal: builder.append_string(self.literal.slice(buf)),
@@ -771,7 +768,7 @@ impl VersionExt for Version {
 // Version::Tag
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: Zig `Tag.map = bun.ComptimeStringMap(Tag, ...)`. Was a `phf::Map`
+// Zig `Tag.map = bun.ComptimeStringMap(Tag, ...)`. Was a `phf::Map`
 // in an earlier draft; rewritten as a length-gated match (cf. 12577e958d71
 // clap::find_param) — 9 entries with near-unique lengths, so a single `usize`
 // compare rejects almost every miss before touching bytes, and hits resolve in
@@ -825,7 +822,7 @@ impl TagExt for Tag {
         }
 
         if strings::starts_with_windows_drive_letter_t(dependency)
-            // PORT NOTE: Zig `std.fs.path.isSep` — platform-native separator only
+            // Zig `std.fs.path.isSep` — platform-native separator only
             // (`/` on POSIX, `/` or `\` on Windows). NOT `isSepAny`.
             && {
                 #[cfg(windows)]
@@ -1049,7 +1046,7 @@ impl TagExt for Tag {
                             url = &url[b"git@".len()..];
                         }
 
-                        let _ = url; // PORT NOTE: Zig mutates `url` but doesn't use it after this point
+                        let _ = url; // Zig mutates `url` but doesn't use it after this point
 
                         if let Ok(Some(info)) = hosted_git_info::HostedGitInfo::from_url(dependency)
                         {

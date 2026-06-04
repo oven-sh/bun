@@ -6,14 +6,14 @@ use super::protocol_jsc::{ToJSOptions, resp_value_to_js_with_options};
 
 type Slice = bun_core::ZigStringSlice;
 
-// PORT NOTE: callers in `js_valkey_functions.rs` construct
+// Note: callers in `js_valkey_functions.rs` construct
 // `Vec<crate::node::types::BlobOrStringOrBuffer>` directly, so `Args::Args` must accept
 // that exact type. The upstream `bun_jsc::Node::BlobOrStringOrBuffer` re-export is a
 // stub; use the real in-crate definition (which already provides `slice()` /
 // `byte_length()`).
 type BlobOrStringOrBuffer = crate::node::types::BlobOrStringOrBuffer;
 
-// PORT NOTE: `Command` is a transient view struct (Zig `deinit` is a no-op); fields
+// Note: `Command` is a transient view struct (Zig `deinit` is a no-op); fields
 // borrow caller-owned data for the duration of serialization.
 #[derive(Copy, Clone)]
 pub struct Command<'a> {
@@ -57,7 +57,6 @@ impl<'a> Args<'a> {
 
 impl<'a> Command<'a> {
     pub fn write(&self, writer: &mut impl bun_io::Write) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // Serialize as RESP array format directly
         write!(writer, "*{}\r\n", 1 + self.args.len())?;
         write!(writer, "${}\r\n", self.command.len())?;
@@ -99,20 +98,9 @@ impl<'a> Command<'a> {
     }
 
     pub fn serialize(&self) -> Result<Box<[u8]>, bun_core::Error> {
-        // TODO(port): narrow error set
         let mut buf: Vec<u8> = Vec::with_capacity(self.byte_length());
         self.write(&mut buf)?;
         Ok(buf.into_boxed_slice())
-    }
-}
-
-impl<'a> core::fmt::Display for Command<'a> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        // TODO(port): RESP bytes may not be valid UTF-8; Zig used the byte-writer protocol.
-        // Route Display through a byte-writing adapter or drop Display entirely.
-        let mut buf: Vec<u8> = Vec::new();
-        self.write(&mut buf).map_err(|_| core::fmt::Error)?;
-        write!(f, "{}", bstr::BStr::new(&buf))
     }
 }
 
@@ -132,10 +120,9 @@ pub mod entry {
 impl Entry {
     // Create an Offline by serializing the Valkey command directly
     pub fn create(command: &Command<'_>, promise: Promise) -> Result<Entry, bun_core::Error> {
-        // TODO(port): narrow error set
         Ok(Entry {
             serialized_data: command.serialize()?,
-            // TODO(markovejnovic): We should be calling .check against command here but due
+            // We should be calling .check against command here but due
             // to a hack introduced to let SUBSCRIBE work, we are not doing that for now.
             meta: command.meta,
             promise,

@@ -28,10 +28,9 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
     // SourceProvider cache.
 
     // Slice-field validity / alignment caveats are documented on the
-    // `ModuleInfoDeserialized` accessors.
-    // TODO(port): switch element reads to `read_unaligned` per the upstream
-    // note in `analyze_transpiled_module.rs` if a strict-alignment target is
-    // ever added.
+    // `ModuleInfoDeserialized` accessors. If a strict-alignment target is ever
+    // added, switch element reads to `read_unaligned` per the upstream note in
+    // `analyze_transpiled_module.rs`.
     let strings_buf: &[u8] = res.strings_buf();
     let strings_lens: &[u32] = res.strings_lens();
     let requested_modules_keys: &[StringID] = res.requested_modules_keys();
@@ -217,7 +216,6 @@ pub(crate) extern "C" fn zig__ModuleInfoDeserialized__toJSModuleRecord(
 }
 
 // ─── opaque FFI types ─────────────────────────────────────────────────────────
-// TODO(port): move to bundler_jsc_sys
 
 bun_opaque::opaque_ffi! { pub struct VariableEnvironment; }
 unsafe extern "C" {

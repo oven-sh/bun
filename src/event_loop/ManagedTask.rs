@@ -7,7 +7,7 @@ use core::ptr::NonNull;
 use crate::{JsResult, Task};
 
 pub struct ManagedTask {
-    // TODO(port): lifetime — opaque userdata pointer round-tripped through `new`/`run`
+    // Opaque userdata pointer round-tripped through `new`/`run`; raw by design.
     pub ctx: Option<NonNull<c_void>>,
     pub callback: fn(*mut c_void) -> JsResult<()>,
     pub cleanup: Option<fn(*mut c_void)>,
@@ -15,7 +15,7 @@ pub struct ManagedTask {
 
 impl ManagedTask {
     pub fn task(this: *mut ManagedTask) -> Task {
-        // PORT NOTE: Zig `Task.init(this)` mapped variant type → tag at comptime.
+        // Zig `Task.init(this)` mapped variant type → tag at comptime.
         // Per §Dispatch (tag+ptr), name the tag explicitly.
         Task::new(crate::task_tag::ManagedTask, this.cast())
     }
@@ -45,7 +45,7 @@ impl ManagedTask {
         self.callback = noop;
     }
 
-    // PORT NOTE: reshaped for borrowck / const-generics limitation.
+    // reshaped for borrowck / const-generics limitation.
     // Zig `pub fn New(comptime Type, comptime Callback) type { return struct { init, wrap } }`
     // cannot be expressed in stable Rust because a fn value is not a valid const-generic
     // parameter. The `wrap` trampoline (which `@ptrCast`/`@alignCast` the opaque ctx back

@@ -3,8 +3,8 @@ use core::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Default, Clone, Copy)]
 pub struct Signals {
-    // TODO(port): lifetime — these are non-owning pointers into a `Store` held by the caller.
-    // LIFETIMES.tsv had no entry; classified as BACKREF (raw) per PORTING.md.
+    // Non-owning pointers into a `Store` held by the caller (BACKREF per
+    // PORTING.md); the `Store` outlives every `Signals` derived from it.
     pub header_progress: Option<NonNull<AtomicBool>>,
     pub response_body_streaming: Option<NonNull<AtomicBool>>,
     pub aborted: Option<NonNull<AtomicBool>>,

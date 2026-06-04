@@ -47,11 +47,12 @@ use crate::isolated_install::store as Store;
 // and branches on `@TypeOf(callbacks.onExtract) != void`, `Ctx == *PackageInstaller`,
 // etc. Rust models this as a single trait with associated consts gating the
 // optional hooks (default-unreachable bodies), plus associated-const tags for
-// the `Ctx` identity checks. Phase B should revisit whether the call sites can
-// be split into 2–3 concrete impls instead of const-gated branches.
-//
-// TODO(port): callbacks trait — comptime duck-typing reshape; verify against
-// the three call sites (`PackageInstaller`, `Store.Installer`, void) in Phase B.
+// the `Ctx` identity checks. The trait branches on three `Ctx` identities
+// (`PackageInstaller`, `Store.Installer`, neither), but there are six impls
+// across four `Ctx` shapes: `PackageInstaller` (`HoistedRunTasksCallbacks`),
+// `Store::Installer` (`StoreRunTasksCallbacks`), unit
+// (`VoidRunTasksCallbacks`, `ManifestsOnlyCallbacks`, `InstallWaitCallbacks`),
+// and `Queue` (`QueueRunTasksCallbacks` in `src/jsc/AsyncModule.rs`).
 pub trait RunTasksCallbacks {
     /// Mirrors `Ctx` (the `extract_ctx` value type).
     type Ctx;
@@ -78,7 +79,7 @@ pub trait RunTasksCallbacks {
         unreachable!()
     }
 
-    // PORT NOTE: Zig calls `onPackageDownloadError` with two distinct shapes
+    // Zig calls `onPackageDownloadError` with two distinct shapes
     // depending on the comptime `Ctx`: `task.task_id: Task.Id` for
     // `*Store.Installer`, `package_id: PackageID` otherwise. Model the
     // comptime branch as static dispatch via two trait methods so impls
@@ -153,7 +154,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     let mut timestamp_this_tick: Option<u32> = None;
 
     // Zig: `defer { manager.drainDependencyList(); ... progress update ... }`
-    // PORT NOTE: scopeguard captures `manager` via raw pointer because the loop
+    // scopeguard captures `manager` via raw pointer because the loop
     // body holds `&mut` to it for the function's duration; `has_updated_this_run`
     // is a `Cell<bool>` so the guard captures it by shared ref. The guard runs
     // on every exit (incl. `?` early-returns), matching Zig `defer` semantics.
@@ -252,7 +253,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     }
 
     if C::IS_STORE_INSTALLER {
-        // PORT NOTE: reshaped for borrowck — Zig writes `const installer:
+        // reshaped for borrowck — Zig writes `const installer:
         // *Store.Installer = extract_ctx;` and freely aliases
         // `installer.manager` with the outer `manager`. Here we obtain the
         // installer via the trait downcast and access PackageManager only
@@ -296,11 +297,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // its sole consumer (see Installer.rs Yield::RunScripts).
                     // Zig: `list.*` — by-value copy of the List.
                     let list_val = unsafe { (*list).clone() };
-                    // PORT NOTE: reshaped for borrowck — `Command::Context<'a>`
+                    // reshaped for borrowck — `Command::Context<'a>`
                     // is `&'a mut ContextData`; reborrow instead of moving the
                     // field out of `*installer`.
                     let command_ctx: Command::Context<'_> = &mut *installer.command_ctx;
-                    // PORT NOTE: `installer.manager == manager` (same allocation,
+                    // `installer.manager == manager` (same allocation,
                     // see fn-signature note); call via the body shadow which is a
                     // reborrow of `manager_ptr` — no extra unsafe alias needed.
                     let spawn_res = manager.spawn_package_lifecycle_scripts(
@@ -360,7 +361,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 name,
                 is_extended_manifest,
             } => {
-                // PORT NOTE: reshaped for borrowck — capture the name's slice
+                // reshaped for borrowck — capture the name's slice
                 // pointer (`StringOrTinyString` is self-referential and not
                 // `Clone`) so the loop body can read `name` after the
                 // `&mut task.callback` borrow ends.
@@ -555,7 +556,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         manifest.pkg.public_max_age = timestamp_this_tick.unwrap();
 
-                        // PORT NOTE: reshaped for borrowck — Zig writes through
+                        // reshaped for borrowck — Zig writes through
                         // the `getOrPut` slot then re-reads it for `saveAsync`.
                         // `bun_collections::HashMap` lacks `get_or_put` for
                         // non-`Default` values, so insert by-value (overwriting
@@ -567,7 +568,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             .insert(name_hash, ManifestEntry::Manifest(manifest));
 
                         if manager.options.enable.contains(Enable::MANIFEST_CACHE) {
-                            // PORT NOTE: reshaped for borrowck — compute the
+                            // reshaped for borrowck — compute the
                             // `&mut`-taking directory accessors first so the
                             // shared `scope_for_package_name` / `manifests`
                             // borrows below do not overlap them. `save_async`
@@ -611,7 +612,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
-                // PORT NOTE: reshaped — `enqueue_parse_npm_package` takes
+                // reshaped — `enqueue_parse_npm_package` takes
                 // `StringOrTinyString` by value; reconstruct from the slice we
                 // captured (the original lives in `task.callback`, which the
                 // enqueued resolve Task takes ownership of via `network`).
@@ -620,7 +621,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     &mut crate::network_task::filename_store_appender(),
                 )
                 .expect("unreachable");
-                // PORT NOTE: reshaped for borrowck — split the nested `&mut
+                // reshaped for borrowck — split the nested `&mut
                 // manager` borrows (`task_batch.push` vs. `enqueue_*`).
                 // SAFETY: `task_ptr` is non-null (checked by the iterator loop guard)
                 // and exclusively owned by this batch; `manager` is the live PackageManager.
@@ -630,7 +631,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
             NetworkTaskCallback::Extract(extract) => {
-                // PORT NOTE: reshaped for borrowck — `extract` borrows
+                // reshaped for borrowck — `extract` borrows
                 // `task.callback`; the body also calls `&mut self` methods on
                 // `task` (`reset_streaming_for_retry`,
                 // `discard_unused_streaming_state`) which only touch disjoint
@@ -911,7 +912,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
-                // PORT NOTE: reshaped for borrowck — split nested `&mut manager`.
+                // reshaped for borrowck — split nested `&mut manager`.
                 let queued = enqueue::enqueue_extract_npm_package(manager, &*extract, task_ptr);
                 manager.task_batch.push(ThreadPoolBatch::from(queued));
             }
@@ -930,7 +931,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             debug_assert!(manager.pending_task_count() > 0);
         }
         // Zig: `defer manager.preallocated_resolve_tasks.put(task);`
-        // PORT NOTE: raw-ptr capture — borrowck would reject overlapping `&mut`
+        // raw-ptr capture — borrowck would reject overlapping `&mut`
         // with the loop body. Guard runs on every `continue`/`?`/fallthrough.
         // Phase B: have the iterator yield a pool guard that puts back on Drop.
         // SAFETY: `task_ptr` non-null per loop guard; node exclusively owned by this batch.
@@ -965,7 +966,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         match task.tag {
             Task::Tag::PackageManifest => {
                 // Zig: `defer manager.preallocated_network_tasks.put(task.request.package_manifest.network);`
-                // PORT NOTE: capture the `*mut NetworkTask` up front — the
+                // capture the `*mut NetworkTask` up front — the
                 // `&'a mut NetworkTask` field can't be moved out through
                 // `ManuallyDrop`'s immutable `Deref` inside the defer body.
                 let net_ptr: *mut NetworkTask = {
@@ -1050,7 +1051,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
             }
             Task::Tag::Extract | Task::Tag::LocalTarball => {
                 // Zig: `defer { switch (task.tag) { .extract => preallocated_network_tasks.put(...), else => {} } }`
-                // PORT NOTE: capture the `*mut NetworkTask` up front (only for the
+                // capture the `*mut NetworkTask` up front (only for the
                 // Extract arm) so the defer body need not move the `&mut` out
                 // through `ManuallyDrop`'s immutable `Deref`.
                 let net_ptr: *mut NetworkTask = if task.tag == Task::Tag::Extract {
@@ -1367,7 +1368,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // this dependency might be something other than a git dependency! only need the name and
                     // behavior, use the resolution from the task.
                     let dep_id = clone.dep_id;
-                    // PORT NOTE: reshaped for borrowck — Zig copies `dep` by
+                    // reshaped for borrowck — Zig copies `dep` by
                     // value. Copy the small `String` handles + behavior bit so
                     // the `&manager.lockfile` borrow doesn't extend across the
                     // `&mut manager` calls (`has_created_network_task`,
@@ -1407,7 +1408,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
-                    // PORT NOTE: reshaped for borrowck — split nested `&mut manager`.
+                    // reshaped for borrowck — split nested `&mut manager`.
                     let queued = enqueue::enqueue_git_checkout(
                         manager,
                         checkout_id,
@@ -1791,7 +1792,7 @@ pub fn generate_network_task_for_tarball<'a>(
         return Ok(None);
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig writes the whole struct via `.* = .{}`.
+    // reshaped for borrowck — Zig writes the whole struct via `.* = .{}`.
     // All `&mut this` uses (patch-task alloc, cache/temp dir, pool slot) happen
     // first; the immutable `pkg_name`/`scope` borrows are taken afterwards and
     // live only through `for_tarball`, leaving `this` free for the streaming
@@ -1831,7 +1832,7 @@ pub fn generate_network_task_for_tarball<'a>(
     let temp_dir = directories::get_temporary_directory(this).handle.fd();
     // Backref address only — stored, not dereffed in this function. The tag is
     // immediately popped by the next `this` use; that's fine for a stored
-    // back-pointer (TODO(port): lifetime — BACKREF).
+    // back-pointer.
     let this_backref: *mut PackageManager = this;
 
     // Take the pool slot as a raw pointer so borrowck releases `this` for the

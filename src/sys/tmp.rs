@@ -44,7 +44,7 @@ impl<'a> Tmpfile<'a> {
                             fd.make_lib_uv_owned_for_syscall(Tag::open, ErrorCase::CloseOnFail)?;
                         break 'open;
                     }
-                    // PORT NOTE: Zig matched .OPNOTSUPP; on Linux that aliases ENOTSUP.
+                    // Zig matched .OPNOTSUPP; on Linux that aliases ENOTSUP.
                     Err(err) => match err.get_errno() {
                         E::EINVAL | E::ENOTSUP | E::ENOSYS => {
                             tmpfile.using_tmpfile = false;
@@ -66,7 +66,6 @@ impl<'a> Tmpfile<'a> {
         Ok(tmpfile)
     }
 
-    // TODO(port): narrow error set
     pub fn finish(&mut self, destname: &ZStr) -> Result<(), bun_core::Error> {
         // ALLOW_TMPFILE = false dead branch — see `create()` note above.
         if ALLOW_TMPFILE && self.using_tmpfile {

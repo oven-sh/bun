@@ -1455,8 +1455,6 @@ pub fn parse_items<D: GradientPosition>(input: &mut css::Parser) -> Result<Vec<G
     let mut seen_stop = false;
 
     loop {
-        // PORT NOTE: reshaped for borrowck — Zig used a Closure { items: *ArrayList, seen_stop: *bool }
-        // captured into parseUntilBefore; here we close over &mut locals directly.
         input.parse_until_before(
             css::Delimiters::COMMA,
             |i: &mut css::Parser| -> Result<()> {

@@ -19,9 +19,9 @@ pub use crate::shared::sql_data_cell::SQLDataCell;
 pub use crate::shared::sql_data_cell::{Array, Flags, Raw, Tag, TypedArray, Value};
 use bun_sql::shared::column_identifier::ColumnIdentifier;
 
-// TODO(port): narrow error set — Zig used inferred error sets that flow into
-// AnyPostgresError. Confirm AnyPostgresError covers all variants referenced
-// via `err!(...)` here.
+// Zig used inferred error sets here; the Rust port collapses them into
+// `AnyPostgresError` (names not in that enum — e.g. `err!("BufferTooSmall")` —
+// fall back to `JSError` via the name-based `From<bun_core::Error>` impl).
 type Result<T, E = AnyPostgresError> = core::result::Result<T, E>;
 
 bun_core::declare_scope!(Postgres, visible);
@@ -522,7 +522,7 @@ fn parse_array(
                             let mut has_exponent = false;
                             let mut has_negative_sign = false;
                             let mut has_positive_sign = false;
-                            // PORT NOTE: reshaped for borrowck — Zig mutates `slice` mid-loop while
+                            // reshaped for borrowck — Zig mutates `slice` mid-loop while
                             // iterating it (the Infinity arm). We capture the advance amount and
                             // apply after the loop.
                             let mut advance_after: Option<usize> = None;
@@ -739,7 +739,7 @@ fn parse_array(
 }
 
 // Helper: typed-array binary path shared by .int4_array / .float4_array.
-// PORT NOTE: Zig used `inline ... => |tag|` to capture the comptime tag and call
+// Zig used `inline ... => |tag|` to capture the comptime tag and call
 // `tag.toJSTypedArrayType()` / `tag.byteArrayType()` / `tag.pgArrayType()` in type
 // position. Those return types, so we monomorphize over the element type here.
 fn from_bytes_typed_array<Elem: bun_sql::postgres::types::tag::WireByteSwap>(
@@ -1239,7 +1239,7 @@ pub(crate) fn from_bytes(
 // #define pg_ntoh32(x)        (x)
 // #define pg_ntoh64(x)        (x)
 
-// PORT NOTE: Zig's pg_ntoT used @typeInfo to accept either an array or an int and
+// Zig's pg_ntoT used @typeInfo to accept either an array or an int and
 // recurse through @bitCast. All call sites pass a uN already, so we drop the
 // reflection and provide direct byte-swap helpers.
 #[inline]
@@ -1274,7 +1274,7 @@ fn parse_binary_numeric<'a>(
     if input.len() < 8 {
         return Err(err!("InvalidBuffer"));
     }
-    // PORT NOTE: std.io.fixedBufferStream → manual cursor over &[u8]
+    // std.io.fixedBufferStream → manual cursor over &[u8]
     let mut cursor = input;
     macro_rules! read_be {
         ($ty:ty) => {{
@@ -1335,7 +1335,7 @@ fn parse_binary_numeric<'a>(
         let mut first_non_zero = false;
 
         while idx <= weight as usize {
-            // PORT NOTE: Zig peer-type-widened `idx < ndigits`; compare in i32 to avoid usize→i16 truncation.
+            // Zig peer-type-widened `idx < ndigits`; compare in i32 to avoid usize→i16 truncation.
             let digit: u16 = if i32::try_from(idx).expect("int cast") < i32::from(ndigits) {
                 read_be!(u16)
             } else {
@@ -1394,11 +1394,11 @@ fn parse_binary_numeric<'a>(
             result.truncate(end);
         }
     }
-    // PORT NOTE: reshaped for borrowck — return borrowed slice of `result`
+    // reshaped for borrowck — return borrowed slice of `result`
     Ok(PGNummericString::Dynamic(result.as_slice()))
 }
 
-// PORT NOTE: Zig's `parseBinary(comptime tag, comptime ReturnType, bytes)` returns a
+// Zig's `parseBinary(comptime tag, comptime ReturnType, bytes)` returns a
 // type that varies per arm. Rust cannot express that as a single fn without an output
 // trait, so it is split per-tag. Call sites in this file are updated.
 pub fn parse_binary_float8(bytes: &[u8]) -> Result<f64, AnyPostgresError> {
@@ -1590,7 +1590,6 @@ impl<'a> Putter<'a> {
 }
 
 // External C++ formatting functions
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     // `&mut [u8; N]` is ABI-identical to `*mut u8` (thin pointer to a `Sized`
     // array == pointer to its first element); the reference type discharges the

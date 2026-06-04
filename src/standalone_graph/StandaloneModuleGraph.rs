@@ -24,8 +24,8 @@ use bun_paths::{OSPathBuffer, WPathBuffer};
 use bun_sourcemap as SourceMap;
 use bun_sys::{self as Syscall, Fd, FdExt as _, Stat};
 
-// TODO(port): bun_webcore::Blob — `cached_blob` is only ever set from
-// `bun_runtime` (higher tier); model as opaque erased pointer here.
+// `bun_webcore::Blob` lives in a higher tier and `cached_blob` is only ever
+// set from `bun_runtime`, so it is modeled as an opaque erased pointer here.
 bun_opaque::opaque_ffi! {
     /// Opaque stand-in for `bun_webcore::Blob`. Only stored as `NonNull<Blob>`.
     pub struct Blob;
@@ -58,10 +58,10 @@ pub const BASE_PATH: &str = "/$bunfs/";
 #[cfg(windows)]
 pub const BASE_PATH: &str = "B:\\~BUN\\";
 
-// TODO(port): Zig version takes `target: Environment.OperatingSystem` + `comptime suffix`
-// and concatenates at comptime. Rust cannot const-concat with a runtime enum branch
-// nor across a `const fn` boundary. Could expose as a `macro_rules!` over
-// `const_format::concatcp!`; for now we materialize the two call-sites directly.
+// Zig took `target: Environment.OperatingSystem` + `comptime suffix` and
+// concatenated at comptime. Rust cannot const-concat with a runtime enum branch
+// nor across a `const fn` boundary, so the two call-site combinations are
+// materialized directly with `const_format::concatcp!`.
 #[cfg(windows)]
 pub const BASE_PUBLIC_PATH: &str = "B:/~BUN/";
 #[cfg(not(windows))]
@@ -72,12 +72,12 @@ pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("
 #[cfg(not(windows))]
 pub const BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX: &str = const_format::concatcp!("/$bunfs/", "root/");
 
-// TODO(port): Zig used a nested `Instance` struct holding a static var. Model
-// as a process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
+// Zig used a nested `Instance` struct holding a static var. Modeled as a
+// process-lifetime `OnceLock` (PORTING.md §Concurrency: never `static mut`).
 // `get()` returns a raw `*mut` to mirror Zig's `?*StandaloneModuleGraph`; callers
-// mutate `wtf_string` / `cached_blob` / `sourcemap` lazily. TODO(refactor):
-// push interior mutability down to those per-`File` fields (`UnsafeCell<…>`) so
-// read-only paths (`find`, `entry_point`, `stat`) can take `&self`.
+// mutate `wtf_string` / `cached_blob` / `sourcemap` lazily. A future reshape
+// could push interior mutability down to those per-`File` fields (`UnsafeCell<…>`)
+// so read-only paths (`find`, `entry_point`, `stat`) can take `&self`.
 struct Instance(core::cell::UnsafeCell<StandaloneModuleGraph>);
 // SAFETY: the graph is populated once at startup before any worker threads;
 // post-init mutation is limited to per-`File` lazy fields. NOTE: `INIT_LOCK`
@@ -104,10 +104,10 @@ impl StandaloneModuleGraph {
     }
 }
 
-// TODO(port): Zig `targetBasePublicPath(target, comptime suffix: [:0]const u8) [:0]const u8`
+// Zig `targetBasePublicPath(target, comptime suffix: [:0]const u8) [:0]const u8`
 // concatenates at comptime via `++`. A runtime `suffix: &[u8]` parameter cannot be
-// const-concatenated. All Zig callers pass either `""` or `"root/"`, so the runtime
-// variant special-cases those two literals.
+// const-concatenated. All callers pass either `""` or `"root/"`, so the runtime
+// variant special-cases those two literals (`unreachable!` guards anything new).
 pub fn target_base_public_path(
     target: bun_core::Environment::OperatingSystem,
     suffix: &'static [u8],
@@ -145,9 +145,9 @@ pub fn is_bun_standalone_file_path(str_: &[u8]) -> bool {
 }
 
 impl StandaloneModuleGraph {
-    // TODO(port): interior mutability — Zig returns `*File` and callers mutate
-    // `wtf_string` / `cached_blob`. Using `&mut self` here may force callers to
-    // hold `&mut StandaloneModuleGraph`; could switch to `UnsafeCell` fields.
+    // Zig returns `*File` and callers mutate `wtf_string` / `cached_blob`, so
+    // these accessors take `&mut self`. Switching to `UnsafeCell` per-`File`
+    // fields would let read-only paths take `&self`; see the `Instance` note above.
     pub fn entry_point(&mut self) -> &mut File {
         &mut self.files.values_mut()[self.entry_point_id as usize]
     }
@@ -278,7 +278,8 @@ pub enum ModuleFormat {
 
 #[cfg(target_os = "macos")]
 mod macho {
-    // TODO(port): move to standalone_graph_sys
+    // Declared inline rather than in a dedicated `*_sys` crate: this crate is
+    // the symbol's only consumer.
     unsafe extern "C" {
         pub(super) fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // align(1) in Zig
     }
@@ -334,7 +335,8 @@ mod pe {
 
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 mod elf {
-    // TODO(port): move to standalone_graph_sys
+    // Declared inline rather than in a dedicated `*_sys` crate: this crate is
+    // the symbol's only consumer.
     unsafe extern "C" {
         pub(super) fn Bun__getStandaloneModuleGraphELFVaddr() -> *mut u64; // align(1)
     }
@@ -425,7 +427,8 @@ impl File {
         self.wtf_string.dupe_ref()
     }
 
-    // TODO(port): move to *_jsc — `pub const blob = @import("../runtime/api/standalone_graph_jsc.zig").fileBlob;`
+    // Zig re-exported `fileBlob` from the jsc tier here (`pub const blob = ...`);
+    // in the Rust port callers use the `*_jsc` crate directly, so no alias exists.
 }
 
 pub enum LazySourceMap {
@@ -457,7 +460,7 @@ impl LazySourceMap {
                 let ism = SourceMap::InternalSourceMap {
                     data: blob.as_ptr(),
                 };
-                // PORT NOTE: `from_internal` fills `internal = Some(ism)` +
+                // Note: `from_internal` fills `internal = Some(ism)` +
                 // `input_line_count = ism.input_line_count()` and defaults the rest.
                 let mut stored = SourceMap::ParsedSourceMap::from_internal(ism);
 
@@ -559,7 +562,7 @@ impl StandaloneModuleGraph {
         // SAFETY: modules metadata blob is a read-only subrange of `[0, raw_len)` disjoint
         // from bytecode/module_info, serialized by `to_bytes`.
         let modules_list_bytes = unsafe { slice_to(raw_const, raw_len, offsets.modules_ptr) };
-        // PORT NOTE: StandaloneModuleGraph.zig:309 builds `[]align(1) const CompiledModuleGraphFile`
+        // Note: StandaloneModuleGraph.zig:309 builds `[]align(1) const CompiledModuleGraphFile`
         // because the modules blob sits at an arbitrary byte offset in the section. In Rust,
         // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
         // → 4-byte). We instead iterate by index and `read_unaligned` each fixed-size record into a
@@ -605,7 +608,10 @@ impl StandaloneModuleGraph {
                     contents,
                     sourcemap: if module.sourcemap.length > 0 {
                         LazySourceMap::Serialized(SerializedSourceMap {
-                            // TODO(port): @alignCast — alignment of source map bytes
+                            // Zig needed `@alignCast` here; `&[u8]` is align(1)
+                            // so no cast is required, and every structured read
+                            // from these bytes (header / StringPointer tables)
+                            // goes through `read_unaligned` in SerializedSourceMap.
                             bytes: sourcemap_bytes,
                         })
                     } else {
@@ -713,10 +719,8 @@ pub(crate) fn to_bytes(
     compile_exec_argv: &[u8],
     flags: Flags,
 ) -> Result<Vec<u8>, BunError> {
-    // TODO(port): bun_perf::PerfEvent::StandaloneModuleGraph_serialize — generated
-    // enum is still a `_Stub` placeholder; restore the trace call once the generator emits
-    // real variants.
-    // let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraph_serialize);
+    // Zig: `bun.perf.trace("StandaloneModuleGraph.serialize")` — RAII `Ctx` ends on drop.
+    let _serialize_trace = bun_perf::trace(bun_perf::PerfEvent::StandaloneModuleGraphSerialize);
 
     let mut entry_point_id: Option<usize> = None;
     let mut string_builder = bun_core::StringBuilder::default();
@@ -856,7 +860,7 @@ pub(crate) fn to_bytes(
             break 'brk StringPointer::default();
         };
 
-        // PORT NOTE: Zig used `bun.sys.File.makeOpen` (open, on-fail mkdir parent +
+        // Note: Zig used `bun.sys.File.makeOpen` (open, on-fail mkdir parent +
         // retry). `src/sys/File.rs` is still cfg-gated upstream, so the
         // `make_open` body is inlined here against the live `bun_sys` stub
         // surface (`openat` / `make_path` / `File::write_all`).
@@ -997,21 +1001,29 @@ pub(crate) fn to_bytes(
     let _ = string_builder.append(offsets_as_bytes);
     let _ = string_builder.append(TRAILER);
 
-    // SAFETY: string_builder.ptr was set by allocate() above.
-    let output_bytes = unsafe {
-        core::slice::from_raw_parts_mut(string_builder.ptr.unwrap().as_ptr(), string_builder.len)
-    };
-
     #[cfg(debug_assertions)]
     {
-        // An expensive sanity check:
-        // TODO(port): from_bytes wants &'static mut; debug-only sanity check elided.
-        // let mut graph = StandaloneModuleGraph::from_bytes(output_bytes, offsets)?;
-        // debug_assert_eq!(graph.files.count(), modules.len());
+        // An expensive sanity check (mirrors the Zig debug block): round-trip
+        // the serialized bytes and verify the module count survives. The graph
+        // only borrows the builder's buffer transiently — it is unlocked and
+        // dropped before the buffer is moved out below.
+        let graph = StandaloneModuleGraph::from_bytes(
+            string_builder.ptr.unwrap().as_ptr(),
+            string_builder.len,
+            offsets,
+        )?;
+        debug_assert_eq!(graph.files.count(), modules.len());
+        graph.files.unlock_pointers();
     }
 
-    // TODO(port): StringBuilder owns the buffer; return it as Vec<u8>.
-    Ok(output_bytes.to_vec())
+    // StringBuilder owns the buffer; hand it back without copying. `cap` may
+    // exceed `len` (sourcemap capacity is over-estimated above), so truncate
+    // the reconstituted Vec down to the written prefix — the `[len, cap)` tail
+    // is never read.
+    let len = string_builder.len;
+    let mut output = string_builder.move_to_slice().into_vec();
+    output.truncate(len);
+    Ok(output)
 }
 
 pub(crate) type InjectOptions = WindowsOptions;
@@ -1070,7 +1082,7 @@ pub(crate) fn inject(
 ) -> Fd {
     let _ = inject_options;
     let mut buf = PathBuffer::uninit();
-    // PORT NOTE: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
+    // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
     // buffer instead, so hoist that owner here so it outlives the loop.
     let mut zname_owned: Option<Box<[u8]>> = None;
@@ -1202,7 +1214,7 @@ pub(crate) fn inject(
                                         zname.as_bytes(),
                                         &[0],
                                     ]);
-                                    // PORT NOTE: Zig leaked the concat buffer here. PORTING.md
+                                    // Note: Zig leaked the concat buffer here. PORTING.md
                                     // §Forbidden bans `mem::forget`; the buffer is parked in
                                     // `zname_owned` (declared at fn entry) so it outlives the
                                     // loop and drops at fn exit.
@@ -1224,7 +1236,7 @@ pub(crate) fn inject(
                                 _ => break,
                             }
                         }
-                        // PORT NOTE: Zig falls through to `unreachable` on retry == 2; the
+                        // Note: Zig falls through to `unreachable` on retry == 2; the
                         // print+return above is dead code in Zig too (kept for diff parity).
                     }
                 }
@@ -1548,10 +1560,11 @@ pub(crate) fn download_to_path(
         let url_str_copy: Box<[u8]> = Box::from(url_str);
         let url = bun_url::URL::parse(&url_str_copy);
         {
-            // TODO(port): errdefer progress.end() — `start` returns `&mut Node`
-            // borrowing `refresher`, so a scopeguard capturing it would alias.
-            // Could reshape with a guard that re-borrows on drop.
-            // PORT NOTE: reshaped for borrowck — `get_http_proxy_for` borrows
+            // Zig's `defer progress.end()` is realized by the unconditional
+            // `progress.end()` below: no fallible call sits between
+            // `refresher.start` and it, so every exit path (including the
+            // error returns after it) ends the node exactly once.
+            // Note: reshaped for borrowck — `get_http_proxy_for` borrows
             // `env` for the proxy URL lifetime; read the bool first.
             let reject_unauthorized = env.get_tls_reject_unauthorized();
             let http_proxy: Option<bun_url::URL<'_>> = env.get_http_proxy_for(&url);
@@ -1601,7 +1614,7 @@ pub(crate) fn download_to_path(
             }
 
             {
-                // PORT NOTE: reshaped for borrowck — `refresher.start` borrows
+                // Note: reshaped for borrowck — `refresher.start` borrows
                 // `refresher` mutably; do gunzip work first, drive progress around it.
                 refresher.start(b"Decompressing", 0);
                 let gunzip_result = (|| -> Result<(), BunError> {
@@ -1696,7 +1709,6 @@ pub fn to_executable(
 ) -> Result<CompileResult, BunError> {
     #[cfg(windows)]
     let _ = root_dir;
-    // TODO(port): narrow error set
     let bytes = match to_bytes(
         module_prefix,
         output_files,
@@ -1717,7 +1729,7 @@ pub fn to_executable(
     }
     // bytes drops at end of scope
 
-    // PORT NOTE: Zig tracked `free_self_exe` to decide whether the slice was
+    // Note: Zig tracked `free_self_exe` to decide whether the slice was
     // allocator-owned. `ZBox` always owns its bytes and drops on scope exit,
     // so the flag is unnecessary.
     let self_exe: bun_core::ZBox = if let Some(path) = self_exe_path {
@@ -1781,7 +1793,7 @@ pub fn to_executable(
     };
 
     let fd = inject(&bytes, &self_exe, windows_options, target);
-    // PORT NOTE: Zig's `defer if (fd != invalid) fd.close()` reads `fd` at scope exit
+    // Note: Zig's `defer if (fd != invalid) fd.close()` reads `fd` at scope exit
     // after later reassignments. A scopeguard closure capturing `fd` by value would not
     // observe those writes; capturing by `&mut` conflicts with later uses. Explicit
     // `if fd != Fd::INVALID { fd.close(); }` calls are inserted at every return below
@@ -1919,7 +1931,7 @@ pub fn to_executable(
     #[cfg(not(windows))]
     {
         let mut buf2 = PathBuffer::uninit();
-        // PORT NOTE: borrowck — `get_fd_path` returns `&mut [u8]` borrowing `buf2`;
+        // Note: borrowck — `get_fd_path` returns `&mut [u8]` borrowing `buf2`;
         // copy it into an owned buffer so `temp_posix_buf` can also borrow `buf2`'s
         // sibling without overlap.
         let temp_location: Vec<u8> = match bun_sys::get_fd_path(fd, &mut buf2) {
@@ -2191,7 +2203,7 @@ impl SerializedSourceMap {
         Some(&self.bytes[start..][..head.map_bytes_length as usize])
     }
 
-    // PORT NOTE: Zig types these arrays as `[]align(1) const StringPointer` because the
+    // Note: Zig types these arrays as `[]align(1) const StringPointer` because the
     // serialized byte buffer carries no alignment guarantee. Materializing a Rust
     // `&[StringPointer]` would require `align_of::<StringPointer>() == 4` alignment
     // (UB otherwise), so expose count + indexed unaligned reads instead.

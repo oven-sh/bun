@@ -46,7 +46,7 @@ pub struct NetworkTask {
     // Self-referential: borrows `url_buf` / leaked header content owned by
     // sibling fields, so the lifetime is erased to `'static`.
     //
-    // PORT NOTE: `MaybeUninit` because the slot comes from `HiveArrayFallback`
+    // `MaybeUninit` because the slot comes from `HiveArrayFallback`
     // as *uninitialized* memory (often zero-page on first mmap, but not
     // guaranteed — `get()`'s heap fallback is `Box::new_uninit()`) and is
     // overwritten by plain `=` in `for_manifest`/`for_tarball`. Zig has no
@@ -63,8 +63,9 @@ pub struct NetworkTask {
     pub unsafe_http_client: MaybeUninit<AsyncHTTP<'static>>,
     pub response: HTTPClientResult<'static>,
     pub task_id: crate::package_manager_task::Id,
-    // TODO(port): owned in `for_manifest` (toOwnedSlice) but borrowed from
-    // `tarball.url` in `for_tarball`; Zig leaks/aliases — verify ownership in Phase B.
+    // Owned in both `for_manifest` (toOwnedSlice) and `for_tarball`. Zig
+    // aliased `tarball.url` in the latter; owning here avoids a self-reference
+    // into `callback` at the cost of one copy per tarball download.
     pub url_buf: Box<[u8]>,
     pub retried: u16,
     // Zig: `std.mem.Allocator param` — dropped (global mimalloc); see §Allocators.
@@ -76,7 +77,7 @@ pub struct NetworkTask {
     pub package_manager: bun_ptr::ParentRef<PackageManager>,
     pub callback: Callback,
     /// Key in patchedDependencies in package.json
-    // PORT NOTE: `'static` because NetworkTask is stored lifetime-less in
+    // `'static` because NetworkTask is stored lifetime-less in
     // `PreallocatedNetworkTasks`; PatchTask's `'a` is a BACKREF on
     pub apply_patch_task: Option<Box<PatchTask>>,
     pub next: bun_threading::Link<NetworkTask>,
@@ -87,7 +88,7 @@ pub struct NetworkTask {
     pub tarball_stream: Option<Box<TarballStream>>,
     /// Extract `Task` pre-created on the main thread so the HTTP thread can
     /// schedule it on the worker pool as soon as the first body chunk arrives.
-    // PORT NOTE: `'static` matches `PreallocatedTaskStore =
+    // `'static` matches `PreallocatedTaskStore =
     // HiveArrayFallback<Task<'static>, 64>` which this slot is borrowed from
     // and returned to (`discard_unused_streaming_state`).
     pub streaming_extract_task: *mut Task<'static>,
@@ -114,9 +115,9 @@ unsafe impl bun_threading::Linked for NetworkTask {
     }
 }
 
-/// Zig: `union(Task.Tag)` — tag type is `Task.Tag`.
-// TODO(port): ensure discriminants match `crate::task::Tag` ordering for any
-// code that transmutes between them.
+/// Zig: `union(Task.Tag)` — variants mirror `crate::package_manager_task::Tag`
+/// in the same order. Nothing transmutes between the two (all consumers
+/// `match` on this enum), so the ordering is documentation, not an invariant.
 pub enum Callback {
     PackageManifest {
         loaded_manifest: Option<PackageManifest>,
@@ -133,11 +134,22 @@ pub enum Callback {
 pub struct DedupeMapEntry {
     pub is_required: bool,
 }
-// Zig: `std.HashMap(Task.Id, DedupeMapEntry, IdentityContext(Task.Id), 80)`
-// TODO(port): IdentityContext (hash = value bits) + 80% load factor — verify
-// `bun_collections::HashMap` exposes an identity hasher, or newtype `task::Id`
-// with a pass-through `Hash` impl.
-pub(crate) type DedupeMap = HashMap<crate::package_manager_task::Id, DedupeMapEntry>;
+/// `Id` is already a wyhash output, so identity hashing matches Zig's
+/// `IdentityContext(Task.Id)` (hash = value bits) and avoids re-hashing.
+impl bun_collections::IdentityHash for crate::package_manager_task::Id {
+    #[inline]
+    fn identity_hash(self) -> u64 {
+        self.get()
+    }
+}
+
+// Zig: `std.HashMap(Task.Id, DedupeMapEntry, IdentityContext(Task.Id), 80)`.
+// `bun_collections::HashMap` uses the same 80% max load factor for all maps.
+pub(crate) type DedupeMap = HashMap<
+    crate::package_manager_task::Id,
+    DedupeMapEntry,
+    bun_collections::IdentityContext<crate::package_manager_task::Id>,
+>;
 
 impl NetworkTask {
     /// Access the HTTP client after `for_manifest`/`for_tarball` (or `notify`'s
@@ -177,7 +189,7 @@ impl NetworkTask {
         unsafe { self.package_manager.assume_mut() }
     }
 
-    // PORT NOTE: signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
+    // Signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
     // `fn(*mut T, *mut AsyncHTTP, HTTPClientResult<'_>)` shape so it can be
     // installed directly without a separate trampoline.
     fn notify(
@@ -346,7 +358,7 @@ const DEFAULT_HEADERS_BUF: &str = concat!(
 const EXTENDED_HEADERS_BUF: &str = concat!("Accept", "application/json, */*");
 
 fn append_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) {
-    // PORT NOTE: Zig `appendFmt("Authorization", "Bearer {s}", .{scope.token})`
+    // Zig `appendFmt("Authorization", "Bearer {s}", .{scope.token})`
     // writes raw bytes; routing through `format_args!`/`BStr` Display would be
     // lossy for non-UTF-8 tokens (U+FFFD expands 1→3 bytes) and overrun the
     // exact byte count reserved by `count_auth`. Use raw-byte append.
@@ -621,14 +633,13 @@ impl NetworkTask {
         // HTTP client below (`ManuallyDrop`), so it genuinely outlives this frame.
         let headers_buf: &'static [u8] =
             unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
-        // PORT NOTE: Zig has no destructors — `header_builder.content` is
-        // intentionally leaked (ownership transfers to the HTTP client).
-        // Forget it so `StringBuilder::drop` doesn't free the buffer that
-        // `headers_buf` / `last_modified` now alias.
+        // `header_builder.content` is intentionally leaked (ownership
+        // transfers to the HTTP client; Zig has no destructors). Forget it so
+        // `StringBuilder::drop` doesn't free the buffer that `headers_buf` /
+        // `last_modified` now alias.
         let _ = ManuallyDrop::new(core::mem::take(&mut header_builder.content));
         let completion_callback = self.get_completion_callback();
-        // TODO(port): narrow error set
-        // PORT NOTE: MaybeUninit overwrite — see field doc; old slot value is
+        // MaybeUninit overwrite — see field doc; old slot value is
         // either uninitialized (fresh hive slot) or a stale bitwise copy from
         // `notify`, neither of which is safe/meaningful to drop.
         self.unsafe_http_client = MaybeUninit::new(AsyncHTTP::init(
@@ -686,7 +697,7 @@ impl NetworkTask {
     }
 
     pub fn get_completion_callback(&mut self) -> HTTPClientResultCallback {
-        // PORT NOTE: Zig `Callback.New(*NetworkTask, notify).init(this)` is a
+        // Zig `Callback.New(*NetworkTask, notify).init(this)` is a
         // comptime type-erased thunk generator. `HTTPClientResultCallback::new`
         // performs the same erasure over a `fn(*mut T, *mut AsyncHTTP, _)`.
         HTTPClientResultCallback::new::<NetworkTask>(self, Self::notify)
@@ -746,8 +757,8 @@ impl NetworkTask {
                 pm.lockfile.buffers.string_bytes.as_slice(),
             )?)
         } else {
-            // TODO(port): Zig aliases `tarball.url` here without copying;
-            // `url_buf: Box<[u8]>` forces an allocation. Revisit ownership.
+            // Zig aliases `tarball.url` here without copying; owning the copy
+            // avoids a self-reference into `callback` (see `url_buf` field doc).
             Box::<[u8]>::from(tarball_url)
         };
         self.callback = Callback::Extract(tarball_);
@@ -816,10 +827,10 @@ impl NetworkTask {
             header_buf =
                 unsafe { bun_ptr::detach_lifetime(header_builder.content.written_slice()) };
         }
-        // PORT NOTE: Zig has no destructors — `header_builder.content` is
-        // intentionally leaked (ownership transfers to the HTTP client).
-        // Forget it so `StringBuilder::drop` doesn't free the buffer that
-        // `header_buf` now aliases.
+        // `header_builder.content` is intentionally leaked (ownership
+        // transfers to the HTTP client; Zig has no destructors). Forget it so
+        // `StringBuilder::drop` doesn't free the buffer that `header_buf` now
+        // aliases.
         let _ = ManuallyDrop::new(core::mem::take(&mut header_builder.content));
 
         // SAFETY: lifetime extension — `url_buf` is a heap allocation owned by
@@ -865,7 +876,7 @@ impl NetworkTask {
         }
 
         let completion_callback = self.get_completion_callback();
-        // PORT NOTE: MaybeUninit overwrite — see field doc; old slot value is
+        // MaybeUninit overwrite — see field doc; old slot value is
         // either uninitialized (fresh hive slot) or a stale bitwise copy from
         // `notify`, neither of which is safe/meaningful to drop.
         self.unsafe_http_client = MaybeUninit::new(AsyncHTTP::init(

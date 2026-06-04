@@ -5,8 +5,8 @@
 use crate::string::strings;
 use bun_alloc::AllocError;
 
-// PORT NOTE: Zig's `std.mem.Allocator` param field dropped — global mimalloc is used for
-// node and duplicated-string allocations.
+// Node and duplicated-string allocations use the global allocator (mimalloc);
+// there is no per-joiner allocator field.
 #[derive(Default)]
 pub struct StringJoiner<'a> {
     /// Total length of all nodes
@@ -76,10 +76,9 @@ impl<'a> StringJoiner<'a> {
         self.push_owned(Box::from(data));
     }
 
-    // PORT NOTE: Zig signature was `push(data: []const u8, ?Allocator param)`.
-    // The optional allocator only encoded ownership of `data`, which has no Rust
-    // analogue for a borrowed `&[u8]`; callers wanting owned semantics use
-    // `push_owned`/`push_cloned` instead.
+    // The Zig signature took an optional allocator that only encoded ownership
+    // of `data`, which has no Rust analogue for a borrowed `&[u8]`; callers
+    // wanting owned semantics use `push_owned`/`push_cloned` instead.
     pub fn push(&mut self, data: &'a [u8]) {
         if data.is_empty() {
             return;

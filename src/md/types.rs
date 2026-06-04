@@ -1,4 +1,5 @@
-// TODO(port): bun_jsc::JsResult missing from lower-tier stub surface — local alias.
+// The md crate sits below `bun_jsc` in the layering, so `bun_jsc::JsResult`
+// is unreachable here; this local alias plays the same role.
 pub type JsResult<T> = Result<T, crate::parser::ParserError>;
 
 /// Offset into the input document.
@@ -133,7 +134,7 @@ pub struct WikilinkDetail<'a> {
 
 /// Renderer interface. The parser calls these methods to produce output.
 //
-// PORT NOTE: Zig's `*anyopaque + *const VTable` manual fat-pointer is collapsed
+// Zig's `*anyopaque + *const VTable` manual fat-pointer is collapsed
 // into `&mut dyn RendererImpl`. LIFETIMES.tsv classified `ptr` as
 // `&'a mut dyn RendererImpl` (BORROW_PARAM) and `vtable` as `&'static VTable`
 // (STATIC); the trait object encodes both.
@@ -174,8 +175,7 @@ impl<'a> Renderer<'a> {
 }
 
 /// Detail data for span events (links, images, wikilinks).
-// TODO(port): lifetime — href/title borrow from the source text; could thread
-// an arena `'bump` lifetime instead.
+/// `href`/`title` borrow from the source text.
 #[derive(Copy, Clone)]
 pub struct SpanDetail<'a> {
     pub href: &'a [u8],
@@ -227,7 +227,7 @@ impl<'a> SpanDetail<'a> {
 
 /// An attribute is a string that may contain embedded entities.
 /// The text is split into substrings, each with a type (normal or entity).
-// TODO(port): lifetime — substr slices borrow from parser-owned buffers.
+/// The substr slices borrow from parser-owned buffers.
 #[derive(Copy, Clone)]
 pub struct Attribute<'a> {
     /// Slices into the source text, one per substring.
@@ -235,7 +235,7 @@ pub struct Attribute<'a> {
     pub substr_types: &'a [SubstrType],
 }
 
-// PORT NOTE: Zig nests `SubstrType`/`SubstrOffset` inside `Attribute`; Rust has
+// Zig nests `SubstrType`/`SubstrOffset` inside `Attribute`; Rust has
 // no nested type defs in structs, so they are hoisted to module scope.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
@@ -327,7 +327,7 @@ pub struct Container {
 }
 
 /// Block flags stored in MD_BLOCK.
-// PORT NOTE: Zig `packed struct(u32)` with bool fields + u28 padding. Not every
+// Zig `packed struct(u32)` with bool fields + u28 padding. Not every
 // field is `bool` (padding), so per PORTING.md this is a transparent newtype
 // with manual shift accessors rather than `bitflags!`.
 #[repr(transparent)]

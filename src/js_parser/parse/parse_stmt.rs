@@ -20,7 +20,6 @@ use crate::typescript;
 use bun_ast::{ImportKind, ImportRecordFlags, ImportRecordTag};
 use js_ast::expr::EFlags;
 
-// TODO(port): narrow error set
 type Result<T> = core::result::Result<T, bun_core::Error>;
 
 // Zig: `pub fn ParseStmt(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
@@ -30,7 +29,7 @@ type Result<T> = core::result::Result<T, bun_core::Error>;
 // `t_export`/`t_import`/fallthrough bodies inline (the `_draft_heavy` staging mod is gone).
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    // PORT NOTE on `#[inline]` / `#[inline(never)]` / `#[cold]` annotations across the `t_*` arms:
+    // Note on `#[inline]` / `#[inline(never)]` / `#[cold]` annotations across the `t_*` arms:
     // `parse_stmt` is invoked once per leading statement token; profiling showed its
     // stack-adjust prologue/epilogue dominating because LLVM was hoisting the larger
     // (and rarely-taken) `t_*` bodies inline, ballooning `parse_stmt`'s frame. Keep the
@@ -95,7 +94,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             //   "@decorator export declare class Foo {}"
             //   "@decorator export declare abstract class Foo {}"
             //
-            // PORT NOTE: spec stores the Vec<Expr> directly into `opts.ts_decorators.values`.
+            // spec stores the Vec<Expr> directly into `opts.ts_decorators.values`.
             // `DeferredTsDecorators::values` is currently typed `&'a [Expr]` (parser.rs), so until
             // that field is widened to `ExprNodeList` we copy into the arena (Expr is `Copy`) and
             // let `ts_decorators` drop normally — no `mem::forget` / `from_raw_parts` lifetime
@@ -204,7 +203,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     fn t_if(p: &mut Self, _: &mut ParseStatementOptions, loc: bun_ast::Loc) -> Result<Stmt> {
         let mut current_loc = loc;
         let mut root_if: Option<Stmt> = None;
-        // PORT NOTE: `StoreRef` (arena back-pointer with safe `Deref`/`DerefMut`)
+        // `StoreRef` (arena back-pointer with safe `Deref`/`DerefMut`)
         // into the previous iteration's `S::If` allocation — borrowck cannot
         // express the cross-iteration back-reference, but the arena keeps every
         // node alive for `'a`.
@@ -351,7 +350,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             let mut found_default = false;
             while p.lexer.token != T::TCloseBrace {
                 let mut body = StmtList::new_in(p.arena);
-                // PORT NOTE: Zig hoisted `value`/`stmt_opts` above the loop;
+                // Zig hoisted `value`/`stmt_opts` above the loop;
                 // both are reinitialized every iteration before any read, so
                 // declare per-iteration.
                 let mut value: Option<js_ast::Expr> = None;
@@ -1895,8 +1894,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
     pub fn parse_stmt(&mut self, opts: &mut ParseStatementOptions<'a>) -> Result<Stmt> {
         if !self.stack_check.is_safe_to_recurse() {
-            // TODO(port): bun_core::throw_stack_overflow() not yet exported; map to a SyntaxError
-            // until the StackOverflow error variant lands.
+            // Sentinel error; mapped to a "Maximum call stack size exceeded"
+            // syntax error at the catch site in parse_entry.rs.
             return Err(err!("StackOverflow"));
         }
 

@@ -143,8 +143,6 @@ impl Default for CustomLoader {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining
 // params are by-value `JSValue`/scalars → `safe fn`.
 unsafe extern "C" {

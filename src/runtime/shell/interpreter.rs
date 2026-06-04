@@ -236,10 +236,12 @@ node_accessors! {
 pub type ExitCode = u16;
 pub type Pipe = [Fd; 2];
 
-/// Stand-in for the shell's `SmolList<T, N>` (inline small-vec). The real
-/// implementation lives in `shell_body.rs` (gated); state nodes only need
-/// `push`/`len`/indexing, which `Vec` provides.
-// TODO(port): replace with shell_body::SmolList once parser un-gates.
+/// Stand-in for the shell's `SmolList<T, N>` (inline small-vec). The parser's
+/// `bun_shell_parser::parse::SmolList` is arena-backed (its heap variant
+/// allocates from the parse arena, which the interpreter frees eagerly — see
+/// `take_args`), so it cannot back long-lived interpreter fields like
+/// `async_pids`. `Vec` is the deliberate choice here; the only difference vs
+/// Zig's inline small-vec is a heap allocation for the first few elements.
 pub type SmolList<T, const N: usize> = Vec<T>;
 
 #[repr(u8)]
@@ -309,9 +311,15 @@ pub struct Interpreter {
     /// JS objects used as input for the shell script. Owned storage (the Zig
     /// `ArrayList(JSValue).items` borrow becomes `Vec` ownership in the port —
     /// `create_shell_interpreter` moves the parsed-script's vec in here).
-    // TODO(port): GC root — bare JSValue heap storage is invisible to the
-    // conservative stack scan. Switch to MarkedArgumentBuffer or root via the
-    // wrapper's visitChildren.
+    ///
+    /// GC liveness: this `Vec` is heap storage invisible to the conservative
+    /// scan, but it is a duplicate of a rooted copy — `Bun__createShellInterpreter`
+    /// (ShellBindings.cpp) copies the same values into the C++
+    /// `JSShellInterpreter` wrapper's `jsvalueArray` (`valuesArray: true` in
+    /// Shell.classes.ts), which the generated `visitChildren` visits. The
+    /// wrapper outlives the run (`this_jsvalue` + `hasPendingActivity`), and
+    /// the mini-event-loop path always passes an empty vec. Same scheme as the
+    /// Zig original's bare `[]JSValue`.
     pub jsobjs: Vec<crate::jsc::JSValue>,
 
     pub root_shell: JsCell<ShellExecEnv>,
@@ -422,7 +430,7 @@ impl ShellArgs {
     }
 
     /// Spec: interpreter.zig `ShellArgs.memoryCost`.
-    /// PORT NOTE: Zig walks `script_ast.memoryCost()`; the Rust port reports
+    /// Note: Zig walks `script_ast.memoryCost()`; the Rust port reports
     /// the arena's `allocated_bytes()` instead (a superset — tokens + strpool
     /// + AST nodes). This is for GC `estimatedSize` reporting only, where
     /// over-approximation is preferable to a tree walk on a lifetime-erased
@@ -492,7 +500,7 @@ impl Interpreter {
     /// On success the returned box owns `shargs`; on error `shargs` is
     /// dropped (Zig: `defer shargs.deinit()` in the caller).
     ///
-    /// PORT NOTE: `allocator` parameter dropped (always global mimalloc).
+    /// Note: `allocator` parameter dropped (always global mimalloc).
     /// `ctx` is stored for `bun run` argv access from builtins (Zig
     /// `command_ctx`); held as a raw pointer because the interpreter outlives
     /// any single `&mut ContextData` borrow.
@@ -616,7 +624,7 @@ impl Interpreter {
             async_commands_executing: Cell::new(0),
             global_this: Cell::new(core::ptr::null_mut()),
             flags: Cell::new(InterpreterFlags::default()),
-            // PORT NOTE — intentional spec-bug fix: Zig declares
+            // Note — intentional spec-bug fix: Zig declares
             // `exit_code: ?ExitCode = 0` (the *non-null* value 0), so its
             // `asyncCmdDone`'s `exit_code != null` check is always true and
             // can fire `finish(0)` before the root script has actually
@@ -1435,7 +1443,7 @@ impl Interpreter {
             self.root_shell.with_mut(|rs| rs.deinit_embedded(false));
         }
 
-        // PORT NOTE: free the parse arena eagerly. Zig's `args.__arena` is a
+        // Note: free the parse arena eagerly. Zig's `args.__arena` is a
         // lightweight `std.heap.ArenaAllocator` (a few KB), so leaving it for
         // the GC finalizer is fine there. The Rust port's `bun_alloc::Arena` is
         // a `MimallocArena` (a full `mi_heap_t`): every shell parse pulls
@@ -1593,11 +1601,8 @@ impl Interpreter {
             let keyslice = key.to_owned_slice();
             let value_str = value.get_zig_string(global_this)?;
             let slice = value_str.to_owned_slice();
-            // PORT NOTE: Zig `initRefCounted` adopts the slice; the Rust
-            // `init_ref_counted` dups (see EnvStr.rs TODO), so the `Vec`s drop
-            // here without leaking. TODO(refactor): revisit the ownership contract.
-            let keyref = EnvStr::init_ref_counted(&keyslice);
-            let valueref = EnvStr::init_ref_counted(&slice);
+            let keyref = EnvStr::init_ref_counted(keyslice.into_boxed_slice());
+            let valueref = EnvStr::init_ref_counted(slice.into_boxed_slice());
             self.root_shell
                 .with_mut(|rs| rs.export_env.insert(keyref, valueref));
             keyref.deref();
@@ -1798,7 +1803,7 @@ fn io_to_js_value(
 ) -> crate::jsc::JSValue {
     // SAFETY: `buf` points into a live `ShellExecEnv` (root or borrowed).
     let bytelist = core::mem::take(unsafe { &mut *buf });
-    // PORT NOTE: Zig wraps in `jsc.Node.Buffer{ .buffer = ArrayBuffer.fromBytes
+    // Note: Zig wraps in `jsc.Node.Buffer{ .buffer = ArrayBuffer.fromBytes
     // (..., .Uint8Array) }.toNodeBuffer(global)`. `MarkedArrayBuffer::
     // to_node_buffer` is the same `JSBuffer__bufferFromPointerAndLengthAndDeinit`
     // call; we hand it the moved-out `Vec<u8>` storage directly. The
@@ -1811,7 +1816,7 @@ fn io_to_js_value(
 /// loop this prints to stderr and `exit(1)`s (diverges); on the JS event loop
 /// it raises a JS exception via [`ShellErr::throw_js`] and returns
 /// `JsError::Thrown`.
-// PORT NOTE: takes ownership (Zig passed `*const ShellErr` because both arms
+// Note: takes ownership (Zig passed `*const ShellErr` because both arms
 // consume; Rust expresses that as by-value). `global` is `Option` because the
 // mini arm has no global; on the JS arm callers always pass `Some`.
 pub fn throw_shell_err(
@@ -1896,7 +1901,7 @@ impl ShellExecEnv {
         size += self.__prev_cwd.capacity();
         size += self._buffered_stderr.memory_cost();
         size += self._buffered_stdout.memory_cost();
-        // PORT NOTE: Zig `async_pids.memoryCost()` walks the SmolList; the
+        // Note: Zig `async_pids.memoryCost()` walks the SmolList; the
         // Rust shim is `Vec`, so report its heap capacity directly.
         size += self.async_pids.capacity() * core::mem::size_of::<PidT>();
         size
@@ -2075,7 +2080,7 @@ impl ShellExecEnv {
     /// Spec: interpreter.zig `ShellExecEnv.changePrevCwd` — `cd -`.
     #[inline]
     pub fn change_prev_cwd(&mut self) -> bun_sys::Result<()> {
-        // PORT NOTE: reshaped for borrowck — `prev_cwd()` borrows `self`, so
+        // Note: reshaped for borrowck — `prev_cwd()` borrows `self`, so
         // copy into a stack buffer before the `&mut self` call. Bounded by the
         // ENAMETOOLONG check inside `change_cwd_impl` (same 4 KiB).
         // Spec uses `ResolvePath.join_buf` (`[4096]u8` on every platform); do
@@ -2133,7 +2138,7 @@ impl ShellExecEnv {
             // Spec interpreter.zig:637-640 — `ResolvePath.joinZ(&.{cwd, new_cwd_},
             // .auto)` normalizes `.`/`..` so the stored `$PWD`/`$OLDPWD` strings
             // reflect the resolved path (not `<cwd>/..`).
-            // PORT NOTE: reshaped for borrowck — capture only the joined length
+            // Note: reshaped for borrowck — capture only the joined length
             // so the borrow on `buf` is released before stripping below.
             let mut n = {
                 let existing_cwd = self.cwd();
@@ -2185,7 +2190,7 @@ impl ShellExecEnv {
         // Spec interpreter.zig:685-688: only `OLDPWD` is gated on `!in_init`;
         // `PWD` is written unconditionally so the very first env (built during
         // `init()` with `in_init = true`) still exports the resolved cwd.
-        // PORT NOTE: reshaped for borrowck — materialize the EnvStr (which
+        // Note: reshaped for borrowck — materialize the EnvStr (which
         // erases the slice lifetime into a packed ptr) before taking
         // `&mut self.export_env`.
         use crate::shell::env_str::EnvStr;
@@ -2375,7 +2380,7 @@ fn open_null_device() -> bun_sys::Result<Fd> {
 
 /// Spec: interpreter.zig `isPollable` (interpreter.zig:2116-2124).
 ///
-/// PORT NOTE: spec takes a pre-cached `mode` from `event_loop.stdout().data
+/// Note: spec takes a pre-cached `mode` from `event_loop.stdout().data
 /// .file.mode`; `EventLoopHandle` is still a shim, so we `fstat` the (already
 /// dup'd) fd here instead. On `fstat` failure we conservatively return `false`
 /// (non-pollable → synchronous write path), matching Windows behavior.
@@ -2489,7 +2494,7 @@ fn shell_get_path<'a>(
         return Ok(to);
     }
     // Relative: resolve dirfd → path, then join.
-    // PORT NOTE: reshaped for borrowck — Zig's `joinZBuf(buf, &.{dirpath, to})`
+    // Note: reshaped for borrowck — Zig's `joinZBuf(buf, &.{dirpath, to})`
     // reads `dirpath` (a slice of `buf`) while writing `buf`; copy `dirpath`
     // out first so the mutable borrow on `buf` is exclusive.
     let dirpath = bun_sys::get_fd_path(dirfd, buf)
@@ -2647,7 +2652,7 @@ pub enum ParseFlagResult {
 /// -- " ++ name ++ "\n"`. Every caller then wraps that AGAIN in the same
 /// prefix via `fmtErrorArena`, so Zig's stderr prints the prefix twice.
 ///
-/// PORT NOTE — intentional spec-bug fix: we return just `name` and let the
+/// Note — intentional spec-bug fix: we return just `name` and let the
 /// caller's `fmt_error_arena` add the prefix once. This diverges from Zig's
 /// observable doubled output; update Zig (or any snapshot tests asserting the
 /// doubled message) rather than reproducing the duplication here. Reproducing

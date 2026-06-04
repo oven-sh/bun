@@ -85,8 +85,6 @@ pub use bun_core::{
 // runtime crates spell `bun_ptr::callback_ctx::<T>(ctx)`.
 pub use bun_core::callback_ctx;
 
-pub mod meta; // small, used by other crates
-
 // ported from: src/ptr/ptr.zig
 
 // ─────────────────────────────────────────────────────────────────────────────

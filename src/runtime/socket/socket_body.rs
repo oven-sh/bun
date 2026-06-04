@@ -9,7 +9,7 @@ use core::ptr::{self, NonNull};
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_ptr::IntrusiveRc;
-// PORT NOTE: do NOT `use bun_boringssl_sys::SSL` here — it shadows the
+// do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
 // resolve `<SSL>` as a type arg (E0747). Use the qualified path instead.
 use bun_boringssl_sys::SSL_CTX;
@@ -129,7 +129,7 @@ extern "C" fn select_alpn_callback(
 /// Generic socket wrapper. `SSL = false` → `TCPSocket`, `SSL = true` → `TLSSocket`.
 ///
 /// In Zig this is `fn NewSocket(comptime ssl: bool) type { return struct {...} }`.
-// PORT NOTE: `#[bun_jsc::JsClass]` cannot be applied here — the proc-macro
+// `#[bun_jsc::JsClass]` cannot be applied here — the proc-macro
 // emits monomorphic `impl JsClass for NewSocket` (no generics) and a single
 // set of `${Name}__fromJS`/`__create` externs, but this type maps to TWO
 // codegen classes (`JSTCPSocket` / `JSTLSSocket`). The codegen accessors are
@@ -190,7 +190,7 @@ pub struct NewSocket<const SSL: bool> {
     /// expects at index 0). The encrypted half holds a ref on the raw half
     /// here so a single `onClose` can retire both — no `Handlers.clone()`,
     /// no second context.
-    // PORT NOTE: LIFETIMES.tsv says `Option<Rc<Self>>`, but `*Self` is stored in
+    // LIFETIMES.tsv says `Option<Rc<Self>>`, but `*Self` is stored in
     // a uws ext slot (FFI) and is intrusively refcounted — PORTING.md mandates
     // IntrusiveRc, never Rc, when *T crosses FFI.
     pub twin: JsCell<Option<IntrusiveRc<Self>>>,
@@ -345,7 +345,6 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// doesn't need a disjoint borrow (the Zig original satisfied this via an
     /// aliased pointer read).
     pub fn do_connect(&self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // Zig: `this.ref(); defer this.deref();` — keep `self` alive across the
         // re-entrant connect path. `ScopedRef` stores a raw `*mut Self` (no
         // borrow held across the body) and derefs on Drop.
@@ -469,7 +468,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         Ok(())
     }
 
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — that macro's free-fn shim
+    // no `#[bun_jsc::host_fn]` here — that macro's free-fn shim
     // emits a bare `constructor(...)` call which doesn't resolve inside an
     // `impl<const SSL: bool>` block. The codegen `JsClass` derive owns the
     // constructor link name, so the placeholder shim isn't needed.
@@ -594,7 +593,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    /// PORT NOTE (noalias re-entrancy): takes `this: *mut Self`, NOT
+    /// Noalias re-entrancy: takes `this: *mut Self`, NOT
     /// `&mut self`. `callback.call(...)` re-enters JS which can call
     /// `socket.write()`/`socket.end()`/`socket.reload()` on this same wrapper
     /// via the JS object's `m_ptr`, re-deriving a `&mut NewSocket` and mutating
@@ -630,7 +629,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return;
         }
         this.ref_();
-        // PORT NOTE: reshaped for borrowck — explicit deref at end instead of `defer`.
+        // reshaped for borrowck — explicit deref at end instead of `defer`.
         this.internal_flush();
         log!(
             "onWritable buffered_data_for_node_net {}",
@@ -749,14 +748,14 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         // Ensure the socket is still alive for any defer's we have
         this.ref_();
-        // PORT NOTE: Zig's first `defer this.deref()` is declared here, before
+        // Zig's first `defer this.deref()` is declared here, before
         // clear_and_free/unrefOnNextTick — keep it as its own guard so the
         // ref_() above is balanced even if those calls unwind.
         let _outer_deref = scopeguard::guard(this.as_ctx_ptr(), |p| {
             // SAFETY: `p` is the live `*mut Self`; shared reborrow, fields celled.
             unsafe { (*p).deref() };
         });
-        // PORT NOTE: reshaped for borrowck — explicit cleanup at end of fn.
+        // reshaped for borrowck — explicit cleanup at end of fn.
         this.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
 
@@ -856,7 +855,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // that way if we need to call the error handler, we can
         let captured_handlers = handlers.as_ptr();
         let scope = Handlers::enter_ref(handlers);
-        // PORT NOTE: `let _ = guard` would drop *immediately* (end of
+        // `let _ = guard` would drop *immediately* (end of
         // statement, not end of scope) and run `scope.exit()` before the
         // user's onConnectError callback. Bind to a named `_`-prefixed
         // local so it lives to end of scope like Zig's `defer`.
@@ -1072,7 +1071,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         );
         // Ensure the socket remains alive until this is finished
         this.ref_();
-        // PORT NOTE: reshaped for borrowck — explicit deref at end.
+        // reshaped for borrowck — explicit deref at end.
 
         // update the internal socket instance to the one that was just connected
         // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
@@ -1450,7 +1449,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // letting `IntrusiveRc::drop` release a *second* time.
             unsafe { Self::on_close(raw, socket, err, reason).ok() };
         }
-        // PORT NOTE: reshaped for borrowck — `defer this.deref()` + `defer markInactive()`.
+        // reshaped for borrowck — `defer this.deref()` + `defer markInactive()`.
         // Capture the `Handlers` pointer that was paired with the
         // `IS_ACTIVE` flag *before* the user's close callback runs. The
         // callback may synchronously re-enter `Bun.connect({ socket: this })`
@@ -1946,7 +1945,7 @@ impl<const SSL: bool> NewSocket<SSL> {
 
         let args = callframe.arguments_undef::<2>();
         this.ref_();
-        // PORT NOTE: reshaped for borrowck — explicit deref at end.
+        // reshaped for borrowck — explicit deref at end.
         let result = match this.write_or_end_buffered::<true>(global, args.ptr[0], args.ptr[1]) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
@@ -2195,7 +2194,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             return WriteResult::Fail;
         }
 
-        // PORT NOTE: was `comptime if (is_end) "end" else "write"` in Zig; Rust
+        // was `comptime if (is_end) "end" else "write"` in Zig; Rust
         // can't reference an outer `const` generic in a nested `const` item
         // (E0401), so precompute the full label per branch.
         let label: &'static str = if IS_END { "Socket.end" } else { "Socket.write" };
@@ -2500,7 +2499,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
 
         this.ref_();
-        // PORT NOTE: reshaped for borrowck — explicit deref at end.
+        // reshaped for borrowck — explicit deref at end.
 
         let result = match this.write_or_end::<true>(global, args.mut_(), false) {
             WriteResult::Fail => JSValue::ZERO,
@@ -2563,7 +2562,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         }
         this_ref.detach_native_callback();
-        // PORT NOTE: Zig `JSRef.deinit()` → reset to empty (Strong drops on assign).
+        // Zig `JSRef.deinit()` → reset to empty (Strong drops on assign).
         this_ref.this_value.set(JsRef::empty());
 
         this_ref
@@ -2712,7 +2711,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // adopt; the old `isDetached()/isNamedPipe()` guard let those
         // through and the `.connected` payload read below would then be
         // illegal-union-access on a `.connecting` socket.
-        // PORT NOTE: Zig `InternalSocket.get()` returns `?*us_socket_t` (Some
+        // Zig `InternalSocket.get()` returns `?*us_socket_t` (Some
         // only for `.connected`); inline the match here since the Rust
         // `bun_uws::InternalSocket` lacks `get()`.
         let uws::InternalSocket::Connected(raw_socket) = this.socket.get().socket else {
@@ -2748,7 +2747,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // The flag flips once ownership transfers so the errdefer is a no-op
         // on success.
         let mut handlers_guard = scopeguard::guard(Some(handlers), |h| {
-            // PORT NOTE: Zig `handlers.deinit()` → `Drop for Handlers`
+            // Zig `handlers.deinit()` → `Drop for Handlers`
             // (unprotect + Strong drop). Explicit drop for clarity.
             drop(h);
         });
@@ -2829,7 +2828,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // Per-VM weak cache: `tls:true` and `{servername}`-only hit
             // the same CTX as `Bun.connect`; an inline CA dedupes across
             // every upgradeTLS that names it.
-            // PORT NOTE: `bun_jsc::rare_data::RareData::ssl_ctx_cache()` returns
+            // `bun_jsc::rare_data::RareData::ssl_ctx_cache()` returns
             // the high-tier opaque ZST stub (cycle-break); the concrete
             // `SSLContextCache` lives on this thread's `RuntimeState`.
             let cache = {
@@ -3095,7 +3094,7 @@ impl<const SSL: bool> NewSocket<SSL> {
     // generic bool, so these are all forwarding methods that branch on `SSL`
     // at runtime (monomorphised away).
     //
-    // PORT NOTE: rustc does not unify `NewSocket<SSL>` with `NewSocket<true>`
+    // rustc does not unify `NewSocket<SSL>` with `NewSocket<true>`
     // inside an `if SSL { .. }` block. The cast is sound because both
     // monomorphisations have identical layout and the branch only runs when
     // `SSL == true` (so `Self` *is* `TLSSocket`).
@@ -3743,7 +3742,7 @@ impl DuplexUpgradeContext {
                 unsafe { boringssl_sys::SSL_CTX_free(ctx) };
             }
         }
-        // PORT NOTE: Zig `self.upgrade.deinit()` — `UpgradedDuplex` cleanup
+        // Zig `self.upgrade.deinit()` — `UpgradedDuplex` cleanup
         // runs via `Drop` when `heap::take(this)` frees the containing
         // struct below; an explicit call here would double-free.
         // SAFETY: heap-allocated in `js_upgrade_duplex_to_tls`; this is the
@@ -3791,7 +3790,7 @@ pub fn js_upgrade_duplex_to_tls(
     // controls lifecycle (markInactive expects a Listener parent when .server).
     // The TLS direction (client vs server) is controlled by DuplexUpgradeContext.mode.
     let handlers = Handlers::from_js(global, socket_obj, false)?;
-    // PORT NOTE: Zig `handlers.deinit()` → `Drop for Handlers`.
+    // Zig `handlers.deinit()` → `Drop for Handlers`.
     let mut handlers_guard = scopeguard::guard(Some(handlers), |h| {
         drop(h);
     });
@@ -3920,8 +3919,8 @@ pub fn js_upgrade_duplex_to_tls(
         ptr::addr_of_mut!((*duplex_context).tls).write(Some(IntrusiveRc::from_raw(tls)));
         ptr::addr_of_mut!((*duplex_context).vm).write(VirtualMachine::get());
         // Zig: `jsc.AnyTask.New(DuplexUpgradeContext, runEvent).init(ctx)`.
-        // Rust's `AnyTask::New` can't take a comptime callback (see AnyTask.rs
-        // PORT NOTE), so hand-write the `*mut c_void → run_event` shim.
+        // Rust's `AnyTask::New` can't take a comptime callback (see the notes
+        // in AnyTask.rs), so hand-write the `*mut c_void → run_event` shim.
         ptr::addr_of_mut!((*duplex_context).task).write(AnyTask {
             ctx: NonNull::new(duplex_context.cast::<c_void>()),
             callback: |p| {
@@ -4113,8 +4112,8 @@ pub fn js_set_socket_options(global: &JSGlobalObject, callframe: &CallFrame) -> 
 
     #[cfg(unix)]
     {
-        // TODO(port): Zig used `bun.sys.setsockopt`; not yet surfaced in
-        // `bun_sys`, so call libc directly with the same `Maybe` shape.
+        // Zig used `bun.sys.setsockopt`; `bun_sys` exposes no public wrapper,
+        // so call libc directly with the same `Maybe` shape.
         let setsockopt = |level: libc::c_int, opt: libc::c_int| -> Option<sys::Error> {
             let val: libc::c_int = buffer_size;
             // SAFETY: libc FFI; `val` lives for the call.

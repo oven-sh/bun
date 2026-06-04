@@ -16,7 +16,7 @@ use bun_threading::Mutex;
 bun_core::declare_scope!(S3, hidden);
 
 pub struct S3HttpDownloadStreamingTask {
-    // PORT NOTE: `MaybeUninit` because `AsyncHTTP` contains non-null references, so the Zig
+    // `MaybeUninit` because `AsyncHTTP` contains non-null references, so the Zig
     // `= undefined`-then-init pattern can't use `mem::zeroed()` here (mirrors `S3HttpSimpleTask`).
     pub http: core::mem::MaybeUninit<AsyncHTTP<'static>>,
     /// JSC_BORROW: per-thread VM singleton, outlives every task. `None` only in
@@ -48,10 +48,10 @@ impl Taskable for S3HttpDownloadStreamingTask {
 
 impl Default for S3HttpDownloadStreamingTask {
     fn default() -> Self {
-        // PORT NOTE: only the Zig-defaulted fields (`has_schedule_callback` .. `concurrent_task`)
+        // only the Zig-defaulted fields (`has_schedule_callback` .. `concurrent_task`)
         // are observed via this path; the rest are placeholders that the caller (client.rs
         // `..Default::default()`) overwrites before the task pointer escapes. `http` is zeroed
-        // to mirror Zig's `= undefined` + later overwrite (see S3HttpSimpleTask PORT NOTE).
+        // to mirror Zig's `= undefined` + later overwrite (see S3HttpSimpleTask in simple_request.rs).
         Self {
             // never read — fully overwritten by `AsyncHTTP::init` before first use.
             http: core::mem::MaybeUninit::uninit(),
@@ -98,7 +98,7 @@ impl S3HttpDownloadStreamingTask {
             _ => true,
         };
 
-        // PORT NOTE: reshaped for borrowck — `code`/`message` borrow from
+        // reshaped for borrowck — `code`/`message` borrow from
         // `self.reported_response_buffer`, so we compute the chunk after the
         // borrow scope ends rather than inside the labeled block.
         let chunk: MutableString = 'brk: {
@@ -140,13 +140,13 @@ impl S3HttpDownloadStreamingTask {
                         }
                     }
 
+                    // `code`/`message` borrow `self.reported_response_buffer`;
+                    // the callback consumes them before any reset/deinit.
                     err = Some(S3Error { code, message });
-                    // TODO(port): S3Error field lifetimes — `code`/`message` borrow
-                    // `self.reported_response_buffer`; callback consumes them before reset/deinit.
                 }
                 break 'brk MutableString::default();
             } else {
-                // PORT NOTE: Zig copies the MutableString struct by value here (shallow copy of
+                // Zig copies the MutableString struct by value here (shallow copy of
                 // ptr+len+cap), then `.reset()` zeros the source — i.e. an ownership transfer.
                 // `core::mem::take` gives the same observable semantics in Rust without the
                 // transient aliasing the Zig code relied on.
@@ -221,7 +221,7 @@ impl S3HttpDownloadStreamingTask {
     fn update_state(
         &mut self,
         async_http: &mut AsyncHTTP<'static>,
-        // PORT NOTE: reshaped for borrowck — Zig passed `result` by value; Rust borrows so the
+        // reshaped for borrowck — Zig passed `result` by value; Rust borrows so the
         // caller (process_http_callback) can still read `result.body` afterward.
         result: &HTTPClientResult,
         state: &mut State,
@@ -238,7 +238,7 @@ impl S3HttpDownloadStreamingTask {
                 0
             });
             if state.status_code() == 0 {
-                // PORT NOTE: Zig explicitly `deinit()`s `certificate_info` / `metadata` here.
+                // Zig explicitly `deinit()`s `certificate_info` / `metadata` here.
                 // In the Rust port both types free their owned buffers via `Drop`, and
                 // `HTTPClientResult` is dropped by the caller after this returns, so the
                 // explicit-free calls become no-ops.
@@ -252,8 +252,6 @@ impl S3HttpDownloadStreamingTask {
             }
             // store the new state
             self.set_state(*state);
-            // TODO(port): Zig does `this.http = async_http.*;` (struct copy). Confirm
-            // AsyncHTTP copy/move semantics in Rust.
             // SAFETY: `async_http` points to a live AsyncHTTP owned by the HTTP thread; Zig does a
             // plain struct copy (`this.http = async_http.*`) — bitwise read+write matches that.
             // `self.http` was previously initialised in `execute_s3_streaming_download`.
@@ -270,10 +268,12 @@ impl S3HttpDownloadStreamingTask {
         result: HTTPClientResult,
     ) -> bool {
         // lets lock and unlock to be safe we know the state is not in the middle of a callback when locked
-        self.mutex.lock();
-        // Zig `defer this.mutex.unlock();` — handled at every return below.
-        // TODO(port): replace with RAII MutexGuard once bun_threading::Mutex exposes one.
-        let unlock = |s: &mut Self| s.mutex.unlock();
+        // Zig `defer this.mutex.unlock();` — the RAII guard unlocks on every
+        // return path. The guard holds the mutex by raw pointer (see
+        // `Mutex::lock_guard`), so `&mut self` stays freely usable while
+        // locked, and it drops before this fn returns — strictly before the
+        // task can be freed by the main thread.
+        let _guard = self.mutex.lock_guard();
 
         // remember the state is atomic load it once, and store it again
         let mut state = self.get_state();
@@ -305,11 +305,9 @@ impl S3HttpDownloadStreamingTask {
                 }
                 body.reset();
                 if self.reported_response_buffer.list.as_slice().is_empty() && !is_done {
-                    unlock(self);
                     return false;
                 }
             } else if !is_done {
-                unlock(self);
                 return false;
             }
             if let Err(has_schedule_callback) = self.has_schedule_callback.compare_exchange(
@@ -319,14 +317,11 @@ impl S3HttpDownloadStreamingTask {
                 Ordering::Relaxed,
             ) {
                 if has_schedule_callback {
-                    unlock(self);
                     return false;
                 }
             }
-            unlock(self);
             return true;
         }
-        unlock(self);
         false
     }
 
@@ -366,7 +361,7 @@ impl S3HttpDownloadStreamingTask {
 
 impl Drop for S3HttpDownloadStreamingTask {
     fn drop(&mut self) {
-        // PORT NOTE: KeepAlive::unref now takes an aio EventLoopCtx; the JS-loop ctx is fetched
+        // KeepAlive::unref now takes an aio EventLoopCtx; the JS-loop ctx is fetched
         // via the global hook (registered by crate::init) — same pattern as
         // `S3HttpSimpleTask::drop` in simple_request.rs.
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(

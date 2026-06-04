@@ -2,9 +2,9 @@
 
 use core::ffi::{c_char, c_int, c_long, c_ulong, c_ulonglong, c_ushort, c_void};
 
-// PORT NOTE: `Option` below is the mimalloc `mi_option_t` enum (kept verbatim
-// from the Zig). Nullable fn-pointer params therefore spell out
-// `core::option::Option<...>` to avoid the shadow.
+// `Option` below is the mimalloc `mi_option_t` enum, which shadows
+// `core::option::Option` in this module. Nullable fn-pointer params therefore
+// spell out `core::option::Option<...>` to avoid the shadow.
 
 unsafe extern "C" {
     /// No preconditions; returns null on failure.
@@ -386,7 +386,7 @@ unsafe extern "C" {
     pub fn mi_thread_set_in_threadpool();
 }
 
-// PORT NOTE: kept name `Option` to match Zig; shadows `core::option::Option` in
+// Named `Option` after mimalloc's `mi_option_t`; shadows `core::option::Option` in
 // this module (callers use `mimalloc::Option`). `enum(c_uint)` → `#[repr(u32)]`
 // (c_uint == u32 on all Bun targets; `#[repr(C)]` would give a signed c_int discriminant).
 #[repr(u32)]

@@ -175,7 +175,7 @@ pub fn print_diff_main(
         diff_segments = new_diff_segments;
 
         // Forward pass: unskip segments after non-equal segments
-        // PORT NOTE: reshaped for borrowck (capture len before mutable slice borrow)
+        // reshaped for borrowck (capture len before mutable slice borrow)
         let len = diff_segments.len();
         for i in 0..len {
             if diff_segments[i].mode != DiffSegmentMode::Equal {
@@ -292,8 +292,8 @@ pub enum DiffSegmentMode {
     Modified,
 }
 
-// TODO(port): lifetime — `removed`/`inserted` borrow from caller input and diff_match_patch output;
-// in Zig these were arena-backed slices. Revisit ownership.
+// `removed`/`inserted` borrow from caller input and diff_match_patch output
+// (tracked by `'a`); in Zig these were arena-backed slices.
 #[derive(Copy, Clone)]
 pub struct DiffSegment<'a> {
     pub removed: &'a [u8],
@@ -653,7 +653,7 @@ pub fn print_diff(
 
     let mut was_skipped = false;
     for (i, segment) in diff_segments.iter().enumerate() {
-        // PORT NOTE: Zig `defer { removed_line_number += ...; inserted_line_number += ...; }` —
+        // Zig `defer { removed_line_number += ...; inserted_line_number += ...; }` —
         // applied at the end of the loop body and before `continue` below.
 
         if (was_skipped && !segment.skip) || (has_skipped_segments && i == 0 && !segment.skip) {

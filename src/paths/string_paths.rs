@@ -79,7 +79,7 @@ pub fn without_nt_prefix<T: Ch>(path: &[T]) -> &[T] {
     if !cfg!(windows) {
         return path;
     }
-    // PORT NOTE: Zig dispatched hasPrefixComptime vs hasPrefixComptimeUTF16 on T;
+    // Zig dispatched hasPrefixComptime vs hasPrefixComptimeUTF16 on T;
     // collapsed to a local `has_prefix_ascii_t` (widens each ASCII byte via T::from_u8).
     if has_prefix_ascii_t(path, &windows::NT_OBJECT_PREFIX_U8) {
         return &path[windows::NT_OBJECT_PREFIX.len()..];
@@ -234,7 +234,7 @@ pub(crate) fn to_w_path_normalized16<'a>(wbuf: &'a mut [u16], path: &[u16]) -> &
         return wstr_in_buf(wbuf, 0);
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig wrote into wbuf and then re-sliced wbuf;
+    // Reshaped for borrowck — Zig wrote into wbuf and then re-sliced wbuf;
     // here we capture the length and re-derive the mutable slice.
     let len = {
         let mut path_to_use = normalize_slashes_only_t::<u16, b'\\', true>(wbuf, path);
@@ -262,7 +262,7 @@ pub(crate) fn normalize_slashes_only_t<
     buf: &'a mut [T],
     path: &'a [T],
 ) -> &'a [T] {
-    // PORT NOTE: was `const _: () = assert!(..)` but Rust forbids const items
+    // Was `const _: () = assert!(..)` but Rust forbids const items
     // referencing outer const-generic params (E0401). Debug-assert instead.
     debug_assert!(DESIRED_SLASH == b'/' || DESIRED_SLASH == b'\\');
     let undesired_slash: u8 = if DESIRED_SLASH == b'/' { b'\\' } else { b'/' };
@@ -284,9 +284,9 @@ pub(crate) fn normalize_slashes_only_t<
     path
 }
 
-// TODO(port): `desired_slash` was `comptime u8` in Zig; kept as runtime arg here since
+// `desired_slash` was `comptime u8` in Zig; kept as a runtime arg here since a
 // const-generic value can't be forwarded from a runtime call site without duplication.
-// PERF(port): was comptime monomorphization.
+// PERF(port): was comptime monomorphization — profile if it shows up on a hot path.
 pub fn normalize_slashes_only<'a>(
     buf: &'a mut [u8],
     utf8: &'a [u8],
@@ -371,7 +371,7 @@ pub(crate) fn to_w_path_maybe_dir<'a, const ADD_TRAILING_LASH: bool>(
     debug_assert!(!wbuf.is_empty());
 
     let cap = wbuf.len().saturating_sub(1 + (ADD_TRAILING_LASH as usize));
-    // PORT NOTE: Zig used `bun.simdutf.convert.utf8.to.utf16.le.with_errors`;
+    // Zig used `bun.simdutf.convert.utf8.to.utf16.le.with_errors`;
     // route through the checked `try_convert_utf8_to_utf16_in_buffer` (same
     // simdutf primitive + WTF-8 fallback) to avoid a `bun_simdutf` crate dep.
     //
@@ -421,7 +421,7 @@ pub fn clone_normalizing_separators(input: &[u8]) -> Vec<u8> {
     if base[0] == crate::SEP {
         buf[0] = crate::SEP;
     }
-    // PORT NOTE: reshaped for borrowck — track index instead of moving slice ptr.
+    // Reshaped for borrowck — track index instead of moving slice ptr.
     let mut i: usize = (base[0] == crate::SEP) as usize;
 
     for token in base.split(|b| *b == crate::SEP).filter(|s| !s.is_empty()) {

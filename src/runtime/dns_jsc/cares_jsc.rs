@@ -93,7 +93,6 @@ pub(crate) fn hostent_with_ttls_to_js_response(
             if addr.is_null() {
                 break;
             }
-            // PORT NOTE: Zig built std.net.Address via .initIp4/.initIp6. Rust
             // bun_dns::Address (= bun_sys::net::Address) only exposes init_posix,
             // so build a sockaddr_in/in6 on the stack and copy through that.
             let addr_string = {
@@ -127,8 +126,6 @@ pub(crate) fn hostent_with_ttls_to_js_response(
             } else {
                 None
             };
-            // PORT NOTE: Zig used `JSValue.createObject2`. No such helper on
-            // `bun_jsc::JSValue`; build via `create_empty_object` + `put`.
             let result_object = JSValue::create_empty_object(global_this, 2);
             result_object.put(global_this, b"address", addr_string);
             result_object.put(
@@ -196,7 +193,6 @@ pub(crate) fn addr_info_to_js_array(
         while !current.is_null() {
             // SAFETY: current is non-null (loop guard); c-ares owns the linked list.
             let this_node = unsafe { &*current };
-            // PORT NOTE: Zig matched on family and union-viewed std.net.Address.
             // bun_dns::Address::init_posix copies from the raw sockaddr by family,
             // so we hand it `this_node.addr` directly after asserting a known family.
             debug_assert!(
@@ -399,8 +395,6 @@ pub(crate) fn txt_reply_to_js_for_any(
 ) -> JsResult<JSValue> {
     let array =
         cares_list_to_js_array(this, global_this, |node, g| utf8_to_js(g, node.txt_bytes()))?;
-    // PORT NOTE: Zig used `JSObject.create(.{ .entries = array }, global)`. No
-    // anon-struct builder on `bun_jsc::JSObject`; use `create_empty_object` + `put`.
     let obj = JSValue::create_empty_object(global_this, 1);
     obj.put(global_this, b"entries", array);
     Ok(obj)
@@ -522,8 +516,6 @@ fn any_reply_append(
     lookup_name: &'static [u8],
 ) -> JsResult<()> {
     let transformed = if response.is_string() {
-        // PORT NOTE: Zig used `JSObject.create(.{ .value = response }, global)`. No
-        // anon-struct builder on `bun_jsc::JSObject`; use `create_empty_object` + `put`.
         let obj = JSValue::create_empty_object(global_this, 1);
         obj.put(global_this, b"value", response);
         obj
@@ -556,9 +548,8 @@ fn any_reply_append_all(
     response: JSValue,
     lookup_name: &'static [u8],
 ) -> JsResult<()> {
-    // PORT NOTE: Zig used `reply: anytype` + `@hasDecl(.., "toJSForAny")` to dispatch between
-    // `toJSForAny` (only `txt`) and `toJSResponse` (everything else). The caller now computes
-    // `response` and passes it in directly — see any_reply_to_js below.
+    // The caller computes `response` (via either `*_to_js_response` or, for txt,
+    // `txt_reply_to_js_for_any`) and passes it in directly — see any_reply_to_js below.
     if response.is_array() {
         let mut iterator = response.array_iterator(global_this)?;
         while let Some(item) = iterator.next()? {
@@ -574,9 +565,8 @@ pub(crate) fn any_reply_to_js(
     this: &mut c_ares::struct_any_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: Zig used `inline for (@typeInfo(struct_any_reply).@"struct".fields)` to
-    // iterate every `*_reply` field. Rust has no struct reflection, so the field set is
-    // expanded manually here. Keep in lockstep with `c_ares::struct_any_reply`'s fields.
+    // The field set is expanded manually here. Keep in lockstep with
+    // `c_ares::struct_any_reply`'s fields.
     let len: usize = this.a_reply.is_some() as usize
         + this.aaaa_reply.is_some() as usize
         + (!this.mx_reply.is_null()) as usize
@@ -611,8 +601,8 @@ pub(crate) fn any_reply_to_js(
     }
     if !this.txt_reply.is_null() {
         // SAFETY: non-null c-ares-owned linked list head.
-        // PORT NOTE: txt is the only reply type whose Zig struct defines `toJSForAny`, so
-        // `anyReplyAppendAll`'s `@hasDecl(.., "toJSForAny")` branch dispatched to it.
+        // txt is the only reply type with the `to_js_for_any` shape (an `entries`
+        // wrapper object) instead of the plain `to_js_response` shape.
         let response =
             txt_reply_to_js_for_any(unsafe { &mut *this.txt_reply }, global_this, b"txt")?;
         any_reply_append_all(global_this, array, &mut i, response, b"txt")?;
@@ -720,7 +710,7 @@ impl ErrorDeferred {
             global_this: bun_ptr::BackRef<JSGlobalObject>,
         }
         impl Context {
-            // PORT NOTE: `bun_event_loop::ManagedTask::new` expects
+            // `bun_event_loop::ManagedTask::new` expects
             // `fn(*mut T) -> bun_event_loop::JsResult<()>` (low-tier `ErasedJsError`).
             fn callback(this: *mut Context) -> bun_event_loop::JsResult<()> {
                 // SAFETY: `this` is the heap-allocated pointer passed to ManagedTask::new

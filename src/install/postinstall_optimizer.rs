@@ -1,8 +1,8 @@
 use bun_collections::VecExt;
 use std::sync::LazyLock;
 
-use bun_collections::ArrayHashMap;
-// PORT NOTE: `Expr` here is the T2 `bun_ast::Expr` (re-exported via
+use bun_collections::{ArrayHashMap, ArrayIdentityContextU64};
+// `Expr` here is the T2 `bun_ast::Expr` (re-exported via
 // `crate::bun_json`), not the T4 `bun_ast::Expr`. The sole caller
 // (`lockfile::Package::parse_with_json`) holds a JSON-parsed `bun_json::Expr`,
 // so binding to the lower-tier type avoids a cross-tier mismatch.
@@ -20,8 +20,9 @@ pub enum PostinstallOptimizer {
     Ignore,
 }
 
-// TODO(port): was comptime in Zig — verify `string_hash` can be `const fn` and
-// switch to `const` array if so.
+// `string_hash` is `Wyhash11` (not `const fn`; only the std-Wyhash final4
+// variant has a const re-port), so this stays a `LazyLock` rather than a
+// `const` array as in the Zig comptime original.
 static DEFAULT_NATIVE_BINLINKS_NAME_HASHES: LazyLock<[PackageNameHash; 2]> = LazyLock::new(|| {
     [
         semver::string::Builder::string_hash(b"esbuild"),
@@ -34,8 +35,8 @@ struct DefaultIgnore {
     minimum_version: semver::Version,
 }
 
-// TODO(port): was comptime in Zig — `Version::parse_utf8` is unlikely to be `const fn`; keep
-// LazyLock unless a const path is found.
+// `Version::parse_utf8` is not `const fn`, so this stays a `LazyLock` rather
+// than a comptime constant as in Zig.
 static DEFAULT_IGNORE: LazyLock<[DefaultIgnore; 1]> = LazyLock::new(|| {
     [DefaultIgnore {
         name_hash: semver::string::Builder::string_hash(b"sharp"),
@@ -49,7 +50,7 @@ impl PostinstallOptimizer {
         expr: &js_ast::Expr,
         value: PostinstallOptimizer,
     ) -> Result<bool, bun_alloc::AllocError> {
-        // PORT NOTE: Zig `expr.asArray()` returns null for both non-array AND empty
+        // Zig `expr.asArray()` returns null for both non-array AND empty
         // array, so the `items.len == 0` check below is dead in Zig too — preserved
         // for diff parity.
         let Some(mut array) = expr.as_array() else {
@@ -60,20 +61,30 @@ impl PostinstallOptimizer {
         }
 
         while let Some(entry) = array.next() {
-            if entry.is_string() {
-                // PORT NOTE: Zig `asString(allocator)` would convert UTF-16→UTF-8; JSON
-                // string literals are always UTF-8/non-rope, so `as_utf8_string_literal`
-                // suffices and avoids threading a bump arena.
-                // TODO(port): if a UTF-16 EString ever reaches here, route a `&Bump`.
-                let Some(str) = entry.as_utf8_string_literal() else {
-                    continue;
-                };
+            let js_ast::ExprData::EString(s) = &entry.data else {
+                continue;
+            };
+            // JSON parsing never folds strings into ropes (same invariant
+            // `as_utf8_string_literal` asserted before this was inlined).
+            debug_assert!(s.next.is_none());
+            // Zig `entry.asString(allocator)` transcodes UTF-16 → UTF-8 before
+            // hashing. The JSON lexer emits UTF-16 `EString`s for non-ASCII
+            // package.json strings, so both representations must hash the same
+            // UTF-8 bytes.
+            let hash = if s.is_utf8() {
+                let str = s.slice8();
                 if str.is_empty() {
                     continue;
                 }
-                let hash = semver::string::Builder::string_hash(str);
-                list.dynamic.put(hash, value)?;
-            }
+                semver::string::Builder::string_hash(str)
+            } else {
+                let utf8 = bun_core::strings::to_utf8_alloc(s.slice16());
+                if utf8.is_empty() {
+                    continue;
+                }
+                semver::string::Builder::string_hash(&utf8)
+            };
+            list.dynamic.put(hash, value)?;
         }
 
         Ok(true)
@@ -132,11 +143,10 @@ impl PostinstallOptimizer {
     }
 }
 
-// TODO(port): Zig used `std.ArrayHashMapUnmanaged(PackageNameHash, PostinstallOptimizer,
-// install.ArrayIdentityContext.U64, false)` — i.e. an *identity* hash context (key is already
-// a hash). `bun_collections::ArrayHashMap` should be configured for identity hashing on u64 keys,
-// or expose a `ArrayHashMap<K, V, IdentityU64>` variant.
-pub type Map = ArrayHashMap<PackageNameHash, PostinstallOptimizer>;
+// Zig: `std.ArrayHashMapUnmanaged(PackageNameHash, PostinstallOptimizer,
+// install.ArrayIdentityContext.U64, false)` — the key is already a hash, so use the
+// identity context rather than re-hashing it.
+pub type Map = ArrayHashMap<PackageNameHash, PostinstallOptimizer, ArrayIdentityContextU64>;
 
 #[derive(Default)]
 pub struct List {

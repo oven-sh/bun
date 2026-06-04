@@ -65,8 +65,8 @@ impl WaitGroup {
 
     pub fn wait(&self) {
         self.mutex.lock();
-        // PORT NOTE: Zig `defer self.mutex.unlock()`. crate::Mutex is a raw lock/unlock
-        // wrapper (no RAII guard), so unlock is called explicitly at scope exit below.
+        // crate::Mutex is a raw lock/unlock wrapper (no RAII guard), so unlock
+        // is called explicitly at scope exit below.
 
         while self.raw_count.load(Ordering::Acquire) > 0 {
             self.cond.wait(&self.mutex);

@@ -21,8 +21,6 @@ use bun_libarchive::{ArchiveAppender, ExtractOptions};
 use bun_resolver::fs::FileSystem;
 #[cfg(windows)]
 use bun_sys::FdDirExt;
-
-// TODO(port): narrow error set
 type Error = bun_core::Error;
 
 const MAX_DECOMPRESSED_TARBALL_SIZE: usize = 2 * 1024 * 1024 * 1024;
@@ -509,7 +507,7 @@ impl ExtractTarball {
 
         let tmpdir = Dir::borrow(&self.temp_dir);
         TL_BUFS.with_borrow_mut(|bufs| {
-            // PORT NOTE: reshaped for borrowck — Zig grabbed a raw `*TlBufs` from TLS;
+            // reshaped for borrowck — Zig grabbed a raw `*TlBufs` from TLS;
             // here the entire body lives inside the thread_local borrow closure.
             let folder_name: &[u8] = match self.resolution.tag {
                 ResolutionTag::Npm => {

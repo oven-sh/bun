@@ -76,7 +76,7 @@ impl MapEntry {
 
 pub type Map = StringHashMap<MapEntry>;
 
-// PORT NOTE: Zig `JSON.parsePackageJSONUTF8WithOpts` takes `comptime opts:
+// Zig `JSON.parsePackageJSONUTF8WithOpts` takes `comptime opts:
 // js_lexer.JSONOptions`; the Rust port (`bun_parsers::json`) spells those
 // out as 8 const-generic bools. The only field this module varies at runtime
 // is `guess_indentation` (because `GetJSONOptions` was demoted from comptime
@@ -137,7 +137,6 @@ pub enum GetResult<'a> {
 
 impl<'a> GetResult<'a> {
     pub fn unwrap(self) -> Result<&'a mut MapEntry, Error> {
-        // TODO(port): narrow error set
         match self {
             GetResult::Entry(entry) => Ok(entry),
             GetResult::ReadErr(err) => Err(err),
@@ -177,7 +176,7 @@ impl WorkspacePackageJSONCache {
             &buf[..abs_package_json_path.len()]
         };
 
-        // PORT NOTE: reshaped for borrowck — Zig `getOrPut` reserves a slot
+        // reshaped for borrowck — Zig `getOrPut` reserves a slot
         // first and `remove`s on failure while still holding `entry.value_ptr`.
         // Rust cannot hold the entry borrow across `self.map.remove`, so check
         // membership up front and only insert into the map after a successful
@@ -255,7 +254,7 @@ impl WorkspacePackageJSONCache {
             &buf[..text.len()]
         };
 
-        // PORT NOTE: reshaped for borrowck — see `get_with_path` above.
+        // reshaped for borrowck — see `get_with_path` above.
         if self.map.contains_key(path) {
             return GetResult::Entry(self.map.get_mut(path).unwrap());
         }

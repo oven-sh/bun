@@ -592,7 +592,7 @@ pub fn trim<'a>(s: &'a [u8], chars: &[u8]) -> &'a [u8] {
 /// to a byte-at-a-time `to_ascii_lowercase` zip.
 pub fn copy_lowercase<'a>(in_: &[u8], out: &'a mut [u8]) -> &'a [u8] {
     let mut in_slice = in_;
-    // PORT NOTE: reshaped for borrowck — track output offset instead of reslicing &mut.
+    // Reshaped for borrowck — track output offset instead of reslicing &mut.
     let mut out_off: usize = 0;
 
     'begin: loop {
@@ -2275,9 +2275,8 @@ impl<Block: OverflowBlock> OverflowGroup<Block> {
 // OverflowList<ValueType, COUNT>
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): const-generic arithmetic (`[ValueType; COUNT]` inside a generic struct) requires
-// `feature(generic_const_exprs)` on stable Rust. Pin COUNT per instantiation site
-// or use a heap `Box<[ValueType]>` with debug_assert on len.
+// Const-generic arithmetic (deriving COUNT from another const param) requires
+// `feature(generic_const_exprs)` on stable Rust, so COUNT is pinned per instantiation site.
 
 pub struct OverflowListBlock<ValueType, const COUNT: usize> {
     // Zig: `SizeType = std.math.IntFittingRange(0, count)`; use u32 here.
@@ -2429,9 +2428,9 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
 /// We do keep a pointer to it globally, but because the data is not zero-initialized, it ends up
 /// taking space in the object file. We don't want to spend 1-2 MB on these structs.
 ///
-/// TODO(port): const-generic arithmetic (`COUNT = _COUNT * 2`) and per-monomorphization
-/// a raw mutable INSTANCE static are not expressible on stable Rust. Instantiate per use-site
-/// via `macro_rules!` or pin concrete `COUNT` constants.
+/// Const-generic arithmetic (`COUNT = _COUNT * 2`) and a per-monomorphization
+/// raw mutable INSTANCE static are not expressible on stable Rust; callers
+/// pin concrete `COUNT` constants per use-site.
 ///
 /// `#[repr(C)]` with the small mutated scalars (`mutex`, `head`, `used`,
 /// `tail`'s header) laid out *before* the giant `backing_buf` array. Storage
@@ -2445,7 +2444,8 @@ impl<ValueType, const COUNT: usize> OverflowList<ValueType, COUNT> {
 pub struct BSSList<ValueType, const COUNT: usize /* = _COUNT * 2 */> {
     pub mutex: Mutex,
     // LIFETIMES.tsv: dual semantics — points at sibling `tail` OR a heap alloc.
-    // TODO(port): lifetime — keep raw NonNull; self-referential when `head == &self.tail`.
+    // Kept as a raw NonNull: self-referential when `head == &self.tail`, so a safe
+    // borrow cannot express it.
     pub head: Option<NonNull<BSSListOverflowBlock<ValueType>>>,
     pub used: u32,
     pub tail: BSSListOverflowBlock<ValueType>,
@@ -2733,7 +2733,7 @@ pub struct BSSListPair<ValueType> {
 /// Stores an initial count in .bss section of the object file.
 /// Overflows to heap when count is exceeded.
 ///
-/// TODO(port): same const-generic-arithmetic and per-type-static caveats as `BSSList`.
+/// Same const-generic-arithmetic and per-type-static caveats as `BSSList`.
 pub struct BSSStringList<
     const COUNT: usize,       /* = _COUNT * 2 */
     const ITEM_LENGTH: usize, /* = _ITEM_LENGTH + 1 */
@@ -3141,7 +3141,7 @@ impl<const COUNT: usize, const ITEM_LENGTH: usize> BSSStringList<COUNT, ITEM_LEN
 // Rust cannot return different types from one generic; we expose both:
 //   - `BSSMapInner<V, COUNT, RM_SLASH>` (the `store_keys = false` shape)
 //   - `BSSMap<V, COUNT, EST_KEY_LEN, RM_SLASH>` (the `store_keys = true` wrapper)
-// TODO(port): callers that passed `store_keys=false` should name `BSSMapInner` directly.
+// Callers that passed `store_keys=false` should name `BSSMapInner` directly.
 
 pub struct BSSMapInner<ValueType, const COUNT: usize, const REMOVE_TRAILING_SLASHES: bool> {
     pub index: IndexMap,
@@ -3343,9 +3343,9 @@ pub struct BSSMap<
     pub key_list_buffer: NonNull<[MaybeUninit<u8>]>, // len == COUNT * ESTIMATED_KEY_LENGTH
     pub key_list_buffer_used: usize,
     pub key_list_slices: NonNull<[MaybeUninit<&'static [u8]>]>, // len == COUNT
-    // TODO(port): Zig declares this as `OverflowList([]u8, count / 4)` but then calls
+    // Zig declares this as `OverflowList([]u8, count / 4)` but then calls
     // `.items[...]` and `.append(allocator, slice)` on it — those are `std.ArrayListUnmanaged`
-    // methods, NOT `OverflowList` methods. Likely dead code or a latent bug upstream.
+    // methods, NOT `OverflowList` methods (likely dead code or a latent bug upstream).
     // Ported as `Vec<&'static [u8]>` to match the *called* API.
     pub key_list_overflow: Vec<&'static [u8]>,
 }
@@ -3429,7 +3429,7 @@ impl<
                     // a process-lifetime mapping of `COUNT` slots.
                     Some(unsafe { *self.key_list_slices.cast::<&'static [u8]>().as_ptr().add(i) })
                 } else {
-                    // TODO(port): see key_list_overflow note — Zig indexes `.items` here.
+                    // See the `key_list_overflow` field note — Zig indexes `.items` here.
                     Some(self.key_list_overflow[index.index() as usize])
                 }
             }
@@ -3442,7 +3442,7 @@ impl<
         result: &mut Result,
         value: ValueType,
     ) -> core::result::Result<&mut ValueType, AllocError> {
-        // PORT NOTE: reshaped for borrowck — Zig returns `ptr` from map.put then calls put_key;
+        // Reshaped for borrowck — Zig returns `ptr` from map.put then calls put_key;
         // Rust can't hold &mut ValueType across &mut self.put_key. Stash as raw, re-borrow after.
         let ptr: *mut ValueType = self.map_mut().put(result, value)?;
         if STORE_KEY {
@@ -3530,7 +3530,7 @@ impl<
                     .write(MaybeUninit::new(slice));
             }
         } else {
-            // TODO(port): see key_list_overflow note above re: `.items` / `.append(alloc, _)`.
+            // See the `key_list_overflow` field note re: `.items` / `.append(alloc, _)`.
             let idx = result.index.index() as usize;
             if self.key_list_overflow.len() > idx {
                 let existing_slice = self.key_list_overflow[idx];

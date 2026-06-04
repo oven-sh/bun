@@ -1,3 +1,4 @@
+use crate::postgres::AnyPostgresError;
 use crate::postgres::types::int_types::int32;
 use crate::shared::Data;
 
@@ -17,13 +18,12 @@ impl Default for CopyFail {
 }
 
 impl CopyFail {
-    // PORT NOTE: Zig signature is `fn decodeInternal(this: *@This(), ...) !void` with
+    // Zig signature is `fn decodeInternal(this: *@This(), ...) !void` with
     // `this.* = .{...}` body — the out-param-constructor pattern. Reshaped to return
     // `Result<Self, _>` per PORTING.md (Rust has NRVO for error unions).
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
-    ) -> Result<Self, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<Self, AnyPostgresError> {
         let _ = reader.int4()?;
 
         let message = reader.read_z()?;
@@ -35,8 +35,7 @@ impl CopyFail {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), AnyPostgresError> {
         let message = self.message.slice();
         let count: u32 =
             u32::try_from(core::mem::size_of::<u32>() + message.len() + 1).expect("int cast");

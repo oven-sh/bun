@@ -1114,7 +1114,9 @@ pub enum PartTag {
 }
 
 // Zig: std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false)
-// TODO(port): bun_collections::ArrayHashMap must accept a custom hasher ctx (RefHashCtx).
+// `AutoContext` hashes the whole `Ref` instead of Zig's `RefHashCtx`
+// (which hashed the packed bits directly) — semantics are identical, only
+// the hash function differs.
 pub type PartSymbolUseMap = ArrayHashMap<Ref, symbol::Use, AutoContext, bun_alloc::AstAlloc>;
 pub type PartSymbolPropertyUseMap = ArrayHashMap<
     Ref,
@@ -1158,7 +1160,7 @@ impl StmtOrExpr {
             StmtOrExpr::Expr(expr) => expr,
             StmtOrExpr::Stmt(stmt) => match stmt.data {
                 crate::stmt::Data::SFunction(mut s) => {
-                    // PORT NOTE: Zig moved `func.func` out by value; StoreRef arena
+                    // Zig moved `func.func` out by value; the StoreRef arena
                     // slot is never individually dropped, so `take` (replace with
                     // Default) is the safe Rust equivalent.
                     let func = core::mem::take(&mut s.func);
@@ -1275,8 +1277,8 @@ impl<T> Batcher<T> {
     where
         T: Default,
     {
-        // TODO(port): bumpalo alloc_slice for uninit T — Zig `arena.alloc(Type, count)`.
-        // PERF(port): Zig left the slice uninitialized; bumpalo requires Default fill.
+        // PERF(port): Zig `arena.alloc(Type, count)` left the slice
+        // uninitialized; bumpalo requires Default fill.
         let all = bump.alloc_slice_fill_default(count);
         Ok(Self {
             head: StoreSlice::new_mut(all),
@@ -1288,8 +1290,8 @@ impl<T> Batcher<T> {
     }
 
     pub fn eat(&mut self, value: T) -> *mut T {
-        // PORT NOTE: Zig source `@ptrCast(&this.head.eat1(value).ptr)` appears to
-        // intend `this.eat1(value).ptr` cast to *T. Porting the apparent intent.
+        // Zig source `@ptrCast(&this.head.eat1(value).ptr)` appears to
+        // intend `this.eat1(value).ptr` cast to *T; this ports the apparent intent.
         self.eat1(value).as_ptr().cast_mut()
     }
 

@@ -123,7 +123,7 @@ impl Default for UpgradeCTX {
 
 impl UpgradeCTX {
     // this can be called multiple times
-    // PORT NOTE: Zig `deinit` renamed `reset` — mid-lifetime reset, not a destructor (PORTING.md: never expose `pub fn deinit(&mut self)`).
+    // Mid-lifetime reset, not a destructor (the Zig original called this `deinit`).
     pub(crate) fn reset(&mut self) {
         // Dropping the taken value frees the old `Box<[u8]>` headers; raw
         // pointers are nulled. Nothing from the old value is reused.
@@ -388,7 +388,7 @@ impl NodeHTTPResponse {
         let Some(ws_handler) = server.web_socket_handler() else {
             return false;
         };
-        // PORT NOTE: reshaped for borrowck — extend handler lifetime past method calls.
+        // Lifetime-extend the handler past the method calls below.
         // SAFETY: JS-thread only; the server (and its websocket config) outlives this call.
         let ws_handler: &mut crate::server::WebSocketServerHandler =
             unsafe { &mut *std::ptr::from_mut(ws_handler) };
@@ -398,8 +398,8 @@ impl NodeHTTPResponse {
         }
         self.resume_socket();
 
-        // PORT NOTE: Zig `defer { setOnAbortedHandler(); upgrade_context.deinit(); }` inlined at the
-        // tail of this fn (no early returns past this point), so no scopeguard needed.
+        // The Zig `defer { setOnAbortedHandler(); upgrade_context.deinit(); }` is inlined at the
+        // tail of this fn (no early returns past this point), so no scopeguard is needed.
 
         data_value.ensure_still_alive();
 
@@ -699,7 +699,7 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: `arguments_undef::<3>()` returns `Arguments<3>` — a 32-byte
+        // Perf: `arguments_undef::<3>()` returns `Arguments<3>` — a 32-byte
         // `[JSValue; 3]` + `len` aggregate — *by value*, which `cargo asm` shows
         // lowered to a per-`writeHead` `vmovups` stack copy on the node:http hot
         // path. The borrowed `arguments()` slice (ptr+len, 16 bytes) carries the
@@ -911,7 +911,7 @@ pub enum AbortEvent {
 impl NodeHTTPResponse {
     fn handle_abort_or_timeout<const EVENT: AbortEvent>(&self, js_value: JSValue) {
         // defer { if event == abort, raw_response = None }
-        // PORT NOTE: reshaped for borrowck — deferred null moved to explicit tail positions.
+        // The deferred null is moved to explicit tail positions.
 
         if self.flags.get().contains(Flags::REQUEST_HAS_COMPLETED) {
             if EVENT == AbortEvent::Abort {
@@ -1412,7 +1412,7 @@ impl NodeHTTPResponse {
             });
         }
 
-        // PORT NOTE: re-read raw_response at each use site (R-2: methods that
+        // Re-read raw_response at each use site (R-2: methods that
         // re-enter may clear it).
         let state = self.raw_response.get().unwrap().state();
         if !state.is_response_pending() {
@@ -1883,7 +1883,7 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: borrow the `arguments()` slice (ptr+len) instead of
+        // Perf: borrow the `arguments()` slice (ptr+len) instead of
         // materialising `Arguments<1>` by value — `cork` runs on every
         // `res.end()`, so the small-aggregate copy + bounds branch are pure
         // per-request overhead with no upstream equivalent.
@@ -1932,7 +1932,7 @@ impl NodeHTTPResponse {
         if let Some(raw_response) = raw_response {
             raw_response.corked(|| {
                 // Capture `this` so a `self`-derived pointer reaches the FFI
-                // closure-data slot (see PORT NOTE above).
+                // closure-data slot (see the R-2 note above).
                 let _escape = this;
                 handle_corked(global_object, corked_fn, &mut result, &mut is_exception)
             });

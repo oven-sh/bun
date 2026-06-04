@@ -19,7 +19,7 @@ use crate::options;
 /// Port of `transpiler.zig:ResolveResults` — keyed by source path hash.
 pub(crate) type ResolveResults = HashMap<u64, ()>;
 /// Port of `transpiler.zig:ResolveQueue` — `std.fifo.LinearFifo(resolver.Result, .Dynamic)`.
-// PORT NOTE: `bun_collections::LinearFifo<T, DynamicBuffer<T>>` would be exact,
+// `bun_collections::LinearFifo<T, DynamicBuffer<T>>` would be exact,
 // but `DynamicBuffer` isn't re-exported from `bun_collections` yet. `VecDeque`
 // is structurally equivalent (growable ring buffer); swap once the re-export lands.
 pub(crate) type ResolveQueue = std::collections::VecDeque<resolver::Result>;
@@ -123,18 +123,16 @@ pub const fn default_macro_js_value() -> MacroJSCtx {
 /// on every VM so that the options can be used for transpilation.
 pub struct Transpiler<'a> {
     pub options: options::BundleOptions<'a>,
-    // PORT NOTE: raw ptr — Zig aliased the same `*Log` into `linker.log` and
+    // Raw ptr — Zig aliased the same `*Log` into `linker.log` and
     // `resolver.log` (see `set_log`). `&'a mut` would forbid that aliasing.
-    // TODO(port): lifetime — restructure once linker/resolver own their logs.
     pub log: *mut bun_ast::Log,
-    // TODO(port): arena — bundler is an AST crate per PORTING.md so we
-    // thread an arena, but callers usually pass `bun.default_allocator`.
-    // Confirm whether this should be removed (global mimalloc) or kept.
+    // Bundler is an AST crate per PORTING.md, so an arena is threaded even
+    // though callers usually pass `bun.default_allocator`.
     pub arena: &'a Arena,
     pub result: options::TransformResult,
     pub resolver: Resolver<'a>,
-    // TODO(port): lifetime — Zig used the global `Fs.FileSystem.instance`
-    // singleton (`&'static mut`). Raw ptr until the singleton accessor lands.
+    // Raw ptr — Zig used the global `Fs.FileSystem.instance` singleton
+    // (`&'static mut`); a stored `&'a mut` would assert uniqueness it cannot have.
     pub fs: *mut Fs::FileSystem,
     pub output_files: Vec<options::OutputFile>,
     pub resolve_results: Box<ResolveResults>,
@@ -149,7 +147,7 @@ pub struct Transpiler<'a> {
     // by `configure_linker` below; `set_log` keeps `linker.log` in sync.
     pub linker: crate::linker::Linker,
     pub timer: SystemTimer,
-    // TODO(port): lifetime — Zig stored `&DotEnv.Loader` (global singleton).
+    // Raw ptr — Zig stored `&DotEnv.Loader` (the global singleton).
     pub env: *mut dot_env::Loader<'a>,
 
     pub macro_context: Option<js_ast::Macro::MacroContext>,
@@ -160,7 +158,7 @@ impl<'a> Transpiler<'a> {
 
     /// Port of `transpiler.zig:95 setLog`.
     ///
-    /// PORT NOTE: takes `*mut Log` (not `&'a mut`) because Zig aliased the same
+    /// takes `*mut Log` (not `&'a mut`) because Zig aliased the same
     /// `*Log` into `linker.log` / `resolver.log`; the un-gated struct field is
     /// already a raw pointer for that reason.
     pub fn set_log(&mut self, log: *mut bun_ast::Log) {
@@ -176,7 +174,7 @@ impl<'a> Transpiler<'a> {
     // TODO: remove this method. it does not make sense
     pub fn set_arena(&mut self, arena: &'a Arena) {
         self.arena = arena;
-        // PORT NOTE: `crate::Linker` is the unit stub — no `.arena` field.
+        // `crate::Linker` is the unit stub — no `.arena` field.
         // `Resolver` dropped its `arena` field (global mimalloc; see
         // resolver/lib.rs `// arena: dropped`), so nothing left to thread.
     }
@@ -260,7 +258,7 @@ impl<'a> Transpiler<'a> {
     /// other `self.*` fields as arguments without a borrow-checker conflict;
     /// callers must not hold two results live at once, nor hold a result
     /// across a `self.{resolver,linker}` call that itself writes to the
-    /// aliased `*mut Log` (see field PORT NOTE — same allocation is threaded
+    /// aliased `*mut Log` (see field comment — same allocation is threaded
     /// into `linker.log` / `resolver.log`).
     #[inline]
     #[allow(clippy::mut_from_ref)]
@@ -471,7 +469,7 @@ impl<'a> Transpiler<'a> {
                     let mut prefixed = Vec::with_capacity(2 + entry_point.len());
                     prefixed.extend_from_slice(b"./");
                     prefixed.extend_from_slice(entry_point);
-                    // PORT NOTE: spec leaks the prefixed slice (arena-freed in
+                    // spec leaks the prefixed slice (arena-freed in
                     // Zig). `Resolver::resolve` interns the path internally,
                     // so the heap buffer can drop after the call.
                     if let Ok(r) = self.resolver.resolve(
@@ -499,7 +497,7 @@ impl<'a> Transpiler<'a> {
                 let mut cache_bust_buf = bun_paths::PathBuffer::uninit();
 
                 // Bust directory cache and try again
-                // PORT NOTE: reshaped for borrowck — Zig's labelled-block
+                // reshaped for borrowck — Zig's labelled-block
                 // returned a slice that aliases either `entry_point` (via
                 // `dirname`) or `cache_bust_buf`. Rust can't unify the two
                 // disjoint mutable borrows of `cache_bust_buf` across `break`,
@@ -578,7 +576,7 @@ impl<'a> Transpiler<'a> {
         let env_loader = self.env_mut();
         let mut is_production = env_loader.is_production();
 
-        // PORT NOTE: spec (`transpiler.zig:314`) eagerly did
+        // spec (`transpiler.zig:314`) eagerly did
         // `Expr.Data.Store.create()` / `Stmt.Data.Store.create()` plus a
         // `defer Store.reset()` here, purely so `defines.zig`'s `parse_env_json`
         // had a thread-local AST store to build `E::String` nodes in. That work
@@ -634,7 +632,7 @@ impl<'a> Transpiler<'a> {
     #[inline(never)]
     pub fn dump_environment_variables(&self) {
         use bun_js_printer::{Encoding, write_json_string};
-        // PORT NOTE: spec uses `std.json.Stringify` (`.whitespace = .indent_2`)
+        // spec uses `std.json.Stringify` (`.whitespace = .indent_2`)
         // to dump `env.map.*`. The Rust `bun_dotenv::Map` doesn't impl
         // `serde::Serialize`, so iterate and emit the object by hand. Keys and
         // values go through `write_json_string` (the same escaper the printer
@@ -690,14 +688,14 @@ fn merge_tsconfig_jsx_into(tsconfig: &TSConfigJSON, out: &mut crate::options_imp
 impl<'a> Transpiler<'a> {
     /// Port of `transpiler.zig:233 configureLinkerWithAutoJSX`.
     pub fn configure_linker_with_auto_jsx(&mut self, auto_jsx: bool) {
-        // PORT NOTE: `Linker::init` dropped its `arena` arg (linker.rs:172
+        // `Linker::init` dropped its `arena` arg (linker.rs:172
         // — global mimalloc). Zig stored borrowed `*T` into the linker; the
         // un-gated `crate::linker::Linker` mirrors that with raw pointers so
         // `&mut self.options` etc. coerce directly. Self-reference is
         // load-bearing — `linker.link()` reads back through these into the
         // owning `Transpiler` — hence raw `*mut`, not `&'a mut` (would alias
         // `&mut self` on every call).
-        // PORT NOTE: `.cast()` on the `options`/`resolver` pointers erases the
+        // `.cast()` on the `options`/`resolver` pointers erases the
         // `<'a>` lifetime parameter — `Linker` stores them as
         // `*mut BundleOptions` / `*mut Resolver` with an (implicit) distinct
         // lifetime. Raw-pointer storage is the Zig contract; the linker never
@@ -735,7 +733,6 @@ impl<'a> Transpiler<'a> {
 
     /// Port of `transpiler.zig:263 runEnvLoader`.
     pub fn run_env_loader(&mut self, skip_default_env: bool) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         use bun_options_types::schema::api::DotEnvBehavior;
         // Derived once up front; no other live `&mut` to this `Loader` exists
         // for the duration of this call (Zig accessed `this.env.*` freely).
@@ -789,7 +786,7 @@ impl<'a> Transpiler<'a> {
                 // sole `&mut` for the call.
                 let dir: &mut bun_resolver::fs::DirEntry = unsafe { &mut *dir };
 
-                // PORT NOTE: `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
+                // `Env.files: Box<[Box<[u8]>]>` but `Loader::load`
                 // wants `&[&[u8]]`. Re-borrow into a small Vec; the explicit
                 // `--env-file` list is bounded (CLI args), not hot-path.
                 // PERF(port): one tiny alloc — Zig passed the slice directly.
@@ -873,7 +870,7 @@ impl AlreadyBundled {
 }
 
 /// Port of `transpiler.zig:ParseResult`.
-// PORT NOTE: lifetime-free — `runtime_transpiler_cache` is a raw pointer (Zig
+// lifetime-free — `runtime_transpiler_cache` is a raw pointer (Zig
 // `?*RuntimeTranspilerCache`) so `AsyncModule.parse_result` / `JSTranspiler`
 // can store this by value without threading a borrow lifetime.
 pub struct ParseResult<'a> {
@@ -883,15 +880,15 @@ pub struct ParseResult<'a> {
     pub already_bundled: AlreadyBundled,
     pub input_fd: Option<FD>,
     pub empty: bool,
-    // PORT NOTE: Zig `_resolver.PendingResolution.List` is
+    // Zig `_resolver.PendingResolution.List` is
     // `MultiArrayList(PendingResolution)`. `PendingResolution` does not yet
     // derive `MultiArrayElement` (lives in `bun_resolver`, derive macro is in
     // `bun_collections_macros` — orphan rules forbid impl-ing it here), so the
     // SoA `len()`/column accessors aren't reachable. Use AoS `Vec` for now;
     // `is_pending_import` only scans `import_record_id`, so the layout
     // difference is observable only as a SoA→AoS perf delta.
-    // TODO(b3): switch back to `MultiArrayList<PendingResolution>` once the
-    // derive lands upstream in `bun_resolver`.
+    // Once the `MultiArrayElement` derive lands upstream in `bun_resolver`,
+    // this can switch back to `MultiArrayList<PendingResolution>`.
     pub pending_imports: Vec<resolver::PendingResolution>,
 
     /// Zig: `?*bun.RuntimeTranspilerCache`. SAFETY: erased — bundler stores it
@@ -917,7 +914,7 @@ impl<'a> ParseResult<'a> {
     pub fn empty(arena: &'a bun_alloc::Arena) -> Self {
         ParseResult {
             source: Default::default(),
-            // PORT NOTE: `options::Loader` has no `Default`; Zig field had no
+            // `options::Loader` has no `Default`; Zig field had no
             // initializer either. `File` is the resolver's neutral fallback
             // (BundleEnums.rs:353), and `Default` here exists only for
             // `mem::take` in `AsyncModule::resume_loading_module`.
@@ -957,7 +954,7 @@ impl<'a> ParseResult<'a> {
 
     pub fn is_pending_import(&self, id: u32) -> bool {
         // Spec transpiler.zig:43-47: scan `pending_imports.items(.import_record_id)` for `id`.
-        // PORT NOTE: AoS scan (see field comment); SoA column iteration restored
+        // AoS scan (see field comment); SoA column iteration restored
         // when `PendingResolution: MultiArrayElement` lands.
         self.pending_imports
             .iter()
@@ -1044,7 +1041,7 @@ fn to_parser_module_type(
 
 /// Spec: `fs.zig:FileSystem.init`.
 ///
-/// PORT NOTE: the inline `bun_resolver::fs` module exposes the `FileSystem`
+/// the inline `bun_resolver::fs` module exposes the `FileSystem`
 /// struct + `INSTANCE`/`INSTANCE_LOADED` statics (resolver/lib.rs:120,129) but
 /// not the `init` constructor (that lives in the still-gated file-backed
 /// `resolver/fs.rs`). All fields are `pub` and `EntriesMap`/`Mutex` have
@@ -1079,7 +1076,7 @@ fn init_file_system(
 /// `Box<[Box<[u8]>]>`/`StringSet`/`StringArrayHashMap` so this is a faithful
 /// value copy rather than a `Default` stub.
 ///
-/// TODO(b3): drop this once `bun_options_types::BundleOptions` exists and both
+/// This projection can be dropped once `bun_options_types::BundleOptions` exists and both
 /// crates re-export it — `Resolver::init1` will then take the canonical type
 /// directly and Zig's `bundle_options` value can flow through unchanged
 /// (transpiler.zig:209 passes the same `options` to both struct fields).
@@ -1193,7 +1190,7 @@ impl<'a> Transpiler<'a> {
     ///   * [`options::BundleOptions::from_api`] — `bun_bundler::options`
     ///   * [`Resolver::init1`] — `bun_resolver`
     ///
-    /// PORT NOTE: `log` / `env_loader_` are raw pointers (not `&'a mut`) to
+    /// `log` / `env_loader_` are raw pointers (not `&'a mut`) to
     /// match the un-gated struct field types — Zig aliased the same `*Log`
     /// into `linker.log` / `resolver.log` (see `set_log`).
     pub fn init(
@@ -1230,7 +1227,6 @@ impl<'a> Transpiler<'a> {
         // deref sites below go through `NonNull` rather than the raw argument.
         let log_nn =
             core::ptr::NonNull::new(log).expect("Transpiler::init_in_place: log is non-null");
-        // TODO(port): narrow error set
         bun_ast::expr::data::Store::create();
         bun_ast::stmt::data::Store::create();
         // These two `create()`s are eager (not deferred to the first `parse()`)
@@ -1253,7 +1249,7 @@ impl<'a> Transpiler<'a> {
         // `reset()` branches to `enter()` on null ARENA), so per-file ASTs
         // *do* get the side arena from the first parsed file onward.
 
-        // PORT NOTE: `FileSystem::init` wants `&'static [u8]`; Zig passed a
+        // `FileSystem::init` wants `&'static [u8]`; Zig passed a
         // borrowed slice (transpiler.zig:179). Intern via `DirnameStore`
         // (the same path `FileSystem::init` already uses for the
         // `None`/getcwd case — fs.rs:222) so the cwd lives in the
@@ -1280,9 +1276,6 @@ impl<'a> Transpiler<'a> {
                     // Transfer ownership of both allocations into the global
                     // singleton via `heap::alloc` (the AtomicPtr becomes the
                     // owner; matches `MiniEventLoop::init_global`).
-                    // TODO(port): replace with a `OnceLock`-backed
-                    // `bun_dotenv::instance_or_init()` accessor once
-                    // `bun_dotenv` grows one (PORTING.md §Concurrency).
                     let map: *mut dot_env::Map =
                         bun_core::heap::into_raw(Box::new(dot_env::Map::init()));
                     // SAFETY: `map` is a fresh heap allocation with no other
@@ -1407,10 +1400,9 @@ impl<'a> Transpiler<'a> {
     >(
         &mut self,
         mut this_parse: ParseOptions<'a, '_>,
-        // TODO(port): Zig `anytype` + `@hasField(.., "source")` — only ever
-        // called with `?*EntryPoints.ClientEntryPoint` in this file. If other
-        // callers pass a different type, introduce a `ClientEntryPointLike`
-        // trait with `fn source() -> Option<&Source>`.
+        // Zig took `anytype` + `@hasField(.., "source")`; the only caller
+        // type is `?*EntryPoints.ClientEntryPoint`, so the param is typed
+        // concretely.
         client_entry_point_: Option<&mut EntryPoints::ClientEntryPoint>,
     ) -> Option<ParseResult<'a>> {
         let arena = this_parse.arena;
@@ -1434,7 +1426,7 @@ impl<'a> Transpiler<'a> {
         // (`Drop` is a no-op).
         let mut source_backing: resolver::cache::Contents = resolver::cache::Contents::Empty;
 
-        // PORT NOTE: Zig `&brk: { ... }` took the address of a temporary; Rust
+        // Zig `&brk: { ... }` took the address of a temporary; Rust
         // owns the value and borrows it after the block.
         let source: &'a bun_ast::Source = arena.alloc('brk: {
             if let Some(virtual_source) = this_parse.virtual_source {
@@ -1533,7 +1525,7 @@ impl<'a> Transpiler<'a> {
             if let Some(file_fd_ptr) = this_parse.file_fd_ptr {
                 *file_fd_ptr = entry.fd;
             }
-            // PORT NOTE: `Source.contents: &'static [u8]` (the AST crate's `Str`
+            // `Source.contents: &'static [u8]` (the AST crate's `Str`
             // convention). The bytes live either in the per-thread shared
             // buffer (`USE_SHARED_BUFFER` → `Contents::SharedBuffer`, no-op
             // drop) or in `this_parse.arena` (`Contents::Arena`, no-op drop —
@@ -1606,7 +1598,7 @@ impl<'a> Transpiler<'a> {
                 jsx.parse = loader.is_jsx();
                 let _ = &this_parse.macro_remappings;
 
-                // PORT NOTE: `ParserOptions::init` is hard-typed
+                // `ParserOptions::init` is hard-typed
                 // `-> Options<'static>` and `Options<'a>` is *invariant* in
                 // `'a` (it holds `Option<&'a mut MacroContext>`), so an
                 // `Options<'static>` cannot be passed to
@@ -1690,8 +1682,8 @@ impl<'a> Transpiler<'a> {
                 // .bundler_feature_flags`. Zig aliased a `*const StringSet`;
                 // `Features.bundler_feature_flags` is currently owned
                 // (`Option<Box<StringSet>>`), so clone by value.
-                // TODO(refactor): change the parser-side field to
-                // `Option<&'a StringSet>` to avoid the clone.
+                // (Changing the parser-side field to `Option<&'a StringSet>`
+                // would avoid the clone.)
                 // The clone drops with `opts` — no leak.
                 opts.features.bundler_feature_flags = self
                     .options
@@ -1748,7 +1740,7 @@ impl<'a> Transpiler<'a> {
                         .map(|m| &mut *core::ptr::from_mut(m));
                 }
 
-                // PORT NOTE: spec calls `transpiler.resolver.caches.js.parse`.
+                // spec calls `transpiler.resolver.caches.js.parse`.
                 // The resolver-side `cache::JavaScript` is a fieldless
                 // shell with no `parse` body (resolver/lib.rs:1664);
                 // the real `parse` lives on `crate::cache::JavaScript`. Both
@@ -1805,7 +1797,7 @@ impl<'a> Transpiler<'a> {
                                 if this_parse.virtual_source.is_none()
                                     && this_parse.allow_bytecode_cache
                                 {
-                                    // PORT NOTE: `bun.bytecode_extension`
+                                    // `bun.bytecode_extension`
                                     // (bun.zig:3502) — no Rust const re-export
                                     // in `bun_core` yet, so inline the literal.
                                     const BYTECODE_EXT: &[u8] = b".jsc";
@@ -1819,7 +1811,7 @@ impl<'a> Transpiler<'a> {
                                     // `path_buf2[total] == 0` already; safe to
                                     // borrow as a NUL-terminated ZStr.
                                     let zpath = bun_core::ZStr::from_buf(&path_buf2[..], total);
-                                    // PORT NOTE: spec calls
+                                    // spec calls
                                     // `bun.sys.File.toSourceAt(...)` which is
                                     // `read_from` + wrap-in-`bun_ast::Source`.
                                     // We only need `.contents`, so call
@@ -1926,7 +1918,7 @@ fn parse_data_loader<'a>(
     // => |kind|` — comptime monomorphization per loader; profile if it
     // shows up on a hot path.
     //
-    // PORT NOTE: `bun_parsers::*` parse into the T2 value AST
+    // `bun_parsers::*` parse into the T2 value AST
     // (`bun_ast::Expr`); lift into the full T4
     // `bun_ast::Expr` via the deep-convert `From` bridge
     // (Expr.rs:1265) so the StoreRef-backed accessors below work.
@@ -1964,7 +1956,7 @@ fn parse_data_loader<'a>(
 
     let mut symbols: Vec<bun_ast::Symbol> = Vec::new();
 
-    // PORT NOTE: reshaped — Zig `arena.alloc(Part, 1)` returned
+    // reshaped — Zig `arena.alloc(Part, 1)` returned
     // an arena slice, but `Ast::from_parts` takes `Box<[Part]>`
     // (Vec owns its buffer). The single-part array is built on
     // the global heap; `stmts` stays arena-backed (`*mut [Stmt]`).
@@ -1990,7 +1982,7 @@ fn parse_data_loader<'a>(
             let properties: &mut [bun_ast::G::Property] = obj.properties.slice_mut();
             if !properties.is_empty() {
                 let n = properties.len();
-                // PORT NOTE: Zig `expandToCapacity()` / `arena.alloc(Symbol, n)`
+                // Zig `expandToCapacity()` / `arena.alloc(Symbol, n)`
                 // leave slots uninitialized, which is inert in Zig.
                 // The loop below writes sparsely at index `i` and
                 // `continue`s on `"default"` / duplicate keys, so
@@ -2002,7 +1994,7 @@ fn parse_data_loader<'a>(
                 let mut decls: Vec<bun_ast::G::Decl> = vec![bun_ast::G::Decl::default(); n];
 
                 symbols.resize_with(n, Default::default);
-                // PORT NOTE: `S::ExportClause.items: *mut [ClauseItem]`
+                // `S::ExportClause.items: *mut [ClauseItem]`
                 // is arena-owned; `ClauseItem: Default` so
                 // `alloc_slice_fill_default` is fine.
                 let export_clauses = arena.alloc_slice_fill_default::<bun_ast::ClauseItem>(n);
@@ -2010,7 +2002,7 @@ fn parse_data_loader<'a>(
                     bun_collections::StringHashMap::default();
                 // duplicate_key_checker drops at end of scope (defer .deinit())
                 let mut count: usize = 0;
-                // PORT NOTE: reshaped for borrowck — cannot zip 4
+                // reshaped for borrowck — cannot zip 4
                 // slices with one mutable borrow into `decls` and
                 // also random-access `decls[prev]`.
                 for i in 0..n {
@@ -2038,7 +2030,7 @@ fn parse_data_loader<'a>(
                             Some(prop.value.expect("infallible: prop has value"));
                         continue;
                     }
-                    // PORT NOTE: spec transpiler.zig:1030-1071
+                    // spec transpiler.zig:1030-1071
                     // writes at `i` and shrinks to `count`, leaving
                     // holes when `"default"` / duplicates `continue`
                     // — a latent spec bug. Write densely at `count`
@@ -2318,7 +2310,7 @@ fn parse_unsupported_loader(loader: options::Loader, path: &bun_paths::fs::Path<
 // `ModuleLoader::transpile_source_code` (jsc_hooks.rs spec :525-539); the
 // dispatch shim that `RuntimeTranspilerStore` / `AsyncModule` link against.
 //
-// PORT NOTE: `comptime format: js_printer.Format` demoted to a runtime arg —
+// `comptime format: js_printer.Format` demoted to a runtime arg —
 // `bun_js_printer::Format` doesn't derive `ConstParamTy` (and can't be added
 // from this crate). All callers pass a literal anyway; the inner
 // `print_ast::<_, ASCII_ONLY, ENABLE_SOURCE_MAP>` keeps both real comptime
@@ -2327,7 +2319,7 @@ fn parse_unsupported_loader(loader: options::Loader, path: &bun_paths::fs::Path<
 // ══════════════════════════════════════════════════════════════════════════
 
 use bun_js_printer as js_printer;
-// PORT NOTE: `module_info` threads the *printer's* `analyze_transpiled_module::ModuleInfo`
+// `module_info` threads the *printer's* `analyze_transpiled_module::ModuleInfo`
 // (the producer), not `crate::analyze_transpiled_module::ModuleInfo` (the
 // richer consumer-side mirror). The print
 // path only ever fills the printer-owned one and hands its serialized bytes to
@@ -2337,7 +2329,7 @@ use js_printer::analyze_transpiled_module;
 /// Map the bundler-local `Target` (options.rs:489) to the lower-tier
 /// `bun_ast::Target` consumed by `js_printer::Options`.
 /// The two enums are variant-for-variant identical but nominally distinct;
-/// TODO(refactor): collapse them (see lib.rs `pub mod options` shadow note).
+/// they could be collapsed (see lib.rs `pub mod options` shadow note).
 #[inline]
 fn to_bundle_enums_target(t: crate::options_impl::Target) -> bun_ast::Target {
     use bun_ast::Target as T;
@@ -2378,14 +2370,17 @@ impl<'a> Transpiler<'a> {
         runtime_transpiler_cache: Option<core::ptr::NonNull<RuntimeTranspilerCache>>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, bun_core::Error> {
-        // TODO(port): narrow error set
-        // TODO(port): `bun.perf.trace("JSPrinter.printWithSourceMap")` /
-        // `("JSPrinter.print")` — `bun_perf::trace` now takes a `PerfEvent`
-        // enum and neither variant is in `generated_perf_trace_events.rs`
-        // yet. Re-add once `scripts/generate-perf-trace-events.sh` runs
-        // against the Rust tree.
+        // Zig: `bun.perf.trace("JSPrinter.printWithSourceMap")` /
+        // `("JSPrinter.print")`. Routed through the T0 ftrace subset like the
+        // other bundler spans (`Bundler.computeChunks` etc.) —
+        // `bun_perf::PerfEvent` has no JSPrinter variants yet.
+        let _trace = bun_core::perf::trace(if ENABLE_SOURCE_MAP {
+            "JSPrinter.printWithSourceMap"
+        } else {
+            "JSPrinter.print"
+        });
 
-        // PORT NOTE: Zig built `Symbol.NestedList.fromBorrowedSliceDangerous(
+        // Zig built `Symbol.NestedList.fromBorrowedSliceDangerous(
         // &.{ast.symbols})` — aliased the stack-one-slice into the map. Rust
         // can't borrow `ast.symbols` while moving `ast` into `print_ast`, so
         // take the column out (the printer never reads `tree.symbols`; it
@@ -2451,7 +2446,7 @@ impl<'a> Transpiler<'a> {
             ),
 
             js_printer::Format::EsmAscii => {
-                // PORT NOTE: `switch (target.isBun()) { inline else => |is_bun| ... }`
+                // `switch (target.isBun()) { inline else => |is_bun| ... }`
                 // — runtime bool → comptime dispatch. Hoisted into the
                 // `print_ast_esm_ascii` helper so the const-generic IS_BUN can
                 // also drive `module_type`.
@@ -2608,7 +2603,7 @@ impl<'a> Transpiler<'a> {
         )
     }
 
-    // PORT NOTE: hoisted from `inline else => |is_bun|` arm of
+    // hoisted from `inline else => |is_bun|` arm of
     // print_with_source_map_maybe to express the comptime bool dispatch as a
     // const generic.
     #[allow(clippy::too_many_arguments)]
@@ -2718,7 +2713,7 @@ impl<'a> Transpiler<'a> {
         handler: js_printer::SourceMapHandler<'_>,
         module_info: Option<*mut analyze_transpiled_module::ModuleInfo>,
     ) -> Result<usize, bun_core::Error> {
-        // PORT NOTE: env_var feature_flag getters return `Option<bool>`
+        // env_var feature_flag getters return `Option<bool>`
         // (Some(default) when unset); Zig's `.get()` is plain `bool`.
         if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS
             .get()
@@ -2816,14 +2811,14 @@ impl<'a> Transpiler<'a> {
 
     /// Port of `transpiler.zig:1254 enqueueEntryPoints`.
     ///
-    /// PORT NOTE: the Zig version writes the resolved entry results into a
+    /// the Zig version writes the resolved entry results into a
     /// caller-provided `[]Result` slice; the only caller (`transform`) discards
     /// that slice immediately, so the Rust port returns only the count and lets
     /// `linker.enqueue_resolve_result` push directly onto `resolve_queue`.
     fn enqueue_entry_points<const NORMALIZE_ENTRY_POINT: bool>(&mut self) -> usize {
         let mut entry_point_i: usize = 0;
 
-        // PORT NOTE: snapshot entry points so the `&mut self` resolver call
+        // snapshot entry points so the `&mut self` resolver call
         // does not conflict with the `&self.options` borrow.
         let entries: Vec<Box<[u8]>> = self.options.entry_points.to_vec();
         let top_level_dir = self.fs().top_level_dir;
@@ -2988,7 +2983,7 @@ impl<'a> Transpiler<'a> {
         let Some(file_path_ref) = resolve_result.path_const() else {
             return Ok(None);
         };
-        // PORT NOTE: `resolver::Result.path_pair` carries `bun_resolver::fs::Path<'_>`;
+        // `resolver::Result.path_pair` carries `bun_resolver::fs::Path<'_>`;
         // downstream `linker.link`/`get_hashed_filename` and `OutputFile.src_path`
         // expect `bun_paths::fs::Path<'_>` / `bun_paths::fs::Path<'static>`. Re-init via
         // `text` (the only field both shapes share semantically).
@@ -3038,15 +3033,17 @@ impl<'a> Transpiler<'a> {
             | options::Loader::Json5
             | options::Loader::Text
             | options::Loader::Md => {
-                // PORT NOTE: borrowck — `parse` consumes `&mut self`, so capture
+                // borrowck — `parse` consumes `&mut self`, so capture
                 // the option fields needed for `ParseOptions` first.
                 let jsx = jsx_pragma_from_resolver(&resolve_result.jsx);
                 let dirname_fd = resolve_result.dirname_fd;
                 let emit_decorator_metadata = resolve_result.flags.emit_decorator_metadata();
                 let experimental_decorators = resolve_result.flags.experimental_decorators();
-                // TODO(port): `MacroRemap` (StringArrayHashMap of StringArrayHashMap)
-                // has no nested `Clone` impl; the Zig copied it by value. Re-key
-                // shallowly here matching the build-command conversion.
+                // `MacroRemap` (StringArrayHashMap of StringArrayHashMap) has
+                // no nested `Clone` impl (the inner clone is fallible); Zig
+                // copied it by value. Rebuild the outer map, deep-cloning
+                // each inner map (fallible), matching the build-command
+                // conversion.
                 let macro_remappings = {
                     let mut m = MacroRemap::default();
                     for (k, v) in self.options.macro_remap.iter() {
@@ -3215,8 +3212,8 @@ impl<'a> Transpiler<'a> {
         // the CSS AST it backs is dropped before this fn returns
         // (only `result.code: Vec<u8>` escapes, which is
         // global-heap). `'static` matches the crate-wide erasure
-        // on `StyleSheet`/`ParserOptions` (see css_parser.rs
-        // TODO(port): 'bump threading).
+        // on `StyleSheet`/`ParserOptions` (see the css_parser.rs
+        // `'bump`-threading note).
         let alloc: &'static Arena = unsafe { bun_ptr::detach_lifetime_ref::<Arena>(self.arena) };
 
         let (mut sheet, extra) = match bun_css::StyleSheet::<bun_css::DefaultAtRule>::parse(

@@ -10,13 +10,12 @@ use crate::Fd;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 use crate::Tag;
 
-// PORT NOTE: Zig was `const debug = bun.Output.scoped(.copy_file, .hidden)`.
+// Zig was `const debug = bun.Output.scoped(.copy_file, .hidden)`.
 // `declare_scope!` uses the ident as both static name AND tag string, but
 // `copy_file` would shadow `pub fn copy_file()` below. Hand-expand with the
-// correct env-var tag and a non-colliding static name.
-// TODO(port): `scoped_log!` stringifies its scope ident for the `[tag]`
-// prefix, so log lines show `[debug]` instead of `[copy_file]`; fix when
-// `scoped_log!` grows a path/expr arm.
+// correct env-var tag and a non-colliding static name. (`scoped_log!` reads
+// the `[tag]` prefix from `ScopedLogger::tagname` at runtime, so log lines
+// still show `[copy_file]`.)
 static debug: bun_core::output::ScopedLogger =
     bun_core::output::ScopedLogger::new("copy_file", bun_core::output::Visibility::Hidden);
 
@@ -24,7 +23,7 @@ static debug: bun_core::output::ScopedLogger =
 pub type InputType<'a> = &'a bun_core::WStr; // bun.OSPathSliceZ == [:0]const u16
 #[cfg(not(windows))]
 pub type InputType<'a> = Fd;
-// PORT NOTE: lifetime param is unused on posix (Fd is Copy); kept so callers
+// lifetime param is unused on posix (Fd is Copy); kept so callers
 // can write `InputType<'_>` uniformly across platforms.
 
 // In a `bun install` with prisma, this reduces the system call count from ~18,000 to ~12,000
@@ -47,7 +46,7 @@ pub type InputType<'a> = Fd;
 //
 // on macOS and other platforms, sendfile() only works when one of the ends is a socket
 // and in general on macOS, it doesn't seem to have much performance impact.
-// PORT NOTE: `packed struct(u8)` with all-bool fields → bitflags!; field reads/writes
+// `packed struct(u8)` with all-bool fields → bitflags!; field reads/writes
 // reshaped to `.contains()`/`.insert()` below.
 bitflags::bitflags! {
     #[derive(Clone, Copy, PartialEq, Eq)]
@@ -131,7 +130,7 @@ pub fn copy_file_with_state(
                 // Don't worry about EINTR here.
                 E::EINTR => {}
 
-                // PORT NOTE: Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
+                // Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
                 E::EACCES | E::EBADF | E::EINVAL | E::ENOTSUP | E::ENOSYS | E::EPERM => {
                     bun_core::scoped_log!(debug, "ioctl_ficlonerange is NOT supported");
                     CAN_USE_IOCTL_FICLONE_.store(-1, Ordering::Relaxed);
@@ -324,7 +323,7 @@ pub fn can_use_ioctl_ficlone() -> bool {
     result == 1
 }
 
-// TODO(port): `fd_t` is `std.posix.fd_t` (c_int on posix, HANDLE on windows). Only the
+// Zig's `fd_t` is `std.posix.fd_t` (c_int on posix, HANDLE on windows). Only the
 // posix paths call the fns below, so c_int is sufficient here.
 #[allow(non_camel_case_types)]
 type fd_t = core::ffi::c_int;
@@ -367,7 +366,7 @@ pub fn copy_file_range(
                     copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
                 }
                 // syscall added in Linux 4.5, use fallback
-                // PORT NOTE: Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
+                // Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
                 E::ENOTSUP | E::ENOSYS => {
                     copy_file_state.insert(LinuxCopyFileState::HAS_COPY_FILE_RANGE_FAILED);
                     bun_core::scoped_log!(debug, "copy_file_range is NOT supported");
@@ -400,7 +399,7 @@ pub fn copy_file_range(
                 copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
             }
             // they might not support it
-            // PORT NOTE: Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
+            // Zig matched .OPNOTSUPP; on Linux EOPNOTSUPP == ENOTSUP.
             E::ENOTSUP | E::ENOSYS => {
                 copy_file_state.insert(LinuxCopyFileState::HAS_SENDFILE_FAILED);
             }
@@ -447,7 +446,7 @@ pub fn copy_file_read_write_loop(in_: fd_t, out: fd_t, len: usize) -> crate::Res
 }
 
 /// `Platform.kernelVersion().orderWithoutTag(.{ major, minor }).compare(.gte)`.
-/// PORT NOTE: `bun_analytics::generate_header::Platform` (T6) is the canonical
+/// `bun_analytics::generate_header::Platform` (T6) is the canonical
 /// source; T1 routes through `bun_core::linux_kernel_version()` (TYPE_ONLY
 /// move-down) so this crate stays leaf. Compare matches Zig
 /// `std.SemanticVersion.orderWithoutTag` (lexicographic on major→minor→patch,

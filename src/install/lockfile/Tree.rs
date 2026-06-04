@@ -18,7 +18,7 @@ use crate::{
 // Tree
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: `#[repr(C)]` pins field order to declaration order so the raw
+// `#[repr(C)]` pins field order to declaration order so the raw
 // in-memory bytes match the `[u8; 20]` `External` encoding read by
 // `Buffers::load` (which decodes via `to_tree` assuming
 // id|dep_id|parent|off|len). Under `repr(Rust)` rustc may reorder fields and
@@ -176,7 +176,7 @@ pub enum IteratorPathStyle {
     PkgPath,
 }
 
-// PORT NOTE: reshaped — Zig stores `lockfile: *const Lockfile`; here we store
+// reshaped — Zig stores `lockfile: *const Lockfile`; here we store
 // the four buffer slices the iterator actually reads so callers from both
 // `crate::lockfile` (stub) and `crate::lockfile_real` can drive the same
 // iterator without a unified `Lockfile` type (reconciler-6).
@@ -247,7 +247,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
         self.tree_id = 0;
     }
 
-    // TODO(port): Zig signature varies `completed_trees` type by `path_style` (void when .pkg_path).
+    // Zig varied the `completed_trees` type by `path_style` (void when .pkg_path).
     // Here we accept `Option<&mut DynamicBitSet>` unconditionally; callers with PkgPath must pass None.
     pub fn next(
         &mut self,
@@ -259,7 +259,7 @@ impl<'a, const PATH_STYLE: IteratorPathStyle> Iterator<'a, PATH_STYLE> {
             return None;
         }
 
-        // PORT NOTE: reshaped for borrowck — cannot mutably borrow completed_trees in loop while moved.
+        // reshaped for borrowck — cannot mutably borrow completed_trees in loop while moved.
         let mut completed_trees = completed_trees;
 
         while trees[self.tree_id as usize].dependencies.len == 0 {
@@ -306,7 +306,7 @@ pub fn folder_name_is_safe(name: &[u8]) -> bool {
 }
 
 /// Returns relative path and the depth of the tree
-// PORT NOTE: reshaped — Zig takes `*const Lockfile`; here we take the three
+// reshaped — Zig takes `*const Lockfile`; here we take the three
 // buffer slices directly so callers from both `crate::lockfile` (stub) and
 // `crate::lockfile_real` can use this without a shared `Lockfile` type.
 pub(crate) fn relative_path_and_depth<'b, const PATH_STYLE: IteratorPathStyle>(
@@ -421,12 +421,11 @@ pub enum BuilderMethod {
     Filter,
 }
 
-// TODO(port): Zig conditionally typed `manager`/`workspace_filters`/`install_root_dependencies`/
-// `packages_to_install` as `void` when method != .filter. Rust const generics cannot vary field
-// types; using Option<_>/empty defaults instead. TODO(refactor): split into two structs or use a
-// trait-associated type if the size matters.
+// Zig conditionally typed `manager`/`workspace_filters`/`install_root_dependencies`/
+// `packages_to_install` as `void` when method != .filter; Rust const generics cannot vary field
+// types, so they are `Option<_>`/empty defaults and only meaningful when `METHOD == .Filter`.
 pub struct Builder<'a, const METHOD: BuilderMethod> {
-    // PORT NOTE: Zig `std.mem.Allocator` param field dropped. Sole construction site is
+    // Zig `std.mem.Allocator` param field dropped. Sole construction site is
     // `Lockfile.hoist()` (src/install/lockfile.zig) which passes `lockfile.allocator` — the
     // lockfile's persistent allocator (bun.default_allocator via PackageManager/CLI ctx), not an
     // arena. Global mimalloc is correct here; no `&'bump Bump` threading needed.
@@ -436,7 +435,7 @@ pub struct Builder<'a, const METHOD: BuilderMethod> {
     pub resolution_lists: &'a [DependencyIDSlice],
     pub queue: TreeFiller,
     pub log: &'a mut bun_ast::Log,
-    /// PORT NOTE: Zig stores `*Lockfile` alongside `&mut buffers.resolutions`
+    /// Zig stores `*Lockfile` alongside `&mut buffers.resolutions`
     /// (an aliased subslice of the same struct). Stored as `ParentRef` (raw
     /// non-null backref) so the construction site (`Lockfile::hoist`) can
     /// split-borrow `resolutions` mutably without borrowck rejecting the
@@ -501,10 +500,8 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     pub(crate) fn clean(&mut self) -> Result<CleanResult, AllocError> {
         let mut total: u32 = 0;
 
-        // TODO(port): Zig captured `list.bytes` raw pointer to reuse the MultiArrayList backing
-        // allocation for the output `trees` slice. That optimization depends on MultiArrayList
-        // internal layout. Porting the straightforward path (fresh Vec<Tree>) instead.
-        // PERF(port): was MultiArrayList buffer reuse — profile if hot.
+        // PERF(port): was MultiArrayList buffer reuse (Zig recycled `list.bytes` for the
+        // output `trees` slice); ported as a fresh Vec<Tree> — profile if hot.
         let mut slice = self.list.to_owned_slice();
         let mut trees: Vec<Tree> = slice.items_tree().to_vec();
         let dependencies: &mut [DependencyIDList] = slice.items_dependencies_mut();
@@ -540,7 +537,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
         }
 
         // queue / sort_buf / pending_optional_peers freed by Drop; explicit deinit removed.
-        // TODO(port): if Builder outlives clean(), explicitly clear these fields here.
+        // The sole caller (`Lockfile::hoist`) drops the Builder immediately after clean().
 
         slice.deinit_owned();
 
@@ -552,7 +549,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
 // is_filtered_dependency_or_workspace
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: reshaped — Zig reads `lockfile.buffers.resolutions[dep_id]` directly,
+// reshaped — Zig reads `lockfile.buffers.resolutions[dep_id]` directly,
 // but `Builder` holds a live `&mut [PackageID]` over that buffer (see `Builder.lockfile`
 // safety contract), so callers must thread `resolutions` explicitly to avoid an
 // aliasing read through the shared `&Lockfile`.
@@ -720,7 +717,7 @@ impl Tree {
             dependencies: DependencyIDList::default(),
         })?;
 
-        // PORT NOTE: reshaped for borrowck.
+        // reshaped for borrowck.
         let next_id = (builder.list.len() - 1) as Id;
 
         // Copy the `ParentRef` out (it's `Copy`) so the resulting `&Lockfile`
@@ -730,7 +727,7 @@ impl Tree {
         let lockfile: &Lockfile = lockfile_ref.get();
         let pkgs = lockfile.packages.slice();
         let pkg_resolutions = pkgs.items_resolution();
-        // PORT NOTE: reshaped for borrowck — copy the `&'a [Dependency]` out of
+        // reshaped for borrowck — copy the `&'a [Dependency]` out of
         // `builder` so `&dependencies[i]` does not keep `builder` borrowed.
         let dependencies: &[Dependency] = builder.dependencies;
 
@@ -757,7 +754,7 @@ impl Tree {
             });
         }
 
-        // PORT NOTE: reshaped for borrowck — iterate over a snapshot of sort_buf indices since
+        // reshaped for borrowck — iterate over a snapshot of sort_buf indices since
         // builder is mutably borrowed inside the loop.
         let sort_buf_len = builder.sort_buf.len();
         'dep: for sort_idx in 0..sort_buf_len {
@@ -946,7 +943,7 @@ impl Tree {
                 }
                 HoistDependencyResult::Placement(dest) => {
                     {
-                        // PORT NOTE: reshaped for borrowck — Zig held both `items(.dependencies)`
+                        // reshaped for borrowck — Zig held both `items(.dependencies)`
                         // and `items(.tree)` mutably from one slice; here we go through ListExt
                         // accessors sequentially so the &mut borrows do not overlap.
                         // bun.handleOom -> push (aborts on OOM via global allocator)
@@ -970,7 +967,7 @@ impl Tree {
             }
         }
 
-        // PORT NOTE: reshaped for borrowck — re-read `next` via index.
+        // reshaped for borrowck — re-read `next` via index.
         let next: Tree = builder.list.items_tree()[next_id as usize];
         if next.dependencies.len == 0 {
             if cfg!(debug_assertions) {
@@ -987,7 +984,7 @@ impl Tree {
     // 2 (return id) - move the package to the top directory
     // 3 (return dependency_loop) - leave the package at the same (relative) directory
     //
-    // PORT NOTE: reshaped for borrowck — Zig passed `&mut self` (an element of `trees`) plus
+    // reshaped for borrowck — Zig passed `&mut self` (an element of `trees`) plus
     // `trees: &mut [Tree]`, `dependency_lists: &mut [...]`, and `builder: &mut Builder`
     // simultaneously, which overlaps mutable borrows. The body never mutates `self`, `trees`,
     // or `dependency_lists`, so we take `self_id: Id` by value and re-derive read-only views
@@ -1093,7 +1090,7 @@ impl Tree {
             }
 
             if AS_DEFINED && !dep.behavior.is_peer() {
-                // PORT NOTE: reshaped for borrowck — `maybe_report_error` takes
+                // reshaped for borrowck — `maybe_report_error` takes
                 // `&mut self` but the format args borrow `&self` (via
                 // `package_name`/`package_version`/`buf`). Inline against split
                 // field borrows: copy the `ParentRef` out so the `&Lockfile` is

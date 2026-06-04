@@ -127,7 +127,7 @@ pub enum UnixOrHost {
 }
 
 impl UnixOrHost {
-    // PORT NOTE: deinit() deleted — Box<[u8]> fields auto-drop.
+    // Note: deinit() deleted — Box<[u8]> fields auto-drop.
 }
 
 impl Listener {
@@ -161,7 +161,7 @@ impl Listener {
         // returns `active_connections = 0`, but existing accepted sockets each hold a +1 via
         // `markActive`. Without this, closing any of them after reload would underflow the
         // counter (panic in safe builds, wrap in release).
-        // PORT NOTE: Zig `this.handlers.deinit()` — Drop handles unprotect; assignment below drops old.
+        // Note: Zig `this.handlers.deinit()` — Drop handles unprotect; assignment below drops old.
         this.handlers.with_mut(|h| {
             let active_connections = h.active_connections.get();
             *h = handlers;
@@ -171,7 +171,7 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
-    // PORT NOTE: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
+    // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
     pub fn listen(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
         log!("listen");
@@ -185,8 +185,13 @@ impl Listener {
         let socket_config = SocketConfig::from_js(vm, opts, global, true)?;
         #[cfg(windows)]
         let mut socket_config = socket_config;
-        // PORT NOTE: `defer socket_config.deinitExcludingHandlers()` — handled by Drop on SocketConfig
-        // (excluding handlers, which are moved out below). // TODO(port): verify SocketConfig Drop semantics
+        // Note: `defer socket_config.deinitExcludingHandlers()` — handled by Drop on SocketConfig
+        // (excluding handlers, which are moved out below). Verified: on early-error
+        // paths the whole SocketConfig drops (Handlers::drop unprotects — matches
+        // Zig's error-path `handlers.unprotect()` + `deinitExcludingHandlers()`);
+        // on success both arms move `handlers` out via `ptr::read` and suppress
+        // the source's drop (`mem::forget` / `ManuallyDrop`) after extracting the
+        // other owned fields, so handlers are dropped exactly once.
 
         // Only deinit handlers if there's an error; otherwise we put them in a `Listener` and
         // need them to stay alive.
@@ -202,13 +207,13 @@ impl Listener {
             if let Some(pipe_name) =
                 normalize_pipe_name(socket_config.hostname_or_unix.slice(), buf.as_mut_slice())
             {
-                // PORT NOTE: reshaped — `pipe_name` borrows `buf`; copy to an owned
+                // Note: reshaped — `pipe_name` borrows `buf`; copy to an owned
                 // buffer so the borrow ends before we move `socket_config` below.
                 let mut pipe_buf = PathBuffer::uninit();
                 let pipe_len = pipe_name.len();
                 pipe_buf[..pipe_len].copy_from_slice(pipe_name);
 
-                // PORT NOTE: Zig `intoOwnedSlice` — transfer the allocation out
+                // Note: Zig `intoOwnedSlice` — transfer the allocation out
                 // of `socket_config` so the `mem::forget` below doesn't leak it.
                 let connection = UnixOrHost::Unix(
                     core::mem::take(&mut socket_config.hostname_or_unix)
@@ -218,7 +223,7 @@ impl Listener {
 
                 vm.event_loop_ref().ensure_waker();
 
-                // PORT NOTE: by-value move of Handlers — see the non-pipe arm below
+                // Note: by-value move of Handlers — see the non-pipe arm below
                 // for rationale on `ptr::read` + `mem::forget`.
                 // SAFETY: socket_config.handlers is valid; we forget socket_config to avoid double-drop.
                 let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
@@ -269,7 +274,7 @@ impl Listener {
                         // `errdefer handlers.deinit()` already unprotects those JSValues, and `this.handlers`
                         // is a by-value copy of the same struct, so calling `this.deinit()` here would
                         // unprotect the same callbacks a second time.
-                        // PORT NOTE: in this port `handlers` was *moved* (not copied), so we
+                        // Note: in this port `handlers` was *moved* (not copied), so we
                         // recover it from the box before freeing and let it drop here for the
                         // same single-unprotect effect.
                         this_ref.strong_data.with_mut(|s| s.deinit());
@@ -297,7 +302,7 @@ impl Listener {
         // Allocate the Listener up front so the embedded `group` has its final
         // address before we hand it to listen() (it's linked into the loop's
         // intrusive list).
-        // PORT NOTE: by-value move of Handlers. Zig copied the struct then ran
+        // Note: by-value move of Handlers. Zig copied the struct then ran
         // `deinitExcludingHandlers()` on the original. Here we read the handlers
         // out by raw ptr and prevent double-drop by clearing the source via
         // `deinit_excluding_handlers` + `mem::forget`.
@@ -307,7 +312,7 @@ impl Listener {
             unsafe { core::ptr::read(&raw const socket_config.handlers) };
         let protos_taken = socket_config.ssl.as_mut().and_then(|s| s.take_protos());
         let default_data = socket_config.default_data;
-        // PORT NOTE: Zig `intoOwnedSlice` — transfer the allocation out of
+        // Note: Zig `intoOwnedSlice` — transfer the allocation out of
         // `socket_config` so the `mem::forget` below doesn't leak it.
         let hostname_owned: Box<[u8]> = core::mem::take(&mut socket_config.hostname_or_unix)
             .into_vec()
@@ -387,7 +392,7 @@ impl Listener {
                 port: port_,
             }
         } else if let Some(fd) = fd_opt {
-            // PORT NOTE: hostname is dropped here (Zig leaked it on this arm — same behavior not preserved)
+            // Note: hostname is dropped here (Zig leaked it on this arm — same behavior not preserved)
             drop(hostname_owned);
             UnixOrHost::Fd(fd)
         } else {
@@ -448,7 +453,7 @@ impl Listener {
             }
         };
         if listen_socket.is_null() {
-            // PORT NOTE: reshaped for borrowck — extract hostname bytes for error formatting
+            // Note: reshaped for borrowck — extract hostname bytes for error formatting
             let hostname_bytes: &[u8] = match &connection {
                 UnixOrHost::Host { host, .. } => host,
                 UnixOrHost::Unix(u) => u,
@@ -530,7 +535,7 @@ impl Listener {
             handlers: Cell::new(NonNull::new(listener.handlers.as_ptr())),
             socket: Cell::new(uws::NewSocketHandler::<SSL>::DETACHED),
             protos: JsCell::new(listener.protos.clone()),
-            // PORT NOTE: Zig shared the listener's slice (`owned_protos = false`);
+            // Note: Zig shared the listener's slice (`owned_protos = false`);
             // here `protos` is `Option<Box<[u8]>>` so we clone instead of borrow.
             flags: Cell::new(SocketFlags::empty()),
             owned_ssl_ctx: Cell::new(None),
@@ -573,7 +578,9 @@ impl Listener {
             handlers: Cell::new(NonNull::new(listener.handlers.as_ptr())),
             socket: Cell::new(socket),
             protos: JsCell::new(listener.protos.clone()),
-            // TODO(port): protos borrow semantics — Zig shared the listener's slice; here we clone.
+            // Zig shared the listener's protos slice (`owned_protos = false`);
+            // here `protos` is `Option<Box<[u8]>>` so each accepted socket
+            // clones it. Behavior-identical; one small allocation per accept.
             flags: Cell::new(SocketFlags::empty()), // owned_protos = false (cloned above)
             owned_ssl_ctx: Cell::new(None),
             this_value: JsCell::new(jsc::JsRef::empty()),
@@ -658,7 +665,7 @@ impl Listener {
             let vm = VirtualMachine::get().as_mut();
             SSLConfig::from_js(vm, global, tls)?
         } {
-            // PORT NOTE: `defer cfg.deinit()` — handled by Drop on SSLConfig
+            // Note: `defer cfg.deinit()` — handled by Drop on SSLConfig
             let mut create_err = uws::create_bun_socket_error_t::none;
             // SAFETY: `vm_ssl_ctx_cache()` returns the per-thread cache; only
             // touched from the JS thread so the `&mut` is unique.
@@ -742,7 +749,7 @@ impl Listener {
             Self::unlink_unix_socket_path(this);
         }
 
-        // PORT NOTE: Zig `defer switch (listener) {...}` — moved to end of fn body for same ordering.
+        // Note: Zig `defer switch (listener) {...}` — moved to end of fn body for same ordering.
 
         if this.handlers.get().active_connections.get() == 0 {
             this.poll_ref.with_mut(|p| p.unref(bun_io::js_vm_ctx()));
@@ -838,7 +845,7 @@ impl Listener {
         }
 
         // connection / protos: dropped by heap::take below
-        // PORT NOTE: Zig `this.handlers.deinit()` — Drop on Handlers handles unprotect.
+        // Note: Zig `this.handlers.deinit()` — Drop on Handlers handles unprotect.
         // SAFETY: reclaim the Box allocated in listen()
         drop(unsafe { bun_core::heap::take(this) });
     }
@@ -919,7 +926,7 @@ impl Listener {
         Ok(JSValue::UNDEFINED)
     }
 
-    // PORT NOTE: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
+    // Note: no #[bun_jsc::host_fn] — BunObject.rs::static_adapters owns the
     // C-ABI shim (it extracts `opts` from the CallFrame and calls this directly).
     pub fn connect(global: &JSGlobalObject, opts: JSValue) -> JsResult<JSValue> {
         Self::connect_inner(global, None, None, opts)
@@ -942,7 +949,7 @@ impl Listener {
         // Listener, but here handlers live in a standalone allocator.create()
         // block (see below), so that would read past the allocation.
         let mut socket_config = SocketConfig::from_js(vm, opts, global, false)?;
-        // PORT NOTE: `defer socket_config.deinitExcludingHandlers()` — Drop on SocketConfig
+        // Note: `defer socket_config.deinitExcludingHandlers()` — Drop on SocketConfig
 
         let port = socket_config.port;
         let ssl_enabled = socket_config.ssl.is_some();
@@ -953,12 +960,14 @@ impl Listener {
         let connection: UnixOrHost = 'blk: {
             if let Some(fd_) = opts.get_truthy(global, "fd")? {
                 if fd_.is_number() {
-                    // TODO(port): `JSValue::as_file_descriptor` — using direct int decode for now.
+                    // Zig `JSValue.asFileDescriptor()` is `assert(isNumber)` +
+                    // `.fromUV(toInt32())`; the `is_number` guard above covers
+                    // the assert, so this is the same decode.
                     let fd = Fd::from_uv(fd_.to_int32());
                     break 'blk UnixOrHost::Fd(fd);
                 }
             }
-            // PORT NOTE: Zig `intoOwnedSlice` — transfer the allocation out of
+            // Note: Zig `intoOwnedSlice` — transfer the allocation out of
             // `socket_config` so the later `mem::forget` doesn't leak it.
             let host: Box<[u8]> = core::mem::take(&mut socket_config.hostname_or_unix)
                 .into_vec()
@@ -1009,7 +1018,7 @@ impl Listener {
             use bun_sys::FdExt as _;
 
             let mut buf = PathBuffer::uninit();
-            // PORT NOTE: reshaped for borrowck — `normalize_pipe_name` borrows
+            // Note: reshaped for borrowck — `normalize_pipe_name` borrows
             // `buf` for the returned slice; store length and re-borrow after the
             // `connection` match drops.
             let mut pipe_name_len: Option<usize> = None;
@@ -1048,7 +1057,7 @@ impl Listener {
             if is_named_pipe {
                 default_data.ensure_still_alive();
 
-                // PORT NOTE: by-value move of Handlers — see `listen()` for rationale.
+                // Note: by-value move of Handlers — see `listen()` for rationale.
                 // SAFETY: socket_config.handlers is valid; we forget socket_config below.
                 let handlers_moved: Handlers = unsafe { core::ptr::read(&socket_config.handlers) };
                 let mut ssl_taken = socket_config.ssl.take();
@@ -1138,7 +1147,7 @@ impl Listener {
                     // before the call so the errdefer above can't double-free.
                     let ctx_for_pipe =
                         core::mem::replace(&mut *ssl_ctx_guard, None).map(|p| p.as_ptr());
-                    // PORT NOTE: re-borrow connection from the socket field — `connection`
+                    // Note: re-borrow connection from the socket field — `connection`
                     // was moved into `tls` above (single allocation in Zig, aliased read).
                     let named_pipe_result = match tls_ref.connection.get().as_ref().unwrap() {
                         UnixOrHost::Unix(_) => WindowsNamedPipeContext::connect(
@@ -1289,7 +1298,7 @@ impl Listener {
 
         default_data.ensure_still_alive();
 
-        // PORT NOTE: by-value move of Handlers. See `listen()` for rationale.
+        // Note: by-value move of Handlers. See `listen()` for rationale.
         let mut socket_config = core::mem::ManuallyDrop::new(socket_config);
         // SAFETY: socket_config.handlers is valid; ManuallyDrop suppresses the second drop.
         let handlers_moved: Handlers =
@@ -1311,7 +1320,7 @@ impl Listener {
         // Ownership of the SSL_CTX is about to move into the socket; disarm the errdefer.
         let owned_ssl_ctx = scopeguard::ScopeGuard::into_inner(ssl_ctx_guard);
 
-        // PORT NOTE: `switch (ssl_enabled) { inline else => |is_ssl_enabled| {...} }` —
+        // Note: `switch (ssl_enabled) { inline else => |is_ssl_enabled| {...} }` —
         // dispatched to a const-generic helper for monomorphization.
         if ssl_enabled {
             connect_finish::<true>(
@@ -1404,7 +1413,7 @@ impl Listener {
     }
 }
 
-// PORT NOTE: hoisted from `switch (ssl_enabled) { inline else => |is_ssl_enabled| {...} }` body
+// Note: hoisted from `switch (ssl_enabled) { inline else => |is_ssl_enabled| {...} }` body
 // in connect_inner. // PERF(port): was comptime bool dispatch — preserved via const generic.
 fn connect_finish<const IS_SSL: bool>(
     global: &JSGlobalObject,
@@ -1421,7 +1430,8 @@ fn connect_finish<const IS_SSL: bool>(
     let socket: *mut NewSocket<IS_SSL> = if let Some(prev_ptr) = maybe_previous {
         // SAFETY: caller passes a live NewSocket<IS_SSL>
         let prev = unsafe { &*prev_ptr };
-        // TODO(port): `JsRef::is_not_empty` — assert non-empty wrapper.
+        // Zig: `bun.assert(prev.this_value.isNotEmpty())`.
+        debug_assert!(prev.this_value.get().is_not_empty());
         if let Some(prev_handlers) = prev.handlers.get() {
             // Only free the previous Handlers when no callback scope is still
             // holding it. If a `data`/`close` handler synchronously re-entered
@@ -1506,7 +1516,7 @@ fn connect_finish<const IS_SSL: bool>(
         f.set(SocketFlags::ALLOW_HALF_OPEN, allow_half_open);
         socket_ref.flags.set(f);
     }
-    // PORT NOTE: Zig stored `connection` in the socket field and passed the same
+    // Note: Zig stored `connection` in the socket field and passed the same
     // value to doConnect (single allocation, aliased read). `do_connect` now
     // reads `self.connection` directly so no second borrow is needed here.
     if socket_ref.do_connect().is_err() {
@@ -1638,7 +1648,7 @@ impl WindowsNamedPipeListeningContext {
         };
         if result.is_err() {
             // connection dropped
-            // PORT NOTE: Zig (Listener.zig:994) calls `client.deinit()` synchronously here,
+            // Note: Zig (Listener.zig:994) calls `client.deinit()` synchronously here,
             // freeing the ctx before returning from the libuv connection callback. We instead
             // release the only ref, which goes 1→0 → schedule_deinit → next-tick free. The
             // deferred path is kept because `get_accepted_by` may have already `uv_pipe_init`'d

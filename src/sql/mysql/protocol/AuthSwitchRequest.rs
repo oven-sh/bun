@@ -7,7 +7,7 @@ pub struct AuthSwitchRequest {
     pub header: u8,
     pub plugin_name: Data,
     pub plugin_data: Data,
-    // TODO(port): Zig u24 — no native Rust u24; using u32 (value always fits in 24 bits)
+    /// Wire format is a 3-byte int (Zig `u24`); the value always fits in 24 bits.
     pub packet_size: u32,
 }
 
@@ -26,7 +26,6 @@ impl Default for AuthSwitchRequest {
 // `Data` owns its own cleanup via `Drop`, so no explicit `impl Drop` is needed here.
 
 impl AuthSwitchRequest {
-    // TODO(port): narrow error set (Zig: error.InvalidAuthSwitchRequest + reader errors)
     pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,

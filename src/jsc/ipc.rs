@@ -48,7 +48,7 @@ use bun_uws;
 /// to describe different events it performs. It will send a message with an incrementing sequence number and then call a callback
 /// when a message is received with an 'ack' property of the same sequence number.
 ///
-/// PORT NOTE: moved down from `bun_runtime::node::node_cluster_binding` (cycle-break per
+/// Note: moved down from `bun_runtime::node::node_cluster_binding` (cycle-break per
 /// docs/PORTING.md) — `SendQueue` stores one inline so the struct must live at this tier.
 /// All field accesses + dispatch methods need only `bun_jsc`/`bun_collections` symbols.
 pub struct InternalMsgHolder {
@@ -103,7 +103,7 @@ impl InternalMsgHolder {
         if let Some(p) = message.get(global, "ack")? {
             if !p.is_undefined() {
                 let ack = p.to_int32();
-                // PORT NOTE: reshaped for borrowck — Zig copied the Strong out of the
+                // Note: reshaped for borrowck — Zig copied the Strong out of the
                 // entry, then conditionally deinit+swapRemove. Here we peek the JSValue
                 // first (ending the immutable borrow), then swap_remove (which drops the
                 // Strong == `defer cbstrong.deinit()`).
@@ -666,8 +666,10 @@ pub fn get_nack_packet(mode: Mode) -> &'static [u8] {
     }
 }
 
+// Zig `uws.NewSocketHandler(false)`: `bun_uws::SocketHandler<SSL>` is an alias
+// for `NewSocketHandler<SSL>` (uws_sys/socket.rs), so `<false>` is the same
+// non-SSL handler shape.
 pub type Socket = bun_uws::SocketHandler<false>;
-// TODO(port): uws.NewSocketHandler(false) — verify generic shape in bun_uws
 
 pub struct Handle {
     pub fd: Fd,
@@ -1003,7 +1005,7 @@ impl SendQueue {
         // owner is about to free the memory that backs `this`, so scheduling
         // a task that points back into it would use-after-free.
         if was_open && self.after_close_task.is_none() {
-            // PORT NOTE: `bun_event_loop::JsResult` erases the error to `*mut ()`;
+            // Note: `bun_event_loop::JsResult` erases the error to `*mut ()`;
             // adapt the jsc-crate `JsResult` via a non-capturing closure (coerces to fn ptr).
             let task = ManagedTask::new(std::ptr::from_mut::<SendQueue>(self), |p| {
                 let _ = Self::_on_after_ipc_closed(p);
@@ -1060,7 +1062,7 @@ impl SendQueue {
             self.close_socket(CloseReason::Normal, CloseFrom::User);
             return;
         }
-        // PORT NOTE: see `_socket_closed` — adapt `bun_event_loop::JsResult` via closure.
+        // Note: see `_socket_closed` — adapt `bun_event_loop::JsResult` via closure.
         let task = ManagedTask::new(std::ptr::from_mut::<SendQueue>(self), |p| {
             let _ = Self::_close_socket_task(p);
             Ok(())
@@ -1111,7 +1113,7 @@ impl SendQueue {
 
         // optimal case: appending a message without a handle to the end of the queue when the last message also doesn't have a handle and isn't ack/nack
         // this is rare. it will only happen if messages stack up after sending a handle, or if a long message is sent that is waiting for writable
-        // PORT NOTE: reshaped for borrowck (NLL limitation: early-return of
+        // Note: reshaped for borrowck (NLL limitation: early-return of
         // `&mut self.queue[..]` would otherwise extend the borrow across the
         // fallback push). Compute the predicate first, then re-borrow.
         let use_last = if handle.is_none() && !self.queue.is_empty() {
@@ -1222,7 +1224,7 @@ impl SendQueue {
 
     pub fn update_ref(&mut self, global: &JSGlobalObject) {
         let _ = global;
-        // PORT NOTE: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
+        // Note: KeepAlive::{ref_,unref} take an `EventLoopCtx` (aio cycle-
         // break vtable), not `&VirtualMachine`. The Zig anytype dispatch is
         // routed through `bun_io::get_vm_ctx` which `bun_runtime` registers.
         let ctx = bun_io::posix_event_loop::get_vm_ctx(bun_io::AllocatorType::Js);
@@ -1242,8 +1244,10 @@ impl SendQueue {
             }
         );
         self.debug_log_message_queue();
-        // defer this.updateRef(global) — handled at every return below.
-        // TODO(port): errdefer — use scopeguard for update_ref-on-exit.
+        // Zig: `defer this.updateRef(global)` — handled manually at every
+        // return below (the recursive `continue_send` path delegates to its
+        // own tail `update_ref`). A scopeguard can't hold `&mut self` while
+        // the body also uses `self`, so the manual spelling stays.
 
         if self.queue.is_empty() {
             self.update_ref(global);
@@ -1368,7 +1372,7 @@ impl SendQueue {
     ) -> SerializeAndSendResult {
         log!("SendQueue#serializeAndSend");
         let indicate_backoff = self.waiting_for_ack.is_some() && !self.queue.is_empty();
-        // PORT NOTE: reshaped for borrowck — work on msg via local then drop borrow before continue_send.
+        // Note: reshaped for borrowck — work on msg via local then drop borrow before continue_send.
         let mode = self.mode;
         let msg = match self.start_message(global, callback, handle) {
             Ok(m) => m,
@@ -1568,7 +1572,7 @@ impl SendQueue {
         // Zig: `defer vm.eventLoop().exit()` — handled by `_scope` drop.
     }
     fn get_global_this(&self) -> crate::GlobalRef {
-        // PORT NOTE: lifetime detached from `&self` so callers can hold the
+        // Note: lifetime detached from `&self` so callers can hold the
         // global across `&mut self` borrows (Zig passes `*JSGlobalObject` by
         // raw pointer everywhere). The owner (Subprocess / IPCInstance)
         // outlives this SendQueue and the JSGlobalObject is heap-allocated by
@@ -1637,7 +1641,6 @@ impl SendQueue {
         this: *mut Self,
         pipe_fd: Fd,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         log!("configureClient");
         let ipc_pipe: *mut uv::Pipe =
             bun_core::heap::into_raw(Box::new(bun_core::ffi::zeroed::<uv::Pipe>()));
@@ -1765,19 +1768,22 @@ fn handle_ipc_message(
 ) {
     #[cfg(debug_assertions)]
     {
-        // PORT NOTE: Zig formats the JSValue via ConsoleObject.Formatter for
-        // the scoped log; the Rust `Formatter` has no `Default` and threading
-        // it through here pulls in the full table-printer machinery for a
-        // debug-only log line. Log the variant tag instead.
-        // TODO(port): wire `console_object::Formatter::new(global_this)` once
-        // its construction stabilises.
-        let _ = global_this;
+        // Zig: `var formatter = jsc.ConsoleObject.Formatter{ .globalThis = globalThis };
+        // defer formatter.deinit();` — the Rust `Formatter` runs its deinit in `Drop`.
+        let mut formatter = jsc::ConsoleObject::Formatter::new(global_this);
         match &message {
             DecodedIPCMessage::Version(version) => {
                 log!("received ipc message: version: {}", version)
             }
-            DecodedIPCMessage::Data(_) => log!("received ipc message: \\<data>"),
-            DecodedIPCMessage::Internal(_) => log!("received ipc message: internal"),
+            DecodedIPCMessage::Data(jsvalue) => {
+                log!("received ipc message: {}", jsvalue.to_fmt(&mut formatter))
+            }
+            DecodedIPCMessage::Internal(jsvalue) => {
+                log!(
+                    "received ipc message: internal: {}",
+                    jsvalue.to_fmt(&mut formatter)
+                )
+            }
         }
     }
     let mut internal_command: Option<IPCCommand> = None;
@@ -1898,7 +1904,7 @@ fn on_data2(send_queue: &mut SendQueue, all_data: &[u8]) {
 
     // Decode the message with just the temporary buffer, and if that
     // fails (not enough bytes) then we allocate to .ipc_buffer
-    // PORT NOTE: reshaped for borrowck — match on raw discriminant pointer to allow
+    // Note: reshaped for borrowck — match on raw discriminant pointer to allow
     // calling &mut self methods on send_queue inside arms.
     match &mut send_queue.incoming {
         IncomingBuffer::Json(_) => {

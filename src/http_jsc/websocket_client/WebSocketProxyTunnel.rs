@@ -151,7 +151,7 @@ impl WebSocketProxyTunnel {
         sni_hostname: &[u8],
         reject_unauthorized: bool,
     ) -> Result<NonNull<WebSocketProxyTunnel>, bun_alloc::AllocError> {
-        // PORT NOTE: const-generic bool → variant selection. The pointer cast is
+        // const-generic bool → variant selection. The pointer cast is
         // identity when SSL matches the alias (HttpUpgradeClient = NewHttpUpgradeClient<false>,
         // etc); `assume_ssl`/`assume_tcp` rebuild the handler around the same
         // `InternalSocket` so no `unsafe` is needed.
@@ -196,7 +196,6 @@ impl WebSocketProxyTunnel {
         ssl_options: &SslConfig,
         initial_data: &[u8],
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // Allow handshake to complete so we can access peer certificate for manual
         // hostname verification in onHandshake(). The actual reject_unauthorized
         // check uses self.reject_unauthorized field.
@@ -235,7 +234,7 @@ impl WebSocketProxyTunnel {
 
         // Configure SNI with hostname.
         //
-        // PORT NOTE: the Zig spec does this inside `onOpen`, which `SslWrapper::start()`
+        // the Zig spec does this inside `onOpen`, which `SslWrapper::start()`
         // invokes immediately before `handle_traffic()`. We hoist it here because
         // `start()` holds `&mut SslWrapper` across the `on_open` dispatch, and any
         // read of `(*ctx).wrapper` from inside the callback would invalidate that
@@ -292,7 +291,7 @@ impl WebSocketProxyTunnel {
         let _guard = unsafe { bun_ptr::ScopedRef::new(this) };
         bun_core::scoped_log!(WebSocketProxyTunnel, "onOpen");
         // SNI configuration is done in `start()` before the wrapper is driven;
-        // see PORT NOTE there. This callback intentionally does not touch
+        // see the note there. This callback intentionally does not touch
         // `(*this).wrapper` — the caller (`SslWrapper::start`) holds `&mut self`
         // over those bytes.
         let _ = this;
@@ -512,7 +511,7 @@ impl WebSocketProxyTunnel {
         unsafe {
             let to_send = (*this).write_buffer.slice();
             if !to_send.is_empty() {
-                // PORT NOTE: reshaped for borrowck — capture len before re-borrowing write_buffer
+                // reshaped for borrowck — capture len before re-borrowing write_buffer
                 let to_send_len = to_send.len();
                 let written = (*this).socket.write(to_send);
                 if written < 0 {
@@ -569,7 +568,6 @@ impl WebSocketProxyTunnel {
     /// which forms `&mut *ctx`; this function therefore accesses `wrapper` via raw
     /// projection and never holds a `&mut Self` across the call.
     pub(crate) unsafe fn write(this: *mut Self, data: &[u8]) -> Result<usize, bun_core::Error> {
-        // TODO(port): narrow error set
         // SAFETY: caller contract — `this` is live; projection covers only `wrapper`.
         let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
         // SAFETY: deref of field projection; `this` is live.

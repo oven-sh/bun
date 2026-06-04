@@ -40,7 +40,7 @@ use debug_scope::HTMLBundle as debug;
 // .classes.ts codegen wires toJS/fromJS/fromJSDirect via #[bun_jsc::JsClass].
 // HTMLBundle can be owned by JavaScript as well as any number of Server instances,
 // hence the ref count alongside the JS wrapper.
-// PORT NOTE (§Pointers): `*mut HTMLBundle` is the m_ctx payload of a
+// `*mut HTMLBundle` is the m_ctx payload of a
 // `.classes.ts` wrapper — FFI rule says intrusive `RefPtr`.
 // `bun.ptr.RefCount(@This(), "ref_count", deinit, .{})`
 #[derive(bun_ptr::RefCounted)]
@@ -130,7 +130,6 @@ impl HTMLBundle {
     // Zig `deinit`: only `allocator.free(this.path)` + `bun.destroy(this)`.
     // `path: Box<[u8]>` auto-drops; dealloc handled by IntrusiveRc — no explicit Drop body.
 
-    // TODO(port): #[bun_jsc::host_fn(getter)] once codegen attribute lands for this class.
     pub fn get_index(this: &Self, global: &JSGlobalObject) -> JsResult<JSValue> {
         bun_jsc::bun_string_jsc::create_utf8_for_js(global, &this.path)
     }
@@ -152,7 +151,7 @@ pub(crate) type HTMLBundleRoute = Route;
 #[derive(bun_ptr::RefCounted)]
 #[ref_count(debug_name = "HTMLBundleRoute")]
 pub struct Route {
-    // PORT NOTE: FFI userdata — *Route is recovered from uws callback
+    // FFI userdata — *Route is recovered from uws callback
     // userdata (on_aborted, JSBundleCompletionTask backref). §Pointers FFI
     // rule → `bun_ptr::RefPtr<HTMLBundle>` + `impl RefCounted`.
     pub bundle: IntrusiveRc<HTMLBundle>,
@@ -189,7 +188,7 @@ pub enum State {
     Html(*mut StaticRoute),
 }
 
-// PORT NOTE: Zig's `State.deinit` is *only* invoked from `Route.deinit` and the
+// Zig's `State.deinit` is *only* invoked from `Route.deinit` and the
 // dev-mode reset in `onAnyRequest`; ordinary `this.state = ...` overwrites in
 // `onComplete`/`onPluginsResolved`/etc. do NOT run it. Mapping it to `impl Drop`
 // would fire on every assignment — in particular `on_complete`'s
@@ -329,7 +328,6 @@ impl Route {
                             bstr::BStr::new(req.url())
                         );
                     }
-                    // TODO(dezig-oom): verify route.schedule_bundle is fallible
                     bun_core::handle_oom(route.schedule_bundle(server));
                     continue;
                 }
@@ -422,7 +420,6 @@ impl Route {
         &self,
         plugins: Option<NonNull<JSBundler::Plugin>>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // S008: `JSGlobalObject` is an `opaque_ffi!` ZST — safe `*const → &` deref.
         let global = bun_opaque::opaque_deref(self.bundle.global);
         let server = self.server.get().expect("server set");
@@ -432,7 +429,7 @@ impl Route {
         let vm = global.bun_vm().as_mut();
 
         let mut config = JSBundlerConfig::default();
-        // PORT NOTE: `errdefer config.deinit(allocator)` — `Config` owns its fields and
+        // Zig `errdefer config.deinit(allocator)` — `Config` owns its fields and
         // drops on early-return.
         config.entry_points.insert(&self.bundle.path)?;
         let xform = &vm.transpiler.options.transform_options;
@@ -483,7 +480,7 @@ impl Route {
 
         if let Some(define) = &cli.args.serve_define {
             debug_assert_eq!(define.keys.len(), define.values.len());
-            // PORT NOTE: Zig bulk-set `entries.len` + `@memcpy` + `reIndex` against
+            // Zig bulk-set `entries.len` + `@memcpy` + `reIndex` against
             // `StringArrayHashMap`; Rust `StringMap` exposes only put/insert. Same
             // result, slightly more hash work.
             // PERF(port): was bulk reIndex — profile if hot.
@@ -522,7 +519,6 @@ impl Route {
     }
 
     pub fn on_plugins_rejected(&self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         bun_output::scoped_log!(
             debug,
             "HTMLBundleRoute(0x{:x}) plugins rejected",
@@ -545,7 +541,7 @@ impl Route {
                 }
                 let mut log = Log::init();
                 completion_task.log.clone_to_with_recycled(&mut log, true);
-                // PORT NOTE: reshaped for borrowck — Zig wrote
+                // Reshaped for borrowck — Zig wrote
                 // `this.state = .{ .err = ... }` then mutated `this.state.err`.
                 if let Some(server) = self.server.get() {
                     if server.config().is_development() {
@@ -591,7 +587,7 @@ impl Route {
                     bun_output::flush();
                 }
 
-                // PORT NOTE: reshaped for borrowck — Zig appended every route in
+                // Reshaped for borrowck — Zig appended every route in
                 // iteration order then mutably called `html_route.clone()` through
                 // a raw ptr aliasing the route table. `AnyRoute::Static` carries
                 // an intrusive `*mut StaticRoute` here; defer appending the HTML
@@ -602,9 +598,8 @@ impl Route {
                     None;
 
                 // Create static routes for each output file
-                // PORT NOTE: index loop because the SourceMap branch reads a sibling entry.
+                // Index loop because the SourceMap branch reads a sibling entry.
                 for i in 0..output_files.len() {
-                    // TODO(dezig-oom): verify OutputFile::to_blob is fallible
                     let blob =
                         AnyBlob::Blob(bun_core::handle_oom(output_files[i].to_blob(global_this)));
                     let mut headers = Headers::default();
@@ -689,7 +684,6 @@ impl Route {
                         continue;
                     }
 
-                    // TODO(dezig-oom): verify server.append_static_route is fallible
                     bun_core::handle_oom(server.append_static_route(
                         route_path,
                         AnyRoute::Static(static_route),
@@ -702,10 +696,8 @@ impl Route {
                 });
                 // SAFETY: html_route is a fresh heap::alloc with ref_count=1;
                 // sole owner before registration.
-                // TODO(dezig-oom): verify StaticRoute::clone is fallible
                 let html_route_clone =
                     bun_core::handle_oom(unsafe { &mut *html_route.as_ptr() }.clone(global_this));
-                // TODO(dezig-oom): verify server.append_static_route is fallible
                 bun_core::handle_oom(server.append_static_route(
                     &html_route_path,
                     AnyRoute::Static(html_route),
@@ -713,7 +705,6 @@ impl Route {
                 ));
                 self.state.set(State::Html(html_route_clone));
 
-                // TODO(dezig-oom): verify server.reload_static_routes is fallible
                 if !bun_core::handle_oom(server.reload_static_routes()) {
                     // Server has shutdown, so it won't receive any new requests
                     // TODO: handle this case
@@ -839,7 +830,7 @@ impl PendingResponse {
         // `ScopedRef` bumps the count and derefs on every exit path.
         let _keep_route = unsafe { bun_ptr::ScopedRef::new(route_ptr) };
 
-        // PORT NOTE: reshaped for borrowck — Zig accessed this.route.pending_responses through
+        // Reshaped for borrowck — Zig accessed this.route.pending_responses through
         // raw ptr; mutate via raw ptr (single-threaded).
         // SAFETY: single-threaded; Route is alive (we hold a ref). R-2: deref as
         // shared (`&*`); `pending_responses` is `JsCell`-wrapped.

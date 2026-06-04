@@ -42,12 +42,11 @@ pub mod npm_registry {
 
     pub use super::NpmRegistry;
 
-    // PORT NOTE: `Parser` stays generic over `L` (Log) / `S` (Source) so this
-    // leaf schema crate doesn't need to name `bun_logger`. The lone live body
-    // (`parse_registry_url_string_impl`) doesn't touch log/source — only the
-    // not-yet-ported `parse_registry_object` / `parse_registry` paths do, and
-    // those need `js_ast::Expr` so they belong upstream in the bunfig parser
-    // anyway.
+    // `Parser` stays generic over `L` (Log) / `S` (Source) so this leaf
+    // schema crate doesn't need to name `bun_logger`. The lone live body
+    // (`parse_registry_url_string_impl`) doesn't touch log/source — only
+    // `parse_registry_object` / `parse_registry` would, and those need
+    // `js_ast::Expr` so they belong upstream in the bunfig parser anyway.
     pub struct Parser<'a, L, S> {
         pub log: &'a mut L,
         pub source: &'a S,

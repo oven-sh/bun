@@ -122,7 +122,7 @@ bun_dispatch::link_interface! {
     pub EventLoopCtx[Js, Mini] {
         fn platform_event_loop_ptr() -> *mut bun_uws_sys::Loop;
         fn file_polls_ptr() -> *mut Store;
-        // PORT NOTE: `alloc_file_poll() -> *mut FilePoll` was removed — it
+        // `alloc_file_poll() -> *mut FilePoll` was removed — it
         // returned an *uninitialized* hive slot, and any caller forming
         // `&mut FilePoll` over it hit validity-invariant UB on the niche-
         // bearing enum fields. `FilePoll::init` now goes through
@@ -293,7 +293,6 @@ pub mod file_poll {
 pub mod heap;
 // `source.rs` is Windows-only (libuv pipe/tty/file wrappers). On POSIX the
 // `Source` type is never constructed; callers are themselves `#[cfg(windows)]`.
-// TODO(port): bun_sys::windows::libuv — verify compiles on Windows in CI.
 #[path = "MaxBuf.rs"]
 pub mod max_buf;
 #[path = "openForWriting.rs"]
@@ -558,8 +557,6 @@ mod safe_c {
         pub(super) safe fn kqueue() -> c_int;
         #[cfg(any(target_os = "linux", target_os = "android"))]
         pub(super) safe fn epoll_create1(flags: c_int) -> c_int;
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
-        pub(super) safe fn eventfd(initval: libc::c_uint, flags: c_int) -> c_int;
         // Out-param `tp` is `&mut timespec` (non-null, valid for write); libc
         // only writes the slot and reports failure via the return value —
         // bad `clk_id` → `EINVAL`, never UB.
@@ -570,8 +567,8 @@ mod safe_c {
 
 // ─── platform type aliases ────────────────────────────────────────────────────
 
-/// `bun_sys::linux` doesn't exist yet; use `libc` constants directly.
-/// TODO(port): bun_sys::linux — replace with that module once available.
+/// `bun_sys` has no `linux` constants module; alias the `libc` constants
+/// locally so the call sites below read like the Zig (`bun.linux.*`) original.
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux {
     pub(crate) use libc::epoll_event;
@@ -1110,7 +1107,7 @@ impl IoRequestLoop {
         self.cached_now.set(ts);
     }
 
-    // PORT NOTE: Zig nests the `extern "c" fn clock_gettime_monotonic` decl
+    // Zig nests the `extern "c" fn clock_gettime_monotonic` decl
     // inside the `Loop` namespace (io.zig:314); Rust forbids `extern` blocks
     // inside `impl`, so it's hoisted to `windows_ffi` at module scope.
 
@@ -1324,7 +1321,8 @@ pub struct CloseAction<'a> {
 
 // ─── Pollable ─────────────────────────────────────────────────────────────────
 
-// TODO(port): repr must match `bun.TaggedPointer.Tag` (15-bit tag in TaggedPtr).
+// Invariant: the repr must fit `bun.TaggedPointer.Tag` (the 15-bit tag packed
+// into `Pollable`'s u64 below) — keep `#[repr(u16)]` and values < 2^15.
 #[repr(u16)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum PollableTag {
@@ -1467,10 +1465,8 @@ pub enum Flags {
 }
 
 pub type FlagsSet = enumset::EnumSet<Flags>;
-// TODO(port): `pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);` — a struct with
-// one `bool` field per variant. Unused in this file; provide if external callers need it.
 
-// PORT NOTE: Zig used a `comptime action: enum` const-generic. `adt_const_params`
+// Zig used a `comptime action: enum` const-generic. `adt_const_params`
 // is nightly-only and the body never uses ACTION in a type position — it just
 // `match`es on it — so demote to a runtime parameter (PORTING.md §Idiom-map).
 // Three call sites, each with a literal variant — trivially inlined; kqueue
@@ -1700,12 +1696,11 @@ impl Poll {
             log!("error() = {:?}", errno);
             // SAFETY: poll is the `io_poll` field of a live owner; link-time
             // extern body matches on `tag`.
-            // TODO(port): bun_sys::Tag::epoll_ctl
             unsafe {
                 __bun_io_pollable_on_io_error(
                     tag,
                     poll,
-                    &sys::Error::from_code(errno, sys::Tag::TODO),
+                    &sys::Error::from_code(errno, sys::Tag::epoll_ctl),
                 )
             };
         } else {
@@ -1716,7 +1711,7 @@ impl Poll {
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
-    // PORT NOTE: `flag` was a comptime param in Zig; `enumset::EnumSetType` cannot be a
+    // `flag` was a comptime param in Zig; `enumset::EnumSetType` cannot be a
     // const generic, so it's a runtime arg. The `match` below preserves the exhaustiveness check.
     pub fn register_for_epoll(
         &mut self,
@@ -1776,8 +1771,7 @@ impl Poll {
 
         let errno = sys::get_errno(ctl);
         if errno != E::SUCCESS {
-            // TODO(port): bun_sys::Tag::epoll_ctl
-            return Err(sys::Error::from_code(errno, sys::Tag::TODO));
+            return Err(sys::Error::from_code(errno, sys::Tag::epoll_ctl));
         }
         // Only mark if it successfully registered.
         // If it failed to register, we don't want to unregister it later if
@@ -1788,7 +1782,7 @@ impl Poll {
         self.flags.insert(match flag {
             Flags::PollReadable => Flags::PollReadable,
             Flags::PollProcess => {
-                // PORT NOTE: Zig's `Environment.isLinux` is true on Android too.
+                // Zig's `Environment.isLinux` is true on Android too.
                 if cfg!(any(target_os = "linux", target_os = "android")) {
                     Flags::PollReadable
                 } else {
@@ -1902,11 +1896,11 @@ impl FilePollRef {
         #[cfg(windows)]
         {
             let _ = force;
-            if self.inner().unregister(loop_) {
-                Ok(())
-            } else {
-                Err(sys::Error::from_code(sys::E::INVAL, sys::Tag::TODO))
-            }
+            // Zig's windows `FilePoll.unregister` (windows_event_loop.zig:179)
+            // always returns true — the bool is vestigial, so there is no
+            // error path to surface here.
+            let _ = self.inner().unregister(loop_);
+            Ok(())
         }
     }
     #[inline]
@@ -2042,13 +2036,10 @@ pub mod waker {
         }
 
         pub fn init() -> Result<Self, bun_core::Error> {
-            // TODO(port): migrate to bun_sys::eventfd (the wrapper exists);
-            // currently falls back to crate::safe_c::eventfd.
-            let raw = crate::safe_c::eventfd(0, 0);
-            if raw < 0 {
-                return Err(bun_core::Error::from_errno(bun_sys::last_errno()));
+            match bun_sys::eventfd(0, 0) {
+                Ok(fd) => Ok(Self::init_with_file_descriptor(fd)),
+                Err(err) => Err(bun_core::Error::from_errno(i32::from(err.errno))),
             }
-            Ok(Self::init_with_file_descriptor(Fd::from_native(raw)))
         }
 
         #[inline]

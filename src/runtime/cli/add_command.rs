@@ -6,7 +6,6 @@ pub(crate) struct AddCommand;
 
 impl AddCommand {
     pub(crate) fn exec(ctx: command::Context) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         update_package_json_and_install_catch_error(ctx, Subcommand::Add)?;
         Ok(())
     }

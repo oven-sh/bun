@@ -91,17 +91,14 @@ impl HotMap {
         if gop.found_existing {
             panic!("HotMap already contains key");
         }
-        // PORT NOTE: `get_or_put` already boxed the key; Zig wrote
-        // `entry.key_ptr.* = dupe(key)` because its map didn't own keys.
+        // `get_or_put` already boxed the key; the map owns its keys.
         *gop.value_ptr = entry;
     }
 
     pub fn remove(&mut self, key: &[u8]) {
-        // PORT NOTE: Zig captured the stored key ptr to free post-removal; here
-        // the map owns the Box<[u8]> key and `swap_remove` drops it. Preserve
-        // the aliasing assert (caller must not pass the map's own key storage).
-        // Ordering doesn't matter for HotMap consumers — Zig's `orderedRemove`
-        // was incidental, not load-bearing.
+        // The map owns the Box<[u8]> key and `swap_remove` drops it. The
+        // aliasing assert below means the caller must not pass the map's own
+        // key storage. Ordering doesn't matter for HotMap consumers.
         let Some(i) = self._map.get_index(key) else {
             return;
         };
@@ -175,8 +172,9 @@ pub(crate) type CleanupHookFunction = extern "C" fn(*mut c_void);
 pub struct CleanupHook {
     pub ctx: *mut c_void,
     pub func: CleanupHookFunction,
-    // PORT NOTE: LIFETIMES.tsv says &'a JSGlobalObject (JSC_BORROW); raw ptr
-    // avoids threading a lifetime param through `RareData`.
+    // Conceptually a borrow of the JSGlobalObject (JSC_BORROW per
+    // LIFETIMES.tsv); a raw ptr avoids threading a lifetime param through
+    // `RareData`.
     pub global_this: *const JSGlobalObject,
 }
 
@@ -300,11 +298,11 @@ pub struct RareData {
 
     pub temp_pipe_read_buffer: Option<Box<PipeReadBuffer>>,
 
-    // PORT NOTE: `aws_signature_cache` field dropped — storage moved DOWN to
-    // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static). The
-    // Zig code always reached it via `getMainThreadVM()`, so it was a
-    // singleton in practice; hosting it in the consumer crate removes the
-    // upward `s3_signing → jsc` hook.
+    // There is intentionally no `aws_signature_cache` field — storage lives in
+    // `bun_s3_signing::credentials::AWS_SIGNATURE_CACHE` (process static; it
+    // was always reached via the main-thread VM, so it was a singleton in
+    // practice). Hosting it in the consumer crate removes the upward
+    // `s3_signing → jsc` hook.
     pub s3_default_client: Strong,
     pub default_csrf_secret: Box<[u8]>,
 
@@ -530,8 +528,7 @@ impl ProxyEnvSlots {
     /// parent's strings. Caller passes the parent's locked guard — the `Arc`
     /// load + clone is not atomic with respect to `Bun__setEnvValue`'s drop.
     pub fn clone_from(&mut self, parent: &ProxyEnvSlots) {
-        // PORT NOTE: reshaped for borrowck — Zig iterated fields via @typeInfo;
-        // here Arc::clone bumps the refcount.
+        // Arc::clone bumps the refcount.
         self.HTTP_PROXY.clone_from(&parent.HTTP_PROXY);
         self.http_proxy.clone_from(&parent.http_proxy);
         self.HTTPS_PROXY.clone_from(&parent.HTTPS_PROXY);
@@ -569,9 +566,8 @@ impl ProxyEnvSlots {
 /// A ref-counted heap-allocated byte slice. The env map stores borrowed
 /// `.bytes` slices; as long as any VM holds a ref, the bytes stay valid.
 ///
-/// PORT NOTE: Zig used intrusive `ThreadSafeRefCount`; LIFETIMES.tsv classifies
-/// holders as `Arc<RefCountedEnvValue>`, so the refcount lives in the `Arc`
-/// header and `ref`/`deref` become `Arc::clone`/`drop`.
+/// Holders are `Arc<RefCountedEnvValue>` (per LIFETIMES.tsv): the refcount
+/// lives in the `Arc` header, so ref/deref are `Arc::clone`/`drop`.
 pub struct RefCountedEnvValue {
     pub bytes: Box<[u8]>,
 }
@@ -705,10 +701,10 @@ impl RareData {
     }
 
     pub fn boring_engine(&mut self) -> *mut boring::ENGINE {
-        // PORT NOTE: Zig spec is `ENGINE_new().?` (panic on null). We cache the
-        // raw result; `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here
-        // degrades to "no engine" rather than crashing. Debug-assert to surface
-        // the divergence without altering release behavior.
+        // The raw `ENGINE_new()` result is cached without a null check:
+        // `EVP_DigestInit_ex` tolerates a NULL engine, so OOM here degrades to
+        // "no engine" rather than crashing. Debug-assert to surface it without
+        // altering release behavior.
         let ptr = *self
             .boring_ssl_engine
             .get_or_insert_with(|| boring::ENGINE_new());
@@ -726,11 +722,10 @@ impl RareData {
     }
 
     pub fn tls_default_ciphers(&self) -> Option<&[u8]> {
-        // PORT NOTE: Zig returns `[:0]const u8` whose `.len` excludes the NUL
-        // sentinel. The stored buffer is NUL-terminated (set_tls_default_ciphers
-        // appends 0), so strip the trailing NUL from the returned slice's length
-        // to match `dupeZ` semantics. Callers needing a C string can still take
-        // `.as_ptr()` — the NUL byte remains in storage one-past-the-end.
+        // The stored buffer is NUL-terminated (set_tls_default_ciphers
+        // appends 0); the trailing NUL is stripped from the returned slice's
+        // length. Callers needing a C string can still take `.as_ptr()` — the
+        // NUL byte remains in storage one-past-the-end.
         self.tls_default_ciphers
             .as_deref()
             .map(|s| &s[..s.len() - 1])
@@ -756,9 +751,9 @@ impl RareData {
 
     pub fn spawn_sync_event_loop(&mut self, vm: &mut VirtualMachine) -> &mut SpawnSyncEventLoop {
         if self.spawn_sync_event_loop_.is_none() {
-            // PORT NOTE: in-place out-param init — Zig used Owned::new(undefined)
-            // then ptr.init(vm). `event_loop` inside captures `self`-addr, so the
-            // value must not move after init; allocate the Box first, init into it.
+            // In-place out-param init: `event_loop` inside captures the
+            // `self` address, so the value must not move after init; allocate
+            // the Box first, then init into it.
             let mut boxed = Box::<SpawnSyncEventLoop>::new_uninit();
             SpawnSyncEventLoop::init(
                 &mut *boxed,
@@ -872,8 +867,6 @@ impl RareData {
     // ── socket groups: lazy init ──────────────────────────────────────────
     #[inline]
     fn lazy_group<'a>(g: &'a mut SocketGroup, vm: &VirtualMachine) -> &'a mut SocketGroup {
-        // PORT NOTE: Zig took `comptime field: []const u8` + @field; Rust takes
-        // the field reference directly since callers know the field statically.
         if g.loop_.is_null() {
             g.init(vm.uws_loop(), None, core::ptr::null_mut());
         }
@@ -1082,8 +1075,8 @@ pub(crate) enum StdinFdType {
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__Process__getStdinFdType(vm: &VirtualMachine, fd: i32) -> StdinFdType {
     let rare = vm.as_mut().rare_data();
-    // PORT NOTE: Zig read `store.data.file.mode`; the store is erased here, so
-    // `stderr/stdout/stdin()` cache `mode` alongside the pointer.
+    // The store is type-erased here, so `stderr/stdout/stdin()` cache `mode`
+    // alongside the pointer.
     let mode = match fd {
         0 => {
             rare.stdin();

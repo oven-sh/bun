@@ -30,6 +30,12 @@ pub enum ImportWatcher {
     Watch(Box<Watcher>),
 }
 
+// Drift guard for the bun_watcher CYCLEBREAK `Loader` newtype: its `File`
+// constant must mirror `bun_ast::Loader::File` (Zig `options.Loader.file`) —
+// the watcher stores that value for auto-watched directories. This crate sees
+// both types, so the compile-time check lives here.
+const _: () = assert!(bun_watcher::Loader::File.0 == bun_ast::Loader::File as u8);
+
 impl ImportWatcher {
     pub fn start(&mut self) -> Result<(), bun_core::Error> {
         match self {
@@ -102,7 +108,7 @@ impl ImportWatcher {
 
     #[inline]
     pub fn add_file_by_path_slow(&mut self, file_path: &[u8], loader: bun_ast::Loader) -> bool {
-        // PORT NOTE: bun_watcher::Loader is an opaque newtype over u8;
+        // Note: bun_watcher::Loader is an opaque newtype over u8;
         // wrap the bun_ast::Loader discriminant.
         match self {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => {
@@ -120,7 +126,7 @@ impl ImportWatcher {
         hash: bun_watcher::HashType,
         loader: bun_ast::Loader,
         dir_fd: Fd,
-        // PORT NOTE: bun_watcher::PackageJSON is an opaque forward-decl;
+        // Note: bun_watcher::PackageJSON is an opaque forward-decl;
         // callers cast from `&bun_resolver::PackageJSON`.
         package_json: Option<&'static bun_watcher::PackageJSON>,
     ) -> bun_sys::Result<()> {
@@ -154,9 +160,9 @@ impl HotReloaderCtx for VirtualMachine {
     }
 
     fn bun_watcher_mut(&mut self) -> &mut Watcher {
-        // PORT NOTE: Zig's three-way `@TypeOf(this.ctx.bun_watcher)` reflection
-        // collapses here — `VirtualMachine.bun_watcher` is the type-erased
-        // `*mut ImportWatcher` (TODO(b2-cycle) field comment in
+        // Zig's three-way `@TypeOf(this.ctx.bun_watcher)` reflection
+        // collapses here — `VirtualMachine.bun_watcher` is the
+        // `*mut ImportWatcher` (see the field comment in
         // VirtualMachine.rs), and `getContext` only runs after
         // `enable_hot_module_reloading` has populated it, so the `.None` arm
         // is unreachable.
@@ -195,8 +201,8 @@ impl HotReloaderCtx for VirtualMachine {
     }
 
     fn is_watcher_enabled(&self) -> bool {
-        // Zig: `this.bun_watcher != .none`. The field is stored type-erased
-        // (`*mut c_void` → `*mut ImportWatcher`); a null pointer means `.none`.
+        // Zig: `this.bun_watcher != .none`. The field is a typed
+        // `*mut ImportWatcher`; a null pointer means `.none`.
         if self.bun_watcher.is_null() {
             return false;
         }
@@ -228,8 +234,7 @@ impl HotReloaderCtx for VirtualMachine {
             ImportWatcher::Hot(w) | ImportWatcher::Watch(w) => &raw mut **w,
             ImportWatcher::None => unreachable!(),
         };
-        // The VM holds `bun_watcher` type-erased as `*mut c_void` (b2-cycle).
-        self.bun_watcher = bun_core::heap::into_raw(iw).cast::<core::ffi::c_void>();
+        self.bun_watcher = bun_core::heap::into_raw(iw);
 
         // Wire the resolver's directory-watch callback at the same time.
         // Zig: `ResolveWatcher(*Watcher, Watcher.onMaybeWatchDirectory).init(w)`;
@@ -483,15 +488,15 @@ fn flush_changed_paths_for_reload() {
     }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn BunDebugger__willHotReload();
 }
 
-// TODO(port): in Zig this was a `pub var` inside the generic struct, giving one
-// static per monomorphization. Rust can't put a static in a generic impl; both
-// HotReloader and WatchReloader now share this. Revisit if the per-type split
-// was load-bearing.
+// In Zig this was a `pub var` inside the generic struct, giving one static per
+// monomorphization. Rust can't put a static in a generic impl, so HotReloader
+// and WatchReloader share this. That is equivalent in practice: the flag is
+// derived from the same CLI clear-screen setting and written only during
+// single-threaded reloader init, before the watcher thread starts.
 static CLEAR_SCREEN: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
@@ -511,7 +516,9 @@ pub struct NewHotReloader<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
 
 pub struct MainFile {
     /// Includes a trailing "/"
-    // TODO(port): lifetime — borrows from `entry_path` (owned by Ctx, outlives Reloader)
+    // `'static` is the API contract of `enable_hot_module_reloading`
+    // (`entry_path: Option<&'static [u8]>`): the entry path is owned by the
+    // Ctx, which outlives the leaked Reloader for the process lifetime.
     pub dir: &'static [u8],
     pub dir_hash: bun_watcher::HashType,
 
@@ -570,10 +577,10 @@ impl MainFile {
 pub struct Task<Ctx, EventLoopType, const RELOAD_IMMEDIATELY: bool> {
     pub count: u8,
     pub hashes: [u32; 8],
-    // TODO(port): in Zig this field's type is `[8][]const u8` only when
+    // In Zig this field's type is `[8][]const u8` only when
     // `Ctx == bun.bake.DevServer`, else `void`. Rust can't branch a field
-    // type on a generic parameter without specialization; storing it
-    // unconditionally for now.
+    // type on a generic parameter without specialization, so it is stored
+    // unconditionally (8 fat pointers of overhead for non-DevServer Ctx).
     pub paths: [&'static [u8]; 8],
     /// Left `None` until [`Self::enqueue`] populates it on the heap copy.
     pub concurrent_task: Option<ConcurrentTask>,
@@ -592,7 +599,8 @@ where
         Self {
             reloader,
             hashes: [0u32; 8],
-            // TODO(port): was `if (Ctx == bun.bake.DevServer) [_][]const u8{&.{}} ** 8`
+            // Zig: `if (Ctx == bun.bake.DevServer) [_][]const u8{&.{}} ** 8` —
+            // see the `paths` field comment for why this is unconditional.
             paths: [b"".as_slice(); 8],
             count: 0,
             concurrent_task: None,
@@ -687,7 +695,7 @@ where
             // BundleV2, never ImportWatcher itself), so the call is dead code in
             // the spec. Match spec literally: no-op for every Ctx.
             //
-            // PORT NOTE: this is almost certainly a Zig typo — the intent was
+            // Note: this is almost certainly a Zig typo — the intent was
             // likely `@TypeOf(ctx.bun_watcher) == ImportWatcher`, which would
             // close listen sockets before exec()-restarting under --watch on a
             // VirtualMachine. But fixing that here would diverge from observable
@@ -712,7 +720,7 @@ where
         }));
         // SAFETY: `that` was just allocated above and is exclusively owned here.
         unsafe {
-            // PORT NOTE: `JscTask::init` requires `Taskable`, but const-generic
+            // Note: `JscTask::init` requires `Taskable`, but const-generic
             // `Task<Ctx, _, _>` can't implement it (one tag per monomorphization).
             // The Zig source tagged the concrete `HotReloader.HotReloadTask` —
             // use the raw `(tag, ptr)` constructor.
@@ -720,8 +728,9 @@ where
                 task: JscTask::new(task_tag::HotReloadTask, that.cast::<()>()),
                 ..Default::default()
             });
-            // TODO(port): `&that.concurrent_task` is an interior pointer into a
-            // Box-allocated Task; event loop must not outlive `that`. Matches Zig.
+            // `&that.concurrent_task` is an interior pointer into a
+            // Box-allocated Task; the event loop must not outlive `that`
+            // (matches the Zig original's layout and lifetime contract).
             //
             // Inlines `NewHotReloader::enqueue_task_concurrent` to avoid forming
             // a whole-struct `&NewHotReloader` (see `Self::pending_count` doc).
@@ -770,8 +779,7 @@ where
         let mut watcher = match Watcher::init(reloader, fs.top_level_dir) {
             Ok(w) => w,
             Err(err) => {
-                // TODO(port): bun.handleErrorReturnTrace — debug-only diagnostics; no Rust equivalent yet
-                let _ = &err;
+                bun_core::handle_error_return_trace(&err);
                 Output::panic(format_args!(
                     "Failed to enable File Watcher: {}",
                     err.name()
@@ -779,8 +787,7 @@ where
             }
         };
         if let Err(err) = watcher.start() {
-            // TODO(port): bun.handleErrorReturnTrace — debug-only diagnostics; no Rust equivalent yet
-            let _ = &err;
+            bun_core::handle_error_return_trace(&err);
             Output::panic(format_args!("Failed to start File Watcher: {}", err.name()));
         }
         watcher
@@ -838,7 +845,7 @@ where
         let watcher = match Watcher::init(reloader, ctx.watcher_top_level_dir()) {
             Ok(w) => w,
             Err(err) => {
-                // TODO(port): bun.handleErrorReturnTrace — debug-only diagnostics; no Rust equivalent yet
+                bun_core::handle_error_return_trace(&err);
                 Output::panic(format_args!(
                     "Failed to enable File Watcher: {}",
                     err.name()
@@ -896,7 +903,7 @@ where
     }
 
     pub fn get_context(&mut self) -> &mut Watcher {
-        // PORT NOTE: Zig branched three ways on `@TypeOf(this.ctx.bun_watcher)`
+        // Note: Zig branched three ways on `@TypeOf(this.ctx.bun_watcher)`
         // (ImportWatcher / Option / bare). Folded into `HotReloaderCtx::bun_watcher_mut`;
         // each impl picks the right unwrap.
         self.ctx_mut().bun_watcher_mut()
@@ -911,7 +918,7 @@ where
     ) {
         let slice = watchlist.slice();
         let file_paths = slice.items_file_path();
-        // PORT NOTE: `WatchItemColumns` doesn't expose a `count` accessor; reach
+        // Note: `WatchItemColumns` doesn't expose a `count` accessor; reach
         // through the generic SoA column directly. Zig mutates this in place
         // (`counts[index] = update_count`) — build the &mut from the raw column
         // pointer rather than ref-casting `&[u32]` (which is UB).
@@ -924,7 +931,7 @@ where
         let hashes = slice.items_hash();
         let parents = slice.items_parent_hash();
         let file_descriptors = slice.items_fd();
-        // PORT NOTE: reshaped for borrowck — `ctx` is held as a raw pointer so
+        // Note: reshaped for borrowck — `ctx` is held as a raw pointer so
         // `self` can be reborrowed inside the loop body for tombstone access,
         // and so the deferred `flush_evictions` doesn't hold `&mut Watcher`
         // across the loop.
@@ -933,7 +940,7 @@ where
         // so any exit path (including future early-returns) flushes the buffered
         // hashes. Dereferenced as `&mut *current_task` for the loop body below.
         //
-        // PORT NOTE: declared *before* `_flush` (inverting the Zig defer order)
+        // Note: declared *before* `_flush` (inverting the Zig defer order)
         // so `flush_evictions()` runs **before** `enqueue()` on drop. The Zig
         // order (`enqueue` → `Output.flush` → `flushEvictions`) opens a window
         // where the JS thread can pick up the concurrent task, look the file up
@@ -946,7 +953,7 @@ where
             Task::<Ctx, EventLoopType, RELOAD_IMMEDIATELY>::init_empty(self),
             |mut t| t.enqueue(),
         );
-        // `defer ctx.flushEvictions(); defer Output.flush();` — see PORT NOTE
+        // `defer ctx.flushEvictions(); defer Output.flush();` — see the note
         // above for why this drops *before* `current_task`.
         let _flush = scopeguard::guard(ctx, |ctx| {
             Output::flush();
@@ -988,7 +995,7 @@ where
                     if self.verbose {
                         Self::debug(format_args!(
                             "File changed: {}",
-                            // PORT NOTE: `fs.relative_to(file_path)` would borrow `&*fs`
+                            // Note: `fs.relative_to(file_path)` would borrow `&*fs`
                             // while `rfs = &mut fs.fs` is live; inline the body so the
                             // split-borrow on `fs.top_level_dir` is visible to borrowck.
                             bstr::BStr::new(bun_paths::resolve_path::relative(
@@ -1041,7 +1048,7 @@ where
                         let mut affected_buf: [&[u8]; 128] = [b"".as_slice(); 128];
                         let mut entries_option: Option<*mut Fs::EntriesOption> = None;
 
-                        // PORT NOTE: the Zig labeled block produced a slice whose
+                        // Note: the Zig labeled block produced a slice whose
                         // element type differs by platform (`[]const u8` on kqueue,
                         // `?[:0]u8` on inotify). Split into two locals; only one is
                         // populated per cfg.
@@ -1237,7 +1244,7 @@ where
                                     .get(PathName::find_extname(changed_name))
                                     .copied()
                                     .unwrap_or(bun_ast::Loader::File);
-                                // PORT NOTE: Zig declares `prev_entry_id` per-iteration and
+                                // Note: Zig declares `prev_entry_id` per-iteration and
                                 // reassigns it just before `break`; the write is dead there
                                 // too (hot_reloader.zig:535/563). Keep the shape for
                                 // fidelity; the post-assignment `_ = prev_entry_id` below
@@ -1298,12 +1305,16 @@ where
                                             _on_file_update_path_buf
                                                 [file_path_without_trailing_slash.len()] = SEP;
 
-                                            // PORT NOTE: Zig copies `changed_name` starting at
-                                            // index `len` (overlapping the just-written SEP)
-                                            // and then slices `len + changed_name.len + 1`
-                                            // bytes — this includes one byte past the copy.
-                                            // Ported verbatim.
-                                            // TODO(port): verify intended off-by-one in Zig source
+                                            // Zig (hot_reloader.zig:606-608) writes the
+                                            // separator at index `len`, then memcpys
+                                            // `changed_name` starting at the same index `len`
+                                            // (overwriting the separator) and slices
+                                            // `len + changed_name.len + 1` bytes — one stale
+                                            // byte past the copy. Verified against the Zig
+                                            // source: the overlap/extra byte is exactly what
+                                            // Zig does (likely the copy was meant to start at
+                                            // `len + 1`). Ported verbatim so the resulting
+                                            // path hash matches Zig; fix upstream first.
                                             _on_file_update_path_buf
                                                 [file_path_without_trailing_slash.len()
                                                     ..file_path_without_trailing_slash.len()
@@ -1354,7 +1365,7 @@ where
 
         // Drop order (LIFO): `_flush` guard → Output::flush() +
         // ctx.flush_evictions(), then `current_task` guard → enqueue(). See
-        // PORT NOTE on `current_task` above for why this inverts the Zig
+        // the note on `current_task` above for why this inverts the Zig
         // defer order.
     }
 }

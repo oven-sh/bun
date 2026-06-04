@@ -25,7 +25,6 @@ impl InstallCommand {
     #[cold]
     #[inline(never)]
     fn handle_error(e: Error) -> Result<(), Error> {
-        // TODO(port): narrow error set
         if e == err!("InstallFailed") || e == err!("InvalidPackageJSON") {
             // SAFETY: `Cli::LOG_` is initialised once during single-threaded
             // startup in `Cli::start()` before any command (including this
@@ -45,7 +44,6 @@ impl InstallCommand {
 // the ~84 MB binary and get faulted in one page at a time.
 #[inline(never)]
 fn install(ctx: &mut ContextData) -> Result<(), Error> {
-    // TODO(port): narrow error set
     let mut cli = CommandLineArguments::parse(Subcommand::Install)?;
 
     // The way this works:
@@ -54,7 +52,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
     //    typing in the dependency names
     // 3. Run the install command
     if cli.analyze {
-        // PORT NOTE: hoisted from Zig fn-local `const Analyzer = struct {...}`.
+        // Hoisted from Zig fn-local `const Analyzer = struct {...}`.
         // `ctx` is stored as a raw `*mut ContextData` (Zig `Command.Context` is
         // `*ContextData` — a freely-aliasing pointer); the `on_fetch` callback
         // re-enters the install path while `BuildCommand::exec` still holds the
@@ -114,7 +112,7 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
             }
         }
 
-        // PORT NOTE: `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`; Zig
+        // `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`; Zig
         // borrowed `cli.positionals[1..]` directly. Clone the argv slices into an
         // owned buffer (small one-shot list — no perf concern). Captured *before*
         // raw-ptr aliasing of `cli` below so the access goes through the live
@@ -151,7 +149,6 @@ fn install(ctx: &mut ContextData) -> Result<(), Error> {
 
 #[inline(never)]
 fn install_with_cli(ctx: &mut ContextData, cli: CommandLineArguments) -> Result<(), Error> {
-    // TODO(port): narrow error set
     let subcommand: Subcommand = if cli.positionals.len() > 1 {
         Subcommand::Add
     } else {

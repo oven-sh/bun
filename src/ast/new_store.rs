@@ -10,6 +10,22 @@
 // Scope name distinct from the macro-generated `struct Store`.
 ::bun_core::declare_scope!(STORE_LOG, hidden);
 
+/// Zig: `fn supportsType(T: type) bool` — compile-time membership check for
+/// the type list of a `new_store!`-generated store.
+///
+/// `new_store!` implements this for every `$T` in its list (with `S` = the
+/// generated `Store` type), and bounds `Store::allocate`/`Store::append` (and
+/// the `thread_local_ast_store!` front-end `append`) on it. Allocating a type
+/// the store was not declared with is therefore a compile error, mirroring
+/// Zig's `comptime if (!supportsType(T)) @compileError(...)`.
+pub trait StoredIn<S>: sealed::Sealed<S> {}
+
+#[doc(hidden)]
+pub mod sealed {
+    /// Sealing supertrait — only `new_store!` expansions implement it.
+    pub trait Sealed<S> {}
+}
+
 /// Zig: `pub fn NewStore(comptime types: []const type, comptime count: usize) type`
 ///
 /// Rust cannot take a slice of types as a generic parameter, and the body
@@ -82,7 +98,7 @@ macro_rules! new_store {
             }
 
             /// Zig: `pub const Block = struct { ... }`
-            // PORT NOTE: `buffer` needs `align(LARGEST_ALIGN)` but `#[repr(align(N))]`
+            // `buffer` needs `align(LARGEST_ALIGN)` but `#[repr(align(N))]`
             // requires a literal. Over-approximate with align(16) — every AST payload
             // type is `<= 16` aligned (asserted below). Switch to a
             // `#[repr(C)] union AlignUnion { $($T),+ }` element type if a >16-aligned
@@ -96,6 +112,17 @@ macro_rules! new_store {
                 bytes_used: BlockSize,
                 next: Option<Box<Block>>,
             }
+
+            // Zig: `fn supportsType(T: type) bool` + the
+            // `comptime if (!supportsType(T)) @compileError(...)` guard in
+            // `allocate` — only the types listed in this `new_store!`
+            // invocation may be allocated from this store. `allocate`/`append`
+            // are bounded on `StoredIn<Store>`, so an unsupported type is a
+            // compile error.
+            $(
+                impl $crate::new_store::sealed::Sealed<Store> for $T {}
+                impl $crate::new_store::StoredIn<Store> for $T {}
+            )+
 
             impl Block {
                 pub const SIZE: usize = BLOCK_SIZE;
@@ -139,7 +166,8 @@ macro_rules! new_store {
 
                     // SAFETY: `start` is in-bounds (checked above) and aligned for T
                     // (align_forward above). Buffer base alignment must be >= align_of::<T>()
-                    // — see TODO(port) on Block re: LARGEST_ALIGN.
+                    // — guaranteed by `repr(align(16))` on Block plus the
+                    // `LARGEST_ALIGN <= 16` const assert above.
                     Some(unsafe {
                         NonNull::new_unchecked(
                             block.buffer.as_mut_ptr().add(start).cast::<T>(),
@@ -257,10 +285,8 @@ macro_rules! new_store {
                     store.current = head_ptr;
                 }
 
-                fn allocate<T>(store: &mut Store) -> NonNull<T> {
+                fn allocate<T: $crate::new_store::StoredIn<Store>>(store: &mut Store) -> NonNull<T> {
                     debug_assert!(size_of::<T>() > 0); // don't allocate!
-                    // TODO(port): `comptime if (!supportsType(T)) @compileError(...)` —
-                    // enforce via a sealed trait generated over `$($T),+`.
 
                     // Lazily materialise the first `Block` on first use — this is
                     // the only `~BLOCK_SIZE` allocation a never-written store
@@ -304,7 +330,10 @@ macro_rules! new_store {
                 }
 
                 #[inline]
-                pub fn append<T>(store: &mut Store, data: T) -> NonNull<T> {
+                pub fn append<T: $crate::new_store::StoredIn<Store>>(
+                    store: &mut Store,
+                    data: T,
+                ) -> NonNull<T> {
                     let ptr = Store::allocate::<T>(store);
                     /* scoped_log elided — debug_logs feature only */
                     // SAFETY: `allocate` returned aligned, in-bounds, exclusive storage for T.
@@ -332,9 +361,8 @@ macro_rules! new_store {
                     let _ = store;
                 }
 
-                // Zig: `fn supportsType(T: type) bool`
-                // TODO(port): comptime type-list membership check; replace with sealed
-                // trait `Stored` impl'd for each `$($T),+` and bound `allocate<T: Stored>`.
+                // Zig: `fn supportsType(T: type) bool` — see the
+                // `StoredIn<Store>` impls generated above `impl Block`.
             }
         }
     };
@@ -481,7 +509,7 @@ macro_rules! thread_local_ast_store {
             }
 
             #[inline]
-            pub fn append<T>(value: T) -> $crate::StoreRef<T> {
+            pub fn append<T: $crate::new_store::StoredIn<Backing>>(value: T) -> $crate::StoreRef<T> {
                 if let Some(ma) = MEMORY_ALLOCATOR.get() {
                     // `BackRef<ASTMemoryAllocator>: Deref` — owning scope outlives this call.
                     return ma.append(value);

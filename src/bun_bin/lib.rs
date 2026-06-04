@@ -76,7 +76,7 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // detect_leaks=0: off by default (Linux defaults it on); CI opts in via
     //   ASAN_OPTIONS with a suppressions file.
     //
-    // PORT NOTE: matches `src/safety/asan.zig` exactly. Do NOT add `symbolize=0`
+    // Matches `src/safety/asan.zig` exactly. Do NOT add `symbolize=0`
     // here — LSAN's function-name suppression matching (`test/leaksan.supp`)
     // requires symbolized stacks; with symbolization disabled every entry like
     // `leak:uws_create_app` silently stops matching and CI reports the

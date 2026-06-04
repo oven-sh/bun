@@ -109,9 +109,9 @@ pub enum Error {
     /// Could not get a symbol for some reason
     #[error("RelocationError")]
     RelocationError,
-    // TODO(port): `OutputError` is returned by `output_file` in the Zig source but is NOT a
-    // member of the Zig `Error` set — latent bug only unobserved because Zig analysis is lazy
-    // and `outputFile` has no callers. Kept here so `output_file` type-checks.
+    // `OutputError` is returned by `output_file` in the Zig source but is NOT a
+    // member of the Zig `Error` set — a latent bug only unobserved because Zig analysis
+    // is lazy and `outputFile` has no callers. Kept here so `output_file` type-checks.
     #[error("OutputError")]
     OutputError,
 }
@@ -155,8 +155,8 @@ pub struct ConfigErr<ErrCtx> {
 
 /// Zig: `fn Config(ErrCtx: type) type { return struct { ... } }`
 pub struct Config<ErrCtx> {
-    // TODO(port): lifetime — call sites pass both literals (default_tcc_options) and runtime
-    // strings (CompileC.flags / BUN_TCC_OPTIONS); kept as a raw ptr, revisit as a borrow.
+    // Call sites pass both literals (default_tcc_options) and runtime strings
+    // (CompileC.flags / BUN_TCC_OPTIONS); kept as a raw ptr rather than a borrow.
     pub options: Option<NonNull<ZStr>>,
     pub output_type: OutputFormat,
     pub err: ConfigErr<ErrCtx>,
@@ -167,8 +167,9 @@ where
     ConfigErr<ErrCtx>: Default,
 {
     fn default() -> Self {
-        // TODO(port): Zig field defaults are `options = null, output_type = .Memory`; `err.handler`
-        // has no default so a literal `.{}` is invalid in Zig too. This Default impl is best-effort.
+        // Zig field defaults are `options = null, output_type = .Memory`; `err.handler`
+        // has no default so a literal `.{}` is invalid in Zig too. This Default impl
+        // exists only for `ErrCtx` types whose `ConfigErr` provides a handler default.
         Self {
             options: None,
             output_type: OutputFormat::Memory,
@@ -188,7 +189,6 @@ impl State {
     pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
         config: &Config<ErrCtx>,
     ) -> Result<NonNull<State>, bun_core::Error> {
-        // TODO(port): narrow error set to (AllocError | Error)
         let state_ptr = State::new()?;
         // errdefer state.destroy() — State is an FFI handle without Drop, so use scopeguard.
         let guard = scopeguard::guard(state_ptr, |p| {
@@ -236,7 +236,7 @@ impl State {
     /// # Safety
     /// `s` must have been returned by [`State::new`]/[`State::init`] and not yet freed.
     pub unsafe fn destroy(s: *mut State) {
-        // PORT NOTE: opaque FFI handle — kept as explicit destroy fn, not `impl Drop`.
+        // opaque FFI handle — kept as explicit destroy fn, not `impl Drop`.
         // SAFETY: caller's contract guarantees `s` is a live `tcc_new` handle not yet deleted.
         unsafe { tcc_delete(s) }
     }
@@ -475,7 +475,7 @@ impl State {
         // SAFETY: self is a valid *mut TCCState; filename is NUL-terminated.
         if unsafe { tcc_output_file(self, filename.as_ptr()) } == -1 {
             // PERF(port): @branchHint(.unlikely)
-            // TODO(port): Zig source returns `error.OutputError` here, which is NOT in the Zig
+            // The Zig source returns `error.OutputError` here, which is NOT in the Zig
             // `Error` set (latent compile error masked by lazy analysis). See enum note above.
             return Err(Error::OutputError);
         }

@@ -18,7 +18,7 @@ use super::codecs;
 /// prefixed sub-blocks (≤255 bytes each, terminated by a 0 block), and
 /// codes are LSB-first across byte boundaries — so this pulls one byte at
 /// a time from the sub-block stream into a 32-bit accumulator.
-// PORT NOTE: stack-local helper; `'a` borrows the input byte slice for the
+// Stack-local helper; `'a` borrows the input byte slice for the
 // duration of the decode call.
 struct Bits<'a> {
     src: &'a [u8],

@@ -2,9 +2,10 @@ use core::mem::size_of;
 
 use super::new_writer::NewWriter;
 use super::z_helpers::z_count;
+use crate::postgres::AnyPostgresError;
 use crate::postgres::types::int_types::{Int4, int32};
 
-// PORT NOTE: Zig `deinit` is a no-op (`_ = this;`), so all three slice fields are
+// Zig `deinit` is a no-op (`_ = this;`), so all three slice fields are
 // borrowed for the lifetime of the write. Most protocol message structs avoid
 // lifetime params, but none of Box / &'static / raw fit a transient borrow-only
 // message builder, so this struct carries an explicit `'a`.
@@ -21,11 +22,10 @@ impl<'a> Parse<'a> {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), AnyPostgresError> {
         let parameters = self.params;
         if parameters.len() > u16::MAX as usize {
-            return Err(bun_core::err!("TooManyParameters"));
+            return Err(AnyPostgresError::TooManyParameters);
         }
         let count: usize = size_of::<u32>()
             + size_of::<u16>()
@@ -53,7 +53,7 @@ impl<'a> Parse<'a> {
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyPostgresError> {
         self.write_internal(writer)
     }
 }

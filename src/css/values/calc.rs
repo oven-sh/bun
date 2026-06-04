@@ -40,10 +40,9 @@ pub enum CalcUnit {
 
 impl CalcUnit {
     /// Zig: `bun.ComptimeEnumMap(CalcUnit).getAnyCase(f)`
-    // TODO(port): phf custom hasher — case-insensitive lookup over &[u8].
     pub fn get_any_case(f: &[u8]) -> Option<Self> {
         // PERF(port): Zig used a comptime perfect hash; this is a linear match on a
-        // stack-lowercased byte slice. TODO(perf): use a phf_map! over &[u8].
+        // stack-lowercased byte slice. Profile before swapping in a phf.
         // §Strings: source bytes are &[u8], never &str/String — no from_utf8/to_ascii_lowercase().
         let (buf, len) = bun_core::strings::ascii_lowercase_buf::<5>(f)?;
         match &buf[..len] {
@@ -263,13 +262,11 @@ impl<V: CalcValue> Calc<V> {
         lhs.mul_f32(rhs)
     }
 
-    // TODO: addValueOwned
     pub fn add_value(lhs: V, rhs: V) -> V {
         // Zig: `f32 => lhs + rhs, else => lhs.addInternal(...)` — folded into trait.
         lhs.add_internal(rhs)
     }
 
-    // TODO: intoValueOwned
     pub fn into_value(self, input: &mut css::Parser) -> CssResult<V> {
         // Zig comptime type switch on V → trait method `V::from_calc`.
         V::from_calc(self, input)
@@ -280,11 +277,10 @@ impl<V: CalcValue> Calc<V> {
         val.into_calc()
     }
 
-    // TODO: change to addOwned()
     pub fn add(self, rhs: Self, input: &mut css::Parser) -> CssResult<Self> {
         if let (Calc::Value(_), Calc::Value(_)) = (&self, &rhs) {
             // PERF: we can reuse the allocation here
-            // PORT NOTE: reshaped for borrowck — clone out of boxes then drop originals.
+            // Reshaped for borrowck — clone out of boxes then drop originals.
             let (a, b) = match (self, rhs) {
                 (Calc::Value(a), Calc::Value(b)) => (*a, *b),
                 _ => unreachable!(),
@@ -323,8 +319,6 @@ impl<V: CalcValue> Calc<V> {
         Ok(Self::into_calc(Self::add_value(this_value, rhs_value)))
     }
 
-    // TODO: users of this and `parseWith` don't need the pointer and often throwaway heap allocated values immediately
-    // use temp arena or something?
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
         fn parse_with_fn<V>(_: (), _: &[u8]) -> Option<Calc<V>> {
             None
@@ -338,7 +332,7 @@ impl<V: CalcValue> Calc<V> {
         parse_ident: F,
     ) -> CssResult<Self> {
         let location = input.current_source_location();
-        // PORT NOTE: clone the token before reborrowing `input` so the function
+        // Clone the token before reborrowing `input` so the function
         // name slice is owned by the cloned `Token` (whose payload already
         // carries the parser's arena lifetime) instead of being laundered to
         // `'static` here.
@@ -353,7 +347,7 @@ impl<V: CalcValue> Calc<V> {
             other => return Err(location.new_unexpected_token_error(other)),
         };
 
-        // PORT NOTE: Zig used explicit `Closure` structs because Zig lacks closures.
+        // Zig used explicit `Closure` structs because Zig lacks closures.
         // Rust closures capture `ctx` + `parse_ident` directly.
         match unit {
             CalcUnit::Calc => {
@@ -476,9 +470,14 @@ impl<V: CalcValue> Calc<V> {
                     i,
                     (),
                     |_, a, b| {
-                        // return ((a % b) + b) % b;
-                        // TODO(port): Zig used nested `@mod`; using Rust `%` per the commented
-                        // formula. Verify edge cases (negative b, NaN).
+                        // Zig: `@mod((@mod(a, b) + b), b)` — floored modulo (result takes
+                        // the sign of the divisor). `((a % b) + b) % b` over Rust's
+                        // truncated `%` agrees in sign and value for NaN/inf and ordinary
+                        // finite inputs, but the two formulas apply different rounding
+                        // sequences, so results can differ near exact multiples of the
+                        // divisor (e.g. f32 `mod(-3e-8, 1)`: this yields 0.99999994 where
+                        // Zig's double-wrap rounds `0.99999994 + 1.0` to 2.0 and returns
+                        // 0.0 — a divergence of ~|b| at the wrap-around boundary).
                         ((a % b) + b) % b
                     },
                     |_, a, b| MathFunction::Mod {
@@ -724,7 +723,7 @@ impl<V: CalcValue> Calc<V> {
         }
 
         let location = input.current_source_location();
-        // PORT NOTE: reshaped for borrowck — clone the next token inside the
+        // Reshaped for borrowck — clone the next token inside the
         // try-parse so the ident slice is owned by the cloned `Token` rather
         // than laundered to `'static` from the `&mut Parser` borrow.
         if let Ok(ident) = input.try_parse(|p| {
@@ -764,7 +763,7 @@ impl<V: CalcValue> Calc<V> {
         };
 
         input.parse_nested_block(|i| {
-            // PORT NOTE: Zig wrapped `parse_ident` to project `Calc<V>::Number` into
+            // Zig wrapped `parse_ident` to project `Calc<V>::Number` into
             // `Calc<Angle>::Number`. Rust closure does the same.
             let parse_ident_fn = |_self: (), ident: &[u8]| -> Option<Calc<Angle>> {
                 let v = parse_ident(ctx, ident)?;
@@ -774,8 +773,9 @@ impl<V: CalcValue> Calc<V> {
                     None
                 }
             };
-            // TODO(port): Zig passed `&closure` (a *@This()) as ctx; here we use `()` and
-            // capture `ctx` via the outer closure. Verify `Calc<Angle>::parse_sum` signature.
+            // Zig passed `&closure` (a *@This()) as ctx; here ctx is `()` and the
+            // outer closure captures `ctx`/`parse_ident` (both `Copy`, satisfying
+            // `parse_sum`'s `C: Copy` / `F: Fn(C, &[u8]) -> Option<Self> + Copy`).
             let v = Calc::<Angle>::parse_sum(i, (), parse_ident_fn)?;
 
             let rad: f32 = 'rad: {
@@ -1129,7 +1129,7 @@ impl<V: CalcValue> Calc<V> {
                 }
             }
 
-            // PORT NOTE: reshaped for borrowck — Zig stored `?*This`; Rust stores index.
+            // Reshaped for borrowck — Zig stored `?*This`; Rust stores index.
             if let Some(maybe_idx) = found {
                 if let Some(idx) = maybe_idx {
                     reduced[idx] = core::mem::replace(arg, Calc::Number(420.0));

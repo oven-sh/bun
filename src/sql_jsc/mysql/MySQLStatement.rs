@@ -40,8 +40,11 @@ pub struct MySQLStatement {
     pub result_count: u64,
 }
 
-impl Default for MySQLStatement {
-    fn default() -> Self {
+impl MySQLStatement {
+    /// Zig: `bun.new(MySQLStatement, .{ .signature = ..., .status = ...,
+    /// .ref_count = .initExactRefs(1) })` — callers supply the signature and
+    /// status; every other field takes its Zig per-field default.
+    pub fn new(signature: Signature, status: Status) -> Self {
         Self {
             cached_structure: CachedStructure::default(),
             ref_count: Cell::new(1),
@@ -50,16 +53,19 @@ impl Default for MySQLStatement {
             params_received: 0,
             columns: Vec::new(),
             columns_received: 0,
-            // TODO(port): Signature has no Zig default; callers must supply it. This Default
-            // impl exists only to mirror Zig's per-field defaults — prefer a `new(signature)`
-            // constructor.
-            signature: Signature::default(),
-            status: Status::Parsing,
+            signature,
+            status,
             error_response: ErrorPacket::default(),
             execution_flags: ExecutionFlags::default(),
             fields_flags: DataCellFlags::default(),
             result_count: 0,
         }
+    }
+}
+
+impl Default for MySQLStatement {
+    fn default() -> Self {
+        Self::new(Signature::empty(), Status::Parsing)
     }
 }
 
@@ -134,7 +140,7 @@ impl MySQLStatement {
             let field: &mut ColumnDefinition41 = &mut self.columns[remaining];
             match &field.name_or_index {
                 ColumnIdentifier::Name(name) => {
-                    // PORT NOTE: reshaped for borrowck — compute `found_existing` before
+                    // reshaped for borrowck — compute `found_existing` before
                     // mutating `field.name_or_index`.
                     let found_existing = seen_fields
                         .get_or_put(name.slice())
@@ -168,7 +174,7 @@ impl MySQLStatement {
         self.fields_flags = flags;
     }
 
-    // PORT NOTE: Zig returns `CachedStructure` by value (struct copy). Returning `&CachedStructure`
+    // Zig returns `CachedStructure` by value (struct copy). Returning `&CachedStructure`
     // here to avoid moving out of `self`; callers may need `.clone()` if they require
     // an owned copy.
     pub(crate) fn structure(

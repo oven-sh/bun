@@ -86,9 +86,8 @@ impl LinuxMemFdAllocator {
     /// outstanding ref. After this call `this` may be dangling; the caller
     /// must not hold any live `&Self`/`&mut Self` derived from `this`.
     //
-    // PORT NOTE: takes `*mut Self` (not `&self`) to mirror Zig's
-    // `RefCount.deref(self: *Self)`. Taking `&self` and then freeing the
-    // allocation via `heap::take(self as *const _ as *mut _)` is UB:
+    // Takes `*mut Self`, not `&self`: taking `&self` and then freeing the
+    // allocation via `heap::take(self as *const _ as *mut _)` is UB —
     // it materializes `&mut Self` (via `Drop`) while a shared `&self`
     // borrow is still live.
     pub unsafe fn deref(this: *mut Self) {
@@ -284,11 +283,10 @@ impl LinuxMemFdAllocator {
                 }
             }
 
-            // PORT NOTE: Zig's `Self.new` returns a raw `*Self` (refcount=1).
-            // `into_raw()` extracts the `heap::alloc` pointer and transfers
-            // the +1 to us (RefPtr has no `Drop`); on `Ok` that ref moves into
-            // `res.allocator`, on `Err` we `deref` it explicitly — exactly the
-            // Zig flow.
+            // `Self::new` returns refcount=1; `into_raw()` extracts the
+            // `heap::alloc` pointer and transfers the +1 to us (RefPtr has no
+            // `Drop`). On `Ok` that ref moves into `res.allocator`; on `Err`
+            // we `deref` it explicitly.
             let memfd: *mut Self = Self::new(fd, bytes.len()).into_raw();
 
             // SAFETY: `memfd` is the `heap::alloc` pointer
@@ -344,9 +342,9 @@ mod allocator_interface {
         // Zig: `var self: *Self = @ptrCast(@alignCast(ptr)); defer self.deref();`
         // — runs after munmap regardless of result.
         //
-        // PORT NOTE: takes the raw vtable data pointer (Zig's `*anyopaque`)
-        // directly rather than `&self`. `deref` may free the allocation, which
-        // requires `*mut Self` with full `heap::alloc` provenance; deriving
+        // Takes the raw vtable data pointer directly rather than `&self`.
+        // `deref` may free the allocation, which requires
+        // `*mut Self` with full `heap::alloc` provenance; deriving
         // it from a `&self` (`as *const _ as *mut _`) would be SharedReadOnly
         // provenance and the `heap::take` → `Drop` write would be UB under
         // Stacked Borrows.

@@ -97,7 +97,7 @@ pub(crate) type NameCountMap =
     bun_collections::hashbrown::HashMap<NameKey, u32, bun_wyhash::BuildHasher>;
 
 pub struct NoOpRenamer<'a> {
-    // PORT NOTE: Zig `Symbol.Map` is a non-owning `BabyList(BabyList(Symbol))`
+    // Zig `Symbol.Map` is a non-owning `BabyList(BabyList(Symbol))`
     // slice header passed by value (renamer.zig:2,126,452 — no `deinit` ever
     // frees it). In the Rust port `symbol::Map` is `Vec<Vec<Symbol>>` (owning).
     // Unlike `MinifyRenamer`/`NumberRenamer` (which the bundler builds over a
@@ -135,9 +135,12 @@ impl<'a> NoOpRenamer<'a> {
             // SAFETY: `original_name` is an AST-arena slice that outlives the renamer.
             symbol.original_name.slice()
         } else {
-            // TODO(port): include `self.source.path.text` once `bun_paths::fs::Path<'static>`
-            // exposes the text accessor.
-            Output::panic(format_args!("Invalid symbol {}", ref_));
+            // Zig: `Output.panic("Invalid symbol {f} in {s}", .{ ref, renamer.source.path.text })`.
+            Output::panic(format_args!(
+                "Invalid symbol {} in {}",
+                ref_,
+                String::from_utf8_lossy(self.source.path.text)
+            ));
         }
     }
 
@@ -146,7 +149,7 @@ impl<'a> NoOpRenamer<'a> {
     }
 }
 
-// PORT NOTE: two lifetime params — `'r` is the borrow of the underlying renamer,
+// Two lifetime params — `'r` is the borrow of the underlying renamer,
 // `'src` is `NoOpRenamer`'s borrow of the `Source`. The Zig `Renamer` was a
 // tag+ptr union that erased both; using `&'a mut NoOpRenamer<'a>` would make
 // `'a` invariant and lock the source borrow to the renamer borrow.
@@ -182,7 +185,7 @@ impl<'r, 'src> Renamer<'r, 'src> {
     }
 }
 
-// PORT NOTE: Zig `Renamer.deinit` freed NumberRenamer/MinifyRenamer internals.
+// Zig `Renamer.deinit` freed NumberRenamer/MinifyRenamer internals.
 // In Rust all three variants are `&'r mut` (caller-owned, Drop on caller's
 // storage). No explicit deinit needed.
 
@@ -289,8 +292,8 @@ impl Drop for MinifyRenamer {
     }
 }
 
-// TODO(port): Zig used `std.HashMapUnmanaged(Ref, usize, RefCtx, 80)` —
-// bun_collections::HashMap should be parameterized with RefCtx hasher.
+// Zig used `std.HashMapUnmanaged(Ref, usize, RefCtx, 80)`; the default hasher
+// here differs only in hash quality/speed, not behavior.
 pub(crate) type TopLevelSymbolSlotMap = HashMap<Ref, usize>;
 
 impl MinifyRenamer {
@@ -356,7 +359,7 @@ impl MinifyRenamer {
         symbol_uses: &js_ast::part::SymbolUseMap,
         stable_source_indices: &[u32],
     ) -> Result<(), bun_alloc::AllocError> {
-        // PORT NOTE: ArrayHashMap exposes parallel keys()/values() slices, no .iter().
+        // ArrayHashMap exposes parallel keys()/values() slices, no .iter().
         for (key, value) in symbol_uses.keys().iter().zip(symbol_uses.values().iter()) {
             self.accumulate_symbol_use_count(
                 top_level_symbols,
@@ -415,7 +418,7 @@ impl MinifyRenamer {
     ) -> Result<(), bun_alloc::AllocError> {
         for stable in top_level_symbols {
             let symbol: &Symbol = self.symbols.get_const(stable.ref_).unwrap();
-            // PORT NOTE: reshaped for borrowck — capture symbol fields before mut-borrowing slots
+            // Reshaped for borrowck — capture symbol fields before mut-borrowing slots
             let ns = symbol.slot_namespace();
             let must_start_with_capital = symbol.must_start_with_capital_letter_for_jsx;
             let slots = &mut self.slots[ns];
@@ -530,7 +533,7 @@ impl StableSymbolCount {
     }
 }
 
-// PORT NOTE: Zig `packed struct(u64)`. Packed layout is not load-bearing here
+// Zig `packed struct(u64)`. Packed layout is not load-bearing here
 // (never bitcast/FFI — only sorted in a local Vec), so two named u32 fields
 // instead of a #[repr(transparent)] u64 with shift accessors.
 #[repr(C)]
@@ -548,7 +551,7 @@ impl SlotAndCount {
 }
 
 pub struct NumberRenamer {
-    // PORT NOTE: see `NoOpRenamer.symbols` — non-owning view; Zig
+    // See `NoOpRenamer.symbols` — non-owning view; Zig
     // `NumberRenamer.deinit` (renamer.zig:462) never frees `symbols`.
     pub symbols: ManuallyDrop<symbol::Map>,
     pub names: Box<[Vec<NameStr>]>,
@@ -637,10 +640,15 @@ impl NumberRenamer {
             root.name_counts.insert(NameKey(NameStr::new(duped)), value);
         }
 
-        // TODO(b2-blocked): bun_core::env_var::BUN_DUMP_SYMBOLS — typed accessor
-        // not yet declared upstream; debug-only `symbols.dump()` call elided.
+        // Zig (renamer.zig:535-538): debug-only, presence-checked symbol dump.
+        // The Zig gated on `!isWindows` only because it used `std.posix.getenv`;
+        // the typed accessor works everywhere.
+        #[cfg(debug_assertions)]
+        if bun_core::env_var::BUN_DUMP_SYMBOLS.get().is_some() {
+            symbols.dump();
+        }
 
-        // PORT NOTE: Zig @memset(sliceAsBytes(names), 0) — Vec::default() is already zeroed.
+        // Zig @memset(sliceAsBytes(names), 0) — Vec::default() is already zeroed.
 
         Ok(Box::new(NumberRenamer {
             symbols: ManuallyDrop::new(symbols),
@@ -668,7 +676,7 @@ impl NumberRenamer {
 
         self.assign_names_recursive_with_number_scope(s, scope, source_index, sorted);
 
-        // PORT NOTE: Zig `defer { s.deinit(); pool.put(s) }` — fn is infallible,
+        // Zig `defer { s.deinit(); pool.put(s) }` — fn is infallible,
         // so no scopeguard needed; cleanup runs unconditionally below.
         // SAFETY: s came from number_scope_pool.get() and was initialized above;
         // `put` drops `name_counts` in place before recycling the slot.
@@ -756,7 +764,7 @@ impl NumberRenamer {
             self.assign_names_recursive_with_number_scope(s, child, source_index, sorted);
         }
 
-        // PORT NOTE: Zig (renamer.zig:594-598) only put the final `s` because
+        // Zig (renamer.zig:594-598) only put the final `s` because
         // both the pool fallback (`.init(renamer.arena.allocator())`) and
         // `name_counts` data lived in arenas bulk-freed by `NumberRenamer.deinit
         // -> arena.deinit()`. The Rust port moved both to the global heap
@@ -779,8 +787,10 @@ impl NumberRenamer {
     }
 
     pub fn add_top_level_symbol(&mut self, ref_: Ref) {
-        // PORT NOTE: reshaped for borrowck — root is a field of self
-        // TODO(port): self.assign_name needs &mut self AND &mut self.root simultaneously
+        // Reshaped for borrowck — root is a field of self, but `assign_name`
+        // needs `&mut self` AND `&mut self.root` simultaneously. Sound only
+        // while `assign_name` never reaches `self.root` through `self`; keep
+        // that invariant if `assign_name` changes.
         let root: *mut NumberScope = &raw mut self.root;
         // SAFETY: assign_name does not touch self.root through `self`
         self.assign_name(unsafe { &mut *root }, ref_);
@@ -894,7 +904,7 @@ pub enum UnusedName {
 /// the exact condition under which Zig's `ensureValidIdentifier` returns the
 /// input slice unchanged (modulo the strict-mode-reserved-word remap, handled
 /// by the caller). The Rust port of that function currently always allocates
-/// a `Box<[u8]>` even on the borrow path — see its `TODO(port)` — so hoisting
+/// a `Box<[u8]>` even on the borrow path, so hoisting
 /// this check into the renamer restores Zig's zero-alloc behaviour for the
 /// overwhelmingly common case (`symbol.original_name` is parser-produced and
 /// almost always satisfies this).
@@ -917,7 +927,7 @@ fn is_simple_ascii_identifier(s: &[u8]) -> bool {
 impl NumberScope {
     /// Caller must use an arena allocator
     pub fn find_unused_name(&mut self, arena: &Bump, input_name: &[u8]) -> UnusedName {
-        // PORT NOTE: Zig's `MutableString.ensureValidIdentifier` borrows the
+        // Zig's `MutableString.ensureValidIdentifier` borrows the
         // input when it is already a valid ASCII identifier; the Rust port
         // always heap-allocates (Box<[u8]>). Skip the call entirely for the
         // common case so this stays alloc-free, matching the .zig fast path.
@@ -937,7 +947,7 @@ impl NumberScope {
             owned_name = MutableString::ensure_valid_identifier(input_name).expect("unreachable");
             &owned_name
         };
-        // PORT NOTE: hoisted from inside the match arm so `name` (which may borrow
+        // Hoisted from inside the match arm so `name` (which may borrow
         // it) stays valid through the trailing dupe.
         let mut mutable_name = MutableString::init_empty();
         // True iff a "name2"/"name3" suffix was appended below (i.e. `name` was
@@ -1098,12 +1108,12 @@ impl ExportRenamer {
                 .expect("unreachable");
                 tries += 1;
                 let attempt: &[u8] = self.string_buffer.slice();
-                // PORT NOTE: reshaped for borrowck — `get_or_put` borrows `self.used`
+                // Reshaped for borrowck — `get_or_put` borrows `self.used`
                 // mutably, so allocate the arena copy first.
                 let to_use: &[u8] = self.arena.alloc_slice_copy(attempt);
                 let entry = self.used.get_or_put(to_use).expect("unreachable");
                 if !entry.found_existing {
-                    // PORT NOTE: `StringHashMap` owns a boxed copy of the key on
+                    // `StringHashMap` owns a boxed copy of the key on
                     // insert; the Zig key-ptr write is unnecessary.
                     *entry.value_ptr = tries;
 
@@ -1118,14 +1128,13 @@ impl ExportRenamer {
             *entry.value_ptr = tries;
         }
 
-        // PORT NOTE: Zig returned `entry.key_ptr.*` (the map's owned copy of `input`).
+        // Zig returned `entry.key_ptr.*` (the map's owned copy of `input`).
         // `StringHashMap` does not expose a key pointer; allocate a copy in `self.arena`
         // so the returned slice is tied to `&self` (sub-borrow of `&mut self`).
         self.arena.alloc_slice_copy(input)
     }
 
     pub fn next_minified_name(&mut self) -> Result<Vec<u8>, bun_core::Error> {
-        // TODO(port): narrow error set
         let name = js_ast::NameMinifier::default_number_to_minified_name(self.count)?;
         self.count += 1;
         Ok(name)
@@ -1194,7 +1203,7 @@ pub fn compute_reserved_names_for_scope(
     symbols: &symbol::Map,
     names: &mut StringHashMap<u32>,
 ) {
-    // PORT NOTE: Zig copied `names_.*` to a local and wrote back via defer.
+    // Zig copied `names_.*` to a local and wrote back via defer.
     // In Rust we mutate through &mut directly.
 
     for member in scope.members.values() {

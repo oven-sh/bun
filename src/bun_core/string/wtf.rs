@@ -1,5 +1,5 @@
 use crate::string::strings;
-// TODO(port): ZigString.Slice is a nested type in Zig; in Rust it lives alongside ZigString.
+// Note (port): ZigString.Slice is a nested type in Zig; in Rust it lives alongside ZigString.
 use crate::string::ZigStringSlice;
 
 // Canonical layout lives in `bun_alloc` (lowest-tier crate) so the
@@ -177,7 +177,7 @@ impl WTFStringImplExt for WTFStringImplStruct {
     }
 }
 
-// PORT NOTE: Zig's `StringImplAllocator` was a `std.mem.Allocator` vtable trick
+// Note (port): Zig's `StringImplAllocator` was a `std.mem.Allocator` vtable trick
 // (alloc() bumped ref, free() dropped it) so a `ZigString.Slice` would deref the
 // WTFStringImpl when freed. Replaced by `ZigStringSlice::WTF { .. }` explicit
 // ownership variant — see `to_latin1_slice` above. No allocator trait needed.

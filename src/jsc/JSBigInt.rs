@@ -8,7 +8,6 @@ bun_opaque::opaque_ffi! {
     pub struct JSBigInt;
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     // safe: `JSValue` is a by-value tagged i64; returns a nullable GC-cell
     // pointer the caller checks before deref.
@@ -55,7 +54,6 @@ impl JSBigInt {
         // (stack-scanned) for as long as the returned ref is used. `JSBigInt`
         // is an opaque ZST handle so the deref is the centralised `opaque_ref`
         // proof.
-        // TODO(port): lifetime — model as `&'a JSBigInt` tied to a stack guard?
         let p = JSC__JSBigInt__fromJS(value);
         (!p.is_null()).then(|| JSBigInt::opaque_ref(p))
     }

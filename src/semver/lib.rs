@@ -8,7 +8,7 @@ pub use crate::version::VersionType;
 pub use crate::semver_query::Query;
 pub use crate::semver_range::Range;
 pub use crate::sliced_string::SlicedString;
-// PORT NOTE: `SemverObject` re-export from `../semver_jsc/` deleted — *_jsc
+// `SemverObject` re-export from `../semver_jsc/` deleted — *_jsc
 // extension traits live in the `bun_semver_jsc` crate, not here.
 
 #[path = "SemverQuery.rs"]
@@ -278,8 +278,8 @@ pub mod semver_string {
             bytes: [0, 0, 0, 0, 0, 0, 0, 0],
         };
 
-        /// Create an inline string
-        // TODO(port): make const fn once `init` is const-evaluable; Zig used `comptime` block.
+        /// Create an inline string (Zig built these in a `comptime` block; `init`'s
+        /// pointer-packing path keeps this from being a `const fn`).
         pub fn from(inlinable_buffer: &'static [u8]) -> String {
             debug_assert!(
                 !(inlinable_buffer.len() > Self::MAX_INLINE_LEN
@@ -344,7 +344,7 @@ pub mod semver_string {
             }
         }
 
-        // PORT NOTE: `hashContext`/`arrayHashContext` (took *Lockfile) intentionally NOT moved
+        // `hashContext`/`arrayHashContext` (took *Lockfile) intentionally NOT moved
         // down — they would create a back-edge to bun_install. The HashContext/ArrayHashContext
         // structs themselves live here; the Lockfile-taking convenience constructors stay in
         // bun_install (or bun_install_types) as inherent helpers there.
@@ -555,7 +555,7 @@ pub mod semver_string {
             Pointer::from_bits(masked)
         }
 
-        // PORT NOTE: `toJS` deleted — lives in bun_semver_jsc (tier-6; deferred to Pass C).
+        // `toJS` deleted — lives in bun_semver_jsc (tier-6; deferred to Pass C).
 
         // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
         #[inline]
@@ -589,7 +589,7 @@ pub mod semver_string {
     }
 
     // ── String.Buf ────────────────────────────────────────────────────────
-    // PORT NOTE: `Buf::init(lockfile: *const Lockfile)` intentionally NOT moved down — would
+    // `Buf::init(lockfile: *const Lockfile)` intentionally NOT moved down — would
     // create a back-edge to bun_install. Higher-tier callers construct `Buf` via struct literal.
     pub struct Buf<'a> {
         pub bytes: &'a mut Vec<u8>,
@@ -982,7 +982,7 @@ pub mod semver_string {
                 debug_assert!(self.ptr.is_some()); // must call allocate first
             }
 
-            // PORT NOTE: reshaped for borrowck — compute final slice range, then borrow once.
+            // reshaped for borrowck — compute final slice range, then borrow once.
             let start = self.len;
             let end = self.cap;
             {
@@ -1010,7 +1010,7 @@ pub mod semver_string {
                 debug_assert!(self.ptr.is_some()); // must call allocate first
             }
 
-            // PORT NOTE: reshaped for borrowck
+            // reshaped for borrowck
             let start = self.len;
             let end = self.cap;
             {
@@ -1038,7 +1038,7 @@ pub mod semver_string {
                 debug_assert!(self.ptr.is_some()); // must call allocate first
             }
 
-            // PORT NOTE: reshaped for borrowck — get_or_put borrows self.string_pool while we also need
+            // reshaped for borrowck — get_or_put borrows self.string_pool while we also need
             // &mut self.ptr; capture scalars first, then re-borrow.
             let start = self.len;
             let cap = self.cap;

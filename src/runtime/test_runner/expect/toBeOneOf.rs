@@ -25,11 +25,12 @@ extern "C" fn same_value_iterator(
     };
     if eq {
         *entry.pass = true;
-        // TODO(perf): break out of the `forEach` when a match is found
+        // PERF: break out of the `forEach` when a match is found
     }
 }
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
 pub(crate) fn to_be_one_of(
     this: &Expect,
     global_this: &JSGlobalObject,
@@ -82,15 +83,14 @@ pub(crate) fn to_be_one_of(
     }
 
     // handle failure
-    // PORT NOTE: Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
+    // Zig shares one `*Formatter` across both `toFmt` calls; in Rust the
     // `ZigFormatter` adapter holds `&'a mut Formatter`, so two live adapters cannot alias
     // the same backing formatter. Use a second formatter for the second value (matches toBe.rs).
     let mut formatter = super::make_formatter(global_this);
     let mut formatter2 = super::make_formatter(global_this);
     if not {
-        // TODO(port): get_signature was `comptime` in Zig — ensure it is `const fn` so this stays compile-time.
         let signature = get_signature("toBeOneOf", "<green>expected<r>", true);
-        // PORT NOTE: Zig `{f}` fmt specifier mapped to Rust `{}` (Display); `++` mapped to concat!.
+        // Zig `{f}` fmt specifier mapped to Rust `{}` (Display); `++` mapped to concat!.
         return this.throw(
             global_this,
             signature,

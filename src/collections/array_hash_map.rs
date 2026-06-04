@@ -1271,8 +1271,8 @@ impl<K, V: Default, C: ArrayHashContext<K>, A: MapAllocator> ArrayHashMap<K, V, 
             // through the slot it already points at.
             *gop.value_ptr = value;
         }
-        // PORT NOTE: reshaped — can't return `gop` while it borrows in the
-        // branch above without NLL gymnastics; recompute via index.
+        // Can't return `gop` while it borrows in the branch above without
+        // NLL gymnastics; recompute via index.
         let i = gop.index;
         let found = gop.found_existing;
         Ok(self.gop_at(i, found))
@@ -2080,7 +2080,7 @@ impl<V: Default, A: Allocator + HashbrownAllocator + Clone + Default> StringHash
 /// This is the *unordered* map context (vs. `StringContext` above which
 /// truncates to u32 for `ArrayHashMap`).
 ///
-/// PORT NOTE: spelled as a module rather than a unit struct so callers can
+/// Spelled as a module rather than a unit struct so callers can
 /// path-access the nested `Prehashed` / `PrehashedCaseInsensitive` types
 /// (`StringHashMapContext::Prehashed::…`) on stable Rust, which forbids
 /// inherent associated types.
@@ -2241,7 +2241,7 @@ impl StringSet {
     pub fn clear_and_free(&mut self) {
         // Keys are `Box<[u8]>`; `clear` drops them.
         self.map.clear_retaining_capacity();
-        // PORT NOTE: Zig also freed the backing arrays; Vec keeps capacity here
+        // Unlike Zig, this does not free the backing arrays; Vec keeps capacity here
         // (callers wanting that can drop the whole `StringSet`).
     }
 

@@ -775,7 +775,7 @@ pub mod dir_iterator {
         dir: Fd,
         // Windows: NtQueryDirectoryFile filter (UNICODE_STRING). On POSIX,
         // ignored (kernel readdir has no name filter; callers post-filter).
-        // PORT NOTE: stored on `State` on Windows so `next()` can pass it.
+        // stored on `State` on Windows so `next()` can pass it.
         #[cfg(not(windows))]
         name_filter: Option<Vec<u16>>,
         state: State,
@@ -835,7 +835,7 @@ pub mod dir_iterator {
 pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) -> Result<Fd> {
     #[cfg(not(windows))]
     {
-        // PORT NOTE: Zig `openDirForIterationOSPath` uses
+        // Zig `openDirForIterationOSPath` uses
         // `O_DIRECTORY | O_RDONLY | O_CLOEXEC` (`| O_NONBLOCK` on Linux).
         let mut buf = bun_paths::PathBuffer::default();
         // bun.zig:883 → `sys.openatA` → `std.posix.toPosixPath`: ENAMETOOLONG on
@@ -1467,7 +1467,7 @@ impl Tag {
     pub const CloseHandle: Tag = Tag(98);
     pub const SetFilePointerEx: Tag = Tag(99);
     pub const SetEndOfFile: Tag = Tag(100);
-    // ── PORT NOTE: tags below this line are Rust-port-only (no Zig ordinal).
+    // ── tags below this line are Rust-port-only (no Zig ordinal).
     // They sit above the Zig range so a Zig-produced `Tag` never collides.
     pub const dup2: Tag = Tag(101);
     pub const fchdir: Tag = Tag(102);
@@ -1475,7 +1475,7 @@ impl Tag {
     pub const ioctl: Tag = Tag(104);
     pub const getrlimit: Tag = Tag(105);
     pub const setrlimit: Tag = Tag(106);
-    // PORT NOTE: sys.zig folds `inotify_init1`/`inotify_add_watch` under the
+    // sys.zig folds `inotify_init1`/`inotify_add_watch` under the
     // generic `.watch` tag; `INotifyWatcher.rs` was ported against the
     // draft-b1 enum that had a distinct `.inotify` variant. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -3478,12 +3478,18 @@ mod posix_impl {
     static MEMFD_ENOSYS: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
-    /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false once
-    /// `memfd_create` has returned ENOSYS/EPERM/EACCES.
+    /// `bun.sys.canUseMemfd()` — false on non-Linux; on Linux, false when
+    /// `BUN_FEATURE_FLAG_DISABLE_MEMFD` is set or once `memfd_create` has
+    /// returned ENOSYS/EPERM/EACCES.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     #[inline]
     pub fn can_use_memfd() -> bool {
-        // TODO(port): also gate on `BUN_FEATURE_FLAG_DISABLE_MEMFD`.
+        if bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_MEMFD
+            .get()
+            .unwrap_or(false)
+        {
+            return false;
+        }
         !MEMFD_ENOSYS.load(core::sync::atomic::Ordering::Relaxed)
     }
     #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -3640,7 +3646,7 @@ mod windows_impl {
             return sys_uv::read(fd, buf);
         }
         let adjusted_len = buf.len().min(MAX_COUNT) as w::DWORD;
-        // PORT NOTE: the Zig spec for `bun.sys.read` returns the raw error, but
+        // the Zig spec for `bun.sys.read` returns the raw error, but
         // every Zig stdin caller (`run_command.zig`, `prompt.zig`, `init`, …)
         // routes through `std.fs.File.readerStreaming` → `std.os.windows.ReadFile`,
         // which maps BROKEN_PIPE/HANDLE_EOF → 0 (EOF) and retries on
@@ -4913,7 +4919,6 @@ pub use bun_core::time;
 /// current process in bytes, or `None` on failure. Thin wrapper around the
 /// C++ `getRSS` shim (lives in `src/jsc/bindings/memory.cpp`).
 pub fn self_process_memory_usage() -> Option<usize> {
-    // TODO(port): move to <area>_sys
     unsafe extern "C" {
         // safe: out-param is `&mut usize` (non-null, valid for write); C++ side
         // only writes the slot and returns a status code — no other preconditions.
@@ -4963,7 +4968,7 @@ impl std::io::Read for FileReader {
 /// `bun.sys.Error.Int` — backing integer for `errno`.
 pub type ErrorInt = error::Int;
 /// `std.posix.E` — un-prefixed errno enum (`.SUCCESS`, `.AGAIN`, ...).
-/// PORT NOTE: aliased to `bun_errno::E` (= `SystemErrno`); variants currently
+/// aliased to `bun_errno::E` (= `SystemErrno`); variants currently
 /// keep the `E` prefix (`EAGAIN` not `AGAIN`). Unprefixed associated consts
 /// live on `SystemErrno` directly (errno crate); callers comparing against
 /// `Errno::AGAIN`/`Errno::EXIST` rely on those.
@@ -4984,7 +4989,7 @@ pub enum SizeHint {
 pub type EnvMap = std::collections::HashMap<String, String>;
 
 /// `bun.sys.syslog` — debug-scoped log under `SYS` (Zig: `Output.scoped(.SYS)`).
-/// PORT NOTE: `bun_core::scoped_log!` only accepts a bare `$scope:ident`, so we
+/// `bun_core::scoped_log!` only accepts a bare `$scope:ident`, so we
 /// re-expand its body verbatim here with the qualified `$crate::fd::SYS` path
 /// and `::bun_core::` helpers — keeping the `[sys] ` tag prefix, trailing-`\n`
 /// append, and `pretty_fmt!` ANSI rewrite (output.zig:893-933) that
@@ -5507,7 +5512,7 @@ pub mod linux {
     }
     /// `syscall(SYS_futex, uaddr, op, val)` — 3-arg form (WAKE).
     /// Returns the raw kernel rc (decode with `E::init`).
-    // PORT NOTE: Zig's `std.os.linux.futex_*` invoke the kernel directly and
+    // Zig's `std.os.linux.futex_*` invoke the kernel directly and
     // return `-errno` on failure. `libc::syscall()` is the *glibc* wrapper —
     // it returns `-1` and sets thread-local errno instead. Translate back to
     // the kernel convention so callers can decode with `E::init(rc)`; without
@@ -5620,7 +5625,7 @@ pub mod linux {
     }
 
     // ── `std.os.linux.*` syscall thunks ──
-    // PORT NOTE: Zig's `std.os.linux.ioctl`/`copy_file_range` are *true* raw
+    // Zig's `std.os.linux.ioctl`/`copy_file_range` are *true* raw
     // syscalls returning the kernel `-errno`-in-`usize` ABI. glibc's
     // `libc::syscall()` is NOT — it returns `-1` and sets thread-local errno
     // on failure. Returning `isize` here routes callers through the
@@ -6327,7 +6332,7 @@ pub fn open_dir_at(dir: impl AsFd, path: &[u8]) -> Maybe<Fd> {
     let dir = dir.as_fd();
     openat_a(dir, path, O::DIRECTORY | O::CLOEXEC | O::RDONLY, 0)
 }
-/// bun.zig:890 `openDirAbsolute`. PORT NOTE: returns `Fd`, not `std.fs.Dir`.
+/// bun.zig:890 `openDirAbsolute`. returns `Fd`, not `std.fs.Dir`.
 pub fn open_dir_absolute(path: &[u8]) -> Maybe<Fd> {
     open_a(path, O::DIRECTORY | O::CLOEXEC | O::RDONLY, 0)
 }
@@ -6456,7 +6461,7 @@ impl Default for NormalizePathWindowsOpts {
 
 /// sys.zig:1129 `normalizePathWindows` — convert a (possibly relative) path
 /// into an NT object path suitable for `NtCreateFile` against `dir_fd`.
-/// PORT NOTE: u16-only here; the u8 entry points pre-convert via
+/// u16-only here; the u8 entry points pre-convert via
 /// `bun_paths::string_paths::to_nt_path` and call this with the resulting wide slice.
 #[cfg(windows)]
 pub fn normalize_path_windows<'a>(
@@ -8445,7 +8450,7 @@ pub mod net {
     }
     impl fmt::Display for Address {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            // PORT NOTE: Zig's std.net.Address.format prints "ip:port"/"[ip6]:port".
+            // Zig's std.net.Address.format prints "ip:port"/"[ip6]:port".
             // Minimal: print family for now; full impl in `bun_dns::address_to_string`.
             match self.as_in4() {
                 Some(v4) => {
@@ -8760,7 +8765,7 @@ mod win_symlink_impl {
     /// with `ALLOW_UNPRIVILEGED_CREATE` and is cleared on `INVALID_PARAMETER`
     /// (older Windows).
     ///
-    /// PORT NOTE (deliberate divergence): Zig's `flags()` (sys.zig:2657) does
+    /// Deliberate divergence: Zig's `flags()` (sys.zig:2657) does
     /// `symlink_flags |= DIRECTORY; return symlink_flags;`, which permanently
     /// stickies the `DIRECTORY` bit into the global after the first directory
     /// symlink — a Zig bug (a later `directory=false` call still passes
@@ -8994,19 +8999,20 @@ pub fn exists(path: &[u8]) -> bool {
     let z = ZStr::from_buf(&buf.0[..], path.len());
     exists_z(z)
 }
-/// sys.zig:4246 — `moveFileZ`. Tries the rename first (no source open on the
-/// hot path); on EISDIR removes the dest dir and retries; on EXDEV falls back
-/// to the slow open+copy path. Only opens the source inside the EXDEV branch.
+/// sys.zig:4246 — `moveFileZ`. Routes through
+/// [`renameat_concurrently_without_fallback`] (renameat2 NOREPLACE → EXCHANGE →
+/// delete-tree + rename, sys.zig:2480); on EISDIR removes the dest dir and
+/// retries; on EXDEV falls back to the slow open+copy path. Only opens the
+/// source inside the EXDEV branch.
 pub fn move_file_z(
     from_dir: Fd,
     filename: &ZStr,
     to_dir: Fd,
     destination: &ZStr,
 ) -> core::result::Result<(), bun_core::Error> {
-    // TODO(port): renameatConcurrentlyWithoutFallback (renameat2 NOREPLACE →
-    // EXCHANGE → deleteTree) — sys.zig:2480. Plain `renameat` for now.
-    match renameat(from_dir, filename, to_dir, destination) {
+    match renameat_concurrently_without_fallback(from_dir, filename, to_dir, destination) {
         Ok(()) => Ok(()),
+        // allow over-writing an empty directory
         Err(e) if e.get_errno() == E::EISDIR => {
             #[cfg(unix)]
             // SAFETY: destination is NUL-terminated.
@@ -9296,7 +9302,7 @@ pub fn write_file_with_path_buffer(
 
 /// `bun.fetchCacheDirectoryPath` — resolve `$BUN_INSTALL_CACHE_DIR` /
 /// `$XDG_CACHE_HOME/.bun/install/cache` / `$HOME/.bun/install/cache`.
-/// PORT NOTE: full env-override chain lives in `bun_install`; this is the
+/// full env-override chain lives in `bun_install`; this is the
 /// fallback so the symbol resolves at T1. Returns an owned path (caller frees).
 pub fn fetch_cache_directory_path() -> Vec<u8> {
     if let Some(v) = bun_core::getenv_z(bun_core::zstr!("BUN_INSTALL_CACHE_DIR")) {

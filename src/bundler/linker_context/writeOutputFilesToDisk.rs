@@ -79,7 +79,7 @@ pub fn write_output_files_to_disk(
     let bv2: &mut BundleV2 =
         unsafe { &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(c)) };
 
-    // PORT NOTE: Zig passes `chunk` (an element of `chunks`) and `chunks`
+    // Zig passes `chunk` (an element of `chunks`) and `chunks`
     // together into `code()`/`code_standalone()`. The callee now takes
     // `&Chunk` / `&[Chunk]` (read-only), so iterate by index and reborrow
     // shared; the only per-chunk mutation is the `intermediate_output`
@@ -151,7 +151,7 @@ pub fn write_output_files_to_disk(
             &resolver_opts.public_path
         };
 
-        // PORT NOTE: take `intermediate_output` by value so its `&mut self` is
+        // Take `intermediate_output` by value so its `&mut self` is
         // disjoint from the `&chunks[i]` / `&[Chunk]` reads below.
         let mut intermediate_output =
             core::mem::take(&mut chunks[chunk_index_in_chunks_list].intermediate_output);
@@ -502,11 +502,13 @@ pub fn write_output_files_to_disk(
                 }
             }),
             entry_point_index: if output_kind == options::OutputKind::EntryPoint {
-                // TODO(port): `bake_types::Framework` is missing
-                // `server_components`; once it lands, restore the
-                // `if c.framework.is_some_and(|fw| fw.server_components.is_some()) { 3 } else { 1 }`
-                // branch.
-                let offset: u32 = 1;
+                // Server-components builds insert 2 extra synthetic sources
+                // before user entry points, so the source-index offset is 3.
+                let offset: u32 = if c.framework.is_some_and(|fw| fw.server_components.is_some()) {
+                    3
+                } else {
+                    1
+                };
                 Some(chunk.entry_point.source_index() - offset)
             } else {
                 None
@@ -545,7 +547,7 @@ pub fn write_output_files_to_disk(
     }
 
     {
-        // PORT NOTE: reshaped for borrowck — compute len before mut borrow,
+        // Reshaped for borrowck — compute len before mut borrow,
         // bump `total_insertions`, then take the slice.
         let additional_start = output_files.additional_output_files_start as usize;
         let additional_len = output_files.output_files.len() - additional_start;

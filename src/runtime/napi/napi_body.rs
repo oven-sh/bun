@@ -363,7 +363,7 @@ pub(super) enum napi_typedarray_type {
 
 impl napi_typedarray_type {
     pub(super) fn from_js_type(this: jsc::JSType) -> Option<napi_typedarray_type> {
-        // PORT NOTE: jsc::JSType is a newtype struct with associated consts (not an enum),
+        // Note: jsc::JSType is a newtype struct with associated consts (not an enum),
         // so glob-import is unavailable; match on the qualified const paths instead.
         Some(match this {
             jsc::JSType::Int8Array => napi_typedarray_type::int8_array,
@@ -502,7 +502,7 @@ pub(crate) fn write_out<T>(p: *mut T, v: T) {
 // Exported / extern NAPI functions
 // ──────────────────────────────────────────────────────────────────────────
 
-// TODO(port): move to napi_sys
+// Implemented in C++ (napi.cpp); declared extern here for Rust-side callers.
 unsafe extern "C" {
     pub(super) fn napi_get_last_error_info(
         env: napi_env,
@@ -803,7 +803,7 @@ pub(super) extern "C" fn napi_create_string_utf16(
     env.ok()
 }
 
-// TODO(port): move to napi_sys
+// Implemented in C++ (napi.cpp); declared extern here for Rust-side callers.
 unsafe extern "C" {
     pub(super) fn napi_create_symbol(
         env: napi_env,
@@ -1375,7 +1375,10 @@ pub(super) extern "C" fn napi_is_arraybuffer(
 }
 
 unsafe extern "C" {
-    // TODO(port): Zig signature has `data: [*]const u8`; N-API spec says `void**` out-param — verify which is the source of truth.
+    // Verified against the C++ implementation (napi.cpp `napi_create_arraybuffer`):
+    // `data` is a `void**` out-param receiving the buffer's data pointer,
+    // matching the N-API spec. (The old Zig decl's `[*]const u8` was wrong but
+    // unused — the function was only ever called from C/C++.)
     pub(super) fn napi_create_arraybuffer(
         env: napi_env,
         byte_length: usize,
@@ -1770,7 +1773,7 @@ pub(super) enum AsyncWorkStatus {
 pub struct napi_async_work {
     pub task: WorkPoolTask,
     pub concurrent_task: ConcurrentTask,
-    // PORT NOTE: BackRef — `enqueue_task` needs `&mut EventLoop`; reborrowed at use sites.
+    // Note: BackRef — `enqueue_task` needs `&mut EventLoop`; reborrowed at use sites.
     pub event_loop: bun_ptr::BackRef<EventLoop>,
     pub global: GlobalRef, // JSC_BORROW (lives for vm lifetime)
     pub env: NapiEnvRef,
@@ -1884,7 +1887,7 @@ impl napi_async_work {
 
     pub fn run_from_js(&mut self, vm: &mut VirtualMachine, global: &JSGlobalObject) {
         // Note: the "this" value here may already be freed by the user in `complete`
-        // PORT NOTE: Zig copied the struct; KeepAlive is not `Copy` in Rust, so
+        // Note: Zig copied the struct; KeepAlive is not `Copy` in Rust, so
         // move it out (the original slot may be freed under us by `complete`).
         let mut poll_ref = core::mem::take(&mut self.poll_ref);
         // KeepAlive::unref needs an event-loop ctx so it cannot impl Drop
@@ -2423,7 +2426,7 @@ pub struct ThreadSafeFunction {
     // for std.condvar
     pub lock: Mutex,
 
-    // PORT NOTE: BackRef — `enqueue_task`/`drain_microtasks` need `&mut
+    // Note: BackRef — `enqueue_task`/`drain_microtasks` need `&mut
     // EventLoop`; reborrowed at use sites (single JS thread).
     pub event_loop: bun_ptr::BackRef<EventLoop>,
     pub tracker: Debugger::AsyncTaskTracker,
@@ -2571,7 +2574,7 @@ impl ThreadSafeFunction {
                 // TODO: is this boolean necessary? Can we rely just on the closing value?
                 if !self.has_queued_finalizer {
                     self.has_queued_finalizer = true;
-                    // PORT NOTE: replace callback with a no-op variant to drop Strong now.
+                    // Note: replace callback with a no-op variant to drop Strong now.
                     self.callback = TsfnCallback::Js(StrongOptional::empty());
                     self.poll_ref.disable();
                     let self_ptr: *mut Self = self;
@@ -2591,7 +2594,7 @@ impl ThreadSafeFunction {
             // `MutexGuard` holds the lock by raw pointer, so it does not borrow
             // `*self` across the `&mut self` calls below.
             let _g = self.lock.lock_guard();
-            // PORT NOTE: reshaped for borrowck — Zig holds the lock across these reads.
+            // Note: reshaped for borrowck — Zig holds the lock across these reads.
             let was_blocked = self.queue.is_blocked();
             let Some(t) = self.queue.data.read_item() else {
                 // When there are no tasks and the number of threads that have
@@ -2735,7 +2738,7 @@ impl ThreadSafeFunction {
         self_.unref();
 
         if let Some(fun) = self_.finalizer_fun {
-            // PORT NOTE: ownership transfer of `env` into the Finalizer. We clone (bumps the
+            // Note: ownership transfer of `env` into the Finalizer. We clone (bumps the
             // external refcount) and let the original drop with the Box below — net refcount
             // delta is zero, equivalent to the Zig move. Avoids writing a zeroed `NonNull`
             // sentinel back into the field, which is UB for `ExternalShared<T>`.
@@ -2972,7 +2975,6 @@ const NAPI_AUTO_LENGTH: usize = usize::MAX;
 #[cfg(not(windows))]
 mod v8_api {
     use core::ffi::c_void;
-    // TODO(port): move to napi_sys
     unsafe extern "C" {
         pub(super) fn _ZN2v87Isolate10GetCurrentEv() -> *mut c_void;
         pub(super) fn _ZN2v87Isolate13TryGetCurrentEv() -> *mut c_void;
@@ -3277,7 +3279,6 @@ mod posix_platform_specific_v8_apis {
 
 #[cfg(unix)]
 mod uv_functions_to_export {
-    // TODO(port): move to napi_sys
     unsafe extern "C" {
         pub(super) fn uv_accept();
         pub(super) fn uv_async_init();
@@ -3754,9 +3755,9 @@ pub fn fix_dead_code_elimination() {
     );
 
     // uv_functions_to_export
-    // TODO(port): Zig iterates std.meta.declarations(uv_functions_to_export) — Rust has no
-    // reflection over extern blocks. Script-generate this black_box list from
-    // the `uv_functions_to_export` module above, or rely on `#[used]` static fn-ptr arrays.
+    // Zig iterated std.meta.declarations(uv_functions_to_export); Rust has no
+    // reflection over extern blocks, so this list is hand-maintained — keep it
+    // in sync with the `uv_functions_to_export` module above.
     #[cfg(unix)]
     {
         use uv_functions_to_export::*;
@@ -4081,7 +4082,8 @@ pub fn fix_dead_code_elimination() {
     }
 
     // V8API
-    // TODO(port): Zig iterates std.meta.declarations(V8API) — same reflection caveat as above.
+    // Hand-maintained for the same reason as the uv list above (no reflection
+    // over extern blocks) — keep in sync with the `v8_api` module.
     #[cfg(not(windows))]
     {
         use v8_api::*;

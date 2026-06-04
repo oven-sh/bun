@@ -6,8 +6,8 @@ use crate::{JSGlobalObject, JSObject, JSValue, JsResult};
 use crate::r#gen::bindgen_test as generated;
 
 pub fn get_bindgen_test_functions(global: &JSGlobalObject) -> JsResult<JSValue> {
-    // PORT NOTE: Zig used an anon struct with `jsc.JSObject.create`; Rust has no
-    // field reflection, so a local `PojoFields` impl enumerates the fields.
+    // Rust has no field reflection, so a local `PojoFields` impl enumerates
+    // the fields.
     struct Fns {
         add: JSValue,
         required_and_optional_arg: JSValue,

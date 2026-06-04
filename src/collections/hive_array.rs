@@ -8,7 +8,7 @@ use bun_core::asan;
 
 /// Fixed-width occupancy bitset for [`HiveArray`].
 ///
-/// PORT NOTE: Zig's `std.bit_set.IntegerBitSet(N)` is backed by an exact-width
+/// Zig's `std.bit_set.IntegerBitSet(N)` is backed by an exact-width
 /// `uN` integer (`u128`, `u256`, `u2048`, …). The Rust port's
 /// [`IntegerBitSet`](crate::bit_set::IntegerBitSet) is backed by a single
 /// `usize`, so for `N > 64` it silently held only 64 usable bits — every
@@ -171,7 +171,7 @@ impl<const CAPACITY: usize> HiveBitSetIter<CAPACITY> {
 /// All slot operations take `&self` and the buffer is `UnsafeCell` — slot
 /// pointers come from `UnsafeCell::get()` and so survive `&self` reborrows of
 /// the pool (the `bumpalo` / `typed-arena` shape). `HiveArray` is `!Sync`.
-// PORT NOTE: Zig's `capacity: u16` is widened to `usize` here because Rust array
+// Zig's `capacity: u16` is widened to `usize` here because Rust array
 // lengths require a `usize` const generic on stable.
 pub struct HiveArray<T, const CAPACITY: usize> {
     buffer: UnsafeCell<[MaybeUninit<T>; CAPACITY]>,
@@ -181,7 +181,7 @@ pub struct HiveArray<T, const CAPACITY: usize> {
 impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
     pub const SIZE: usize = CAPACITY;
 
-    // PORT NOTE: Zig had `pub var empty: Self` as a mutable static to work around
+    // Zig had `pub var empty: Self` as a mutable static to work around
     // https://github.com/ziglang/zig/issues/22462 and /21988. Rust has no such
     // limitation; callers should use `init()` (which is `const`).
 
@@ -403,7 +403,7 @@ impl<T, const CAPACITY: usize> HiveArray<T, CAPACITY> {
         debug_assert!(self.used.is_set(index as usize));
         debug_assert!(self.ptr_at(index as usize).cast_const() == value.cast_const());
 
-        // PORT NOTE: Zig wrote `value.* = undefined;` — Zig has no destructors,
+        // Zig wrote `value.* = undefined;` — Zig has no destructors,
         // so the slot was simply marked logically uninitialized. In the Rust
         // port several `T` carry owned heap data (e.g. `NumberScope.name_counts:
         // StringHashMap`, `NetworkTask.url_buf: Box<[u8]>`); drop the slot
@@ -589,7 +589,7 @@ impl<T, const CAPACITY: usize> Drop for HiveBox<'_, T, CAPACITY> {
     }
 }
 
-// PORT NOTE: In Zig this was the nested type `HiveArray(T, capacity).Fallback`.
+// In Zig this was the nested type `HiveArray(T, capacity).Fallback`.
 // Rust cannot nest a generic struct that captures outer generics, so it lives at
 // module scope with the same parameters. The Zig field
 // `hive: if (capacity > 0) Self else void` is always materialized here; the
@@ -597,7 +597,7 @@ impl<T, const CAPACITY: usize> Drop for HiveBox<'_, T, CAPACITY> {
 // PERF(port): zero-capacity case carried a zero-size hive in Zig — profile in Phase B.
 pub struct Fallback<T, const CAPACITY: usize> {
     pub hive: HiveArray<T, CAPACITY>,
-    // PORT NOTE: `std.mem.Allocator param` dropped — global mimalloc.
+    // (Zig's `std.mem.Allocator` field is gone — the fallback uses the global allocator.)
 }
 
 impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
@@ -768,7 +768,7 @@ impl<T, const CAPACITY: usize> Fallback<T, CAPACITY> {
 // HiveRef
 // ──────────────────────────────────────────────────────────────────────────
 //
-// PORT NOTE: ground truth is `bun.HiveRef` in src/bun.zig. It lives here (not
+// Ground truth is `bun.HiveRef` in src/bun.zig. It lives here (not
 // in the `bun` crate) because every consumer names it through
 // `bun_collections::HiveRef`, and its only collaborator is `Fallback` above.
 //
@@ -941,7 +941,7 @@ mod tests {
         const SIZE: usize = 64;
 
         // Choose an integer with a weird alignment
-        // PORT NOTE: Zig used `u127`; Rust has no arbitrary-width ints. `u128` is the closest.
+        // (Zig used `u127`; Rust has no arbitrary-width ints, so `u128` is the closest.)
         type Int = u128;
 
         let a = HiveArray::<Int, SIZE>::init();

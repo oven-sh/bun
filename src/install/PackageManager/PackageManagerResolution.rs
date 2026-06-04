@@ -102,7 +102,7 @@ impl PackageManager {
                     return None;
                 }
 
-                // PORT NOTE: reshaped for borrowck — Zig calls
+                // reshaped for borrowck — Zig calls
                 // `this.manifests.byNameHash(this, …, .load_from_memory, …)`,
                 // which in Rust would require simultaneous `&mut self.manifests`
                 // (receiver) and `&mut self` (arg). The memory-only path touches
@@ -145,7 +145,6 @@ impl PackageManager {
         tags_buf: &mut Vec<u8>,
         package_name: &[u8],
     ) -> Result<Vec<semver::Version>, bun_core::Error> {
-        // TODO(port): narrow error set
         let mut list: Vec<semver::Version> = Vec::new();
         // Zig: `getCacheDirectory().openDir(package_name, .{ .iterate = true })`.
         let cache_dir = super::get_cache_directory(self);
@@ -306,7 +305,7 @@ impl PackageManager {
     }
 
     pub fn assign_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
-        // PORT NOTE: reshaped for borrowck — capture lengths before mutable borrows.
+        // reshaped for borrowck — capture lengths before mutable borrows.
         if cfg!(debug_assertions) {
             debug_assert!(
                 (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()
@@ -327,7 +326,7 @@ impl PackageManager {
     }
 
     pub fn assign_root_resolution(&mut self, dependency_id: DependencyID, package_id: PackageID) {
-        // PORT NOTE: reshaped for borrowck — capture lengths before mutable borrows.
+        // reshaped for borrowck — capture lengths before mutable borrows.
         if cfg!(debug_assertions) {
             debug_assert!(
                 (dependency_id as usize) < self.lockfile.buffers.resolutions.as_slice().len()

@@ -293,7 +293,7 @@ impl WorkspaceMap {
             let mut arena = Arena::new();
             // PERF(port): was arena bulk-free per-iteration via reset(.retain_capacity)
             for (i, user_pattern) in workspace_globs.iter().enumerate() {
-                // PORT NOTE: Zig `defer arena.reset()` ran *after* iter.deinit()/walker.deinit() at
+                // Zig `defer arena.reset()` ran *after* iter.deinit()/walker.deinit() at
                 // end of each iter. In Rust, walker/iter borrow `&arena` and Drop at scope exit,
                 // so resetting here (top of next iter) ensures they drop before invalidation.
                 // Last iter's allocs are freed when `arena` itself drops after the loop.
@@ -311,7 +311,7 @@ impl WorkspaceMap {
                 if cwd.is_empty() {
                     cwd = bun_resolver::fs::FileSystem::instance().top_level_dir();
                 }
-                // PORT NOTE: GlobWalker::init_with_cwd is now an associated constructor
+                // GlobWalker::init_with_cwd is now an associated constructor
                 // returning `Result<Maybe<Self>>`; arena param dropped (heap-backed),
                 // ignore filter supplied as final arg (was comptime fn param in Zig).
                 let mut walker = match GlobWalker::init_with_cwd(
@@ -338,8 +338,9 @@ impl WorkspaceMap {
                         return Err(bun_core::err!("GlobError"));
                     }
                 };
-                // walker dropped at end of loop iter (Drop impl handles deinit(false))
-                // TODO(port): GlobWalker::deinit(false) — Drop cannot take params; assume default Drop matches `false`
+                // walker dropped at end of loop iter. Zig called `deinit(false)` (skip the
+                // arena free); the Rust GlobWalker is heap-backed with no arena, and its
+                // Drop only logs + frees owned Vec/Box fields, so default Drop matches.
 
                 let mut iter = glob::walk::Iterator::new(&mut walker);
                 if let Err(e) = iter.init()? {
@@ -520,7 +521,7 @@ impl WorkspaceMap {
         }
 
         // Sort the names for determinism
-        // PORT NOTE: reshaped for borrowck — Zig captured `values()` slice in sort ctx;
+        // reshaped for borrowck — Zig captured `values()` slice in sort ctx;
         // here ArrayHashMap::sort provides values internally to the comparator.
         workspace_names
             .map
@@ -543,7 +544,7 @@ fn ignored_workspace_paths(path: &[u8]) -> bool {
     false
 }
 
-// PORT NOTE: Zig `glob.GlobWalker(ignoredWorkspacePaths, glob.walk.SyscallAccessor, false)` —
+// Zig `glob.GlobWalker(ignoredWorkspacePaths, glob.walk.SyscallAccessor, false)` —
 // the comptime ignore-filter fn param was lowered to a runtime fn-pointer field on
 // `bun_glob::GlobWalker` (const-generic fn ptrs are unstable). Supplied via
 // `init_with_cwd(..., Some(ignored_workspace_paths))`.

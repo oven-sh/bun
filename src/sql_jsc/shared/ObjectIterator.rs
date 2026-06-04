@@ -1,6 +1,6 @@
 use crate::jsc::{JSGlobalObject, JSObject, JSValue, JsResult};
 
-// PORT NOTE: this iterator holds bare `JSValue` fields and a borrowed
+// Note: this iterator holds bare `JSValue` fields and a borrowed
 // `&JSGlobalObject`; it is only sound when constructed on the stack for the
 // duration of a single bind/iteration pass (conservative GC stack scan keeps
 // `array`/`columns`/`current_row` alive). Never `Box` this.
@@ -50,7 +50,7 @@ impl<'a> ObjectIterator<'a> {
             }
         }
 
-        // PORT NOTE: Zig `defer { if (cell_i >= columns_count) { ... } }` is
+        // Note: Zig `defer { if (cell_i >= columns_count) { ... } }` is
         // lowered to a labeled block whose result is computed first, then the
         // deferred bookkeeping runs exactly once before returning.
         let result: JsResult<Option<JSValue>> = 'out: {
@@ -68,8 +68,11 @@ impl<'a> ObjectIterator<'a> {
                 )));
             }
 
-            // TODO(port): verify `get_own_by_value` return type — Zig site treats it
-            // as `?JSValue` (compares against `.zero` and `null` separately).
+            // `get_own_by_value` maps the C++ empty (zero) return to `None`,
+            // exactly like Zig's `getOwnByValue` (`?JSValue`, zero → null). Zig's
+            // `value == .zero` arm therefore can never be true (an unwrapped
+            // optional is never zero); `Some(JSValue::ZERO)` below mirrors that
+            // defensively-dead comparison 1:1.
             let value: Option<JSValue> = self.current_row.get_own_by_value(global_object, property);
             if value == Some(JSValue::ZERO) || value.is_some_and(|v| v.is_undefined()) {
                 if !global_object.has_exception() {

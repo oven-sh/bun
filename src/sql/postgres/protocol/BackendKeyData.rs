@@ -1,4 +1,5 @@
 use super::new_reader::NewReader;
+use crate::postgres::AnyPostgresError;
 
 #[derive(Default)]
 pub struct BackendKeyData {
@@ -10,16 +11,15 @@ impl BackendKeyData {
     // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode<Container: super::new_reader::ReaderContext>(
         context: Container,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> Result<Self, AnyPostgresError> {
         Self::decode_internal(NewReader { wrapped: context })
     }
 
-    // TODO(port): narrow error set
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         mut reader: NewReader<Container>,
-    ) -> Result<Self, bun_core::Error> {
+    ) -> Result<Self, AnyPostgresError> {
         if !reader.expect_int::<u32>(12)? {
-            return Err(crate::postgres::AnyPostgresError::InvalidBackendKeyData.into());
+            return Err(AnyPostgresError::InvalidBackendKeyData);
         }
 
         Ok(Self {

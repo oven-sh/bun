@@ -25,9 +25,9 @@ impl Crypto {
     }
 
     // DOMJIT fast path — non-standard signature (typed-array args unwrapped by codegen).
-    // TODO(port): Zig return type is bare `JSValue` but the error branch returns
-    // `ERR(..).throw()` (a `bun.JSError`). Mirroring as JsResult<JSValue> here; verify
-    // DOMJIT shim expectations.
+    // DOMJIT operations report failure by throwing on the VM and returning the empty
+    // value (`JSValue::ZERO`); the generated wrapper returns the raw EncodedJSValue and
+    // the JIT checks for a pending exception after the call.
     pub fn timing_safe_equal_without_type_checks(
         &self,
         global: &JSGlobalObject,
@@ -40,9 +40,9 @@ impl Crypto {
         let len = array_a.len();
 
         if array_b.len() != len {
-            // TODO(port): see note above re: return type — DOMJIT shim expects bare JSValue
-            // but the Zig error branch returns `bun.JSError`. Mirror by throwing then
-            // returning the encoded error-builder JSValue.
+            // Throw, then return the empty value — the DOMJIT wrapper surfaces the
+            // pending exception (matches Zig's `return ERR(..).throw()`, which the
+            // C-ABI shim encodes as zero).
             let _ = global
                 .err(
                     bun_jsc::ErrorCode::CRYPTO_TIMING_SAFE_EQUAL_LENGTH,

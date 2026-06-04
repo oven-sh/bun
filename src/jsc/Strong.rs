@@ -6,7 +6,7 @@ use core::ptr::NonNull;
 
 use crate::{JSGlobalObject, JSValue};
 
-// PORT NOTE: field renamed from `impl` (Rust keyword) to `handle`.
+// Note: field renamed from `impl` (Rust keyword) to `handle`.
 pub struct Strong {
     handle: NonNull<Impl>,
     // NonNull<T> is already !Send + !Sync, matching the requirement that
@@ -64,7 +64,7 @@ impl Drop for Strong {
 
 /// Holds a strong reference to a JS value, protecting it from garbage
 /// collection. When not holding a value, the strong may still be allocated.
-// PORT NOTE: field renamed from `impl` (Rust keyword) to `handle`.
+// Note: field renamed from `impl` (Rust keyword) to `handle`.
 // `#[repr(transparent)]` matches the Zig layout (`?*Impl` — single nullable
 // pointer) so it stays FFI-safe when embedded in `extern "C"` structs.
 #[repr(transparent)]
@@ -109,7 +109,7 @@ impl Optional {
         let Some(function) = self.try_swap() else {
             return JSValue::ZERO;
         };
-        // PORT NOTE: Zig source (Strong.zig:71) calls `function.call(global, args)`
+        // Note: Zig source (Strong.zig:71) calls `function.call(global, args)`
         // which predates the `thisValue` param on JSValue.call; pass `.undefined`.
         function
             .call(global, JSValue::UNDEFINED, args)
@@ -202,11 +202,11 @@ impl Impl {
 
     pub fn get(this: NonNull<Impl>) -> JSValue {
         // `this` is actually a pointer to a `JSC::JSValue`; see Strong.cpp.
-        // SAFETY: HandleSlot storage is a live, aligned JSC::JSValue (encoded i64) for the
-        // lifetime of the Impl handle. JSValue stub is `#[repr(transparent)] usize` (same
-        // size); reading it directly is the encode() operation.
-        // TODO(port): once DecodedJSValue.rs un-gates, switch back to `(*js_value).encode()`.
-        unsafe { *this.as_ptr().cast::<JSValue>() }
+        // Zig: `const js_value: *jsc.DecodedJSValue = @ptrCast(this); return js_value.encode();`
+        // SAFETY: HandleSlot storage is a live, aligned JSC::JSValue for the
+        // lifetime of the Impl handle; `DecodedJSValue` is its `#[repr(C)]`
+        // ABI-compatible mirror.
+        unsafe { (*this.as_ptr().cast::<crate::DecodedJSValue>()).encode() }
     }
 
     pub fn set(this: NonNull<Impl>, global: &JSGlobalObject, value: JSValue) {
@@ -246,8 +246,6 @@ impl Impl {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
 // `Impl` and `JSGlobalObject` are opaque `UnsafeCell`-backed ZST handles, so
 // `&Impl`/`&JSGlobalObject` are ABI-identical to non-null `*const T` and C++
 // mutating through them (HandleSet slot write) is interior mutation invisible

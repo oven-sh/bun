@@ -13,7 +13,6 @@ impl AuthMethod {
         auth_data: &[u8],
         buf: &'a mut [u8; 32],
     ) -> Result<&'a mut [u8], bun_core::Error> {
-        // TODO(port): narrow error set
         if password.is_empty() {
             return Ok(&mut []);
         }

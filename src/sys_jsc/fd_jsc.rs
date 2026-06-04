@@ -109,8 +109,6 @@ impl FdJsc for Fd {
         }
         #[cfg(windows)]
         {
-            // PORT NOTE: Zig accessed `any_fd.value.as_system` / `.as_uv` directly.
-            // `bun_core::Fd` exposes `kind()` / `native()` / `uv()` instead.
             return match self.kind() {
                 FdKind::System => JSValue::js_number_from_uint64(self.native() as u64),
                 FdKind::Uv => JSValue::js_number_from_int32(self.uv()),

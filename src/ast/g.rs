@@ -12,7 +12,7 @@ use crate::{ExprData, ExprNodeList, LocRef, StmtNodeList, StoreSlice, StoreStr, 
 pub use crate::flags::Function as FnFlags;
 pub use crate::flags::FunctionSet as FnFlagsSet;
 
-// PORT NOTE: all `&'ast mut [T]` arena slices are `StoreSlice<T>` (lifetime-
+// All `&'ast mut [T]` arena slices are `StoreSlice<T>` (lifetime-
 // erased arena-slice newtype). 'ast/'bump can be threaded crate-wide later by
 // adding a `PhantomData<&'arena ()>` to `StoreSlice` in one pass.
 

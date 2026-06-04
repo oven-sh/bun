@@ -2,6 +2,7 @@
 // SSLRequest
 
 use crate::mysql::Capabilities;
+use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::character_set::CharacterSet;
 use crate::mysql::protocol::new_writer::NewWriter;
 
@@ -30,11 +31,10 @@ impl SSLRequest {
     // Zig: pub fn deinit(_: *SSLRequest) void {}
     // Empty deinit → no Drop impl needed.
 
-    // TODO(port): narrow error set
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &mut self,
         writer: &mut NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyMySQLError> {
         let mut packet = writer.start(1)?;
 
         self.capability_flags.CLIENT_CONNECT_ATTRS = self.has_connection_attributes;
@@ -53,7 +53,7 @@ impl SSLRequest {
         writer.int4(self.max_packet_size)?;
 
         // Write character set (1 byte)
-        writer.int1(self.character_set as u8)?;
+        writer.int1(self.character_set.to_int())?;
 
         // Write 23 bytes of padding
         writer.write(&[0u8; 23])?;

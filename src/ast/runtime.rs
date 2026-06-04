@@ -33,8 +33,10 @@ impl Runtime {
 pub enum ReplaceableExport {
     Delete,
     Replace(Expr),
+    /// Zig's `name: string` borrowed a transpiler-owned buffer; the Rust
+    /// variant owns the bytes (constructed from an owned slice in
+    /// `JSTranspiler`; the parser copies into its bump arena when consuming).
     Inject { name: Box<[u8]>, value: Expr },
-    // TODO(port): `name` was `string` (= []const u8). Ownership unclear; using Box<[u8]>.
 }
 
 impl ReplaceableExport {
@@ -339,9 +341,9 @@ impl Imports {
         }
     }
 
-    /// Zig: `contains(imports, comptime key: string)`.
-    // TODO(port): comptime-string key — Rust callers should access the field directly
-    // (`imports.__foo.is_some()`). Runtime fallback provided for parity.
+    /// Zig: `contains(imports, comptime key: string)`. The Zig key was
+    /// comptime; callers that know the key statically can read the field
+    /// directly (`imports.__foo.is_some()`) — this is the runtime equivalent.
     pub fn contains(&self, key: &[u8]) -> bool {
         Self::ALL
             .iter()
@@ -359,8 +361,9 @@ impl Imports {
         false
     }
 
-    /// Zig: `put(imports, comptime key: string, ref: Ref)`.
-    // TODO(port): comptime-string key — Rust callers should assign the field directly.
+    /// Zig: `put(imports, comptime key: string, ref: Ref)`. The Zig key was
+    /// comptime; callers that know the key statically can assign the field
+    /// directly — this is the runtime equivalent.
     pub fn put(&mut self, key: &[u8], ref_: Ref) {
         if let Some(i) = Self::ALL.iter().position(|&k| k == key) {
             if let Some(slot) = self.field_mut(i) {
@@ -369,8 +372,9 @@ impl Imports {
         }
     }
 
-    /// Zig: `at(imports, comptime key: string) ?Ref`.
-    // TODO(port): comptime-string key — Rust callers should read the field directly.
+    /// Zig: `at(imports, comptime key: string) ?Ref`. The Zig key was
+    /// comptime; callers that know the key statically can read the field
+    /// directly — this is the runtime equivalent.
     pub fn at(&self, key: &[u8]) -> Option<Ref> {
         Self::ALL
             .iter()

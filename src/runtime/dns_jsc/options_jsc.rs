@@ -10,7 +10,7 @@ use bun_dns::{
     PROTOCOL_MAP, Protocol, ResultAny, SOCKET_TYPE_MAP, SocketType,
 };
 use bun_dns::{addr_info_count, address_to_string};
-// PORT NOTE: Zig's `Options.FromJSError` is the error-set union of all the
+// Zig's `Options.FromJSError` is the error-set union of all the
 // per-field `Invalid*` variants plus `JSError`. The Rust enum lives in
 // `bun_dns` (which has no `bun_jsc` dep), so the `JsError → JSError` mapping is
 // done locally via the `js()` helper below.
@@ -56,9 +56,8 @@ pub(crate) fn options_from_js(
                 return Err(FromJSError::InvalidFlags);
             }
 
-            // TODO(port): Zig coerces to `std.c.AI` (packed struct of bools backed
-            // by c_int). Options.flags in Rust should be an `AIFlags` bitflags
-            // newtype; here we coerce to i32 and store/bit-test as u32.
+            // Zig coerces to `std.c.AI` (packed struct of bools backed by
+            // c_int); here we coerce to i32 and store/bit-test as u32.
             let flags_int: i32 = js(flags.coerce::<i32>(global))?;
             options.flags = flags_int;
 
@@ -95,7 +94,7 @@ pub(crate) fn family_from_js(
     }
 
     if value.is_string() {
-        // PORT NOTE: `Family.map` is a `ComptimeStringMap` ported as
+        // `Family.map` is a `ComptimeStringMap` ported as
         // `bun_dns::FAMILY_MAP: phf::Map`; `.from_js` comes from
         // `bun_jsc::ComptimeStringMapExt`.
         return match js(FAMILY_MAP.from_js(global, value))? {
@@ -234,7 +233,7 @@ pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResul
     obj.put(
         global,
         b"family",
-        // PORT NOTE: `this.address.any.family` — Zig's std.net.Address stores a
+        // `this.address.any.family` — Zig's std.net.Address stores a
         // sockaddr union under `.any` with a `.family` field. The Rust
         // `bun_sys::net::Address` exposes `.family() -> i32`.
         match this.address.family() {
@@ -248,7 +247,7 @@ pub(crate) fn result_to_js(this: &GaiResult, global: &JSGlobalObject) -> JsResul
 }
 
 pub(crate) fn address_to_js(
-    // PORT NOTE: `*const std.net.Address` — `bun_dns::Address` is the
+    // `*const std.net.Address` — `bun_dns::Address` is the
     // `bun_sys::net::Address` sockaddr wrapper.
     address: &bun_dns::Address,
     global: &JSGlobalObject,

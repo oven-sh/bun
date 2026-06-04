@@ -52,18 +52,19 @@ pub mod js_printer {
         input: &[u8],
         f: &mut impl fmt::Write,
         quote: u8,
-        _allow_backtick: bool,
+        ascii_only: bool,
         enc: Encoding,
     ) -> fmt::Result {
-        // TODO(port): full impl in bun_js_printer; this tier only needs the
-        // "already quoted" passthrough for fmt.rs JS-string display.
         // Zig writePreQuotedString writes the escaped body WITHOUT surrounding
-        // quotes — delegate to the canonical chars-only escaper.
-        let _ = quote;
-        match enc {
-            Encoding::Latin1 => super::encode_json_string_chars_latin1(f, input),
-            _ => super::encode_json_string_chars(f, input),
-        }
+        // quotes. Delegate to the canonical full port in `string::printer`
+        // (a byte-sink writer) and bridge the result into the `fmt::Write`.
+        // `json = true` matches the Zig fmt.zig JSONFormatterUTF8 call site;
+        // in JSON mode every non-printable scalar (including lone surrogates)
+        // is emitted as an ASCII escape.
+        let mut buf: Vec<u8> = Vec::with_capacity(input.len() + 8);
+        crate::string::printer::write_pre_quoted_string(input, &mut buf, quote, ascii_only, true, enc)
+            .map_err(|_| fmt::Error)?;
+        f.write_str(&String::from_utf8_lossy(&buf))
     }
 }
 use strum::IntoStaticStr;
@@ -988,10 +989,6 @@ where
 // `bun_js_parser::lexer`, and `bun_install` can call it without taking a
 // `bun_jsc` edge. `bun_core::wtf`, `bun_jsc::wtf`, and `bun::` re-export it
 // to preserve the Zig namespace shape.
-//
-// TODO(port): Zig `bun.parseDouble` falls back to `std.fmt.parseFloat` under
-// `comptime Environment.isWasm` (no WebKit link). Restore when wasm target is
-// brought up.
 // ──────────────────────────────────────────────────────────────────────────
 
 /// Error from [`parse_double`] — Zig `error{InvalidCharacter}`.
@@ -1733,7 +1730,8 @@ pub enum RedactedKeyword {
 
 pub struct RedactedKeywords;
 impl RedactedKeywords {
-    // TODO(port): replace with phf::Map.
+    // 5 entries — a `matches!` chain beats a hash map at this size (the big
+    // keyword table in `Keywords::get` is where `phf` pays off).
     pub fn has(s: &[u8]) -> bool {
         matches!(
             s,
@@ -1780,12 +1778,9 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                     let code = keyword.color_code();
                     write!(
                         writer,
-                        // TODO(port): Output.prettyFmt("<r>{s}{s}<r>", true)
-                        "{}{}{}{}",
-                        Output::RESET,
+                        crate::pretty_fmt!("<r>{s}{s}<r>", true),
                         code.color(),
                         bstr::BStr::new(&text[..i]),
-                        Output::RESET,
                     )?;
                 } else {
                     should_redact_value =
@@ -1797,14 +1792,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     prev_keyword = None;
 
                                     if i < text.len() && text[i] == b'(' {
-                                        // TODO(port): Output.prettyFmt("<r><b>{s}<r>", true)
                                         write!(
                                             writer,
-                                            "{}{}{}{}",
-                                            Output::RESET,
-                                            Output::BOLD,
+                                            crate::pretty_fmt!("<r><b>{s}<r>", true),
                                             bstr::BStr::new(&text[..i]),
-                                            Output::RESET,
                                         )?;
                                         break 'write;
                                     }
@@ -1814,15 +1805,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                 | Keyword::Declare
                                 | Keyword::Type
                                 | Keyword::Interface => {
-                                    // TODO(port): Output.prettyFmt("<r><b><blue>{s}<r>", true)
                                     write!(
                                         writer,
-                                        "{}{}{}{}{}",
-                                        Output::RESET,
-                                        Output::BOLD,
-                                        ColorCode::Blue.color(),
+                                        crate::pretty_fmt!("<r><b><blue>{s}<r>", true),
                                         bstr::BStr::new(&text[..i]),
-                                        Output::RESET,
                                     )?;
                                     prev_keyword = None;
                                     break 'write;
@@ -1887,8 +1873,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                 let end = crate::strings_impl::index_of_char(text, b'\n')
                                     .unwrap_or(text.len());
                                 text = &text[end..];
-                                // TODO(port): Output.prettyFmt("<r><yellow>***<r>", true)
-                                write!(writer, "{}\x1b[33m***{}", Output::RESET, Output::RESET)?;
+                                write!(writer, crate::pretty_fmt!("<r><yellow>***<r>", true))?;
                                 continue;
                             }
 
@@ -1926,13 +1911,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             }
                         }
 
-                        // TODO(port): Output.prettyFmt("<r><yellow>{s}<r>", true)
                         write!(
                             writer,
-                            "{}\x1b[33m{}{}",
-                            Output::RESET,
+                            crate::pretty_fmt!("<r><yellow>{s}<r>", true),
                             bstr::BStr::new(&text[..i]),
-                            Output::RESET,
                         )?;
                         text = &text[i..];
                     }
@@ -1954,13 +1936,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                         i += 1;
                                     }
 
-                                    // TODO(port): Output.prettyFmt("<r><green>{s}<r>", true)
                                     write!(
                                         writer,
-                                        "{}\x1b[32m{}{}",
-                                        Output::RESET,
+                                        crate::pretty_fmt!("<r><green>{s}<r>", true),
                                         bstr::BStr::new(&text[..curly_start]),
-                                        Output::RESET,
                                     )?;
                                     writer.write_str("${")?;
                                     let mut opts = self.opts;
@@ -1981,12 +1960,9 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                                     text = &text[i..];
                                     i = 0;
                                     if !text.is_empty() && text[0] == char_ {
-                                        // TODO(port): Output.prettyFmt("<r><green>`<r>", true)
                                         write!(
                                             writer,
-                                            "{}\x1b[32m`{}",
-                                            Output::RESET,
-                                            Output::RESET
+                                            crate::pretty_fmt!("<r><green>`<r>", true)
                                         )?;
                                         text = &text[1..];
                                         continue 'outer;
@@ -2009,8 +1985,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             should_redact_value = false;
                             if i > 2 && text[i - 1] == char_ {
                                 let len = i - 2;
-                                // TODO(port): Output.prettyFmt("<r><green>{c}", true)
-                                write!(writer, "{}\x1b[32m{}", Output::RESET, char_ as char)?;
+                                write!(writer, crate::pretty_fmt!("<r><green>{s}", true), char_ as char)?;
                                 splat_byte_all(writer, b'*', len)?;
                                 write!(writer, "{}{}", char_ as char, Output::RESET)?;
                             } else {
@@ -2125,13 +2100,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             }
 
                             if self.opts.redact_sensitive_information {
-                                // TODO(port): Output.prettyFmt("<r><d>{f}<r>", true)
                                 write!(
                                     writer,
-                                    "{}\x1b[2m{}{}",
-                                    Output::RESET,
+                                    crate::pretty_fmt!("<r><d>{f}<r>", true),
                                     redacted_source(remain_to_print),
-                                    Output::RESET,
                                 )?;
                             } else {
                                 write!(
@@ -2227,8 +2199,7 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             text = &text[len..];
                             continue;
                         }
-                        // TODO(port): Output.prettyFmt("<r><d>;<r>", true)
-                        write!(writer, "{}\x1b[2m;{}", Output::RESET, Output::RESET)?;
+                        write!(writer, crate::pretty_fmt!("<r><d>;<r>", true))?;
                         text = &text[1..];
                     }
                     b'.' => {
@@ -2255,14 +2226,10 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             }
 
                             if i < text.len() && text[i] == b'(' {
-                                // TODO(port): Output.prettyFmt("<r><i><b>{s}<r>", true)
                                 write!(
                                     writer,
-                                    "{}\x1b[3m{}{}{}",
-                                    Output::RESET,
-                                    Output::BOLD,
+                                    crate::pretty_fmt!("<r><i><b>{s}<r>", true),
                                     bstr::BStr::new(&text[..i]),
-                                    Output::RESET,
                                 )?;
                                 text = &text[i..];
                                 continue;
@@ -2295,8 +2262,9 @@ impl Display for QuickAndDirtyJavaScriptSyntaxHighlighter<'_> {
                             // Zig `while (cond) { i += 1 } else { i = 1; break :jsx; }` — Zig's
                             // while-else runs the else branch whenever the condition becomes false
                             // (i.e. on normal loop exit, since the body has no `break`). So the
-                            // else ALWAYS fires here and the code below is dead in Zig too.
-                            // TODO(port): Zig while-else always fires here — likely upstream bug, worth verifying.
+                            // else ALWAYS fires (verified against fmt.zig's `jsx:` block): the
+                            // `>`-scan + cyan-print code that follows it in Zig is dead there,
+                            // and is intentionally not ported here.
                             while i < text.len() && js_lexer::is_identifier_continue(text[i] as i32)
                             {
                                 i += 1;
@@ -2389,8 +2357,8 @@ pub fn enum_tag_list<E: strum::VariantNames, const LIST: bool>() -> EnumTagListF
 // formatIp
 // ───────────────────────────────────────────────────────────────────────────
 
-// TODO(port): `std.net.Address` — bun_core stays I/O-free; this should accept a
-// bun_sys/bun_net Address type. Logic preserved against a placeholder Display.
+// Zig took a `std.net.Address`; bun_core stays I/O-free, so this accepts any
+// `Display` (callers pass their own address type). The strip logic is identical.
 pub fn format_ip<'a>(
     address: &impl Display,
     into: &'a mut [u8],
@@ -2403,8 +2371,8 @@ pub fn format_ip<'a>(
     write!(cursor, "{}", address).map_err(|_| crate::err!("NoSpaceLeft"))?;
     let written = cursor.position() as usize;
 
-    // PORT NOTE: reshaped for borrowck — compute (start, end) offsets against
-    // `into` instead of iteratively reborrowing a `result` slice, so the final
+    // Reshaped for borrowck — compute (start, end) offsets against `into`
+    // instead of iteratively reborrowing a `result` slice, so the final
     // returned `&mut into[start..end]` carries the caller's `'a` lifetime
     // cleanly. Semantics match Zig's `result = result[a..b]` chain exactly.
     let mut start = 0usize;
@@ -2698,8 +2666,8 @@ impl Display for SizeFormatter {
     }
 }
 
-// TODO(port): Zig `size(bytes: anytype, ...)` switched on @TypeOf(bytes) for
-// f64/f32/f128 (intFromFloat) and i64/isize (intCast). Expose typed helpers.
+// Zig `size(bytes: anytype, ...)` switched on @TypeOf(bytes); the Rust port
+// splits that into `size` (usize), `size_f64`, and `size_i64` below.
 pub fn size(bytes: usize, opts: SizeFormatterOptions) -> SizeFormatter {
     SizeFormatter { value: bytes, opts }
 }
@@ -2738,7 +2706,7 @@ pub fn size_f64(bytes: f64, opts: SizeFormatterOptions) -> SizeFormatter {
     }
 }
 pub fn size_i64(bytes: i64, opts: SizeFormatterOptions) -> SizeFormatter {
-    // PORT NOTE: Zig's `@intCast(bytes)` is unchecked in release (UB-wraps negative);
+    // Zig's `@intCast(bytes)` is unchecked in release (UB-wraps negative);
     // clamp to 0 instead of panicking so release builds never crash on a transiently
     // negative size, while keeping the safe-build trap via debug_assert.
     debug_assert!(bytes >= 0);
@@ -3024,10 +2992,10 @@ pub const fn hex_u16<const LOWER: bool>(v: u16) -> [u8; 4] {
     ]
 }
 
-// TODO(port): Zig parameterizes on `comptime Int: type` and computes
+// Zig parameterizes on `comptime Int: type` and computes
 // `BufType = [@bitSizeOf(Int) / 4]u8`. Rust const generics can't derive an array
-// length from a type's bit-width. Represent as a generic over u64 with explicit
-// nibble count; add per-width helpers if this shows up on a hot path.
+// length from a type's bit-width, so this is generic over u64 with an explicit
+// nibble count.
 pub struct HexIntFormatter<const LOWER: bool, const NIBBLES: usize> {
     pub value: u64,
 }
@@ -3148,7 +3116,7 @@ impl<const PRECISION: usize> Display for TrimmedPrecisionFormatter<PRECISION> {
         let rem = self.num - whole;
         if rem != 0.0 {
             // buf size = "0." + PRECISION digits
-            // PORT NOTE: Zig used `[2 + precision]u8` stack array; Rust const-generic array
+            // Zig used a `[2 + precision]u8` stack array; Rust const-generic array
             // length arithmetic is unstable, so use a small fixed upper bound and
             // const-assert it suffices (matches Zig's compile-time sizing guarantee).
             const {
@@ -3360,7 +3328,6 @@ pub struct FormatDouble {
     pub number: f64,
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     // `&mut [u8; 124]` is ABI-identical to the C `char *` argument (thin
     // non-null pointer to 124 writable bytes); the type encodes WTF__dtoa's

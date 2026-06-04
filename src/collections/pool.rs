@@ -9,7 +9,7 @@ use bun_core::Error;
 // SinglyLinkedList
 // ──────────────────────────────────────────────────────────────────────────
 //
-// PORT NOTE: Zig's `SinglyLinkedList(comptime T: type, comptime Parent: type)`
+// Zig's `SinglyLinkedList(comptime T: type, comptime Parent: type)`
 // threads `Parent` only so that `Node.release()` can call `Parent.release(node)`.
 // In Rust the only `Parent` is `ObjectPool`, so `Node::release` is provided as
 // an inherent method on `ObjectPool` instead and the `Parent` type param is
@@ -21,12 +21,12 @@ use bun_core::Error;
 pub struct Node<T> {
     // INTRUSIVE: pool.zig:7 — next link in singly-linked free list
     pub next: *mut Node<T>,
-    // PORT NOTE: Zig stored `std.mem.Allocator param` here so `destroyNode`
+    // Zig stored `std.mem.Allocator param` here so `destroyNode`
     // could free via the originating allocator. In Rust the global mimalloc
     // allocator owns every `Box<Node<T>>`, so the field is dropped and
     // `destroy_node` uses `heap::take`.
     //
-    // PORT NOTE: `MaybeUninit<T>` not `T` — Zig's `else undefined` (pool.zig:203)
+    // `MaybeUninit<T>` not `T` — Zig's `else undefined` (pool.zig:203)
     // is well-defined-until-read, but Rust's `assume_init()` on uninit bytes is
     // immediate UB for any `T` with validity invariants. Callers that use
     // `INIT == None` write `data` before reading, so we keep the bytes
@@ -34,7 +34,7 @@ pub struct Node<T> {
     pub data: MaybeUninit<T>,
 }
 
-// PORT NOTE: `pub const Data = T;` (inherent assoc type) is nightly-only;
+// `pub const Data = T;` (inherent assoc type) is nightly-only;
 // callers can write `T` directly.
 
 impl<T> Node<T> {
@@ -120,7 +120,7 @@ impl<T> Node<T> {
         count
     }
 
-    // PORT NOTE: `pub inline fn release(node: *Node) void { Parent.release(node) }`
+    // `pub inline fn release(node: *Node) void { Parent.release(node) }`
     // is expressed as `ObjectPool::<T, ..>::release(node)` at call sites; see
     // module-level note above.
 }
@@ -237,7 +237,7 @@ pub trait ObjectPoolType: Sized {
 pub struct DataStruct<T> {
     pub list: SinglyLinkedList<T>,
     pub loaded: bool,
-    // PORT NOTE: Zig used `MaxCountInt = std.math.IntFittingRange(0, max_count)`.
+    // Zig used `MaxCountInt = std.math.IntFittingRange(0, max_count)`.
     // Rust const generics cannot pick an integer type from a const value; use
     // `usize` and accept the few extra bytes.
     // PERF(port): was IntFittingRange — narrow if it shows up on a hot path.
@@ -247,7 +247,7 @@ pub struct DataStruct<T> {
 impl<T> Default for DataStruct<T> {
     fn default() -> Self {
         Self {
-            // PORT NOTE: Zig had `list: LinkedList = undefined` — we zero it.
+            // Zig had `list: LinkedList = undefined` — we zero it.
             list: SinglyLinkedList::default(),
             loaded: false,
             count: 0,
@@ -268,7 +268,7 @@ pub struct ObjectPool<
     S = UnwiredStorage,
 >(core::marker::PhantomData<(T, S)>);
 
-// PORT NOTE: `pub const List = SinglyLinkedList(T)` / `pub const Node = Node(T)`
+// `pub const List = SinglyLinkedList(T)` / `pub const Node = Node(T)`
 // inherent assoc types are nightly-only; callers write `SinglyLinkedList<T>` /
 // `Node<T>` directly.
 
@@ -365,7 +365,7 @@ where
     // but we don't want to create 3 global variables per pool
     // instead, we create one global variable per pool
     //
-    // PORT NOTE: Rust cannot place a `static` / `thread_local!` inside a
+    // Rust cannot place a `static` / `thread_local!` inside a
     // generic `impl`; storage is supplied via the `S: PoolStorage<T>` type
     // parameter (see `object_pool!` for the usual declaration).
     #[inline]
@@ -385,7 +385,7 @@ where
 
     pub fn push(pooled: T) {
         if cfg!(debug_assertions) {
-            // PORT NOTE: Zig gated on `env.allow_assert`; that is
+            // Zig gated on `env.allow_assert`; that is
             // `Environment.isDebug` ⇒ `cfg!(debug_assertions)`.
             debug_assert!(!Self::full());
         }
@@ -450,9 +450,13 @@ where
         }
 
         if LOG_ALLOCATIONS {
-            // PORT NOTE: Zig wrote to stderr via std.fs; banned here. Route
-            // through `bun_core::Output` if this is ever flipped on.
-            // TODO(port): log "Allocate {type_name} - {size} bytes"
+            // Zig wrote to stderr via std.fs (banned here); route through
+            // `bun_core::output` instead.
+            let _ = bun_core::output::File::stderr().write_fmt(format_args!(
+                "Allocate {} - {} bytes\n",
+                core::any::type_name::<T>(),
+                core::mem::size_of::<T>()
+            ));
         }
 
         // Matches Zig's `data = if (Init) |i| i(..) else undefined` (pool.zig:203).
@@ -508,7 +512,11 @@ where
             let mut d = cell.borrow_mut();
             if MAX_COUNT > 0 && d.count >= MAX_COUNT {
                 if LOG_ALLOCATIONS {
-                    // TODO(port): log "Free {type_name} - {size} bytes"
+                    let _ = bun_core::output::File::stderr().write_fmt(format_args!(
+                        "Free {} - {} bytes\n",
+                        core::any::type_name::<T>(),
+                        core::mem::size_of::<T>()
+                    ));
                 }
                 return true;
             }
@@ -550,11 +558,11 @@ where
     }
 
     fn destroy_node(node: *mut Node<T>) {
-        // TODO(port): Zig special-cased `Type != bun.Vec<u8>` here to skip
-        // `bun.memory.deinit(&node.data)` for `Vec<u8>` (a known leak the Zig
-        // comment calls out). In Rust, dropping `T` is the moral equivalent of
-        // `bun.memory.deinit`. If `Vec<u8>` (the `Vec<u8>` port) must keep
-        // leaking for compat, gate its `Drop` there — not here.
+        // Zig special-cased `Type != bun.Vec(u8)` here to skip
+        // `bun.memory.deinit(&node.data)` for `Vec<u8>` — a known leak its own
+        // comment calls out. Dropping `T` below is the moral equivalent of
+        // `bun.memory.deinit`, applied uniformly; if that compat leak is ever
+        // needed, gate the `Drop` on the `Vec<u8>` port itself, not here.
         //
         // SAFETY: `node` was created via `heap::alloc` in `push`/`get` and
         // is exclusively owned by the caller. `data` is initialized: `destroy_node`
@@ -637,7 +645,7 @@ macro_rules! __object_pool_storage {
             fn with<R>(
                 f: impl FnOnce(&::core::cell::RefCell<$crate::pool::DataStruct<$ty>>) -> R,
             ) -> R {
-                // PORT NOTE: Zig's `threadsafe = false` used a plain global
+                // Zig's `threadsafe = false` used a plain global
                 // `var data`; Rust forbids non-`Sync` statics, so this still
                 // expands to a thread-local. Single-threaded callers see the
                 // same one cell; cross-thread callers get per-thread pools

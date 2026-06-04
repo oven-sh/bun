@@ -113,7 +113,7 @@ impl Cat {
 
     /// Spec: cat.zig `next`.
     pub fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
-        // PORT NOTE: reshaped for borrowck — read scalars, drop borrow, act.
+        // Read scalars, drop the borrow, then act.
         enum Branch {
             Stdin,
             FileArg { args_start: usize, idx: usize },
@@ -143,9 +143,8 @@ impl Cat {
                     {
                         *in_done = true;
                     }
-                    // PORT NOTE: reshaped for borrowck — copy stdin bytes so
-                    // the &mut on `stdout`/`write_no_io` doesn't overlap a
-                    // borrow of `stdin`.
+                    // Copy stdin bytes so the &mut on `stdout`/`write_no_io`
+                    // doesn't overlap a borrow of `stdin`.
                     let buf = Builtin::read_stdin_no_io(interp, cmd).to_vec();
                     if let Some(safeguard) = Builtin::of(interp, cmd).stdout.needs_io() {
                         let child = ChildPtr::new(cmd, WriterTag::Builtin);
@@ -157,7 +156,7 @@ impl Cat {
                     return Builtin::done(interp, cmd, 0);
                 }
                 // Spec: `this.bltn().stdin.fd.addReader(this); return ...start()`.
-                // PORT NOTE: reshaped for borrowck — clone the `Arc<IOReader>`
+                // Clone the `Arc<IOReader>`
                 // out of `stdin` so we hold no borrow of `interp` across
                 // `start()` (which may re-enter via the raw interp backref).
                 let interp_ptr: *mut Interpreter = interp.as_ctx_ptr();
@@ -257,7 +256,7 @@ impl Cat {
                 tag: ReaderTag::Cat,
             };
             // Writing to stdout errored: cancel everything and finish.
-            // PORT NOTE: reshaped for borrowck — pull the reader `Arc` out of
+            // Pull the reader `Arc` out of
             // state before calling `remove_reader`, then drop it (= Zig deref).
             match &mut Self::state_mut(interp, cmd).state {
                 CatState::ExecStdin {

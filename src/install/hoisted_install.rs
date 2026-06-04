@@ -56,7 +56,6 @@ impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
     }
 }
 
-// TODO(port): narrow error set
 pub(crate) fn install_hoisted_packages(
     this: &mut PackageManager,
     ctx: Command::Context,
@@ -67,7 +66,7 @@ pub(crate) fn install_hoisted_packages(
 ) -> Result<package_install::Summary, bun_core::Error> {
     analytics::features::hoisted_bun_install.fetch_add(1, Ordering::Relaxed);
 
-    // PORT NOTE: `defer { restore buffers }` (Zig:16) — side-effecting rollback,
+    // `defer { restore buffers }` (Zig:16) — side-effecting rollback,
     // not a free. Captures `*mut PackageManager` so the guard can write back
     // through the same provenance root the body uses (see `mgr_ptr` below).
     let mgr_ptr: *mut PackageManager = this;
@@ -89,7 +88,7 @@ pub(crate) fn install_hoisted_packages(
         .clone_from(&original_tree_dep_ids);
 
     {
-        // PORT NOTE: reshaped for borrowck — Zig passes `this.log, this` (two
+        // Reshaped for borrowck — Zig passes `this.log, this` (two
         // borrows of `this`). `lockfile` is `Box<Lockfile>` so the heap object
         // is disjoint from the `PackageManager` struct; snapshot raw `*mut
         // Lockfile` and `*mut Log` first so `filter` can hold `&mut Lockfile`
@@ -149,13 +148,15 @@ pub(crate) fn install_hoisted_packages(
         download_node = root_node.start(ProgressStrings::download(), 0);
         install_node = root_node.start(ProgressStrings::install(), hoisted_len);
         scripts_node = root_node.start(ProgressStrings::script(), 0);
+        // The stored pointers target stack locals in this frame; they are
+        // cleared by `_end_progress` below before the frame returns, so
+        // `scripts_node_mut()` / `downloads_node_mut()` never observe a
+        // dangling pointer outside this call.
         this.downloads_node = Some(core::ptr::addr_of_mut!(download_node));
         this.scripts_node = NonNull::new(&raw mut scripts_node);
-        // TODO(port): storing pointers to stack locals into `this` — reshape so the
-        // nodes live in PackageManager or thread lifetimes through.
     }
 
-    // PORT NOTE: `defer { progress.root.end(); progress = .{} }`
+    // `defer { progress.root.end(); progress = .{} }`
     let _end_progress = scopeguard::guard(log_level, move |log_level| {
         if log_level.show_progress() {
             // SAFETY: `mgr_ptr` provenance — see `_restore_buffers` note.
@@ -229,7 +230,7 @@ pub(crate) fn install_hoisted_packages(
     let mut summary = package_install::Summary::default();
 
     {
-        // PORT NOTE: BACKREF — `Tree::Iterator` borrows the four buffer slices,
+        // BACKREF — `Tree::Iterator` borrows the four buffer slices,
         // and `PackageInstaller` simultaneously holds `&mut Lockfile` (plus
         // `&[T]` column aliases into `lockfile.packages`). Zig stores
         // non-exclusive `*const Lockfile` in the iterator. Snapshot raw `*const
@@ -343,7 +344,7 @@ pub(crate) fn install_hoisted_packages(
             // so we want to make sure they're not accessible to the rest of this function
             // to make mistakes harder
             //
-            // PORT NOTE: BACKREF — Zig's `var parts = packages.slice()` is a
+            // BACKREF — Zig's `var parts = packages.slice()` is a
             // by-value `MultiArrayList.Slice` (raw ptr+len per column), so
             // `parts.items(.field)` yields independent `[]T` regardless of
             // mutability. The `PackageInstaller` slice fields are
@@ -495,7 +496,7 @@ pub(crate) fn install_hoisted_packages(
             struct Closure<'a, 'b> {
                 installer: &'a mut PackageInstaller<'b>,
                 err: Option<bun_core::Error>,
-                // PORT NOTE: raw `*mut` (Zig `*PackageManager`) — `sleep_until`
+                // raw `*mut` (Zig `*PackageManager`) — `sleep_until`
                 // also receives this pointer, so `&mut` here would alias.
                 manager: *mut PackageManager,
             }
@@ -562,11 +563,11 @@ pub(crate) fn install_hoisted_packages(
                 return Err(err);
             }
         }
-        // PORT NOTE: Zig `while ... else { ... }` — else runs when the condition becomes false (no break in body).
+        // Zig `while ... else { ... }` — else runs when the condition becomes false (no break in body).
         this.tick_lifecycle_scripts();
         this.report_slow_lifecycle_scripts();
 
-        // PORT NOTE: reshaped for borrowck — Zig iterates `installer.trees`
+        // Reshaped for borrowck — Zig iterates `installer.trees`
         // by value while calling `installer.installAvailablePackages` (which
         // also touches `installer.trees`); index instead of `.iter()` so the
         // immutable borrow doesn't overlap `&mut self`.
@@ -595,7 +596,7 @@ pub(crate) fn install_hoisted_packages(
             return Err(bun_core::err!("InstallFailed"));
         }
 
-        // PORT NOTE: Zig copies the bitset header (`summary.* = installer.*`);
+        // Zig copies the bitset header (`summary.* = installer.*`);
         // Rust moves. `replace` with a fresh empty so `installer` stays whole
         // for the `link_remaining_bins` / `complete_remaining_scripts` calls
         // below. Route through `installer.summary` because `summary` itself is

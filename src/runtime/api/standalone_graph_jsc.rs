@@ -8,7 +8,7 @@ use bun_core::{self as bstring, strings};
 use bun_http::MimeType;
 use bun_jsc::JSGlobalObject;
 
-// PORT NOTE: `StandaloneModuleGraph` is the inner *module* (so
+// `StandaloneModuleGraph` here is the inner *module* (so
 // `StandaloneModuleGraph::BASE_PUBLIC_PATH_WITH_DEFAULT_SUFFIX` resolves);
 // `File` is re-exported at the crate root.
 use crate::webcore::Blob;
@@ -42,7 +42,7 @@ impl FileJsc for File {
                     bun_alloc::basic::C_ALLOCATOR,
                 )
             };
-            // PORT NOTE: cannot use `..Default::default()` — `Store: Drop`
+            // Cannot use `..Default::default()` — `Store: Drop`
             // forbids partial moves out of the temporary default.
             let store = StoreRef::from(Store::new(Store {
                 data: Data::Bytes(bytes),

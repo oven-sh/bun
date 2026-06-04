@@ -624,9 +624,6 @@ pub struct Gap {
 }
 
 impl Gap {
-    // TODO(port): PropertyFieldMap was a comptime struct mapping fields → CSS property names
-    // (.row = "row-gap", .column = "column-gap"); could encode as derive attrs.
-
     pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let row = GapValue::parse(input)?;
         let column = input
@@ -659,9 +656,6 @@ pub struct PlaceItems {
 }
 
 impl PlaceItems {
-    // TODO(port): PropertyFieldMap (.align = "align-items", .justify = "justify-items")
-    // TODO(port): VendorPrefixMap (.align = true)
-
     pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let align = AlignItems::parse(input)?;
         let justify = match input.try_parse(JustifyItems::parse) {
@@ -724,9 +718,6 @@ pub struct PlaceSelf {
 }
 
 impl PlaceSelf {
-    // TODO(port): PropertyFieldMap (.align = "align-self", .justify = "justify-self")
-    // TODO(port): VendorPrefixMap (.align = true)
-
     pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let align = AlignSelf::parse(input)?;
         let justify = match input.try_parse(JustifySelf::parse) {
@@ -817,9 +808,6 @@ pub struct PlaceContent {
 }
 
 impl PlaceContent {
-    // TODO(port): PropertyFieldMap (.align = PropertyIdTag::AlignContent, .justify = PropertyIdTag::JustifyContent)
-    // TODO(port): VendorPrefixMap (.align = true, .justify = true)
-
     pub(crate) fn parse(input: &mut Parser) -> CssResult<Self> {
         let align = AlignContent::parse(input)?;
         let justify = match JustifyContent::parse(input) {
@@ -978,10 +966,9 @@ pub struct AlignHandler {
 
 // ─── helper macros (Zig used `comptime prop: []const u8` + `@field` / `@unionInit`) ───
 //
-// TODO(port): the Zig source threads field names as comptime strings into helper fns
-// and uses @field/@unionInit for reflection. Rust cannot pass field names as values, so
-// these are macro_rules! that expand at each call site; a small proc-macro could dedupe
-// if maintenance burden is high.
+// The Zig source threads field names as comptime strings into helper fns and uses
+// @field/@unionInit for reflection. Rust cannot pass field names as values, so these
+// are macro_rules! that expand at each call site.
 
 macro_rules! handle_property_maybe_flush {
     ($this:expr, $dest:expr, $context:expr, $field:ident, $val:expr, $vp:expr) => {{
@@ -1057,9 +1044,9 @@ macro_rules! flush_legacy_property {
                         prefixes_2009.insert(VendorPrefix::MOZ);
                     }
                     if !prefixes_2009.is_empty() {
-                        // TODO(port): Zig branched on `T == BoxOrdinalGroup` to bypass
-                        // from_standard. Never true at any callsite in this file; preserved
-                        // as a note in case the macro is reused elsewhere.
+                        // Zig branched on `T == BoxOrdinalGroup` to bypass from_standard.
+                        // Never true at any callsite in this file; noted in case the
+                        // macro is reused elsewhere.
                         let s = <$ty2009>::from_standard(val);
                         if let Some(a) = s {
                             $dest.push(Property::$variant2009((a, prefixes_2009)));
@@ -1140,9 +1127,6 @@ macro_rules! flush_shorthand_helper {
                         align.clone(),
                         justify_actual.clone(),
                     )));
-                    // TODO(port): Zig built `prop.ty{ .align = ..., .justify = ... }` directly.
-                    // Using a `from_align_justify` ctor here; could inline the struct init.
-
                     *$align_val = None;
                     *$justify_val = None;
                 }
@@ -1174,8 +1158,6 @@ macro_rules! flush_shorthand_helper {
                         align.clone(),
                         justify.clone(),
                     )));
-                    // TODO(port): see note above re: from_align_justify ctor.
-
                     *$align_val = None;
                     *$justify_val = None;
                 }
@@ -1185,7 +1167,6 @@ macro_rules! flush_shorthand_helper {
 }
 
 // Tiny ctors used by flush_shorthand_helper! above.
-// TODO(port): inline as struct literals once Property variant shapes are settled.
 impl PlaceContent {
     fn from_align_justify(align: AlignContent, justify: JustifyContent) -> Self {
         Self { align, justify }
@@ -1332,8 +1313,8 @@ impl AlignHandler {
             Property::Unparsed(val) => {
                 if is_align_property(&val.property_id) {
                     self.flush(dest, context);
-                    // PORT NOTE: Zig pushed `property.deepClone(context.arena)`. `Property`
-                    // has no blanket `Clone` yet; reconstruct from the matched payload (same as flex.rs).
+                    // Zig pushed `property.deepClone(context.arena)`. `Property` has no
+                    // blanket `Clone` yet; reconstruct from the matched payload (same as flex.rs).
                     let bump = dest.bump();
                     dest.push(Property::Unparsed(val.deep_clone(bump)));
                 } else {

@@ -1,7 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_have_been_called(
     this: &Expect,
     global: &JSGlobalObject,
@@ -30,7 +29,6 @@ pub(crate) fn to_have_been_called(
 
     // handle failure
     if not {
-        // TODO(port): `comptime getSignature(...)` — ensure Expect::get_signature is `const fn`
         let signature = Expect::get_signature("toHaveBeenCalled", "", true);
         return this.throw(
             global,

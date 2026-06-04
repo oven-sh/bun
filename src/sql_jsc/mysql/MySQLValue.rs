@@ -234,10 +234,11 @@ impl Value {
             }
             // Value::Decimal(dec) => return dec.to_binary(field_type),
             Value::StringData(data) | Value::BytesData(data) => {
-                // TODO(port): Zig returned `data` by value (copy of Data union);
-                // `bun_sql::shared::Data` is not `Clone` in the Rust port, so
-                // return a `Temporary` aliasing the same bytes. `to_data` callers
-                // must keep `self` alive until the returned `Data` is consumed.
+                // Zig returned `data` by value (shallow copy of the Data union,
+                // aliasing the same bytes). `bun_sql::shared::Data` is not
+                // `Clone` in the Rust port, so return a `Temporary` aliasing the
+                // same bytes. INVARIANT: `to_data` callers must keep `self`
+                // alive until the returned `Data` is consumed.
                 let s = data.slice();
                 return Ok(if s.is_empty() {
                     Data::Empty
@@ -495,7 +496,6 @@ pub struct DateTime {
 
 impl DateTime {
     pub fn from_data(data: &Data) -> Result<DateTime, bun_core::Error> {
-        // TODO(port): narrow error set
         Ok(Self::from_binary(data.slice()))
     }
 
@@ -558,8 +558,8 @@ impl DateTime {
                     ),
                 }
             }
+            // Zig: `bun.Output.panic(...)` — formatted fatal abort; `panic!` is the equivalent.
             _ => panic!("Invalid datetime length: {}", val.len()),
-            // TODO(port): Zig used bun.Output.panic; confirm bun_core panic helper
         }
     }
 
@@ -684,7 +684,9 @@ impl DateTime {
     }
 
     pub fn to_js(self, global_object: &JSGlobalObject) -> JSValue {
-        // TODO(port): Zig calls toJSTimestamp() with no args here but the fn takes globalObject and is fallible; preserved bug
+        // Zig's `DateTime.toJS` calls `toJSTimestamp()` with no args even though
+        // the fn takes a globalObject and is fallible (a latent bug there); the
+        // Rust port passes the globalObject and maps failure to NaN.
         JSValue::from_date_number(
             global_object,
             self.to_js_timestamp(global_object).unwrap_or(f64::NAN),
@@ -711,7 +713,6 @@ impl DateTime {
         value: JSValue,
         global_object: &JSGlobalObject,
     ) -> Result<DateTime, any_mysql_error::Error> {
-        // TODO(port): narrow error set
         if value.is_date() {
             // this is actually ms not seconds
             let total_ms = value.get_unix_timestamp();
@@ -763,7 +764,6 @@ impl Time {
         value: JSValue,
         global_object: &JSGlobalObject,
     ) -> Result<Time, any_mysql_error::Error> {
-        // TODO(port): narrow error set
         if value.is_date() {
             let total_ms = value.get_unix_timestamp();
             let ts: i64 = (total_ms / 1000.0).floor() as i64;
@@ -808,7 +808,6 @@ impl Time {
     }
 
     pub fn from_data(data: &Data) -> Result<Time, bun_core::Error> {
-        // TODO(port): narrow error set
         Ok(Self::from_binary(data.slice()))
     }
 
@@ -961,7 +960,6 @@ fn gregorian_date(days: i32) -> Date {
     }
 }
 
-// TODO(port): move to sql_jsc_sys (or bun_jsc_sys)
 unsafe extern "C" {
     /// By-value `JSValue`; C++ side null-checks and reads its own heap state.
     /// No caller-side preconditions → `safe fn`.

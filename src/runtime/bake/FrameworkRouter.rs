@@ -26,7 +26,10 @@ use crate::bake::dev_server::route_bundle::IndexOptional as RouteBundleIndexOpti
 /// where it is an entrypoint index.
 pub enum OpaqueFileIdMarker {}
 pub type OpaqueFileId = bun_core::GenericIndex<u32, OpaqueFileIdMarker>;
-// TODO(port): bun.GenericIndex.Optional is a packed sentinel (maxInt = none); using Option<T> here changes layout.
+// Zig's `bun.GenericIndex.Optional` is a packed maxInt-sentinel optional (4
+// bytes); `Option<OpaqueFileId>` is the idiomatic Rust spelling and is 8 bytes
+// — a deliberate, accepted layout divergence (`bun_core::GenericIndexOptional`
+// exists if the size ever matters).
 pub type OpaqueFileIdOptional = Option<OpaqueFileId>;
 
 pub struct FrameworkRouter {
@@ -82,8 +85,10 @@ pub type DynamicRouteMap = ArrayHashMap<EncodedPattern, RouteIndex, EffectiveUrl
 
 /// A logical route, for which layouts are looked up on after resolving a route.
 pub struct Route {
-    // TODO(port): lifetime — payload bytes borrow from `pattern_string_arena` (ARENA class).
-    // Erased to 'static via `to_owned_part()` at insertion; could switch to `*const [u8]`.
+    // Payload bytes borrow from the sibling `pattern_string_arena` field — a
+    // self-referential borrow Rust lifetimes cannot express, so it is detached
+    // to `'static` via `to_owned_part()` at insertion. See `to_owned_part` for
+    // the safety invariant (arena outlives every `Route`).
     pub part: Part<'static>,
     pub r#type: TypeIndex,
 
@@ -222,11 +227,14 @@ impl FrameworkRouter {
     pub fn memory_cost(&self) -> usize {
         let mut cost: usize = size_of::<FrameworkRouter>();
         cost += self.routes.capacity() * size_of::<Route>();
-        // TODO(port): StaticRouteMap/DynamicRouteMap DataList::capacity_in_bytes equivalent
-        // (`bun_collections::ArrayHashMap` does not yet expose capacity_in_bytes; approximate as 0).
-        // cost += self.static_routes.capacity_in_bytes();
-        // cost += self.dynamic_routes.capacity_in_bytes();
-        let _ = (&self.static_routes, &self.dynamic_routes);
+        // Zig: `DataList.capacityInBytes(entries.capacity)` — the SoA byte
+        // capacity of the backing `MultiArrayList`. The Rust `ArrayHashMap`
+        // stores three column `Vec`s (keys, values, 32-bit hashes), so the
+        // equivalent footprint is `capacity * (sizeof K + sizeof V + sizeof u32)`.
+        cost += self.static_routes.capacity()
+            * (size_of::<Box<[u8]>>() + size_of::<RouteIndex>() + size_of::<u32>());
+        cost += self.dynamic_routes.capacity()
+            * (size_of::<EncodedPattern>() + size_of::<RouteIndex>() + size_of::<u32>());
         cost
     }
 
@@ -646,7 +654,7 @@ pub enum Style {
     JavascriptDefined(Strong),
 }
 
-// PORT NOTE: Zig copies `Style` by value (bitwise), which for the
+// Note: Zig copies `Style` by value (bitwise), which for the
 // `.javascript_defined` arm shallow-copies the `jsc.Strong.Optional` pointer —
 // both copies alias the same C++ StrongRef and only one `deinit()` is ever
 // called. In Rust `Strong` has `Drop`, so a bitwise copy would double-free.
@@ -677,7 +685,6 @@ pub(crate) static STYLE_MAP: phf::Map<&'static [u8], fn() -> Style> = phf::phf_m
 pub(crate) const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
 
 impl Style {
-    // TODO(port): move to *_jsc — calls JSValue methods
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Style> {
         if value.is_string() {
             let bun_string = bun_core::OwnedString::new(value.to_bun_string(global)?);
@@ -1082,7 +1089,7 @@ impl FrameworkRouter {
             InsertPattern::Static(p) => (Some(p.iterate()), None),
             InsertPattern::Dynamic(p) => (None, Some(p.iterate())),
         };
-        // PORT NOTE: a closure can't express that the returned `Part<'a>` borrows from the
+        // Note: a closure can't express that the returned `Part<'a>` borrows from the
         // iterator's `'a` (Rust infers fresh anon lifetimes per `'_`). Use a local fn item.
         fn next_part<'a>(
             s: &mut Option<StaticPatternIterator<'a>>,
@@ -1101,7 +1108,7 @@ impl FrameworkRouter {
             };
 
             let mut route_index = root_route;
-            // PORT NOTE: reshaped for borrowck — Zig held `route: *Route`; we re-fetch via index.
+            // Note: reshaped for borrowck — Zig held `route: *Route`; we re-fetch via index.
             'outer: loop {
                 let mut next = self.route_ptr(route_index).first_child;
                 while let Some(current) = next {
@@ -1205,16 +1212,15 @@ impl FrameworkRouter {
     }
 }
 
-// TODO(port): lifetime — Part stored in Route borrows from pattern_string_arena.
-// Zig stored borrowed slices; here we keep raw slices via the same arena. The
-// `to_owned_part` helper exists to detach the borrow lifetime when stored in `Route`.
+// `Part` stored in `Route` borrows from the router's own `pattern_string_arena`
+// (Zig stored plain borrowed slices). Rust cannot express that self-referential
+// borrow, so `to_owned_part` detaches the lifetime when storing into `Route`.
 impl<'a> Part<'a> {
     /// Detach the borrow lifetime so this `Part` can be stored in `Route`.
     ///
     /// # Safety
     /// Every payload slice must point into `FrameworkRouter::pattern_string_arena`
     /// (or other storage that outlives the owning `FrameworkRouter`).
-    /// TODO(refactor): model this with a `'bump` lifetime instead of `'static`.
     #[allow(unsafe_op_in_unsafe_fn)]
     unsafe fn to_owned_part(self) -> Part<'static> {
         // Variant-by-variant detach (no bitcast). `d` stays `unsafe fn` so a
@@ -1258,7 +1264,6 @@ impl MatchedParams {
 
     /// Convert the matched params to a JavaScript object
     /// Returns null if there are no params
-    // TODO(port): move to *_jsc
     pub fn to_js(&self, global: &JSGlobalObject) -> JSValue {
         let params_array = self.params.const_slice();
 
@@ -1377,7 +1382,7 @@ impl TinyLog {
 
     pub fn write(&mut self, args: fmt::Arguments<'_>) {
         use std::io::Write as _;
-        // PORT NOTE: BoundedArray exposes no `buffer_mut()`; format into a stack
+        // Note: BoundedArray exposes no `buffer_mut()`; format into a stack
         // scratch buffer (same capacity) and copy into the BoundedArray.
         let mut buf = [0u8; TINY_LOG_CAP];
         let mut cursor: &mut [u8] = &mut buf[..];
@@ -1473,7 +1478,7 @@ fn writer_splat_bytes_all(
 }
 
 /// Interface for connecting FrameworkRouter to another codebase
-// PORT NOTE: Zig's `InsertionContext` was an `*anyopaque` + `*const VTable` pair, with `wrap()`
+// Note: Zig's `InsertionContext` was an `*anyopaque` + `*const VTable` pair, with `wrap()`
 // generating a comptime vtable per concrete type. Per LIFETIMES.tsv this is BORROW_PARAM →
 // `&mut dyn InsertionHandler`. The trait below replaces the manual vtable.
 pub trait InsertionHandler {
@@ -1526,7 +1531,7 @@ impl FrameworkRouter {
         r: &mut Resolver,
         ctx: &mut dyn InsertionHandler,
     ) -> Result<(), AllocError> {
-        // PORT NOTE: reshaped for borrowck — Zig held `t: *const Type`; we re-fetch via index.
+        // Note: reshaped for borrowck — Zig held `t: *const Type`; we re-fetch via index.
         let abs_root: Box<[u8]> = self.types[ty.get() as usize].abs_root.clone();
         debug_assert!(!abs_root.ends_with(b"/"));
         debug_assert!(paths::is_absolute(&abs_root));
@@ -1555,7 +1560,7 @@ impl FrameworkRouter {
         let fs_impl = unsafe { core::ptr::addr_of_mut!((*fs).fs) };
 
         if let Some(entries) = dir_info.get_entries_const() {
-            // PORT NOTE: `entries.data` is backed by `std::collections::HashMap`,
+            // Note: `entries.data` is backed by `std::collections::HashMap`,
             // whose iteration order differs from Zig's `std.HashMapUnmanaged`.
             // The route-tree child order is this iteration order (see `insert`),
             // and `test/bake/framework-router.test.ts` snapshots it. Rebuild into
@@ -1579,7 +1584,7 @@ impl FrameworkRouter {
                 // outlive this scan and are serialized via `RealFS.entries_mutex`.
                 let file = unsafe { &*file_ptr };
                 let base = file.base();
-                // PORT NOTE: reshaped for borrowck — fetch type fields fresh each iteration.
+                // Note: reshaped for borrowck — fetch type fields fresh each iteration.
                 // SAFETY: `Entry::kind` mutates only the entry's lazily-cached kind; `file_ptr`
                 // is the unique live reference to this entry during the scan, and `fs_impl`
                 // points at the process-global FS implementation.
@@ -1797,11 +1802,10 @@ pub struct StoredParseError {
     pub log: TinyLog,
 }
 
-// TODO(port): jsc.Codegen.JSFrameworkFileSystemRouter — codegen wires toJS/fromJS via #[bun_jsc::JsClass]
-
 impl JSFrameworkRouter {
     pub fn get_bindings(global: &JSGlobalObject) -> JsResult<JSValue> {
-        // TODO(port): jsc.JSObject.create with struct literal — needs builder API
+        // Zig used `jsc.JSObject.create` with a struct literal; the Rust
+        // spelling is `create_empty_object` + `put`.
         let obj = JSValue::create_empty_object(global, 2);
         obj.put(
             global,
@@ -1818,7 +1822,7 @@ impl JSFrameworkRouter {
         Ok(obj)
     }
 
-    // PORT NOTE: no `#[bun_jsc::host_fn]` — `#[bun_jsc::JsClass]` on the struct
+    // Note: no `#[bun_jsc::host_fn]` — `#[bun_jsc::JsClass]` on the struct
     // emits the construct shim that calls `<Self>::constructor(__g, __f)` directly.
     pub fn constructor(
         global: &JSGlobalObject,
@@ -1877,7 +1881,7 @@ impl JSFrameworkRouter {
         });
 
         let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-        // PORT NOTE: reshaped for borrowck — Zig passes `jsfr` as both the router owner and the
+        // Note: reshaped for borrowck — Zig passes `jsfr` as both the router owner and the
         // insertion-context. The handler only touches `files`/`stored_parse_errors`, so
         // split-borrow those two fields into a dedicated context (see `JSFrameworkRouterScanCtx`).
         {
@@ -2094,7 +2098,7 @@ impl JSFrameworkRouter {
     }
 }
 
-// PORT NOTE: free-function host-fn shim — `#[bun_jsc::host_fn]` (Free kind) emits a
+// Note: free-function host-fn shim — `#[bun_jsc::host_fn]` (Free kind) emits a
 // shim that calls the bare ident, so this cannot live inside the `impl` block.
 #[bun_jsc::host_fn]
 pub(crate) fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
@@ -2103,7 +2107,7 @@ pub(crate) fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) ->
 
 use bun_core::fmt::VecWriter as ByteFmtWriter;
 
-// PORT NOTE: reshaped for borrowck. Zig's `InsertionContext.wrap(JSFrameworkRouter, jsfr)`
+// Note: reshaped for borrowck. Zig's `InsertionContext.wrap(JSFrameworkRouter, jsfr)`
 // needs `&mut jsfr.router` (for `scan`) and `&mut *jsfr` (as the handler) simultaneously.
 // The handler only touches `files` / `stored_parse_errors`, so we split-borrow those two
 // fields into a dedicated context struct instead of implementing the trait on

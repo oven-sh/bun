@@ -29,7 +29,7 @@ use bun_core::Error;
 /// let thing = match allocate_thing() { Ok(v) => v, Err(err) => bun::handle_oom(err) };
 /// ```
 ///
-/// PORT NOTE: In Rust, `Vec`/`Box` allocation already aborts on OOM via the
+/// In Rust, `Vec`/`Box` allocation already aborts on OOM via the
 /// global allocator's `handle_alloc_error`. Per PORTING.md §Allocators,
 /// callsites of `bun.handleOom(expr)` translate to bare `expr`. This function
 /// remains for the residual cases where a `Result<T, AllocError>` is threaded

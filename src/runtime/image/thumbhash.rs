@@ -18,7 +18,6 @@ use core::f32::consts::PI;
 pub(crate) const MAX_LEN: usize = 25;
 
 pub(crate) fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]) -> &'a mut [u8] {
-    // PORT NOTE: Zig returns `out[0..n]`; mirrored here as a mut sub-slice borrow of `out`.
     debug_assert!(w > 0 && w <= 100 && h > 0 && h <= 100);
     debug_assert!(rgba.len() == (w as usize) * (h as usize) * 4);
 
@@ -34,7 +33,6 @@ pub(crate) fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]
         i += 4;
     }
     if avg[3] > 0.0 {
-        // PORT NOTE: reshaped for borrowck — Zig indexed avg[3] inside the loop body.
         let a3 = avg[3];
         for c in &mut avg[0..3] {
             *c /= a3;
@@ -104,7 +102,6 @@ pub(crate) fn encode<'a>(out: &'a mut [u8; MAX_LEN], w: u32, h: u32, rgba: &[u8]
     }
 
     let mut odd = false;
-    // PORT NOTE: Zig `inline for` over tuple of &Channel — all same type, plain loop.
     for ch in [&lc, &pc, &qc, &ac] {
         for &f in &ch.ac[0..ch.n] {
             let u: u8 = (15.0 * f).round() as u8;
@@ -268,9 +265,7 @@ pub fn decode(hash: &[u8]) -> Result<Decoded, DecodeError> {
     } else {
         32
     };
-    // PORT NOTE: `bun.default_allocator.alloc` → boxed slice (global mimalloc); aborts on OOM.
     let mut rgba = vec![0u8; (w as usize) * (h as usize) * 4].into_boxed_slice();
-    // errdefer free → dropped; Box<[u8]> Drop handles it.
 
     let mut fx = [0.0f32; 7];
     let mut fy = [0.0f32; 7];
@@ -324,7 +319,6 @@ fn idct(ac: &[f32], nx: u32, ny: u32, fx: &[f32; 7], fy: &[f32; 7]) -> f32 {
     v
 }
 
-// PORT NOTE: local borrow-param view; lifetime is fn-scoped to `decode`.
 struct NibbleReader<'a> {
     src: &'a [u8],
     i: usize,

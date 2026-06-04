@@ -95,7 +95,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
             Global::crash();
         }
     };
-    // PORT NOTE: reshaped for borrowck — clone the cwd slice so the PathBuffer
+    // Note: reshaped for borrowck — clone the cwd slice so the PathBuffer
     // borrow doesn't span the rest of the function (matches `cwd: []const u8`
     // semantics in the Zig spec since the buffer is never reused).
     let cwd: Box<[u8]> = Box::from(cwd);
@@ -119,7 +119,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // unique access for the rest of this function.
     let vm = unsafe { &mut *vm_ptr };
     // defer vm.deinit() — handled by `vm.destroy()` on the unwind path below.
-    // PORT NOTE: pass `vm_ptr` by value into the guard so the drop closure does
+    // Note: pass `vm_ptr` by value into the guard so the drop closure does
     // not borrow the local (`defer!` would capture `&vm_ptr`, which under
     // edition-2024 disjoint-capture rules collides with the `&mut *vm_ptr`
     // re-borrows on the JSError path).
@@ -134,9 +134,9 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     vm.event_loop_ref().ensure_waker();
     {
         let b = &mut vm.transpiler;
-        // TODO(port): preload/argv are `Vec<Box<[u8]>>` on both sides; clone since
-        // ctx outlives vm but Zig assigned slices directly (no ownership transfer).
-        // Could change VM fields to borrow from ctx.
+        // preload/argv are `Vec<Box<[u8]>>` on both sides; clone because the VM
+        // owns its fields in Rust (Zig assigned the ctx slices directly with no
+        // ownership transfer). Startup-only, so the copies are not hot.
         vm.preload.clone_from(&ctx.preloads);
         vm.argv.clone_from(&ctx.passthrough);
         vm.arena = NonNull::new(&raw mut arena);
@@ -153,7 +153,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
             .offline_mode_setting
             .unwrap_or(OfflineMode::Online)
             == OfflineMode::Offline;
-        // PORT NOTE: `bun_resolver::options::BundleOptions` has no
+        // Note: `bun_resolver::options::BundleOptions` has no
         // `prefer_latest_install` field in the Rust port; compute the value once
         // and assign only to `b.options` (which does carry it). The Zig source
         // mirrored it onto resolver.opts but the resolver never reads it.
@@ -175,7 +175,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
-        // PORT NOTE: `bun_resolver::options::BundleOptions` has no
+        // Note: `bun_resolver::options::BundleOptions` has no
         // `minify_identifiers`/`minify_whitespace` fields; the Zig mirror onto
         // resolver.opts is dropped (the resolver never reads them).
         b.options.env.behavior = bundler_options::EnvBehavior::LoadAllWithoutInlining;
@@ -186,7 +186,7 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
             vm.transpiler.options.no_macros = true;
         }
         MacroOptions::Map(macros) => {
-            // PORT NOTE: Zig spec is `b.options.macro_remap = macros;` — a
+            // Note: Zig spec is `b.options.macro_remap = macros;` — a
             // shallow struct copy where both maps share the same backing
             // string slices owned by `ctx`. The two Rust types are nominally
             // distinct (`ArrayHashMap<Box<[u8]>, ArrayHashMap<Box<[u8]>, Box<[u8]>>>`
@@ -223,14 +223,14 @@ pub fn build_command(ctx: Context) -> Result<(), bun_core::Error> {
     // releases the lock — matching Zig's `defer api_lock.release()` ordering.
     let _api_lock = unsafe { (*vm.jsc_vm).get_api_lock() };
 
-    // PORT NOTE: `PerThread` owns its data in Rust (Zig held borrowed slices
+    // Note: `PerThread` owns its data in Rust (Zig held borrowed slices
     // into `buildWithVm` locals, which is fine in Zig but unrepresentable for a
     // value living in this frame). Start with an empty placeholder so Drop
     // (which detaches the C++-side per-thread pointer) runs in this frame's
     // LIFO order — under the API lock, before the VM is destroyed.
     let mut pt = PerThread::placeholder(vm_ptr);
 
-    // PORT NOTE: reshaped for borrowck — `pt.vm` already borrows `*vm`, so pass
+    // Note: reshaped for borrowck — `pt.vm` already borrows `*vm`, so pass
     // the raw VM pointer and re-borrow inside.
     match build_with_vm(ctx, &cwd, vm_ptr, &mut pt) {
         Ok(()) => {}
@@ -432,7 +432,7 @@ pub(super) fn build_with_vm(
         .unwrap_or(false);
 
     // this is probably wrong
-    // PORT NOTE: process-lifetime dotenv singleton owned via `OnceLock`
+    // Note: process-lifetime dotenv singleton owned via `OnceLock`
     // (PORTING.md §Forbidden: no leaking). `Loader` self-borrows `Map`,
     // so both live in `DOTENV_SINGLETON`.
     let backing = DOTENV_SINGLETON.get_or_init(|| DotenvSingleton {
@@ -450,10 +450,10 @@ pub(super) fn build_with_vm(
     loader.map.put(b"NODE_ENV", b"production")?;
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader<'static>>(loader));
 
-    // TODO(port): Zig used `var x: Transpiler = undefined;` + out-param init.
-    // PORTING.md §Exception — out-param constructors: reshape to a returned
-    // value once `init_transpiler_with_options` is reshaped; for now use
-    // `MaybeUninit` to mirror the in-place-init contract.
+    // Zig used `var x: Transpiler = undefined;` + out-param init.
+    // `MaybeUninit` mirrors that in-place-init contract under PORTING.md
+    // §Exception — out-param constructors (`init_transpiler_with_options`
+    // keeps the out-param shape shared with the dev-server path).
     let mut client_transpiler = MaybeUninit::<Transpiler>::uninit();
     let mut server_transpiler = MaybeUninit::<Transpiler>::uninit();
     let mut ssr_transpiler = MaybeUninit::<Transpiler>::uninit();
@@ -517,7 +517,7 @@ pub(super) fn build_with_vm(
             transpiler.options.minify_syntax = false;
             transpiler.options.minify_identifiers = false;
             transpiler.options.minify_whitespace = false;
-            // PORT NOTE: `bun_resolver::options::BundleOptions` carries no naming
+            // Note: `bun_resolver::options::BundleOptions` carries no naming
             // templates; the canonical fields live on `transpiler.options`
             // (bun_bundler::options::BundleOptions).
             transpiler.options.entry_naming =
@@ -563,10 +563,10 @@ pub(super) fn build_with_vm(
     let mut root_dir_buf = PathBuffer::uninit();
     let root_dir_path =
         resolve_path::join_abs_string_buf::<platform::Auto>(cwd, &mut root_dir_buf.0, &[b"dist"]);
-    // PORT NOTE: reshaped for borrowck — copy out so root_dir_buf can drop.
+    // Note: reshaped for borrowck — copy out so root_dir_buf can drop.
     let root_dir_path: Box<[u8]> = Box::from(root_dir_path);
 
-    // PORT NOTE: borrowck — `framework` is `&mut options.framework`; reborrow
+    // Note: borrowck — `framework` is `&mut options.framework`; reborrow
     // through it instead of `options.framework` to avoid stacking borrows.
     let mut router_types: Vec<framework_router::Type> =
         Vec::with_capacity(framework.file_system_router_types.len());
@@ -629,8 +629,8 @@ pub(super) fn build_with_vm(
     // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
     // Project once here via the shared helper so the field-shape (e.g.
     // `BuiltInModule` `&'static [u8]` → `Box<[u8]>`) stays in one place.
-    // TODO(port): collapse `bake_body::Framework` into `bun_bundler::bake_types::Framework`
-    // once `FileSystemRouterType`/`framework_router::Style` move down to bun_bundler.
+    // (The two Framework types could only merge if `FileSystemRouterType` /
+    // `framework_router::Style` moved down to bun_bundler.)
     let bundler_framework = framework.as_bundler_view();
 
     let bundled_outputs_list: Vec<OutputFile> = {
@@ -1017,7 +1017,7 @@ pub(super) fn build_with_vm(
 
         let route = router.route_ptr(route_index);
         let main_file_route_index = route.file_page.unwrap();
-        // PORT NOTE: reshaped for borrowck — `pt.output_file()` borrows `pt`
+        // Note: reshaped for borrowck — `pt.output_file()` borrows `pt`
         // immutably, but `pt.preload_bundled_module()` below needs `&mut pt`.
         // Fetch the output file fresh at each use site instead of binding it.
 
@@ -1268,7 +1268,7 @@ fn load_module(
     // S012: `JSInternalPromise` (= `JSPromise`) is an `opaque_ffi!` ZST —
     // safe `*mut → &mut` deref via the const-asserted accessor.
     jsc::JSInternalPromise::opaque_mut(promise).set_handled();
-    // PORT NOTE: Zig's `*VirtualMachine` is a freely-aliasing mutable pointer.
+    // Note: Zig's `*VirtualMachine` is a freely-aliasing mutable pointer.
     // We take `*mut VirtualMachine` (not `&VirtualMachine`) so the provenance
     // permits mutation — casting a `&T` to `*mut T` and writing through it is
     // UB. The raw pointer flows from `VirtualMachine::init_bake` unchanged.
@@ -1294,8 +1294,6 @@ fn load_module(
 
 // extern apis:
 
-// TODO: Dedupe
-// TODO(port): move to bake_sys
 unsafe extern "C" {
     safe fn BakeGetDefaultExportFromModule(global: &JSGlobalObject, key: JSValue) -> JSValue;
     safe fn BakeGetModuleNamespace(global: &JSGlobalObject, key: JSValue) -> JSValue;
@@ -1324,7 +1322,6 @@ fn bake_get_on_module_namespace(
 }
 
 // Renders all routes for static site generation by calling the JavaScript implementation.
-// TODO(port): move to bake_sys
 // All args are by-value `JSValue`/`BunString` plus a live `&JSGlobalObject`
 // (UnsafeCell-backed); C++ allocates and returns a non-null `JSPromise*`.
 // No caller-side precondition for the call itself — declare `safe fn`.
@@ -1485,7 +1482,7 @@ impl framework_router::InsertionHandler for EntryPointMap {
 /// Data used on each rendering thread. Contains all information in the bundle needed to render.
 /// This is referred to as `pt` in variable/field naming, and Bake::ProductionPerThread in C++
 ///
-/// PORT NOTE: Zig held borrowed slices into `buildWithVm` locals; the Rust port
+/// Note: Zig held borrowed slices into `buildWithVm` locals; the Rust port
 /// owns the backing storage so the value can outlive `build_with_vm` in the
 /// caller's frame without dangling references.
 pub struct PerThread {
@@ -1500,7 +1497,7 @@ pub struct PerThread {
     pub source_maps: StringArrayHashMap<OutputFileIndex>,
 
     // Thread-local
-    // PORT NOTE: Zig's `vm: *jsc.VirtualMachine`. Stored as `BackRef` (the VM
+    // Note: Zig's `vm: *jsc.VirtualMachine`. Stored as `BackRef` (the VM
     // is process-lifetime and outlives every `PerThread`); `load_module`
     // re-derives a mutable VM via the per-thread singleton, so no write
     // provenance is needed here.
@@ -1517,7 +1514,6 @@ pub struct PerThread {
     attached: bool,
 }
 
-// TODO(port): move to bake_sys
 // C++ treats `PerThread` as an opaque pointer (Bake::ProductionPerThread*); the Rust
 // layout is irrelevant across the FFI boundary, so silence the improper_ctypes lint.
 // C++ stores `pt` opaquely on the global (never dereferenced C++-side; null

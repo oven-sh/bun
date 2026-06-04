@@ -1328,9 +1328,9 @@ unsafe extern "system" {
     pub fn SaferiIsExecutableFileType(szFullPathname: LPCWSTR, bFromShellExecute: BOOLEAN) -> BOOL;
 }
 
-// PORT NOTE: the Zig declared these without an explicit library/callconv (defaults to .c on x64).
 // `GetProcAddress`/`LoadLibraryA` are kernel32 stdcall — use `extern "system"` so the
-// callconv is correct on all targets. `GetProcAddress` takes `LPCSTR` (narrow), not wide.
+// callconv is correct on all targets (winapi == C only on x64). `GetProcAddress`
+// takes `LPCSTR` (narrow), not wide.
 #[link(name = "kernel32")]
 unsafe extern "system" {
     pub fn GetProcAddress(ptr: *mut c_void, name: *const c_char) -> *mut c_void;
@@ -1338,8 +1338,8 @@ unsafe extern "system" {
     pub fn LoadLibraryA(name: *const c_char) -> *mut c_void;
 }
 
-// PORT NOTE: the following kernel32 fns lacked `callconv(.winapi)` in the Zig (works on
-// x64 where winapi == C). Declared here as "system" for correctness on all targets.
+// Declared as `extern "system"` so the callconv is correct on all targets
+// (winapi == C only on x64).
 #[link(name = "kernel32")]
 unsafe extern "system" {
     pub fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL;

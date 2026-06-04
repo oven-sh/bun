@@ -7,14 +7,14 @@ use bun_sql::shared::Data;
 // re-exports it as `WTFStringImpl = *mut WTFStringImplStruct`.
 use bun_core::wtf::WTFStringImpl;
 
-// PORT NOTE: This entire type is `extern struct` in Zig and is passed by pointer
+// Note: This entire type is `extern struct` in Zig and is passed by pointer
 // across FFI to C++ (`JSC__constructObjectFromDataCell`). Field layout is
 // load-bearing. LIFETIMES.tsv classifies several pointer fields as owned/shared/
 // borrowed (Vec / RefPtr / &[u8]), but those Rust types either change size
 // (fat slice ptrs) or add Drop semantics that a `#[repr(C)] union` cannot host
 // without `ManuallyDrop`. Raw thin pointers are kept for FFI fidelity; ownership
 // semantics from LIFETIMES.tsv are noted per-field below and enforced in
-// `deinit`. TODO(refactor): revisit once the C++ side is ported.
+// `deinit`. Revisit only if the C++ side (SQLClient.cpp) is ever ported.
 
 #[repr(C)]
 #[derive(Copy, Clone)]
@@ -181,7 +181,7 @@ pub struct TypedArray {
     pub type_: JSType, // `type` is a Rust keyword
 }
 
-// PORT NOTE: Zig's `slice()`/`byteSlice()` accessors are intentionally not
+// Note: Zig's `slice()`/`byteSlice()` accessors are intentionally not
 // ported as `&mut [u8]` getters. `len` is the typed-array *element* count
 // (consumed by SQLClient.cpp), not a byte length, so a `&mut [u8; len]` view
 // would be wrong for elements wider than u8; and the only Rust caller of
@@ -189,7 +189,7 @@ pub struct TypedArray {
 // `ptr::slice_from_raw_parts_mut` directly (no intermediate `&mut` reference).
 
 impl SQLDataCell {
-    // PORT NOTE: kept as an explicit method, not `impl Drop` — this type is
+    // Note: kept as an explicit method, not `impl Drop` — this type is
     // #[repr(C)], lives inside a C union, is bulk-passed to C++ by pointer, and
     // freeing is gated on `free_value`. See PORTING.md §Idiom map (FFI types
     // keep explicit destroy).
@@ -221,8 +221,17 @@ impl SQLDataCell {
                 // Build the fat pointer with the safe `ptr::slice_from_raw_parts_mut`
                 // (no `&mut` reference materialized); only `Box::from_raw` is unsafe.
                 // SAFETY: bytea[0]/bytea[1] are ptr/len of a buffer allocated
-                // via the global allocator (Zig: bun.default_allocator).
-                // TODO(port): verify allocation size == len (Zig free() uses slice.len).
+                // via the global allocator (Zig: bun.default_allocator). The
+                // only `free_value=1` Bytea producer is `parse_bytea`
+                // (postgres/DataCell.rs), which allocates exactly `hex.len()/2`
+                // bytes and stores `decode_hex_to_bytes`'s return. With that
+                // call-site invariant (`source.len() >= 2 * dest.len()`), the
+                // non-truncating decoder cannot exhaust the input before the
+                // destination fills, so on success it returns `dest.len()` —
+                // hence allocation size == len and the `Box<[u8]>` layout
+                // below matches the allocation. (In general the decoder may
+                // return less than `dest.len()` when the input runs out first;
+                // this proof depends on parse_bytea's allocation size.)
                 unsafe { drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(p, len))) };
             }
             Tag::Array => {
@@ -247,10 +256,11 @@ impl SQLDataCell {
                     // Zig got away with it; Rust's `Box::<[u8]>::from_raw`
                     // layout must match the allocation, hence `byte_len`.
                     // SAFETY: head_ptr was allocated via the global allocator
-                    // when free_value != 0.
-                    // TODO(port): LIFETIMES.tsv marks this BORROW (free_value=0
-                    // at all call sites) — this branch may be dead; preserved
-                    // to match Zig.
+                    // when free_value != 0. This branch is live: the postgres
+                    // binary-array path (DataCell.rs `from_bytes_typed_array`)
+                    // produces `free_value=1` cells whose `head_ptr` is
+                    // `Box::into_raw` of a `Box<[u8]>` of exactly `byte_len`
+                    // bytes, so the layout below matches the allocation.
                     unsafe {
                         drop(Box::<[u8]>::from_raw(ptr::slice_from_raw_parts_mut(
                             ta.head_ptr,
@@ -373,7 +383,8 @@ bitflags::bitflags! {
     }
 }
 
-// TODO(port): move to sql_jsc_sys
+// Declared inline rather than in a dedicated `*_sys` crate: this is the only
+// extern this crate calls and its sole consumer is the wrapper above.
 unsafe extern "C" {
     // `&JSGlobalObject` is ABI-identical to a non-null `*const JSGlobalObject`;
     // remaining params are by-value scalars + raw (ptr,len) slice pairs that

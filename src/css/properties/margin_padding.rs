@@ -83,8 +83,8 @@ impl_size_shorthand!(
 //
 // `PropertyFieldMap` (an anonymous struct mapping field-name → PropertyIdTag)
 // becomes an associated const slice; consumers that did `@field(map, name)`
-// will look up by name. // TODO(port): if consumers need O(1) by-field access,
-// switch to per-type associated consts.
+// will look up by name. (If consumers ever need O(1) by-field access, this
+// could switch to per-type associated consts.)
 
 define_rect_shorthand! {
     /// A value for the [inset](https://drafts.csswg.org/css-logical/#propdef-inset) shorthand property.
@@ -375,7 +375,7 @@ pub type InsetHandler = SizeHandler<InsetSpec>;
 // calls through `S::*`. Each concrete handler is a zero-sized marker type
 // implementing the spec.
 //
-// TODO(port): a `macro_rules! size_handler_spec!` could generate the four
+// A `macro_rules! size_handler_spec!` could generate the four
 // `SizeHandlerSpec` impls from the same 13-argument table the Zig used,
 // eliminating the per-spec extract/construct boilerplate. Left explicit for
 // reviewability.
@@ -417,7 +417,7 @@ pub trait SizeHandlerSpec {
     const SHORTHAND: PropertyIdTag;
     const BLOCK_SHORTHAND: PropertyIdTag;
     const INLINE_SHORTHAND: PropertyIdTag;
-    // PORT NOTE: `PropertyId` mirrors of TOP/BOTTOM/LEFT/RIGHT for
+    // `PropertyId` mirrors of TOP/BOTTOM/LEFT/RIGHT for
     // `UnparsedProperty::with_property_id`. All margin/padding/inset/scroll-*
     // `PropertyId` variants are payload-free, so these are well-formed consts.
     const TOP_ID: PropertyId;
@@ -447,8 +447,8 @@ pub trait SizeHandlerSpec {
     // Each pair is the Rust spelling of:
     //   `@field(property, @tagName(X_prop))`       → extract_x
     //   `@unionInit(Property, @tagName(X_prop), v)` → make_x
-    // TODO(port): these are pure mechanical pattern-matches over `Property`;
-    // could generate via macro.
+    // These are pure mechanical pattern-matches over `Property`; they could
+    // be generated via macro.
 
     fn extract_top(p: &Property) -> &LengthPercentageOrAuto;
     fn extract_bottom(p: &Property) -> &LengthPercentageOrAuto;
@@ -531,7 +531,7 @@ impl<S: SizeHandlerSpec> Default for SizeHandler<S> {
     }
 }
 
-// PORT NOTE: `context.arena` was dropped from PropertyHandlerContext; the
+// `context.arena` was dropped from PropertyHandlerContext; the
 // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
 impl<S: SizeHandlerSpec> SizeHandler<S> {
     // ---- @field(this, field) replacements ----
@@ -674,7 +674,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
                 dest,
                 context,
             );
-            // PORT NOTE: Zig stored `property.deepClone(arena)`; reconstruct
+            // Zig stored `property.deepClone(arena)`; reconstruct
             // via the spec's `make_X(extract_X)` pair (same observable shape).
             self.logical_property_helper(
                 LogicalSlot::BlockStart,
@@ -830,7 +830,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
         self.flush(dest, context);
     }
 
-    // PORT NOTE: reshaped — Zig's single `flushHelper` (generic over `comptime field: []const u8`
+    // Reshaped — Zig's single `flushHelper` (generic over `comptime field: []const u8`
     // via `@field(this, field)`) is split into `flush_helper_physical` + `flush_helper_logical`
     // because the physical slots hold `Option<LengthPercentageOrAuto>` and the logical slots hold
     // `Option<Property>`; Rust cannot express `@field` over heterogeneous Option payloads generically.
@@ -1168,7 +1168,7 @@ impl<S: SizeHandlerSpec> SizeHandler<S> {
             // Zig: `@as(css.PropertyIdTag, v.*) == logical` — raw discriminant.
             if v.variant_tag() == logical {
                 // Zig moved the payload (`@field(v, @tagName(logical))`) by value.
-                // PORT NOTE: reshaped for borrowck — clone instead of moving out
+                // Reshaped for borrowck — clone instead of moving out
                 // of `&Property`; `LengthPercentageOrAuto` is small.
                 dest.push(make_physical(extract_logical(v).clone()));
             } else if let Property::Unparsed(u) = v {
@@ -1188,7 +1188,7 @@ enum LogicalSidePair {
 // Spec instantiations
 // ──────────────────────────────────────────────────────────────────────────
 //
-// PORT NOTE: the `extract_*` / `make_*` / `shorthand_*` bodies are pure
+// The `extract_*` / `make_*` / `shorthand_*` bodies are pure
 // `@field` / `@unionInit` token-pasting in Zig (`NewSizeHandler`).
 // `size_handler_spec_projections!` expands them from the 11 `Property`
 // variant idents + 3 shorthand value-type idents that the Zig

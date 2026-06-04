@@ -27,9 +27,12 @@ pub struct Scanner<'a> {
     pub dirs_to_scan: Fifo,
     /// Paths to test files found while scanning.
     pub test_files: Vec<Interned>,
-    // TODO(port): LIFETIMES.tsv classifies as &'a FileSystem, but several call
-    // sites (dirname_store.append, readDirectoryWithIterator) mutate. May need
-    // interior mutability on FileSystem or &'a mut.
+    // dirname_store appends are fine through `&self` (interior-mutable bss
+    // string list), but `read_dir_with_name`/`next` derive `&mut RealFS` from
+    // this `&FileSystem` via lint-silenced `&T` -> `&mut T` casts — that is
+    // UB-adjacent debt, not a settled design. This field should become
+    // `*mut FileSystem` (the shape `Transpiler.fs` already uses; init would
+    // store `transpiler.fs` directly) or RealFS needs interior mutability.
     pub fs: &'a FileSystem,
     pub open_dir_buf: PathBuffer,
     pub scan_dir_buf: PathBuffer,
@@ -44,7 +47,8 @@ pub(crate) type Fifo = VecDeque<ScanEntry>;
 
 pub struct ScanEntry {
     pub relative_dir: Fd,
-    // TODO(port): lifetime — borrows from FileSystem.dirname_store (process-lifetime arena)
+    // `'static` is sound here: borrows from FileSystem.dirname_store, a
+    // process-lifetime arena that is never reset.
     pub dir_path: &'static [u8],
     pub name: StringOrTinyString,
 }
@@ -111,7 +115,7 @@ impl<'a> Scanner<'a> {
 
     pub fn scan(&mut self, path_literal: &[u8]) -> Result<(), ScanError> {
         let parts: [&[u8]; 2] = [self.fs.top_level_dir, path_literal];
-        // PORT NOTE: reshaped for borrowck — abs_buf's return keeps a &mut borrow
+        // reshaped for borrowck — abs_buf's return keeps a &mut borrow
         // of scan_dir_buf alive across the &mut self calls below. Capture only the
         // length, then reconstruct a detached slice from the raw buffer pointer.
         let path_len = self.fs.abs_buf(&parts, &mut self.scan_dir_buf).len();
@@ -156,7 +160,7 @@ impl<'a> Scanner<'a> {
                 debug_assert!(fd != Fd::INVALID);
                 // Collect first so `self.next(…)` doesn't overlap the
                 // `entries.data` borrow.
-                // PORT NOTE: this branch is taken when the resolver already has
+                // this branch is taken when the resolver already has
                 // `path` cached (e.g. `run_env_loader`/`read_dir_info` read the
                 // cwd before the scanner runs), so `read_directory_with_iterator`
                 // returned the cached `EntryMap` without invoking `iterator.next`.
@@ -244,16 +248,18 @@ impl<'a> Scanner<'a> {
         name: &[u8],
         handle: Option<bun_sys::Dir>,
     ) -> Result<&'static mut EntriesOption, bun_core::Error> {
-        // PORT NOTE: Zig `readDirectoryWithIterator` takes `*RealFS` and a
+        // Zig `readDirectoryWithIterator` takes `*RealFS` and a
         // duck-typed `*Scanner` iterator. `self.fs` is `&FileSystem` here, but
         // the underlying `RealFS` is the process singleton and is mutated
         // through `*mut` everywhere else (see `Transpiler.fs: *mut FileSystem`);
         // cast away `&` to match the Zig calling convention. Serialised by
-        // `RealFS.entries_mutex` inside the callee.
+        // `RealFS.entries_mutex` inside the callee. This `&T` -> `&mut T` cast
+        // is lint-silenced UB-adjacent debt; the real fix is storing
+        // `Scanner.fs` as `*mut FileSystem` (see the field doc).
         let real_fs = core::ptr::from_ref(&self.fs.fs).cast_mut();
         let iter = ScannerDirIter(std::ptr::from_mut::<Scanner<'a>>(self));
         let raw = handle.map(bun_sys::Dir::into_raw);
-        // SAFETY: see PORT NOTE above — `real_fs` aliases the singleton.
+        // SAFETY: see comment above — `real_fs` aliases the singleton.
         #[allow(invalid_reference_casting)]
         unsafe { &mut *real_fs }.read_directory_with_iterator(name, raw, 0, true, iter)
     }
@@ -378,7 +384,7 @@ impl<'a> Scanner<'a> {
                 // Prune ignored directory trees early so we never traverse them.
                 if !self.path_ignore_patterns.is_empty() {
                     let parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                    // PORT NOTE: reshaped for borrowck — drop the &mut borrow from
+                    // reshaped for borrowck — drop the &mut borrow from
                     // abs_buf and reborrow open_dir_buf immutably so &self methods
                     // can be called with the slice.
                     let dir_path_len = self.fs.abs_buf(&parts, &mut self.open_dir_buf).len();
@@ -411,7 +417,7 @@ impl<'a> Scanner<'a> {
                 }
 
                 let parts: [&[u8]; 2] = [entry.dir, entry.base()];
-                // PORT NOTE: reshaped for borrowck — drop the &mut borrow from
+                // reshaped for borrowck — drop the &mut borrow from
                 // abs_buf and reborrow open_dir_buf immutably so &self methods
                 // below can be called with the slice.
                 let path_len = self.fs.abs_buf(&parts, &mut self.open_dir_buf).len();

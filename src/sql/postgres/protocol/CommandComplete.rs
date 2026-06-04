@@ -17,9 +17,8 @@ impl Default for CommandComplete {
 // `Drop`, so no explicit `Drop` impl is needed here.
 
 impl CommandComplete {
-    // PORT NOTE: Zig body is the out-param-constructor pattern (`this.* = .{...}`),
-    // which PORTING.md normally reshapes to `fn(...) -> Result<Self, E>`. Kept as
-    // Zig `DecoderWrap(@This(), ...)` — see src/sql/postgres/protocol/DecoderWrap.rs
+    // Intentionally `&mut self` (not `-> Result<Self, E>`) to fit the
+    // `DecoderWrap` decode contract — see src/sql/postgres/protocol/DecoderWrap.rs
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         &mut self,
         mut reader: NewReader<Container>,

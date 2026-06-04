@@ -23,9 +23,10 @@ pub(crate) fn dump_describe(describe: &DescribeScope) -> JsResult<()> {
     if !group::get_log_enabled() {
         return Ok(());
     }
-    // TODO(port): std.zig.fmtString escaping — using BStr Debug-ish display for now
+    // `BStr`'s `Debug` impl quotes and escapes the name (the Zig source used
+    // `std.zig.fmtString` for the same purpose).
     let _guard = group::begin_msg(format_args!(
-        "describe \"{}\" (concurrent={}, mode={}, only={}, has_callback={})",
+        "describe {:?} (concurrent={}, mode={}, only={}, has_callback={})",
         bstr::BStr::new(describe.base.name.as_deref().unwrap_or(b"(unnamed)")),
         describe.base.concurrent,
         describe.base.mode.tag_name(),
@@ -56,7 +57,7 @@ pub(crate) fn dump_test(current: &ExecutionEntry, label: &[u8]) -> JsResult<()> 
         return Ok(());
     }
     let _guard = group::begin_msg(format_args!(
-        "{} \"{}\" (concurrent={}, only={})",
+        "{} {:?} (concurrent={}, only={})",
         bstr::BStr::new(label),
         bstr::BStr::new(current.base.name.as_deref().unwrap_or(b"(unnamed)")),
         current.base.concurrent,
@@ -114,7 +115,7 @@ pub mod group {
         let _ = write!(writer, "\x1b[m");
     }
 
-    // PORT NOTE: Zig used plain mutable globals; using atomics for Rust safety (debug-only path).
+    // Zig used plain mutable globals; using atomics for Rust safety (debug-only path).
     static INDENT: AtomicUsize = AtomicUsize::new(0);
     static LAST_WAS_START: AtomicBool = AtomicBool::new(false);
 

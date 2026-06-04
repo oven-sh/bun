@@ -43,9 +43,8 @@ pub struct CodeCoverageOptions {
 impl Default for CodeCoverageOptions {
     fn default() -> Self {
         Self {
-            // TODO(port): Zig `!bun.Environment.allow_assert` (allow_assert = isDebug || is_canary || isTest);
-            // mapped to `!cfg!(debug_assertions)` — may want a `bun_core::Environment::ALLOW_ASSERT` const.
-            skip_test_files: !cfg!(debug_assertions),
+            // Zig: `!bun.Environment.allow_assert`.
+            skip_test_files: !bun_core::env::ALLOW_ASSERT,
             reporters: Reporters {
                 text: true,
                 lcov: false,

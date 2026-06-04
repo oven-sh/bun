@@ -6,14 +6,11 @@ use crate::{JSGlobalObject, JSValue, JsResult, VM, host_fn};
 use bun_core::{StringPointer, ZigString};
 use bun_uws::ResponseKind;
 
-// TODO(port): consider an RAII wrapper that calls `deref` on Drop instead of returning `NonNull<FetchHeaders>` from constructors.
 bun_opaque::opaque_ffi! {
     /// Opaque C++ `WebCore::FetchHeaders` handle (ref-counted on the C++ side; see `deref`).
     pub struct FetchHeaders;
 }
 
-// TODO(port): move to jsc_sys
-//
 // `FetchHeaders`/`JSGlobalObject`/`VM` are opaque `UnsafeCell`-backed ZST
 // handles, so `&T` is ABI-identical to a non-null `*const T` and C++ mutating
 // header storage / VM state through them is interior mutation invisible to
@@ -213,7 +210,7 @@ impl FetchHeaders {
             .expect("WebCore__FetchHeaders__createEmpty returned null")
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig took `pico_headers: anytype` and read
+    // Reshaped for borrowck — Zig took `pico_headers: anytype` and read
     // `pico_headers.list.ptr` / `.list.len`. In Rust, callers pass the slice directly.
     pub fn create_from_pico_headers<T>(pico_headers_list: &[T]) -> NonNull<FetchHeaders> {
         let out = PicoHeaders {
@@ -242,7 +239,6 @@ impl FetchHeaders {
         value: &[u8],
         global: &JSGlobalObject,
     ) -> JsResult<()> {
-        // TODO(port): bun.jsc.fromJSHostCallGeneric — wraps the FFI call and converts a pending VM exception into JsError
         host_fn::from_js_host_call_generic(global, || {
             let zs = ZigString::init(value);
             WebCore__FetchHeaders__put(self, name_, &zs, global)
@@ -257,7 +253,7 @@ impl FetchHeaders {
         let mut out = ZigString::EMPTY;
         self.get_(&ZigString::init(name_), &mut out, global);
         if out.len > 0 {
-            // PORT NOTE: returns the ZigString view (borrows C++-owned header
+            // Returns the ZigString view (borrows C++-owned header
             // storage); caller may `.slice()` it. Returning `&[u8]` directly
             // would borrow the local `out`, not the underlying buffer.
             return Some(out);
@@ -331,7 +327,6 @@ impl FetchHeaders {
         &mut self,
         global: &JSGlobalObject,
     ) -> JsResult<Option<NonNull<FetchHeaders>>> {
-        // TODO(port): bun.jsc.fromJSHostCallGeneric — wraps the FFI call and converts a pending VM exception into JsError
         host_fn::from_js_host_call_generic(global, || {
             NonNull::new(WebCore__FetchHeaders__cloneThis(self, global))
         })

@@ -55,7 +55,6 @@ impl<'a> JSArrayIterator<'a> {
     }
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     safe fn Bun__JSArray__getContiguousVector(value: JSValue, out_len: &mut u32) -> *const JSValue;
     // safe: by-value `JSValue`/`u32`; `elements` is only pointer-compared against

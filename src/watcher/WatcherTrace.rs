@@ -45,33 +45,27 @@ pub fn write_events(
         return;
     };
 
-    // PORT NOTE: Zig passed a stack `[4096]u8` to `bufferedWriter(&buffer)`;
+    // Zig passed a stack `[4096]u8` to `bufferedWriter(&buffer)`;
     // `bun_sys::File::buffered_writer()` wraps `std::io::BufWriter` which
     // owns its own heap buffer. Same observable behaviour.
     let buffered = file.buffered_writer();
     // `defer buffered.flush() catch |err| { Output.err(...) }`
     let mut writer = scopeguard::guard(buffered, |mut w| {
         if let Err(err) = w.flush() {
-            // PORT NOTE: Zig passed the error-union tag (`@errorName`). The
-            // BufWriter wrapper surfaces a `std::io::Error`; print its display
-            // as the tag — same observable text minus the `error.` prefix.
-            // TODO(port): map io::Error → bun_sys::Error once a helper exists.
-            let mut name_buf = [0u8; 64];
-            let name = {
-                use std::io::Write as _;
-                let mut c = std::io::Cursor::new(&mut name_buf[..]);
-                let _ = write!(c, "{}", err.kind());
-                let n = c.position() as usize;
-                // SAFETY: `write!(.., "{}", io::ErrorKind)` emits an ASCII variant
-                // name (`NotFound`, `PermissionDenied`, …) — pure-ASCII output.
-                unsafe { core::str::from_utf8_unchecked(&name_buf[..n]) }
-            };
-            output::err(name, "Failed to flush watcher trace file", ());
+            // Zig passed the error-union tag (`@errorName`) to Output.err;
+            // here we map the `std::io::Error` to the interned errno-name
+            // code, so an errno name (e.g. `ENOSPC`) renders instead of
+            // Zig's generic `WriteFailed` tag — debug-trace-only path.
+            output::err(
+                bun_core::Error::from(err),
+                "Failed to flush watcher trace file",
+                (),
+            );
         }
     });
 
     // Get current timestamp
-    // PORT NOTE: std.time.milliTimestamp() — std::time is not in the banned
+    // std.time.milliTimestamp() — std::time is not in the banned
     // I/O set; revisit if a `bun_core::time` helper exists.
     let timestamp: i64 = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -123,7 +117,7 @@ pub fn write_events(
         }
 
         // Write array of event types.
-        // PORT NOTE: Zig walks `std.meta.fields(Op)` (lowercase field names).
+        // Zig walks `std.meta.fields(Op)` (lowercase field names).
         // bitflags `iter_names()` yields SCREAMING_CASE const names; use the
         // shared lowercase OP_NAMES table so trace JSON matches Zig exactly.
         let mut first = true;
@@ -192,7 +186,7 @@ pub fn write_events(
 }
 
 /// Close the trace file if open
-// PORT NOTE: free-function `deinit` (no `self`), so this stays a plain fn
+// free-function `deinit` (no `self`), so this stays a plain fn
 // rather than `impl Drop`.
 pub(crate) fn deinit() {
     let _ = TRACE_FILE.lock().take();

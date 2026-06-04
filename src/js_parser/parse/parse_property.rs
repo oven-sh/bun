@@ -132,8 +132,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.pop_scope();
-        // PORT NOTE: G::Fn is not Copy (FnBody/TS-metadata aren't), so mutate in place via the
-        // E::Function payload after boxing rather than copying `func`.
+        // G::Fn is not Copy (FnBody/TS-metadata aren't), so mutate `func` in place
+        // rather than copying it as the Zig original did.
         let mut func = func;
         func.flags.insert(flags::Function::IsUniqueFormalParameters);
         let args = func.args.slice();
@@ -801,7 +801,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 ..Default::default()
             };
 
-            // PORT NOTE: reshaped for borrowck — `errors` is Option<&mut _>, reborrow via as_deref_mut
+            // `errors` is Option<&mut _>; reborrow via as_deref_mut so the caller's binding stays usable
             p.parse_expr_or_bindings(
                 Level::Comma,
                 errors.as_deref_mut(),

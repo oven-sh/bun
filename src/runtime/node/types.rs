@@ -313,7 +313,7 @@ impl StringOrBuffer {
         match self {
             Self::String(s) => {
                 s.to_thread_safe();
-                // PORT NOTE: reshaped for borrowck — Zig moves the payload between variants.
+                // reshaped for borrowck — Zig moves the payload between variants.
                 let str = core::mem::take(s);
                 *self = Self::ThreadsafeString(str);
             }
@@ -425,7 +425,7 @@ impl StringOrBuffer {
                     str.deref();
 
                     if sliced.underlying.is_empty() {
-                        // PORT NOTE: partial-move out of `SliceWithUnderlyingString` —
+                        // partial-move out of `SliceWithUnderlyingString` —
                         // take `utf8` and leave the rest defaulted (no Drop on the type).
                         *out = Self::EncodedSlice(core::mem::take(&mut sliced.utf8));
                         return Ok(true);
@@ -656,7 +656,7 @@ pub enum Encoding {
     Buffer,
 }
 
-// PORT NOTE: Zig used `ComptimeStringMap` (`fromJSCaseInsensitive` /
+// Zig used `ComptimeStringMap` (`fromJSCaseInsensitive` /
 // `inMapCaseInsensitive`). With only 13 short keys spread across 7 distinct
 // lengths (max 4 keys at len==6) a length-gated byte match beats a
 // `phf::Map`'s hash+probe — see `Encoding::from` below. The case-insensitive
@@ -761,7 +761,7 @@ impl Encoding {
 
 impl Encoding {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>> {
-        // PORT NOTE: ComptimeStringMap::fromJSCaseInsensitive — emulated via
+        // ComptimeStringMap::fromJSCaseInsensitive — emulated via
         // `from_bun_string` (stack-buffer narrow + length-gated match; no
         // `to_utf8()` allocation needed for a ≤9-byte ASCII key).
         let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global)?);
@@ -862,7 +862,7 @@ impl Encoding {
                 Ok(jsc::zig_string::ZigString::init(&buf).to_js(global_object))
             }
             Self::Hex => {
-                // PORT NOTE: Zig used `bufPrint("{x}", input)` into a stack buffer.
+                // Zig used `bufPrint("{x}", input)` into a stack buffer.
                 // The byte-by-byte `write!` formatting machinery is pathologically
                 // slow in debug builds, so encode via LUT directly into the
                 // destination JS string buffer.
@@ -889,7 +889,8 @@ impl Encoding {
     }
 }
 
-// TODO(port): move to runtime_sys
+// Externs stay in this crate per PORTING.md §FFI: "If your file has externs
+// and isn't already *_sys, leave them in place".
 unsafe extern "C" {
     safe fn WebCore_BufferEncodingType_toJS(
         global_object: &JSGlobalObject,
@@ -920,7 +921,7 @@ pub enum PathOrBuffer {
 impl PathOrBuffer {
     #[inline]
     pub fn slice(&self) -> &[u8] {
-        // PORT NOTE: Zig only ever returns `self.path.slice()` here regardless of variant —
+        // Zig only ever returns `self.path.slice()` here regardless of variant —
         // preserved verbatim (likely a latent bug or this type is unused).
         match self {
             Self::Path(p) => p.slice(),
@@ -934,12 +935,10 @@ impl PathOrBuffer {
 pub struct CallbackTask<Result> {
     pub callback: jsc::C::JSObjectRef,
     pub option: CallbackTaskOption<Result>,
-    pub success: bool,
 }
 
-// PORT NOTE: Zig uses an untagged `union` discriminated by `success: bool`.
-// Represented here as a Rust enum; callers must keep `success` in sync.
-// TODO(refactor): drop the redundant `success` field entirely.
+// Zig uses an untagged `union` discriminated by a separate `success: bool`
+// field; the Rust enum's own discriminant replaces it.
 pub enum CallbackTaskOption<Result> {
     Err(Box<bun_sys::SystemError>),
     Result(Result),
@@ -956,7 +955,6 @@ where
         Self {
             callback: core::ptr::null_mut(),
             option: Default::default(),
-            success: false,
         }
     }
 }
@@ -1055,9 +1053,10 @@ pub(crate) trait PathOrFdExt {
 }
 
 impl PathLikeExt for PathLike {
-    // TODO(port): Zig return type is `if (force) [:0]u8 else [:0]const u8`.
-    // Rust const-generics can't change return mutability; we always return `&ZStr`.
-    // The single force=true caller (if any) needs `&mut ZStr` — handle if it comes up.
+    // Zig's return type is `if (force) [:0]u8 else [:0]const u8`; Rust
+    // const-generics can't change return mutability, so this always returns
+    // `&ZStr`. A future force=true caller that needs `&mut ZStr` will need a
+    // separate method.
     fn slice_z_with_force_copy<'a, const FORCE: bool>(
         &'a self,
         buf: &'a mut PathBuffer,
@@ -1096,7 +1095,7 @@ impl PathLikeExt for PathLike {
                     // SAFETY: buf[4+n] == 0 written above.
                     return ZStr::from_buf(&buf[..], 4 + n);
                 }
-                // PORT NOTE: reshaped for borrowck — capture the length so
+                // reshaped for borrowck — capture the length so
                 // the `Ok` borrow ends at the match, then re-derive.
                 let resolved_len = match bun_paths::resolve_path::PosixToWinNormalizer::resolve_cwd_with_external_buf_z(buf, sliced) {
                     Ok(res) => Some(res.len()),
@@ -1388,7 +1387,6 @@ impl PathLikeExt for PathLike {
         str: &mut bun_core::String,
         will_be_async: bool,
     ) -> JsResult<PathLike> {
-        // TODO(port): narrow error set
         if will_be_async {
             let sliced = str.to_thread_safe_slice();
             let sliced = scopeguard::guard(sliced, |s| s.deinit());
@@ -1507,7 +1505,7 @@ impl Valid {
 // ──────────────────────────────────────────────────────────────────────────
 
 pub struct VectorArrayBuffer {
-    // PORT NOTE: bare JSValue field — only sound while this lives on the stack.
+    // bare JSValue field — only sound while this lives on the stack.
     // Stored in a stack-local during writev; never heap-allocated.
     pub value: JSValue,
     pub buffers: Vec<PlatformIoVec>,
@@ -1692,7 +1690,7 @@ pub fn mode_from_js(ctx: &JSGlobalObject, value: JSValue) -> JsResult<Option<Mod
 // `crate::node::types::PathOrFileDescriptorSerializeTag` paths keep resolving.
 pub use bun_jsc::node_path::PathOrFileDescriptorSerializeTag;
 
-// PORT NOTE: Zig copies these tagged unions by value freely; the Rust port adds
+// Zig copies these tagged unions by value freely; the Rust port adds
 // `Drop` for the path-owning variants, so an explicit `dupe()` is provided for
 // callers (Blob, Store::File) that need a fresh copy. Ref-counting variants are
 // bumped where the underlying type supports it; otherwise we bitwise-copy
@@ -1737,7 +1735,7 @@ pub enum FileSystemFlagsKind {
 }
 
 impl FileSystemFlags {
-    // PORT NOTE: `pub type TagType = c_int;` would be an inherent associated
+    // `pub type TagType = c_int;` would be an inherent associated
     // type (unstable). Dropped — callers use `c_int` directly.
 
     // Named variants from the Zig enum:
@@ -1821,7 +1819,7 @@ impl FileSystemFlags {
                     }
                 }
 
-                // PORT NOTE: Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
+                // Zig used `ComptimeStringMap.getWithEql(str, ZigString.eqlComptime)`.
                 // Convert the ZigString (≤12 bytes here) to a UTF-8 slice and
                 // dispatch through the length-gated match below.
                 let key_slice = str.to_slice();
@@ -1842,7 +1840,7 @@ impl FileSystemFlags {
     }
 
     /// Equivalent of GetValidFileMode, which is used to implement fs.access and copyFile
-    // PORT NOTE: Zig took `comptime kind: enum { access, copy_file }`; lowered to a
+    // Zig took `comptime kind: enum { access, copy_file }`; lowered to a
     // runtime arg here so callers (`node_fs.rs`) can pass it positionally without
     // needing `adt_const_params` const-generic dispatch.
     pub fn from_js_number_only(
@@ -1987,7 +1985,8 @@ pub struct Dirent {
 
 pub type DirentKind = bun_sys::FileKind;
 
-// TODO(port): move to runtime_sys
+// Externs stay in this crate per PORTING.md §FFI: "If your file has externs
+// and isn't already *_sys, leave them in place".
 // `&JSGlobalObject` / `&mut bun_core::String` are ABI-identical to non-null
 // pointers; `Option<&mut *mut JSString>` uses the niche-optimization layout
 // (`*mut *mut JSString`), so the validity proof lives in the type signature.

@@ -6,11 +6,9 @@ pub struct EnvMap {
     map: EnvMapInner,
 }
 
-// PORT NOTE: Zig used `std.ArrayHashMap(K, V, Context, store_hash=true)`.
-// `bun_collections::ArrayHashMap` already takes a `C: ArrayHashContext<K>` param.
 pub(crate) type Iterator<'a> = Iter<'a, EnvStr, EnvStr>;
 
-// PORT NOTE: Zig calls this `MapType`. Renamed to avoid rustc confusing it with the
+// Zig calls this `MapType`. Renamed to avoid rustc confusing it with the
 // unrelated mmap `sys::c::MapType` / `sys::posix::MapType` in diagnostic suggestions.
 type EnvMapInner = ArrayHashMap<EnvStr, EnvStr, EnvMapContext>;
 
@@ -78,7 +76,6 @@ impl EnvMap {
     /// NOTE: This will `.ref()` value, so you should `defer value.deref()` it
     /// before handing it to this function!!!
     pub fn insert(&mut self, key: EnvStr, val: EnvStr) {
-        // PORT NOTE: `bun.handleOom` → `.expect("OOM")` (abort-on-OOM is the Rust default).
         let result = self.map.get_or_put(key).expect("OOM");
         if !result.found_existing {
             key.ref_();
@@ -121,7 +118,8 @@ impl EnvMap {
         new
     }
 
-    // PORT NOTE: allocator param dropped (global mimalloc); identical to `clone` now.
+    // The Zig version's allocator param has no Rust equivalent (global mimalloc),
+    // so this is identical to `clone`.
     pub fn clone_with_allocator(&self) -> EnvMap {
         self.clone()
     }

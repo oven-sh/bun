@@ -1,3 +1,4 @@
+use crate::postgres::AnyPostgresError;
 use crate::postgres::protocol::new_writer::NewWriter;
 use crate::postgres::types::int_types::int32;
 use crate::shared::Data;
@@ -21,8 +22,7 @@ impl PasswordMessage {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), AnyPostgresError> {
         let password = self.password.slice();
         let count: usize = core::mem::size_of::<u32>() + password.len() + 1;
         // Zig: `[_]u8{'p'} ++ toBytes(Int32(count))` — comptime array concat.
@@ -39,7 +39,7 @@ impl PasswordMessage {
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyPostgresError> {
         self.write_internal(writer)
     }
 }

@@ -35,7 +35,7 @@ impl BakeSourceProvider {
     }
 
     pub fn to_source_content_ptr(&self) -> source_map::parsed_source_map::SourceContentPtr {
-        // PORT NOTE: `bun_sourcemap` defines its own opaque `BakeSourceProvider` so it
+        // `bun_sourcemap` defines its own opaque `BakeSourceProvider` so it
         // can name the pointer without a tier-6 dep. Both are `#[repr(C)]` ZST opaques
         // for the same C++ type, so the pointer cast is layout-correct.
         source_map::parsed_source_map::SourceContentPtr::from_bake_provider(
@@ -56,7 +56,7 @@ impl BakeSourceProvider {
         // SAFETY: `global` is a `Bake::GlobalObject` (checked above), so the
         // attached `PerThread*` is non-null and live for the bake build session.
         let pt = unsafe { BakeGlobalObject__getPerThreadData(global) };
-        // PORT NOTE: `PerThread`'s fields name `bun_bundler::OutputFile`, which
+        // `PerThread`'s fields name `bun_bundler::OutputFile`, which
         // lives above this crate (forward-dep cycle). The field access
         // (`pt.source_maps.get(filename)` →
         // `pt.bundled_outputs[idx].value.asSlice()`) is dispatched through the
@@ -91,8 +91,6 @@ impl BakeSourceProvider {
     }
 }
 
-// PORT NOTE: Zig dispatched via `comptime SourceProviderKind: type` + `@hasDecl`;
-// Rust uses a trait per PORTING.md §Dispatch.
 impl SourceProvider for BakeSourceProvider {
     const HAS_EXTERNAL_DATA: bool = true;
 

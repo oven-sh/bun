@@ -22,13 +22,6 @@ use crate::source::Source;
 
 bun_core::define_scoped_log!(log, PipeWriter, hidden);
 
-// TODO(port): bun_sys::Error::oom — `oom()` is a private free fn in
-// `bun_sys::error`; promote to assoc fn or re-export, then drop this shim.
-#[inline]
-fn oom_err() -> sys::Error {
-    sys::Error::from_code(sys::E::ENOMEM, sys::Tag::write)
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // WriteResult / WriteStatus
 // ──────────────────────────────────────────────────────────────────────────
@@ -130,7 +123,7 @@ pub trait PosixPipeWriter {
     }
 
     fn on_poll(&mut self, size_hint: isize, received_hup: bool) {
-        // PORT NOTE: reshaped for borrowck — capture buffer.len() before further &mut self calls.
+        // reshaped for borrowck — capture buffer.len() before further &mut self calls.
         let buffer_len = self.get_buffer().len();
         log!("onPoll({})", buffer_len);
         if buffer_len == 0 && !received_hup {
@@ -548,7 +541,7 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         self.parent = Some(bun_ptr::ParentRef::from(
             core::ptr::NonNull::new(parent).expect("set_parent: parent must not be null"),
         ));
-        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
+        // reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
             .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
@@ -569,8 +562,10 @@ impl<Parent: PosixBufferedWriterParent> PosixBufferedWriter<Parent> {
         }
     }
 
-    /// Zig accepts `bun.FD`, `*bun.MovableIfWindowsFd`, or `bun.MovableIfWindowsFd`.
-    // TODO(port): MovableIfWindowsFd overload — add an Into<Fd> bound or a separate fn.
+    /// Zig accepts `bun.FD`, `*bun.MovableIfWindowsFd`, or `bun.MovableIfWindowsFd`
+    /// and reduces them all to the POSIX fd (`rawfd.getPosix()`); on POSIX a
+    /// `MovableIfWindowsFd` never transfers ownership, so Rust callers pass the
+    /// plain `Fd` (via `MovableIfWindowsFd::get_posix()` when needed).
     pub fn start(&mut self, rawfd: Fd, pollable: bool) -> sys::Result<()> {
         let fd = rawfd;
         self.pollable = pollable;
@@ -696,9 +691,13 @@ unsafe impl<Parent: PosixStreamingWriterParent> bun_ptr::LaunderedSelf
 }
 
 impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
-    // TODO: configurable?
-    // TODO(port): std.heap.page_size_min — pick correct const for target.
-    const CHUNK_SIZE: usize = 4096;
+    // Zig `std.heap.page_size_min` — the smallest page size the target
+    // supports (16K on Apple Silicon, 4K elsewhere among our targets).
+    const CHUNK_SIZE: usize = if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
+        16384
+    } else {
+        4096
+    };
 
     /// Raw backref to the owning `Parent`. Returned as `*mut` (never `&mut`)
     /// because this writer is an intrusive field of `Parent` and a `&mut Parent`
@@ -794,7 +793,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
     pub fn set_parent(&mut self, parent: *mut Parent) {
         self.parent = parent;
-        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
+        // reshaped for borrowck — capture *mut Self before borrowing field.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
             .set_owner(Owner::new(Parent::POLL_OWNER_TAG, owner.cast()));
@@ -852,7 +851,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         let before_len = self.outgoing.size();
 
         if self.outgoing.write_utf16(buf).is_err() {
-            return WriteResult::Err(oom_err());
+            return WriteResult::Err(sys::Error::oom());
         }
 
         let buf_len = self.outgoing.size() - before_len;
@@ -873,7 +872,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
 
         const CHECK_ASCII: bool = false;
         if self.outgoing.write_latin1::<CHECK_ASCII>(buf).is_err() {
-            return WriteResult::Err(oom_err());
+            return WriteResult::Err(sys::Error::oom());
         }
 
         let buf_len = self.outgoing.size() - before_len;
@@ -943,7 +942,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             // this is streaming, but we buffer the data below `chunk_size` to
             // reduce the number of writes
             if self.outgoing.write(buf).is_err() {
-                return WriteResult::Err(oom_err());
+                return WriteResult::Err(sys::Error::oom());
             }
 
             // noop, but need this to have a chance
@@ -959,7 +958,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         if self.outgoing.size() > 0 {
             // make sure write is in-order
             if self.outgoing.write(buf).is_err() {
-                return WriteResult::Err(oom_err());
+                return WriteResult::Err(sys::Error::oom());
             }
 
             return self.try_write_newly_buffered_data();
@@ -970,7 +969,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
         match rc {
             WriteResult::Pending(amt) => {
                 if self.outgoing.write(&buf[amt..]).is_err() {
-                    return WriteResult::Err(oom_err());
+                    return WriteResult::Err(sys::Error::oom());
                 }
                 self.parent_on_write(amt, WriteStatus::Pending);
                 Self::register_poll(self);
@@ -978,7 +977,7 @@ impl<Parent: PosixStreamingWriterParent> PosixStreamingWriter<Parent> {
             WriteResult::Wrote(amt) => {
                 if amt < buf.len() {
                     if self.outgoing.write(&buf[amt..]).is_err() {
-                        return WriteResult::Err(oom_err());
+                        return WriteResult::Err(sys::Error::oom());
                     }
                     self.parent_on_write(amt, WriteStatus::Pending);
                     Self::register_poll(self);
@@ -1794,8 +1793,8 @@ impl StreamBuffer {
     }
 
     pub fn maybe_shrink(&mut self) {
-        // TODO(port): std.heap.pageSize() — using 4096; query the actual page size.
-        let page = 4096usize;
+        // Zig `std.heap.pageSize()` — runtime page size of the host.
+        let page = bun_core::page_size();
         if self.list.capacity() > page {
             // Zig: expandToCapacity() then shrinkAndFree(page) — i.e. truncate the
             // buffer's content to `page` bytes AND release the excess capacity.
@@ -1857,7 +1856,6 @@ impl StreamBuffer {
         buffer_u16: Option<&[u16]>,
         kind: WriteKind,
     ) -> Result<&'a [u8], OOM> {
-        // TODO(refactor): comptime fn-ptr identity dispatch → enum tag; consider unifying with write_internal.
         match kind {
             WriteKind::Latin1 => {
                 let buffer = buffer_u8.unwrap();
@@ -1883,7 +1881,7 @@ impl StreamBuffer {
             }
         }
 
-        // PORT NOTE: Zig round-trips through `Vec::<u8>::moveFromList` to call
+        // Zig round-trips through `Vec::<u8>::moveFromList` to call
         // `writeLatin1`; the underlying op is `allocateLatin1IntoUTF8WithList`,
         // which we call on the `Vec<u8>` directly.
         let len = self.list.len();
@@ -2398,7 +2396,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             let result = (|| {
                 let remain = match self.outgoing.write_or_fallback(Some(buffer), None, kind) {
                     Ok(r) => r,
-                    Err(_) => return WriteResult::Err(oom_err()),
+                    Err(_) => return WriteResult::Err(sys::Error::oom()),
                 };
                 let initial_len = remain.len();
                 let mut remain = remain;
@@ -2436,7 +2434,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
             WriteKind::Utf16 => unreachable!(),
         };
         if r.is_err() {
-            return WriteResult::Err(oom_err());
+            return WriteResult::Err(sys::Error::oom());
         }
         if had_buffered_data {
             return WriteResult::Pending(0);
@@ -2458,7 +2456,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
                         .write_or_fallback(None, Some(buffer), WriteKind::Utf16)
                     {
                         Ok(r) => r,
-                        Err(_) => return WriteResult::Err(oom_err()),
+                        Err(_) => return WriteResult::Err(sys::Error::oom()),
                     };
                 let initial_len = remain.len();
                 let mut remain = remain;
@@ -2491,7 +2489,7 @@ impl<Parent: WindowsStreamingWriterParent> WindowsStreamingWriter<Parent> {
 
         let had_buffered_data = self.outgoing.is_not_empty();
         if self.outgoing.write_utf16(buffer).is_err() {
-            return WriteResult::Err(oom_err());
+            return WriteResult::Err(sys::Error::oom());
         }
         if had_buffered_data {
             return WriteResult::Pending(0);

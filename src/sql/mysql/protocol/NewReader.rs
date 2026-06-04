@@ -21,7 +21,7 @@ pub trait ReaderContext: Copy {
     fn set_offset_from_start(self, offset: usize);
 }
 
-// PORT NOTE: Zig's `NewReaderWrap(Context, fn, fn, fn, fn, fn, fn, fn) type`
+// Zig's `NewReaderWrap(Context, fn, fn, fn, fn, fn, fn, fn) type`
 // returned an anonymous `struct { wrapped: Context, ... }`. In Rust the comptime
 // fn-pointer params collapse into the `ReaderContext` trait above, and the
 // returned struct becomes this generic wrapper. `NewReader(Context)` (which
@@ -34,8 +34,8 @@ pub struct NewReader<C: ReaderContext> {
 }
 
 impl<C: ReaderContext> NewReader<C> {
-    // PORT NOTE: Zig `pub const Ctx = Context` — in Rust the generic param `C` IS
-    // the name; inherent associated types are unstable, so callers name `C` directly.
+    // Zig `pub const Ctx = Context` — in Rust the generic param `C` IS the name;
+    // callers name `C` directly.
 
     pub const IS_WRAPPED: bool = true;
 
@@ -125,14 +125,13 @@ impl<C: ReaderContext> NewReader<C> {
         Err(AnyMySQLError::InvalidEncodedInteger)
     }
 
-    pub fn encoded_len_int_with_size(self, size: &mut usize) -> Result<u64, bun_core::Error> {
-        // TODO(port): narrow error set
+    pub fn encoded_len_int_with_size(self, size: &mut usize) -> Result<u64, AnyMySQLError> {
         if let Some(result) = decode_length_int(self.peek()) {
             self.skip(result.bytes_read);
             *size += result.bytes_read;
             return Ok(result.value);
         }
-        Err(bun_core::err!("InvalidEncodedInteger"))
+        Err(AnyMySQLError::InvalidEncodedInteger)
     }
 }
 
@@ -157,7 +156,7 @@ pub type NewReaderOf<C> = NewReader<C>;
 // struct with `decode` / `decodeAllocator` that auto-wrapped `context` into
 // `.{ .wrapped = context }` when `Context` lacked `is_wrapped`.
 //
-// PORT NOTE: the `@hasDecl(Context, "is_wrapped")` branch collapses — in Rust,
+// The `@hasDecl(Context, "is_wrapped")` branch collapses — in Rust,
 // callers either already have a `NewReader<C>` or a bare `C: ReaderContext`, and
 // `Into<NewReader<C>>` covers both. The allocator-taking variant drops its
 // `std.mem.Allocator` param per PORTING.md §Allocators (non-AST crate).
@@ -181,13 +180,14 @@ pub trait Decode: Sized {
         self.decode_internal(context.into())
     }
 
-    // Zig `decodeAllocator` — allocator param deleted (global mimalloc).
+    // Zig `decodeAllocator` — allocator param deleted (global mimalloc). The sole
+    // Zig caller (JSMySQLConnection.zig onResultRow -> ResultSet.Row.decode) passed a
+    // `stackFallback(4096, bun.default_allocator)` allocator — a perf-only divergence
+    // already documented at the JSMySQLConnection.rs call site (PERF(port) note).
     fn decode_allocator<C: ReaderContext>(
         &mut self,
         context: impl Into<NewReader<C>>,
     ) -> Result<(), AnyMySQLError> {
-        // TODO(port): some Zig decodeFn callees took (this, allocator, Context, ctx);
-        // confirm none need a distinct arena before unifying with `decode`.
         self.decode_internal(context.into())
     }
 }

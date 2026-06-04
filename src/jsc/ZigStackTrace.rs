@@ -61,11 +61,9 @@ impl ZigStackTrace {
             if source_line_len > 0 {
                 let n_lines = usize::try_from((source_lines_iter.i + 1).max(0)).expect("int cast");
                 let mut source_lines: Vec<api::SourceLine> = Vec::with_capacity(n_lines);
-                // PORT NOTE: Zig packed all line texts into a single contiguous
-                // `source_line_buf` and stored sub-slices in each `SourceLine`.
-                // The Rust `api::SourceLine.text` is `Box<[u8]>` (owns its bytes),
-                // so each line gets its own allocation instead.
-                // PERF(port): one alloc per line vs one shared buffer — profile if hot.
+                // `api::SourceLine.text` is `Box<[u8]>` (owns its bytes), so each
+                // line gets its own allocation rather than sub-slices of one shared
+                // buffer. One alloc per line — profile if this ever shows up hot.
                 source_lines_iter = self.source_line_iterator();
                 while let Some(source) = source_lines_iter.next() {
                     let text = source.text.slice();

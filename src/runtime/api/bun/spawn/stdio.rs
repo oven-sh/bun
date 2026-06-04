@@ -33,8 +33,9 @@ bun_output::define_scoped_log!(log, SYS, visible);
 /// Anonymous payload of `Stdio::Capture` in Zig: `struct { buf: *bun.Vec<u8> }`.
 #[derive(Clone, Copy)]
 pub struct Capture {
-    // TODO(port): lifetime — Zig holds a raw `*bun.Vec<u8>` backref owned
-    // elsewhere (shell). LIFETIMES.tsv has no row; treating as BACKREF.
+    // BACKREF: raw pointer to a capture buffer owned by the shell interpreter
+    // (Zig: `*bun.Vec<u8>`). The shell keeps the buffer alive for the lifetime
+    // of the spawned process; this struct never frees it.
     pub buf: *mut Vec<u8>,
 }
 
@@ -185,11 +186,11 @@ impl Stdio {
                 }
             }
 
-            // PORT NOTE: reshaped for borrowck — `remain` borrows `*self`, so we
+            // Note: reshaped for borrowck — `remain` borrows `*self`, so we
             // must drop it before mutating `self`. Shadowing ends the borrow here.
             let _ = remain;
 
-            // PORT NOTE: in Zig only `.array_buffer` / `.blob` are explicitly
+            // Note: in Zig only `.array_buffer` / `.blob` are explicitly
             // deinit'd before reassignment. In Rust, assigning to `*self` drops
             // the previous variant via `Drop`, which has equivalent behaviour
             // for those arms and is a no-op for others (and additionally closes

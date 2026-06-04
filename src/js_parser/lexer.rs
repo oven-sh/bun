@@ -14,9 +14,6 @@ use bun_core::{Environment, feature_flags as FeatureFlags};
 use identifier as js_identifier;
 // MOVE-IN: Indentation now lives in this crate (was bun_js_printer::Options::Indentation).
 use bun_ast::{Indentation, IndentationCharacter};
-// TODO(port): arena threading — js_parser is an AST crate; many `arena.*` calls below
-// should use `&'bump bumpalo::Bump`. For now we keep a `&dyn Allocator`-ish slot and
-// route owned buffers through `Vec`/`Box`.
 use bun_alloc::Arena;
 
 // Unicode ID-Start/ID-Continue tables moved DOWN to `bun_core` (pure data;
@@ -179,7 +176,6 @@ pub type NewLexer<'a, J: JsonOptionsT = DefaultJsonOptions> = LexerType<
     { <J as JsonOptionsT>::GUESS_INDENTATION },
 >;
 
-// TODO(port): `thiserror` not in this crate's deps; hand-roll Display/Error.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum Error {
     UTF8Fail,
@@ -188,8 +184,8 @@ pub enum Error {
     UnexpectedSyntax,
     JSONStringsMustUseDoubleQuotes,
     ParserError,
-    // TODO(port): Zig `error.Backtrack` is returned from `expected()` but not declared in
-    // the local error set; modeled here as an extra variant.
+    // Zig `error.Backtrack` is returned from `expected()` but not declared in
+    // the local error set; modeled here as an extra variant. Intentional.
     Backtrack,
 }
 bun_core::impl_tag_error!(Error);
@@ -241,7 +237,7 @@ pub struct ScanResult<'a> {
     pub contents: &'a [u8],
 }
 
-// PORT NOTE: Zig's `FakeArrayList16` (fixed-slice writer with the `append` surface of an
+// Note: Zig's `FakeArrayList16` (fixed-slice writer with the `append` surface of an
 // ArrayList) is dead — every `decodeEscapeSequences` callsite in lexer.zig passes
 // `std.array_list.Managed(u16)`. Dropped instead of porting; `decode_escape_sequences` is
 // monomorphized to `Vec<u16>`.
@@ -373,21 +369,19 @@ pub struct LexerType<
     pub string_literal_raw_format: StringLiteralRawFormat,
     pub temp_buffer_u16: Vec<u16>,
 
-    /// Only used for JSON stringification when bundling
-    /// This is a zero-bit type unless we're parsing JSON.
-    // TODO(port): Zig uses `if (is_json) bool else void` for zero-cost when !is_json.
-    // PERF(port): always-bool here wastes 1 byte in non-JSON instantiations — profile if hot.
+    /// Only used for JSON stringification when bundling.
+    /// (Zig made this `void` unless parsing JSON; always a bool here.)
     pub is_ascii_only: bool,
     pub track_comments: bool,
     pub all_comments: Vec<Range>,
 
-    // TODO(port): Zig field type is `if (guess_indentation) struct{..} else void`.
-    // PERF(port): always-present here — profile if hot.
+    /// Only meaningful when `GUESS_INDENTATION` is set.
+    /// (Zig made this `void` unless guessing indentation; always present here.)
     pub indent_info: IndentInfo,
 }
 
 // Convenience: associated constants mirroring Zig's `const json = json_options;` etc.
-// PORT NOTE: Rust macros must emit complete items; the macro now wraps the
+// Note: Rust macros must emit complete items; the macro now wraps the
 // entire `impl { ... }` block instead of just the header.
 macro_rules! lexer_impl_header {
     ($($body:tt)*) => {
@@ -507,7 +501,8 @@ lexer_impl_header! {
             return Ok(());
         }
 
-        // TODO(port): Zig dupes `notes` with `self.log.msgs.arena`.
+        // Zig dupes `notes` with `self.log.msgs.arena`; the Log API takes an
+        // owned `Box<[Data]>` here (error path only, allocation cost is moot).
         let notes_owned: Box<[bun_ast::Data]> = notes.to_vec().into_boxed_slice();
         self.log()
             .add_range_error_fmt_with_notes(Some(self.source), r, notes_owned, args);
@@ -563,7 +558,7 @@ lexer_impl_header! {
     /// truncate the Vecs to their snapshotted lengths. `log`/`source`/`arena`
     /// are left untouched.
     pub fn restore(&mut self, original: &LexerSnapshot<'a>) {
-        // TODO(port): keep this list in sync with the struct fields.
+        // Keep this field list in sync with `snapshot()` and the Lexer struct fields.
         self.current = original.current;
         self.start = original.start;
         self.end = original.end;
@@ -627,7 +622,7 @@ lexer_impl_header! {
         text: &[u8],
         buf: &mut Vec<u16>,
     ) -> Result<(), Error> {
-        // PORT NOTE: monomorphized — Zig is generic over `comptime BufType: type` but every
+        // Note: monomorphized — Zig is generic over `comptime BufType: type` but every
         // caller passes `std.array_list.Managed(u16)`; `FakeArrayList16` was dead in the source.
         if IS_JSON {
             self.is_ascii_only = false;
@@ -1170,7 +1165,7 @@ lexer_impl_header! {
         &self.contents[self.current..]
     }
 
-    /// PORT NOTE: split into an `#[inline(always)]` ASCII/EOF fast path plus
+    /// Note: split into an `#[inline(always)]` ASCII/EOF fast path plus
     /// an outlined multibyte tail. `step()` is called from ~50 sites inside
     /// the giant `next()` switch and inlines into it; with the multibyte
     /// decode in the same body LLVM declined to inline `next_codepoint`
@@ -1269,8 +1264,7 @@ lexer_impl_header! {
     pub fn scan_identifier_with_escapes(
         &mut self,
         kind: IdentifierKind,
-    ) -> Result<ScanResult<'a>, bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<ScanResult<'a>, Error> {
         let mut result = ScanResult {
             token: T::TEndOfFile,
             contents: b"".as_slice(),
@@ -1334,7 +1328,7 @@ lexer_impl_header! {
         let original_text = self.raw();
 
         debug_assert!(self.temp_buffer_u16.is_empty());
-        // PORT NOTE: reshaped for borrowck — we move temp_buffer_u16 out, use it, then
+        // Note: reshaped for borrowck — we move temp_buffer_u16 out, use it, then
         // clear and put it back (mirrors `defer clearRetainingCapacity()`).
         let mut tmp = core::mem::take(&mut self.temp_buffer_u16);
         tmp.reserve(original_text.len());
@@ -1343,9 +1337,9 @@ lexer_impl_header! {
         if let Err(e) = decode_res {
             tmp.clear();
             self.temp_buffer_u16 = tmp;
-            return Err(e.into());
+            return Err(e);
         }
-        result.contents = self.utf16_to_string(&tmp)?;
+        result.contents = self.utf16_to_string(&tmp);
         tmp.clear();
         self.temp_buffer_u16 = tmp;
 
@@ -1587,8 +1581,7 @@ lexer_impl_header! {
                         self.step_with(contents);
                         if self.code_point == 0x5C {
                             self.identifier = self
-                                .scan_identifier_with_escapes(IdentifierKind::Private)
-                                .map_err(|_| Error::SyntaxError)? // TODO(port): error coercion
+                                .scan_identifier_with_escapes(IdentifierKind::Private)?
                                 .contents;
                         } else {
                             if !is_identifier_start(self.code_point) {
@@ -1601,8 +1594,7 @@ lexer_impl_header! {
                             }
                             if self.code_point == 0x5C {
                                 self.identifier = self
-                                    .scan_identifier_with_escapes(IdentifierKind::Private)
-                                    .map_err(|_| Error::SyntaxError)?
+                                    .scan_identifier_with_escapes(IdentifierKind::Private)?
                                     .contents;
                             } else {
                                 self.identifier = self.raw();
@@ -2178,8 +2170,7 @@ lexer_impl_header! {
                     } else {
                         // @branchHint(.unlikely)
                         let scan_result = self
-                            .scan_identifier_with_escapes(IdentifierKind::Normal)
-                            .map_err(|_| Error::SyntaxError)?; // TODO(port): error coercion
+                            .scan_identifier_with_escapes(IdentifierKind::Normal)?;
                         self.identifier = scan_result.contents;
                         self.token = scan_result.token;
                     }
@@ -2196,8 +2187,7 @@ lexer_impl_header! {
                     }
 
                     let scan_result = self
-                        .scan_identifier_with_escapes(IdentifierKind::Normal)
-                        .map_err(|_| Error::SyntaxError)?;
+                        .scan_identifier_with_escapes(IdentifierKind::Normal)?;
                     self.identifier = scan_result.contents;
                     self.token = scan_result.token;
                 }
@@ -2220,8 +2210,7 @@ lexer_impl_header! {
                         }
                         if self.code_point == 0x5C {
                             let scan_result = self
-                                .scan_identifier_with_escapes(IdentifierKind::Normal)
-                                .map_err(|_| Error::SyntaxError)?;
+                                .scan_identifier_with_escapes(IdentifierKind::Normal)?;
                             self.identifier = scan_result.contents;
                             self.token = scan_result.token;
                         } else {
@@ -2519,7 +2508,7 @@ lexer_impl_header! {
                         if !IS_JSON {
                             let pragma_trigger_pos = self.end; // Position OF #/@
                             // Use remaining() which starts *after* the consumed #/@
-                            // PORT NOTE: reshaped for borrowck — `remaining()` borrows
+                            // Note: reshaped for borrowck — `remaining()` borrows
                             // `self.contents`; `scan_pragma` needs `&mut self`.
                             // Detach via `StoreStr` (arena-owned, lives for parse).
                             let chunk = js_ast::StoreStr::new(self.remaining());
@@ -2664,8 +2653,8 @@ lexer_impl_header! {
     pub fn range(&self) -> Range {
         Range {
             loc: bun_ast::usize2loc(self.start),
-            // TODO(port): std.math.lossyCast — saturate on overflow
-            len: (self.end - self.start) as i32,
+            // Zig `std.math.lossyCast` — saturate on overflow.
+            len: i32::try_from(self.end - self.start).unwrap_or(i32::MAX),
         }
     }
 
@@ -2808,8 +2797,8 @@ lexer_impl_header! {
     #[inline]
     fn assert_not_json(&self) {
         if IS_JSON {
-            // TODO(port): Zig uses @compileError; Rust const generics can't compile-error
-            // here without nightly. Could gate JSX methods to non-JSON instantiations.
+            // Zig used @compileError; stable Rust can't fail the build on a
+            // const-generic branch, so this is a runtime check on a dead path.
             unreachable!("JSON should not reach this point");
         }
     }
@@ -2886,14 +2875,11 @@ lexer_impl_header! {
         }
     }
 
-    pub fn utf16_to_string(
-        &self,
-        js: JavascriptString<'_>,
-    ) -> Result<&'a [u8], bun_core::Error> {
-        // TODO(port): arena routing — Zig: strings.toUTF8AllocWithType(lexer.arena, js)
-        // PERF(port): goes through global Vec then dupes into the arena.
+    pub fn utf16_to_string(&self, js: JavascriptString<'_>) -> &'a [u8] {
+        // Zig wrote straight into the arena (`strings.toUTF8AllocWithType(lexer.arena, js)`);
+        // here we transcode into a temporary Vec and dupe into the arena.
         let owned = strings::to_utf8_alloc_with_type(js);
-        Ok(self.arena.alloc_slice_copy(&owned))
+        self.arena.alloc_slice_copy(&owned)
     }
 
     pub fn next_inside_jsx_element(&mut self) -> Result<(), Error> {
@@ -3352,7 +3338,7 @@ lexer_impl_header! {
                     base = 16;
                 }
 
-                // PORT NOTE: std.fmt.parseInt(i32, ..) — bytes-based parser; source bytes are
+                // Note: std.fmt.parseInt(i32, ..) — bytes-based parser; source bytes are
                 // not guaranteed UTF-8 so we never round-trip through &str (PORTING.md §Strings).
                 // Also reject values outside the Unicode range (0..=0x10FFFF); otherwise
                 // `push_codepoint_utf16` hits `debug_assert`s in `u16_lead`/`u16_trail`
@@ -3518,7 +3504,7 @@ lexer_impl_header! {
         // them. <CR><LF> and <CR> LineTerminatorSequences are normalized to
         // <LF> for both TV and TRV. An explicit EscapeSequence is needed to
         // include a <CR> or <CR><LF> sequence.
-        // TODO(port): MutableString — using arena-backed Vec<u8> here.
+        // Zig used MutableString; an owned Vec<u8> scratch buffer here.
         let mut bytes: Vec<u8> = text.to_vec();
         let mut end: usize = 0;
         let mut i: usize = 0;
@@ -3713,7 +3699,8 @@ lexer_impl_header! {
                 if is_big_integer_literal {
                     self.identifier = text;
                 } else if is_invalid_legacy_octal_literal {
-                    // TODO(port): std.fmt.parseFloat — bytes-based; using bun_core::wtf::parse_double
+                    // Zig used `std.fmt.parseFloat`; `bun_core::wtf::parse_double` is the
+                    // bytes-based equivalent (legacy-octal edge path only).
                     match bun_core::wtf::parse_double(text) {
                         Ok(num) => {
                             self.number = num;

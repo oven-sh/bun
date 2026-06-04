@@ -26,7 +26,7 @@ use bun_zlib as Zlib;
 use crate::Command;
 use crate::cli::which_npm_client::NPMClient;
 
-// PORT NOTE: `cli/create/` has no mod.rs yet; mount the generator directly here
+// `cli/create/` has no mod.rs yet; mount the generator directly here
 // so `SourceFileProjectGenerator::generate(...)` resolves. The submodule itself
 // reaches back into `crate::cli::create_command::Example` via absolute path.
 #[path = "create/SourceFileProjectGenerator.rs"]
@@ -37,7 +37,7 @@ pub mod SourceFileProjectGenerator;
 // thread (sequenced — git thread writes after main is done with it).
 static BUN_PATH_BUF: bun_core::RacyCell<PathBuffer> = bun_core::RacyCell::new(PathBuffer::ZEROED);
 
-// PORT NOTE: bun.OSPathLiteral — `bun_paths` does not (yet) export an
+// bun.OSPathLiteral — `bun_paths` does not (yet) export an
 // `os_path_literal!` macro from this crate's POV. `OSPathSlice` is `[u8]` on
 // POSIX, so byte-string literals coerce directly; the Windows `[u16]` form will
 // need the macro once it lands in `bun_paths` (see src/bun.rs).
@@ -141,7 +141,6 @@ impl ProgressBuf {
     }
 
     pub(crate) fn print(args: core::fmt::Arguments<'_>) -> Result<&'static [u8], bun_core::Error> {
-        // TODO(port): narrow error set
         Self::BUF_INDEX.with(|i| i.set(i.get() + 1));
         let idx = Self::BUF_INDEX.with(|i| i.get()) % 2;
         Self::BUFS.with_borrow_mut(|bufs| {
@@ -157,13 +156,13 @@ impl ProgressBuf {
         })
     }
 
-    pub(crate) fn pretty(
-        _fmt: &'static str,
-        args: core::fmt::Arguments<'_>,
-    ) -> Result<&'static [u8], bun_core::Error> {
-        // TODO(port): Output.prettyFmt is a comptime fmt-string transform; the Rust
-        // `pretty_fmt` takes a single rendered payload, so callers should pre-render
-        // `args` with the color template baked in. `_fmt` is retained for API parity.
+    /// Zig's `Output.prettyFmt` is a comptime fmt-string transform; the Rust
+    /// `pretty_fmt` post-processes the rendered payload, so callers bake the
+    /// color template into `args` directly. One divergence: `<tag>` sequences
+    /// inside interpolated arguments (e.g. a user-supplied template name) are
+    /// also rewritten here, whereas Zig only transformed the template literal
+    /// and printed argument bytes verbatim. Cosmetic-only on adversarial input.
+    pub(crate) fn pretty(args: core::fmt::Arguments<'_>) -> Result<&'static [u8], bun_core::Error> {
         if Output::enable_ansi_colors_stdout() {
             ProgressBuf::print(format_args!("{}", Output::pretty_fmt::<true>(args)))
         } else {
@@ -178,7 +177,9 @@ struct CreateOptions {
     overwrite: bool,
     skip_git: bool,
     skip_package_json: bool,
-    positionals: Box<[&'static [u8]]>, // TODO(port): lifetime — borrows from clap args
+    // `&'static` is sound: entries are duped into the process-lifetime CLI
+    // arena in `parse` (via `crate::cli::cli_dupe`), not borrowed from clap args.
+    positionals: Box<[&'static [u8]]>,
     verbose: bool,
     open: bool,
 }
@@ -221,7 +222,7 @@ impl CreateOptions {
         };
 
         let mut opts = CreateOptions {
-            // PORT NOTE: clap positionals borrow from process argv; dupe each
+            // clap positionals borrow from process argv; dupe each
             // entry into the process-lifetime CLI arena to obtain
             // `&'static [u8]` (mirrors Zig where argv is process-static).
             positionals: args
@@ -236,8 +237,9 @@ impl CreateOptions {
         if opts.positionals.len() >= 1
             && (opts.positionals[0] == b"c" || opts.positionals[0] == b"create")
         {
-            // TODO(port): re-slicing Box<[T]> — store as Vec or slice with offset.
-            opts.positionals = opts.positionals[1..].to_vec().into_boxed_slice();
+            let mut v = core::mem::take(&mut opts.positionals).into_vec();
+            v.remove(0);
+            opts.positionals = v.into_boxed_slice();
         }
 
         opts.skip_package_json = args.flag(b"--no-package-json");
@@ -302,7 +304,7 @@ impl CreateCommand {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
             ..Default::default()
         };
-        // PORT NOTE: reshaped for borrowck — `Progress::start` returns
+        // `Progress::start` returns
         // `&mut Node` borrowing `progress` exclusively for the node's lifetime.
         // Convert to `*mut` immediately so `progress` and `node` can be used
         // independently below (matches Zig's pointer semantics; same pattern as
@@ -328,12 +330,12 @@ impl CreateCommand {
             progress.refresh_rate_ns = (bun_core::time::NS_PER_MS * 8) as u64;
         }
 
-        // PORT NOTE: Zig `defer progress.refresh()`. Capture `*mut Progress` so
+        // Zig `defer progress.refresh()`. Capture `*mut Progress` so
         // the guard does not hold an exclusive borrow for the whole fn body;
         // `progress` is declared earlier so it is still alive when this drops.
         let progress_ptr: *mut Progress = &raw mut progress;
         let _refresh_on_exit = scopeguard::guard(progress_ptr, |p| {
-            // SAFETY: see PORT NOTE above — `progress` outlives this guard.
+            // SAFETY: see note above — `progress` outlives this guard.
             unsafe { (*p).refresh() };
         });
 
@@ -461,7 +463,7 @@ impl CreateCommand {
 
                 progress.refresh();
 
-                // PORT NOTE: see SKIP_DIRS note re: os_path_literal — Plucker::init
+                // See SKIP_DIRS note re: os_path_literal — Plucker::init
                 // takes `&[OSPathChar]`, which is `&[u8]` on POSIX / `&[u16]` on Windows.
                 #[cfg(not(windows))]
                 let package_json_lit: &OSPathSlice = b"package.json";
@@ -480,14 +482,26 @@ impl CreateCommand {
                 };
 
                 if !create_options.overwrite {
-                    // TODO(port): blocked_on bun_libarchive::ArchiveAppender impl for
-                    // fs::DirnameStore — Zig passed `FileSystem.DirnameStore` (has
-                    // appendMutable). For now route through the no-op `()` appender.
-                    Archiver::get_overwriting_file_list::<(), 1>(
+                    // Zig passed `FileSystem.DirnameStore`, an interning store whose
+                    // `append` returns a stable copy of the path used as the
+                    // overwrite-list key. The Rust overwrite list boxes its keys
+                    // itself, so the appender only needs to hand back a stable view
+                    // of the path for that copy.
+                    struct OverwriteListAppender {
+                        buf: Vec<u8>,
+                    }
+                    impl bun_libarchive::ArchiveAppender for OverwriteListAppender {
+                        fn append(&mut self, path: &[u8]) -> Result<&[u8], bun_core::Error> {
+                            self.buf.clear();
+                            self.buf.extend_from_slice(path);
+                            Ok(&self.buf)
+                        }
+                    }
+                    Archiver::get_overwriting_file_list::<OverwriteListAppender, 1>(
                         &tarball_buf_list,
                         destination,
                         &mut archive_context,
-                        &mut (),
+                        &mut OverwriteListAppender { buf: Vec::new() },
                     )?;
 
                     for never_conflict_path in NEVER_CONFLICT {
@@ -555,11 +569,10 @@ impl CreateCommand {
                 progress.refresh();
 
                 let abs_template_path = filesystem.abs(&template_parts);
-                // TODO(port): std.fs.openDirAbsolute — use bun_sys directory APIs
-                let _ = bun_sys::OpenDirOptions {
-                    iterate: true,
-                    ..Default::default()
-                };
+                // Zig: `std.fs.openDirAbsolute(abs_template_path, .{ .iterate = true })`.
+                // `Dir::open` routes through `open_dir_at`, which always yields an
+                // iterable handle (`FILE_LIST_DIRECTORY` on Windows; readdir-capable
+                // `O_DIRECTORY` fd on POSIX).
                 let template_dir = match bun_sys::Dir::open(abs_template_path) {
                     Ok(d) => d,
                     Err(err) => {
@@ -575,9 +588,8 @@ impl CreateCommand {
                     }
                 };
 
-                // TODO(port): std.fs.deleteTreeAbsolute — bun_sys lacks an absolute helper;
-                // route through cwd-relative delete_tree (absolute paths bypass dirfd on POSIX).
-                let _ = bun_sys::Dir::cwd().delete_tree(destination);
+                // Zig: `std.fs.deleteTreeAbsolute(destination) catch {};`
+                let _ = bun_sys::delete_tree_absolute(destination);
                 let destination_dir__ = match bun_sys::Fd::cwd().make_open_path(destination) {
                     Ok(d) => d,
                     Err(err) => {
@@ -1003,16 +1015,16 @@ impl CreateCommand {
                 //     try properties_list.ensureUnusedCapacity(new_properties_count);
                 // }
 
-                // TODO(port): InjectionPrefill — large block of mutable static AST nodes used to
-                // inject "bun"/"macros"/dependency properties into package.json. The Zig code builds
-                // a tree of `E.String`/`E.Object`/`G.Property` values stored in `pub var` statics
-                // and wires their `.properties` lists together at runtime. In Rust, mutable statics
-                // of non-Sync AST types require careful redesign (likely thread_local! + Lazy or
-                // building the tree on the stack/arena per call). Since every consumer of
-                // InjectionPrefill below is commented out except `npx_react_scripts_build` and the
-                // three `.properties =` wiring lines (which themselves only feed commented-out
-                // code), we stub the module here and leave the full structure as a comment for
-                // reference.
+                // InjectionPrefill — in Zig this is a large block of mutable static AST
+                // nodes used to inject "bun"/"macros"/dependency properties into
+                // package.json (a tree of `E.String`/`E.Object`/`G.Property` values in
+                // `pub var` statics, with their `.properties` lists wired together at
+                // runtime). Every consumer of it below is commented out (matching the
+                // Zig source) except `npx_react_scripts_build`, so the module is
+                // stubbed here with the full structure preserved as a comment for
+                // reference; if the commented-out injection code is ever revived, the
+                // statics should be rebuilt on the stack/arena per call rather than as
+                // mutable statics of non-Sync AST types.
                 mod injection_prefill {
                     // pub var dependencies_e_string = E.String.init(dependencies_string);
                     // pub var devDependencies_e_string = E.String.init(dev_dependencies_string);
@@ -1078,12 +1090,11 @@ impl CreateCommand {
                     // pub var dev_dependencies_key = js_ast.Expr{ .data = .{ .e_string = &devDependencies_e_string }, .loc = logger.Loc.Empty };
                     // pub var dependencies_key     = js_ast.Expr{ .data = .{ .e_string = &dependencies_e_string },    .loc = logger.Loc.Empty };
 
-                    // TODO(port): these wire up the static objects above; only feeds dead code
-                    pub(crate) fn wire() {
-                        // InjectionPrefill.bun_macro_relay_object.properties = ...fromBorrowedSliceDangerous(bun_macro_relay_properties[0..]);
-                        // InjectionPrefill.bun_macros_relay_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_object_properties);
-                        // InjectionPrefill.bun_macros_relay_only_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_only_object_properties);
-                    }
+                    // Zig wired up the static objects above at runtime; that wiring only
+                    // feeds the commented-out injection code below:
+                    // InjectionPrefill.bun_macro_relay_object.properties = ...fromBorrowedSliceDangerous(bun_macro_relay_properties[0..]);
+                    // InjectionPrefill.bun_macros_relay_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_object_properties);
+                    // InjectionPrefill.bun_macros_relay_only_object.properties = ...fromBorrowedSliceDangerous(&bun_macros_relay_only_object_properties);
 
                     pub(crate) fn npx_react_scripts_build() -> bun_ast::Expr {
                         bun_ast::Expr::init(
@@ -1092,8 +1103,6 @@ impl CreateCommand {
                         )
                     }
                 }
-
-                injection_prefill::wire();
 
                 // if (needs_to_inject_dev_dependency and dev_dependencies == null) {
                 //     var e_object = try ctx.allocator.create(E.Object);
@@ -1196,8 +1205,8 @@ impl CreateCommand {
                 // don't do it!
                 // if (has_react_scripts) {
                 //     bail: {
-                //         // ... (large CRA index.html injection block; see Zig source lines 1183-1265)
-                //         // TODO(port): commented-out CRA HTML rewrite logic — preserved verbatim in Zig source
+                //         // ... (large CRA index.html injection block, commented out
+                //         // in the Zig source too; see Zig source lines 1183-1265)
                 //     }
                 // }
 
@@ -1302,7 +1311,7 @@ impl CreateCommand {
                         }
 
                         let value = props.slice()[i].value.unwrap();
-                        // PORT NOTE: `as_property` returns an owned `Query`
+                        // `as_property` returns an owned `Query`
                         // (Copy types backed by an arena `StoreRef`). Borrowck
                         // ties any `&[u8]` we pull out of it to the `if let`
                         // scope even though the underlying `EString.data` is
@@ -1584,7 +1593,7 @@ impl CreateCommand {
             );
         }
 
-        // PORT NOTE: Zig `filesystem.relativeTo(destination)` —
+        // Zig `filesystem.relativeTo(destination)` —
         // `bun_resolver::fs::FileSystem` (the inline shim) has no `relative_to`; call
         // the resolver path helper directly with the singleton's `top_level_dir`.
         let rel_destination =
@@ -1819,10 +1828,12 @@ impl CreateCommand {
 
 pub(crate) struct ExtractedInfo {
     pub example_tag: ExampleTag,
-    pub template: &'static [u8], // TODO(port): lifetime — borrows from positionals/static buffer
+    // `&'static` is sound: this borrows either CLI-arena-duped positionals or a
+    // static buffer, both process-lifetime.
+    pub template: &'static [u8],
 }
 
-// PORT NOTE: hoisted from Zig fn-local `const FileCopier = struct { pub fn copy(...) }` inside
+// Hoisted from Zig fn-local `const FileCopier = struct { pub fn copy(...) }` inside
 // CreateCommand.exec, because Rust does not allow capturing-closure-style nested fns and the
 // fn body is large.
 fn file_copier_copy(
@@ -1868,7 +1879,7 @@ fn file_copier_copy(
                     }
                 }
                 bun_sys::FileKind::File => {
-                    // PORT NOTE: capture `node_` as a raw pointer so the defer closure
+                    // Capture `node_` as a raw pointer so the defer closure
                     // doesn't hold a unique borrow across the error-path `node_.end()` below.
                     let node_ptr: *mut ProgressNode = node_;
                     // SAFETY: `node_` outlives this match arm; single-threaded progress access.
@@ -1963,7 +1974,7 @@ fn file_copier_copy(
                 }
             };
             let _close_out = bun_sys::CloseOnDrop::new(outfile);
-            // PORT NOTE: capture `node_` as a raw pointer so the defer body
+            // Capture `node_` as a raw pointer so the defer body
             // doesn't hold a unique borrow across the error-path `node_.end()` below.
             let node_ptr: *mut ProgressNode = node_;
             // SAFETY: `node_` outlives this loop body; single-threaded progress access.
@@ -1998,7 +2009,7 @@ fn file_copier_copy(
     Ok(())
 }
 
-// PORT NOTE: hoisted from Zig fn-local `const Analyzer = struct {...}` inside runOnEntryPoint.
+// Hoisted from Zig fn-local `const Analyzer = struct {...}` inside runOnEntryPoint.
 struct Analyzer<'a> {
     ctx: &'a Command::Context<'a>,
     example_tag: ExampleTag,
@@ -2043,9 +2054,12 @@ fn run_on_entry_point(
 // three git command arrays directly (see GitHandler::run).
 
 pub struct Example {
-    pub name: &'static [u8],        // TODO(port): lifetime
-    pub version: &'static [u8],     // TODO(port): lifetime
-    pub description: &'static [u8], // TODO(port): lifetime
+    // `&'static` is sound for these three fields: they borrow either static
+    // literals, the process-lifetime CLI arena (`cli_arena()` — remote
+    // examples JSON), or `filesystem.filename_store` (local examples).
+    pub name: &'static [u8],
+    pub version: &'static [u8],
+    pub description: &'static [u8],
     pub local: bool,
 }
 
@@ -2088,7 +2102,7 @@ static URL_: bun_core::RacyCell<Option<URL<'static>>> = bun_core::RacyCell::new(
 static APP_NAME_BUF: bun_core::RacyCell<[u8; 512]> = bun_core::RacyCell::new([0u8; 512]);
 static GITHUB_REPOSITORY_URL_BUF: bun_core::RacyCell<[u8; 1024]> =
     bun_core::RacyCell::new([0u8; 1024]);
-// PORT NOTE: Zig used a fn-local `var url_buf: [1024]u8` in `Example.fetch`;
+// Zig used a fn-local `var url_buf: [1024]u8` in `Example.fetch`;
 // hoisted to a static so the borrowed slice satisfies `URL<'static>` for
 // `AsyncHTTP::init_sync` (single-threaded CLI; same pattern as
 // `GITHUB_REPOSITORY_URL_BUF`).
@@ -2182,7 +2196,7 @@ impl Example {
                         match entry.kind {
                             bun_sys::FileKind::Directory => {
                                 for skip_dir in SKIP_DIRS {
-                                    // PORT NOTE: `bun.pathLiteral` is a comptime cast to OSPathSlice
+                                    // `bun.pathLiteral` is a comptime cast to OSPathSlice
                                     // already applied in the `SKIP_DIRS` literal table; compare directly.
                                     if entry.name.slice() == *skip_dir {
                                         continue 'loop_;
@@ -2203,9 +2217,9 @@ impl Example {
                                     )
                                 };
 
-                                // Zig: `folder.accessZ(path, .{ .mode = .read_only })` (std.fs.Dir.accessZ).
-                                // bun_sys exposes `faccessat` for F_OK only; use it as the existence
-                                // gate here. TODO(port): plumb R_OK once bun_sys grows an accessor.
+                                // Zig: `folder.accessZ(path, .{ .mode = .read_only })` — std.fs.Dir.accessZ
+                                // maps `.read_only` to `F_OK`, so the F_OK-only `faccessat` here is an
+                                // exact match.
                                 if !bun_sys::faccessat(folder, path).unwrap_or(false) {
                                     continue 'loop_;
                                 }
@@ -2243,10 +2257,11 @@ impl Example {
             repository = &repository[0..i as usize];
         }
 
-        progress.name = ProgressBuf::pretty(
+        progress.name = ProgressBuf::pretty(format_args!(
             "<d>[github] <b>GET<r> <blue>{}/{}<r>",
-            format_args!("{}/{}", bstr::BStr::new(owner), bstr::BStr::new(repository)),
-        )?;
+            bstr::BStr::new(owner),
+            bstr::BStr::new(repository),
+        ))?;
         refresher.refresh();
 
         let mut github_api_domain: &[u8] = b"api.github.com";
@@ -2597,7 +2612,7 @@ impl Example {
 
         bun_ast::initialize_store();
         let source = bun_ast::Source::init_path_string(b"examples.json", mutable.list.as_slice());
-        // PORT NOTE: Zig passed `ctx.allocator`; ContextData dropped the allocator
+        // Zig passed `ctx.allocator`; ContextData dropped the allocator
         // field (global mimalloc) — use the process-lifetime CLI arena (examples
         // slices borrow from it and the CLI exits shortly after).
         let bump: &'static bun_alloc::Arena = crate::cli::cli_arena();
@@ -2708,7 +2723,7 @@ impl CreateListExamplesCommand {
             supports_ansi_escape_codes: Output::enable_ansi_colors_stderr(),
             ..Default::default()
         };
-        // PORT NOTE: `Progress::start` returns `&mut Node` borrowing `progress`; detach
+        // `Progress::start` returns `&mut Node` borrowing `progress`; detach
         // via raw pointer so `progress.refresh()` can re-borrow below (mirrors Zig where
         // both held independent `*Node`/`*Progress` pointers).
         let node: *mut ProgressNode = progress.start(b"Fetching manifest", 0);
@@ -2764,15 +2779,14 @@ impl GitHandler {
     pub(crate) fn spawn(destination: &[u8], path: &[u8], verbose: bool) {
         SUCCESS.store(0, Ordering::Relaxed);
 
-        // TODO(port): std.Thread.spawn — destination/path borrowed across thread; Zig relied on
-        // them being long-lived (filesystem dirname_store / env). Ensure 'static or own.
-        // SAFETY: `destination` lives in `filesystem.dirname_store` and `path` in env loader;
-        // both are 'static for the CLI process. Extend lifetimes to satisfy `spawn`.
-        let destination: &'static [u8] = unsafe { bun_ptr::detach_lifetime(destination) };
-        // SAFETY: `path` is owned by the process-lifetime env loader; valid for `'static`.
-        let path: &'static [u8] = unsafe { bun_ptr::detach_lifetime(path) };
+        // Zig's std.Thread.spawn borrowed destination/path across the thread,
+        // relying on them being long-lived (filesystem dirname_store / env).
+        // Own copies here instead so the spawned closure is `'static` without
+        // any lifetime extension.
+        let destination: Box<[u8]> = Box::from(destination);
+        let path: Box<[u8]> = Box::from(path);
         let thread = match std::thread::Builder::new()
-            .spawn(move || Self::spawn_thread(destination, path, verbose))
+            .spawn(move || Self::spawn_thread(&destination, &path, verbose))
         {
             Ok(t) => t,
             Err(err) => {
@@ -2865,7 +2879,7 @@ impl GitHandler {
             }
 
             // same names, just comptime known values
-            // PORT NOTE: Zig used `inline for` over std.meta.fieldNames(@TypeOf(Commands)) to
+            // Zig used `inline for` over std.meta.fieldNames(@TypeOf(Commands)) to
             // index into git_commands by tuple field index. We just iterate the array directly.
             for command in git_commands {
                 // Zig used `std.process.Child`; PORTING.md bans std::process — use bun.spawnSync.

@@ -23,10 +23,10 @@ use bun_threading::Mutex;
 pub use bun_event_loop::EventLoopTimer::{
     EventLoopTimer, InHeap, IntrusiveField, State as EventLoopTimerState, Tag as EventLoopTimerTag,
 };
-// TODO(port): bun_event_loop carries a local `Timespec` stub instead of
+// bun_event_loop carries a local `Timespec` stub instead of
 // `bun_core::Timespec`. Same `{sec: i64, nsec: i64}` shape; alias it here so
-// `fire()`/`next` accesses type-check without a transmute. Remove once the
-// lower tier switches to `bun_core::Timespec`.
+// `fire()`/`next` accesses type-check without a transmute.
+// TODO: remove this alias once the lower tier switches to `bun_core::Timespec`.
 pub(crate) use bun_event_loop::EventLoopTimer::Timespec as ElTimespec;
 
 use crate::jsc::JSValue;
@@ -101,7 +101,7 @@ macro_rules! impl_timer_object {
                     event_loop_timer: super::EventLoopTimer::init_paused(
                         super::EventLoopTimerTag::$tag,
                     ),
-                    // PORT NOTE: Zig left `internals = undefined` and assigned
+                    // Note: Zig left `internals = undefined` and assigned
                     // in `init()`; Rust default-constructs then overwrites —
                     // same observable behavior.
                     internals: super::TimerObjectInternals::default(),
@@ -445,7 +445,9 @@ impl DateHeaderTimer {
 }
 
 pub struct EventLoopDelayMonitor {
-    // TODO(port): bare JSValue heap field — see EventLoopDelayMonitor.rs PORT NOTE
+    // TODO(port): bare `JSValue` heap field with no Strong/visitChildren rooting —
+    // the histogram object can be GC'd while `monitorEventLoopDelay` is active.
+    // Needs JsRef-style rooting.
     js_histogram: JSValue,
     pub event_loop_timer: EventLoopTimer,
     pub resolution_ms: i32,
@@ -671,7 +673,7 @@ impl All {
 
     pub fn insert(&mut self, timer: *mut EventLoopTimer) {
         self.lock.lock();
-        // PORT NOTE: bun_threading::Mutex is lock()/unlock(), not RAII.
+        // Note: bun_threading::Mutex is lock()/unlock(), not RAII.
         let r = self.insert_lock_held(timer);
         self.lock.unlock();
         r
@@ -679,7 +681,7 @@ impl All {
 
     fn insert_lock_held(&mut self, timer: *mut EventLoopTimer) {
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
-        // PORT NOTE (§Forbidden aliased-&mut): `TimerHeap::insert` forms a
+        // Note (§Forbidden aliased-&mut): `TimerHeap::insert` forms a
         // fresh `&mut EventLoopTimer` via `(*a).heap()` for the same
         // allocation, so we must NOT hold a `&mut *timer` across that call.
         // Read `tag` and write `state`/`in_heap` via raw deref instead.
@@ -708,7 +710,7 @@ impl All {
     /// On Windows there is no epoll/kqueue fallback; this `uv_timer_t` is the
     /// ONLY thing that wakes `uv_run` for JS timers.
     ///
-    /// PORT NOTE (jsc/runtime crate cycle): Zig recovers `*VirtualMachine` via
+    /// Note (jsc/runtime crate cycle): Zig recovers `*VirtualMachine` via
     /// `@fieldParentPtr("timer", this)` (the VM that *owns* this `All`) and
     /// reads `vm.uvLoop()` == `vm.event_loop_handle`. In Rust `All` is a field
     /// of `RuntimeState` (not `VirtualMachine`) and `RuntimeState` carries no
@@ -802,7 +804,7 @@ impl All {
 
     fn remove_lock_held(&mut self, timer: *mut EventLoopTimer) {
         // SAFETY: caller guarantees `timer` is a valid live EventLoopTimer.
-        // PORT NOTE (§Forbidden aliased-&mut): `TimerHeap::remove` forms a
+        // Note (§Forbidden aliased-&mut): `TimerHeap::remove` forms a
         // fresh `&mut EventLoopTimer` via `(*v).heap()` for the same
         // allocation, so we must NOT hold a `&mut *timer` across that call.
         // Read `in_heap` and write the post-remove bookkeeping via raw deref.
@@ -831,7 +833,7 @@ impl All {
     /// provenance for its tag (see [`js_timer_flags_ptr`]).
     // `timer` must stay `*mut`: the body forms only short-lived `&mut *timer`
     // so re-entrant `remove_lock_held` does not alias an outstanding `&mut`
-    // (see PORT NOTEs below); contract is documented in `# Safety`.
+    // (see Notes below); contract is documented in `# Safety`.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn update(&mut self, timer: *mut EventLoopTimer, time: &Timespec) {
         self.lock.lock();
@@ -846,7 +848,7 @@ impl All {
         // SAFETY: `timer` is still a valid live EventLoopTimer; safe to derive
         // an exclusive reference now that no other borrow is outstanding.
         let timer_ref = unsafe { &mut *timer };
-        // PORT NOTE: Zig asserts `&timer.next != time` (threadsafety); the
+        // Note: Zig asserts `&timer.next != time` (threadsafety); the
         // EventLoopTimer.Timespec and bun_core::Timespec are distinct types
         // until the lower tier unifies them, so the pointer-compare is moot
         // here. Re-add once `bun_event_loop` switches to `bun_core::Timespec`.
@@ -873,7 +875,7 @@ impl All {
     /// Called from `EventLoop::auto_tick` to compute the epoll/kqueue timeout.
     /// Returns `true` if `spec` was written.
     ///
-    /// PORT NOTE (b2): `vm` is erased per §Dispatch (the caller is in
+    /// Note (b2): `vm` is erased per §Dispatch (the caller is in
     /// `bun_jsc::event_loop` which can't name `bun_runtime`). The two reads
     /// it needs — `event_loop.immediate_tasks.len()` and the QUIC tick — are
     /// passed in pre-computed until the cycle is broken.
@@ -899,7 +901,7 @@ impl All {
         #[cfg(not(unix))]
         let _ = has_pending_immediate;
 
-        // PORT NOTE (§Forbidden aliased-&mut): the WTFTimer arm below calls
+        // Note (§Forbidden aliased-&mut): the WTFTimer arm below calls
         // `(*min).fire(...)` → `WTFTimer__fire` → C++ may call back into
         // `WTFTimer__update` → `(*runtime_state()).timer.update(...)`, minting
         // a fresh `&mut All` to this same allocation while the outer
@@ -912,7 +914,7 @@ impl All {
         //
         // TODO(port): same caveat as `drain_timers` — the call-site auto-ref
         // still creates a `&mut All` for the call frame; switch the signature
-        // to `this: *mut Self` (see jsc_hooks.rs:525).
+        // to `this: *mut Self` (see the `get_timeout` call sites in jsc_hooks.rs).
         let this: *mut Self = self;
         let mut maybe_now: Option<Timespec> = None;
         loop {
@@ -922,7 +924,7 @@ impl All {
                 break;
             };
             // SAFETY: peek returns a live heap node.
-            // PORT NOTE (§Forbidden aliased-&mut): `delete_min()` writes
+            // Note (§Forbidden aliased-&mut): `delete_min()` writes
             // `(*min).heap` through a fresh `&mut EventLoopTimer`, so we must
             // NOT hold a `&mut *min` across it. Read `next`/`tag` via raw
             // deref and fire via raw deref (mirroring `drain_timers`).
@@ -1025,7 +1027,7 @@ impl All {
     // not_unsafe_ptr_arg_deref is a false positive on opaque-token forwarding.
     #[allow(clippy::not_unsafe_ptr_arg_deref)]
     pub fn drain_timers(&mut self, vm: *mut () /* erased *mut VirtualMachine */) {
-        // PORT NOTE (§Forbidden aliased-&mut): spec Timer.zig:346-354 takes
+        // Note (§Forbidden aliased-&mut): spec Timer.zig:346-354 takes
         // `*All` (raw pointer) because fired handlers re-enter `vm.timer`
         // (e.g. setInterval reschedule → `vm.timer.update(...)`, `cancel()` →
         // `vm.timer.remove(...)`). In Rust those re-entrant calls resolve to
@@ -1050,7 +1052,7 @@ impl All {
             let Some(t) = (unsafe { &mut *this }).next(&mut has_set_now, &mut now) else {
                 break;
             };
-            // PORT NOTE: re-pack into bun_event_loop's local Timespec stub
+            // Note: re-pack into bun_event_loop's local Timespec stub
             // until the lower tier unifies on bun_core::Timespec.
             let el_now = ElTimespec {
                 sec: now.sec,
@@ -1085,7 +1087,7 @@ impl All {
                 // while immediates are pending (matches Node.js).
                 if self.uv_idle.data.is_null() {
                     self.uv_idle.init(uv::Loop::get());
-                    // PORT NOTE: Zig stashes `vm` here; only used as a
+                    // Note: Zig stashes `vm` here; only used as a
                     // non-null "initialized" sentinel — never dereferenced.
                     self.uv_idle.data = bun_jsc::virtual_machine::VirtualMachine::get_mut_ptr()
                         .cast::<core::ffi::c_void>();

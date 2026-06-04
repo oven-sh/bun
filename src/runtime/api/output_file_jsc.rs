@@ -80,9 +80,9 @@ impl SavedFile {
         .expect("unreachable");
 
         let blob = Blob::init_with_store(store, global_this);
-        // PORT NOTE: Zig overwrites `blob.content_type = mime.value` here;
+        // The Zig original overwrites `blob.content_type = mime.value` here;
         // `init_with_store` already populated it from the store's `File`
-        // mime (which is the same value), so the overwrite is a no-op.
+        // mime (the same value), so the overwrite is intentionally omitted.
         blob.size.set(byte_size as BlobSizeType);
         let ptr = Blob::new(blob);
         // SAFETY: `ptr` is a freshly heap-allocated `*mut Blob` from
@@ -109,10 +109,9 @@ impl OutputFileJsc for OutputFile {
             _ => {}
         }
 
-        // PORT NOTE: each Zig arm reassigns `this.value = .buffer{.{}}` after
-        // consuming the payload. Taking the value out up-front avoids the
-        // borrowck conflict between `&mut self.value` (match scrutinee) and
-        // `self.{hash,loader,...}` reads inside the arms.
+        // Taking the value out up-front avoids the borrowck conflict between
+        // `&mut self.value` (match scrutinee) and `self.{hash,loader,...}`
+        // reads inside the arms.
         let value = core::mem::replace(
             &mut self.value,
             OutputFileValue::Buffer {

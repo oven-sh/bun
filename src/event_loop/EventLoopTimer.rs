@@ -123,7 +123,8 @@ impl EventLoopTimer {
                     //
                     // Zig epoch is `u25` so `-%` wraps mod 2^25. Rust stores it in a wider int,
                     // so we mask the wrapping_sub result to 25 bits to preserve that semantics.
-                    // TODO(port): confirm Rust `epoch` field is masked to 25 bits on write too.
+                    // (`TimerFlags::epoch`/`set_epoch` below mask to 25 bits on both read
+                    // and write, so both operands here are already < 2^25.)
                     const U25_MAX: u32 = (1 << 25) - 1;
                     return (b_epoch.wrapping_sub(a_epoch) & U25_MAX) < U25_MAX / 2;
                 }
@@ -135,7 +136,7 @@ impl EventLoopTimer {
     /// If self was created by set{Immediate,Timeout,Interval}, return its
     /// JS-timer epoch (used for stable ordering of equal-deadline timers).
     ///
-    /// PORT NOTE (b0): Zig `jsTimerInternalsFlags` did `@fieldParentPtr` into
+    /// Zig `jsTimerInternalsFlags` did `@fieldParentPtr` into
     /// `TimeoutObject`/`ImmediateObject`/`AbortSignalTimeout` (all tier-6
     /// runtime types). The container_of dispatch lives in
     /// `bun_runtime::dispatch::__bun_js_timer_epoch` (link-time extern).
@@ -149,13 +150,13 @@ impl EventLoopTimer {
 
     /// Fire the timer's callback.
     ///
-    /// PORT NOTE (b0): the `match self.tag { … container_of … }` body was
+    /// In Zig, the `match self.tag { … container_of … }` body was
     /// hot-dispatch over ~20 tier-6 variant types (Subprocess, DevServer,
     /// PostgresSQLConnection, …). That match lives in
     /// `bun_runtime::dispatch::__bun_fire_timer` (link-time extern). `vm` is
     /// the erased `*mut VirtualMachine`.
     ///
-    /// PORT NOTE (noalias re-entrancy): takes `this: *mut Self`, NOT
+    /// Deliberately takes `this: *mut Self`, NOT
     /// `&mut self`. `__bun_fire_timer` dispatches via container_of into a
     /// tier-6 timer object whose JS callback can re-enter and re-derive a
     /// `&mut EventLoopTimer` to *this same node* (e.g. `clearTimeout()` →
@@ -221,7 +222,7 @@ impl Tag {
 
 pub struct TimerCallback {
     pub callback: fn(*mut TimerCallback),
-    // TODO(port): lifetime — opaque user ctx, no init/deinit found in src/event_loop/
+    // Opaque user ctx; ownership stays with whoever installs the callback.
     pub ctx: Option<NonNull<c_void>>,
     pub event_loop_timer: EventLoopTimer,
 }

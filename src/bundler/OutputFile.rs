@@ -127,8 +127,8 @@ pub type IndexOptional = bun_core::GenericIndexOptional<u32, OutputFile>;
 // We may use a different system call
 #[derive(Clone)]
 pub struct FileOperation {
-    // TODO(port): lifetime — Zig never frees `pathname`; may be borrowed from
-    // `Options.output_path`. Using owned `Box<[u8]>` for now.
+    // Zig never frees `pathname` (it may alias `Options.output_path`); the
+    // Rust port owns a copy so the field has a single, obvious lifetime.
     pub pathname: Box<[u8]>,
     pub fd: Fd,
     pub dir: Fd,
@@ -163,7 +163,7 @@ impl FileOperation {
 
     pub fn get_pathname(&self) -> &[u8] {
         if self.is_tmpdir {
-            // PORT NOTE: `resolve_path.joinAbs` writes into a threadlocal buffer in
+            // Note: `resolve_path.joinAbs` writes into a threadlocal buffer in
             // Zig; the Rust port returns a borrow into that TLS buffer (`'static`),
             // which coerces to the `&self` lifetime here.
             return resolve_path::join_abs::<platform::Auto>(RealFS::tmpdir_path(), &self.pathname);
@@ -195,7 +195,7 @@ pub enum Value {
         // global mimalloc arena backs `Box<[u8]>`, so the field is dropped.
         bytes: Box<[u8]>,
     },
-    // PORT NOTE: boxed to avoid blowing up `Value`'s inline size (`resolver::Result`
+    // Note: boxed to avoid blowing up `Value`'s inline size (`resolver::Result`
     // is several hundred bytes).
     Pending(Box<bun_resolver::Result>),
     Saved(SavedFile),
@@ -325,7 +325,7 @@ pub struct SavedFile {
 
 impl OutputFile {
     pub fn init_pending(loader: Loader, pending: bun_resolver::Result) -> OutputFile {
-        // PORT NOTE: Zig copied the whole `Fs.Path` struct (`pending.pathConst().?.*`).
+        // Note: Zig copied the whole `Fs.Path` struct (`pending.pathConst().?.*`).
         // The Rust `bun_paths::fs::Path<'static>` and `bun_resolver::fs::Path<'static>` are
         // distinct nominal types with identical layout; re-init from `text` (the
         // resolver path borrows arena/static memory, so the `'static` bound holds).
@@ -357,7 +357,7 @@ impl OutputFile {
     ) -> OutputFile {
         let mut res = Self::init_file(file, pathname, size);
         if let Value::Copy(op) = &mut res.value {
-            // PORT NOTE: Zig wrote `res.value.copy.dir_handle = .fromStdDir(dir)` but
+            // Note: Zig wrote `res.value.copy.dir_handle = .fromStdDir(dir)` but
             // `FileOperation` has no `dir_handle` field — looks like a latent bug; the
             // intended field is `dir`.
             op.dir = dir;
@@ -442,7 +442,6 @@ impl OutputFile {
         }
     }
 
-    // TODO(port): narrow error set
     pub fn write_to_disk(&self, root_dir: Fd, root_dir_path: &[u8]) -> Result<(), Error> {
         match &self.value {
             Value::Noop => {}
@@ -488,7 +487,6 @@ impl OutputFile {
         Ok(())
     }
 
-    // TODO(port): narrow error set
     pub fn move_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
         let Value::Move(mv) = &self.value else {
             unreachable!()
@@ -504,9 +502,8 @@ impl OutputFile {
         Ok(())
     }
 
-    // TODO(port): narrow error set
     pub fn copy_to(&self, _: &[u8], rel_path: &[u8], dir: Fd) -> Result<(), Error> {
-        // PORT NOTE: Zig used `dir.stdDir().createFile(rel_path, .{})` and
+        // Note: Zig used `dir.stdDir().createFile(rel_path, .{})` and
         // `std.fs.cwd().openFile(...)`. Mapped to `bun_sys::openat` (which takes
         // a NUL-terminated `&ZStr`).
         let mut out_buf = PathBuffer::uninit();

@@ -66,7 +66,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.cur_scope().is_after_const_local_prefix = true;
 
         // Zig: `switch (@as(Stmt.Tag, stmt.data))` with `inline else` reflection over @tagName.
-        // PORT NOTE: reshaped for borrowck — `Stmt::Data` is `Copy` (`StoreRef<T>` is a thin
+        // reshaped for borrowck — `Stmt::Data` is `Copy` (`StoreRef<T>` is a thin
         // `NonNull`); take a copy of the enum so the StoreRef payload can be DerefMut'd
         // without aliasing the `&mut Stmt` we also pass through. The deref'd `&mut S::*`
         // points into the arena, not into `*stmt`.
@@ -165,7 +165,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Result<(), Error> {
         // "module.exports = value"
         // Zig: p.@"module.exports"(stmt.loc) — mapped to `module_exports`
-        // PORT NOTE: Zig evaluates lhs before rhs at the call site; preserve that order
+        // Zig evaluates lhs before rhs at the call site; preserve that order
         // (`module_exports` builds via `new_expr`, `visit_expr` mutates parser state).
         let lhs = p.module_exports(stmt.loc);
         p.visit_expr(&mut data.value);
@@ -191,7 +191,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let symbol = p.find_symbol(items[i].alias_loc, name)?;
                 let ref_ = symbol.r#ref;
 
-                // PORT NOTE: reshaped for borrowck — get_ptr borrows options; clone the
+                // reshaped for borrowck — get_ptr borrows options; clone the
                 // small enum payload so `inject_replacement_export(&mut self, ...)` can run.
                 if let Some(entry) = p.options.features.replace_exports.get_ptr(name).cloned() {
                     if !entry.is_replace() {
@@ -315,11 +315,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // Truncate `data.items` to `j` by reslicing the arena view.
             data.items.truncate(j);
 
-            // TODO(port): dead branch in Zig — `data.items.len = j;` runs first, so
-            // `j == 0 and data.items.len > 0` is always false. Mirrored bug-for-bug.
-            if j == 0 && data.items.len() > 0 {
-                return Ok(());
-            }
+            // Zig followed this with `if (j == 0 and data.items.len > 0) return;`,
+            // but `data.items.len = j;` runs first so the condition is always
+            // false — the dead branch is intentionally not ported.
         } else {
             // This is a re-export and the symbols created here are used to reference
             for item in items.iter_mut() {
@@ -383,7 +381,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         data: &mut S::ExportDefault,
     ) -> Result<(), Error> {
         // Zig: defer { if (data.default_name.ref) |ref| p.recordDeclaredSymbol(ref) catch unreachable; }
-        // PORT NOTE: scopeguard can't borrow `p` across the body; restructured to a tail
+        // scopeguard can't borrow `p` across the body; restructured to a tail
         // closure invoked at every return site below.
         macro_rules! record_on_exit {
             () => {
@@ -586,7 +584,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             js_ast::StmtOrExpr::Stmt(s2) => {
-                // PORT NOTE: reshaped for borrowck — `s2` borrows from `data.value`; copy
+                // reshaped for borrowck — `s2` borrows from `data.value`; copy
                 // `s2.loc`/`s2.data` (both Copy) so we can mutate `data.value` below.
                 let s2_loc = s2.loc;
                 let s2_data = s2.data;
@@ -874,8 +872,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         }
 
                         if p.options.features.server_components.wraps_exports() {
-                            // TODO(port): Zig spec mutates `data.value` *after* pushing `stmt` —
-                            // mirrored bug-for-bug. The class expr wrap likely belongs before push.
+                            // Zig mutates `data.value` *after* pushing `stmt`; mirrored
+                            // deliberately. The pushed stmt still observes the write because
+                            // `data` is an arena backref shared with the pushed copy.
                             let class_expr =
                                 p.new_expr(core::mem::take(&mut class.class), stmt.loc);
                             data.value = js_ast::StmtOrExpr::Expr(
@@ -1047,7 +1046,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
 
             if p.current_scope == p.module_scope {
-                // PORT NOTE: defer-vs-drop-scope — restore hook_ctx_storage/is_control_flow_dead
+                // defer-vs-drop-scope — restore hook_ctx_storage/is_control_flow_dead
                 // before propagating Err so the stack-local `react_hook_data` ptr is never left in
                 // p.react_refresh on the OOM path (Zig defer covers all exits).
                 rr = p.handle_react_refresh_register(
@@ -1192,7 +1191,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             .expect("infallible: in namespace"),
                     );
                     // TODO: is it necessary to lowerAssign? why does esbuild do it _most_ of the time?
-                    // PORT NOTE: ToExprWrapper is Copy; pass by value to avoid borrowing `*p`
+                    // ToExprWrapper is Copy; pass by value to avoid borrowing `*p`
                     // across `p.s(...)`. The `*mut P` ctx is derived from the live `&mut Self`
                     // here so its provenance is a child of the active Unique borrow.
                     let wrapper = p.to_expr_wrapper_namespace;
@@ -1427,7 +1426,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.visit_expr(&mut data.value);
 
         // Zig: defer p.stmt_expr_value = .{ .e_missing = .{} };
-        // PORT NOTE: restructured — restored at every return below.
+        // restructured — restored at every return below.
         macro_rules! restore_stmt_expr {
             () => {
                 p.stmt_expr_value = js_ast::ExprData::EMissing(E::Missing {});
@@ -1453,7 +1452,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     if to_convert != u32::MAX {
                         p.commonjs_named_exports_needs_conversion = u32::MAX;
                         'convert: {
-                            // PORT NOTE: reshaped for borrowck — copy StoreRef so DerefMut
+                            // reshaped for borrowck — copy StoreRef so DerefMut
                             // points into the arena, freeing `&mut data.value`.
                             let js_ast::ExprData::EBinary(mut bin_ref) = data.value.data else {
                                 break 'convert;
@@ -1537,7 +1536,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             }
                         }
                     } else if p.commonjs_replacement_stmts.len() > 0 {
-                        // PORT NOTE: Zig directly swaps backing storage; commonjs_replacement_stmts
+                        // Zig directly swaps backing storage; commonjs_replacement_stmts
                         // is `StmtNodeList = StoreSlice<Stmt>` here, so copy then clear.
                         let repl: &[Stmt] = p.commonjs_replacement_stmts.slice();
                         if stmts.is_empty() {

@@ -115,8 +115,8 @@ pub fn parse(header: &[u8], total: u64) -> Result {
     parse_raw(header).resolve(total)
 }
 
-// PORT NOTE: Zig passed `req` by value; `bun_uws::AnyRequest::header` borrows
-// `&self` and returns `&[u8]` tied to it, so take `&AnyRequest` here.
+// `bun_uws::AnyRequest::header` borrows `&self` and returns `&[u8]` tied to
+// it, so take `&AnyRequest` here (the Zig original passed `req` by value).
 pub(crate) fn from_request(req: &AnyRequest, total: u64) -> Result {
     let Some(h) = req.header(b"range") else {
         return Result::None;

@@ -23,7 +23,7 @@ use crate::webcore::{Blob, FetchHeaders, Response};
 #[derive(bun_ptr::CellRefCounted)]
 #[ref_count(destroy = FileRoute::deinit)]
 pub struct FileRoute {
-    // PORT NOTE (§Pointers Rc/Arc default): owned via intrusive refcount; the
+    // Owned via intrusive refcount; the
     // raw `*mut FileRoute` is round-tripped through `FileResponseStream`'s
     // `ctx: *mut c_void` userdata, so `Rc<FileRoute>` is unsuitable. See
     // StaticRoute.rs note re: FFI userdata fallback to RefPtr.
@@ -219,7 +219,7 @@ impl FileRoute {
         let buf = self.headers.buf.as_slice();
 
         debug_assert_eq!(names.len(), values.len());
-        // PORT NOTE: Zig `switch (resp) { inline else => |s, tag| { ... } }` expanded per-variant.
+        // Zig `switch (resp) { inline else => |s, tag| { ... } }` expanded per-variant.
         // S008: variant payloads are ZST opaques — safe `*mut → &mut` deref.
         match resp {
             AnyResponse::SSL(s) => {
@@ -302,7 +302,7 @@ impl FileRoute {
         unsafe { Self::on(this, req, resp, method) };
     }
 
-    // PORT NOTE: takes `*mut FileRoute` (not `&self`) because the
+    // Takes `*mut FileRoute` (not `&self`) because the
     // intrusive-refcounted heap object is captured raw into a `scopeguard`
     // whose closure may free `*this` via `deref()` before the local `&Self`
     // borrow lexically ends. Derive a single `&FileRoute` for all field reads;
@@ -328,7 +328,7 @@ impl FileRoute {
             server.on_pending_request();
             resp.timeout(server.config().idle_timeout);
         }
-        // PORT NOTE: clone the path so the borrow into `this.blob.store`
+        // Clone the path so the borrow into `this.blob.store`
         // doesn't span the scopeguard creation (the guard's closure may free
         // `*this_ptr` on early-return drop). // PERF(port): was zero-copy
         // slice — profile if hot.
@@ -388,7 +388,7 @@ impl FileRoute {
             }
         });
 
-        // PORT NOTE (intentional spec divergence): Zig writes
+        // Intentional spec divergence: Zig writes
         // `req.dateForHeader(..) catch return` — i.e. on a JS parse exception
         // the handler bails with NO response written (the defer above closes
         // the fd and decrements the route ref, leaving the client hung until
@@ -408,7 +408,7 @@ impl FileRoute {
         let (can_serve_file, size, file_type, pollable): (bool, u64, FileType, bool) = 'brk: {
             let stat = match bun_sys::fstat(fd) {
                 Ok(s) => s,
-                // PORT NOTE: file_type is `undefined` in Zig here; never read because can_serve_file == false
+                // file_type is `undefined` in Zig here; never read because can_serve_file == false
                 Err(_) => break 'brk (false, 0, FileType::File, false),
             };
 

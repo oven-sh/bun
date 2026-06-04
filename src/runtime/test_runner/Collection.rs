@@ -127,7 +127,6 @@ impl Collection {
         let _g = group::begin();
 
         debug_assert!(!self.locked);
-        // PORT NOTE: Zig used `bunTest().gpa` for Strong.init; allocator param dropped.
 
         if let Some(cb) = callback {
             group::log(format_args!(
@@ -196,7 +195,6 @@ impl Collection {
         let _formatter = make_formatter(global_this);
 
         // append queued callbacks, in reverse order because items will be pop()ed from the end
-        // PORT NOTE: reshaped for borrowck — Zig indexed `items[i]` then clearRetainingCapacity;
         // drain(..).rev() moves each item out exactly once and leaves capacity intact.
         for item in this.current_scope_callback_queue.drain(..).rev() {
             // SAFETY: `new_scope` points into `root_scope`'s Box-allocated tree, which outlives

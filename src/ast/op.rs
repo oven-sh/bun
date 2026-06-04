@@ -263,8 +263,6 @@ impl Default for Op {
 }
 
 impl Op {
-    // PORT NOTE: Zig `init(triple: anytype)` took an anonymous tuple .{text, level, is_keyword}
-    // and accessed .@"0"/.@"1"/.@"2". Flattened to positional params.
     pub const fn init(text: &'static [u8], level: Level, is_keyword: bool) -> Op {
         Op {
             text,

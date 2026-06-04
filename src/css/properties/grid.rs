@@ -9,7 +9,6 @@ use bun_core::strings;
 
 /// A [track sizing](https://drafts.csswg.org/css-grid-2/#track-sizing) value
 /// for the `grid-template-rows` and `grid-template-columns` properties.
-// TODO(port): css.DeriveParse / css.DeriveToCss → #[derive(Parse, ToCss)] proc-macro
 pub enum TrackSizing {
     /// No explicit grid tracks.
     None,
@@ -39,7 +38,6 @@ impl TrackList {
 
             if let Ok(track_size) = input.try_parse(TrackSize::parse) {
                 // TODO: error handling
-                // TODO(port): Zig original omits arena arg here (`items.append(.{...})`); mirroring with input.arena()
                 items.push(TrackListItem::TrackSize(track_size));
             } else if let Ok(repeat) = input.try_parse(TrackRepeat::parse) {
                 // TODO: error handling
@@ -142,7 +140,6 @@ impl TrackSize {
 
         input.expect_function_matching(b"fit-content")?;
 
-        // TODO(port): css.voidWrap(LengthPercentage, LengthPercentage.parse) — wraps a parse fn for parseNestedBlock; using a closure directly
         let len = input.parse_nested_block(|i: &mut Parser| LengthPercentage::parse(i))?;
 
         Ok(TrackSize::FitContent(len))
@@ -289,13 +286,10 @@ impl TrackRepeat {
         input.expect_function_matching(b"repeat")?;
 
         input.parse_nested_block(|i: &mut Parser| -> css::Result<TrackRepeat> {
-            // TODO(port): Zig uses `@call(.auto, @field(RepeatCount, "parse"), .{i})` — direct call here
             let count = RepeatCount::parse(i)?;
 
             i.expect_comma()?;
 
-            // TODO: this code will not compile if used
-            // TODO(port): Zig calls `bun.Vec(T).init(i.arena)` — using default + push(alloc, ..) here
             let mut line_names = Vec::<CustomIdentList>::default();
             let mut track_sizes = Vec::<TrackSize>::default();
 
@@ -305,7 +299,8 @@ impl TrackRepeat {
                     .unwrap_or_else(|_| CustomIdentList::default());
                 line_names.push(line_name);
 
-                // TODO(port): Zig original references outer `input` here (likely a bug); mirroring with `i`
+                // The Zig original referenced the outer `input` here (likely a
+                // bug); use the nested parser `i`.
                 if let Ok(track_size) = i.try_parse(TrackSize::parse) {
                     // TODO: error handling
                     track_sizes.push(track_size);
@@ -391,7 +386,8 @@ fn parse_line_names(input: &mut Parser) -> css::Result<CustomIdentList> {
     input.parse_nested_block(|i: &mut Parser| -> css::Result<CustomIdentList> {
         let mut values = CustomIdentList::default();
 
-        // TODO(port): Zig original references outer `input` here (likely a bug); mirroring with `i`
+        // The Zig original referenced the outer `input` here (likely a bug);
+        // use the nested parser `i`.
         while let Ok(ident) = i.try_parse(CustomIdent::parse) {
             values.append(ident);
         }
@@ -404,7 +400,6 @@ fn parse_line_names(input: &mut Parser) -> css::Result<CustomIdentList> {
 /// used in the `repeat()` function.
 ///
 /// See [TrackRepeat](TrackRepeat).
-// TODO(port): css.DeriveParse / css.DeriveToCss → #[derive(Parse, ToCss)] proc-macro
 #[derive(PartialEq, Eq)]
 pub enum RepeatCount {
     /// The number of times to repeat.
@@ -416,7 +411,7 @@ pub enum RepeatCount {
 }
 
 impl RepeatCount {
-    // PORT NOTE: `css.DeriveParse(@This()).parse` — hand-expanded in declaration
+    // Hand-expanded from Zig's `css.DeriveParse(@This()).parse` in declaration
     // order (Number → keyword `auto-fill` → keyword `auto-fit`).
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
         if let Ok(n) = input.try_parse(CSSIntegerFns::parse) {
@@ -433,7 +428,7 @@ impl RepeatCount {
         Err(location.new_unexpected_token_error(css::Token::Ident(ident)))
     }
 
-    // PORT NOTE: `css.DeriveToCss(@This()).toCss` — hand-expanded.
+    // Hand-expanded from Zig's `css.DeriveToCss(@This()).toCss`.
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
         match self {
             RepeatCount::Number(n) => CSSIntegerFns::to_css(*n, dest),
@@ -472,7 +467,7 @@ impl GridTemplateAreas {
         let mut row: u32 = 0;
         let mut columns: u32 = 0;
 
-        // PORT NOTE: `expect_string` returns a slice borrowing `&mut self`, which
+        // `expect_string` returns a slice borrowing `&mut self`, which
         // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
         // raw pointer inside the closure; the slice lives in the input arena and
         // outlives this parse.
@@ -483,7 +478,6 @@ impl GridTemplateAreas {
             let parsed_columns = match Self::parse_string(input.arena(), s, &mut tokens) {
                 Ok(v) => v,
                 Err(()) => {
-                    // TODO(port): Zig uses `.{input.newError(.qualified_rule_invalid)}` — anonymous struct shorthand; mapping to Err(..)
                     return Err(input.new_error(css::BasicParseErrorKind::qualified_rule_invalid));
                 }
             };
@@ -529,8 +523,12 @@ impl GridTemplateAreas {
             column += 1;
 
             if strings::starts_with_char(rest, b'.') {
-                // TODO(port): Zig original falls through here without `continue` — likely a bug (the `.` token
-                // is supposed to push None and continue). Mirroring Zig control flow exactly.
+                // TODO(port): the Zig original falls through here without `continue` —
+                // likely a bug (per upstream lightningcss, a `.` null-cell token should
+                // push None and continue; as written, any string containing `.` fails
+                // the name-codepoint check below and the whole value fails to parse).
+                // Mirroring the observable Zig control flow for now (Zig dead-advances
+                // `string = rest[idx..]`; this block is empty — same outcome).
             }
 
             let starts_with_name_codepoint = 'brk: {

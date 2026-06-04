@@ -86,7 +86,7 @@ pub enum FileState {
 
 impl Default for File {
     fn default() -> Self {
-        // PORT NOTE: std.mem.zeroes(File) — hand-written because `state` is an enum field
+        // Hand-written equivalent of zero-initialization because `state` is an enum field
         // (PORTING.md forbids blanket zeroed() over enums). FileState::Deinitialized == 0.
         Self {
             fs: bun_core::ffi::zeroed(),

@@ -78,7 +78,7 @@ impl ManifestBindings {
     }
 }
 
-// PORT NOTE: lives at module scope (not `impl ManifestBindings`) because the
+// Lives at module scope (not `impl ManifestBindings`) because the
 // `#[bun_jsc::host_fn]` Free-kind shim body emits `#fn_name(__g, __f)` without
 // a `Self::` qualifier, so the wrapped fn must resolve unqualified.
 #[bun_jsc::host_fn]
@@ -106,8 +106,6 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
     let registry_str = scopeguard::guard(args[1].to_bun_string(global)?, |s| s.deref());
     let registry = registry_str.to_utf8();
 
-    // PORT NOTE: Zig used `std.fs.cwd().openFile`; PORTING.md bans std::fs, so go
-    // through bun_sys (read-only open).
     let manifest_file = match bun_sys::openat_a(
         bun_sys::Fd::cwd(),
         manifest_filename.slice(),
@@ -124,7 +122,7 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
         }
     };
 
-    // PORT NOTE: Zig built a borrowing `bun.URL` struct literal (host/hostname/
+    // Zig built a borrowing `bun.URL` struct literal (host/hostname/
     // href/origin/protocol all slicing `registry`). The Rust `Scope.url` field
     // is `OwnedURL`, which stores only the href buffer and re-derives components
     // via `URL::parse` on demand. `load_by_file`/`read_all` only consult
@@ -139,8 +137,6 @@ pub(crate) fn js_parse_manifest(global: &JSGlobalObject, frame: &CallFrame) -> J
 
     let maybe_package_manifest = match npm::package_manifest::Serializer::load_by_file(
         &scope,
-        // PORT NOTE: Zig wrapped std.fs.File via `bun.sys.File.from(...)`; we already
-        // opened a bun_sys::File above, so pass directly.
         &manifest_file,
     ) {
         Ok(m) => m,

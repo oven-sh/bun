@@ -118,7 +118,7 @@ pub mod socket {
 // ─── RawSocketEvents glue ────────────────────────────────────────────────────
 // `uws_handlers::RawSocketEvents<SSL>` is the raw-pointer dispatch trait the
 // vtable layer requires of `api::NewSocket<SSL>` (routed via `RawPtrHandler`,
-// not `PtrHandler`). PORT NOTE (noalias re-entrancy): the inherent `on_*`
+// not `PtrHandler`). Noalias re-entrancy: the inherent `on_*`
 // methods take `this: *mut Self` precisely so no `&mut NewSocket` is held
 // across `callback.call` (JS can re-derive `&mut Self` via the wrapper's
 // `m_ptr` and mutate `flags`/`handlers`/`ref_count`); a `&mut self` argument

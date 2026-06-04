@@ -368,9 +368,6 @@ impl UDPSocketConfig {
                 };
             }
 
-            // PORT NOTE: `inline for (handlers)` over [("data","on_data"),("drain","on_drain"),
-            // ("error","on_error")] with `@field(UDPSocket.js.gc, handler.1)` — unrolled because
-            // Rust cannot index struct fields by runtime/const string.
             macro_rules! handler {
                 ($name:literal, $set:path) => {
                     if let Some(value) = socket.get_truthy(global_this, $name)? {
@@ -547,7 +544,7 @@ impl UDPSocket {
             }
         });
 
-        // PORT NOTE: `JsClass::to_js(self)` boxes by value, but we already own
+        // `JsClass::to_js(self)` boxes by value, but we already own
         // the heap allocation in `this_ptr` and need to keep that exact pointer
         // (it is stashed as the uws user_data). Route through the
         // `#[bun_jsc::JsClass]`-generated `to_js_ptr` inherent method, which
@@ -1735,7 +1732,7 @@ impl UDPSocket {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    // PORT NOTE: no `#[bun_jsc::host_fn]` — the macro's free-fn shim emits a
+    // No `#[bun_jsc::host_fn]` — the macro's free-fn shim emits a
     // bare `js_connect(..)` call which doesn't resolve inside an `impl` block.
     // The codegen `JsClass` derive owns the link name, so the shim isn't needed.
     pub fn js_connect(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
@@ -1793,7 +1790,7 @@ impl UDPSocket {
         Ok(JSValue::UNDEFINED)
     }
 
-    // PORT NOTE: see `js_connect` — codegen `JsClass` derive owns the link name.
+    // See `js_connect` — codegen `JsClass` derive owns the link name.
     pub fn js_disconnect(
         global_object: &JSGlobalObject,
         call_frame: &CallFrame,

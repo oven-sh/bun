@@ -547,12 +547,12 @@ pub fn lstat(path: &ZStr) -> Result<Stat> {
 }
 
 pub fn close(fd: Fd) -> Option<Error> {
-    // TODO(port): @returnAddress() — Rust has no stable equivalent; pass None for now.
+    // Zig passed `@returnAddress()`; Rust has no stable equivalent, so pass None.
     fd.close_allowing_bad_file_descriptor(None)
 }
 
 pub fn close_allowing_stdout_and_stderr(fd: Fd) -> Option<Error> {
-    // TODO(port): @returnAddress() — Rust has no stable equivalent; pass None for now.
+    // Zig passed `@returnAddress()`; Rust has no stable equivalent, so pass None.
     fd.close_allowing_standard_io(None)
 }
 
@@ -796,8 +796,8 @@ pub fn read(fd: Fd, buf: &mut [u8]) -> Result<usize> {
 
 #[inline]
 pub fn writev(fd: Fd, bufs: &[PlatformIOVec]) -> Result<usize> {
-    // TODO(port): Zig signature is `[]bun.PlatformIOVec` (mutable) but pwritev takes
-    // `[]const bun.PlatformIOVecConst`; on Windows both alias uv_buf_t. Reconcile the two.
+    // The Zig signature is `[]bun.PlatformIOVec` (mutable) but pwritev takes
+    // `[]const bun.PlatformIOVecConst`; on Windows both alias uv_buf_t.
     // SAFETY: `PlatformIOVec` (= `uv_buf_t`) and `PlatformIOVecConst` are
     // layout-identical on Windows (size/align asserted in lib.rs); the
     // fat-pointer cast preserves the original slice's (ptr, len) metadata
@@ -876,7 +876,7 @@ pub fn write(fd: Fd, buf: &[u8]) -> Result<usize> {
     Result::Ok(total_written)
 }
 
-// PORT NOTE: Zig's `write()` builds a `[1]PlatformIOVecConst` and calls `writev` (which
+// Zig's `write()` builds a `[1]PlatformIOVecConst` and calls `writev` (which
 // takes `[]PlatformIOVec`). The two types alias on Windows so Zig coerces silently. Rust
 // can't, so route through pwritev directly with position = -1. TODO(refactor): unify the
 // iovec types on Windows.

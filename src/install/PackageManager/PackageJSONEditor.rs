@@ -254,7 +254,7 @@ pub(crate) fn edit_update_no_args(
 
     // Zig: `const allocator = manager.allocator;` — process-lifetime arena for AST
     // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
-    // PORT NOTE: reshaped for borrowck — `arena` is a disjoint-field borrow held across
+    // `arena` is a disjoint-field borrow held across
     // the `&mut manager.updating_packages` accesses below.
     let arena = &manager.ast_arena;
 
@@ -318,7 +318,7 @@ pub(crate) fn edit_update_no_args(
                         }
 
                         let key_str = key.as_utf8_string_literal().expect("unreachable");
-                        // PORT NOTE: reshaped for borrowck — capture the literal as an owned
+                        // Capture the literal as an owned
                         // copy before borrowing `manager.updating_packages` mutably.
                         let version_literal_owned = Box::<[u8]>::from(version_literal);
                         let entry = manager.updating_packages.get_or_put(key_str)?;
@@ -548,7 +548,7 @@ pub(crate) fn edit(
 
     // Zig: `const allocator = manager.allocator;` — process-lifetime arena for AST
     // nodes that must outlive `Expr.Data.Store.reset()`. See `PackageManager.ast_arena`.
-    // PORT NOTE: reshaped for borrowck — `arena` is a disjoint-field borrow held across
+    // `arena` is a disjoint-field borrow held across
     // the `&mut manager.{updating_packages,trusted_deps_to_add_to_package_json}` accesses below.
     let arena = &manager.ast_arena;
 
@@ -573,7 +573,6 @@ pub(crate) fn edit(
                         for item in arr.items.slice() {
                             if let bun_ast::ExprData::EString(s) = &item.data {
                                 if s.eql_bytes(trusted_package_name) {
-                                    // PORT NOTE: reshaped for borrowck — drop return value (was allocator.free)
                                     let _ =
                                         manager.trusted_deps_to_add_to_package_json.swap_remove(i);
                                     break;
@@ -619,7 +618,7 @@ pub(crate) fn edit(
                                                     break 'add_packages_to_update;
                                                 }
 
-                                                // PORT NOTE: reshaped for borrowck — capture an
+                                                // Capture an
                                                 // owned copy of the literal before borrowing
                                                 // `manager.updating_packages` mutably.
                                                 let version_literal_owned =
@@ -632,7 +631,7 @@ pub(crate) fn edit(
                                                     break 'add_packages_to_update;
                                                 }
 
-                                                // PORT NOTE: Zig leaves `entry.value_ptr.*`
+                                                // The Zig original leaves `entry.value_ptr.*`
                                                 // undefined across the `npm:`-alias bailout
                                                 // below (Zig:435), which is later read by
                                                 // `fetchSwapRemove` — UB. `get_or_put` here

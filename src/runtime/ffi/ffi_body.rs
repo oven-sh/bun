@@ -74,7 +74,6 @@ use bun_tcc_sys as TCC;
 
 bun_output::declare_scope!(TCC, visible);
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn pthread_jit_write_protect_np(enable: c_int);
 }
@@ -109,7 +108,6 @@ struct Offsets {
     js_cell_offset_of_type: u32,
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     // Written once by C++ before any Rust read. C++ mutates these bytes, so a
     // plain non-`mut` extern static would assert immutability to the optimizer
@@ -243,7 +241,7 @@ impl FFI {
 
 struct CompileC {
     source: Source,
-    current_file_for_errors: ZBox, // TODO(port): lifetime — Zig stored borrowed [:0]const u8
+    current_file_for_errors: ZBox,
     libraries: StringArray,
     library_dirs: StringArray,
     include_dirs: StringArray,
@@ -288,10 +286,8 @@ impl Source {
         state: &mut TCC::State,
         current_file_for_errors: &mut ZBox,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         match self {
             Source::File(file) => {
-                // TODO(port): Zig stored borrowed slice
                 *current_file_for_errors = ZBox::from_bytes(file.as_bytes());
                 state
                     .add_file(file)
@@ -317,7 +313,6 @@ impl Source {
 mod stdarg {
     use super::*;
 
-    // TODO(port): move to <area>_sys
     unsafe extern "C" {
         pub(super) fn ffi_vfprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
         pub(super) fn ffi_vprintf(_: *const c_char, ...) -> c_int;
@@ -620,14 +615,15 @@ impl CompileC {
         &mut self,
         global_this: &JSGlobalObject,
     ) -> Result<NonNull<TCC::State>, bun_core::Error> {
-        // TODO(port): narrow error set (DeferredErrors | JSError | OutOfMemory | JSTerminated)
+        let tcc_options_owned: ZBox;
         let compile_options: &ZStr = if !self.flags.is_empty() {
             &self.flags
         } else if let Some(tcc_options) = env_var::BUN_TCC_OPTIONS.get() {
-            // TODO(port): @ptrCast from []const u8 to [:0]const u8 — env var must be NUL-terminated
-            // SAFETY: env vars are NUL-terminated by the OS; the slice points into
-            // the process env block, so a sentinel byte follows it.
-            unsafe { ZStr::from_raw(tcc_options.as_ptr(), tcc_options.len()) }
+            // Copy into an owned NUL-terminated buffer instead of assuming the
+            // OS env block provides a sentinel byte right after the slice
+            // (Zig @ptrCast a []const u8 to [:0]const u8 here).
+            tcc_options_owned = ZBox::from_bytes(tcc_options);
+            &tcc_options_owned
         } else {
             zstr!("-std=c11 -Wl,--export-all-symbols -g -O2")
         };
@@ -984,7 +980,7 @@ impl StringArray {
 // ─── FFI host functions ─────────────────────────────────────────────────────
 
 impl FFI {
-    // TODO(port): `#[bun_jsc::host_fn]` — the `Free` shim emits a bare
+    // No `#[bun_jsc::host_fn]` here — the `Free` shim it emits is a bare
     // `bun_ffi_cc(__g, __f)` call, which doesn't resolve inside `impl FFI`.
     // The C-ABI shim (`Bun__FFI__cc`) is supplied by the `.classes.ts` codegen.
     pub fn bun_ffi_cc(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -1212,7 +1208,7 @@ impl FFI {
 
         let obj = JSValue::create_empty_object(global_this, compile_c.symbols.map.len());
         for function in compile_c.symbols.map.values_mut() {
-            // PORT NOTE: clone the name before `compile(&mut self)` so the
+            // Clone the name before `compile(&mut self)` so the
             // immutable borrow of `function.base_name` doesn't overlap.
             let function_name = function.base_name.clone().unwrap();
 
@@ -1260,7 +1256,7 @@ impl FFI {
             functions: JsCell::new(core::mem::take(&mut compile_c.symbols.map)),
             closed: Cell::new(false),
         });
-        // PORT NOTE: reshaped for borrowck — Zig nulled tcc_state and symbols after move
+        // Reshaped for borrowck — Zig nulled tcc_state and symbols after move
 
         let js_object = lib.to_js(global_this);
         symbols_value_set_cached(js_object, global_this, obj);
@@ -1472,7 +1468,8 @@ impl FFI {
                 () => b"dylib",
                 #[cfg(windows)]
                 () => b"dll",
-                // TODO(port): wasm @compileError("TODO")
+                // No arm for other targets (e.g. wasm) — the match fails to
+                // compile there, mirroring Zig's `@compileError`.
             };
             // Spec `ffi.zig:1030` — `ModuleLoader.resolveEmbeddedFile(vm, buf,
             // name_slice.slice(), ext)` extracts a bunfs-embedded shared
@@ -1563,7 +1560,7 @@ impl FFI {
 
         for function in symbols.values_mut() {
             let function_name = ZBox::from_bytes(function.base_name.as_ref().unwrap().as_bytes());
-            // PORT NOTE: reshaped for borrowck — clone base_name to drop &function borrow
+            // Reshaped for borrowck — clone base_name to drop &function borrow
 
             // optional if the user passed "ptr"
             if function.symbol_from_dynamic_library.is_none() {
@@ -1939,7 +1936,6 @@ impl Default for Function {
     }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn FFICallbackFunctionWrapper_destroy(_: *mut c_void);
 }
@@ -1972,7 +1968,6 @@ impl Function {
 
     fn fail(&mut self, msg: &'static [u8]) {
         if !matches!(self.step, Step::Failed { .. }) {
-            // PORT NOTE: @branchHint(.likely) — Rust has no statement-level hint; left as-is
             self.step = Step::Failed {
                 msg: Box::<[u8]>::from(msg),
                 allocated: false,
@@ -2019,7 +2014,6 @@ impl Function {
         &mut self,
         napi_env: Option<&napi::NapiEnv>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let mut source_code: Vec<u8> = Vec::new();
         self.print_source_code(&mut source_code)?;
 
@@ -2118,7 +2112,6 @@ impl Function {
         js_function: JSValue,
         is_threadsafe: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         jsc::mark_binding();
         let mut source_code: Vec<u8> = Vec::new();
         // SAFETY: js_context/js_function are live for the call
@@ -2127,7 +2120,6 @@ impl Function {
 
         #[cfg(all(debug_assertions, unix))]
         'debug_write: {
-            // TODO(port): uses std.posix directly in Zig — keep raw libc here for parity
             // SAFETY: best-effort debug write; failures are swallowed
             unsafe {
                 let fd = libc::open(
@@ -2261,7 +2253,6 @@ impl Function {
         &self,
         writer: &mut impl std::io::Write,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         if !self.arg_types.is_empty() {
             writer.write_all(b"#define HAS_ARGUMENTS\n")?;
         }
@@ -2419,7 +2410,6 @@ impl Function {
         context_ptr: Option<*mut c_void>,
         writer: &mut impl std::io::Write,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         {
             let ptr = global_object
                 .map(|g| std::ptr::from_ref(g) as usize)
@@ -2546,7 +2536,6 @@ impl Function {
     }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn FFI_Callback_call(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
     fn FFI_Callback_call_0(_: *mut c_void, _: usize, _: *mut JSValue) -> JSValue;
@@ -2816,9 +2805,8 @@ fn make_napi_env_if_needed<'a>(
     // immediate-after `values_mut()` loop at every call site.
     for function in functions {
         if function.needs_napi_env() {
-            // TODO(port): lifetime — makeNapiEnvForFFI returns a heap-allocated env owned by VM
             // SAFETY: C++ returns a non-null fresh NapiEnv; we hand back a shared `&` only.
-            // PORT NOTE: `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
+            // `bun_jsc` exposes `*mut c_void` to avoid an upward dep on
             // `bun_runtime::napi`; the concrete type lives here, so cast at the boundary.
             return Some(unsafe { &*global_this.make_napi_env_for_ffi().cast::<napi::NapiEnv>() });
         }

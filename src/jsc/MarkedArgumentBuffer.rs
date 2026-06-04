@@ -8,7 +8,6 @@ bun_opaque::opaque_ffi! {
     pub struct MarkedArgumentBuffer;
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     safe fn MarkedArgumentBuffer__append(args: &MarkedArgumentBuffer, value: JSValue);
     // safe: `ctx` is an opaque round-trip pointer C++ only forwards to `f`
@@ -76,8 +75,6 @@ impl MarkedArgumentBuffer {
 /// `fn(*JSGlobalObject, *CallFrame, *MarkedArgumentBuffer) bun.JSError!JSValue`
 /// and returns a `jsc.JSHostFnZig`. Rust cannot parameterize a `fn` item by a const
 /// fn-pointer, so this is a macro that expands to a `#[bun_jsc::host_fn]` wrapper.
-// TODO(port): consider a proc-macro attribute (`#[bun_jsc::with_marked_argument_buffer]`)
-// instead of `macro_rules!` once the host_fn codegen is settled.
 #[macro_export]
 macro_rules! marked_argument_buffer_wrap {
     ($function:path) => {{
@@ -106,7 +103,7 @@ macro_rules! marked_argument_buffer_wrap {
             let mut ctx = Context {
                 global_this,
                 callframe,
-                // PORT NOTE: Zig used `undefined`; init with a placeholder since `run`
+                // Zig used `undefined`; init with a placeholder since `run`
                 // unconditionally overwrites it before we read.
                 result: ::core::result::Result::Ok($crate::JSValue::ZERO),
             };

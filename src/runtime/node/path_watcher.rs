@@ -577,7 +577,6 @@ pub fn watch(
 /// per directory; kqueue needs an fd per file too). Best-effort — an unreadable
 /// subdirectory just stops that branch (matches Node). Uses `bun.sys` /
 /// `bun.DirIterator` / `bun.path` throughout; no std.fs.
-// PORT NOTE: ctx+comptime cb collapsed to FnMut closure (same monomorphization).
 #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
 fn walk_subtree<const DIRS_ONLY: bool>(
     abs_dir: &ZStr,
@@ -749,7 +748,7 @@ impl Linux {
         manager: &'static PathWatcherManager,
         watcher: &mut PathWatcher,
     ) -> sys::Result<()> {
-        // PORT NOTE: reshaped for borrowck — clone path to avoid &/&mut overlap on watcher.
+        // Borrowck: clone path to avoid &/&mut overlap on watcher.
         let root = watcher.path.clone();
         Linux::add_one(manager, watcher, &root, b"")?;
         if watcher.recursive && !watcher.is_file {
@@ -1059,7 +1058,7 @@ impl Linux {
                             abs_buf.as_mut_slice(),
                             &[watcher_path, owner_subpath, name],
                         );
-                        // PORT NOTE: reshaped for borrowck — `rel` may borrow `path_buf`,
+                        // Borrowck: `rel` may borrow `path_buf`,
                         // which `walk_and_add` also borrows. Own it for the call.
                         let rel_owned: Box<[u8]> = Box::from(rel);
                         // These may rehash `wd_map`; `owners` is re-fetched next iteration.
@@ -1130,7 +1129,7 @@ impl Darwin {
     /// takes `manager.mutex`). Keeping this call outside `manager.mutex` makes the
     /// lock order one-way: fsevents_loop.mutex → manager.mutex.
     fn add_watch(_: &'static PathWatcherManager, watcher: &mut PathWatcher) -> sys::Result<()> {
-        // PORT NOTE: reshaped for borrowck — capture the raw ctx pointer before the
+        // Borrowck: capture the raw ctx pointer before the
         // shared borrow of `watcher.path` so the two don't overlap at the call site.
         let ctx = core::ptr::from_mut::<PathWatcher>(watcher).cast::<c_void>();
         match fsevents::watch(
@@ -1309,7 +1308,7 @@ impl Kqueue {
         manager: &'static PathWatcherManager,
         watcher: &mut PathWatcher,
     ) -> sys::Result<()> {
-        // PORT NOTE: reshaped for borrowck — clone path to avoid &/&mut overlap.
+        // Borrowck: clone path to avoid &/&mut overlap.
         let root = watcher.path.clone();
         let is_file = watcher.is_file;
         Kqueue::add_one(manager, watcher, &root, b"", is_file)?;

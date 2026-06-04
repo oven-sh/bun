@@ -280,7 +280,6 @@ pub(super) mod lib_info {
             // TODO: WHAT?????????
             sys::Fd::from_native(i32::MAX - 1),
             Default::default(),
-            // TODO(port): FilePoll generic owner type GetAddrInfoRequest
             Async::Owner::new(
                 Async::posix_event_loop::poll_tag::GET_ADDR_INFO_REQUEST,
                 request.cast(),
@@ -420,7 +419,6 @@ pub(super) mod lib_uv_backend {
         query: GetAddrInfo,
         global_this: &JSGlobalObject,
     ) -> JsResult<JSValue> {
-        // TODO(port): narrow error set
         let key = get_addr_info_request::PendingCacheKey::init(&query);
 
         let cache =
@@ -572,7 +570,6 @@ impl CacheConfig {
 
 /// Trait standing in for Zig's `(comptime cares_type: type, comptime type_name: []const u8)` pair.
 /// Each c-ares reply struct implements this with its record-type tag.
-// TODO(port): proc-macro — Zig instantiated this per (type, "name") pair via comptime.
 pub trait CAresRecordType: Sized {
     const TYPE_NAME: &'static str;
     /// `"query" ++ ucfirst(TYPE_NAME)` — Zig built this at comptime; each impl
@@ -780,12 +777,13 @@ pub mod get_host_by_addr_info_request {
 }
 
 impl GetHostByAddrInfoRequest {
+    /// Reverse lookups always cache through `pending_addr_cache_cares`, so no
+    /// `cache_field` selector is needed (unlike `ResolveInfoRequest::<T>::init`).
     pub(crate) fn init(
         cache: LookupCacheHit<Self>,
         resolver: Option<*mut Resolver>,
         name: &[u8],
         global_this: &JSGlobalObject,
-        cache_field: PendingCacheField,
     ) -> *mut Self {
         let hash = wyhash(name);
         let mut poll_ref = KeepAlive::init();
@@ -821,8 +819,6 @@ impl GetHostByAddrInfoRequest {
                 (*new).lookup = request;
             }
         }
-        // TODO(port): cache_field is always "pending_addr_cache_cares" for this type
-        let _ = cache_field;
         request
     }
 
@@ -1184,7 +1180,6 @@ pub mod get_addr_info_request {
         pub machport: mach_port,
     }
 
-    // TODO(port): move to <area>_sys
     #[cfg(target_os = "macos")]
     unsafe extern "C" {
         fn getaddrinfo_send_reply(
@@ -2179,12 +2174,11 @@ pub mod internal {
 
     // ───────────── Request ─────────────
 
-    // PORT NOTE: Zig stored a borrowed `[:0]const u8` here and only allocated in
-    // `toOwned()`. We keep a raw borrow on the stack key (constructed in `init`) and
-    // allocate in `to_owned()` before storing on the heap `Request`.
-    // TODO(port): lifetime — model the borrow with `<'a>` once ZStr ownership is settled.
-    pub struct RequestKey {
-        pub host: Option<*const ZStr>, // BORROW until to_owned(); never freed via this field
+    // Zig stored a borrowed `[:0]const u8` here and only allocated in
+    // `toOwned()`. Same shape here: the stack key borrows the caller's host
+    // string and `to_owned()` copies before storing on the heap `Request`.
+    pub struct RequestKey<'a> {
+        pub host: Option<&'a ZStr>,
         /// Used for getaddrinfo() to avoid glibc UDP port 0 bug, but NOT included in hash
         pub port: u16,
         /// Hash of hostname only - DNS results are port-agnostic
@@ -2202,31 +2196,27 @@ pub mod internal {
         /// Cache-lookup equality: same hash *and* same hostname bytes. The hash
         /// (wyhash, fixed seed) is not collision resistant, so it is only a
         /// fast reject — never the sole match criterion.
-        fn matches(&self, other: &RequestKey) -> bool {
+        fn matches(&self, other: &RequestKey<'_>) -> bool {
             if self.hash != other.hash {
                 return false;
             }
             match (self.host.as_ref(), other.host) {
-                (Some(a), Some(b)) => {
-                    // SAFETY: `other.host` borrows the caller's NUL-terminated
-                    // slice, which outlives the lookup (see `RequestKey.host`).
-                    a.as_bytes() == unsafe { (*b).as_bytes() }
-                }
+                (Some(a), Some(b)) => a.as_bytes() == b.as_bytes(),
                 (None, None) => true,
                 _ => false,
             }
         }
     }
 
-    impl RequestKey {
-        pub fn init(name: Option<&ZStr>, port: u16) -> Self {
+    impl<'a> RequestKey<'a> {
+        pub fn init(name: Option<&'a ZStr>, port: u16) -> Self {
             let hash = if let Some(n) = name {
                 Self::generate_hash(n) // Don't include port
             } else {
                 0
             };
             Self {
-                host: name.map(std::ptr::from_ref::<ZStr>),
+                host: name,
                 hash,
                 port,
             }
@@ -2238,9 +2228,7 @@ pub mod internal {
 
         pub fn to_owned(&self) -> RequestKeyOwned {
             if let Some(host) = self.host {
-                // SAFETY: host borrows the caller's NUL-terminated slice for the stack key's lifetime.
-                let bytes = unsafe { (*host).as_bytes() };
-                let host_copy = bun::ZBox::from_bytes(bytes);
+                let host_copy = bun::ZBox::from_bytes(host.as_bytes());
                 RequestKeyOwned {
                     host: Some(host_copy),
                     hash: self.hash,
@@ -2273,7 +2261,6 @@ pub mod internal {
         pub machport: mach_port,
     }
 
-    // TODO(port): move to <area>_sys
     #[cfg(target_os = "macos")]
     unsafe extern "C" {
         fn getaddrinfo_send_reply(
@@ -2406,7 +2393,11 @@ pub mod internal {
             }
         }
 
-        fn get(&mut self, key: &RequestKey, timestamp_to_store: &mut u32) -> Option<*mut Request> {
+        fn get(
+            &mut self,
+            key: &RequestKey<'_>,
+            timestamp_to_store: &mut u32,
+        ) -> Option<*mut Request> {
             let mut len = self.len;
             let mut i: usize = 0;
             while i < len {
@@ -2546,7 +2537,6 @@ pub mod internal {
         hints_copy
     }
 
-    // TODO(port): move to <area>_sys
     // `Request` is passed opaquely to usockets and round-tripped back into
     // Rust; the C side never dereferences fields, so layout is irrelevant.
     #[allow(improper_ctypes)]
@@ -2697,7 +2687,7 @@ pub mod internal {
                     };
                 }
             }
-            // PORT NOTE: Zig's inner `for ... else { break }` has no `break` in its body,
+            // Zig's inner `for ... else { break }` has no `break` in its body,
             // so the else fires unconditionally — mirrored exactly.
             // the rest of the list is all one address family
             break 'outer;
@@ -2861,7 +2851,6 @@ pub mod internal {
             // bitcast u32 mach_port → i32 fd, matches Zig @bitCast
             sys::Fd::from_native(machport as i32),
             Default::default(),
-            // TODO(port): FilePoll generic owner type InternalDNSRequest
             Async::Owner::new(Async::posix_event_loop::poll_tag::REQUEST, req.cast::<()>()),
         );
         // SAFETY: `poll` is a freshly-allocated hive slot; `loop_.r#loop()` is the live uws loop.
@@ -3772,7 +3761,7 @@ pub enum CacheHit {
 }
 
 pub enum LookupCacheHit<R: HasPendingCacheKey> {
-    // PORT NOTE: Zig's `LookupCacheHit(request_type)` referenced `request_type.PendingCacheKey`.
+    // Zig's `LookupCacheHit(request_type)` referenced `request_type.PendingCacheKey`.
     // We thread the request type via `R` and resolve `PendingCacheKey` through `HasPendingCacheKey`.
     Inflight(*mut R::PendingCacheKey), // BORROW_FIELD
     New(*mut R::PendingCacheKey),      // BORROW_FIELD
@@ -4104,7 +4093,7 @@ impl Resolver {
     // ───────────── timer / pending bookkeeping ─────────────
 
     pub fn check_timeouts(&self, now: &ElTimespec, vm: &VirtualMachine) {
-        // PORT NOTE: caller (`dispatch.rs::fire_timer`) hands us the event-loop's
+        // Caller (`dispatch.rs::fire_timer`) hands us the event-loop's
         // local `ElTimespec`; `add_timer` works in `bun_core::timespec`. Same
         // `{ sec: i64, nsec: i64 }` layout — convert field-by-field.
         let now = bun::timespec {
@@ -4118,7 +4107,7 @@ impl Resolver {
         // `&Resolver` from their stored ctx without aliasing UB.
         let deref_this = self.as_ctx_ptr();
         scopeguard::defer! {
-            // PORT NOTE (jsc/runtime crate cycle): low-tier `VirtualMachine.timer` is `()`;
+            // jsc/runtime crate cycle: low-tier `VirtualMachine.timer` is `()`;
             // resolve via the high-tier `RuntimeState` hook.
             let state = crate::jsc_hooks::runtime_state();
             // SAFETY: `state` is the boxed per-thread `RuntimeState`; single-threaded JS heap.
@@ -4148,7 +4137,8 @@ impl Resolver {
     }
 
     fn any_requests_pending(&self) -> bool {
-        // TODO(port): Zig used @typeInfo to iterate all `pending_*` fields.
+        // Zig used `@typeInfo` to iterate all `pending_*` fields; Rust has no
+        // field reflection, so keep this list in sync with `Resolver`'s `pending_*` fields.
         macro_rules! check { ($($f:ident),*) => { $( if self.$f.get().used.find_first_set().is_some() { return true; } )* } }
         check!(
             pending_host_cache_cares,
@@ -4193,7 +4183,7 @@ impl Resolver {
             .copied()
             .unwrap_or_else(|| bun::timespec::now(bun::TimespecMockMode::AllowMockedTime));
         let next = now_ts.add_ms(1000);
-        // PORT NOTE: `EventLoopTimer.next` uses the event-loop crate's local
+        // `EventLoopTimer.next` uses the event-loop crate's local
         // `Timespec` (distinct from `bun_core::Timespec`); convert by field.
         self.event_loop_timer.with_mut(|t| {
             t.next = ElTimespec {
@@ -4262,7 +4252,7 @@ impl Resolver {
     }
 
     /// Dispatch to a typed ResolveInfoRequest cache by record type.
-    // PORT NOTE: Zig used `@field(this, "pending_{TYPE_NAME}_cache_cares")` with a comptime
+    // Zig used `@field(this, "pending_{TYPE_NAME}_cache_cares")` with a comptime
     // string. Each per-record cache is a distinct monomorphization of
     // `HiveArray<resolve_info_request::PendingCacheKey<_>, 32>`; `PendingCacheKey<T>` is
     // layout-identical for all `T` (only the `*mut ResolveInfoRequest<T>` payload's pointee
@@ -4352,7 +4342,6 @@ impl Resolver {
         // SAFETY: `self` is the live heap allocation; ref_scope keeps count > 0 across re-entrant callbacks.
         let _g = unsafe { Self::ref_scope(self.as_ctx_ptr()) };
 
-        // TODO(port): generic getKey over T::CACHE_FIELD
         let key = {
             let cache = self.pending_cache_for::<T>(T::CACHE_FIELD);
             // SAFETY: slot at `index` was alloc'd by `get_or_put_into_resolve_pending_cache`.
@@ -4687,7 +4676,7 @@ impl Resolver {
         key: &R::PendingCacheKey,
         field: PendingCacheField,
     ) -> LookupCacheHit<R> {
-        // PORT NOTE: Zig used `@field(this, field)` over a comptime string. We dispatch via
+        // Zig used `@field(this, field)` over a comptime string. We dispatch via
         // `HasPendingCacheKey::pending_cache`; the body is identical across all `R`.
         let cache = R::pending_cache(self, field);
         let mut inflight_iter = cache.used.iter_set();
@@ -4947,7 +4936,6 @@ impl Resolver {
             if !poll_entry.found_existing {
                 *poll_entry.value_ptr =
                     FilePoll::init(ctx, sys::Fd::from_native(fd), Default::default(), owner);
-                // TODO(port): FilePoll generic owner type Resolver
             }
 
             // SAFETY: `value_ptr` points at a slot just initialized above (or a
@@ -5029,7 +5017,6 @@ impl Resolver {
                 if record_type_str.length() == 0 {
                     break 'brk RecordType::DEFAULT;
                 }
-                // TODO(port): phf custom hasher — Zig used getWithEql with ZigString.eqlComptime
                 match RECORD_TYPE_MAP.get(record_type_str.to_slice(global_this).slice()) {
                     Some(r) => *r,
                     None => {
@@ -5149,13 +5136,8 @@ impl Resolver {
             return Ok(unsafe { (*cares_reverse).promise.value() });
         }
 
-        let request = GetHostByAddrInfoRequest::init(
-            cache,
-            Some(self.as_ctx_ptr()),
-            ip,
-            global_this,
-            PendingCacheField::PendingAddrCacheCares,
-        );
+        let request =
+            GetHostByAddrInfoRequest::init(cache, Some(self.as_ctx_ptr()), ip, global_this);
 
         // SAFETY: `request` just heap-allocated in `init()`; `tail` points at its inline `head`.
         let promise = unsafe { (*(*request).tail).promise.value() };
@@ -5412,7 +5394,6 @@ impl Resolver {
         c_ares::struct_any_reply,
         false
     );
-    // PORT NOTE: resolveTxt/resolveAny used arguments_old(1) in Zig; collapsed into the macro.
 
     pub fn do_resolve_cares<T: CAresRecordType>(
         &self,
@@ -5478,7 +5459,7 @@ impl Resolver {
             ChannelResult::Result(res) => res,
             ChannelResult::Err(err) => {
                 let syscall = bun_core::String::create_atom(&query.name);
-                // PORT NOTE: SystemError has no Default impl upstream; spell out
+                // SystemError has no Default impl upstream; spell out
                 // the Zig field defaults (.empty strings, fd = c_int::MIN).
                 let system_error = SystemError {
                     errno: -1,
@@ -5589,7 +5570,7 @@ impl Resolver {
 
             // size = strlen(buf+1) + 1
             let size = ip.len() + 1;
-            // PORT NOTE: `bun_core::ZigString` lacks `with_encoding`/`to_js` (those live
+            // `bun_core::ZigString` lacks `with_encoding`/`to_js` (those live
             // on `bun_jsc::zig_string::ZigString`). The formatted bytes here are pure
             // ASCII (IP address + optional port), so `with_encoding()` would be a no-op
             // anyway — borrow as a `bun_core::String` and hand to JS.
@@ -5714,7 +5695,7 @@ impl Resolver {
         value: JSValue,
     ) -> JsResult<c_int> {
         let str_ = value.to_slice(global_this)?;
-        // PORT NOTE: ZigStringSlice has no `into_owned_slice_z`; build the
+        // ZigStringSlice has no `into_owned_slice_z`; build the
         // NUL-terminated buffer inline (Zig: `toOwnedSliceZ`).
         let bytes = str_.slice();
         let mut slice = bytes.to_vec();
@@ -5870,7 +5851,7 @@ impl Resolver {
         }
         // Link the list AFTER the Vec is fully populated (no reallocs past this point).
         for i in 1..entries.len() {
-            // PORT NOTE: reshaped for borrowck — raw ptr to avoid two &mut into entries.
+            // Reshaped for borrowck — raw ptr to avoid two &mut into entries.
             let next: *mut _ = &raw mut entries[i];
             entries[i - 1].next = next;
         }
@@ -6062,8 +6043,8 @@ impl Resolver {
         _frame: &CallFrame,
     ) -> JsResult<JSValue> {
         // SAFETY: bun_vm() returns a live VM pointer for the duration of the call.
-        // PORT NOTE: VirtualMachine.dns_result_order is `u8` upstream (see
-        // jsc/VirtualMachine.rs TODO(port)); cast through Order's repr(u8).
+        // `VirtualMachine.dns_result_order` is stored as a raw `u8` (the jsc
+        // crate cannot depend on this crate's `Order`); cast through Order's repr(u8).
         let raw = global_this.bun_vm().as_mut().dns_result_order;
         let order = match raw {
             4 => Order::Ipv4first,

@@ -26,7 +26,6 @@ enum CommonStringsForZig {
     BinaryTypeUint8Array = 12,
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     // `JSGlobalObject` is an opaque `UnsafeCell`-backed FFI handle; `&T` is
     // ABI-identical to non-null `*const T` and the C++ side's lazy init of its
@@ -45,8 +44,8 @@ impl CommonStringsForZig {
 }
 
 impl<'a> CommonStrings<'a> {
-    // PORT NOTE: Zig had both `IPv4`/`IPv6` and `ipv4`/`ipv6` methods, which
-    // collide under snake_case. The lowercase Zig methods are renamed to
+    // Zig had both `IPv4`/`IPv6` and `ipv4`/`ipv6` methods, which collide
+    // under snake_case. The lowercase Zig methods are renamed to
     // `ipv4_lower`/`ipv6_lower` here (matching their enum variants).
     #[inline]
     pub fn ipv4(self) -> JSValue {
@@ -56,14 +55,14 @@ impl<'a> CommonStrings<'a> {
     pub fn ipv6(self) -> JSValue {
         CommonStringsForZig::IPv6.to_js(self.global_object)
     }
-    // PORT NOTE: Zig `@"127.0.0.1"` — not a valid Rust identifier; renamed to
-    // match the enum variant.
+    // Zig `@"127.0.0.1"` — not a valid Rust identifier; renamed to match the
+    // enum variant.
     #[inline]
     pub fn in4_loopback(self) -> JSValue {
         CommonStringsForZig::IN4Loopback.to_js(self.global_object)
     }
-    // PORT NOTE: Zig `@"::"` — not a valid Rust identifier; renamed to match
-    // the enum variant.
+    // Zig `@"::"` — not a valid Rust identifier; renamed to match the enum
+    // variant.
     #[inline]
     pub fn in6_any(self) -> JSValue {
         CommonStringsForZig::IN6Any.to_js(self.global_object)

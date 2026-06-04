@@ -326,10 +326,15 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                 return Ok(JSValue::NULL);
             }
 
-            // TODO(port): Zig used `@tagName(err.basic().kind)`; `BasicParseErrorKind`
-            // currently lacks `IntoStaticStr` in bun_css — falls back to Display until
-            // the derive lands.
-            return Err(global.throw(format_args!("color() failed to parse {}", err.basic().kind)));
+            // Matches Zig's `@tagName(err.basic().kind)`.
+            let kind_name = match err.basic().kind {
+                css::BasicParseErrorKind::unexpected_token(_) => "unexpected_token",
+                css::BasicParseErrorKind::end_of_input => "end_of_input",
+                css::BasicParseErrorKind::at_rule_invalid(_) => "at_rule_invalid",
+                css::BasicParseErrorKind::at_rule_body_invalid => "at_rule_body_invalid",
+                css::BasicParseErrorKind::qualified_rule_invalid => "qualified_rule_invalid",
+            };
+            return Err(global.throw(format_args!("color() failed to parse {}", kind_name)));
         }
         Ok(result) => {
             let format: OutputColorFormat = if unresolved_format == OutputColorFormat::Ansi {
@@ -368,12 +373,10 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                             let srgba: SRGB = match &result {
                                 CssColor::Float(float) => match &**float {
                                     css::FloatColor::Rgb(rgb) => *rgb,
-                                    // TODO(port): inline else over FloatColor variants → trait `IntoColor<SRGB>`
                                     other => other.into_srgb(),
                                 },
                                 CssColor::Rgba(rgba) => rgba.into_srgb(),
                                 CssColor::Lab(lab) => {
-                                    // TODO(port): inline else over LabColor variants → trait `IntoColor<SRGB>`
                                     lab.into_srgb()
                                 }
                                 _ => break 'formatted,
@@ -541,12 +544,10 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                             let hsl: HSL = match &result {
                                 CssColor::Float(float) => match &**float {
                                     css::FloatColor::Hsl(hsl) => *hsl,
-                                    // TODO(port): inline else over FloatColor variants → trait `IntoColor<HSL>`
                                     other => other.into_hsl(),
                                 },
                                 CssColor::Rgba(rgba) => rgba.into_hsl(),
                                 CssColor::Lab(lab) => {
-                                    // TODO(port): inline else over LabColor variants → trait `IntoColor<HSL>`
                                     lab.into_hsl()
                                 }
                                 _ => break 'formatted,
@@ -560,12 +561,10 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
                         OutputColorFormat::Lab => {
                             let lab: LAB = match &result {
                                 CssColor::Float(float) => {
-                                    // TODO(port): inline else over FloatColor variants → trait `IntoColor<LAB>`
                                     float.into_lab()
                                 }
                                 CssColor::Lab(lab) => match &**lab {
                                     css::LabColor::Lab(lab_) => *lab_,
-                                    // TODO(port): inline else over LabColor variants → trait `IntoColor<LAB>`
                                     other => other.into_lab(),
                                 },
                                 CssColor::Rgba(rgba) => rgba.into_lab(),
@@ -588,7 +587,8 @@ pub fn js_function_color(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             let mut dest: Vec<u8> = Vec::new();
 
             let symbols = SymbolMap::init_list(Default::default());
-            // TODO(port): css::Printer::new signature — Zig passes (allocator, ArrayList, writer, opts, null, null, &symbols)
+            // Zig passes (allocator, ArrayList, writer, opts, null, null, &symbols);
+            // the Rust signature maps 1:1 (arena, buffer, writer, opts, None, None, &symbols).
             let mut printer = css::Printer::new(
                 &arena,
                 bun_alloc::ArenaVec::<u8>::new_in(&arena),

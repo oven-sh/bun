@@ -951,9 +951,9 @@ impl uv_write_t {
     /// the trampoline recovers it and dispatches to `on_write` as a plain Rust
     /// `&mut`. Generic monomorphisation gives one `extern "C"` thunk per `<T>`.
     ///
-    /// PORT NOTE: Zig captures `onWrite` at *comptime* (one thunk per
-    /// callsite, direct call) and returns `Maybe(void)` with the
-    /// `.toError(.write)` already applied. The Rust port can do neither
+    /// The Zig original captured `onWrite` at *comptime* (one thunk per
+    /// callsite, direct call) and returned `Maybe(void)` with the
+    /// `.toError(.write)` already applied. The Rust version can do neither
     /// without a `bun_sys` dependency / unstable const-generic fn pointers, so
     /// it (a) keeps `on_write` runtime-dispatched but stashes it as a `usize`
     /// (fn-ptr ↔ integer is well-defined; fn-ptr ↔ data-ptr is not — Miri

@@ -104,7 +104,7 @@ impl Options {
 
         // required. Validated by `validatePort`.
         let _port: u16 = if let Some(p) = obj.get(global, "port")? {
-            // PORT NOTE: Zig `JSValue.isFinite()`; Rust shim until landed in bun_jsc.
+            // Note: Zig `JSValue.isFinite()`; Rust shim until landed in bun_jsc.
             if !(p.is_number() && p.as_number().is_finite()) {
                 return Err(Self::throw_bad_port(global, p));
             }
@@ -178,7 +178,7 @@ impl SocketAddress {
     /// ### `SocketAddress.parse(input: string): SocketAddress | undefined`
     /// Parse an address string (with an optional `:port`) into a `SocketAddress`.
     /// Returns `undefined` if the input is invalid.
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the macro's free-fn arm emits a
+    // Note: no `#[bun_jsc::host_fn]` here — the macro's free-fn arm emits a
     // bare `parse(__g, __f)` call which doesn't resolve inside an `impl` block.
     // The C-ABI shim is wired by the `.classes.ts` codegen / `JsClass` derive.
     pub fn parse(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
@@ -239,7 +239,7 @@ impl SocketAddress {
         // - "[::1]" -> "::1"
         // - "0x.0x.0" -> "0.0.0.0"
         let paddr = host.latin1(); // presentation address
-        // PORT NOTE: Zig used `std.net.Ip{4,6}Address.parse`; Rust port uses
+        // Note: Zig used `std.net.Ip{4,6}Address.parse`; Rust port uses
         // `ares_inet_pton` (already linked) to fill the sockaddr in place.
         // `std.net.Ip6Address.parse` accepts a `%scope` suffix and populates
         // `scope_id`; `ares_inet_pton` does not, so we strip and parse it here.
@@ -295,7 +295,7 @@ impl SocketAddress {
     /// ### `SocketAddress.isSocketAddress(value: unknown): value is SocketAddress`
     /// Returns `true` if `value` is a `SocketAddress`. Subclasses and similarly-shaped
     /// objects are not considered `SocketAddress`s.
-    // PORT NOTE: no `#[bun_jsc::host_fn]` — free-fn arm emits bare ident; see `parse`.
+    // Note: no `#[bun_jsc::host_fn]` — free-fn arm emits bare ident; see `parse`.
     pub fn is_socket_address(_global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let value = callframe.argument(0);
         Ok(JSValue::from(
@@ -317,7 +317,7 @@ impl SocketAddress {
     ///
     /// ## References
     /// - [Node docs](https://nodejs.org/api/net.html#new-netsocketaddressoptions)
-    // PORT NOTE: no `#[bun_jsc::host_fn]` — free-fn arm emits bare ident; see `parse`.
+    // Note: no `#[bun_jsc::host_fn]` — free-fn arm emits bare ident; see `parse`.
     pub fn constructor(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<Box<SocketAddress>> {
         let options_obj = frame.argument(0);
         if options_obj.is_undefined() {
@@ -575,7 +575,6 @@ impl SocketAddress {
     }
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn JSSocketAddressDTO__create(
         global_object: &JSGlobalObject,
@@ -701,7 +700,7 @@ impl SocketAddress {
 
     #[bun_jsc::host_fn(method)]
     pub fn to_json(this: &Self, global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
-        // PORT NOTE: Zig used an anon struct with `jsc.JSObject.create`; Rust
+        // Note: Zig used an anon struct with `jsc.JSObject.create`; Rust
         // requires a `PojoFields` impl, so use a local struct.
         struct ToJson {
             address: JSValue,
@@ -735,28 +734,29 @@ impl SocketAddress {
 
 // PERF(port): was comptime monomorphization (`comptime af: c_int`) — profile if it shows up on a hot path.
 fn pton(global: &JSGlobalObject, af: c_int, addr: &ZStr, dst: *mut c_void) -> JsResult<()> {
+    use bun_jsc::js_global_object::SysErrOptions;
     // SAFETY: addr is NUL-terminated, dst points to a valid in_addr/in6_addr
     match unsafe { ares::ares_inet_pton(af, addr.as_ptr(), dst) } {
-        0 => Err(global
-            .err(
-                bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
-                format_args!("Invalid socket address"),
-            )
-            .throw()),
+        0 => Err(global.throw_sys_error(
+            &SysErrOptions {
+                code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
+                errno: None,
+                name: None,
+            },
+            format_args!("Invalid socket address"),
+        )),
 
-        // TODO: figure out proper way to convert a c errno into a js exception
-        // TODO(port): Zig set `.errno = std.c._errno().*` on the thrown SystemError;
-        // `JSGlobalObject::throw_sys_error` / `SysErrOptions` are not yet on the
-        // active stub, so the errno property is dropped for now.
-        -1 => {
-            let _ = bun_sys::last_errno();
-            Err(global
-                .err(
-                    bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
-                    format_args!("Invalid socket address"),
-                )
-                .throw())
-        }
+        // Open question (carried from the Zig original): the proper way to
+        // convert a C errno into a JS exception.
+        -1 => Err(global.throw_sys_error(
+            &SysErrOptions {
+                code: bun_jsc::ErrorCode::ERR_INVALID_IP_ADDRESS,
+                // Zig: `.errno = std.c._errno().*`.
+                errno: Some(bun_sys::last_errno()),
+                name: None,
+            },
+            format_args!("Invalid socket address"),
+        )),
         1 => Ok(()),
         _ => unreachable!(),
     }
@@ -1032,17 +1032,23 @@ impl sockaddr {
 // =============================================================================
 
 // The same types are defined in a bunch of different places. We should probably unify them.
-// TODO(port): comptime static asserts — Rust const_assert! once inet types are concrete
-// const _: () = assert!(mem::size_of::<inet::socklen_t>() == mem::size_of::<bun_sys::posix::socklen_t>());
-// const _: () = assert!(mem::align_of::<inet::socklen_t>() == mem::align_of::<bun_sys::posix::socklen_t>());
-// const _: () = assert!(AF::INET.int() == ares::AF::INET);
-// const _: () = assert!(AF::INET6.int() == ares::AF::INET6);
+// Zig comptime block (SocketAddress.zig:633-645): socklen_t shape parity +
+// AF constant parity with c-ares.
+#[cfg(not(windows))]
+const _: () = {
+    assert!(mem::size_of::<inet::socklen_t>() == mem::size_of::<libc::socklen_t>());
+    assert!(mem::align_of::<inet::socklen_t>() == mem::align_of::<libc::socklen_t>());
+};
+const _: () = {
+    assert!(AF::INET as c_int == ares::AF::INET);
+    assert!(AF::INET6 as c_int == ares::AF::INET6);
+};
 
 #[cfg(windows)]
 pub mod inet {
     #![allow(non_camel_case_types)]
     use bun_sys::windows::ws2_32 as ws2;
-    // PORT NOTE: `bun_windows_sys::ws2_32` does not currently surface
+    // Note: `bun_windows_sys::ws2_32` does not currently surface
     // `INET6_ADDRSTRLEN` / `ADDRESS_FAMILY` / `USHORT`; mirror the
     // `ws2ipdef.h` / `ws2def.h` values locally so the Windows build
     // resolves without widening the leaf crate.

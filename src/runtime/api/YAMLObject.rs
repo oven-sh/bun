@@ -114,10 +114,9 @@ pub(crate) struct AnchorAlias {
 
 impl Default for AnchorAlias {
     fn default() -> Self {
-        // PORT NOTE: `HashMap::get_or_put` requires `V: Default` to fill the
-        // freshly-inserted slot before the caller overwrites `*value_ptr`. Zig
-        // left it `undefined`; this is the closest legal Rust equivalent and is
-        // immediately overwritten by the caller (see `find_anchors_and_aliases`).
+        // Exists only because `HashMap::get_or_put` requires `V: Default` to
+        // fill the freshly-inserted slot; the value is immediately overwritten
+        // by the caller (see `find_anchors_and_aliases`).
         AnchorAlias {
             anchored: false,
             used: false,
@@ -424,7 +423,8 @@ impl Stringifier {
                 return Ok(());
             }
 
-            // PORT NOTE: reshaped for borrowck — set anchored before newline()
+            // `anchored` is set before `newline()` (the order is irrelevant to
+            // output; doing it here releases the `anchor` borrow first).
             anchor.anchored = true;
             match self.space {
                 Space::Minified => {

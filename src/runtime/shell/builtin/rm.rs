@@ -112,7 +112,7 @@ impl Rm {
     /// Spec: rm.zig `next`.
     pub(crate) fn next(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
-            // PORT NOTE: reshaped for borrowck — read tag, drop borrow, act.
+            // Read the tag, drop the borrow, then act.
             enum Tag {
                 Idle,
                 ParseOpts(u32, bool),
@@ -215,7 +215,7 @@ impl Rm {
                                     let dirname =
                                         resolve_path::dirname::<platform::Auto>(normalized);
                                     if dirname.is_empty() {
-                                        // PORT NOTE: reshaped for borrowck — copy resolved before
+                                        // Copy resolved before
                                         // re-borrowing `interp` mutably.
                                         let resolved_owned = resolved.to_vec();
                                         if let Some(safeguard) =
@@ -438,7 +438,7 @@ impl Rm {
 
         // SAFETY: `task` is live; exclusive on main thread until decr above runs.
         let task_err = unsafe { (*task).err.get_mut().take() };
-        // PORT NOTE: reshaped for borrowck — format the error string before
+        // Format the error string before
         // stashing the error on `exec` (formatting needs &mut interp).
         let errstr: Option<Vec<u8>> = task_err
             .as_ref()
@@ -658,11 +658,11 @@ pub struct ShellRmTask {
     pub cmd: NodeId,
     pub opts: Opts,
     pub cwd: bun_sys::Fd,
-    // PORT NOTE: rm.zig also keeps a Windows-only `cwd_path` populated from
+    // rm.zig also keeps a Windows-only `cwd_path` populated from
     // `Syscall.getFdPath(cwd)` on the root task, but it is never read (set and
     // freed only). The Rust port drops it: keeping it required a Windows
     // `get_fd_path` call whose only observable effect was the error path.
-    /// PORT NOTE: in Zig the root DirTask is an inline field. Here it lives in
+    /// In Zig the root DirTask is an inline field. Here it lives in
     /// its own `heap::alloc`'d allocation so that `&ShellRmTask` (held as
     /// the `&self` receiver throughout `remove_entry*`) never overlaps the
     /// `&mut DirTask` borrows those methods take on the root — embedding it
@@ -691,7 +691,7 @@ pub struct ShellRmTask {
 }
 
 /// Spec: rm.zig `ShellRmTask.DirTask`. One per directory in the recursive
-/// walk; root and children alike are heap-allocated (see PORT NOTE on
+/// walk; root and children alike are heap-allocated (see the comment on
 /// [`ShellRmTask::root_task`]).
 pub struct DirTask {
     pub task_manager: *mut ShellRmTask,
@@ -734,7 +734,7 @@ impl ShellRmTask {
     ) -> *mut ShellRmTask {
         let root_path_z = ZBox::from_bytes(root_path);
         let join_style = JoinStyle::from_path(root_path);
-        // Separate allocation — see PORT NOTE on `root_task`.
+        // Separate allocation — see the comment on `root_task`.
         let root_task = bun_core::heap::into_raw(Box::new(DirTask {
             // task_manager is fixed up below once we have the ShellRmTask address.
             task_manager: core::ptr::null_mut(),
@@ -1140,7 +1140,7 @@ impl ShellRmTask {
                 }
                 _ => {
                     let name = current.name.slice_u8();
-                    // PORT NOTE: reshaped for borrowck — Zig passed both the
+                    // Zig passed both the
                     // joined slice (borrowing `buf`) and `buf` itself to
                     // `removeEntryFile`. Copy the join into an owned ZBox so
                     // `buf` is free to be re-borrowed by the vtable callback.
@@ -1387,7 +1387,7 @@ impl DirTask {
         // / `parent_task` / `path` / `is_absolute`). `tm_ptr` is live until
         // `pending_main_callbacks` hits 0.
         //
-        // PORT NOTE: rm.zig:560-577 also resolves `cwd_path` here on Windows
+        // rm.zig:560-577 also resolves `cwd_path` here on Windows
         // via `Syscall.getFdPath`. That field is dead state (never read), so
         // the Rust port drops the block entirely rather than calling a
         // Windows path resolver whose only effect would be to fail the task
@@ -1415,7 +1415,7 @@ impl DirTask {
             }
         };
 
-        // PORT NOTE: rm.zig re-reads `this.deleting_after_waiting_for_children`
+        // rm.zig re-reads `this.deleting_after_waiting_for_children`
         // here to decide whether to skip `postRun`. That load (and `postRun`'s
         // own `need_to_wait` load) is a use-after-free race: once
         // `remove_entry_dir` publishes `need_to_wait = true`, the last child
@@ -1473,7 +1473,7 @@ impl DirTask {
                     // finished, while the parent was still in `remove_entry_dir`.
                     let p = &*me.parent_task;
                     let tasks_left = p.subtask_count.fetch_sub(1, Ordering::SeqCst);
-                    // PORT NOTE: rm.zig uses `.monotonic` here, but that is a
+                    // rm.zig uses `.monotonic` here, but that is a
                     // formal data race on the parent's non-atomic
                     // `deleted_entries`: the parent thread may have appended
                     // verbose paths for plain-file children *after* scheduling

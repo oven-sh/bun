@@ -367,7 +367,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         break 'tagger _tag;
                     }
                     if p.options.jsx.runtime == options::JSX::Runtime::Classic {
-                        // PORT NOTE: `jsx_strings_to_member_expression` wants `&[&'a [u8]]`.
+                        // `jsx_strings_to_member_expression` wants `&[&'a [u8]]`.
                         // In Zig, `options.jsx.fragment: []const string` borrows from the
                         // long-lived `transpiler.options.jsx`, so the strings outlive the
                         // AST. Here, `options.jsx.fragment: Box<[Box<[u8]>]>` is OWNED by
@@ -424,7 +424,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     let num_props = e_.properties.len_u32();
                     if num_props > 0 {
-                        // PORT NOTE: Zig duped the property slice into a fresh arena allocation
+                        // Zig duped the property slice into a fresh arena allocation
                         // before wrapping in E.Object. PropertyList = Vec<Property> here is
                         // already arena-backed and the JSX node is consumed; reuse in place.
                         // PERF(port): was arena alloc + bun.copy — profile if it shows up on a hot path
@@ -453,7 +453,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     let target: Expr = if runtime == options::JSX::Runtime::Classic {
-                        // PORT NOTE: see fragment note above — `options.jsx.factory` is
+                        // see fragment note above — `options.jsx.factory` is
                         // owned by `P` and freed when the parser drops; dupe each part
                         // into the arena so the symbol/E::Dot names outlive the printer.
                         // Build the parts slice in the AST arena (no global-heap `Vec`).
@@ -510,7 +510,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         None
                     };
 
-                    // PORT NOTE: Zig reassigns `props` (a `*Vec(G.Property)`) to point inside
+                    // Zig reassigns `props` (a `*Vec(G.Property)`) to point inside
                     // a spread object's properties via raw arena pointer. Track as a
                     // `StoreRef` (safe `Deref`/`DerefMut`) so the spread-collapse walk
                     // and the `push`/`take` calls below stay in safe code.
@@ -524,7 +524,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
                     {
                         let mut last_child: u32 = 0;
-                        // PORT NOTE: Zig wrote `e_.children.ptr[last_child] = p.visitExpr(child)`
+                        // Zig wrote `e_.children.ptr[last_child] = p.visitExpr(child)`
                         // while iterating a slice over the same buffer. Iterate by index to avoid
                         // borrowck on `e_.children`.
                         for i in 0..children_count {
@@ -561,7 +561,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         {
                             break;
                         }
-                        // PORT NOTE: reshaped for borrowck — Zig reassigns `props` to point
+                        // reshaped for borrowck — Zig reassigns `props` to point
                         // inside the spread object's properties. Compute the next handle in
                         // a block so the `DerefMut` borrow of `props_handle` ends before
                         // reassignment.
@@ -823,7 +823,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // iteration on the heap instead of recursion on the call stack to avoid
         // stack overflow for deeply-nested ASTs.
         //
-        // PORT NOTE: Zig stores `*E.Binary` (arena ptr). `BinaryExpressionVisitor.e`
+        // Zig stores `*E.Binary` (arena ptr). `BinaryExpressionVisitor.e`
         // is the `StoreRef<E::Binary>` arena handle directly — `Copy` + safe
         // `Deref`/`DerefMut`, so no raw-pointer detach is needed here.
         let mut v: BinaryExpressionVisitor = BinaryExpressionVisitor {
@@ -1175,7 +1175,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             );
         }
 
-        // PORT NOTE: `e_` is `StoreRef<E::Index>` — mutations above wrote through
+        // `e_` is `StoreRef<E::Index>` — mutations above wrote through
         // DerefMut into the same arena slot `expr.data` already points at. Zig's
         // `p.newExpr(e_, loc)` re-wraps the same pointer; here `*e` is already that.
     }
@@ -1751,7 +1751,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     && matches!(key.data, Data::EString(..))
                 {
                     let key_str = key.data.e_string().expect("infallible: variant checked");
-                    // PORT NOTE: Zig `string(arena)` transcodes UTF-16; while
+                    // Zig `string(arena)` transcodes UTF-16; while
                     // E.rs has duplicate impls (E0034), reach the bytes directly
                     // — class-name keys are parser-produced (UTF-8, no rope).
                     p.decorator_class_name = if !key_str.is_utf16 {
@@ -1830,7 +1830,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         //
         // const binding = await import(`./${process.platform}-${process.arch}.node`);
         //
-        // PORT NOTE: Zig `defer` restores at scope exit; restored manually before each return.
+        // Zig `defer` restores at scope exit; restored manually before each return.
         let prev_should_fold_typescript_constant_expressions = true;
         p.should_fold_typescript_constant_expressions = true;
 
@@ -1893,7 +1893,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         );
 
         // Copy the call side effect flag over if this is a known target
-        // PORT NOTE: copy the small inline payloads out first so the `match &e_.target.data`
+        // copy the small inline payloads out first so the `match &e_.target.data`
         // borrow doesn't overlap the `e_.can_be_unwrapped_if_unused = …` write below.
         match e_.target.data {
             Data::EIdentifier(ident) => {
@@ -1928,7 +1928,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         p.record_usage(p.exports_ref);
                     }
 
-                    // PORT NOTE: `Scope.parent: ?*Scope` in Zig is `Option<StoreRef<Scope>>` here;
+                    // `Scope.parent: ?*Scope` in Zig is `Option<StoreRef<Scope>>` here;
                     // walk via the safe arena back-pointer.
                     let mut scope_iter: Option<js_ast::StoreRef<js_ast::Scope>> =
                         Some(p.current_scope);
@@ -1970,7 +1970,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         {
             let old_ce = p.options.ignore_dce_annotations;
-            // PORT NOTE: Zig `defer` restores at scope exit; do it manually below.
+            // Zig `defer` restores at scope exit; do it manually below.
             let old_should_fold_typescript_constant_expressions =
                 p.should_fold_typescript_constant_expressions;
             let old_is_control_flow_dead = p.is_control_flow_dead;
@@ -2265,7 +2265,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // When we see a hook call, we need to hash it, and then mark a flag so that if
         // it is assigned to a variable, that variable also get's hashed.
         //
-        // PORT NOTE: `Runtime::Features.server_components` is a `bool` stub; the
+        // `Runtime::Features.server_components` is a `bool` stub; the
         // full Zig type is `enum { off, client, server }` with `.isServerSide()`. Treat
         // `true` as server-side until the enum lands.
         if p.options.features.react_fast_refresh
@@ -2475,7 +2475,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
         // Zig: `std.mem.toBytes(...)` then `bytesToValue(...)` to save/restore. In Rust the struct
         // is `Copy`/`Clone`, so just copy it.
-        // PORT NOTE: reshaped — toBytes/bytesToValue → plain copy.
+        // reshaped — toBytes/bytesToValue → plain copy.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_visit;
         p.fn_or_arrow_data_visit = FnOrArrowDataVisit {
             is_arrow: true,
@@ -2515,10 +2515,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let prev_hook_ctx = p.react_refresh.hook_ctx_storage;
         p.react_refresh.hook_ctx_storage = Some(core::ptr::NonNull::from(&mut react_hook_data));
 
-        // TODO(port): Zig `ListManaged(Stmt).fromOwnedSlice(p.arena, dupe)` takes ownership of
-        // the arena slice without copying. bumpalo Vec cannot adopt an existing slice; a custom
-        // arena Vec that can would avoid this copy. Left as a copy with PERF note.
-        // PERF(port): was fromOwnedSlice (no copy) — profile if it shows up on a hot path
+        // Zig `ListManaged(Stmt).fromOwnedSlice(p.arena, dupe)` adopted the arena slice
+        // without copying; bumpalo Vec cannot adopt an existing slice, so this copies.
+        // PERF: profile if it shows up on a hot path (react-refresh only).
         let mut stmts_list = bun_alloc::vec_from_iter_in(dupe.iter().copied(), p.arena);
         let mut temp_opts = PrependTempRefsOpts {
             kind: crate::parser::StmtsKind::FnBody,

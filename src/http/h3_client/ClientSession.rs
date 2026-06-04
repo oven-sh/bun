@@ -174,7 +174,7 @@ impl ClientSession {
     }
 
     pub fn fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
-        // PORT NOTE: reshaped for borrowck — capture client ptr before detach() invalidates stream.
+        // Capture the client ptr before detach() invalidates `stream`.
         let client = stream_mut(stream).client;
         stream_mut(stream).abort();
         self.detach(stream);
@@ -191,7 +191,7 @@ impl ClientSession {
     /// port-reuse race where a pooled session goes stale between the
     /// `matches()` check and the first stream open.
     pub fn retry_or_fail(&mut self, stream: *mut Stream, err: bun_core::Error) {
-        // PORT NOTE: reshaped for Stacked Borrows like `fail` below — `detach()`
+        // Shaped for Stacked Borrows like `fail` below — `detach()`
         // re-derives `&mut HTTPClient` from the same raw ptr to null `h3`, which
         // would invalidate any `&mut HTTPClient` held across it. Hold the raw
         // `client_ptr` across `detach` and only form `&mut` afterward.
@@ -234,7 +234,7 @@ impl ClientSession {
     }
 
     pub fn abort_by_http_id(&mut self, async_http_id: u32) -> bool {
-        // PORT NOTE: Zig iterates `pending.items` and calls `this.fail` (which
+        // The Zig original iterates `pending.items` and calls `this.fail` (which
         // mutates `pending`) mid-loop. Rust borrowck forbids reborrowing
         // `&mut self` while the iterator holds `&self.pending`, and only one
         // entry can match — so locate first via raw-ptr reads, then act.

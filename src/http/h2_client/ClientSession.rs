@@ -26,7 +26,7 @@ pub type Socket = HTTPSocket<true>;
 
 const LOCAL_INITIAL_WINDOW_SIZE: u32 = super::LOCAL_INITIAL_WINDOW_SIZE;
 
-// PORT NOTE: Zig `u31`/`u24` widened to u32; range asserts at use sites.
+// 31-/24-bit wire fields stored as u32; range asserts at use sites.
 #[allow(non_camel_case_types)]
 type u31 = u32;
 #[allow(non_camel_case_types)]
@@ -553,7 +553,8 @@ impl ClientSession {
     /// end-of-body) are available in the ThreadSafeStreamBuffer.
     pub fn stream_body_by_http_id(&mut self, async_http_id: u32, ended: bool) {
         let _guard = self.ref_scope();
-        // PORT NOTE: reshaped for borrowck — collect target stream ptr before mutating self.
+        // Collect the target stream ptr first so no borrow of `self.streams`
+        // is held while mutating `self` below.
         let mut target: Option<*mut Stream> = None;
         for &stream in self.streams.values() {
             let Some(client) = stream_mut(stream).client_mut() else {
@@ -599,7 +600,7 @@ impl ClientSession {
             self.write_window_update(0, self.conn_unacked_bytes);
             self.conn_unacked_bytes = 0;
         }
-        // PORT NOTE: reshaped for borrowck — collect (id, unacked) pairs before mutating self.
+        // Collect (id, unacked) pairs before mutating self.
         let mut updates: Vec<(u32, u32)> = Vec::new();
         for &s in self.streams.values() {
             let s = stream_mut(s);
@@ -615,10 +616,10 @@ impl ClientSession {
     }
 
     pub fn flush(&mut self) -> Result<bool, Error> {
-        // PORT NOTE: reshaped for borrowck — capture as `bun_ptr::RawSlice`
-        // (encapsulated outlives-holder invariant) so the loop can borrow
-        // `self.socket` while still subslicing `write_buffer`. The buffer is
-        // not reallocated until `wrote()` after the loop.
+        // Captured as `bun_ptr::RawSlice` (encapsulated outlives-holder
+        // invariant) so the loop can borrow `self.socket` while still
+        // subslicing `write_buffer`. The buffer is not reallocated until
+        // `wrote()` after the loop.
         let pending = bun_ptr::RawSlice::new(self.write_buffer.slice());
         if pending.is_empty() {
             return Ok(false);
@@ -658,11 +659,10 @@ impl ClientSession {
             }
         } else {
             self.read_buffer.extend_from_slice(incoming);
-            // PORT NOTE: reshaped for borrowck — `parse_frames` takes
-            // `&mut self` plus a view into `self.read_buffer`. Capture as
-            // `bun_ptr::RawSlice`: read_buffer is not reallocated during
-            // parse_frames (only consumed), so the outlives-holder invariant
-            // holds for the call.
+            // `parse_frames` takes `&mut self` plus a view into
+            // `self.read_buffer`, so capture the view as `bun_ptr::RawSlice`:
+            // read_buffer is not reallocated during parse_frames (only
+            // consumed), so the outlives-holder invariant holds for the call.
             let buf = bun_ptr::RawSlice::new(self.read_buffer.as_slice());
             let consumed = dispatch::parse_frames(self, buf.slice());
             self.read_buffer.drain_front(consumed);
@@ -821,9 +821,9 @@ impl ClientSession {
     /// Called from the HTTP thread's shutdown queue when a fetch on this
     /// session is aborted. RST_STREAMs that one request; siblings continue.
     pub fn abort_by_http_id(&mut self, async_http_id: u32) {
-        // PORT NOTE: reshaped for borrowck — find index via raw-ptr field read
-        // first, then swap_remove, so no `&mut HTTPClient` is held across the
-        // Vec mutation and no `&mut` is materialised during iteration.
+        // Find the index via a raw-ptr field read first, then swap_remove, so
+        // no `&mut HTTPClient` is held across the Vec mutation and no `&mut`
+        // is materialised during iteration.
         let found = self
             .pending_attach
             .iter()
@@ -835,7 +835,8 @@ impl ClientSession {
             self.maybe_release();
             return;
         }
-        // PORT NOTE: reshaped for borrowck — find target before detaching.
+        // Find the target before detaching so no borrow of `self.streams` is
+        // held across the mutation.
         let mut target: Option<*mut Stream> = None;
         for &e in self.streams.values() {
             if stream_ref(e)

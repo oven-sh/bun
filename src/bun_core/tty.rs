@@ -50,7 +50,6 @@ impl Drop for RawModeGuard {
     }
 }
 
-// TODO(port): move to bun_core_sys (or appropriate *_sys crate)
 unsafe extern "C" {
     safe fn Bun__ttySetMode(fd: c_int, mode: c_int) -> c_int;
 }

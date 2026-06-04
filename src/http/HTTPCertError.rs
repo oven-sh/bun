@@ -2,9 +2,10 @@ use bun_core::ZStr;
 
 pub struct HTTPCertError {
     pub error_no: i32,
-    // TODO(port): CertificateInfo.deinit frees code/reason — ownership unclear
-    // (borrowed in onHandshake, owned via dupeZ in CertificateInfo / http.zig:115).
-    // May need owned NUL-terminated type (Box<ZStr> / ZString) instead of &'static.
+    // `code`/`reason` borrow process-lifetime static string tables (uSockets'
+    // verify-error strings and BoringSSL's `X509_verify_cert_error_string`
+    // literals — see the SAFETY note in `from_verify_error`), so unlike Zig's
+    // `dupeZ` + `CertificateInfo.deinit` pair, nothing owns or frees them here.
     pub code: &'static ZStr,
     pub reason: &'static ZStr,
 }
@@ -30,9 +31,9 @@ impl HTTPCertError {
     /// uSockets API populates both together or neither).
     pub fn from_verify_error(ssl_error: bun_uws::us_bun_verify_error_t) -> Self {
         /// Borrow a NUL-terminated C string from uSockets as `&'static ZStr`.
-        /// The string is owned by the long-lived SSL session and outlives the
-        /// `on_handshake` dispatch; widened to `'static` to match the field
-        /// type (see TODO above re: ownership).
+        /// Both sources are process-lifetime static string tables (see the
+        /// SAFETY note below), so the `'static` widen is genuine, not a
+        /// convenience.
         #[inline]
         fn zstr(p: *const core::ffi::c_char) -> &'static ZStr {
             // SAFETY: (`bun_ptr::Interned`-style audit — Population A,

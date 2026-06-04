@@ -10,8 +10,8 @@ use super::ArrayList;
 /// Either a name or at least one pseudo class is required.
 pub struct PageSelector {
     /// An optional named page type.
-    // PORT NOTE: arena-owned slice borrowed from parser input; `&'static` per
-    // PORTING.md §AST crates / rules/mod.rs lifetime-erasure note.
+    // Arena-owned slice borrowed from parser input; `&'static` per the
+    // rules/mod.rs lifetime-erasure note.
     // TODO(port): re-thread `'bump`.
     pub name: Option<&'static [u8]>,
     /// A list of page pseudo classes.
@@ -34,9 +34,7 @@ impl PageSelector {
 
 impl PageSelector {
     pub fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `name: Option<&'static
-        // [u8]>` is an arena-owned slice → identity copy; `PagePseudoClass` is
-        // `Copy`.
+        // `name` is an arena-owned slice → identity copy; `PagePseudoClass` is `Copy`.
         Self {
             name: self.name,
             pseudo_classes: self
@@ -82,7 +80,7 @@ pub struct PageMarginRule {
     /// The margin box identifier for this rule.
     pub margin_box: PageMarginBox,
     /// The declarations within the rule.
-    // PORT NOTE: lifetime erased to `'static` per rules/mod.rs `CssRule<R>` note.
+    // Lifetime erased to `'static` per the rules/mod.rs `CssRule<R>` note.
     pub declarations: DeclarationBlock<'static>,
     /// The location of the rule in the source file.
     pub loc: Location,
@@ -101,7 +99,6 @@ impl PageMarginRule {
 
 impl PageMarginRule {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `PageMarginBox` is `Copy`.
         Self {
             margin_box: self.margin_box,
             declarations: super::dc::decl_block_static(&self.declarations, bump),
@@ -115,7 +112,7 @@ pub struct PageRule {
     /// A list of page selectors.
     pub selectors: ArrayList<PageSelector>,
     /// The declarations within the `@page` rule.
-    // PORT NOTE: lifetime erased to `'static` per rules/mod.rs `CssRule<R>` note.
+    // Lifetime erased to `'static` per the rules/mod.rs `CssRule<R>` note.
     pub declarations: DeclarationBlock<'static>,
     /// The nested margin rules.
     pub rules: ArrayList<PageMarginRule>,
@@ -144,8 +141,7 @@ impl PageRule {
         let mut i: usize = 0;
         let len = self.declarations.len() + self.rules.len();
 
-        // PORT NOTE: Zig used `inline for` over field-name tuple + @field reflection.
-        // Unrolled to a 2-tuple of (slice, important) since both fields are property lists.
+        // Both declaration fields are property lists; iterate as (slice, important) pairs.
         let decls_groups: [(&[crate::css_parser::Property], bool); 2] = [
             (self.declarations.declarations.as_slice(), false),
             (self.declarations.important_declarations.as_slice(), true),
@@ -187,7 +183,6 @@ impl PageRule {
 
 impl PageRule {
     pub(crate) fn deep_clone(&self, bump: &bun_alloc::Arena) -> Self {
-        // PORT NOTE: `css.implementDeepClone` field-walk.
         Self {
             selectors: self.selectors.iter().map(|s| s.deep_clone(bump)).collect(),
             declarations: super::dc::decl_block_static(&self.declarations, bump),
@@ -310,10 +305,7 @@ pub(crate) struct PageRuleParser<'a> {
     pub options: &'a css::ParserOptions<'a>,
 }
 
-// PORT NOTE: Zig modeled DeclarationParser/AtRuleParser/QualifiedRuleParser/
-// RuleBodyItemParser as nested `pub const Foo = struct { ... }` namespaces with
-// methods taking `*This`. In Rust these become trait impls on PageRuleParser;
-// associated `pub const X = T` → `type X = T`.
+// Parser trait impls for `@page` rule bodies.
 const _: () = {
     use css::css_parser::{
         AtRuleParser, DeclarationParser, QualifiedRuleParser, RuleBodyItemParser,

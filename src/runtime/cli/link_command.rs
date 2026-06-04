@@ -108,7 +108,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
             }
         }
 
-        // PORT NOTE: reshaped for borrowck — re-derive `name` here so its
+        // Reshaped for borrowck — re-derive `name` here so its
         // lifetime is tied only to `lockfile.buffers.string_bytes`, decoupled
         // from `package_json_source` (dropped above).
         let name = lockfile.str(&package.name);
@@ -222,7 +222,7 @@ fn link(ctx: command::Context) -> Result<(), bun_core::Error> {
             let mut link_dest_buf = PathBuffer::uninit();
             let mut link_rel_buf = PathBuffer::uninit();
 
-            // PORT NOTE: Zig passed `&node_modules_path` for both
+            // Zig passed `&node_modules_path` for both
             // `target_node_modules_path` (`*const`) and `node_modules_path`
             // (`*mut`). Rust forbids `&` + `&mut` to the same value, so resolve
             // the fd path twice (cheap: one `getFdPath` syscall) into two

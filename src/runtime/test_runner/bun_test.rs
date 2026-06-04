@@ -87,7 +87,8 @@ pub mod js_fns {
         global_this: &JSGlobalObject,
         cfg: &GetActiveCfg<'a>,
     ) -> JsResult<&'static mut BunTestRoot> {
-        // TODO(port): lifetime — Jest.runner is a process-global; modeled as an unbounded `&mut` here.
+        // `Jest.runner` is a process-global that outlives every caller, so the
+        // unbounded `&'static mut` is the honest model here.
         let Some(runner) = Jest::runner() else {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} outside of the test runner. Run \"bun test\" to run tests.",
@@ -121,7 +122,7 @@ pub mod js_fns {
 
     /// Tags accepted by `generic_hook`. Superset of `DescribeScope::HookTag`
     /// (adds `OnTestFinished`).
-    // PORT NOTE: was a const-generic param (`adt_const_params` is unstable);
+    // was a const-generic param (`adt_const_params` is unstable);
     // reshaped to runtime dispatch with per-tag thin host_fn wrappers below.
     #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
     pub enum GenericHookTag {
@@ -159,7 +160,7 @@ pub mod js_fns {
     }
 
     // Zig: `fn genericHook(comptime tag) type { return struct { pub fn hookFn(...) } }`
-    // PORT NOTE: reshaped — `adt_const_params` is unstable, so the body takes
+    // reshaped — `adt_const_params` is unstable, so the body takes
     // `tag` at runtime and 5 thin `#[host_fn]` wrappers below supply the
     // per-tag entry points (one fn per JS function, matching Zig's comptime
     // monomorphization for JSFunction::create).
@@ -168,10 +169,11 @@ pub mod js_fns {
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
-        {
-            let _g = group_begin!();
-            // errdefer group.log("ended in error", .{}) — handled by ? paths implicitly logging
-            // TODO(port): errdefer side-effect log on error path
+        let _g = group_begin!();
+        // Zig: `errdefer group.log("ended in error", .{})` — run the body in a
+        // closure so every error exit funnels through the log below before the
+        // group guard closes (matching Zig's errdefer-before-defer order).
+        let result = (|| -> JsResult<JSValue> {
 
             let tag_name: &'static str = tag.into();
             let sig_bytes: &'static [u8] = tag.sig();
@@ -325,7 +327,11 @@ pub mod js_fns {
                     tag_name
                 ))),
             }
+        })();
+        if result.is_err() {
+            crate::test_runner::debug::group::log("ended in error");
         }
+        result
     }
 
     /// Per-tag `#[host_fn]` entry points (one fn per JS function so
@@ -528,9 +534,10 @@ impl BunTestRoot {
             .unwrap_or_else(|| NonNull::from(&mut *self));
 
         // Zig: active_file = .new(undefined); active_file.get().?.init(...)
-        // TODO(port): in-place init — Rc::new_cyclic or two-phase init may be
-        // needed because BunTest stores a backref to BunTestRoot.
-        // PORT NOTE: Zig stores `?*CommandLineReporter` (raw, untracked); the
+        // BunTest stores a backref to BunTestRoot, but the backref is the
+        // `stable_root` raw pointer above (not an `Rc`), so plain construction
+        // works without `Rc::new_cyclic`/two-phase init.
+        // Zig stores `?*CommandLineReporter` (raw, untracked); the
         // reporter is the global `CommandLineReporter` owned by
         // `test_command::exec` which outlives every `BunTest`. `exit_file()`
         // nulls this before the file is dropped.
@@ -637,7 +644,7 @@ pub struct BunTest {
     pub file_id: FileId,
     /// null if the runner has moved on to the next file but a strong reference to BunTest is still keeping it alive
     ///
-    /// PORT NOTE: Zig stores `?*CommandLineReporter` (raw, mutable). Stored as
+    /// Zig stores `?*CommandLineReporter` (raw, mutable). Stored as
     /// `NonNull` (not `&`) so callbacks (`handle_test_completed`, junit writer,
     /// uncaught-exception handler) can write through it without deriving `&mut`
     /// from `&` (UB). The reporter is owned by `test_command::exec`'s stack
@@ -686,7 +693,7 @@ impl BunTest {
             first_last,
             extra_execution_entries: Vec::new(),
             cloned_hook_entries: Vec::new(),
-            // PORT NOTE: `EventLoopTimer` has no `Default`; `init_paused` sets
+            // `EventLoopTimer` has no `Default`; `init_paused` sets
             // `next = EPOCH, state = PENDING` (matches Zig's zero-init).
             timer: EventLoopTimer::init_paused(EventLoopTimerTag::BunTest),
             wants_wakeup: false,
@@ -751,7 +758,8 @@ impl BunTest {
         is_catch: bool,
     ) -> JsResult<()> {
         let _g = group_begin!();
-        // TODO(port): errdefer group.log("ended in error")
+        // Zig had `errdefer group.log("ended in error")` here, but this body
+        // has no fallible operations in the Rust port — every exit is `Ok`.
 
         let [result, this_ptr] = callframe.arguments_as_array::<2>();
         if this_ptr.is_empty_or_undefined_or_null() {
@@ -797,7 +805,7 @@ impl BunTest {
         Ok(())
     }
 
-    // PORT NOTE: `#[bun_jsc::host_fn]` proc-macro emits a free-fn wrapper that
+    // `#[bun_jsc::host_fn]` proc-macro emits a free-fn wrapper that
     // calls the annotated item by bare name; that lookup fails for associated
     // fns inside `impl` blocks. The extern-"C" trampoline is wired separately
     // (see the gated `Bun__TestScope__Describe2__*` statics below), so the
@@ -1010,7 +1018,7 @@ impl BunTest {
                 bun_core::scoped_log!(bun_test_group, "-> removing existing timer");
                 vm_timer().remove(&raw mut self.timer);
             }
-            // PORT NOTE: `EventLoopTimer.next` uses the event-loop crate's local
+            // `EventLoopTimer.next` uses the event-loop crate's local
             // `Timespec` (distinct from `bun_core::Timespec`); convert by field.
             self.timer.next = ElTimespec { sec: min_timeout.sec, nsec: min_timeout.nsec };
             if self.timer.next != ElTimespec::EPOCH {
@@ -1028,7 +1036,7 @@ impl BunTest {
     fn _advance(&mut self, _global_this: &JSGlobalObject) -> JsResult<Advance> {
         let _g = group_begin!();
         bun_core::scoped_log!(bun_test_group, "advance from {}", <&'static str>::from(self.phase));
-        // PORT NOTE: capture `self.phase` by raw ptr so the deferred log doesn't
+        // capture `self.phase` by raw ptr so the deferred log doesn't
         // hold a `&self` borrow across the `self.phase = …` writes below
         // (Zig `defer` closes over `*BunTest` by pointer, not by borrow).
         let phase_ptr: *const Phase = &raw const self.phase;
@@ -1068,7 +1076,7 @@ impl BunTest {
                 } else {
                     None
                 };
-                // PORT NOTE: Zig `prng.random()` yields a `std.Random` interface
+                // Zig `prng.random()` yields a `std.Random` interface
                 // wrapper; the Rust `Order::Config.randomize` takes the PRNG
                 // itself (`Option<DefaultPrng>`), so pass it through directly.
                 let should_randomize = per_file_prng.take();
@@ -1115,7 +1123,7 @@ impl BunTest {
                 };
                 afterall_order.set_failure_skip_to(&mut order);
 
-                self.execution.load_from_order(&mut order)?;
+                self.execution.load_from_order(&mut order);
                 debug::dump_order(&self.execution)?;
                 Ok(Advance::Cont)
             }
@@ -1380,7 +1388,7 @@ impl Drop for BunTest {
 
 // `export const Bun__TestScope__Describe2__bunTestThen = jsc.toJSHostFn(bunTestThen);`
 //
-// PORT NOTE: Zig's `export const X = jsc.toJSHostFn(f)` mints a *function*
+// Zig's `export const X = jsc.toJSHostFn(f)` mints a *function*
 // symbol named `X` (the comptime wrapper is inlined into a fresh fn item).
 // `ZigGlobalObject::promiseHandlerID` (C++) compares the fn-ptr passed to
 // `JSValue::then` against `&Bun__TestScope__Describe2__bunTestThen` by
@@ -1427,9 +1435,10 @@ pub struct EntryData {
 pub enum RefDataValue {
     Start,
     Collection {
-        // LIFETIMES.tsv: BORROW_PARAM &'a DescribeScope — but stored across async
-        // boundaries (promise .then); falling back to UNKNOWN-class NonNull.
-        // TODO(port): lifetime
+        // A borrowed `&'a DescribeScope` cannot work here: the pointer is stored
+        // across async boundaries (promise .then), so no thread-able lifetime
+        // exists. The scope is kept alive by the collection tree (Box-ed entries
+        // under root_scope, owned by BunTest) until Phase::Done.
         active_scope: core::ptr::NonNull<DescribeScope>,
     },
     Execution {
@@ -1448,7 +1457,7 @@ impl RefDataValue {
     pub fn sequence<'a>(&self, buntest: &'a mut BunTest) -> Option<&'a mut Execution::ExecutionSequence> {
         let RefDataValue::Execution { group_index, entry_data } = self else { return None };
         let entry_data = (*entry_data)?;
-        // PORT NOTE: reshaped for borrowck — `ConcurrentGroup::sequences_mut`
+        // reshaped for borrowck — `ConcurrentGroup::sequences_mut`
         // borrows `&mut Execution` while `group()` already holds a borrow into
         // `execution.groups`. Read `(sequence_start, sequence_end)` first, then
         // index `execution.sequences` directly.
@@ -1534,8 +1543,9 @@ impl RefData {
 
 pub struct RunTestsTask {
     pub weak: BunTestPtrWeak,
+    // `GlobalRef` (not a borrow): the JSGlobalObject is stored across the task
+    // tick, and the VM keeps it alive until shutdown.
     pub global_this: GlobalRef,
-    // TODO(port): lifetime — JSGlobalObject borrow stored across task tick
     pub phase: RefDataValue,
 }
 impl RunTestsTask {
@@ -1579,7 +1589,7 @@ pub enum HandleUncaughtExceptionResult {
 }
 
 pub type ResultQueue = LinearFifo<RefDataValue, bun_collections::linear_fifo::DynamicBuffer<RefDataValue>>;
-// PORT NOTE: bun.LinearFifo(.Dynamic) → second generic is the buffer strategy.
+// bun.LinearFifo(.Dynamic) → second generic is the buffer strategy.
 
 pub enum StepResult {
     Waiting { timeout: Timespec },
@@ -1801,17 +1811,18 @@ impl DescribeScope {
         }
     }
 
+    /// Infallible: the Zig version's error set was OOM-only (`bun.handleOom`
+    /// territory); `Vec::push` aborts on OOM in this port.
     pub fn append_describe(
         &mut self,
         name_not_owned: Option<&[u8]>,
         base: BaseScopeCfg,
-    ) -> JsResult<&mut DescribeScope> {
+    ) -> &mut DescribeScope {
         let mut child = Self::create(BaseScope::init(base, name_not_owned, Some(std::ptr::from_mut(self)), false));
         child.base.propagate(false);
         self.entries.push(TestScheduleEntry::Describe(child));
-        // TODO(port): narrow error set
         match self.entries.last_mut().unwrap() {
-            TestScheduleEntry::Describe(d) => Ok(&mut **d),
+            TestScheduleEntry::Describe(d) => &mut **d,
             _ => unreachable!(),
         }
     }
@@ -1996,7 +2007,7 @@ impl Default for RunOneResult {
 }
 
 pub use super::timers::fake_timers::FakeTimers;
-// PORT NOTE: Zig nested types (`Execution.ConcurrentGroup`, `Order.Cfg`, …) are
+// Zig nested types (`Execution.ConcurrentGroup`, `Order.Cfg`, …) are
 // top-level items in the sibling Rust modules. Alias the *modules* under the
 // Zig struct names so `Execution::ConcurrentGroup` / `Order::AllOrderResult`
 // resolve as module paths without per-reference rewrites.

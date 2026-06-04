@@ -298,8 +298,8 @@ impl Tag {
     // Zig: pub const toJSTypedArrayType / toJS / fromJS = @import("../../../sql_jsc/...").*;
     // Deleted per PORTING.md — these become extension-trait methods in `bun_sql_jsc`.
 
-    // PORT NOTE: `byteArrayType` / `pgArrayType` / `PostgresBinarySingleDimensionArray`
-    // are not ported. The Zig version overlaid an `extern struct` of i32 fields onto a
+    // `byteArrayType` / `pgArrayType` / `PostgresBinarySingleDimensionArray`
+    // are intentionally not ported. The Zig version overlaid an `extern struct` of i32 fields onto a
     // `[]const u8` wire buffer via `@ptrCast(@alignCast(@constCast(...)))` and byte-swapped
     // in place. In Rust that is UB on two axes: (1) the recv buffer carries no 4-byte
     // alignment guarantee, and (2) writing through a pointer derived from `&[u8]` violates
@@ -312,7 +312,7 @@ impl Tag {
 }
 
 // Zig: `fn PostgresBinarySingleDimensionArray(comptime T: type) type { return extern struct { ... } }`
-// Not ported — see PORT NOTE on `Tag` above. Kept here only as documentation of the
+// Not ported — see the note on `Tag` above. Kept here only as documentation of the
 // wire header shape the Zig code overlaid:
 //
 //   struct array_int4 {

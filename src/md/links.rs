@@ -3,8 +3,8 @@ use crate::inlines;
 use crate::parser::{self, Parser};
 use crate::types::{OFF, SpanDetail, SpanType, TextType};
 
-// PORT NOTE: aliases for the real `SpanType` / `SpanDetail` types (the Zig
-// original named them `Span` / `SpanAttrs`).
+// Aliases for the real `SpanType` / `SpanDetail` types (named `Span` /
+// `SpanAttrs` in the original implementation).
 type Span = SpanType;
 type SpanAttrs<'a> = SpanDetail<'a>;
 type Off = OFF;
@@ -496,8 +496,8 @@ impl Parser<'_> {
                 };
                 pos += 1;
                 if let Some(ref_def) = self.lookup_ref_def(ref_label) {
-                    // PORT NOTE: reshaped for borrowck — clone owned dest/title so the
-                    // &self borrow from lookup_ref_def is dropped before &mut self calls.
+                    // Clone the owned dest/title so the &self borrow from
+                    // lookup_ref_def is dropped before &mut self calls.
                     let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
                     let title: Box<[u8]> = Box::from(&ref_def.title[..]);
                     // Link nesting prohibition
@@ -523,7 +523,8 @@ impl Parser<'_> {
         };
         if char_after_label != b'[' {
             if let Some(ref_def) = self.lookup_ref_def(label) {
-                // PORT NOTE: reshaped for borrowck — clone owned dest/title.
+                // Clone the owned dest/title so the &self borrow from
+                // lookup_ref_def is dropped before &mut self calls.
                 let dest: Box<[u8]> = Box::from(&ref_def.dest[..]);
                 let title: Box<[u8]> = Box::from(&ref_def.title[..]);
                 // Link nesting prohibition

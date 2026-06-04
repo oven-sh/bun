@@ -123,11 +123,9 @@ pub struct BindgenOptional<Child>(PhantomData<Child>);
 // Default path: `Child` does NOT define a custom optional repr — wrap in
 // `ExternTaggedUnion<(u8, Child::ExternType)>` and produce `Option<Child::ZigType>`.
 //
-// PORT NOTE: Zig switches on `@hasDecl(Child, "OptionalExternType")` to pick
-// between this default and `Child::convertOptionalFromExtern`. Stable Rust
-// cannot specialize on "does Child impl BindgenOptionalRepr", so the bindgen
-// codegen emits `BindgenOptional<Child>` vs `BindgenOptionalCustom<Child>`
-// explicitly per call site.
+// Stable Rust cannot specialize on "does Child impl BindgenOptionalRepr",
+// so the bindgen codegen emits `BindgenOptional<Child>` vs
+// `BindgenOptionalCustom<Child>` explicitly per call site.
 impl<Child: Bindgen> Bindgen for BindgenOptional<Child> {
     type ZigType = Option<Child::ZigType>;
     type ExternType = ExternTaggedUnion2<u8, Child::ExternType>;
@@ -197,10 +195,8 @@ impl BindgenOptionalRepr for BindgenString {
 // generated per arity (or by a proc-macro from the bindgen codegen).
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: `BindgenUnion(children)` reflects over a comptime type list to
-// build a tagged union and dispatch `convertFromExtern` per arm via
-// `inline else`. The bindgen TS codegen emits a concrete `enum` + `#[repr(C)]`
-// union pair per call site rather than a generic Rust combinator (see
+// The bindgen TS codegen emits a concrete `enum` + `#[repr(C)]` union pair
+// per call site rather than a generic Rust combinator (see
 // `src/jsc/generated.rs`). This marker type exists for documentation parity.
 pub struct BindgenUnion;
 
@@ -216,9 +212,10 @@ pub struct ExternTaggedUnion2<T0, T1> {
     pub tag: u8,
 }
 
-/// PORT NOTE: union fields wrapped in `ManuallyDrop` so non-`Copy` payloads
+/// Union fields are wrapped in `ManuallyDrop` so non-`Copy` payloads
 /// (e.g. nested `ExternTaggedUnion2`, `ExternArrayList`) are permitted without
-/// trait bounds. Matches Zig `extern union` semantics (no auto-drop).
+/// trait bounds. There is no auto-drop — the active arm must be dropped
+/// explicitly by whoever knows the tag.
 #[repr(C)]
 pub union ExternUnion2<T0, T1> {
     pub _0: ManuallyDrop<T0>,
@@ -256,13 +253,12 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
             // Don't reuse memory in this case; it would be freed by the wrong allocator.
         } else if size_of::<Child::ZigType>() == size_of::<Child::ExternType>()
             && align_of::<Child::ZigType>() == align_of::<Child::ExternType>()
-            // PORT NOTE: Zig checks `Child.ZigType == Child.ExternType` (type identity).
-            // Rust has no stable type-equality test in generic context. Gate this
-            // fast-path on a `const SAME_REPR: bool` opt-in so it only fires when the
-            // bindgen codegen has proven layout identity.
+            // Rust has no stable type-equality test in generic context, so this
+            // fast-path is gated on the `const SAME_REPR: bool` opt-in: it only
+            // fires when the bindgen codegen has proven layout identity.
             && Child::SAME_REPR
         {
-            // PORT NOTE: when the types are identical the Vec is returned as-is.
+            // The layouts are identical, so the Vec is returned as-is.
             let (ptr, len, cap) = {
                 let mut v = ManuallyDrop::new(unmanaged);
                 (v.as_mut_ptr(), v.len(), v.capacity())
@@ -276,23 +272,20 @@ impl<Child: Bindgen> Bindgen for BindgenArray<Child> {
         {
             // We can reuse the allocation, but we still need to convert the elements.
             //
-            // PORT NOTE: Zig's `@ptrCast(unmanaged.allocatedSlice())` to a `[]u8`
-            // is fine under Zig's (lack of a) memory model. In Rust, materializing
-            // a `&mut [u8]` over the full capacity would assert that every byte —
-            // including uninitialized tail elements and `ExternType` padding — is
-            // a valid `u8`, which is UB. Work entirely through raw `*mut u8` and
-            // `ptr::copy_nonoverlapping` instead; no reference to the storage is
-            // ever formed.
+            // Materializing a `&mut [u8]` over the full capacity would assert that
+            // every byte — including uninitialized tail elements and `ExternType`
+            // padding — is a valid `u8`, which is UB. Work entirely through raw
+            // `*mut u8` and `ptr::copy_nonoverlapping` instead; no reference to
+            // the storage is ever formed.
             let mut v = ManuallyDrop::new(unmanaged);
             let mut storage_ptr: *mut u8 = v.as_mut_ptr().cast::<u8>();
             let storage_len = v.capacity() * size_of::<Child::ExternType>();
 
             // Convert the elements.
             for i in 0..length {
-                // Zig doesn't have a formal aliasing model, so we should be maximally
-                // pessimistic.
-                // PORT NOTE: Rust DOES — but we keep the byte-wise copy to match behavior
-                // exactly (in-place reinterpretation of overlapping element slots).
+                // Byte-wise copy: this is an in-place reinterpretation of
+                // overlapping element slots, so each element is copied out
+                // before conversion.
                 let mut old_elem = core::mem::MaybeUninit::<Child::ExternType>::uninit();
                 // SAFETY: source range lies within the mimalloc block and holds a
                 // valid (C++-initialized) `ExternType` for `i < length`.

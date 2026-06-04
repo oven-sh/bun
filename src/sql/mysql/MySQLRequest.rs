@@ -7,7 +7,6 @@ pub fn execute_query<Context: WriterContext>(
     query: &[u8],
     writer: NewWriter<Context>,
 ) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
     bun_core::scoped_log!(
         MySQLRequest,
         "executeQuery len: {} {}",
@@ -27,7 +26,6 @@ pub fn prepare_request<Context: WriterContext>(
     query: &[u8],
     writer: NewWriter<Context>,
 ) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
     bun_core::scoped_log!(MySQLRequest, "prepareRequest {}", bstr::BStr::new(query));
     let mut packet = writer.start(0)?;
     writer.int1(CommandType::COM_STMT_PREPARE as u8)?;

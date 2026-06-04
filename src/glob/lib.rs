@@ -10,9 +10,8 @@ pub use crate::glob_walker as walk;
 pub use crate::matcher::{MatchResult, r#match};
 pub use walk::GlobWalker;
 
-// PORT NOTE: Zig passes `null` as the first comptime arg to `GlobWalker_(null, Accessor, sentinel)`.
-// In the port, `ignore_filter_fn` is a runtime fn-pointer field (const-generic fn ptrs are
-// unstable), so the first param is dropped from the type and supplied at `init()`.
+// `ignore_filter_fn` is a runtime fn-pointer field supplied at `init()` rather than a type
+// parameter (const-generic fn ptrs are unstable).
 pub type BunGlobWalker = walk::GlobWalker<walk::SyscallAccessor, false>;
 pub type BunGlobWalkerZ = walk::GlobWalker<walk::SyscallAccessor, true>;
 

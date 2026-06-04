@@ -5,12 +5,11 @@ use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_collections::ArrayHashMap;
 
 use crate as css;
-// TODO(port): narrow error set
 pub use crate::Error;
 
 // ─────────────────────────────────────────────────────────────────────────
-// `reference_dashed`'s `dest.importRecord()` lookup is hoisted to the caller (see PORT NOTE on
-// the method) to satisfy Rust borrowck (caller holds `&mut dest.css_module`).
+// `reference_dashed`'s `dest.importRecord()` lookup is hoisted to the caller (see the comment
+// on the method) to satisfy Rust borrowck (caller holds `&mut dest.css_module`).
 // ─────────────────────────────────────────────────────────────────────────
 pub struct CssModule<'a> {
     pub config: &'a Config,
@@ -46,7 +45,7 @@ impl<'a> CssModule<'a> {
                     }
                     break 'source path.as_ref();
                 };
-                // PORT NOTE: Zig `defer if (alloced) arena.free(source);` — arena-allocated, bulk-freed on bump.reset()
+                // Zig `defer if (alloced) arena.free(source);` — arena-allocated, bulk-freed on bump.reset()
                 let _ = alloced;
                 // PERF(port): was appendAssumeCapacity — profile if it shows up on a hot path
                 hashes.push(hash(
@@ -74,10 +73,10 @@ impl<'a> CssModule<'a> {
         }
     }
 
-    // PORT NOTE: `deinit` was a no-op (`// TODO: deinit`); Drop is implicit. No `impl Drop` needed.
+    // Zig's `deinit` was a no-op; Drop is implicit. No `impl Drop` needed.
 
     pub fn get_reference(&mut self, bump: &'a Bump, name: &'a [u8], source_index: u32) {
-        // PORT NOTE: Zig `getOrPut` returns an uninitialized value slot;
+        // Zig `getOrPut` returns an uninitialized value slot;
         // bun_collections::ArrayHashMap::get_or_put requires `V: Default`
         // (CssModuleExport can't be Default — BumpVec field). Reshaped to the
         // entry()-API instead.
@@ -102,7 +101,7 @@ impl<'a> CssModule<'a> {
         }
     }
 
-    // PORT NOTE: Zig `referenceDashed` took `*Printer` so it could read
+    // Zig `referenceDashed` took `*Printer` so it could read
     // `dest.arena` and call `dest.importRecord(idx)`. In Rust the only
     // caller (`DashedIdentReference::to_css`) already holds a `&mut` borrow of
     // `dest.css_module` (which *is* `self`), so threading `&mut Printer` in
@@ -134,7 +133,7 @@ impl<'a> CssModule<'a> {
             }
             None => {
                 // Local export. Mark as used.
-                // PORT NOTE: Zig `getOrPut` returns an uninitialized value
+                // Zig `getOrPut` returns an uninitialized value
                 // slot; `CssModuleExport` cannot be `Default` (BumpVec field),
                 // so reshape to the `entry()` API like `get_reference` above.
                 use bun_collections::array_hash_map::MapEntry;
@@ -173,7 +172,7 @@ impl<'a> CssModule<'a> {
             false,
         );
 
-        // PORT NOTE: std.fmt.allocPrint(arena, "--{s}", .{the_hash}) → bump Vec
+        // std.fmt.allocPrint(arena, "--{s}", .{the_hash}) → bump Vec
         // (bumpalo::Vec<u8> lacks io::Write; the format string was a pure concat anyway).
         let mut k = BumpVec::with_capacity_in(2 + the_hash.len(), bump);
         k.extend_from_slice(b"--");

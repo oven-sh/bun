@@ -92,10 +92,10 @@
 
 use crate::array_buffer::TypedArrayType;
 
-// PORT NOTE: Zig's `enum(u8) { ..., _ }` is non-exhaustive — any u8 value is a valid
-// JSType (values are read directly from JSCell::m_type via FFI, including embedder-
-// defined types). A plain `#[repr(u8)] enum` would be UB for unknown discriminants,
-// so this is a transparent newtype with associated consts instead.
+// Any u8 value is a valid JSType (values are read directly from JSCell::m_type
+// via FFI, including embedder-defined types). A plain `#[repr(u8)] enum` would
+// be UB for unknown discriminants, so this is a transparent newtype with
+// associated consts instead.
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, PartialOrd, Ord, Hash, Debug, core::marker::ConstParamTy)]
 pub struct JSType(pub u8);

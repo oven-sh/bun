@@ -1064,8 +1064,7 @@ impl StatWatcher {
     }
 }
 
-// PORT NOTE: hoisted from inline `if (isLinux and supports_statx) ... else brk: { ... }`
-// at two call sites (InitialStatTask::work_pool_callback and StatWatcher::restat) — identical logic.
+// Shared by InitialStatTask::work_pool_callback and StatWatcher::restat — identical logic.
 fn restat_impl(path: &ZStr) -> bun_sys::Maybe<PosixStat> {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {

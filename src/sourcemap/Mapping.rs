@@ -141,8 +141,9 @@ impl List {
             return Ok(());
         }
 
-        // PORT NOTE: reshaped for borrowck — move the without_names list out, build the
-        // with_names list, then assign back. The old list drops at end of scope.
+        // Move the without_names list out, build the with_names list, then
+        // assign back (satisfies the borrow checker). The old list drops at
+        // end of scope.
         let ListValue::WithoutNames(without_names) = core::mem::replace(
             &mut self.r#impl,
             ListValue::WithNames(MultiArrayList::default()),
@@ -154,7 +155,7 @@ impl List {
         with_names.ensure_total_capacity(without_names.len())?;
         // `without_names` drops at end of scope (was `defer without_names.deinit(allocator)`).
 
-        // PORT NOTE: Zig set_len + per-column memcpy. Rust MultiArrayList has no
+        // Zig used set_len + per-column memcpy. Rust MultiArrayList has no
         // public `set_len`; rebuild element-wise (capacity already reserved, so no
         // realloc). PERF(port): revisit once typed mut-column accessors exist.
         for i in 0..without_names.len() {
@@ -362,7 +363,7 @@ impl Lookup {
         }
 
         if bun_paths::is_absolute(base_filename) {
-            // PORT NOTE: Zig passed runtime `.auto` Platform; bun_paths exposes
+            // Zig passed runtime `.auto` Platform; bun_paths exposes
             // const-generic `PlatformT` only. `platform::Auto` is a cfg-selected
             // type alias (Posix on unix, Windows on windows), which is what
             // `.auto` resolved to at comptime anyway.
@@ -427,7 +428,7 @@ impl Lookup {
             let name: &[u8] = &source_map.external_source_names[index];
 
             let mut buf = bun_paths::PathBuffer::uninit();
-            // PORT NOTE: Zig passed runtime `.auto` / `.loose`; bun_paths
+            // Zig passed runtime `.auto` / `.loose`; bun_paths
             // exposes const-generic `PlatformT` ZSTs. `platform::Auto` is
             // cfg-selected (Posix on unix, Windows on windows) — same result.
             let dir = bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(base_filename);

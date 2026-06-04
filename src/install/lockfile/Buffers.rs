@@ -4,9 +4,9 @@ use bun_collections::DynamicBitSet as Bitset;
 #[cfg(debug_assertions)]
 use bun_core::strings;
 
-// PORT NOTE: `use super::{self as lockfile, ...}` and bare `use super as lockfile;`
-// are both rejected by rustc (E0432: "no `super` in the root" — rust-lang/rust#48067),
-// so the parent-module alias is spelled via its crate path instead.
+// `use super::{self as lockfile, ...}` and bare `use super as lockfile;` are both
+// rejected by rustc (E0432: "no `super` in the root" — rust-lang/rust#48067), so the
+// parent-module alias is spelled via its crate path instead.
 use super::{
     DependencyIDList, DependencyList, ExternalStringBuffer, Lockfile, PackageIDList, Stream,
     StringBuffer, Tree, assert_no_uninitialized_padding, tree,
@@ -30,12 +30,11 @@ pub struct Buffers {
     pub string_bytes: StringBuffer,
 }
 
-// PORT NOTE: Zig `deinit` only freed owned ArrayListUnmanaged fields; in Rust the
-// Vec-backed field types drop automatically, so no explicit `Drop` impl is needed.
+// Zig `deinit` only freed owned ArrayListUnmanaged fields; in Rust the Vec-backed
+// field types drop automatically, so no explicit `Drop` impl is needed.
 
 impl Buffers {
     pub fn preallocate(&mut self, that: &Buffers) -> Result<(), bun_alloc::AllocError> {
-        // TODO(port): narrow error set
         self.trees
             .reserve(that.trees.len().saturating_sub(self.trees.len()));
         self.resolutions.reserve(
@@ -65,7 +64,7 @@ impl Buffers {
 // ──────────────────────────────────────────────────────────────────────────
 // `sizes` — comptime field-order table
 //
-// PORT NOTE: the Zig computed this with `std.meta.fields` + an insertion sort
+// The Zig computed this with `std.meta.fields` + an insertion sort
 // by descending `@alignOf(field.type)`. Every field is an `ArrayListUnmanaged`,
 // whose alignment is `@alignOf(usize)`, so the stable sort is a no-op and the
 // result is declaration order. We hard-code that order here. `types[0]` (used
@@ -87,12 +86,10 @@ mod sizes {
     const _: () = assert!(ALIGN_TYPE_0 == align_of::<&[Tree]>());
 
     // `sizes.bytes` was never read in the Zig; omitted.
-    // TODO(port): if another file reads `Buffers.sizes.bytes`, add it back.
 }
 
 pub fn read_array<T: Copy>(stream: &mut Stream) -> Result<Vec<T>, bun_core::Error> {
-    // TODO(port): narrow error set (CorruptLockfile | OOM)
-    // PORT NOTE: Zig went through `stream.reader()`; `FixedBufferStream` exposes
+    // Zig went through `stream.reader()`; `FixedBufferStream` exposes
     // `read_int_le` directly, so the intermediate reader handle is elided.
     let start_pos = stream.read_int_le::<u64>()?;
 
@@ -172,20 +169,23 @@ pub fn write_array<S, T>(
     prefix: &'static str,
 ) -> Result<(), bun_core::Error>
 where
-    // PORT NOTE: Zig threaded a separate `stream` (anytype) and `writer` over the
+    // Zig threaded a separate `stream` (anytype) and `writer` over the
     // same buffer. Two `&mut` to one object is UB in Rust regardless of access
     // order, so the port collapses both roles onto one type — `StreamType` impls
     // both `PositionalStream` (get_pos/pwrite) and `bun_io::Write` (append).
     S: lockfile::PositionalStream + bun_io::Write,
-    // TODO(port): narrow error set
 {
-    // TODO(port): comptime `assertNoUninitializedPadding(@TypeOf(array))` — needs
-    // a const-eval padding check on `T`; could add a `const _: () = assert!(...)`
-    // per call site or a `NoPadding` marker trait.
+    // Zig's comptime `assertNoUninitializedPadding(@TypeOf(array))`. In Rust this
+    // call is a zero-cost intent marker only — it carries no trait bound (see the
+    // doc comment on `assert_no_uninitialized_padding`). The actual compile-time
+    // enforcement is the per-type `const` field-offset asserts and the
+    // `layout_asserts` size/align pins in src/install/padding_checker.rs; any new
+    // `T` serialized through here must be added to that audit.
     assert_no_uninitialized_padding(array);
 
-    // SAFETY: `T` has no uninitialized padding (asserted above in Zig); reading
-    // its bytes is sound. Matches `std.mem.sliceAsBytes`.
+    // SAFETY: `T` has no uninitialized padding (audited via the per-type layout
+    // asserts in padding_checker.rs); reading its bytes is sound. Matches
+    // `std.mem.sliceAsBytes`.
     let bytes: &[u8] =
         unsafe { bun_core::ffi::slice(array.as_ptr().cast::<u8>(), core::mem::size_of_val(array)) };
 
@@ -193,7 +193,7 @@ where
     stream.write_int_le::<u64>(0xDEAD_BEEF)?;
     stream.write_int_le::<u64>(0xDEAD_BEEF)?;
 
-    // PORT NOTE: Zig built this with `std.fmt.comptimePrint` over
+    // Zig built this with `std.fmt.comptimePrint` over
     // `@typeName/@sizeOf/@alignOf(std.meta.Child(ArrayList))`. The reader skips
     // this prefix by absolute offset so it is semantically inert, but we emit the
     // exact bytes Zig produces so that re-saving an unchanged lockfile is a byte
@@ -236,13 +236,13 @@ pub fn save<S>(
     stream: &mut S,
 ) -> Result<(), bun_core::Error>
 where
-    // PORT NOTE: see `write_array` — Zig's separate stream/writer aliased one
-    // buffer; collapsed to a single bound to avoid two `&mut` to the same object.
+    // See `write_array` — Zig's separate stream/writer aliased one buffer;
+    // collapsed to a single bound to avoid two `&mut` to the same object.
     S: lockfile::PositionalStream + bun_io::Write,
 {
     let buffers = &lockfile.buffers;
 
-    // PORT NOTE: Zig used `inline for (sizes.names) |name|` + `@field(buffers, name)`.
+    // Zig used `inline for (sizes.names) |name|` + `@field(buffers, name)`.
     // Rust has no field-name reflection, so the loop is unrolled in declaration
     // order (see `sizes` module note — the comptime sort was a no-op).
 
@@ -251,7 +251,7 @@ where
             if options.log_level.is_verbose() {
                 bun_core::pretty_errorln!("Saving {} {}", buffers.$field.len(), $name);
             }
-            // PORT NOTE: the Zig had `if (comptime Type == Tree)` here, but `Type`
+            // The Zig had `if (comptime Type == Tree)` here, but `Type`
             // was `@TypeOf(list.items)` i.e. `[]Elem`, never `Tree`, so that arm
             // was dead. We port only the live `else` arm.
             // We duplicate it here so that alignment bytes are zeroed out
@@ -271,7 +271,7 @@ where
         if options.log_level.is_verbose() {
             bun_core::pretty_errorln!("Saving {} {}", buffers.trees.len(), "trees");
         }
-        // PORT NOTE: Zig's `if (comptime Type == Tree)` arm (Buffers.zig:248)
+        // Zig's `if (comptime Type == Tree)` arm (Buffers.zig:248)
         // never fires because `Type` is `[]Tree`, so Zig writes raw `Tree`
         // bytes — which works only because Zig's auto-layout for `Tree` happens
         // to match the `[id|dep_id|parent|off|len]` encoding that `load`
@@ -287,7 +287,7 @@ where
             stream,
             clone.as_slice(),
             // Verbatim Zig `@typeName(Tree)` output. Zig writes raw `Tree` (the
-            // `Type == Tree` branch is dead — see PORT NOTE above), so it reports
+            // `Type == Tree` branch is dead — see comment above), so it reports
             // `4 alignof` even though we serialize `tree::External` (`[u8;20]`,
             // align 1). The reader ignores this string; we match Zig's bytes.
             "\n<install.lockfile.Tree> 20 sizeof, 4 alignof\n",
@@ -415,8 +415,8 @@ impl Buffers {
             0 => return Ok(tree::ROOT_DEP_ID),
             id if id == invalid_package_id => return Ok(invalid_package_id),
             _ => {
-                // PORT NOTE: reshaped for borrowck — `dependency_visited` is
-                // captured once outside the loop instead of re-matched per iter.
+                // `dependency_visited` is captured once outside the loop
+                // instead of re-matched per iteration (borrowck).
                 let mut visited = dependency_visited;
                 for (dep_id, &pkg_id) in self.resolutions.iter().enumerate() {
                     if pkg_id == package_id {
@@ -443,7 +443,7 @@ pub(crate) fn load(
     let mut this = Buffers::default();
     let external_dependency_list_: Vec<dependency::External>;
 
-    // PORT NOTE: Zig `inline for (sizes.names)` unrolled — see `sizes` module note.
+    // Zig `inline for (sizes.names)` unrolled — see `sizes` module note.
 
     macro_rules! load_generic_field {
         ($field:ident, $name:literal, $elem:ty) => {{
@@ -467,7 +467,7 @@ pub(crate) fn load(
         let _pos: usize = stream.pos;
 
         let tree_list: Vec<tree::External> = read_array(stream)?;
-        // PORT NOTE: Zig did `initCapacity` + `items.len = N` + write each slot.
+        // Zig did `initCapacity` + `items.len = N` + write each slot.
         // In Rust, `set_len` then `iter_mut()` would form `&mut Tree` to
         // uninitialized memory (UB), so we push into the reserved capacity
         // instead — same allocation pattern, no uninit reads.
@@ -518,10 +518,7 @@ pub(crate) fn load(
         buffer: string_buf,
         package_manager: pm_,
     };
-    // TODO(port): `Dependency::Context` borrows `log`, `string_buf`, and `pm_`
-    // simultaneously with `&mut this`; may need to restructure borrows.
-
-    // PORT NOTE: Zig did `expandToCapacity` + `items.len = N` then wrote each
+    // Zig did `expandToCapacity` + `items.len = N` then wrote each
     // slot via `*dep = ...`. In Rust, `set_len` then `as_mut_slice()` would form
     // `&mut Dependency` to uninitialized memory (UB even when write-only), so we
     // push into the reserved capacity instead — same single allocation, same
@@ -535,7 +532,7 @@ pub(crate) fn load(
     // Legacy tree structure stores package IDs instead of dependency IDs
     if !this.trees.is_empty() && this.trees[0].dependency_id != tree::ROOT_DEP_ID {
         let mut visited = Bitset::init_empty(this.dependencies.len())?;
-        // PORT NOTE: reshaped for borrowck — iterate by index so
+        // Iterate by index so
         // `legacy_package_to_dependency_id` can borrow `&self` while we hold
         // `&mut this.trees[i]`.
         for i in 0..this.trees.len() {

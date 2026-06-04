@@ -20,13 +20,11 @@ pub(crate) struct UnlinkCommand;
 
 impl UnlinkCommand {
     pub(crate) fn exec(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         unlink(ctx)
     }
 }
 
 fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
     let cli = CommandLineArguments::parse(Subcommand::Unlink)?;
     let (manager, _original_cwd) = match pm::init(&mut *ctx, cli, Subcommand::Unlink) {
         Ok(v) => v,
@@ -109,7 +107,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             }
         }
 
-        // PORT NOTE: reshaped for borrowck — `name` borrows `lockfile`; re-derive
+        // Reshaped for borrowck — `name` borrows `lockfile`; re-derive
         // it after the parse block so its lifetime is decoupled from
         // `package_json_source` (dropped above) while remaining a slice into
         // `lockfile.buffers.string_bytes`.
@@ -175,7 +173,7 @@ fn unlink(ctx: &mut ContextData) -> Result<(), bun_core::Error> {
             let mut link_dest_buf = PathBuffer::uninit();
             let mut link_rel_buf = PathBuffer::uninit();
 
-            // PORT NOTE: Zig passed `&node_modules_path` for both
+            // Zig passed `&node_modules_path` for both
             // `target_node_modules_path` (`*const`) and `node_modules_path`
             // (`*mut`). Rust forbids `&` + `&mut` to the same value, so resolve
             // the fd path twice (cheap: one `getFdPath` syscall) into two

@@ -88,9 +88,9 @@ pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
             .throw());
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig holds `body = response.getBodyValue()` as
-    // a single live pointer through `getBodyReadableStream`; in Rust that overlaps two
-    // `&mut` borrows of `response`, so we re-borrow per use and capture scalars.
+    // Zig holds `body = response.getBodyValue()` as a single live pointer
+    // through `getBodyReadableStream`; in Rust that overlaps two `&mut` borrows
+    // of `response`, so we re-borrow per use and capture scalars.
     {
         let body = response.get_body_value();
         if let BodyValue::Error(err) = body {

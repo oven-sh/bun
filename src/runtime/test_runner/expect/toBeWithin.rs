@@ -58,9 +58,8 @@ impl Expect {
         }
 
         // Zig: .{ .globalThis = globalThis, .quote_strings = true } — make_formatter sets quote_strings.
-        // PORT NOTE: Zig aliased one `*Formatter` for all three fmt adapters; Rust `to_fmt`
-        // takes `&mut Formatter` so three live adapters need three formatters (matches
-        // toBeLessThan.rs / toContainEqual.rs).
+        // `to_fmt` takes `&mut Formatter` and the adapter holds the borrow, so three
+        // live adapters need three formatters (matches toBeLessThan.rs / toContainEqual.rs).
         let mut formatter = super::make_formatter(global);
         let mut formatter2 = super::make_formatter(global);
         let mut formatter3 = super::make_formatter(global);

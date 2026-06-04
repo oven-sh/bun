@@ -49,7 +49,7 @@ fn jsc_event_loop_handle(js_event_loop: *mut ()) -> JsEventLoop {
 
 /// Useful for code that may need an event loop and could be used from either JavaScript or directly without JavaScript.
 /// Unlike jsc.EventLoopHandle, this owns the event loop when it's not a JavaScript event loop.
-// PORT NOTE: Zig `union(EventLoopKind)` — variant order/discriminant must match `crate::EventLoopKind`.
+// Variant order/discriminant must match `crate::EventLoopKind`.
 pub enum AnyEventLoop<'a> {
     Js {
         /// Typed handle wrapping the erased `*mut jsc::EventLoop`. The
@@ -60,8 +60,7 @@ pub enum AnyEventLoop<'a> {
     Mini(Box<MiniEventLoop<'a>>),
 }
 
-// PORT NOTE: Zig had `pub const Task = AnyTaskWithExtraContext;` as an associated decl.
-// Inherent associated types are unstable in Rust, so expose at module level.
+// Inherent associated types are unstable in Rust, so this is exposed at module level.
 pub type Task = AnyTaskWithExtraContext;
 
 impl<'a> Default for AnyEventLoop<'a> {
@@ -92,7 +91,6 @@ impl<'a> AnyEventLoop<'a> {
     }
 
     pub fn init() -> AnyEventLoop<'a> {
-        // PORT NOTE: Zig took `std.mem.Allocator param`; dropped per §Allocators (non-AST crate).
         AnyEventLoop::Mini(Box::new(MiniEventLoop::init()))
     }
 
@@ -121,9 +119,8 @@ impl<'a> AnyEventLoop<'a> {
         }
     }
 
-    // PORT NOTE: Zig `context: anytype` + `@ptrCast(isDone)` erases the fn-ptr
-    // type at the call into `mini.tick(ctx, *const fn(*anyopaque) bool)`. All
-    // callers pass a pointer, so we take the erased form directly; callers cast.
+    // All callers pass a pointer, so we take the erased fn-ptr form directly;
+    // callers cast.
     pub fn tick(
         &mut self,
         context: *mut core::ffi::c_void,
@@ -245,7 +242,6 @@ impl<'a> AnyEventLoop<'a> {
 // instantiation in the tree is already `'static` (verified: install, patch,
 // build_command, ChangedFilesFilter, `js()`/`js_current()`).
 impl AnyEventLoop<'static> {
-    // PORT NOTE: renamed via raw identifier — `loop` is a Rust keyword.
     #[inline]
     pub fn r#loop(&mut self) -> *mut UwsLoop {
         EventLoopHandle::from_any(self).r#loop()
@@ -306,9 +302,9 @@ pub enum EventLoopHandle {
         /// `Copy`.
         owner: JsEventLoop,
     },
-    // PORT NOTE: `BackRef<MiniEventLoop>` (not `&mut`) because the handle is
-    // `Copy` and stored in `uws::InternalLoopData` as a non-owning backref —
-    // matches Zig `*MiniEventLoop`. The pointee is the per-thread singleton
+    // `BackRef<MiniEventLoop>` (not `&mut`) because the handle is `Copy` and
+    // stored in `uws::InternalLoopData` as a non-owning backref.
+    // The pointee is the per-thread singleton
     // (`init_global`) or an `AnyEventLoop::Mini`-owned loop, both of which
     // strictly outlive every `EventLoopHandle` derived from them — the
     // [`BackRef`] invariant. Read-only sites use safe `Deref`; the few
@@ -378,12 +374,9 @@ impl Drop for EnteredEventLoop {
 }
 
 impl EventLoopHandle {
-    /// Wrap an erased `*mut jsc::EventLoop`.
-    // PORT NOTE: Zig `init(anytype)` dispatched on `@TypeOf` over five input
-    // types. Rust splits by overload: `init` (jsc::EventLoop), `init_mini`,
-    // `from_any`, plus the trivial `EventLoopHandle → EventLoopHandle` is
-    // identity. The `*VirtualMachine` overload moves to bun_runtime (it must
-    // call `vm.eventLoop()`).
+    /// Wrap an erased `*mut jsc::EventLoop`. (Sibling constructors:
+    /// `init_mini`, `from_any`; the `*VirtualMachine` form lives in
+    /// bun_runtime since it must call `vm.eventLoop()`.)
     ///
     /// `js_event_loop` is a live erased `*mut jsc::EventLoop` whose owner
     /// outlives every dispatch through the returned handle. The pointer is not
@@ -715,10 +708,6 @@ impl EventLoopHandle {
             }
         }
     }
-
-    // PORT NOTE: Zig `cast(tag)` returned `tag.Type()` at comptime — no Rust
-    // equivalent. Callers should pattern-match the enum directly.
-    // PORT NOTE: Zig `allocator()` dropped per §Allocators (non-AST crate).
 }
 
 // ported from: src/event_loop/AnyEventLoop.zig

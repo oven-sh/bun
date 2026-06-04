@@ -41,7 +41,7 @@ impl<'a> Row<'a> {
         structure: JSValue,
         flags: SQLDataCellFlags,
         result_mode: SQLQueryResultMode,
-        // PORT NOTE: Zig `?CachedStructure` is by-value; passed by ref here because CachedStructure is non-Copy (owns Strong + Box).
+        // Zig `?CachedStructure` is by-value; passed by ref here because CachedStructure is non-Copy (owns Strong + Box).
         cached_structure: Option<&CachedStructure>,
     ) -> crate::jsc::JsResult<JSValue> {
         let mut names: *mut ExternColumnIdentifier = ptr::null_mut();
@@ -453,7 +453,9 @@ impl<'a> Row<'a> {
 impl<'a> Drop for Row<'a> {
     fn drop(&mut self) {
         for value in self.values.iter_mut() {
-            // TODO(port): if SQLDataCell gains `impl Drop`, delete this loop and the Drop impl entirely.
+            // SQLDataCell deliberately has no `impl Drop` — it is an FFI struct
+            // whose ownership is normally transferred to C++ — so the cells
+            // still owned by this row must be freed manually here.
             value.deinit();
         }
         // self.columns is intentionally left out.

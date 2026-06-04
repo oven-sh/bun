@@ -6,7 +6,6 @@ use bstr::BStr;
 use bun_core::fmt::{PathFormatOptions, PathSep, fmt_path_u8 as fmt_path};
 use bun_semver as semver;
 use bun_semver::String;
-// PORT NOTE: Zig `String.Buf` → `bun_semver::string::Buf<'_>`.
 use bun_core::strings;
 use bun_semver::string::Buf as StringBuf;
 use bun_semver::version::VersionInt;
@@ -283,7 +282,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
             }
             dependency::VersionTag::Npm => {
                 let version_literal = string_buf.append(res_str)?;
-                // PORT NOTE: this fn returns `Resolution` (= `ResolutionType<u64>`),
+                // This fn returns `Resolution` (= `ResolutionType<u64>`),
                 // not `Self`, so parse at `u64` regardless of the impl's SemverInt.
                 let parsed =
                     semver::Version::parse(version_literal.sliced(string_buf.bytes.as_slice()));
@@ -494,7 +493,7 @@ impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
     }
 }
 
-// PORT NOTE: the duck-typed `Builder` Zig comptime param maps to the
+// The duck-typed `Builder` Zig comptime param maps to the
 // `bun_semver::StringBuilder` trait (`count` + `append<T>`); local alias kept
 // so dependents that named `resolution::StringBuilderLike` still resolve.
 pub use bun_semver::StringBuilder as StringBuilderLike;
@@ -581,7 +580,7 @@ impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
             ),
             Tag::Folder => writer.write_all(res.folder().slice(buf)),
             Tag::RemoteTarball => writer.write_all(res.remote_tarball().slice(buf)),
-            // PORT NOTE: `Repository::format_as` still goes through `fmt::Write`
+            // `Repository::format_as` still goes through `fmt::Write`
             // (and uses `BStr` internally); git/github URLs are ASCII in
             // practice so byte-exactness is preserved. A follow-up shard owns
             // `repository.rs` if that ever needs a byte-level path too.
@@ -604,7 +603,7 @@ impl<'a, SemverInt: VersionInt> URLFormatter<'a, SemverInt> {
     }
 }
 
-// PORT NOTE: kept for the ~dozen call sites that interpolate into
+// Kept for the ~dozen call sites that interpolate into
 // `format_args!` for terminal/log output (Output::err, pretty_errorln, …),
 // where lossy U+FFFD on the rare non-UTF-8 byte is acceptable. File-producing
 // callers MUST use [`URLFormatter::write_to`] instead.
@@ -727,7 +726,7 @@ impl<'a, SemverInt: VersionInt> Formatter<'a, SemverInt> {
     }
 }
 
-// PORT NOTE: kept for terminal/log call sites (Output::err, tree printer, …).
+// Kept for terminal/log call sites (Output::err, tree printer, …).
 // Persisted-to-disk callers (Yarn.rs) MUST use [`Formatter::write_to`].
 impl<'a, SemverInt: VersionInt> fmt::Display for Formatter<'a, SemverInt> {
     fn fmt(&self, writer: &mut fmt::Formatter<'_>) -> fmt::Result {

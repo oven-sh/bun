@@ -1,6 +1,7 @@
 // GENERATED: re-run the analytics schema generator (peechy) with .rs output
 // source: src/analytics/schema.zig
-// TODO(port): regenerate remaining analytics::* types for Rust
+// Hand-ported subset — the remaining analytics::* types are unused at runtime
+// and come back with the next peechy regen (see the `analytics` mod below).
 
 use bun_core::Error;
 
@@ -23,10 +24,14 @@ use bun_core::Error;
 // already do).
 
 /// Zig: `Reader.ReadError = error{EOF}`.
-// PORT NOTE: peechy's two error cases (`EOF`, `InvalidValue`) are folded into
+// peechy's two error cases (`EOF`, `InvalidValue`) are folded into
 // the crate-wide `bun_core::Error` so downstream `decode` signatures stay
 // `Result<_, bun_core::Error>` without an extra `From` hop.
-pub(crate) const EOF: Error = Error::TODO; // TODO(port): Error::from_name("EOF") once name→code table lands
+// (`Error::from_name` interns at runtime, so this is a fn, not a const.)
+#[inline]
+pub(crate) fn eof() -> Error {
+    bun_core::err!("EOF")
+}
 
 /// Primitive integers encodable in the peechy wire format (native-endian raw
 /// bytes). Zig handled this via `comptime T` + `std.mem.readIntSliceNative` /
@@ -87,7 +92,7 @@ pub trait Reader {
 
 /// Concrete buffer-backed reader — direct port of Zig's `pub const Reader = struct`.
 ///
-/// PORT NOTE: the Zig struct also carries `std.mem.Allocator param` for
+/// The Zig struct also carries `std.mem.Allocator param` for
 /// `readArray`'s nested-slice case; per PORTING.md §Allocators (non-AST crate)
 /// the allocator param is dropped — callers that need owned sub-arrays
 /// allocate at the call site.
@@ -107,7 +112,7 @@ impl<'a> Reader for BufReader<'a> {
     fn read(&mut self, count: usize) -> Result<&[u8], Error> {
         let read_count = core::cmp::min(count, self.remain.len());
         if read_count < count {
-            return Err(EOF);
+            return Err(eof());
         }
         let (slice, rest) = self.remain.split_at(read_count);
         self.remain = rest;
@@ -123,7 +128,7 @@ impl<'a> Reader for BufReader<'a> {
 // will be filled in by the peechy regen.
 pub mod analytics {
     /// Zig: `pub const OperatingSystem = enum(u8) { _none, linux, macos, windows, wsl, android, freebsd, _ }`
-    // PORT NOTE: Zig's open enum (`_`) is dropped — Rust enums are closed; the
+    // Zig's open enum (`_`) is dropped — Rust enums are closed; the
     // schema decoder is the only producer of unknown discriminants and it is
     // not yet ported.
     #[repr(u8)]

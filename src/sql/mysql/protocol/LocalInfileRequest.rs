@@ -1,10 +1,11 @@
+use super::any_mysql_error::Error as AnyMySQLError;
 use super::new_reader::{NewReader, ReaderContext};
 use crate::shared::Data;
 
 pub struct LocalInfileRequest {
     pub filename: Data,
-    // TODO(port): Zig `u24` — Rust has no native u24; using u32. Verify wire-format
-    // callers populate this from the 3-byte MySQL packet length correctly.
+    // Zig `u24`: callers populate this from `PacketHeader.length`, the 3-byte
+    // MySQL packet length (always <= 0xFFFFFF), so `u32` holds it losslessly.
     pub packet_size: u32,
 }
 
@@ -22,14 +23,13 @@ impl Default for LocalInfileRequest {
 // explicit `impl Drop` is needed here.
 
 impl LocalInfileRequest {
-    // TODO(port): narrow error set
     pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyMySQLError> {
         let header = reader.int::<u8>()?;
         if header != 0xFB {
-            return Err(bun_core::err!("InvalidLocalInfileRequest"));
+            return Err(AnyMySQLError::InvalidLocalInfileRequest);
         }
 
         self.filename = reader.read((self.packet_size - 1) as usize)?;
@@ -40,7 +40,7 @@ impl LocalInfileRequest {
     pub fn decode<Context: ReaderContext>(
         &mut self,
         context: Context,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyMySQLError> {
         self.decode_internal(NewReader { wrapped: context })
     }
 }

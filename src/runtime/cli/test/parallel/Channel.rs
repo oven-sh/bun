@@ -46,14 +46,14 @@ pub trait ChannelOwner: bun_core::IntrusiveField<Channel<Self>> {
     fn on_channel_done(&mut self);
 }
 
-// PORT NOTE: the struct itself carries no `ChannelOwner` bound so that owners
+// The struct itself carries no `ChannelOwner` bound so that owners
 // (Worker, WorkerCommands) can embed `Channel<Self>` as a field before their
 // `impl ChannelOwner` is in scope. Method impls that recover the owner via
 // `IntrusiveField::OFFSET` keep the bound. (Rust also forbids a stricter bound
 // on `Drop` than on the struct, so Drop/Default below are unbounded too.)
 pub struct Channel<Owner> {
     /// Incoming bytes that don't yet form a complete frame.
-    // PORT NOTE: Zig field name is `in`, a Rust keyword — kept via raw ident
+    // Zig field name is `in`, a Rust keyword — kept via raw ident
     // so the .zig ↔ .rs diff stays aligned.
     pub r#in: Vec<u8>,
     /// Outgoing bytes the kernel didn't accept yet.
@@ -120,7 +120,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// `SocketKind` value of its own. The per-file isolation swap skips
     /// `rare.test_parallel_ipc_group` so the coordinator link survives.
     fn ensure_posix_group(vm: &mut VirtualMachine) -> &mut uws::SocketGroup {
-        // PORT NOTE: borrowck split — `rare_data()` mutably borrows `vm`, but
+        // borrowck split — `rare_data()` mutably borrows `vm`, but
         // the group accessor needs `vm` again for `uws_loop()`. The two touch
         // disjoint storage (the `Box<RareData>` payload vs the loop pointer
         // field), so a raw-pointer reborrow is sound here. Mirrors Zig's
@@ -134,7 +134,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // separate processes so there's never more than one Owner type sharing
         // this group.
         if g.vtable.is_none() {
-            // PORT NOTE: cannot use `uws::vtable::make::<PosixHandlers<Owner>>()`
+            // cannot use `uws::vtable::make::<PosixHandlers<Owner>>()`
             // because `bun_uws_sys::vtable::Handler` requires `Self: 'static`
             // and one owner (`WorkerCommands<'a>`) carries a lifetime. The
             // hand-rolled `PosixHandlers::<Owner>::VTABLE` const below mirrors
@@ -178,7 +178,7 @@ impl Default for WindowsBackend {
 impl<Owner: ChannelOwner> Channel<Owner> {
     /// Adopt a duplex fd into the channel and start reading. POSIX: the
     /// socketpair end. Windows: the inherited named-pipe end (worker side).
-    // PORT NOTE: callers (`runner.rs`, `Worker.rs`) only hold `&VirtualMachine`;
+    // callers (`runner.rs`, `Worker.rs`) only hold `&VirtualMachine`;
     // the upstream `rare_data()` / `test_parallel_ipc_group()` accessors require
     // `&mut`. Take a raw `*const` (matches Zig `*jsc.VirtualMachine`) and cast
     // away const locally — single-threaded init path. A `&VirtualMachine`
@@ -186,7 +186,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     // promotion; the raw-pointer route sidesteps that lint while keeping both
     // call sites (which pass `&`/`&mut` and coerce) unchanged.
     pub fn adopt(&mut self, vm: *const VirtualMachine, fd: Fd) -> bool {
-        // PORT NOTE — VM is process-singleton and accessed only from the main
+        // VM is process-singleton and accessed only from the main
         // thread here; route through the safe singleton accessor.
         let _ = vm;
         let vm: &mut VirtualMachine = VirtualMachine::get().as_mut();
@@ -264,7 +264,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
     /// returning, so the extra ref never holds the process open.
     #[cfg(windows)]
     pub fn adopt_pipe(&mut self, _vm: *const VirtualMachine, pipe: *mut uv::Pipe) -> bool {
-        // PORT NOTE: Zig's `pipe.readStart(self, onAlloc, onError, onRead)`
+        // Zig's `pipe.readStart(self, onAlloc, onError, onRead)`
         // bakes the three callbacks at comptime; the Rust binding expresses
         // that via the `StreamReader` trait impl below and routes through
         // `read_start_ctx`, which stashes `self` in `handle.data`.
@@ -332,7 +332,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         // so this currently always falls through to submit_windows_write —
         // kept because EBADF/EPIPE here mean the pipe is dead and must not
         // silently drop the frame.
-        // PORT NOTE: Zig `pipe.tryWrite([]const u8) Maybe(usize)` is inlined
+        // Zig `pipe.tryWrite([]const u8) Maybe(usize)` is inlined
         // here against the low-level `UvStream::try_write(&[uv_buf_t])`.
         let buf = uv::uv_buf_t::init(frame_bytes);
         let rc = pipe.try_write(core::slice::from_ref(&buf));
@@ -447,9 +447,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                     // SAFETY: Box-allocated; close_and_destroy reclaims via heap::take.
                     unsafe { uv::Pipe::close_and_destroy(bun_core::heap::into_raw(p)) };
                 } else {
-                    // TODO(port): Zig left the field set if already closing;
-                    // with Box we cannot put it back without re-taking. May
-                    // need raw *mut uv::Pipe here.
+                    // Already closing: put the Box back, matching Zig leaving
+                    // the field set (uv close callback finishes the teardown).
                     self.backend.pipe = Some(p);
                 }
             }
@@ -482,7 +481,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
                 head += 5usize + len as usize;
                 continue;
             };
-            // PORT NOTE: borrowck split — `rd` borrows `self.r#in` while
+            // borrowck split — `rd` borrows `self.r#in` while
             // `owner()` would re-borrow `*self` mutably. Capture the owner raw
             // pointer *before* forming `rd` (so the `&mut *self` reborrow ends
             // immediately), then recover `&mut Owner` from it after. Same
@@ -546,7 +545,7 @@ impl<Owner> Drop for Channel<Owner> {
 pub(crate) struct PosixHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
 
 /// Ext slot type for the usockets vtable: the slot holds a `*mut Channel<Owner>`.
-// PORT NOTE: was an inherent `type Ext` on the impl in the Zig-shaped draft;
+// Was an inherent `type Ext` on the impl in the Zig-shaped draft;
 // inherent associated types are unstable in Rust, so it lives as a free alias.
 #[cfg(not(windows))]
 pub(crate) type PosixExt<Owner> = *mut Channel<Owner>;

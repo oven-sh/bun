@@ -265,15 +265,17 @@ impl From<std::io::Error> for Error {
             // Windows: `raw_os_error()` returns the raw Win32 `GetLastError()`
             // code (ERROR_ACCESS_DENIED=5, ERROR_SHARING_VIOLATION=32, …),
             // NOT a `SystemErrno`. Routing it through `ErrnoNames::SYS.name()` would
-            // alias garbage (5→EIO, 32→EPIPE). The Zig pipeline first runs
-            // `Win32Error.toSystemErrno()` (windows_errno.zig:290) before any
-            // `errno_map` lookup; that table lives in `bun_errno`, which is
-            // tier-above `bun_core` (dep cycle), so we can't call it here.
-            // Fall back to `Unexpected` rather than return a wrong name.
-            // TODO(port): plumb a Win32→SystemErrno hook (or duplicate the
-            // table) so `?`-propagated `io::Error`s name correctly on Windows.
+            // alias garbage (5→EIO, 32→EPIPE). Mirror the Zig pipeline, which
+            // first runs `Win32Error.toSystemErrno()` (windows_errno.zig:290)
+            // before any `errno_map` lookup; that table lives in `bun_errno`
+            // (tier-above `bun_core`, dep cycle), reached via the `win32_name`
+            // method on the `ErrnoNames` link-interface. Unknown codes still
+            // collapse to `Unexpected` rather than aliasing a wrong name.
             #[cfg(windows)]
-            Some(_code) => Self::UNEXPECTED,
+            Some(code) => match crate::ErrnoNames::SYS.win32_name(code as u32) {
+                Some(name) => Self::intern(name),
+                None => Self::UNEXPECTED,
+            },
             None => Self::UNEXPECTED,
         }
     }

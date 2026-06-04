@@ -11,7 +11,7 @@ use bun_ast::{
     expr::{Equality, LooseEql, StrictEql},
 };
 
-// PORT NOTE: The Zig `CreateBinaryExpressionVisitor(comptime ts, comptime jsx, comptime scan_only) type`
+// The Zig `CreateBinaryExpressionVisitor(comptime ts, comptime jsx, comptime scan_only) type`
 // returned an anonymous namespace struct whose only public item was `BinaryExpressionVisitor`.
 // Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so `BinaryExpressionVisitor` carries
 // the parser generics directly.
@@ -80,7 +80,7 @@ fn try_optimize_typeof_undefined<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bo
     ))
 }
 
-// PORT NOTE: `Expr.Data.eql(left, right, p, .{loose,strict})` — thin adapter
+// `Expr.Data.eql(left, right, p, .{loose,strict})` — thin adapter
 // from the `const STRICT: bool` shape used at the four call sites below to the
 // canonical `ExprData::eql<P, K: EqlKindT>` (Expr.rs). Kept as a free fn so
 // the call sites don't each repeat the `LooseEql`/`StrictEql` type-select.
@@ -104,7 +104,7 @@ pub struct BinaryExpressionVisitor {
     /// round-trip to forge an `'arena` borrow.
     pub e: StoreRef<E::Binary>,
     pub loc: bun_ast::Loc,
-    // PORT NOTE: Zig field name `in` is a Rust keyword; renamed to `in_`.
+    // Zig field name `in` is a Rust keyword; renamed to `in_`.
     pub in_: ExprIn,
 
     /// Input for visiting the left child
@@ -514,17 +514,13 @@ impl BinaryExpressionVisitor {
                 if p.should_fold_typescript_constant_expressions {
                     if let Some(vals) = Expr::extract_numeric_values(&e_.left.data, &e_.right.data)
                     {
-                        // TODO(port): move to <area>_sys
-                        unsafe extern "C" {
-                            // libc fmod is pure (value-type args, no errno, no pointers) → no caller preconditions.
-                            safe fn fmod(x: f64, y: f64) -> f64;
-                        }
                         return p.new_expr(
-                            // Use libc fmod here to be consistent with what JavaScriptCore does
+                            // Rust `%` on f64 has libc fmod semantics (LLVM frem),
+                            // which matches what JavaScriptCore does:
                             // https://github.com/oven-sh/WebKit/blob/7a0b13626e5db69aa5a32d037431d381df5dfb61/Source/JavaScriptCore/runtime/MathCommon.cpp#L574-L597
-                            // PORT NOTE: Zig had a non-native fallback to std.math.mod; Rust targets are always native.
+                            // Zig had a non-native fallback to std.math.mod; Rust targets are always native.
                             E::Number {
-                                value: fmod(vals[0], vals[1]),
+                                value: vals[0] % vals[1],
                             },
                             v.loc,
                         );
@@ -738,7 +734,7 @@ impl BinaryExpressionVisitor {
             Op::Code::BinAssign => {
                 // Optionally preserve the name
                 if let ExprData::EIdentifier(ident) = e_.left.data {
-                    // PORT NOTE: reshaped for borrowck — copy the `StoreStr` out of
+                    // reshaped for borrowck — copy the `StoreStr` out of
                     // `p.symbols` before taking `&mut self` for `maybe_keep_expr_symbol_name`.
                     let name = p.symbols[ident.ref_.inner_index() as usize].original_name;
                     e_.right = p.maybe_keep_expr_symbol_name(

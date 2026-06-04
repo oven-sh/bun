@@ -72,8 +72,16 @@ impl StringMap {
         self.map.get(key).map(|v| &**v)
     }
 
-    // Zig `sort` takes an `anytype` ctx; defer until a caller needs it.
-    // TODO(port): StringMap::sort — wire once ArrayHashMap::sort lands.
+    /// Zig `sort(sort_ctx)` — forwards to the inner map's order-preserving
+    /// sort. Zig's `anytype` ctx exposed `lessThan(a_index, b_index)`; the
+    /// closure receives the parallel key/value slices plus the two indices so
+    /// it can compare on either column.
+    pub fn sort(
+        &mut self,
+        less_than: impl FnMut(&[Box<[u8]>], &[Box<[u8]>], usize, usize) -> bool,
+    ) {
+        self.map.sort(less_than);
+    }
 
     // `deinit` → Drop on the inner Vecs.
 }

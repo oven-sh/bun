@@ -21,7 +21,7 @@ use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status};
 #[cfg(unix)]
 use bun_sys::Fd;
-// PORT NOTE: `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
+// `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. `AnyEventLoop::native_loop()` projects through the uws wrapper
 // (`WindowsLoop::uv_loop`) on Windows so both paths hand back the same shape
@@ -316,7 +316,7 @@ impl<'a> InstallCtx<'a> {
     }
 }
 
-// PORT NOTE: Zig's `Intrusive(T, Context, less)` takes the comparator as a comptime
+// Zig's `Intrusive(T, Context, less)` takes the comparator as a comptime
 // fn-pointer. The Rust `io_heap::Intrusive` folds it into `HeapContext::less` on the
 // `Context` type instead, so `sort_by_started_at` is provided via a trait impl on a
 // ZST `StartedAtCtx` (the Zig context arg `*PackageManager` is unused by `less`).
@@ -452,8 +452,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             let flags = bun_sys::get_fcntl_flags(fd).expect("Failed to get fcntl flags");
             debug_assert!(flags & bun_sys::O::NONBLOCK as isize != 0);
 
-            let _stat = bun_sys::fstat(fd).expect("Failed to fstat");
-            // TODO(port): `bun.S.ISSOCK(stat.mode)` once bun_sys exposes `S::ISSOCK`.
+            let stat = bun_sys::fstat(fd).expect("Failed to fstat");
+            debug_assert!(bun_sys::S::ISSOCK(stat.st_mode as _));
         }
         let _ = fd;
     }
@@ -498,7 +498,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         this: *mut Self,
         next_script_index: u8,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         bun_core::analytics::Features::LIFECYCLE_SCRIPTS.fetch_add(1, Ordering::Relaxed);
 
         // SAFETY: `this` is non-null and uniquely accessed (caller contract).
@@ -512,7 +511,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
 
         // errdefer { decrement alive_count; ensure_not_in_heap }
-        // PORT NOTE: Zig's `errdefer` is modeled by splitting the fallible body into
+        // Zig's `errdefer` is modeled by splitting the fallible body into
         // `spawn_next_script_inner` and running the cleanup on the error branch. Both
         // functions take the allocation-rooted `*mut Self` (mirroring Zig's
         // `*LifecycleScriptSubprocess` receiver) so that backrefs stored into the
@@ -619,7 +618,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 core::mem::size_of::<[*const c_char; 4]>() == 4 * core::mem::size_of::<usize>()
             );
 
-            // PORT NOTE / OWNERSHIP: Zig allocates the libuv pipes
+            // OWNERSHIP: Zig allocates the libuv pipes
             // (`bun.new(uv.Pipe, zeroes)`), stashes the *non-owning* `*uv.Pipe`
             // in `this.stdout.source.?.pipe`, and reuses the same heap pointer for
             // `SpawnOptions.{stdout,stderr} = .{ .buffer = pipe }`. In Rust,
@@ -718,7 +717,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         // linked in the libuv loop's handle queue forever). Zig avoided
                         // this by stashing the pipes in `this.{stdout,stderr}.source`
                         // BEFORE building `SpawnOptions` (lifecycle_script_runner.zig:190);
-                        // the Rust ordering moved allocation inline (see PORT NOTE above)
+                        // the Rust ordering moved allocation inline (see OWNERSHIP note above)
                         // and must therefore handle the error path explicitly.
                         let mut spawn_options = spawn_options;
                         spawn_options.stdout.deinit();
@@ -818,7 +817,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
     pub fn print_output(&mut self) {
         if !self.manager().options.log_level.is_verbose() {
             // Reuse the memory
-            // PORT NOTE: reshaped for borrowck — Zig evaluated all three clauses
+            // Reshaped for borrowck — Zig evaluated all three clauses
             // (`stdout.len==0 && stdout.cap>0 && stderr.buffer().cap==0`) before
             // the swap, holding two `*ArrayList(u8)` simultaneously. Evaluate
             // the stderr-capacity check first (immutable), then take the
@@ -922,17 +921,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     } else {
                         // .monotonic because this is what `completeOne` does. This is the same
                         // as `completeOne` but doesn't update the parent.
-                        // TODO(port): Zig used `@atomicRmw(usize, &node.unprotected_completed_items, .Add, 1, .monotonic)`;
-                        // the stub `bun_progress::Node` is non-atomic & has no parent, so the
-                        // detached-parent path collapses to `complete_one()` until the real
-                        // `std.Progress` port lands.
-                        scripts_node.complete_one();
+                        scripts_node
+                            .unprotected_completed_items
+                            .fetch_add(1, Ordering::Relaxed);
                     }
                 }
 
                 if let Some(nanos) = maybe_duration {
                     if nanos > MIN_MILLISECONDS_TO_LOG * bun_core::time::NS_PER_MS {
-                        // PORT NOTE: Zig passed `manager.lockfile.allocator`; allocator param
+                        // Zig passed `manager.lockfile.allocator`; allocator param
                         // dropped per §Allocators (non-AST crate). Zig borrowed the lockfile
                         // string buffer for `package_name`; we own a `Box<[u8]>` that drops on
                         // `destroy`, so the log entry takes its own owned copy.
@@ -1137,7 +1134,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 break 'try_delete_dir;
             };
             let basename = bun_paths::basename(self.scripts.cwd.as_bytes());
-            // PORT NOTE: Zig (lifecycle_script_runner.zig:533-534) leaks this fd
+            // Zig (lifecycle_script_runner.zig:533-534) leaks this fd
             // too — fixed here since this path returns to the install loop without
             // exiting, so the HANDLE/fd would otherwise persist for the rest of
             // the install on every failed optional-dependency lifecycle script.
@@ -1161,7 +1158,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         foreground: bool,
         ctx: Option<InstallCtx<'a>>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let package_name = list.package_name.clone();
         let lifecycle_subprocess = Self::new(LifecycleScriptSubprocess {
             manager: bun_ptr::BackRef::new_mut(manager),

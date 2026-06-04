@@ -3,7 +3,6 @@ use super::JSValueTestExt;
 
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_match(
     this: &Expect,
     global: &JSGlobalObject,
@@ -53,7 +52,7 @@ pub(crate) fn to_match(
     }
 
     // handle failure
-    // PORT NOTE: Zig shares one Formatter across both `to_fmt` calls; in Rust each
+    // Zig shares one Formatter across both `to_fmt` calls; in Rust each
     // `to_fmt` borrows `&mut Formatter` for the lifetime of the returned wrapper, so
     // we need a second Formatter for the second value (matches toContain.rs / toBe.rs).
     let mut formatter2 = super::make_formatter(global);
@@ -61,7 +60,6 @@ pub(crate) fn to_match(
     let value_fmt = value.to_fmt(&mut formatter2);
 
     if not {
-        // TODO(port): `comptime getSignature(...)` — ensure `get_signature` is `const fn` (or macro) returning &'static str.
         let signature = Expect::get_signature("toMatch", "<green>expected<r>", true);
         return this.throw(
             global,

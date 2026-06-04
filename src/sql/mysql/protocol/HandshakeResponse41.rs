@@ -1,5 +1,6 @@
 // Client authentication response
 
+use super::any_mysql_error::Error as AnyMySQLError;
 use super::character_set::CharacterSet;
 use super::encode_int::encode_length_int;
 use super::new_writer::NewWriter;
@@ -29,8 +30,7 @@ impl HandshakeResponse41 {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &mut self,
         writer: NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), AnyMySQLError> {
         let mut packet = writer.start(self.sequence_id)?;
 
         self.capability_flags.CLIENT_CONNECT_ATTRS = self.connect_attrs.len() > 0;
@@ -50,7 +50,7 @@ impl HandshakeResponse41 {
         writer.int4(self.max_packet_size)?;
 
         // Write character set (1 byte)
-        writer.int1(self.character_set as u8)?;
+        writer.int1(self.character_set.to_int())?;
 
         // Write 23 bytes of padding
         writer.write(&[0u8; 23])?;
@@ -110,7 +110,7 @@ impl HandshakeResponse41 {
     pub fn write<Context: super::new_writer::WriterContext>(
         &mut self,
         writer: NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyMySQLError> {
         self.write_internal(writer)
     }
 }

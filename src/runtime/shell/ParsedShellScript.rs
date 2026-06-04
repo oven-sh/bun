@@ -22,7 +22,7 @@ use super::{EnvMap, EnvStr, Interpreter};
 pub struct ParsedShellScript {
     pub args: JsCell<Option<Box<ShellArgs>>>,
     /// allocated with arena in jsobjs
-    // PORT NOTE: in Zig this Vec's backing storage lives in `args.arena` (self-referential
+    // In Zig this Vec's backing storage lives in `args.arena` (self-referential
     // with the `args` field). Uses a global-alloc Vec here; revisit if profiling shows
     // the extra alloc matters. JSValues here are GC-rooted via `toJSWithValues` codegen
     // (own: array on the C++ wrapper), so storing them on the Rust heap is sound.
@@ -76,7 +76,7 @@ impl ParsedShellScript {
         self.estimated_size_for_gc
     }
 
-    // PORT NOTE: reshaped from 5 out-params to a returned tuple; Zig used out-params
+    // Reshaped from 5 out-params to a returned tuple; Zig used out-params
     // because the caller pre-declares slots. Rust callers destructure the tuple.
     pub fn take(
         &self,
@@ -173,9 +173,9 @@ impl ParsedShellScript {
             // `ZigString::to_owned_slice` is infallible in the Rust port (global alloc
             // aborts on OOM); Zig wrapped in `bun.handleOom`.
             let slice = value_str.to_owned_slice();
-            let keyref = EnvStr::init_ref_counted(&keyslice);
+            let keyref = EnvStr::init_ref_counted(keyslice.into_boxed_slice());
             // defer keyref.deref() — done below (insert refs again).
-            let valueref = EnvStr::init_ref_counted(&slice);
+            let valueref = EnvStr::init_ref_counted(slice.into_boxed_slice());
             // defer valueref.deref() — done below.
 
             env.insert(keyref, valueref);
@@ -240,7 +240,7 @@ fn create_parsed_shell_script_impl(
     // `JsStrings`'s `Drop` (per-element `bun.String::deref()` then Vec free).
     let mut jsstrings = JsStrings::with_capacity(4);
 
-    // PORT NOTE: in Zig `jsobjs` and `script` are allocated from `shargs.arena_allocator()`.
+    // In Zig `jsobjs` and `script` are allocated from `shargs.arena_allocator()`.
     // Shell is an AST crate (arena-backed); uses global Vec here to sidestep the
     // self-referential borrow against `shargs` (it later moves into `ParsedShellScript`).
     let mut jsobjs: Vec<JSValue> = Vec::new();
@@ -255,7 +255,7 @@ fn create_parsed_shell_script_impl(
         marked_argument_buffer,
     )?;
 
-    // PORT NOTE: reshaped for borrowck — `out_parser`/`out_lex_result` borrow
+    // Reshaped for borrowck — `out_parser`/`out_lex_result` borrow
     // `shargs.__arena`, so they're scoped to a block that ends before
     // `shargs.script_ast = script` below. The arena reference is taken via raw
     // pointer so the `&shargs` borrow doesn't outlive the call (the returned

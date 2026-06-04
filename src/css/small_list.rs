@@ -75,7 +75,6 @@ pub mod fallbacks_gated {
     use crate::css_parser as css;
     use crate::properties::text::TextShadow;
 
-    // TODO(port): trait bound placeholder — any T with getImage()/withImage()/getFallback()/getNecessaryFallbacks()
     pub fn get_fallbacks_image<T>(
         this: &mut SmallList<T, 1>,
         arena: &bun_alloc::Arena,

@@ -12,7 +12,6 @@ use crate::node::util::validators;
 use crate::socket::{Listener, NativeCallbacks, NewSocket, SocketFlags, TCPSocket, TLSSocket};
 
 // Zig: `pub var autoSelectFamilyDefault: bool = true;`
-// PORT NOTE: reshaped for borrowck — Rust forbids safe `static mut`; use AtomicBool.
 pub(crate) static AUTO_SELECT_FAMILY_DEFAULT: AtomicBool = AtomicBool::new(true);
 
 // This is only used to provide the getDefaultAutoSelectFamilyAttemptTimeout and

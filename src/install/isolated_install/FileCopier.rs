@@ -153,12 +153,10 @@ impl FileCopier {
                     _ => continue,
                 }
 
-                // PORT NOTE: reshaped for borrowck — Zig's `var s = path.save();
-                // defer s.restore();` returns a `ResetScope` that holds
-                // `&mut Path`, which would keep `self.src_path` /
-                // `self.dest_subpath` exclusively borrowed for the rest of the
-                // iteration. Capture the saved length and restore via
-                // `set_length` after the body.
+                // A `path.save()` ResetScope would hold `&mut Path` and keep
+                // `self.src_path` / `self.dest_subpath` exclusively borrowed
+                // for the rest of the iteration. Capture the saved length and
+                // restore via `set_length` after the body instead.
                 let src_saved_len = self.src_path.len();
                 let _ = self.src_path.append(entry.path.as_slice());
 

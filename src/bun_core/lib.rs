@@ -628,6 +628,9 @@ bun_dispatch::link_interface! {
     pub ErrnoNames[Sys] {
         fn name(errno: i32) -> Option<&'static str>;
         fn max_dense() -> u32;
+        // Raw Win32 `GetLastError()` code → `SystemErrno` tag name.
+        // Always `None` on non-Windows.
+        fn win32_name(code: u32) -> Option<&'static str>;
     }
 }
 
@@ -951,7 +954,7 @@ bun_alloc::oom_from_alloc!(JsError);
 
 impl From<crate::Error> for JsError {
     fn from(_: crate::Error) -> Self {
-        // PORT NOTE: Zig coerces arbitrary `anyerror` into the JS error union by
+        // Zig coerces arbitrary `anyerror` into the JS error union by
         // throwing a generic Error; the throw happens at the call site. Mapping
         // to `Thrown` here lets `?` propagate while the actual throw is handled
         // by the host-fn wrapper.
@@ -1096,7 +1099,7 @@ pub fn handle_oom<T, E>(r: core::result::Result<T, E>) -> T {
 /// Zig-faithful narrowing version (`bun.handleOom` with comptime error-set
 /// reflection) see `bun_crash_handler::HandleOom`.
 ///
-/// PORT NOTE: this is intentionally a blanket `impl<T, E>` — it matches the
+/// This is intentionally a blanket `impl<T, E>` — it matches the
 /// existing `bun_core::handle_oom` free fn and the two pre-existing local
 /// blanket impls in `run_command.rs` / `valkey.rs`. Callers that want a strict
 /// `error{OutOfMemory}`-only whitelist should use `bun_crash_handler::HandleOom`
@@ -1129,11 +1132,16 @@ pub fn handle_error_return_trace<E>(_err: E) {}
 /// yet implemented" path that the Zig source ships with — distinct from a
 /// porting placeholder. Captures file/line via `file!()`/`line!()` (the
 /// `@src()` equivalent) and routes through `Output::panic`.
-// TODO(port): wire `bun_analytics::Features::todo_panic` once the analytics
-// crate is reachable from bun_core without a dep cycle.
 #[macro_export]
 macro_rules! todo_panic {
     ($($arg:tt)*) => {{
+        // Zig: `analytics.Features.todo_panic = 1;` (bun.zig todoPanic).
+        // Recorded in the tier-0 `Global::features` counter (same as
+        // css_parser's todo store). `bun_analytics::features::todo_panic` —
+        // the set the crash report serializes via `packed_features()` — is a
+        // re-export of this same static (see `define_features!`'s `core =`
+        // entries in src/analytics/lib.rs), so the bit reaches crash reports.
+        $crate::Global::features::TODO_PANIC.store(1, ::core::sync::atomic::Ordering::Relaxed);
         $crate::output::panic(::core::format_args!(
             "TODO: {} ({}:{})",
             ::core::format_args!($($arg)*),
@@ -2468,7 +2476,7 @@ pub(crate) mod strings_impl {
     /// caller is responsible for sizing `out` for the worst case (≤ 3× input
     /// code units).
     ///
-    /// PORT NOTE: Zig passes `out` straight to simdutf with no bounds check
+    /// Zig passes `out` straight to simdutf with no bounds check
     /// (UB if undersized). We assert in release too — one extra SIMD length
     /// scan is cheap, and a panic beats heap corruption if a future caller
     /// gets the sizing wrong. All current callers (~10, Windows wide-path

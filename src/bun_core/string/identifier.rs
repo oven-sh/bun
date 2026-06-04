@@ -51,9 +51,10 @@ pub fn is_identifier(text: &[u8]) -> bool {
 /// Surrogate decoding is open-coded on purpose: an unpaired high surrogate
 /// (0xD800..=0xDBFF not followed by a low surrogate) advances ONE unit and is
 /// fed raw to `is_identifier_start/part` — exactly matching Zig
-/// `lexer.zig:3091-3096`. `crate::string::strings::utf16_codepoint` would advance
-/// TWO units in that case (see immutable.rs:1644 PORT NOTE), so do NOT swap it
-/// in here.
+/// `lexer.zig:3091-3096`. `crate::string::strings::utf16_codepoint` (defined in
+/// `immutable/unicode.rs`, re-exported through `immutable.rs`) would advance
+/// TWO units in that case — its lead-surrogate arm returns `len: 2` even when
+/// the next unit is not a trail surrogate — so do NOT swap it in here.
 pub fn is_identifier_utf16(text: &[u16]) -> bool {
     let n = text.len();
     if n == 0 {
@@ -78,12 +79,13 @@ pub fn is_identifier_utf16(text: &[u16]) -> bool {
 
 // ──────────────────────────────────────────────────────────────────────────
 // The remainder of this file is auto-generated. Do not edit.
-// TODO(port): re-run the identifier-table generator with .rs output instead
-// of post-processing the .zig; tables below were mechanically transcribed.
+// The tables below were mechanically transcribed from the generated .zig;
+// to regenerate, re-run the identifier-table generator with .rs output.
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: Zig `u21` codepoint type → `u32`. Callers must pass cp <= 0x10FFFF
-// (stage1 tables are sized for that range); out-of-range indexes panic.
+// Zig used a `u21` codepoint type; here it is `u32`. Callers must pass
+// cp <= 0x10FFFF (stage1 tables are sized for that range); out-of-range
+// indexes panic.
 
 /// isIDStartESNext checks if a codepoint is valid in the isIDStartESNext category
 pub(crate) fn is_id_start_es_next(cp: u32) -> bool {

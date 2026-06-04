@@ -22,11 +22,10 @@ impl Parser<'_> {
         self.enter_block(BlockType::Doc, 0, 0)?;
 
         while off < self.size {
-            // PORT NOTE: reshaped for borrowck — index into line_buf via raw idx
             let line = &mut line_buf[line_idx];
 
             self.analyze_line(off, &mut off, &pivot_line, line)?;
-            // PORT NOTE: reshaped for borrowck — pass whole buf + idx so process_line can swap
+            // Pass the whole buf + idx so process_line can swap lines.
             self.process_line(&mut pivot_line, line_idx, &mut line_buf, &mut line_idx)?;
         }
 
@@ -694,8 +693,8 @@ impl Parser<'_> {
         line_buf: &mut [Line; 2],
         line_idx: &mut usize,
     ) -> Result<(), bun_alloc::AllocError> {
-        // PORT NOTE: reshaped for borrowck — Zig passed `line: *Line` aliasing into line_buf;
-        // here we index into line_buf via cur_line_idx.
+        // Index into line_buf via cur_line_idx instead of taking a `&mut Line`
+        // parameter, which would alias line_buf.
         let line = &mut line_buf[cur_line_idx];
 
         // Blank line ends current leaf block.
@@ -882,8 +881,8 @@ impl Parser<'_> {
 
     pub fn end_current_block(&mut self) -> Result<(), bun_alloc::AllocError> {
         if let Some(cb_off) = self.current_block {
-            // PORT NOTE: reshaped for borrowck — capture header fields, drop the &mut borrow,
-            // then access other &self fields.
+            // Capture the header fields, drop the &mut borrow, then access
+            // other &self fields.
             let (is_setext, hdr_n_lines) = {
                 let hdr = self.get_block_header_at(cb_off);
                 (
@@ -940,7 +939,6 @@ impl Parser<'_> {
 
         // Merge lines into buffer for ref def parsing
         self.buffer.clear();
-        // PORT NOTE: reshaped for borrowck — index instead of borrowing items slice.
         for idx in 0..self.current_block_lines.len() {
             let vline = self.current_block_lines[idx];
             if vline.beg > vline.end || vline.end > self.size {
@@ -953,8 +951,8 @@ impl Parser<'_> {
                 .extend_from_slice(&self.text[vline.beg as usize..vline.end as usize]);
         }
 
-        // PORT NOTE: reshaped for borrowck — move merged buffer out of self so
-        // parse_ref_def/normalize_label can borrow &self/&mut self.
+        // Move the merged buffer out of self so parse_ref_def/normalize_label
+        // can borrow &self/&mut self.
         let merged = core::mem::take(&mut self.buffer);
         let mut pos: usize = 0;
         let mut lines_consumed: u32 = 0;
@@ -1004,7 +1002,6 @@ impl Parser<'_> {
 
         if lines_consumed > 0 {
             if let Some(cb_off) = self.current_block {
-                // PORT NOTE: reshaped for borrowck — capture n_lines, mutate, then write back.
                 let hdr_n_lines = self.get_block_header_at(cb_off).n_lines;
                 if lines_consumed >= hdr_n_lines {
                     // All lines consumed

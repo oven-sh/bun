@@ -121,7 +121,10 @@ impl KeepAlive {
             return;
         }
         self.status = Status::Inactive;
-        // TODO(port): vm.pending_unref_counter must be Atomic; Zig uses @atomicRmw .Add .monotonic
+        // Cross-thread increment: Zig does `@atomicRmw .Add .monotonic` on
+        // `vm.pending_unref_counter`; the Rust counter is an `AtomicI32`
+        // RMW'd with `Ordering::Relaxed` for the same reason (see
+        // `jsc::VirtualMachine::pending_unref_counter`).
         #[cfg(not(windows))]
         vm.increment_pending_unref_counter();
         // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194

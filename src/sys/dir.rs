@@ -175,9 +175,9 @@ impl Dir {
                             },
                         };
                         let parent = top.iter.dir();
-                        // PORT NOTE: Zig caps the stack at 16 and falls back to
+                        // The Zig original caps the stack at 16 and falls back to
                         // `deleteTreeMinStackSizeWithKindHint` past that depth. The
-                        // Rust `Vec` grows, so the capacity check is dropped — same
+                        // `Vec` here grows, so the capacity check is dropped — same
                         // semantics, no fixed-depth limit.
                         stack.push(StackItem {
                             name: entry.name.slice_u8().to_vec(),

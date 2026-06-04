@@ -36,6 +36,11 @@ impl VersionFlag {
 
     /// std.math.maxInt(u13)
     const MAX: VersionFlag = VersionFlag((1u16 << 13) - 1);
+
+    #[inline]
+    pub const fn bits(self) -> u16 {
+        self.0
+    }
 }
 
 // Zig: `packed struct(u16)` with mixed bool + u13 fields → `#[repr(transparent)]`
@@ -144,7 +149,7 @@ mod host {
     /// has produced the PE — but any actual *use* of the data still fails loudly.
     /// Call this from every site that writes `EMBEDDED_EXECUTABLE_DATA` to disk.
     ///
-    /// PORT NOTE: this MUST be a process exit, not `panic!()`. The only caller
+    /// IMPORTANT: this MUST be a process exit, not `panic!()`. The only caller
     /// (`bin::Linker::create_windows_shim`) runs on the parallel-install thread
     /// pool; the workspace is `panic = "unwind"`, so a `panic!()` here unwinds
     /// and kills the worker thread — the main install loop's pending-task counter
@@ -203,25 +208,23 @@ mod host {
 
     #[derive(Copy, Clone)]
     pub struct Shebang<'a> {
-        // PORT NOTE: borrows into the caller's input buffer (see `parse` doc)
+        // Borrows into the caller's input buffer (see `parse` doc).
         pub launcher: &'a [u8],
         pub utf16_len: u32,
         pub is_node_or_bun: bool,
     }
 
     impl<'a> Shebang<'a> {
-        pub fn init(
-            launcher: &'a [u8],
-            is_node_or_bun: bool,
-        ) -> Result<Shebang<'a>, bun_core::Error> {
-            // TODO(port): narrow error set (Zig inferred empty error set here)
-            Ok(Shebang {
+        // Zig declared `!Shebang` but the inferred error set is empty; return the
+        // value directly.
+        pub fn init(launcher: &'a [u8], is_node_or_bun: bool) -> Shebang<'a> {
+            Shebang {
                 launcher,
                 // TODO: what if this is invalid utf8?
                 utf16_len: u32::try_from(simdutf::length::utf16::from::utf8(launcher))
                     .expect("int cast"),
                 is_node_or_bun,
-            })
+            }
         }
 
         /// std.fs.path.extension but utf16
@@ -299,7 +302,7 @@ mod host {
             };
 
             // std.mem.tokenizeScalar(u8, line, ' ') — manual port preserving `.rest()` semantics.
-            // PORT NOTE: reshaped — Rust split() iterator has no `.rest()`.
+            // Reshaped — Rust split() iterator has no `.rest()`.
             let mut idx: usize = 0;
             // skip leading delimiters, then take token
             while idx < line.len() && line[idx] == b' ' {
@@ -331,10 +334,10 @@ mod host {
                 }
                 let is_node_or_bun =
                     eql_comptime(program, b"bun") || eql_comptime(program, b"node");
-                return Shebang::init(rest, is_node_or_bun).map(Some);
+                return Ok(Some(Shebang::init(rest, is_node_or_bun)));
             }
 
-            Shebang::init(line, false).map(Some)
+            Ok(Some(Shebang::init(line, false)))
         }
 
         pub fn encoded_length(&self) -> usize {
@@ -362,9 +365,12 @@ mod host {
             l
         }
 
-        /// The buffer must be exactly the correct length given by encoded_length
+        /// The buffer must be exactly the correct length given by encoded_length.
+        ///
+        /// Zig declared `!void` but the inferred error set is empty; the `Result`
+        /// is kept only because the caller (`bin.rs`) treats it as fallible API —
+        /// this always returns `Ok(())`.
         pub fn encode_into(&self, buf: &mut [u8]) -> Result<(), bun_core::Error> {
-            // TODO(port): narrow error set
             debug_assert!(buf.len() == self.encoded_length());
             debug_assert!(self.bin_path[0] != b'/' as u16);
 

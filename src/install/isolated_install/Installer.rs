@@ -649,7 +649,11 @@ pub enum Result {
     None,
     Err(TaskError),
     Blocked,
-    RunScripts(*mut package::scripts::List), // TODO(port): LIFETIMES.tsv=BORROW_FIELD &'a mut package::scripts::List — kept raw for borrowck (owned by store.entries.items(.scripts)[entry_id])
+    // Kept raw (semantically `&mut package::scripts::List`): the pointee is
+    // owned by `store.entries.items(.scripts)[entry_id]`, which outlives every
+    // task; threading `'a` here is blocked by the `Installer<'static>` BackRef
+    // the queued `Task` already carries.
+    RunScripts(*mut package::scripts::List),
     Done,
 }
 
@@ -675,12 +679,16 @@ impl TaskError {
             TaskError::Binaries(err) => TaskError::Binaries(*err),
             TaskError::RunScripts(err) => TaskError::RunScripts(*err),
             TaskError::Patching(_log) => {
-                // TODO(port): `bun_ast::Log` is non-Clone; the only caller of
-                // `TaskError::clone()` is `Yield::failure` which never receives a
-                // `Patching` payload (Patching is only constructed on the main
-                // thread via `on_package_extracted`, never passed through the
-                // task-thread `Yield::Fail` path). Preserve a fresh Log so we
-                // don't UAF a borrowed one.
+                // `bun_ast::Log` is non-Clone; the only caller of
+                // `TaskError::clone()` is the `Result::Err(err) => err.clone()`
+                // task-batch drain in PackageManager/runTasks.rs, and
+                // `Task::result` is only set to `Result::Err` from the
+                // `Yield::Fail` arm in `Task::run`. No `Yield::Fail` /
+                // `Yield::failure` site ever constructs `TaskError::Patching` —
+                // it is built only for direct `on_task_fail` calls (Installer.rs
+                // and isolated_install.rs patch paths), so this arm is
+                // unreachable in practice. Preserve a fresh Log so we don't UAF
+                // a borrowed one.
                 TaskError::Patching(Log::init())
             }
             TaskError::Download(dl) => TaskError::Download(DownloadError {
@@ -756,7 +764,9 @@ impl Step {
 
 pub enum Yield {
     Yield,
-    RunScripts(*mut package::scripts::List), // TODO(port): LIFETIMES.tsv=BORROW_PARAM &'a mut package::scripts::List — kept raw for borrowck (borrow of entry_scripts)
+    // Kept raw (semantically `&mut package::scripts::List`): borrow of
+    // `entry_scripts`, owned by the store entry — see `Result::RunScripts`.
+    RunScripts(*mut package::scripts::List),
     Done,
     Blocked,
     Fail(TaskError),
@@ -1203,7 +1213,7 @@ impl Task {
                         let _ = Fd::cwd().delete_tree(staging.slice());
                     }
 
-                    // PORT NOTE: reshaped for borrowck — `defer if (cached_package_dir) |d| d.close()`
+                    // reshaped for borrowck — `defer if (cached_package_dir) |d| d.close()`
                     // becomes a guard that *owns* the `Option<Fd>` so the loop body can reassign
                     // through `*cached_package_dir` without an outstanding closure borrow.
                     let mut cached_package_dir = scopeguard::guard(None::<Fd>, |dir| {
@@ -1218,7 +1228,7 @@ impl Task {
                     let mut backend =
                         InstallMethod::from_u8(installer.supported_backend.load(Ordering::Relaxed));
                     'backend: loop {
-                        // PORT NOTE: reshaped for borrowck — Zig builds `dest_subpath` once
+                        // reshaped for borrowck — Zig builds `dest_subpath` once
                         // before the labeled-switch and passes it by-value (struct copy)
                         // into each backend's helper. Rust moves it, so rebuild per
                         // iteration; this only re-runs once on an EXDEV/OPNOTSUPP retry.
@@ -1491,7 +1501,7 @@ impl Task {
                             installer.append_store_path(&mut dep_store_path, dep.entry_id);
                         }
 
-                        // PORT NOTE: reshaped for borrowck — Zig's
+                        // reshaped for borrowck — Zig's
                         // `const dest_save = dest.save(); defer dest_save.restore();`
                         // can't coexist with `dest.undo()/dest.relative()` because
                         // the `ResetScope` guard holds `&mut dest`. Capture the
@@ -1826,7 +1836,7 @@ impl Task {
                         );
                     }
 
-                    // PORT NOTE: `target_node_modules_path` intentionally aliases
+                    // `target_node_modules_path` intentionally aliases
                     // `node_modules_path` in the common (no-replacement) case —
                     // mirrors the Zig `*AbsPath` aliasing. The Linker field is a
                     // raw `*const AbsPath` for exactly this reason.
@@ -2052,7 +2062,7 @@ pub struct PatchInfoRemove {
 
 pub struct PatchInfoPatch {
     pub name_and_version_hash: u64,
-    pub patch_path: Box<[u8]>, // TODO(port): lifetime — slices into lockfile string_buf
+    pub patch_path: Box<[u8]>, // owned copy of the lockfile string_buf slice (Zig borrowed)
     pub contents_hash: u64,
 }
 
@@ -2255,7 +2265,6 @@ impl<'a> Installer<'a> {
         &self,
         parent_entry_id: StoreEntryId,
     ) -> core::result::Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let lockfile = self.lockfile();
         let store = self.store;
 
@@ -2330,7 +2339,7 @@ impl<'a> Installer<'a> {
                 );
             }
 
-            // PORT NOTE: see the matching note in `Step::LinkBinaries` — Zig
+            // see the matching note in `Step::LinkBinaries` — Zig
             // aliases `target_node_modules_path` with `node_modules_path` and
             // the Linker field is a raw `*const AbsPath` to permit that.
             let target_nm_ptr: *const DefaultAbsPath = match target_node_modules_path.as_ref() {
@@ -2713,7 +2722,7 @@ impl<'a> Installer<'a> {
                 buf.append(pkg_res.workspace().slice(string_buf));
             }
             ResolutionTag::Symlink => {
-                // PORT NOTE: reshaped — Zig `globalLinkDirPath()` lazily ensures
+                // reshaped — Zig `globalLinkDirPath()` lazily ensures
                 // the dir and mutates `*PackageManager`. `append_store_path` is
                 // `&self` (matching Zig `*const Installer`) and may run on worker
                 // threads, so the lazy init is hoisted to the main-thread caller

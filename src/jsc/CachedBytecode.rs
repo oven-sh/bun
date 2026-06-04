@@ -34,7 +34,7 @@ unsafe extern "C" {
 }
 
 impl CachedBytecode {
-    // PORT NOTE: the returned `&'static [u8]` actually borrows from the
+    // SAFETY CONTRACT: the returned `&'static [u8]` actually borrows from the
     // `CachedBytecode` handle and is invalidated when `deref()` is called —
     // identical to the Zig `[]const u8` + `*CachedBytecode` pair. Callers own
     // the handle and must call `deref()` (or drop via `allocator()`) to free.
@@ -119,7 +119,7 @@ impl CachedBytecode {
 // bytecode slice alongside an "allocator" whose `.free()` decrements the
 // CachedBytecode refcount. This is a Zig-specific ownership-tracking idiom.
 //
-// PORT NOTE: the Zig `VTable.free` slot called `CachedBytecode__deref(ctx)` and
+// The Zig `VTable.free` slot called `CachedBytecode__deref(ctx)` and
 // `VTable.alloc` panicked. The Rust `bun_alloc::Allocator` marker trait has no
 // `alloc`/`free` methods to dispatch through — so the "free → deref" semantics
 // cannot ride the trait object. Call sites that would have freed through this

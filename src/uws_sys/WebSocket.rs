@@ -110,8 +110,6 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
     /// monomorphized into an `extern "C"` trampoline. Rust cannot const-generic
     /// over a fn value, so we tunnel `(ctx, callback)` through the user-data
     /// pointer instead.
-    // TODO(perf): comptime-callback monomorphization — a per-callsite
-    // `extern "C" fn` would avoid the indirect call.
     pub fn cork<C>(&mut self, ctx: &mut C, callback: fn(&mut C)) {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
@@ -188,10 +186,10 @@ impl<const SSL_FLAG: i32> NewWebSocket<SSL_FLAG> {
         }
     }
 
-    pub fn get_buffered_amount(&mut self) -> u32 {
-        // TODO(port): C decl returns usize but Zig wrapper types this as u32 —
-        // verify which is correct.
-        u32::try_from(c::uws_ws_get_buffered_amount(SSL_FLAG, self.raw())).unwrap()
+    pub fn get_buffered_amount(&mut self) -> usize {
+        // The C shim returns `size_t` (libuwsockets.cpp `uws_ws_get_buffered_amount`);
+        // pass it through untruncated, matching `AnyWebSocket::get_buffered_amount`.
+        c::uws_ws_get_buffered_amount(SSL_FLAG, self.raw())
     }
 
     pub fn get_remote_address<'a>(&mut self, buf: &'a mut [u8]) -> &'a mut [u8] {
@@ -244,22 +242,10 @@ impl AnyWebSocket {
         }
     }
 
-    /// # Safety
-    /// Caller must guarantee the user data was set to a `*mut T` for this socket.
-    #[inline]
-    pub unsafe fn as_<T>(self) -> Option<&'static mut T> {
-        let (ssl, ws) = self.split();
-        // SAFETY: see NewWebSocket::as_. Lifetime is tied to the C-owned socket
-        // (effectively 'static from Rust's view; uWS frees on close).
-        // TODO(port): lifetime — returning an unbounded `&mut` is a placeholder; Phase
-        // B should scope this to the callback frame or return *mut T.
-        unsafe { c::uws_ws_get_user_data(ssl, ws).cast::<T>().as_mut() }
-    }
-
     /// Raw user-data pointer cast to `*mut T` (NULL if unset).
     ///
-    /// PORT NOTE (noalias re-entrancy): the `WebSocketHandler` dispatch
-    /// trampolines use this instead of `as_::<T>()` so the handler frame holds
+    /// Noalias re-entrancy: the `WebSocketHandler` dispatch
+    /// trampolines use this (not a `&mut`-returning accessor) so the handler frame holds
     /// a raw `*mut T`, not a `noalias` `&mut T`. A JS callback fired from inside
     /// the handler can re-derive `&mut T` via the JS wrapper's `m_ptr` (e.g.
     /// `ws.close()` → `on_close` → `flags.set_closed(true)`); a live `noalias`
@@ -329,7 +315,8 @@ impl AnyWebSocket {
         unsafe { c::uws_ws_end(ssl, ws, code, message.as_ptr(), message.len()) }
     }
 
-    // TODO(port): comptime-callback monomorphization — see NewWebSocket::cork.
+    // See NewWebSocket::cork — same fn-pointer tunneling in place of Zig's
+    // comptime-callback monomorphization.
     pub fn cork<C>(self, ctx: &mut C, callback: fn(&mut C)) {
         // Safe fn item: nested local thunk, only coerced to the C-ABI
         // fn-pointer type passed to C; body wraps its raw-ptr ops explicitly.
@@ -507,7 +494,8 @@ impl Default for WebSocketBehavior {
 ///
 /// `HAS_ON_*` consts replace `@hasDecl(Type, "...")` — set to `false` to leave
 /// the corresponding C callback `null`.
-/// PORT NOTE (noalias re-entrancy): the `on_*` methods take `this: *mut Self`,
+///
+/// Noalias re-entrancy: the `on_*` methods take `this: *mut Self`,
 /// NOT `&mut self`. The handler body re-enters JS (`ws.send()`, `ws.close()`,
 /// promise callbacks…); JS can call back into this same socket via the wrapper
 /// object's `m_ptr`, re-deriving a `&mut Self` and mutating its fields. A live

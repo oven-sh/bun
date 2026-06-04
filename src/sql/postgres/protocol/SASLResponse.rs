@@ -1,4 +1,5 @@
 use super::new_writer::NewWriter;
+use crate::postgres::AnyPostgresError;
 use crate::postgres::types::int_types::int32;
 use crate::shared::Data;
 
@@ -14,8 +15,7 @@ impl SASLResponse {
     pub fn write_internal<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
+    ) -> Result<(), AnyPostgresError> {
         let data = self.data.slice();
         let count: usize = core::mem::size_of::<u32>() + data.len();
         let mut header = [0u8; 5];
@@ -32,7 +32,7 @@ impl SASLResponse {
     pub fn write<Context: super::new_writer::WriterContext>(
         &self,
         writer: &mut NewWriter<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyPostgresError> {
         self.write_internal(writer)
     }
 }

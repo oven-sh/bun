@@ -24,7 +24,7 @@ pub struct DeferredBatchTask {
 
 impl DeferredBatchTask {
     pub fn init(&mut self) {
-        // PORT NOTE: kept as `&mut self` (not `-> Self`) — this struct is embedded
+        // Kept as `&mut self` (not `-> Self`) — this struct is embedded
         // by value in BundleV2 (recovered via container_of in `get_bundle_v2`), so
         // it is reset in place, never separately constructed.
         #[cfg(debug_assertions)]
@@ -64,7 +64,7 @@ impl DeferredBatchTask {
     }
 
     pub fn run_on_js_thread(&mut self) {
-        // PORT NOTE: reshaped for borrowck — Zig's `defer this.deinit()` only resets
+        // Zig's `defer this.deinit()` only resets
         // the debug `running` flag; since nothing follows `drainDeferred`, ignoring
         // its error and resetting the flag afterwards is equivalent on both paths.
         {
@@ -79,7 +79,7 @@ impl DeferredBatchTask {
         self.deinit();
     }
 
-    // PORT NOTE: not `impl Drop` — this struct is an intrusive field of `BundleV2`
+    // Not `impl Drop` — this struct is an intrusive field of `BundleV2`
     // and `deinit` is a debug-flag reset, not resource teardown.
     fn deinit(&mut self) {
         #[cfg(debug_assertions)]

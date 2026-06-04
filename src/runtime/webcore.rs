@@ -81,8 +81,8 @@ pub mod jsc {
 // Forward the real `bun_s3_signing` types so `s3_stub::X` and
 // `bun_s3_signing::X` are the *same* type (avoids
 // `s3_stub::ACL`-vs-`bun_s3_signing::ACL` mismatches across modules).
-// Remaining names without a real definition stay as opaque unit structs.
-// TODO(port): bun_s3 — replace with real crate once it exists.
+// Remaining names without a real definition stay as opaque unit structs until
+// a real `bun_s3` crate exists.
 pub mod s3_stub {
     macro_rules! opaque { ($($n:ident),* $(,)?) => {$(
         #[derive(Debug, Default)] pub struct $n;
@@ -199,7 +199,7 @@ impl AutoFlusher {
         vm: &jsc::VirtualMachine,
     ) {
         debug_assert!(this.auto_flusher().registered.get());
-        // PORT NOTE: Zig `bun.assert(expr)` evaluates `expr` unconditionally;
+        // Note: Zig `bun.assert(expr)` evaluates `expr` unconditionally;
         // only the *check* is debug-gated. Do not wrap the side-effecting call
         // in `debug_assert!`.
         let removed = vm
@@ -316,7 +316,9 @@ pub use file_sink::FileSink;
 pub use byte_blob_loader::ByteBlobLoader;
 pub use byte_stream::ByteStream;
 
-// TODO: make this JSGlobalObject local for better security
+// TODO: make this pool per-JSGlobalObject so recycled buffers are not shared
+// across realms (process-global behavior carried over from Zig, which has the
+// same TODO).
 // Zig: `bun.ObjectPool(bun.ByteList, null, true, 8)` — `null` init goes on
 // `ObjectPoolType` (already impl'd for `Vec<u8>` in bun_collections), `true`
 // is THREADSAFE, `8` is MAX_COUNT. `object_pool!` wires the per-monomorphization
@@ -362,7 +364,7 @@ pub mod script_execution_context;
 #[doc(hidden)]
 #[path = "webcore/s3/multipart_options.rs"]
 pub mod multipart_options_impl;
-// PORT NOTE: inner `#[path]` inside an inline `mod s3 { }` resolves relative to
+// Note: inner `#[path]` inside an inline `mod s3 { }` resolves relative to
 // `<this-file's-dir>/s3/`, which would point at `src/runtime/s3/...` (does not
 // exist). Declare the file mods at this level (where `#[path]` is relative to
 // `src/runtime/`) and re-export them under `s3`.
@@ -389,14 +391,14 @@ pub mod s3 {
     pub use super::multipart_options_impl::MultiPartUploadOptions;
     // Forward the credential / enum stubs so `crate::webcore::s3::{ACL, ...}`
     // resolves for S3Client.rs (its `crate::s3` path is being migrated here).
-    // TODO(port): replace with real bun_s3 types once that crate exists.
+    // These come from `s3_stub` until a real `bun_s3` crate exists.
     pub use super::s3_stub::{
         ACL, S3Credentials, S3CredentialsWithOptions, S3DeleteResult, S3DownloadStreamWrapper,
         S3HttpSimpleTask, S3ListObjectsOptions, S3ListObjectsResult, S3SimpleRequestResult,
         StorageClass,
     };
 
-    // PORT NOTE: `client` is the umbrella re-export hub (matches Zig's `s3/client.zig`
+    // Note: `client` is the umbrella re-export hub (matches Zig's `s3/client.zig`
     // which `pub const X = @import(...)`-s every sibling). It pulls in `simple_request`
     // / `download_stream` / `list_objects` / `multipart` transitively.
     pub use super::__s3_client as client;
@@ -417,7 +419,7 @@ pub mod streams;
 // force-reference here. Dropped per PORTING.md §Don't translate.
 
 pub enum PathOrFileDescriptor {
-    // PORT NOTE: `jsc.ZigString.Slice` → `bun_core::zig_string::Slice` (= `ZigStringSlice`).
+    // Note: `jsc.ZigString.Slice` → `bun_core::zig_string::Slice` (= `ZigStringSlice`).
     Path(bun_core::zig_string::Slice),
     Fd(bun_sys::Fd),
 }
@@ -440,10 +442,10 @@ impl Pipe {
 
 pub type Function = fn(ctx: NonNull<()>, stream: streams::Result);
 
-// TODO(port): Zig `Wrap(comptime Type, comptime function)` takes a *comptime fn pointer* as a
+// Zig `Wrap(comptime Type, comptime function)` takes a *comptime fn pointer* as a
 // generic argument, which stable Rust cannot express. Reshaped: callers implement `PipeHandler`
-// for their type instead of passing a free fn. TODO(refactor): audit call sites
-// (`Wrap(Foo, Foo.onPipe).init(self)` → `Wrap::<Foo>::init(self)`).
+// for their type instead of passing a free fn (`Wrap(Foo, Foo.onPipe).init(self)` →
+// `Wrap::<Foo>::init(self)`).
 pub(crate) trait PipeHandler {
     fn on_pipe(&mut self, stream: streams::Result);
 }

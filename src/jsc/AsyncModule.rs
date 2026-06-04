@@ -51,7 +51,7 @@ pub struct AsyncModule {
     referrer_len: u32,
     specifier_len: u32,
     pub fd: Option<Fd>,
-    // PORT NOTE: `?*PackageJSON` / `*JSGlobalObject` — both are VM-lifetime
+    // `?*PackageJSON` / `*JSGlobalObject` — both are VM-lifetime
     // backrefs (BACKREF/JSC_BORROW class in LIFETIMES.tsv). `package_json` is
     // stored as a raw ptr so `AsyncModule` is `'static`-embeddable in
     // `Queue`/`VirtualMachine` without a phantom lifetime; `global_this` uses
@@ -157,7 +157,7 @@ impl AsyncModule {
         jsc::mark_binding();
         let mut specifier = specifier_;
         let mut referrer = referrer_;
-        // PORT NOTE: Zig `defer { specifier.deref(); referrer.deref(); scope.deinit(); }` —
+        // Zig `defer { specifier.deref(); referrer.deref(); scope.deinit(); }` —
         // BunString is `Copy` in the Rust port (no Drop), so deref the held
         // refcounts explicitly via scopeguard. The `TopExceptionScope` is
         // omitted: `from_js_host_call_generic` already checks the VM for a
@@ -184,7 +184,7 @@ impl AsyncModule {
 
         let mut errorable: ErrorableResolvedSource;
         if let Some(e) = err {
-            // PORT NOTE: inner Zig `defer { if (needs_deref) { needs_deref = false;
+            // inner Zig `defer { if (needs_deref) { needs_deref = false;
             // source_code.deref(); } }` — `OwnedString` derefs on Drop at the end
             // of this `if` arm; `None` is the no-op path.
             let _source_code_guard = if resolved_source.source_code_needs_deref {
@@ -206,7 +206,7 @@ impl AsyncModule {
                 // Error/AggregateError from the parser log and writes it into
                 // `errorable.result.err.value`. Without this the import promise
                 // would reject with `undefined` (ModuleLoader.cpp:473).
-                // PORT NOTE: call the `virtual_machine` impl directly (takes
+                // call the `virtual_machine` impl directly (takes
                 // `&JSGlobalObject`) instead of the `module_loader` shim that
                 // takes `*mut` — avoids a `&T as *const T as *mut T` cast,
                 // which is UB-adjacent under Stacked Borrows even when the
@@ -224,9 +224,9 @@ impl AsyncModule {
         } else {
             errorable = ErrorableResolvedSource::ok(*resolved_source);
         }
-        // TODO(port): Zig calls log.deinit() here explicitly (early), then uses
-        // specifier after. In Rust, caller owns `log`; we leave it to caller's
-        // Drop. Verify no behavioral diff.
+        // Zig calls log.deinit() here explicitly (early), then uses specifier
+        // after. In Rust the caller owns `log` and its Drop runs at caller scope
+        // exit — only the free is deferred; nothing observable changes.
 
         bun_core::scoped_log!(AsyncModule, "fulfill: {}", specifier);
 
@@ -242,14 +242,12 @@ impl AsyncModule {
     }
 }
 
-// PORT NOTE: pub fn deinit → impl Drop. Body only freed owned fields (promise,
+// pub fn deinit → impl Drop. Body only freed owned fields (promise,
 // parse_result, arena, string_buf), all of which now have Drop impls on their
 // Rust types. No explicit Drop needed; relying on field Drop order.
 // bun.default_allocator.free(this.stmt_blocks);
 // bun.default_allocator.free(this.expr_blocks);
 
-// TODO(port): move to <area>_sys
-//
 // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
 // ABI-identical to non-null `*const`); `ErrorableResolvedSource`/`BunString`
 // are `#[repr(C)]` payloads whose `&mut` is exclusive for the call. C++ reads
@@ -317,7 +315,7 @@ impl Queue {
             bun_io::AllocatorType::Js,
         ));
 
-        // PORT NOTE: allocator arg dropped (Vec uses global mimalloc).
+        // allocator arg dropped (Vec uses global mimalloc).
         self.map.push(module);
         // PERF(port): was assume_capacity-free append
         self.vm().package_manager().drain_dependency_list();
@@ -340,11 +338,11 @@ impl Queue {
             bstr::BStr::new(this.vm().package_manager().lockfile.str(&dependency.name))
         );
 
-        // PORT NOTE: reshaped for borrowck — Zig iterated copies and
+        // reshaped for borrowck — Zig iterated copies and
         // compacted in place; Rust uses retain_mut and lets Drop free
         // removed modules.
         this.map.retain_mut(|module| {
-            // PORT NOTE: Zig `MultiArrayList.items(.root_dependency_id)` →
+            // Zig `MultiArrayList.items(.root_dependency_id)` →
             // `Vec<PendingResolution>` field walk.
             for pending in module.parse_result.pending_imports.iter() {
                 if pending.root_dependency_id != root_dependency_id {
@@ -355,7 +353,7 @@ impl Queue {
                 // `container_of`-derived `*mut`; provenance is the original
                 // allocation, disjoint from the `&mut module` borrow above.
                 let vm = VirtualMachine::get().as_mut();
-                // PORT NOTE: reshaped for borrowck — `lockfile.str()` ties the
+                // reshaped for borrowck — `lockfile.str()` ties the
                 // returned slice to `&vm`, which conflicts with passing
                 // `&mut vm` to `resolve_error`. The lockfile string buffer is
                 // stable across `resolve_error` (no realloc on the error
@@ -403,7 +401,7 @@ impl Queue {
     }
 
     pub fn run_tasks(&mut self) {
-        // PORT NOTE: reshaped for borrowck — Zig held `pm` across the call
+        // reshaped for borrowck — Zig held `pm` across the call
         // while passing `this` (which can recover `pm` via
         // `@fieldParentPtr`). The Rust `run_tasks` free fn takes both
         // `&mut PackageManager` and `&mut Queue`; the package manager is a
@@ -435,9 +433,9 @@ impl Queue {
             bstr::BStr::new(name)
         );
 
-        // PORT NOTE: reshaped for borrowck — compaction loop → retain_mut.
+        // reshaped for borrowck — compaction loop → retain_mut.
         self.map.retain_mut(|module| {
-            // PORT NOTE: Zig `MultiArrayList.items(.tag)` etc. →
+            // Zig `MultiArrayList.items(.tag)` etc. →
             // `Vec<PendingResolution>` field walk.
             for pending in module.parse_result.pending_imports.iter() {
                 if pending.tag == bun_resolver::PendingResolutionTag::Resolve {
@@ -498,9 +496,9 @@ impl Queue {
                 .as_slice(),
         );
 
-        // PORT NOTE: reshaped for borrowck — compaction loop → retain_mut.
+        // reshaped for borrowck — compaction loop → retain_mut.
         self.map.retain_mut(|module| {
-            // PORT NOTE: Zig `MultiArrayList.items(.import_record_id)` /
+            // Zig `MultiArrayList.items(.import_record_id)` /
             // `.items(.root_dependency_id)` → `Vec<PendingResolution>` field
             // walk.
             for pending in module.parse_result.pending_imports.iter() {
@@ -537,7 +535,7 @@ impl Queue {
             return;
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig compacted by index then
+        // reshaped for borrowck — Zig compacted by index then
         // truncated `items.len` without running deinit on finished slots. Rust
         // walks by index and `remove(i)` finished modules by value into
         // `done(self)`, so each module's owned fields are dropped exactly once
@@ -546,7 +544,7 @@ impl Queue {
         while i < self.map.len() {
             let (done_count, tags_len) = {
                 let module = &mut self.map[i];
-                // PORT NOTE: Zig `MultiArrayList.items(.tag)` /
+                // Zig `MultiArrayList.items(.tag)` /
                 // `.items(.root_dependency_id)` → `Vec<PendingResolution>`
                 // field walk via `iter_mut()`.
                 let pending_imports = &mut module.parse_result.pending_imports;
@@ -592,7 +590,7 @@ impl Queue {
 
                     let mut name_and_version_hash: Option<u64> = None;
                     let mut patchfile_hash: Option<u64> = None;
-                    // PORT NOTE: Zig passed `pm.lockfile` as a separate arg;
+                    // Zig passed `pm.lockfile` as a separate arg;
                     // the Rust port collapsed it onto `&mut self.lockfile`
                     // (PackageManagerLifecycle.rs) to avoid the
                     // `&mut self`/`&self.lockfile` aliasing borrowck rejects.
@@ -647,7 +645,7 @@ impl AsyncModule {
     ) -> Result<AsyncModule, bun_alloc::AllocError> {
         // var stmt_blocks = js_ast.Stmt.Data.toOwnedSlice();
         // var expr_blocks = js_ast.Expr.Data.toOwnedSlice();
-        // PORT NOTE: `JSInternalPromise` aliases `JSPromise` upstream
+        // `JSInternalPromise` aliases `JSPromise` upstream
         // (JSInternalPromise.rs), so `JSPromise::create` is the
         // `createInternalPromise` equivalent.
         let this_promise = crate::JSPromise::create(global_object).to_js();
@@ -663,7 +661,7 @@ impl AsyncModule {
         unsafe {
             *opts.promise_ptr.unwrap() = this_promise.as_promise().unwrap();
         }
-        // PORT NOTE: Zig kept three aliasing slices into `buf` plus
+        // Zig kept three aliasing slices into `buf` plus
         // `buf.allocatedSlice()` as the owning storage. Rust can't store
         // self-referential borrows, so capture lengths and pack
         // `referrer ++ specifier ++ path.text` into `string_buf`, then expose
@@ -698,7 +696,7 @@ impl AsyncModule {
     }
 
     pub fn done(self, jsc_vm: &mut VirtualMachine) {
-        // PORT NOTE: Zig `allocator.create` + bitwise copy then truncated the
+        // Zig `allocator.create` + bitwise copy then truncated the
         // queue without running deinit on the discarded slot — single
         // ownership transfers to the heap clone. In Rust the caller
         // (`Queue::poll_modules`) removes the element by value and passes it
@@ -710,7 +708,7 @@ impl AsyncModule {
         // task queue until on_done reclaims it via heap::take; we hold
         // the only reference here.
         unsafe {
-            // PORT NOTE: Zig `AnyTask.New(AsyncModule, onDone).init(clone)` —
+            // Zig `AnyTask.New(AsyncModule, onDone).init(clone)` —
             // Rust cannot take a fn as const generic, so hand-write the shim
             // (option (b) in event_loop/AnyTask.rs).
             (*clone).any_task = AnyTask::AnyTask {
@@ -757,7 +755,7 @@ impl AsyncModule {
                 global_this.take_error(JsError::Thrown),
             ),
             Err(err) => {
-                // PORT NOTE: Zig declared `errorable = undefined` and relied on
+                // Zig declared `errorable = undefined` and relied on
                 // `processFetchLog` writing the out-param. Rust pre-seeds the
                 // err so the `&mut` borrow is definitely-initialized;
                 // `process_fetch_log` overwrites `result.err.value`.
@@ -791,9 +789,9 @@ impl AsyncModule {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    // TODO(port): narrow error set to bun_alloc::AllocError — Zig body only
-    // `try`s std.fmt.allocPrint (OOM-only). write! into Vec<u8> is
-    // infallible here; `.ok()` collapses the `fmt::Result`.
+    // Zig body only `try`s std.fmt.allocPrint (OOM-only). write! into Vec<u8>
+    // is infallible here; `.ok()` collapses the `fmt::Result`, so this never
+    // actually returns Err — the wide Result is kept for call-site uniformity.
     fn resolve_error(
         &mut self,
         vm: &mut VirtualMachine,
@@ -865,7 +863,7 @@ impl AsyncModule {
             .ok();
         } else if e == bun_core::err!("DistTagNotFound") || e == bun_core::err!("NoMatchingVersion")
         {
-            // PORT NOTE: Zig peeks at the tagged-union via
+            // Zig peeks at the tagged-union via
             // `result.version.tag == .npm and
             // result.version.value.npm.version.isExact()`. The Rust
             // `Version::try_npm()` performs the tag guard and yields the
@@ -997,7 +995,7 @@ impl AsyncModule {
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        // PORT NOTE: Zig called `this.deinit()` here; in Rust the caller
+        // Zig called `this.deinit()` here; in Rust the caller
         // (Queue::retain_mut) returns `false` and Vec drops the element,
         // running Drop.
         // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
@@ -1218,7 +1216,7 @@ impl AsyncModule {
         self.poll_ref.unref(bun_io::posix_event_loop::get_vm_ctx(
             bun_io::AllocatorType::Js,
         ));
-        // PORT NOTE: Zig called `this.deinit()` here; caller drops via
+        // Zig called `this.deinit()` here; caller drops via
         // retain_mut → false.
         // `JSInternalPromise` is an `opaque_ffi!` ZST handle; `opaque_mut` is
         // the centralised non-null deref proof.
@@ -1236,7 +1234,7 @@ impl AsyncModule {
             "resumeLoadingModule: {}",
             bstr::BStr::new(self.specifier())
         );
-        // PORT NOTE: Zig copied `parse_result` by value, mutated, wrote
+        // Zig copied `parse_result` by value, mutated, wrote
         // back. Rust takes-by-value via `mem::take` then restores below to
         // satisfy borrowck around `linker.link(&mut parse_result)` while
         // `self` is also borrowed.
@@ -1296,7 +1294,7 @@ impl AsyncModule {
             )?;
         }
         self.parse_result = parse_result;
-        // PORT NOTE: `print_with_source_map` consumes `ParseResult` by
+        // `print_with_source_map` consumes `ParseResult` by
         // value (it moves `ast` into `print_ast`). Hoist the post-print
         // reads (`is_commonjs_module` / `input_fd`) above the move so we
         // can `mem::take` instead of cloning.
@@ -1306,7 +1304,7 @@ impl AsyncModule {
         let arena = *self.parse_result.ast.parts.allocator();
         let parse_result = core::mem::replace(&mut self.parse_result, ParseResult::empty(arena));
 
-        // PORT NOTE: `VirtualMachine.source_code_printer` is a thread-local
+        // `VirtualMachine.source_code_printer` is a thread-local
         // `?*BufferPrinter` (see `SOURCE_CODE_PRINTER`); Zig dereferenced to
         // copy by value (`var printer = source_code_printer.?.*`), reset, and
         // wrote back in a `defer`. `BufferPrinter` is `!Clone` in Rust, so
@@ -1363,14 +1361,18 @@ impl AsyncModule {
             }?;
         }
 
-        #[cfg(feature = "dump_source")]
-        crate::runtime_transpiler_store::dump_source_string(
-            // SAFETY: `jsc_vm` is the live per-thread `VirtualMachine` (BACKREF, non-null).
-            unsafe { core::ptr::NonNull::new_unchecked(jsc_vm) },
-            specifier,
-            printer.ctx.get_written(),
-        );
-        // TODO(port): Environment.dump_source mapped to cfg feature; confirm flag name.
+        // Zig: `if (comptime Environment.dump_source)` — `bun_core::env::DUMP_SOURCE`
+        // is the Rust equivalent (debug, non-test builds only). The previous
+        // `cfg(feature = "dump_source")` gate referenced a feature that doesn't
+        // exist, which silently compiled this call out everywhere.
+        if bun_core::env::DUMP_SOURCE {
+            crate::runtime_transpiler_store::dump_source_string(
+                // SAFETY: `jsc_vm` is the live per-thread `VirtualMachine` (BACKREF, non-null).
+                unsafe { core::ptr::NonNull::new_unchecked(jsc_vm) },
+                specifier,
+                printer.ctx.get_written(),
+            );
+        }
 
         // SAFETY: per-thread VM.
         if unsafe { (*jsc_vm).is_watcher_enabled() } {
@@ -1396,7 +1398,7 @@ impl AsyncModule {
                             .bun_watcher
                             .cast::<crate::hot_reloader::ImportWatcher>()
                     };
-                    // PORT NOTE: `bun_watcher::PackageJSON` is an opaque
+                    // `bun_watcher::PackageJSON` is an opaque
                     // forward-decl of `bun_resolver::PackageJSON`;
                     // the watcher only stores the pointer, so cast through.
                     // SAFETY: `package_json` (when set) is a VM-lifetime

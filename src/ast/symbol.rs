@@ -166,11 +166,9 @@ pub struct Symbol {
     pub has_been_assigned_to: bool,
 }
 
-// TODO(port): Zig asserts @sizeOf(Symbol) == 88 and @alignOf(Symbol) == @alignOf([]const u8).
-// Rust default repr reorders fields and Option<NamespaceAlias> niche may differ
-// (likely needs #[repr(C)] or manual packing if the size is load-bearing).
-// const _: () = assert!(core::mem::size_of::<Symbol>() == 88);
-// const _: () = assert!(core::mem::align_of::<Symbol>() == core::mem::align_of::<crate::StoreStr>());
+// Zig asserted @sizeOf(Symbol) == 88 as a layout-regression tripwire; the size
+// was never load-bearing (no FFI, no serialization). Rust's default repr packs
+// the struct differently, so the assert is intentionally not ported.
 
 const INVALID_CHUNK_INDEX: u32 = u32::MAX;
 pub const INVALID_NESTED_SCOPE_SLOT: u32 = u32::MAX;
@@ -583,7 +581,7 @@ impl Map {
         }
     }
 
-    // PORT NOTE: Zig aliased the caller's stack `[1]List` slot directly; that's
+    // Zig aliased the caller's stack `[1]List` slot directly; that's
     // unsound in Rust (would dangle on return). Take ownership of `list` and
     // box it into a one-element NestedList instead.
     // PERF(port): one extra allocation vs Zig — profile (single
@@ -633,7 +631,9 @@ impl Map {
     }
 
     pub fn follow_all(&mut self) {
-        // TODO(port): bun_perf::trace("Symbols.followAll") — RAII guard
+        // Zig: `const trace = bun.perf.trace("Symbols.followAll"); defer trace.end();`
+        // — the returned `Ctx` is RAII and ends the span on drop.
+        let _trace = bun_perf::trace(bun_perf::PerfEvent::SymbolsFollowAll);
         // `link` is `Cell<Ref>`, so we can iterate the table by shared ref and
         // mutate `link` in place; `follow()` only takes `&self` and only touches
         // `link`, so the nested shared borrows coexist.
@@ -650,7 +650,7 @@ impl Map {
 
     /// Equivalent to followSymbols in esbuild.
     ///
-    /// PORT NOTE: Zig's body is naturally recursive (`follow(symbol.link)`).
+    /// Zig's body is naturally recursive (`follow(symbol.link)`).
     /// Reshaped to an iterative two-phase walk so the per-hop work is just two
     /// raw pointer adds and a load — no call frame, no `Option` unwrap, no
     /// repeated tag/null guards. Semantics are identical to Zig's: every node

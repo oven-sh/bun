@@ -28,7 +28,7 @@ pub use super::inlines::{EmphDelim, HtmlScanMemo, MAX_EMPH_MATCHES};
 pub use super::ref_defs::RefDef;
 
 /// Parser context holding all state during parsing.
-// PORT NOTE: `text` is a caller-owned borrow for the parser's lifetime.
+// `text` is a caller-owned borrow for the parser's lifetime.
 // PORTING.md's mechanical-port guidance was "no struct lifetimes", but raw-ptr
 // here would obscure every `ch()` call; one obvious `'a` is the honest mapping.
 pub struct Parser<'a> {
@@ -52,10 +52,12 @@ pub struct Parser<'a> {
     // Dynamic arrays
     pub marks: Vec<Mark>,
     pub containers: Vec<Container>,
-    // TODO(port): Zig uses `ArrayListAlignedUnmanaged(u8, .@"4")` — 4-byte
-    // alignment is load-bearing for `BlockHeader` reinterpretation via
-    // `getBlockHeaderAt`. Wrap in an aligned-vec newtype or store
-    // `Vec<u32>` and byte-view it.
+    // Zig used `ArrayListAlignedUnmanaged(u8, .@"4")`: 4-byte alignment is
+    // load-bearing for the `BlockHeader` reinterpretation in
+    // `get_block_header_at`. Here the invariant rests on (a) offsets being
+    // padded to a multiple of 4 by every writer and (b) the global allocator
+    // returning >=16-byte-aligned bases; `get_block_header_at`
+    // debug-asserts it on every access.
     pub block_bytes: Vec<u8>,
     pub buffer: Vec<u8>,
     pub emph_delims: Vec<EmphDelim>,
@@ -128,12 +130,11 @@ impl Default for BlockHeader {
 
 /// `Parser.Error` in Zig is `bun.JSError || bun.StackOverflow`, i.e. the union
 /// of `{ OutOfMemory, JSError, JSTerminated }` with `{ StackOverflow }`.
-// TODO(port): narrow error set — `bun_jsc::JsError` already covers the first
-// three; could be `enum { Js(JsError), StackOverflow }` instead.
-// TODO(port): thiserror/strum not in workspace deps — derive dropped, hand-roll if needed.
+// (`bun_jsc::JsError` covers the first three, but the md crate sits below
+// `bun_jsc` in the layering, so the variants stay flat here.)
 pub type Error = ParserError;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ParserError {
     OutOfMemory,
     JSError,
@@ -144,9 +145,8 @@ pub enum ParserError {
 bun_core::oom_from_alloc!(ParserError);
 
 impl From<ParserError> for bun_core::Error {
-    fn from(_e: ParserError) -> Self {
-        // TODO(port): wire IntoStaticStr → interned tag; bun_core::err! only accepts ident
-        bun_core::err!(ParserError)
+    fn from(e: ParserError) -> Self {
+        bun_core::err!(from e)
     }
 }
 
@@ -156,8 +156,6 @@ impl<'a> Parser<'a> {
         // to a multiple of `align_of::<BlockHeader>()`, and the global allocator returns
         // blocks aligned to at least `align_of::<usize>()`, so the resulting pointer is
         // 4-byte aligned (asserted below). The buffer holds an initialized BlockHeader there.
-        // TODO(port): borrowck — this returns &mut into self.block_bytes while other
-        // &mut self borrows may be live at call sites; may need raw *mut.
         unsafe {
             let ptr = self
                 .block_bytes

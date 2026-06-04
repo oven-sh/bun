@@ -31,23 +31,25 @@
 //! There is one other way to introduce undefined memory into a struct, which this does not check for, and that is
 //! a union with unequal size fields.
 
-// TODO(port): The Zig implementation is pure `comptime` reflection over `@typeInfo(T)` —
+// The Zig implementation is pure `comptime` reflection over `@typeInfo(T)` —
 // it walks struct/union/array/optional/pointer field trees, recurses into children, and
 // `@compileError`s on any gap between `@offsetOf(T, field) + @sizeOf(field)` and the next
 // field's offset (and between the last field's end and `@sizeOf(T)`).
 //
-// Rust has no `@typeInfo` equivalent. TODO(port): provide this as a proc-macro derive
-// (`#[derive(AssertNoUninitializedPadding)]`) that emits the `const _: () = assert!(...)`
-// checks below per-field, plus a marker trait so `assert_no_uninitialized_padding::<T>()`
-// is bounded on it. The free function here is kept as the call-site-compatible entry point.
+// Rust has no `@typeInfo` equivalent, so the layout checking is done differently:
+// per-field `const _: () = assert!(offset_of!...)` proofs live next to each serialized
+// struct (e.g. `NpmPackage` / `PackageVersion` in npm.rs), and the `layout_asserts`
+// module below pins every serialized type's size/align against the Zig extern-struct
+// spec. The free function here is kept as the call-site-compatible entry point.
 
 /// Marker trait asserting that `Self` is `#[repr(C)]` (or `#[repr(transparent)]`/packed),
 /// contains no pointer fields, and has no implicit padding bytes anywhere in its layout
-/// (recursively). Implemented by `#[derive(AssertNoUninitializedPadding)]`.
+/// (recursively).
 ///
 /// # Safety
-/// Implementing this by hand asserts the layout invariants above without the derive's
-/// compile-time checks. Only do so for primitives and manually-audited `#[repr(C)]` types.
+/// Implementing this by hand asserts the layout invariants above without compile-time
+/// checks. Only do so for primitives and manually-audited `#[repr(C)]` types whose
+/// explicit `_padding_*` fields are proven gap-free by `const` offset asserts.
 pub unsafe trait AssertNoUninitializedPadding {}
 
 /// Assertion that `T` has no uninitialized padding. See module docs.
@@ -57,24 +59,25 @@ pub unsafe trait AssertNoUninitializedPadding {}
 /// `.pointer => |ptr| assertNoUninitializedPadding(ptr.child)` arm so callers could
 /// pass `@TypeOf(slice)` directly.
 ///
-/// In Rust the actual layout checking lives in `#[derive(AssertNoUninitializedPadding)]`
-/// on each serialized struct; this function is a zero-cost call-site marker that
+/// In Rust the actual layout checking lives in the per-struct `const` offset asserts
+/// and `layout_asserts` pins; this function is a zero-cost call-site marker that
 /// documents intent. It takes a type-witness value so call sites can mirror the Zig
 /// `assertNoUninitializedPadding(@TypeOf(value))` pattern (pass any value of `T` —
 /// or name `T` explicitly via turbofish and reference the fn item without calling).
 ///
 /// The trait bound is intentionally *not* applied here: Zig's `else => return` accepts
 /// all leaf types, and bounding the generic would force every `write_array<T>` caller
-/// to propagate `T: AssertNoUninitializedPadding` before the derive exists.
+/// to propagate `T: AssertNoUninitializedPadding`.
 #[inline(always)]
 #[allow(dropping_copy_types, clippy::needless_pass_by_value)]
 pub fn assert_no_uninitialized_padding<T>(_type_witness: T) {
-    // Body intentionally empty — the derive on `T` is the check. Matches Zig's
-    // runtime behaviour (the Zig version is `comptime`-only and codegens nothing).
+    // Body intentionally empty — the per-type `const` layout asserts are the check.
+    // Matches Zig's runtime behaviour (the Zig version is `comptime`-only and
+    // codegens nothing).
 }
 
-// TODO(port): proc-macro — the derive should expand roughly to the following per type
-// (shown as a declarative helper for reference; not invoked anywhere yet):
+// Reference: what a manual padding audit of a serialized type must establish
+// (this is the per-type expansion the Zig comptime walk performs):
 //
 // For each adjacent field pair (prev, field) in declaration order:
 //   const _: () = assert!(

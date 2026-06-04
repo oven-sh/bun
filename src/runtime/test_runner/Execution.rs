@@ -84,7 +84,7 @@ bun_core::declare_scope!(jest, visible);
 
 pub struct Execution {
     pub groups: Box<[ConcurrentGroup]>,
-    // PORT NOTE: was `pub(self)`; widened so `RefDataValue::sequence` can
+    // was `pub(self)`; widened so `RefDataValue::sequence` can
     // split-borrow `groups`/`sequences` without re-entering `sequences_mut`.
     /// the entries themselves are owned by BunTest, which owns Execution.
     // Zig: `#sequences` (private field)
@@ -292,15 +292,15 @@ impl Execution {
     // Zig `deinit` only freed `groups` and `#sequences` via the parent allocator.
     // Both are now `Box<[T]>` and drop automatically — no explicit Drop impl needed.
 
-    pub fn load_from_order(&mut self, order: &mut Order::Order) -> JsResult<()> {
+    /// Infallible: Zig's `try toOwnedSlice()` could only fail on OOM; the Rust
+    /// `Vec` → `Box<[T]>` conversion cannot fail.
+    pub fn load_from_order(&mut self, order: &mut Order::Order) {
         debug_assert!(self.groups.is_empty());
         debug_assert!(self.sequences.is_empty());
         // Zig: bun.safety.CheckedAllocator asserts that order's lists used the same gpa.
         // In Rust the global allocator is unified — nothing to check.
         self.groups = core::mem::take(&mut order.groups).into_boxed_slice();
         self.sequences = core::mem::take(&mut order.sequences).into_boxed_slice();
-        // TODO(port): narrow error set — Zig `try toOwnedSlice()` was OOM-only; Rust Vec→Box is infallible.
-        Ok(())
     }
 
     pub fn handle_timeout(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
@@ -310,7 +310,7 @@ impl Execution {
         //   kill any dangling processes
         // when using test.concurrent(), we can't do this because it could kill multiple tests at once.
         if let Some(current_group) = self.active_group() {
-            // PORT NOTE: reshaped for borrowck — capture range, drop &mut group, re-borrow sequences
+            // reshaped for borrowck — capture range, drop &mut group, re-borrow sequences
             let (start, end) = (current_group.sequence_start, current_group.sequence_end);
             let sequences = &self.sequences[start..end];
             if sequences.len() == 1 {
@@ -390,7 +390,7 @@ impl Execution {
                     }
                 }
                 // this sequence is complete; execute the next sequence
-                // PORT NOTE: re-slice from `this` each iteration via the group's range; carry
+                // re-slice from `this` each iteration via the group's range; carry
                 // `group` as NonNull so no `&mut ConcurrentGroup` aliases `&mut Execution`.
                 loop {
                     // SAFETY: group_ptr points into this.groups (disjoint from this.sequences).
@@ -610,8 +610,9 @@ impl Execution {
             let entry = unsafe { entry_ptr.as_ref() };
             scoped_log!(
                 jest,
-                "Running test: \"{}\"",
-                // TODO(port): std.zig.fmtString — escapes string for display; using BStr for now
+                "Running test: {:?}",
+                // `BStr`'s `Debug` impl quotes and escapes for display (Zig used
+                // `std.zig.fmtString` here).
                 bstr::BStr::new(entry.base.name.as_deref().unwrap_or(b"(unnamed)"))
             );
 
@@ -679,7 +680,7 @@ impl Execution {
             if sequence.test_entry.is_some() || sequence.result != Result::Pass {
                 // SAFETY: deref parent BunTest at point-of-use. `sequence` aliases
                 // `buntest.execution.sequences[i]`; `handle_test_completed`'s signature still takes
-                // both `&mut BunTest` and `&mut ExecutionSequence` (TODO(refactor): reshape callee).
+                // both `&mut BunTest` and `&mut ExecutionSequence` (callee could be reshaped to avoid this).
                 test_command::CommandLineReporter::handle_test_completed(
                     unsafe { &mut *buntest.as_ptr() },
                     sequence,

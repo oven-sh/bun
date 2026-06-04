@@ -850,7 +850,7 @@ pub mod js_bundler {
                         });
                     }
 
-                    // PORT NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
+                    // NOTE: `get_if_exists_longest_common_path` wants `&[&[u8]]`
                     // but `StringSet::keys()` yields `&[Box<[u8]>]`; build a borrow
                     // adapter on the stack.
                     let borrowed: Vec<&[u8]> = entry_points.iter().map(|b| b.as_ref()).collect();
@@ -1201,7 +1201,7 @@ pub mod js_bundler {
                             return Err(global_this.throw_invalid_arguments(format_args!("cannot use compile with an output file named 'bun' because bun won't realize it's a standalone executable. Please choose a different name for compile.outfile")));
                         }
 
-                        // PORT NOTE (diverges from Zig spec — flake fix): when no
+                        // NOTE (diverges from Zig spec — flake fix): when no
                         // `outdir`/`outfile` was given, the Zig path stores only
                         // the basename here and `doCompilation` later resolves it
                         // against the process-wide `top_level_dir`. Under the JS
@@ -1358,7 +1358,7 @@ pub mod js_bundler {
         build(global_this, arguments.slice())
     }
 
-    // PORT NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
+    // NOTE: `Resolve`/`Load`/`MiniImportRecord`/etc. are owned by
     // `bun_bundler::bundle_v2::api::JSBundler` so that `BundleV2` can operate
     // on them directly (`on_resolve_async`/`on_load_async`). `dispatch()` and
     // `run_on_js_thread()` are also inherent methods there — they only need
@@ -1401,7 +1401,6 @@ pub mod js_bundler {
         unsafe { &mut *bv2_mut(bv2).plugins.unwrap().as_ptr() }
     }
 
-    // TODO(port): move to runtime_sys
     /// # Safety
     /// `resolve` must be the live `*mut Resolve` previously handed to C++ via
     /// `Resolve::dispatch`; sole owner on the JS thread for the call duration.
@@ -1519,7 +1518,6 @@ pub mod js_bundler {
         BundleV2::on_notify_defer_mini(unsafe { &mut *load }, unsafe { &mut *ctx });
     }
 
-    // TODO(port): move to runtime_sys
     /// # Safety
     /// `load` must be the live `*mut Load` previously handed to C++ via
     /// `Load::dispatch`, and `global` must be the plugin's owning
@@ -1533,7 +1531,6 @@ pub mod js_bundler {
         unsafe { jsc::to_js_host_call(&*global, || (&mut *load).on_defer(&*global)) }
     }
 
-    // TODO(port): move to runtime_sys
     #[unsafe(no_mangle)]
     pub(crate) extern "C" fn JSBundlerPlugin__onLoadAsync(
         this: &mut Load,
@@ -1557,8 +1554,10 @@ pub mod js_bundler {
                         )),
                     );
                 }
-                // Zig: this.deinit() — explicit drop
-                // TODO(port): Load is not Box-allocated here; Zig deinit only resets value
+                // Zig: `this.deinit()` — `Load.deinit` only runs `value.deinit()`,
+                // which for the just-assigned `no_match` frees nothing and leaves
+                // `.consumed` behind. Assigning `Consumed` (dropping the trivial
+                // `NoMatch`) is exactly that.
                 this.value = LoadValue::Consumed;
                 return;
             }
@@ -1800,7 +1799,6 @@ pub mod js_bundler {
         }
     }
 
-    // TODO(port): move to runtime_sys
     /// # Safety
     /// `plugin` must be a live `JSBundlerPlugin` opaque handle. `ctx` must be
     /// the live `*mut Resolve` (when `which == 0`) or `*mut Load` (when
@@ -2004,7 +2002,7 @@ impl BuildArtifact {
 
         {
             formatter.indent_inc();
-            // PORT NOTE: reshaped for borrowck — scopeguard cannot reborrow
+            // NOTE: reshaped for borrowck — scopeguard cannot reborrow
             // `formatter` while it is also borrowed for the body; decrement
             // after the block instead.
 

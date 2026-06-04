@@ -9,7 +9,8 @@
 //!   - the runtime result-mapping helpers the macros call into,
 //!   - the FFI surface for `JSFunction` creation,
 //!   - `DomEffect` (plain data),
-//! and stubs the reflection-driven generators with `// TODO(port): proc-macro`.
+//! and stubs the reflection-driven generators (callers hand-write the
+//! equivalent decode/dispatch glue until the proc-macros grow those modes).
 
 use core::ffi::c_void;
 
@@ -737,8 +738,9 @@ pub fn from_js_host_call_generic<R>(
     // from_js_host_call_generic is only for functions where the return value tells you nothing
     // about whether an exception was thrown.
     //
-    // TODO(port): static-assert `R != JSValue` (Zig used @compileError; Rust needs a
-    // negative trait bound or specialization — neither stable). A sealed-trait trick could enforce this.
+    // Zig statically rejected `R == JSValue` via @compileError; Rust would need a
+    // negative trait bound or specialization (neither stable), so this is enforced
+    // by convention only.
     crate::call_check_slow(global_this, f)
 }
 
@@ -762,23 +764,17 @@ pub fn void_from_js_error(err: JsError, global_this: &JSGlobalObject) {
 //
 // Zig `wrap1`..`wrap5` / `wrap4v` each take a `comptime func: anytype`, reflect on
 // its parameter list with `@typeInfo`, and return a fresh `extern fn` of matching
-// arity that forwards through `toJSHostCall`. This is signature reflection —
-// `// TODO(port): proc-macro`. The Rust replacement is a single attribute:
-//
-//     #[bun_jsc::host_call(wrap)]       // -> extern "C"   (wrap1..wrap5)
-//     #[bun_jsc::host_call(wrap, sysv)] // -> jsc.conv ABI (wrap4v)
-//
-// `checkWrapParams` (arity + first-arg-is-*JSGlobalObject assertion) is enforced by
-// the macro at expansion time.
-// TODO(port): proc-macro — `wrap1`..`wrap5`, `wrap4v`, `checkWrapParams`.
+// arity that forwards through `toJSHostCall`. Rust has no equivalent signature
+// reflection and no Rust call site uses a `wrapN`: each site hand-writes its
+// `extern` shim, decoding arguments explicitly and forwarding through
+// `to_js_host_call`. `checkWrapParams` (arity + first-arg-is-*JSGlobalObject)
+// is simply the shim's own signature.
 
 // ───────────────────────────── FFI: JSFunction creation ──────────────────────────────
 
 mod private {
     use super::*;
 
-    // TODO(port): move to jsc_sys
-    //
     // safe fn: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&`
     // is ABI-identical to non-null `*mut`); `Option<&ZigString>` is ABI-identical
     // to a nullable `*const ZigString` via the guaranteed null-pointer
@@ -973,9 +969,8 @@ pub enum DomEffectId {
 //
 // `DOMCallArgumentType` / `DOMCallArgumentTypeWrapper` / `DOMCallResultType` map a
 // Zig type to a C++ spec-string at comptime. They feed the C++ codegen
-// (`generate-classes.ts`), not runtime. The proc-macro for `#[bun_jsc::dom_call]`
-// owns this mapping in Rust.
-// TODO(port): proc-macro — DOMCall type→spec-string tables move into the macro crate.
+// (`generate-classes.ts`), not runtime — there is nothing for the Rust side to
+// hold; the spec-strings stay in the codegen script.
 
 // Zig: `pub fn DOMCall(comptime class_name, comptime Container, comptime functionName,
 //                      comptime dom_effect) type`
@@ -985,12 +980,10 @@ pub enum DomEffectId {
 //   - `@extern`s `<class>__<fn>__put`,
 //   - exposes `effect`, `put()`, and `Arguments`.
 //
-// This is link-name synthesis + signature reflection. Rust replacement:
-//
-//     #[bun_jsc::dom_call(class = "Foo", effect = DomEffect::PURE)]
-//     impl Foo { fn bar(...) -> ... { ... }  fn bar_without_type_checks(...) -> ... { ... } }
-//
-// TODO(port): proc-macro — `DOMCall` type-generator.
+// This is link-name synthesis + signature reflection with no Rust equivalent;
+// the hand-written [`DomCall`] descriptor below is the Rust mechanism — call
+// sites write the slow/fast paths and the `<class>__<fn>__put` extern
+// themselves.
 
 /// Runtime descriptor for a `DOMCall(...)`-generated DOMJIT entry.
 ///
@@ -1022,10 +1015,9 @@ pub type InstanceMethodType<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> JsRe
 // `?jsc.ArrayBuffer`, `*WebCore.Response`, `?HTMLRewriter.ContentOptions`, ...) and
 // emits per-param argument-decoding + error-throwing glue, then `@call`s the target.
 // There is no value-level translation; the entire body is a type-directed code
-// generator. Per PORTING.md §"Comptime reflection":
-//
-// TODO(port): proc-macro — `#[bun_jsc::host_fn(method, auto_protect)]` replaces
-// `wrapInstanceMethod`. The macro must reproduce the per-type decode table:
+// generator with no Rust equivalent (PORTING.md §"Comptime reflection"), so each
+// Rust call site hand-writes its own argument decoding. For reference, the Zig
+// per-type decode table was:
 //   *Container            -> `this`
 //   *JSGlobalObject       -> `global`
 //   *CallFrame            -> `frame`
@@ -1047,8 +1039,7 @@ pub type InstanceMethodType<C> = fn(&mut C, &JSGlobalObject, &CallFrame) -> JsRe
 //          jsc.JSHostFnZig`
 //
 // Same as `wrapInstanceMethod` minus the `*Container`/`*CallFrame`/`ExceptionRef`
-// arms, plus a `Node.BlobOrStringOrBuffer` arm.
-// TODO(port): proc-macro — `#[bun_jsc::host_fn(static, auto_protect)]` replaces
-// `wrapStaticMethod` (decode table as above + BlobOrStringOrBuffer).
+// arms, plus a `Node.BlobOrStringOrBuffer` arm. As above, Rust call sites
+// hand-write the equivalent decoding.
 
 // ported from: src/jsc/host_fn.zig

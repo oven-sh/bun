@@ -145,10 +145,14 @@ impl Parser<'_> {
                 merged_len -= 1;
             }
         }
-        // PORT NOTE: reshaped for borrowck — Zig passes self.buffer.items directly into a
+        // reshaped for borrowck — Zig passes self.buffer.items directly into a
         // &self method; Rust take()s the Vec out so process_inline_content (and any recursive
-        // call via process_link) gets a fresh self.buffer to scribble on without aliasing.
-        // TODO(port): verify recursive calls (via process_link) do not need the parent buffer.
+        // call via process_link) gets a fresh self.buffer to scribble on without
+        // aliasing. Verified: nothing reachable from process_inline_content
+        // (including recursive process_link -> process_inline_content calls, which
+        // operate solely on the `content`/label slices) touches `self.buffer`; its
+        // other users (ref-def merging in blocks.rs/ref_defs.rs) run during the
+        // block phase, never re-entrantly from here.
         let merged = core::mem::take(&mut self.buffer);
         let ret = self.process_inline_content(&merged[..merged_len], block_lines[0].beg);
         self.buffer = merged;
@@ -183,7 +187,7 @@ impl Parser<'_> {
         self.resolve_emphasis_delimiters();
 
         // Copy resolved delimiters locally (recursive calls may modify emph_delims)
-        // PORT NOTE: Zig dupe() catch OOM → emit plain text fallback; Rust Vec::clone aborts on OOM.
+        // Zig dupe() catch OOM → emit plain text fallback; Rust Vec::clone aborts on OOM.
         let resolved: Vec<EmphDelim> = self.emph_delims.clone();
 
         // Phase 2: Emit content using resolved emphasis info
@@ -672,7 +676,7 @@ impl Parser<'_> {
 
     /// Resolve emphasis delimiters using the CommonMark algorithm.
     pub fn resolve_emphasis_delimiters(&mut self) {
-        // PORT NOTE: reshaped for borrowck — index directly into self.emph_delims
+        // reshaped for borrowck — index directly into self.emph_delims
         // instead of binding `delims` + `opener` aliases.
         let len = self.emph_delims.len();
         if len == 0 {

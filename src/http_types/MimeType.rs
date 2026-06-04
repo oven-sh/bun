@@ -2,7 +2,7 @@ use std::borrow::Cow;
 
 use bun_core::strings;
 
-// PORT NOTE (cyclebreak): `by_loader` needs `bun_ast::Loader`, but
+// Cyclebreak: `by_loader` needs `bun_ast::Loader`, but
 // adding that dep creates a cargo cycle
 // (http_types → options_types → zlib → io → uws_sys → http_types). The Loader
 // enum is `#[repr(u8)]` with stable discriminants (pinned by
@@ -27,10 +27,13 @@ mod loader_disc {
 pub use super::mime_type_list_enum::MimeTypeList as Table;
 use bun_collections::StringHashMap;
 
-// PORT NOTE: `Table` variant names in Zig are raw MIME-type strings
+// `Table` variant names in Zig are raw MIME-type strings
 // (e.g. `@"application/json"`), which are not valid Rust identifiers.
-// `mime_type_list_enum.rs` exposes `const fn from_mime_literal(&'static str)`;
-// `t!("...")` resolves to the corresponding `Table` value at compile time.
+// `mime_type_list_enum.rs` exposes `const fn from_mime_literal(&'static str)`,
+// an UNCHECKED literal wrapper: a typo'd literal still compiles and simply
+// never matches anything at runtime (comparison is string equality, not Zig's
+// enum compare). The checked, packed-enum form is pending the codegen `.rs`
+// backend — see the header of `mime_type_list_enum.rs`.
 macro_rules! t {
     ($s:literal) => {
         Table::from_mime_literal($s)
@@ -68,8 +71,9 @@ impl Compact {
             <&'static str>::from(self.value),
         );
 
-        // TODO(port): Zig matches on `Table` enum variants directly; we compare against
-        // `t!` placeholders because variant idents are not yet defined (see top-of-file note).
+        // Zig matches on `Table` enum variants directly; here `t!` wraps an
+        // unchecked `&'static str` literal and the compares are runtime string
+        // equality (see the macro definition above for the caveats).
         let v = self.value;
         if v == t!("application/webassembly") {
             return WASM;
@@ -158,7 +162,6 @@ pub enum Category {
 
 impl Category {
     pub fn from_table(entry: Table) -> Category {
-        // TODO(port): see top-of-file note re: Table variant idents.
         if entry == t!("text/javascript")
             || entry == t!("application/javascript")
             || entry == t!("application/javascript; charset=utf-8")
@@ -338,7 +341,7 @@ impl MimeType {
     }
 
     pub fn init(str_: &[u8], dupe: bool, allocated: Option<&mut bool>) -> MimeType {
-        // PORT NOTE: Zig signature is `(str_, ?Allocator param, allocated: ?*bool)`.
+        // Zig signature is `(str_, ?Allocator param, allocated: ?*bool)`.
         // Allocator presence == "dupe the input"; replaced with `dupe: bool` (see §Allocators).
         let mut str = str_;
         if let Some(slash) = str.iter().position(|&b| b == b'/') {
@@ -474,20 +477,16 @@ impl MimeType {
     }
 
     #[inline]
-    fn maybe_dupe(s: &[u8], dupe: bool) -> Cow<'static, [u8]> {
-        if dupe {
-            Cow::Owned(s.to_vec())
-        } else {
-            // TODO(port): Zig borrows the input slice here (zero-copy). A non-'static
-            // borrow would need a struct lifetime param — copying for now.
-            // PERF(port): was zero-copy borrow
-            Cow::Owned(s.to_vec())
-        }
+    fn maybe_dupe(s: &[u8], _dupe: bool) -> Cow<'static, [u8]> {
+        // Zig borrowed the input slice in the no-dupe case (zero-copy). A
+        // non-'static borrow would need a lifetime parameter on `MimeType`, so
+        // both cases copy here; never launder the borrow to 'static instead.
+        Cow::Owned(s.to_vec())
     }
 }
 
 // TODO: improve this
-// PORT NOTE (cyclebreak): takes the `#[repr(u8)]` discriminant of
+// Cyclebreak: takes the `#[repr(u8)]` discriminant of
 // `bun_ast::Loader` to avoid a same-tier cargo cycle (see
 // `loader_disc` at top of file). Callers: `by_loader(loader as u8, ext)`.
 pub fn by_loader(loader: u8, ext: &[u8]) -> MimeType {
@@ -519,7 +518,7 @@ pub fn by_name(name: &[u8]) -> MimeType {
     MimeType::init(name, false, None)
 }
 
-// PORT NOTE: phf_map! rejects duplicate keys at compile time. The Zig source
+// phf_map! rejects duplicate keys at compile time. The Zig source
 // contained duplicate entries for "tsx", "yaml", "yml" (Zig ComptimeStringMap
 // silently kept the first occurrence) — later duplicates dropped below.
 pub(crate) static EXTENSIONS: phf::Map<&'static [u8], Table> = phf::phf_map! {

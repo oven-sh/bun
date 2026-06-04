@@ -111,7 +111,7 @@ pub struct JSPropertyIterator<'a> {
     pub object: *mut JSObject,
     /// Current property value being yielded (only meaningful when
     /// `options.include_value` is set).
-    // PORT NOTE: bare JSValue field is sound because this struct is stack-only (`'a` borrow);
+    // The bare JSValue field is sound because this struct is stack-only (`'a` borrow);
     // conservative stack scan keeps it alive. Do NOT box this struct.
     pub value: JSValue,
 
@@ -283,10 +283,9 @@ impl JSPropertyIteratorImpl {
         property_name: &mut bstr::String,
         i: usize,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: Zig wrapped this in a manual `TopExceptionScope.init/deinit` +
-        // `returnIfException`; that is exactly `from_js_host_call_generic`'s contract
-        // (the FFI may return `.zero` without throwing, so the non-generic
-        // `from_js_host_call` — which treats empty as thrown — is wrong here).
+        // The FFI may return `.zero` without throwing, so the non-generic
+        // `from_js_host_call` — which treats empty as thrown — is wrong here;
+        // `from_js_host_call_generic` checks the exception scope instead.
         from_js_host_call_generic(global_object, || {
             Bun__JSPropertyIterator__getNameAndValue(iter, global_object, object, property_name, i)
         })

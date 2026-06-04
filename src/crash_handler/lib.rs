@@ -72,7 +72,6 @@ pub use draft::*;
 // Local shim for `bun_debug` (no such crate exists yet). These are
 // std.debug.* placeholders the Zig side leaned on; the Rust port will replace
 // them with a real debug-info backend in a later pass.
-// TODO(port): bun_debug::SelfInfo / SourceLocation / TtyConfig / capture_stack_trace
 // ──────────────────────────────────────────────────────────────────────────
 pub mod debug {
     use super::draft::StackTrace;
@@ -124,7 +123,7 @@ pub mod debug {
     /// provides the symbol-name half (which is what `btjs` actually consumes for
     /// its `__`/`_llint_call_javascript` prefix checks). `source_location` is left
     /// `None`, which `print_line_info` already handles.
-    // PORT NOTE: full `readElfDebugInfo`/`readMachODebugInfo` (~2k LOC of DWARF) not
+    // The full `readElfDebugInfo`/`readMachODebugInfo` (~2k LOC of DWARF) are not
     // ported — `dladdr` is the libc-level equivalent for symbol-name resolution.
     pub struct Module {
         base_address: usize,
@@ -223,7 +222,7 @@ pub mod debug {
 
         #[cfg(target_vendor = "apple")]
         fn lookup_module_dyld(&mut self, address: usize) -> Result<&mut Module, Error> {
-            // PORT NOTE: Zig walks `_dyld_get_image_header` + LoadCommandIterator. `dladdr`
+            // Zig walks `_dyld_get_image_header` + LoadCommandIterator. `dladdr`
             // gives the same `{base_address, fname}` pair on Darwin without the MachO walk.
             let mut info: libc::Dl_info = bun_core::ffi::zeroed();
             // SAFETY: dladdr only reads; out-param is a valid Dl_info.
@@ -253,7 +252,7 @@ pub mod debug {
         /// Port of `Module.getSymbolAtAddress`.
         #[cfg(windows)]
         pub fn get_symbol_at_address(&mut self, address: usize) -> Result<SymbolInfo, Error> {
-            // TODO(port-windows): SPEC DIVERGENCE — Zig's `std.debug.SelfInfo`
+            // SPEC DIVERGENCE — Zig's `std.debug.SelfInfo`
             // resolves symbols on Windows via the loaded PE's PDB
             // (`dbghelp.dll` `SymFromAddr`). That path is not yet ported, so
             // every Windows backtrace currently prints bare addresses even
@@ -301,7 +300,7 @@ pub mod debug {
             Ok(SymbolInfo {
                 name,
                 compile_unit_name,
-                // PORT NOTE: DWARF line-table lookup not ported; dladdr does not provide
+                // DWARF line-table lookup is not ported; dladdr does not provide
                 // file:line. `print_line_info` handles `None` by printing `???:?:?`.
                 source_location: None,
             })
@@ -541,10 +540,10 @@ mod draft {
         Ok(())
     }
 
-    // TODO(port): `Cli` arrives from move-in (MOVE_DOWN bun_runtime::cli::Cli → crash_handler).
-    // Only the two bits the crash handler needs — main-thread check and the
-    // one-byte command tag for the trace URL — land here as plain globals that
-    // `bun_runtime` populates at startup.
+    // The two bits of CLI state the crash handler needs — main-thread check and
+    // the one-byte command tag for the trace URL — live here as plain globals
+    // that `bun_runtime` populates at startup (the full `Cli` stays in
+    // `bun_runtime::cli`, a higher-tier crate).
     pub mod cli_state {
         use core::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 
@@ -584,7 +583,7 @@ mod draft {
 
     /// Non-zero whenever the program triggered a panic.
     /// The counter is incremented/decremented atomically.
-    /// PORT NOTE: shared with bun_core::PANICKING so T0 callers see the same state.
+    /// Shared with bun_core::PANICKING so T0 callers see the same state.
     use bun_core::PANICKING;
     // D131: dedup — these read the shared `PANICKING` atomic and were byte-identical
     // to the bun_core (T0) copies. Re-export so `bun_crash_handler::{is_panicking,
@@ -638,7 +637,6 @@ mod draft {
     pub enum CrashReason {
         /// From @panic()
         Panic(&'static [u8]),
-        // TODO(port): lifetime — Zig holds a borrowed []const u8; using &'static here as a placeholder.
         /// "reached unreachable code"
         Unreachable,
 
@@ -720,7 +718,13 @@ mod draft {
         Parse(&'static [u8]),
         Visit(&'static [u8]),
         Print(&'static [u8]),
-        // TODO(port): lifetime — these slices borrow caller-owned paths; &'static is a placeholder.
+        // These slices are stored in the `CURRENT_ACTION` thread-local, so they
+        // are typed `'static`. Callers pass `Source.path` data whose
+        // `Path<'static>` is itself an upstream `into_static()` lifetime
+        // erasure of arena/resolver-owned bytes (see paths/lib.rs); the data
+        // is not truly `'static`. Correctness relies on the `scoped_action`
+        // RAII guard restoring the thread-local before the owning arena or
+        // resolver storage is freed.
         #[cfg(feature = "show_crash_trace")]
         BundleGenerateChunk(BundleGenerateChunk),
         #[cfg(not(feature = "show_crash_trace"))]
@@ -807,7 +811,7 @@ mod draft {
     ///
     /// `source_dir`/`import_path` are caller-interned (DirnameStore / source text)
     /// and outlive the guard; the `&'static` lifetime erasure matches the existing
-    /// `Action::Parse`/`Visit`/`Print` slice fields (see TODO(port) above).
+    /// `Action::Parse`/`Visit`/`Print` slice fields (see the comment on those fields).
     #[inline]
     pub fn set_current_action_resolver(
         source_dir: &[u8],
@@ -881,8 +885,8 @@ mod draft {
                     //
                     // Output.errorWriter() is not used here because it may not be configured
                     // if the program crashes immediately at startup.
-                    // TODO(port): std.fs.File.stderr().writerStreaming — local raw StderrWriter (bun_sys
-                    //             FileWriter only impls std::io::Write, not the local byte-Write trait)
+                    // Zig: std.fs.File.stderr().writerStreaming — a local raw StderrWriter is used
+                    // because bun_sys's FileWriter only impls std::io::Write, not the local byte-Write trait.
                     let writer = &mut stderr_writer();
 
                     // The format of the panic trace is slightly different in debug
@@ -939,9 +943,10 @@ mod draft {
                             {
                                 abort();
                             }
-                        } else if UNSUPPORTED_UV_FUNCTION.with(|c| c.get()).is_some() {
-                            // TODO(port): bun_analytics::Features::unsupported_uv_function — using
-                            // the threadlocal as a stand-in for the global counter check.
+                        } else if bun_analytics::features::unsupported_uv_function
+                            .load(Ordering::Relaxed)
+                            > 0
+                        {
                             let name: &[u8] = UNSUPPORTED_UV_FUNCTION
                                 .with(|c| c.get())
                                 .map(|p| {
@@ -1069,7 +1074,6 @@ mod draft {
                                 target_os = "freebsd"
                             ))]
                             { /* no-op */ }
-                            // TODO(port): wasm @compileError("TODO")
                         }
 
                         if writer.write_all(b": ").is_err() {
@@ -1171,8 +1175,10 @@ mod draft {
                                 "Bun has encountered a crash while running the <red><d>\"{s}\"<r> native plugin.\n\nTo send a redacted crash report to Bun's team,\nplease file a GitHub issue using the link below:\n\n",
                                 true,
                             ), bstr::BStr::new(native_plugin_name)).is_err() { abort(); }
-                            } else if UNSUPPORTED_UV_FUNCTION.with(|c| c.get()).is_some() {
-                                // TODO(port): bun_analytics::Features::unsupported_uv_function
+                            } else if bun_analytics::features::unsupported_uv_function
+                                .load(Ordering::Relaxed)
+                                > 0
+                            {
                                 let name: &[u8] = UNSUPPORTED_UV_FUNCTION
                                     .with(|c| c.get())
                                     .map(|p| {
@@ -1278,7 +1284,6 @@ mod draft {
                     );
                     Output::flush();
 
-                    // TODO(port): comptime assert void == @TypeOf(bun.reloadProcess(...))
                     bun_core::reload_process(false, true);
                 }
             }
@@ -1497,7 +1502,7 @@ mod draft {
             err_generic!("Bun could not find a package.json file to install from");
             bun_core::note!("Run \"bun init\" to initialize a project");
         } else {
-            // PORT NOTE: Zig picked the format string at comptime; the macros need
+            // Zig picked the format string at comptime; the macros need
             // `:literal`, so branch on the const and call separately.
             if Environment::SHOW_CRASH_TRACE {
                 err_generic!(
@@ -1541,7 +1546,6 @@ mod draft {
             if msg == b"reached unreachable code" {
                 CrashReason::Unreachable
             } else {
-                // TODO(port): lifetime — Zig borrows msg; erased to &'static for the noreturn path.
                 // SAFETY: process is about to abort; the borrow is never invalidated.
                 CrashReason::Panic(unsafe { bun_collections::detach_lifetime(msg) })
             },
@@ -1768,7 +1772,6 @@ mod draft {
         {
             reset_on_posix();
         }
-        // TODO(port): wasm @compileError("TODO")
 
         install_hooks();
     }
@@ -2089,7 +2092,6 @@ mod draft {
         {
             let cpu_features = CPUFeatures::get();
 
-            // TODO(port): bun_analytics::GenerateHeader::GeneratePlatform
             {
                 #[cfg(any(
                     all(target_os = "linux", target_env = "gnu"),
@@ -2243,7 +2245,8 @@ mod draft {
             )
             .map_err(fmt_err)?;
 
-            // TODO(port): {B:<3.2} byte-size formatting — bun_fmt::bytes() doesn't take width/prec yet
+            // Zig used `{B:<3.2}`; bun_fmt::bytes() output differs only in spacing
+            // and adaptive precision — human-readable metadata, not the trace string.
             write!(
                 writer,
                 "RSS: {} | Peak: {} | Commit: {} | Faults: {}",
@@ -2283,7 +2286,6 @@ mod draft {
         if PANICKING.fetch_sub(1, Ordering::SeqCst) != 1 {
             // Another thread is panicking, wait for the last one to finish
             // and call abort()
-            // TODO(port): builtin.single_threaded → unreachable
 
             // Sleep forever without hammering the CPU
             let futex = AtomicU32::new(0);
@@ -2405,7 +2407,7 @@ mod draft {
         address: i32,
         // None -> from bun.exe
         object: Option<Box<[u8]>>,
-        // TODO(port): Zig stores a borrowed slice into caller's `name_bytes`; using Box<[u8]> here
+        // Zig stores a borrowed slice into caller's `name_bytes`; Box<[u8]> here
         // since the only caller writes into a stack buffer and the value is consumed immediately.
     }
 
@@ -2751,9 +2753,8 @@ mod draft {
             return false;
         }
 
-        // Honor DO_NOT_TRACK
-        // TODO(port): bun_analytics::is_enabled
-        if env_var::DO_NOT_TRACK::get() == Some(true) {
+        // Honor DO_NOT_TRACK (and the bunfig telemetry setting)
+        if !bun_analytics::is_enabled() {
             return false;
         }
 
@@ -2844,7 +2845,7 @@ mod draft {
             // SAFETY: we just wrote a NUL terminator at len-1
             let end = cmd_line.len() - 1;
             let cmd_line_slice = &mut cmd_line.slice()[0..end];
-            // TODO(port): need [:0] sentinel slice — pass raw pointer
+            // Rust has no [:0] sentinel slices — pass the raw pointer instead.
             // SAFETY: all pointer args are either null or point to stack-local buffers/structs valid for the duration of the call; cmd_line is NUL-terminated above
             let spawn_result = unsafe {
                 windows::kernel32::CreateProcessW(
@@ -2885,7 +2886,7 @@ mod draft {
             let Ok(cwd) = bun_core::getcwd(&mut buf2) else {
                 return;
             };
-            // PORT NOTE: reshaped for borrowck — capture cwd bytes by value (it
+            // Reshaped for borrowck — capture cwd bytes by value (it
             // borrows buf2, not buf, so no actual overlap; copy len for clarity).
             let cwd_bytes = cwd.as_bytes();
             let Some(curl) = bun_which::which(&mut buf, path_env, cwd_bytes, b"curl") else {
@@ -2933,7 +2934,6 @@ mod draft {
                 _ => {}
             }
         }
-        // TODO(port): wasm @compileError("Not implemented")
         #[cfg(not(unix))]
         let _ = url;
     }
@@ -2995,7 +2995,8 @@ mod draft {
         err_int_workaround_for_zig_ccall_bug: u16,
         trace: &StackTrace,
     ) {
-        // TODO(port): std.meta.Int(.unsigned, @bitSizeOf(anyerror)) — bun_core::Error is errno-based
+        // Zig passed std.meta.Int(.unsigned, @bitSizeOf(anyerror)); bun_core::Error
+        // is errno-based, so the error round-trips through its u16 representation.
         let err = bun_core::Error::from_errno(err_int_workaround_for_zig_ccall_bug as i32);
 
         // The format of the panic trace is slightly different in debug
@@ -3054,8 +3055,8 @@ mod draft {
         err: bun_core::Error,
         maybe_trace: Option<&StackTrace>,
     ) {
-        // TODO(port): builtin.have_error_return_tracing — Rust has no error-return tracing;
-        // decide whether to keep this entire mechanism or strip it.
+        // Rust has no error-return tracing; `HAVE_ERROR_RETURN_TRACING` is const
+        // false, so this path is currently dead and kept for parity with the Zig spec.
         if !debug::HAVE_ERROR_RETURN_TRACING {
             return;
         }
@@ -3227,7 +3228,6 @@ mod draft {
         program: &bun_core::ZStr,
         trace: &StackTrace,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let mut argv: Vec<Vec<u8>> = Vec::new();
         argv.push(program.as_bytes().to_vec());
         argv.push(b"--exe".to_vec());
@@ -3372,10 +3372,10 @@ mod draft {
         pub source_location: Option<SourceLocation>,
         pub symbol_name: Box<[u8]>,
         pub compile_unit_name: Box<[u8]>,
-        // TODO(port): Zig stores borrowed slices owned by debug_info; using Box<[u8]> here.
+        // Zig stores borrowed slices owned by debug_info; Box<[u8]> here.
     }
 
-    // PORT NOTE: Zig's `SourceAtAddress.deinit` only freed `source_location.file_name`;
+    // Zig's `SourceAtAddress.deinit` only freed `source_location.file_name`;
     // `Option<SourceLocation>` owns it as `Box<[u8]>` so Drop handles it — no explicit deinit.
 
     // D130: deduped — canonical def lives in bun_core (T0). Re-export under the
@@ -3402,7 +3402,7 @@ mod draft {
             .index
             .min(stack_trace.instruction_addresses.len());
 
-        // PORT NOTE: Zig's `while (...) : ({ frames_left -= 1; frame_index = ... })` continue-expression
+        // Zig's `while (...) : ({ frames_left -= 1; frame_index = ... })` continue-expression
         // is inlined at every `continue` site and at end-of-loop below.
         while frames_left != 0 {
             if frame_index >= limits.frame_count {
@@ -3769,7 +3769,7 @@ mod draft {
     /// `name` must be a valid NUL-terminated C string.
     #[unsafe(no_mangle)]
     pub(crate) unsafe extern "C" fn CrashHandler__unsupportedUVFunction(name: *const c_char) {
-        // TODO(port): bun_analytics::Features::increment_unsupported_uv_function
+        bun_analytics::features::unsupported_uv_function.fetch_add(1, Ordering::Relaxed);
         UNSUPPORTED_UV_FUNCTION.with(|c| c.set(if name.is_null() { None } else { Some(name) }));
         if env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_UV_STUB::get() == Some(true) {
             suppress_reporting();

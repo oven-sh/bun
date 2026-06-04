@@ -7,7 +7,6 @@ use core::cmp::Ordering;
 /// Sorted array of entity names (including & and ;) mapped to Unicode codepoint(s).
 pub(crate) struct Entity {
     pub name: &'static [u8],
-    // PORT NOTE: Zig `u21` (Unicode codepoint) → `u32`.
     pub codepoints: [u32; 2],
 }
 

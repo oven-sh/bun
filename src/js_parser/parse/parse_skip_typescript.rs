@@ -10,12 +10,11 @@ use bun_ast::ts::Metadata;
 use bun_core::{self, Error, err};
 
 // Zig: `fn SkipTypescript(comptime ts, comptime jsx, comptime scan_only) type { return struct {...} }`
-// — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
-// a direct `impl P` block.
+// — file-split mixin pattern, lowered to a direct `impl P` block on the const-generic parser.
 
-// PORT NOTE: Zig nested `Bitset` inside `SkipTypeOptions`; Rust hoists it to a module-level
-// alias. Re-export here so the parser-side type alias used in this file matches the
-// canonical definition in `TypeScript.rs`.
+// Re-export so the parser-side type alias used in this file matches the
+// canonical definition in `TypeScript.rs` (the Zig original nested this
+// bitset inside `SkipTypeOptions`).
 pub(crate) type SkipTypeOptionsBitset = typescript::SkipTypeOptionsBitset;
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
@@ -229,7 +228,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(())
     }
 
-    // PORT NOTE: Zig signature is `result: if (get_metadata) *TypeScript.Metadata else void`.
+    // The Zig signature is `result: if (get_metadata) *TypeScript.Metadata else void`.
     // Rust cannot express a const-generic-dependent param type on stable; we use
     // `Option<&mut Metadata>` and require callers to pass `Some` iff `GET_METADATA == true`.
     // The const generic is kept so `if GET_METADATA { ... }` branches monomorphize away.
@@ -884,8 +883,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
 
                     if GET_METADATA {
-                        // PORT NOTE: reshaped for borrowck — `find_symbol` borrows `&mut self`;
-                        // `result` is a disjoint fn parameter so the borrows do not conflict.
+                        // `find_symbol` borrows `&mut self`; `result` is a disjoint fn
+                        // parameter so the borrows do not conflict.
                         let ident = self.lexer.identifier;
                         let r = result
                             .as_deref_mut()
@@ -1421,8 +1420,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         F: FnOnce(&mut Self) -> Result<R, Error>,
     {
         self.mark_type_script_only();
-        // PORT NOTE: Zig copies the lexer by value; Rust Lexer holds `&mut Log` so we use a
-        // POD `LexerSnapshot` and `restore()`.
+        // The Zig original copies the lexer by value to backtrack; the Rust Lexer
+        // holds `&mut Log`, so backtracking goes through a POD `LexerSnapshot` + `restore()`.
         let old_lexer = self.lexer.snapshot();
         let old_log_disabled = self.lexer.is_log_disabled;
         self.lexer.is_log_disabled = true;

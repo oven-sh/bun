@@ -487,12 +487,14 @@ impl PosixSpawnResult {
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn pidfd_flags_for_linux() -> u32 {
-        // pidfd_nonblock only supported in 5.10+. The Zig path consults
-        // `analytics.kernel_version()` (semver compare); until that helper is
-        // ported, optimistically request NONBLOCK and rely on the EINVAL retry
-        // below to fall back on older kernels.
-        // TODO(port): wire bun_analytics::kernel_version() once available.
-        bun_sys::O::NONBLOCK as u32
+        // PIDFD_NONBLOCK is only supported on kernel 5.10+ (the EINVAL retry
+        // in `pifd_from_pid` still covers misdetection by retrying with 0).
+        let kernel = bun_core::linux_kernel_version();
+        if (kernel.major, kernel.minor) >= (5, 10) {
+            bun_sys::O::NONBLOCK as u32
+        } else {
+            0
+        }
     }
 
     #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -588,7 +590,7 @@ pub(crate) const POSIX_SPAWN_SETEXEC: i32 = 0x0040; // POSIX_SPAWN_SETEXEC
 /// This exists so that bare `?` on `actions.*` propagates without leaking
 /// the parent-side socketpair ends pushed earlier in the loop.
 ///
-/// PORT NOTE (intentional divergence): Zig's `errdefer` only fires on
+/// Intentional divergence from the Zig source: Zig's `errdefer` only fires on
 /// error-union returns (`try` failures), *not* on `return .{.err = ..}` value
 /// returns — so in the spec, socketpair/set_nonblocking/spawn_z value-error
 /// paths leak `to_close_on_error`. This guard initializes `on_error = true`
@@ -731,8 +733,8 @@ pub unsafe fn spawn_process_posix(
     }
 
     let stdio_options: [&PosixStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
-    // PORT NOTE: reshaped for borrowck — Zig holds [3]*?bun.FD into spawned;
-    // we index spawned.{stdin,stdout,stderr} via a helper closure instead.
+    // Reshaped for borrowck: Zig holds [3]*?bun.FD into spawned; here we
+    // index spawned.{stdin,stdout,stderr} via a helper closure instead.
     let mut dup_stdout_to_stderr: bool = false;
 
     // The label is only referenced from the Linux memfd fast-path below.

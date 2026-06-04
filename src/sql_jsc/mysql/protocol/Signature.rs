@@ -33,22 +33,19 @@ impl Signature {
         // only needs to be self-consistent — byte-for-byte layout parity with Zig
         // is not required.
         //
-        // PERF(port): Zig fed two slices into a streaming Wyhash; bun_wyhash
-        // currently lacks the std-compatible streaming `Wyhash` type. Concatenate
-        // into a temp Vec until that lands.
-        // TODO(port): bun_wyhash::Wyhash (streaming std-compatible API)
-        const BYTES_PER_PARAM: usize = 1 /* FieldType */ + 2 /* ColumnFlags */;
-        let mut buf: Vec<u8> =
-            Vec::with_capacity(self.name.len() + self.fields.len() * BYTES_PER_PARAM);
-        buf.extend_from_slice(&self.name);
+        // Zig fed two slices into a streaming `std.hash.Wyhash`; stream the
+        // same bytes (minus padding, see above) through `bun_wyhash::Wyhash`.
+        let mut hasher = bun_wyhash::Wyhash::init(0);
+        hasher.update(&self.name);
         for p in self.fields.iter() {
-            buf.push(p.r#type as u8);
-            buf.extend_from_slice(&p.flags.to_int().to_ne_bytes());
+            hasher.update(&[p.r#type as u8]);
+            hasher.update(&p.flags.to_int().to_ne_bytes());
         }
-        bun_wyhash::hash(&buf)
+        hasher.final_()
     }
 
-    // TODO(port): narrow error set (mixes JS errors, alloc, and InvalidQueryBinding)
+    // Zig used an inferred error set (JS errors, alloc, InvalidQueryBinding);
+    // collapsed into the crate-wide `bun_core::Error` currency.
     pub fn generate(
         global_object: &JSGlobalObject,
         query: &[u8],
@@ -85,7 +82,7 @@ impl Signature {
                     .map_err(js_error_to_mysql)?;
             if unsigned {
                 // 128 is more than enought right now
-                // PORT NOTE: reshaped — Zig used `std.fmt.bufPrint` into a 128-byte
+                // reshaped — Zig used `std.fmt.bufPrint` into a 128-byte
                 // stack buffer with a `catch @tagName(tag)` fallback on overflow.
                 // "U" + tag name can never exceed 128 bytes, so a direct append is
                 // equivalent and avoids the intermediate buffer.

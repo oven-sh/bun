@@ -130,9 +130,11 @@ impl TextShadow {
     // Ported as `#[derive(PartialEq)]` above; callers use `==`.
 
     pub(crate) fn deep_clone(&self, alloc: &bun_alloc::Arena) -> Self {
-        // TODO(port): Zig used reflection-based `css.implementDeepClone`. Fields here
-        // are value types, so a plain Clone is equivalent; arena param retained for
-        // signature compatibility with the CSS deep_clone protocol.
+        // Zig used reflection-based `css.implementDeepClone`. Fields deep-clone
+        // via `#[derive(Clone)]` (`CssColor`/`Length` `Box`-carrying variants
+        // clone deeply onto the global heap), so a plain Clone is equivalent;
+        // arena param retained for signature compatibility with the CSS
+        // deep_clone protocol.
         let _ = alloc;
         self.clone()
     }

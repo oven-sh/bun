@@ -153,7 +153,7 @@ pub struct PosixBufferedReader {
     pub vtable: BufferedReaderVTable,
     pub flags: PosixFlags,
     pub count: usize,
-    // PORT NOTE: MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
+    // MaxBuf uses hand-rolled dual-ownership (Subprocess + reader) via
     // `add_to_pipereader`/`remove_from_pipereader`, not Arc — see MaxBuf.rs.
     pub maxbuf: Option<NonNull<MaxBuf>>,
 }
@@ -223,12 +223,11 @@ impl PosixBufferedReader {
             count: 0,
             maxbuf: None,
         };
-        // PORT NOTE: `other.buffer().* = init(default_allocator)` and
-        // `other.handle = .closed` handled by mem::replace/mem::take above.
         other.flags.insert(PosixFlags::IS_DONE);
         other._offset = 0;
         MaxBuf::transfer_to_pipereader(&mut other.maxbuf, &mut self.maxbuf);
-        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
+        // Capture *mut Self before borrowing `handle` so the owner pointer
+        // doesn't conflict with the field borrow.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
             .set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
@@ -239,7 +238,8 @@ impl PosixBufferedReader {
 
     pub fn set_parent(&mut self, parent: *mut c_void) {
         self.vtable.parent = parent;
-        // PORT NOTE: reshaped for borrowck — capture *mut Self before borrowing field.
+        // Capture *mut Self before borrowing `handle` so the owner pointer
+        // doesn't conflict with the field borrow.
         let owner = std::ptr::from_mut(self).cast::<c_void>();
         self.handle
             .set_owner(Owner::new(PollTag::BufferedReader, owner.cast()));
@@ -329,8 +329,8 @@ impl PosixBufferedReader {
     pub fn final_buffer(&mut self) -> &mut Vec<u8> {
         if self.flags.contains(PosixFlags::MEMFD) {
             if let PollOrFd::Fd(fd) = self.handle {
-                // PORT NOTE: Zig `defer this.handle.close(null, {})` — close after
-                // the read regardless of result. `self.handle` owns the fd;
+                // The handle is closed after the read regardless of result.
+                // `self.handle` owns the fd;
                 // borrow a non-owning `File` view so the temporary doesn't
                 // close it on drop (handle.close() below does).
                 let result = sys::File::borrow(&fd)
@@ -403,7 +403,7 @@ impl PosixBufferedReader {
     }
 
     pub fn register_poll(&mut self) {
-        // PORT NOTE: reshaped for borrowck — hoist vtable-derived scalars and
+        // Hoist vtable-derived scalars and
         // normalize self.handle to Poll before taking the single &mut borrow,
         // so no raw-pointer escape is needed.
         let ev = self.vtable.event_loop();
@@ -539,7 +539,7 @@ impl PosixBufferedReader {
         }
     }
 
-    // PORT NOTE: reshaped for borrowck — takes &vtable instead of &mut Self so
+    // Takes &vtable instead of &mut Self so
     // call sites can pass &parent._buffer alongside without a raw-pointer escape.
     #[inline]
     fn drain_chunk(vtable: &BufferedReaderVTable, chunk: &[u8], has_more: ReadState) -> bool {
@@ -599,9 +599,9 @@ impl PosixBufferedReader {
         );
     }
 
-    // PORT NOTE: reshaped for borrowck — `resizable_buffer` is no longer passed
-    // separately; functions access `parent._buffer` directly. In Zig the buffer
-    // pointer was always `parent.buffer()` anyway.
+    // Unlike the Zig original, `resizable_buffer` is not passed separately;
+    // functions access `parent._buffer` directly (in Zig the buffer pointer
+    // was always `parent.buffer()` anyway).
     fn read_blocking_pipe(
         parent: &mut PosixBufferedReader,
         fd: Fd,
@@ -710,7 +710,6 @@ impl PosixBufferedReader {
                             }
 
                             if streaming {
-                                // PORT NOTE: reshaped for borrowck — re-slice from _buffer.
                                 let new_len = parent._buffer.len();
                                 let chunk = &parent._buffer[new_len - bytes_read..new_len];
                                 if !parent.vtable.on_read_chunk(
@@ -860,7 +859,7 @@ impl PosixBufferedReader {
 
                             // Keep reading as much as we can
                             if (stack_buffer_len - head_start) < stack_buffer_cutoff {
-                                // PORT NOTE: `&& !received_hup` mirrors the
+                                // `&& !received_hup` mirrors the
                                 // after-inner-loop flush below (line ~855).
                                 // Without it, a peer close (HUP) with >cutoff
                                 // bytes still buffered makes a parent that
@@ -1015,7 +1014,6 @@ impl PosixBufferedReader {
 
                     if parent.vtable.is_streaming_enabled() {
                         if parent._buffer.len() > 128_000 {
-                            // PORT NOTE: `defer resizable_buffer.clearRetainingCapacity()` inlined below.
                             let keep_going = parent
                                 .vtable
                                 .on_read_chunk(&parent._buffer, ReadState::Progress);
@@ -1066,10 +1064,10 @@ impl PosixBufferedReader {
 
         Self::read_blocking_pipe(parent, fd, size_hint, received_hup);
     }
-
-    // PORT NOTE: `comptime { bun.meta.banFieldType(@This(), bool); }` dropped —
-    // bitflags! ensures bools are packed.
 }
+
+// Keep boolean state in the `PosixFlags` bitflags field — no loose `bool`
+// fields on `PosixBufferedReader` (Zig enforced this via `banFieldType`).
 
 impl Drop for PosixBufferedReader {
     fn drop(&mut self) {
@@ -1151,7 +1149,7 @@ impl WindowsBufferedReader {
 
     pub fn from(&mut self, other: &mut WindowsBufferedReader, parent: *mut c_void) {
         debug_assert!(other.source.is_some() && self.source.is_none());
-        // PORT NOTE: keep self.vtable; move other's state in.
+        // Keep self.vtable; move other's state in.
         self.flags = other.flags;
         self._buffer = mem::take(other.buffer());
         self._offset = other._offset;
@@ -1505,7 +1503,6 @@ impl WindowsBufferedReader {
                     return;
                 }
 
-                // PORT NOTE: defer block inlined after body — see below.
                 let len: usize = usize::try_from(nread_int).expect("int cast");
                 this._offset += len;
                 // we got some data lets get the current iov
@@ -1535,8 +1532,8 @@ impl WindowsBufferedReader {
                     );
                 }
 
-                // PORT NOTE: this is the Zig `defer { ... }` body, inlined after the body
-                // because both body paths fall through (void return).
+                // This is the Zig original's `defer { ... }` body, inlined here
+                // because both body paths above fall through (void return).
                 // if we are not paused we keep reading until EOF or err
                 if !this.flags.contains(WindowsFlags::IS_PAUSED) {
                     // Re-snapshot — `on_read` may have mutated `this.source`.
@@ -1574,7 +1571,7 @@ impl WindowsBufferedReader {
                                     Some(Self::on_file_read),
                                 )
                             }
-                            // PORT NOTE: Zig PipeReader.zig:1113 tags this `.write` even
+                            // Zig PipeReader.zig:1113 tags this `.write` even
                             // though the syscall is `uv_fs_read` (a Zig bug). Match the
                             // spec for now so user-visible `error.syscall` stays
                             // bit-identical; fix upstream in Zig first.
@@ -1647,7 +1644,7 @@ impl WindowsBufferedReader {
                         Some(Self::on_file_read),
                     )
                 }
-                // PORT NOTE: Zig PipeReader.zig:1163 tags this `.write` even though the
+                // Zig PipeReader.zig:1163 tags this `.write` even though the
                 // syscall is `uv_fs_read` (a Zig bug). Match the spec for now so
                 // user-visible `error.syscall` stays bit-identical; fix upstream in
                 // Zig first.
@@ -1796,7 +1793,7 @@ impl WindowsBufferedReader {
         };
         if !source.is_closed() {
             // closeImpl will take care of freeing the source.
-            // PORT NOTE: Zig nulls `source` *before* calling closeImpl, which
+            // Zig nulls `source` *before* calling closeImpl, which
             // makes that call a no-op (latent Zig leak). We cannot mirror that
             // verbatim: in Zig nulling a `?*Pipe` leaks; in Rust dropping
             // `Box<Pipe>` frees a uv_pipe_t still linked into the loop's
@@ -1865,11 +1862,11 @@ impl WindowsBufferedReader {
 
         let should_continue = self._on_read_chunk(slice, has_more);
 
-        // PORT NOTE: Spec parents that stream (IOReader.zig:161,
+        // Spec parents that stream (IOReader.zig:161,
         // shell/subproc.zig:1230) call `this.reader.startWithCurrentPipe()`
         // from inside their `onReadChunk` callback on Windows. The Rust
         // shell IOReader port cannot re-derive `&mut Self` from inside the
-        // vtable callback (Stacked-Borrows; see shell/IOReader.rs PORT NOTE),
+        // vtable callback (Stacked-Borrows; see the comment in shell/IOReader.rs),
         // so the call is omitted there. The re-arm half of that call is
         // already handled by `on_file_read`'s defer block / `uv_read_start`,
         // but its other side effect — `buffer().clearRetainingCapacity()`
@@ -1898,10 +1895,10 @@ impl WindowsBufferedReader {
         // we cannot sync read pipes on Windows so we just check if we are paused to resume the reading
         self.unpause();
     }
-
-    // PORT NOTE: `comptime { bun.meta.banFieldType(WindowsBufferedReader, bool); }` dropped —
-    // bitflags! ensures bools are packed.
 }
+
+// Keep boolean state in the `WindowsFlags` bitflags field — no loose `bool`
+// fields on `WindowsBufferedReader` (Zig enforced this via `banFieldType`).
 
 #[cfg(windows)]
 impl Drop for WindowsBufferedReader {
@@ -1910,7 +1907,7 @@ impl Drop for WindowsBufferedReader {
         // Do NOT take() source here and let it drop: Box<Pipe>/Box<File> own
         // live uv handles registered with the loop. Let close_impl perform the
         // take + into_raw hand-off so the uv close callback reclaims them.
-        // PORT NOTE: Zig `WindowsBufferedReader.deinit` (PipeReader.zig:979)
+        // Zig `WindowsBufferedReader.deinit` (PipeReader.zig:979)
         // skips closeImpl when `source.isClosed()` — a uv_close is already
         // pending on that allocation, so closing again would double-close and
         // freeing the Box would UAF the handle libuv still references. Mirror

@@ -49,11 +49,6 @@ pub enum Method {
 
 pub type Set = EnumSet<Method>;
 
-// PORT NOTE: Zig's private `with_body`/`with_request_body` EnumSet consts are
-// folded directly into `has_body()`/`has_request_body()` as `matches!` —
-// `EnumSet::remove` is not const on stable, and the consts were never read
-// outside those two predicates.
-
 impl Method {
     /// Port of Zig `@tagName(method)` — uppercase HTTP method token. `M_SEARCH`
     /// renders as `"M-SEARCH"` (the wire form, matching the Zig enum name

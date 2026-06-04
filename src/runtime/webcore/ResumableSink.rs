@@ -169,7 +169,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
         let this_ref = unsafe { &mut *this };
 
         if stream.is_locked(global_this) || stream.is_disturbed(global_this) {
-            // PORT NOTE: `SystemError` has no `Default` impl upstream — spell out
+            // `SystemError` has no `Default` impl upstream — spell out
             // every field with its Zig default (SystemError.zig:1).
             let err = SystemError {
                 errno: 0,
@@ -214,8 +214,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                     };
 
                     let bytes = byte_stream.drain();
-                    // PORT NOTE: `defer bytes.deinit(bun.default_allocator)` deleted — `bytes`
-                    // owns its buffer and Drop frees it.
                     scoped_log!(ResumableSink, "onWrite {}", bytes.len());
                     let _ = Self::on_write(this_ref.context, bytes.slice());
                     Self::on_end(this_ref.context, err);
@@ -225,7 +223,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                 }
                 // We can pipe but we also wanna to drain as much as possible first
                 let bytes = byte_stream.drain();
-                // PORT NOTE: `defer bytes.deinit(...)` deleted — Drop frees it.
                 // lets write and see if we can still pipe or if we have backpressure
                 if bytes.len() > 0 {
                     scoped_log!(ResumableSink, "onWrite {}", bytes.len());
@@ -234,8 +231,8 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
                     let _ = Self::on_write(this_ref.context, bytes.slice());
                 }
                 this_ref.status = Status::Piped;
-                // PORT NOTE: jsc.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this) — the
-                // Zig comptime fn-ptr param is reshaped as a `PipeHandler` impl on `Self`
+                // Zig `jsc.WebCore.Pipe.Wrap(@This(), onStreamPipe).init(this)` — the
+                // comptime fn-ptr param is reshaped as a `PipeHandler` impl on `Self`
                 // (see `impl PipeHandler` below); `Wrap::<Self>::init` erases `this` into
                 // the Pipe's ctx ptr.
                 byte_stream.pipe.set(Wrap::<Self>::init(this_ref));
@@ -333,7 +330,6 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
             )));
         };
 
-        // PORT NOTE: `defer sb.deinit()` deleted — StringOrBuffer impls Drop.
         let bytes = sb.slice();
         scoped_log!(ResumableSink, "jsWrite {}", bytes.len());
         match Self::on_write(this.context, bytes) {
@@ -474,7 +470,7 @@ impl<Js: ResumableSinkJs, Context: ResumableSinkContext> ResumableSink<Js, Conte
     }
 
     fn on_stream_pipe(&mut self, mut stream: StreamResult) {
-        // PORT NOTE: Zig `onStreamPipe(this, stream, allocator)` frees
+        // Zig `onStreamPipe(this, stream, allocator)` frees
         // `.owned`/`.owned_and_done` payloads with the *caller-supplied*
         // allocator. The Rust `Pipe`/`PipeHandler` reshape drops the allocator
         // param because every producer (`ByteStream::on_data` — the sole `Pipe`

@@ -110,7 +110,6 @@ enum BunSocket {
     TcpWriteonly(bun_ptr::BackRef<TCPSocket>),
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     safe fn JSC__JSGlobalObject__getHTTP2CommonString(
         global_object: &JSGlobalObject,
@@ -307,7 +306,7 @@ impl UInt31WithReserved {
     fn init(value: u32, reserved: bool) -> Self {
         Self((value & 0x7fff_ffff) | if reserved { 0x8000_0000 } else { 0 })
     }
-    /// PORT NOTE (intentional divergence): Zig's `toUInt32()` is `@bitCast` of
+    /// Note (intentional divergence): Zig's `toUInt32()` is `@bitCast` of
     /// `packed struct(u32){ reserved: bool, uint31: u31 }`, which on little-endian places
     /// `reserved` in bit 0 and yields `(uint31 << 1) | reserved`. That is a latent RFC 7540
     /// §6.3 bug in Zig's deprecated PRIORITY path — the wire format wants the reserved/E
@@ -368,7 +367,8 @@ impl StreamPriority {
 }
 
 // packed struct(u72): length: u24, type: u8, flags: u8, streamIdentifier: u32
-// TODO(port): u24 — represented as u32 here; wire encoding handled in write()/from()
+// `length` is u24 on the wire; widened to u32 here (Rust has no u24). The 3-byte
+// big-endian encoding is handled explicitly in write()/decode().
 #[derive(Clone, Copy)]
 pub struct FrameHeader {
     length: u32, // u24 on the wire
@@ -444,7 +444,9 @@ impl SettingsPayloadUnit {
 }
 
 // packed struct(u336) — 7 × (u16 type + u32 value) = 42 bytes
-// TODO(port): #[repr(C, packed)] for wire layout; verify byteSwapAllFields equivalence in Phase B
+// Wire layout via #[repr(C, packed)]: all fields are byte-aligned u16/u32, so the
+// per-field swap_bytes() in write() is exactly Zig's std.mem.byteSwapAllFields
+// (which swaps packed-struct fields individually, not the whole backing int).
 #[repr(C, packed)]
 #[derive(Clone, Copy)]
 pub(crate) struct FullSettingsPayload {
@@ -1401,7 +1403,7 @@ impl H2FrameParser {
 /// mid-loop are not visited, and nothing is yielded twice. That's the
 /// guarantee the call sites actually rely on (flush / emit-to-all / detach).
 pub(crate) struct StreamResumableIterator {
-    // PORT NOTE: Zig's `parser: *H2FrameParser` freely aliases. R-2: `streams`
+    // Note: Zig's `parser: *H2FrameParser` freely aliases. R-2: `streams`
     // is now `JsCell`-backed, so a shared backref suffices and the in-loop
     // body can keep its own `&H2FrameParser` without provenance gymnastics.
     // `ParentRef` encapsulates the back-pointer invariant (parser outlives the
@@ -1494,7 +1496,6 @@ pub(crate) struct SignalRef {
     // (mirrors Zig `*AbortSignal`). `BackRef` captures the backref invariant
     // (signal is `ref_()`'d in `attach_signal` and outlives this struct until
     // `Drop` calls `detach()`/`unref()`), so reads go through safe `Deref`.
-    // TODO(port): wrap in a dedicated smart-pointer once AbortSignal grows one.
     signal: bun_ptr::BackRef<AbortSignal>,
     // LIFETIMES.tsv: SHARED — H2FrameParser carries an intrusive RefCount and is
     // recovered via `from_field_ptr!` from the auto-flusher. It uses a hand-rolled
@@ -1881,7 +1882,7 @@ impl Stream {
     ) {
         let global_this = client.global_this;
 
-        // PORT NOTE: `dispatch_write_callback()` below re-enters JS, which can
+        // Note: `dispatch_write_callback()` below re-enters JS, which can
         // call back into `H2FrameParser` host-fns (e.g. `writeStream`) that
         // look this `Stream` up by id from `client.streams` and reach
         // `queue_frame()` again with a fresh `&mut Stream` aliasing this one.
@@ -1900,13 +1901,13 @@ impl Stream {
             // SAFETY: helper for the pre-dispatch accesses below; `last_frame`
             // is the unique tail slot in `self.data_frame_queue.data`, valid
             // until the dispatch call (after which we re-`black_box` before
-            // every access — see PORT NOTE above).
+            // every access — see note above).
             macro_rules! lf {
                 () => {
                     // SAFETY: `last_frame` points at the live tail slot of
                     // `self.data_frame_queue`; provenance is re-laundered via
                     // `black_box` before each post-dispatch expansion so no
-                    // other `&mut` to the slot is live here (see PORT NOTE).
+                    // other `&mut` to the slot is live here (see note).
                     unsafe { &mut *last_frame }
                 };
             }
@@ -2157,17 +2158,6 @@ impl AbortListener for SignalRef {
 
 type HeaderValue = lshpack::DecodeResult;
 
-// PORT NOTE: `lshpack::HpackError` does not yet impl `From` for `bun_core::Error`
-// (see TODO in lshpack.rs). Map variants 1:1 to interned error names so Zig
-// callers that match on `error.UnableToDecode` etc. keep their semantics.
-fn hpack_error_to_core(e: &lshpack::HpackError) -> bun_core::Error {
-    match e {
-        lshpack::HpackError::UnableToDecode => bun_core::err!("UnableToDecode"),
-        lshpack::HpackError::EmptyHeaderName => bun_core::err!("EmptyHeaderName"),
-        lshpack::HpackError::UnableToEncode => bun_core::err!("UnableToEncode"),
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // H2FrameParser impl — core methods
 // ──────────────────────────────────────────────────────────────────────────
@@ -2184,10 +2174,9 @@ impl H2FrameParser {
         value: &[u8],
         never_index: bool,
     ) -> Result<usize, bun_core::Error> {
-        // TODO(port): narrow error set
         let old_len = encoded_headers.len();
         let required = old_len + name.len() + value.len() + HPACK_ENTRY_OVERHEAD;
-        // PORT NOTE: Zig wrote into `allocatedSlice()` past `.len` then bumped `.len` on
+        // Note: Zig wrote into `allocatedSlice()` past `.len` then bumped `.len` on
         // success. In Rust, materializing `&mut [u8]` over uninitialized capacity is UB and
         // hpack.encode() needs `&mut [u8]` (not `&mut [MaybeUninit<u8>]`), so zero-extend to
         // `required` first. On both Ok and Err we truncate so `len` never exposes scratch
@@ -2214,9 +2203,7 @@ impl H2FrameParser {
     pub(crate) fn decode(&self, src_buffer: &[u8]) -> Result<HeaderValue, bun_core::Error> {
         self.hpack.with_mut(|hpack| {
             if let Some(hpack) = hpack.as_mut() {
-                return hpack
-                    .decode(src_buffer)
-                    .map_err(|e| hpack_error_to_core(&e));
+                return hpack.decode(src_buffer).map_err(bun_core::Error::from);
             }
             Err(bun_core::err!("UnableToDecode"))
         })
@@ -2235,7 +2222,7 @@ impl H2FrameParser {
                 // lets make sure the name is lowercase
                 return hpack
                     .encode(name, value, never_index, dst_buffer, dst_offset)
-                    .map_err(|e| hpack_error_to_core(&e));
+                    .map_err(bun_core::Error::from);
             }
             Err(bun_core::err!("UnableToEncode"))
         })
@@ -2287,7 +2274,7 @@ impl H2FrameParser {
     }
 
     fn increment_window_size_if_needed(&self) {
-        // PORT NOTE: reshaped for borrowck — collect actions then apply
+        // Note: reshaped for borrowck — collect actions then apply
         let mut updates: Vec<(u32, u64)> = Vec::new();
         for (_, item) in self.streams.get().iter() {
             // SAFETY: item is &*mut Stream from streams.iter(); the boxed Stream outlives the iteration
@@ -3112,7 +3099,7 @@ impl H2FrameParser {
     }
 }
 
-// PORT NOTE: raw-ptr slice — Zig's `[]const u8` payload may alias `this.readBuffer` across
+// Note: raw-ptr slice — Zig's `[]const u8` payload may alias `this.readBuffer` across
 // `readBuffer.reset()` (e.g. handleHeadersFrame resets then calls decodeHeaderBlock(payload)).
 // A borrowed `&'a [u8]` tied to `&'a mut self` forces every caller into an aliasing
 // `unsafe { &mut *self_ptr }` reborrow, which under Stacked Borrows invalidates the slice the
@@ -3986,7 +3973,7 @@ impl H2FrameParser {
             let payload = content.data();
             let is_not_ack = frame.flags & PingFrameFlags::ACK as u8 == 0;
             let end = content.end;
-            // PORT NOTE: Zig resets readBuffer before send_ping(payload); reset() only clears len
+            // Note: Zig resets readBuffer before send_ping(payload); reset() only clears len
             // so the bytes stay readable. Copy out anyway so send_ping/to_js below don't depend on
             // that subtlety once read_buffer is mutated further.
             let payload_owned = payload.to_vec();
@@ -4789,7 +4776,7 @@ impl H2FrameParser {
         )
     }
 
-    // PORT NOTE: hoisted from three identical switch blocks in read_bytes for borrowck/DRY.
+    // Note: hoisted from three identical switch blocks in read_bytes for borrowck/DRY.
     // The `add` parameter is the number of bytes already consumed before `bytes` (0, `needed`, or BYTE_SIZE).
     fn dispatch_frame(
         &self,
@@ -4869,7 +4856,7 @@ impl H2FrameParser {
     }
 }
 
-// PORT NOTE: holds a `BackRef<H2FrameParser>` so the borrow of the parser ends
+// Note: holds a `BackRef<H2FrameParser>` so the borrow of the parser ends
 // at `to_writer()`'s return — `Stream::flush_queue` interleaves field
 // reads/writes on the parser between `writer.write()` calls. R-2: `write()`
 // takes `&self` (Cell/JsCell-backed), so a shared back-reference is sufficient
@@ -6717,7 +6704,7 @@ impl H2FrameParser {
         let mut single_value_headers = [false; SINGLE_VALUE_HEADERS_LEN];
 
         for ignore_pseudo_headers in 0..2usize {
-            // PORT NOTE: `bun_jsc::JSPropertyIterator` (runtime-options variant) lacks `.reset()`;
+            // Note: `bun_jsc::JSPropertyIterator` (runtime-options variant) lacks `.reset()`;
             // re-initialize per pass instead — same observable property walk as the Zig two-pass loop.
             let mut iter = bun_jsc::JSPropertyIterator::init(
                 global_object,
@@ -7716,7 +7703,7 @@ impl H2FrameParser {
             .strong_this
             .with_mut(|s| s.set_strong(this_value, global_object));
 
-        // PORT NOTE: `HPACK::init` returns a C-allocated wrapper that must be
+        // Note: `HPACK::init` returns a C-allocated wrapper that must be
         // torn down via `lshpack_wrapper_deinit` (runs `lshpack_{enc,dec}_cleanup`
         // before freeing). Wrapping it in `heap::take` and letting `Box` drop
         // would `mi_free` the struct but leak the encoder/decoder internals.
@@ -7778,9 +7765,9 @@ impl H2FrameParser {
         bun_output::scoped_log!(H2FrameParser, "deinit");
 
         self.detach();
-        // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
+        // Note: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
         self.strong_this.set(JsRef::empty());
-        // PORT NOTE: take the map out first so `self` is free for
+        // Note: take the map out first so `self` is free for
         // `free_resources(self)` while we walk the entries.
         let streams = self.streams.replace(BunHashMap::default());
         for (_, item) in streams.iter() {
@@ -7823,7 +7810,7 @@ impl H2FrameParser {
 
     pub(crate) fn finalize(self: Box<Self>) {
         bun_output::scoped_log!(H2FrameParser, "finalize");
-        // PORT NOTE: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
+        // Note: JsRef::deinit() dropped — overwrite with empty(); Drop releases the Strong slot.
         bun_ptr::finalize_js_box(self, |this| {
             this.strong_this.set(JsRef::empty());
             // process.exit() never unwinds, so a stack-rooted ref can strand and deinit()

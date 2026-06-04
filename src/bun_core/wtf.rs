@@ -9,7 +9,7 @@
 //! which forwards to `WTF::parseES5Date` in
 //! vendor/WebKit `Source/WTF/wtf/DateMath.{h,cpp}`.
 //!
-//! PORT NOTE: WTF's `parseES5Date` sets an `isLocalTime` out-param so the JS
+//! Note: WTF's `parseES5Date` sets an `isLocalTime` out-param so the JS
 //! `Date` constructor can later apply the VM's tz offset. The C shim discards
 //! it (matching `src/jsc/WTF.zig`), so local-time inputs return their naive
 //! UTC value here too.

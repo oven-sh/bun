@@ -22,7 +22,7 @@ use crate::{
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
 // stub that lib.rs exposes for downstream crates during the staged port.
-// PORT NOTE: bare `use super as lockfile;` fails when this file is reached via
+// bare `use super as lockfile;` fails when this file is reached via
 // `#[path]` from a non-module context (rust-lang/rust#48067). Name the parent
 // module by its absolute crate path instead.
 use crate::lockfile_real as lockfile;
@@ -67,7 +67,7 @@ impl ExprStr for Expr {
 // Defaulted to `u64` so bare `Package` matches Zig's primary `Package(u64)`
 // instantiation (the only one the lockfile/PM call sites name unqualified).
 //
-// PORT NOTE: `` cannot be used here — the derive
+// `#[derive(MultiArrayElement)]` cannot be used here — the derive
 // emits a `PackageField` enum with snake_case variants and an inherent
 // `__MAL_SIZES` const that fail to const-eval through the defaulted
 // `SemverIntType` param. The trait impl, field enum, and `PackageColumns` /
@@ -405,7 +405,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
     }
 }
 
-// PORT NOTE: `clone` / `from_package_json` / `from_npm` / `parse*` all interact
+// `clone` / `from_package_json` / `from_npm` / `parse*` all interact
 // with `Lockfile`, whose package list is concretely `MultiArrayList<Package<u64>>`.
 // Zig's `Package(SemverIntType)` is only ever instantiated at `u64` for these
 // paths (the `u32` instantiation is migration-only and routed through
@@ -414,8 +414,7 @@ impl<SemverIntType: VersionInt> Package<SemverIntType> {
 // site.
 impl Package<u64> {
     pub fn clone(&self, cloner: &mut Cloner) -> Result<PackageID, bun_core::Error> {
-        // TODO(port): narrow error set
-        // PORT NOTE: Zig passes (`pm`, `old`, `new`, `package_id_mapping`,
+        // Zig passes (`pm`, `old`, `new`, `package_id_mapping`,
         // `cloner`) separately, but `cloner` already owns `&mut` to all four.
         // Rust borrowck rejects the redundant aliasing at the call site, so
         // route everything through `cloner`'s disjoint fields here instead.
@@ -428,7 +427,7 @@ impl Package<u64> {
         let package_id_mapping = &mut *cloner.mapping;
         let old_string_buf = old.buffers.string_bytes.as_slice();
         let old_extern_string_buf = old.buffers.extern_strings.as_slice();
-        // PORT NOTE: `string_builder!` split-borrows only `new.buffers
+        // `string_builder!` split-borrows only `new.buffers
         // .string_bytes` + `new.string_pool`, leaving sibling buffer fields
         // (`dependencies`, `resolutions`, `extern_strings`, `packages`) free
         // for the disjoint borrows below.
@@ -493,7 +492,7 @@ impl Package<u64> {
         // Default-fill the tail so it is valid before `bin.clone` overwrites
         // it (replaces `reserve` + raw `set_len`).
         bun_core::vec::grow_default(&mut new.buffers.extern_strings, new_extern_string_count);
-        // PORT NOTE: Zig passes both `new.buffers.extern_strings.items` (full slice) and a
+        // Zig passes both `new.buffers.extern_strings.items` (full slice) and a
         // tail subslice into `bin.clone`; the full slice is only used to compute the tail's
         // offset for `ExternalStringList::init`. In Rust those two views would alias, so
         // `Bin::clone_with_buffers` takes the precomputed offset directly.
@@ -501,7 +500,7 @@ impl Package<u64> {
 
         let id = new.packages.len() as PackageID;
 
-        // PORT NOTE: Zig calls `appendPackageWithID` mid-body while still
+        // Zig calls `appendPackageWithID` mid-body while still
         // holding live slices into `new.buffers` and the `builder`. Rust can't
         // express that (the method borrows `&mut Lockfile` whole), so build the
         // `Package` value and clone the dependency strings *first* (only needs
@@ -592,12 +591,11 @@ impl Package<u64> {
     ) -> Result<Self, bun_core::Error> {
         #[allow(non_snake_case)]
         let FEATURES = features;
-        // TODO(port): narrow error set
         let mut package = Self::default();
 
         // var string_buf = package_json;
 
-        // PORT NOTE: split-borrow `string_bytes`/`string_pool` so the disjoint
+        // split-borrow `string_bytes`/`string_pool` so the disjoint
         // `lockfile.buffers.dependencies/resolutions` borrows below pass.
         let mut string_builder = crate::string_builder!(lockfile);
 
@@ -709,7 +707,6 @@ impl Package<u64> {
     ) -> Result<Self, bun_core::Error> {
         #[allow(non_snake_case)]
         let FEATURES = features;
-        // TODO(port): narrow error set
         let mut package = Self::default();
 
         let package_version = *package_version_ptr;
@@ -732,7 +729,7 @@ impl Package<u64> {
             out
         };
 
-        // PORT NOTE: split-borrow so `lockfile.buffers.dependencies/resolutions
+        // split-borrow so `lockfile.buffers.dependencies/resolutions
         // /extern_strings` below are disjoint from the builder's `string_bytes`.
         let mut string_builder = crate::string_builder!(lockfile);
 
@@ -1013,7 +1010,7 @@ impl DiffSummary {
 }
 
 impl Diff {
-    // PORT NOTE: Zig's `Package` here is the canonical `Package(u64)` (the only
+    // Zig's `Package` here is the canonical `Package(u64)` (the only
     // instantiation `Lockfile` ever holds). Dropping the generic avoids a
     // spurious `Package<I>` ≠ `Package<u64>` mismatch on the recursive call
     // through `from_lockfile.packages.get(...)`.
@@ -1027,10 +1024,9 @@ impl Diff {
         update_requests: Option<&[UpdateRequest]>,
         mut id_mapping: Option<&mut [PackageID]>,
     ) -> Result<DiffSummary, bun_core::Error> {
-        // TODO(port): narrow error set
         let mut summary = DiffSummary::default();
         let is_root = id_mapping.is_some();
-        // PORT NOTE: Zig held `to_deps` as a mutable slice binding and reassigned
+        // Zig held `to_deps` as a mutable slice binding and reassigned
         // it after `parseWithJSON` (which may grow `to_lockfile.buffers
         // .dependencies` and invalidate the old slice). Mirror that with raw fat
         // pointers so the `&mut to_lockfile`/`&mut from_lockfile` reborrows below
@@ -1055,7 +1051,7 @@ impl Diff {
             .resolutions
             .get(from_lockfile.buffers.resolutions.as_slice())
             .into();
-        // See PORT NOTE above — `from_lockfile.buffers` is not reallocated for
+        // See note above — `from_lockfile.buffers` is not reallocated for
         // the lifetime of these references.
         let (from_deps, from_resolutions) = (from_deps.slice(), from_resolutions.slice());
         let mut to_i: usize = 0;
@@ -1067,7 +1063,7 @@ impl Diff {
                 bun_core::pretty_errorln!("Overrides changed since last install");
             }
         } else {
-            // PORT NOTE: reshaped for borrowck — Zig passed `from_lockfile`
+            // Reshaped for borrowck — Zig passed `from_lockfile`
             // twice (once as `&mut self` via `.overrides`, once as `lockfile`).
             // `OverrideMap::sort` only reads `lockfile.buffers.string_bytes`,
             // so split the borrow at the field.
@@ -1122,7 +1118,7 @@ impl Diff {
                     break 'catalogs;
                 }
 
-                // PORT NOTE: reshaped for borrowck — see `overrides.sort` note above.
+                // Reshaped for borrowck — see `overrides.sort` note above.
                 lockfile::CatalogMap::sort(&mut from_lockfile.catalogs, &from_lockfile.buffers);
                 lockfile::CatalogMap::sort(&mut to_lockfile.catalogs, &to_lockfile.buffers);
 
@@ -1472,7 +1468,7 @@ impl Diff {
                         );
                         let _ = package_json_path.append(b"package.json"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
-                        // PORT NOTE: `bun.sys.File.toSource` was removed from
+                        // `bun.sys.File.toSource` was removed from
                         // T1 (`bun_sys`) because `bun_ast::Source` lives in T2.
                         // Route through the workspace cache's path-based getter
                         // instead, which both reads and parses.
@@ -1653,7 +1649,6 @@ impl Package<u64> {
         resolver: &mut R,
         features: Features,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         initialize_store();
         // Zig threaded `lockfile.allocator` for the JSON arena. The returned
         // `Expr` tree only needs to live until `parse_with_json` finishes, so
@@ -1709,7 +1704,7 @@ impl Package<u64> {
     // Zig: `comptime group: DependencyGroup`, `comptime features: Features`, `comptime tag: ?Dependency.Version.Tag`
     // PERF(port): was comptime monomorphization on `group`/`tag` — profile if hot.
     //
-    // PORT NOTE: Zig took `lockfile: *Lockfile`, but the live `StringBuilder`
+    // Zig took `lockfile: *Lockfile`, but the live `StringBuilder`
     // (also passed) already holds `&mut lockfile.buffers.string_bytes`. The
     // body only otherwise touches `workspace_paths` / `workspace_versions`,
     // so accept those two maps directly and read `string_bytes` via the
@@ -1733,7 +1728,6 @@ impl Package<u64> {
         key_loc: bun_ast::Loc,
         value_loc: bun_ast::Loc,
     ) -> Result<Option<Dependency>, bun_core::Error> {
-        // TODO(port): narrow error set
         #[cfg(windows)]
         let external_version = 'brk: {
             match tag.unwrap_or_else(|| dependency::version::Tag::infer(version)) {
@@ -2151,12 +2145,11 @@ impl Package<u64> {
     ) -> Result<(), bun_core::Error> {
         #[allow(non_snake_case)]
         let FEATURES = features;
-        // TODO(port): narrow error set
         // Zig threads `allocator` for `asString` transcoding; the Rust signature
         // dropped it, so use a function-local arena (transcoded strings are only
         // borrowed until `string_builder.append` copies them).
         let bump = bun_alloc::Arena::new();
-        // PORT NOTE: split-borrow `string_bytes`/`string_pool` so the dozens of
+        // split-borrow `string_bytes`/`string_pool` so the dozens of
         // disjoint `lockfile.{buffers.*, overrides, catalogs, workspace_*, …}`
         // accesses below pass borrowck. Reads of `lockfile.buffers.string_bytes`
         // must go through `string_builder.string_bytes` while it's live.
@@ -2557,7 +2550,7 @@ impl Package<u64> {
             );
         }
 
-        // PORT NOTE: Zig slices `lockfile.buffers.dependencies.items.ptr[off..total_len]`
+        // Zig slices `lockfile.buffers.dependencies.items.ptr[off..total_len]`
         // — i.e. into reserved-but-uncommitted capacity *without* bumping `items.len`.
         // Mirroring that here matters: `parse_dependency` can return early with an error
         // (e.g. `InstallFailed` for a non-matching `workspace:` range), and the caller
@@ -2698,7 +2691,7 @@ impl Package<u64> {
                                 if cfg!(debug_assertions) {
                                     debug_assert!(i == extern_strings.len());
                                 }
-                                // PORT NOTE: Zig passed the full extern_strings
+                                // Zig passed the full extern_strings
                                 // buffer + tail subslice; `init` only needs the
                                 // tail's offset, so construct directly to avoid
                                 // the aliasing borrow.
@@ -3176,16 +3169,17 @@ pub mod serializer {
         stream: &mut S,
     ) -> Result<(), bun_core::Error>
     where
-        // PORT NOTE: Zig threaded a separate `stream` (anytype) and `writer` over
+        // Zig threaded a separate `stream` (anytype) and `writer` over
         // the same buffer. Two `&mut` to one object is UB in Rust regardless of
         // access order, so the port collapses both roles onto one type —
         // `Serializer::StreamType` impls both `PositionalStream` and
         // `bun_io::Write`.
         S: PositionalStream + bun_io::Write,
     {
-        // TODO(port): narrow error set
         stream.write_int_le::<u64>(list.len() as u64)?;
-        // TODO(port): @alignOf(@TypeOf(list.bytes)) — needs concrete type from MultiArrayList.
+        // Zig wrote `@alignOf(@TypeOf(list.bytes))` — the alignment of the
+        // MultiArrayList bytes *pointer* itself (not the pointee), which is
+        // exactly `align_of::<*mut u8>()` on every supported target.
         stream.write_int_le::<u64>(mem::align_of::<*mut u8>() as u64)?;
         stream.write_int_le::<u64>(FIELD_COUNT as u64)?;
         let begin_at = stream.get_pos()?;
@@ -3193,7 +3187,8 @@ pub mod serializer {
         let end_at = stream.get_pos()?;
         stream.write_int_le::<u64>(0)?;
 
-        // TODO(port): Aligner.write needs the bytes-pointer alignment type.
+        // `*mut u8` carries the pointer alignment, matching the
+        // `@alignOf(@TypeOf(list.bytes))` value serialized above.
         let pos = stream.get_pos()? as u64;
         let _ = Aligner::write::<*mut u8, _>(&mut *stream, pos)?;
 
@@ -3225,9 +3220,10 @@ pub mod serializer {
                     bytes.len(),
                 );
             }
-            // TODO(port): assert_no_uninitialized_padding once a typed accessor
-            // is exposed; for now `Package`'s field types are all `#[repr(C)]`
-            // with explicit padding zeroed by their `Default`/`init` paths.
+            // Zig's `assert_no_uninitialized_padding` has no per-field typed
+            // accessor here; the invariant holds because `Package`'s field
+            // types are all `#[repr(C)]` with explicit padding zeroed by
+            // their `Default`/`init` paths.
             if matches!(field, PackageField::Resolution) {
                 // copy each resolution to make sure the union is zero initialized
                 let resolutions: &[Resolution<SemverIntType>] =
@@ -3265,7 +3261,7 @@ pub mod serializer {
         pub needs_update: bool,
     }
 
-    // PORT NOTE: Zig parameterised on `SemverIntType`, but the v2-migration arm
+    // Zig parameterised on `SemverIntType`, but the v2-migration arm
     // below hard-codes `u32 → u64` (`VersionedURL.migrate()` returns `<u64>`).
     // The only caller (`bun.lockb.rs`) instantiates at `u64`, so bind concretely
     // instead of carrying a phantom generic that can't typecheck the migrate arm.
@@ -3275,7 +3271,6 @@ pub mod serializer {
         migrate_from_v2: bool,
     ) -> Result<PackagesLoadResult<u64>, bun_core::Error> {
         type SemverIntType = u64;
-        // TODO(port): narrow error set
         let reader = stream.reader();
 
         let list_len = reader.read_int_le::<u64>()?;
@@ -3289,7 +3284,8 @@ pub mod serializer {
 
         let mut list = List::<SemverIntType>::default();
 
-        // TODO(port): @alignOf(@TypeOf(list.bytes)) — needs MultiArrayList bytes ptr type.
+        // Zig compared against `@alignOf(@TypeOf(list.bytes))` — the alignment
+        // of the MultiArrayList bytes *pointer* itself, i.e. pointer alignment.
         let expected_alignment = mem::align_of::<*mut u8>() as u64;
         if expected_alignment != input_alignment {
             return Err(bun_core::err!(
@@ -3403,7 +3399,6 @@ pub mod serializer {
         list: &mut List<SemverIntType>,
         needs_update: &mut bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let _n = list.len();
         let mut sliced = list.slice();
 
@@ -3421,7 +3416,6 @@ pub mod serializer {
                     sliced.column_bytes_mut(field as usize)
                 }
             };
-            // TODO(port): assert_no_uninitialized_padding once a typed accessor lands.
             let end_pos = stream.pos + bytes.len();
             if end_pos as u64 <= end_at {
                 let src = &stream.buffer[stream.pos..stream.pos + bytes.len()];

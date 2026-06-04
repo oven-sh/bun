@@ -90,11 +90,9 @@ pub use crate::values::{
 
 pub use gated_shims::*;
 
-/// Minimal stand-ins for types that live in still-gated sibling *leaf* modules
-/// (rules/{keyframes,page,container,...}, values::{number,string}). The hub
-/// modules above are real; only the per-rule payload types `AtRulePrelude`
-/// reaches into by name remain shimmed here. When a leaf un-gates, delete the
-/// matching shim.
+/// Re-exports of leaf-module payload types `AtRulePrelude` names directly,
+/// plus crate-tier shims for `bun.ast` types that live above this crate's
+/// dependency tier.
 mod gated_shims {
 
     // ── rules/ leaf-module payload re-exports ────────────────────────────
@@ -206,7 +204,7 @@ impl SourceLocation {
         }
     }
 
-    // PORT NOTE: Zig used `anytype` + `@TypeOf` to dispatch on
+    // Note: Zig used `anytype` + `@TypeOf` to dispatch on
     // `ParserError | BasicParseError | SelectorParseErrorKind`. In Rust this
     // becomes a trait `IntoParserError` implemented by each live variant
     // (the `BasicParseError` arm is dead/ill-typed in Zig — see note below).
@@ -229,7 +227,7 @@ impl IntoParserError for ParserError {
         self
     }
 }
-// PORT NOTE: Zig's `newCustomError` had a third `@TypeOf` arm for
+// Note: Zig's `newCustomError` had a third `@TypeOf` arm for
 // `BasicParseError`, but that arm is dead and ill-typed — it wraps
 // `BasicParseError.intoDefaultParseError(err)` (a `ParseError(ParserError)`)
 // in `.custom`, which expects a `ParserError`. No caller ever passes
@@ -247,8 +245,8 @@ pub type PrintResult<T> = Maybe<T, PrinterError>;
 
 #[cold]
 pub fn todo(msg: &str) -> ! {
-    // bun.analytics.Features.todo_panic = 1;
-    // TODO(port): analytics counter
+    // Zig: `bun.analytics.Features.todo_panic = 1;`
+    bun_core::Global::features::TODO_PANIC.store(1, core::sync::atomic::Ordering::Relaxed);
     panic!("TODO: {msg}");
 }
 
@@ -274,7 +272,7 @@ pub fn void_wrap<T>(
 
 /// Shorthand longhand-reconstruction helpers.
 ///
-/// PORT NOTE: Zig's `DefineShorthand` bodies are `@compileError(todo_stuff.depth)`
+/// Note: Zig's `DefineShorthand` bodies are `@compileError(todo_stuff.depth)`
 /// — i.e. instantiating the comptime fn and reaching any method is a compile
 /// error. The faithful Rust mapping is a trait with **no default bodies**: any
 /// `impl DefineShorthand for T` that omits a method fails at compile time, same
@@ -319,7 +317,7 @@ pub trait DefineShorthand: Sized {
     fn set_longhand(&mut self, property: &Property) -> bool;
 }
 
-// PORT NOTE: Zig's `DefineListShorthand` / `DefineRectShorthand` /
+// Note: Zig's `DefineListShorthand` / `DefineRectShorthand` /
 // `DefineSizeShorthand` / `DeriveParse` / `DeriveToCss` comptime fns became
 // proc-macros (`bun_css_derive::*`, re-exported below) plus the
 // `impl_rect_shorthand!` / `impl_size_shorthand!` macros in
@@ -386,15 +384,16 @@ pub trait EnumProperty: Sized + Copy + Into<&'static str> {
     where
         Self: Into<u32>,
     {
-        // TODO(port): Zig hashed the raw enum int bytes.
+        // Zig hashed the enum's native-width tag bytes; the width only changes
+        // the hash value, which never leaves the process, so a fixed u32 is fine.
         let tag: u32 = (*self).into();
         hasher.update(&tag.to_ne_bytes());
     }
 }
 
-/// `DeriveValueType` — maps each enum variant to a `MediaFeatureType` via a
-/// comptime field map.
-/// TODO(port): proc-macro `#[derive(ValueType)]` with attribute annotations.
+/// `DeriveValueType` — maps each enum variant to a `MediaFeatureType`. Zig
+/// used a comptime `ValueTypeMap`; the Rust impls are written by hand (see
+/// `media_query.rs`, `rules/container.rs`), so no derive macro is needed.
 pub trait DeriveValueType {
     fn value_type(&self) -> MediaFeatureType;
 }
@@ -559,7 +558,7 @@ fn parse_until_before<T, C>(
     parse_fn: impl FnOnce(C, &mut Parser) -> CssResult<T>,
 ) -> CssResult<T> {
     let delimiters = parser.stop_before | delimiters_;
-    // PORT NOTE: reshaped for borrowck — Zig held `parser.input` aliased
+    // Note: reshaped for borrowck — Zig held `parser.input` aliased
     // between the outer Parser and a stack-local "delimited" Parser. In Rust
     // `&'a mut ParserInput<'a>` is invariant and cannot be reborrowed into a
     // second `Parser<'a>` while the first lives. We instead temporarily swap
@@ -698,7 +697,7 @@ fn parse_nested_block<T>(
         BlockType::SquareBracket => Delimiters::CLOSE_SQUARE_BRACKET,
         BlockType::Parenthesis => Delimiters::CLOSE_PARENTHESIS,
     };
-    // PORT NOTE: reshaped for borrowck — same aliasing as parse_until_before.
+    // Note: reshaped for borrowck — same aliasing as parse_until_before.
     // Swap stop_before/at_start_of in place rather than constructing a second
     // Parser over the invariant `&'a mut ParserInput<'a>`.
     let saved_stop_before = parser.stop_before;
@@ -875,7 +874,9 @@ impl CustomAtRuleParser for DefaultAtRuleParser {
 pub const ENABLE_TAILWIND_PARSING: bool = false;
 
 pub type BundlerAtRule = DefaultAtRule;
-// TODO(port): when ENABLE_TAILWIND_PARSING == true, this is `TailwindAtRule`.
+// Zig: `if (ENABLE_TAILWIND_PARSING) TailwindAtRule else DefaultAtRule`
+// (css_parser.zig:1345); the flag is false, so only the DefaultAtRule form is
+// ported.
 
 pub struct BundlerAtRuleParser<'a> {
     pub arena: &'a Bump,
@@ -895,7 +896,9 @@ pub struct BundlerAtRuleParser<'a> {
 }
 
 impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
-    // TODO(port): when ENABLE_TAILWIND_PARSING, Prelude = enum { Tailwind(TailwindAtRule) }.
+    // Zig gates `Prelude = union(enum) { tailwind: TailwindAtRule }` on
+    // ENABLE_TAILWIND_PARSING (false; css_parser.zig:1368) — only the void
+    // form is ported.
     type Prelude = ();
     type AtRule = BundlerAtRule;
 
@@ -905,7 +908,8 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         input: &mut Parser,
         _: &ParserOptions,
     ) -> CssResult<Self::Prelude> {
-        // TODO(port): tailwind branch (gated on ENABLE_TAILWIND_PARSING).
+        // Zig's tailwind branch is comptime-gated on ENABLE_TAILWIND_PARSING
+        // (false; css_parser.zig:1374) — only the error path ships.
         Err(input.new_error(BasicParseErrorKind::at_rule_invalid(name)))
     }
 
@@ -927,7 +931,8 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
         _: &ParserOptions,
         _: bool,
     ) -> Maybe<Self::AtRule, ()> {
-        // TODO(port): tailwind branch.
+        // Zig's tailwind branch is comptime-gated on ENABLE_TAILWIND_PARSING
+        // (false; css_parser.zig:1408) — only the error path ships.
         Err(())
     }
 
@@ -1022,9 +1027,8 @@ impl<'a> CustomAtRuleParser for BundlerAtRuleParser<'a> {
 
 // ───────────────────────────── AtRulePrelude ─────────────────────────────
 //
-// The few leaf-module payload types not yet exposed by `rules/mod.rs`
-// (KeyframesName, PageSelector, ContainerName, ContainerCondition) come from
-// `gated_shims` above.
+// The leaf-module payload types (KeyframesName, PageSelector, ContainerName,
+// ContainerCondition) are re-exported from `rules/` via `gated_shims` above.
 
 pub enum AtRulePrelude<T> {
     FontFace,
@@ -1053,17 +1057,13 @@ pub enum AtRulePrelude<T> {
     Supports(SupportsCondition),
     Viewport(VendorPrefix),
     Keyframes {
-        // TODO(port): real type is `css_rules::keyframes::KeyframesName` —
-        // leaf module gated in rules/mod.rs.
         name: KeyframesName,
         prefix: VendorPrefix,
     },
-    // TODO(port): real type is `Vec<css_rules::page::PageSelector>` — gated.
     Page(Vec<PageSelector>),
     MozDocument,
     Layer(SmallList<LayerName, 1>),
     Container {
-        // TODO(port): real types in `css_rules::container` — gated.
         name: Option<ContainerName>,
         condition: ContainerCondition,
     },
@@ -1112,7 +1112,7 @@ pub enum TopLevelState {
 }
 
 pub struct TopLevelRuleParser<'a, AtRuleParserT: CustomAtRuleParser> {
-    // PORT NOTE: Zig threaded `input.arena()` at every call site; the Rust
+    // Note: Zig threaded `input.arena()` at every call site; the Rust
     // `DeclarationList = bumpalo::Vec<'bump, Property>` needs the arena up
     // front, so cache it here (same `'static`-erased borrow `DeclarationBlock`
     // already uses crate-wide).
@@ -1201,7 +1201,7 @@ pub struct NestedRuleParser<'a, T: CustomAtRuleParser> {
     pub options: &'a ParserOptions<'a>,
     pub at_rule_parser: &'a mut T,
     // todo_stuff.think_mem_mgmt
-    // PORT NOTE: `DeclarationList<'bump>` borrows the parser arena. Threading
+    // Note: `DeclarationList<'bump>` borrows the parser arena. Threading
     // `'bump` here cascades into every rule type; deferred (matches
     // `StyleRule`'s `'static` erasure in rules/style.rs).
     pub declarations: DeclarationList<'static>,
@@ -1329,7 +1329,7 @@ mod rule_parsers {
     use super::*;
     use crate::selectors::parser as selector_parser;
 
-    // PORT NOTE: Zig threaded `composes_ctx: anytype` (pointer to the
+    // Note: Zig threaded `composes_ctx: anytype` (pointer to the
     // `NestedRuleParser`) directly into `parse_declaration`. Rust's borrow checker
     // forbids passing `&mut *this` while also borrowing `this.declarations` /
     // `this.important_declarations`, so split-borrow the three composes fields
@@ -1633,7 +1633,7 @@ mod rule_parsers {
                 composes_refs: &mut *self.composes_refs,
                 local_properties: &mut *self.local_properties,
             };
-            // PORT NOTE: reshaped for borrowck — Zig held `self.*` aliased. Spell
+            // Note: reshaped for borrowck — Zig held `self.*` aliased. Spell
             // out the impl with a fresh lifetime so `nested_parser` isn't forced
             // to borrow `rules` for `'a`.
             let parse_declarations =
@@ -2013,7 +2013,7 @@ mod rule_parsers {
                     Ok(())
                 }
                 AtRulePrelude::Layer(mut layer) => {
-                    // PORT NOTE (css_parser.zig:2393): Zig reads
+                    // Note (css_parser.zig:2393): Zig reads
                     // `prelude.layer.at(0).*` — a struct copy that leaves the list
                     // intact — *then* calls `onLayerRule(&prelude.layer)` so the
                     // hook still observes the 1-element list. Mirror that: clone
@@ -2192,7 +2192,7 @@ mod rule_parsers {
             input: &mut Parser,
         ) -> CssResult<()> {
             let loc = this.get_loc(start);
-            // PORT NOTE: Zig `defer this.composes_refs.clearRetainingCapacity();`.
+            // Note: Zig `defer this.composes_refs.clearRetainingCapacity();`.
             // `composes_refs` is `&mut SmallList<..>` borrowed from the parent
             // `TopLevelRuleParser`, so dropping `NestedRuleParser` on an error path
             // does NOT clear the underlying storage. A safe `scopeguard::guard`
@@ -2203,7 +2203,7 @@ mod rule_parsers {
             // `TopLevelRuleParser`) strictly outlives this frame.
             let composes_refs_ptr: *mut SmallList<ast::Ref, 2> = &raw mut *this.composes_refs;
             scopeguard::defer! {
-                // SAFETY: see PORT NOTE above — no aliasing borrow live at drop.
+                // SAFETY: see the note above — no aliasing borrow live at drop.
                 unsafe { (*composes_refs_ptr).clear_retaining_capacity(); }
             }
             // allow composes if:
@@ -2311,7 +2311,7 @@ mod rule_parsers {
         type Declaration = ();
 
         fn parse_value(this: &mut Self, name: &[u8], input: &mut Parser) -> CssResult<()> {
-            // PORT NOTE: split-borrow — see `NestedComposesCtx` above.
+            // Note: split-borrow — see `NestedComposesCtx` above.
             // SAFETY: `input.arena()` re-borrows the parser arena through `&self`;
             // detach that borrow so `input` can be re-borrowed mutably below. The
             // arena outlives the parser (it owns all parsed allocations).
@@ -2510,9 +2510,14 @@ impl PropertyUsage {
     }
 }
 
-// TODO(port): Zig: `std.bit_set.ArrayBitSet(usize, ceilPow2(EnumFields(PropertyIdTag).len))`.
-// Compute the variant count via `strum::EnumCount` instead of hardcoding 1024.
-pub type PropertyBitset = ArrayBitSet<1024, { num_masks_for(1024) }>;
+// Zig: `std.bit_set.ArrayBitSet(usize, ceilPowerOfTwo(EnumFields(PropertyIdTag).len))`
+// (css_parser.zig:3015). `PropertyIdTag` is a dense `repr(u16)` enum with no
+// explicit discriminants whose last variant is `Custom`, so the variant count
+// is `Custom + 1`.
+pub const PROPERTY_BITSET_BITS: usize =
+    (PropertyIdTag::Custom as usize + 1).next_power_of_two();
+pub type PropertyBitset =
+    ArrayBitSet<PROPERTY_BITSET_BITS, { num_masks_for(PROPERTY_BITSET_BITS) }>;
 
 pub fn fill_property_bit_set(
     bitset: &mut PropertyBitset,
@@ -2569,8 +2574,9 @@ pub struct StyleSheet<AtRule> {
     pub source_map_urls: Vec<Option<Box<[u8]>>>,
     pub license_comments: Vec<&'static [u8]>, // TODO(port): lifetime — arena
     pub options: ParserOptions<'static>,      // TODO(port): lifetime
-    // Zig: `tailwind: if (AtRule == BundlerAtRule) ?*BundlerTailwindState else u0`
-    // TODO(port): conditional field; for now Option<Box<_>> always.
+    // Zig: `tailwind: if (AtRule == BundlerAtRule) ?*BundlerTailwindState else u0`.
+    // Rust has no comptime-conditional fields; `Option<Box<_>>` (always `None`
+    // for non-bundler sheets) is the permanent shape.
     pub tailwind: Option<Box<BundlerTailwindState>>,
     pub layer_names: Vec<LayerName>,
 
@@ -2601,15 +2607,14 @@ impl<AtRule> StyleSheet<AtRule> {
 }
 
 // ── StyleSheet behavior (parse/minify/to_css) ────────────────────────────────
-// Method *bodies* are ported with `// PORT NOTE:` borrowck reshapes where Zig
-// aliased pointers.
+// Method *bodies* carry borrowck-reshape notes where Zig aliased pointers.
 mod stylesheet_impl {
     use super::*;
 
     impl<AtRule> StyleSheet<AtRule> {
         /// Minify and transform the style sheet for the provided browser targets.
         ///
-        /// PORT NOTE: `arena` is the arena that owns this stylesheet's AST
+        /// Note: `arena` is the arena that owns this stylesheet's AST
         /// (Zig: `arena: Allocator`). It is threaded into `MinifyContext` so
         /// downstream `deep_clone` calls allocate alongside the existing tree.
         pub fn minify(
@@ -2698,7 +2703,7 @@ mod stylesheet_impl {
             local_names: Option<&'a LocalsResultsMap>,
             symbols: &'a bun_ast::symbol::Map,
         ) -> PrintResult<ToCssResultInternal> {
-            // PORT NOTE: PrinterOptions has `&mut SourceMap` and so isn't Copy; capture
+            // Note: PrinterOptions has `&mut SourceMap` and so isn't Copy; capture
             // the lone field we re-read after moving `options` into Printer::new.
             let project_root = options.project_root;
             let mut printer = Printer::new(
@@ -2803,9 +2808,10 @@ mod stylesheet_impl {
         ) -> PrintResult<ToCssResult> {
             // TODO: this is not necessary
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
-            // TODO(port): writer adapter — Zig used std.Io.Writer.Allocating; here we
-            // route through bun_io::Write over Vec<u8> until 'bump dest threads.
-            // blocked_on: bun_io::Write impl for Vec<u8> / dest ownership reshape.
+            // Zig used std.Io.Writer.Allocating; `Vec<u8>` behind `bun_io::Write`
+            // is the equivalent allocating destination.
+            // PERF(port): Zig's writer fed an allocator the caller controlled;
+            // this always heap-allocates — profile if hot.
             let mut dest: Vec<u8> = Vec::with_capacity(1);
             let result = self.to_css_with_writer(
                 arena,
@@ -2830,7 +2836,7 @@ mod stylesheet_impl {
             import_records: Option<&mut Vec<ImportRecord>>,
             source_index: SrcIndex,
         ) -> Maybe<(StyleSheet<DefaultAtRule>, StylesheetExtra), Err<ParserError>> {
-            // PORT NOTE: Zig instantiated `StyleSheet(DefaultAtRule).parse`; Rust
+            // Note: Zig instantiated `StyleSheet(DefaultAtRule).parse`; Rust
             // cannot vary `Self`'s `AtRule` param against `DefaultAtRuleParser`, so
             // this returns the concrete `StyleSheet<DefaultAtRule>`. Callers that
             // need a custom at-rule call `parse_with` directly.
@@ -2971,24 +2977,6 @@ mod stylesheet_impl {
             // bun.debugAssert()
         }
 
-        pub fn contains_tailwind_directives(&self) -> bool {
-            // TODO(port): Zig `@compileError` if AtRule != BundlerAtRule.
-            let mut found_import = false;
-            for rule in self.rules.v.iter() {
-                match rule {
-                    CssRule::Custom(_) => return true,
-                    // TODO: layer
-                    CssRule::LayerBlock(_) => {}
-                    CssRule::Import(_) => {
-                        found_import = true;
-                    }
-                    _ => return false,
-                }
-            }
-            let _ = found_import;
-            false
-        }
-
         pub fn new_from_tailwind_imports(
             options: ParserOptions<'static>,
             imports_from_tailwind: CssRuleList<AtRule>,
@@ -3016,7 +3004,7 @@ mod stylesheet_impl {
             out: &mut CssRuleList<AtRule>,
             new_import_records: &mut Vec<ImportRecord>,
         ) {
-            // PORT NOTE: the Zig fn takes `*const @This()` but writes
+            // Note: the Zig fn takes `*const @This()` but writes
             // `rule.* = .ignored;` through it (Zig has no const-transitivity).
             // Writing through a `*const`-derived pointer is UB in Rust, so the
             // receiver is reshaped to `&mut self`. The sole caller (Tailwind
@@ -3077,7 +3065,7 @@ mod stylesheet_impl {
                             original_path: b"",
                             flags: Default::default(),
                         });
-                        // PORT NOTE: reshaped for borrowck — Zig did
+                        // Note: reshaped for borrowck — Zig did
                         // `out.v.appendAssumeCapacity(rule.*)` (bitwise copy) then
                         // `rule.* = .ignored`. Rust moves the rule out via
                         // `mem::replace` (no `Clone` bound needed) and pushes that.
@@ -3096,6 +3084,27 @@ mod stylesheet_impl {
                     break;
                 }
             }
+        }
+    }
+
+    // Zig compile-errors unless `AtRule == BundlerAtRule`
+    // (css_parser.zig:3355); the concrete impl enforces the same restriction.
+    impl StyleSheet<BundlerAtRule> {
+        pub fn contains_tailwind_directives(&self) -> bool {
+            let mut found_import = false;
+            for rule in self.rules.v.iter() {
+                match rule {
+                    CssRule::Custom(_) => return true,
+                    // TODO: layer
+                    CssRule::LayerBlock(_) => {}
+                    CssRule::Import(_) => {
+                        found_import = true;
+                    }
+                    _ => return false,
+                }
+            }
+            let _ = found_import;
+            false
         }
     }
 
@@ -3149,8 +3158,8 @@ mod stylesheet_impl {
             // );
 
             let symbols = bun_ast::symbol::Map::init_list(Default::default());
-            // TODO(port): writer adapter — Zig used std.Io.Writer.Allocating; route
-            // through bun_io::Write over Vec<u8> until 'bump dest threads.
+            // Zig used std.Io.Writer.Allocating; `Vec<u8>` behind `bun_io::Write`
+            // is the equivalent allocating destination.
             let mut dest: Vec<u8> = Vec::new();
             let mut printer = Printer::new(
                 arena,
@@ -3184,7 +3193,7 @@ mod stylesheet_impl {
             import_records: &mut Vec<ImportRecord>,
             source_index: SrcIndex,
         ) -> Maybe<(Self, StylesheetExtra), Err<ParserError>> {
-            // PORT NOTE: Zig aliased `import_records` into both `BundlerAtRuleParser`
+            // Note: Zig aliased `import_records` into both `BundlerAtRuleParser`
             // *and* the inner `Parser` (css_parser.zig:3245), and aliased `&options`
             // into the at-rule parser while also passing `options` by value (struct
             // copy) to `parseWith`. Rust forbids both overlaps directly:
@@ -3226,7 +3235,7 @@ mod stylesheet_impl {
 // ───────────────────────────── StyleAttribute ─────────────────────────────
 
 pub struct StyleAttribute {
-    // PORT NOTE: `DeclarationBlock<'bump>` borrows the parser arena; lifetime
+    // Note: `DeclarationBlock<'bump>` borrows the parser arena; lifetime
     // erased to `'static` until 'bump threads through the rule tree (matches
     // `StyleRule.declarations` in rules/style.rs).
     pub declarations: DeclarationBlock<'static>,
@@ -3471,7 +3480,7 @@ bitflags::bitflags! {
         const CSS_MODULES = 0b1;
     }
 }
-// PORT NOTE: Zig packed struct had `css_modules: bool`. Expose accessor:
+// Note: Zig packed struct had `css_modules: bool`. Expose accessor:
 impl ParserOpts {
     #[inline]
     pub fn css_modules(self) -> bool {
@@ -4564,14 +4573,13 @@ pub struct Tokenizer<'a> {
 const FORM_FEED_BYTE: u8 = 0x0C;
 const REPLACEMENT_CHAR: u32 = 0xFFFD;
 const REPLACEMENT_CHAR_UNICODE: [u8; 3] = [0xEF, 0xBF, 0xBD];
-/// UTF-8 encoding of U+0FFD — used by `serializer` where Zig called
-/// `bun.strings.encodeUTF8Comptime(0xFFD)` (css_parser.zig:6747, :6937). The
-/// Zig literal is `0xFFD` (sic — likely a typo for `0xFFFD`), but the spec is
-/// ground truth: encode 0x0FFD → [0xE0, 0xBF, 0xBD] to byte-match.
-/// TODO(port): confirm whether the spec itself needs fixing to 0xFFFD.
-// TODO(port): verify upstream — Zig wrote 0xFFD, comment says "replacement
-// character" which is U+FFFD. Byte-matching the spec (0x0FFD) for now.
-const REPLACEMENT_CHAR_UTF8: &[u8] = &[0xE0, 0xBF, 0xBD];
+/// UTF-8 encoding of U+FFFD REPLACEMENT CHARACTER, written by `serializer`
+/// when escaping a NUL byte (css-syntax requires U+0000 → U+FFFD; upstream
+/// rust-cssparser writes `"\u{FFFD}"`). Zig called
+/// `bun.strings.encodeUTF8Comptime(0xFFD)` (css_parser.zig:6747, :6937) — a
+/// typo for `0xFFFD` per its own "replacement character" comment — and so
+/// emitted U+0FFD (`[0xE0, 0xBF, 0xBD]`); that bug is fixed here.
+const REPLACEMENT_CHAR_UTF8: &[u8] = &REPLACEMENT_CHAR_UNICODE;
 const MAX_ONE_B: u32 = 0x80;
 const MAX_TWO_B: u32 = 0x800;
 const MAX_THREE_B: u32 = 0x10000;
@@ -4669,7 +4677,7 @@ impl<'a> Tokenizer<'a> {
 
     pub fn see_function(&mut self, name: &[u8]) {
         if self.var_or_env_functions == SeenStatus::LookingForThem {
-            // PORT NOTE: Zig had `and` here (always false); preserved.
+            // Note: Zig had `and` here (always false); preserved.
             if strings::eql_case_insensitive_ascii_check_length(name, b"var")
                 && strings::eql_case_insensitive_ascii_check_length(name, b"env")
             {
@@ -5654,15 +5662,14 @@ fn byte_to_decimal_digit(b: u8) -> Option<u32> {
 }
 
 pub fn split_source_map(contents: &[u8]) -> Option<&[u8]> {
-    // FIXME: Use bun CodepointIterator
-    // TODO(port): Zig used std.unicode.Utf8Iterator. Approximate with byte
-    // scan since the delimiters are all ASCII.
+    // Zig used std.unicode.Utf8Iterator; a byte scan is equivalent because the
+    // delimiters are all ASCII and ASCII bytes never occur inside a multi-byte
+    // UTF-8 sequence. Zig returned `[0..iter.i]` where `i` is *after* the
+    // matched codepoint — hence `i + 1`.
     for (i, &c) in contents.iter().enumerate() {
         match c {
             b' ' | b'\t' | FORM_FEED_BYTE | b'\r' | b'\n' => {
                 return Some(&contents[0..i + 1]);
-                // PORT NOTE: Zig returned `[0..iter.i]` where `i` is *after*
-                // the codepoint — preserved.
             }
             _ => {}
         }
@@ -6005,12 +6012,10 @@ impl Token {
 }
 
 // `impl Display for Token` lives at crate root (lib.rs) — minimal rendering
-// for error messages. The full Zig `Token.format` (CSS-serialization-correct)
-// is `Token::to_css_generic` above; switch lib.rs's impl to delegate once
-// dependents stop relying on the simple form.
-// TODO(port): Zig `format` had subtle differences from `to_css_generic`
-// (quoted_string→serialize_string, idhash→serialize_identifier). Specialize
-// if it matters for diagnostics.
+// for error messages only. The CSS-serialization-correct form is
+// `Token::to_css_generic` above; Zig's `Token.format` additionally routed
+// quoted_string→serialize_string and idhash→serialize_identifier, a purely
+// cosmetic difference in diagnostics output.
 
 /// Byte-writer trait for `serializer` and `to_css_generic` (replaces Zig
 /// `anytype` writer). Aliased to the canonical `bun_io::Write`; the associated
@@ -6616,7 +6621,7 @@ pub mod to_css {
             local_names,
             symbols,
         );
-        // PORT NOTE: Zig special-cased `T == CSSString` → `CSSStringFns.toCss`;
+        // Note: Zig special-cased `T == CSSString` → `CSSStringFns.toCss`;
         // in Rust the `ToCss` impl on `CSSString` routes there directly, so the
         // generic dispatch suffices.
         this.to_css(&mut printer)?;

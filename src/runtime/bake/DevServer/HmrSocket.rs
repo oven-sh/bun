@@ -11,7 +11,7 @@ use super::{ConsoleLogKind, DevServer, HmrTopic, IncomingMessageId, MessageId};
 use crate::bake::dev_server_body::HmrTopicBits;
 
 // Local shim for Zig's `res: anytype` — shared with `DevServer::on_web_socket_upgrade`.
-// TODO(port): replace with `bun_uws::ResponseLike` once that trait lands upstream.
+// The trait lives in `dev_server/mod.rs`; only the dev server needs it.
 pub(crate) use super::ResponseLike;
 
 // Struct definition lives in `dev_server/mod.rs` so the public
@@ -151,7 +151,7 @@ impl HmrSocket {
                                             dev.memory_visualizer_timer.state
                                                 != EventLoopTimerState::ACTIVE
                                         );
-                                        // PORT NOTE (jsc/runtime crate cycle): `vm.timer` is `()` on the
+                                        // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the
                                         // low-tier `VirtualMachine`; the real `timer::All`
                                         // lives in `RuntimeState` (see jsc_hooks.rs).
                                         let state = crate::jsc_hooks::runtime_state();
@@ -174,7 +174,7 @@ impl HmrSocket {
                             }
                         }
                     } else if new_bits.contains(bit) && !self.subscriptions.contains(bit) {
-                        // PORT NOTE: this `else if` condition is identical to the `if` above in
+                        // Note: this `else if` condition is identical to the `if` above in
                         // the source Zig (line 96) and is therefore unreachable. Ported verbatim;
                         // likely an upstream bug (intended: `!new && old` → unsubscribe).
                         let _ = ws.unsubscribe(&[field as u8]);
@@ -240,7 +240,7 @@ impl HmrSocket {
                         ws.close();
                     }
                     super::TestingBatchEvents::Enabled(_event_const) => {
-                        // PORT NOTE: reshaped for borrowck — Zig copied the payload then
+                        // Note: reshaped for borrowck — Zig copied the payload then
                         // overwrote the union; here we replace-and-extract.
                         let super::TestingBatchEvents::Enabled(mut event) = core::mem::replace(
                             &mut dev.testing_batch_events,
@@ -344,7 +344,7 @@ impl HmrSocket {
                 if dev.emit_incremental_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
-                    // PORT NOTE (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier
+                    // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier
                     // `VirtualMachine`; the real `timer::All` lives in `RuntimeState`.
                     let state = crate::jsc_hooks::runtime_state();
                     // SAFETY: `runtime_state()` is non-null after `bun_runtime::init()`;

@@ -33,7 +33,6 @@ impl FieldDescription {
         types::Tag(self.type_oid as Short)
     }
 
-    // PORT NOTE: reshaped out-param constructor (`this.* = .{...}`) into a value-returning fn.
     pub fn decode_internal<Container: super::new_reader::ReaderContext>(
         reader: &mut NewReader<Container>,
     ) -> Result<Self, AnyPostgresError> {

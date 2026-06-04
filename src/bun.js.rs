@@ -14,7 +14,6 @@ use bun_standalone_graph::StandaloneModuleGraph::{Flags as GraphFlags, Standalon
 // Thin re-exports (mirrors `pub const X = @import(...)` at file top).
 pub use crate::api;
 pub use crate::webcore;
-pub use bun_jsc as jsc_mod; // TODO(port): naming — Zig exposed this as `bun.js.jsc`
 
 /// Canonical `Run` lives in `cli::run_command`; re-export so callers that
 /// expect `bun.js.Run` resolve to the single definition.

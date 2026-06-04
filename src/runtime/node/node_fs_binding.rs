@@ -15,7 +15,7 @@ pub(crate) type NodeFSFunction =
     fn(this: &Binding, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue>;
 
 // Zig: `const NodeFSFunctionEnum = std.meta.DeclEnum(node.fs.NodeFS);`
-// PORT NOTE: Rust has no `DeclEnum`/`@field`/`@typeInfo` reflection. The
+// Rust has no `DeclEnum`/`@field`/`@typeInfo` reflection. The
 // (`args::*`, `ret::*`, `NodeFS::<method>`, `async_::*`) quadruples that the
 // Zig comptime block reflected per `function_name` are spelled out once in
 // `node_fs.rs` (the `NodeFS::dispatch` table + `async_::*` aliases) and reused
@@ -24,7 +24,7 @@ pub(crate) type NodeFSFunction =
 /// Returns bindings to call jsc.Node.fs.NodeFS.<function>.
 /// Async calls use a thread pool.
 // Zig: `fn Bindings(comptime function_name) type { return struct { runSync, runAsync } }`
-// PORT NOTE: collapsed to two free generic fns; the `comptime function_name`
+// Collapsed to two free generic fns; the `comptime function_name`
 // becomes a `const F: NodeFSFunctionEnum`, and the reflected `Arguments` /
 // return type become `A: FsArgument` / `R: FsReturn`.
 

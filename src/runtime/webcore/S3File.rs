@@ -238,7 +238,7 @@ pub fn write(global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue
             )
         }
         PathOrBlob::Blob(blob) => {
-            // PORT NOTE: reshaped for borrowck — match consumes path_or_blob; rebuild to pass &mut PathOrBlob
+            // Reshaped for borrowck — match consumes path_or_blob; rebuild to pass &mut PathOrBlob
             let mut pob = PathOrBlob::Blob(blob);
             blob::write_file_internal(
                 global,
@@ -372,7 +372,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
         if aws_options.changed_credentials {
             break 'brk blob::Store::init_s3(path, None, aws_options.credentials).expect("oom");
         } else {
-            // PORT NOTE: Zig `initS3WithReferencedCredentials` bumps the
+            // Zig `initS3WithReferencedCredentials` bumps the
             // intrusive ref on `default_credentials` (a `*S3Credentials`).
             // The Rust `Store::S3` field is `Rc<S3Credentials>` (separate rc
             // layer), so we can't share the existing intrusive allocation —
@@ -402,7 +402,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials_and_options(
                         blob.content_type_was_set.set(true);
                         // SAFETY: bun_vm() returns the live VM raw ptr.
                         if let Some(entry) = global.bun_vm().as_mut().mime_type(str.slice()) {
-                            // PORT NOTE: `MimeType.value` is `Cow<'static, [u8]>`; the
+                            // `MimeType.value` is `Cow<'static, [u8]>`; the
                             // canonical-table hit (via `Compact::to_mime_type`) is always
                             // `Borrowed(&'static)`. If a future table source ever yields
                             // `Owned`, hand the buffer to the blob's allocated-content-type
@@ -469,7 +469,7 @@ pub(crate) fn construct_s3_file_with_s3_credentials(
                         blob.content_type_was_set.set(true);
                         // SAFETY: bun_vm() returns the live VM raw ptr.
                         if let Some(entry) = global.bun_vm().as_mut().mime_type(str.slice()) {
-                            // PORT NOTE: `MimeType.value` is `Cow<'static, [u8]>`; the
+                            // `MimeType.value` is `Cow<'static, [u8]>`; the
                             // canonical-table hit (via `Compact::to_mime_type`) is always
                             // `Borrowed(&'static)`. If a future table source ever yields
                             // `Owned`, hand the buffer to the blob's allocated-content-type
@@ -573,7 +573,6 @@ impl S3BlobStatTask {
                     .resolve(global, JSValue::js_number(stat_result.size as f64))?;
             }
             s3::S3StatResult::NotFound(err) | s3::S3StatResult::Failure(err) => {
-                // TODO(port): Zig binds same payload name for .not_found and .failure arms; verify NotFound carries an error payload
                 let value = s3_error_to_js_with_async_stack(
                     &err,
                     global,
@@ -708,7 +707,7 @@ impl S3BlobStatTask {
     // deinit: store.deref() + promise.deinit() + bun.destroy(this) — all handled by Box<Self> Drop
 }
 
-// PORT NOTE: `Method.fromJS` lives in `bun_http_jsc` so `bun_http_types` stays
+// `Method.fromJS` lives in `bun_http_jsc` so `bun_http_types` stays
 // JSC-free. Thin local alias keeps the `getPresignUrlFrom` body diff-stable
 // against the Zig.
 #[inline]
@@ -821,7 +820,7 @@ pub(crate) fn get_bucket_name(this: &Blob) -> Option<&[u8]> {
     Some(bucket)
 }
 
-// PORT NOTE: `#[bun_jsc::host_fn(getter|method)]` requires `Self` (impl-block
+// `#[bun_jsc::host_fn(getter|method)]` requires `Self` (impl-block
 // context). These are free fns on `*Blob` exported manually as `JSS3File__*`
 // (see `@export` block below) and called as `s3_file::get_*` from `Blob::get_*`,
 // so the proc-macro shim is not used here — the raw ABI shim is hand-wired.
@@ -928,7 +927,8 @@ pub(crate) fn construct_internal(
     construct_s3_file_internal(global, path, args.next_eat())
 }
 
-// TODO(port): callconv(jsc.conv) — #[bun_jsc::host_fn] macro emits the raw ABI shim; @export name handled below
+// Hand-written ABI shim: returns `*mut Blob` (codegen constructor contract),
+// which `#[bun_jsc::host_fn]` does not model; `@export` name handled below.
 pub(crate) fn construct(global: &JSGlobalObject, callframe: &CallFrame) -> *mut Blob {
     match construct_internal(global, callframe) {
         Ok(b) => b,
@@ -1018,7 +1018,6 @@ pub mod exports {
     }
 }
 
-// TODO(port): move to <area>_sys
 // C++ side defines `SYSV_ABI EncodedJSValue` (JSS3File.cpp).
 bun_jsc::jsc_abi_extern! {
     safe fn BUN__createJSS3File(global: &JSGlobalObject, callframe: &CallFrame) -> JSValue;

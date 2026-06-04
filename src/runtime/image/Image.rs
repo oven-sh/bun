@@ -254,7 +254,7 @@ const MAX_INPUT_FILE_BYTES: u64 = 256 << 20;
 // ───────────────────────────── lifecycle ────────────────────────────────────
 
 impl Image {
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — `#[bun_jsc::JsClass]` on the
+    // No `#[bun_jsc::host_fn]` here — `#[bun_jsc::JsClass]` on the
     // struct emits the constructor C-ABI shim; the bare attribute would expand
     // to a free-fn call (`constructor(__g, __f)`) that can't resolve in `impl`.
     pub fn constructor(
@@ -675,16 +675,15 @@ impl Image {
     /// the ArrayBuffer's vector each call so a detach between construction and
     /// here surfaces as `None` instead of UAF). For off-thread, see `pin_for_task`.
     fn js_thread_bytes(&self, this_value: JSValue, global: &JSGlobalObject) -> Option<&[u8]> {
-        // TODO(port): lifetime — JsBuffer arm returns a borrow into the JS heap,
-        // not into `self`; may need a different return type.
         match self.source.get() {
             Source::JsBuffer => js::source_js_get_cached(this_value)
                 .and_then(|v: JSValue| v.as_array_buffer(global))
                 .map(|ab| {
                     // SAFETY: `ArrayBuffer` is a view struct (ptr+len); the
-                    // bytes live in the JS heap, not in `ab`. `this_value`
-                    // keeps the buffer alive for this JS-thread call — see fn
-                    // doc + TODO(port) above re: borrow-into-JS-heap.
+                    // bytes live in the JS heap, not in `ab` — the returned
+                    // slice borrows the JS heap with `&self`'s lifetime, which
+                    // is sound only on the JS thread. `this_value` keeps the
+                    // buffer alive for this JS-thread call — see fn doc above.
                     unsafe { &*std::ptr::from_ref::<[u8]>(ab.byte_slice()) }
                 }),
             Source::Owned(b) => Some(b.as_slice()),
@@ -786,7 +785,7 @@ impl Image {
 
 // ───────────────────────── static `Bun.Image.backend` ───────────────────────
 //
-// PORT NOTE: `#[bun_jsc::host_fn(getter|setter)]` expands to a `Self`-taking
+// `#[bun_jsc::host_fn(getter|setter)]` expands to a `Self`-taking
 // shim, but these are *static* class accessors (no receiver). The C-ABI shim
 // is emitted by `.classes.ts` codegen (`generated_classes.rs`) and calls them
 // as `Image::<fn>(…)`, so they live in an inherent `impl` with the codegen's
@@ -1182,10 +1181,10 @@ impl Image {
                 return Err(global.throw(format_args!("Image: source ArrayBuffer was detached")));
             }
         };
-        // PORT NOTE: Zig `defer input.release()` is hoisted below — `input`
+        // Zig `defer input.release()` is hoisted below — `input`
         // moves into `task`, and `run()` is sync with no early returns, so we
         // release via `task.input` after the result is extracted.
-        // PORT NOTE: Zig never calls `PipelineTask.deinit()` on this stack
+        // Zig never calls `PipelineTask.deinit()` on this stack
         // temporary (only `then()` does — Image.zig:1092). `Drop` here would
         // underflow `pending_tasks` and downgrade `this_ref`, so suppress it.
         let mut task = mem::ManuallyDrop::new(PipelineTask {
@@ -1200,13 +1199,13 @@ impl Image {
             result: TaskResult::Err(codecs::Error::DecodeFailed),
         });
         task.run();
-        // PORT NOTE: reshaped for borrowck — move `result` out via `replace`
+        // Reshaped for borrowck — move `result` out via `replace`
         // since `task` is behind `ManuallyDrop` deref.
         let result = mem::replace(
             &mut task.result,
             TaskResult::Err(codecs::Error::DecodeFailed),
         );
-        // Zig `defer input.release()` (see PORT NOTE above).
+        // Zig `defer input.release()` (see hoisting note above).
         mem::take(&mut task.input).release();
         match result {
             TaskResult::Encoded { out, format, w, h } => {
@@ -1339,7 +1338,7 @@ impl<'a> BlobReadChain<'a> {
                 let inner = match image.schedule(global, this_value, kind, deliver) {
                     Ok(v) => v,
                     Err(_) => {
-                        // PORT NOTE: `deliver` was moved into `schedule()`; on
+                        // `deliver` was moved into `schedule()`; on
                         // error it has already been dropped there.
                         let _ = outer.reject(
                             global,
@@ -1405,7 +1404,8 @@ pub struct Input {
     // Borrows pinned ArrayBuffer or `image.source.owned`; the owning `Image`
     // is held via BACKREF for the task's lifetime — `RawSlice` invariant.
     bytes: bun_ptr::RawSlice<u8>,
-    // TODO(port): lifetime — borrows `image.source.path` (NUL-terminated).
+    // Borrows `image.source.path` (NUL-terminated); the owning `Image` is
+    // held via BACKREF for the task's lifetime, same as `bytes` above.
     path: Option<*const ZStr>,
     /// JS value to `unpinArrayBuffer` in `then()`. `.zero` for sources
     /// with no ArrayBuffer to pin (Oversize TA, owned, path, copied).
@@ -1469,7 +1469,7 @@ pub enum Kind {
     Placeholder,
 }
 
-// PORT NOTE: renamed from `Result` to avoid shadowing `core::result::Result`.
+// Renamed from Zig's `Result` to avoid shadowing `core::result::Result`.
 pub enum TaskResult {
     Encoded {
         out: codecs::Encoded,
@@ -1710,7 +1710,7 @@ impl<'a> PipelineTask<'a> {
         // dispatch (`run_from_js` → `destroy`), immediately after this returns.
         // JS thread again — release the per-task pin so user code can
         // transfer/detach the source now.
-        // PORT NOTE: reshaped for borrowck — `PipelineTask: Drop` forbids
+        // Reshaped for borrowck — `PipelineTask: Drop` forbids
         // moving fields out by destructure; `mem::take`/`mem::replace` the
         // owning fields into locals instead so `Drop` still runs on the husk.
         mem::take(&mut self.input).release();
@@ -1727,7 +1727,7 @@ impl<'a> PipelineTask<'a> {
             }
             _ => {}
         }
-        // PORT NOTE: `Drop` forbids moving out of `self.result`; swap in a
+        // `Drop` forbids moving out of `self.result`; swap in a
         // throwaway sentinel (`Err` is `Copy`) and match the owned local.
         let result = mem::replace(
             &mut self.result,
@@ -1856,7 +1856,7 @@ impl<'a> PipelineTask<'a> {
                             Ok(p) => p,
                             Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
                         };
-                        // PORT NOTE: `PathOrBlob::Path` owns its `PathOrFileDescriptor`
+                        // `PathOrBlob::Path` owns its `PathOrFileDescriptor`
                         // and frees on Drop — no explicit `path.deinit()` needed.
                         let write_promise = match crate::webcore::blob::write_file_internal(
                             global,
@@ -1898,7 +1898,7 @@ impl<'a> PipelineTask<'a> {
         let p = &self.pipeline;
         if p.rotate != 0 {
             let next = codecs::rotate(&d.rgba, d.width, d.height, u32::from(p.rotate))?;
-            // PORT NOTE: `bun.default_allocator.free(d.rgba)` — assignment drops
+            // Zig `bun.default_allocator.free(d.rgba)` — assignment drops
             // the old `Vec<u8>`/owned buffer.
             d.rgba = next.rgba;
             d.width = next.width;

@@ -86,9 +86,8 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
     /// by the given combinator.
     #[inline]
     pub(crate) fn push_combinator(&mut self, combinator: Combinator) {
-        // PORT NOTE: `SmallList::append/insert` no longer take an arena —
-        // it owns its spill buffer (global arena). The `bump` field is
-        // retained for `BuildResult.components` (BumpVec) only.
+        // `SmallList` owns its spill buffer (global arena); the `bump` field
+        // is retained for `BuildResult.components` (BumpVec) only.
         self.combinators.append((combinator, self.current_len));
         self.current_len = 0;
     }
@@ -105,9 +104,8 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         self.simple_selectors.insert(0, GenericComponent::Nesting);
     }
 
-    // PORT NOTE: Zig `deinit` only freed `simple_selectors` and `combinators`.
-    // In Rust, `SmallList` owns its spill buffer and frees on `Drop`, so no
-    // explicit `Drop` impl is needed here.
+    // `SmallList` owns its spill buffer and frees on `Drop`, so no explicit
+    // `Drop` impl is needed here.
 
     /// Consumes the builder, producing a Selector.
     ///
@@ -129,10 +127,9 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         if parsed_part {
             flags |= SelectorFlags::HAS_PART;
         }
-        // `build_with_specificity_and_flags()` will
-        // PORT NOTE: Zig had `defer this.deinit()` here to free SmallList capacity
-        // after building. In Rust, `Drop` on `SelectorBuilder` handles this when the
-        // builder goes out of scope; the call below already drains the contents.
+        // `build_with_specificity_and_flags()` drains the contents; `Drop` on
+        // `SelectorBuilder` frees the SmallList capacity when the builder goes
+        // out of scope.
         self.build_with_specificity_and_flags(SpecificityAndFlags { specificity, flags })
     }
 
@@ -151,8 +148,7 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
         &mut self,
         spec: SpecificityAndFlags,
     ) -> BuildResult<Impl> {
-        // PORT NOTE: reshaped for borrowck — capture combinators.len()
-        // before borrowing simple_selectors.slice().
+        // Capture combinators.len() before borrowing simple_selectors.slice().
         let combinators_len = self.combinators.len();
 
         let (rest, current) = split_from_end::<GenericComponent<Impl>>(
@@ -170,7 +166,6 @@ impl<Impl: ValidSelectorImpl> SelectorBuilder<Impl> {
 
         loop {
             if current_simple_selectors_i < current_simple_selectors.len() {
-                // PORT NOTE: Zig copies the component by value here (struct copy).
                 // `GenericComponent<Impl>` is not `Copy`; we bitwise-move it out
                 // via `ptr::read` — sound because every element of
                 // `simple_selectors` is consumed exactly once across the loop,

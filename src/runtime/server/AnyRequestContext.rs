@@ -20,7 +20,7 @@ type DebugHttpsCtx = RequestContext<DebugHTTPSServer, true, true, false>;
 type HttpsH3Ctx = RequestContext<HTTPSServer, true, false, true>;
 type DebugHttpsH3Ctx = RequestContext<DebugHTTPSServer, true, true, true>;
 
-// PORT NOTE (§Dispatch): Zig used `bun.ptr.TaggedPointerUnion(...)`. The
+// Zig used `bun.ptr.TaggedPointerUnion(...)`. The
 // `bun_ptr::impl_tagged_ptr_union!` macro hits the orphan rule from outside
 // `bun_ptr`, so per §Dispatch store `(tag: u8, ptr: *mut ())` as two fields.
 // PERF(port): was TaggedPointerUnion pack — 8→16 bytes. AnyRequestContext is
@@ -180,7 +180,7 @@ impl AnyRequestContext {
                 // H3 populates url/headers eagerly
                 return;
             }
-            // PORT NOTE: `ctx.req` is `Option<*mut Req<SSL,H3>>` where
+            // `ctx.req` is `Option<*mut Req<SSL,H3>>` where
             // `Req<_,_> = c_void` (erased handle). For non-H3 the underlying
             // type is always `uws::Request`, so the cast is purely nominal.
             ctx.req = Some(req.cast::<c_void>());
@@ -199,7 +199,7 @@ impl AnyRequestContext {
 
     pub fn on_abort(self, response: uws::AnyResponse) {
         dispatch!(self, (), |T, ctx| {
-            // PORT NOTE: Zig does a checked downcast of the `AnyResponse` arm
+            // Zig does a checked downcast of the `AnyResponse` arm
             // to `*T.Resp` before forwarding. The Rust `RequestContext::on_abort`
             // takes `uws::AnyResponse` directly (and re-checks H3 internally),
             // so forward the enum as-is — the per-variant assert is redundant.

@@ -1,8 +1,7 @@
-// PORT NOTE: Zig source is a *non-exhaustive* `enum(u8)` (trailing `_`), meaning
-// any `u8` value is a valid `FieldType` and unknown bytes from the wire must
+// Any `u8` value is a valid `FieldType` and unknown bytes from the wire must
 // round-trip. A `#[repr(u8)] enum` in Rust is exhaustive — transmuting an
-// unlisted byte into it is UB. So this is ported as a transparent `u8` newtype
-// with associated consts for the known field codes.
+// unlisted byte into it is UB — so this is a transparent `u8` newtype with
+// associated consts for the known field codes.
 
 #[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, Debug)]

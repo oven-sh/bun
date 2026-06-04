@@ -37,7 +37,7 @@ use crate::npm::Negatable;
 use crate::package_manager_real::Options as PackageManagerOptions;
 use crate::repository::RepositoryExt as _;
 use bun_install_types::DependencyVersionTag;
-// PORT NOTE: this file is `crate::lockfile_real::bun_lock`; `super` is the
+// this file is `crate::lockfile_real::bun_lock`; `super` is the
 // real `Lockfile` module, distinct from the `crate::lockfile` stub.
 use super::PackageIDSlice;
 use super::package::{Meta, PackageColumns as _};
@@ -77,7 +77,7 @@ pub(crate) fn url_is_under_registry(url: &[u8], registry: &[u8]) -> bool {
         && (url.len() == registry.len() || url[registry.len()] == b'/')
 }
 
-// PORT NOTE: reshaped for borrowck. Zig keeps a single `var string_buf =
+// reshaped for borrowck. Zig keeps a single `var string_buf =
 // lockfile.stringBuf()` for the whole parser, but in Rust that locks out every
 // other `lockfile.*` access (the `string_buf()` method borrows the whole
 // receiver). Construct a fresh `Buf` at each append site so the disjoint
@@ -93,7 +93,6 @@ macro_rules! sbuf {
     };
 }
 
-// TODO(port): narrow to a concrete byte-writer trait once bun_io stabilizes.
 // PERF(port): anytype → dyn dispatch (Zig used `writer: anytype`; PORTING.md
 // prefers `impl Trait`, but the trait shape is unsettled so dyn for now).
 type Writer = dyn bun_io::Write;
@@ -299,13 +298,12 @@ impl Stringifier {
         options: &PackageManagerOptions,
         writer: &mut Writer,
     ) -> Result<(), WriteError> {
-        // TODO(port): narrow error set
         let buf = lockfile.buffers.string_bytes.as_slice();
         let extern_strings = lockfile.buffers.extern_strings.as_slice();
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
         let pkgs = lockfile.packages.slice();
-        // PORT NOTE: Zig `pkgs.items(.field)` → derive(MultiArrayElement)-generated
+        // Zig `pkgs.items(.field)` → derive(MultiArrayElement)-generated
         // `items_<field>()` column accessors on `Slice<Package>`.
         let pkg_dep_lists: &[DependencySlice] = pkgs.items_dependencies();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
@@ -328,7 +326,7 @@ impl Stringifier {
 
         let mut pkg_map: PkgMap<()> = PkgMap::init();
 
-        // PORT NOTE: `from_slices` (vs `init(lockfile)`) is used so the iterator
+        // `from_slices` (vs `init(lockfile)`) is used so the iterator
         // borrows only `buffers.{trees,hoisted_dependencies,dependencies,string_bytes}`;
         // `overrides`/`catalogs` are mutated below while the iterator is still live.
         let mut pkgs_iter = tree::Iterator::<'_, { tree::IteratorPathStyle::PkgPath }>::from_slices(
@@ -1072,8 +1070,7 @@ impl Stringifier {
         relative_path: &[u8],
         path_buf: &mut [u8],
     ) -> Result<(), WriteError> {
-        // TODO(port): narrow error set to { OutOfMemory, WriteFailed }
-        // PORT NOTE: Zig `defer optional_peers_buf.clearRetainingCapacity()` moved to fn tail.
+        // Zig `defer optional_peers_buf.clearRetainingCapacity()` moved to fn tail.
         // Error path (`?` on writer) aborts the whole save in the caller, so skipping the
         // clear on early-return cannot leak stale entries into a subsequent call.
 
@@ -1250,8 +1247,7 @@ impl Stringifier {
         relative_path: &[u8],
         path_buf: &mut [u8],
     ) -> Result<(), WriteError> {
-        // TODO(port): narrow error set to { OutOfMemory, WriteFailed }
-        // PORT NOTE: Zig `defer optional_peers_buf.clearRetainingCapacity()` moved to fn tail.
+        // Zig `defer optional_peers_buf.clearRetainingCapacity()` moved to fn tail.
         // Error path (`?` on writer) aborts the whole save in the caller, so skipping the
         // clear on early-return cannot leak stale entries into a subsequent call.
 
@@ -1494,7 +1490,7 @@ pub(crate) enum ResolveError {
 }
 
 impl<T> PkgMap<T> {
-    // PORT NOTE: Zig `pub const Entry = T;` — inherent associated types are
+    // Zig `pub const Entry = T;` — inherent associated types are
     // unstable in Rust; callers name `T` directly.
 
     pub(crate) fn init() -> Self {
@@ -2181,7 +2177,7 @@ pub fn parse_into_binary_lockfile(
 
     if lockfile_version != Version::V0 {
         // these are the `workspaceOnly` packages
-        // PORT NOTE: snapshot the workspace-path handles up front so the loop
+        // snapshot the workspace-path handles up front so the loop
         // body can take `&mut *lockfile` (`parse_append_dependencies`,
         // `append_package_dedupe`) without conflicting with the
         // `workspace_paths.values()` iterator borrow. `String` is `Copy`.
@@ -2797,7 +2793,7 @@ pub fn parse_into_binary_lockfile(
         // is chosen (dev -> optional -> prod -> peer)
         let mut seen_deps: bun_collections::StringArrayHashMap<()> = Default::default();
 
-        // PORT NOTE: Zig grabs `pkgs.items(.meta)` / `.items(.resolution)` as
+        // Zig grabs `pkgs.items(.meta)` / `.items(.resolution)` as
         // mutable column slices, writes index 0, then keeps the resolution slice
         // for read-only lookups. In Rust the two `[0]` writes are done first via
         // sequential `&mut` accessors so the loops can take all column views
@@ -3009,7 +3005,7 @@ pub fn parse_into_binary_lockfile(
     Ok(())
 }
 
-// PORT NOTE: Zig signature takes `*BinaryLockfile` plus a `*Dependency` that
+// Zig signature takes `*BinaryLockfile` plus a `*Dependency` that
 // points into `lockfile.buffers.dependencies` — fine in Zig, illegal aliasing in
 // Rust. The function only touches `buffers.resolutions[dep_id]` and reads
 // `text_lockfile_version`, so accept those disjoint pieces directly and let the
@@ -3086,7 +3082,7 @@ fn dependency_resolution_failure(
     Ok(())
 }
 
-// PORT NOTE: Zig threaded `string_buf: *String.Buf` separately from `lockfile`.
+// Zig threaded `string_buf: *String.Buf` separately from `lockfile`.
 // In Rust the `Buf` borrows the same `lockfile.buffers.string_bytes` /
 // `string_pool` fields, so the two parameters alias. The `buf` parameter is
 // dropped and each append constructs a fresh `sbuf!(lockfile)` so the borrow
@@ -3103,9 +3099,10 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
     bundled_pkgs: Option<&PkgPathSet>,
     workspaces_obj: Option<&Expr>,
 ) -> Result<(u32, u32), ParseError> {
-    // PORT NOTE: defer optional_peers_buf.clearRetainingCapacity() moved to fn tail
-    // (and to each early-return path implicitly via clear-on-next-call semantics in caller).
-    // TODO(port): if exact defer semantics matter on error paths, wrap in scopeguard.
+    // Zig cleared `optional_peers_buf` via `defer ... clearRetainingCapacity()` on
+    // every exit path. Clearing on entry is observationally equivalent for all
+    // callers (none read the buf between calls) and also covers early-error exits.
+    optional_peers_buf.clear();
 
     if let Some(optional_peers) = obj.get(b"optionalPeers") {
         if !optional_peers.is_array() {

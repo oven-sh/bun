@@ -13,7 +13,6 @@ pub mod js_bindings {
 
     pub fn generate(global: &JSGlobalObject) -> JSValue {
         let obj = JSValue::create_empty_object(global, 8);
-        // PORT NOTE: `inline for` over homogeneous (name, host_fn) tuples → const array + plain `for`.
         // `#[bun_jsc::host_fn]` emits an `extern "C"` shim named `__jsc_host_<fn>`; that
         // shim is the `JSHostFn` value passed to `JSFunction::create`.
         const ENTRIES: &[(&str, bun_jsc::JSHostFn)] = &[

@@ -48,7 +48,7 @@ pub struct TaskTag(pub u8);
 /// order; `bun_runtime::dispatch::run_task` matches on these. Both sides MUST
 /// agree — adding a variant requires updating both this list and the runtime
 /// match arm.
-// PORT NOTE: Zig `TaggedPointerUnion` derived tags from a comptime type list;
+// Zig `TaggedPointerUnion` derived tags from a comptime type list;
 // Rust splits the table (here) from the type→arm mapping (runtime tier-6).
 #[allow(non_upper_case_globals)]
 pub mod task_tag {
@@ -212,7 +212,7 @@ impl Task {
     /// resolved the tag from the comptime type list. Rust expresses the
     /// type→tag table as the [`Taskable`] trait; the per-type impl supplies
     /// `T::TAG` and the body is the Zig `TaggedPointer.init(ptr, tag)`.
-    // PORT NOTE: Zig accepted `anytype` and reflected on `@TypeOf`; Rust takes
+    // Zig accepted `anytype` and reflected on `@TypeOf`; Rust takes
     // `*mut T` directly (the only shape Zig admitted). `&mut T` coerces at
     // call sites.
     #[inline]
@@ -271,7 +271,7 @@ impl Default for ConcurrentTask {
     }
 }
 
-// PORT NOTE: Zig packs `auto_delete` into bit 0 of `next` (`PackedNextPtr`) to
+// Zig packs `auto_delete` into bit 0 of `next` (`PackedNextPtr`) to
 // keep `ConcurrentTask` at 16 bytes. The Rust port deliberately splits it back
 // out: `Task` is already two words here (tag is not packed into the pointer),
 // so the struct was never 16B, and profiling (build/create-next benches) showed
@@ -334,9 +334,7 @@ impl ConcurrentTask {
     }
 
     pub fn create_from<T: Taskable>(task: *mut T) -> core::ptr::NonNull<ConcurrentTask> {
-        // TODO(port): re-enable once `mark_binding!` macro arity matches
-        // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
-        // bun_core::mark_binding!();
+        bun_core::mark_binding!();
         Self::create(Task::init(task))
     }
 
@@ -349,16 +347,14 @@ impl ConcurrentTask {
         Self::create(Task::from_boxed(task))
     }
 
-    // PORT NOTE: callback returns `JsResult<()>` to match `ManagedTask::new`'s stored ABI;
+    // callback returns `JsResult<()>` to match `ManagedTask::new`'s stored ABI;
     // Zig accepted both `fn(*T) void` and `fn(*T) JSError!void` via comptime — Rust callers
     // that have a `fn(*mut T)` should wrap it as `|p| { f(p); Ok(()) }` at the call site.
     pub fn from_callback<T>(
         ptr: *mut T,
         callback: fn(*mut T) -> crate::JsResult<()>,
     ) -> core::ptr::NonNull<ConcurrentTask> {
-        // TODO(port): re-enable once `mark_binding!` macro arity matches
-        // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
-        // bun_core::mark_binding!();
+        bun_core::mark_binding!();
         Self::create(ManagedTask::ManagedTask::new(ptr, callback))
     }
 
@@ -367,9 +363,7 @@ impl ConcurrentTask {
         of: *mut T,
         auto_deinit: AutoDeinit,
     ) -> &mut ConcurrentTask {
-        // TODO(port): re-enable once `mark_binding!` macro arity matches
-        // `ScopedLogger::log` (concurrent bun_core edit changed it to 1-arg).
-        // bun_core::mark_binding!();
+        bun_core::mark_binding!();
         *self = ConcurrentTask {
             task: Task::init(of),
             next: Link::new(),

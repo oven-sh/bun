@@ -98,7 +98,7 @@ impl<'a, F: ReadFileToJs> ReadFileCompletion for NewReadFileHandler<'a, F> {
     ) -> jsc::JsTerminatedResult<()> {
         // SAFETY: handler was heap-allocated by doReadFile(); we take ownership here.
         let mut handler = unsafe { bun_core::heap::take(handler) };
-        // PORT NOTE: `Strong::swap()` ties the returned `&mut JSPromise` to
+        // `Strong::swap()` ties the returned `&mut JSPromise` to
         // `&mut self`, but the promise is GC-heap-owned and outlives `handler`.
         // Decay to a raw pointer so `handler` can be dropped before resolution.
         let promise: *mut jsc::JSPromise = handler.promise.swap();
@@ -296,7 +296,7 @@ impl FileCloser for ReadFile {
             let this = unsafe { bun_ptr::callback_ctx::<ReadFile>(ctx.cast()) };
             <ReadFile as FileCloser>::on_io_request_closed(this);
         }
-        // PORT NOTE: reshaped for borrowck — compute the parent raw pointer
+        // reshaped for borrowck — compute the parent raw pointer
         // before mutably borrowing `io_poll` so the two borrows do not overlap.
         let ctx = std::ptr::from_mut::<ReadFile>(this).cast::<()>();
         let fd = this.opened_fd;
@@ -351,7 +351,6 @@ impl ReadFile {
         off: SizeType,
         max_len: SizeType,
     ) -> Result<Box<ReadFile>, Error> {
-        // TODO(port): narrow error set
         // store.ref() — `StoreRef` carries the +1; held in `self.store`.
         let file_store = store.data.as_file().clone();
         let read_file = Box::new(ReadFile {
@@ -401,7 +400,8 @@ impl ReadFile {
         // `run` and `on_complete_ctx` is the unwrapped `*mut C` — exactly the
         // Zig layout (no extra heap box, nothing to leak on the `Err` path).
         fn handler_run<C: ReadFileCompletion>(ctx: *mut c_void, bytes: ReadFileResultType) {
-            // TODO(port): properly propagate exception upwards (matches Zig TODO).
+            // The JsTerminated error is intentionally swallowed; upstream Zig has
+            // an unresolved TODO to propagate the exception, and this matches it.
             // SAFETY: `ctx` is the `*mut C` passed unmodified through
             // `on_complete_ctx`; ownership transfers per `ReadFileCompletion::run`.
             let _ = unsafe { C::run(ctx.cast::<C>(), bytes) };
@@ -496,7 +496,7 @@ impl ReadFile {
     /// `do_read_loop` can carry it across the `&mut self` `do_read` call
     /// without two live `&mut` covering overlapping memory (Stacked-Borrows
     /// UB). The slice is materialised only at the syscall boundary.
-    // PORT NOTE: Zig indexed raw ptr range `items.ptr[items.len..capacity]`.
+    // Zig indexed raw ptr range `items.ptr[items.len..capacity]`.
     #[cfg(not(windows))]
     fn remaining_buffer(&mut self, stack_buffer: &mut [u8]) -> (*mut u8, usize) {
         // `spare_capacity_mut()` is the safe spelling of
@@ -608,7 +608,7 @@ impl ReadFile {
 
         let mut this = this;
         let _store = this.store.take().unwrap();
-        // PORT NOTE: reshaped for borrowck — take buffer out so it survives `drop(this)`.
+        // reshaped for borrowck — take buffer out so it survives `drop(this)`.
         let buf = core::mem::take(&mut this.buffer);
 
         // `_store` is dropped at end of scope (= store.deref()).
@@ -750,7 +750,7 @@ impl ReadFile {
         // so we should check specifically that its a regular file before trusting the size.
         if self.size == 0 && bun_sys::is_regular_file(self.file_store.mode) {
             self.buffer = Vec::new();
-            // PORT NOTE: Zig wrote `byte_store = ByteStore.init(buffer.items, …)`
+            // Zig wrote `byte_store = ByteStore.init(buffer.items, …)`
             // (a non-owning view); Rust `Bytes` owns its allocation, so leave it
             // default — `then()` reads `self.buffer` directly.
             self.byte_store = ByteStore::default();
@@ -816,13 +816,13 @@ impl ReadFile {
             //
             // 64 KB is large, but since this is running in a thread
             // with it's own stack, it should have sufficient space.
-            // PORT NOTE: hoisted out of the loop and zero-initialized once — the
+            // hoisted out of the loop and zero-initialized once — the
             // one-time 64 KB memset is negligible next to the per-iteration
             // syscall, and avoids the `MaybeUninit<u8>` → `&mut [u8]` cast (uninit
             // bytes behind a `&[u8]` is technically UB even when never read).
             let mut stack_buffer = [0u8; 64 * 1024];
             while self.state.load(Ordering::Relaxed) == ClosingState::Running as u8 {
-                // PORT NOTE: reshaped for borrowck — keep the read target as a raw
+                // reshaped for borrowck — keep the read target as a raw
                 // (ptr, len) across the `&mut self` `do_read` call; no `&mut [u8]`
                 // to `self.buffer`'s spare capacity is ever live alongside
                 // `&mut self`.
@@ -920,7 +920,7 @@ impl ReadFile {
             if self.buffer.len() + 16_000 < self.buffer.capacity() {
                 self.buffer.shrink_to_fit();
             }
-            // PORT NOTE: Zig also wrote `byte_store = ByteStore.init(buffer.items, …)` —
+            // Zig also wrote `byte_store = ByteStore.init(buffer.items, …)` —
             // a non-owning alias of `buffer`. Rust `Bytes` is owning, and `then()`
             // delivers `self.buffer` directly, so skip the alias to avoid a double-free.
             self.on_finish();
@@ -1400,7 +1400,7 @@ impl<'a> ReadFileUV<'a> {
 
             // We are done reading.
             let owned = core::mem::take(&mut self.buffer).into_boxed_slice();
-            // PORT NOTE: Vec::into_boxed_slice cannot fail; Zig caught OOM here.
+            // Vec::into_boxed_slice cannot fail; Zig caught OOM here.
             self.byte_store = ByteStore::init_owned(owned);
             self.on_finish();
         }
@@ -1428,7 +1428,7 @@ impl<'a> ReadFileUV<'a> {
         if result.int() == 0 {
             // We are done reading.
             let owned = core::mem::take(&mut this.buffer).into_boxed_slice();
-            // PORT NOTE: Vec::into_boxed_slice cannot fail; Zig caught OOM here.
+            // Vec::into_boxed_slice cannot fail; Zig caught OOM here.
             this.byte_store = ByteStore::init_owned(owned);
             this.on_finish();
             return;

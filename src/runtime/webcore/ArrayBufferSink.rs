@@ -5,9 +5,9 @@ use bun_jsc::{ArrayBuffer, JSGlobalObject, JSType, JSValue, JsResult};
 use bun_sys as syscall;
 
 pub type JSSink = sink::JSSink<ArrayBufferSink>;
-// PORT NOTE: Zig passes the literal "ArrayBufferSink" as a 2nd comptime arg to
-// `Sink.JSSink()`; in Rust the symbol-name concatenation lives in the
-// `JsSinkAbi` impl in `Sink.rs` (see `array_buffer_sink_abi`).
+// The "ArrayBufferSink" symbol-name concatenation (Zig's 2nd comptime arg to
+// `Sink.JSSink()`) lives in the `JsSinkAbi` impl in `Sink.rs`
+// (see `array_buffer_sink_abi`).
 
 #[derive(Default)]
 pub struct ArrayBufferSink {
@@ -15,10 +15,10 @@ pub struct ArrayBufferSink {
     // allocator field dropped — global mimalloc (non-AST crate, see PORTING.md §Allocators)
     pub done: bool,
     pub signal: Signal,
-    // PORT NOTE: Zig `?Sink` stores a `*anyopaque` (raw, manually-managed
-    // lifetime). The Rust `Sink<'a>` was ported with a borrow; using `'static`
-    // here recovers the Zig semantics (caller is responsible for the pointee
-    // outliving every dispatch). No call site sets `next` to non-`None` today.
+    // Zig `?Sink` stores a `*anyopaque` (raw, manually-managed lifetime).
+    // The Rust `Sink<'a>` carries a borrow; `'static` here recovers the Zig
+    // semantics (caller is responsible for the pointee outliving every
+    // dispatch). No call site sets `next` to non-`None` today.
     pub next: Option<Sink<'static>>,
     pub streaming: bool,
     pub as_uint8array: bool,
@@ -26,8 +26,8 @@ pub struct ArrayBufferSink {
 
 impl ArrayBufferSink {
     pub fn connect(&mut self, signal: Signal) {
-        // PORT NOTE: Zig asserts `this.reader == null` but there is no `reader`
-        // field on this struct (dead Zig assert; lazy compilation never reaches it).
+        // Zig asserts `this.reader == null` but there is no `reader` field on
+        // this struct (dead Zig assert; lazy compilation never reaches it).
         self.signal = signal;
     }
 
@@ -80,7 +80,7 @@ impl ArrayBufferSink {
         Ok(JSValue::js_number(0.0))
     }
 
-    // PORT NOTE: NOT a `host_fn_finalize` target — JSSink uses its own
+    // NOT a `host_fn_finalize` target — JSSink uses its own
     // `${abi_name}__finalize` thunk (generated_jssink.rs), which calls
     // the trait `JsSinkType::finalize(&mut self)`; that forwards here. The
     // `Box<Self>` contract applies only to generate-classes.ts classes.
@@ -109,7 +109,7 @@ impl ArrayBufferSink {
         }))
     }
 
-    // PORT NOTE: in-place init (JSSink m_ctx slot) — codegen calls this on a
+    // In-place init (JSSink m_ctx slot) — codegen calls this on a
     // pre-allocated slot.
     pub fn construct(this: &mut core::mem::MaybeUninit<Self>) {
         this.write(ArrayBufferSink {
@@ -192,9 +192,9 @@ impl ArrayBufferSink {
         as_uint8array: bool,
     ) -> JsResult<JSValue> {
         if self.streaming {
-            // PORT NOTE: Zig calls `ArrayBuffer.create()` here without `catch`
-            // (dead path under Zig's lazy compilation). Propagate the JS
-            // exception explicitly in Rust.
+            // Zig calls `ArrayBuffer.create()` here without `catch` (dead path
+            // under Zig's lazy compilation). Propagate the JS exception
+            // explicitly in Rust.
             let value: JSValue = if as_uint8array {
                 ArrayBuffer::create::<{ JSType::Uint8Array }>(global_this, self.bytes.slice())?
             } else {

@@ -207,49 +207,51 @@ pub(crate) fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> Js
                 break;
             }
 
-            // PORT NOTE: Zig keeps a parallel `ArrayList(Strong)` to root each element across
-            // the format_label/bind allocations below. `bun_jsc::MarkedArgumentBuffer` only
-            // exposes a scoped-closure constructor (no `as_slice`/`len`), so for Phase D we
-            // use a plain `Vec<JSValue>` mirroring Zig's `args_list_raw`. The outer `iter`
-            // keeps `this.each` alive; per-element rooting is a TODO once Strong<JSValue>
-            // lands in bun_jsc.
-            // TODO(port): root args via Strong / MarkedArgumentBuffer once upstream surface exists.
-            let mut args_list: Vec<JSValue> = Vec::new();
+            // Root the gathered args for the GC across the `format_label`/`bind`
+            // allocations below (Zig kept a parallel `ArrayList(Strong)` for the
+            // same purpose). `MarkedArgumentBuffer` stack-roots every appended
+            // value for the duration of the closure; the plain `Vec<JSValue>`
+            // mirrors it because `format_label`/`bind` need a slice view (the
+            // buffer exposes no `as_slice`/`len`).
+            bun_jsc::MarkedArgumentBuffer::new(|rooted| -> JsResult<()> {
+                rooted.append(item);
+                let mut args_list: Vec<JSValue> = Vec::new();
 
-            if item.is_array() {
-                // Spread array as args_list (matching Jest & Vitest)
-                let mut item_iter = item.array_iterator(global)?;
-                let mut idx: usize = 0;
-                while let Some(array_item) = item_iter.next()? {
-                    args_list.push(array_item);
-                    idx += 1;
+                if item.is_array() {
+                    // Spread array as args_list (matching Jest & Vitest)
+                    let mut item_iter = item.array_iterator(global)?;
+                    while let Some(array_item) = item_iter.next()? {
+                        rooted.append(array_item);
+                        args_list.push(array_item);
+                    }
+                } else {
+                    args_list.push(item);
                 }
-                let _ = idx;
-            } else {
-                args_list.push(item);
-            }
 
-            let formatted_label: Option<Vec<u8>> = if let Some(desc) = args.description.as_deref() {
-                Some(jest::format_label(global, desc, args_list.as_slice(), test_idx)?.into_vec())
-            } else {
-                None
-            };
+                let formatted_label: Option<Vec<u8>> = if let Some(desc) = args.description.as_deref() {
+                    Some(jest::format_label(global, desc, args_list.as_slice(), test_idx)?.into_vec())
+                } else {
+                    None
+                };
 
-            let bound = if let Some(cb) = args.callback {
-                Some(JSValueTestExt::bind(cb, global, item, &BunString::static_str("cb"), 0.0, args_list.as_slice())?)
-            } else {
-                None
-            };
-            this.enqueue_describe_or_test_callback(
-                bun_test_ptr,
-                global,
-                frame,
-                bound,
-                formatted_label.as_deref(),
-                &args.options,
-                callback_length.saturating_sub(args_list.len()),
-                line_no,
-            )?;
+                let bound = if let Some(cb) = args.callback {
+                    Some(JSValueTestExt::bind(cb, global, item, &BunString::static_str("cb"), 0.0, args_list.as_slice())?)
+                } else {
+                    None
+                };
+                this.enqueue_describe_or_test_callback(
+                    // Explicit reborrow: the closure must not move the `&mut`
+                    // (it is reused on later loop iterations).
+                    &mut *bun_test_ptr,
+                    global,
+                    frame,
+                    bound,
+                    formatted_label.as_deref(),
+                    &args.options,
+                    callback_length.saturating_sub(args_list.len()),
+                    line_no,
+                )
+            })?;
 
             test_idx += 1;
         }
@@ -294,7 +296,7 @@ impl<'a> WriteEnd for Write<'a> {
         }
         let dst_start = self.buf.len() - write.len();
         self.buf[dst_start..].copy_from_slice(write);
-        // PORT NOTE: reshaped for borrowck — Zig reassigns the slice in place;
+        // reshaped for borrowck — Zig reassigns the slice in place;
         // here we shrink via `take` + reslice.
         let buf = core::mem::take(&mut self.buf);
         self.buf = &mut buf[..dst_start];
@@ -396,7 +398,7 @@ impl ScopeFunctions {
         match self.mode {
             Mode::Describe => {
                 // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
-                let new_scope = unsafe { bun_test.collection.active_scope.as_mut() }.append_describe(description, base)?;
+                let new_scope = unsafe { bun_test.collection.active_scope.as_mut() }.append_describe(description, base);
                 bun_test.collection.enqueue_describe_callback(new_scope, callback)?;
             }
             Mode::Test => {
@@ -408,14 +410,14 @@ impl ScopeFunctions {
                     if let Some(filter_regex) = reporter.jest.filter_regex {
                         group_log::log(format_args!("matches_filter begin"));
                         debug_assert!(bun_test.collection.filter_buffer.is_empty());
-                        // PORT NOTE: reshaped for borrowck — clear at end via explicit call below.
+                        // reshaped for borrowck — clear at end via explicit call below.
 
                         // SAFETY: active_scope is a valid cursor into root_scope's tree for the lifetime of Collection.
                         let active_scope: &DescribeScope = unsafe { bun_test.collection.active_scope.as_ref() };
 
                         let mut len = Measure { len: 0 };
                         filter_names(&mut len, description, Some(active_scope));
-                        // PORT NOTE: Zig `addManyAsSlice` — extend by `len.len` zero bytes and
+                        // Zig `addManyAsSlice` — extend by `len.len` zero bytes and
                         // hand back the freshly-appended tail as `&mut [u8]`.
                         let start = bun_test.collection.filter_buffer.len();
                         bun_test.collection.filter_buffer.resize(start + len.len, 0);
@@ -526,7 +528,7 @@ pub struct ParseArgumentsResult {
     pub callback: Option<JSValue>,
     pub options: ParseArgumentsOptions,
 }
-// PORT NOTE: Zig `deinit` only freed `description`; `Vec<u8>` drops automatically.
+// Zig `deinit` only freed `description`; `Vec<u8>` drops automatically.
 
 #[derive(Default, Clone, Copy)]
 pub struct ParseArgumentsOptions {
@@ -568,7 +570,7 @@ fn get_description(
     }
 
     if description.is_class(global) {
-        // PORT NOTE: upstream `JSValue::get_class_name` writes into an out-param
+        // upstream `JSValue::get_class_name` writes into an out-param
         // ZigString instead of returning one (unlike Zig's `className` which
         // returns by value). Adapt locally rather than touching bun_jsc.
         let mut description_class_name = bun_core::ZigString::EMPTY;
@@ -825,7 +827,6 @@ pub(crate) fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> 
 /// Local shim for `JSValue::setPrototypeDirect` (not yet on `bun_jsc::JSValue`).
 /// Mirrors Zig `bun.cpp.Bun__JSValue__setPrototypeDirect` — `[[ZIG_EXPORT(check_slow)]]`,
 /// so we manually surface any pending exception as `JsError::Thrown`.
-// TODO(port): land as inherent `JSValue::set_prototype_direct` in bun_jsc.
 #[track_caller]
 fn set_prototype_direct(value: JSValue, prototype: JSValue, global: &JSGlobalObject) -> JsResult<()> {
     // `[[ZIG_EXPORT(check_slow)]]`. C++ side reads `value.getObject()` so

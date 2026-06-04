@@ -98,7 +98,7 @@ impl FilePoll {
             .as_ptr()
     }
 
-    // PORT NOTE: not `impl Drop` — FilePoll lives in a HiveArray pool slot, not a Box;
+    // Note: not `impl Drop` — FilePoll lives in a HiveArray pool slot, not a Box;
     // teardown returns the slot to the pool via `Store::put`.
     pub fn deinit(&mut self) {
         self.deinit_with_vm(js_vm_ctx());
@@ -201,7 +201,7 @@ impl FilePoll {
     }
 
     /// Only intended to be used from EventLoop.Pollable
-    // PORT NOTE: Zig takes `*Loop = *uv.Loop` here (`vm.event_loop_handle.?`),
+    // Note: Zig takes `*Loop = *uv.Loop` here (`vm.event_loop_handle.?`),
     // but the cycle-broken `EventLoopCtx::platform_event_loop` vtable is typed
     // `*mut bun_uws_sys::Loop` (the uws `WindowsLoop` wrapper) so the
     // impl-crate bodies (`VirtualMachine::uws_loop` / `MiniEventLoop::loop_ptr`)
@@ -381,8 +381,9 @@ unsafe impl Send for Waker {}
 unsafe impl Sync for Waker {}
 
 impl Waker {
+    // `Result` kept (despite being infallible here) for signature parity with
+    // the POSIX wakers, whose `init` can fail (eventfd / kqueue).
     pub fn init() -> Result<Waker, bun_core::Error> {
-        // TODO(port): narrow error set
         Ok(Waker {
             loop_: bun_ptr::BackRef::from(
                 ptr::NonNull::new(WindowsLoop::get()).expect("WindowsLoop::get() singleton"),
@@ -402,15 +403,10 @@ impl Waker {
         self.loop_.uv_loop
     }
 
-    // TODO(port): Zig used @compileError here; on Windows these must never be linked.
-    pub fn get_fd(&self) -> Fd {
-        unreachable!("Waker.getFd is unsupported on Windows");
-    }
-
-    // TODO(port): Zig used @compileError here; on Windows these must never be linked.
-    pub fn init_with_file_descriptor(_fd: Fd) -> Waker {
-        unreachable!("Waker.initWithFileDescriptor is unsupported on Windows");
-    }
+    // Zig declared `getFd`/`initWithFileDescriptor` as `@compileError` here:
+    // on Windows they must never be referenced. The Rust equivalent is to not
+    // define them at all — POSIX-only call sites are `cfg`-gated, so a stray
+    // Windows use fails the build just like Zig's `@compileError`.
 
     pub fn wait(&self) {
         // Do NOT go through `WindowsLoop::wait(&mut self)`: that would

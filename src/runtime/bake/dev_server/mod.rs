@@ -306,10 +306,10 @@ pub use route_bundle::RouteBundle;
 pub use serialized_failure::SerializedFailure;
 pub use source_map_store::SourceMapStore;
 
-/// Local stand-in for the unported `bun_uws::ResponseLike` trait — Zig's
-/// `resp: anytype` modeled as a generic bound. Method shapes mirror
-/// `bun_uws_sys::Response<SSL>` so the `R`-generic bodies type-check.
-// TODO(port): replace with `bun_uws::ResponseLike` once it lands upstream.
+/// Local response trait — Zig's `resp: anytype` modeled as a generic bound.
+/// Method shapes mirror `bun_uws_sys::Response<SSL>` so the `R`-generic
+/// bodies type-check. `bun_uws` exposes no equivalent trait; if it ever
+/// grows one, this can be replaced by it.
 pub trait ResponseLike {
     fn write_status(&mut self, status: &[u8]);
     fn end(&mut self, data: &[u8], close_connection: bool);
@@ -397,7 +397,7 @@ impl HmrSocket {
 }
 
 /// `DevServer.HotReloadEvent` — produced by the watcher thread.
-// PORT NOTE: Zig's `_: u0 align(std.atomic.cache_line) = 0` first-field trick gives the whole
+// Note: Zig's `_: u0 align(std.atomic.cache_line) = 0` first-field trick gives the whole
 // struct cache-line alignment so each inline `WatcherAtomics.events: [3]` element occupies its
 // own cache line, avoiding false sharing on `contention_indicator` between watcher and dev-server
 // threads. 128 matches `std.atomic.cache_line` on x86_64/aarch64 (Bun's tier-1 targets) and
@@ -482,14 +482,14 @@ impl HotReloadEvent {
 
                 // if a directory watch exists for resolution failures, check those now.
                 if let Some(watcher_index) = dev.directory_watchers.watches.get_index(changed_dir) {
-                    // PORT NOTE: reshaped for borrowck — Zig held `entry` ref while mutating
+                    // Note: reshaped for borrowck — Zig held `entry` ref while mutating
                     // `dev.directory_watchers.dependencies` and `self.files` in the loop body.
                     let mut new_chain: Option<u32> = None;
                     let mut it: Option<u32> =
                         Some(dev.directory_watchers.watches.values()[watcher_index].first_dep);
 
                     while let Some(index) = it {
-                        // PORT NOTE: reshaped for borrowck — re-index per iteration instead of
+                        // Note: reshaped for borrowck — re-index per iteration instead of
                         // holding `dep` ref across resolver call + appendFile + freeDependencyIndex.
                         let (source_file_path, specifier, next) = {
                             let dep = &dev.directory_watchers.dependencies[index as usize];
@@ -515,7 +515,7 @@ impl HotReloadEvent {
                             // this resolution result is not preserved as passing it
                             // into BundleV2 is too complicated. the resolution is
                             // cached, anyways.
-                            // PORT NOTE: inlined `append_file` body for disjoint borrow
+                            // Note: inlined `append_file` body for disjoint borrow
                             // (`self.dirs.keys()` is held immutably across this loop).
                             bun_core::handle_oom(self.files.get_or_put(source_file_path.slice()));
                             dev.directory_watchers.free_dependency_index(index);
@@ -547,7 +547,7 @@ impl HotReloadEvent {
         }
 
         let changed_file_paths = self.files.keys();
-        // PORT NOTE: Zig used `inline for` over a 2-tuple; written out as two calls.
+        // Note: Zig used `inline for` over a 2-tuple; written out as two calls.
         bun_core::handle_oom(
             dev.server_graph
                 .invalidate(changed_file_paths, entry_points),
@@ -686,7 +686,7 @@ impl HotReloadEvent {
         // `WatcherAtomics::watcher_acquire_event` before submission.
         let timer = unsafe { (*first).timer };
 
-        // PORT NOTE: raw-ptr loop because `recycle_event_from_dev_server` returns
+        // Note: raw-ptr loop because `recycle_event_from_dev_server` returns
         // a pointer into `dev.watcher_atomics.events`; re-borrow each iteration
         // to avoid aliasing UB.
         let mut current: *mut HotReloadEvent = first;
@@ -735,7 +735,7 @@ impl HotReloadEvent {
         }
 
         if let Err(_err) = dev_ref.start_async_bundle(entry_points, true, timer) {
-            // PORT NOTE: Zig `bun.handleErrorReturnTrace` has no Rust equivalent.
+            // Note: Zig `bun.handleErrorReturnTrace` has no Rust equivalent.
             return;
         }
     }
@@ -747,9 +747,10 @@ pub struct WatcherAtomics {
     pub events: [HotReloadEvent; 3],
     /// `next_event: std.atomic.Value(NextEvent)` — encodes the `NextEvent`
     /// `enum(u8) { 0..3 = event index, .waiting, .done }`.
-    // TODO(port): Zig had `align(std.atomic.cache_line)` on this field; Rust cannot align
-    // individual fields — wrap in a `#[repr(align(128))]` newtype if false sharing
-    // shows up in profiles.
+    // Zig had `align(std.atomic.cache_line)` on this field; Rust cannot align
+    // individual fields, so that perf-only property is dropped here. Wrap in a
+    // `#[repr(align(128))]` newtype (init site: lifecycle.rs) if false sharing
+    // ever shows up in profiles.
     pub next_event: core::sync::atomic::AtomicU8,
     /// Watcher-thread-only; index into `events` currently being processed.
     pub current_event: Option<u8>,
@@ -882,7 +883,7 @@ impl WatcherAtomics {
 
         // Initialize the timer if it is empty.
         if ev_ref.is_empty() {
-            // PORT NOTE: Zig's `std.time.Timer.start()` records a monotonic start time;
+            // Note: Zig's `std.time.Timer.start()` records a monotonic start time;
             // we capture `Instant::now()` here and compute elapsed at the read site.
             ev_ref.timer = std::time::Instant::now();
         }
@@ -929,7 +930,7 @@ impl WatcherAtomics {
 
         #[cfg(debug_assertions)]
         {
-            // PORT NOTE: Zig asserted `ev.timer` was not the 0xAA debug-undefined
+            // Note: Zig asserted `ev.timer` was not the 0xAA debug-undefined
             // fill pattern. Rust has no such fill (uninitialized memory is never
             // observed through a typed place), so the byte-scan is dropped — it
             // could not fire and reading struct padding is itself UB.
@@ -1146,7 +1147,7 @@ bun_bundler::link_impl_DevServerHandle! {
         finalize_bundle(bv2, result) => {
             // `bv2` borrows the three `Transpiler`s stored inline in `DevServer`
             // (stable heap address); the `'static` is a stand-in for the
-            // DevServer-self lifetime — see `CurrentBundle.bv2` PORT NOTE.
+            // DevServer-self lifetime — see the comment on `CurrentBundle.bv2`.
             super::dev_server_body::finalize_bundle(&mut *this, &mut *bv2.cast(), &mut *result)
                 .map_err(Into::into)
         },
@@ -1324,7 +1325,7 @@ impl DirectoryWatchStore {
     ) -> Result<(), DirectoryWatchInsertError> {
         debug_assert!(!specifier.is_empty());
         // TODO: watch the parent dir too.
-        // PORT NOTE: take a raw pointer so the &mut self borrow from owner() does
+        // Note: take a raw pointer so the &mut self borrow from owner() does
         // not overlap subsequent self.* field accesses (Zig has no borrowck here).
         let dev: *mut DevServer = self.owner();
 
@@ -1341,7 +1342,7 @@ impl DirectoryWatchStore {
             self.dependencies.reserve(1);
         }
 
-        // PORT NOTE: reshaped for borrowck — capture gop scalars before
+        // Note: reshaped for borrowck — capture gop scalars before
         // calling self methods that need &mut self.
         let gop = self.watches.get_or_put(
             bun_paths::string_paths::without_trailing_slash_windows_path(dir_name_to_watch),
@@ -1371,7 +1372,7 @@ impl DirectoryWatchStore {
             return Ok(());
         }
 
-        // PORT NOTE: `errdefer store.watches.swapRemoveAt(gop.index)` — guard the
+        // Note: `errdefer store.watches.swapRemoveAt(gop.index)` — guard the
         // map via raw ptr so it doesn't conflict with `&mut self` below.
         let watches_ptr: *mut StringArrayHashMap<directory_watch_store::Entry> =
             &raw mut self.watches;
@@ -1503,7 +1504,7 @@ impl DirectoryWatchStore {
         let mut watch_index = self.watches.count();
         while watch_index > 0 {
             watch_index -= 1;
-            // PORT NOTE: reshaped for borrowck — cannot hold &mut entry across
+            // Note: reshaped for borrowck — cannot hold &mut entry across
             // self.free_dependency_index(); walk by index and re-borrow.
             let mut new_chain: Option<u32> = None;
             let mut it: Option<u32> = Some(self.watches.values()[watch_index].first_dep);

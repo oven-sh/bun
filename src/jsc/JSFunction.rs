@@ -41,8 +41,6 @@ pub struct CreateJSFunctionOptions {
     pub constructor: Option<JSHostFn>,
 }
 
-// TODO(port): move to jsc_sys
-//
 // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; the remaining
 // params are by-value scalars / `#[repr(C)]` PODs / fn-ptrs, so all three
 // shims are declared `safe fn`. `getSourceCode` writes a `ZigString` view into

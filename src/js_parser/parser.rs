@@ -30,8 +30,6 @@ pub mod options {
     // re-exported here so the `options::Loader`/`options::Target` spelling used
     // throughout `P.rs`/`Parser.rs` keeps resolving without per-site churn.
     pub(crate) use bun_ast::Loader;
-    // TODO(port): bun_options_types::{ServerComponents, OutputFormat,
-    // AllowUnresolved, Format, Framework} — missing from lower-tier surface.
     pub use bun_options_types::bundle_enums::ModuleType;
     // D042: canonical `JSX::{Pragma, Runtime, ImportSource, Defaults, ...}`
     // lives in `bun_options_types::jsx`. The glob above already brings in
@@ -275,7 +273,7 @@ pub mod Runtime {
         /// This is used for `--print` entry points so we can get the result.
         pub remove_cjs_module_wrapper: bool,
 
-        // PORT NOTE: `?*bun.jsc.RuntimeTranspilerCache` — raw `*mut` (not `&'a mut`)
+        // `?*bun.jsc.RuntimeTranspilerCache` — raw `*mut` (not `&'a mut`)
         // so `Features` stays `'static`-bounded inside `Parser::Options` and avoids
         // the borrowck self-borrow that `&'a mut` would induce while `P` holds
         // `&mut Options`.
@@ -381,7 +379,7 @@ pub mod Runtime {
             if feature_flags.is_empty() {
                 return None;
             }
-            // PORT NOTE: reshaped for borrowck — Zig inserted then sorted via
+            // reshaped for borrowck — Zig inserted then sorted via
             // `set.map.sort(...)` with a comparator borrowing `set.map.keys()`.
             // `StringSet` preserves insertion order and has no in-place key sort,
             // so sort the inputs first; the resulting `keys()` iteration order
@@ -603,7 +601,6 @@ pub(crate) type RuntimeImports = Runtime::Imports;
 
 pub use crate::p::{NewParser, P};
 
-pub use bun_collections::StringHashMap as StringHashMapRe; // TODO(port): name collision with `StringHashMap` re-export
 // NOTE(b0): `pub use bun_js_printer as js_printer;` removed — js_printer is same-tier mutual
 // (js_printer depends on js_parser). Downstream callers import bun_js_printer directly.
 
@@ -1144,7 +1141,7 @@ macro_rules! generated_symbol_name {
 
 pub struct ExprOrLetStmt {
     pub stmt_or_expr: js_ast::StmtOrExpr,
-    // PORT NOTE: Zig writes `.decls = decls.slice()` borrowing the heap buffer
+    // Zig writes `.decls = decls.slice()` borrowing the heap buffer
     // that was just moved into `S::Local`. The buffer pointer is stable across
     // the move, but borrowck can't see that — store as `RawSlice` to record the
     // outlives-holder invariant without a per-site unsafe cast. Read by the
@@ -1474,7 +1471,9 @@ pub struct StringVoidMap {
 impl StringVoidMap {
     /// Returns true if the map already contained the given key.
     pub(crate) fn get_or_put_contains(&mut self, key: &[u8]) -> bool {
-        // TODO(port): StringHashMap key ownership — Zig stored borrowed source slices.
+        // Zig stored borrowed source slices as keys; the Rust StringHashMap
+        // copies keys into owned heap allocations on insert, so the pooled map
+        // outliving any one source is fine.
         let entry = self.map.get_or_put(key).expect("unreachable");
         entry.found_existing
     }
@@ -1511,10 +1510,12 @@ impl bun_collections::pool::ObjectPoolType for StringVoidMap {
 bun_collections::object_pool!(pub StringVoidMapPool: StringVoidMap, threadsafe, 32);
 
 pub(crate) type StringBoolMap = StringHashMap<bool>;
-pub(crate) type RefMap = HashMap<Ref, ()>; // TODO(port): RefCtx hasher + 80% load factor
-pub(crate) type RefRefMap = HashMap<Ref, Ref>; // TODO(port): RefCtx hasher + 80% load factor
+// Zig used `std.HashMapUnmanaged(Ref, _, RefCtx, 80)`; the default hasher and
+// load factor here are close enough that no custom context is warranted.
+pub(crate) type RefMap = HashMap<Ref, ()>;
+pub(crate) type RefRefMap = HashMap<Ref, Ref>;
 
-// PORT NOTE: `scope` is `*mut` (not `&'arena`) because the visit pass writes
+// `scope` is `*mut` (not `&'arena`) because the visit pass writes
 // through it (push_scope_for_visit_pass assigns it to `current_scope: *mut`)
 // and the parse pass needs Copy for the BumpVec<Option<ScopeOrder>> to be
 // indexable + truncatable. The Scope itself is arena-owned for `'arena`.
@@ -1820,7 +1821,7 @@ impl ScanPassResult {
         self.named_imports.clear_retaining_capacity();
         self.import_records.clear();
         self.used_symbols.clear_retaining_capacity();
-        // PORT NOTE: parser.zig:778-783 does NOT clear import_records_to_keep here;
+        // parser.zig:778-783 does NOT clear import_records_to_keep here;
         // matching Zig (the keep-list persists across reset()).
         self.approximate_newline_count = 0;
     }
@@ -1897,22 +1898,13 @@ impl<'a> ParseStatementOptions<'a> {
     }
 }
 
-// TODO(port): `Prefill` holds mutable global AST node singletons (`pub var` in
-// Zig). Rust forbids non-`Sync` mutable statics without `unsafe`; several of
-// these contain raw pointers (e_string -> &E.String) and one (`ActivateIndex`)
-// has an `undefined` field. TODO(refactor): decide between `static mut` +
-// `unsafe`, `LazyLock`, or eliminating the globals entirely. The byte-array
-// constants are safe and ported as `pub const`.
+// Zig's `Prefill` held mutable global AST node singletons (`pub var`); only
+// the const-able subset survived the port. Callers needing the rest (missing
+// nodes, empty statements, the HMR helper exprs) construct them directly —
+// they are cheap value types, so the shared-singleton optimization isn't
+// worth `static mut`/`LazyLock` plumbing in Rust.
 pub mod prefill {
     use super::*;
-
-    pub mod hot_module_reloading {
-        // TODO(port): mutable static Expr arrays — need `static mut` or `LazyLock`.
-        // pub static DEBUG_ENABLED_ARGS: [Expr; 1] = [...];
-        // pub static DEBUG_DISABLED: [Expr; 1] = [...];
-        // pub static ACTIVATE_STRING: E::String = E::String { data: b"activate" };
-        // pub static ACTIVATE_INDEX: E::Index = ...; // .target = undefined
-    }
 
     pub mod string_literal {
         pub(crate) const CHILDREN: [u8; 8] = *b"children";
@@ -1931,13 +1923,6 @@ pub mod prefill {
 
     pub mod data {
         use super::*;
-        // TODO(port): Expr.Data / Stmt.Data / B variant statics — needs final
-        // shape of `js_ast::ExprData` (Rust enum) before these compile.
-        // pub static B_MISSING: B = B::Missing(B::Missing {});
-        // pub static E_MISSING: ExprData = ExprData::EMissing(E::Missing {});
-        // pub static S_EMPTY: StmtData = StmtData::SEmpty(S::Empty {});
-        // pub static FILENAME: ExprData = ExprData::EString(&string::FILENAME);
-        // ... etc.
         pub const THIS: js_ast::ExprData = js_ast::ExprData::EThis(E::This {});
         pub(crate) const ZERO: js_ast::ExprData = js_ast::ExprData::ENumber(value::ZERO);
     }
@@ -1982,9 +1967,9 @@ pub struct MacroState<'a> {
 }
 
 impl<'a> MacroState<'a> {
-    // TODO(port): Zig initializes `prepend_stmts = undefined`; Rust cannot leave
-    // a `&mut` field uninitialized. Caller must supply a placeholder list, or
-    // this field becomes `Option<&'a mut Vec<Stmt>>` set to `None` here.
+    // Zig initialized `prepend_stmts = undefined` (the field is write-only in
+    // both ports); Rust cannot leave a `&mut` field uninitialized, so the
+    // caller supplies a placeholder list.
     pub fn init(prepend_stmts: &'a mut Vec<Stmt>) -> MacroState<'a> {
         MacroState {
             refs: MacroRefs::default(),
@@ -2272,7 +2257,7 @@ pub struct ReactRefresh<'a> {
     /// and then it will insert `var _s = ...`, add the `_s()` call at
     /// the start of the function, and then add the call to `_s(func, ...)`.
     ///
-    /// PORT NOTE: Zig type is `?*?HookContext` — a raw nullable pointer to
+    /// Zig type is `?*?HookContext` — a raw nullable pointer to
     /// stack storage on the visiting fn frame. Modeled as `Option<NonNull<_>>`
     /// (Copy) so the save/set/restore dance in visitStmt/visitExpr can take a
     /// stack-local address without the `'a` borrow the visitor cannot satisfy.

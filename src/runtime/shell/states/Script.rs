@@ -72,8 +72,6 @@ impl Script {
             *idx += 1;
             (i, me.base.shell)
         };
-        // PORT NOTE: reshaped for borrowck — captured idx/shell into locals
-        // before re-borrowing interp for Stmt::init.
         let stmt_node = Self::stmt_at(interp, this, idx);
         let io = interp.as_script(this).io.clone();
         let stmt = Stmt::init(interp, shell, stmt_node, this, io);

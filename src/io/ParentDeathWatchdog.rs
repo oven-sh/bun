@@ -55,9 +55,9 @@ pub struct ParentDeathWatchdog;
 /// convention for "terminated because the controlling end went away".
 pub const EXIT_CODE: u8 = 128 + 1;
 
-// PORT NOTE: Zig used plain `var` globals (unsynchronized). Converted to
-// atomics/OnceLock per docs/PORTING.md §Global mutable state — same
-// single-writer-at-startup discipline, but no `static mut` aliasing.
+// Zig used plain `var` globals (unsynchronized). Converted to atomics/OnceLock
+// per docs/PORTING.md §Global mutable state — same single-writer-at-startup
+// discipline, but no `static mut` aliasing.
 static ENABLED: AtomicBool = AtomicBool::new(false);
 static ORIGINAL_PPID: core::sync::atomic::AtomicI32 = core::sync::atomic::AtomicI32::new(0);
 
@@ -165,7 +165,6 @@ fn kill_sync_pgroups_and_descendants() {
     }
 }
 
-// TODO(port): move to <aio>_sys
 #[cfg(target_os = "macos")]
 unsafe extern "C" {
     // safe: no args; no preconditions.
@@ -532,7 +531,7 @@ fn kill_tree_rooted_at(root: libc::pid_t, expected_ppid_of_root: libc::pid_t) {
     to_kill.push(root);
     let _ = to_visit.try_reserve(1);
     to_visit.push(root);
-    // PORT NOTE: Zig swallowed OOM on the to_visit push; Rust push() after a
+    // Zig swallowed OOM on the to_visit push; Rust push() after a
     // failed try_reserve would still attempt (and abort on OOM). In practice
     // a 1-element reserve never fails; matching exact Zig OOM semantics is
     // not worth the complexity here.
@@ -680,7 +679,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         let mut w = &mut path_buf[..];
         write!(w, "/proc/{}/task", parent).ok()?;
         let n = 64 - w.len();
-        // PORT NOTE: reshaped for borrowck — recompute slice after write.
+        // Reshaped for borrowck — recompute slice after write.
         &path_buf[..n]
     };
 
@@ -688,7 +687,7 @@ fn list_child_pids_linux(parent: libc::pid_t, out: &mut [libc::pid_t]) -> Option
         Ok(fd) => fd,
         Err(_) => return None,
     };
-    // PORT NOTE: Zig `defer task_fd.close()`; `Fd` is Copy and does not impl Drop.
+    // Zig `defer task_fd.close()`; `Fd` is Copy and does not impl Drop.
     let _task_fd_guard = scopeguard::guard(task_fd, |fd| {
         let _ = bun_sys::close(fd);
     });

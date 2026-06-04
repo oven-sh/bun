@@ -37,7 +37,7 @@ pub(crate) trait S3CredentialsExt {
     fn guess_bucket(endpoint: &[u8]) -> Option<&[u8]>;
     #[allow(clippy::too_many_arguments)]
     fn get_credentials_with_options(
-        // PORT NOTE: takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
+        // Takes `&S3Credentials` (not by-value) — `bun_s3_signing::S3Credentials`
         // has a private `ref_count` field and no `Clone`, so callers holding a borrow
         // (e.g. `&IntrusiveRc<S3Credentials>` deref) cannot produce an owned copy. The
         // real impl in `s3/credentials_jsc.rs` deep-copies internally.
@@ -257,7 +257,7 @@ impl Drop for S3Client {
 }
 
 impl S3Client {
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]`
+    // No `#[bun_jsc::host_fn]` here — the `#[bun_jsc::JsClass]`
     // derive on the struct emits `S3ClientClass__construct` which calls
     // `<S3Client>::constructor` directly.
     pub(crate) fn constructor(
@@ -591,10 +591,10 @@ impl S3Client {
             ptr.storage_class,
             ptr.request_payer,
         )?;
-        // PORT NOTE: reshaped for borrowck — Zig copied `blob` into `blob_internal`
-        // by value while `defer blob.detach()` was still armed on the original.
-        // Here we move into `PathOrBlob` directly; cleanup of the moved-out
-        // value is handled by `Drop`.
+        // Zig copied `blob` into `blob_internal` by value while `defer
+        // blob.detach()` was still armed on the original. Here we move into
+        // `PathOrBlob` directly; cleanup of the moved-out value is handled by
+        // `Drop`.
         let mut blob_internal = crate::webcore::node_types::PathOrBlob::Blob(Box::new(blob));
         crate::webcore::blob::write_file_internal(
             global,

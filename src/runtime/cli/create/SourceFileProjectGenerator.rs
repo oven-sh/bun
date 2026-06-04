@@ -156,9 +156,6 @@ fn string_with_replacements(
     relative_name: &[u8],
     react_component_export: &[u8],
 ) -> Result<Vec<u8>, bun_alloc::AllocError> {
-    // PORT NOTE: Zig threaded an allocator and reassigned `input` to leaked
-    // intermediate slices. In Rust we own `Vec<u8>` and rebind it; intermediates
-    // are dropped automatically.
     let mut input: Vec<u8> = original_input.to_vec();
 
     if strings::contains(&input, b"REPLACE_ME_WITH_YOUR_REACT_COMPONENT_EXPORT") {
@@ -268,7 +265,7 @@ pub fn generate_files(
     }
 
     // Generate files based on template type
-    // PORT NOTE: Zig used `switch (tag) { inline else => |active| @field(Self, @tagName(active)) }`
+    // Zig used `switch (tag) { inline else => |active| @field(Self, @tagName(active)) }`
     // to comptime-dispatch to the per-template `files` const and stack-size the
     // `filenames`/`created_files` arrays. Rust cannot reflect on decl names, so
     // we route through `Tag::files()` and use heap Vecs sized at runtime.
@@ -277,7 +274,7 @@ pub fn generate_files(
         let files: &'static [TemplateFile] = template.tag().files();
 
         let mut max_filename_len: usize = 0;
-        // PORT NOTE: reshaped for borrowck — Zig kept parallel `[N][]const u8 filenames`
+        // Reshaped for borrowck — Zig kept parallel `[N][]const u8 filenames`
         // + `[N]bool created_files` arrays of arena-backed slices. Here a single
         // Vec<Option<Vec<u8>>> owns the names; Some(_) doubles as the created flag.
         let mut filenames: Vec<Option<Vec<u8>>> = vec![None; files.len()];
@@ -672,7 +669,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
             }
 
             if filename[0] >= b'a' && filename[0] <= b'z' {
-                // PORT NOTE: Zig leaked `duped` on the success returns below
+                // Zig leaked `duped` on the success returns below
                 // (only freed on the fall-through). Route through the process-
                 // lifetime CLI arena to match the returned-slice lifetime; the
                 // fall-through `free` is a no-op (arena-backed).
@@ -744,7 +741,7 @@ fn find_react_component_export<'r>(bundler: &'r BundleV2<'_>) -> Option<&'r [u8]
                     }
                 }
 
-                // Zig: default_allocator.free(duped) — intentionally leaked above; see PORT NOTE.
+                // Zig: default_allocator.free(duped) — `duped` is arena-backed here, so no free (see above).
             }
 
             let Ok(name_to_try) = MutableString::ensure_valid_identifier(filename) else {

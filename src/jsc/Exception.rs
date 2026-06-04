@@ -5,7 +5,6 @@ bun_opaque::opaque_ffi! {
     pub struct Exception;
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     safe fn JSC__Exception__getStackTrace(
         this: &Exception,

@@ -1,4 +1,5 @@
 use crate::mysql::mysql_types::FieldType;
+use crate::mysql::protocol::any_mysql_error::Error as AnyMySQLError;
 use crate::mysql::protocol::new_reader::{NewReader, ReaderContext};
 use crate::shared::column_identifier::ColumnIdentifier;
 use crate::shared::data::Data;
@@ -79,11 +80,10 @@ impl ColumnFlags {
 // handle that automatically in Rust, so no explicit `impl Drop` is needed here.
 
 impl ColumnDefinition41 {
-    // TODO(port): narrow error set
     pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: &mut NewReader<Context>,
-    ) -> Result<bool, bun_core::Error> {
+    ) -> Result<bool, AnyMySQLError> {
         // Length encoded strings
         self.catalog = reader.encode_len_string()?;
         bun_core::scoped_log!(
@@ -126,23 +126,24 @@ impl ColumnDefinition41 {
         self.fixed_length_fields_length = reader.encoded_len_int()?;
         self.character_set = reader.int::<u16>()?;
         self.column_length = reader.int::<u32>()?;
-        // PORT NOTE: Zig FieldType is a NON-exhaustive `enum(u8)` so `@enumFromInt` accepts
-        // any byte. Rust `#[repr(u8)] enum` is exhaustive, so unknown bytes go through
-        // `from_raw`'s match and error here instead. This diverges from Zig (which keeps
-        // the value) but is sound; if a new server sends an unknown type, we fail loudly
-        // rather than carry an invalid discriminant. TODO(port): switch FieldType to a
-        // `#[repr(transparent)] struct(u8)` newtype to match Zig's non-exhaustive
-        // semantics exactly.
+        // Zig FieldType is a NON-exhaustive `enum(u8)` so `@enumFromInt` accepts any
+        // byte and carries it; the Rust `#[repr(u8)] enum` is exhaustive, so an unknown
+        // wire byte fails loudly here with `UnsupportedColumnType` instead of carrying
+        // an invalid discriminant (which would be UB). This is a real divergence: Zig
+        // carries the unknown byte and serves the value as a raw/string cell (the
+        // `else` arms in ResultSet.zig and DecodeBinaryValue.zig), whereas Rust
+        // currently fails the whole query here. Resolves once `FieldType` becomes a
+        // non-exhaustive newtype-over-u8 (see MySQLTypes.rs).
         let type_byte = reader.int::<u8>()?;
-        self.column_type = FieldType::from_raw(type_byte)
-            .ok_or_else(|| bun_core::err!("UnknownMySQLFieldType"))?;
+        self.column_type =
+            FieldType::from_raw(type_byte).ok_or(AnyMySQLError::UnsupportedColumnType)?;
         self.flags = ColumnFlags::from_int(reader.int::<u16>()?);
         self.decimals = reader.int::<u8>()?;
 
-        // PORT NOTE: Zig called `name_or_index.deinit()` before reassigning; in Rust the
+        // Zig called `name_or_index.deinit()` before reassigning; in Rust the
         // assignment below drops the previous value automatically.
-        // PORT NOTE: reshaped for borrowck — Zig passed `this.name` by value; pass by ref here.
-        // PORT NOTE: `ColumnIdentifier::init` consumes its `Data` (Zig moved by-value
+        // Reshaped for borrowck — Zig passed `this.name` by value; pass by ref here.
+        // `ColumnIdentifier::init` consumes its `Data` (Zig moved by-value
         // and `errdefer name.deinit()`). We can't move `self.name` while `&mut self`
         // is borrowed, so feed it a Temporary view of the same bytes.
         //
@@ -158,7 +159,8 @@ impl ColumnDefinition41 {
         let mut changed = false;
         if !unchanged {
             let name_view = Data::Temporary(bun_ptr::RawSlice::new(self.name.slice()));
-            let rebuilt = ColumnIdentifier::init(name_view)?;
+            let rebuilt =
+                ColumnIdentifier::init(name_view).map_err(|_| AnyMySQLError::OutOfMemory)?;
             changed = match (&self.name_or_index, &rebuilt) {
                 (ColumnIdentifier::Index(prev), ColumnIdentifier::Index(curr)) => prev != curr,
                 _ => true,
@@ -173,13 +175,12 @@ impl ColumnDefinition41 {
         Ok(changed)
     }
 
-    // TODO(refactor): `decoderWrap(ColumnDefinition41, decodeInternal).decode` is a comptime
-    // type-generator that produces a `.decode` wrapper. Consider expressing as a trait impl
-    // (e.g. `impl Decode for ColumnDefinition41`) or a macro from `new_reader`.
+    // Zig `decoderWrap(ColumnDefinition41, decodeInternal).decode` — see the Decode
+    // trait in src/sql/mysql/protocol/NewReader.rs.
     pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: &mut NewReader<Context>,
-    ) -> Result<bool, bun_core::Error> {
+    ) -> Result<bool, AnyMySQLError> {
         self.decode_internal(reader)
     }
 }

@@ -3,15 +3,9 @@
 
 use crate::{JSGlobalObject, JSValue, JsResult};
 use bun_core::{OwnedString, String as BunString, Tag};
-// PORT NOTE: `from_js` on `bun_core::String` is provided by the `StringJsc`
-// extension trait, which is allowed here because this file lives in `src/jsc/`.
+// `from_js` on `bun_core::String` is provided by the `StringJsc` extension
+// trait, which is allowed here because this file lives in `src/jsc/`.
 use crate::StringJsc as _;
-
-// PORT NOTE: reshaped for borrowck / Rust generics. Zig took `comptime Map: type`
-// (the `ComptimeStringMap(V, ...)` instantiation, a namespace with static
-// lookup decls). The Rust port of `ComptimeStringMap` is a `phf::Map` *value*
-// (see PORTING.md §Collections), so callers pass a `&'static phf::Map` instead
-// of a type parameter, and `Map.Value` becomes the generic `V`.
 
 /// `map` is the `phf::Map<&'static [u8], V>` instance (Rust port of
 /// `ComptimeStringMap(V, ...)`); `V` is the value type.

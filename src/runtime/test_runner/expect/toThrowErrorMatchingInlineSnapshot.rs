@@ -3,14 +3,13 @@ use bun_core::ZigString;
 
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_throw_error_matching_inline_snapshot(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
     // Zig: `defer this.postMatch(globalThis);`
-    // PORT NOTE: reshaped for borrowck — guard owns the &mut and Derefs to it.
+    // reshaped for borrowck — guard owns the &mut and Derefs to it.
     let this = scopeguard::guard(this, |t| t.post_match(global));
 
     let this_value = frame.this();
@@ -60,7 +59,7 @@ pub(crate) fn to_throw_error_matching_inline_snapshot(
 
     let expected_slice: Option<&[u8]> = if has_expected { Some(expected.slice()) } else { None };
 
-    // PORT NOTE: reshaped for borrowck — hoist get_value out so the two &mut self
+    // reshaped for borrowck — hoist get_value out so the two &mut self
     // receivers don't overlap.
     let received = this.get_value(
         global,

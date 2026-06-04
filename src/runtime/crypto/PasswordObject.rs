@@ -325,7 +325,7 @@ impl PasswordObject {
                 let mut outbuf = [0u8; 4096];
                 // bcrypt silently truncates passwords longer than 72 bytes
                 // we use SHA512 to hash the password if it's longer than 72 bytes
-                // PORT NOTE: reshaped for borrowck — Zig aliased `outbuf` for both the
+                // Reshaped for borrowck — Zig aliased `outbuf` for both the
                 // SHA digest and the remaining output slice; here the digest gets its own
                 // 64-byte buffer (SHA512::final wants `&mut [u8; DIGEST]`).
                 let mut digest = [0u8; SHA512::DIGEST];
@@ -816,9 +816,8 @@ pub(crate) fn js_password_object_hash_sync(
         );
     }
 
-    // PORT NOTE: sync path borrows the slice; pass as Box for unified signature.
-    // TODO(port): hash<true> only needs &[u8]; consider splitting sync/async to
-    // avoid the copy. Zig passed the borrowed slice directly.
+    // The sync path only needs `&[u8]`; copy into a Box to share the async
+    // signature (Zig passed the borrowed slice directly).
     JSPasswordObject::hash::<true>(
         global_object,
         Box::<[u8]>::from(string_or_buffer.slice()),
@@ -973,8 +972,8 @@ pub(crate) fn js_password_object_verify_sync(
         return Ok(JSValue::FALSE);
     }
 
-    // TODO(port): sync path only needs &[u8]; copying into Box here to share
-    // signature with async. Zig passed borrowed slices.
+    // The sync path only needs `&[u8]`; copy into Boxes to share the async
+    // signature (Zig passed borrowed slices).
     JSPasswordObject::verify::<true>(
         global_object,
         Box::<[u8]>::from(password.slice()),

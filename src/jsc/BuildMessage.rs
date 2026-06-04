@@ -13,7 +13,6 @@ use crate::{
 pub struct BuildMessage {
     pub msg: bun_ast::Msg,
     // resolve_result: Resolver.Result,
-    // PORT NOTE: `std.mem.Allocator param` field dropped — global mimalloc.
     pub logged: Cell<bool>,
 }
 

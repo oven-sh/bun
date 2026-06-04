@@ -162,7 +162,7 @@ pub(crate) mod compile {
     }
 }
 
-// PORT NOTE: The Zig `compile.@"(...)"(...)` comptime type-generators take
+// Note: The Zig `compile.@"(...)"(...)` comptime type-generators take
 // `comptime []const u8` params (not expressible as Rust const generics on
 // stable). Each generator is ported as a `macro_rules!` that emits a
 // `#[bun_jsc::host_fn(method)]` inside the `impl JSValkeyClient` block.
@@ -473,7 +473,7 @@ impl JSValkeyClient {
             args: CommandArgs::Args(&args),
             meta: CommandMeta::default(),
         };
-        // PORT NOTE: reshaped for borrowck (cmd.meta = cmd.meta.check(&cmd))
+        // Note: reshaped for borrowck (cmd.meta = cmd.meta.check(&cmd))
         let checked_meta = cmd.meta.check(&cmd);
         cmd.meta = checked_meta;
         // Send command with slices directly
@@ -1041,7 +1041,6 @@ impl JSValkeyClient {
             // Pattern 1: Object/Record - hset(key, {field: value, ...})
             let Some(obj) = second_arg.get_object() else {
                 return Err(global.throw_invalid_argument_type(
-                    // TODO(port): command is bytes; throw_invalid_argument_type expects &str
                     bname(command),
                     "fields",
                     "object",
@@ -1227,7 +1226,7 @@ impl JSValkeyClient {
     // Implement ping (send a PING command with an optional message)
     #[bun_jsc::host_fn(method)]
     pub fn ping(this: &Self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-        // PORT NOTE: reshaped from Zig stack-array + slice pattern to Option<JSArgument>
+        // Note: reshaped from Zig stack-array + slice pattern to Option<JSArgument>
         let message: Option<JSArgument> = if !frame.argument(0).is_undefined_or_null() {
             // Only use the first argument if provided, ignore any additional arguments
             let Some(m) = from_js(global, frame.argument(0))? else {
@@ -1719,9 +1718,9 @@ impl JSValkeyClient {
                 // What we do here is add our receive handler. Notice that this doesn't really do anything until the
                 // "SUBSCRIBE" command is sent to redis and we get a response.
                 //
-                // TODO(markovejnovic): This is less-than-ideal, still, because this assumes a happy path. What happens if
-                //                      the SUBSCRIBE command fails? We have no way to roll back the addition of the
-                //                      handler.
+                // This is less-than-ideal, still, because this assumes a happy path. What happens if
+                // the SUBSCRIBE command fails? We have no way to roll back the addition of the
+                // handler.
                 this._subscription_ctx.get().upsert_receive_handler(
                     global,
                     channel_arg,
@@ -1777,7 +1776,6 @@ impl JSValkeyClient {
         global: &JSGlobalObject,
         redis_channels: &[JSArgument],
     ) -> JsResult<JSValue> {
-        // TODO(port): narrow error set
         send_cmd(
             this,
             global,

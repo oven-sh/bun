@@ -26,8 +26,8 @@ pub struct WindowsNamedPipeContext {
     // Intrusive refcount; on zero → `schedule_deinit` (deferred free), not
     // immediate `Box::from_raw`.
     ref_count: Cell<u32>,
-    // PORT NOTE: `socket` deref'd manually in `Drop` before `named_pipe` field-drop
-    // — matches Zig `deinit` order (socket.deref() then named_pipe.deinit()).
+    // `socket` is deref'd manually in `Drop` before the `named_pipe` field
+    // drops — teardown order must stay socket.deref() then named_pipe deinit.
     socket: SocketType,
     /// `pub(super)` so `WindowsNamedPipeListeningContext::on_client_connect`
     /// (sibling module) can call `get_accepted_by` on the freshly-created
@@ -388,7 +388,8 @@ impl WindowsNamedPipeContext {
 
         let this = WindowsNamedPipeContext::create(global_this, socket);
 
-        // PORT NOTE: reshaped for borrowck — errdefer references `socket` which was moved into `this`
+        // The error-path guard reaches `socket` through `this` because it was
+        // moved into `this` by `create()`.
         let mut guard = scopeguard::guard(this, |this| {
             // SAFETY: `this` is live; create() returned it and no deref has fired yet.
             // +1 ref held on the inner socket; live until `Self::deref` below.

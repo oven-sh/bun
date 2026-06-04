@@ -202,7 +202,7 @@ impl hooks::AutoInstaller for PackageManager {
         // `PackageJsonView` interface so this impl does not need to name
         // `bun_resolver::PackageJSON` directly.
 
-        // PORT NOTE: reshaped for borrowck — `string_builder!` borrows
+        // Reshaped from the Zig for borrowck — `string_builder!` borrows
         // `self.lockfile` mutably while `dep.clone_in` needs `&mut self`.
         // Use a raw pointer for the disjoint reborrow (same approach as
         // `Package::from_package_json`).

@@ -84,34 +84,36 @@ pub type Task = AnyTaskWithExtraContext;
 pub struct MiniEventLoop<'a> {
     pub tasks: Queue,
     pub concurrent_tasks: ConcurrentTaskQueue,
-    // PORT NOTE: Zig `*uws.Loop` — raw pointer because the loop is C-owned
+    // Zig `*uws.Loop` — raw pointer because the loop is C-owned
     // (created by `uws_get_loop`/`us_create_loop`) and outlives this struct.
     pub loop_: *mut UwsLoop,
-    // PORT NOTE: `std.mem.Allocator param` field dropped — non-AST crate uses global mimalloc.
+    // `std.mem.Allocator param` field dropped — non-AST crate uses global mimalloc.
     pub file_polls_: Option<Box<FilePollStore>>,
     /// Zig: `env: ?*bun.DotEnv.Loader` — mutable; callers (shell spawn,
     /// `createNullDelimitedEnvMap`) write through it. Stored as `NonNull`
     /// (BACKREF) so [`EventLoopHandle::env`] can hand out a `*mut` with
     /// mutable provenance. `'a` is preserved via PhantomData below.
     pub env: Option<NonNull<DotEnvLoader<'a>>>,
-    // PORT NOTE: Zig field is `[]const u8` with mixed provenance (literal "", borrowed `cwd`
+    // Zig field is `[]const u8` with mixed provenance (literal "", borrowed `cwd`
     // param, or `allocator.dupe`). Never freed in `deinit`. Use Box<[u8]> and dupe on assign.
     pub top_level_dir: Box<[u8]>,
-    // TODO(port): lifetime — opaque ctx assigned externally, only read/cleared here.
+    // Opaque ctx assigned externally; only read/cleared here.
     pub after_event_loop_callback_ctx: Option<NonNull<c_void>>,
     pub after_event_loop_callback: Option<unsafe extern "C" fn(*mut c_void)>,
     pub pipe_read_buffer: Option<Box<PipeReadBuffer>>,
     // SAFETY: erased `*mut webcore::blob::Store` (tier-6). Constructed via
-    // `__bun_stdio_blob_store_new`; intrusive-refcounted on the runtime side.
-    // TODO(port): Blob.Store uses intrusive ref_count (constructed with ref_count=2);
-    // LIFETIMES.tsv classifies as Arc but IntrusiveArc<BlobStore> may be required for FFI compat.
+    // `__bun_stdio_blob_store_new` with ref_count=2: one owning intrusive ref
+    // held by this MiniEventLoop (intentionally never released — the
+    // MiniEventLoop is a never-freed thread-lifetime singleton, matching Zig),
+    // one for the eventual Blob consumer. If a teardown path is ever added it
+    // must release via `__bun_stdio_blob_store_deinit`, as `rare_data.rs` does.
     pub stdout_store: Option<NonNull<()>>,
     pub stderr_store: Option<NonNull<()>>,
 }
 
 thread_local! {
     pub static GLOBAL_INITIALIZED: Cell<bool> = const { Cell::new(false) };
-    // PORT NOTE: Zig `threadlocal var global: *MiniEventLoop = undefined;` — raw pointer
+    // Zig `threadlocal var global: *MiniEventLoop = undefined;` — raw pointer
     // because the global is heap-allocated once (heap::alloc) and lives for the
     // thread's lifetime (a true thread-lifetime singleton; never freed in Zig either).
     pub static GLOBAL: Cell<*mut MiniEventLoop<'static>> = const { Cell::new(core::ptr::null_mut()) };
@@ -119,7 +121,7 @@ thread_local! {
 
 /// Returns the thread-local `*mut MiniEventLoop` (Zig: `*MiniEventLoop`).
 ///
-/// PORT NOTE (aliasing): Zig's `*T` aliases freely; returning `&'static mut`
+/// Zig's `*T` aliases freely; returning `&'static mut`
 /// here would let two calls (or `init_global` + `MiniKind::get_vm`) hold
 /// overlapping `&mut` to the same allocation — UB. Return the raw pointer;
 /// callers reborrow `&mut` for the scope they need.
@@ -133,7 +135,7 @@ pub fn init_global(
         return GLOBAL.with(|g| g.get());
     }
     let loop_ = MiniEventLoop::init();
-    // PORT NOTE: §Forbidden bans `Box::leak` for `&'static`; this is a
+    // §Forbidden bans `Box::leak` for `&'static`; this is a
     // thread-lifetime singleton, so use `heap::alloc` (intrusive ownership)
     // and store the raw pointer in the thread-local — same as Zig
     // `bun.default_allocator.create` + `threadlocal var global: *MiniEventLoop`.
@@ -147,7 +149,7 @@ pub fn init_global(
     // raw ptr.
     let global = unsafe { &mut *global_ptr };
 
-    // PORT NOTE: `InternalLoopData::set_parent_event_loop` (typed) lives in a
+    // `InternalLoopData::set_parent_event_loop` (typed) lives in a
     // higher tier; the sys-level API is `set_parent_raw(tag, ptr)`. Tag 1 = JS,
     // tag 2 = mini (matches Zig `EventLoopHandle` discriminant + 1).
     {
@@ -160,7 +162,7 @@ pub fn init_global(
         };
     }
 
-    // PORT NOTE: Zig `bun.DotEnv.instance` is a `?*Loader` global. The Rust
+    // Zig `bun.DotEnv.instance` is a `?*Loader` global. The Rust
     // port stores it as `AtomicPtr<Loader<'static>>`.
     global.env = env.map(NonNull::from).or_else(|| {
         NonNull::new(
@@ -180,7 +182,7 @@ pub fn init_global(
 
     // Set top_level_dir from provided cwd or get current working directory
     if let Some(dir) = cwd {
-        // PORT NOTE: Zig borrowed `dir`; we dupe to keep Box<[u8]> ownership uniform.
+        // Zig borrowed `dir`; we dupe to keep Box<[u8]> ownership uniform.
         global.top_level_dir = Box::<[u8]>::from(dir);
     } else if global.top_level_dir.is_empty() {
         let mut buf = bun_paths::PathBuffer::uninit();
@@ -350,7 +352,7 @@ impl<'a> MiniEventLoop<'a> {
         // which realigns when the contiguous slice is too short, so the
         // returned slice is always `>= count` long.
         //
-        // PORT NOTE: reshaped for borrowck — Zig held `writable` (&mut into self.tasks) while
+        // reshaped for borrowck — Zig held `writable` (&mut into self.tasks) while
         // bumping `self.tasks.count` per-iteration (overlapping &mut). Fill the writable slice
         // first, track items written in a local, then commit via `update()` after the borrow ends.
         let mut written: usize = 0;
@@ -383,7 +385,7 @@ impl<'a> MiniEventLoop<'a> {
                 (*self.loop_ptr()).tick();
                 (*self.loop_ptr()).dec();
             }
-            // PORT NOTE: Zig `defer this.onAfterEventLoop()` was block-scoped to this `if`.
+            // Zig `defer this.onAfterEventLoop()` was block-scoped to this `if`.
             self.on_after_event_loop();
         }
 
@@ -408,7 +410,7 @@ impl<'a> MiniEventLoop<'a> {
                 break;
             }
         }
-        // PORT NOTE: Zig `defer this.onAfterEventLoop()` at fn scope; no early returns above.
+        // Zig `defer this.onAfterEventLoop()` at fn scope; no early returns above.
         self.on_after_event_loop();
     }
 
@@ -430,7 +432,7 @@ impl<'a> MiniEventLoop<'a> {
     /// per PORTING.md (§reflection) with a caller-supplied `field_offset =
     /// core::mem::offset_of!(C, <field>)` into the embedded `AnyTaskWithExtraContext`.
     ///
-    /// PORT NOTE: the Zig body is dead code — it calls `Task.New(Context, Callback)`
+    /// the Zig body is dead code — it calls `Task.New(Context, Callback)`
     /// (wrong arity; `New` takes 3 type args) and `this.enqueueJSCTask(...)` (no such
     /// decl). Zig's lazy analysis lets this compile because no caller exists. The
     /// faithful port writes to `self.tasks` (the local non-concurrent FIFO), which is
@@ -450,7 +452,7 @@ impl<'a> MiniEventLoop<'a> {
         // Zig: `@field(ctx, name) = TaskType.init(ctx);`
         // SAFETY: `task` points at a properly aligned `AnyTaskWithExtraContext` field of `*ctx`.
         unsafe { task.write(New::<C, ()>::init(ctx, callback)) };
-        // Zig: `this.enqueueJSCTask(&@field(ctx, name))` — see PORT NOTE above.
+        // Zig: `this.enqueueJSCTask(&@field(ctx, name))` — see the note above.
         self.tasks.write_item(task).expect("unreachable");
     }
 
@@ -573,7 +575,7 @@ impl<'a> MiniEventLoop<'a> {
 
 impl<'a> Drop for MiniEventLoop<'a> {
     fn drop(&mut self) {
-        // PORT NOTE: `tasks.deinit()` is implicit via Queue's Drop.
+        // `tasks.deinit()` is implicit via Queue's Drop.
         debug_assert!(self.concurrent_tasks.is_empty());
     }
 }
@@ -581,7 +583,7 @@ impl<'a> Drop for MiniEventLoop<'a> {
 // ───────────────────────────── MiniVM ─────────────────────────────
 
 pub struct MiniVM<'a> {
-    // PORT NOTE: LIFETIMES.tsv classifies this BORROW_PARAM `&'a`, but `file_polls()`
+    // LIFETIMES.tsv classifies this BORROW_PARAM `&'a`, but `file_polls()`
     // mutates the loop (lazy-inits the store). Hold `&'a mut` instead of
     // casting `&T`→`&mut T` (UB, and forbidden by PORTING.md "no raw pointers to silence
     // borrowck"). Zig's `*MiniEventLoop` was always mutable.
@@ -646,7 +648,7 @@ impl EventLoopKindT for JsKind {
 
 impl EventLoopKindT for MiniKind {
     type Loop = MiniEventLoop<'static>;
-    // PORT NOTE (aliasing): Zig `refType() = *MiniEventLoop` is a freely-aliasing
+    // Zig `refType() = *MiniEventLoop` is a freely-aliasing
     // pointer. Returning `&'static mut` would let two `get_vm()` calls (or
     // `get_vm()` + `init_global()`) hold overlapping `&mut` — UB. Return the raw
     // pointer (matches `JsKind::Ref = *mut ()`); callers reborrow scoped `&mut`.
@@ -667,7 +669,7 @@ pub trait AbstractVM<'a> {
     fn abstract_vm(self) -> Self::Wrapped;
 }
 
-// PORT NOTE (b0): `impl AbstractVM for &VirtualMachine` cannot live here
+// `impl AbstractVM for &VirtualMachine` cannot live here
 // without naming the tier-6 `VirtualMachine` type. The impl moves to
 // `bun_runtime` (move-in pass), which constructs `JsVM { vm, vtable }`.
 

@@ -91,7 +91,7 @@ impl FuzzilliCommand {
 
             // Run the temp file
             let temp_path: &[u8] = b"/tmp/bun-fuzzilli-reprl.js";
-            // PORT NOTE: Zig calls `Run.boot` (src/bun_js.zig); the Rust port
+            // Zig calls `Run.boot` (src/bun_js.zig); the Rust port
             // hosts that entry point on `RunCommand` to avoid the higher-tier
             // crate cycle (see run_command.rs §`Run`).
             let result = RunCommand::boot(_ctx, temp_path.to_vec().into_boxed_slice(), None);

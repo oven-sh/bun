@@ -64,11 +64,10 @@ pub enum InternalSocket {
     Pipe,
 }
 
-// Zig `InternalSocket.eq` — variant + pointer-identity equality.
-// PORT NOTE: Zig's `.pipe` arm returns `false` even for `(pipe, pipe)` on
-// non-Windows (the variant carries no payload there, so identity is
-// meaningless). Mirrored exactly so debug-asserts that compare sockets behave
-// identically to the Zig build.
+// Variant + pointer-identity equality. The `Pipe` arm intentionally returns
+// `false` even for `(Pipe, Pipe)` on non-Windows (the variant carries no
+// payload there, so identity is meaningless) — debug-asserts that compare
+// sockets rely on this matching the original `InternalSocket.eq` semantics.
 impl PartialEq for InternalSocket {
     fn eq(&self, other: &Self) -> bool {
         match (*self, *other) {

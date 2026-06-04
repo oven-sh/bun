@@ -22,7 +22,7 @@ const MAX_KEEPALIVE_HOSTNAME: usize = 128;
 /// Zig: `fn NewHTTPContext(comptime ssl: bool) type { return struct { ... } }`
 /// The const-generic `SSL` is load-bearing for monomorphization (gates hot
 /// inner-loop branches); do not demote to a runtime bool.
-// PORT NOTE: renamed NewHTTPContext→HTTPContext — `New` is a Zig type-factory
+// Note: renamed NewHTTPContext→HTTPContext — `New` is a Zig type-factory
 // naming convention, not part of the type's identity; LIFETIMES.tsv already
 // aliases `*NewHTTPContext(true)` as `HttpsContext`.
 #[derive(bun_ptr::CellRefCounted)]
@@ -46,15 +46,16 @@ pub struct HTTPContext<const SSL: bool> {
     pub secure: Option<*mut SSL_CTX>,
     /// HTTP/2 sessions with at least one active stream, available for
     /// concurrent attachment if `hasHeadroom()`.
-    // TODO(port): lifetime — Zig stores `*H2.ClientSession` with manual
-    // `.ref()`/`.deref()`. Kept as raw pointers; ref/deref is intrusive.
+    // Zig stores `*H2.ClientSession` with manual `.ref()`/`.deref()`. Kept as
+    // raw pointers; the intrusive refcount (bumped on insert, dropped on
+    // removal) is what keeps each session alive while listed here.
     pub active_h2_sessions: Vec<*mut h2::ClientSession>,
     /// HTTPClients whose fresh TLS connect is in flight and whose request
     /// is h2-capable. Subsequent h2-capable requests to the same origin
     /// coalesce onto the first one's session once ALPN resolves rather
     /// than each opening its own socket.
-    // TODO(port): lifetime — owned Box<PendingConnect>; `pc.deinit()` in Drop.
-    // The `Box` is load-bearing: `client.pending_h2` holds `NonNull<PendingConnect>`
+    // Owned Box<PendingConnect>; `pc.deinit()` runs in Drop. The `Box` is
+    // load-bearing: `client.pending_h2` holds `NonNull<PendingConnect>`
     // into the box interior; unboxing would dangle it on `Vec` realloc.
     #[expect(clippy::vec_box)]
     pub pending_h2_connects: Vec<Box<h2::PendingConnect>>,
@@ -79,7 +80,7 @@ pub(crate) type ActiveSocket<const SSL: bool> = TaggedPtrUnion<ActiveSocketTypes
 /// is foreign even when every element is local).
 pub(crate) struct ActiveSocketTypes<const SSL: bool>;
 
-// PORT NOTE: tags assigned 1024 - i to match Zig's `TagTypeEnumWithTypeMap`
+// Note: tags assigned 1024 - i to match Zig's `TagTypeEnumWithTypeMap`
 // (`@typeName(Types[0])` → 1024, descending).
 impl<const SSL: bool> bun_ptr::tagged_pointer::TypeList for ActiveSocketTypes<SSL> {
     const LEN: usize = 4;
@@ -295,7 +296,7 @@ impl<const SSL: bool> ExistingSocket<SSL> {
 /// `dispatch.zig` reaches `Handler` via this name. The ext stores
 /// `*anyopaque` (the `ActiveSocket` tagged pointer), so dispatch reads
 /// it as `**anyopaque` and `Handler` decodes the tag.
-// PORT NOTE: was `pub type ActiveSocketHandler = Handler<SSL>;` (inherent
+// Note: was `pub type ActiveSocketHandler = Handler<SSL>;` (inherent
 // associated type — unstable). Hoisted to a free alias.
 pub type ActiveSocketHandler<const SSL: bool> = Handler<SSL>;
 
@@ -409,7 +410,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
         if s.registry_index() != u32::MAX {
             return;
         }
-        // PORT NOTE: `session.ref()` — intrusive refcount bump.
+        // Note: `session.ref()` — intrusive refcount bump.
         s.ref_();
         s.set_registry_index(u32::try_from(self.active_h2_sessions.len()).expect("int cast"));
         self.active_h2_sessions.push(session);
@@ -490,9 +491,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
         &mut self,
         client: &mut HTTPClient,
     ) -> Result<(), InitError> {
-        // TODO(port): `if (!comptime ssl) @compileError("ssl only")` — Rust
-        // cannot @compileError on a const-generic bool branch without nightly;
-        // debug_assert until the SSL/non-SSL impls are split.
+        // Zig: `if (!comptime ssl) @compileError("ssl only")`. Rust cannot
+        // @compileError on a const-generic bool branch on stable, so this is
+        // a debug_assert instead of a compile-time rejection.
         debug_assert!(SSL, "ssl only");
         let opts = client
             .tls_props
@@ -843,7 +844,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
         client: &mut HTTPClient,
         socket_path: &[u8],
     ) -> Result<Option<HTTPSocket<SSL>>, Error> {
-        // TODO(port): narrow error set
         client.connected_url = client
             .http_proxy
             .clone()
@@ -872,7 +872,6 @@ impl<const SSL: bool> HTTPContext<SSL> {
         hostname_: &[u8],
         port: u16,
     ) -> Result<Option<HTTPSocket<SSL>>, Error> {
-        // TODO(port): narrow error set
         let hostname: &[u8] =
             if FeatureFlags::HARDCODE_LOCALHOST_TO_127_0_0_1 && hostname_ == b"localhost" {
                 b"127.0.0.1"
@@ -884,9 +883,9 @@ impl<const SSL: bool> HTTPContext<SSL> {
             .http_proxy
             .clone()
             .unwrap_or_else(|| client.url.clone());
-        // TODO(port): URL.hostname is a borrowed slice — assigning a local
-        // overwrites lifetime. Preserved as-is via raw lifetime erasure matching
-        // the Zig pointer assignment semantics.
+        // URL.hostname is a borrowed slice — assigning a local would not
+        // satisfy the field's lifetime, so this uses raw lifetime erasure
+        // matching the Zig pointer-assignment semantics.
         client.connected_url.hostname =
             // SAFETY: hostname borrows either a static literal or `client.url`/
             // `client.http_proxy` which outlive `connected_url` for the
@@ -989,7 +988,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
                 client.allow_retry = true;
                 if let Some(session) = found.h2_session {
                     if SSL {
-                        // PORT NOTE: `session.socket = sock` — direct field
+                        // Note: `session.socket = sock` — direct field
                         // write; ClientSession.socket is `HTTPSocket<true>`.
                         // Re-derive `&mut` at each step (via the accessor)
                         // rather than holding one across `register_h2` — that
@@ -1099,8 +1098,8 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
             }
         }
 
-        // PORT NOTE: Vec drop subsumes `active_h2_sessions.deinit()`.
-        // PORT NOTE: Box<PendingConnect> Drop subsumes `pc.deinit()`; Vec drop
+        // Note: Vec drop subsumes `active_h2_sessions.deinit()`.
+        // Note: Box<PendingConnect> Drop subsumes `pc.deinit()`; Vec drop
         // subsumes `pending_h2_connects.deinit()`.
 
         // `init_with_opts` can fail before `group.init()` runs (HTTPThread
@@ -1111,7 +1110,7 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
             // Force-close any remaining sockets before unlinking the group so
             // the loop never dereferences a freed `*Context` via `group->ext`.
             self.group.close_all();
-            // PORT NOTE: SocketGroup deinit must run before the embedding struct
+            // Note: SocketGroup deinit must run before the embedding struct
             // is freed (it unlinks from the loop's group list).
             // SAFETY: group was init()'d in `init`/`init_with_opts`; HTTP-thread-only.
             unsafe { uws::SocketGroup::destroy(&raw mut self.group) };
@@ -1122,7 +1121,7 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
                 unsafe { bun_boringssl_sys::SSL_CTX_free(c) };
             }
         }
-        // PORT NOTE: `bun.default_allocator.destroy(this)` is the Box drop
+        // Note: `bun.default_allocator.destroy(this)` is the Box drop
         // performed by IntrusiveRc when refcount hits 0; not repeated here.
     }
 }
@@ -1373,9 +1372,10 @@ pub(crate) struct DeadSocket {
     garbage: u8,
 }
 
-// TODO(port): Zig used `pub var dead_socket align(@alignOf(usize)) = .{}` and
-// a module-level `var dead_socket = &DeadSocket.dead_socket`. Using a static
-// + accessor; revisit if `&'static mut` is needed for TaggedPtrUnion::init.
+// Zig used `pub var dead_socket align(@alignOf(usize)) = .{}` and a
+// module-level `var dead_socket = &DeadSocket.dead_socket`; a shared static
+// + accessor is the Rust equivalent (the pointer is only ever compared, never
+// written through).
 static DEAD_SOCKET: DeadSocket = DeadSocket { garbage: 0 };
 
 #[inline]

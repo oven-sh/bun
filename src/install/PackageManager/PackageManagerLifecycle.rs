@@ -35,7 +35,7 @@ pub struct LifecycleScriptTimeLog {
 }
 
 pub struct LifecycleScriptTimeLogEntry {
-    // PORT NOTE: Zig borrowed the lockfile string buffer (`string`). The Rust
+    // Zig borrowed the lockfile string buffer (`string`). The Rust
     // `LifecycleScriptSubprocess.package_name` is owned (`Box<[u8]>`) and freed
     // on `destroy`, so the log entry must own its copy to avoid a dangling
     // borrow. The list is at most a few dozen entries per install.
@@ -48,7 +48,6 @@ pub struct LifecycleScriptTimeLogEntry {
 impl LifecycleScriptTimeLog {
     pub fn append_concurrent(&mut self, entry: LifecycleScriptTimeLogEntry) {
         self.mutex.lock();
-        // TODO(port): consider `Mutex<Vec<Entry>>` so the guard scopes the borrow
         self.list.push(entry);
         self.mutex.unlock();
     }
@@ -100,10 +99,10 @@ impl PackageManager {
         // expandToCapacity + @memset(.., .unknown)
         self.preinstall_state
             .resize(self.preinstall_state.capacity(), PreinstallState::Unknown);
-        let _ = offset; // PORT NOTE: resize already fills [offset..] with Unknown
+        let _ = offset; // resize already fills [offset..] with Unknown
     }
 
-    /// PORT NOTE: Zig `setPreinstallState(this, package_id, lockfile, value)` — the
+    /// Zig `setPreinstallState(this, package_id, lockfile, value)` — the
     /// separate `lockfile` parameter only feeds `lockfile.packages.len` into
     /// `ensurePreinstallStateListCapacity`. Every Rust caller passes
     /// `self.lockfile` (or an alias of it), which would alias `&mut self`; the
@@ -122,7 +121,7 @@ impl PackageManager {
         self.preinstall_state[package_id as usize]
     }
 
-    /// PORT NOTE: Zig `determinePreinstallState(manager, pkg, lockfile, …)` — the
+    /// Zig `determinePreinstallState(manager, pkg, lockfile, …)` — the
     /// separate `lockfile` parameter is always `manager.lockfile` at every call
     /// site in the Rust port; collapsed onto `self.lockfile` to avoid the
     /// `&mut self` / `&self.lockfile` aliasing borrowck rejects.
@@ -271,7 +270,7 @@ impl PackageManager {
     }
 
     pub fn tick_lifecycle_scripts(&mut self) {
-        // PORT NOTE: reshaped for borrowck — `self.event_loop.tick_once(self)`
+        // reshaped for borrowck — `self.event_loop.tick_once(self)`
         // would borrow `self` twice. Erase `self` to a raw context pointer
         // first; `tick_once` only forwards it opaquely to task callbacks.
         let ctx = std::ptr::from_mut::<PackageManager>(self).cast::<core::ffi::c_void>();
@@ -281,7 +280,7 @@ impl PackageManager {
     pub fn sleep(&mut self) {
         self.report_slow_lifecycle_scripts();
         Output::flush();
-        // PORT NOTE: see `tick_lifecycle_scripts` — `is_done` callback reborrows
+        // see `tick_lifecycle_scripts` — `is_done` callback reborrows
         // `self` (the struct that owns `event_loop`), so use the raw-pointer
         // `tick_raw` variant which only holds `&mut event_loop` between
         // `is_done` calls.
@@ -405,7 +404,6 @@ impl PackageManager {
         foreground: bool,
         install_ctx: Option<InstallCtx<'_>>,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let log_level = self.options.log_level;
         let mut any_scripts = false;
         for maybe_item in list.items.iter() {
@@ -420,7 +418,7 @@ impl PackageManager {
 
         self.ensure_temp_node_gyp_script()?;
 
-        // PORT NOTE: `list` is moved into `spawn_package_scripts` below; copy
+        // `list` is moved into `spawn_package_scripts` below; copy
         // `cwd` out so the PATH builder can borrow it independently.
         let cwd_owned: Vec<u8> = list.cwd.as_bytes().to_vec();
         let cwd: &[u8] = &cwd_owned;
@@ -430,7 +428,7 @@ impl PackageManager {
         let mut script_env = env_loader.map.clone_with_allocator()?;
         // `defer script_env.map.deinit()` — handled by Drop
 
-        // PORT NOTE: `script_env.put` below needs `&mut`; copy PATH out so the
+        // `script_env.put` below needs `&mut`; copy PATH out so the
         // shared borrow does not span it.
         let original_path: Vec<u8> = script_env.get(b"PATH").unwrap_or(b"").to_vec();
 

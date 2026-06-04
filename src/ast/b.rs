@@ -28,7 +28,7 @@ pub use crate::ArrayBinding;
 ///     B.Object
 /// ```
 // Zig: `union(Binding.Tag)` — tag enum lives on `Binding::Tag`.
-// PORT NOTE: arena values are referenced via `StoreRef<T>` (LIFETIMES.tsv: ARENA)
+// Arena values are referenced via `StoreRef<T>` (LIFETIMES.tsv: ARENA)
 // rather than a threaded `&'bump mut T`.
 #[derive(Copy, Clone, bun_core::EnumTag)]
 #[enum_tag(existing = super::binding::Tag)]
@@ -74,24 +74,27 @@ pub struct Property {
     pub value: Binding,
     pub default_value: Option<Expr>,
 }
-// TODO(port): partial defaults — Zig only defaults `flags`/`default_value`; `key`/`value` have none, so no `impl Default`.
+// No `impl Default` on purpose: Zig only defaults `flags`/`default_value`;
+// `key`/`value` have no defaults, so every constructor must supply them.
 
 pub struct Object {
     pub properties: crate::StoreSlice<Property>,
     pub is_single_line: bool,
 }
-// Zig: `pub const Property = B.Property;` — inherent associated type alias.
-// TODO(port): inherent associated types are unstable; callers use `B::Property` directly.
-// TODO(port): partial defaults — Zig only defaults `is_single_line`; `properties` has none, so no `impl Default`.
+// Zig: `pub const Property = B.Property;` — inherent associated types are
+// unstable in Rust, so callers spell `b::Property` directly.
+// No `impl Default` on purpose: Zig only defaults `is_single_line`;
+// `properties` has no default, so every constructor must supply it.
 
 pub struct Array {
     pub items: crate::StoreSlice<ArrayBinding>,
     pub has_spread: bool,
     pub is_single_line: bool,
 }
-// Zig: `pub const Item = ArrayBinding;` — inherent associated type alias.
-// TODO(port): inherent associated types are unstable; callers use `ArrayBinding` directly.
-// TODO(port): partial defaults — Zig only defaults `has_spread`/`is_single_line`; `items` has none, so no `impl Default`.
+// Zig: `pub const Item = ArrayBinding;` — inherent associated types are
+// unstable in Rust, so callers spell `ArrayBinding` directly.
+// No `impl Default` on purpose: Zig only defaults `has_spread`/`is_single_line`;
+// `items` has no default, so every constructor must supply it.
 
 #[derive(Default, Copy, Clone)]
 pub struct Missing {}
@@ -127,7 +130,7 @@ impl B {
     where
         H: bun_core::Hasher + ?Sized,
         S: crate::base::SymbolTable + ?Sized,
-        // PORT NOTE: `symbol_table: anytype` — forwarded to `Ref::get_symbol` and
+        // `symbol_table: anytype` — forwarded to `Ref::get_symbol` and
         // `Expr::Data::write_to_hasher`; bound mirrors `Expr::Data::write_to_hasher`.
     {
         // Local mirror of `bun.writeAnyToHasher`. Zig fed anonymous tuples

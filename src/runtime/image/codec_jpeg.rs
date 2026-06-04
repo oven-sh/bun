@@ -10,7 +10,6 @@ use crate::encoded_wrap_free;
 #[allow(non_camel_case_types)]
 type tjhandle = *mut c_void;
 
-// TODO(port): move to libjpeg_turbo_sys (or runtime_sys) crate
 // TJINIT_COMPRESS=0, TJINIT_DECOMPRESS=1.
 unsafe extern "C" {
     pub(crate) fn tj3Init(init_type: c_int) -> tjhandle;

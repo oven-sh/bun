@@ -2,7 +2,6 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_have_been_called_times(
     this: &Expect,
     global: &JSGlobalObject,
@@ -38,31 +37,35 @@ pub(crate) fn to_have_been_called_times(
 
     // handle failure
     if not {
-        let signature: &str = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", true);
-        return this.throw_fmt(
+        let signature = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", true);
+        return this.throw(
             global,
             signature,
-            concat!(
-                "\n\n",
-                "Expected number of calls: not <green>{d}<r>\n",
-                "Received number of calls: <red>{d}<r>\n"
+            format_args!(
+                concat!(
+                    "\n\n",
+                    "Expected number of calls: not <green>{}<r>\n",
+                    "Received number of calls: <red>{}<r>\n"
+                ),
+                times,
+                calls.get_length(global)?,
             ),
-            format_args!("{}, {}", times, calls.get_length(global)?),
         );
-        // TODO(refactor): Expect.throw signature — Zig passes (fmt_literal, args_tuple); Rust
-        // side likely wants a single format_args!. Reconcile.
     }
 
-    let signature: &str = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", false);
-    this.throw_fmt(
+    let signature = get_signature("toHaveBeenCalledTimes", "<green>expected<r>", false);
+    this.throw(
         global,
         signature,
-        concat!(
-            "\n\n",
-            "Expected number of calls: <green>{d}<r>\n",
-            "Received number of calls: <red>{d}<r>\n"
+        format_args!(
+            concat!(
+                "\n\n",
+                "Expected number of calls: <green>{}<r>\n",
+                "Received number of calls: <red>{}<r>\n"
+            ),
+            times,
+            calls.get_length(global)?,
         ),
-        format_args!("{}, {}", times, calls.get_length(global)?),
     )
 }
 

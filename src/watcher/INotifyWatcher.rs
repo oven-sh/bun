@@ -63,7 +63,6 @@ impl Default for INotifyWatcher {
             fd: Fd::INVALID,
             loaded: false,
             // PERF(port): Zig left these `undefined` until init(); Box::default() zero-allocates eagerly.
-            // TODO(port): consider MaybeUninit<Box<EventListBytes>> to defer allocation to init().
             eventlist_bytes: bun_core::boxed_zeroed(),
             eventlist_ptrs: [core::ptr::null(); max_count],
             read_ptr: None,
@@ -100,9 +99,9 @@ impl Event {
         (n + a - 1) & !(a - 1)
     };
 
-    // TODO(port): Zig uses *align(1) Event everywhere. The kernel pads names so
-    // subsequent events are 4-byte aligned, but Zig is defensive. If unaligned
-    // reads are observed, switch these to take `*const Event` + read_unaligned.
+    // Zig uses *align(1) Event everywhere. The kernel pads names so subsequent
+    // events are 4-byte aligned, but Zig is defensive. If unaligned reads are
+    // ever observed, switch these to take `*const Event` + read_unaligned.
 
     pub fn name(&self) -> &ZStr {
         #[cfg(debug_assertions)]
@@ -184,7 +183,7 @@ impl INotifyWatcher {
         result
     }
 
-    // PORT NOTE: kept as in-place &mut self init (not `-> Result<Self, _>`) because
+    // kept as in-place &mut self init (not `-> Result<Self, _>`) because
     // INotifyWatcher is embedded as `Watcher.platform` with field defaults already set.
     pub(crate) fn init(&mut self, _root: &[u8]) -> Result<(), bun_core::Error> {
         use bun_sys::linux::IN;
@@ -196,11 +195,12 @@ impl INotifyWatcher {
             .and_then(|v| isize::try_from(v).ok())
             .unwrap_or(100_000);
 
-        // TODO: convert to bun.sys.Error
         let raw = bun_sys::linux::inotify_init1(IN::CLOEXEC);
-        if raw < 0 {
-            // TODO(port): narrow error set — Zig propagated the std.posix error union here.
-            return Err(bun_core::err!("InotifyInitFailed"));
+        let errno = bun_sys::get_errno(raw);
+        if errno != bun_sys::E::SUCCESS {
+            // Zig propagated the std.posix error union here; surface the errno
+            // name (e.g. EMFILE) instead of a generic init-failed tag.
+            return Err(bun_core::errno_to_zig_err(errno as i32));
         }
         self.fd = Fd::from_native(raw);
         // PERF(port): Zig used alignedAlloc here; eager Box in Default already allocated.
@@ -222,7 +222,7 @@ impl INotifyWatcher {
         use bun_sys::linux as system;
         use bun_sys::{E, get_errno};
         let mut i: u32 = 0;
-        // PORT NOTE: reshaped for borrowck — track length instead of borrowing a sub-slice
+        // reshaped for borrowck — track length instead of borrowing a sub-slice
         // of self.eventlist_bytes across the whole function.
         let read_len: usize = if let Some(ptr) = self.read_ptr {
             Futex::wait_forever(&self.watch_count, 0);
@@ -383,7 +383,7 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
         return Ok(());
     }
 
-    // PORT NOTE: reshaped for borrowck — copy raw event pointers to a local buffer so
+    // reshaped for borrowck — copy raw event pointers to a local buffer so
     // `this.platform` borrow ends before we mutably borrow other `this` fields below.
     // PERF(port): Zig used the platform's eventlist_ptrs slice directly.
     let events_len = events.len();
@@ -392,12 +392,12 @@ pub(crate) fn watch_loop_cycle(this: &mut Watcher) -> bun_sys::Result<()> {
     let events = &events_buf[..events_len];
 
     // Zig: `this.watchlist.items(.eventlist_index)`.
-    // PORT NOTE: reshaped for borrowck — copy the (small) column to a local Vec
+    // reshaped for borrowck — copy the (small) column to a local Vec
     // so the borrow of `this.watchlist` ends before we mutably borrow other
     // `this` fields inside the batching loop below.
     // PERF(port): Zig used the column slice directly.
     //
-    // PORT NOTE: locked — diverges from Zig spec (which reads this column
+    // locked — diverges from Zig spec (which reads this column
     // unlocked). `on_file_update` may evict watchlist entries via
     // `remove_at_index` + `flush_evictions` (the dir-event path appends *and*
     // evicts the matched file watch). The enqueued reload then re-imports the
@@ -524,7 +524,7 @@ fn process_inotify_event_batch(
         }
 
         if watch_events[i].index == last_event_id {
-            // PORT NOTE: reshaped for borrowck — split_at_mut to get two disjoint &mut.
+            // reshaped for borrowck — split_at_mut to get two disjoint &mut.
             let (head, tail) = watch_events.split_at_mut(i);
             head[last_event_index].merge(tail[0]);
             continue;
@@ -542,7 +542,7 @@ fn process_inotify_event_batch(
     let _guard = this.mutex.lock_guard();
     if this.running.load() {
         // watch_events.len == 0 is checked above, so last_event_index + 1 is safe.
-        // PORT NOTE: reshaped for borrowck — split disjoint field borrows so we can
+        // reshaped for borrowck — split disjoint field borrows so we can
         // pass `&mut watch_events[..]` in place (matching Zig's `all_events[0..]`)
         // without a gratuitous `.to_vec()`/`.clone()`.
         let deduped = &mut this.watch_events[..last_event_index + 1];

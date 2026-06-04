@@ -24,13 +24,13 @@ use bun_paths::{self as paths, PathBuffer};
 pub(crate) use crate::api::js_bundler::Plugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 
-// PORT NOTE: parent `mod.rs` already declares `dev_server` / `framework_router`
+// Note: parent `mod.rs` already declares `dev_server` / `framework_router`
 // as sibling modules of this file; pull them in instead of re-declaring (which
 // would duplicate the module tree and fail on `framework_router` having no
 // matching filename).
 use super::{dev_server, framework_router};
 
-// PORT NOTE: `pub use dev_server as DevServer` / `framework_router as
+// Note: `pub use dev_server as DevServer` / `framework_router as
 // FrameworkRouter` are already provided by the parent `mod.rs` (lines 349/369);
 // re-exporting here triggers E0365 because `bake_body` is a private module.
 
@@ -164,7 +164,6 @@ impl Drop for UserOptions {
 
 impl UserOptions {
     /// Currently, this function must run at the top of the event loop.
-    // TODO(port): narrow error set
     pub fn from_js(config: JSValue, global: &JSGlobalObject) -> JsResult<UserOptions> {
         let arena = Arena::new();
         // errdefer arena.deinit() — handled by Drop
@@ -275,7 +274,7 @@ impl StringRefList {
         strings: Vec::new(),
     };
 
-    // PORT NOTE: returned slice borrows JSC-owned storage kept alive by the
+    // Note: returned slice borrows JSC-owned storage kept alive by the
     // `ZigStringSlice` now stored in `self.strings`; it is valid only for as
     // long as `self` is. Callers that store the result in `Framework` /
     // `FileSystemRouterType` / `ServerComponents` fields must thread a `'bump`
@@ -307,7 +306,7 @@ pub struct SplitBundlerOptions {
 }
 
 impl SplitBundlerOptions {
-    // PORT NOTE: was `pub const EMPTY` — `ArrayHashMap::new()` (inside
+    // Note: was `pub const EMPTY` — `ArrayHashMap::new()` (inside
     // `BuildConfigSubset`) is not `const fn`, so this is now a fn-backed
     // default. Callers updated to `SplitBundlerOptions::default()`.
 
@@ -455,7 +454,7 @@ impl BuildConfigSubset {
 
 impl Default for BuildConfigSubset {
     fn default() -> Self {
-        // PORT NOTE: was `pub const DEFAULT` — `ArrayHashMap::new()` is not
+        // Note: was `pub const DEFAULT` — `ArrayHashMap::new()` is not
         // `const fn`, so this lives behind `Default` instead.
         BuildConfigSubset {
             loader: None,
@@ -548,7 +547,7 @@ impl Framework {
             }],
             // .static_routers = arena.alloc_slice_copy(&[b"public"]),
             built_in_modules: {
-                // PORT NOTE: was `ArrayHashMap::from_entries(arena, keys, vals)`;
+                // Note: was `ArrayHashMap::from_entries(arena, keys, vals)`;
                 // that constructor doesn't exist on the heap-backed
                 // `ArrayHashMap` — build it imperatively. `bun.handleOom`.
                 let keys: [&'static [u8]; 3] = [
@@ -606,7 +605,7 @@ impl Framework {
         Ok(fw)
     }
 
-    /// Unopinionated default. PORT NOTE: was `pub const NONE` —
+    /// Unopinionated default. Note: was `pub const NONE` —
     /// `ArrayHashMap::new()` is not `const fn`.
     pub fn none() -> Framework {
         Framework {
@@ -898,7 +897,7 @@ impl Framework {
                     )));
                 }
 
-                let path = match get_optional_string(file, global, b"import", refs, arena)? {
+                let path = match get_optional_string(file, global, b"import", refs)? {
                     Some(p) => p,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -909,10 +908,10 @@ impl Framework {
                 };
 
                 let value: BuiltInModule = if let Some(str) =
-                    get_optional_string(file, global, b"path", refs, arena)?
+                    get_optional_string(file, global, b"path", refs)?
                 {
                     BuiltInModule::Import(str)
-                } else if let Some(str) = get_optional_string(file, global, b"code", refs, arena)? {
+                } else if let Some(str) = get_optional_string(file, global, b"code", refs)? {
                     BuiltInModule::Code(str)
                 } else {
                     return Err(global.throw_invalid_arguments(format_args!(
@@ -943,15 +942,17 @@ impl Framework {
                     "Framework can only define up to 256 file-system router types"
                 )));
             }
-            // PORT NOTE: reshaped alloc+index → Vec::push (owned; deep-cloned with Framework)
+            // Note: reshaped alloc+index → Vec::push (owned; deep-cloned with Framework)
             let mut file_system_router_types = Vec::with_capacity(len as usize);
 
             let mut it = array.array_iterator(global)?;
             let mut i: usize = 0;
-            // TODO(port): errdefer for (file_system_router_types[0..i]) |*fsr| fsr.style.deinit();
-            // — Style should impl Drop; bumpalo Vec drop will handle this if so.
+            // Zig errdefer `for (file_system_router_types[0..i]) |*fsr| fsr.style.deinit()`
+            // is covered by `Vec`'s drop on the error path: dropping a `Style`
+            // releases the `Strong` held by its `JavascriptDefined` arm (the
+            // only owning variant; the named styles are unit-like).
             while let Some(fsr_opts) = it.next()? {
-                let root = match get_optional_string(fsr_opts, global, b"root", refs, arena)? {
+                let root = match get_optional_string(fsr_opts, global, b"root", refs)? {
                     Some(r) => r,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -960,13 +961,8 @@ impl Framework {
                         )));
                     }
                 };
-                let server_entry_point = match get_optional_string(
-                    fsr_opts,
-                    global,
-                    b"serverEntryPoint",
-                    refs,
-                    arena,
-                )? {
+                let server_entry_point =
+                    match get_optional_string(fsr_opts, global, b"serverEntryPoint", refs)? {
                     Some(s) => s,
                     None => {
                         return Err(global.throw_invalid_arguments(format_args!(
@@ -976,9 +972,9 @@ impl Framework {
                     }
                 };
                 let client_entry_point =
-                    get_optional_string(fsr_opts, global, b"clientEntryPoint", refs, arena)?;
+                    get_optional_string(fsr_opts, global, b"clientEntryPoint", refs)?;
                 let prefix =
-                    get_optional_string(fsr_opts, global, b"prefix", refs, arena)?.unwrap_or(b"/");
+                    get_optional_string(fsr_opts, global, b"prefix", refs)?.unwrap_or(b"/");
                 let ignore_underscores =
                     get_boolean_strict(fsr_opts, global, b"ignoreUnderscores")?.unwrap_or(false);
                 let layouts = get_boolean_strict(fsr_opts, global, b"layouts")?.unwrap_or(false);
@@ -1195,14 +1191,14 @@ impl Framework {
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig built `ASTMemoryAllocator.Scope` by hand and called
+        // Note: Zig built `ASTMemoryAllocator.Scope` by hand and called
         // `enter`/`exit`; the Rust port collapses that to `ASTMemoryAllocator::enter`
         // returning the RAII `Scope`, whose `Drop` runs `exit()` at end-of-fn
         // (Zig's `defer ast_scope.exit()`).
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        // PORT NOTE: Zig passed `out: *Transpiler` pointing at `= undefined`
+        // Note: Zig passed `out: *Transpiler` pointing at `= undefined`
         // memory and assigned `out.* = try Transpiler.init(...)`. In Rust the
         // caller (`DevServer::init`) hands us an uninitialized slot, so use
         // `MaybeUninit::write` (no drop of prior bytes) then reborrow as
@@ -1210,7 +1206,9 @@ impl Framework {
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
-            // TODO(port): std.mem.zeroes(TransformOptions) — verify all-zero is valid
+            // Zig: `std.mem.zeroes(TransformOptions)`. `TransformOptions`
+            // documents `Default` ⇔ `std.mem.zeroes` (every Option `None`,
+            // every slice empty, every scalar zero/false).
             bun_schema::api::TransformOptions::default(),
             None,
         )?);
@@ -1427,7 +1425,6 @@ fn get_optional_string(
     global: &JSGlobalObject,
     property: &[u8],
     allocations: &mut StringRefList,
-    arena: &Arena,
 ) -> JsResult<Option<&'static [u8]>> {
     let Some(value) = target.get(global, property)? else {
         return Ok(None);
@@ -1436,11 +1433,10 @@ fn get_optional_string(
         return Ok(None);
     }
     let str = bun_core::OwnedString::new(value.to_bun_string(global)?);
-    let _ = arena; // TODO(port): arena param unused after to_utf8() drops allocator
     Ok(Some(allocations.track(str.to_utf8())))
 }
 
-// PORT NOTE: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`
+// Note: `HmrRuntime` is defined canonically in the parent `bake/mod.rs`
 // (struct with `code: &'static ZStr` + `line_count`); re-export so callers
 // using `bake_body::HmrRuntime` see the same nominal type.
 pub(crate) use super::HmrRuntime;
@@ -1463,8 +1459,6 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
     // `cfg(bun_codegen_embed)` the macro expands to `include_str!`, so this
     // costs one extra copy at first call; the cost is negligible vs. keeping
     // a per-call-site `#[cfg]` pair in sync.)
-    // TODO(port): add a `runtime_embed_file_z!` to bun_core that yields
-    // `&'static ZStr` directly so the second copy goes away.
     use std::sync::OnceLock;
     fn nul_terminate(s: &'static str, cell: &'static OnceLock<Box<[u8]>>) -> &'static ZStr {
         let buf = cell.get_or_init(|| {
@@ -1491,7 +1485,7 @@ pub fn get_hmr_runtime(side: Side) -> HmrRuntime {
     })
 }
 
-// PORT NOTE: `Mode`/`Side`/`Graph` are defined canonically in the parent
+// Note: `Mode`/`Side`/`Graph` are defined canonically in the parent
 // `bake/mod.rs` (which itself re-exports `Side`/`Graph` from
 // `bun_bundler::bake_types`). Re-export here so `bake_body::Mode` ≡
 // `crate::bake::Mode` and downstream callers (production.rs, build_command.rs,

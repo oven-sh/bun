@@ -184,9 +184,10 @@ impl InternalSourceMap {
     }
 
     #[inline]
-    pub fn stream(self) -> &'static [u8] {
-        // TODO(port): lifetime — this borrows the blob for as long as `self.data`
-        // is valid; callers in this file only use the slice while `self` is live.
+    pub fn stream(&self) -> &[u8] {
+        // The slice borrows `self` (a Copy view over the blob); the blob
+        // outlives every view by construction, so tying the slice to the view
+        // borrow is conservative.
         // SAFETY: stream_offset..total_len is within the blob (validated by
         // is_valid_blob / producer).
         unsafe {
@@ -200,9 +201,9 @@ impl InternalSourceMap {
     /// Only call this when the blob was heap-allocated by `Builder`/`from_vlq` (e.g.
     /// entries in `SavedSourceMap`). Do NOT call on views over the standalone
     /// module graph section or any other borrowed memory.
-    // TODO(port): conditional ownership — intentionally NOT `impl Drop` because
-    // `InternalSourceMap` is a Copy view and may borrow non-owned memory. Could
-    // split into an owning newtype with `impl Drop`.
+    // Intentionally NOT `impl Drop`: `InternalSourceMap` is a Copy view and
+    // may borrow non-owned memory (e.g. the standalone module graph section),
+    // so ownership is the caller's responsibility here.
     pub fn free_owned(self) {
         // SAFETY: caller guarantees the blob was produced by Builder/from_vlq via
         // the global allocator with this exact length.
@@ -389,8 +390,10 @@ mod win_hdr {
 
 /// Parses a window header and steps through its deltas in order. Exception
 /// streams are consumed in order, so a reader is forward-only.
-// TODO(port): lifetime — `bytes`/`base`/`src_idx_mask` borrow the blob; kept as
-// raw pointers to avoid struct lifetime params.
+// Invariant: `bytes`/`base`/`src_idx_mask` point into the blob and are only
+// valid while the blob is live. They are raw pointers (not lifetimes) because
+// readers are stored in lifetime-less caches (`FindCacheSlot`, `Cursor`) that
+// follow `InternalSourceMap`'s Copy-view design.
 #[derive(Copy, Clone)]
 struct WindowReader {
     bytes: *const [u8],
@@ -425,7 +428,7 @@ impl WindowReader {
 
     #[inline]
     fn bytes<'a>(&self) -> &'a [u8] {
-        // PORT NOTE: returns an unbound lifetime so callers can mutate other
+        // returns an unbound lifetime so callers can mutate other
         // `self` fields while holding the slice — `self.bytes` is a raw `*const [u8]`
         // pointing into the blob, not into `self`, so this is sound.
         // SAFETY: `bytes` was set from `InternalSourceMap.stream()` which is
@@ -1235,7 +1238,7 @@ impl Builder {
     /// count, input line count) so this path flows through the existing
     /// `Chunk.buffer` plumbing unchanged.
     pub fn finalize(&mut self) -> &mut MutableString {
-        // PORT NOTE: reshaped for borrowck — Zig early-returns `&self.finalized.?`
+        // reshaped for borrowck — Zig early-returns `&self.finalized.?`
         // before populating; we check first then fall through to the trailing borrow.
         if self.finalized.is_none() {
             self.flush_window();
@@ -1398,7 +1401,7 @@ pub fn from_vlq(vlq: &[u8], input_line_count_hint: u32) -> Result<Box<[u8]>, Fro
         });
     }
 
-    // PORT NOTE: reshaped for borrowck — capture `builder.count` before borrowing
+    // reshaped for borrowck — capture `builder.count` before borrowing
     // `builder.finalized` mutably.
     let mapping_count: u64 = builder.count as u64;
     let out = builder.finalize();

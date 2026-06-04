@@ -23,7 +23,7 @@ use bun_uws::{self as uws, AnySocket, NewSocketHandler, SocketTCP};
 use super::js_mysql_query::JSMySQLQuery;
 use crate::mysql::protocol::any_mysql_error_jsc::mysql_error_to_js;
 use crate::mysql::protocol::error_packet_jsc::ErrorPacketJsc;
-// PORT NOTE: `my_sql_connection::MySQLConnection` (the protocol-layer struct)
+// `my_sql_connection::MySQLConnection` (the protocol-layer struct)
 // is intentionally NOT imported by name — that ident is taken in this module's
 // value namespace by the `declare_scope!` static and in the type namespace by
 // the `pub use JSMySQLConnection as MySQLConnection` re-export below.
@@ -33,7 +33,7 @@ use super::protocol::result_set::{self as ResultSet};
 
 bun_core::declare_scope!(MySQLConnection, visible);
 
-// PORT NOTE: #[bun_jsc::JsClass] proc-macro is not applied because this type
+// The #[bun_jsc::JsClass] proc-macro is not applied because this type
 // already has its `to_js`/`from_js` wired through `crate::jsc::codegen::
 // js_mysql_connection` (which owns the extern symbols) — the hand-rolled
 // `impl crate::jsc::JsClass` below forwards to those. `crate::jsc` re-exports
@@ -343,9 +343,7 @@ impl JSMySQLConnection {
         });
     }
 
-    // TODO(port): #[bun_jsc::host_fn] — free-fn shim emitted inside an
-    // `impl` block tries to call `constructor()` unqualified; re-enable once the
-    // proc-macro emits `Self::constructor` for receiverless impl items.
+    // Exported via the `.classes.ts` codegen (`MySQLConnectionClass__construct`).
     pub fn constructor(
         global_object: &JSGlobalObject,
         _callframe: &CallFrame,
@@ -546,7 +544,7 @@ impl JSMySQLConnection {
         let options_str = bun_core::OwnedString::new(arguments[7].to_bun_string(global_object)?);
         let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);
 
-        // PORT NOTE: Zig packed all five strings into one `StringBuilder`-owned
+        // Zig packed all five strings into one `StringBuilder`-owned
         // arena and handed `[]const u8` slices into it to `MySQLConnection.init`.
         // The Rust `init` takes `Box<[u8]>` per field (each separately owned),
         // so we just copy each string into its own allocation. `options_buf`
@@ -683,18 +681,15 @@ impl JSMySQLConnection {
 
     bun_jsc::poll_ref_hostfns!(field = poll_ref, ctx = vm_ctx);
 
-    // TODO(port): #[bun_jsc::host_fn(getter)] — see JsClass note above.
     pub fn get_connected(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.connection.get().status == my_sql_connection::Status::Connected)
     }
 
-    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_flush(this: &Self, _: &JSGlobalObject, _: &CallFrame) -> JsResult<JSValue> {
         this.register_auto_flusher();
         Ok(JSValue::UNDEFINED)
     }
 
-    // TODO(port): #[bun_jsc::host_fn(method)] — see JsClass note above.
     pub fn do_close(
         this: &Self,
         _global_object: &JSGlobalObject,
@@ -870,7 +865,7 @@ impl JSMySQLConnection {
     ) -> Result<(), OnResultRowError> {
         let result_mode = request.get_result_mode();
         let mut structure: JSValue = JSValue::UNDEFINED;
-        // PORT NOTE: `MySQLStatement::structure(&mut self) -> &CachedStructure`
+        // `MySQLStatement::structure(&mut self) -> &CachedStructure`
         // would keep `*statement` exclusively borrowed for the lifetime of the
         // returned ref, blocking the `&statement.columns` / `fields_flags` reads
         // below. Stash a `ParentRef` (lifetime-erased `&T`; Zig holds it by
@@ -994,19 +989,16 @@ impl JSMySQLConnection {
     pub fn get_statement_from_signature_hash(
         &self,
         signature_hash: u64,
-    ) -> Result<my_sql_connection::PreparedStatementsMapGetOrPutResult<'_>, bun_core::Error> {
-        // TODO(port): narrow error set — `get_or_put` currently yields `AllocError`.
-        self.connection_mut()
-            .statements
-            .get_or_put(signature_hash)
-            .map_err(|_| bun_core::err!("OutOfMemory"))
+    ) -> Result<my_sql_connection::PreparedStatementsMapGetOrPutResult<'_>, bun_core::AllocError>
+    {
+        self.connection_mut().statements.get_or_put(signature_hash)
     }
 }
 
 /// Referenced by `dispatch.zig` (kind = `.mysql[_tls]`).
 pub struct SocketHandler<const SSL: bool>;
 
-// PORT NOTE: Zig's `pub const SocketType = uws.NewSocketHandler(ssl)` is an
+// Zig's `pub const SocketType = uws.NewSocketHandler(ssl)` is an
 // inherent associated type, which is unstable in Rust (`feature(inherent_associated_types)`).
 // Spell out `NewSocketHandler<SSL>` at every use site instead.
 impl<const SSL: bool> SocketHandler<SSL> {

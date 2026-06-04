@@ -28,8 +28,8 @@ pub struct BoxShadow {
     pub inset: bool,
 }
 
-// PORT NOTE: `SmallList::{deep_clone,eql,is_compatible}` are bounded on the
-// `generics::{DeepClone,CssEql,IsCompatible}` traits. Wire BoxShadow into all
+// `SmallList::{deep_clone,eql,is_compatible}` are bounded on the
+// `generics::{DeepClone,CssEql,IsCompatible}` traits. BoxShadow implements all
 // three so the handler can use `SmallList<BoxShadow,1>` directly without
 // hand-rolling per-field loops.
 impl<'bump> css::generic::DeepClone<'bump> for BoxShadow {
@@ -127,7 +127,6 @@ impl BoxShadow {
         dest.write_char(b' ')?;
         self.y_offset.to_css(dest)?;
 
-        // PORT NOTE: Zig `Length.eql` → Rust `PartialEq` (see values/length.rs).
         if self.blur != Length::zero() || self.spread != Length::zero() {
             dest.write_char(b' ')?;
             self.blur.to_css(dest)?;
@@ -146,8 +145,7 @@ impl BoxShadow {
     }
 
     pub(crate) fn deep_clone(&self, arena: &Arena) -> Self {
-        // PORT NOTE: Zig css.implementDeepClone iterated @typeInfo fields. Expanded
-        // explicitly here — keep in sync with the BoxShadow field list. `Length`
+        // Expanded field-wise — keep in sync with the BoxShadow field list. `Length`
         // has no `DeepClone` trait impl yet but is `Clone` (Box<Calc> deep-clones).
         BoxShadow {
             color: self.color.deep_clone(arena),
@@ -160,8 +158,7 @@ impl BoxShadow {
     }
 
     pub(crate) fn eql(&self, rhs: &Self) -> bool {
-        // PORT NOTE: Zig css.implementEql iterated @typeInfo fields. Expanded
-        // explicitly. `Length` Zig `eql` → Rust `PartialEq` (values/length.rs).
+        // Expanded field-wise — keep in sync with the BoxShadow field list.
         self.color.eql(&rhs.color)
             && self.x_offset == rhs.x_offset
             && self.y_offset == rhs.y_offset
@@ -204,7 +201,7 @@ impl BoxShadowHandler {
                     self.flush(dest, context);
                 }
 
-                // PORT NOTE: reshaped for borrowck — Zig held simultaneous &mut into
+                // Reshaped for borrowck: Zig held simultaneous &mut into
                 // self.box_shadows across self.flush(). Compute the predicate first,
                 // then either flush+replace or update in place.
                 let needs_flush = if let Some(bxs) = &self.box_shadows {
@@ -273,7 +270,7 @@ impl BoxShadowHandler {
                 fallbacks.insert(shadow.color.get_necessary_fallbacks(&context.targets));
             }
 
-            // PORT NOTE: Zig used `initCapacity(len)` + `setLen(len)` + per-index field
+            // Zig used `initCapacity(len)` + `setLen(len)` + per-index field
             // writes via `inline for std.meta.fields(BoxShadow)` skipping `color`. That
             // pattern would observe partially-uninit `BoxShadow` values in Rust, so we
             // build each fully-formed `BoxShadow` and `append`. Behavior is identical.

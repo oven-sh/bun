@@ -12,9 +12,9 @@ impl Timer {
         Ok(Self)
     }
 
-    // TODO(port): Zig used `@compileError` here, which fires lazily only if the
-    // fn is referenced. Rust's `compile_error!` fires unconditionally, so we
-    // keep the fn signatures for structural parity and trap at runtime instead.
+    // Zig used `@compileError` here, which fires lazily only if the fn is
+    // referenced. Rust's `compile_error!` fires unconditionally, so we keep
+    // the fn signatures for structural parity and trap at runtime instead.
     pub fn read(&self) -> u64 {
         unreachable!("FeatureFlags.tracing should be disabled in WASM");
     }
@@ -39,7 +39,9 @@ pub struct Timer {
 #[cfg(not(target_family = "wasm"))]
 impl Timer {
     pub fn start() -> Result<Self, bun_core::Error> {
-        // TODO(port): narrow error set
+        // Infallible here, but kept fallible to mirror Zig's
+        // `std.time.Timer.start()` (`error{TimerUnsupported}!Timer`) signature
+        // that callers already handle.
         Ok(Self {
             started: std::time::Instant::now(),
         })

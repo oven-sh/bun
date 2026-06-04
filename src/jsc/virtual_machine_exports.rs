@@ -42,7 +42,6 @@ pub fn read_origin_timer(vm: &VirtualMachine) -> u64 {
     if let Some(overridden) = vm.overridden_performance_now {
         return overridden;
     }
-    // PORT NOTE: Zig `std.time.Timer.read()`; the Rust field is `Instant`.
     vm.origin_timer.elapsed().as_nanos() as u64
 }
 
@@ -155,9 +154,9 @@ pub fn handle_rejected_promise(global: &JSGlobalObject, promise: &mut JSPromise)
 struct HandledPromiseContext {
     // VM-lifetime backref (JSC_BORROW) — `GlobalRef` encapsulates the deref.
     global_this: crate::GlobalRef,
-    // PORT NOTE: Zig stored a bare JSValue rooted via `.protect()`/`.unprotect()`.
-    // PORTING.md forbids bare JSValue fields on heap-allocated structs; `Strong`
-    // is the prescribed root type and its `Drop` releases the handle slot.
+    // PORTING.md forbids bare JSValue fields on heap-allocated structs;
+    // `Strong` is the prescribed root type and its `Drop` releases the
+    // handle slot.
     promise: Strong,
 }
 

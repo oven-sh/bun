@@ -110,7 +110,7 @@ pub struct Watcher {
     pub watched_count: usize,
     pub mutex: Mutex,
 
-    // PORT NOTE: Zig stored `fs: *Fs.FileSystem` but only ever read
+    // Zig stored `fs: *Fs.FileSystem` but only ever read
     // `fs.top_level_dir`. Storing the slice directly avoids a forward-decl
     // dependency on the higher-tier `bun_resolver::fs::FileSystem` type.
     // allocator field dropped — global mimalloc (see §Allocators)
@@ -234,7 +234,6 @@ impl Watcher {
             std::thread::Builder::new()
                 .name("FileWatcher".into())
                 .spawn(move || unsafe {
-                    // TODO(port): narrow error set
                     let _ = Watcher::thread_main(this as *mut Watcher);
                 })
                 .expect("spawn FileWatcher thread"),
@@ -242,7 +241,7 @@ impl Watcher {
         Ok(())
     }
 
-    // PORT NOTE: not `impl Drop` — takes a flag and conditionally hands
+    // not `impl Drop` — takes a flag and conditionally hands
     // ownership to the watcher thread (which frees self in thread_main).
     // Per PORTING.md, `pub fn deinit` is never the public name; renamed to
     // `shutdown` (not `close(self)` because ownership may transfer to the
@@ -363,7 +362,7 @@ impl Watcher {
         // So if we just sort the list by the biggest index first, that should be fine
         self.evict_list[0..evict_list_i].sort_by(|a, b| b.cmp(a));
 
-        // PORT NOTE: reshaped for borrowck — capture fds.len() before loop
+        // reshaped for borrowck — capture fds.len() before loop
         let slice = self.watchlist.slice();
         let fds = slice.items_fd();
         let fds_len = fds.len();
@@ -441,7 +440,10 @@ impl Watcher {
     /// Does not propagate kevent registration errors.
     #[cfg(any(target_os = "macos", target_os = "freebsd"))]
     pub fn add_file_descriptor_to_kqueue_without_checks(&mut self, fd: Fd, watchlist_id: usize) {
-        // TODO(port): move to watcher_sys
+        // Raw libc::kevent on purpose, matching the Zig sibling (Watcher.zig
+        // calls raw std.posix.system.kevent here and discards the result):
+        // this is a registration-only call (nevents = 0) whose return value
+        // is intentionally ignored.
         use libc::{EV_ADD, EV_CLEAR, EV_ENABLE, EVFILT_VNODE, kevent as KEvent};
         use libc::{NOTE_DELETE, NOTE_RENAME, NOTE_WRITE};
 
@@ -658,12 +660,10 @@ impl Watcher {
         dir_fd: Fd,
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<()> {
-        if LOCK {
-            self.mutex.lock();
-        }
-        // TODO(port): errdefer — defer-unlock captures &mut self; needs RAII
-        // MutexGuard. Until then, each early-return below hand-inlines
-        // `if LOCK { self.mutex.unlock() }`.
+        // RAII guard (Zig: `lock(); defer unlock()`): `lock_guard()` holds the
+        // mutex by `BackRef`, not a borrow of `self`, so the `&mut self` calls
+        // below are fine and every return path unlocks.
+        let _guard = LOCK.then(|| self.mutex.lock_guard());
 
         debug_assert!(file_path.len() > 1);
         let pathname = bun_paths::fs::PathName::init(file_path);
@@ -708,9 +708,6 @@ impl Watcher {
                     parent_dir_hash,
                 ) {
                     Err(err) => {
-                        if LOCK {
-                            self.mutex.unlock();
-                        }
                         return Err(err.with_path(parent_dir));
                     }
                     Ok(r) => r,
@@ -728,9 +725,6 @@ impl Watcher {
             package_json,
         ) {
             Err(err) => {
-                if LOCK {
-                    self.mutex.unlock();
-                }
                 return Err(err.with_path(file_path));
             }
             Ok(()) => {}
@@ -754,9 +748,6 @@ impl Watcher {
             );
         }
 
-        if LOCK {
-            self.mutex.unlock();
-        }
         Ok(())
     }
 
@@ -795,20 +786,16 @@ impl Watcher {
         file_path: &[u8],
         hash: HashType,
     ) -> sys::Result<WatchItemIndex> {
-        self.mutex.lock();
-        // TODO(port): use RAII guard for mutex
-        let result = (|| {
-            if let Some(idx) = self.index_of(hash) {
-                return Ok(idx as WatchItemIndex);
-            }
-            // Zig: `bun.handleOom(this.watchlist.ensureUnusedCapacity(this.allocator, 1))`.
-            self.watchlist
-                .ensure_unused_capacity(1)
-                .unwrap_or_else(|_| bun_core::out_of_memory());
-            self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, file_path, hash)
-        })();
-        self.mutex.unlock();
-        result
+        // RAII guard (Zig: `lock(); defer unlock()`); see append_file_maybe_lock.
+        let _guard = self.mutex.lock_guard();
+        if let Some(idx) = self.index_of(hash) {
+            return Ok(idx as WatchItemIndex);
+        }
+        // Zig: `bun.handleOom(this.watchlist.ensureUnusedCapacity(this.allocator, 1))`.
+        self.watchlist
+            .ensure_unused_capacity(1)
+            .unwrap_or_else(|_| bun_core::out_of_memory());
+        self.append_directory_assume_capacity::<CLONE_FILE_PATH>(fd, file_path, hash)
     }
 
     /// Lazily watch a file by path (slow path).
@@ -940,7 +927,7 @@ impl Watcher {
         self.mutex.unlock();
     }
 
-    // PORT NOTE: Zig used a comptime `kind: Kind` param. Rust const-generic
+    // Zig used a comptime `kind: Kind` param. Rust const-generic
     // enum params need `adt_const_params` (nightly); the value is only
     // compared to `.Directory`, so a plain runtime parameter is fine.
     pub fn remove_at_index(

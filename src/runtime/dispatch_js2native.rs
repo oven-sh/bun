@@ -36,7 +36,7 @@ pub use bun_install_jsc::npm_jsc::operating_system_is_match as install_npm_opera
 pub use bun_install_jsc::npm_jsc::package_manifest_bindings_generate as install_npm_package_manifest_bindings_generate;
 
 // ── src/ini/ini.zig IniTestingAPIs ──────────────────────────────────────────
-// PORT NOTE: the `*_jsc` bodies were lifted into `bun_install_jsc::ini_jsc`
+// The `*_jsc` bodies live in `bun_install_jsc::ini_jsc`
 // (ini's only JSC consumer is `bun install`'s npmrc loader).
 pub use bun_install_jsc::ini_jsc::ini_testing_load_npmrc_from_js as ini_ini_ini_testing_ap_is_load_npmrc_from_js;
 pub use bun_install_jsc::ini_jsc::ini_testing_parse as ini_ini_ini_testing_ap_is_parse;

@@ -17,8 +17,6 @@ use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::npm as Npm;
 use bun_paths::{self as Path, PathBuffer};
-// TODO(port): PackageManagerCommand arrives from move-in
-// (bun_runtime::cli::package_manager_command::PackageManagerCommand → install::PackageManager::CommandLineArguments).
 use crate::package_manager_real::PackageManagerCommand;
 
 use std::sync::OnceLock;
@@ -44,7 +42,7 @@ type ParamType = clap::Param<clap::Help>;
 // (`INSTALL_PARAMS`, …) are baked into rodata with zero runtime init.
 use bun_clap::concat_params;
 
-// PORT NOTE: Zig builds the `--backend` param spec via comptime string `++` against
+// Zig builds the `--backend` param spec via comptime string `++` against
 // `platform_specific_backend_label`. `clap::param!` is a proc-macro that requires a
 // *literal* token (it parses the spec at compile time), so `const_format::concatcp!`
 // can't feed it. Instead we cfg-select the fully-expanded literal per platform —
@@ -354,8 +352,8 @@ static WHY_PARAMS: &[ParamType] = concat_params![
 
 // NOTE: `string` (= `[]const u8`) fields here are slices into process argv (owned by `clap::Args`
 // which itself lives for the program duration). They are never freed. Mapped to `&'static [u8]`
-// per PORTING.md (no `deinit`, never `allocator.free`d). TODO(refactor): thread an explicit
-// lifetime if `clap::Args` ever becomes scoped.
+// per PORTING.md (no `deinit`, never `allocator.free`d). An explicit lifetime would only
+// become necessary if `clap::Args` ever becomes scoped.
 //
 // `Clone` mirrors Zig value-copy semantics — `updatePackageJSONAndInstall`
 // passes `cli` by value into `PackageManager.init` while retaining its own
@@ -974,7 +972,6 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
         }
     }
 
-    // TODO(port): narrow error set
     pub fn parse(subcommand: Subcommand) -> Result<CommandLineArguments, bun_core::Error> {
         // PERF(port): was comptime monomorphization on `subcommand` — profile if hot
         Output::set_is_verbose(Output::is_verbose());
@@ -1003,7 +1000,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/pm#scan<r>.
 
         let mut diag = clap::Diagnostic::default();
 
-        // PORT NOTE: Zig kept `args` (and its arena) alive for the program duration —
+        // Zig kept `args` (and its arena) alive for the program duration —
         // `cli` stores slices into it. Park the parsed `Args` in a process-global
         // `OnceLock` so outer slice borrows (`positionals()`, `options()`) are
         // `'static`; inner `&[u8]` are argv-backed and already `'static`. CLI args

@@ -13,21 +13,22 @@ use crate::{
 };
 
 /// A value for the [transform](https://www.w3.org/TR/2019/CR-css-transforms-1-20190214/#propdef-transform) property.
-// PORT NOTE: was `BumpVec<'bump, Transform>`; downgraded to `Vec` so the
-// `Property` enum (properties_generated.rs) stays lifetime-free. Re-thread
-// `'bump` through `Property<'a>` crate-wide in a later pass (see line :1096).
+// Was `BumpVec<'bump, Transform>` in an earlier port iteration; uses `Vec` so
+// the `Property` enum (properties_generated.rs) stays lifetime-free.
+// Re-threading `'bump` through `Property<'a>` crate-wide is deferred work
+// (see /tmp/todo-fix/complex/mk04-repair.md; also TransformHandler below).
 #[derive(Clone, PartialEq, Default)]
 pub struct TransformList {
     pub v: Vec<Transform>,
 }
 
-// PORT NOTE: split out of the parse/to_css `impl TransformList` below —
+// Split out of the parse/to_css `impl TransformList` below —
 // `TransformHandler` only needs deep_clone/eql.
 impl TransformList {
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone reflection — `Transform`/`TransformList`
-        // are `Clone`-via-derive (Vec + POD payloads); an arena-aware DeepClone
-        // trait should land crate-wide.
+        // `Transform`/`TransformList` deep-clone via `#[derive(Clone)]`: payloads
+        // with heap variants (`LengthPercentage`/`Length` `Calc(Box<..>)`) clone
+        // deeply onto the global heap, matching Zig's `css.implementDeepClone`.
         self.clone()
     }
 }
@@ -63,7 +64,7 @@ impl TransformList {
 
         // TODO: Re-enable with a better solution
         //       See: https://github.com/parcel-bundler/lightningcss/issues/288
-        // PORT NOTE: Zig's minify branch built a sub-`Printer` writing into a temp
+        // Zig's minify branch built a sub-`Printer` writing into a temp
         // buffer then `dest.writeStr(base)` — observably identical to writing
         // directly into `dest` while `dest.minify` is set (the original
         // lightningcss size-comparison was already disabled upstream). Collapsed.
@@ -148,8 +149,6 @@ impl Transform {
     pub(crate) fn parse(input: &mut Parser) -> Result<Transform> {
         let function = input.expect_function_cloned()?;
 
-        // PORT NOTE: Zig used a Closure struct + nested anon-struct fn passed to
-        // parseNestedBlock; Rust closures capture `function` directly.
         input.parse_nested_block(|i| -> Result<Transform> {
             let location = i.current_source_location();
             crate::match_ignore_ascii_case! { function, {
@@ -241,8 +240,8 @@ impl Transform {
                         let y = NumberOrPercentage::parse(i)?;
                         Ok(Transform::Scale { x, y })
                     } else {
-                        // PORT NOTE: Zig `x.deepClone(arena)` — `NumberOrPercentage`
-                        // is POD; `clone()` is exact.
+                        // `NumberOrPercentage` is POD; `clone()` matches Zig's
+                        // `x.deepClone(arena)` exactly.
                         let y = x.clone();
                         Ok(Transform::Scale { x, y })
                     }
@@ -574,7 +573,9 @@ impl Transform {
     }
 
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone reflection — payload types may need bump-aware clone
+        // All payload types deep-clone via `#[derive(Clone)]` — `Calc` variants
+        // of `LengthPercentage`/`Length` are `Box`ed and clone deeply onto the
+        // global heap — matching Zig's `css.implementDeepClone`.
         self.clone()
     }
 }
@@ -612,8 +613,6 @@ pub struct Matrix3d<T> {
 }
 
 /// A value for the [transform-style](https://drafts.csswg.org/css-transforms-2/#transform-style-property) property.
-// TODO(port): css.DefineEnumProperty reflection → crate-wide #[derive(EnumProperty)] providing
-// parse/to_css/eql/hash/deep_clone from kebab-case variant names.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, crate::DefineEnumProperty)]
 pub enum TransformStyle {
     #[css("flat")]
@@ -726,8 +725,8 @@ impl Translate {
     }
 }
 
-// PORT NOTE: split out of the parse/to_css `impl Translate` above — these
-// don't depend on Parser/Printer surface and are needed by `TransformHandler`.
+// Split out of the parse/to_css `impl Translate` above — these don't depend
+// on Parser/Printer surface and are needed by `TransformHandler`.
 impl Translate {
     pub(crate) fn to_transform(&self, _bump: &Bump) -> Transform {
         match self {
@@ -745,7 +744,8 @@ impl Translate {
     }
 
     pub(crate) fn deep_clone(&self, _bump: &Bump) -> Self {
-        // TODO(port): css.implementDeepClone — arena-aware clone for LengthPercentage
+        // `LengthPercentage` is `Clone`-via-derive; a plain clone matches
+        // Zig's `css.implementDeepClone`.
         self.clone()
     }
 }
@@ -846,7 +846,7 @@ impl Rotate {
     }
 }
 
-// PORT NOTE: split out of the parse/to_css `impl Rotate` above — needed by
+// Split out of the parse/to_css `impl Rotate` above — needed by
 // `TransformHandler`.
 impl Rotate {
     /// Converts the rotation to a transform function.
@@ -930,7 +930,7 @@ impl Scale {
     }
 }
 
-// PORT NOTE: split out of the parse/to_css `impl Scale` above — needed by
+// Split out of the parse/to_css `impl Scale` above — needed by
 // `TransformHandler`.
 impl Scale {
     pub(crate) fn to_transform(&self, _bump: &Bump) -> Transform {
@@ -962,9 +962,10 @@ crate::css_eql_partialeq!(
     Scale
 );
 
-// PORT NOTE: was `TransformHandler<'bump>` holding `TransformList<'bump>`; the
-// `Property` enum is lifetime-free (see TransformList above), so the handler
-// is too. Re-thread `'bump` crate-wide in a later pass.
+// Was `TransformHandler<'bump>` holding `TransformList<'bump>` in an earlier
+// port iteration; the `Property` enum is lifetime-free (see TransformList
+// above), so the handler is too. Re-threading `'bump` crate-wide is deferred
+// work (see /tmp/todo-fix/complex/mk04-repair.md).
 #[derive(Default)]
 pub struct TransformHandler {
     pub transform: Option<(TransformList, VendorPrefix)>,
@@ -974,8 +975,8 @@ pub struct TransformHandler {
     pub has_any: bool,
 }
 
-// PORT NOTE: `context.arena` was dropped from PropertyHandlerContext, so the
-// arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
+// `context.arena` does not exist on PropertyHandlerContext; the arena is
+// recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
 impl TransformHandler {
     pub(crate) fn handle_property(
         &mut self,
@@ -984,7 +985,7 @@ impl TransformHandler {
         context: &mut PropertyHandlerContext,
     ) -> bool {
         let bump = dest.bump();
-        // PORT NOTE: Zig used a local fn with `comptime field: []const u8` + `@field(self, field)`.
+        // Zig used a local fn with `comptime field: []const u8` + `@field(self, field)`.
         // Rust cannot index struct fields by string at runtime; use a macro to paste the ident.
         macro_rules! individual_property {
             ($field:ident, $val:expr) => {{
@@ -1004,7 +1005,7 @@ impl TransformHandler {
 
                 // If two vendor prefixes for the same property have different
                 // values, we need to flush what we have immediately to preserve order.
-                // PORT NOTE: reshaped for borrowck — Zig held &self.transform across
+                // Reshaped for borrowck — Zig held &self.transform across
                 // self.flush(); compute the predicate first, then act.
                 let needs_flush = if let Some(current) = &self.transform {
                     current.0 != *transform_val && !current.1.contains(vp)
@@ -1046,8 +1047,8 @@ impl TransformHandler {
                             prefixes::Feature::Transform,
                         ))
                     } else {
-                        // PORT NOTE: Zig pushed `property.deepClone(arena)`; the
-                        // matched payload is `Unparsed`, so reconstruct directly.
+                        // Zig pushed `property.deepClone(arena)`; the matched
+                        // payload is `Unparsed`, so reconstruct directly.
                         Property::Unparsed(unparsed.deep_clone(bump))
                     };
                     dest.push(prop);

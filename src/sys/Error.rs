@@ -34,8 +34,8 @@ pub struct Error {
     pub fd: Fd,
     #[cfg(windows)]
     pub from_libuv: bool,
-    // TODO(port): in Zig these are borrowed `[]const u8` by default and only owned after
-    // `clone()`. Ported as Box<[u8]> per PORTING.md (deinit frees them); `with_path*` now
+    // In Zig these are borrowed `[]const u8` by default and only owned after
+    // `clone()`. Ported as Box<[u8]> per PORTING.md (deinit frees them); `with_path*`
     // eagerly clones. Revisit if profiling shows regressions.
     pub path: Box<[u8]>,
     pub syscall: Tag,
@@ -91,7 +91,7 @@ impl IntoErrnoInt for u16 {
 impl IntoErrnoInt for i32 {
     #[inline]
     fn into_errno_int(self) -> Int {
-        // PORT NOTE: matches Error.zig fromCodeInt:
+        // matches Error.zig fromCodeInt:
         // `@intCast(if (Environment.isWindows) @abs(errno) else errno)` — only Windows
         // (libuv negative codes) takes the absolute value; on POSIX a negative errno is
         // a caller bug and `@intCast` would trap in safe builds, so panic here too.
@@ -159,7 +159,7 @@ impl Error {
         }
     }
 
-    // TODO(port): Zig took `errno: anytype`; narrowed to c_int (covers all call sites in practice).
+    // Zig took `errno: anytype`; narrowed to c_int (covers all call sites in practice).
     pub fn from_code_int(errno: c_int, syscall_tag: Tag) -> Error {
         #[cfg(windows)]
         let n = Int::try_from(errno.unsigned_abs()).unwrap();
@@ -197,8 +197,8 @@ impl Error {
         self.get_errno() == E::EAGAIN
     }
 
-    // TODO(port): was `pub const oom` in Zig; Box<[u8]> fields prevent a true `const` item.
-    /// `bun.sys.Error.oom` — `ENOMEM` with no syscall context.
+    /// `bun.sys.Error.oom` — `ENOMEM` with no syscall context. (Was `pub const oom`
+    /// in Zig; the `Box<[u8]>` fields prevent a true `const` item.)
     #[inline]
     pub fn oom() -> Error {
         Error {
@@ -208,7 +208,8 @@ impl Error {
         }
     }
 
-    // TODO(port): was `pub const retry` in Zig; Box<[u8]> fields prevent a true `const` item.
+    /// `bun.sys.Error.retry`. (Was `pub const retry` in Zig; the `Box<[u8]>`
+    /// fields prevent a true `const` item.)
     #[inline]
     pub fn retry() -> Error {
         Error {
@@ -349,7 +350,7 @@ impl Error {
 
     pub fn msg(&self) -> Option<&'static [u8]> {
         let (_code, system_errno) = self.get_error_code_tag_name()?;
-        // PORT NOTE: Zig wraps this in `if (map.get(e)) |label|` with a `return code`
+        // Zig wraps this in `if (map.get(e)) |label|` with a `return code`
         // fallback, but both error maps are `initFull("unknown error")` so `.get()`
         // never returns null; the fallback is dead code in Zig too.
         Some(coreutils_error_map::COREUTILS_ERROR_MAP[system_errno].as_bytes())
@@ -370,7 +371,7 @@ impl Error {
             ..Default::default()
         };
 
-        // PORT NOTE: both maps are total (`initFull("unknown error")`); Zig's optional
+        // both maps are total (`initFull("unknown error")`); Zig's optional
         // unwrap on `.get()` is never null.
         let looked_up = self.get_error_code_tag_name().map(|(code, system_errno)| {
             err.code = BunString::static_(code.as_bytes());

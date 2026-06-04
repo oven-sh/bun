@@ -36,7 +36,6 @@ fn clone_ts_member_data(d: &TSNamespaceMemberData) -> TSNamespaceMemberData {
 // a direct `impl P` block.
 
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    // TODO(port): narrow error set
     pub fn parse_type_script_decorators(&mut self) -> Result<ExprNodeList, Error> {
         let p = self;
         if !Self::IS_TYPESCRIPT_ENABLED && !p.options.features.standard_decorators {
@@ -65,7 +64,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 //
                 // This matches the behavior of the TypeScript compiler.
                 // PERF(port): was ensureUnusedCapacity + unusedCapacitySlice — profile if it shows up on a hot path
-                // PORT NOTE: Zig `parseExprWithFlags` takes an out-param slot; preserved here.
+                // Zig `parseExprWithFlags` takes an out-param slot; preserved here.
                 let mut expr = Expr::EMPTY;
                 p.parse_expr_with_flags(Level::New, EFlags::TsDecorator, &mut expr)?;
                 decorators.push(expr);
@@ -82,7 +81,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ///   @ DecoratorMemberExpression
     ///   @ DecoratorCallExpression
     ///   @ DecoratorParenthesizedExpression
-    // TODO(port): narrow error set
     pub fn parse_standard_decorator(&mut self) -> Result<ExprNodeIndex, Error> {
         let p = self;
         let loc = p.lexer.loc();
@@ -431,7 +429,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 .insert(name.ref_.expect("infallible: ref bound"), ns_member_data);
         }
 
-        // PORT NOTE: S::Namespace.stmts is `StoreSlice<Stmt>` (arena slice). BumpVec → bump slice.
+        // S::Namespace.stmts is `StoreSlice<Stmt>` (arena slice). BumpVec → bump slice.
         let stmts_slice: &'a mut [Stmt] = stmts.into_bump_slice_mut();
         Ok(p.s(
             S::Namespace {
@@ -592,7 +590,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Parse the name
             if p.lexer.token == T::TStringLiteral {
-                // PORT NOTE: `slice8()` is currently duplicated in E.rs (two impl blocks);
+                // `slice8()` is currently duplicated in E.rs (two impl blocks);
                 // read `.data` directly — `to_utf8_e_string` guarantees `is_utf16 == false`.
                 let estr = p.lexer.to_utf8_e_string()?;
                 debug_assert!(!estr.is_utf16);
@@ -673,7 +671,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 // run the renamer. For external-facing things the renamer will avoid
                 // collisions automatically so this isn't important for correctness.
                 // PERF(port): strings::cat heap-allocates; Zig allocated into p.arena.
-                // TODO(perf): route through bump arena.
                 let prefixed = strings::cat(b"_", name_text).expect("unreachable");
                 let prefixed: &'a [u8] = p.arena.alloc_slice_copy(&prefixed);
                 arg_ref = p

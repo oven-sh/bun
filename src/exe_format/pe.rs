@@ -335,7 +335,6 @@ impl PEFile {
         // 5. Read optional header
         let size_of_optional_header = pe_header.size_of_optional_header;
         let number_of_sections = pe_header.number_of_sections;
-        // PORT NOTE: reshaped for borrowck — drop pe_header borrow before re-borrowing data
         let optional_header = view_at_mut::<OptionalHeader64>(&mut data, optional_header_offset)?;
         // SAFETY: validated bounds above
         let optional_header = unsafe { &mut *optional_header };
@@ -565,7 +564,7 @@ impl PEFile {
         // 2. Re-read PE/Optional (pointers may have moved due to resize in strip)
         let opt = self.get_optional_header_mut()?;
         // SAFETY: opt points into self.data at validated offset
-        // PORT NOTE: reshaped for borrowck — capture needed scalars from opt before re-borrowing self.data
+        // Capture the needed scalars from opt before re-borrowing self.data below.
         let file_alignment = unsafe { (*opt).file_alignment };
         // SAFETY: opt points into self.data at the offset validated by get_optional_header_mut
         let section_alignment = unsafe { (*opt).section_alignment };
@@ -778,8 +777,6 @@ impl PEFile {
 
     /// Write the modified PE file
     pub fn write(&self, writer: &mut impl std::io::Write) -> Result<(), bun_core::Error> {
-        // PORT NOTE: Zig used `writer: anytype` (`std.Io.Writer`); std::io::Write
-        // is the canonical Rust equivalent. bun_io has no Write trait.
         writer.write_all(&self.data)?;
         Ok(())
     }

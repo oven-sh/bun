@@ -39,7 +39,6 @@ use css::CssResult;
 
 /// A value for the [font-weight](https://www.w3.org/TR/css-fonts-4/#font-weight-prop) property.
 #[derive(Clone, PartialEq)]
-// TODO(port): css.DeriveParse / css.DeriveToCss were comptime-reflection derives; provide proc-macro #[derive(Parse, ToCss)]
 pub enum FontWeight {
     /// An absolute font weight.
     Absolute(AbsoluteFontWeight),
@@ -50,7 +49,7 @@ pub enum FontWeight {
 }
 
 impl FontWeight {
-    // PORT NOTE: Zig `css.DeriveParse(@This()).parse` for a union(enum) with one
+    // Zig `css.DeriveParse(@This()).parse` for a union(enum) with one
     // payload variant + 2 keyword variants tries the payload first, then matches
     // the remaining keywords against `expect_ident`.
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
@@ -86,8 +85,7 @@ impl FontWeight {
         }
     }
 
-    // eql → derived PartialEq
-    // deepClone → derived Clone; TODO(port): arena-aware deep_clone if needed
+    // eql → derived PartialEq; deepClone → derived Clone (no arena-owned data)
 }
 
 /// An [absolute font weight](https://www.w3.org/TR/css-fonts-4/#font-weight-absolute-values),
@@ -105,7 +103,7 @@ pub enum AbsoluteFontWeight {
 }
 
 impl AbsoluteFontWeight {
-    // PORT NOTE: Zig `css.DeriveParse(@This()).parse` — payload (`CSSNumber`) first,
+    // Zig `css.DeriveParse(@This()).parse` — payload (`CSSNumber`) first,
     // then keyword variants.
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
         if let Ok(n) = input.try_parse(CSSNumberFns::parse) {
@@ -237,7 +235,7 @@ pub enum FontStretch {
 }
 
 impl FontStretch {
-    // PORT NOTE: Zig `css.DeriveParse(@This()).parse` — two payload variants
+    // Zig `css.DeriveParse(@This()).parse` — two payload variants
     // tried in declaration order.
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
         if let Ok(kw) = input.try_parse(FontStretchKeyword::parse) {
@@ -334,9 +332,11 @@ pub enum FontFamily {
     /// A generic family name.
     Generic(GenericFontFamily),
     /// A custom family name.
-    // TODO(port): arena-backed slice — should be &'bump [u8] once 'bump lifetime is threaded through
-    // PORT NOTE: with *const [u8] derived PartialEq/Eq/Hash would compare by pointer; Zig's custom
-    // HashContext hashes/compares by content (Wyhash over bytes) — provide manual impls below.
+    // Arena-backed slice: the pointer targets bytes owned by the parser arena and is
+    // only valid while that arena is alive (becomes `&'bump [u8]` once the 'bump
+    // lifetime is threaded through these types). With `*const [u8]`, derived
+    // PartialEq/Eq/Hash would compare by pointer; Zig's custom HashContext
+    // hashes/compares by content (Wyhash over bytes) — manual impls below.
     FamilyName(*const [u8]),
 }
 
@@ -433,7 +433,7 @@ impl FontFamily {
     // `CssEql`/`DeepClone` via `bridge_clone_partialeq!` in `generics.rs`.
 }
 
-// PORT NOTE: Zig's `css.implementEql` / `css.implementHash` walked fields by
+// Zig's `css.implementEql` / `css.implementHash` walked fields by
 // reflection and compared/hashed `[]const u8` by *content*. With `*const [u8]`
 // in Rust, derived `PartialEq`/`Hash` would compare pointers, so hand-roll.
 impl PartialEq for FontFamily {
@@ -452,7 +452,7 @@ impl Eq for FontFamily {}
 
 impl core::hash::Hash for FontFamily {
     fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
-        // PORT NOTE: Zig `css.implementHash` hashes the active tag then the
+        // Zig `css.implementHash` hashes the active tag then the
         // payload bytes. With `*const [u8]` a derived Hash would hash the
         // pointer address, breaking FontFamilyHashMap dedupe semantics.
         core::mem::discriminant(self).hash(state);
@@ -468,7 +468,7 @@ impl core::hash::Hash for FontFamily {
 
 impl Clone for FontFamily {
     fn clone(&self) -> Self {
-        // PORT NOTE: shallow — arena slice pointers are `Copy`; matches Zig's
+        // shallow — arena slice pointers are `Copy`; matches Zig's
         // implicit struct copy. `deepClone` would re-alloc the slice in 'bump.
         match self {
             FontFamily::Generic(g) => FontFamily::Generic(*g),
@@ -647,7 +647,7 @@ pub enum LineHeight {
 }
 
 impl LineHeight {
-    // PORT NOTE: Zig `css.DeriveParse(@This()).parse` — keyword variant first
+    // Zig `css.DeriveParse(@This()).parse` — keyword variant first
     // (`normal`), then payload variants in declaration order.
     pub(crate) fn parse(input: &mut css::Parser) -> CssResult<Self> {
         if input
@@ -686,7 +686,7 @@ impl LineHeight {
 }
 
 /// A value for the [font](https://www.w3.org/TR/css-fonts-4/#font-prop) shorthand property.
-// PORT NOTE: Zig's `eql`/`deepClone` were reflection-based (`css.implementEql`
+// Zig's `eql`/`deepClone` were reflection-based (`css.implementEql`
 // / `css.implementDeepClone`); the field-wise `#[derive(DeepClone, CssEql)]`
 // is the Rust equivalent — every field type carries the trait via the
 // blankets/bridges in `generics.rs`.
@@ -746,7 +746,7 @@ impl Font {
             }
 
             if variant_caps.is_some() {
-                // PORT NOTE: Zig has `if (variant_caps != null)` here — preserved verbatim (likely upstream bug; should be `== null`)
+                // Zig has `if (variant_caps != null)` here — preserved verbatim (likely upstream bug; should be `== null`)
                 if let Ok(value) = input.try_parse(FontVariantCaps::parse_css2) {
                     variant_caps = Some(value);
                     count += 1;
@@ -776,7 +776,7 @@ impl Font {
             None
         };
 
-        // PORT NOTE: Zig `Vec(FontFamily).parse` parsed a comma-separated
+        // Zig `Vec(FontFamily).parse` parsed a comma-separated
         // list and packed it; route through `parse_comma_separated` + move.
         let family = input
             .parse_comma_separated(FontFamily::parse)
@@ -878,7 +878,8 @@ impl FontProperty {
     pub(crate) fn try_from_property_id(
         property_id: crate::properties::PropertyIdTag,
     ) -> Option<FontProperty> {
-        // TODO(port): Zig used `inline for` over std.meta.fields + @field; expanded by hand
+        // Zig used `inline for` over std.meta.fields + @field; expanded by hand —
+        // keep in sync when new Font* PropertyIdTag variants are added.
         use crate::properties::PropertyIdTag;
         match property_id {
             PropertyIdTag::FontFamily => Some(FontProperty::FONT_FAMILY),
@@ -918,12 +919,12 @@ impl FontHandler {
         context: &mut crate::PropertyHandlerContext<'_>,
     ) -> bool {
         use crate::properties::Property;
-        // PORT NOTE: `arena` field dropped from PropertyHandlerContext; the
+        // `arena` field dropped from PropertyHandlerContext; the
         // arena is recovered via `dest.bump()` (DeclarationList = bumpalo::Vec).
         let arena = dest.bump();
 
-        // TODO(port): Zig used `comptime prop: []const u8` + @field for property_helper / flush_helper / push.
-        // No Rust equivalent for field-name reflection — expanded as macro_rules! over (handler_field, Property variant, FontProperty flag).
+        // Zig used `comptime prop: []const u8` + @field for property_helper / flush_helper /
+        // push; expanded as macro_rules! over (handler_field, Property variant, FontProperty flag).
         macro_rules! flush_helper {
             ($this:expr, $field:ident, $val:expr) => {{
                 if $this.$field.is_some()
@@ -1052,13 +1053,16 @@ impl FontHandler {
 
                 let mut i: usize = 0;
                 while i < f.len() {
-                    // TODO(port): seen.getOrPut equivalent — using entry API
-                    let key = f.at(i).clone();
-                    if seen.contains_key(&key) {
-                        let _ = f.ordered_remove(i);
-                    } else {
-                        seen.insert(key, ());
-                        i += 1;
+                    // Zig: `seen.getOrPut` — single-lookup entry API.
+                    use bun_collections::array_hash_map::MapEntry;
+                    match seen.entry(f.at(i).clone()) {
+                        MapEntry::Occupied(_) => {
+                            let _ = f.ordered_remove(i);
+                        }
+                        MapEntry::Vacant(v) => {
+                            v.insert(());
+                            i += 1;
+                        }
                     }
                 }
             }
@@ -1128,8 +1132,8 @@ impl FontHandler {
     }
 }
 
-// TODO(port): SYSTEM_UI was `const FontFamily = .{ .generic = .system_ui }`; cannot be a `const` here
-// because FontFamily contains a raw pointer. Compare against the Generic variant directly instead.
+// Zig SYSTEM_UI was `const FontFamily = .{ .generic = .system_ui }`; matched against
+// the Generic variant directly here instead of a const (FontFamily holds a raw pointer).
 fn is_system_ui(f: &FontFamily) -> bool {
     matches!(f, FontFamily::Generic(GenericFontFamily::SystemUi))
 }
@@ -1159,7 +1163,7 @@ fn compatible_font_family(
     }
 
     if let Some(families) = family.as_mut() {
-        // PORT NOTE: Zig (font.zig:1029-1035) iterates `families.sliceConst()`
+        // Zig (font.zig:1029-1035) iterates `families.sliceConst()`
         // by value while inserting into `families` mid-loop, then `break`s.
         // In Rust the immutable slice borrow would alias the &mut needed for
         // `insert` (and `insert` may reallocate, invalidating the iterator).

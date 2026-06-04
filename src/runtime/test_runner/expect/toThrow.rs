@@ -10,7 +10,6 @@ use super::ExpectAny;
 use super::expect_any_js;
 use super::get_signature;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_throw(
     this: &Expect,
     global: &JSGlobalObject,
@@ -409,7 +408,7 @@ pub(crate) fn to_throw(
     let result = return_value_from_function;
     let mut formatter = Formatter::new(global).with_quote_strings(true);
     let mut formatter2 = super::make_formatter(global);
-    // PORT NOTE: Zig `received_line` was concatenated via `++` into each fmt string
+    // Zig `received_line` was concatenated via `++` into each fmt string
     // below; Rust `format_args!` only accepts literals so the value is inlined at each site.
     // received_line = "Received function did not throw\nReceived value: <red>{f}<r>\n"
 

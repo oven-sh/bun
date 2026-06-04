@@ -28,8 +28,6 @@ use crate::properties::PropertyIdTag;
 
 /// A [`<geometry-box>`](https://www.w3.org/TR/css-masking-1/#typedef-geometry-box) value
 /// as used in the `mask-clip` and `clip-path` properties.
-// TODO(port): css.DefineEnumProperty(@This()) — comptime-generated eql/hash/parse/toCss/deepClone.
-// In Rust this becomes #[derive] of the css enum-property protocol (kebab-case serialization).
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum GeometryBox {
     /// The painted content is clipped to the content box.
@@ -107,7 +105,7 @@ pub struct Polygon {
     /// The fill rule used to determine the interior of the polygon.
     pub fill_rule: FillRule,
     /// The points of each vertex of the polygon.
-    // TODO(port): css is an AST crate (§Allocators) — if Polygon is arena-fed this must become
+    // If Polygon ever becomes arena-fed this must become (§Allocators: AST crates are arena-fed)
     // `bun_alloc::ArenaVec<'bump, Point>` and Polygon/BasicShape/ClipPath gain `<'bump>`.
     // No construction site exists in src/css/*.zig today, so provenance is unconfirmed; keeping
     // plain Vec<Point> until the arena story is verified.
@@ -136,7 +134,6 @@ pub struct Point {
 }
 
 /// A value for the [mask-mode](https://www.w3.org/TR/css-masking-1/#the-mask-mode) property.
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskMode {
     /// The luminance values of the mask image is used.
@@ -152,7 +149,6 @@ pub enum MaskMode {
 }
 
 /// A value for the [mask-clip](https://www.w3.org/TR/css-masking-1/#the-mask-clip) property.
-// TODO(port): css.DeriveParse / css.DeriveToCss → derive css union-property protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, css::Parse, css::ToCss)]
 pub enum MaskClip {
     /// A geometry box.
@@ -164,7 +160,6 @@ pub enum MaskClip {
 }
 
 /// A value for the [mask-composite](https://www.w3.org/TR/css-masking-1/#the-mask-composite) property.
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskComposite {
     /// The source is placed over the destination.
@@ -183,7 +178,6 @@ pub enum MaskComposite {
 }
 
 /// A value for the [mask-type](https://www.w3.org/TR/css-masking-1/#the-mask-type) property.
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskType {
     /// The luminance values of the mask is used.
@@ -195,7 +189,7 @@ pub enum MaskType {
 }
 
 /// A value for the [mask](https://www.w3.org/TR/css-masking-1/#the-mask) shorthand property.
-// PORT NOTE: Debug/Clone/PartialEq derives gated on `Image`/`Position`/
+// Debug/Clone/PartialEq derives gated on `Image`/`Position`/
 // `BackgroundSize`/`BackgroundRepeat` gaining those derives upstream.
 #[cfg_attr(any(), derive(Debug, Clone, PartialEq))]
 #[derive(DeepClone, CssEql)]
@@ -219,9 +213,8 @@ pub struct Mask {
 }
 
 impl Mask {
-    // TODO(port): PropertyFieldMap was a Zig anon-struct const consumed by comptime
-    // reflection in shorthand handlers. Represented as an assoc const slice; could
-    // be replaced with a trait/derive.
+    // Zig's PropertyFieldMap was an anon-struct const consumed by comptime
+    // reflection in shorthand handlers; represented here as an assoc const slice.
     pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
         ("image", PropertyIdTag::MaskImage),
         ("position", PropertyIdTag::MaskPosition),
@@ -233,8 +226,8 @@ impl Mask {
         ("mode", PropertyIdTag::MaskMode),
     ];
 
-    // TODO(port): VendorPrefixMap was a Zig anon-struct const of bools consumed by
-    // comptime reflection. Represented as a field-name slice; could be replaced with trait/derive.
+    // Zig's VendorPrefixMap was an anon-struct const of bools consumed by
+    // comptime reflection; represented here as a field-name slice.
     pub const VENDOR_PREFIX_MAP: &'static [&'static str] =
         &["image", "position", "size", "repeat", "clip", "origin"];
 
@@ -373,7 +366,6 @@ impl Mask {
 }
 
 /// A value for the [mask-border-mode](https://www.w3.org/TR/css-masking-1/#the-mask-border-mode) property.
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum MaskBorderMode {
     /// The luminance values of the mask image is used.
@@ -386,7 +378,7 @@ pub enum MaskBorderMode {
 }
 
 /// A value for the [mask-border](https://www.w3.org/TR/css-masking-1/#the-mask-border) shorthand property.
-// PORT NOTE: Debug/Clone/PartialEq derives gated on `Image`/`Rect<_>` gaining
+// Debug/Clone/PartialEq derives gated on `Image`/`Rect<_>` gaining
 // those derives upstream.
 #[cfg_attr(any(), derive(Debug, Clone, PartialEq))]
 #[derive(DeepClone, CssEql)]
@@ -408,7 +400,7 @@ pub struct MaskBorder {
 impl MaskBorder {
     // (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"mask-border", PropertyFieldMap);
 
-    // TODO(port): PropertyFieldMap — see note on Mask::PROPERTY_FIELD_MAP
+    // See the PropertyFieldMap note on Mask::PROPERTY_FIELD_MAP.
     pub const PROPERTY_FIELD_MAP: &'static [(&'static str, PropertyIdTag)] = &[
         ("source", PropertyIdTag::MaskBorderSource),
         ("slice", PropertyIdTag::MaskBorderSlice),
@@ -474,7 +466,6 @@ impl MaskBorder {
 /// property.
 ///
 /// See also [MaskComposite](MaskComposite).
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum WebKitMaskComposite {
     #[css(name = "clear")]
@@ -513,7 +504,6 @@ pub enum WebKitMaskComposite {
 /// property.
 ///
 /// See also [MaskMode](MaskMode).
-// TODO(port): css.DefineEnumProperty(@This()) → derive css enum-property protocol
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, css::Parse, css::ToCss)]
 pub enum WebKitMaskSourceType {
     /// Equivalent to `match-source` in the standard `mask-mode` syntax.
@@ -529,8 +519,8 @@ pub enum WebKitMaskSourceType {
 
 // blocked_on: PropertyId::WebKitMaskComposite variant name (codegen spelling is `WebKitMaskComposite`)
 pub fn get_webkit_mask_property(property_id: &PropertyId) -> Option<PropertyId> {
-    // TODO(port): PropertyId variant naming — Zig uses kebab-case @"mask-border-source" etc.
-    // Mapping to PascalCase variants here; verify exact PropertyId enum shape.
+    // Zig spells these variants kebab-case (@"mask-border-source" etc.); the
+    // Rust PropertyId enum uses the PascalCase spellings below.
     match property_id {
         PropertyId::MaskBorderSource => Some(PropertyId::MaskBoxImageSource(VendorPrefix::WEBKIT)),
         PropertyId::MaskBorderSlice => Some(PropertyId::MaskBoxImageSlice(VendorPrefix::WEBKIT)),

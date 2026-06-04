@@ -83,7 +83,7 @@ impl Data {
 impl RouteBundle {
     /// `RouteBundle.invalidateClientBundle` (RouteBundle.zig:122).
     ///
-    /// PORT NOTE: takes `&mut SourceMapStore` rather than `&mut DevServer` —
+    /// Note: takes `&mut SourceMapStore` rather than `&mut DevServer` —
     /// the Zig body only touches `dev.source_maps`, and the two keystone
     /// `DevServer` structs (`dev_server::DevServer` / `dev_server_body::DevServer`)
     /// both expose that field but cannot be named here without a cycle.

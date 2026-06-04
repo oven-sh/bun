@@ -646,7 +646,7 @@ mod inherent_bridge {
     use crate::properties::border_image::{
         BorderImage, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice,
     };
-    // PORT NOTE: BorderImageRepeat/SideWidth/Slice carry inherent
+    // BorderImageRepeat/SideWidth/Slice carry inherent
     // `deep_clone(&self, &Arena)` / `eql(&self, &Self)` (no `Clone`/`PartialEq`
     // derives — see border_image.rs), so route through bridge_deep_clone/eql.
     bridge_deep_clone!(BorderImageRepeat, BorderImageSideWidth, BorderImageSlice);
@@ -655,8 +655,8 @@ mod inherent_bridge {
     bridge_eql!(BorderImage);
 
     use crate::properties::border_radius::BorderRadius;
-    // PORT NOTE: BorderRadius has inherent deep_clone/eql (Size2D<T> lacks
-    // Clone/PartialEq derives — see border_radius.rs PORT NOTE).
+    // BorderRadius has inherent deep_clone/eql (Size2D<T> lacks
+    // Clone/PartialEq derives — see border_radius.rs).
     bridge_deep_clone!(BorderRadius);
     bridge_eql!(BorderRadius);
 
@@ -865,9 +865,11 @@ mod inherent_bridge {
     bridge_eql_partialeq!(PropertyId);
 }
 
-// TODO(port): Zig also special-cases `@typeInfo(T).struct.layout == .packed` →
-// bitwise `==`. In Rust those are `bitflags!` types implementing `PartialEq`;
-// add `impl<T: BitFlags> CssEql for T` or per-type impls.
+// Zig special-cased packed structs (`@typeInfo(T).struct.layout == .packed`) with a
+// bitwise `==`. In Rust those are `bitflags!` types whose derived `PartialEq` already
+// compares contents, routed through the per-type `bridge_eql_partialeq!` calls above.
+// (A blanket `impl<T: bitflags::Flags> CssEql for T` would collide with the container
+// blanket impls under coherence, so coverage stays per-type.)
 
 // ───────────────────────────────────────────────────────────────────────────────
 // Hash
@@ -1182,7 +1184,7 @@ is_compatible_container!(
 //
 // `Parse` is intentionally lifetime-free: every value-type parser takes
 // `&mut Parser<'_>` (the borrowed source slice) and returns an owned value.
-// TODO(refactor): `'bump` arena threading is a follow-up; until then the parser
+// `'bump` arena threading is a follow-up; until then the parser
 // holds the arena and arena-backed lists go through `from_list(Vec)`.
 
 /// `T::parse(&mut Parser) -> CssResult<T>`.
@@ -1193,7 +1195,7 @@ pub trait Parse: Sized {
 /// `T::parse_with_options(&mut Parser, &ParserOptions) -> CssResult<T>`.
 ///
 /// Zig falls through to `parse` when a type has no `parseWithOptions` decl.
-/// PORT NOTE: Rust can't express that as a `where Self: Parse` default method
+/// Rust can't express that as a `where Self: Parse` default method
 /// — the bound becomes part of the *method signature*, so the free
 /// `parse_with_options::<T>` below would require `T: Parse` even for impls
 /// that override the body. Instead the fallthrough lives in
@@ -1522,8 +1524,8 @@ impl TrySign for CSSNumber {
         Some(CSSNumberFns::sign(*self))
     }
 }
-// TODO(port): Zig fallback `if @hasDecl(T, "sign") T.sign else T.trySign` —
-// model as a trait with default method delegating to `Sign` where available.
+// Zig fell back via `@hasDecl(T, "sign")`; Rust has no decl probing, so each type
+// implements `TrySign` explicitly (delegating to its inherent `sign` where one exists).
 
 pub trait TryMap: Sized {
     // Zig: `comptime map_fn: *const fn(f32) f32` — generic param preserves monomorphization.

@@ -9,8 +9,6 @@ use bun_core::{Error, Global, err, pretty_errorln};
 // fn value as a const generic, so both params collapse into one trait that the
 // value type implements. Each `T` declares its own resolver and whether it is the
 // schema Loader.
-// TODO(port): if a single `T` ever needs two distinct resolvers, split this back
-// into `<T, R: ValueResolver<T>>` with a PhantomData marker.
 pub(crate) trait ColonListValue: Sized {
     /// Mirrors `comptime value_resolver(str)`.
     fn resolve_value(input: &[u8]) -> Result<Self, Error>;
@@ -20,21 +18,20 @@ pub(crate) trait ColonListValue: Sized {
 }
 
 pub(crate) struct ColonListType<T: ColonListValue> {
-    // TODO(port): lifetime — keys borrow slices out of CLI argv (process-lifetime
-    // in practice). Uses &'static; may need to thread a `'a` if needed.
+    // Invariant: keys borrow slices out of CLI argv, which is process-lifetime
+    // in practice — that is what makes the `&'static` typing sound.
     pub keys: Vec<&'static [u8]>,
     pub values: Vec<T>,
 }
 
 impl<T: ColonListValue> ColonListType<T> {
-    pub(crate) fn init(count: usize) -> Result<Self, Error> {
-        // PORT NOTE: reshaped — Zig allocs two uninit slices of `count` and
-        // index-assigns in `load`; Rust uses `Vec::with_capacity` + `push`.
+    pub(crate) fn init(count: usize) -> Self {
+        // Zig allocs two uninit slices of `count` and index-assigns in `load`;
+        // Rust uses `Vec::with_capacity` + `push`, which is infallible here.
         let keys = Vec::with_capacity(count);
         let values = Vec::with_capacity(count);
 
-        // TODO(port): narrow error set
-        Ok(ColonListType { keys, values })
+        ColonListType { keys, values }
     }
 
     pub(crate) fn load(&mut self, input: &[&'static [u8]]) -> Result<(), Error> {
@@ -64,12 +61,11 @@ impl<T: ColonListValue> ColonListType<T> {
             self.values.push(match T::resolve_value(&str[midpoint + 1..str.len()]) {
                 Ok(v) => v,
                 Err(e) if e == err!("InvalidLoader") => {
-                    // TODO(blocked): bun_ast::Loader (strum::VariantNames derive)
-                    // — `bun_fmt::enum_tag_list::<Loader, false>()` requires the derive; print
-                    // a placeholder list until lower-tier crate adds it.
+                    // Mirrors Zig `bun.fmt.enumTagList(bun.options.Loader, .dash)`.
                     pretty_errorln!(
-                        "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of: jsx, js, ts, tsx, css, file, json, jsonc, toml, wasm, napi, base64, dataurl, text, bunsh, sqlite, html, yaml, json5, md",
+                        "<r><red>error<r><d>:<r> <b>invalid loader {}<r>, expected one of:{}",
                         bun_fmt::quote(&str[midpoint + 1..str.len()]),
+                        bun_fmt::enum_tag_list::<bun_ast::Loader, { bun_fmt::SEP_DASH }>(),
                     );
                     Global::exit(1);
                 }
@@ -80,7 +76,7 @@ impl<T: ColonListValue> ColonListType<T> {
     }
 
     pub(crate) fn resolve(input: &[&'static [u8]]) -> Result<Self, Error> {
-        let mut list = Self::init(input.len())?;
+        let mut list = Self::init(input.len());
         match list.load(input) {
             Ok(()) => {}
             Err(e) if e == err!("InvalidSeparator") => {

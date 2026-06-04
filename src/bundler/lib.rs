@@ -340,7 +340,7 @@ pub use bundle_v2::dispatch;
 // ── link-interfaces (must be at crate root so `$crate::__alias` resolves) ──
 // Re-exported through `bundle_v2::dispatch` for existing call sites.
 
-// Erased handle to `bake::DevServer`. PORT NOTE: Zig takes
+// Erased handle to `bake::DevServer`. The Zig original takes
 // `*const DevServerOutput` but mutates through the `chunks: []Chunk` slice it
 // holds; in Rust the struct stores `&'a mut [Chunk]`, hence `*mut`.
 bun_dispatch::link_interface! {

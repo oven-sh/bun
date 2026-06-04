@@ -32,7 +32,7 @@ pub use bun_http::ssl_config::{
 // ReadFromBlobError
 // ──────────────────────────────────────────────────────────────────────────
 
-// PORT NOTE: cannot derive `thiserror::Error` because `JsError` is not
+// Cannot derive `thiserror::Error` because `JsError` is not
 // `std::error::Error`/`Display`. Manual `From<JsError>` instead.
 #[derive(Debug)]
 pub(crate) enum ReadFromBlobError {
@@ -359,7 +359,6 @@ fn handle_file_array(
     Ok(Some(core::mem::take(result).into_boxed_slice()))
 }
 
-// PORT NOTE: Zig used an anonymous `union(enum)` param; named here.
 enum SingleFile<'a> {
     String(bun_core::String),
     Buffer(&'a mut jsc::JSCArrayBuffer),

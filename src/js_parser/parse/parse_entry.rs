@@ -355,7 +355,6 @@ impl<'a> Parser<'a> {
 impl<'a> Parser<'a> {
     #[cfg_attr(not(target_arch = "wasm32"), allow(unused_mut))]
     pub fn parse(mut self) -> Result<crate::Result<'a>, Error> {
-        // TODO(port): narrow error set
         #[cfg(target_arch = "wasm32")]
         {
             self.options.ts = true;
@@ -488,7 +487,7 @@ impl<'a> Parser<'a> {
                     .set(ImportRecordFlags::IS_UNUSED, new_unused);
             }
 
-            // PORT NOTE: `scan_pass.used_symbols`/`import_records` are still
+            // `scan_pass.used_symbols`/`import_records` are still
             // exclusively borrowed inside `p`; route through `p`'s fields so the
             // borrow checker sees disjoint field access on the same struct.
             let import_records = p.import_records.items_mut();
@@ -511,7 +510,7 @@ impl<'a> Parser<'a> {
         // So we say "did we parse any JSX?"
         // if yes, just automatically add the import so that .bun knows to include the file.
         if p.options.jsx.parse && p.needs_jsx_import {
-            // PORT NOTE: Zig's `string` aliased the long-lived option storage
+            // Zig's `string` aliased the long-lived option storage
             // directly. `add_import_record` requires `&'a [u8]`, but borrowing
             // `p.options` would conflict with `&mut p`, so copy into the arena.
             let arena = p.arena;
@@ -542,7 +541,6 @@ impl<'a> Parser<'a> {
         runtime_api_call: &'static [u8],
         symbols: js_ast::symbol::List<'a>,
     ) -> Result<crate::Result<'a>, Error> {
-        // TODO(port): narrow error set
         // Zig moves lexer/options by value into `P` (Parser.zig) and only
         // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
         // on `Parser.lexer`. In Rust we move them out and leave inert
@@ -701,11 +699,11 @@ impl<'a> Parser<'a> {
         if p.log().errors > 0 {
             #[cfg(target_arch = "wasm32")]
             {
-                // If the logger is backed by console.log, every print appends a newline.
-                // so buffering is kind of mandatory here
-                // TODO(port): Zig builds a custom GenericWriter wrapping Output::print and a
-                // buffered writer over it. Provide a `bun_core::Output::buffered()`
-                // that returns an `impl core::fmt::Write` flushed on drop.
+                // Divergence from Zig: Zig wraps `Output.writer()` in a
+                // buffered `GenericWriter` here because a console.log-backed
+                // logger appends a newline per print; the Rust port currently
+                // emits each message unbuffered (one console.log line per
+                // write on wasm32). Diagnostics formatting only.
                 for msg in p.log().msgs.as_slice() {
                     let mut m: bun_ast::Msg = *msg;
                     let _ = m.write_format(Output::writer(), true);
@@ -729,12 +727,13 @@ impl<'a> Parser<'a> {
     }
 
     fn _parse<const TS: bool>(self) -> Result<crate::Result<'a>, Error> {
-        // TODO(port): narrow error set
-        // TODO(port): bun_crash_handler::current_action — `Action` stores
-        // `&'static [u8]` but `self.source.path.text` is `'a`; widen
-        // the lifetime on `Action` (Zig held the same pointer). Once unblocked:
-        //   let _restore = bun_crash_handler::scoped_action(Action::Parse(self.source.path.text));
-        // (`ActionGuard` restores the previous action on Drop — no scopeguard.)
+        // Zig: `const prev_action = bun.crash_handler.current_action; defer
+        // bun.crash_handler.current_action = prev_action; ... = .{ .parse = ... }`
+        // (parse_entry.zig:333-335). `Source.path` is `Path<'static>`, so
+        // `path.text` satisfies `Action::Parse(&'static [u8])` directly.
+        let _action_guard = bun_crash_handler::scoped_action(bun_crash_handler::Action::Parse(
+            self.source.path.text,
+        ));
 
         // Zig moves lexer/options by value into `P` (Parser.zig:339) and only
         // `defer p.lexer.deinit()` cleans up — Zig has no implicit destructor
@@ -804,13 +803,10 @@ impl<'a> Parser<'a> {
         // We must check the cache only after we've consumed the hashbang and leading // @bun pragma
         // We don't want to ever put files with `// @bun` into this cache, as that would be wasteful.
         #[cfg(not(target_arch = "wasm32"))]
-        if true
-        /* TODO(port): feature_flag */
-        {
+        if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
-                // TODO(port): `Path::is_node_module`/`is_jsx_file` live on the
-                // resolver `fs::Path` (not the logger stub) — inline their
-                // bodies until the logger Path grows them.
+                // `Path::is_node_module`/`is_jsx_file` live on the resolver
+                // `fs::Path` (not the logger stub) — their bodies are inlined here.
                 let path = &p.source.path;
                 #[cfg(windows)]
                 const NM: &[u8] = b"\\node_modules\\";
@@ -872,8 +868,12 @@ impl<'a> Parser<'a> {
             return Err(err!("SyntaxError"));
         }
 
-        // TODO(port): bun_crash_handler::CURRENT_ACTION.set(Action::Visit(self.source.path.text))
-        // — see lifetime note at top of fn.
+        // Zig sets `current_action = .{ .visit = ... }` here (parse_entry.zig:443)
+        // and relies on the function-scope `defer` above to restore the previous
+        // action; a second guard dropped at end of `_parse` is equivalent.
+        let _visit_action_guard = bun_crash_handler::scoped_action(
+            bun_crash_handler::Action::Visit(source.path.text),
+        );
 
         let mut visit_tracer = bun_core::perf::trace("JSParser::visit");
         p.prepare_for_visit_pass()?;
@@ -961,7 +961,7 @@ impl<'a> Parser<'a> {
             // The TypeScript compiler itself contains code with this pattern, so
             // it's important to implement this optimization.
 
-            // PORT NOTE: `Loc` lacks `Hash` (logger crate), so the
+            // `Loc` lacks `Hash` (logger crate), so the
             // `scopes_in_order_for_enum` lookups linear-scan `keys()` —
             // matches Zig's ArrayHashMap linear behaviour at small N (one
             // entry per top-level `enum`). `scope_order_to_visit` is
@@ -1001,7 +1001,7 @@ impl<'a> Parser<'a> {
                     js_ast::StmtData::SLocal(local) => {
                         if (local.decls.len_u32() as usize) > 1 {
                             for decl in local.decls.slice() {
-                                // PORT NOTE: `S::Local`/`Decl` are not `Copy`;
+                                // `S::Local`/`Decl` are not `Copy`;
                                 // rebuild the struct instead of `**local`.
                                 let _local = S::Local {
                                     kind: local.kind,
@@ -1056,7 +1056,7 @@ impl<'a> Parser<'a> {
                         p.append_part(&mut parts, sliced)?;
 
                         if should_move {
-                            // PORT NOTE: `Part` isn't `Copy`; pop+push instead of last+truncate.
+                            // `Part` isn't `Copy`; pop+push instead of last+truncate.
                             before.push(parts.pop().expect("unreachable"));
                         }
                     }
@@ -1073,7 +1073,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                     js_ast::StmtData::SEnum(_) => {
-                        // PORT NOTE: `Part` isn't `Clone`; move out the
+                        // `Part` isn't `Clone`; move out the
                         // pre-visited parts instead of `appendSlice`.
                         let enum_parts = core::mem::replace(
                             &mut preprocessed_enums[preprocessed_enum_i],
@@ -1222,7 +1222,7 @@ impl<'a> Parser<'a> {
                 let mut remaining_stmts: &mut [Stmt] = all_stmts;
 
                 for i in 0..p.imports_to_convert_from_require.len() {
-                    // PORT NOTE: borrowck — copy out the three Copy fields so the
+                    // borrowck — copy out the three Copy fields so the
                     // immutable borrow of `p.imports_to_convert_from_require`
                     // ends before `p.module_scope_mut()` takes `&mut self`.
                     let (ns_ref, ns_loc, import_record_id) = {
@@ -1273,7 +1273,7 @@ impl<'a> Parser<'a> {
             }
 
             if p.commonjs_named_exports.count() > 0 {
-                // PORT NOTE: borrowck — `deoptimize_commonjs_named_exports` mut-borrows
+                // borrowck — `deoptimize_commonjs_named_exports` mut-borrows
                 // `self`, so the `values()`/`keys()` slices are read once into locals
                 // (Zig kept slice handles across the call).
                 let export_names_len = p.commonjs_named_exports.keys().len();
@@ -1547,7 +1547,7 @@ impl<'a> Parser<'a> {
                         }
                     }
                     let _ = &mut *part;
-                    // PORT NOTE: Zig had no explicit continue/break here; loop continues
+                    // Zig had no explicit continue/break here; loop continues
                     continue 'outer_part_loop;
                 }
             }
@@ -1563,9 +1563,9 @@ impl<'a> Parser<'a> {
             //    export const foo = 123
             //    export * as ns from './foo'
             //
-            if false
-            /* TODO(port): feature_flag — Zig gates with comptime FeatureFlags.export_star_redirect (false) */
-            {
+            // Zig gates with `comptime FeatureFlags.export_star_redirect`, which is
+            // permanently `false` (see the circular-export breakage above).
+            if false {
                 // If the file only contains "export * from './blah'
                 // we pretend the file never existed in the first place.
                 // the semantic difference here is in export default statements
@@ -1916,7 +1916,7 @@ impl<'a> Parser<'a> {
             }
 
             // if they didn't use any of the jest globals, don't inject it, I guess.
-            // PORT NOTE: Zig used `inline for (comptime std.meta.fieldNames(Jest))` — comptime
+            // Zig used `inline for (comptime std.meta.fieldNames(Jest))` — comptime
             // reflection over Jest's Ref fields. Rust iterates the static `Jest::FIELDS`
             // table (`&[(&'static str, fn(&Jest) -> Ref)]`) instead; declaration order
             // matches the Zig struct so emitted clause/property order is identical.
@@ -2095,7 +2095,7 @@ impl<'a> Parser<'a> {
             });
 
             if i > 0 {
-                // PORT NOTE: snapshot to break the `&mut self` ↔ `&self.runtime_imports`
+                // snapshot to break the `&mut self` ↔ `&self.runtime_imports`
                 // borrow overlap in `generate_import_stmt(symbols: &Sym)`; the callee
                 // never touches `self.runtime_imports`, so the clone is purely a
                 // borrow-checker workaround (Zig passed by value here).
@@ -2118,7 +2118,7 @@ impl<'a> Parser<'a> {
             && p.options.features.auto_import_jsx
             && p.options.jsx.runtime == options::JSX::Runtime::Automatic
         {
-            // PORT NOTE: `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
+            // `generate_import_stmt` takes `&mut self` plus `import_path: &'a [u8]`
             // and `symbols: &Sym`, so the Pragma-owned `Box<[u8]>` paths are copied into the
             // bump arena (giving them the required `'a` lifetime) and `jsx_imports` is moved
             // out via `take` (it is `Default`) to avoid an overlapping `&self.jsx_imports`
@@ -2222,9 +2222,7 @@ impl<'a> Parser<'a> {
         // p.popScope();
 
         #[cfg(not(target_arch = "wasm32"))]
-        if true
-        /* TODO(port): feature_flag */
-        {
+        if bun_core::feature_flags::RUNTIME_TRANSPILER_CACHE {
             if let Some(cache) = p.options.features.runtime_transpiler_cache_mut() {
                 if p.macro_call_count != 0 {
                     // disable this for:
@@ -2244,7 +2242,7 @@ impl<'a> Parser<'a> {
         )?))
     }
 
-    // PORT NOTE: associated fn (was `&self` reading `self.lexer.source.contents`)
+    // associated fn (was `&self` reading `self.lexer.source.contents`)
     // because `_parse` consumes `self` by value and destructures it before this
     // call site; the source contents are passed explicitly.
     // called from gated `_parse` body above

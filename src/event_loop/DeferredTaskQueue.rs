@@ -31,7 +31,7 @@ use core::ptr::NonNull;
 
 use bun_collections::ArrayHashMap;
 
-// PORT NOTE: Zig `*const fn(*anyopaque) bool`. Declared `extern "C"` so the
+// Declared `extern "C"` so the
 // same fn-pointer type can flow across the FFI boundary (e.g.
 // `Bun__VM__postDeferredTask`) without an ABI-crossing fn-ptr cast. All in-tree
 // producers go through monomorphic `extern "C"` trampolines (see
@@ -45,9 +45,8 @@ pub struct DeferredTaskQueue {
 
 impl DeferredTaskQueue {
     pub fn post_task(&mut self, ctx: Option<NonNull<c_void>>, task: DeferredRepeatingTask) -> bool {
-        // Zig: `getOrPutValue(ctx, task).found_existing`.
-        // PORT NOTE: `ArrayHashMap` is currently aliased to std `HashMap`; the
-        // entry API gives the same semantics (insert-if-absent + report-existing).
+        // `ArrayHashMap` is currently aliased to std `HashMap`; the entry API
+        // gives insert-if-absent + report-existing semantics.
         match self.map.entry(ctx) {
             bun_collections::hash_map::Entry::Occupied(_) => true,
             bun_collections::hash_map::Entry::Vacant(v) => {
@@ -65,11 +64,11 @@ impl DeferredTaskQueue {
     }
 
     pub fn run(&mut self) {
-        // PORT NOTE: Zig used `swapRemoveAt(i)` (O(1) by index). The current
-        // `ArrayHashMap` exposes `keys()/values()` slices and `swap_remove(&K)`
-        // (O(n) hash lookup) but not `swap_remove_at`. Keys here are `Copy`
-        // pointers, so copy the key out and remove by key — semantically
-        // identical (keys are unique), just an extra hash per removal.
+        // The current `ArrayHashMap` exposes `keys()/values()` slices and
+        // `swap_remove(&K)` (hash lookup) but not `swap_remove_at` (O(1) by
+        // index). Keys here are `Copy` pointers, so copy the key out and
+        // remove by key — semantically identical (keys are unique), just an
+        // extra hash per removal.
         // PERF(port): swap_remove(&K) re-hashes; restore swap_remove_at when
         // bun_collections::ArrayHashMap grows it.
         let mut i: usize = 0;
@@ -82,7 +81,7 @@ impl DeferredTaskQueue {
                 continue;
             };
 
-            // PORT NOTE: reshaped for borrowck — copy fn ptr out before calling
+            // Copy the fn ptr out before calling (borrowck).
             let task = self.map.values()[i];
             // SAFETY: `nn` is the live `*mut T` registered by the caller; the
             // callback contract (Zig `Type.onAutoFlush`) is that `task` may be

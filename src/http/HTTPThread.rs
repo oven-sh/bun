@@ -15,10 +15,11 @@ use crate::proxy_tunnel::ProxyTunnel;
 use crate::ssl_config::{self, SSLConfig};
 use crate::{AsyncHttp, HTTPContext, HttpClient, InitError, NewHttpContext, h3};
 
+// Zig had two `Output.scoped(.HTTPThread, ...)` with different visibilities
+// (.hidden + .visible); the Rust scope registry keys on name, so they are
+// split into two scope names instead.
 bun_core::declare_scope!(HTTPThread, hidden); // threadlog
 bun_core::declare_scope!(HTTPThread_log, visible); // log
-// TODO(port): Zig had two `Output.scoped(.HTTPThread, ...)` with different visibilities (.hidden + .visible).
-// Rust scope registry keys on name; pick one visibility or split scope names.
 
 /// SSL context cache keyed by interned SSLConfig pointer.
 /// Since configs are interned via SSLConfig.GlobalRegistry, pointer equality
@@ -198,8 +199,8 @@ impl HttpThread {
 
 pub struct HeapRequestBodyBuffer {
     pub buffer: [u8; 512 * 1024],
-    // TODO(port): was `std.heap.FixedBufferAllocator` borrowing `buffer` —
-    // self-referential. Use bun_alloc::FixedBufferAllocator or just a cursor.
+    // Zig used a `std.heap.FixedBufferAllocator` borrowing `buffer`
+    // (self-referential); replaced with a plain write cursor.
     pub cursor: usize,
 }
 
@@ -208,7 +209,6 @@ unsafe impl bun_core::Zeroable for HeapRequestBodyBuffer {}
 
 impl HeapRequestBodyBuffer {
     pub fn init() -> Box<Self> {
-        // TODO(port): self-referential init; FixedBufferAllocator borrows this.buffer.
         bun_core::boxed_zeroed()
     }
 
@@ -229,7 +229,6 @@ pub enum RequestBodyBuffer {
     // Option<> so Drop can `.take()` the Box and hand it to `put()` (which consumes by value).
     Heap(Option<Box<HeapRequestBodyBuffer>>),
     // PERF(port): was std.heap.StackFallbackAllocator(32KB) — inline stack buffer with heap fallback.
-    // TODO(port): bun_alloc::StackFallbackAllocator<REQUEST_BODY_SEND_STACK_BUFFER_SIZE>
     Stack(Box<[u8; REQUEST_BODY_SEND_STACK_BUFFER_SIZE]>),
 }
 
@@ -252,8 +251,9 @@ impl RequestBodyBuffer {
     }
 
     pub(crate) fn to_array_list(&mut self) -> Vec<u8> {
-        // TODO(port): Zig built an ArrayList over self.arena()/self.allocated_slice() with len=0.
-        // Rust Vec cannot adopt a foreign allocator+buffer; expose a cursor type instead.
+        // Zig built an ArrayList over self.arena()/self.allocated_slice() with
+        // len=0; a Rust Vec cannot adopt a foreign allocator+buffer, so this
+        // allocates a fresh Vec of the same capacity.
         // PERF(port): was FixedBufferAllocator/StackFallback (allocator() accessor
         // dropped per PORTING.md non-AST rule; callers should write into allocated_slice() directly).
         let mut arraylist = Vec::with_capacity(self.allocated_slice().len());
@@ -324,7 +324,8 @@ pub(crate) type Queue = UnboundedQueue<AsyncHttp<'static>>;
 // deep-clones its slot list.
 #[derive(Clone)]
 pub struct InitOpts {
-    // TODO(port): lifetime — Zig `[]stringZ` borrowed from caller config; copied into spawned thread.
+    // Zig `[]stringZ` borrowed from caller config; the pointers are copied
+    // into the spawned thread and only read there (see the Send SAFETY note).
     pub ca: Vec<*const c_void>, // *const [*:0]const u8
     pub abs_ca_file_name: &'static [u8],
     pub for_install: bool,
@@ -453,7 +454,7 @@ impl HttpThread {
     }
 
     pub fn context<const IS_SSL: bool>(&mut self) -> &mut NewHttpContext<IS_SSL> {
-        // PORT NOTE: const-generic dispatch over two distinct fields — `NewHttpContext<true>`
+        // Note: const-generic dispatch over two distinct fields — `NewHttpContext<true>`
         // and `NewHttpContext<IS_SSL>` are the same type when IS_SSL, just spelled
         // differently. Route through a raw-pointer `.cast()` (identity).
         if IS_SSL {
@@ -487,9 +488,7 @@ impl HttpThread {
     pub fn connect<const IS_SSL: bool>(
         &mut self,
         client: &mut HttpClient,
-    ) -> Result<Option<crate::HTTPSocket<IS_SSL>>, bun_core::Error>
-// TODO(port): narrow error set
-    {
+    ) -> Result<Option<crate::HTTPSocket<IS_SSL>>, bun_core::Error> {
         if IS_SSL {
             // First SSL connect: materialize the default HTTPS `SSL_CTX` +
             // socket group now (deferred from `on_start`). Runs once; every
@@ -497,7 +496,7 @@ impl HttpThread {
             // funnels through here before touching `https_context.{group,secure}`.
             self.ensure_https_context_init();
         }
-        // PORT NOTE: borrowck — `slice()` borrows `client`; capture into a
+        // Note: borrowck — `slice()` borrows `client`; capture into a
         // `bun_ptr::RawSlice` (encapsulated outlives-holder invariant) so the
         // borrow of `client` ends before we hand `&mut client` to
         // `connect_socket`. Backing storage is `client.unix_socket_path`, which
@@ -535,7 +534,7 @@ impl HttpThread {
                         let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
                         ctx.connect(client, hn, pt)
                     }
-                    // PORT NOTE: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
+                    // Note: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
                     .map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
                 }
 
@@ -602,7 +601,7 @@ impl HttpThread {
                     let (hn, pt) = (client.url.hostname, client.url.get_port_auto());
                     custom_context.connect(client, hn, pt)
                 };
-                // PORT NOTE: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
+                // Note: NewHttpContext<true> == NewHttpContext<IS_SSL> here (IS_SSL branch).
                 return result.map(|o| o.map(|s| s.cast_ssl::<IS_SSL>()));
             }
         }
@@ -1164,7 +1163,7 @@ fn start_queued_task(
 ) {
     // SAFETY: http points to a live AsyncHttp queued by the caller thread.
     let cloned = crate::ThreadlocalAsyncHttp::new(unsafe { core::ptr::read(http) });
-    // PORT NOTE: Zig used struct copy `http.*`; AsyncHttp is byte-copied here
+    // Note: Zig used struct copy `http.*`; AsyncHttp is byte-copied here
     // since the original stays valid (real owner is `http`, copy is the
     // HTTP-thread working set).
     let cloned = bun_core::heap::release(cloned);
@@ -1189,12 +1188,10 @@ fn abort_tracker() -> &'static mut ArrayHashMap<u32, uws::AnySocket> {
 use core::cell::Cell;
 
 // ═══════════════════════════════════════════════════════════════════════════
-// init / on_start / process_events — depends on `bun_event_loop::MiniEventLoop`
-// (higher-tier) for `loop_.loop_.{tick,inc,dec,num_polls}`. The wakeup path
-// above uses the raw `*mut uws::Loop` directly so the rest of the thread
-// machinery compiles; the actual event-loop drive stays gated until the tier
-// boundary is resolved.
-// TODO(port): MiniEventLoop is in bun_event_loop (not in bun_http deps).
+// init / on_start / process_events — uses `bun_event_loop::MiniEventLoop`
+// for `loop_.loop_.{tick,inc,dec,num_polls}` (`on_start` calls
+// `mini_event_loop::init_global` and drives the thread's event loop). The
+// wakeup path above still uses the raw `*mut uws::Loop` directly.
 // ═══════════════════════════════════════════════════════════════════════════
 
 mod _event_loop_draft {
@@ -1202,7 +1199,7 @@ mod _event_loop_draft {
     use std::sync::Once;
 
     static INIT_ONCE: Once = Once::new();
-    // PORT NOTE: Zig `std.Thread.spawn` + `.detach()` allocates nothing on the
+    // Note: Zig `std.Thread.spawn` + `.detach()` allocates nothing on the
     // heap. Rust's `Builder::spawn` allocates an `Arc<thread::Inner>` (48 B)
     // shared between the `JoinHandle` and the new thread's TLS `current()`.
     // Dropping the handle leaves the only strong ref inside the spawned

@@ -122,7 +122,7 @@ impl State {
             Ok(_) => {
                 #[cfg(debug_assertions)]
                 {
-                    // PORT NOTE: Zig passes `@returnAddress()` here; no stable Rust
+                    // Zig passes `@returnAddress()` here; no stable Rust
                     // equivalent. `None` lets capture() use the current frame.
                     self.owner_trace = StoredTrace::capture(None);
                 }

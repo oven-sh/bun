@@ -27,7 +27,7 @@ use bun_core::Error;
 use bun_core::define_scoped_log;
 use bun_core::env::IS_WINDOWS;
 use bun_core::strings;
-use bun_core::{String as BunString, ZStr};
+use bun_core::ZStr;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, resolve_path};
 use bun_sys::dir_iterator as DirIterator;
 use bun_sys::{self as Syscall, E, Error as SysError, Fd, FdExt, O, Result as Maybe, S, Stat};
@@ -36,7 +36,7 @@ use bun_sys::{self as Syscall, E, Error as SysError, Fd, FdExt, O, Result as May
 
 define_scoped_log!(log, Glob, visible);
 
-// PORT NOTE: Zig's `CodepointIterator.Cursor.CodePointType` is `u32` (UnsignedCodepointIterator).
+// Note: Zig's `CodepointIterator.Cursor.CodePointType` is `u32` (UnsignedCodepointIterator).
 // The bun_string Cursor stores `c: i32`; cast at the assignment sites.
 type Codepoint = u32;
 fn dummy_filter_false(_val: &[u8]) -> bool {
@@ -226,7 +226,6 @@ impl Accessor for SyscallAccessor {
 // `MatchedPath` was `[]const u8` or `[:0]const u8` depending on `sentinel`.
 // Without the arena, matched paths are heap-owned; we use `Box<[u8]>` and
 // include a trailing NUL byte when `SENTINEL == true`.
-// TODO(port): MatchedPath sentinel typing — consider a dedicated owned ZStr type.
 pub type MatchedPath = Box<[u8]>;
 
 pub type IgnoreFilterFn = fn(&[u8]) -> bool;
@@ -279,12 +278,7 @@ pub type Result_ = Maybe<()>;
 /// Array hashmap used as a set (values are the keys)
 /// to store matched paths and prevent duplicates
 ///
-/// BunString is used so that we can call BunString.toJSArray()
-/// on the result of `.keys()` to give the result back to JS
-///
-/// The only type of string impl we use is ZigString since
-/// all matched paths are UTF-8 (DirIterator converts them on
-/// windows) and allocated on the arena
+/// All matched paths are UTF-8 (DirIterator converts them on windows)
 ///
 /// Multiple patterns are not supported so right now this is
 /// only possible when running a pattern like:
@@ -292,34 +286,22 @@ pub type Result_ = Maybe<()>;
 /// `foo/**/*`
 ///
 /// Use `.keys()` to get the matched paths
-// PORT NOTE: Zig keys this on `BunString` so `.keys()` can hand a slice
+// Zig keys this on `BunString` so `.keys()` can hand a slice
 // straight to `BunString.toJSArray`. `to_js_array` lives in a `*_jsc` crate
 // (per PORTING.md §Strings, `.toJS` is only callable there), so the JS-array
 // fast path moves up-tier anyway and there's no win keeping `BunString` keys
 // here. Use `StringArrayHashMap<()>` (boxed `[u8]` keys); the JSC consumer
-// rebuilds `BunString`s from `.keys()`.
-// TODO(refactor): wire `MatchedMapContext` as a `StringArrayHashMap`
-// custom context once SENTINEL-aware hashing matters (currently the trailing
-// NUL is part of the key so dedupe is still exact).
+// rebuilds `BunString`s from `.keys()`. Default hashing includes the trailing
+// NUL when `SENTINEL == true`. For keys produced by `join` (the
+// `prepare_matched_path` path) probe and stored key both carry the NUL, so
+// dedupe is exact there. The symlink path is the exception:
+// `prepare_matched_path_symlink` probes with `ZStr::as_bytes()` (NUL-less)
+// while its stored keys come from `dupe_z` (NUL included), so in SENTINEL
+// mode symlink-match probes never hit and symlink dedupe silently misses —
+// a known quirk preserved for parity with GlobWalker.zig, whose
+// `BunString.fromBytes(symlink_full_path)` probe is likewise NUL-less
+// against NUL-carrying stored keys.
 pub type MatchedMap = bun_collections::StringArrayHashMap<()>;
-
-pub struct MatchedMapContext;
-// TODO(port): ArrayHashMap context trait shape — wire the actual trait.
-impl MatchedMapContext {
-    pub fn hash(&self, this: &BunString) -> u32 {
-        debug_assert!(this.tag() == bun_core::Tag::ZigString);
-        let slice = this.byte_slice();
-        // For SENTINEL the slice includes trailing NUL; hash excludes it.
-        // TODO(port): const-generic SENTINEL not reachable here; Zig branched at comptime.
-        // Thread `SENTINEL` through `MatchedMapContext` (or strip the NUL at
-        // insert time so the key never carries it).
-        bun_collections::array_hash_map::hash_string(slice)
-    }
-
-    pub fn eql(&self, this: &BunString, other: &BunString, _idx: usize) -> bool {
-        this.eql(other)
-    }
-}
 
 /// The glob walker references the .directory.path so its not safe to
 /// copy/move this
@@ -351,7 +333,6 @@ pub struct Directory<A: Accessor> {
     pub path: Box<PathBuffer>,
     // Zig: `dir_path: [:0]const u8` is a slice into `path` (self-referential).
     // Store the length and reconstruct on demand.
-    // TODO(port): self-referential dir_path; may need Pin or raw-ptr slice.
     pub dir_path_len: usize,
 
     /// Active component indices. Multiple indices mean one readdir
@@ -506,7 +487,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
             )
         };
 
-        // PORT NOTE: reshaped for borrowck — `path_buf` aliases `self.walker.path_buf`;
+        // Note: reshaped for borrowck — `path_buf` aliases `self.walker.path_buf`;
         // capture the raw ptr+len up front so the &mut borrow ends before
         // `handle_sys_err_with_path` re-borrows `self.walker`.
         let root_path = &root_work_item.path;
@@ -602,7 +583,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
         // NUL in their `.len()`; the logical path drops it (see `work_item_logical_path`).
         let work_item_path: &[u8] = work_item_logical_path(&work_item.path);
         log!("transition => {}", bstr::BStr::new(work_item_path));
-        // PORT NOTE: reshaped for borrowck — Zig set `iter_state = .{ .directory = .{...} }`
+        // Note: reshaped for borrowck — Zig set `iter_state = .{ .directory = .{...} }`
         // up front and then mutated `this.iter_state.directory.*` while also borrowing
         // `this.walker`. Build the Directory in a local and assign at the end.
         let mut dir_path_buf = Box::new(PathBuffer::uninit());
@@ -831,7 +812,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
 
     pub fn next(&mut self) -> Result<Maybe<Option<MatchedPath>>, Error> {
         'outer: loop {
-            // PORT NOTE: reshaped for borrowck — take/replace iter_state where needed.
+            // Note: reshaped for borrowck — take/replace iter_state where needed.
             match &mut self.iter_state {
                 IterState::Matched(_) => {
                     let IterState::Matched(path) =
@@ -868,13 +849,13 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                                 )
                                 .with_path(work_item_path)));
                             }
-                            // PORT NOTE: reshaped for borrowck — Zig used `self.path_buf`
+                            // Note: reshaped for borrowck — Zig used `self.path_buf`
                             // both as the scratch buffer here and from inside
                             // `collapseDots`/`handleSysErrWithPath`. In Rust we split-borrow
                             // `path_buf` and `pattern_components` (disjoint fields) for the
                             // write+normalize, then drop the &mut and read via `self.walker`.
                             let mut symlink_full_path_len = work_item_path.len();
-                            // PORT NOTE: reshaped for borrowck — entry_name is a sub-slice
+                            // Note: reshaped for borrowck — entry_name is a sub-slice
                             // of symlink_full_path; capture range and re-slice later.
                             let entry_start = work_item.entry_start as usize;
 
@@ -1004,7 +985,7 @@ impl<'a, A: Accessor, const SENTINEL: bool> Iterator<'a, A, SENTINEL> {
                             let dir_fd = dir.fd;
                             let at_cwd = dir.at_cwd;
                             let dir_path = dir.dir_path();
-                            // PORT NOTE: reshaped for borrowck
+                            // Note: reshaped for borrowck
                             let err = self.walker.handle_sys_err_with_path(&err, dir_path);
                             if !at_cwd {
                                 self.close_disallowing_cwd(dir_fd);
@@ -1353,7 +1334,7 @@ impl SyntaxHint {
 
 impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
     /// The arena parameter is dereferenced and copied if all allocations go well and nothing goes wrong
-    // PORT NOTE: out-param constructor reshaped to return Self.
+    // Note: out-param constructor reshaped to return Self.
     pub fn init(
         pattern: &[u8],
         dot: bool,
@@ -1399,7 +1380,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
 
     /// `cwd` should be allocated with the arena
     /// The arena parameter is dereferenced and copied if all allocations go well and nothing goes wrong
-    // PORT NOTE: out-param constructor reshaped to return Self.
+    // Note: out-param constructor reshaped to return Self.
     pub fn init_with_cwd(
         pattern: &[u8],
         cwd: &[u8],
@@ -1492,7 +1473,7 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         Ok(Ok(()))
     }
 
-    // PORT NOTE: associated fn taking `pattern_components` so callers can
+    // Note: associated fn taking `pattern_components` so callers can
     // split-borrow it from `&mut self.path_buf` (Zig freely aliased; Rust
     // forbids `&mut self` + `&mut self.path_buf`). Error path builds SysError
     // directly from `path_buf` (which is already `self.path_buf` for the
@@ -2053,10 +2034,10 @@ impl<A: Accessor, const SENTINEL: bool> GlobWalker<A, SENTINEL> {
         let mut width: u32 = 0;
         while (i as usize) < pattern.len() {
             let c = pattern[i as usize];
-            // PORT NOTE: Zig calls bun.strings.utf8ByteSequenceLength; same table as wtf8.
+            // Note: Zig calls bun.strings.utf8ByteSequenceLength; same table as wtf8.
             width = u32::from(strings::wtf8_byte_sequence_length(c));
 
-            // PORT NOTE: GlobWalker.zig duplicates this block across the '\\' (Windows) and '/'
+            // Note: GlobWalker.zig duplicates this block across the '\\' (Windows) and '/'
             // arms because Zig has no or-pattern with a comptime guard; merged here.
             if bun_core::path_sep::is_sep_native(c) {
                 let mut end_byte = i;

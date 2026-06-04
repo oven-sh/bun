@@ -28,9 +28,9 @@ pub(crate) fn create_crypto_error(global_this: &JSGlobalObject, err_code: u32) -
 /// For usage in Rust (`src/runtime/crypto/PBKDF2.zig` `pub fn pbkdf2`).
 ///
 /// Returns `Some(output)` on success, `None` on BoringSSL error.
-// PORT NOTE: Zig nests `pbkdf2`/`Algorithm` inside the `EVP` struct. Stable
-// Rust has no inherent associated types, so callers reach them via the
-// `evp` module re-exported as `EVP` (see `pub use evp as EVP` below) —
+// Stable Rust has no inherent associated types, so `pbkdf2`/`Algorithm` cannot
+// nest inside the `EVP` struct; callers reach them via the `evp` module
+// re-exported as `EVP` (see `pub use evp as EVP` below) —
 // `EVP::pbkdf2(..)` / `EVP::Algorithm::Sha256` resolve through the module.
 pub fn pbkdf2<'a>(
     output: &'a mut [u8],

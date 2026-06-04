@@ -18,7 +18,7 @@ pub use bun_s3_signing::acl::ACL;
 pub use bun_s3_signing::storage_class::StorageClass;
 
 pub use bun_s3_signing::error as Error;
-// PORT NOTE: `throwSignError` / `getJSSignError` live in `error_jsc.zig` (jsc-side
+// `throwSignError` / `getJSSignError` live in `error_jsc.zig` (jsc-side
 // of the s3_signing error tables). The pure error module is `bun_s3_signing::error`;
 // the jsc helpers are mounted here as a child module so the umbrella re-export hub
 // matches the Zig `s3/client.zig` shape.
@@ -178,7 +178,7 @@ pub(crate) fn delete(
 
 pub(crate) fn list_objects(
     this: &S3Credentials,
-    // PORT NOTE: Zig took `S3ListObjectsOptions` by-value (implicit struct
+    // Zig took `S3ListObjectsOptions` by-value (implicit struct
     // copy at the call site). The Rust struct owns `Utf8Slice`s and is not
     // `Clone`, but this fn only reads fields synchronously to build the
     // search-params string — borrow instead so the caller (Store::S3::
@@ -192,7 +192,7 @@ pub(crate) fn list_objects(
 
     let _ = search_params.append_slice(b"?"); // OOM/capacity: Zig aborts; port keeps fire-and-forget
 
-    if let Some(continuation_token) = list_options.continuation_token.as_deref() {
+    if let Some(continuation_token) = list_options.continuation_token.as_ref().map(|s| s.slice()) {
         let mut buff = vec![0u8; continuation_token.len() * 3];
         let encoded =
             encode_uri_component::<true>(continuation_token, &mut buff).expect("unreachable");
@@ -203,7 +203,7 @@ pub(crate) fn list_objects(
         ));
     }
 
-    if let Some(delimiter) = list_options.delimiter.as_deref() {
+    if let Some(delimiter) = list_options.delimiter.as_ref().map(|s| s.slice()) {
         let mut buff = vec![0u8; delimiter.len() * 3];
         let encoded = encode_uri_component::<true>(delimiter, &mut buff).expect("unreachable");
 
@@ -249,13 +249,13 @@ pub(crate) fn list_objects(
         let _ = search_params.append_fmt(format_args!("&max-keys={}", max_keys)); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     }
 
-    if let Some(prefix) = list_options.prefix.as_deref() {
+    if let Some(prefix) = list_options.prefix.as_ref().map(|s| s.slice()) {
         let mut buff = vec![0u8; prefix.len() * 3];
         let encoded = encode_uri_component::<true>(prefix, &mut buff).expect("unreachable");
         let _ = search_params.append_fmt(format_args!("&prefix={}", bstr::BStr::new(encoded))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
     }
 
-    if let Some(start_after) = list_options.start_after.as_deref() {
+    if let Some(start_after) = list_options.start_after.as_ref().map(|s| s.slice()) {
         let mut buff = vec![0u8; start_after.len() * 3];
         let encoded = encode_uri_component::<true>(start_after, &mut buff).expect("unreachable");
         let _ = search_params.append_fmt(format_args!("&start-after={}", bstr::BStr::new(encoded))); // OOM/capacity: Zig aborts; port keeps fire-and-forget
@@ -311,6 +311,7 @@ pub(crate) fn list_objects(
         result: bun_http::HTTPClientResult::default(),
         concurrent_task: Default::default(),
         proxy_url: Box::default(),
+        body: Box::default(),
         poll_ref: bun_io::KeepAlive::init(),
     }));
     // SAFETY: just allocated, non-null
@@ -646,7 +647,7 @@ impl S3UploadStreamWrapper {
     pub(crate) fn write_end_request(&mut self, err: Option<JSValue>) {
         bun_output::scoped_log!(S3UploadStream, "writeEndRequest {}", err.is_some());
         self.detach_sink();
-        // PORT NOTE: reshaped for borrowck — Zig used `defer this.deref()`
+        // reshaped for borrowck — Zig used `defer this.deref()`
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self), |s| {
             // SAFETY: s points to self which is alive for the duration of the guard; deref_
             // decrements ref_count and may free self only after all borrows above are released
@@ -674,7 +675,7 @@ impl S3UploadStreamWrapper {
 
     pub(crate) fn resolve(result: S3UploadResult, self_: &mut Self) -> JsTerminatedResult<()> {
         bun_output::scoped_log!(S3UploadStream, "resolve");
-        // PORT NOTE: reshaped for borrowck — Zig used `defer self.deref()`
+        // reshaped for borrowck — Zig used `defer self.deref()`
         let _deref_guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), |s| {
             // SAFETY: s points to self_ which is alive for the duration of the guard; deref_
             // decrements ref_count and may free self only after all borrows above are released
@@ -778,9 +779,9 @@ pub fn upload_stream(
             )
             .to_js());
         }
-        // TODO(port): Zig used `inline .File, .Bytes => |stream|` — File/Bytes payload types
-        // differ (`*FileReader` vs `*ByteStream`), so the inline-captured `stream` has different
-        // types per arm. Manual unroll once both have a `.pending` accessor.
+        // Zig used `inline .File, .Bytes => |stream|`; the File/Bytes payload types
+        // differ (`*FileReader` vs `*ByteStream`), so the inline-captured arm is
+        // manually unrolled here.
         ReadableStreamPtr::Bytes(_) => {
             // BACKREF: see `Source::bytes()` — payload live while the
             // ReadableStream JS wrapper is rooted. R-2: `pending` is `JsCell`.
@@ -857,7 +858,7 @@ pub fn upload_stream(
         );
     }
 
-    // PORT NOTE: Zig calls `this.ref()` *before* the is_disturbed/Invalid/pending-err early
+    // Zig calls `this.ref()` *before* the is_disturbed/Invalid/pending-err early
     // returns above (client.zig:465), leaking a credential ref on every early-return path.
     // Here `credentials` is owned-by-value and explicitly `.deref()`ed on each early
     // return — strictly an improvement.
@@ -1143,7 +1144,7 @@ pub fn readable_stream(
             request_err: Option<Error::S3Error>,
             self_: &mut Self,
         ) -> JsTerminatedResult<()> {
-            // PORT NOTE: reshaped for borrowck — Zig used `defer if (!has_more) self.deinit()`
+            // reshaped for borrowck — Zig used `defer if (!has_more) self.deinit()`
             let _guard = scopeguard::guard(std::ptr::from_mut::<Self>(self_), move |s| {
                 if !has_more {
                     // SAFETY: s is a live Box-allocated pointer (heap::alloc in S3DownloadStreamWrapper::new);

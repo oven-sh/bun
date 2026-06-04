@@ -3,18 +3,19 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
 use super::get_signature;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
 pub(crate) fn to_be_instance_of(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: reshaped for borrowck (was `defer this.postMatch(globalThis)`).
+    // Reshaped for borrowck (was `defer this.postMatch(globalThis)`).
     // Run the matcher body in an inner closure so `this` is released when it returns,
     // then call `post_match` exactly once on every exit path (success or throw).
     let res = (|| -> JsResult<JSValue> {
     let this_value = frame.this();
-    // PORT NOTE: collapsed `arguments_old(1)` + ptr/len slice into a single &[JSValue].
+    // Collapsed `arguments_old(1)` + ptr/len slice into a single &[JSValue].
     let arguments_ = frame.arguments_old::<1>(); let arguments: &[JSValue] = arguments_.slice();
 
     if arguments.len() < 1 {
@@ -49,16 +50,15 @@ pub(crate) fn to_be_instance_of(
     }
 
     // handle failure
-    // PORT NOTE: two live `to_fmt(&mut Formatter)` wrappers alias the same formatter under
+    // Two live `to_fmt(&mut Formatter)` wrappers alias the same formatter under
     // borrowck — use a second Formatter for the second value (matches toBe.rs / toInclude.rs).
     let mut formatter2 = super::make_formatter(global);
     let expected_fmt = expected_value.to_fmt(&mut formatter);
     let value_fmt = value.to_fmt(&mut formatter2);
     if not {
-        // PORT NOTE: Zig built the fmt string via comptime `++` concatenation of
+        // Zig built the fmt string via comptime `++` concatenation of
         // `expected_line`/`received_line` consts; inlined here because Rust `concat!`
         // only accepts literals (and `format_args!` needs a literal anyway).
-        // TODO(port): get_signature should be a `const fn` (was `comptime` in Zig).
         let signature = get_signature("toBeInstanceOf", "<green>expected<r>", true);
         return this.throw(
             global,

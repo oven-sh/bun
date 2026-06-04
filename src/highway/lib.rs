@@ -288,8 +288,8 @@ pub fn index_of_any_char(haystack: &[u8], chars: &[u8]) -> Option<usize> {
     Some(result)
 }
 
-// TODO(port): Zig accepts `[]align(1) const u16` (unaligned). Rust `&[u16]` requires
-// 2-byte alignment; callers passing unaligned data must go through the raw extern.
+// Zig accepted `[]align(1) const u16` (unaligned); Rust `&[u16]` requires
+// 2-byte alignment. Callers with unaligned data must go through the raw extern.
 #[inline(always)]
 pub fn copy_u16_to_u8(input: &[u16], output: &mut [u8]) {
     // SAFETY: input.ptr/len readable, output.ptr writable for at least input.len() bytes

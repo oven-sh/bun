@@ -97,7 +97,7 @@ pub struct SpawnSyncEventLoop {
     vm: *mut (),
 
     /// Completely separate uws.Loop instance - critical for avoiding recursive event loop execution
-    // TODO(port): lifetime — FFI-owned handle created via `uws::Loop::create`, freed in Drop via
+    // FFI-owned handle created via `uws::Loop::create`, freed in Drop via
     // `Loop::deinit`. Kept as raw because `uws::Loop` is an opaque C type and its address is
     // stored back into `internal_loop_data` (self-referential w.r.t. `event_loop`).
     uws_loop: NonNull<uws::Loop>,
@@ -145,15 +145,15 @@ mod handler {
 }
 
 impl SpawnSyncEventLoop {
-    // TODO(port): in-place init — `self.event_loop` is captured by
-    // `setParentEventLoop` below, so `Self` must not move after `init` returns.
-    // Zig caller passes `undefined` storage, hence `MaybeUninit<Self>` (out-param ctor exception).
-    // TODO(refactor): consider `Pin<&mut Self>` or document the no-move invariant at the caller.
+    // In-place init: `self.event_loop` is captured by `setParentEventLoop`
+    // below, so `Self` MUST NOT move after `init` returns (no-move invariant
+    // upheld by the caller). Zig caller passes `undefined` storage, hence
+    // `MaybeUninit<Self>` (out-param ctor exception).
     pub fn init(
         this: &mut core::mem::MaybeUninit<Self>,
         vm: *mut (), /* SAFETY: erased *mut VirtualMachine */
     ) {
-        // PORT NOTE: Zig passes a comptime `Handler` type with wakeup/pre/post decls.
+        // Zig passes a comptime `Handler` type with wakeup/pre/post decls.
         // The Rust wrapper takes a `LoopHandler` impl with associated-const fn ptrs.
         let loop_ = uws::Loop::create::<handler::Handler>();
 
@@ -177,7 +177,7 @@ impl SpawnSyncEventLoop {
         // Set up the loop's internal data to point to this isolated event loop
         // SAFETY: `this` was fully written immediately above so `assume_init_mut` is sound.
         let this = unsafe { this.assume_init_mut() };
-        // PORT NOTE: sys-level API is `set_parent_raw(tag, ptr)`; the typed
+        // sys-level API is `set_parent_raw(tag, ptr)`; the typed
         // `set_parent_event_loop` lives in a higher tier. Tag 1 = JS, tag 2 = mini.
         // `this.event_loop` is the live heap-owned `*mut jsc::EventLoop`
         // returned by `__bun_spawn_sync_create_event_loop` immediately above —
@@ -295,7 +295,7 @@ impl Drop for SpawnSyncEventLoop {
             }
         }
 
-        // PORT NOTE: Zig order was `event_loop.deinit()` then `uws_loop.deinit()`.
+        // Zig order was `event_loop.deinit()` then `uws_loop.deinit()`.
         __bun_spawn_sync_destroy_event_loop(self.event_loop);
         // SAFETY: uws_loop was returned by `us_create_loop` in `init` and not yet freed.
         unsafe { uws::Loop::destroy(self.uws_loop.as_ptr()) };
@@ -425,7 +425,7 @@ impl SpawnSyncEventLoop {
         // On POSIX, the uws tick only polls I/O; callbacks are dispatched later
         // via the task queue, but we set the flag here uniformly for safety.
         let _suppress = SuppressMicrotaskDrain::new(self.vm);
-        // PORT NOTE: Zig `defer` restores at scope exit; RAII Drop mirrors that.
+        // Zig `defer` restores at scope exit; RAII Drop mirrors that.
 
         // Tick the isolated uws loop with the specified timeout
         // This will only process I/O related to this subprocess

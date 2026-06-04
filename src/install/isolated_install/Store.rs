@@ -136,7 +136,7 @@ impl Store {
 
         len = parent_dedupe.len();
         while i < len {
-            // PORT NOTE: reshaped for borrowck — capture key before mutating `parent_dedupe`.
+            // Capture key before mutating `parent_dedupe`.
             let key = parent_dedupe.keys()[i];
             for &parent_id in entry_parents[key.get() as usize].as_slice() {
                 if parent_id == entry::Id::INVALID {
@@ -157,11 +157,10 @@ impl Store {
 
 // ──────────────────────────────────────────────────────────────────────────
 // OrderedArraySet<T> — Zig: `fn OrderedArraySet(comptime T, comptime Ctx) type`.
-// PORT NOTE: the `Ctx` type param is dropped from the struct; ctx is passed per-call as
-// `&impl OrderedArraySetCtx<T>`. In Zig the Ctx param only contributed comptime method
-// lookup; in Rust the two instantiations (`Dependencies`, `Peers`) are already distinct
-// via `T`. Ctx structs carry borrowed slices, so binding their lifetime into the
-// container type would infect stored fields.
+// The ctx is passed per-call as `&impl OrderedArraySetCtx<T>` rather than as a
+// type param on the struct; the two instantiations (`Dependencies`, `Peers`)
+// are already distinct via `T`. Ctx structs carry borrowed slices, so binding
+// their lifetime into the container type would infect stored fields.
 // ──────────────────────────────────────────────────────────────────────────
 pub(crate) trait OrderedArraySetCtx<T: Copy> {
     fn eql(&self, l: T, r: T) -> bool;
@@ -281,9 +280,9 @@ pub mod entry {
         // Zig default: `.empty`
         pub parents: Vec<Id>,
         // Zig default: `.init(.link_package)`
-        // PORT NOTE: `std.atomic.Value(Installer.Task.Step)` → `AtomicU32` storing
-        // the `#[repr(u8)]` discriminant. Loads/stores go through `Step as u32` /
-        // `Step::from_u32` (see Installer.rs); no atomic-enum wrapper exists.
+        // `AtomicU32` storing the `#[repr(u8)]` `Step` discriminant. Loads and
+        // stores go through `Step as u32` / `Step::from_u32` (see Installer.rs);
+        // no atomic-enum wrapper exists.
         pub step: core::sync::atomic::AtomicU32,
 
         // if true this entry gets symlinked to `node_modules/.bun/node_modules`
@@ -302,7 +301,7 @@ pub mod entry {
         pub entry_hash: u64,
 
         // Zig default: `null`
-        // PORT NOTE: `Cell` because `Installer::Task::run` writes this slot
+        // `Cell` because `Installer::Task::run` writes this slot
         // from a task thread through `&Store` (each Task is the sole writer for
         // its own `entry_id`; see Installer.zig:541/1161). Without interior
         // mutability the only access path is `&Store → &[Option<_>]` and the
@@ -474,8 +473,6 @@ pub mod entry {
     }
 
     pub(crate) fn debug_gather_all_parents(entry_id: Id, store: &Store) -> Vec<Id> {
-        // PORT NOTE: reshaped — Zig leaked the local map and returned its keys slice;
-        // Rust returns an owned Vec instead.
         let mut i: usize = 0;
         let mut len: usize;
 
@@ -493,7 +490,7 @@ pub mod entry {
 
         len = parents.len();
         while i < len {
-            // PORT NOTE: reshaped for borrowck — capture key before mutating `parents`.
+            // Capture key before mutating `parents`.
             let key = parents.keys()[i];
             for &parent_id in entry_parents[key.get() as usize].as_slice() {
                 if parent_id == Id::INVALID {

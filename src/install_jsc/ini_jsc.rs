@@ -41,7 +41,7 @@ impl IniTestingAPIs {
         // (all `allocator.create`/`toOwnedSlice` below now use the global mimalloc)
 
         let envjs = frame.argument(1);
-        // PORT NOTE: reshaped for borrowck — Zig returned either a VM-owned *Loader or
+        // Reshaped for borrowck — Zig returned either a VM-owned *Loader or
         // an arena-allocated *Loader from a labeled block. Per PORTING.md §Forbidden
         // (`Box::leak` is banned), keep both `Map` and `Loader` owned in fn-scope
         // `Option`s and hand out a raw `*mut Loader` uniformly. Both drop at fn
@@ -143,7 +143,7 @@ impl IniTestingAPIs {
         };
         // `defer { *.deref() }` deleted — bun_core::String impls Drop.
 
-        // PORT NOTE: `jsc.JSObject.create(.{ .field = val, ... }, global)` reflects over
+        // `jsc.JSObject.create(.{ .field = val, ... }, global)` reflects over
         // an anon struct's fields at comptime. Rust has no field reflection; mirror with
         // a local `PojoFields` impl (the bun_jsc-convention until `#[derive(PojoFields)]`
         // lands) so each `bun.String → JSValue` encoding interleaves with `put()` and
@@ -206,7 +206,7 @@ impl IniTestingAPIs {
         let utf8str = bunstr.to_utf8();
 
         let env = global.bun_vm().as_mut().transpiler.env_mut();
-        // TODO(port): lifetime — `Parser::init` ties `src: &'a [u8]` and
+        // `Parser::init` ties `src: &'a [u8]` and
         // `env: &'a mut DotEnvLoader<'a>` to one invariant `'a`; the VM-owned
         // env is `'static`, so erase `src` to match. SAFETY: `parser` is dropped
         // before `utf8str` (drop order is reverse of declaration); no borrow
@@ -214,7 +214,7 @@ impl IniTestingAPIs {
         let src: &'static [u8] = bun_ast::IntoStr::into_str(utf8str.slice());
         let mut parser = Parser::init(b"<src>", src, env);
 
-        // PORT NOTE: borrowck — `Parser::parse` takes `&'a Arena` (Zig passed
+        // Borrowck — `Parser::parse` takes `&'a Arena` (Zig passed
         // `parser.arena.arena()`); split the borrow via raw ptr so the bump
         // outlives the `&mut parser` for the call.
         let arena_ptr: *const bun_alloc::Arena = &raw const parser.arena;

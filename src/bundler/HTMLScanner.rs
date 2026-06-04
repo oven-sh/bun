@@ -135,9 +135,9 @@ pub(crate) trait HTMLProcessorHandler {
     fn on_write_html(&mut self, bytes: &[u8]);
     fn on_html_parse_error(&mut self, message: &[u8]);
 
-    // Only required when VISIT_DOCUMENT_TAGS == true.
-    // TODO(port): split into a separate trait if const-generic specialization
-    // is unwieldy; Zig only references these inside `if (visit_document_tags)`.
+    // Only required when VISIT_DOCUMENT_TAGS == true; Zig only references
+    // these inside `if (visit_document_tags)`, so the defaults are never
+    // reached for handlers that don't visit document tags.
     fn on_body_tag(&mut self, _element: &mut lol::Element) -> bool {
         unreachable!()
     }
@@ -454,7 +454,7 @@ impl<T: HTMLProcessorHandler, const VISIT_DOCUMENT_TAGS: bool>
 
         let mut sink = Sink::<T>(this_ptr);
 
-        // PORT NOTE: Zig `errdefer { ... this.onHTMLParseError(last_error) }`
+        // Note: Zig `errdefer { ... this.onHTMLParseError(last_error) }`
         // reshaped — fallible tail wrapped in an inner block so the side effect
         // runs on error without a scopeguard double-borrowing `this`.
         let res: Result<(), Error> = (|| {

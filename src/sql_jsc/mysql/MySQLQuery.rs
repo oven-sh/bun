@@ -276,7 +276,6 @@ impl MySQLQuery {
     }
 
     fn run_simple_query(&mut self, connection: &MySQLConnection) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         if self.status != Status::Pending || !connection.can_execute_query() {
             debug!("cannot execute query");
             // cannot execute query
@@ -286,12 +285,11 @@ impl MySQLQuery {
         let writer = connection.get_writer();
         if self.statement.is_null() {
             // Zig: `bun.new(MySQLStatement, .{ .signature = .empty(), .status = .parsing, .ref_count = .initExactRefs(1) })`.
-            // `heap::alloc` yields a heap allocation with intrusive ref_count == 1
-            // (the `Default` impl sets `ref_count = Cell::new(1)`).
-            // FRU (`..Default::default()`) is illegal for `Drop` types; mutate instead.
-            let mut stmt = Box::new(MySQLStatement::default());
-            stmt.signature = Signature::empty();
-            stmt.status = my_sql_statement::Status::Parsing;
+            // `MySQLStatement::new` sets the intrusive ref_count to 1.
+            let stmt = Box::new(MySQLStatement::new(
+                Signature::empty(),
+                my_sql_statement::Status::Parsing,
+            ));
             self.statement = bun_core::heap::into_raw(stmt);
         }
         mysql_request::execute_query(query_str.slice(), writer)?;
@@ -307,7 +305,6 @@ impl MySQLQuery {
         columns_value: JSValue,
         binding_value: JSValue,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         let mut query_str: Option<bun_core::zig_string::Slice> = None;
         // `defer if (query_str) |str| str.deinit()` — deleted: `Utf8Slice` impls `Drop`.
 
@@ -322,7 +319,7 @@ impl MySQLQuery {
                 Ok(s) => s,
                 Err(err) => {
                     if !global_object.has_exception() {
-                        // PORT NOTE: Zig calls `AnyMySQLError.mysqlErrorToJS` here, but the
+                        // Zig calls `AnyMySQLError.mysqlErrorToJS` here, but the
                         // Rust `Signature::generate` returns a wider `bun_core::Error`. Use
                         // `throw_error` (which builds an `Error` instance from the error
                         // name + message) instead of forcing into the MySQL enum.
@@ -339,7 +336,10 @@ impl MySQLQuery {
             {
                 Ok(e) => e,
                 Err(err) => {
-                    let _ = global_object.throw_error(err, "failed to allocate statement");
+                    // `err` is `bun_core::AllocError`; `throw_error` takes
+                    // `bun_core::Error` (`From<AllocError>` → OutOfMemory).
+                    let _ =
+                        global_object.throw_error(err.into(), "failed to allocate statement");
                     return Err(bun_core::err!("JSError"));
                 }
             };
@@ -370,11 +370,10 @@ impl MySQLQuery {
             } else {
                 // Zig: `bun.new(MySQLStatement, .{ .ref_count = .initExactRefs(2), ... })`
                 // — one ref for `self.statement`, one for the map entry.
-                // FRU (`..Default::default()`) is illegal for `Drop` types; mutate instead.
-                let mut stmt = Box::new(MySQLStatement::default());
-                stmt.signature = signature;
-                stmt.status = my_sql_statement::Status::Pending;
-                stmt.statement_id = 0;
+                let mut stmt = Box::new(MySQLStatement::new(
+                    signature,
+                    my_sql_statement::Status::Pending,
+                ));
                 stmt.init_exact_refs(2);
                 let stmt = bun_core::heap::into_raw(stmt);
                 self.statement = stmt;
@@ -470,7 +469,6 @@ impl MySQLQuery {
         columns_value: JSValue,
         binding_value: JSValue,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         if self.flags.simple() {
             debug!("runSimpleQuery");
             return self.run_simple_query(connection);

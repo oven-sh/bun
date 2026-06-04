@@ -33,7 +33,7 @@ impl<R> ScopeRule<R> {
         if let Some(scope_start) = &self.scope_start {
             dest.write_char(b'(')?;
             // scope_start.to_css(dest)?;
-            // PORT NOTE: read `dest.ctx` directly (Copy) — `Printer::context()`
+            // Read `dest.ctx` directly (Copy) — `Printer::context()`
             // ties the borrow to `&self`, which conflicts with `&mut dest`.
             let ctx = dest.ctx;
             serialize_selector_list(scope_start.v.slice(), dest, ctx, false)?;
@@ -48,7 +48,7 @@ impl<R> ScopeRule<R> {
             // <scope-start> is treated as an ancestor of scope end.
             // https://drafts.csswg.org/css-nesting/#nesting-at-scope
             if let Some(scope_start) = &self.scope_start {
-                // PORT NOTE: Zig passed an anon-struct fn pointer; the Rust
+                // Zig passed an anon-struct fn pointer; the Rust
                 // `Printer::with_context` carries the captured state as the
                 // first closure arg (no `&self` capture across `&mut dest`).
                 dest.with_context(
@@ -85,9 +85,9 @@ impl<R> ScopeRule<R> {
     where
         R: crate::generics::DeepClone<'bump>,
     {
-        // PORT NOTE: `css.implementDeepClone` field-walk. `SelectorList::
-        // deep_clone()` intentionally drops the `&Arena` (selectors/parser.rs
-        // — every payload is arena-static); routed via `dc::selector_list`.
+        // `SelectorList::deep_clone()` intentionally drops the `&Arena`
+        // (selectors/parser.rs — every payload is arena-static); routed via
+        // `dc::selector_list`.
         Self {
             scope_start: self
                 .scope_start

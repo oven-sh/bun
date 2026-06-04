@@ -1,7 +1,7 @@
 //! Basic utilities for working with memory and objects.
 
 // ──────────────────────────────────────────────────────────────────────────────
-// PORT NOTE: `exemptedFromDeinit`, `deinitIsVoid`, and `deinit` are intentionally
+// `exemptedFromDeinit`, `deinitIsVoid`, and `deinit` are intentionally
 // NOT ported as functions.
 //
 // Zig's `bun.memory.deinit(ptr_or_slice)` walked `@typeInfo` to:
@@ -24,7 +24,7 @@
 // port is not possible — and per §Idiom map, `deinit` definitions become `impl Drop`
 // on the target type, not a free function here.
 //
-// TODO(port): if any caller relied on the `*x = undefined` poisoning to catch UAF in
+// If any caller relied on the `*x = undefined` poisoning to catch UAF in
 // debug, add `#[cfg(debug_assertions)] unsafe { ptr::write_bytes(p, 0xAA, 1) }` at
 // that call site.
 // ──────────────────────────────────────────────────────────────────────────────

@@ -56,7 +56,7 @@ impl ScanCommand {
         );
         Output::flush();
 
-        // PORT NOTE: reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
+        // Reshaped for borrowck — `manager.lockfile.load_from_cwd(&mut self,
         // Some(manager), log)` would alias `&mut *manager.lockfile` with `&mut *manager`.
         // Project disjoint raw pointers from the singleton first; `load_from_cwd` only
         // reads `manager.options`/migration helpers and never re-borrows `manager.lockfile`.
@@ -68,7 +68,7 @@ impl ScanCommand {
             // no other live `&mut Lockfile` exists at this point.
             let lockfile: &mut Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
             match lockfile.load_from_cwd::<true>(
-                // SAFETY: see PORT NOTE above — `load_from_cwd` accesses `manager`
+                // SAFETY: see comment above — `load_from_cwd` accesses `manager`
                 // fields disjoint from `lockfile` (Zig invariant).
                 Some(unsafe { &mut *pm_ptr }),
                 log,

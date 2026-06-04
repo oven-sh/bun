@@ -40,7 +40,7 @@ impl HTTPServerAgent {
 
     // #region Events
     //
-    // PORT NOTE (phase-d): `notify_server_started` / `notify_server_stopped` /
+    // `notify_server_started` / `notify_server_stopped` /
     // `notify_server_routes_updated` reach into `bun_jsc::api::AnyServer` and
     // `ServerConfig::RouteDeclaration`, which live in `bun_runtime` (forward
     // dep). The C++ side only needs `Bun__HTTPServerAgent__setEnabled` for
@@ -125,8 +125,6 @@ bun_opaque::opaque_ffi! {
     pub struct InspectorHTTPServerAgent;
 }
 
-// TODO(port): move to jsc_sys
-//
 // `safe fn`: `InspectorHTTPServerAgent` is an `opaque_ffi!` ZST handle
 // (`!Freeze` via `UnsafeCell`); `BunString` is `#[repr(C)]` and read-only
 // across the call. `&mut`/`&` are ABI-identical to non-null `*mut`/`*const`.

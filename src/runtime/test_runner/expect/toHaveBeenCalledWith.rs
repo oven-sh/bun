@@ -4,7 +4,6 @@ use super::DiffFormatter;
 use super::mock;
 use super::Expect;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_have_been_called_with(
     this: &Expect,
     global: &JSGlobalObject,
@@ -102,7 +101,7 @@ pub(crate) fn to_have_been_called_with(
     }
 
     // If there are multiple calls, list them all to help debugging.
-    // PORT NOTE: reshaped for borrowck — Zig shares one `&formatter` between to_fmt and
+    // reshaped for borrowck — Zig shares one `&formatter` between to_fmt and
     // list_formatter; in Rust the AllCallsWithArgsFormatter holds an exclusive borrow, so
     // we allocate a second ConsoleObject formatter for the list.
     let mut list_fmt = super::make_formatter(global);
@@ -112,10 +111,6 @@ pub(crate) fn to_have_been_called_with(
         formatter: core::cell::RefCell::new(&mut list_fmt),
     };
 
-    // TODO(port): Output.prettyFmt comptime color dispatch — Zig branches on
-    // `Output.enable_ansi_colors_stderr` to substitute/strip `<green>`/`<red>` tags at comptime.
-    // Re-expand to `if b { throw::<true>() } else { throw::<false>() }` once `bun_core::pretty_fmt!` exists.
-    // PERF(port): was comptime bool dispatch (`switch inline else`) — profile if hot.
     this.throw(
         global,
         signature,

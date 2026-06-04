@@ -21,7 +21,7 @@ use crate::webcore::headers_ref::any_blob_content_type;
 use crate::webcore::{AnyBlob, FetchHeaders, InternalBlob, Response};
 
 // bun.ptr.RefCount(@This(), "ref_count", deinit, .{}) — single-thread refcount.
-// PORT NOTE (§Pointers): `*StaticRoute` is also passed as uws onAborted/
+// `*StaticRoute` is also passed as uws onAborted/
 // onWritable userdata; the intrusive `ref_count` Cell + `*mut Self` receivers
 // preserve write provenance through the FFI userdata round-trip so the eventual
 // `heap::take` in `deref_` is sound.
@@ -76,7 +76,7 @@ impl StaticRoute {
     }
 
     /// Ownership of `blob` is transferred to this function.
-    // PORT NOTE: Zig takes `*const AnyBlob` and bit-copies (`blob.*`) into the
+    // The Zig original takes `*const AnyBlob` and bit-copies (`blob.*`) into the
     // route, relying on no-auto-drop. Rust `AnyBlob` has drop glue (e.g.
     // `InternalBlob.bytes: Vec<u8>`), so a `&AnyBlob` + `ptr::read` would alias
     // and double-free when the caller's value drops. Take by value instead.

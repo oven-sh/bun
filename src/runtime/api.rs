@@ -21,8 +21,6 @@ pub use crate::socket::NewSocket;
 pub use crate::socket::SocketAddress;
 pub use crate::socket::TCPSocket;
 pub use crate::socket::TLSSocket;
-// PORT NOTE: dropped `comptime { _ = @import("./socket/uws_jsc.zig"); }` force-reference;
-// Rust links `us_socket_buffered_js_write` via `pub` export in crate::socket::uws_jsc.
 pub use crate::socket::udp_socket::UDPSocket;
 
 pub use crate::ffi::FFI;

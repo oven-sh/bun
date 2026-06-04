@@ -10,9 +10,8 @@ use bun_alloc::ArenaPtr;
 
 pub use crate::Error;
 
-// TODO(port): the CSS crate borrows strings from parser input with lifetime `'i`
-// (matching lightningcss). This module avoids struct lifetime params; consider
-// threading `'i` through `MediaType::Custom`, `Ident`, `DashedIdent`, etc.
+// Strings here borrow parser input/arena memory but the structs carry no lifetime
+// params (crate-wide `&'static`/raw-slice placeholder convention); see lib.rs.
 
 // ───────────────────────── value-type imports ─────────────────────────
 // Real `values/` payloads — the calc lattice has un-gated, so the local
@@ -181,11 +180,11 @@ pub enum MediaType {
     /// `screen`.
     Screen,
     /// An unknown / deprecated / custom media type.
-    // TODO(port): arena lifetime — Zig borrowed parser input.
+    // Lifetime: arena-borrowed parser input; valid until the arena is reset.
     Custom(*const [u8]),
 }
 
-// PORT NOTE: hand-rolled — derived PartialEq on `*const [u8]` compares
+// Hand-rolled — derived PartialEq on `*const [u8]` compares
 // address+len, not byte content. Spec `MediaType.eql` compares slice bytes
 // (via `css.implementEql`); adjacent-@media merging (rules.zig) depends on
 // content equality across distinct arena offsets.
@@ -203,7 +202,6 @@ impl PartialEq for MediaType {
 }
 
 // Flags for `parse_query_condition`.
-// PORT NOTE: Zig `packed struct(u8)` with two bool fields → bitflags!
 bitflags::bitflags! {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub struct QueryConditionFlags: u8 {
@@ -255,8 +253,8 @@ pub enum MediaFeatureName<FeatureId: FeatureIdTrait> {
     Unknown(Ident),
 }
 
-// PORT NOTE: `eql` was hand-written byte compare on the ident slices; data-only
-// PartialEq derived once `Ident`/`DashedIdent` gain `PartialEq` (values/ un-gate).
+// Data-only PartialEq, derived once `Ident`/`DashedIdent` gained `PartialEq`
+// (Zig's `eql` was a hand-written byte compare on the ident slices).
 impl<FeatureId: FeatureIdTrait> PartialEq for MediaFeatureName<FeatureId> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -296,7 +294,7 @@ pub enum QueryFeature<FeatureId: FeatureIdTrait> {
 }
 
 /// Comparison operator in a range media feature.
-// PORT NOTE: discriminants are power-of-two bitflags — Zig media_query.zig
+// Discriminants are power-of-two bitflags — Zig media_query.zig
 // bitwise-ORs `@intFromEnum(start_operator) | @intFromEnum(end_operator)` to
 // validate interval operator pairs. Do NOT use implicit 0..=4.
 #[repr(u8)]
@@ -315,7 +313,7 @@ pub enum MediaFeatureComparison {
 }
 
 /// [media feature value](https://drafts.csswg.org/mediaqueries/#typedef-mf-value).
-// PORT NOTE: `Debug` hand-rolled below — `Length` (calc tree) does not derive
+// `Debug` hand-rolled below — `Length` (calc tree) does not derive
 // `Debug`, but the `MediaCondition`/`QueryFeature` chain wants it for
 // diagnostics.
 #[derive(Clone)]
@@ -355,7 +353,7 @@ impl core::fmt::Debug for MediaFeatureValue {
     }
 }
 
-// PORT NOTE: derive(PartialEq) blocked on `Ident`/`EnvironmentVariable` lacking
+// derive(PartialEq) blocked on `Ident`/`EnvironmentVariable` lacking
 // std `PartialEq`; hand-roll all arms (Zig: `css.implementEql`).
 impl PartialEq for MediaFeatureValue {
     fn eq(&self, other: &Self) -> bool {
@@ -963,8 +961,6 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
     pub(crate) fn to_css(&self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
             MediaFeatureName::Standard(v) => v.to_css(dest),
-            // PORT NOTE: Zig `DashedIdentFns.toCss` → `dest.writeDashedIdent`
-            // (handles css-module name rewriting).
             MediaFeatureName::Custom(d) => d.to_css(dest),
             MediaFeatureName::Unknown(v) => v.to_css(dest),
         }
@@ -1021,7 +1017,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
                 None
             };
 
-        // PORT NOTE: Zig `allocPrint("-webkit-{s}", .{name})` then
+        // Zig `allocPrint("-webkit-{s}", .{name})` then
         // `parse_utility.parseString(.., FeatureId.parse)` — the re-tokenize is
         // only to feed `DefineEnumProperty.parse` an ident token. Here
         // `FeatureIdTrait::from_str` does the same case-insensitive table lookup
@@ -1057,7 +1053,7 @@ impl<FeatureId: FeatureIdTrait> MediaFeatureName<FeatureId> {
 impl MediaFeatureComparison {
     pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         match self {
-            // PORT NOTE(suspect): Zig emits '-' for `Equal` (media_query.zig:1156),
+            // Suspect but intentional: Zig emits '-' for `Equal` (media_query.zig:1156),
             // diverging from the spec `=` and from this enum's strum tag. Ported
             // byte-for-byte; revisit if upstream fixes.
             MediaFeatureComparison::Equal => dest.delim(b'-', true),
@@ -1121,7 +1117,12 @@ impl MediaFeatureValue {
             MediaFeatureValue::Resolution(res) => MediaFeatureValue::Resolution(res.add_f32(other)),
             MediaFeatureValue::Ratio(ratio) => MediaFeatureValue::Ratio(ratio.add_f32(other)),
             MediaFeatureValue::Ident(id) => MediaFeatureValue::Ident(id),
-            MediaFeatureValue::Env(env) => MediaFeatureValue::Env(env), // TODO: calc support
+            // Matches Zig (media_query.zig `addF32`): env() values pass through
+            // unchanged — the calc-lattice add (wrapping the env() reference in a
+            // calc() to apply the strict-inequality boundary adjustment) is not
+            // implemented in either port, so range bounds on env() values lose the
+            // +/-0.001 nudge.
+            MediaFeatureValue::Env(env) => MediaFeatureValue::Env(env),
         }
     }
 
@@ -1212,7 +1213,7 @@ impl MediaFeatureValue {
             return Ok(MediaFeatureValue::Resolution(res));
         }
 
-        // PORT NOTE: Zig `input.tryParse(EnvironmentVariable.parse, .{})` left
+        // Zig `input.tryParse(EnvironmentVariable.parse, .{})` left
         // `options`/`depth` undefined (tryParse builds `ArgsTuple` and only
         // fills index 0) — UB. Fixed here by threading the real `ParserOptions`
         // down from `QueryFeature::parse` and passing `depth = 0`.
@@ -1249,7 +1250,7 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 
     dest.delim(b':', false)?;
 
-    // PORT NOTE: Zig deepCloned `value` into `dest.arena` then mutated; here
+    // Zig deepCloned `value` into `dest.arena` then mutated; here
     // `MediaFeatureValue: Clone` so we clone-by-value.
     let adjusted: Option<MediaFeatureValue> = match operator {
         MediaFeatureComparison::GreaterThan => Some(value.clone().add_f32(0.001)),
@@ -1271,7 +1272,7 @@ fn write_min_max<FeatureId: FeatureIdTrait>(
 // bodies. Un-gated this round so `rules::dc::{media_list,query_feature}` can
 // route through real impls instead of `#[derive(Clone)]` passthroughs.
 //
-// PORT NOTE: written as **inherent** methods (not `#[derive(DeepClone)]`) to
+// Written as **inherent** methods (not `#[derive(DeepClone)]`) to
 // match the Zig hand-written bodies exactly: Zig copies `name`/`qualifier`/
 // `media_type`/`operator` fields by value (they are `Copy`/arena-slice types
 // under the generics.zig "const strings" rule) and only recurses into the
@@ -1737,7 +1738,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
     ) -> Result<Self> {
         // We need to find the feature name first so we know the type.
         let start = input.state();
-        // PORT NOTE: Zig loops `MediaFeatureName.parse` then checks
+        // Zig loops `MediaFeatureName.parse` then checks
         // `isExhausted()` — but `expectIdent` does not advance on error, so
         // the literal Zig body would spin on a non-ident token. The intent
         // (matching lightningcss) is to *skip* tokens until the name is
@@ -1774,7 +1775,7 @@ impl<FeatureId: FeatureIdTrait> QueryFeature<FeatureId> {
             let start_operator = operator.unwrap();
             let end_operator = end_operator_.unwrap();
             // Start and end operators must be matching.
-            // PORT NOTE: discriminants are bitflags (1/2/4/8/16) — see the
+            // Discriminants are bitflags (1/2/4/8/16) — see the
             // comment on `MediaFeatureComparison`. Zig bitwise-ORs them.
             const GT: u8 = MediaFeatureComparison::GreaterThan as u8;
             const GTE: u8 = MediaFeatureComparison::GreaterThanEqual as u8;

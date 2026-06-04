@@ -33,7 +33,6 @@ pub fn parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
             // for now...
             let buffer_writer = js_printer::BufferWriter::init();
             let mut writer = js_printer::BufferPrinter::init(buffer_writer);
-            // PORT NOTE: Zig passed `*js_printer.BufferPrinter` as a comptime type param; dropped per (comptime X: type, arg: X) rule
             if js_printer::print_json(
                 &mut writer,
                 parse_result,

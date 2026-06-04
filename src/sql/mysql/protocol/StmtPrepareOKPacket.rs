@@ -1,3 +1,4 @@
+use super::any_mysql_error::Error as AnyMySQLError;
 use super::new_reader::{NewReader, ReaderContext};
 
 #[derive(Default)]
@@ -11,14 +12,13 @@ pub struct StmtPrepareOKPacket {
 }
 
 impl StmtPrepareOKPacket {
-    // TODO(port): narrow error set
     pub fn decode_internal<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyMySQLError> {
         self.status = reader.int::<u8>()?;
         if self.status != 0 {
-            return Err(bun_core::err!("InvalidPrepareOKPacket"));
+            return Err(AnyMySQLError::InvalidPrepareOKPacket);
         }
 
         self.statement_id = reader.int::<u32>()?;
@@ -35,7 +35,7 @@ impl StmtPrepareOKPacket {
     pub fn decode<Context: ReaderContext>(
         &mut self,
         reader: NewReader<Context>,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), AnyMySQLError> {
         self.decode_internal(reader)
     }
 }

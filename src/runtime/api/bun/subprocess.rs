@@ -105,7 +105,7 @@ pub enum ObservableGetter {
 
 pub use bun_spawn::process::StdioKind;
 
-// PORT NOTE: `#[bun_jsc::JsClass]` does not yet handle generic structs (it emits the
+// Note: `#[bun_jsc::JsClass]` does not yet handle generic structs (it emits the
 // bare ident in extern signatures). The `JsClass` impl + finalize/construct C-ABI
 // hooks are hand-expanded below for `Subprocess<'_>`.
 //
@@ -148,7 +148,8 @@ pub struct Subprocess<'a> {
     pub ipc_data: JsCell<Option<IPC::SendQueue>>,
     pub flags: Cell<Flags>,
 
-    // TODO(port): lifetime — weak observer, nulled in onStdinDestroyed; no ownership
+    /// Weak observer of the stdin `FileSink` — holds no ownership/ref. `onStdinDestroyed`
+    /// nulls this before the sink is freed, so it is never dereferenced after the sink dies.
     pub weak_file_sink_stdin_ptr: Cell<Option<NonNull<FileSink>>>,
     /// +1 C++-intrusive ref held; released in `clear_abort_signal` via
     /// `AbortSignal::unref()`. Not `Arc` — `AbortSignal` is an opaque FFI
@@ -170,8 +171,8 @@ pub struct Subprocess<'a> {
 
 bun_event_loop::impl_timer_owner!(Subprocess<'_>; from_timer_ptr => event_loop_timer);
 
-// PORT NOTE: no `Default` impl for `Subprocess`. `js_bun_spawn_bindings::
-// spawn_maybe_sync` fills every field explicitly (see PORT NOTE there), and
+// Note: no `Default` impl for `Subprocess`. `js_bun_spawn_bindings::
+// spawn_maybe_sync` fills every field explicitly (see note there), and
 // `*mut Process` has no sound placeholder anyway.
 
 pub type SubprocessRc<'a> = RefPtr<Subprocess<'a>>;
@@ -586,7 +587,7 @@ impl Subprocess<'_> {
         }
         this.observable_getters
             .set(this.observable_getters.get() | ObservableGetter::Stdin);
-        // PORT NOTE: reshaped for borrowck — Zig passed `&stdin` and `*Subprocess`
+        // Note: reshaped for borrowck — Zig passed `&stdin` and `*Subprocess`
         // separately (aliasing). `Writable::to_js` takes only the parent and
         // projects `stdin` internally so no two `&mut` overlap here.
         Ok(Writable::to_js(this, global_this))

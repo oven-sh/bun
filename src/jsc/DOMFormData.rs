@@ -8,7 +8,6 @@ bun_opaque::opaque_ffi! {
     pub struct DOMFormData;
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     safe fn WebCore__DOMFormData__create(arg0: &JSGlobalObject) -> JSValue;
     safe fn WebCore__DOMFormData__createFromURLQuery(
@@ -62,7 +61,7 @@ impl DOMFormData {
         })
     }
 
-    // PORT NOTE: Zig's `comptime Ctx: type, ctx: Ctx, comptime callback: fn(Ctx, ZigString)`
+    // Zig's `comptime Ctx: type, ctx: Ctx, comptime callback: fn(Ctx, ZigString)`
     // is Zig's spelling of a monomorphized closure. Reshaped to `FnMut(ZigString)` — the
     // closure environment IS the ctx, and the generic trampoline below is the `Wrapper.run`.
     pub fn to_query_string<F>(&mut self, callback: &mut F)
@@ -89,8 +88,9 @@ impl DOMFormData {
         // Returned pointer is valid while `value` is kept alive on the stack
         // (conservative GC scan). Null → None. `DOMFormData` is an opaque ZST
         // handle, so `opaque_mut` is the centralised zero-byte deref proof.
-        // TODO(port): lifetime — unbounded `'a` is a placeholder; caller must keep `value`
-        // stack-rooted for the lifetime of the returned reference.
+        // The unbounded `'a` cannot be expressed more tightly: the cell is
+        // GC-owned, so the caller must keep `value` stack-rooted for the
+        // lifetime of the returned reference.
         let p = WebCore__DOMFormData__fromJS(value);
         (!p.is_null()).then(|| DOMFormData::opaque_mut(p))
     }
@@ -113,7 +113,7 @@ impl DOMFormData {
         WebCore__DOMFormData__count(self)
     }
 
-    // PORT NOTE: Zig's `comptime Context: type, ctx: *Context, comptime callback_wrapper`
+    // Zig's `comptime Context: type, ctx: *Context, comptime callback_wrapper`
     // reshaped to a Rust closure; the generic `extern "C"` trampoline below is `Wrap.forEachWrapper`.
     //
     // LAYERING: `FormDataEntry::File::blob` is a `*mut webcore::Blob`, whose

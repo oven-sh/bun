@@ -381,8 +381,9 @@ impl SSLConfig {
         }
         let p = core::mem::replace(&mut self.protos, core::ptr::null());
         let bytes = cstr_bytes(p);
-        // TODO(port): bun.memory.dropSentinel — reuses the allocation in
-        // place; here we copy. PERF(port).
+        // Zig's `dropSentinel` reused the allocation in place; here we copy:
+        // `Box<[u8]>` must own a global-allocator allocation of exactly `len`
+        // bytes, which the NUL-terminated `dupe_z` allocation is not.
         let owned = bytes.to_vec().into_boxed_slice();
         // SAFETY: `p` was `dupe_z`-allocated when this config was built and
         // taken (replaced with null) above — sole owner, NUL-terminated.
@@ -517,7 +518,7 @@ fn clone_string(s: CStrPtr) -> CStrPtr {
 pub mod global_registry {
     use super::*;
 
-    // PORT NOTE: Zig used `ArrayHashMapUnmanaged<*SSLConfig, WeakPtr, MapContext>`
+    // Zig used `ArrayHashMapUnmanaged<*SSLConfig, WeakPtr, MapContext>`
     // where `MapContext` hashes/compares by *content* through the raw-pointer
     // key. That shape is UB in Rust: when an interned `Arc`'s strong count hits
     // 0, std `Arc` materializes a `&mut SSLConfig` (via `drop_in_place`)
@@ -552,7 +553,7 @@ pub mod global_registry {
         let mut dispose_new: Option<SharedPtr> = None;
         let mut dispose_old_weak: Option<WeakPtr> = None;
 
-        // PORT NOTE: reshaped for borrowck — Zig returned directly while holding
+        // reshaped for borrowck — Zig returned directly while holding
         // the mutex, then ran `defer`s. We compute `result` in a block, drop
         // the guard, then dispose deferred values.
         let result = {

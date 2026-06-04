@@ -2,8 +2,6 @@ use core::ffi::c_void;
 
 use crate::{Exception, JSGlobalObject, JSValue, JsError};
 
-// TODO(port): move to <jsc>_sys
-//
 // All JSC__VM__* shims take only a `JSC::VM*` (and at most a
 // `JSGlobalObject*` / `JSC::Exception*` / scalar). `VM` and `JSGlobalObject`
 // are opaque `UnsafeCell`-backed ZST handles, so `&VM` is ABI-identical to a
@@ -64,11 +62,11 @@ pub enum HeapType {
 }
 
 impl VM {
-    // PORT NOTE: `JSC__VM__create` was removed from bindings.cpp (Bun creates
+    // Note: `JSC__VM__create` was removed from bindings.cpp (Bun creates
     // its VM via `Zig::GlobalObject::create` → `WebWorker__createVM` instead).
     // The Zig `VM.create` wrapper is dead code; do not port it.
 
-    // PORT NOTE: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
+    // Note: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
     pub fn deinit(&self, global_object: &JSGlobalObject) {
         JSC__VM__deinit(self, global_object)
     }
@@ -97,7 +95,7 @@ impl VM {
         Lock { vm: self }
     }
 
-    // PORT NOTE: `JSC__VM__deferGC` was removed from bindings.cpp in the
+    // Note: `JSC__VM__deferGC` was removed from bindings.cpp in the
     // WebKit-bump that introduced `JSC::DeferGC` RAII; the Zig `deferGC`
     // wrapper is dead code. Callers should use `holdAPILock`/`DeferGC` on the
     // C++ side instead.

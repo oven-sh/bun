@@ -292,7 +292,8 @@ impl String {
         callback: ExternalStringImplFreeFunction<Ctx>,
     ) -> Self {
         use core::ffi::c_void;
-        // PORT NOTE: Zig asserted `@typeInfo(Ctx) == .pointer` at comptime.
+        // `Ctx` must be a pointer-sized, pointer-aligned handle (the Zig
+        // original required a raw pointer type at comptime).
         struct AssertPtrSized<C>(core::marker::PhantomData<C>);
         impl<C> AssertPtrSized<C> {
             const OK: () = {
@@ -309,11 +310,11 @@ impl String {
             callback(ctx, bytes.as_ptr().cast_mut().cast::<c_void>(), bytes.len());
             return Self::DEAD;
         }
-        // PORT NOTE: Zig asserted `@typeInfo(Ctx) == .pointer` (raw pointer, no
-        // destructor). The Rust const-assert only checks size, so an owning
-        // pointer-sized `Ctx` (e.g. `Box<T>`) would otherwise be dropped here
-        // and later double-freed by the WTF finalizer. Ownership transfers to
-        // the external string; suppress the local drop.
+        // The const-assert above only checks size/alignment (Zig required a raw
+        // pointer with no destructor), so an owning pointer-sized `Ctx` (e.g.
+        // `Box<T>`) would otherwise be dropped here and later double-freed by
+        // the WTF finalizer. Ownership transfers to the external string;
+        // suppress the local drop.
         let ctx = core::mem::ManuallyDrop::new(ctx);
         // SAFETY: Ctx is pointer-sized and pointer-aligned (const-asserted
         // above); read the bits as `*mut c_void`.
@@ -364,8 +365,8 @@ impl String {
     /// `(comptime fmt, args: anytype)` into [`core::fmt::Arguments`].
     pub fn create_format(args: core::fmt::Arguments<'_>) -> Self {
         use core::fmt::Write;
-        // PORT NOTE: Zig used a 512-byte stackFallback; this is a cold path
-        // (error messages), so a heap buffer is fine.
+        // Cold path (error messages), so a heap buffer is fine (the Zig
+        // original used a 512-byte stackFallback).
         if let Some(s) = args.as_str() {
             return Self::clone_utf8(s.as_bytes());
         }
@@ -657,9 +658,8 @@ impl String {
     /// outlive the result.
     pub fn trunc(&self, len: usize) -> String {
         if self.length() <= len {
-            // PORT NOTE: Zig returns `this` by value with no refcount bump;
-            // `String` is `Copy` here (POD #[repr(C)]), so a plain copy
-            // matches the Zig pass-by-value semantics.
+            // No refcount bump: `String` is `Copy` here (POD #[repr(C)]), so a
+            // plain copy matches the Zig pass-by-value semantics.
             return *self;
         }
         String::init(self.to_zig_string().trunc(len))
@@ -769,7 +769,7 @@ impl String {
     }
 
     pub fn eql_utf8(&self, other: &[u8]) -> bool {
-        // PORT NOTE: no `as_utf8()` fast-path here — for a 16-bit ZigString,
+        // No `as_utf8()` fast-path here — for a 16-bit ZigString,
         // `as_utf8()` would call `slice()` (which debug-asserts !is_16bit) and
         // `is_all_ascii` on the wrong byte view. Match Zig's `eqlUTF8` and go
         // straight through encoding-aware `to_utf8_without_ref`.
@@ -1579,8 +1579,8 @@ impl ZigString {
     /// `ZigString.latin1ByteLength` (ZigString.zig:211).
     pub fn latin1_byte_length(self) -> usize {
         if self.is_utf8() {
-            // PORT NOTE: Zig: `@panic("TODO")` — never implemented for UTF-8
-            // sources. Match Zig behaviour.
+            // Zig panics here ("TODO") — never implemented for UTF-8 sources.
+            // Match Zig behaviour.
             unreachable!("ZigString.latin1ByteLength from UTF-8 — unimplemented in Zig");
         }
         self.len
@@ -1651,8 +1651,6 @@ impl ZigString {
         if self.is_16bit() {
             return strings::eql_comptime_utf16(self.utf16_slice(), other);
         }
-        // PORT NOTE: Zig branched on `comptime strings.isAllASCII(other)`;
-        // demoted to runtime length-check + byte compare.
         if self.len != other.len() {
             return false;
         }
@@ -1947,7 +1945,7 @@ impl ZigString {
         if self.len == 0 {
             return Vec::new();
         }
-        // PORT NOTE: order matches ZigString.zig:233-253 — `isUTF8()` is tested
+        // Order matters (matches ZigString.zig:233-253) — `isUTF8()` is tested
         // before `is16Bit()` so a string with both tags set takes the UTF-8 arm.
         if self.is_utf8() {
             return with_sentinel(self.slice().to_vec());
@@ -1964,8 +1962,8 @@ impl ZigString {
     /// (ZigString.zig:693). Unlike `to_slice`, this never borrows the source
     /// bytes, so the result outlives a GC'd `JSString` that produced `self`.
     ///
-    /// PORT NOTE: Zig returned `OOM!Slice`; with mimalloc as the global
-    /// allocator OOM aborts the process, so this is infallible.
+    /// Infallible (Zig returned `OOM!Slice`): with mimalloc as the global
+    /// allocator, OOM aborts the process.
     pub fn to_slice_clone(&self) -> ZigStringSlice {
         if self.len == 0 {
             return ZigStringSlice::EMPTY;
@@ -1977,11 +1975,9 @@ impl ZigString {
     /// the end (`slice().as_ptr()` is a valid C string of length `slice().len()`).
     /// `slice()` itself does *not* include the terminator.
     ///
-    /// PORT NOTE: the Zig method this targets was never instantiated (lazy
-    /// compilation); JSString/JSValue callers reached for it but no `.zig`
-    /// caller forced codegen. Semantics here match `toOwnedSliceZ` wrapped in
-    /// a `Slice` so `JSValue::to_slice_z` / `JSString::to_slice_z` get the
-    /// `[:0]` guarantee they document.
+    /// Semantics match `toOwnedSliceZ` wrapped in a `Slice` so
+    /// `JSValue::to_slice_z` / `JSString::to_slice_z` get the `[:0]`
+    /// guarantee they document.
     pub fn to_slice_z(&self) -> ZigStringSlice {
         if self.len == 0 {
             // Static "" already points at a NUL byte.

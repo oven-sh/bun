@@ -53,10 +53,11 @@ impl Header {
 }
 
 /// `enum lsqpack_tnv`. Only the entries a request encoder actually emits are
-/// named; the rest are still reachable via `Qpack::from_raw`.
-// TODO(port): Zig `enum(u8) { ... _ }` is non-exhaustive — unnamed u8 values
-// are valid. If callers ever construct unnamed indices, switch to
-// `#[repr(transparent)] pub struct Qpack(u8)` with associated consts.
+/// named (the C enum has more). This closed enum is only ever converted *to*
+/// the C value (`idx as c_int` in [`Header::init`]), never constructed from a
+/// raw `u8`, so the unnamed indices being unrepresentable is fine. If a
+/// decoder ever needs to construct arbitrary indices, switch to
+/// `#[repr(transparent)] pub struct Qpack(u8)` with associated consts.
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum Qpack {

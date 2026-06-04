@@ -304,7 +304,7 @@ fn find_playwright_shell() -> Option<ZBox> {
     let cache_dir = resolve_path::join_string_buf_z::<platform::Auto>(&mut dir_buf[..], &parts);
 
     let fd = bun_sys::open(cache_dir, O::RDONLY | O::DIRECTORY, 0).ok()?;
-    // PORT NOTE: `defer fd.close()` — Fd has no Drop; close explicitly on all
+    // `defer fd.close()` — Fd has no Drop; close explicitly on all
     // exit paths via scopeguard.
     let _fd_guard = scopeguard::guard(fd, |fd| fd.close());
 
@@ -529,16 +529,15 @@ fn spawn(
             ..SpawnOptions::default()
         };
 
-        // TODO(port): narrow error set — outer Result + inner bun_sys::Result
         // SAFETY: `argv`/`env` are local null-terminated C-string arrays with
         // argv[0] non-null; valid for this call.
         let spawned =
             unsafe { bun_spawn::spawn_process(&opts, argv.as_ptr(), env.as_ptr().cast()) }??;
 
-        // PORT NOTE: reshaped for borrowck — Zig's errdefer stays armed past
-        // this point (and would re-close fds on the WatchFailed path below);
-        // we disarm here and close explicitly on that path instead.
-        // TODO(port): verify Zig errdefer double-close of fds[1] on WatchFailed is intentional/idempotent.
+        // Reshaped for borrowck — Zig's errdefer stays armed past this point,
+        // which would re-close the already-closed fds[1] on the WatchFailed
+        // path below; we disarm here and close each fd exactly once on that
+        // path instead.
         let fds = scopeguard::ScopeGuard::into_inner(fds);
 
         // Parent doesn't need the child's end. POSIX_SPAWN_CLOEXEC_DEFAULT
@@ -587,7 +586,6 @@ fn spawn(
 }
 
 // Implemented in ChromeBackend.cpp. Rejects all pending CDP promises.
-// TODO(port): move to <runtime>_sys
 unsafe extern "C" {
     fn Bun__Chrome__died(signo: i32);
 }

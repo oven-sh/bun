@@ -1,7 +1,7 @@
 //! Timer subsystem JS-facing surface: setTimeout/setInterval/setImmediate/
 //! Bun.sleep/clear* host functions.
 //!
-//! PORT NOTE: this file is loaded as `pub mod timer;` from `mod.rs` (codegen
+//! this file is loaded as `pub mod timer;` from `mod.rs` (codegen
 //! path `crate::timer::timer::*`). The canonical struct definitions (`All`,
 //! `Kind`, `Maps`, `TimeoutObject`, `ImmediateObject`, `TimerObjectInternals`,
 //! `DateHeaderTimer`, …) live in `mod.rs`; this module only adds the JS-facing
@@ -52,7 +52,7 @@ impl All {
         vm: *mut VirtualMachine,
     ) {
         if loop_.should_enable_date_header_timer() {
-            // PORT NOTE: `is_date_timer_active()` is private to mod.rs; inline.
+            // `is_date_timer_active()` is private to mod.rs; inline.
             if self.date_header_timer.event_loop_timer.state != EventLoopTimerState::ACTIVE {
                 // SAFETY: caller contract guarantees `vm` is valid.
                 unsafe {
@@ -154,16 +154,20 @@ impl All {
         overflow_behavior: CountdownOverflowBehavior,
         warn: bool,
     ) -> JsResult<u32> {
-        // TODO(port): Zig return type is `u31`; using u32 here, callers must respect the [0, i32::MAX] range.
+        // Zig's return type was `u31`; here it's `u32`, but both match arms below
+        // enforce the [0, i32::MAX] range (Clamp saturates to i32::MAX; OneMs
+        // yields either 1 or a value already validated to be <= i32::MAX), so
+        // callers always receive a value in the u31 range.
         // We don't deal with nesting levels directly
         // but we do set the minimum timeout to be 1ms for repeating timers
         let countdown_double = countdown.to_number(global_this)?;
         let countdown_int: u32 = match overflow_behavior {
             CountdownOverflowBehavior::Clamp => {
-                // std.math.lossyCast(u31, countdown_double): saturating cast to [0, i32::MAX]
-                // Rust `as` saturates float→int; clamp upper to u31 max.
+                // std.math.lossyCast(u31, countdown_double): saturating cast to [0, i32::MAX].
+                // Rust `as` saturates float→int and maps NaN→0, exactly matching
+                // lossyCast (which clamps to the int range and returns 0 for NaN),
+                // so `setTimeout(fn, NaN)` behaves like `setTimeout(fn, 0)`.
                 (countdown_double as u32).min(i32::MAX as u32)
-                // TODO(port): verify NaN→0 behavior matches std.math.lossyCast
             }
             CountdownOverflowBehavior::OneMs => {
                 if !(countdown_double >= 1.0 && countdown_double <= i32::MAX as f64) {
@@ -302,7 +306,7 @@ impl All {
     }
 
     fn remove_timer_by_id(&mut self, id: i32) -> Option<*mut TimeoutObject> {
-        // PORT NOTE: Zig `fetchSwapRemove` returns the entry; ArrayHashMap
+        // Zig `fetchSwapRemove` returns the entry; ArrayHashMap
         // exposes `get_index` + `swap_remove_at`, so combine them.
         let value: *mut EventLoopTimer = if let Some(idx) = self.maps.set_timeout.get_index(&id) {
             self.maps.set_timeout.swap_remove_at(idx).1
@@ -379,7 +383,7 @@ impl All {
                             }
                         }};
                     }
-                    // PORT NOTE: bun_core::String has no `encoding()` accessor;
+                    // bun_core::String has no `encoding()` accessor;
                     // dispatch on `is_utf16()` and treat the 8-bit case via
                     // `latin1()` (digit chars are in the ASCII range either way).
                     if string.is_utf16() {
@@ -467,7 +471,7 @@ impl DateHeaderTimer {
     pub(super) unsafe fn enable(&mut self, vm: *mut VirtualMachine, now: &Timespec) {
         debug_assert!(self.event_loop_timer.state != EventLoopTimerState::ACTIVE);
 
-        // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
+        // `EventLoopTimer.next` is the lower-tier `ElTimespec` stub
         // (same `{sec,nsec}` layout) until bun_event_loop switches to bun_core::Timespec.
         let last_update = Timespec {
             sec: self.event_loop_timer.next.sec,
@@ -597,7 +601,7 @@ pub mod internal_bindings {
         let _ = global_this;
         let _ = call_frame;
         let now = Timespec::now(TimespecMockMode::AllowMockedTime).ms();
-        // PORT NOTE: bun_jsc::JSValue has no `js_number_from_int64`; route via
+        // bun_jsc::JSValue has no `js_number_from_int64`; route via
         // `js_number(f64)` (i64 → f64 is lossless for the millisecond range).
         Ok(JSValue::js_number(now as f64))
     }

@@ -19,7 +19,6 @@ impl ListenSocket {
         &mut self,
         buf: &'a mut [u8],
     ) -> Result<&'a [u8], bun_core::Error> {
-        // TODO(port): narrow error set
         self.get_socket().local_address(buf)
     }
 

@@ -31,7 +31,6 @@ pub(crate) struct InitCommand;
 
 impl InitCommand {
     pub(crate) fn prompt(
-        // TODO(port): narrow error set
         label: &'static str,
         default: &[u8],
     ) -> Result<Vec<u8>, Error> {
@@ -108,7 +107,7 @@ impl InitCommand {
         // The Zig has `errdefer reprint_menu = false;` followed by a `defer { ... }`
         // that uses `reprint_menu`. We model both with a single guard whose state we
         // mutate, and flip `reprint_menu = false` on the error paths before returning.
-        // PORT NOTE: reshaped for borrowck — can't both borrow `selected`/`initial_draw`
+        // Reshaped for borrowck — can't both borrow `selected`/`initial_draw`
         // in a scopeguard closure and mutate them in the loop. Instead inline the
         // cleanup at every return point.
         macro_rules! finish {
@@ -182,7 +181,7 @@ impl InitCommand {
                 b'1'..=b'9' => {
                     let choice = (byte - b'1') as usize;
                     if choice < choices.len() {
-                        // PORT NOTE: Zig's `defer` reads `selected`, which is NOT updated
+                        // Zig's `defer` reads `selected`, which is NOT updated
                         // before `return @enumFromInt(choice)` — so Zig prints the previously
                         // highlighted option, not the one just picked. Matching Zig verbatim.
                         finish!(reprint_menu, selected);
@@ -971,7 +970,7 @@ impl Assets {
     /// Create a new asset file, overriding anything that already exists. Known
     /// assets will have their contents pre-populated; otherwise the file will be empty.
     ///
-    /// PORT NOTE: Zig looked up `asset_name` via `@hasDecl`/`@field` reflection.
+    /// Zig looked up `asset_name` via `@hasDecl`/`@field` reflection.
     /// Rust takes the asset bytes directly; `asset_name` is the filename.
     fn create(
         asset_name: &[u8],
@@ -1231,7 +1230,7 @@ impl DependencyGroup {
         }],
     };
 
-    // PORT NOTE: Zig used comptime array concatenation (`++ blank.devDependencies[0..1].*`).
+    // Zig used comptime array concatenation (`++ blank.devDependencies[0..1].*`).
     // Rust `const` cannot concat slices; the lists are hand-expanded below.
     pub(crate) const REACT: DependencyGroup = DependencyGroup {
         dependencies: &[
@@ -1420,7 +1419,7 @@ impl Template {
     ) -> Result<(), Error> {
         type Rope = bun_ast::E::Rope;
         fields.name = self.name().to_vec();
-        // PORT NOTE: Zig `alloc.create(Rope)` against the default allocator and
+        // Zig `alloc.create(Rope)` against the default allocator and
         // never frees; allocate in the process-lifetime CLI arena instead.
         let key: &mut Rope = crate::cli::cli_arena().alloc(Rope {
             head: bun_ast::Expr::init(bun_ast::E::String::init(b"scripts"), bun_ast::Loc::EMPTY),
@@ -1725,11 +1724,9 @@ impl Template {
         bun_core::pretty!("\n");
         Output::flush();
 
-        // Zig: std.process.Child stdin=.Ignore stdout/stderr=.Inherit → spawnAndWait
-        // TODO(port): spawn_sync_inherit inherits stdin too; full bun.spawnSync
-        // (with Ignore stdin) lives in bun_runtime::api::process::sync.
+        // Zig: std.process.Child stdin=.Ignore stdout/stderr=.Inherit → spawnAndWait.
         let self_exe = bun::self_exe_path()?;
-        let _ = bun::spawn_sync_inherit(&[self_exe.as_bytes(), b"install"])?;
+        let _ = bun::spawn_sync_inherit_no_stdin(&[self_exe.as_bytes(), b"install"])?;
 
         bun_core::prettyln!(
             "\n\

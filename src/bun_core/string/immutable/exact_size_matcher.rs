@@ -48,9 +48,9 @@ impl_exact_size_int!(4, u32);
 impl_exact_size_int!(8, u64);
 impl_exact_size_int!(16, u128);
 
-// TODO(port): Zig uses `u96` for MAX_BYTES=12; Rust has no native `u96`.
-// We back it with `u128` and zero-pad the high 4 bytes. `MAX` is the true
-// 96-bit max so the "too long" sentinel is distinct from any 12-byte payload.
+// Zig uses `u96` for MAX_BYTES=12; Rust has no native `u96`, so we back it
+// with `u128` and zero-pad the high 4 bytes. `MAX` is the true 96-bit max so
+// the "too long" sentinel is distinct from any 12-byte payload.
 impl ExactSizeInt<12> for ExactSizeMatcher<12> {
     type T = u128;
     const ZERO: u128 = 0;
@@ -97,8 +97,7 @@ where
     /// the non-const trait method `read_le` on stable.
     #[inline(always)]
     pub fn case(str: &'static [u8]) -> <Self as ExactSizeInt<MAX_BYTES>>::T {
-        // if (str.len < max_bytes) { zero-pad } else if (== max_bytes) { read } else { @compileError }
-        // PORT NOTE: reshaped — Zig branches on `<` vs `==` vs `@compileError`;
+        // Zig branches on `<` (zero-pad) vs `==` (read) vs `@compileError`;
         // here we assert `<=` (the compile error) and unify the two valid arms.
         assert!(
             str.len() <= MAX_BYTES,

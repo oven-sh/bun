@@ -84,7 +84,6 @@ fn generate_compile_result_for_css_chunk_impl(
             a.reset();
         }
     });
-    // TODO(port): worker.arena threading — css crate is an AST crate and may want &'bump Bump
     let mut allocating_writer: Vec<u8> = Vec::new();
 
     let Content::Css(css_content) = &chunk.content else {

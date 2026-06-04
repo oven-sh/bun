@@ -34,10 +34,62 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     let mut assets: usize = 0;
 
     // See https://github.com/ziglang/zig/issues/21879
-    // PORT NOTE: Zig used `useAllFields(DevServer, .{...})` to compile-time-assert that
-    // every DevServer field is accounted for below. Rust has no equivalent; the field
-    // list is preserved as comments. A proc-macro or static-assert could re-add the check.
-    // TODO(port): exhaustiveness check for DevServer fields (was bun.meta.useAllFields)
+    // Exhaustiveness check (Zig: `useAllFields(DevServer, .{...})`):
+    // destructuring without `..` fails to compile when a DevServer field is
+    // added, removed, or renamed, forcing the accounting below to be updated.
+    // All bindings are `_` so nothing is moved or borrowed past this block.
+    {
+        let DevServer {
+            magic: _,
+            root: _,
+            inspector_server_id: _,
+            configuration_hash_key: _,
+            vm: _,
+            server: _,
+            router: _,
+            route_bundles: _,
+            graph_safety_lock: _,
+            client_graph: _,
+            server_graph: _,
+            barrel_files_with_deferrals: _,
+            barrel_needed_exports: _,
+            incremental_result: _,
+            route_lookup: _,
+            html_router: _,
+            assets: _,
+            source_maps: _,
+            bundling_failures: _,
+            frontend_only: _,
+            has_tailwind_plugin_hack: _,
+            server_fetch_function_callback: _,
+            server_register_update_callback: _,
+            bun_watcher: _,
+            directory_watchers: _,
+            watcher_atomics: _,
+            testing_batch_events: _,
+            generation: _,
+            bundles_since_last_error: _,
+            framework: _,
+            bundler_framework_views: _,
+            bundler_options: _,
+            server_transpiler: _,
+            client_transpiler: _,
+            ssr_transpiler: _,
+            log: _,
+            plugin_state: _,
+            current_bundle: _,
+            next_bundle: _,
+            deferred_request_pool: _,
+            active_websocket_connections: _,
+            dump_dir: _,
+            emit_incremental_visualizer_events: _,
+            emit_memory_visualizer_events: _,
+            memory_visualizer_timer: _,
+            has_pre_crash_handler: _,
+            assume_perfect_incremental_bundling: _,
+            broadcast_console_log_from_browser_to_server: _,
+        } = dev;
+    }
 
     // does not contain pointers
     //   .assume_perfect_incremental_bundling
@@ -80,6 +132,9 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     for bundle in dev.route_bundles.iter() {
         other_bytes += bundle.memory_cost();
     }
+    // .bundler_framework_views (the pointed-to Frameworks are owned elsewhere;
+    // count the Vec's own backing store)
+    other_bytes += memory_cost_array_list(&dev.bundler_framework_views);
     // .server_graph
     {
         let cost = dev.server_graph.memory_cost_detailed();
@@ -103,9 +158,9 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // .source_maps
     other_bytes += memory_cost_array_hash_map(&dev.source_maps.entries);
     for entry in dev.source_maps.entries.values() {
-        // PORT NOTE: Zig stored `MultiArrayList(PackedMap.Shared)` and called
+        // Note: Zig stored `MultiArrayList(PackedMap.Shared)` and called
         // `entry.files.memoryCost()` (capacityInBytes). The Rust port stores a
-        // plain `Vec<packed_map::Shared>` (see source_map_store.rs PORT NOTE),
+        // plain `Vec<packed_map::Shared>` (see source_map_store.rs Note),
         // so the SoA byte-count is replaced by `cap * size_of::<Shared>()`.
         source_maps += entry.files.capacity() * size_of::<packed_map::Shared>();
         for file in entry.files.iter() {
@@ -113,10 +168,21 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         }
     }
     // .incremental_result
-    // TODO(port): exhaustiveness check for IncrementalResult fields (was bun.meta.useAllFields)
     {
-        let _ = core::mem::size_of::<IncrementalResult>(); // anchor for grep
-        // .had_adjusted_edges
+        // Exhaustiveness check (Zig: `useAllFields`) — fails to compile when
+        // an IncrementalResult field is added/removed/renamed.
+        let IncrementalResult {
+            framework_routes_affected: _,
+            html_routes_soft_affected: _,
+            html_routes_hard_affected: _,
+            had_adjusted_edges: _,
+            client_components_added: _,
+            client_components_removed: _,
+            failures_removed: _,
+            client_components_affected: _,
+            failures_added: _,
+        } = &dev.incremental_result;
+        // .had_adjusted_edges (bool — no heap)
         // .client_components_added
         other_bytes += memory_cost_array_list(&dev.incremental_result.client_components_added);
         // .framework_routes_affected
@@ -154,7 +220,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
         dev.html_router.map.capacity() * (size_of::<*const HTMLBundleRoute>() + size_of::<&[u8]>());
     // DevServer does not count the referenced HTMLBundle.HTMLBundleRoutes
     // .bundling_failures
-    // PORT NOTE: Zig keys the set by `SerializedFailure` directly; the Rust port
+    // Note: Zig keys the set by `SerializedFailure` directly; the Rust port
     // stores `OwnerPacked → SerializedFailure`, so the failure payloads live in
     // `.values()`.
     other_bytes += memory_cost_slice(dev.bundling_failures.values());
@@ -164,7 +230,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
     // All entries are owned by the bundler arena, not DevServer, except for `requests`
     // .current_bundle
     if let Some(bundle) = &dev.current_bundle {
-        // PORT NOTE: Zig walked the intrusive list (`while (r) |req| : (r = req.next)`)
+        // Note: Zig walked the intrusive list (`while (r) |req| : (r = req.next)`)
         // only to count nodes; `SinglyLinkedList::len()` does the same O(N) walk.
         other_bytes += bundle.requests.len() * size_of::<deferred_request::Node>();
     }
@@ -196,7 +262,7 @@ pub(crate) fn memory_cost_detailed(dev: &DevServer) -> MemoryCost {
 
 pub(crate) fn memory_cost(dev: &DevServer) -> usize {
     let cost = memory_cost_detailed(dev);
-    // PORT NOTE: Zig iterated `@typeInfo(MemoryCost).@"struct".fields` to sum every
+    // Note: Zig iterated `@typeInfo(MemoryCost).@"struct".fields` to sum every
     // field. Rust has no field reflection; the sum is written out explicitly. Keep this
     // in sync with the `MemoryCost` struct definition above.
     let mut acc: usize = 0;

@@ -26,7 +26,7 @@ pub struct ServerConfig {
     pub idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
     pub has_idle_timeout: bool,
     // TODO: use webkit URL parser instead of bun's
-    // PORT NOTE: Zig stores `base_url: URL` borrowing into `base_uri: []const u8`
+    // NOTE: Zig stores `base_url: URL` borrowing into `base_uri: []const u8`
     // (self-referential). Rust keeps only the owned buffer; callers parse on
     // demand via [`ServerConfig::base_url`] so the borrow lifetime is tied to
     // `&self` instead of erased to `'static` (PORTING.md §Forbidden — lifetime
@@ -34,7 +34,8 @@ pub struct ServerConfig {
     pub base_uri: Box<[u8]>,
 
     pub ssl_config: Option<SSLConfig>,
-    // TODO(port): verify Vec<SSLConfig> drops elements; Zig looped + deinit each.
+    // Vec drop runs each element's `Drop`, and `SSLConfig: Drop` calls
+    // `deinit()` (frees the owned C strings) — matches Zig's per-element loop.
     pub sni: Option<Vec<SSLConfig>>,
     pub max_request_body_size: usize,
     pub development: DevelopmentOption,
@@ -121,7 +122,7 @@ impl Default for Address {
     }
 }
 
-// PORT NOTE: Zig `address.deinit(allocator)` freed hostname/unix and reset to .tcp{}.
+// NOTE: Zig `address.deinit(allocator)` freed hostname/unix and reset to .tcp{}.
 // In Rust, ZBox frees on Drop; resetting is `*self = Address::default()`.
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -191,7 +192,7 @@ impl Default for RouteDeclaration {
     }
 }
 
-// PORT NOTE: Zig `RouteDeclaration.deinit` only freed `path`; ZBox drops automatically.
+// NOTE: Zig `RouteDeclaration.deinit` only freed `path`; ZBox drops automatically.
 
 // TODO: rename to StaticRoute.Entry
 pub struct StaticRouteEntry {
@@ -254,7 +255,7 @@ impl ServerConfig {
         }
 
         // sort the cloned static routes by name for determinism
-        // PORT NOTE: Zig `std.mem.sort` takes a strict-weak `lessThan(a,b)` and
+        // NOTE: Zig `std.mem.sort` takes a strict-weak `lessThan(a,b)` and
         // tolerates `false`/`false` for equal elements; Rust `sort_by` requires
         // a total `Ordering`. `is_less_than` ≡ `strings::order(a,b) == Greater`
         // (descending by path), so the 3-way equivalent is `order(b, a)`.
@@ -318,7 +319,6 @@ impl ServerConfig {
         route: AnyRoute,
         method: MethodOptional,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         self.static_routes.push(StaticRouteEntry {
             path: Box::<[u8]>::from(path),
             route,
@@ -328,7 +328,7 @@ impl ServerConfig {
     }
 }
 
-// PORT NOTE: Zig `applyStaticRoute` used comptime closures over (ssl, T) passed
+// NOTE: Zig `applyStaticRoute` used comptime closures over (ssl, T) passed
 // as C-style fn pointers to uws app.head/any/method. Rust monomorphizes free
 // `extern "C"` fns per `<SSL, T>` and registers them via the raw
 // `c::uws_method_handler` overload — equivalent to the Zig `handler_wrap` struct.
@@ -496,7 +496,7 @@ pub(crate) trait StaticRouteLike<const SSL: bool>: 'static {
     );
 }
 
-// PORT NOTE (layering): the original `RequestUnion`/`ResponseUnion` placeholders
+// NOTE (layering): the original `RequestUnion`/`ResponseUnion` placeholders
 // were duplicates of `bun_uws_sys::AnyRequest`/`AnyResponse` (which already
 // model Zig's `.{ .h1 = req }` / `.{ .SSL = resp }`). Re-export the real types
 // so any straggler reference resolves to the canonical opaque.
@@ -672,7 +672,7 @@ fn convert_file_system_router_type(
     src: crate::bake::FileSystemRouterType,
 ) -> crate::bake::bake_body::FileSystemRouterType {
     use crate::bake::bake_body as bb;
-    // PORT NOTE: `bb::arena_erase` is the single sanctioned `'bump → 'static`
+    // NOTE: `bb::arena_erase` is the single sanctioned `'bump → 'static`
     // erasure for the `UserOptions.arena` self-referential pattern; bake_body's
     // own `Framework::from_js` / `resolve` use it identically.
     // TODO(refactor): thread a real `'bump` through `bb::Framework`/
@@ -732,7 +732,7 @@ impl ServerConfig {
         };
         let mut has_hostname = false;
 
-        // PORT NOTE: Zig `defer { if !hmr { assert(bake == null) } }` — moved to end of fn.
+        // NOTE: Zig `defer { if !hmr { assert(bake == null) } }` — moved to end of fn.
 
         if env.get(b"NODE_ENV").unwrap_or(b"") == b"production" {
             args.development = DevelopmentOption::Production;
@@ -778,7 +778,7 @@ impl ServerConfig {
             args.base_uri = Box::<[u8]>::from(origin.as_ref());
         }
 
-        // PORT NOTE: Zig `defer { if global.hasException() { ssl_config.deinit() } }` —
+        // NOTE: Zig `defer { if global.hasException() { ssl_config.deinit() } }` —
         // SSLConfig drops automatically when `args` drops on error path.
 
         let Some(arg) = arguments.next() else {
@@ -841,7 +841,7 @@ impl ServerConfig {
             };
             args.had_routes_object = true;
 
-            // PORT NOTE: in Zig the iterator options are a comptime struct; the
+            // NOTE: in Zig the iterator options are a comptime struct; the
             // Rust port carries them as a runtime arg to `init()`.
             // SAFETY: `get_object()` returned Some, so the pointer is a live JSObject.
             let static_obj: &bun_jsc::JSObject = unsafe { &*static_obj };
@@ -857,7 +857,7 @@ impl ServerConfig {
             // iter drops at scope end
 
             let mut init_ctx_ = ServerInitContext {
-                // PORT NOTE: Zig threaded a `std.heap.ArenaAllocator` here; the
+                // NOTE: Zig threaded a `std.heap.ArenaAllocator` here; the
                 // Rust `ServerInitContext` dropped that field — bake owns the
                 // arena instead (created below and moved into `UserOptions`).
                 dedupe_html_bundle_map: Default::default(),
@@ -876,7 +876,7 @@ impl ServerConfig {
             // — Vec<StaticRouteEntry> drops elements (which deref route) automatically on error.
 
             while let Some(key) = iter.next()? {
-                // PORT NOTE: `to_owned_slice_returning_all_ascii` not yet on
+                // NOTE: `to_owned_slice_returning_all_ascii` not yet on
                 // `bun_core::String`; split into `to_owned_slice()` + `is_all_ascii`.
                 let path_vec = key.to_owned_slice();
                 let is_ascii = strings::is_all_ascii(&path_vec);
@@ -1025,7 +1025,7 @@ impl ServerConfig {
                     use crate::bake::bake_body as bb;
                     use bun_options_types::schema::api::DotEnvBehavior;
 
-                    // PORT NOTE: Zig threaded `init_ctx.arena` from
+                    // NOTE: Zig threaded `init_ctx.arena` from
                     // `ServerInitContext`; the Rust `ServerInitContext` dropped
                     // that field, so the arena is created here and moved into
                     // `UserOptions` (same lifetime: lives until `args.bake`
@@ -1068,7 +1068,7 @@ impl ServerConfig {
 
                     match o.serve_env_behavior {
                         DotEnvBehavior::prefix => {
-                            // PORT NOTE: `serve_env_prefix` is `Option<Box<[u8]>>`
+                            // NOTE: `serve_env_prefix` is `Option<Box<[u8]>>`
                             // owned by the long-lived `transform_options`; dupe
                             // into the arena so the `&'static [u8]` field is
                             // backed by `UserOptions.arena`.
@@ -1100,12 +1100,7 @@ impl ServerConfig {
                             "FrameworkRouter is currently only supported when `development: true`",
                         )));
                     }
-                    // init_ctx.arena drops at scope end
                 }
-            } else {
-                // TODO(port): Zig asserted arena was empty (state.end_index == 0 && first == null).
-                // bumpalo has no equivalent; skip assertion.
-                // init_ctx.arena drops at scope end
             }
         }
 
@@ -1599,7 +1594,7 @@ impl ServerConfig {
             )));
         }
 
-        // PORT NOTE: deferred assertion from top of fn
+        // NOTE: deferred assertion from top of fn
         if !args.development.is_hmr_enabled() {
             debug_assert!(args.bake.is_none());
         }

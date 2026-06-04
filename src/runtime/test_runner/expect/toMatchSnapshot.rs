@@ -4,13 +4,12 @@ use bun_core::ZigString;
 use super::Expect;
 use super::get_signature;
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
 pub(crate) fn to_match_snapshot(
     this: &Expect,
     global: &JSGlobalObject,
     frame: &CallFrame,
 ) -> JsResult<JSValue> {
-    // PORT NOTE: reshaped for borrowck — `defer this.postMatch(globalThis)` is expressed by
+    // reshaped for borrowck — `defer this.postMatch(globalThis)` is expressed by
     // wrapping `this` in a scopeguard so `post_match` runs on every exit path while we still
     // deref through the guard for the body.
     let this = scopeguard::guard(this, |this| this.post_match(global));

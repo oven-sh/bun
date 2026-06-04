@@ -158,9 +158,8 @@ impl Metadata {
         Ok(())
     }
 
-    /// PORT NOTE: Zig took `anytype reader`; both call sites
-    /// (`from_file_with_cache_file_path`, the debug round-trip in `Entry::save`)
-    /// drive it from a `fixedBufferStream`, so we accept the concrete
+    /// Both call sites (`from_file_with_cache_file_path`, the debug round-trip
+    /// in `Entry::save`) drive this from a fixed buffer, so accept the concrete
     /// `bun_io::FixedBufferStream` over a borrowed slice.
     pub fn decode(
         &mut self,
@@ -171,9 +170,9 @@ impl Metadata {
             return Err(bun_core::err!(StaleCache));
         }
 
-        // PORT NOTE: reshaped for borrowck/enum-safety — Zig stored raw @enumFromInt then
-        // validated at the end; here we validate immediately so ModuleType never holds an
-        // out-of-range discriminant.
+        // Validate the raw discriminants immediately (rather than at the end,
+        // as the Zig original did) so `ModuleType` never holds an out-of-range
+        // value.
         let module_type_raw = reader.read_int_le::<u8>()?;
         let output_encoding_raw = reader.read_int_le::<u8>()?;
 
@@ -252,9 +251,6 @@ pub struct Entry {
 }
 
 impl Entry {
-    /// PORT NOTE: Zig `deinit` took three allocator params; per §Allocators
-    /// (non-AST crate) the Rust port owns its buffers via `Box<[u8]>` /
-    /// `BunString`, so this is just an explicit `deref()` + drop.
     pub fn deinit(&mut self) {
         self.output_code.deinit();
         self.sourcemap = Box::default();
@@ -309,9 +305,9 @@ impl Entry {
                     },
                     output_encoding: match output_code {
                         OutputCode::Utf8(_) => Encoding::UTF8,
-                        // PORT NOTE: `bun_core::String` has no `.encoding()` yet;
-                        // derive from the is_* predicates (same discrimination Zig's
-                        // `String.encoding()` performs).
+                        // `bun_core::String` has no `.encoding()`; derive it
+                        // from the `is_*` predicates (the same discrimination
+                        // Zig's `String.encoding()` performs).
                         OutputCode::String(str) => {
                             if str.is_utf16() {
                                 Encoding::UTF16
@@ -449,7 +445,7 @@ impl Entry {
         } else {
             match self.metadata.output_encoding {
                 Encoding::UTF8 => {
-                    // PORT NOTE / PERF: Zig threaded `output_code_allocator`
+                    // PERF: Zig threaded `output_code_allocator`
                     // (the per-call arena) here so the ~1.2 MB scratch buffer
                     // was bump-freed with the parse arena. The Rust port
                     // dropped that field and `pread_box`'d into a `Box<[u8]>`
@@ -600,12 +596,10 @@ pub struct RuntimeTranspilerCache {
     pub exports_kind: ExportsKind,
     pub output_code: Option<BunString>,
     pub entry: Option<Entry>,
-    // PORT NOTE: Zig had sourcemap_allocator / output_code_allocator / esm_record_allocator
-    // fields. `sourcemap` / `esm_record` were `bun.default_allocator` at every
-    // call site so `Box<[u8]>` (global mimalloc) is equivalent.
-    // `output_code_allocator` was the per-call arena; rather than re-thread it,
-    // the UTF-8 load arm now preads straight into WTF storage (see
-    // `Entry::load`), so no arena scratch is needed at all.
+    // `sourcemap` / `esm_record` are owned `Box<[u8]>` (global mimalloc).
+    // The per-call arena that once backed the output code is gone: the UTF-8
+    // load arm preads straight into WTF storage (see `Entry::load`), so no
+    // arena scratch is needed at all.
 }
 
 impl Default for RuntimeTranspilerCache {
@@ -706,10 +700,10 @@ impl RuntimeTranspilerCache {
             return len;
         }
 
-        // PORT NOTE: Zig used `FileSystem.instance.absBufZ(parts, buf)`. The
-        // inline `bun_resolver::fs::FileSystem` surface only exposes `abs_buf`
-        // (no `_z`), so go straight to the underlying joiner with the same
-        // `top_level_dir` + `Loose` platform Zig's `absBufZ` used.
+        // The inline `bun_resolver::fs::FileSystem` surface only exposes
+        // `abs_buf` (no NUL-terminating `_z` variant), so go straight to the
+        // underlying joiner with the same `top_level_dir` + `Loose` platform
+        // that `absBufZ` used.
         let top = FileSystem::instance().top_level_dir;
 
         if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
@@ -751,10 +745,9 @@ impl RuntimeTranspilerCache {
     }
 
     // Only do this at most once per-thread.
-    // PORT NOTE: Zig used `bun.ThreadlocalBuffers(struct { buf: bun.PathBuffer })`
-    // plus a threadlocal `?[:0]const u8` pointing into it. Rust thread_local
-    // can't easily borrow into itself across calls, so we cache the resolved
-    // path bytes + length and re-copy into the caller's buffer on each call.
+    // A Rust thread_local can't easily hand out borrows into itself across
+    // calls, so cache the resolved path bytes + length and re-copy into the
+    // caller's buffer on each call.
     thread_local! {
         // bun.ThreadlocalBuffers: heap-backed so only a Box pointer lives in TLS.
         static CACHE_DIR_BUF: RefCell<Box<PathBuffer>> = RefCell::new(Box::new(PathBuffer::ZEROED));
@@ -869,10 +862,9 @@ impl RuntimeTranspilerCache {
         let _tracer = bun_core::perf::trace("RuntimeTranspilerCache.toFile");
 
         let mut cache_file_path_buf = PathBuffer::uninit();
-        // PORT NOTE: Zig matched on `source_code.encoding()`; derive from
-        // `is_utf8()` instead. Zig's `.utf8` arm borrowed `source_code.byteSlice()`
-        // without copying; `OutputCode::Utf8` here owns a `Box<[u8]>`, so we
-        // copy. PERF(port): add a borrowed `OutputCode` variant to avoid the copy.
+        // Zig's `.utf8` arm borrowed `source_code.byteSlice()` without
+        // copying; `OutputCode::Utf8` here owns a `Box<[u8]>`, so we copy.
+        // PERF: add a borrowed `OutputCode` variant to avoid the copy.
         //
         // Zig: `else => .{ .string = source_code }` — by-value copy, **no**
         // `dupeRef()` and **no** matching `deref()`. `BunString` is `Copy` and
@@ -958,8 +950,8 @@ impl RuntimeTranspilerCache {
             return false;
         }
 
-        // PORT NOTE: `bun_paths::fs::Path<'static>` is the trimmed TYPE_ONLY mirror and
-        // doesn't carry `is_file()` yet; inline the same check the resolver
+        // `bun_paths::fs::Path<'static>` is the trimmed TYPE_ONLY mirror and
+        // doesn't carry `is_file()`; inline the same check the resolver
         // `Path::is_file` performs (`namespace == "" || namespace == "file"`).
         if !(source.path.namespace.is_empty() || source.path.namespace == b"file") {
             return false;

@@ -45,8 +45,8 @@ const SHA512_256_DIGEST_LENGTH: usize = 32;
 /// take function items as const-generic parameters, and the call sites are pure
 /// token-pasting of BoringSSL symbol names, so this is expressed as a
 /// `macro_rules!` type-generator.
-// TODO(port): inherent associated type `Digest = [u8; N]` requires nightly
-// `inherent_associated_types`; callers should use `[u8; <Name>::DIGEST]` for now.
+// An inherent associated type `Digest = [u8; N]` would require nightly
+// `inherent_associated_types`; callers spell `[u8; <Name>::DIGEST]` instead.
 macro_rules! new_hasher {
     (
         $name:ident,

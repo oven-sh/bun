@@ -103,9 +103,8 @@ impl Content {
 
 /// Per-file metadata. Zig defines this as `File = ServerFile | ClientFile`
 /// selected by `comptime side`. Rust folds the union here; per-side fields are
-/// simply unused on the other side.
-// TODO(port): split back into `ServerFile`/`ClientFile` once a trait shim
-// over `Side` selects the per-side layout (saves ~24 bytes/file on server).
+/// simply unused on the other side (costs ~24 bytes/file on the server graph
+/// versus a per-side layout).
 pub struct File {
     /// Server-side `kind`. For client side this mirrors `content.kind()`.
     pub kind: FileKind,
@@ -547,7 +546,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         // DirectoryWatchStore.Dep.source_file_path borrows this key; remove
         // any such dependencies before freeing it so they do not dangle.
         {
-            // PORT NOTE: reshaped for borrowck — re-derive the key slice via raw
+            // Note: reshaped for borrowck — re-derive the key slice via raw
             // ptr so the `&mut DevServer.directory_watchers` borrow does not
             // overlap the `&mut self.bundled_files` borrow.
             let key_ptr: *const [u8] =
@@ -564,7 +563,8 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         // Free the key string and tombstone the slot. Cannot swap-remove since
         // FrameworkRouter / SerializedFailure hold FileIndices into this graph.
-        // TODO(port): freed FileIndex should go on a free-list for reuse.
+        // Tombstoned slots are not reused; the Zig source records the same
+        // pending free-list idea (IncrementalGraph.zig:1943-1947).
         self.bundled_files.keys_mut()[file_index.get() as usize] = Box::default();
         debug_assert!(self.first_dep[file_index.get() as usize].is_none());
         debug_assert!(self.first_import[file_index.get() as usize].is_none());
@@ -639,7 +639,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         if !found_existing {
             *gop.key_ptr = Box::<[u8]>::from(key);
         }
-        // PORT NOTE: drop `gop` borrow before pushing to other Vecs / re-borrowing.
+        // Note: drop `gop` borrow before pushing to other Vecs / re-borrowing.
         if !found_existing {
             self.first_dep.push(None);
             self.first_import.push(None);
@@ -658,7 +658,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 let mut is_special_framework_file = false;
 
                 if found_existing {
-                    // PORT NOTE: take the existing slot out so `free_file_content`
+                    // Note: take the existing slot out so `free_file_content`
                     // can borrow `&mut self` while we hold the `File` by value.
                     let mut existing = core::mem::take(
                         &mut self.bundled_files.values_mut()[file_index.get() as usize],
@@ -891,8 +891,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                 self.first_import[file_index.get() as usize] = new_imports;
                 return Ok(());
             }
-            // TODO(port): RSC+SSR dual-index dispatch (`ctx.scbs.getSSRIndex`)
-            // is dead in the Zig spec (commented out at IncrementalGraph.zig:782).
+            // RSC+SSR dual-index dispatch (`ctx.scbs.getSSRIndex`) is dead in
+            // the Zig spec (commented out at IncrementalGraph.zig:782), so it
+            // is intentionally not ported.
         }
 
         match mode {
@@ -949,7 +950,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
 
         let records_len = ctx.import_records[index.get() as usize].len();
         for i in 0..records_len {
-            // PORT NOTE: snapshot the three fields we need so the shared borrow
+            // Note: snapshot the three fields we need so the shared borrow
             // on `ctx.import_records` ends before `process_edge_attachment`
             // takes `&mut ctx`.
             let (flags, src, key) = {
@@ -1374,7 +1375,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             Side::Client => {
                 if found_existing {
                     let mut existing = core::mem::take(&mut self.bundled_files.values_mut()[idx]);
-                    // PORT NOTE: re-derive owned key via `RawSlice` so
+                    // Note: re-derive owned key via `RawSlice` so
                     // `free_file_content` can borrow `&mut self`.
                     let key = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[idx]);
                     self.free_file_content(key.slice(), &mut existing, FreeCssMode::UnrefCss);
@@ -1541,8 +1542,9 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let dev = unsafe { self.owner() };
         let fail_owner = serialized_failure::OwnerPacked::new(SIDE, idx as u32);
 
-        // TODO(port): DevServer should get a stdio manager which can process
-        // the error list as it changes while also supporting a REPL.
+        // Errors print straight to the terminal, mirroring the Zig source —
+        // which records the same pending idea of a stdio manager that could
+        // re-render the error list alongside a REPL (IncrementalGraph.zig:1505).
         let _ = log.print(std::ptr::from_mut(bun_core::Output::error_writer()));
 
         let failure = {
@@ -1643,7 +1645,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
             self.stale_files.set(index);
             // Store the graph-owned key, not the incoming `path` (which may be
             // freed before `entry_points` is consumed).
-            // PORT NOTE: re-derive via `RawSlice` so the immutable key borrow
+            // Note: re-derive via `RawSlice` so the immutable key borrow
             // does not conflict with the `&mut entry_points` push below.
             let owned_path = bun_ptr::RawSlice::new(&*self.bundled_files.keys()[index]);
             let owned_path = owned_path.slice();

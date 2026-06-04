@@ -30,9 +30,8 @@ use crate::test_command::{self, CommandLineReporter, TestCommand};
 use crate::test_runner::bun_test::FirstLast;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
 
-// TODO(port): `format_bytes!` placeholder — needs a macro that writes fmt args
-// into a Vec<u8> (no UTF-8 validation). Define in bun_core or use
-// `{ let mut v = Vec::new(); write!(&mut v, ...).unwrap(); v }` inline.
+// Local helper: formats args into a Vec<u8>. The `unwrap` cannot fail —
+// `Write for Vec<u8>` is infallible.
 macro_rules! format_bytes {
     ($($arg:tt)*) => {{
         let mut __v: Vec<u8> = Vec::new();
@@ -85,7 +84,6 @@ pub fn run_as_coordinator(
     let vm_ptr = vm;
     // SAFETY: env loader is initialized before the test runner runs.
     let env = unsafe { &mut *(*vm_ptr).transpiler.env };
-    // TODO(port): narrow error set
     let n: u32 = u32::try_from(files.len()).unwrap();
     let k: u32 = ctx.test_options.parallel.min(n);
     if k <= 1 {
@@ -217,7 +215,10 @@ pub fn run_as_coordinator(
         cwd: FileSystem::get().top_level_dir,
         argv,
         envps,
-        workers: &mut workers, // TODO(port): lifetime — Coordinator borrows workers slice
+        // Coordinator borrows the workers slice while each Worker holds a raw
+        // backref to the Coordinator; the raw pointers (never a second `&mut`)
+        // are what keep this sound. See the backref patch loop below.
+        workers: &mut workers,
         worker_tmpdir: worker_tmpdir.path(),
         parallel_limit: k,
         scale_up_after_ms: if let Some(d) = ctx.test_options.parallel_delay_ms {
@@ -250,7 +251,14 @@ pub fn run_as_coordinator(
     // Patch the Worker→Coordinator backref now that `coord`'s address is fixed.
     // Access workers through `coord.workers` to avoid a second &mut on the Vec.
     {
-        let coord_ptr = (&raw const coord).cast::<Coordinator<'static>>();
+        // `&raw mut` so the stored `*const` backref keeps write provenance —
+        // Worker mutates the Coordinator through `coord.cast_mut()`. This only
+        // removes the read-only-provenance layer of UB: `coord.drive()` below
+        // is called through a fresh `&mut coord` and the backref writes happen
+        // during drive(), so the aliasing remains UB-adjacent under
+        // Stacked/Tree Borrows. Full fix = `*mut` backref or interior
+        // mutability (see `Worker.coord` field doc).
+        let coord_ptr = (&raw mut coord).cast::<Coordinator<'static>>().cast_const();
         for w in coord.workers.iter_mut() {
             w.coord = coord_ptr;
         }
@@ -398,7 +406,7 @@ fn build_worker_argv(
         argv.push(lit(b"--tsconfig-override\0"));
         argv.push(dupe_z(tsconfig));
     }
-    // PORT NOTE: was `inline for` over heterogeneous-ish tuple; all elements are
+    // Was `inline for` over a heterogeneous-ish tuple; all elements are
     // (&'static [u8], &[Box<[u8]>]) so a const array + plain for suffices.
     let multi_value_flags: [(&'static [u8], &[Box<[u8]>]); 6] = [
         (b"--conditions\0", &ctx.args.conditions),
@@ -557,7 +565,7 @@ impl ChannelOwner for WorkerCommands {
     }
 }
 
-// PORT NOTE: hoisted from local struct inside run_as_worker — Rust does not
+// Hoisted from a local struct inside run_as_worker — Rust does not
 // support method-bearing local structs that need to be named in a generic call.
 struct WorkerLoop<'a> {
     reporter: &'a mut CommandLineReporter,
@@ -626,7 +634,7 @@ impl<'a> WorkerLoop<'a> {
 
             let after = *self.reporter.summary();
             wf.begin(frame::Kind::FileDone);
-            // PORT NOTE: was `inline for (.{...}) |v| worker_frame.u32_(v)` —
+            // Was `inline for (.{...}) |v| worker_frame.u32_(v)` —
             // all elements are u32, so a plain array + for loop is equivalent.
             for v in [
                 idx,
@@ -667,8 +675,11 @@ pub fn run_as_worker(
     vm_ref.test_isolation_enabled = true;
     vm_ref.auto_killer.enabled = true;
 
-    // TODO(port): MimallocArena assigned to vm.arena/vm.allocator — verify
-    // whether Rust VM still needs explicit arena wiring or if this is a no-op.
+    // `vm.arena` is currently a write-only backref kept for Zig shape parity:
+    // the `MimallocArena.gc()` reader was dropped from the GC path (see
+    // web_worker.rs, which wires its own arena the same way and notes the
+    // dropped read). The Zig `vm.allocator = arena.allocator()` half is also
+    // dropped (no per-VM allocator handle in the Rust port).
     let mut arena = bun_alloc::MimallocArena::new();
     // SAFETY: event_loop pointer is valid while vm lives.
     unsafe { (*vm_ref.event_loop()).ensure_waker() };
@@ -806,8 +817,8 @@ static WORKER_FRAME: bun_core::RacyCell<Frame> = bun_core::RacyCell::new(Frame::
 /// `CommandLineReporter.handleTestCompleted`) can reach the channel.
 // PORTING.md §Global mutable state: single-worker-thread ptr slot → RacyCell.
 static WORKER_CMDS: bun_core::RacyCell<Option<*mut WorkerCommands>> = bun_core::RacyCell::new(None);
-// TODO(port): lifetime — stores a 'a-bound pointer as 'static; sound because
-// the pointee outlives all callers (process exits before it's dropped).
+// Lifetime note: stores an 'a-bound pointer as 'static; sound because the
+// pointee outlives all callers (process exits before it's dropped).
 
 /// Called from `CommandLineReporter.handleTestCompleted` in the worker with the
 /// fully-formatted status line (✓/✗ + scopes + name + duration, including ANSI

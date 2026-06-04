@@ -11,8 +11,6 @@ bun_opaque::opaque_ffi! {
     pub struct JSString;
 }
 
-// TODO(port): move to jsc_sys
-//
 // NOTE: Zig declares several of these params as `*JSString` / `*JSGlobalObject`
 // (mutable), but the C ABI does not distinguish `*const T` from `*mut T`. We
 // intentionally declare them `*const` here — matching the convention in

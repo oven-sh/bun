@@ -303,9 +303,11 @@ pub enum Mode {
 }
 
 pub struct Debugger {
-    // TODO(port): lifetime — never freed in Zig; likely borrowed from CLI args / env for process lifetime
+    // `'static` is genuine: set from `cli::cli_dupe` (process-lifetime CLI
+    // arena) — see jsc_hooks.rs. Never freed in Zig either.
     pub path_or_port: Option<&'static [u8]>,
-    // TODO(port): lifetime — never freed in Zig; default ""
+    // `'static` is genuine: borrowed from process-lifetime env-var storage;
+    // default `""`.
     pub from_environment_variable: &'static [u8],
     pub script_execution_context_id: u32,
     pub next_debugger_id: u64,
@@ -346,8 +348,6 @@ impl Default for Debugger {
     }
 }
 
-// TODO(port): move to jsc_sys
-//
 // SAFETY (safe fn): `JSGlobalObject` is an opaque `UnsafeCell`-backed handle
 // (`&` is ABI-identical to non-null `*mut`); `BunString` is a `#[repr(C)]` POD
 // out-param. Remaining args are by-value scalars.
@@ -373,7 +373,7 @@ impl Debugger {
     ///
     /// Spec `Debugger.zig:31` `waitForDebuggerIfNecessary`.
     ///
-    /// PORT NOTE — aliasing: `this.debugger` is read through a raw pointer
+    /// Aliasing: `this.debugger` is read through a raw pointer
     /// with fresh short-lived borrows because `event_loop().tick()` /
     /// `auto_tick_active()` re-enter JS, which calls `VirtualMachine::get()`
     /// and may form independent `&mut VirtualMachine` borrows. Holding a
@@ -404,7 +404,7 @@ impl Debugger {
         });
 
         bun_core::scoped_log!(debugger, "spin");
-        // PORT NOTE: spec `var futex_atomic = .init(0)` and nothing ever
+        // Spec `var futex_atomic = .init(0)` and nothing ever
         // stores `1` before this load, so this loop is a no-op on first call
         // — ported faithfully.
         while FUTEX_ATOMIC.load(Ordering::Relaxed) > 0 {
@@ -487,7 +487,7 @@ impl Debugger {
         }
 
         // Drop the long-lived `&mut Debugger` before re-entering JS — see
-        // PORT NOTE above. Each loop iteration re-fetches via `debugger_mut()`
+        // the aliasing note on this fn. Each loop iteration re-fetches via `debugger_mut()`
         // so re-entrant JS may independently borrow the VM.
         loop {
             let wait = match this.debugger.as_deref() {
@@ -581,13 +581,13 @@ impl Debugger {
 
         if !this_ref.has_started_debugger {
             this_ref.as_mut().has_started_debugger = true;
-            // PORT NOTE: `std::thread::spawn` requires `Send`; raw `*mut
+            // `std::thread::spawn` requires `Send`; raw `*mut
             // VirtualMachine` is `!Send`. Wrap in a `Send` newtype — the
             // pointer is only ever dereferenced on the debugger thread under
             // `holdAPILock` (see `start_js_debugger_thread` doc), and the VM
             // outlives the process.
             struct SendVmPtr(*mut VirtualMachine);
-            // SAFETY: see PORT NOTE above — cross-thread access is mediated
+            // SAFETY: see comment above — cross-thread access is mediated
             // by `holdAPILock` / the futex; the VM allocation is `'static`.
             unsafe impl Send for SendVmPtr {}
             let send_vm = SendVmPtr(this);
@@ -620,14 +620,14 @@ impl Debugger {
     ///
     /// Spec `Debugger.zig:143` `startJSDebuggerThread`.
     ///
-    /// PORT NOTE: `other_vm` is the *parent thread's* VM. The parent thread
+    /// `other_vm` is the *parent thread's* VM. The parent thread
     /// continues executing (and mutating that VM) concurrently with this
     /// thread (Debugger.zig:131→134-138, then the wait-loop at zig:79-114).
     /// Taking `&mut VirtualMachine` here would assert exclusive access we do
     /// not have — UB. Spec uses a raw `*VirtualMachine`; we mirror that and
     /// never materialize a `&`/`&mut VirtualMachine` to the foreign-thread VM.
     pub fn start_js_debugger_thread(other_vm: *mut VirtualMachine) {
-        // PORT NOTE: Zig `MimallocArena` + thread-local `DotEnv.Loader` are
+        // Zig `MimallocArena` + thread-local `DotEnv.Loader` are
         // dropped per docs/PORTING.md §Allocators — the global allocator is
         // mimalloc and `InitOptions` no longer carries `allocator`/`env_loader`
         // (those are wired by `RuntimeHooks::init_runtime_state`).
@@ -653,7 +653,7 @@ impl Debugger {
 
         // Spec: `vm.global.vm().holdAPILock(other_vm, OpaqueWrap(VM, start))`.
         extern "C" fn start_trampoline(ctx: *mut c_void) {
-            // PORT NOTE: forward the raw pointer unchanged — see fn doc above
+            // Forward the raw pointer unchanged — see fn doc above
             // for why we never form `&mut VirtualMachine` to the parent VM.
             Debugger::start(ctx.cast::<VirtualMachine>());
         }
@@ -667,7 +667,7 @@ impl Debugger {
     /// debugger thread. Publishes the inspector URL(s), wakes the futex the
     /// parent VM is blocked on, then spins this thread's event loop forever.
     ///
-    /// PORT NOTE — aliasing: every `VirtualMachine` / `EventLoop` access here
+    /// Aliasing: every `VirtualMachine` / `EventLoop` access here
     /// goes through a raw pointer with a fresh short-lived `&mut *p` formed at
     /// the call site, never bound to a long-lived reference. Reasons:
     ///
@@ -689,7 +689,7 @@ impl Debugger {
 
         // `this` is this thread's own VM (created in `start_js_debugger_thread`)
         // — safe to hold as `&'static`. `other_vm` remains a raw pointer (see
-        // PORT NOTE above): the parent thread mutates it concurrently after the
+        // aliasing note above): the parent thread mutates it concurrently after the
         // futex wake, so forming `&VirtualMachine` to it would be a data race.
         let this: &VirtualMachine = VirtualMachine::get();
         // SAFETY: `other_vm` is the parent-thread VM, live for process
@@ -701,7 +701,7 @@ impl Debugger {
         let other_loop: *mut crate::event_loop::EventLoop = unsafe { (*other_vm).event_loop() };
         let global: &JSGlobalObject = this.global();
 
-        // PORT NOTE: copy the four scalars we need from the parent VM's
+        // Copy the four scalars we need from the parent VM's
         // debugger before re-entering JS or waking the parent. Spec `.?` would
         // safety-panic, but we run inside an `extern "C"` trampoline where
         // unwinding is UB — wake the parent and bail instead (unreachable in
@@ -870,8 +870,6 @@ pub enum AsyncCallType {
     Microtask = 5,
 }
 
-// TODO(port): move to jsc_sys
-//
 // SAFETY (safe fn): `JSGlobalObject` is an opaque `UnsafeCell`-backed handle
 // (`&` is ABI-identical to non-null `*const`); remaining args are by-value
 // scalars / `#[repr(u8)]` enums.
@@ -937,8 +935,6 @@ pub enum TestType {
 
 bun_opaque::opaque_ffi! { pub struct TestReporterHandle; }
 
-// TODO(port): move to jsc_sys
-//
 // SAFETY (safe fn): `TestReporterHandle` and `CallFrame` are `opaque_ffi!`
 // ZST handles (`!Freeze` via `UnsafeCell`); `BunString` is a `#[repr(C)]`
 // in/out-param the C++ side reads/consumes in-place. Remaining args are
@@ -1099,8 +1095,6 @@ pub struct LifecycleAgent {
 
 bun_opaque::opaque_ffi! { pub struct LifecycleHandle; }
 
-// TODO(port): move to jsc_sys
-//
 // SAFETY (safe fn): `LifecycleHandle` is an `opaque_ffi!` ZST handle (`!Freeze`
 // via `UnsafeCell`); `ZigException` is a `#[repr(C)]` out-param the C++ side
 // reads/fills in-place.

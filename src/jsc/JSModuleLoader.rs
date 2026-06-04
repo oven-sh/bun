@@ -6,8 +6,6 @@ bun_opaque::opaque_ffi! {
     pub struct JSModuleLoader;
 }
 
-// TODO(port): move to jsc_sys
-//
 // `JSGlobalObject` is an opaque ZST handle on the Rust side; Rust never reads or
 // writes bytes through it. C++ mutates VM state internally, but that is outside
 // Rust's aliasing model, so these externs take `*const JSGlobalObject` (matching

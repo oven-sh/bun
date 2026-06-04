@@ -2,7 +2,7 @@
 // it turns out: FFI.h is faster than our implementation that calls into C++ bindings
 // so we just use this in some cases
 //
-// PORT NOTE: the original .zig is raw `zig translate-c` output. The meaningful
+// The original .zig is raw `zig translate-c` output. The meaningful
 // surface (EncodedJSValue + tag constants + inline coercion fns) is ported
 // below; the ~390 lines of compiler-builtin macro noise (`__clang__`,
 // `__INT_MAX__`, `__ARM_FEATURE_*`, …) emitted by translate-c are dropped —
@@ -52,8 +52,6 @@ pub(crate) const TRUE_I64: i64 = ((2 | 4) | 1) as i64;
 pub(crate) static ValueTrue: bun_core::RacyCell<EncodedJSValue> =
     bun_core::RacyCell::new(EncodedJSValue { as_int64: TRUE_I64 });
 
-// TODO(port): move to jsc_sys
-//
 // By-value POD union arg; no invariants beyond ABI → `safe fn`.
 unsafe extern "C" {
     pub safe fn JSVALUE_TO_UINT64_SLOW(value: EncodedJSValue) -> u64;
@@ -65,12 +63,11 @@ pub fn uint64_to_jsvalue_slow(global_object: &JSGlobalObject, val: u64) -> JSVal
     JSValue::from_uint64_no_truncate(global_object, val)
 }
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     pub fn JSFunctionCall(globalObject: *mut c_void, callFrame: *mut c_void) -> *mut c_void;
 }
 
-// PORT NOTE: ~390 lines of translate-c compiler-builtin macro definitions
+// ~390 lines of translate-c compiler-builtin macro definitions
 // (`__block`, `__INTMAX_C_SUFFIX__`, `__clang_major__`, `__SIZEOF_*`,
 // `__ARM_FEATURE_*`, `__APPLE__`, …) from FFI.zig:121-509 intentionally
 // dropped — they are clang predefined-macro spew with no callers.

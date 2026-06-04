@@ -740,7 +740,7 @@ impl<T> JsResultExt for JsResult<T> {
 
 impl From<bun_core::Error> for JsError {
     fn from(_: bun_core::Error) -> Self {
-        // PORT NOTE: Zig coerces arbitrary `anyerror` into the JS error union by
+        // Note: Zig coerces arbitrary `anyerror` into the JS error union by
         // throwing a generic Error; the throw happens at the call site. Mapping
         // to `Thrown` here lets `?` propagate while the actual throw is handled
         // by the host-fn wrapper.
@@ -908,7 +908,7 @@ pub mod __macro_support {
         global: &JSGlobalObject,
         f: impl FnOnce() -> R,
     ) -> JSValue {
-        // PORT NOTE: Zig passed `@src()` explicitly; `to_js_host_call` is
+        // Note: Zig passed `@src()` explicitly; `to_js_host_call` is
         // `#[track_caller]` so the caller's `Location` propagates through this
         // `#[track_caller]` shim into `ExceptionValidationScope::init`.
         super::host_fn::to_js_host_call(global, move || f().into_host_fn_result())
@@ -1658,7 +1658,7 @@ pub use self::Node as node;
 /// has no jsc dep) so lower-tier crates can mark bindings without depending on
 /// `bun_jsc`. This fn is the thin wrapper `jsc.zig` exposes for in-crate use.
 ///
-/// PORT NOTE: `std.builtin.SourceLocation.fn_name` has no Rust equivalent;
+/// Note: `std.builtin.SourceLocation.fn_name` has no Rust equivalent;
 /// `#[track_caller]` only surfaces file/line, so the leading `{fn_name}` is
 /// dropped. Prefer the `mark_binding!()` macro form (re-exported above) which
 /// captures `module_path!()` at the call site.
@@ -2156,7 +2156,6 @@ pub fn to_js_time(sec: isize, nsec: isize) -> JSTimeType {
 pub const MAX_SAFE_INTEGER: i64 = 9007199254740991;
 pub const MIN_SAFE_INTEGER: i64 = -9007199254740991;
 
-// TODO(port): move to jsc_sys
 unsafe extern "C" {
     fn JSCInitialize(
         env: *const *const c_char,
@@ -2167,9 +2166,8 @@ unsafe extern "C" {
     );
 }
 
-// TODO(port): generated module — re-run bindgen with .rs output. Hand-stubbed
-// in `generated.rs` until `src/codegen/generate-classes.ts` grows a `.rs`
-// backend.
+// Hand-stubbed in `generated.rs` until `src/codegen/generate-classes.ts`
+// grows a `.rs` backend (same arrangement as `r#gen` below).
 #[path = "generated.rs"]
 pub mod generated;
 

@@ -496,7 +496,7 @@ impl BlobExt for Blob {
             // The garbage collector runs on memory allocations
             // The JSPromise is the next GC'd memory allocation.
             // This shouldn't really fix anything, but it's a little safer.
-            // PORT NOTE: `JSPromiseStrong.strong` is private; `init` creates the
+            // `JSPromiseStrong.strong` is private; `init` creates the
             // JSPromise *and* the strong handle in one step, matching the Zig.
             // SAFETY: handler was just boxed; sole owner.
             unsafe { (*handler).promise = jsc::JSPromiseStrong::init(global) };
@@ -587,7 +587,7 @@ impl BlobExt for Blob {
                         // SystemError so the callback has one shape to handle.
                         crate::webcore::__s3_client::S3DownloadResult::NotFound(e)
                         | crate::webcore::__s3_client::S3DownloadResult::Failure(e) => {
-                            // PORT NOTE: reshaped for borrowck — `t.done` moves
+                            // reshaped for borrowck — `t.done` moves
                             // `t`, so build the SystemError (cloning the path
                             // out of `t.blob.store`) before the call.
                             let err = bun_jsc::SystemError {
@@ -612,7 +612,7 @@ impl BlobExt for Blob {
             });
             t.poll.ref_(bun_io::js_vm_ctx());
             let proxy = http_proxy_href(global);
-            // PORT NOTE: reshaped for borrowck — `heap::alloc(t)` moves `t`,
+            // reshaped for borrowck — `heap::alloc(t)` moves `t`,
             // so clone the `Rc<S3Credentials>` out (cheap ref bump)
             // and stash `path` as a raw `*const [u8]` whose backing store is
             // kept alive by the same `t.blob` now owned by the heap task.
@@ -897,7 +897,7 @@ impl BlobExt for Blob {
         // string entry 8, plus 3 for the closing boundary.
         context.joiner.reserve(form_data.count() * 13 + 3);
 
-        // PORT NOTE (layering): `bun_jsc::DOMFormData::for_each` yields the
+        // `bun_jsc::DOMFormData::for_each` yields the
         // lower-tier `bun_jsc::dom_form_data::FormDataEntry`, whose `blob`
         // field is `&bun_jsc::WebCore::Blob` (the forward-decl). The native
         // pointer the C++ hands us is the `m_ctx` `*mut Blob`; reinterpret it
@@ -1754,7 +1754,7 @@ impl BlobExt for Blob {
 
         let store = self.store().expect("infallible: store present").clone();
         if self.is_s3() {
-            // PORT NOTE: reshaped for borrowck — Zig holds `*const S3` while
+            // reshaped for borrowck — Zig holds `*const S3` while
             // also mutating `this.content_type*`. Borrow `s3` through the
             // cloned `store: StoreRef` (independent of `self`) so the
             // content-type writes below don't conflict.
@@ -1964,7 +1964,7 @@ impl BlobExt for Blob {
                 ),
             };
 
-            // PORT NOTE: `webcore::PathOrFileDescriptor` is not `Clone`; build user
+            // `webcore::PathOrFileDescriptor` is not `Clone`; build user
             // options first, then move `input_path` in once.
             let mut stream_start = if has_args && arg0.is_object() {
                 streams::Start::from_js_with_tag::<{ streams::StartTag::FileSink }>(
@@ -2052,7 +2052,7 @@ impl BlobExt for Blob {
     /// https://w3c.github.io/FileAPI/#slice-method-algo
     fn get_slice(&self, global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let mut arguments_ = callframe.arguments_old::<3>();
-        // PORT NOTE: index the full fixed-3 array (Zig writes args[2] regardless of len).
+        // index the full fixed-3 array (Zig writes args[2] regardless of len).
         let args = &mut arguments_.ptr[..];
 
         if self.size.get() == 0 {
@@ -2067,7 +2067,7 @@ impl BlobExt for Blob {
         // If the optional end parameter is not used, let relativeEnd be size.
         let mut relative_end: i64 = i64::try_from(self.size.get()).expect("int cast");
 
-        // PORT NOTE: Zig mutates the fixed-3 args array in place to shift string arg into [2].
+        // Zig mutates the fixed-3 args array in place to shift string arg into [2].
         if args[0].is_string() {
             args[2] = args[0];
             args[1] = JSValue::ZERO;
@@ -2231,7 +2231,7 @@ impl BlobExt for Blob {
     fn get_last_modified(&self, _: &JSGlobalObject) -> JSValue {
         if let Some(store) = self.store.get() {
             if matches!(store.data, store::Data::File(_)) {
-                // PORT NOTE: do not hold a pattern-bound `&File` across
+                // do not hold a pattern-bound `&File` across
                 // `resolve_file_stat` — it materializes `&mut File` on the same
                 // memory (Stacked Borrows UB; the optimizer may legally cache the
                 // pre-call `last_modified` and return the stale `INIT_TIMESTAMP`).
@@ -2364,7 +2364,7 @@ impl BlobExt for Blob {
             self.size.set(0);
             return;
         };
-        // PORT NOTE: dispatch on the copied `DataTag` rather than
+        // dispatch on the copied `DataTag` rather than
         // `match &store.data { File(file) => … }`. The latter goes through
         // `StoreRef::Deref → &Store → &Data` (no `UnsafeCell`), and that shared
         // borrow is live across the arm body where `resolve_file_stat`
@@ -2426,7 +2426,7 @@ impl BlobExt for Blob {
         let Some(store) = self.store.get() else {
             return (self.offset.get(), 0);
         };
-        // PORT NOTE: see `resolve_size` — dispatch on the copied tag and re-read
+        // see `resolve_size` — dispatch on the copied tag and re-read
         // via `StoreRef::data_mut` after `resolve_file_stat` so no
         // `Deref`-produced `&Data`/`&File` is live across the mutating call.
         match store.data_mut().tag() {
@@ -2589,7 +2589,7 @@ impl BlobExt for Blob {
                 if let Ok(result) =
                     crate::allocators::linux_mem_fd_allocator::LinuxMemFdAllocator::create(bytes_)
                 {
-                    // PORT NOTE: spell out all fields — `..Default::default()` would
+                    // spell out all fields — `..Default::default()` would
                     // attempt a partial move out of `Store` which has a `Drop` impl.
                     let store = StoreRef::from(Store::new(Store {
                         data: store::Data::Bytes(result),
@@ -2619,7 +2619,7 @@ impl BlobExt for Blob {
         Self::try_create(bytes_, global_this, was_string).expect("oom")
     }
 
-    // PORT NOTE: non-generic `init_with_store(StoreRef, ...)` / `init_empty` removed —
+    // non-generic `init_with_store(StoreRef, ...)` / `init_empty` removed —
     // duplicates of the generic `init_with_store<S: Into<StoreRef>>` / `init_empty` below
     // (E0592). All `StoreRef` callers resolve to the generic via the reflexive `Into` impl.
 
@@ -2871,7 +2871,7 @@ impl BlobExt for Blob {
                 .map_err(Into::into);
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
+        // reshaped for borrowck — Zig @constCast'd shared_view().
         // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
         // `StoreRef::as_ptr`), avoiding the const→mut cast. `to_string_with_bytes`
         // only ever reads through it (`&*raw_bytes`); the sole write path —
@@ -2983,7 +2983,7 @@ impl BlobExt for Blob {
                     OwnedString::new(BunString::clone_utf16(&units))
                 }
             };
-            // PORT NOTE: Zig used `defer { free; detach }`. Reshaped to compute the
+            // Zig used `defer { free; detach }`. Reshaped to compute the
             // result first, then perform the deferred work explicitly — capturing
             // `&mut self` in a scopeguard closure conflicts with later uses below.
             let result = out.to_js_by_parse_json(global);
@@ -3037,7 +3037,7 @@ impl BlobExt for Blob {
             return ZigString::init(b"Invalid encoding").to_error_instance(global);
         };
 
-        // PORT NOTE: `crate::webcore::form_data::Encoding` re-exports
+        // `crate::webcore::form_data::Encoding` re-exports
         // `bun_core::form_data::Encoding` — same type, no re-tagging needed.
         // SAFETY: `buf` is valid for reads for the duration of this call (either a
         // leaked Box for `Temporary` or a store-backed view otherwise);
@@ -3244,7 +3244,7 @@ impl BlobExt for Blob {
             .map_err(Into::into);
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
+        // reshaped for borrowck — Zig @constCast'd shared_view().
         // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
         // `StoreRef::as_ptr`). The `Clone` arm only reads (`&*buf`);
         // `Share`/`Transfer` hand the ptr to JSC as an external ArrayBuffer
@@ -3299,7 +3299,7 @@ impl BlobExt for Blob {
             return self.do_read_from_s3::<ToFormDataWithBytesFn>(global);
         }
 
-        // PORT NOTE: reshaped for borrowck — Zig @constCast'd shared_view().
+        // reshaped for borrowck — Zig @constCast'd shared_view().
         // `shared_view_raw` yields a `*mut [u8]` with mutable provenance (via
         // `StoreRef::as_ptr`). It is *only ever read* by
         // `to_form_data_with_bytes` (`FormData::to_js` takes `&[u8]`). Note: the
@@ -3388,7 +3388,7 @@ impl BlobExt for Blob {
                         // (Zig: `defer str.deref()`). `to_owned_slice` only
                         // borrows `&self` — it does not consume the ref.
                         let str = OwnedString::new(top_value.to_bun_string(global)?);
-                        // PORT NOTE: Zig `toOwnedSliceReturningAllASCII` collapsed into
+                        // Zig `toOwnedSliceReturningAllASCII` collapsed into
                         // `to_owned_slice` + a SIMD ASCII scan; identical observable result.
                         let bytes = str.to_owned_slice();
                         let ascii = strings::is_all_ascii(&bytes);
@@ -3427,7 +3427,7 @@ impl BlobExt for Blob {
                                 // Move the store without bumping its refcount, but take
                                 // independent ownership of name/content_type so the
                                 // source's eventual finalize() doesn't double-free them.
-                                // PORT NOTE: Zig did a raw bitwise copy then `transfer()`
+                                // Zig did a raw bitwise copy then `transfer()`
                                 // (null without deref) → net 0 on the store refcount.
                                 // Mirror that by *taking* the StoreRef out of `blob`
                                 // (no clone, no into_raw leak) and field-copying the
@@ -3474,7 +3474,7 @@ impl BlobExt for Blob {
                             // buffers instead — regardless of `MOVE`.
                             return Ok(artifact.blob.dupe());
                         } else {
-                            // PORT NOTE: Zig checked `sliced.allocator.get()` to
+                            // Zig checked `sliced.allocator.get()` to
                             // detect an owned (heap) slice; `ZigStringSlice`
                             // collapsed the allocator-vtable into an enum, so
                             // dispatch on the variant. Zig passes
@@ -3523,7 +3523,7 @@ impl BlobExt for Blob {
                 | jsc::JSType::DerivedStringObject => {
                     let sliced = current.to_slice(global)?;
                     could_have_non_ascii = could_have_non_ascii || !sliced.is_wtf_backed();
-                    // PORT NOTE: Zig handed `allocator` to the joiner so it could
+                    // Zig handed `allocator` to the joiner so it could
                     // free in-place; `StringJoiner::push` dropped that param, so
                     // clone into the joiner and let `sliced` drop normally.
                     joiner.push_cloned(sliced.slice());
@@ -3835,7 +3835,7 @@ impl BlobExt for Blob {
 
                 // SAFETY: bun_vm() is live for the duration of a host call.
                 if global_this.bun_vm().standalone_module_graph.is_some() {
-                    // PORT NOTE (layering): `vm.standalone_module_graph` is a
+                    // `vm.standalone_module_graph` is a
                     // type-erased `&dyn` so `bun_jsc` doesn't depend on
                     // `bun_standalone_graph`. The concrete `Graph` is the sole
                     // implementor and lives in a process-lifetime `OnceLock`;
@@ -3915,7 +3915,7 @@ impl BlobExt for Blob {
 
     /// Takes ownership of `self` by value. Invalidates `self`.
     fn take_ownership(&mut self) -> Blob {
-        // PORT NOTE: Zig writes `self.* = undefined` after the copy.
+        // Zig writes `self.* = undefined` after the copy.
         let mut result = std::mem::take(self);
         result.set_not_heap_allocated();
         result
@@ -4108,7 +4108,7 @@ impl FormDataContext<'_> {
                         }
                         store::Data::File(file) => {
                             // TODO: make this async + lazy
-                            // PORT NOTE (layering): Zig used the per-VM cached
+                            // Zig used the per-VM cached
                             // `globalThis.bunVM().nodeFS()`. That accessor is not
                             // yet ported on `VirtualMachine`, so use a fresh stack
                             // `NodeFS` (it is stateless aside from a path scratch
@@ -4553,7 +4553,7 @@ fn write_file_with_empty_source_to_destination(
         .store()
         .expect("infallible: store present")
         .clone();
-    // PORT NOTE: `scopeguard::guard(&mut *destination_blob, …)` would hold an
+    // `scopeguard::guard(&mut *destination_blob, …)` would hold an
     // exclusive borrow for the entire function, blocking the immut reads below
     // (`content_type_or_mime_type`). Capture a raw pointer instead — the
     // `&mut Blob` parameter outlives this stack frame, and the closure runs
@@ -4821,7 +4821,7 @@ pub fn write_file_with_source_destination(
             .expect("unreachable");
             let task = write_file_mod::WriteFileTask::create_on_js_thread(ctx, file_copier);
             // Defer promise creation until we're just about to schedule the task.
-            // PORT NOTE: Zig wrote `promise.strong.set(ctx, promise_value)` directly;
+            // Zig wrote `promise.strong.set(ctx, promise_value)` directly;
             // `JSPromiseStrong.strong` is private in `bun_jsc`, so use `init` (which
             // creates the JSPromise *and* the strong handle in one step) instead.
             // SAFETY: write_file_promise was just produced by heap::alloc above; sole owner.
@@ -4859,7 +4859,7 @@ pub fn write_file_with_source_destination(
                 options.mode,
             );
             file_copier.schedule();
-            // PORT NOTE: Zig returned `file_copier.promise.value()` directly.
+            // Zig returned `file_copier.promise.value()` directly.
             // `ConcurrentPromiseTask` is consumed by the work-pool and freed via
             // `ManualDeinit` → `destroy(*mut Self)`, so hand ownership over as a
             // raw pointer (paired with `heap::take` in `destroy()`).
@@ -5092,7 +5092,7 @@ pub fn write_file_internal(
             "Bun.write(pathOrFdOrBlob, blob) expects a Blob-y thing to write"
         )));
     }
-    // PORT NOTE: Zig copies `path_or_blob_.*`; Blob is non-Clone, so reborrow.
+    // Zig copies `path_or_blob_.*`; Blob is non-Clone, so reborrow.
     let path_or_blob = &mut *path_or_blob_;
     if let PathOrBlob::Blob(ref blob) = *path_or_blob {
         let Some(blob_store) = blob.store.get() else {
@@ -5111,7 +5111,7 @@ pub fn write_file_internal(
     } else {
         None
     };
-    // PORT NOTE: Zig manually ref/deref's; StoreRef clone+drop achieves the same.
+    // Zig manually ref/deref's; StoreRef clone+drop achieves the same.
     let _input_store_hold = input_store;
 
     if let Some(mkdir) = options.mkdirp_if_not_exists {
@@ -5230,7 +5230,7 @@ pub fn write_file_internal(
 
     // TODO: implement a writev() fast path
     let source_blob: Blob = 'brk: {
-        // PORT NOTE: Zig has two near-identical arms for `Response` and
+        // Zig has two near-identical arms for `Response` and
         // `Request`. Both expose `get_body_value()` /
         // `get_body_readable_stream()`; collapse into one helper that takes the
         // body-value pointer and a `get_stream` closure.
@@ -5371,7 +5371,7 @@ pub fn write_file_internal(
     let mut source_blob = scopeguard::guard(source_blob, |b| b.detach());
 
     let destination_store = destination_blob.store.get().clone();
-    // PORT NOTE: Zig manually ref/deref's; StoreRef clone+drop covers this.
+    // Zig manually ref/deref's; StoreRef clone+drop covers this.
     let _dest_hold = destination_store;
 
     write_file_with_source_destination(
@@ -5505,7 +5505,7 @@ fn write_string_to_file_fast<const NEEDS_OPEN: bool>(
     // Declared before the truncate guard so it drops *after* it (close runs last).
     let _close = NEEDS_OPEN.then(|| bun_sys::CloseOnDrop::new(fd));
 
-    // PORT NOTE: Zig used `defer` which can read locals at unwind time.
+    // Zig used `defer` which can read locals at unwind time.
     // Rust scopeguard's closure captures borrows at construction, conflicting
     // with later `written += ...` / `truncate = false`. Route through `Cell`
     // so the guard and the loop body share `&Cell<_>` (no mutable-borrow conflict).
@@ -5804,13 +5804,13 @@ pub fn construct_bun_file(
 
     if let PathOrFileDescriptor::Path(ref p) = path {
         if p.slice().starts_with(b"s3://") {
-            // PORT NOTE (layering): `webcore::node_types::PathLike` re-exports
+            // `webcore::node_types::PathLike` re-exports
             // `crate::node::types::PathLike`, so no conversion is needed —
             // clone the path (Zig consumed it; the Rust `path` drops at scope exit).
             return S3File::construct_internal_js(global_object, p.clone(), options);
         }
     }
-    // PORT NOTE: Zig `defer path.deinitAndUnprotect()` — sync path took no
+    // Zig `defer path.deinitAndUnprotect()` — sync path took no
     // `protect()`, so `Drop for PathOrFileDescriptor` suffices.
 
     let blob = Blob::find_or_create_file_from_path(&mut path, global_object, false);
@@ -6096,7 +6096,7 @@ pub fn on_file_stream_reject_request_stream(
     callframe: &CallFrame,
 ) -> JsResult<JSValue> {
     let args = callframe.arguments_old::<2>();
-    // PORT NOTE: Zig defers `this.sink.deref()` here but does NOT call `this.deinit()`
+    // Zig defers `this.sink.deref()` here but does NOT call `this.deinit()`
     // (leaks the wrapper). We take ownership via Box so Drop runs `sink.deref()`
     // and frees the wrapper — same observable effect on the sink, fixes the leak.
     // SAFETY: the trailing argument is the `FileStreamWrapper*` boxed and passed
@@ -6147,14 +6147,10 @@ bun_jsc::jsc_host_abi! {
     }
 }
 
-// PORT NOTE: the local `AnyPromiseResultExt` shim was removed —
+// the local `AnyPromiseResultExt` shim was removed —
 // `bun_jsc::AnyPromise::result` is an inherent method (and `JSInternalPromise`
 // is a transparent alias for `JSPromise`), so the `.result(vm)` call below
 // resolves directly upstream.
-
-// TODO(port): @export of jsc::to_js_host_fn wrappers under
-// "Bun__FileStreamWrapper__onResolveRequestStream" / "...Reject..." names.
-// The `#[bun_jsc::host_fn]` attribute should support a `link_name = "..."` arg.
 
 // ──────────────────────────────────────────────────────────────────────────
 // getSliceFrom / getSlice / type/name/lastModified/size getters
@@ -6582,7 +6578,7 @@ impl Any {
                 if matches!(s.data, store::Data::Bytes(_)) && s.has_one_ref() {
                     // `StoreRef` exposes interior-mutable `data_mut()` (no DerefMut).
                     let internal = s.data_mut().as_bytes_mut().to_internal_blob();
-                    // PORT NOTE: Zig deref's the store; StoreRef::drop on replace handles it.
+                    // Zig deref's the store; StoreRef::drop on replace handles it.
                     blob.free_content_type();
                     *self = Any::InternalBlob(internal);
                     return;
@@ -6842,7 +6838,7 @@ impl Any {
     pub fn content_type(&self) -> &[u8] {
         match self {
             Any::Blob(b) => b.content_type_slice(),
-            // PORT NOTE: MimeType::TEXT is `const` — see Internal::content_type.
+            // MimeType::TEXT is `const` — see Internal::content_type.
             Any::WTFStringImpl(_) => b"text/plain;charset=utf-8",
             Any::InternalBlob(ib) => ib.content_type(),
         }
@@ -6985,7 +6981,7 @@ impl Internal {
     }
 
     pub fn content_type(&self) -> &'static [u8] {
-        // PORT NOTE: MimeType::{TEXT,OTHER} are `const` (not `static`), so
+        // MimeType::{TEXT,OTHER} are `const` (not `static`), so
         // borrowing `.value` would borrow a temporary. Inline the literals
         // (matches `MimeType::init_comptime` values).
         if self.was_string {
@@ -7012,7 +7008,7 @@ pub type InlineIntSize = u8;
 
 impl Inline {
     const REAL_BLOB_SIZE: usize = core::mem::size_of::<Blob>();
-    // PORT NOTE: Zig `pub const IntSize = u8` — inherent assoc types are nightly-only;
+    // Zig `pub const IntSize = u8` — inherent assoc types are nightly-only;
     // hoisted to module-level `InlineIntSize` above.
     pub const AVAILABLE_BYTES: usize = Self::REAL_BLOB_SIZE - core::mem::size_of::<u8>() - 1 - 1;
 
@@ -7073,7 +7069,7 @@ impl Inline {
     }
 
     pub fn content_type(&self) -> &'static [u8] {
-        // PORT NOTE: see Internal::content_type — MimeType consts are `const`, not `static`.
+        // see Internal::content_type — MimeType consts are `const`, not `static`.
         if self.was_string {
             b"text/plain;charset=utf-8"
         } else {
@@ -7363,7 +7359,7 @@ pub trait FileCloser: Sized {
     fn on_close_io_request(task: *mut bun_jsc::WorkPoolTask);
 
     fn do_close(&mut self, is_allowed_to_close_fd: bool) -> bool {
-        // PORT NOTE: Zig nests `if (@hasField(This, "io_request")) { if (this.close_after_io) … }`.
+        // Zig nests `if (@hasField(This, "io_request")) { if (this.close_after_io) … }`.
         // `@hasField` is comptime (constant per concrete `Self`), so swapping the
         // order is sound and lets us finish the immutable `self` reads before
         // taking the `&mut self` borrow via `io_request()`.

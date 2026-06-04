@@ -51,7 +51,6 @@ pub use internal_source_map::InternalSourceMap;
 // only ever sees it as a pointer.
 bun_opaque::opaque_ffi! { pub struct BakeSourceProvider; }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     // C++ accessor is read-only (`provider->source()`). Taking `*const` avoids
     // casting away const from the `&self` borrow below; any interior mutation
@@ -114,7 +113,7 @@ impl BakeSourceProvider {
     }
 }
 
-// PORT NOTE: Zig dispatched via `comptime SourceProviderKind: type` + `@hasDecl`;
+// Zig dispatched via `comptime SourceProviderKind: type` + `@hasDecl`;
 // Rust uses a trait per PORTING.md §Dispatch.
 impl SourceProvider for BakeSourceProvider {
     const HAS_EXTERNAL_DATA: bool = true;
@@ -451,7 +450,6 @@ impl core::fmt::Display for DebugIDFormatter {
 // This is used for files that were pre-bundled with `bun build --target=bun --sourcemap`
 bun_opaque::opaque_ffi! { pub struct SourceProviderMap; }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     // `SourceProviderMap` is an UnsafeCell-backed opaque ZST (Rust holds zero
     // bytes of it), so `&SourceProviderMap` carries no `readonly`/`noalias` —
@@ -497,7 +495,6 @@ pub struct DevServerSourceMapData {
     pub length: usize,
 }
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     // Both C++ accessors are read-only (`provider->source()` /
     // `provider->sourceMapJSON()`). Taking `*const` avoids casting away
@@ -710,7 +707,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
                 let load_path =
                     bun_core::ZStr::from_buf(&load_path_buf[..], source_filename.len() + 4);
 
-                // PORT NOTE: Zig passed the arena allocator; the Rust
+                // Zig passed the arena allocator; the Rust
                 // `bun_sys::File::read_from` returns an owned `Vec<u8>`. The
                 // arena was only used to free the bytes on scope exit, which
                 // `Vec` Drop already does.
@@ -753,7 +750,7 @@ pub fn get_source_map_impl<P: SourceProvider + ?Sized>(
         return None;
     };
     if let Some(ptr) = parsed.map.as_mut() {
-        // PORT NOTE: Zig mutates `ptr.underlying_provider` after `bun.new`.
+        // Zig mutates `ptr.underlying_provider` after `bun.new`.
         // The Arc is freshly created in `parse_json` and we hold the only ref
         // here, so `Arc::get_mut` succeeds. (PORTING.md §Pointers — no raw
         // *mut cast through Arc::as_ptr.)
@@ -873,7 +870,7 @@ pub mod SerializedSourceMap {
 
     impl Loaded {
         pub(crate) fn source_file_contents(&mut self, index: usize) -> Option<&[u8]> {
-            // PORT NOTE: reshaped for borrowck — Zig checked the cache, then
+            // reshaped for borrowck — Zig checked the cache, then
             // wrote and re-read in the same scope. Here we populate first if
             // empty, then take a single borrow at the end.
             if self.decompressed_files[index].is_none() {
@@ -1028,13 +1025,12 @@ pub fn parse_url(
     source: &[u8],
     hint: ParseUrlResultHint,
 ) -> Result<ParseUrl, bun_core::Error> {
-    // TODO(port): narrow error set
     let json_bytes: &[u8] = 'json_bytes: {
         const DATA_PREFIX: &[u8] = b"data:application/json";
 
         'try_data_url: {
             if source.starts_with(DATA_PREFIX) && source.len() > DATA_PREFIX.len() + 1 {
-                // PORT NOTE: `scoped_log!(SourceMap, ...)` dropped — `SourceMap`
+                // `scoped_log!(SourceMap, ...)` dropped — `SourceMap`
                 // names the top-level struct in this module; the debug scope
                 // lives in `mapping::SourceMap` and `scoped_log!` only takes a
                 // bare ident. Debug-only log; revisit if scopes become path-able.
@@ -1084,7 +1080,6 @@ pub fn parse_json(
     use bun_ast::StoreResetGuard as DataStoreScope;
     use std::sync::Arc;
 
-    // TODO(port): narrow error set
     let json_src = bun_ast::Source::init_path_string("sourcemap.json", source);
     let mut log = bun_ast::Log::init();
     // `defer log.deinit()` → Drop
@@ -1140,7 +1135,7 @@ pub fn parse_json(
 
     let source_only = matches!(hint, ParseUrlResultHint::SourceOnly(_));
 
-    // PORT NOTE: reshaped for borrowck — Zig used a counted index `i` with
+    // reshaped for borrowck — Zig used a counted index `i` with
     // errdefer freeing the prefix; Rust `Vec<Box<[u8]>>` drops automatically.
     let source_paths_slice: Option<Vec<Box<[u8]>>> = if !source_only {
         let mut v: Vec<Box<[u8]>> = Vec::with_capacity(sources_content.items.len_u32() as usize);
@@ -1212,8 +1207,10 @@ pub fn parse_json(
 
         let mut psm = map_data;
         psm.external_source_names = source_paths_slice.unwrap();
-        // TODO(port): ParsedSourceMap was ThreadSafeRefCount in Zig; ported as `Arc`.
-        // Confirm whether an intrusive Arc is required for FFI.
+        // ParsedSourceMap is `Arc`-managed in the Rust port; the embedded
+        // `ref_count` field is layout parity only and FFI ref/deref routes
+        // through `Arc::{increment,decrement}_strong_count` (see
+        // `ParsedSourceMap::ref_`).
         Some(Arc::new(psm))
     } else {
         None
@@ -1278,7 +1275,6 @@ pub fn append_source_map_chunk<'a>(
     start_state_: SourceMapState,
     source_map_: &'a [u8],
 ) -> Result<(), bun_core::Error> {
-    // TODO(port): narrow error set
     let mut prev_end_state = prev_end_state_;
     let mut start_state = start_state_;
     // Handle line breaks in between this mapping and the previous one

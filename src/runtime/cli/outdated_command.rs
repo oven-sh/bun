@@ -90,7 +90,7 @@ impl OutdatedCommand {
         original_cwd: &[u8],
         manager: &mut PackageManager,
     ) -> Result<(), bun_core::Error> {
-        // PORT NOTE: reshaped for borrowck — Zig calls
+        // Reshaped for borrowck — Zig calls
         // `manager.lockfile.loadFromCwd(manager, alloc, manager.log, true)` which
         // aliases `*PackageManager` with its `*Lockfile` field. Project disjoint
         // raw pointers from the singleton first; `load_from_cwd` only reads
@@ -106,7 +106,7 @@ impl OutdatedCommand {
         // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
         let log = unsafe { &mut *log_ptr };
         match lockfile.load_from_cwd::<true>(
-            // SAFETY: see PORT NOTE above — `load_from_cwd` accesses `manager`
+            // SAFETY: see comment above — `load_from_cwd` accesses `manager`
             // fields disjoint from `lockfile` (Zig invariant).
             Some(unsafe { &mut *pm_ptr }),
             log,
@@ -148,7 +148,7 @@ impl OutdatedCommand {
                 Global::crash();
             }
             LoadResult::Ok(_) => {
-                // PORT NOTE: Zig reassigns `manager.lockfile = ok.lockfile`
+                // Zig reassigns `manager.lockfile = ok.lockfile`
                 // (pointer field). `load_from_cwd(&mut self, ..)` populates the
                 // lockfile in place, so the `ok.lockfile: &mut Lockfile` reborrow
                 // is the same storage and no reassignment is needed.
@@ -454,7 +454,7 @@ impl OutdatedCommand {
         let mut max_workspace: usize = 0;
         let mut has_filtered_versions: bool = false;
 
-        // PORT NOTE: reshaped for borrowck — Zig threads `*PackageManager`
+        // Reshaped for borrowck — Zig threads `*PackageManager`
         // into `manifests.byNameAllowExpired`, freely aliasing the receiver.
         // Hoist the four scalars that path reads into a by-value
         // `DiskCacheCtx` so the loop body holds only disjoint field borrows

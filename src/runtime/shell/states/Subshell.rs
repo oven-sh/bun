@@ -92,8 +92,11 @@ impl Subshell {
                 };
                 let script_node: *const ast::Script = &raw const node.get().script;
                 interp.as_subshell_mut(this).state = SubshellState::Exec;
-                // TODO(port): apply `(*node).redirect` / `redirect_flags`
-                // to `io` once IOWriter redirect open is wired.
+                // `node.redirect` is always `None` here: the parser rejects
+                // subshells with redirections ("Subshells with redirections
+                // are currently not supported", shell_parser/parse.rs), same
+                // as the Zig parser. The Zig interpreter's dead
+                // `expanding_redirect` machinery is intentionally not ported.
                 let script = Script::init(interp, shell, script_node, this, io);
                 Script::start(interp, script)
             }

@@ -32,14 +32,15 @@ fn glob_ignore_fn(val: &[u8]) -> bool {
     false
 }
 
-// PORT NOTE: Zig `glob.GlobWalker(globIgnoreFn, glob.walk.DirEntryAccessor, false)` is a
+// Note: Zig `glob.GlobWalker(globIgnoreFn, glob.walk.DirEntryAccessor, false)` is a
 // comptime type-generator taking (ignore_fn, Accessor type, sentinel: bool). In Rust the
 // ignore filter is a runtime parameter on `init_with_cwd`, and `DirEntryAccessor` lives in
 // `bun_resolver` (it depends on the resolver's DirEntry cache).
 type GlobWalker = glob::GlobWalker<bun_resolver::DirEntryAccessor, false>;
-// TODO(port): self-referential — Iterator borrows the GlobWalker stored alongside it in
-// `PackageFilterIterator`. Forced to `'static` here; see `init_walker` for the unsafe
-// lifetime erasure. TODO(refactor): Pin<Box<Self>> or fold walker+iter into one type.
+// The Iterator borrows the GlobWalker owned by `PackageFilterIterator`. The walker is
+// heap-allocated (`*mut GlobWalker` from `Box::into_raw`) so its address is stable even if
+// the `PackageFilterIterator` itself moves; the borrow is erased to `'static` because the
+// allocation lives until `deinit_walker` drops the iterator first, then frees the walker.
 type GlobWalkerIterator = glob::walk::Iterator<'static, bun_resolver::DirEntryAccessor, false>;
 
 pub(crate) fn get_candidate_package_patterns<'a>(
@@ -48,14 +49,13 @@ pub(crate) fn get_candidate_package_patterns<'a>(
     workdir_: &[u8],
     root_buf: &'a mut PathBuffer,
 ) -> Result<&'a [u8], bun_core::Error> {
-    // TODO(port): narrow error set
     bun_ast::expr::data::Store::create();
     bun_ast::stmt::data::Store::create();
     let _store_guard = bun_ast::StoreResetGuard::new();
 
     let mut workdir = workdir_;
 
-    // PORT NOTE: reshaped Zig `while (true) : (workdir = dirname(workdir) orelse break)` as a
+    // Note: reshaped Zig `while (true) : (workdir = dirname(workdir) orelse break)` as a
     // labeled loop with an inner labeled block; `continue` → `break 'body`, `break` → `break 'walk`.
     'walk: loop {
         'body: {
@@ -70,7 +70,7 @@ pub(crate) fn get_candidate_package_patterns<'a>(
             log.errors = 0;
             log.warnings = 0;
 
-            // PORT NOTE: `bun.sys.File.toSource` was MOVE_DOWN'd to `bun_ast::to_source`
+            // Note: `bun.sys.File.toSource` was MOVE_DOWN'd to `bun_ast::to_source`
             // (T1 cannot name T2 — see src/sys/File.rs:446).
             let json_source = match bun_ast::to_source(json_path, Default::default()) {
                 Err(err) => match err.get_errno() {
@@ -196,7 +196,6 @@ impl FilterSet {
         filters: &[F],
         cwd_: &[u8],
     ) -> Result<FilterSet, bun_core::Error> {
-        // TODO(port): narrow error set
         let cwd = cwd_;
 
         let mut buf = PathBuffer::uninit();
@@ -267,13 +266,15 @@ impl FilterSet {
 
 pub(crate) struct PackageFilterIterator {
     // `patterns` and `root_dir` borrow from the caller (Zig: `[]const u8`).
-    // Callers keep them alive for the iterator's lifetime — `RawSlice`
-    // invariant. TODO(refactor): thread a `<'a>` lifetime on the struct instead.
+    // Callers keep them alive for the iterator's lifetime — `RawSlice` invariant.
     patterns: bun_ptr::RawSlice<Box<[u8]>>,
     pattern_idx: usize,
     root_dir: bun_ptr::RawSlice<u8>,
 
-    walker: MaybeUninit<GlobWalker>,
+    // Heap-allocated via `Box::into_raw` so the `iter` borrow stays valid if `self` moves.
+    // Null iff `valid == false` (`init_walker` tears down on failure to keep this).
+    // Owned by `self`; freed in `deinit_walker`.
+    walker: *mut GlobWalker,
     iter: MaybeUninit<GlobWalkerIterator>,
     valid: bool,
     // `std.mem.Allocator param` — deleted (non-AST crate).
@@ -284,20 +285,18 @@ impl PackageFilterIterator {
         patterns: &[Box<[u8]>],
         root_dir: &[u8],
     ) -> Result<PackageFilterIterator, bun_core::Error> {
-        // TODO(port): narrow error set (Zig signature was `!PackageFilterIterator` but body is infallible)
         Ok(PackageFilterIterator {
             // Caller keeps `patterns`/`root_dir` alive for the iterator's lifetime — `RawSlice` invariant.
             patterns: bun_ptr::RawSlice::new(patterns),
             pattern_idx: 0,
             root_dir: bun_ptr::RawSlice::new(root_dir),
-            walker: MaybeUninit::uninit(),
+            walker: core::ptr::null_mut(),
             iter: MaybeUninit::uninit(),
             valid: false,
         })
     }
 
     fn walker_next(&mut self) -> Result<Option<glob::walk::MatchedPath>, bun_core::Error> {
-        // TODO(port): narrow error set
         loop {
             // SAFETY: `valid == true` (caller invariant) so `iter` is initialized.
             let iter = unsafe { self.iter.assume_init_mut() };
@@ -314,7 +313,6 @@ impl PackageFilterIterator {
     }
 
     fn init_walker(&mut self) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // pattern_idx < patterns.len() checked by caller.
         let pattern: &[u8] = &self.patterns.slice()[self.pattern_idx];
         // PERF(port): Zig created an `ArenaAllocator` here and handed it to the walker (which takes
@@ -331,30 +329,38 @@ impl PackageFilterIterator {
             true,
             Some(glob_ignore_fn),
         )??;
-        self.walker.write(walker);
-        // TODO(port): self-referential — `iter.walker` borrows `self.walker`. This is unsound
-        // if `PackageFilterIterator` moves after `init_walker`. TODO(refactor): Pin<Box<Self>> or
-        // fold walker+iter into a single bun_glob type. Erase the lifetime to `'static` for now.
-        // SAFETY: `init_with_cwd` just initialized `self.walker` above; lifetime erased per TODO.
-        let walker_ref =
-            unsafe { &mut *std::ptr::from_mut::<GlobWalker>(self.walker.assume_init_mut()) };
-        self.iter.write(glob::walk::Iterator::new(walker_ref));
+        // Heap-allocate the walker so its address is stable even if `self` moves between
+        // `init_walker` and the iterator's last use. `iter` holds a `'static`-erased `&mut`
+        // into this allocation; `deinit_walker` drops `iter` before freeing the walker.
+        let walker_ptr = Box::into_raw(Box::new(walker));
+        self.walker = walker_ptr;
+        // SAFETY: `walker_ptr` is a live, uniquely-owned heap allocation that outlives `iter`
+        // (freed only in `deinit_walker`, after `iter` is dropped).
+        self.iter
+            .write(glob::walk::Iterator::new(unsafe { &mut *walker_ptr }));
         // SAFETY: just wrote `iter`.
-        unsafe { self.iter.assume_init_mut() }.init()??;
+        let inited: Result<(), bun_core::Error> =
+            (|| Ok(unsafe { self.iter.assume_init_mut() }.init()??))();
+        if let Err(err) = inited {
+            // Tear down `iter` and the walker allocation so `walker` is null again
+            // whenever `valid == false` (the field invariant).
+            self.deinit_walker();
+            return Err(err);
+        }
         Ok(())
     }
 
     fn deinit_walker(&mut self) {
-        // SAFETY: `valid == true` (caller invariant) so both are initialized.
-        // Drop iter first (it borrows walker).
+        // SAFETY: `iter` and `walker` are initialized (caller invariant).
+        // Drop iter first (it borrows the walker allocation), then free the walker.
         unsafe {
             self.iter.assume_init_drop();
-            self.walker.assume_init_drop();
+            drop(Box::from_raw(self.walker));
         }
+        self.walker = core::ptr::null_mut();
     }
 
     pub(crate) fn next(&mut self) -> Result<Option<glob::walk::MatchedPath>, bun_core::Error> {
-        // TODO(port): narrow error set
         loop {
             if !self.valid {
                 // Raw slice pointer `len()` reads only metadata — no deref/autoref needed.
@@ -366,7 +372,7 @@ impl PackageFilterIterator {
                     return Ok(None);
                 }
             }
-            // PORT NOTE: reshaped for borrowck — Zig captured `path` from `walkerNext` then
+            // Note: reshaped for borrowck — Zig captured `path` from `walkerNext` then
             // returned it; here we must end the `&mut self` borrow before re-borrowing on the
             // else branch. We rely on NLL to make this work; if it doesn't, restructure.
             if let Some(path) = self.walker_next()? {

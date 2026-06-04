@@ -63,7 +63,7 @@ unsafe extern "C" {
     fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: *mut BunString);
 }
 
-// PORT NOTE: receivers are `&self` (not `&mut self`) because `CppWebSocket` is
+// Receivers are `&self` (not `&mut self`) because `CppWebSocket` is
 // an opaque C++ handle with no Rust-visible state; mutation happens entirely on
 // the C++ side. Callers hold `NonNull<CppWebSocket>` and dispatch via shared
 // borrows (often while `&mut WebSocket<SSL>` is also live), so `&mut self`
@@ -176,7 +176,6 @@ impl CppWebSocket {
 }
 
 impl CppWebSocket {
-    // PORT NOTE: `ref` is a Rust keyword; using raw identifier to match Zig fn name.
     pub(crate) fn r#ref(&self) {
         bun_jsc::mark_binding!();
         WebSocket__incrementPendingActivity(self);

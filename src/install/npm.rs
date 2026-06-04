@@ -4,7 +4,7 @@ use std::io::Write as _;
 use crate::bun_json as JSON;
 use crate::bun_schema::api;
 use bun_alloc::AllocError;
-use bun_collections::{HashMap, StringSet};
+use bun_collections::{HashMap, IdentityContext, StringSet};
 use bun_core::{Error, Global, Output, err, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
@@ -342,7 +342,7 @@ pub mod registry {
                 }
             }
 
-            // PORT NOTE: Zig's `URL.parse(registry.url)` borrows the input
+            // Zig's `URL.parse(registry.url)` borrows the input
             // `[]const u8`; here `url` borrows the owned `registry_url` buffer
             // for the duration of parsing. The final href is moved into
             // `Scope.url: OwnedURL` (owned `Box<[u8]>`).
@@ -453,7 +453,7 @@ pub mod registry {
                             }
                         }
 
-                        // PORT NOTE: reshaped for borrowck — Zig's `defer { url.pathname = pathname; url.path = pathname; }`
+                        // reshaped for borrowck — Zig's `defer { url.pathname = pathname; url.path = pathname; }`
                         // is applied at every `break 'outer` above and once more here at fallthrough.
                         url.pathname = pathname;
                         url.path = pathname;
@@ -494,7 +494,7 @@ pub mod registry {
             let final_href: Box<[u8]> = if needs_normalize {
                 url.href_without_auth()
             } else {
-                // PORT NOTE: reshaped for borrowck — `url` (borrowing
+                // reshaped for borrowck — `url` (borrowing
                 // `registry_url`) is dead on this branch (every path that
                 // mutated `url.pathname` also set `needs_normalize = true`).
                 registry_url
@@ -513,8 +513,8 @@ pub mod registry {
         }
     }
 
-    // TODO(port): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
-    pub type Map = HashMap<u64, Scope>;
+    // Keys are pre-hashed (`Scope::hash`), so don't re-hash them.
+    pub type Map = HashMap<u64, Scope, bun_collections::IdentityContext<u64>>;
 
     pub(crate) enum PackageVersionResponse {
         Cached(PackageManifest),
@@ -532,7 +532,6 @@ pub mod registry {
         package_manager: &mut PackageManager,
         is_extended_manifest: bool,
     ) -> Result<PackageVersionResponse, Error> {
-        // TODO(port): narrow error set
         match response.status_code {
             400 => return Err(err!("BadRequest")),
             429 => return Err(err!("TooManyRequests")),
@@ -914,9 +913,10 @@ pub mod package_manifest {
         const HEADER_BYTES: &'static str =
             concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
 
-        // TODO(port): `sizes` was a comptime block iterating PackageManifest's fields by alignment.
-        // Rust cannot reflect struct fields. Hardcode the field order produced by the Zig sort
-        // (descending alignment); re-verify against the Zig output if the layout changes.
+        // Zig's `sizes` was a comptime block iterating PackageManifest's fields by
+        // alignment; Rust cannot reflect struct fields, so this hardcodes the field
+        // order produced by the Zig sort (descending alignment). Re-verify against
+        // the Zig output if the layout changes.
         pub const SIZES_FIELDS: &'static [&'static str] = &[
             "pkg",
             "string_buf",
@@ -1000,7 +1000,7 @@ pub mod package_manifest {
 
             pos += 128 / 8;
 
-            // TODO(port): inline-for over SIZES_FIELDS — unrolled by hand. Verify field
+            // Zig inline-for over SIZES_FIELDS — unrolled by hand. Verify field
             // order matches Zig comptime sort (descending alignment) if the layout changes.
             {
                 // "pkg"
@@ -1235,19 +1235,22 @@ pub mod package_manifest {
                 Batch as PoolBatch, Node as PoolNode, Task as PoolTask,
             };
 
-            pub(crate) struct SaveTask<'a> {
+            pub(crate) struct SaveTask {
                 manifest: PackageManifest,
-                scope: &'a registry::Scope,
+                // Owned: the thread-pool task can outlive the caller's borrow
+                // of the Registry.Scope (Zig assumed the Scope was effectively
+                // immortal; owning a clone removes that assumption).
+                scope: registry::Scope,
                 tmpdir: Fd,
                 cache_dir: Fd,
 
                 task: PoolTask,
             }
 
-            bun_threading::intrusive_work_task!(['a] SaveTask<'a>, task);
+            bun_threading::intrusive_work_task!(SaveTask, task);
 
-            impl<'a> SaveTask<'a> {
-                pub(crate) fn new(init: SaveTask<'a>) -> Box<SaveTask<'a>> {
+            impl SaveTask {
+                pub(crate) fn new(init: SaveTask) -> Box<SaveTask> {
                     Box::new(init)
                 }
 
@@ -1269,7 +1272,7 @@ pub mod package_manifest {
 
                     if let Err(err) = Serializer::save(
                         &save_task.manifest,
-                        save_task.scope,
+                        &save_task.scope,
                         save_task.tmpdir,
                         save_task.cache_dir,
                     ) {
@@ -1285,11 +1288,9 @@ pub mod package_manifest {
                 }
             }
 
-            // TODO(port): lifetime — `scope` is borrowed across a thread boundary; Zig assumed
-            // the Registry.Scope outlives the threadpool task. Prove or change to owned.
             let task = bun_core::heap::into_raw(SaveTask::new(SaveTask {
                 manifest: this.clone(),
-                scope,
+                scope: scope.clone(),
                 tmpdir,
                 cache_dir,
                 task: PoolTask {
@@ -1398,7 +1399,6 @@ pub mod package_manifest {
                 return Ok(None);
             }
 
-            // TODO(port): manifest borrows `bytes` in Zig; here read_all copies into Box<[T]>.
             Ok(Some(manifest))
         }
 
@@ -1424,7 +1424,8 @@ pub mod package_manifest {
                 return Ok(None);
             }
 
-            // TODO(port): inline-for over SIZES_FIELDS — unrolled by hand
+            // Zig inline-for over SIZES_FIELDS — unrolled by hand; keep the order
+            // in sync with `Serializer::write` and SIZES_FIELDS.
             {
                 // std.mem.alignForward(usize, pos, alignOf(NpmPackage))
                 pkg_stream.pos = pkg_stream
@@ -1942,8 +1943,8 @@ impl PackageManifest {
     }
 }
 
-// TODO(port): Zig used `IdentityContext(u64)` hasher; std HashMap is fine for now.
-type ExternalStringMapDeduper = HashMap<u64, ExternalStringList>;
+// Keys are pre-hashed string hashes, so don't re-hash them.
+type ExternalStringMapDeduper = HashMap<u64, ExternalStringList, IdentityContext<u64>>;
 
 use bun_install_types::DependencyGroup;
 /// Abbreviated registry metadata never carries `devDependencies` — keep this 3-wide intentionally.
@@ -1965,19 +1966,17 @@ impl PackageManifest {
         public_max_age: u32,
         is_extended_manifest: bool,
     ) -> Result<Option<PackageManifest>, Error> {
-        // TODO(port): narrow error set
         // `bun_ast::Source::init_path_string` accepts borrowed `&[u8]` via
         // `IntoStr`; the Source only lives for the duration of this function,
         // so pass the caller's buffers through directly without manufacturing
         // `'static` references here (PORTING.md §Forbidden lifetime extension).
         let source = bun_ast::Source::init_path_string(expected_name, json_buffer);
         initialize_store();
-        // TODO(port): bun.ast.Stmt.Data.Store.memory_allocator.?.pop() — Zig
-        // pushed/popped the AST arena around the parse so the JSON AST is
-        // bulk-freed on return. `initialize_mini_store` already does the push;
-        // the pop is handled by resetting on the next call. Wire an explicit
-        // RAII guard once `ASTMemoryAllocator::pop` is exposed.
-        // PERF(port): was arena bulk-free — profile if hot.
+        // Zig deferred `Store.memory_allocator.?.pop()` so the JSON AST arena was
+        // bulk-freed on return. The Rust `initialize_mini_store` deliberately keeps
+        // the allocator pushed across calls (the AstAlloc state stays installed for
+        // the re-arm) and bulk-frees via `reset_retain_with_limit` on the next
+        // call — see `initialize_mini_store` in lib.rs for why.
         let bump = bun_alloc::Arena::new();
         let json = match JSON::parse_utf8(&source, log, &bump) {
             Ok(j) => j,
@@ -2001,8 +2000,10 @@ impl PackageManifest {
             }
         }
 
+        // Zig used `bun.serializable()` to zero padding for cache determinism; the
+        // serialized `NpmPackage` has explicit `_padding_*` fields zeroed by
+        // `Default`, so plain `default()` is already deterministic here.
         let mut result: PackageManifest = PackageManifest::default();
-        // TODO(port): bun.serializable() — zero-init for serialization determinism
 
         let mut all_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
         let mut version_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
@@ -2348,10 +2349,10 @@ impl PackageManifest {
             vec![PackageNameHash::default(); bundled_deps_count].into_boxed_slice();
         let mut bundled_deps_offset: usize = 0;
 
-        // PORT NOTE: Zig manually @memset zeroed the buffers; Default::default() above achieves
+        // Zig manually @memset zeroed the buffers; Default::default() above achieves
         // the same determinism for these POD types.
 
-        // PORT NOTE: reshaped for borrowck — Zig used overlapping mutable subslices into the
+        // reshaped for borrowck — Zig used overlapping mutable subslices into the
         // same allocation. Rust uses index cursors instead and re-slices on demand.
         let mut versioned_package_releases_start: usize = 0;
         let all_versioned_package_releases_range = 0..release_versions_len;
@@ -2376,7 +2377,7 @@ impl PackageManifest {
 
         string_builder.allocate()?;
 
-        // PORT NOTE: Zig zeroed the freshly allocated buffer for determinism;
+        // Zig zeroed the freshly allocated buffer for determinism;
         // `Builder::allocate` already produces a zeroed `Box<[u8]>`.
         //
         // Zig kept a single `string_buf` slice over the builder's backing
@@ -2414,7 +2415,9 @@ impl PackageManifest {
                 bin: Bin::init(),
                 ..PackageVersion::default()
             };
-            // TODO(port): bun.serializable() on empty_version
+            // Zig: `bun.serializable(PackageVersion{...})` — PackageVersion's
+            // explicit `_padding_*` fields are zeroed by `Default`, so no
+            // separate padding scrub is needed.
 
             for prop in versions {
                 let Some(version_name) = prop
@@ -2568,7 +2571,7 @@ impl PackageManifest {
                                         };
                                         let mut group_i: u32 = 0;
 
-                                        // PORT NOTE: Zig wrote through a raw `*[len]ExternalString`
+                                        // Zig wrote through a raw `*[len]ExternalString`
                                         // sub-pointer. The boxed slice is fully initialised
                                         // (`vec![Default; n].into_boxed_slice()` in the counting
                                         // pass) and `ExternalString: Copy`, so plain absolute
@@ -2775,7 +2778,7 @@ impl PackageManifest {
                     // iteration's slice of `bundled_deps_buf`, so an
                     // unconditional empty pass would clobber the value the
                     // `dependencies` iteration just produced.
-                    // PORT NOTE: hoist `versioned_deps` so the borrowed
+                    // hoist `versioned_deps` so the borrowed
                     // `obj.properties.slice()` outlives the labelled block.
                     let versioned_deps = prop
                         .value
@@ -2806,7 +2809,7 @@ impl PackageManifest {
                             }
                         };
                     if items.len() > 0 || has_meta_only_peers {
-                        // PORT NOTE: reshaped for borrowck — index into all_extern_strings / version_extern_strings
+                        // reshaped for borrowck — index into all_extern_strings / version_extern_strings
                         let names_base = dependency_names_cursor;
                         let values_base = dependency_values_cursor;
 
@@ -3101,10 +3104,84 @@ impl PackageManifest {
                             _ => unreachable!("non-value Expr from JSON parser"),
                         }
 
-                        // TODO(port): debug-assertions block (Zig lines 2478-2522) elided —
-                        // it re-reads `this_names`/`this_versions` via `mut()` after dedupe.
-                        // Re-add with cursor-based slicing if needed.
-                        let _ = (this_names, this_versions);
+                        // Zig `allow_assert` block: the dedupe must hand back
+                        // lists resolving to identical contents. The string
+                        // pool dedupes equal strings to equal offsets, so
+                        // field equality holds even when `name_list` points
+                        // at an earlier entry's region.
+                        #[cfg(debug_assertions)]
+                        {
+                            let dependencies_list = map;
+                            debug_assert!(
+                                (dependencies_list.name.off as usize) < all_extern_strings.len()
+                            );
+                            debug_assert!(
+                                (dependencies_list.value.off as usize) < all_extern_strings.len()
+                            );
+                            debug_assert!(
+                                dependencies_list.name.off as usize
+                                    + (dependencies_list.name.len as usize)
+                                    < all_extern_strings.len()
+                            );
+                            debug_assert!(
+                                dependencies_list.value.off as usize
+                                    + (dependencies_list.value.len as usize)
+                                    < all_extern_strings.len()
+                            );
+
+                            let name_dependencies =
+                                dependencies_list.name.get(&all_extern_strings);
+                            let value_dependencies =
+                                dependencies_list.value.get(&version_extern_strings);
+
+                            // std.meta.eql — element-wise field equality.
+                            debug_assert!(name_dependencies.len() == this_names.len());
+                            debug_assert!(value_dependencies.len() == this_versions.len());
+                            for (a, b) in name_dependencies.iter().zip(this_names.iter()) {
+                                debug_assert!(a.hash == b.hash && a.value == b.value);
+                            }
+                            for (a, b) in value_dependencies.iter().zip(this_versions.iter()) {
+                                debug_assert!(a.hash == b.hash && a.value == b.value);
+                            }
+
+                            // Per-element string-content checks against the
+                            // source JSON. Skipped (as in Zig) when meta-only
+                            // optional peers may have been synthesised, since
+                            // `items[j]` correspondence no longer holds then.
+                            if !is_peer || optional_peer_dep_names.is_empty() {
+                                let string_buf: &[u8] = string_builder.allocated_slice();
+                                for (j, dep_name) in name_dependencies.iter().enumerate() {
+                                    debug_assert!(
+                                        dep_name.value.slice(string_buf)
+                                            == this_names[j].value.slice(string_buf)
+                                    );
+                                    debug_assert!(
+                                        dep_name.value.slice(string_buf)
+                                            == items[j]
+                                                .key
+                                                .as_ref()
+                                                .expect("infallible: prop has key")
+                                                .as_string(&bump)
+                                                .expect("dependency key must be a string")
+                                    );
+                                }
+                                for (j, dep_version) in value_dependencies.iter().enumerate() {
+                                    debug_assert!(
+                                        dep_version.value.slice(string_buf)
+                                            == this_versions[j].value.slice(string_buf)
+                                    );
+                                    debug_assert!(
+                                        dep_version.value.slice(string_buf)
+                                            == items[j]
+                                                .value
+                                                .as_ref()
+                                                .expect("infallible: prop has value")
+                                                .as_string(&bump)
+                                                .expect("dependency value must be a string")
+                                    );
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -3133,7 +3210,7 @@ impl PackageManifest {
 
             extern_strings_consumed = dependency_names_cursor;
             // version_extern_strings trimmed below
-            // PORT NOTE: Zig: version_extern_strings = version_extern_strings[0 .. len - dependency_values.len]
+            // Zig: version_extern_strings = version_extern_strings[0 .. len - dependency_values.len]
         }
         let version_extern_strings_len = dependency_values_cursor;
 
@@ -3192,8 +3269,23 @@ impl PackageManifest {
                     ),
                 };
 
-                if cfg!(debug_assertions) {
-                    // TODO(port): std.meta.eql sanity checks elided
+                #[cfg(debug_assertions)]
+                {
+                    // Zig: std.meta.eql round-trip of the just-initialized
+                    // slices. `init` is a pointer-offset round-trip, so slice
+                    // identity (ptr + len) implies element equality.
+                    let tags_rt = result.pkg.dist_tags.tags.get(&all_extern_strings);
+                    debug_assert!(core::ptr::eq(
+                        tags_rt.as_ptr(),
+                        all_extern_strings[extern_strings_slice_start..].as_ptr()
+                    ));
+                    debug_assert!(tags_rt.len() == dist_tag_i);
+                    let versions_rt = result.pkg.dist_tags.versions.get(&all_semver_versions);
+                    debug_assert!(core::ptr::eq(
+                        versions_rt.as_ptr(),
+                        all_semver_versions[dist_tag_versions_start..].as_ptr()
+                    ));
+                    debug_assert!(versions_rt.len() == dist_tag_i);
                 }
 
                 extern_strings_cursor += dist_tag_i;
@@ -3307,7 +3399,7 @@ impl PackageManifest {
                             string_bytes,
                         )
                     });
-                    // PORT NOTE: Zig sorted indices against semver_versions_ (which is unmutated
+                    // Zig sorted indices against semver_versions_ (which is unmutated
                     // until after sort) — equivalent to sorting against cloned_versions.
 
                     debug_assert_eq!(indices.len(), versioned_packages_.len());
@@ -3363,7 +3455,7 @@ impl PackageManifest {
             }
 
             // all_extern_strings = all_extern_strings[0 .. len - extern_strings_remaining]
-            // PORT NOTE: trim by truncating the boxed slice via Vec round-trip
+            // trim by truncating the boxed slice via Vec round-trip
             let new_len = all_extern_strings.len() - extern_strings_remaining;
             let mut v = core::mem::take(&mut all_extern_strings).into_vec();
             v.truncate(new_len);
@@ -3394,9 +3486,6 @@ impl PackageManifest {
         result.pkg.has_extended_manifest = is_extended_manifest;
 
         if let Some(buf) = string_builder.ptr.take() {
-            // TODO(port): string_builder owns this allocation; copy out the
-            // written prefix. Add a `Builder::into_owned()` that yields
-            // `Box<[u8]>` without the truncate copy.
             let mut v = buf.into_vec();
             v.truncate(string_builder.len);
             result.string_buf = v.into_boxed_slice();

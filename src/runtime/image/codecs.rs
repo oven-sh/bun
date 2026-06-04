@@ -56,7 +56,6 @@ pub enum Backend {
     System = 0,
     Bun = 1,
 }
-// PORT NOTE: `Backend.Map = bun.ComptimeEnumMap(Backend)` → phf map keyed by lowercase variant name.
 pub(crate) static BACKEND_MAP: phf::Map<&'static [u8], Backend> = phf::phf_map! {
     b"system" => Backend::System,
     b"bun" => Backend::Bun,
@@ -72,8 +71,8 @@ impl bun_jsc::FromJsEnum for Backend {
     }
 }
 
-// PORT NOTE: Zig `pub var backend` is read from WorkPool threads + written from JS;
-// "torn read of a 1-byte enum is fine" → relaxed atomic is the safe-Rust spelling.
+// Read from WorkPool threads + written from JS; a torn read of a 1-byte enum
+// is harmless, so a relaxed atomic is sufficient.
 pub(crate) static BACKEND: core::sync::atomic::AtomicU8 =
     core::sync::atomic::AtomicU8::new(if HAS_SYSTEM_BACKEND {
         Backend::System as u8
@@ -222,7 +221,6 @@ pub struct Decoded {
     /// colours. See issue #30197.
     pub icc_profile: Option<Vec<u8>>,
 }
-// PORT NOTE: `deinit` only freed owned fields → Drop is automatic via Vec/Option<Vec>.
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, thiserror::Error, strum::IntoStaticStr)]
 pub enum Error {
@@ -316,8 +314,8 @@ pub fn decode(bytes: &[u8], max_pixels: u64, hint: DecodeHint) -> Result<Decoded
     }
 }
 
-// PORT NOTE: Zig returned `(Error || error{BackendUnavailable})!Decoded`;
-// reshaped to `Result<Option<Decoded>, Error>` where `Ok(None)` = BackendUnavailable.
+// Zig returned `(Error || error{BackendUnavailable})!Decoded`; reshaped to
+// `Result<Option<Decoded>, Error>` where `Ok(None)` = BackendUnavailable.
 fn decode_via_system(_bytes: &[u8], _max_pixels: u64) -> Result<Option<Decoded>, Error> {
     #[cfg(any(target_os = "macos", windows))]
     if use_system() {
@@ -453,15 +451,16 @@ pub struct EncodeOptions {
     /// pipeline forwards this from the decode step so a non-sRGB source
     /// (P3, Adobe RGB, XYB/Jpegli) preserves its colour meaning through
     /// re-encode. Borrowed; the caller retains ownership.
-    // TODO(port): lifetime — borrowed from caller for the duration of `encode()`;
-    // raw ptr per rule "never put a lifetime param on a struct".
+    // SAFETY invariant: borrowed from the caller and only valid for the
+    // duration of `encode()`; raw ptr instead of a lifetime param per the
+    // repo rule against lifetime params on structs.
     pub icc_profile: Option<NonNull<[u8]>>,
 }
 
 impl Default for EncodeOptions {
     fn default() -> Self {
         Self {
-            format: Format::Png, // TODO(port): Zig has no default for `format`; pick at construction
+            format: Format::Png, // arbitrary — Zig has no default; callers set it at construction
             quality: 80,
             lossless: false,
             compression_level: -1,
@@ -503,9 +502,9 @@ impl Drop for Encoded {
 
 /// Adapt a 1-arg C free (`tj3Free`, `WebPFree`, `std.c.free`) to the
 /// 2-arg JSC deallocator signature.
-// PORT NOTE: Zig `wrap(comptime f: anytype)` generated a distinct static fn per
-// call site. Rust cannot capture a runtime fn pointer in a non-capturing
-// `extern "C" fn`, so this is a macro that mints a static trampoline per call.
+// Rust cannot capture a runtime fn pointer in a non-capturing `extern "C" fn`,
+// so this is a macro that mints a static trampoline per call site (the moral
+// equivalent of Zig's `wrap(comptime f: anytype)`).
 #[macro_export]
 macro_rules! encoded_wrap_free {
     ($f:path) => {{
@@ -626,7 +625,6 @@ pub(crate) static FILTER_MAP: phf::Map<&'static [u8], Filter> = phf::phf_map! {
     b"mks2021" => Filter::Mks2021,
 };
 
-// TODO(port): move to <area>_sys
 unsafe extern "C" {
     fn bun_image_resize_scratch_size(
         src_w: i32,

@@ -7,7 +7,7 @@ use bstr::BStr;
 use bun_core::output::enable_ansi_colors_stderr;
 use bun_core::pretty_fmt;
 
-// PORT NOTE: `Header::clone` / `Request::clone` / `Response::clone` need the
+// `Header::clone` / `Request::clone` / `Response::clone` need the
 // unbound-lifetime `append_raw` so they can interleave appends and stash the
 // raw ptr/len pairs — the Zig original returns aliasing `[]const u8` with no
 // lifetime tracking. The buffer is heap-owned; callers keep the builder (or
@@ -163,7 +163,7 @@ impl Header {
     pub fn clone(&self, builder: &mut StringBuilder) -> Header {
         // SAFETY: returned slices alias `builder`'s heap buffer; caller of the
         // outer `clone` keeps the builder (or its moved-out buffer) alive for
-        // the lifetime of the cloned `Header` (see PORT NOTE on `StringBuilder`).
+        // the lifetime of the cloned `Header` (see the comment on `StringBuilder`).
         let name = unsafe { builder.append_raw(self.name()) };
         // SAFETY: same buffer-lifetime invariant as `name` above.
         let value = unsafe { builder.append_raw(self.value()) };
@@ -244,9 +244,8 @@ impl fmt::Display for HeaderCurlFormatter<'_> {
 #[derive(Clone, Copy, Default)]
 pub struct HeaderList<'a> {
     pub list: &'a [Header],
-    // TODO(port): Zig field is `[]Header` (mutable slice) but only ever read
-    // through `*const List`; using `&'a [Header]` here. Revisit if a caller
-    // mutates through it.
+    // Zig's field was `[]Header` (mutable slice) but it is only ever read
+    // through `*const List`, so a shared `&'a [Header]` is sufficient here.
 }
 
 impl<'a> HeaderList<'a> {

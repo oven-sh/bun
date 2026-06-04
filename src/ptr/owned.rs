@@ -1,6 +1,6 @@
 //! Owned pointer abstractions.
 //!
-//! PORT NOTE: The Zig `Owned(comptime Pointer: type)` is a single type-returning function that
+//! The Zig `Owned(comptime Pointer: type)` is a single type-returning function that
 //! dispatches on `@typeInfo(Pointer)` (single-item vs slice, optional vs non-optional). Rust has
 //! no `@typeInfo`, so the four shapes become four distinct std types per the crate map:
 //!
@@ -29,21 +29,17 @@
 /// This type is an alias of `OwnedIn(Pointer, bun.DefaultAllocator)`, and thus has no overhead
 /// because `bun.DefaultAllocator` is a zero-sized type.
 ///
-/// PORT NOTE: in Rust this is `Box<T>` / `Box<[T]>` / `Option<Box<_>>`. The alias below covers
+/// In Rust this is `Box<T>` / `Box<[T]>` / `Option<Box<_>>`. The alias below covers
 /// only the `*T` (single, non-optional) case, which is the overwhelmingly common one. Slice and
-/// optional callers use `Box<[T]>` / `Option<Box<T>>` directly.
+/// optional callers use `Box<[T]>` / `Option<Box<T>>` directly (PORTING.md §Pointers).
 pub type Owned<T> = Box<T>;
-// TODO(port): Zig `Owned` accepts a *pointer type* (`*T`, `[]T`, `?*T`, `?[]T`) and branches on
-// kind via @typeInfo. Rust generics cannot inspect "is T a slice / is T optional", so a single
-// alias cannot cover all four. Audit call sites; they should already be `Box<T>` /
-// `Box<[T]>` / `Option<Box<_>>` per PORTING.md §Pointers and LIFETIMES.tsv.
 
 /// `std.mem.Allocator` param/field is deleted entirely outside AST crates. `Dynamic` collapses
 /// to `Box<T>`.
 pub type Dynamic<T> = Box<T>;
-// TODO(port): if any caller genuinely needs a runtime-chosen allocator (e.g. arena vs heap at
-// runtime), that caller is in an AST crate and should use `bumpalo::boxed::Box<'bump, T>` or a
-// bespoke enum — not this type. Audit call sites if one appears.
+// A caller that genuinely needs a runtime-chosen allocator (e.g. arena vs heap at runtime)
+// belongs in an AST crate and should use `bumpalo::boxed::Box<'bump, T>` or a bespoke enum —
+// not this type.
 
 /// An owned pointer or slice, allocated using an instance of `Allocator`.
 ///
@@ -56,10 +52,10 @@ pub type Dynamic<T> = Box<T>;
 /// If `Allocator` is a zero-sized type, the owned pointer has no overhead compared to a raw
 /// pointer.
 ///
-/// PORT NOTE: the `Allocator` type parameter is dropped — global mimalloc. See module doc.
+/// The `Allocator` type parameter is dropped — global mimalloc. See module doc.
 pub type OwnedIn<T /*, Allocator */> = Box<T>;
-// TODO(port): nightly `allocator_api` (`Box<T, A>`) would be the literal translation, but
-// PORTING.md forbids it (delete allocator params). Keeping the alias single-param.
+// Nightly `allocator_api` (`Box<T, A>`) would be the literal translation, but PORTING.md
+// forbids it (delete allocator params), so the alias stays single-param.
 
 // ──────────────────────────────────────────────────────────────────────────────────────────────
 // The block below mirrors the body of `fn OwnedIn(...) type { return struct { ... } }` so that
@@ -86,12 +82,12 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 //
 //   .single: alloc(value: Child) AllocError!Self
 //     → Box::new(value)                         (infallible — aborts on OOM, same as bun.handleOom)
-//     → Box::try_new(value)                     // TODO(port): nightly; use if AllocError must propagate
+//     → Box::try_new(value)                     // nightly-only; would apply if AllocError must propagate
 //
 //   .slice:  alloc(count: usize, elem: Child) AllocError!Self   (shallow copies of `elem`)
 //     → vec![elem; count].into_boxed_slice()    where Child: Clone
 //
-// PORT NOTE: Zig returns `AllocError!Self`; Rust `Box::new` aborts on OOM. PORTING.md says
+// Zig returns `AllocError!Self`; Rust `Box::new` aborts on OOM. PORTING.md says
 // `bun.handleOom(expr)` → `expr`, so the fallible form is not needed at most call sites.
 
 // ── allocIn ──────────────────────────────────────────────────────────────────────────────────
@@ -128,7 +124,7 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 //                  unsafe { Vec::from_raw_parts(ptr, len, cap) }.into_boxed_slice()
 //     optional:  → if data.is_null() { None } else { Some(unsafe { bun_core::heap::take(data) }) }
 //
-// PORT NOTE: the Zig doc's caveat about `bun.new` vs `bun.default_allocator.create` is the
+// The Zig doc's caveat about `bun.new` vs `bun.default_allocator.create` is the
 // typed-mimalloc-heap distinction; in Rust both paths go through the same `#[global_allocator]`,
 // so the caveat does not apply.
 
@@ -146,7 +142,7 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 // Frees the memory without calling `deinit` on the underlying data.
 //   deinitShallow(self: *Self) void
 //     → let _ = bun_core::heap::into_raw(ManuallyDrop::into_inner(/* ... */));
-//   PORT NOTE: "free the box allocation but don't drop T" is unusual in Rust. The two real uses:
+//   "Free the box allocation but don't drop T" is unusual in Rust. The two real uses:
 //     (a) T has no Drop → plain `drop(boxed)` is already shallow.
 //     (b) caller moved the payload out first → use `*boxed` to move out, then `drop(boxed)`.
 //   If a literal "dealloc without dropping" is needed:
@@ -174,7 +170,6 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 // ── PointerAndAllocator / intoRawWithAllocator ───────────────────────────────────────────────
 //   intoRawWithAllocator(self: *Self) (Pointer, Allocator) | ?(NonOptionalPointer, Allocator)
 //     → bun_core::heap::into_raw(boxed)                     (allocator dropped from tuple)
-//   // TODO(port): if any caller actually inspects the returned allocator, it needs rethinking.
 
 // ── initNull ─────────────────────────────────────────────────────────────────────────────────
 // Returns a null owned pointer (only when `Pointer` is optional).
@@ -212,7 +207,6 @@ pub type OwnedIn<T /*, Allocator */> = Box<T>;
 // Returns a borrowed version of the allocator.
 //   allocator(self: Self) MaybeAllocator
 //     → ()                                       (no allocator stored)
-//   // TODO(port): callers should be deleted along with the allocator threading.
 
 // ── getStdAllocator (private) ────────────────────────────────────────────────────────────────
 //   → deleted.

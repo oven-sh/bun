@@ -12,7 +12,6 @@ pub mod nocancel {
     use core::ffi::{c_char, c_int, c_uint, c_void};
     use libc::{iovec, off_t, pollfd, sigset_t, sockaddr, socklen_t, timespec};
 
-    // TODO(port): move to platform_sys
     unsafe extern "C" {
         #[link_name = "recvfrom$NOCANCEL"]
         pub fn recvfrom_nocancel(

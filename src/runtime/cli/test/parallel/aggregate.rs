@@ -165,7 +165,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             bun_sys::Result::Err(_) => continue,
         };
         let mut cur: Option<usize> = None; // index into by_file; raw &mut would alias across getOrPut
-        // PORT NOTE: reshaped for borrowck — store index instead of *mut FileCoverage
+        // reshaped for borrowck — store index instead of *mut FileCoverage
         for raw in data.split(|b| *b == b'\n') {
             let line = strings::trim_right(raw, b"\r");
             if line.starts_with(b"SF:") {
@@ -218,7 +218,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     }
 
     // Stable output order. Zig's `ArrayHashMap.sort` reorders entries in place;
-    // PORT NOTE: reshaped — ArrayHashMap has no in-place sort yet, so build a
+    // reshaped — ArrayHashMap has no in-place sort yet, so build a
     // permutation and iterate via `order` everywhere below.
     let mut order: Vec<usize> = (0..by_file.count()).collect();
     {
@@ -253,7 +253,8 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 (e,),
             ),
             bun_sys::Result::Ok(f) => {
-                // TODO(port): Zig used a 64KiB-buffered writer adapter; building in Vec then one write_all
+                // Zig used a 64KiB-buffered writer adapter; building the whole
+                // report in a Vec then issuing one write_all is equivalent.
                 let mut w: Vec<u8> = Vec::with_capacity(64 * 1024);
                 for &i in &order {
                     let fc = &by_file.values()[i];
@@ -327,8 +328,14 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
         let console = Output::error_writer();
         fn sep<const COLORS: bool>(c: &mut bun_core::io::Writer, n: usize) {
             let _ = c.write_all(Output::pretty_fmt::<COLORS>("<r><d>").as_ref());
-            // TODO(port): splatByteAll equivalent on writer
-            let _ = c.write_all(&vec![b'-'; n + 2]);
+            // Zig `splatByteAll`: repeat the byte without a heap allocation.
+            const DASHES: [u8; 64] = [b'-'; 64];
+            let mut left = n + 2;
+            while left > 0 {
+                let take = left.min(DASHES.len());
+                let _ = c.write_all(&DASHES[..take]);
+                left -= take;
+            }
             let _ = c.write_all(
                 Output::pretty_fmt::<COLORS>("|---------|---------|-------------------<r>\n")
                     .as_ref(),
@@ -392,7 +399,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             avg.stmts /= avg_n;
         }
         let _ = console.write_all(&body);
-        // PORT NOTE: bun_core::io::Writer doesn't impl bun_io::Write — buffer
+        // bun_core::io::Writer doesn't impl bun_io::Write — buffer
         // through a Vec then write_all once.
         let mut all_files: Vec<u8> = Vec::new();
         let _ = CoverageReportText::write_format_with_values::<ENABLE_COLORS>(

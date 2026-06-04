@@ -33,7 +33,7 @@ pub(crate) fn version_to_js(
         BunString::static_(<&'static str>::from(dep.tag).as_bytes()).to_js(global)?,
     );
 
-    // PORT NOTE: `dependency::Version` keeps `Value` as a `#[repr(C)] union`
+    // `dependency::Version` keeps `Value` as a `#[repr(C)] union`
     // (discriminant in `Version.tag`); the tag-checked accessors on
     // `DependencyVersion` (`npm()`, `git()`, …) wrap the union read.
     match dep.tag {
@@ -168,7 +168,7 @@ pub fn dependency_from_js(global: &JSGlobalObject, frame: &CallFrame) -> JsResul
     };
     let name_slice = name_value.to_slice(global)?;
 
-    // PORT NOTE: reshaped for borrowck — Zig built `name`/`alias`/`buf` as
+    // Reshaped for borrowck — Zig built `name`/`alias`/`buf` as
     // overlapping slices into a StringBuilder's single allocation. Rust's
     // `StringBuilder::append` returns `&[u8]` borrowing `&mut self`, so we
     // can't hold two appended slices at once. Instead, build into an owned

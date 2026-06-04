@@ -219,7 +219,7 @@ impl Cp {
     #[cfg(windows)]
     fn ignore_ebusy_error_if_possible(interp: &Interpreter, cmd: NodeId) -> Yield {
         loop {
-            // PORT NOTE: reshaped for borrowck — pop tasks one at a time
+            // Pop tasks one at a time
             // (Zig iterated `tasks.items[idx..]` and bumped `idx` on the
             // first non-ignorable hit so a re-entry resumes there).
             let next = {
@@ -275,7 +275,7 @@ impl Cp {
             if let State::Exec(exec) = &mut Self::state_mut(interp, cmd).state {
                 if let Some(err) = &tref.err {
                     // Spec: cp.zig — defer the task to the ebusy phase.
-                    // PORT NOTE: cp.zig L215-221 reads
+                    // cp.zig L215-221 reads
                     //   `err.* == .sys and err.sys.getErrno() == .BUSY and (tgt_match) or (src_match)`
                     // Zig `and` binds tighter than `or`, so this parses as
                     //   `(is_sys && errno==BUSY && tgt_match) || src_match`
@@ -448,7 +448,6 @@ impl ShellCpTask {
     /// threads; serialised via `verbose_output`'s mutex.
     fn on_copy_impl(&self, src: &[u8], dest: &[u8]) {
         let mut out = self.verbose_output.lock();
-        // PORT NOTE: Zig used `writer.print("{s} -> {s}\n", .{src, dest})`.
         out.reserve(src.len() + dest.len() + 5);
         out.extend_from_slice(src);
         out.extend_from_slice(b" -> ");
@@ -592,7 +591,7 @@ impl ShellCpTask {
         // We have to give an absolute path to our cp implementation for it to
         // work with cwd.
         let src: &bun_core::ZStr = if Platform::AUTO.is_absolute(&self.src) {
-            // PORT NOTE: `self.src` is the bare argv bytes (no NUL); the Zig
+            // `self.src` is the bare argv bytes (no NUL); the Zig
             // path is `[:0]const u8` so `break :brk this.src` was already
             // NUL-terminated. Re-terminate via the thread-local join buffer.
             resolve_path::join_z::<platform::Auto>(&[&self.src])
@@ -718,8 +717,6 @@ impl ShellCpTask {
             },
         };
 
-        // PORT NOTE: Zig passed an `ArenaAllocator` for the async-cp
-        // bookkeeping; the Rust `NewAsyncCpTask` owns its allocations.
         match self.task.event_loop {
             EventLoopHandle::Js { .. } => {
                 let vm_ptr = self
@@ -731,7 +728,7 @@ impl ShellCpTask {
                 // construction); accessed read-only here for the
                 // global-object handle and event-loop pointer — same as Zig's
                 // `event_loop.js.getVmImpl()` from the work-pool thread.
-                // PORT NOTE: reshaped for borrowck — read the raw `global`
+                // Read the raw `global`
                 // field instead of `vm.global()` so the `&mut VirtualMachine`
                 // passed below doesn't overlap a `&JSGlobalObject` borrow.
                 let (global, vm) = unsafe { (&*(*vm_ptr).global, &mut *vm_ptr) };

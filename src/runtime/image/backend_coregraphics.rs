@@ -65,7 +65,6 @@ impl BackendError {
     }
 }
 
-// TODO(port): move to runtime_sys (or a dedicated image_sys crate)
 unsafe extern "C" {
     fn bun_coregraphics_decode(
         bytes: *const u8,
@@ -206,7 +205,6 @@ pub(crate) fn encode(
 // Highway path in `codecs.rs` so the dispatch site is `system_backend.x()
 // .or_else(|_| fallback.x())`.
 
-// TODO(port): move to runtime_sys
 unsafe extern "C" {
     #[allow(dead_code)]
     fn bun_coregraphics_scale(
@@ -289,7 +287,6 @@ pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u
 // the static `Bun.Image.fromClipboard()` accessor calls this synchronously
 // before constructing the Image — the heavy decode still goes to WorkPool).
 
-// TODO(port): move to runtime_sys
 unsafe extern "C" {
     #[allow(dead_code)]
     fn bun_coregraphics_clipboard(out: *mut u8, out_len: *mut usize, probe_only: i32) -> i32;
@@ -327,7 +324,6 @@ pub(crate) fn has_clipboard_image() -> bool {
     }
 }
 
-// TODO(port): move to runtime_sys
 unsafe extern "C" {
     #[allow(dead_code)]
     fn bun_coregraphics_clipboard_change_count() -> i64;

@@ -3,9 +3,7 @@
 //! the parsed-options shape without importing the CLI itself.
 //!
 //! `create()` (which calls `Arguments.parse`) and the `global_cli_ctx`/
-//! `context_data` storage stay in `cli.rs`; they are forward-aliased onto
-//! `ContextData` below so call sites that write `Command::ContextData::create()`
-//! keep working.
+//! `context_data` storage stay in `cli.rs`.
 
 use crate::schema::api;
 use bun_collections::ArrayHashMap;
@@ -16,10 +14,8 @@ use crate::compile_target::CompileTarget;
 use crate::global_cache::GlobalCache;
 use crate::offline_mode::OfflineMode;
 
-// TODO(port): every `[]const u8` / `[]const []const u8` struct field below is a
-// proc-lifetime CLI string (no `deinit`, populated once from argv/bunfig and
-// never freed). Ported as `Box<[u8]>` / `Vec<Box<[u8]>>` for now; may retype to
-// `&'static [u8]` once the CLI parser leaks into a bump arena.
+// Every `Box<[u8]>` / `Vec<Box<[u8]>>` struct field below is a proc-lifetime
+// CLI string: populated once from argv/bunfig during startup and never freed.
 
 pub struct ContextData {
     pub start_time: i128,
@@ -30,7 +26,6 @@ pub struct ContextData {
     // SAFETY: written exactly once in single-threaded CLI startup; thereafter
     // always non-null for the process lifetime. Callers deref via `ctx.log()`.
     pub log: *mut bun_ast::Log,
-    // PORT NOTE: `std.mem.Allocator param` deleted (global mimalloc).
     pub positionals: Vec<Box<[u8]>>,
     pub passthrough: Vec<Box<[u8]>>,
     pub install: Option<Box<api::BunInstall>>,
@@ -183,21 +178,16 @@ impl ContextData {
         unsafe { &*self.log }
     }
 
-    /// `Arguments.parse` lives in `cli/`; forward-aliased so
-    /// `Command::ContextData::create(...)` keeps working.
-    // TODO(port): Zig was `pub const create = bun.cli.Command.createContextData;`
-    // — Rust cannot re-export an associated fn; TODO(port): add a thin
-    // delegating `pub fn create(...)` here once `bun_cli` exists, or invert the
-    // alias direction (cli re-exports this type).
-    pub const CREATE_SEE_CLI: () = ();
 }
+
+// `create()` (Zig: `Command.ContextData.create`) lives in the CLI crate
+// (`bun_runtime::cli::command::create_context_data`), which depends on this
+// crate — a delegating fn here would invert the dependency.
 
 pub struct BundlerOptions {
     pub outdir: Box<[u8]>,
     pub outfile: Box<[u8]>,
-    // TODO(port): was `[:0]const u8` (NUL-terminated); decide owned ZStr repr.
     pub metafile: Box<[u8]>,
-    // TODO(port): was `[:0]const u8` (NUL-terminated); decide owned ZStr repr.
     pub metafile_md: Box<[u8]>,
     pub root_dir: Box<[u8]>,
     pub public_path: Box<[u8]>,
@@ -294,9 +284,6 @@ impl Default for BundlerOptions {
 }
 
 pub type Context<'a> = &'a mut ContextData;
-// TODO(port): Zig `*ContextData` is passed everywhere as a long-lived handle;
-// the borrow lifetime above may need to become `*mut ContextData` at call sites
-// that re-enter the global ctx.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Process-global CLI context handle.

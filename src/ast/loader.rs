@@ -14,7 +14,7 @@ use phf;
 /// - bun-native-bundler-plugin-api/bundler_plugin.h
 /// - src/jsc/bindings/headers-handwritten.h
 #[repr(u8)]
-#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr)]
+#[derive(Copy, Clone, Eq, PartialEq, Debug, Hash, Enum, strum::IntoStaticStr, strum::VariantNames)]
 // Zig field names are lower_snake — `@tagName` is exposed to JS (HTMLImportManifest
 // `"loader":`, BuildArtifact.loader) so the strum serialization must match exactly.
 #[strum(serialize_all = "snake_case")]
@@ -246,7 +246,7 @@ impl Loader {
         matches!(self, Loader::Jsx | Loader::Js | Loader::Ts | Loader::Tsx)
     }
 
-    // PORT NOTE: spelling-aliases for the canonical `is_typescript` /
+    // Spelling-aliases for the canonical `is_typescript` /
     // `is_javascript_like*` (acronym-collapsing rule). Hoisted from
     // `bun_bundler::options::LoaderExt` so cross-crate callers (bun_jsc,
     // bun_runtime) resolve them as inherent methods without a trait import.

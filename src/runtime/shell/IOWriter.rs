@@ -463,7 +463,7 @@ impl IOWriter {
         #[cfg(not(windows))]
         {
             use bun_io::FilePollFlag;
-            // PORT NOTE: re-derive `state()` — the EINVAL/EPERM fallback paths
+            // NOTE: re-derive `state()` — the EINVAL/EPERM fallback paths
             // above re-enter `__start()` and mutate `writer.handle`, which
             // invalidates `s` under Stacked Borrows.
             let s = self.state();
@@ -502,7 +502,7 @@ impl IOWriter {
             }
             #[cfg(not(windows))]
             {
-                // PORT NOTE: `__start()` re-derives `state()` (and may mutate
+                // NOTE: `__start()` re-derives `state()` (and may mutate
                 // `writer.handle` on the EINVAL/EPERM fallback paths), which
                 // invalidates the `s` borrow under Stacked Borrows. Re-derive.
                 let s = self.state();
@@ -624,7 +624,7 @@ impl IOWriter {
     }
 
     fn get_buffer_impl(&self) -> &[u8] {
-        // PORT NOTE: reshaped for borrowck — re-derive `state()` after
+        // NOTE: reshaped for borrowck — re-derive `state()` after
         // `skip_dead()` instead of holding one `&mut State` across it.
         {
             let s = self.state();
@@ -658,7 +658,7 @@ impl IOWriter {
     /// return the `Yield` for the child's `on_io_writer_chunk` callback.
     /// Spec: IOWriter.zig `bump`.
     fn bump(&self, current_idx: usize) -> Yield {
-        // PORT NOTE: reshaped for borrowck — `skip_dead()` re-derives `state()`,
+        // NOTE: reshaped for borrowck — `skip_dead()` re-derives `state()`,
         // so we must drop `s` before calling it and re-derive after, otherwise
         // two `&mut State` are live simultaneously (UB under Stacked Borrows).
         let (is_dead, written, child_ptr) = {
@@ -728,7 +728,7 @@ impl IOWriter {
         debug_assert!(!buf.is_empty());
 
         let result = drain_buffered_data(self, buf, u32::MAX as usize);
-        // PORT NOTE: re-derive `state()` after `drain_buffered_data` (which may
+        // NOTE: re-derive `state()` after `drain_buffered_data` (which may
         // have called `on_error`) instead of holding a stale `&mut`.
         let amt = match result {
             bun_io::WriteResult::Done(amt) => amt,
@@ -771,7 +771,7 @@ impl IOWriter {
     /// Spec: IOWriter.zig `onWritePollable` (the `BufferedWriter.onWrite`
     /// hook). Runs on the event loop when the fd is writable.
     fn on_write_pollable(&self, amount: usize, status: bun_io::WriteStatus) {
-        // PORT NOTE: `set_writing` re-derives `state()` on Windows, which would
+        // NOTE: `set_writing` re-derives `state()` on Windows, which would
         // invalidate `s` under Stacked Borrows; do it before binding `s`
         // (matches the ordering in `on_error`).
         self.set_writing(false);
@@ -791,7 +791,7 @@ impl IOWriter {
             s.total_bytes_written += amount;
             s.writers[idx].written += amount;
             if status == bun_io::WriteStatus::EndOfFile {
-                // PORT NOTE: inline `is_last_idx` instead of calling
+                // NOTE: inline `is_last_idx` instead of calling
                 // `self.is_last_idx(idx)` — that re-derives `state()` while `s`
                 // is still live, which is two simultaneous `&mut State` (UB).
                 let last = idx == s.writers.len().saturating_sub(1);
@@ -820,7 +820,7 @@ impl IOWriter {
         if !wrote_everything && s.writer_idx < s.writers.len() {
             #[cfg(windows)]
             {
-                // PORT NOTE: inline `set_writing(true)` instead of calling the
+                // NOTE: inline `set_writing(true)` instead of calling the
                 // helper — the helper re-derives `state()` while `s` is live,
                 // which is two simultaneous `&mut State` (UB under Stacked
                 // Borrows). Same discipline as the top of this fn.
@@ -839,7 +839,7 @@ impl IOWriter {
     fn broken_pipe_for_writers(&self) {
         let s = self.state();
         debug_assert!(s.flags.broken_pipe);
-        // PORT NOTE: reshaped for borrowck — collect targets first so we don't
+        // NOTE: reshaped for borrowck — collect targets first so we don't
         // hold `&mut s.writers` across `cancel_chunks`/`run_yield`.
         let mut targets: Vec<ChildPtr> = Vec::new();
         for w in &s.writers[s.writer_idx..] {
@@ -879,7 +879,7 @@ impl IOWriter {
         // may have been freed; only notify the still-pending ones, dedup'd.
         let mut seen: Vec<ChildPtr> = Vec::with_capacity(64);
         let start = s.writer_idx;
-        // PORT NOTE: reshaped for borrowck — copy out the child ptrs first.
+        // NOTE: reshaped for borrowck — copy out the child ptrs first.
         let pending: Vec<ChildPtr> = s.writers[start..]
             .iter()
             .filter(|w| !w.is_dead())
@@ -1017,7 +1017,7 @@ impl IOWriter {
         // Spec: Zig writes into `buf` *before* checking broken_pipe in
         // `enqueueFmt`; mirror that ordering (the bytes are dead but the
         // buffer will be cleared on the error path anyway).
-        // PORT NOTE: inline `handle_broken_pipe` instead of calling the helper —
+        // NOTE: inline `handle_broken_pipe` instead of calling the helper —
         // the helper re-derives `state()` while `s` is still live, which is two
         // simultaneous `&mut State` (UB under Stacked Borrows).
         if s.flags.broken_pipe {

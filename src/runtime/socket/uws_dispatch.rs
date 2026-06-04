@@ -34,7 +34,7 @@ use super::uws_handlers as handlers;
 // once-init branch; once `vtable::make` is `const fn`, switch to a plain
 // `static`/`const`.
 //
-// PORT NOTE: Zig used `std.EnumArray(SocketKind, ?*const VTable)`. `SocketKind`
+// Zig used `std.EnumArray(SocketKind, ?*const VTable)`. `SocketKind`
 // is `#[repr(u8)]` with dense 0..N discriminants (see uws/lib.rs), so a plain
 // array indexed by `kind as usize` is the exact equivalent — no `enum_map`
 // derive needed on the upstream type.
@@ -86,7 +86,6 @@ fn vt(s: *mut us_socket_t) -> &'static VTable {
     let kind = s.kind();
     match kind {
         SocketKind::Invalid => {
-            // TODO(port): bun.Output.panic formatting (group={*})
             panic!("us_socket_t with kind=invalid (group={:p})", s.raw_group())
         }
         // Per-group vtable: uWS C++ installs a different `HttpContext<SSL>*`
@@ -111,7 +110,6 @@ fn vtc(c: *mut ConnectingSocket) -> &'static VTable {
     let kind = c.kind();
     match kind {
         SocketKind::Invalid => {
-            // TODO(port): bun.Output.panic formatting
             panic!("us_connecting_socket_t with kind=invalid")
         }
         SocketKind::Dynamic

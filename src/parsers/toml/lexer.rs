@@ -47,7 +47,7 @@ pub enum T {
 }
 
 pub struct Lexer<'a> {
-    // PORT NOTE: borrowed (`&'a Source`) rather than owned so
+    // Borrowed (`&'a Source`) rather than owned so
     // `identifier`/`string_literal_slice` can borrow `&'a [u8]` from
     // `source.contents` without a self-referential struct. The Zig original
     // copied `Source` by value because Zig has no borrow checker; the Rust
@@ -291,7 +291,8 @@ impl<'a> Lexer<'a> {
                             i += 1;
                         }
                     }
-                    // PORT NOTE: Zig discards `bytes` here (dead store); ported faithfully.
+                    // `bytes` is intentionally discarded here, matching the
+                    // Zig original's dead store.
                 }
 
                 // Store bigints as text to avoid precision loss;
@@ -429,7 +430,6 @@ impl<'a> Lexer<'a> {
             // Filter out underscores;
             if underscore_count > 0 {
                 let mut i: usize = 0;
-                // PORT NOTE: Zig handled OOM via if/else on allocator.alloc; arena alloc here is infallible.
                 let bytes = self
                     .bump
                     .alloc_slice_fill_default::<u8>(text.len() - underscore_count);
@@ -710,8 +710,8 @@ impl<'a> Lexer<'a> {
                         }
                     }
 
-                    // PORT NOTE: reshaped for borrowck — capture slice bounds as indices
-                    // instead of laundering a `&'a [u8]` through a raw pointer. On the fast
+                    // Capture the slice bounds as indices instead of laundering
+                    // a `&'a [u8]` through a raw pointer. On the fast
                     // path we reslice immediately before `return`; on the slow path we
                     // reslice after the loop and hand it straight to
                     // `decode_escape_sequences` without stashing in `self` first.
@@ -864,9 +864,6 @@ impl<'a> Lexer<'a> {
         text: &[u8],
         buf: &mut bun_alloc::ArenaVec<'a, u8>,
     ) -> Result<(), Error> {
-        // PORT NOTE: Zig copied `*buf_` into a local and `defer`-wrote it back.
-        // In Rust we operate on `buf` directly via &mut.
-
         let iterator = strings::CodepointIterator::init(text);
         let mut iter = strings::Cursor::default();
         while iterator.next(&mut iter) {
@@ -1210,7 +1207,7 @@ impl<'a> Lexer<'a> {
             }
         };
 
-        // PORT NOTE: reshaped for borrowck — compute range before borrowing `found` from source.
+        // Compute the range before borrowing `found` from source.
         let range = self.range();
         self.add_range_error(range, format_args!("Unexpected {}", bstr::BStr::new(found)))
     }
@@ -1297,8 +1294,8 @@ pub(crate) fn is_identifier_part(code_point: CodePoint) -> bool {
         | '-'
         | ':'
     ) && (0..=127).contains(&code_point)
-    // PORT NOTE: Zig matched CodePoint directly against char ranges; Rust requires
-    // bounding to ASCII before the byte cast above is sound.
+    // The `(0..=127)` bound is required for the byte cast above to be sound;
+    // the Zig original matched the CodePoint directly against char ranges.
 }
 
 #[inline]

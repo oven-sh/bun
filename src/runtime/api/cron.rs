@@ -67,7 +67,7 @@ use crate::jsc_hooks::timer_all_mut as timer_all;
 /// Shared base for [`CronRegisterJob`] and [`CronRemoveJob`].
 // Zig: `fn CronJobBase(comptime Self: type) type { return struct { ... } }`
 //
-// PORT NOTE: every method on the path to `finish()` (which `heap::take`-
+// Note: every method on the path to `finish()` (which `heap::take`-
 // drops `this`) takes a raw `*mut Self` receiver, mirroring the Zig `*Self`.
 // A `&mut self` *parameter* would carry a Stacked Borrows FnEntry protector,
 // making the in-flight dealloc UB; a *local* `let s = &mut *this` reborrow
@@ -215,7 +215,7 @@ impl CronRegisterJob {
         }
     }
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     unsafe fn maybe_finished(this: *mut Self) {
         // SAFETY: local reborrow (no FnEntry protector); not used after any
         // call below that may free `this`.
@@ -308,7 +308,7 @@ impl CronRegisterJob {
         unsafe { Self::advance_state(this) };
     }
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     unsafe fn advance_state(this: *mut Self) {
         // SAFETY: local reborrow; last use precedes any self-freeing call.
         let s = unsafe { &mut *this };
@@ -390,7 +390,7 @@ impl CronRegisterJob {
 
     // -- Linux --
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     #[cfg(all(not(target_os = "macos"), not(windows)))]
     unsafe fn start_linux(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
@@ -408,7 +408,7 @@ impl CronRegisterJob {
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer) };
     }
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     #[cfg(not(target_os = "macos"))]
     unsafe fn process_crontab_and_install(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
@@ -473,7 +473,7 @@ impl CronRegisterJob {
         let _ = file.close(); // close error is non-actionable (Zig parity: discarded)
 
         s.state = RegisterState::InstallingCrontab;
-        // PORT NOTE: explicit deinit of old reader before reassign — Drop handles it.
+        // Note: explicit deinit of old reader before reassign — Drop handles it.
         s.stdout_reader = OutputReader::init::<CronRegisterJob>();
         let Some(crontab_path) = find_crontab() else {
             s.set_err(format_args!("crontab not found in PATH"));
@@ -487,7 +487,7 @@ impl CronRegisterJob {
 
     // -- macOS --
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     #[cfg(target_os = "macos")]
     unsafe fn start_mac(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_bootout`/`finish`.
@@ -618,7 +618,7 @@ impl CronRegisterJob {
         unsafe { Self::spawn_bootout(this) };
     }
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     #[cfg(target_os = "macos")]
     unsafe fn spawn_bootout(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
@@ -647,7 +647,7 @@ impl CronRegisterJob {
         drop(uid_str);
     }
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     #[cfg(target_os = "macos")]
     unsafe fn spawn_bootstrap(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
@@ -834,7 +834,7 @@ pub fn cron_register(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
 impl CronRegisterJob {
     // -- Windows --
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     unsafe fn start_windows(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
@@ -1017,7 +1017,7 @@ impl CronRemoveJob {
         }
     }
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     unsafe fn maybe_finished(this: *mut Self) {
         // SAFETY: local reborrow (no FnEntry protector); not used after any
         // call below that may free `this`.
@@ -1090,7 +1090,7 @@ impl CronRemoveJob {
         unsafe { Self::advance_state(this) };
     }
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     unsafe fn advance_state(this: *mut Self) {
         // SAFETY: local reborrow; last use precedes any self-freeing call.
         let s = unsafe { &mut *this };
@@ -1184,7 +1184,7 @@ impl CronRemoveJob {
         unsafe { spawn_cmd_generic(this, argv, stdin_opt, stdout_opt) };
     }
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     #[cfg(all(not(target_os = "macos"), not(windows)))]
     unsafe fn start_linux(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
@@ -1202,7 +1202,7 @@ impl CronRemoveJob {
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Buffer) };
     }
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     #[cfg(not(target_os = "macos"))]
     unsafe fn remove_crontab_entry(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
@@ -1260,7 +1260,7 @@ impl CronRemoveJob {
         unsafe { Self::spawn_cmd(this, &mut argv, spawn::Stdio::Ignore, spawn::Stdio::Ignore) };
     }
 
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     #[cfg(target_os = "macos")]
     unsafe fn start_mac(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
@@ -1353,7 +1353,7 @@ pub fn cron_remove(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVal
 
 #[cfg(windows)]
 impl CronRemoveJob {
-    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] PORT NOTE.
+    /// May free `this`. Raw-ptr receiver: see [`CronJobBase`] note.
     unsafe fn start_windows(this: *mut Self) {
         // SAFETY: local reborrow; not used after `spawn_cmd`/`finish`.
         let s = unsafe { &mut *this };
@@ -1463,7 +1463,7 @@ impl CronJob {
     fn destroy_impl(this: *mut Self) {
         // deinit: this_value.deinit() then destroy.
         // SAFETY: last ref; nobody else holds a pointer.
-        // PORT NOTE: `JsRef::deinit()` was dropped — Strong's Drop on
+        // Note: `JsRef::deinit()` was dropped — Strong's Drop on
         // reassignment handles teardown (JSRef.rs trailer).
         unsafe {
             (*this).this_value.set(JsRef::empty());
@@ -1582,7 +1582,7 @@ impl CronJob {
     }
 
     fn remove_from_list(this: *mut Self, vm: &VirtualMachine) {
-        // PORT NOTE: `RareData::cron_jobs` stores the opaque
+        // Note: `RareData::cron_jobs` stores the opaque
         // `rare_data::high_tier::CronJob`; cast through `*mut ()` for compare.
         // SAFETY: address-equality only.
         let needle = this.cast::<()>();
@@ -1619,7 +1619,7 @@ impl CronJob {
             None => return,
         };
         for job in jobs {
-            // PORT NOTE: stored as opaque `rare_data::high_tier::CronJob`; the
+            // Note: stored as opaque `rare_data::high_tier::CronJob`; the
             // concrete type is this `CronJob` (see `register` push site).
             let job = job.cast::<CronJob>();
             // List holds a ref for each entry.
@@ -1893,7 +1893,7 @@ impl CronJob {
         // so skip the list ref + append entirely.
         if vm.hot_reload == HOT_RELOAD_HOT || vm.worker.is_some() {
             job_ref.ref_(); // owned by cron_jobs entry
-            // PORT NOTE: `RareData::cron_jobs` stores the opaque high-tier
+            // Note: `RareData::cron_jobs` stores the opaque high-tier
             // placeholder type; cast through `*mut ()` and let inference pick
             // the element type.
             vm.rare_data().cron_jobs.push(job.cast::<()>().cast());
@@ -2068,7 +2068,6 @@ pub fn cron_parse(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValu
 // ============================================================================
 
 /// Trait abstracting over CronRegisterJob/CronRemoveJob for `spawn_cmd_generic`.
-// TODO(refactor): merge with CronJobBase.
 trait SpawnCmdTarget: CronJobBase + BufferedReaderParent {
     const EXIT_KIND: bun_spawn::ProcessExitKind;
     fn set_err(&mut self, args: core::fmt::Arguments<'_>);
@@ -2149,7 +2148,7 @@ impl SpawnCmdTarget for CronRemoveJob {
 ///
 /// May free `this` (synchronously, via either an early `T::finish` on setup
 /// error or `watch_or_reap` → exit handler → `maybe_finished` → `finish`).
-/// Raw-ptr receiver: see [`CronJobBase`] PORT NOTE. Callers must not touch
+/// Raw-ptr receiver: see [`CronJobBase`] note. Callers must not touch
 /// `this` after this returns.
 unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
     this: *mut T,
@@ -2217,7 +2216,7 @@ unsafe fn spawn_cmd_generic<T: SpawnCmdTarget>(
         }
     };
 
-    // PORT NOTE / OWNERSHIP: Zig stashes the heap libuv pipe in
+    // Ownership note: Zig stashes the heap libuv pipe in
     // `stderr_reader.source.?.pipe` and reuses the same pointer for
     // `SpawnOptions.stderr = .{ .buffer = pipe }`. In the Rust port BOTH
     // `Source::Pipe` and `WindowsStdioResult::Buffer` own a `Box<uv::Pipe>`,
@@ -2441,8 +2440,6 @@ fn alloc_print_z(args: core::fmt::Arguments<'_>) -> Result<ZString, bun_alloc::A
 #[cfg(not(target_os = "macos"))]
 fn make_temp_path(prefix: &'static str) -> Result<ZString, bun_alloc::AllocError> {
     let mut name_buf = PathBuffer::uninit();
-    // PORT NOTE: Zig used `prefix ++ "tmp"` at comptime; concat at runtime here.
-    // TODO(port): use const_format::concatcp! once call sites pass a const.
     let mut full_prefix = Vec::with_capacity(prefix.len() + 3);
     full_prefix.extend_from_slice(prefix.as_bytes());
     full_prefix.extend_from_slice(b"tmp");
@@ -2551,7 +2548,6 @@ pub enum CalendarError {
     #[error("OutOfMemory")]
     OutOfMemory,
 }
-// TODO(port): narrow error set
 
 impl From<CalendarError> for bun_core::Error {
     fn from(e: CalendarError) -> Self {
@@ -3073,7 +3069,6 @@ fn append_calendar_trigger_with_schedule(
 /// Local stand-in for the planned `bun_core::BitOps` trait — only what
 /// `compute_step_interval` needs, implemented for the two integer widths the
 /// cron bitfields use.
-// TODO(port): replace with `bun_core::BitOps` once that trait lands.
 trait StepBits:
     Copy + core::ops::BitAnd<Output = Self> + core::ops::Sub<Output = Self> + PartialEq
 {

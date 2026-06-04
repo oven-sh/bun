@@ -392,7 +392,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let mut v = BumpVec::<u8>::new_in(self.arena);
         v.extend_from_slice(prefix);
         if let Some(n) = n {
-            // PORT NOTE: bumpalo Vec<u8> doesn't impl io::Write; format into a
+            // bumpalo Vec<u8> doesn't impl io::Write; format into a
             // bump String and copy the bytes.
             let s = bun_alloc::arena_format!(in self.arena, "{}", n);
             v.extend_from_slice(s.as_bytes());
@@ -2257,7 +2257,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     break;
                 }
                 let insert_at = if let Some(j) = super_index { j + 1 } else { 0 };
-                // PORT NOTE: BumpVec has no `splice`; rebuild.
+                // BumpVec has no `splice`; rebuild.
                 let mut spliced = BumpVec::<Stmt>::with_capacity_in(
                     body_stmts.len() + constructor_inject_stmts.len(),
                     bump,
@@ -2362,7 +2362,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 comma_parts.push(ba);
             }
 
-            // PORT NOTE: Zig used a local anonymous-struct fn; can't capture
+            // Zig used a local anonymous-struct fn; can't capture
             // `&mut self` in a Rust closure while also calling `p.method()`, so
             // inline both call sites against a `&[Stmt]` slice array.
             for stmts_list in [&pre_eval_stmts[..], &prefix_stmts[..]] {

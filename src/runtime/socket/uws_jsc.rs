@@ -80,7 +80,8 @@ pub fn create_bun_socket_error_to_js(
 pub use bun_jsc::system_error::verify_error_to_js;
 
 // ── AnyWebSocket.getTopicsAsJSArray ────────────────────────────────────────
-// TODO(port): move to bun_uws_sys
+// Declared inline; migrate into `bun_uws_sys` with the rest of the
+// WebSocket FFI surface.
 unsafe extern "C" {
     // Opaque-handle (`RawWebSocket` is an `opaque_ffi!` ZST — `&mut` carries no
     // `noalias`, dereferences zero bytes) + live `&JSGlobalObject`
@@ -176,7 +177,7 @@ pub(crate) unsafe extern "C" fn us_socket_buffered_js_write(
     let mut stream_buffer = unsafe { &mut *buffer }.to_stream_buffer();
     let mut total_written: usize = 0;
 
-    // PORT NOTE: Zig `defer { buffer.update(stream_buffer); buffer.wrote(total_written); }`
+    // Zig `defer { buffer.update(stream_buffer); buffer.wrote(total_written); }`
     // reshaped as a labeled block + post-block cleanup so the side effects run on every
     // exit path without a scopeguard borrow conflict.
     let result: JSValue = 'body: {

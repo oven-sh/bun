@@ -1,8 +1,6 @@
 use phf::phf_map;
 
-// PORT NOTE: `build_options` was Zig's build-system-injected module. In Rust it
-// is a generated module (build.rs consts).
-// Zig: `pub const build_options = @import("build_options");` — public re-export.
+// `build_options` is a generated module (build.rs consts), re-exported publicly.
 pub use crate::build_options;
 
 #[repr(u8)]

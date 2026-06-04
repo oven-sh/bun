@@ -2,7 +2,7 @@ use core::fmt;
 
 use bun_core::output;
 
-// PORT NOTE: Zig `enum(u8) { ..., _ }` is non-exhaustive — any u8 is a valid
+// Zig `enum(u8) { ..., _ }` is non-exhaustive — any u8 is a valid
 // inhabitant. A Rust `#[repr(u8)] enum` with only the named variants would be
 // UB for the `from()` path (which accepts arbitrary bytes), so this is ported
 // as a transparent newtype with associated consts.
@@ -115,8 +115,7 @@ impl fmt::Display for Fmt {
         // PERF(port): was comptime bool dispatch (`switch inline else`) — profile if it shows up on a hot path
         if let Some(str_) = signal.name() {
             if let Some(desc) = signal.description() {
-                // TODO(port): Output.prettyFmt("{s} <d>({s})<r>", enable_ansi_colors) —
-                // use bun_core::output's pretty-fmt helper once available.
+                // Zig: Output.prettyFmt("{s} <d>({s})<r>", enable_ansi_colors).
                 if self.enable_ansi_colors {
                     return write!(f, "{} {}({}){}", str_, output::DIM, desc, output::RESET);
                 } else {

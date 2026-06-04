@@ -7,11 +7,11 @@ use bun_collections::array_hash_map::ArrayHashAdapter;
 use bun_install::dependency::DependencyExt as _;
 use bun_install::lockfile::{Buffers, StringBuilder};
 use bun_install::{Dependency, Lockfile, PackageManager};
-// PORT NOTE (layering): Zig `bun.ast.Expr` resolves to the full T4 parser AST,
-// but every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML into
-// the lower-tier `bun_ast::js_ast` shape (re-exported via `crate::bun_json`).
-// Importing `bun_js_parser` here forced a higher-tier dep and produced
-// distinct-`Expr`-type errors at every call site, so use the T2 type directly.
+// Layering: every install-side caller (Package.rs / pnpm.rs) parses JSON/YAML
+// into the lower-tier `bun_ast::js_ast` shape (re-exported via
+// `crate::bun_json`). Importing `bun_js_parser` here would force a higher-tier
+// dep and produce distinct-`Expr`-type errors at every call site, so use the
+// T2 type directly.
 use crate::bun_json::{E, Expr, ExprData};
 use bun_ast::{Log, Source};
 use bun_semver::String;
@@ -68,8 +68,8 @@ impl CatalogMap {
         group.get_adapted(&dep_name, &ctx(buf)).cloned()
     }
 
-    /// PORT NOTE: Zig took `lockfile: *Lockfile` but only reads its string
-    /// buffer for the hash context. Narrow to `buf: &[u8]` so callers can hold
+    /// Takes `buf: &[u8]` (the lockfile's string buffer, used for the hash
+    /// context) rather than the whole `Lockfile` so callers can hold
     /// `&mut lockfile.catalogs` while only borrowing `buffers.string_bytes`
     /// (disjoint field), instead of forcing a whole-`Lockfile` borrow that
     /// conflicts with the `&mut self` receiver.
@@ -110,8 +110,7 @@ impl CatalogMap {
         )
     }
 
-    // PORT NOTE: Zig took `lockfile: *Lockfile` only for `.allocator` (dropped
-    // per global-mimalloc rule). Removing it lets `lockfile.catalogs.parse_count`
+    // Deliberately takes no `Lockfile` param so `lockfile.catalogs.parse_count`
     // call sites avoid the `&mut self` vs `&mut Lockfile` self-alias.
     pub fn parse_count(&mut self, expr: Expr, builder: &mut StringBuilder) {
         if let Some(default_catalog) = expr.get(b"catalog") {
@@ -165,11 +164,9 @@ impl CatalogMap {
         }
     }
 
-    /// PORT NOTE: Zig threaded `lockfile: *Lockfile` for `.allocator` and
-    /// `.buffers.string_bytes`. The allocator is dropped (global mimalloc) and
-    /// `builder` already holds `&mut string_bytes`, so read the buffer through
-    /// `builder` and drop the `lockfile` param — otherwise call sites would
-    /// alias `&mut lockfile.catalogs` against `&mut lockfile`.
+    /// `builder` already holds `&mut string_bytes`, so the string buffer is
+    /// read through it rather than taking a `lockfile` param — otherwise call
+    /// sites would alias `&mut lockfile.catalogs` against `&mut lockfile`.
     pub fn parse_append(
         &mut self,
         pm: &mut PackageManager,
@@ -300,12 +297,12 @@ impl CatalogMap {
         Ok(found_any)
     }
 
-    // PORT NOTE: reshaped for borrowck — Zig threads `*Lockfile` through, but
-    // the only field this body touches is `lockfile.catalogs`, and the call
-    // site in `pnpm.rs` must simultaneously hold `&mut StringBuf` (which
-    // already borrows `lockfile.buffers.string_bytes` + `lockfile.string_pool`).
-    // Taking `&mut Lockfile` here would alias those borrows, so narrow to
-    // `&mut CatalogMap` and let the caller split the disjoint fields.
+    // The only lockfile field this body touches is `lockfile.catalogs`, and
+    // the call site in `pnpm.rs` must simultaneously hold `&mut StringBuf`
+    // (which already borrows `lockfile.buffers.string_bytes` +
+    // `lockfile.string_pool`). Taking `&mut Lockfile` here would alias those
+    // borrows, so narrow to `&mut CatalogMap` and let the caller split the
+    // disjoint fields.
     pub fn from_pnpm_lockfile(
         catalogs: &mut CatalogMap,
         log: &mut Log,
@@ -339,11 +336,11 @@ impl CatalogMap {
         Ok(())
     }
 
-    // PORT NOTE: Zig took `lockfile: *const Lockfile` but only reads its
-    // string buffer. Narrow to `buffers: &Buffers` so the call site can hold
-    // `&mut lockfile.catalogs` while only borrowing `lockfile.buffers`
-    // immutably (disjoint fields), instead of forcing a whole-`Lockfile`
-    // shared borrow that conflicts with the `&mut self` receiver.
+    // Takes `buffers: &Buffers` rather than the whole `Lockfile` so the call
+    // site can hold `&mut lockfile.catalogs` while only borrowing
+    // `lockfile.buffers` immutably (disjoint fields), instead of forcing a
+    // whole-`Lockfile` shared borrow that conflicts with the `&mut self`
+    // receiver.
     pub fn sort(&mut self, buffers: &Buffers) {
         let buf = buffers.string_bytes.as_slice();
         let dep_less_than = |_: &[String], deps: &[Dependency], l: usize, r: usize| -> bool {
@@ -365,12 +362,12 @@ impl CatalogMap {
     // Zig `deinit(allocator)` deleted: `Map` and `ArrayHashMap<String, Map>` are owned
     // collections whose `Drop` recursively frees the nested maps.
 
-    /// PORT NOTE: Zig took `*const Lockfile` but only ever read
-    /// `lockfile.buffers.string_bytes` — accept the slice directly so callers
-    /// can split-borrow the lockfile alongside a live `StringBuilder`.
+    /// Accepts `lockfile.buffers.string_bytes` directly (rather than the whole
+    /// `Lockfile`) so callers can split-borrow the lockfile alongside a live
+    /// `StringBuilder`.
     pub fn count(&self, string_bytes: &[u8], builder: &mut StringBuilder) {
         let buf = string_bytes;
-        // PORT NOTE: `ArrayHashMap::iterator()` requires `&mut`; iterate the
+        // `ArrayHashMap::iterator()` requires `&mut`; iterate the
         // `keys()`/`values()` slices instead so `count` can stay `&self`.
         for (dep_name, dep) in self.default.keys().iter().zip(self.default.values()) {
             builder.count(dep_name.slice(buf));
@@ -387,9 +384,9 @@ impl CatalogMap {
         }
     }
 
-    /// PORT NOTE: Zig also passed `*Lockfile new`, but `builder` already
-    /// borrows `new.buffers.string_bytes` — read the new-side buffer through
-    /// it instead so the call site doesn't alias `&mut new` twice.
+    /// `builder` already borrows the new lockfile's `buffers.string_bytes`, so
+    /// the new-side buffer is read through it instead of taking a separate
+    /// `new: &mut Lockfile` param that would alias `&mut new` twice.
     /// `pm` is generic over `NpmAliasRegistry` (was `&mut PackageManager`) so a
     /// caller already holding `&mut manager.lockfile` can pass
     /// `&mut manager.known_npm_aliases` instead of the whole manager.

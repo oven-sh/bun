@@ -20,8 +20,9 @@ macro_rules! arena_slice_newtype {
         $(#[$meta])*
         #[derive(Debug, Clone, Copy)]
         pub struct $name {
-            // TODO(port): arena lifetime — CSS parser slices are arena-owned; thread a `'bump`
-            // lifetime through instead of erasing to a raw pointer.
+            // CSS parser slices are arena-owned; the borrow is erased to a raw
+            // pointer until the crate threads a `'bump` lifetime (see
+            // PORTING.md §Allocators). Never dereferenced after arena reset.
             pub v: *const [u8],
         }
 
@@ -41,12 +42,12 @@ macro_rules! arena_slice_newtype {
             #[inline]
             pub fn v(&self) -> &[u8] {
                 // SAFETY: arena-owned, never null, immutable for the parse session
-                // (see field-level TODO(port) on `'bump` threading).
+                // (see the field-level comment on `'bump` threading).
                 unsafe { crate::arena_str(self.v) }
             }
 
             pub fn deep_clone(&self, _bump: &bun_alloc::Arena) -> Self {
-                // PORT NOTE: Zig `css.implementDeepClone` — field-wise. The
+                // Zig `css.implementDeepClone` — field-wise. The
                 // `*const [u8]` slice is arena-owned (never mutated, freed on
                 // arena reset), so identity copy is correct (matches generics.zig
                 // "const strings" fast-path).
@@ -54,7 +55,7 @@ macro_rules! arena_slice_newtype {
             }
 
             pub fn hash(&self, hasher: &mut Wyhash) {
-                // PORT NOTE: Zig `css.implementHash` (comptime field-walk) → arena slice bytes.
+                // Zig `css.implementHash` (comptime field-walk) → arena slice bytes.
                 hasher.update(self.v());
             }
 
@@ -73,7 +74,7 @@ macro_rules! arena_slice_newtype {
 // `from` field below uses it directly. `parse_with_options` honors
 // `ParserOptions.css_modules.dashed_idents`. `to_css` resolves the
 // import-record path up front and hands it to `CssModule::reference_dashed`
-// (borrowck — see PORT NOTE on that method).
+// (borrowck — see the comment on that method).
 
 /// A CSS [`<dashed-ident>`](https://www.w3.org/TR/css-values-4/#dashed-idents) reference.
 ///
@@ -93,9 +94,7 @@ pub struct DashedIdentReference {
 
 impl DashedIdentReference {
     pub(crate) fn eql(&self, rhs: &Self) -> bool {
-        // PORT NOTE: Zig `css.implementEql` — field-wise. `from` is a CSS-modules
-        // resolution hint, not part of value identity, so compare on `ident` only
-        // (matches Zig `Specifier`-less comparison in the dashed-ident dedup path).
+        // Zig `css.implementEql` — field-wise over `ident` and `from`.
         use crate::generics::CssEql;
         self.ident.eql(&rhs.ident) && self.from.eql(&rhs.from)
     }
@@ -149,7 +148,7 @@ impl DashedIdentReference {
             let ident_v = unsafe { crate::arena_str(self.ident.v) };
             let source_index = dest.loc.source_index;
             let bump = dest.arena;
-            // PORT NOTE: Zig `referenceDashed` took `*Printer` and called
+            // Zig `referenceDashed` took `*Printer` and called
             // `dest.importRecord()` internally. Rust borrowck forbids handing
             // `dest` to a method on `dest.css_module`, so resolve the path
             // here and pass the slice down. The `?` preserves the Zig
@@ -187,13 +186,29 @@ arena_slice_newtype! {
     DashedIdent
 }
 
-// TODO(port): Zig `pub fn HashMap(comptime V: type) type` returned an
-// ArrayHashMapUnmanaged with a custom string-hash context. Inherent assoc
-// type aliases are unstable in Rust; expose as a free type alias instead.
-// bun_collections::ArrayHashMap is wyhash-keyed; verify the hasher matches
-// std.array_hash_map.hashString or supply a custom Hash impl.
-// blocked_on: bun_collections::ArrayHashMap surface
-pub type DashedIdentHashMap<V> = bun_collections::ArrayHashMap<DashedIdent, V>;
+/// Hash/eql context for [`DashedIdentHashMap`] — port of the anonymous context
+/// struct in Zig `DashedIdent.HashMap(V)`: keys hash their string bytes via
+/// `std.array_hash_map.hashString` (wyhash seed 0, truncated to u32) and
+/// compare by byte equality.
+#[derive(Default, Clone, Copy)]
+pub struct DashedIdentContext;
+
+impl bun_collections::array_hash_map::ArrayHashContext<DashedIdent> for DashedIdentContext {
+    #[inline]
+    fn hash(&self, key: &DashedIdent) -> u32 {
+        bun_collections::array_hash_map::hash_string(key.v())
+    }
+
+    #[inline]
+    fn eql(&self, a: &DashedIdent, b: &DashedIdent, _b_index: usize) -> bool {
+        a.v() == b.v()
+    }
+}
+
+/// Zig `pub fn HashMap(comptime V: type) type` — inherent assoc type aliases
+/// are unstable in Rust, so this is a free type alias instead.
+pub type DashedIdentHashMap<V> =
+    bun_collections::ArrayHashMap<DashedIdent, V, DashedIdentContext>;
 
 impl DashedIdent {
     pub fn parse(input: &mut Parser) -> CssResult<DashedIdent> {
@@ -303,7 +318,8 @@ impl IdentOrRef {
 
     #[cfg(debug_assertions)]
     pub fn debug_ident(self) -> &'static [u8] {
-        // TODO(port): lifetime — returns arena-borrowed slice; `'static` is a placeholder.
+        // Returns an arena-borrowed slice; `'static` is a placeholder for the
+        // not-yet-threaded `'bump` lifetime.
         if self.ref_bit() {
             let ptr = self.ptrbits() as usize as *const *const [u8];
             // SAFETY: in debug builds, `ptrbits` stores a valid arena-allocated `*const *const [u8]`
@@ -387,7 +403,8 @@ impl IdentOrRef {
         map: &bun_ast::symbol::Map,
         local_names: Option<&css::LocalsResultsMap>,
     ) -> Option<&'static [u8]> {
-        // TODO(port): lifetime — returns arena/symbol-table borrow; `'static` is a placeholder.
+        // Returns an arena/symbol-table borrow; `'static` is a placeholder for
+        // the not-yet-threaded `'bump` lifetime.
         if self.is_ident() {
             // SAFETY: arena slice reconstructed from packed ptr/len
             return Some(unsafe { crate::arena_str(self.as_ident().unwrap().v) });
@@ -418,7 +435,7 @@ impl IdentOrRef {
         } else {
             // SAFETY: self is #[repr(transparent)] u128; reading first 2 bytes matches Zig's
             // `slice_u8[0..2]` (which is almost certainly a Zig bug — hashes 2 bytes, not 16).
-            // TODO(port): verify upstream intent; preserving behavior verbatim.
+            // Preserved verbatim for behavioral parity; PR #30784 hashes the full identity.
             let bytes = unsafe {
                 core::slice::from_raw_parts(std::ptr::from_ref::<Self>(self).cast::<u8>(), 2)
             };

@@ -87,7 +87,7 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
 }
 
 // Zig: std.HashMapUnmanaged(u64, FolderResolution, IdentityContext(u64), 80)
-// PORT NOTE: bun_collections::HashMap currently ignores the context/load-factor
+// bun_collections::HashMap currently ignores the context/load-factor
 // type params (backed by std HashMap); identity hashing is a TODO(perf).
 pub type Map = HashMap<u64, FolderResolution, IdentityContext<u64>>;
 
@@ -100,7 +100,7 @@ pub fn hash(normalized_path: &[u8]) -> u64 {
 }
 
 // ── NewResolver(comptime tag: Resolution.Tag) type ────────────────────────
-// PORT NOTE: `Resolution.Tag` (Zig nested decl) is `crate::resolution::Tag`;
+// `Resolution.Tag` (Zig nested decl) is `crate::resolution::Tag`;
 // const-generic requires `#[derive(ConstParamTy)]` (already on `Tag`).
 pub struct NewResolver<'a, const TAG: ResolutionTag> {
     pub folder_path: &'a [u8],
@@ -242,7 +242,7 @@ fn normalize_package_json_path<'a>(
         remain[normalized.len() + 1..normalized.len() + PACKAGE_JSON_LEN]
             .copy_from_slice(b"package.json");
         let remain_after = remain.len() - (normalized.len() + PACKAGE_JSON_LEN);
-        // PORT NOTE: reshaped for borrowck — compute abs len from remaining capacity
+        // Reshaped from the Zig original for borrowck — compute abs len from remaining capacity
         let abs_len = joined_len - remain_after;
         abs = &joined[0..abs_len];
         // We store the folder name without package.json
@@ -273,7 +273,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
 
     let mut package: LockfilePackage = Default::default();
 
-    // PORT NOTE: Zig passed `manager.lockfile`, `manager`, `manager.log` as
+    // Borrow splitting: Zig passed `manager.lockfile`, `manager`, `manager.log` as
     // three separate args; Rust borrowck rejects the overlap on `&mut self`,
     // so split via raw pointer once here. `lockfile` and `log` are disjoint
     // fields of `PackageManager`, and `parse{,_with_json}` only reaches
@@ -293,8 +293,9 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             bun_perf::trace(bun_perf::PerfEvent::FolderResolverReadPackageJSONFromDiskWorkspace);
 
         // SAFETY: `manager_ptr` was just derived from the live `&mut PackageManager`
-        // argument; `log` points into a separate `Log` allocation (see PORT NOTE
-        // above), so this `&mut` reborrow aliases no other live reference.
+        // argument; `log` points into a separate `Log` allocation (see the
+        // borrow-splitting comment above), so this `&mut` reborrow aliases no
+        // other live reference.
         let json = unsafe { &mut *manager_ptr }
             .workspace_package_json_cache
             .get_with_path(log, abs.as_bytes(), Default::default())
@@ -305,7 +306,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
         let root: Expr = json.root;
         let source: *const bun_ast::Source = &raw const json.source;
 
-        // SAFETY: see PORT NOTE above on borrow splitting.
+        // SAFETY: see the borrow-splitting comment above.
         unsafe {
             let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
             package.parse_with_json::<R>(
@@ -326,7 +327,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             let file = File::openat(Fd::cwd(), abs.as_bytes(), O::RDONLY, 0)?;
             // defer file.close()
             body.reset();
-            // PORT NOTE: toManaged/moveToUnmanaged dance is a no-op in Rust
+            // Zig's toManaged/moveToUnmanaged dance is a no-op in Rust
             // (Vec owns its allocator).
             let read_result = file
                 .read_to_end_with_array_list(&mut body.list, bun_sys::SizeHint::ProbablySmall)
@@ -337,7 +338,7 @@ fn read_package_json_from_disk<R: FolderResolverImpl>(
             bun_ast::Source::init_path_string(abs.as_bytes(), body.list.as_slice())
         };
 
-        // SAFETY: see PORT NOTE above on borrow splitting.
+        // SAFETY: see the borrow-splitting comment above.
         unsafe {
             let lockfile: *mut Lockfile = &raw mut *(*manager_ptr).lockfile;
             package.parse::<R>(
@@ -430,7 +431,7 @@ pub fn get_or_put(
     };
     let abs_hash = hash(abs.as_bytes());
 
-    // PORT NOTE: reshaped for borrowck — Zig used getOrPut to reserve the slot before reading
+    // Reshaped for borrowck — Zig used getOrPut to reserve the slot before reading
     // package.json; here we check first, compute, then insert, because read_package_json_from_disk
     // needs &mut manager.
     if let Some(existing) = manager.folders.get(&abs_hash) {

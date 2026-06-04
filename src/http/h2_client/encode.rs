@@ -65,8 +65,8 @@ enum RequestHeader {
     Sensitive,
 }
 
-// PORT NOTE: Zig used a comptime case-insensitive map. The first pass below
-// pre-lowercases the probe so a case-sensitive match suffices.
+// The match is case-sensitive; the first pass below pre-lowercases the probe
+// so that suffices (header name matching must be case-insensitive).
 fn classify_request_header(name: &[u8]) -> Option<RequestHeader> {
     Some(match name {
         b"connection" => RequestHeader::Drop,
@@ -91,7 +91,7 @@ pub fn write_request(
     stream: &mut Stream,
     request: &picohttp::Request<'_>,
 ) -> Result<(), bun_core::Error> {
-    // PORT NOTE: reshaped for borrowck — `encode_scratch` is borrowed mutably
+    // Reshaped from the Zig original for borrowck — `encode_scratch` is borrowed mutably
     // alongside `&mut *session` below; pull the Vec out, push it back at the end.
     let mut encoded = core::mem::take(&mut session.encode_scratch);
     encoded.clear();
@@ -370,7 +370,7 @@ pub(crate) fn drain_send_bodies(session: &mut ClientSession) {
     let slice: usize = session.remote_max_frame_size as usize;
     while session.conn_send_window > 0 && session.write_buffer.size() < WRITE_BUFFER_HIGH_WATER {
         let mut progressed = false;
-        // PORT NOTE: reshaped for borrowck — Zig iterates `session.streams.values()`
+        // Reshaped from the Zig original for borrowck — Zig iterates `session.streams.values()`
         // while passing `session` mutably to `drain_send_body`. Iterate by index
         // and re-borrow each pass.
         let mut i = 0usize;

@@ -207,7 +207,7 @@ impl UpgradedDuplex {
     }
 
     fn on_internal_receive_data(&mut self, data: &[u8]) {
-        // PORT NOTE: reshaped for borrowck — Zig borrowed `wrapper` then called
+        // Note: reshaped for borrowck — Zig borrowed `wrapper` then called
         // `self.resetTimeout()` (which needs &mut self). Reordered: reset first, then borrow.
         if self.wrapper.is_some() {
             self.reset_timeout();
@@ -310,7 +310,6 @@ impl UpgradedDuplex {
         ssl_options: &crate::server::server_config::SSLConfig,
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         self.wrapper = Some(super::ssl_wrapper::init(
             ssl_options,
             is_client,
@@ -337,7 +336,6 @@ impl UpgradedDuplex {
         ctx: *mut bun_boringssl_sys::SSL_CTX,
         is_client: bool,
     ) -> Result<(), bun_core::Error> {
-        // TODO(port): narrow error set
         // errdefer SSL_CTX_free(ctx) — free the adopted ref on the error path only.
         let ctx_guard = scopeguard::guard(ctx, |ctx| {
             // SAFETY: ctx is a valid SSL_CTX* with one ref adopted by this fn.
@@ -442,7 +440,8 @@ impl UpgradedDuplex {
                 .reason
                 .as_deref()
                 .map_or(c"".as_ptr(), |c| c.as_ptr()),
-            // TODO(port): us_bun_verify_error_t may have more fields; Zig used implicit defaults.
+            // `struct us_bun_verify_error_t` (libusockets.h) has exactly these
+            // three fields: { int error; const char* code; const char* reason }.
         }
     }
 
@@ -462,7 +461,7 @@ impl UpgradedDuplex {
         }
 
         // reschedule the timer
-        // PORT NOTE: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
+        // Note: `EventLoopTimer.next` is the lower-tier `ElTimespec` stub;
         // bridge from `bun_core::Timespec` until the lower tier switches.
         let next =
             bun_core::Timespec::ms_from_now(bun_core::TimespecMockMode::AllowMockedTime, ms as i64);

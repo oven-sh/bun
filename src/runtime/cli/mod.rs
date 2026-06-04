@@ -225,12 +225,7 @@ pub mod shell_completions;
 #[path = "which_npm_client.rs"]
 pub mod which_npm_client;
 
-// ─── open (minimal open_url; full Editor/EditorContext stays gated) ──────────
-// TODO(port): full `open.rs` (Editor detection/spawn) needs
-// `crate::process::spawn_sync`, `bun_threading::spawn_detached`,
-// `bun_resolver::fs::FileSystem` — none of which are wired on this path yet.
-// `bun discord` only needs `open_url`, so provide a thin print-fallback impl
-// here until the heavy half compiles.
+// ─── open (open_url wrapper; Editor/EditorContext live in open.rs) ───────────
 #[path = "open.rs"]
 mod open_full;
 pub mod open {
@@ -249,24 +244,29 @@ pub mod open {
         Output::flush();
     }
 
-    /// Minimal port of `open.openURL`. The Zig version spawns `OPENER url` and
-    /// only falls back to printing on spawn failure; that path needs
-    /// `bun.spawnSync` (gated). Until then, always take the fallback so
-    /// `bun discord` is usable in headless/CI environments.
+    /// Port of `open.openURL` (open.zig): spawn `OPENER url` with inherited
+    /// stdio and fall back to printing the URL when the spawn fails or the
+    /// opener exits non-zero (e.g. headless/CI environments).
+    ///
+    /// Divergence: open.zig's Android arm (`/system/bin/am start -a
+    /// android.intent.action.VIEW -d <url>`) is intentionally not ported —
+    /// Android is not a shipping CLI target, and the xdg-open spawn failing
+    /// there falls back to printing the URL, same net behavior.
     pub(crate) fn open_url(url: &[u8]) {
-        // TODO(port): wire `bun.spawnSync({ argv: [OPENER, url] })` once the
-        // non-JSC spawn path is un-gated, then only fallback() on error.
-        let _ = OPENER;
-        fallback(url);
+        match bun_core::spawn_sync_inherit(&[OPENER, url]) {
+            Ok(status) if status.is_ok() => {}
+            _ => fallback(url),
+        }
     }
 }
 
-// ─── non-JSC subcommand bodies (heavy; re-gated inside or here) ──────────────
+// ─── non-JSC subcommand bodies ───────────────────────────────────────────────
 // `init_command.rs` pulls bun_json/bun_js_parser/bun_js_printer/bun_bundler +
-// `bun_ast::initialize_store`; `install_completions_command.rs`
-// and `package_manager_command.rs` need bun_install::PackageManager + a real
-// `Command::Context` (blocked on `create_context_data`). Help/print-only paths
-// are handled inline in `Command::start()` below; full bodies stay gated.
+// `bun_ast::initialize_store`; `package_manager_command.rs` needs
+// bun_install::PackageManager + a real `Command::Context` (blocked on
+// `create_context_data`), so its help/print-only paths are handled inline in
+// `Command::start()` below. `install_completions_command.rs` is fully wired
+// via `exec_install_completions` (its `exec()` takes no Context).
 #[path = "init_command.rs"]
 pub mod init_command;
 #[path = "install_completions_command.rs"]
@@ -416,7 +416,7 @@ pub(crate) fn start_time() -> i128 {
 }
 
 #[allow(non_upper_case_globals)]
-// PORT NOTE: Zig `?string` (borrowed slice) → owned `Box<[u8]>` so
+// Zig `?string` (borrowed slice) → owned `Box<[u8]>` so
 // `process.title = "..."` (set_title) drops the previous value instead of
 // leaking. The mutex provides exclusion between `get_title`/`set_title`
 // (Zig: `var title_mutex = bun.Mutex{}`).
@@ -582,7 +582,8 @@ pub mod cli {
         // SAFETY: single-threaded process startup; `mimalloc` is already init.
         unsafe { (*super::CLI_ARENA.get()).write(bun_alloc::Arena::new()) };
 
-        // TODO(port): MainPanicHandler wiring.
+        // (Zig set up MainPanicHandler here — commented out in cli.zig too; the
+        // Rust panic hook is installed by `bun_crash_handler::init()` in bun_bin.)
         // SAFETY: just initialized above; single-threaded for the lifetime of `log`.
         let log = unsafe { (*LOG_.get()).assume_init_mut() };
         if let Err(err) = Command::start(log) {
@@ -603,7 +604,7 @@ pub use cli as Cli;
 // ─── debug_flags (resolve/print breakpoints) ─────────────────────────────────
 pub mod debug_flags {
     // SHOW_CRASH_TRACE-only in Zig; harmless to always declare here.
-    // PORT NOTE: `Vec<&'static [u8]>` (not `&'static [&[u8]]`) so `parse()` can
+    // `Vec<&'static [u8]>` (not `&'static [&[u8]]`) so `parse()` can
     // hand off ownership of the argv-borrowed list without leaking the backing
     // storage. Each `&'static [u8]` element is a process-lifetime argv slice.
     pub(crate) static RESOLVE_BREAKPOINTS: std::sync::OnceLock<Vec<&'static [u8]>> =
@@ -661,7 +662,7 @@ pub mod help_command {
 
     /// `cli_helptext_fmt` from cli.zig.
     ///
-    /// PORT NOTE: emits the `pretty!`/`pretty_error!` call directly instead of
+    /// Emits the `pretty!`/`pretty_error!` call directly instead of
     /// expanding to a bare literal — `pretty!` captures its template as
     /// `$fmt:expr`, which is opaque to the `pretty_fmt!` proc-macro, so a
     /// nested `cli_helptext_fmt!()` inside `concat!()` would never be flattened.
@@ -712,7 +713,7 @@ pub mod help_command {
         };
     }
 
-    // PORT NOTE: Zig had `comptime reason: Reason` → const generic. Tag/Reason
+    // Zig had `comptime reason: Reason` → const generic. Tag/Reason
     // lack `ConstParamTy` in lower-tier crates, so demoted to a runtime arg.
     // PERF(port): was comptime monomorphization — profile if hot.
     pub fn print_with_reason(reason: Reason, show_all_flags: bool) {
@@ -728,7 +729,7 @@ pub mod help_command {
         let package_remove_i = pick(PACKAGES_TO_REMOVE_FILLER.len());
         let package_create_i = pick(PACKAGES_TO_CREATE_FILLER.len());
 
-        // PORT NOTE: filler tables are `&str` (not `&[u8]`) so the `{:<16}`
+        // The filler tables are `&str` (not `&[u8]`) so the `{:<16}`
         // width spec actually pads — `Display for BStr` writes raw bytes and
         // ignores formatter width/alignment.
         let args = (
@@ -855,7 +856,7 @@ pub mod command {
     // Canonical home: src/runtime/cli/mod.rs, inside `pub mod command { ... }`
     // (crate path `bun_runtime::cli::command::{is_bun_x, is_node, which}`).
     //
-    // PORT NOTE (cli.zig:411): the `is_node` branch of `which()` must clear
+    // cli.zig:411 — the `is_node` branch of `which()` must clear
     // `bun_clap::streaming::WARN_ON_UNRECOGNIZED_FLAG` so node-mode argv parsing
     // stays silent on unknown flags.
     // ──────────────────
@@ -1140,7 +1141,7 @@ pub mod command {
 
     /// `ContextData.create` — populates the global ctx and runs `Arguments::parse`.
     ///
-    /// PORT NOTE: Zig had `comptime command: Tag` → const generic. `Tag` lacks
+    /// Zig had `comptime command: Tag` → const generic. `Tag` lacks
     /// `ConstParamTy` (lower-tier crate), so demoted to a runtime arg; the only
     /// comptime-dependent bit was `Tag.uses_global_options.get(command)`, which
     /// the runtime `USES_GLOBAL_OPTIONS` set covers.
@@ -1173,9 +1174,6 @@ pub mod command {
         #[cfg(windows)]
         {
             if ctx.debug.hot_reload == HotReload::Watch {
-                // TODO(port): bun_sys::windows::is_watcher_child /
-                // become_watcher_manager — Windows watcher hand-off path.
-
                 {
                     if !bun_sys::windows::is_watcher_child() {
                         bun_sys::windows::become_watcher_manager();
@@ -1385,7 +1383,7 @@ pub mod command {
         let offset_for_passthrough: usize;
 
         let ctx: &mut ContextData = 'brk: {
-            // PORT NOTE: Zig calls `bun.initArgv()` eagerly in `main.zig`
+            // Zig calls `bun.initArgv()` eagerly in `main.zig`
             // before `Cli.start`, which populates `bun_options_argc` from
             // `BUN_OPTIONS`. The Rust entry (`bun_bin::main`) defers argv
             // init to `bun_core::argv()`'s lazy `Once`, so force that init
@@ -1456,16 +1454,20 @@ pub mod command {
     /// pair — kept out-of-line so `start` is a jump table, but *not* `#[cold]`.
     #[inline(never)]
     fn exec_auto_or_run(tag: Tag, log: &mut bun_ast::Log) -> CmdResult {
-        // PORT NOTE: Zig's AutoCommand arm swallows
-        // `error.MissingEntryPoint` from `Command.init` and prints
-        // help. `bun_core::Error` has no variant table yet (stub
-        // — `err!()` collapses to `Error::TODO`), so a name-match
-        // would alias every error. Propagate for now; the empty-
-        // positionals fallthrough below covers the common "no args"
-        // help path anyway.
-        // TODO(port): restore `MissingEntryPoint → HelpCommand::exec()`
-        // once `bun_core::Error` interns names.
-        let ctx = init(tag, log)?;
+        // cli.zig:783-793 — Zig's AutoCommand arm swallows
+        // `error.MissingEntryPoint` from `Command.init` and prints help;
+        // every other tag (including RunCommand) propagates the error.
+        // Note: nothing currently produces `MissingEntryPoint` (true of the
+        // Zig tree too — the catch arm there is equally unreachable); bare
+        // `bun` help is served by the empty-positionals fallthrough. This arm
+        // exists for 1:1 parity if a producer is ever added (Arguments.rs).
+        let ctx = match init(tag, log) {
+            Ok(ctx) => ctx,
+            Err(e) if tag == Tag::AutoCommand && e == bun_core::err!("MissingEntryPoint") => {
+                return HelpCommand::exec();
+            }
+            Err(e) => return Err(e),
+        };
         ctx.args.target = Some(bun_options_types::schema::api::Target::Bun);
 
         if ctx.parallel || ctx.sequential {
@@ -1527,35 +1529,17 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_install_completions() -> CmdResult {
-        // Minimal port of the non-interactive path: detect $SHELL and
-        // dump the embedded completion script to stdout. Full install
-        // (bunx symlink, fpath/XDG dir search, profile patching) needs
-        // `install_completions_command.rs` un-gated.
+        // cli.zig:636 — `InstallCompletionsCommand.exec(allocator)`. The full
+        // exec handles both the non-tty path (dump the embedded completion
+        // script to stdout) and the tty install path (bunx symlink, fpath/XDG
+        // dir search, profile patching).
         for a in bun::argv().iter().skip(2) {
             if matches!(a, b"--help" | b"-h") {
                 tag_print_help(Tag::InstallCompletionsCommand, true);
                 Global::exit(0);
             }
         }
-        use super::shell_completions::ShellCompletionsExt as _;
-        let shell = bun_core::env_var::SHELL::platform_get()
-            .map(super::shell_completions::Shell::from_env)
-            .unwrap_or_default();
-        if matches!(shell, super::shell_completions::Shell::Unknown) {
-            pretty_errorln!(
-                "<r><red>error<r>: Unknown or unsupported shell. Please set $SHELL to one of zsh, fish, or bash."
-            );
-            bun_core::note!("To manually output completions, run 'bun getcompletes'");
-            Output::flush();
-            Global::exit(1);
-        }
-        // `Output::writer()` returns the process-global writer; no raw
-        // deref needed (was `*mut` in an earlier port pass).
-        let writer = Output::writer();
-        let _ = writer.write_all(shell.completions());
-        Output::flush();
-        // TODO(port): tty path → write into shell completions dir
-        // (InstallCompletionsCommand::exec).
+        super::install_completions_command::InstallCompletionsCommand::exec()?;
         Global::exit(0);
     }
 
@@ -1582,7 +1566,7 @@ pub mod command {
     #[cold]
     #[inline(never)]
     fn exec_repl(log: &mut bun_ast::Log) -> CmdResult {
-        // PORT NOTE: Zig inits with .RunCommand here (repl reuses run params).
+        // Zig inits with .RunCommand here (repl reuses run params).
         let ctx = init(Tag::RunCommand, log)?;
         super::repl_command::ReplCommand::exec(ctx)
     }
@@ -1666,7 +1650,7 @@ pub mod command {
         b"bun", b"upgrade", b"discord", b"test", b"pm", b"x", b"repl", b"info",
     ];
 
-    // PORT NOTE: Zig concatenated DEFAULT_COMPLETIONS_LIST ++ extras at
+    // Zig concatenated DEFAULT_COMPLETIONS_LIST ++ extras at
     // comptime; hand-rolled join (small, fixed).
     const REJECT_LIST: &[&[u8]] = &[
         b"build",
@@ -1700,7 +1684,7 @@ pub mod command {
         use super::shell_completions::ShellCompletions;
 
         let ctx = init(Tag::GetCompletionsCommand, log)?;
-        // PORT NOTE: `ctx.positionals` is `Vec<Box<[u8]>>`; clone into a local
+        // `ctx.positionals` is `Vec<Box<[u8]>>`; clone into a local
         // owned vec so `filter` doesn't borrow `ctx` (passed `&mut` below).
         let positionals: Vec<Box<[u8]>> = ctx.positionals.clone();
         let positionals_refs: Vec<&[u8]> = positionals.iter().map(|b| &**b).collect();
@@ -1918,7 +1902,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
             let prefixed = BunxCommand::add_create_prefix(template_name)?;
             bunx_args.push(
                 CREATE_PREFIX
-                    .get_or_init(|| bun_core::ZBox::from_vec_with_nul(prefixed))
+                    .get_or_init(|| prefixed)
                     .as_zstr(),
             );
             for src in &args[template_name_start..] {
@@ -2019,7 +2003,7 @@ To create a project with the official Next.js scaffolding tool, run\n\
         // use [foo] for multiple arguments or flags for foo.
         // use <bar> to emphasize 'bar'
         //
-        // PORT NOTE: every help block here must pass its template as a *string
+        // Every help block here must pass its template as a *string
         // literal* to `pretty!()` so the `pretty_fmt!` proc-macro can rewrite
         // the `<tag>` markers at compile time. Passing a `const &str` through
         // `{}` prints the raw markup.

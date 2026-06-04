@@ -4,9 +4,9 @@ use crate::ThreadSafeStreamBuffer;
 /// Request body payload. Parameterized over `'a` so callers can hand in
 /// stack-/arena-borrowed bytes without erasing the lifetime to `&'static`
 /// at every `AsyncHTTP::init` call site.
-// PORT NOTE: no `Owned(Vec<u8>)` variant — the body is bitwise-copied across
-// threads via `core::ptr::read` in `start_queued_task`, so every arm must be
-// trivially-droppable. Zig has only `bytes` / `sendfile` / `stream`.
+// No `Owned(Vec<u8>)` variant — the body is bitwise-copied across threads via
+// `core::ptr::read` in `start_queued_task`, so every arm must be
+// trivially-droppable.
 pub enum HTTPRequestBody<'a> {
     /// Borrowed bytes — caller guarantees they outlive the request.
     Bytes(&'a [u8]),
@@ -15,10 +15,10 @@ pub enum HTTPRequestBody<'a> {
 }
 
 pub struct Stream {
-    // PORT NOTE: ThreadSafeStreamBuffer carries an *intrusive* atomic refcount and
-    // is round-tripped as a raw pointer between the main thread and the HTTP
-    // thread, so per §Pointers we keep the intrusive form (raw `*mut T` + manual
-    // ref/deref) instead of `Arc<T>`.
+    // ThreadSafeStreamBuffer carries an *intrusive* atomic refcount and is
+    // round-tripped as a raw pointer between the main thread and the HTTP
+    // thread, so we keep the intrusive form (raw pointer + manual ref/deref)
+    // instead of `Arc<T>`.
     pub buffer: Option<core::ptr::NonNull<ThreadSafeStreamBuffer>>,
     pub ended: bool,
 }

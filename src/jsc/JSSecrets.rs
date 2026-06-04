@@ -3,8 +3,6 @@ use crate::{AnyTaskJob, AnyTaskJobCtx, JSGlobalObject, JSValue, JsResult, Strong
 // Opaque pointer to C++ SecretsJobOptions struct
 bun_opaque::opaque_ffi! { pub struct SecretsJobOptions; }
 
-// TODO(port): move to <area>_sys
-//
 // safe fn: `SecretsJobOptions` and `JSGlobalObject` are `opaque_ffi!` ZST
 // handles (`!Freeze` via `UnsafeCell`); `&mut`/`&` are ABI-identical to
 // non-null `*mut`/`*const` and C++ mutating job state through them is interior

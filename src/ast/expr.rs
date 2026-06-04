@@ -107,16 +107,17 @@ impl Expr {
         data::Store::create();
     }
 
-    /// Zig: `Expr.Data.Store.assert()` — debug-only re-entrancy guard.
+    /// Zig: `Expr.Data.Store.assert()` — debug-only "Store must be init'd"
+    /// guard (expr.zig:3170-3175). The re-entrancy `Disabler` check lives in
+    /// `Store::append`, mirroring expr.zig:3194.
     #[inline]
     pub fn data_store_assert() {
-        crate::DebugOnlyDisabler::<Expr>::assert();
+        data::Store::assert();
     }
 }
 
 impl Expr {
     pub fn clone_in(&self, bump: &Bump) -> Result<Expr, bun_core::Error> {
-        // TODO(port): narrow error set
         Ok(Expr {
             loc: self.loc,
             data: Data::clone_in(self.data, bump)?,
@@ -136,7 +137,6 @@ impl Expr {
     }
 
     pub fn wrap_in_arrow(this: Expr, bump: &Bump) -> Result<Expr, bun_core::Error> {
-        // TODO(port): narrow error set
         let stmts: &mut [Stmt] = bump.alloc_slice_fill_with(1, |_| {
             Stmt::alloc(S::Return { value: Some(this) }, this.loc)
         });
@@ -369,7 +369,7 @@ impl Expr {
     /// - `foo[123].bar[456].baz.qux` // etc.
     ///
     /// This is not intended for use by the transpiler, instead by pretty printing JSON.
-    // PORT NOTE: Zig passed `bun.default_allocator` to getByIndex; Rust threads the arena
+    // Zig passed `bun.default_allocator` to getByIndex; Rust threads the arena
     // explicitly because get_by_index allocates an E.String slice into &Bump.
     pub fn get_path_may_be_index(&self, bump: &Bump, name: &[u8]) -> Option<Expr> {
         if name.is_empty() {
@@ -568,7 +568,7 @@ impl Expr {
         }
     }
 
-    // PORT NOTE: `Query` holds `expr` by value (Copy). The iterator stores the
+    // `Query` holds `expr` by value (Copy). The iterator stores the
     // `StoreRef<E::Array>` directly (Copy, arena-backed) so no lifetime is tied
     // to a local temporary — `StoreRef::Deref` re-borrows the arena slot on use.
     pub fn get_array(&self, name: &[u8]) -> Option<ArrayIterator> {
@@ -698,7 +698,7 @@ impl ArrayIterator {
     }
 }
 
-// PORT NOTE: earlier drafts of `as_array`/`is_string`/`as_utf8_string_literal`/
+// Earlier drafts of `as_array`/`is_string`/`as_utf8_string_literal`/
 // `as_string`/`as_string_cloned`/`as_bool`/`as_number` duplicated the live `&self`
 // implementations above (lines ~231-315) with worse signatures (`expr: &Expr`,
 // raw-ptr returns). Those drafts were dropped; only the methods without a live
@@ -827,7 +827,7 @@ impl Expr {
         )
     }
 
-    // PORT NOTE: Zig threaded `_: std.mem.Allocator` (unused) so the caller's
+    // Zig threaded `_: std.mem.Allocator` (unused) so the caller's
     // arena reached `Expr.init`. The Rust port uses the thread-local
     // `data::Store` and drops the parameter.
     pub fn join_with_comma(self, b: Expr) -> Expr {
@@ -862,7 +862,7 @@ impl Expr {
         }
     }
 
-    // PORT NOTE: Zig threaded `ctx: anytype` and called `callback(ctx, ...)` on
+    // Zig threaded `ctx: anytype` and called `callback(ctx, ...)` on
     // each element. Rust passes `ctx` by `&mut` so a single `&mut P` (the parser
     // state) can be reborrowed for each callback invocation without `Copy`.
     pub fn join_all_with_comma_callback<C: ?Sized>(
@@ -977,7 +977,7 @@ impl Expr {
 #[cfg(debug_assertions)]
 pub(crate) static ICOUNT: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
-// PORT NOTE: Zig `expr.zig` declares `true_bool`/`false_bool`/`bool_values`
+// Zig `expr.zig` declares `true_bool`/`false_bool`/`bool_values`
 // statics but never references them — `E.Boolean` is stored by value in
 // `Data.e_boolean` (both `allocate` and `init` arms), not as a pointer to a
 // pooled singleton. Dropped here; the comment "We don't need to dynamically
@@ -2302,13 +2302,12 @@ impl Data {
     /// Shallow clone: re-allocate the boxed payload (so the caller owns a fresh
     /// arena slot) but don't recurse into children. Zig: `Data.clone`.
     ///
-    /// PORT NOTE: the `E::*` payloads do not derive `Clone` (they hold raw arena
+    /// The `E::*` payloads do not derive `Clone` (they hold raw arena
     /// pointers / `Vec`). Zig copied struct bytes (`el.*`); we mirror that
     /// with a `core::ptr::read` of the payload, which is sound because every
     /// payload is `Copy`-shaped (no `Drop`, no owned heap state — `Vec`
     /// stores a raw pointer + len/cap into the arena).
     pub fn clone_in(this: Data, bump: &Bump) -> Result<Data, bun_core::Error> {
-        // TODO(port): narrow error set
         macro_rules! shallow {
             ($variant:ident, $el:expr) => {{
                 // SAFETY: `$el` is a `StoreRef<T>` deref to a live arena `T`; `T` is
@@ -2689,7 +2688,7 @@ impl Data {
                 e.value.data.write_to_hasher(hasher, symbol_table);
             }
             Data::EYield(e) => {
-                // TODO(port): Zig hashed the raw bytes of `.{ e.is_star, e.value }` (the full
+                // Zig hashed the raw bytes of `.{ e.is_star, e.value }` (the full
                 // `?Expr` optional, including loc/data pointer). Rust `Option<Expr>` layout is
                 // not byte-compatible, so we hash the discriminant here and recurse below.
                 raw(hasher, e.is_star);
@@ -2724,7 +2723,7 @@ impl Data {
                 hasher.update(&e.value);
             }
             Data::EString(e) => {
-                // PORT NOTE: Zig declared `var next: ?*E.String = e;` and tested `if (next)`
+                // Zig declared `var next: ?*E.String = e;` and tested `if (next)`
                 // — i.e. it only ever hashes the *first* rope segment (the `next = current.next`
                 // store is dead). Preserved here.
                 let current: &E::String = e;
@@ -3403,7 +3402,6 @@ pub use data::Store;
 // Zig: `pub fn StoredData(tag: Tag) type` — comptime type-level function.
 // Rust cannot return types from runtime tags. Callers should match on `Data`
 // directly.
-// TODO(port): if needed, expose as a macro mapping Tag → payload type.
 
 fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     // +"" -> 0
@@ -3413,7 +3411,6 @@ fn string_to_equivalent_number_value(str: &[u8]) -> f64 {
     if !bun_core::is_all_ascii(str) {
         return f64::NAN;
     }
-    // TODO(port): move to *_sys
     unsafe extern "C" {
         // NOT `safe fn`: callee dereferences `ptr` for `len` bytes — caller must
         // guarantee the (ptr,len) pair is a valid readable range.

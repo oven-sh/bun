@@ -12,15 +12,13 @@ use bun_ast as js_ast;
 use bun_ast::op::Level;
 use bun_ast::{E, Expr, Flags, G, S, Stmt};
 
-// TODO(port): narrow error set
 type Error = bun_core::Error;
 
 // Zig: `pub fn ParseFn(comptime typescript, comptime jsx, comptime scan_only) type { return struct { ... } }`
 // — file-split mixin pattern. Round-C lowered `const JSX: JSXTransformType` → `J: JsxT`, so this is
 // a direct `impl P` block.
 impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_ONLY> {
-    // Zig: `const is_typescript_enabled = P.is_typescript_enabled;`
-    // (PORT NOTE: P.rs already defines `IS_TYPESCRIPT_ENABLED`; reuse it.)
+    // Zig: `const is_typescript_enabled = P.is_typescript_enabled;` — reuse `IS_TYPESCRIPT_ENABLED`.
 
     /// This assumes the "function" token has already been parsed
     pub fn parse_fn_stmt(
@@ -198,7 +196,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         p.lexer.expect(T::TOpenParen)?;
 
         // Await and yield are not allowed in function arguments
-        // PORT NOTE: Zig used `std.mem.toBytes` / `bytesToValue` to save/restore by value;
+        // Zig used `std.mem.toBytes` / `bytesToValue` to save/restore by value;
         // in Rust `FnOrArrowDataParse` is `Clone`, so a clone is equivalent.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
@@ -381,7 +379,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         p.lexer.expect(T::TCloseParen)?;
-        // PORT NOTE: Zig restored via `std.mem.bytesToValue`; plain copy is equivalent.
+        // Zig restored via `std.mem.bytesToValue`; plain copy is equivalent.
         p.fn_or_arrow_data_parse = old_fn_or_arrow_data;
 
         p.fn_or_arrow_data_parse.has_argument_decorators = arg_has_decorators;
@@ -570,17 +568,16 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
 
         let _ = p.push_scope_for_parse_pass(js_ast::scope::Kind::FunctionBody, arrow_loc)?;
-        // PORT NOTE: Zig `defer p.popScope();` — moved to explicit call before each return below.
-        // TODO(port): consider scopeguard if more early-returns are added.
+        // Zig `defer p.popScope();` — moved to explicit call before each return below.
 
-        // PORT NOTE: Zig used `std.mem.toBytes`/`bytesToValue`; clone is equivalent.
+        // Zig used `std.mem.toBytes`/`bytesToValue`; clone is equivalent.
         let old_fn_or_arrow_data = p.fn_or_arrow_data_parse.clone();
 
         p.fn_or_arrow_data_parse = data.clone();
         let expr = match p.parse_expr(Level::Comma) {
             Ok(e) => e,
             Err(err) => {
-                // PORT NOTE: Zig `try` returns here without restoring fn_or_arrow_data_parse;
+                // Zig `try` returns here without restoring fn_or_arrow_data_parse;
                 // only the `defer p.popScope()` fires on the error path.
                 p.pop_scope();
                 return Err(err);

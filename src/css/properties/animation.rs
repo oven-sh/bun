@@ -38,13 +38,10 @@ pub struct Animation {
 }
 
 impl Animation {
-    // TODO(port): PropertyFieldMap / VendorPrefixMap were comptime anonymous-struct
-    // metadata consumed by reflection in the shorthand codegen. Replace these with
-    // a derive macro (e.g. #[derive(Shorthand)]) that emits the field→PropertyIdTag
-    // and field→has-vendor-prefix tables.
-    // PORT NOTE: PropertyFieldMap dropped — `PropertyIdTag::Animation*` variants
-    // are not yet generated (animation longhands are unparsed-only for now), and
-    // the table was unread comptime metadata. Re-add when the variants land.
+    // PropertyFieldMap omitted: `PropertyIdTag::Animation*` variants are not yet
+    // generated (animation longhands are unparsed-only for now), and the Zig table
+    // was unread comptime metadata. Re-add the field→PropertyIdTag table once the
+    // variants land.
 
     pub const VENDOR_PREFIX_MAP: &'static [(&'static str, bool)] = &[
         ("name", true),
@@ -140,7 +137,7 @@ impl Animation {
     }
 
     pub fn to_css(&self, dest: &mut Printer) -> Result<(), PrintErr> {
-        // PORT NOTE: reshaped `inline .ident, .string => |name|` — Zig's inline
+        // reshaped `inline .ident, .string => |name|` — Zig's inline
         // switch monomorphized over two payload types; Rust extracts the inner
         // string slice up front instead.
         let name_str: Option<&[u8]> = match &self.name {
@@ -225,7 +222,7 @@ impl Animation {
 }
 
 /// A value for the [animation-name](https://drafts.csswg.org/css-animations/#animation-name) property.
-// PORT NOTE: no `#[derive(PartialEq, Eq, Hash)]` — `CustomIdent`/`CSSString`
+// no `#[derive(PartialEq, Eq, Hash)]` — `CustomIdent`/`CSSString`
 // carry raw `*const [u8]` arena pointers; derived eq/hash would compare by
 // pointer. Hand-written `eql`/`hash` below compare by content.
 #[derive(Clone, Copy)]
@@ -239,7 +236,7 @@ pub enum AnimationName {
 }
 
 impl AnimationName {
-    // PORT NOTE: hand-written (not `#[derive]`) because `CSSString` is a raw
+    // hand-written (not `#[derive]`) because `CSSString` is a raw
     // `*const [u8]` arena pointer — generics blanket impls cover `&[u8]` but
     // not raw slices. Mirrors Zig `css.implementEql/Hash/DeepClone`.
     pub fn eql(&self, other: &Self) -> bool {
@@ -283,7 +280,7 @@ impl AnimationName {
     }
 
     pub fn parse(input: &mut Parser) -> css::Result<Self> {
-        // PORT NOTE: ported from src/css/properties/animation.zig — `none` keyword,
+        // ported from src/css/properties/animation.zig — `none` keyword,
         // then `<string>`, else `<custom-ident>`.
         if input
             .try_parse(|i| i.expect_ident_matching(b"none"))
@@ -291,7 +288,7 @@ impl AnimationName {
         {
             return Ok(AnimationName::None);
         }
-        // PORT NOTE: `expect_string` returns a slice borrowing `&mut self`, which
+        // `expect_string` returns a slice borrowing `&mut self`, which
         // `try_parse`'s `R` type param can't carry. Erase the lifetime through a
         // raw pointer inside the closure; the slice lives in the input arena and
         // outlives this parse (CSSString = &'static [u8]).
@@ -315,7 +312,7 @@ impl AnimationName {
                 // SAFETY: arena-owned slice valid for 'bump.
                 let name: &[u8] = unsafe { crate::arena_str(s.v) };
                 if css_module_animation_enabled {
-                    // PORT NOTE: reshaped for borrowck — capture arena/source_index
+                    // reshaped for borrowck — capture arena/source_index
                     // before borrowing dest.css_module mutably.
                     let arena = dest.arena;
                     let source_index = dest.loc.source_index;
@@ -329,7 +326,7 @@ impl AnimationName {
                 // SAFETY: arena-owned slice valid for 'bump.
                 let name: &[u8] = unsafe { crate::arena_str(*s) };
                 if css_module_animation_enabled {
-                    // PORT NOTE: reshaped for borrowck
+                    // reshaped for borrowck
                     let arena = dest.arena;
                     let source_index = dest.loc.source_index;
                     if let Some(css_module) = &mut dest.css_module {
@@ -351,8 +348,6 @@ impl AnimationName {
 }
 
 /// A value for the [animation-iteration-count](https://drafts.csswg.org/css-animations/#animation-iteration-count) property.
-// TODO(port): css.DeriveParse / css.DeriveToCss were comptime mixins generating
-// parse()/to_css() from variant shape. Implement as #[derive(Parse, ToCss)].
 #[derive(PartialEq)]
 pub enum AnimationIterationCount {
     /// The animation will repeat the specified number of times.
@@ -531,7 +526,7 @@ impl AnimationTimeline {
     }
 }
 
-// PORT NOTE: hand-written `PartialEq` — `DashedIdent` carries a raw
+// hand-written `PartialEq` — `DashedIdent` carries a raw
 // `*const [u8]` arena pointer; derive would compare by pointer, not content.
 impl PartialEq for AnimationTimeline {
     fn eq(&self, other: &Self) -> bool {

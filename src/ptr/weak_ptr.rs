@@ -75,10 +75,9 @@ pub trait HasWeakPtrData {
 /// `WeakPtr`s are released. Even if the allocation is present, `WeakPtr<T>::get`
 /// will return `None` after the inner contents are freed.
 pub struct WeakPtr<T: HasWeakPtrData> {
-    // PORT NOTE: LIFETIMES.tsv classifies this field as SHARED → `Weak<T>`,
-    // but this file *is* the definition of the intrusive weak pointer; per
-    // PORTING.md §Pointers ("keep as `*mut T` + manual ref/deref over an
-    // embedded `WeakPtrData`"), the field stays a raw pointer.
+    // Intentionally a raw pointer, not `std::sync::Weak<T>`: this file *is*
+    // the definition of the intrusive weak pointer, with liveness tracked by
+    // the embedded `WeakPtrData` and manual ref/deref.
     raw_ptr: Option<NonNull<T>>,
 }
 

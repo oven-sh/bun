@@ -97,10 +97,9 @@ impl SocketGroup {
     /// Initialise an embedded group. `owner_ptr` is what `group.owner::<T>()`
     /// recovers inside handlers — pass the embedding struct so dispatch can
     /// find it from a raw `*us_socket_t`.
-    // TODO(port): Zig accepted `owner_ptr: anytype` (any single-item pointer or
-    // null) with comptime @typeInfo validation. Rust callers cast at the call
-    // site; consider a typed `init_with_owner<T>(&mut self, ..., owner: &mut T)`
-    // helper if ergonomics warrant.
+    // Zig accepted `owner_ptr: anytype` (any single-item pointer or null) with
+    // comptime @typeInfo validation; Rust callers cast to `*mut c_void` at the
+    // call site.
     pub fn init(&mut self, loop_: *mut Loop, vt: Option<&'static VTable>, owner_ptr: *mut c_void) {
         // SAFETY: C initializes all fields of `self` in-place; `self` is a valid
         // `#[repr(C)]` slot embedded in the caller.
@@ -117,7 +116,7 @@ impl SocketGroup {
         }
     }
 
-    // PORT NOTE: not `impl Drop`. SocketGroup is `#[repr(C)]`, embedded
+    // Not `impl Drop`. SocketGroup is `#[repr(C)]`, embedded
     // by-value in its owner, and its lifecycle is FFI-managed (C unlinks it
     // from the loop). PORTING.md's #[repr(C)]-across-FFI exception applies:
     // expose `unsafe fn destroy(*mut Self)` and have the owner call it

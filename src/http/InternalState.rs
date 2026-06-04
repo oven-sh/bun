@@ -4,7 +4,7 @@ use bun_core::MutableString;
 use bun_core::{Error, Output};
 
 use crate::{
-    CertificateInfo, Decompressor, EXTREMELY_VERBOSE, Encoding, HTTPRequestBody,
+    CertificateInfo, Decompressor, Encoding, HTTPRequestBody,
     HTTPResponseMetadata,
 };
 
@@ -33,8 +33,8 @@ pub struct InternalState<'a> {
     pub chunked_decoder: bun_picohttp::phr_chunked_decoder,
     pub decompressor: Decompressor,
     pub stage: Stage,
-    /// This is owned by the user and should not be freed here
-    // TODO(port): lifetime — user-owned back-reference; no LIFETIMES.tsv row, kept as raw NonNull
+    /// This is owned by the user and should not be freed here.
+    /// Non-owning back-reference, kept as a raw `NonNull` (BACKREF per PORTING.md).
     pub body_out_str: Option<NonNull<MutableString>>,
     pub compressed_body: MutableString,
     pub content_length: Option<usize>,
@@ -51,7 +51,7 @@ pub struct InternalState<'a> {
     pub certificate_info: Option<CertificateInfo>,
 }
 
-// PORT NOTE: was a `packed struct(u8)` in Zig. Kept as a struct-of-bools so the
+// was a `packed struct(u8)` in Zig. Kept as a struct-of-bools so the
 // HTTPClient state machine in lib.rs can use field syntax (`flags.allow_keepalive
 // = true`) directly; restore packing if size ever matters.
 #[derive(Clone, Copy)]
@@ -150,7 +150,7 @@ impl<'a> InternalState<'a> {
     }
 
     pub fn reset(&mut self) {
-        // PORT NOTE: allocator param dropped (global mimalloc).
+        // allocator param dropped (global mimalloc).
         self.compressed_body = MutableString::init_empty();
         self.response_message_buffer = MutableString::init_empty();
 
@@ -158,9 +158,9 @@ impl<'a> InternalState<'a> {
         if let Some(body) = body_msg {
             crate::body_out::as_mut(body).reset();
         }
-        // PORT NOTE: Zig calls `this.decompressor.deinit()` here. The boxed
+        // Zig calls `this.decompressor.deinit()` here. The boxed
         // Zlib/Brotli/Zstd readers all impl Drop calling end()/destroy_instance
-        // (see Decompressor.rs PORT NOTE), so the `*self = ...` assignment below
+        // (see the note in Decompressor.rs), so the `*self = ...` assignment below
         // frees the FFI handle via drop glue — no explicit reset needed.
 
         // just in case we check and free to avoid leaks
@@ -236,7 +236,6 @@ impl<'a> InternalState<'a> {
         self.flags.received_last_chunk
     }
 
-    // TODO(port): narrow error set
     pub fn decompress_bytes(
         &mut self,
         buffer: &[u8],
@@ -252,15 +251,9 @@ impl<'a> InternalState<'a> {
             return Ok(());
         }
 
-        // PORT NOTE: Zig `defer this.compressed_body.reset()` runs on every exit. scopeguard would
+        // Zig `defer this.compressed_body.reset()` runs on every exit. scopeguard would
         // hold &mut self.compressed_body across the body and conflict with &mut self.decompressor,
         // so each early-return below calls `self.compressed_body.reset()` explicitly.
-        let mut gzip_timer: Option<std::time::Instant> = None;
-
-        if EXTREMELY_VERBOSE {
-            gzip_timer = Some(std::time::Instant::now());
-        }
-
         let mut still_needs_to_decompress = true;
 
         if bun_core::feature_flags::is_libdeflate_enabled() {
@@ -380,29 +373,21 @@ impl<'a> InternalState<'a> {
             }
         }
 
-        if EXTREMELY_VERBOSE {
-            // TODO(port): `gzip_elapsed` is not a field on InternalState in the Zig source either —
-            // this looks like dead code referencing a removed field. Preserved as a no-op read.
-            let _ = gzip_timer.map(|t| t.elapsed());
-        }
-
         self.compressed_body.reset();
         Ok(())
     }
 
-    // TODO(port): narrow error set
     pub fn decompress(
         &mut self,
         buffer: &MutableString,
         body_out_str: &mut MutableString,
         is_final_chunk: bool,
     ) -> Result<(), Error> {
-        // PORT NOTE: reshaped for borrowck — Zig passed MutableString by value; we borrow the inner slice.
+        // reshaped for borrowck — Zig passed MutableString by value; we borrow the inner slice.
         self.decompress_bytes(buffer.list.as_slice(), body_out_str, is_final_chunk)
     }
 
-    // TODO(port): narrow error set
-    // PORT NOTE: Zig takes `buffer: MutableString` BY VALUE (a shallow struct copy whose
+    // Zig takes `buffer: MutableString` BY VALUE (a shallow struct copy whose
     // `.list.items` aliases the same allocation). Every caller passes `getBodyBuffer().*`,
     // so `buffer` is always the current body buffer's bytes. To avoid aliased &mut/& under
     // Stacked Borrows (decompress_bytes mutates `self.compressed_body`; the uncompressed
@@ -420,7 +405,7 @@ impl<'a> InternalState<'a> {
             return Ok(false);
         }
 
-        // PORT NOTE: not `self.body_out_mut()` — `decompress_bytes` below takes
+        // not `self.body_out_mut()` — `decompress_bytes` below takes
         // `&mut self` alongside `body_out_str`; the accessor would tie the
         // borrow to `self`. The free `body_out::as_mut` yields an unbounded
         // `&mut` to the disjoint caller-owned allocation.

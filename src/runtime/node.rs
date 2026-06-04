@@ -1,11 +1,10 @@
 //! Node.js APIs in Bun. Access this namespace with `bun.api.node`
 
-// PORT NOTE: the Zig `comptime { _ = @import(...) }` force-reference block maps
-// to explicit `pub mod` declarations below. Rust only compiles a `.rs` file if
-// it is reachable via a `mod` declaration — `#[no_mangle]` alone does NOT make
-// an orphaned file link. Every Windows-only force-referenced sibling
-// (`uv_signal_handle_windows`, `win_watcher`) must have a `#[cfg(windows)]
-// pub mod` entry here or its C-ABI exports will be missing at link time.
+// Rust only compiles a `.rs` file if it is reachable via a `mod` declaration —
+// `#[no_mangle]` alone does NOT make an orphaned file link. Every Windows-only
+// sibling (`uv_signal_handle_windows`, `win_watcher`) must have a
+// `#[cfg(windows)] pub mod` entry here or its C-ABI exports will be missing at
+// link time.
 
 // ─── compiling submodules ─────────────────────────────────────────────────
 #[path = "node/nodejs_error_code.rs"]
@@ -168,8 +167,8 @@ pub mod zlib {
     pub use super::native_zlib_impl as native_zlib;
     pub use super::native_zstd_impl as native_zstd;
     pub use bun_zlib::NodeMode;
-    // PORT NOTE: the `NativeZlib` / `NativeBrotli` / `NativeZstd` *struct*
-    // re-exports were dropped — those structs live inside each file's private
+    // The `NativeZlib` / `NativeBrotli` / `NativeZstd` *struct* re-exports are
+    // intentionally absent — those structs live inside each file's private
     // `mod _impl { ... }` (JSC-gated) and are not reachable from here. The only
     // consumers (`node_zlib_binding.rs::_impl::Native*`) are themselves gated
     // behind a private `_impl` and resolve through `crate::api::Native*` once
@@ -237,8 +236,6 @@ impl<R, E> MaybeExt<R, E> for Maybe<R, E> {
         E: MaybeErrorTodo,
     {
         if cfg!(debug_assertions) {
-            // PORT NOTE: Zig branched on `ReturnType == void` only to vary the
-            // panic message; collapsed to a single panic + type name.
             panic!("TODO: Maybe({})", core::any::type_name::<R>());
         }
         Err(E::todo())
@@ -269,8 +266,8 @@ impl<R, E> MaybeExt<R, E> for Maybe<R, E> {
     where
         R: Default,
     {
-        // PORT NOTE: Zig used `std.mem.zeroes(ReturnType)`. Mapped to
-        // `Default` here since the generic `R` may contain non-POD fields.
+        // `Default` rather than zeroed memory — the generic `R` may contain
+        // non-POD fields.
         Ok(R::default())
     }
 
@@ -372,7 +369,6 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
     #[inline]
     fn aborted() -> Self {
         Err(bun_sys::Error {
-            // PORT NOTE: Zig `posix.E.INTR` → `SystemErrno::EINTR` (variants keep `E` prefix).
             errno: bun_sys::posix::E::EINTR as bun_sys::ErrorInt,
             syscall: bun_sys::Tag::access,
             ..Default::default()
@@ -403,8 +399,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
         use bun_jsc::SysErrorJsc as _;
         match self {
             Ok(r) => {
-                // PORT NOTE: Zig hands the result slice straight to
-                // `ArrayBuffer.fromBytes` and ownership transfers to JSC — the
+                // Ownership of the result slice transfers to JSC — the
                 // GC-installed deallocator (`MarkedArrayBuffer_deallocator`)
                 // calls `mi_free` on the buffer when the JS object is
                 // collected. Leak the `Vec` here to hand the allocation to
@@ -475,8 +470,8 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
         syscall: bun_sys::Tag,
         file_path: impl AsRef<[u8]>,
     ) -> Option<Self> {
-        // PORT NOTE: Zig `@compileError` on `u16` paths is enforced by the
-        // `AsRef<[u8]>` bound — UTF-16 slices won't satisfy it.
+        // UTF-16 (`u16`) paths are rejected at compile time by the
+        // `AsRef<[u8]>` bound.
         #[cfg(windows)]
         {
             if !Rc::IS_NTSTATUS {
@@ -530,7 +525,7 @@ impl<R> MaybeSysExt<R> for Maybe<R, bun_sys::Error> {
         file_path: impl AsRef<[u8]>,
         dest: impl AsRef<[u8]>,
     ) -> Option<Self> {
-        // PORT NOTE: Zig `@compileError` on `u16` paths enforced by `AsRef<[u8]>`.
+        // UTF-16 (`u16`) paths are rejected at compile time by the `AsRef<[u8]>` bound.
         #[cfg(windows)]
         {
             if !Rc::IS_NTSTATUS {
@@ -637,7 +632,7 @@ impl MaybeToJs for Vec<u8> {
         self,
         global_object: &bun_jsc::JSGlobalObject,
     ) -> bun_jsc::JsResult<bun_jsc::JSValue> {
-        // PORT NOTE: ownership transfers to JSC (freed via
+        // Ownership transfers to JSC (freed via
         // `MarkedArrayBuffer_deallocator` → `mi_free`); see
         // `MaybeSysExt::to_array_buffer` above for the full rationale.
         let bytes: &mut [u8] = Vec::leak(self);
@@ -685,14 +680,9 @@ impl MaybeToJs for bun_sys::Error {
     }
 }
 
-// PORT NOTE: the Zig `.@"struct" / .@"enum" / .@"opaque" / .@"union"` and
-// non-string `.pointer` arms forwarded to `r.toJS(globalObject)`. In Rust each
-// such `R` implements `MaybeToJs` directly at its definition site (no blanket
-// `@typeInfo` reflection available); add per-type impls alongside the type.
-
-// PORT NOTE: the Zig `Maybe.format` (Display) impl is dropped — `Maybe` is now
-// `core::result::Result`, which already has `Debug`, and a foreign `Display`
-// impl on a foreign type is not expressible. No call sites depended on it.
+// There is no blanket reflection-style impl: each result type `R` that needs
+// `r.toJS(globalObject)` semantics implements `MaybeToJs` directly at its
+// definition site; add per-type impls alongside the type.
 
 // ─── helpers ──────────────────────────────────────────────────────────────
 

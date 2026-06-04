@@ -658,7 +658,7 @@ impl PmPkgCommand {
                 .unwrap()
                 .put(dummy_bump(), &path_parts[0], expr)?;
 
-            // PORT NOTE: Zig's `path_parts[0] = ""` here was an ownership-transfer hack to neuter
+            // Zig's `path_parts[0] = ""` here was an ownership-transfer hack to neuter
             // the caller's `defer allocator.free(part)`. That defer is gone (Vec<Box<[u8]>> drops
             // its elements), so the assignment is deleted.
             return Ok(());
@@ -724,7 +724,7 @@ impl PmPkgCommand {
             return Ok(());
         }
 
-        // PORT NOTE: Zig's `path[0] = ""` writes were an ownership-transfer hack to neuter the
+        // Zig's `path[0] = ""` writes were an ownership-transfer hack to neuter the
         // caller's `defer allocator.free(part)` (manual move semantics). In Zig, `current_key`
         // is a VALUE copy of the slice descriptor taken before the clear, so `root.get(current_key)`
         // still sees the original key. That defer is gone in Rust (Drop handles it), so the

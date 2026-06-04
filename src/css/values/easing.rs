@@ -85,7 +85,7 @@ fn easing_map_get_any_case(ident: &[u8]) -> Option<EasingKeyword> {
 
 impl EasingFunction {
     pub fn parse(input: &mut css::Parser) -> Result<EasingFunction> {
-        // PORT NOTE: reshaped for borrowck — `try_parse(|i| i.expect_ident())`
+        // Reshaped for borrowck — `try_parse(|i| i.expect_ident())`
         // ties the returned slice to the closure's `&mut Parser` borrow, so the
         // ident can't escape. Read the next token by value (Token slices are
         // `'static` placeholders for the not-yet-threaded `'bump`) and dispatch
@@ -285,8 +285,8 @@ fn step_position_map_get_any_case(ident: &[u8]) -> Option<StepPositionKeyword> {
 }
 
 impl StepPosition {
-    // TODO(port): Zig used `css.DeriveToCss(@This()).toCss` — reflection-derived serializer.
-    // Replace with `#[derive(ToCss)]` once the trait/derive exists.
+    /// Zig used `css.DeriveToCss(@This()).toCss` (reflection-derived
+    /// keyword serializer); hand-written equivalent.
     pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.write_str(<&'static str>::from(self))
     }

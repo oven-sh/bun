@@ -14,18 +14,6 @@
 // `PropertyId::set_prefixes_for_targets` / `from_name_and_prefix` and the
 // `Property` payloads that name `css_values::*` resolve directly.
 
-/// Declares a property-handler ZST with the `handle_property` / `finalize`
-/// surface that `DeclarationHandler` (declaration.rs) composes over. The
-/// real handler bodies live in the gated leaf .rs files; until those
-/// un-gate, these no-op stubs keep `DeclarationHandler` compiling against
-/// the now-real `Property` enum.
-///
-/// PORT NOTE: Zig handlers are plain structs with `handleProperty(*Self,
-/// *const Property, *DeclarationList, *PropertyHandlerContext) bool` +
-/// `finalize(*Self, *DeclarationList, *PropertyHandlerContext) void`. Same
-/// shape here; lifetimes on `DeclarationList<'bump>` / context are erased
-/// behind anonymous lifetimes since the stub bodies touch neither.
-
 // ─── Rect / Size shorthand impl + define macros ────────────────────────────
 // Shared by `border.rs` and `margin_padding.rs`. These are the Rust port of
 // Zig's `css.DefineRectShorthand` / `css.DefineSizeShorthand` comptime mixins
@@ -95,8 +83,11 @@ macro_rules! define_rect_shorthand {
         }
 
         impl $name {
-            // TODO(port): bring this back
-            // (old using name space) css::DefineShorthand(@This(), PropertyIdTag::$shorthand_id);
+            // Zig applied `css.DefineShorthand(@This(), PropertyIdTag::<shorthand>,
+            // PropertyFieldMap)` here, but every method it defines
+            // (`fromLonghands`/`longhands`/`longhand`) bodies out to
+            // `@compileError(todo_stuff.depth)` (css_parser.zig:307ff) — it is not
+            // callable. `PROPERTY_FIELD_MAP` preserves the map data it consumed.
 
             pub const PROPERTY_FIELD_MAP: &[(&str, $crate::properties::PropertyIdTag)] = &[
                 ("top", $crate::properties::PropertyIdTag::$top_id),

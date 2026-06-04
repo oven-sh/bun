@@ -90,7 +90,6 @@ impl Strong {
 }
 
 // ─── extern fns ──────────────────────────────────────────────────────────────
-// TODO(port): move to runtime_sys / bun_jsc_sys
 
 unsafe extern "C" {
     /// C++ writes the two teed-stream JSValues into the out-params; reference
@@ -343,7 +342,7 @@ impl ReadableStream {
         };
         match &store.data {
             webcore::blob::store::Data::Bytes(_) => {
-                // PORT NOTE: Zig left `context: undefined` then called `setup()` to initialize
+                // Zig left `context: undefined` then called `setup()` to initialize
                 // in place. Rust constructs with `Default` (no UB) and `setup()` overwrites
                 // the entire struct via `*self = ByteBlobLoader { ... }`.
                 let reader = NewSource::<ByteBlobLoader>::new_mut(NewSource {
@@ -450,7 +449,7 @@ impl ReadableStream {
             },
             ..Default::default()
         });
-        // PORT NOTE: reshaped for borrowck — Zig passed `&source.context` as both reader-parent and self.
+        // Reshaped for borrowck — Zig passed `&source.context` as both reader-parent and self.
         let ctx_ptr: *mut FileReader = &raw mut source.context;
         source
             .context
@@ -646,7 +645,9 @@ pub trait SourceContext: Sized {
 
     /// `@hasDecl(Context, "setRawMode")` — default: not present.
     /// Returns `None` if the context type does not support raw mode.
-    // TODO(port): Zig used @compileError when absent + codegen referenced; Rust default panics never reached if codegen omits it.
+    /// Zig made this a `@compileError` when absent; in Rust the `None`
+    /// default is only reachable if codegen wires `setRawMode` for a context
+    /// that does not implement it (see `set_raw_mode_from_js`).
     fn set_raw_mode(&mut self, _flag: bool) -> Option<bun_sys::Result<()>> {
         None
     }
@@ -655,10 +656,11 @@ pub trait SourceContext: Sized {
     fn set_flowing(&mut self, _flag: bool) {}
 }
 
-// TODO(port): #[bun_jsc::JsClass] — codegen name is "JS{C::NAME}InternalReadableStreamSource".
-// The Zig `js = @field(jsc.Codegen, ...)` + toJS/fromJS/fromJSDirect aliases are wired by the
-// derive; cached-property accessors (pendingPromiseSetCached, onDrainCallback{Get,Set}Cached)
-// are emitted by the .classes.ts generator.
+// Hand-wired JSC class (the `#[bun_jsc::JsClass]` derive cannot be used on a
+// type generic over `C`): codegen name is "JS{C::NAME}InternalReadableStreamSource".
+// The Zig `js = @field(jsc.Codegen, ...)` + toJS/fromJS/fromJSDirect aliases are wired
+// manually below; cached-property accessors (pendingPromiseSetCached,
+// onDrainCallback{Get,Set}Cached) are emitted by the .classes.ts generator.
 //
 // `repr(C)` keeps `context` at offset 0: C++ `wrapped()` returns `*mut NewSource<C>` and
 // [`ReadableStream::from_js`] casts that straight to `*mut C` (matching Zig, where `context`
@@ -671,7 +673,9 @@ pub struct NewSource<C: SourceContext> {
     pub ref_count: u32,
     pub pending_err: Option<syscall::Error>,
     pub close_handler: Option<fn(Option<*mut c_void>)>,
-    // TODO(port): lifetime — TSV class UNKNOWN
+    /// Borrowed opaque context for native `close_handler`s (Zig
+    /// `?*anyopaque`, never owned/freed here). The JS path stores
+    /// `on_js_close` and leaves this `None` — see [`Self::on_close`].
     pub close_ctx: Option<NonNull<c_void>>,
     pub close_jsvalue: bun_jsc::strong::Optional,
     /// R-2: cleared via `&self` from `FetchTasklet::clear_stream_cancel_handler`
@@ -967,7 +971,6 @@ impl<C: SourceContext> NewSource<C> {
         ReadableStream::from_native(global_this, out_value)
     }
 
-    // TODO(port): #[bun_jsc::host_fn(method)]
     pub fn set_raw_mode_from_js(
         this: &mut Self,
         global: &JSGlobalObject,
@@ -983,7 +986,6 @@ impl<C: SourceContext> NewSource<C> {
         }
     }
 
-    // TODO(port): #[bun_jsc::host_fn(method)]
     pub fn set_flowing_from_js(
         this: &mut Self,
         _global: &JSGlobalObject,
@@ -1053,7 +1055,7 @@ impl<C: SourceContext> NewSource<C> {
         flags: JSValue,
         mut result: streams::Result,
     ) -> JsResult<JSValue> {
-        // PORT NOTE: Zig matches on the union and falls through to `result.toJS`
+        // Zig matches on the union and falls through to `result.toJS`
         // for non-handled tags; here `result` is consumed by `to_js(&mut self)`.
         match &result {
             streams::Result::Err(err) => match err {
@@ -1228,7 +1230,7 @@ impl<C: SourceContext> NewSource<C> {
         Ok(JSValue::UNDEFINED)
     }
 
-    // PORT NOTE: text/arrayBuffer/blob/bytes/json all share the same body modulo
+    // text/arrayBuffer/blob/bytes/json all share the same body modulo
     // `BufferActionTag`. Collapsed into one helper to avoid 5× drift.
     fn to_buffered_value_from_js(
         &mut self,

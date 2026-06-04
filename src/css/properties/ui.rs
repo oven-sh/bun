@@ -104,15 +104,15 @@ fn color_scheme_map_get(ident: &[u8]) -> Option<ColorSchemeKeyword> {
 }
 
 /// A value for the [resize](https://www.w3.org/TR/2021/WD-css-ui-4-20210316/#resize) property.
-// TODO(port): Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))` — intentionally unimplemented upstream.
+// Zig source is `css.DefineEnumProperty(@compileError(css.todo_stuff.depth))`
+// — intentionally unimplemented upstream, so this stays a unit placeholder.
 pub struct Resize;
 
 #[derive(Default)]
 pub struct ColorSchemeHandler;
 
-// PORT NOTE: `context.arena` was dropped from PropertyHandlerContext;
-// `define_var` no longer needs an arena because `TokenList.v` is a std
-// `Vec<TokenOrValue>` (LIFETIMES.tsv classification).
+// `define_var` needs no arena because `TokenList.v` is a std
+// `Vec<TokenOrValue>` (unlike Zig, which threaded `context.arena` through).
 impl ColorSchemeHandler {
     pub(crate) fn handle_property(
         &mut self,
@@ -146,7 +146,7 @@ impl ColorSchemeHandler {
                         dest.push(define_var(b"--buncss-dark", css::Token::Ident(b"initial")));
                     }
                 }
-                // PORT NOTE: Zig pushed `property.deepClone(arena)`; ColorScheme is
+                // Zig pushed `property.deepClone(arena)`; ColorScheme is
                 // `Copy` (bitflags u8), so reconstruct the variant directly.
                 dest.push(Property::ColorScheme(color_scheme));
                 true
@@ -164,7 +164,7 @@ impl ColorSchemeHandler {
 }
 
 fn define_var(name: &'static [u8], value: css::Token) -> Property {
-    // PORT NOTE: `name` is `&'static [u8]` because all call sites pass byte-string literals.
+    // `name` is `&'static [u8]` because all call sites pass byte-string literals.
     // `TokenList.v` is `Vec<TokenOrValue>` (std Vec — see custom.rs:320), so no arena
     // threading is needed here despite Zig's `ArrayList(TokenOrValue)`.
     Property::Custom(css::css_properties::custom::CustomProperty {

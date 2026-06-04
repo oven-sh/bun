@@ -8,7 +8,7 @@ use bun_s3_signing::error::{self as s3_error, get_sign_error_message};
 
 pub use s3_error::S3Error;
 
-// PORT NOTE: `get_sign_error_message` returns `&'static [u8]` of ASCII literals; reinterpret as
+// `get_sign_error_message` returns `&'static [u8]` of ASCII literals; reinterpret as
 // `&str` for the `format_args!`-taking `JSGlobalObject::err()` builder.
 #[inline]
 fn msg(bytes: &'static [u8]) -> &'static str {
@@ -150,7 +150,6 @@ impl JSS3Error {
     }
 }
 
-// TODO(port): move to <area>_sys
 // C++ side defines `SYSV_ABI JSC::EncodedJSValue` (S3Error.cpp).
 bun_jsc::jsc_abi_extern! {
     // C++ copies the three `BunString` fields out and does not write through

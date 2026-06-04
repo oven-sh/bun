@@ -189,7 +189,7 @@ impl<T: SourceMapFormatCtx> SourceMapFormat<T> {
 
     #[inline]
     pub fn get_buffer(&mut self) -> &mut MutableString {
-        // PORT NOTE: Zig returned `MutableString` by value (struct copy sharing
+        // Zig returned `MutableString` by value (struct copy sharing
         // the same backing allocation). Rust returns `&mut` to avoid a
         // double-ownership footgun; callers mutate in place.
         self.ctx.get_buffer()
@@ -287,8 +287,8 @@ impl SourceMapFormatCtx for VLQSourceMap {
 
     fn get_buffer(&mut self) -> &mut MutableString {
         if let Some(b) = &mut self.internal {
-            // PORT NOTE: Zig did `this.data = b.finalize().*; b.finalized = null;`
-            // i.e. move the finalized buffer out and clear the builder.
+            // Move the finalized buffer out and clear the builder
+            // (Zig: `this.data = b.finalize().*; b.finalized = null;`).
             self.data = b.finalize_take();
             self.internal = None;
         }
@@ -468,8 +468,8 @@ impl NewBuilder<VLQSourceMap> {
     #[inline(never)]
     pub fn generate_chunk(&mut self, output: &[u8]) -> Chunk {
         self.update_generated_line_and_column(output);
-        // PORT NOTE: reshaped for borrowck — capture scalars before borrowing
-        // `source_map` mutably via `get_buffer`.
+        // Capture scalars before borrowing `source_map` mutably via
+        // `get_buffer`, to satisfy the borrow checker.
         if self.prepend_count {
             let count = self.source_map.get_count();
             let approx = self.approximate_input_line_count;

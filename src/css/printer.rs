@@ -15,8 +15,7 @@ use css_values::ident::DashedIdent;
 
 pub use css::Error;
 
-// TODO(port): move to <area>_sys / clarify which Write trait. Zig used *std.Io.Writer
-// (byte-oriented: writeAll/writeByte/print/splatByteAll). Using a local dyn trait alias.
+// Byte-oriented writer (writeAll/writeByte/print equivalents); Zig used *std.Io.Writer.
 use bun_io::Write;
 
 /// Options that control how CSS is serialized to a string.
@@ -148,8 +147,9 @@ pub struct Printer<'a> {
     /// from JavaScript. Useful for polyfills, for example.
     pub pseudo_classes: Option<PseudoClasses<'a>>,
     pub indentation_buf: BumpVec<'a, u8>,
-    // TODO(port): lifetime — ctx is set to a stack-local during with_context() and restored
-    // after; `&'a StyleContext<'a>` will not borrow-check there. May need raw `*const StyleContext`.
+    // INVARIANT: `with_context()` points this at a stack-local `StyleContext` (via an
+    // unsafe variance cast — see the SAFETY note there) and always restores the parent
+    // before that frame returns; never stash `ctx` beyond the `with_context` call.
     pub ctx: Option<&'a css::StyleContext<'a>>,
     /// Number of parent-selector substitutions performed for `&` while
     /// serializing the current rule prelude with compiled nesting (targets
@@ -183,7 +183,6 @@ pub struct Printer<'a> {
     pub local_names: Option<&'a css::LocalsResultsMap>,
     /// NOTE This should be the same mimalloc heap arena arena
     pub arena: &'a Bump,
-    // TODO: finish the fields
 }
 
 #[cfg(debug_assertions)]
@@ -300,7 +299,7 @@ impl<'a> Printer<'a> {
         Err(PrintErr::CSSPrintError)
     }
 
-    // PORT NOTE: deinit() dropped — scratchbuf/indentation_buf/dependencies are arena-backed
+    // deinit() dropped — scratchbuf/indentation_buf/dependencies are arena-backed
     // BumpVec<'a, _>; freed in bulk by `arena.reset()`. No explicit Drop impl needed.
 
     /// If `import_records` is null, then the printer will error when it encounters code that relies on import records (urls())
@@ -391,7 +390,7 @@ impl<'a> Printer<'a> {
             let import_record = &info.import_records[import_record_idx as usize];
             let [a, b] =
                 bun_core::cheap_prefix_normalizer(self.public_path, import_record.path.text);
-            // PORT NOTE: reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
+            // Reshaped for borrowck — copied (a, b) out before re-borrowing &mut self
             let a = a.to_vec();
             let b = b.to_vec();
             // PERF(port): two small heap copies above; Zig borrowed directly. Profile if it shows up on a hot path.
@@ -518,13 +517,22 @@ impl<'a> Printer<'a> {
         Ok(())
     }
 
-    /// Alias of `write_str` for callers that want to be explicit about
-    /// possibly-newline-containing byte content (Zig: `writeBytes`).
+    /// Like `write_str`, but newline-containing byte content is permitted:
+    /// `line`/`col` are tracked across newlines (matching `write_char` applied
+    /// byte-by-byte), whereas `write_str` debug-asserts that no newlines are
+    /// present. Used for raw token round-trip content (whitespace tokens,
+    /// comments, unparsed contents).
     #[inline]
     pub fn write_bytes(&mut self, s: &[u8]) -> PrintResult<()> {
-        // TODO(port): Zig writeBytes did not assert no-newline; tracked
-        // line/col separately. For now route through write_str.
-        self.col += u32::try_from(s.len()).expect("int cast");
+        // Unlike `write_str`, newlines are allowed here; track line/col across them
+        // (matching `write_char` applied byte-by-byte) so source maps stay correct.
+        if let Some(last_newline) = s.iter().rposition(|&b| b == b'\n') {
+            let new_lines = s.iter().filter(|&&b| b == b'\n').count();
+            self.line += u32::try_from(new_lines).expect("int cast");
+            self.col = u32::try_from(s.len() - last_newline - 1).expect("int cast");
+        } else {
+            self.col += u32::try_from(s.len()).expect("int cast");
+        }
         if self.dest.write_all(s).is_err() {
             return Err(self.add_fmt_error());
         }
@@ -569,7 +577,7 @@ impl<'a> Printer<'a> {
                 let Some(symbol) = self.symbols.get_const(ref_) else {
                     return Err(self.add_fmt_error());
                 };
-                // PORT NOTE: copy out the arena slice before re-borrowing &mut self.
+                // Copy out the arena slice before re-borrowing &mut self.
                 let name = symbol.original_name.slice();
                 return self.serialize_identifier(name);
             }
@@ -588,7 +596,7 @@ impl<'a> Printer<'a> {
     pub fn write_ident(&mut self, ident: &'a [u8], handle_css_module: bool) -> PrintResult<()> {
         if handle_css_module {
             if self.css_module.is_some() {
-                // PORT NOTE: borrowck reshape — Zig captured `&mut self` inside the closure
+                // Borrowck reshape — Zig captured `&mut self` inside the closure
                 // while `css_module` (a field of self) was simultaneously borrowed. We instead
                 // copy the `'a`-lifetime references out of `css_module` up front so the
                 // closure can hold the sole `&mut self`.
@@ -662,7 +670,7 @@ impl<'a> Printer<'a> {
             None => false,
         };
         if dashed_idents {
-            // PORT NOTE: same borrowck reshape as `write_ident`.
+            // Same borrowck reshape as `write_ident`.
             let source_index = self.loc.source_index as usize;
             let arena = self.arena;
             let (config, hash, source): (&'a css::css_modules::Config, &'a [u8], &'a [u8]) = {
@@ -836,9 +844,8 @@ impl<'a> Printer<'a> {
 
         let ctx = css::StyleContext { selectors, parent };
 
-        // TODO(port): lifetime — `&ctx` is stack-local but field type is `&'a StyleContext<'a>`.
-        // Zig relied on restoring `parent` before return. Consider changing the field to raw
-        // `*const StyleContext` or restructuring StyleContext as an explicit stack.
+        // `&ctx` is stack-local but the field type is `&'a StyleContext<'a>`; like Zig,
+        // soundness relies on restoring `parent` before this frame returns.
         // SAFETY: ctx outlives the call to func; self.ctx is restored to `parent` before return.
         // Inner-lifetime variance cast via raw pointer (`StyleContext<'x>` and
         // `StyleContext<'a>` share layout; only the borrow-checker tag differs).

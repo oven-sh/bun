@@ -61,7 +61,7 @@ impl JsonCache {
     ) -> Result<Option<bun_ast::Expr>, bun_core::Error> {
         let mut temp_log = bun_ast::Log::init();
         let bump = self.bump.get_or_insert_with(bun_alloc::Arena::new);
-        // PORT NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source) catch {}`
+        // NOTE: reshaped for borrowck — Zig `defer temp_log.appendToMaybeRecycled(log, source) catch {}`
         // runs after the `func() catch null` body; here the append is hoisted past the match.
         let result = func(source, &mut temp_log, bump).ok();
         let _ = temp_log.append_to_maybe_recycled(log, source);
@@ -122,7 +122,8 @@ impl JsonCache {
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
 // Array iteration is faster and deterministically ordered in that case.
-// TODO(port): bun.StringArrayHashMap — confirm bun_collections key/value ownership for byte-slice keys
+// Zig `bun.StringArrayHashMap` borrows arena-owned `[]const u8` keys; here both
+// keys and values are owned (`Box`/`Vec`) and freed when the map drops.
 pub(crate) type PathsMap = ArrayHashMap<Box<[u8]>, Vec<Box<[u8]>>>;
 
 // Zig: `fn FlagSet(comptime Type: type) type { return std.EnumSet(std.meta.FieldEnum(Type)); }`
@@ -139,8 +140,8 @@ pub(crate) enum JsxField {
 pub(crate) type JsxFieldSet = EnumSet<JsxField>;
 
 pub struct TSConfigJSON {
-    // TODO(port): lifetime — Zig never frees these string fields (resolver-lifetime arena);
-    // modeled here as owned Box<[u8]>. Revisit if profiling shows churn.
+    // Zig never frees these string fields (resolver-lifetime arena); modeled
+    // here as owned Box<[u8]>.
     pub abs_path: Box<[u8]>,
 
     /// The absolute path of "compilerOptions.baseUrl"
@@ -317,7 +318,7 @@ impl TSConfigJSON {
         Ok(Box::from(&written[..len]))
     }
 
-    // PORT NOTE: Zig `Expr.asString(allocator)` allocates and never frees (the
+    // NOTE: Zig `Expr.asString(allocator)` allocates and never frees (the
     // resolver owns the JSON AST for its lifetime). The live Rust `Expr` query
     // API exposes `as_utf8_string_literal() -> Option<&[u8]>` instead — the
     // tsconfig parser forces UTF-8 (cache.zig:313 `force_utf8=true`), so every
@@ -590,7 +591,7 @@ impl TSConfigJSON {
             // Parse "paths"
             if let Some(paths_prop) = paths_v {
                 if let bun_ast::ExprData::EObject(paths) = &paths_prop.data {
-                    // PORT NOTE: Zig `defer { Features.tsconfig_paths += 1 }` hoisted to top of block;
+                    // NOTE: Zig `defer { Features.tsconfig_paths += 1 }` hoisted to top of block;
                     // it runs on every exit path either way.
                     bun_analytics::features::tsconfig_paths
                         .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
@@ -736,7 +737,6 @@ impl TSConfigJSON {
         loc: bun_ast::Loc,
         text: &[u8],
     ) -> Result<Box<[Box<[u8]>]>, bun_core::Error> {
-        // TODO(port): narrow error set
         if text.is_empty() {
             return Ok(Box::default());
         }

@@ -381,7 +381,7 @@ pub trait PathLike {
     fn append(&mut self, bytes: &[u8]);
     fn append_fmt(&mut self, args: core::fmt::Arguments<'_>);
 }
-// PORT NOTE: Bound to `CheckLength::ASSUME` only. In Zig the helpers call
+// Bound to `CheckLength::ASSUME` only. In Zig the helpers call
 // `buf.append(x)` with no `try`, so passing a `.check_for_greater_than_max_path`
 // Path is a *compile error* (`Error!void` is not `void`). Mirroring that here
 // prevents check-mode callers from silently swallowing `MaxPathExceeded` through
@@ -930,7 +930,7 @@ pub mod fs {
         }
 
         /// Zig: `Path.initWithNamespaceVirtual(comptime text, namespace, package)`.
-        /// PORT NOTE: Zig formed `pretty = namespace ++ ":" ++ package` at comptime;
+        /// Zig formed `pretty = namespace ++ ":" ++ package` at comptime;
         /// `const_format::concatcp!` can't accept fn-param `&str`, so callers pass
         /// the precomputed `concatcp!` result as `pretty`.
         #[inline]
@@ -949,7 +949,8 @@ pub mod fs {
         }
 
         /// Zig: `Path.initForKitBuiltIn`.
-        /// PORT NOTE: same comptime-concat caveat as `init_with_namespace_virtual`.
+        /// Same comptime-concat caveat as `init_with_namespace_virtual`:
+        /// callers pass the precomputed `concatcp!` result as `pretty`.
         #[inline]
         pub const fn init_for_kit_built_in(
             namespace: &'static [u8],

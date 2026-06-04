@@ -80,7 +80,7 @@ impl Default for PostgresSQLQuery {
     }
 }
 
-// PORT NOTE: Zig used `packed struct(u8)`. Ported as a plain struct with public
+// Note: Zig used `packed struct(u8)`. Ported as a plain struct with public
 // fields because `PostgresSQLConnection.rs` reads/writes these directly
 // (`req.flags.simple`, `req.flags.binary = ...`, `req.flags.result_mode`).
 // The packing is not load-bearing on the Rust side.
@@ -379,8 +379,9 @@ impl PostgresSQLQuery {
         mem::size_of::<PostgresSQLQuery>()
     }
 
-    // comptime { @export(&jsc.toJSHostFn(call), .{ .name = "PostgresSQLQuery__createInstance" }); }
-    // TODO(port): proc-macro emits the PostgresSQLQuery__createInstance export; verify codegen name.
+    // Zig exported this as `PostgresSQLQuery__createInstance` for C++ to bind;
+    // the Rust port registers it directly as `createQuery` via
+    // `put_host_functions!` in `postgres.rs`, so no exported symbol is needed.
     pub fn call(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let arguments = callframe.arguments();
         let mut args =
@@ -428,7 +429,7 @@ impl PostgresSQLQuery {
         this_value.ensure_still_alive();
 
         // SAFETY: ptr is exclusively owned here until returned to JS.
-        // PORT NOTE: Zig's `ptr.* = .{ ... }` is functional-record-update over a
+        // Note: Zig's `ptr.* = .{ ... }` is functional-record-update over a
         // default; in Rust `PostgresSQLQuery` implements `Drop`, so FRU
         // (`..Default::default()`) is forbidden (E0509). `ptr` was already
         // `default()`-initialised by `Box::new` above, so just overwrite the
@@ -450,12 +451,6 @@ impl PostgresSQLQuery {
         }
 
         Ok(this_value)
-    }
-
-    pub fn push(&self, global_this: &JSGlobalObject, value: JSValue) {
-        // TODO(port): Zig source references `this.pending_value` which is not a field on this
-        // struct — likely dead/broken code in the original. Preserved as a no-op.
-        let _ = (global_this, value);
     }
 
     pub fn do_done(
@@ -658,7 +653,7 @@ impl PostgresSQLQuery {
         let has_params = signature.fields.len() > 0;
         let mut did_write = false;
         'enqueue: {
-            // PORT NOTE: `connection_entry_value` is a *mut into connection.statements value slot;
+            // Note: `connection_entry_value` is a *mut into connection.statements value slot;
             // holding a `&mut` across other &mut connection borrows below trips borrowck, so
             // store the raw `*mut *mut PostgresSQLStatement` and re-dereference at use sites.
             let mut connection_entry_value: Option<*mut *mut PostgresSQLStatement> = None;

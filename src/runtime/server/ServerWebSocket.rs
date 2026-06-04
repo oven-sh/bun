@@ -17,12 +17,11 @@ use crate::server::web_socket_server_context::HandlerFlags;
 
 bun_output::declare_scope!(WebSocketServer, visible);
 
-// PORT NOTE: `'a` on a `.classes.ts` m_ctx payload is wrong — the JS wrapper
-// outlives any stack frame. LIFETIMES.tsv says BORROW_PARAM but the handler
-// lives in `ServerConfig.websocket` for the server's lifetime. Raw `*const` +
-// SAFETY notes is the runtime shape.
+// No `'a` on a `.classes.ts` m_ctx payload — the JS wrapper outlives any
+// stack frame. The handler lives in `ServerConfig.websocket` for the server's
+// lifetime, so a raw back-pointer + SAFETY notes is the runtime shape.
 //
-// R-2 (PORT_NOTES_PLAN): every uws/JS callback into this socket can re-enter
+// R-2: every uws/JS callback into this socket can re-enter
 // — `on_open` → `ws.cork(JS)` → `ws.close()` → `on_close` mutates `flags` /
 // `this_value` on the SAME `m_ctx`. A `&mut Self` receiver would alias under
 // Stacked Borrows. Receivers therefore take `&self`; per-field interior
@@ -33,7 +32,7 @@ pub struct ServerWebSocket {
     handler: bun_ptr::BackRef<WebSocketServerHandler>,
     this_value: JsCell<JsRef>,
     flags: Cell<Flags>,
-    // PORT NOTE (§Pointers): `?*bun.webcore.AbortSignal` is an opaque C++ type
+    // `AbortSignal` is an opaque C++ type
     // with intrusive WebCore ref-counting (ref/unref) — never `Arc`. The init
     // caller transfers a +1 ref; `finalize`/`on_close` unref it.
     signal: Cell<Option<NonNull<AbortSignal>>>,
@@ -392,7 +391,7 @@ impl ServerWebSocket {
 
         let handler = self.handler();
         let vm = handler.vm();
-        // PORT NOTE: reshaped for borrowck — handler is &'a, mutate via interior helper
+        // The handler is shared (&), so mutate via the interior-mutability helper.
         handler.active_connections_saturating_add(1);
         let global_object = handler.global_object();
         let on_open_handler = handler.on_open;
@@ -646,7 +645,7 @@ impl ServerWebSocket {
         }
         let signal = self.signal.take();
 
-        // PORT NOTE: reshaped for borrowck — Zig defer block; downgrade + signal
+        // Replaces a Zig defer block: downgrade + signal
         // cleanup runs at fn exit. `this_value` is not mutated between here and
         // the deferred `downgrade()`, so hoisting these reads is sound.
         let was_not_empty = self.this_value.get().is_not_empty();
@@ -734,7 +733,7 @@ impl ServerWebSocket {
         Wrap::<ServerType, Self, SSL>::apply(opts)
     }
 
-    // PORT NOTE: no `#[bun_jsc::host_fn]` here — the constructor extern shim is
+    // No `#[bun_jsc::host_fn]` here — the constructor extern shim is
     // emitted by `generated_classes.rs`, which calls `<Self>::constructor`
     // directly.
     pub fn constructor(

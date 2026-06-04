@@ -23,7 +23,6 @@ pub fn update_package_json_and_install_catch_error(
     ctx: Context,
     subcommand: Subcommand,
 ) -> Result<(), Error> {
-    // TODO(port): narrow error set
     match update_package_json_and_install(ctx, subcommand) {
         Ok(()) => Ok(()),
         Err(e) if e == err!("InstallFailed") || e == err!("InvalidPackageJSON") => {
@@ -40,7 +39,6 @@ pub fn update_package_json_and_install_catch_error(
 }
 
 pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> Result<(), Error> {
-    // TODO(port): narrow error set
     // PERF(port): Zig used `switch (subcommand) { inline else => |cmd| ... }` to monomorphize
     // `CommandLineArguments.parse` per subcommand. Calling with runtime `subcommand` here; if
     // `parse` requires `<const CMD: Subcommand>`, expand to a `match`.
@@ -52,7 +50,7 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
     //    typing in the dependency names
     // 3. Run the install command
     if cli.analyze {
-        // PORT NOTE: hoisted from Zig fn-local `const Analyzer = struct {...}`.
+        // Note: hoisted from Zig fn-local `const Analyzer = struct {...}`.
         // `ctx`/`cli` are stored as raw `*mut` (Zig: freely-aliasing `*T`) because
         // `BuildCommand::exec` holds `command::get()` (the same `ContextData`) across
         // the `on_fetch` callback, and `DependenciesScanner.entry_points` owns a copy
@@ -116,7 +114,7 @@ pub fn update_package_json_and_install(ctx: Context, subcommand: Subcommand) -> 
             }
         }
 
-        // PORT NOTE: `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`; Zig
+        // Note: `DependenciesScanner.entry_points` is `Box<[Box<[u8]>]>`; Zig
         // borrowed `cli.positionals[1..]` directly. Clone the argv slices into an owned
         // buffer (small one-shot list — no perf concern) so `cli` is not borrowed across
         // the `&mut analyzer` setup.

@@ -7,8 +7,8 @@ pub(crate) struct CharAndCount {
     pub index: usize,
 }
 
-// PORT NOTE: Zig `CharAndCount.Array` was an associated type alias; inherent
-// associated types are unstable in Rust, so it's a free alias here.
+// Zig's `CharAndCount.Array` associated alias is a free alias here; inherent
+// associated types are unstable in Rust.
 pub(crate) type CharAndCountArray = [CharAndCount; CHAR_FREQ_COUNT];
 
 // PERF(port): Zig used `@Vector(CHAR_FREQ_COUNT, i32)` for SIMD adds — profile
@@ -16,9 +16,6 @@ type Buffer = [i32; CHAR_FREQ_COUNT];
 
 #[derive(Copy, Clone)]
 pub struct CharFreq {
-    // PORT NOTE: Zig field was `align(1)` (unaligned i32 array). Rust gives natural
-    // alignment; if the packed layout was load-bearing for an FFI/serialized struct,
-    // revisit.
     pub freqs: Buffer,
 }
 
@@ -75,7 +72,7 @@ impl CharFreq {
             }
 
             // std.sort.pdq → Rust's sort_unstable_by (pattern-defeating quicksort).
-            // PORT NOTE: do NOT route through `CharAndCount::less_than` and map
+            // Do NOT route through `CharAndCount::less_than` and map
             // false→Greater — that comparator never returns `Equal`, which
             // violates `sort_unstable_by`'s total-order contract (Rust 1.81+
             // is permitted to panic on inconsistent comparators). `index` is
@@ -120,7 +117,7 @@ impl CharFreq {
 
 fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
     // https://zig.godbolt.org/z/P5dPojWGK
-    // PORT NOTE: Zig copied `out.*` into a stack local and wrote back via `defer` to
+    // Zig copied `out.*` into a stack local and wrote back via `defer` to
     // avoid unaligned (`align(1)`) loads in the hot loop. We operate on `out` directly;
     // the field is naturally aligned in Rust.
     let mut deltas: [i32; 256] = [0; 256];
@@ -141,7 +138,7 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
         deltas[c as usize] += delta;
     }
 
-    // PORT NOTE — INTENTIONAL SPEC DIVERGENCE: CharFreq.zig:64 writes
+    // INTENTIONAL DIVERGENCE from the Zig original: CharFreq.zig:64 writes
     // `freqs[0..26].* = deltas[...]`, which *overwrites* the accumulator
     // (`var freqs = out.*` is dead). That is an upstream bug: every ≥32-byte
     // scan discards all prior counts, so the result is last-big-scan-wins
@@ -169,7 +166,7 @@ fn scan_big(out: &mut Buffer, text: &[u8], delta: i32) {
 }
 
 fn scan_small(out: &mut Buffer, text: &[u8], delta: i32) {
-    // PORT NOTE: Zig copied `out.*` into a stack local to avoid unaligned (`align(1)`)
+    // Zig copied `out.*` into a stack local to avoid unaligned (`align(1)`)
     // RMWs in the loop. The Rust field is naturally aligned, so operate on `out` directly
     // (same treatment as `scan_big`).
     for &c in text {

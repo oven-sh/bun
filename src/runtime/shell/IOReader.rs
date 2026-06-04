@@ -162,7 +162,7 @@ impl IOReader {
                 interp: None,
             }),
         });
-        // PORT NOTE: set the parent backref after Arc allocation so the
+        // NOTE: set the parent backref after Arc allocation so the
         // address is stable.
         let parent: *const IOReader = std::sync::Arc::as_ptr(&this);
         // SAFETY: `Arc::as_ptr` yields `*const IOReader`, but every field of
@@ -285,7 +285,7 @@ impl IOReader {
         // memory. Spec gets this from `asyncDeinit`'s next-tick hop.
         let _keepalive = self.keepalive();
         self.set_reading(false);
-        // PORT NOTE: reshaped for borrowck — `dispatch_read_chunk`/`run_yield`
+        // NOTE: reshaped for borrowck — `dispatch_read_chunk`/`run_yield`
         // both re-derive `state()` (and the interpreter callback may re-enter
         // `add_reader`/`remove_reader`), so we must NOT hold a long-lived
         // `&mut State` across the dispatch. Re-derive `state()` per access
@@ -307,7 +307,7 @@ impl IOReader {
         let should_continue = has_more != bun_io::ReadState::Eof;
         if should_continue && !self.state().readers.is_empty() {
             self.set_reading(true);
-            // PORT NOTE: Spec IOReader.zig:159-167 calls
+            // NOTE: Spec IOReader.zig:159-167 calls
             // `this.reader.registerPoll()` (posix) / `startWithCurrentPipe()`
             // (windows) here. In Rust this would re-derive a second
             // `&mut ReaderImpl` while the bun_io read loop still holds one on
@@ -335,7 +335,7 @@ impl IOReader {
         let s = self.state();
         s.err = Some(err.to_shell_system_error());
         s.raw_err = Some(err.clone());
-        // PORT NOTE: reshaped for borrowck — copy out before dispatching.
+        // NOTE: reshaped for borrowck — copy out before dispatching.
         let readers: Vec<ChildPtr> = s.readers.clone();
         let interp = s.interp;
         for r in readers {

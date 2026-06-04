@@ -27,11 +27,11 @@ pub struct Cmd {
     pub redirection_fd: Option<*mut CowFd>,
     pub exec: Exec,
     pub exit_code: Option<ExitCode>,
-    /// PORT NOTE: in Zig this guarded the `spawn_arena` (an `ArenaAllocator`
-    /// holding argv/env scratch). The Rust port heap-allocates argv as
-    /// `Vec<Vec<u8>>` so there is no arena to free, but the flag is kept to
-    /// preserve `bufferedOutputClose`'s control-flow split (post-spawn vs
-    /// pre-spawn completion).
+    /// In Zig this guarded the `spawn_arena` (an `ArenaAllocator` holding
+    /// argv/env scratch). The Rust port heap-allocates argv as `Vec<Vec<u8>>`
+    /// so there is no arena to free, but the flag is kept to preserve
+    /// `bufferedOutputClose`'s control-flow split (post-spawn vs pre-spawn
+    /// completion).
     pub spawn_arena_freed: bool,
 }
 
@@ -400,8 +400,8 @@ impl Cmd {
                             interp.as_cmd_mut(this).exit_code = Some(out.out_exit_code);
                         }
                     }
-                    // PORT NOTE: Zig used `out.bounds` to split into multiple
-                    // argv words (glob/IFS); preserved here verbatim.
+                    // `out.bounds` splits the expansion into multiple argv
+                    // words (glob/IFS).
                     let me = interp.as_cmd_mut(this);
                     if out.bounds.is_empty() {
                         // Spec (Expansion.zig pushCurrentOut 652): an empty
@@ -480,7 +480,7 @@ impl Cmd {
         }
 
         // ── Subprocess path (Spec: Cmd.zig `initSubproc` lines 487-546) ────
-        // PORT NOTE: `SpawnArgs` borrows only the local `arena` (its
+        // `SpawnArgs` borrows only the local `arena` (its
         // `interp`/`argv` fields are raw pointers), so `interp: &mut
         // Interpreter` is freely re-borrowable at every step before
         // `spawn_async`. Re-enter the arena via `interp.as_cmd{,_mut}(this)`
@@ -922,7 +922,7 @@ impl Cmd {
             // subprocess box was returned. Nothing to tear down.
             Exec::Subproc(_) => {}
         }
-        // PORT NOTE: spec frees `spawn_arena` here unless `spawn_arena_freed`.
+        // Spec frees `spawn_arena` here unless `spawn_arena_freed`.
         // Argv/env are heap-owned `Vec`s in the port; nothing arena-backed to
         // free.
         // `base.shell` is borrowed (or, when parent is Pipeline, freed by
@@ -985,7 +985,7 @@ impl Cmd {
                 // through `Builtin::done` → `on_exec_done`.
                 _ => return Yield::suspended(),
             };
-            // PORT NOTE: the `!spawn_arena_freed` arm
+            // The `!spawn_arena_freed` arm
             // (`ShellAsyncSubprocessDone::enqueue`) is unreachable here in
             // practice — `initSubproc` sets `spawn_arena_freed = true` before
             // any pipe can close. Kept as the same `Yield::Next` since the

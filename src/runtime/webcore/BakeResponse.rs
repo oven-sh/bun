@@ -175,8 +175,8 @@ pub(crate) fn construct_render(
     assert_streaming_disabled(global_this, async_local_storage, b"Response.render")?;
 
     // Validate arguments
-    // PORT NOTE: `arguments` is a fixed [JSValue; 2] so `.len() < 1` is
-    // comptime-false in Zig too; kept for structural fidelity.
+    // `arguments` is a fixed [JSValue; 2] so `.len() < 1` is always false
+    // (comptime-false in the Zig too); kept for structural fidelity.
     #[allow(clippy::len_zero)]
     if arguments.len() < 1 {
         return Err(global_this.throw_invalid_arguments(format_args!(

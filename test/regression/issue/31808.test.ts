@@ -124,6 +124,20 @@ test("Bun.inspect maxArrayLength: 0 keeps brackets symmetric with sorted", () =>
   expect(Bun.inspect([1, 2, 3], { maxArrayLength: 0 })).toBe("[ ... 3 more items ]");
 });
 
+test("Bun.inspect maxArrayLength: 0 stays symmetric when the line is already wrapped", () => {
+  // Nested under a long key, the line already exceeds the wrap threshold at
+  // entry, so the all-elided opener must go multi-line to match the close
+  // (same as the normal opener would) — not inline-open/multi-line-close.
+  const obj = { aVeryLongPropertyNameThatPushesTheLinePastEightyCharactersBeforeTheArrayValue: [1, 2, 3] };
+  expect(Bun.inspect(obj, { maxArrayLength: 0 })).toMatchInlineSnapshot(`
+    "{
+      aVeryLongPropertyNameThatPushesTheLinePastEightyCharactersBeforeTheArrayValue: [
+        ... 3 more items
+      ],
+    }"
+  `);
+});
+
 test.concurrent("console.dir honors maxArrayLength", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "-e", "const a = Array.from({length:200}, (_,i)=>i); console.dir(a, {maxArrayLength: 5});"],

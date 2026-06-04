@@ -4591,14 +4591,15 @@ pub mod formatter {
                     // `[ ... N more items` and fall through to the
                     // named-property pass (Node: `[ ... N more items, foo: 1 ]`).
                     if self.max_array_length == 0 {
-                        // Nothing is printed, so the element-count heuristic
-                        // (`len > 10`) should not force a multi-line close.
-                        was_good_time = false;
-                        // Mirror the normal first-element opener (below): when
-                        // `sorted`/`ordered_properties` is set the close goes
-                        // multi-line, so the opener must match to stay
-                        // symmetric. Otherwise keep it inline.
-                        if !self.single_line && self.ordered_properties {
+                        // Mirror the normal first-element opener (below) so the
+                        // brackets stay symmetric with the close. Nothing is
+                        // printed, so the element-count heuristic (`len > 10`)
+                        // should not apply, but the close also honors
+                        // `ordered_properties` and the content-driven
+                        // `good_time_for_a_new_line` wrap — capture the latter
+                        // here exactly as the normal opener does.
+                        was_good_time = writer.good_time_for_a_new_line(self.indent);
+                        if !self.single_line && (self.ordered_properties || was_good_time) {
                             writer.reset_line(self.indent);
                             writer.write_all(b"[\n");
                             writer.write_indent(self.indent);

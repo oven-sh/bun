@@ -107,7 +107,7 @@ function installPrepare() {
     if (typeof prev === "function") return prev(error, frames);
     // Default V8-style formatting.
     let out = `${error.name ?? "Error"}${error.message ? ": " + error.message : ""}`;
-    for (const frame of stackFrames) {
+    for (const frame of frames) {
       out += `\n    at ${frame.toString()}`;
     }
     return out;

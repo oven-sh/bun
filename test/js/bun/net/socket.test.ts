@@ -1560,10 +1560,11 @@ it("node:net connect() reusing a server-accepted handle keeps the listener's han
 });
 
 it("Bun.listen with an invalid socket handler throws ERR_INVALID_ARG_TYPE instead of aborting", async () => {
-  // Regression: a non-function handler used to abort the debug process (Drop ran
-  // unprotect() on a Handlers that protect() never rooted). It must throw a
-  // catchable error. Run in a subprocess so a regression (abort) shows up as a
-  // non-zero exit rather than killing the test runner.
+  // Regression: an invalid handlers object used to abort the debug process on
+  // both validation error paths (Drop ran unprotect() on a Handlers that
+  // protect() never rooted). It must throw a catchable error. Run in a
+  // subprocess so a regression (abort) shows up as a non-zero exit rather than
+  // killing the test runner.
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -1572,8 +1573,13 @@ it("Bun.listen with an invalid socket handler throws ERR_INVALID_ARG_TYPE instea
         Bun.listen({ port: 0, hostname: "127.0.0.1", socket: { data: 123 } });
         process.exit(2); // did not throw
       } catch (e) {
-        process.stdout.write(String(e.code));
-        process.exit(0);
+        console.log(e.code + ": " + e.message);
+      }
+      try {
+        Bun.listen({ port: 0, hostname: "127.0.0.1", socket: {} });
+        process.exit(2); // did not throw
+      } catch (e) {
+        console.log(e.code + ": " + e.message);
       }`,
     ],
     env: bunEnv,
@@ -1581,6 +1587,9 @@ it("Bun.listen with an invalid socket handler throws ERR_INVALID_ARG_TYPE instea
     stderr: "pipe",
   });
   const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("ERR_INVALID_ARG_TYPE");
+  expect(stdout).toBe(
+    'ERR_INVALID_ARG_TYPE: Expected "onData" callback to be a function\n' +
+      'ERR_INVALID_ARG_TYPE: Expected at least "data" or "drain" callback\n',
+  );
   expect(exitCode).toBe(0);
 });

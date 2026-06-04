@@ -761,20 +761,22 @@ describe.concurrent("--isolate: collects globals pinned by leaked handles", () =
 // thread), not in the refcount destructor; otherwise the file-boundary drain
 // pops a dangling pointer and calls close() on freed memory (UAF, caught by
 // ASAN).
-test.concurrent("--isolate: unwatchFile'd watcher freed on the work pool leaves no dangling registry entry", async () => {
-  // The dance, per file:
-  //   1. watchFile, then touch the file until the listener fires — proof the
-  //      initial stat completed and the watcher sits in the scheduler queue
-  //      (queue ref taken).
-  //   2. unwatchFile (close: Strong self-ref downgraded) + Bun.gc (wrapper
-  //      finalized: wrapper ref dropped).
-  //   3. sleep past a few 10ms scheduler ticks so the work-pool callback pops
-  //      the closed watcher and drops the queue ref — the last one — freeing
-  //      the watcher on the work-pool thread. No JS-observable signal exists
-  //      for that free, hence the bounded sleep.
-  // The file boundary after each file then drains the isolation registry,
-  // which must no longer reference the freed watcher.
-  const raceFixture = `
+test.concurrent(
+  "--isolate: unwatchFile'd watcher freed on the work pool leaves no dangling registry entry",
+  async () => {
+    // The dance, per file:
+    //   1. watchFile, then touch the file until the listener fires — proof the
+    //      initial stat completed and the watcher sits in the scheduler queue
+    //      (queue ref taken).
+    //   2. unwatchFile (close: Strong self-ref downgraded) + Bun.gc (wrapper
+    //      finalized: wrapper ref dropped).
+    //   3. sleep past a few 10ms scheduler ticks so the work-pool callback pops
+    //      the closed watcher and drops the queue ref — the last one — freeing
+    //      the watcher on the work-pool thread. No JS-observable signal exists
+    //      for that free, hence the bounded sleep.
+    // The file boundary after each file then drains the isolation registry,
+    // which must no longer reference the freed watcher.
+    const raceFixture = `
     import { test } from "bun:test";
     import fs from "node:fs";
     import path from "node:path";
@@ -797,23 +799,24 @@ test.concurrent("--isolate: unwatchFile'd watcher freed on the work pool leaves 
       }
     });
   `;
-  // Two identical files: the drain runs at the boundary BETWEEN files, so the
-  // first file's registry is drained while the second exists to force it.
-  using dir = tempDir("isolate-statwatcher-race", {
-    "a.test.js": raceFixture,
-    "b.test.js": raceFixture,
-  });
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "--isolate"],
-    env: bunEnv,
-    cwd: String(dir),
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).toContain("2 pass");
-  expect(exitCode).toBe(0);
-});
+    // Two identical files: the drain runs at the boundary BETWEEN files, so the
+    // first file's registry is drained while the second exists to force it.
+    using dir = tempDir("isolate-statwatcher-race", {
+      "a.test.js": raceFixture,
+      "b.test.js": raceFixture,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--isolate"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("2 pass");
+    expect(exitCode).toBe(0);
+  },
+);
 
 // The synchronous module-load path (require(esm), importSync) must attach the
 // transpiler's ESM-record analysis (module_info) to the ResolvedSource under

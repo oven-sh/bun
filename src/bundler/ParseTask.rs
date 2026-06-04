@@ -2386,13 +2386,47 @@ pub mod parse_worker {
         }
         *step = Step::Parse;
 
-        let entry_contents: &[u8] = entry.contents.as_slice();
+        let mut entry_contents: &[u8] = entry.contents.as_slice();
         let is_empty = strings::is_all_whitespace(entry_contents);
 
         // SAFETY: `transpiler` derived from a live `&mut` above. Reborrow only the
         // disjoint `options` field — never the whole struct — so the raw `resolver`
         // pointer (which targets `(*transpiler).resolver`) remains valid.
         let topts = unsafe { &(*transpiler).options };
+
+        // React Compiler (experimental): source-to-source rewrite before Bun's
+        // parser runs. `compile_source` returns `None` whenever the file should
+        // be used as-is (no components/hooks, opt-out directive, unsupported
+        // syntax, parse error, or compiler bailout), so this never fails a
+        // build — it only substitutes the source that gets parsed below.
+        if topts.react_compiler
+            && !is_empty
+            && loader.is_javascript_like()
+            && !file_path.is_node_module()
+        {
+            if let Ok(source_text) = core::str::from_utf8(entry_contents) {
+                let compiled = bun_react_compiler::compile_source(
+                    source_text,
+                    core::str::from_utf8(file_path.text).unwrap_or_default(),
+                    &bun_react_compiler::CompileOptions {
+                        jsx: loader.is_jsx(),
+                        typescript: loader.is_typescript(),
+                        is_dev: topts.has_dev_server(),
+                    },
+                );
+                if let Some(compiled) = compiled {
+                    scoped_log!(
+                        ParseTask,
+                        "react_compiler({}) {} -> {} bytes",
+                        bstr::BStr::new(file_path.text),
+                        entry_contents.len(),
+                        compiled.len()
+                    );
+                    entry_contents = bump.alloc_str(&compiled).as_bytes();
+                }
+            }
+        }
+
         let use_directive: UseDirective = if !is_empty && topts.server_components {
             UseDirective::parse(entry_contents).unwrap_or(UseDirective::None)
         } else {

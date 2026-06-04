@@ -201,6 +201,8 @@ export interface BundlerTestInput {
   format?: "esm" | "cjs" | "iife" | "internal_bake_dev";
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
+  /** Enable React Compiler (experimental) — `--react-compiler` / `reactCompiler: true` */
+  reactCompiler?: boolean;
   bytecode?: boolean;
   emitDCEAnnotations?: boolean;
   inject?: string[];
@@ -508,6 +510,7 @@ function expectBundled(
     unsupportedJSFeatures,
     useDefineForClassFields,
     ignoreDCEAnnotations,
+    reactCompiler,
     bytecode = false,
     emitDCEAnnotations,
     production,
@@ -789,6 +792,7 @@ function expectBundled(
               banner && `--banner="${banner}"`, // TODO: --banner-css=*
               footer && `--footer="${footer}"`,
               ignoreDCEAnnotations && `--ignore-dce-annotations`,
+              reactCompiler && `--react-compiler`,
               emitDCEAnnotations && `--emit-dce-annotations`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
               // jsx.preserve && "--jsx=preserve",
@@ -1156,6 +1160,7 @@ function expectBundled(
           publicPath,
           emitDCEAnnotations,
           ignoreDCEAnnotations,
+          reactCompiler,
           drop,
           features,
           optimizeImports,

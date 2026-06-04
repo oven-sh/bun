@@ -490,6 +490,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--react-fast-refresh             Enable React Fast Refresh transform (does not emit hot-module code, use this for testing)"
         ),
+        parse_param!(
+            "--react-compiler                 Enable React Compiler (experimental). Automatically memoizes React components and hooks"
+        ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
@@ -2383,6 +2386,10 @@ fn parse_build_command_options(
 
     if args.flag(b"--react-fast-refresh") {
         ctx.bundler_options.react_fast_refresh = true;
+    }
+
+    if args.flag(b"--react-compiler") {
+        ctx.bundler_options.react_compiler = true;
     }
 
     if let Some(setting) = args.option(b"--sourcemap") {

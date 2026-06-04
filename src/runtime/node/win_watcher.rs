@@ -330,7 +330,7 @@ impl PathWatcher {
         let readlink_result = sys::readlink(path, &mut outbuf);
         let event_path: &ZStr = match readlink_result {
             sys::Result::Err(err) => 'brk: {
-                if err.errno == sys::E::NOENT as _ {
+                if err.get_errno() == sys::E::NOENT {
                     return sys::Result::Err(sys::Error {
                         errno: err.errno,
                         syscall: sys::Tag::open,

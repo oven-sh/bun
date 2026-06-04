@@ -43,6 +43,10 @@ const filePath = term ? process.env.NODE_REPL_HISTORY : ''
 
 const replServer = REPL.start(opts)
 
+// Match Node's standalone-REPL introspection: the running instance is
+// reachable as require('repl').repl.
+REPL.repl = replServer
+
 replServer.setupHistory({
   filePath,
   size: opts.size,

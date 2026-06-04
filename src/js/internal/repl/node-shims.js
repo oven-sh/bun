@@ -88,7 +88,7 @@ const isProxy = util.types.isProxy
 function getOptionValue(name) {
   switch (name) {
     case '--pending-deprecation':
-      return false
+      return process.execArgv.includes('--pending-deprecation')
     case '--experimental-repl-await':
       return true
     case '--use-strict':
@@ -200,11 +200,6 @@ function getBuiltinLibs() {
 function addBuiltinLibsToObject(object, dummy) {
   // Make built-in modules available directly (loaded lazily).
   getBuiltinLibs().forEach(name => {
-    if (name === 'domain' || name === 'repl' || name === 'sys') {
-      // The domain module is so weird, and repl/sys so deprecated, that
-      // node excludes them too.
-      return
-    }
     if (Object.getOwnPropertyDescriptor(object, name)) {
       return
     }

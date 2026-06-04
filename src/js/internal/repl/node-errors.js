@@ -26,37 +26,53 @@ function ERR_INVALID_STATE(...args) {
 
 class ERR_CANNOT_WATCH_SIGINT extends Error {
   code = 'ERR_CANNOT_WATCH_SIGINT'
-  name = 'Error [ERR_CANNOT_WATCH_SIGINT]'
   constructor() {
     super('Cannot watch for interruptions when running asynchronously')
+    this.name = 'Error [ERR_CANNOT_WATCH_SIGINT]'
     Error.captureStackTrace?.(this, ERR_CANNOT_WATCH_SIGINT)
+    // Node resets name to the base class after capturing the stack so the
+    // decorated form only appears in the stack header.
+    this.stack
+    this.name = 'Error'
   }
 }
 
 class ERR_INSPECTOR_NOT_AVAILABLE extends Error {
   code = 'ERR_INSPECTOR_NOT_AVAILABLE'
-  name = 'Error [ERR_INSPECTOR_NOT_AVAILABLE]'
   constructor() {
     super('Inspector is not available')
+    this.name = 'Error [ERR_INSPECTOR_NOT_AVAILABLE]'
     Error.captureStackTrace?.(this, ERR_INSPECTOR_NOT_AVAILABLE)
+    // Node resets name to the base class after capturing the stack so the
+    // decorated form only appears in the stack header.
+    this.stack
+    this.name = 'Error'
   }
 }
 
 class ERR_INVALID_REPL_EVAL_CONFIG extends TypeError {
   code = 'ERR_INVALID_REPL_EVAL_CONFIG'
-  name = 'TypeError [ERR_INVALID_REPL_EVAL_CONFIG]'
   constructor() {
     super('Cannot specify both "breakEvalOnSigint" and "eval" for REPL')
+    this.name = 'TypeError [ERR_INVALID_REPL_EVAL_CONFIG]'
     Error.captureStackTrace?.(this, ERR_INVALID_REPL_EVAL_CONFIG)
+    // Node resets name to the base class after capturing the stack so the
+    // decorated form only appears in the stack header.
+    this.stack
+    this.name = 'TypeError'
   }
 }
 
 class ERR_INVALID_REPL_INPUT extends TypeError {
   code = 'ERR_INVALID_REPL_INPUT'
-  name = 'TypeError [ERR_INVALID_REPL_INPUT]'
   constructor(message) {
     super(message)
+    this.name = 'TypeError [ERR_INVALID_REPL_INPUT]'
     Error.captureStackTrace?.(this, ERR_INVALID_REPL_INPUT)
+    // Node resets name to the base class after capturing the stack so the
+    // decorated form only appears in the stack header.
+    this.stack
+    this.name = 'TypeError'
   }
 }
 

@@ -5,6 +5,8 @@ if (!Bun.isMainThread) {
 
 const agent = require("internal/trace_events");
 
+const ObjectDefineProperty = Object.defineProperty;
+
 const kMaxTracingCount = 10;
 // Strong refs: enabled Tracing objects must keep their categories enabled
 // even when the user drops every reference (GC must not disable them).
@@ -16,11 +18,18 @@ class Tracing {
 
   constructor(categories: string[]) {
     this.#categories = categories;
+    // `enabled` and `categories` are own enumerable (read-only) properties
+    // rather than prototype getters so util.inspect renders instances the way
+    // node does: `[Tracing]` at the depth cut and
+    // `Tracing { enabled: false, categories: '...' }` otherwise.
+    setOwnProperty(this, "enabled", false);
+    setOwnProperty(this, "categories", categories.join(","));
   }
 
   enable() {
     if (this.#enabled) return;
     this.#enabled = true;
+    setOwnProperty(this, "enabled", true);
     agent.enableCategories(this.#categories);
     enabledTracingObjects.$add(this);
     if (enabledTracingObjects.size > kMaxTracingCount) {
@@ -34,17 +43,19 @@ class Tracing {
   disable() {
     if (!this.#enabled) return;
     this.#enabled = false;
+    setOwnProperty(this, "enabled", false);
     agent.disableCategories(this.#categories);
     enabledTracingObjects.$delete(this);
   }
+}
 
-  get enabled(): boolean {
-    return this.#enabled;
-  }
-
-  get categories(): string {
-    return this.#categories.join(",");
-  }
+function setOwnProperty(tracing: Tracing, name: string, value: boolean | string): void {
+  ObjectDefineProperty(tracing, name, {
+    value,
+    writable: false,
+    enumerable: true,
+    configurable: true,
+  });
 }
 
 function createTracing(options: { categories: string[] }): Tracing {

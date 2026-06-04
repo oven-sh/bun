@@ -149,11 +149,12 @@ function machoStompLength(path: string): void {
       const cmdsize = cmd.readUInt32LE(4);
       if (cmd.readUInt32LE(0) === 0x19 /* LC_SEGMENT_64 */) {
         const seg = readAt(fd, cmdOffset, 72);
-        if (seg.toString("latin1", 8, 13) === "__BUN") {
+        // Exact 16-byte segment/section names, as written by src/exe_format/macho.rs.
+        if (seg.subarray(8, 24).equals(Buffer.from("__BUN\0\0\0\0\0\0\0\0\0\0\0", "latin1"))) {
           const nsects = seg.readUInt32LE(64);
           for (let s = 0; s < nsects; s++) {
             const sect = readAt(fd, cmdOffset + 72 + s * 80, 80);
-            if (sect.toString("latin1", 0, 6) === "__bun\0") {
+            if (sect.subarray(0, 16).equals(Buffer.from("__bun\0\0\0\0\0\0\0\0\0\0\0", "latin1"))) {
               writeU64At(fd, sect.readUInt32LE(48) /* offset */, HUGE_LENGTH);
               return;
             }
@@ -177,7 +178,7 @@ async function compileApp(dir: string): Promise<string> {
     stderr: "pipe",
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-  expect(stderr).not.toContain("error");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
   return join(dir, isWindows ? "app.exe" : "app");
 }

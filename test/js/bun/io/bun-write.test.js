@@ -1,6 +1,16 @@
 import { describe, expect, it, test } from "bun:test";
 import fs, { mkdirSync } from "fs";
-import { bunEnv, bunExe, exampleHtml, exampleSite, gcTick, isWindows, tempDir, withoutAggressiveGC } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  exampleHtml,
+  exampleSite,
+  gcTick,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  withoutAggressiveGC,
+} from "harness";
 import path, { join } from "path";
 
 let i = 0;
@@ -593,5 +603,65 @@ const IS_UV_FS_COPYFILE_DISABLED =
     Bun.gc(true);
 
     expect(f.name).toBe(filePath);
+  });
+});
+
+describe("Bun.write file-to-file copy task liveness", () => {
+  // The file->file copy task is heap-allocated, scheduled on the work pool
+  // (POSIX) or libuv (Windows), and re-entered after the scheduling stack
+  // frame is gone. This is smoke coverage for those copy-task paths (success,
+  // mkdirp retry, and rejection) under forced GC pressure — a liveness
+  // contract guard, not a test that fails on any released build.
+  it("file->file copies survive forced GC between scheduling and completion", async () => {
+    using dir = tempDir("bun-write-copyfile-gc", {
+      "src.txt": "A".repeat(64 * 1024),
+      "copy-gc.js": `
+        const expected = "A".repeat(64 * 1024);
+        const pending = [];
+        for (let i = 0; i < 50; i++) {
+          // Nested destination exercises the mkdirp -> retry path too.
+          const promise = Bun.write(Bun.file(\`out/\${i}/dest.txt\`), Bun.file("src.txt"));
+          if (i % 10 === 0) Bun.gc(true);
+          pending.push(promise);
+        }
+        Bun.gc(true);
+        const written = await Promise.all(pending);
+        Bun.gc(true);
+        if (!written.every(n => n === expected.length)) {
+          throw new Error("unexpected byte counts: " + JSON.stringify(written));
+        }
+        for (const i of [0, 25, 49]) {
+          const text = await Bun.file(\`out/\${i}/dest.txt\`).text();
+          if (text !== expected) throw new Error("content mismatch at " + i);
+        }
+
+        // Rejection path: missing source must reject (not crash) after GC.
+        const failing = Bun.write(Bun.file("out/err.txt"), Bun.file("does-not-exist.txt"));
+        Bun.gc(true);
+        let code = null;
+        try {
+          await failing;
+        } catch (e) {
+          code = e?.code;
+        }
+        Bun.gc(true);
+        if (code !== "ENOENT") throw new Error("expected ENOENT rejection, got " + code);
+        console.log("OK");
+      `,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "copy-gc.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(normalizeBunSnapshot(stdout)).toBe("OK");
+    expect(exitCode).toBe(0);
   });
 });

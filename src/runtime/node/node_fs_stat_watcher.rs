@@ -716,14 +716,9 @@ impl StatWatcher {
 
         // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
         if this_ref.ctx.test_isolation_enabled {
-            // `as_mut()` routes through the thread-local `*mut VM` (write
-            // provenance) so `rare_data()`'s `&mut self` borrow is sound on
-            // the JS thread.
-            this_ref
-                .ctx
-                .as_mut()
-                .rare_data()
-                .remove_stat_watcher_for_isolation(this.cast::<c_void>());
+            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
+                handles.remove_stat_watcher(this.cast_const());
+            }
         }
         this_ref.persistent.set(false);
         if cfg!(debug_assertions) {
@@ -1037,25 +1032,13 @@ impl StatWatcher {
         js::listener_set_cached(js_this, &args.global_this, args.listener);
         // `ctx` is a `BackRef<VirtualMachine>` (JSC_BORROW); safe Deref.
         if this_ref.ctx.test_isolation_enabled {
-            // `as_mut()` routes through the thread-local `*mut VM` (write
-            // provenance) so `rare_data()`'s `&mut self` borrow is sound.
-            this_ref
-                .ctx
-                .as_mut()
-                .rare_data()
-                .add_stat_watcher_for_isolation(
-                    this_ptr.cast::<c_void>(),
-                    // §Dispatch cold-path vtable — `bun_jsc::RareData` stores
-                    // (ptr, close-fn) so it can fire close without naming
-                    // StatWatcher. BACKREF — `p` is the live watcher we registered
-                    // above; `ParentRef` Deref gives safe `&StatWatcher`.
-                    |p| {
-                        ParentRef::from(
-                            NonNull::new(p.cast::<StatWatcher>()).expect("isolation close cb"),
-                        )
-                        .close()
-                    },
-                );
+            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
+                // `bun test --isolate` teardown closes this watcher if the
+                // test file leaks it; unregistered in `deinit`.
+                handles
+                    .stat_watchers
+                    .push(NonNull::new(this_ptr).expect("init: watcher"));
+            }
         }
         // SAFETY: `this_ptr` was just leaked from `Box`; live with refcount 1.
         InitialStatTask::create_and_schedule(this_ptr);

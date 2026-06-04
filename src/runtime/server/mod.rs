@@ -1538,11 +1538,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // httplog!("stopListening", .{});
 
         if self.vm().test_isolation_enabled {
-            // SAFETY: `vm_mut()` is the live thread-local VM pointer.
-            unsafe {
-                (*self.vm_mut())
-                    .rare_data()
-                    .remove_server_for_isolation(core::ptr::from_mut(self).cast());
+            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
+                handles.remove_server(core::ptr::from_ref(self).cast());
             }
         }
 
@@ -1875,11 +1872,8 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if this_ref.vm().test_isolation_enabled {
             // Backstop for the same hypothetical — never leave a dangling
             // registry entry behind the free below.
-            // SAFETY: `vm_mut()` is the live thread-local VM pointer.
-            unsafe {
-                (*this_ref.vm_mut())
-                    .rare_data()
-                    .remove_server_for_isolation(this.cast());
+            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
+                handles.remove_server(this.cast::<()>().cast_const());
             }
         }
 

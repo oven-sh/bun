@@ -1660,21 +1660,11 @@ pub(crate) fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> Js
             }
             server_ref.js_value.set_strong(obj, global_object);
 
-            {
-                // SAFETY: bun_vm() returns the live thread-local VM.
-                let vm = global_object.bun_vm().as_mut();
-                if vm.test_isolation_enabled {
+            if global_object.bun_vm().test_isolation_enabled {
+                if let Some(handles) = crate::jsc_hooks::isolation_handles() {
                     // `bun test --isolate` teardown stops this server if the
                     // test file leaks it; unregistered in `stop_listening`.
-                    vm.rare_data().add_server_for_isolation(
-                        server.cast::<core::ffi::c_void>(),
-                        |p| {
-                            // SAFETY: `p` is the server registered above; the
-                            // entry is removed in `stop_listening`/`deinit`
-                            // before the server is freed.
-                            unsafe { (*p.cast::<$ServerType>()).stop(true) }
-                        },
-                    );
+                    handles.servers.push(AnyServer::from(server.cast_const()));
                 }
             }
 

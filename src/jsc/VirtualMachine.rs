@@ -4700,20 +4700,16 @@ impl VirtualMachine {
     }
 
     /// Spec VirtualMachine.zig:2505 `swapGlobalForTestIsolation`.
+    ///
+    /// Callers must run `bun_runtime::jsc_hooks::close_isolation_handles()`
+    /// first: the socket-group walk below blindly closes fds, which would
+    /// leave a leaked server's `has_listener()` true and its strong
+    /// `js_value` pinning the outgoing global (fetch handler closure and
+    /// all) for the rest of the run.
     pub fn swap_global_for_test_isolation(&mut self) {
         debug_assert!(self.test_isolation_enabled);
 
         let _ = self.event_loop_mut().drain_microtasks();
-
-        if let Some(rare) = self.rare_data.as_deref_mut() {
-            rare.close_all_watchers_for_isolation();
-            // Stop leaked servers through their own lifecycle (listener close +
-            // `js_value` downgrade) BEFORE the blind socket-group walk below.
-            // The walk only closes fds — the server would keep `has_listener()`
-            // true and its strong `js_value` would pin the outgoing global
-            // (fetch handler closure and all) for the rest of the run.
-            rare.stop_all_servers_for_isolation();
-        }
 
         {
             // Groups that must survive the per-file isolation swap: this
@@ -4779,8 +4775,8 @@ impl VirtualMachine {
         // `global_exit()`. Runs no user JS.
         //
         // The hook also runs `StatWatcherScheduler::shutdown_for_exit` first:
-        // it drains the (already-closed — see
-        // `close_all_watchers_for_isolation` above) watcher queue and retires
+        // it drains the (already-closed — the caller ran
+        // `close_isolation_handles` before this swap) watcher queue and retires
         // the per-VM scheduler singleton, which the next file's first
         // `fs.watchFile` lazily recreates. That per-file reset is intentional
         // — the scheduler's queue and in-flight work-pool task belong to the

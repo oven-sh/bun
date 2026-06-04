@@ -1005,9 +1005,9 @@ impl FSWatcher {
     pub fn detach(&self) {
         let ctx_ptr = self.as_ctx_ptr().cast::<c_void>();
         if self.vm().test_isolation_enabled {
-            self.vm()
-                .rare_data()
-                .remove_fs_watcher_for_isolation(ctx_ptr);
+            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
+                handles.remove_fs_watcher(self.as_ctx_ptr().cast_const());
+            }
         }
 
         if let Some(watcher) = self.path_watcher.take() {
@@ -1150,19 +1150,13 @@ impl FSWatcher {
             )
         };
         if vm_ref.test_isolation_enabled {
-            // `as_mut()` routes through the thread-local `*mut VM` (write
-            // provenance) so `rare_data()`'s `&mut self` borrow is sound.
-            vm_ref.as_mut().rare_data().add_fs_watcher_for_isolation(
-                ctx.cast::<c_void>(),
-                // §Dispatch cold-path vtable — `bun_jsc::RareData` stores
-                // (ptr, close-fn) so it can fire the close without naming
-                // FSWatcher.
-                |p| {
-                    // SAFETY: `p` is the `ctx` registered above; still live
-                    // until `remove_fs_watcher_for_isolation` runs.
-                    unsafe { (*p.cast::<FSWatcher>()).close_for_isolation() }
-                },
-            );
+            if let Some(handles) = crate::jsc_hooks::isolation_handles() {
+                // `bun test --isolate` teardown closes this watcher if the
+                // test file leaks it; unregistered in `detach`.
+                handles
+                    .fs_watchers
+                    .push(core::ptr::NonNull::new(ctx).expect("init: watcher"));
+            }
         }
         Ok(ctx)
     }

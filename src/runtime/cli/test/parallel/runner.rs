@@ -617,6 +617,9 @@ impl<'a> WorkerLoop<'a> {
             ) {
                 test_command::handle_top_level_test_error_before_javascript_start(err);
             }
+            // Close leaked watchers/servers through their own lifecycle
+            // before the swap's blind fd close.
+            crate::jsc_hooks::close_isolation_handles();
             vm.swap_global_for_test_isolation();
             self.reporter
                 .jest

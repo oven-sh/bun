@@ -83,12 +83,19 @@ impl<Owner> Default for Channel<Owner> {
 }
 
 impl<Owner: ChannelOwner> Channel<Owner> {
+    /// Recover a raw pointer to the owning struct from `&mut self`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure `self` is embedded in a live `Owner` with
+    /// whole-`Owner` provenance. The returned pointer must not be used to
+    /// create `&mut Owner` while `&mut self` is live — the two would alias.
     #[inline]
-    fn owner(&mut self) -> &mut Owner {
-        // SAFETY: `self` is always embedded at `Owner::OFFSET` inside an
-        // `Owner` that outlives all callbacks (see module doc). Mirrors Zig
+    unsafe fn owner_ptr(&mut self) -> *mut Owner {
+        // SAFETY: `self` is embedded at `Owner::OFFSET` inside a live
+        // `Owner` that outlives all callbacks. Mirrors Zig
         // `@alignCast(@fieldParentPtr(owner_field, self))`.
-        unsafe { &mut *Owner::from_field_ptr(std::ptr::from_mut(self)) }
+        Owner::from_field_ptr(std::ptr::from_mut(self))
     }
 }
 
@@ -495,10 +502,10 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             let mut rd = frame::Reader {
                 p: &self.r#in[head + 5..][..len as usize],
             };
-            // SAFETY: see `Channel::owner()` — `self` is embedded at
-            // `Owner::OFFSET` inside an `Owner` that outlives all callbacks.
-            let owner: &mut Owner = unsafe { &mut *owner_ptr };
-            owner.on_channel_frame(kind, &mut rd);
+            // SAFETY: `self` is embedded at `Owner::OFFSET` inside an
+            // `Owner` that outlives all callbacks. Raw pointer deref
+            // avoids materializing `&mut Owner` alongside `&mut self`.
+            unsafe { (*owner_ptr).on_channel_frame(kind, &mut rd) };
             head += 5usize + len as usize;
         }
         self.r#in.drain_front(head);
@@ -509,7 +516,8 @@ impl<Owner: ChannelOwner> Channel<Owner> {
             return;
         }
         self.done = true;
-        self.owner().on_channel_done();
+        // SAFETY: `self` is embedded in a live `Owner` (see `owner_ptr` doc).
+        unsafe { (*self.owner_ptr()).on_channel_done() };
     }
 }
 

@@ -172,6 +172,15 @@ pub enum HardcodedModule {
     /// This is gated behind '--expose-internals'
     #[strum(serialize = "bun:internal-for-testing")]
     BunInternalForTesting,
+    /// node's `--expose-internals` surface for vendored cluster tests
+    /// (`require('internal/cluster/round_robin_handle')`); gated like
+    /// `bun:internal-for-testing`.
+    #[strum(serialize = "internal:cluster/RoundRobinHandle")]
+    InternalClusterRoundRobinHandle,
+    /// node's `internal/test/binding` (`internalBinding('udp_wrap')` shim);
+    /// gated like `bun:internal-for-testing`.
+    #[strum(serialize = "internal:test/binding")]
+    InternalTestBinding,
 }
 
 impl HardcodedModule {
@@ -191,6 +200,8 @@ impl HardcodedModule {
         b"bun:sqlite" => HardcodedModule::BunSqlite,
         b"bun:wrap" => HardcodedModule::BunWrap,
         b"bun:internal-for-testing" => HardcodedModule::BunInternalForTesting,
+        b"internal:cluster/RoundRobinHandle" => HardcodedModule::InternalClusterRoundRobinHandle,
+        b"internal:test/binding" => HardcodedModule::InternalTestBinding,
         // Node.js
         b"node:assert" => HardcodedModule::NodeAssert,
         b"node:assert/strict" => HardcodedModule::NodeAssertStrict,
@@ -679,6 +690,26 @@ const BUN_EXTRA_ALIAS_KVS: &[AliasKv] = &[
     entry!("bun:sqlite"),
     entry!("bun:wrap"),
     entry!("bun:internal-for-testing"),
+    //
+    // node `--expose-internals` module names used by vendored cluster tests.
+    (
+        b"internal/cluster/round_robin_handle",
+        Alias {
+            path: zstr!("internal:cluster/RoundRobinHandle"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
+    (
+        b"internal/test/binding",
+        Alias {
+            path: zstr!("internal:test/binding"),
+            tag: import_record::Tag::Builtin,
+            node_builtin: false,
+            node_only_prefix: false,
+        },
+    ),
     (
         b"ffi",
         Alias {

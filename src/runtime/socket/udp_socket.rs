@@ -278,6 +278,9 @@ pub struct UDPSocketConfig {
     pub port: u16,
     pub flags: i32,
     pub binary_type: BinaryType,
+    /// Adopt an existing bound UDP fd (cluster shared dgram handle) instead
+    /// of creating + binding a new socket.
+    pub fd: Option<i32>,
 }
 
 impl Default for UDPSocketConfig {
@@ -288,6 +291,7 @@ impl Default for UDPSocketConfig {
             port: 0,
             flags: 0,
             binary_type: BinaryType::Buffer,
+            fd: None,
         }
     }
 }
@@ -335,10 +339,18 @@ impl UDPSocketConfig {
             }
         };
 
+        let fd: Option<i32> = if let Some(value) = options.get_truthy(global_this, "fd")? {
+            let number = validators::validate_int32(global_this, value, "fd", Some(0), None)?;
+            Some(number)
+        } else {
+            None
+        };
+
         let mut config = Self {
             hostname,
             port,
             flags,
+            fd,
             ..Default::default()
         };
 
@@ -567,18 +579,30 @@ impl UDPSocket {
         let config = this.config.get();
         let hostname_z = config.hostname.to_owned_slice_z();
 
-        let created = uws::udp::Socket::create(
-            this.loop_,
-            on_data,
-            on_drain,
-            on_close,
-            on_recv_error,
-            hostname_z.as_ptr(),
-            config.port,
-            config.flags,
-            Some(&mut err),
-            this_ptr.cast::<c_void>(),
-        );
+        let created = if let Some(fd) = config.fd {
+            uws::udp::Socket::create_from_fd(
+                this.loop_,
+                on_data,
+                on_drain,
+                on_close,
+                on_recv_error,
+                fd as uws::LIBUS_SOCKET_DESCRIPTOR,
+                this_ptr.cast::<c_void>(),
+            )
+        } else {
+            uws::udp::Socket::create(
+                this.loop_,
+                on_data,
+                on_drain,
+                on_close,
+                on_recv_error,
+                hostname_z.as_ptr(),
+                config.port,
+                config.flags,
+                Some(&mut err),
+                this_ptr.cast::<c_void>(),
+            )
+        };
         drop(hostname_z);
         this.socket.set(if created.is_null() {
             None
@@ -1614,6 +1638,18 @@ impl UDPSocket {
     #[bun_jsc::host_fn(getter)]
     pub fn get_closed(this: &Self, _: &JSGlobalObject) -> JSValue {
         JSValue::from(this.closed.get())
+    }
+
+    #[bun_jsc::host_fn(getter)]
+    pub fn get_fd(this: &Self, _: &JSGlobalObject) -> JSValue {
+        if this.closed.get() {
+            return JSValue::js_number(-1.0);
+        }
+        let Some(socket) = this.socket.get() else {
+            return JSValue::js_number(-1.0);
+        };
+        // `Socket` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
+        JSValue::js_number(uws::udp::Socket::opaque_mut(socket).fd() as f64)
     }
 
     #[bun_jsc::host_fn(getter)]

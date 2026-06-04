@@ -153,8 +153,17 @@ pub(crate) fn do_send(
                 crate::socket::listener::ListenerType::NamedPipe(_named_pipe) => {}
                 crate::socket::listener::ListenerType::None => {}
             }
-        } else {
-            //
+        } else if let Some(socket) = crate::socket::TCPSocket::from_js(handle) {
+            // net.Socket: Ipc.ts serialize() unwrapped it to the native
+            // TCPSocket. The connected fd rides as SCM_RIGHTS; the JS handle
+            // object stays protected until the bytes are flushed.
+            // SAFETY: from_js returned a non-null pointer; the JS wrapper
+            // holds it alive for the call.
+            let fd = unsafe { (*socket).socket.get().fd() };
+            if fd != bun_sys::Fd::INVALID {
+                log!("got tcp socket fd");
+                zig_handle = Some(Handle::init(fd, handle));
+            }
         }
     }
 

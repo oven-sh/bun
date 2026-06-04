@@ -146,6 +146,57 @@ int us_udp_socket_set_source_specific_membership(struct us_udp_socket_t *s, cons
     return bsd_socket_set_source_specific_membership(us_poll_fd(&s->p), source, group, iface, drop);
 }
 
+LIBUS_SOCKET_DESCRIPTOR us_udp_socket_fd(struct us_udp_socket_t *s) {
+    return us_poll_fd(&s->p);
+}
+
+/* Adopt an existing bound UDP fd (e.g. a node:cluster shared dgram handle
+ * delivered over SCM_RIGHTS). POSIX only — returns NULL on Windows/libuv. */
+struct us_udp_socket_t *us_create_udp_socket_from_fd(
+    struct us_loop_t *loop,
+    void (*data_cb)(struct us_udp_socket_t *, void *, int),
+    void (*drain_cb)(struct us_udp_socket_t *),
+    void (*close_cb)(struct us_udp_socket_t *),
+    void (*recv_error_cb)(struct us_udp_socket_t *, int),
+    LIBUS_SOCKET_DESCRIPTOR fd,
+    void *user
+) {
+#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
+    return 0;
+#else
+    apple_no_sigpipe(fd);
+    bsd_set_nonblocking(fd);
+
+    int ext_size = 0;
+    int fallthrough = 0;
+
+    struct us_poll_t *p = us_create_poll(loop, fallthrough, sizeof(struct us_udp_socket_t) + ext_size);
+    us_poll_init(p, fd, POLL_TYPE_UDP);
+
+    struct us_udp_socket_t *udp = (struct us_udp_socket_t *)p;
+
+    /* Get and store the port once */
+    struct bsd_addr_t tmp = {0};
+    bsd_local_addr(fd, &tmp);
+    udp->port = bsd_addr_get_port(&tmp);
+    udp->loop = loop;
+
+    udp->user = user;
+
+    udp->closed = 0;
+    udp->connected = 0;
+    udp->on_data = data_cb;
+    udp->on_drain = drain_cb;
+    udp->on_close = close_cb;
+    udp->on_recv_error = recv_error_cb;
+    udp->next = NULL;
+
+    us_poll_start((struct us_poll_t *) udp, udp->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+
+    return (struct us_udp_socket_t *) udp;
+#endif
+}
+
 struct us_udp_socket_t *us_create_udp_socket(
     struct us_loop_t *loop,
     void (*data_cb)(struct us_udp_socket_t *, void *, int),

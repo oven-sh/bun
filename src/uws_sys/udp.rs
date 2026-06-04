@@ -47,6 +47,26 @@ impl Socket {
         }
     }
 
+    /// Adopt an existing bound UDP fd (cluster shared dgram handle).
+    /// POSIX only — returns null on Windows builds.
+    pub fn create_from_fd(
+        loop_: *mut Loop,
+        data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
+        drain_cb: extern "C" fn(*mut Socket),
+        close_cb: extern "C" fn(*mut Socket),
+        recv_error_cb: extern "C" fn(*mut Socket, c_int),
+        fd: crate::LIBUS_SOCKET_DESCRIPTOR,
+        user_data: *mut c_void,
+    ) -> *mut Socket {
+        // SAFETY: thin wrapper over us_create_udp_socket_from_fd; the caller
+        // guarantees `fd` is a bound UDP socket it owns.
+        unsafe {
+            us_create_udp_socket_from_fd(
+                loop_, data_cb, drain_cb, close_cb, recv_error_cb, fd, user_data,
+            )
+        }
+    }
+
     pub fn send(
         &mut self,
         payloads: &[*const u8],
@@ -73,6 +93,11 @@ impl Socket {
     /// Get the bound port in host byte order
     pub fn bound_port(&mut self) -> c_int {
         us_udp_socket_bound_port(self)
+    }
+
+    /// Underlying socket descriptor.
+    pub fn fd(&mut self) -> crate::LIBUS_SOCKET_DESCRIPTOR {
+        us_udp_socket_fd(self)
     }
 
     pub fn bound_ip(&mut self, buf: *mut u8, length: &mut i32) {
@@ -151,6 +176,15 @@ unsafe extern "C" {
         err: *mut c_int,
         user_data: *mut c_void,
     ) -> *mut Socket;
+    fn us_create_udp_socket_from_fd(
+        loop_: *mut Loop,
+        data_cb: extern "C" fn(*mut Socket, *mut PacketBuffer, c_int),
+        drain_cb: extern "C" fn(*mut Socket),
+        close_cb: extern "C" fn(*mut Socket),
+        recv_error_cb: extern "C" fn(*mut Socket, c_int),
+        fd: crate::LIBUS_SOCKET_DESCRIPTOR,
+        user_data: *mut c_void,
+    ) -> *mut Socket;
     fn us_udp_socket_connect(socket: *mut Socket, hostname: *const c_char, port: c_uint) -> c_int;
     safe fn us_udp_socket_disconnect(socket: &mut Socket) -> c_int;
     fn us_udp_socket_send(
@@ -162,6 +196,7 @@ unsafe extern "C" {
     ) -> c_int;
     safe fn us_udp_socket_user(socket: &mut Socket) -> *mut c_void;
     safe fn us_udp_socket_bound_port(socket: &mut Socket) -> c_int;
+    safe fn us_udp_socket_fd(socket: &mut Socket) -> crate::LIBUS_SOCKET_DESCRIPTOR;
     fn us_udp_socket_bound_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);
     fn us_udp_socket_remote_ip(socket: *mut Socket, buf: *mut u8, length: *mut i32);
     safe fn us_udp_socket_close(socket: &mut Socket);

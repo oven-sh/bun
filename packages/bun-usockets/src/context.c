@@ -385,6 +385,33 @@ struct us_listen_socket_t *us_socket_group_listen(struct us_socket_group_t *grou
     return ls;
 }
 
+/* Adopt an already-bound fd (e.g. a node:cluster shared handle delivered over
+ * SCM_RIGHTS) as a listen socket: make it non-blocking, listen(2), and
+ * register the accept poll. On failure *error receives errno. */
+struct us_listen_socket_t *us_socket_group_listen_fd(struct us_socket_group_t *group,
+        unsigned char kind, struct ssl_ctx_st *ssl_ctx,
+        LIBUS_SOCKET_DESCRIPTOR fd, int backlog, int options, int socket_ext_size, int *error) {
+#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
+    return 0;
+#else
+    apple_no_sigpipe(fd);
+    bsd_set_nonblocking(fd);
+    if (listen(fd, backlog > 0 ? backlog : 512)) {
+        *error = errno;
+        return 0;
+    }
+
+    struct us_poll_t *p = us_create_poll(group->loop, 0, sizeof(struct us_listen_socket_t));
+    us_poll_init(p, fd, POLL_TYPE_SEMI_SOCKET);
+    us_poll_start(p, group->loop, LIBUS_SOCKET_READABLE);
+
+    struct us_listen_socket_t *ls = (struct us_listen_socket_t *) p;
+    us_internal_init_listen_socket(ls, group, kind, ssl_ctx, options, socket_ext_size);
+
+    return ls;
+#endif
+}
+
 struct us_listen_socket_t *us_socket_group_listen_unix(struct us_socket_group_t *group,
         unsigned char kind, struct ssl_ctx_st *ssl_ctx,
         const char *path, size_t pathlen, int options, int socket_ext_size, int *error) {

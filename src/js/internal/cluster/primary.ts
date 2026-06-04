@@ -1,8 +1,9 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
+const SharedHandle = require("internal/cluster/SharedHandle");
 const path = require("node:path");
-const { throwNotImplemented, kHandle } = require("internal/shared");
+const { kHandle } = require("internal/shared");
 
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimary", 4);
 const onInternalMessage = $newZigFunction("node_cluster_binding.zig", "onInternalMessagePrimary", 3);
@@ -231,7 +232,11 @@ function queryServer(worker, message) {
   // Stop processing if worker already disconnecting
   if (worker.exitedAfterDisconnect) return;
 
-  const key = `${message.address}:${message.port}:${message.addressType}:` + `${message.fd}:${message.index}`;
+  // node: the per-listen `index` only disambiguates port-0 listens; fixed
+  // ports/pipes/fds share one handle across every worker that asks.
+  const key =
+    `${message.address}:${message.port}:${message.addressType}:${message.fd}` +
+    (message.port === 0 ? `:${message.index}` : "");
   let handle = handles.get(key);
 
   if (handle === undefined) {
@@ -248,7 +253,7 @@ function queryServer(worker, message) {
     // be obvious reasons: it's connectionless. There is nothing to send to
     // the workers except raw datagrams and that's pointless.
     if (schedulingPolicy !== SCHED_RR || message.addressType === "udp4" || message.addressType === "udp6") {
-      throwNotImplemented("node:cluster SCHED_NONE");
+      handle = new SharedHandle(key, address, message);
     } else {
       handle = new RoundRobinHandle(key, address, message);
     }

@@ -8,9 +8,6 @@ const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimar
 const ArrayIsArray = Array.isArray;
 
 const UV_TCP_IPV6ONLY = 1;
-const assert_fail = () => {
-  throw new Error("ERR_INTERNAL_ASSERTION");
-};
 
 export default class RoundRobinHandle {
   key;
@@ -19,6 +16,7 @@ export default class RoundRobinHandle {
   handles;
   handle;
   server;
+  listening;
 
   constructor(key, address, { port, fd, flags, backlog, readableAll, writableAll }) {
     net ??= require("node:net");
@@ -27,7 +25,12 @@ export default class RoundRobinHandle {
     this.free = new Map();
     this.handles = init(Object.create(null));
     this.handle = null;
-    this.server = net.createServer(assert_fail);
+    this.listening = false;
+    // Accepted sockets start paused (no kernel reads), so the connection's
+    // bytes stay in the kernel buffer until the fd is handed to a worker.
+    this.server = net.createServer({ pauseOnConnect: true }, socket => {
+      this.distribute(0, makeAcceptedHandle(socket));
+    });
 
     if (fd >= 0) this.server.listen({ fd, backlog });
     else if (port >= 0) {
@@ -46,10 +49,8 @@ export default class RoundRobinHandle {
         writableAll,
       }); // UNIX socket path.
     this.server.once("listening", () => {
+      this.listening = true;
       this.handle = this.server._handle;
-      this.handle.onconnection = (err, handle) => this.distribute(err, handle);
-      this.server._handle = null;
-      this.server = null;
     });
   }
 
@@ -58,7 +59,8 @@ export default class RoundRobinHandle {
     this.all.set(worker.id, worker);
 
     const done = () => {
-      if (this.handle.getsockname) {
+      // address() returns the pipe path (a string) for UNIX sockets.
+      if (this.handle.getsockname && typeof this.server.address() === "object") {
         const out = {};
         this.handle.getsockname(out);
         // TODO(bnoordhuis) Check err.
@@ -70,12 +72,16 @@ export default class RoundRobinHandle {
       this.handoff(worker); // In case there are connections pending.
     };
 
-    if (this.server === null) return done();
+    if (this.listening) return done();
 
     // Still busy binding.
     this.server.once("listening", done);
     this.server.once("error", err => {
-      send(err.errno, null);
+      // Bun's listen errors carry positive platform errnos; the cluster
+      // protocol (checkBindError, getSystemErrorName) expects negative
+      // uv-style values.
+      const errno = typeof err.errno === "number" && err.errno !== 0 ? -Math.abs(err.errno) : -1;
+      send(errno, null);
     });
   }
 
@@ -94,7 +100,8 @@ export default class RoundRobinHandle {
       remove(handle);
     }
 
-    this.handle?.stop(false);
+    this.server?.close();
+    this.server = null;
     this.handle = null;
     return true;
   }
@@ -138,4 +145,18 @@ export default class RoundRobinHandle {
       this.handoff(worker);
     });
   }
+}
+
+// The fd handed to the worker is the accepted socket's. The paused node
+// Socket keeps it alive (and unread) until the worker accepts (then we close
+// our copy — the worker holds a dup) or every worker rejects (then destroy
+// sends nothing because no bytes were read or written here).
+function makeAcceptedHandle(socket) {
+  return {
+    fd: socket._handle.fd,
+    close(cb?) {
+      socket.destroy();
+      if (typeof cb === "function") process.nextTick(cb);
+    },
+  };
 }

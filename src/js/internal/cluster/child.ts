@@ -1,6 +1,7 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
 const path = require("node:path");
+const { kClusterOwner: owner_symbol } = require("internal/shared");
 
 const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
 const onInternalMessage = $newZigFunction("node_cluster_binding.zig", "onInternalMessageChild", 2);
@@ -15,7 +16,27 @@ const indexes = new Map();
 const noop = FunctionPrototype;
 const TIMEOUT_MAX = 2 ** 31 - 1;
 const kNoFailure = 0;
-const owner_symbol = Symbol("owner_symbol");
+
+let fs;
+// Minimal stand-in for node's TCPWrap client handle: the primary hands off an
+// accepted connection as a raw fd over the IPC channel (surfaced as
+// `message.$fd`). net.ts adopts `.fd`; `.close()` covers the rejected path.
+function makeConnectionHandle(fd) {
+  let closed = false;
+  return {
+    fd,
+    close(cb?) {
+      if (!closed) {
+        closed = true;
+        fs ??= require("node:fs");
+        try {
+          fs.closeSync(fd);
+        } catch {}
+      }
+      if (typeof cb === "function") process.nextTick(cb);
+    },
+  };
+}
 
 export default cluster;
 
@@ -52,8 +73,12 @@ cluster._setupWorker = function () {
   send({ act: "online" });
 
   function onmessage(message, handle) {
-    if (message.act === "newconn") onconnection(message, handle);
-    else if (message.act === "disconnect") worker._disconnect(true);
+    if (message.act === "newconn") {
+      if (handle == null && typeof message.$fd === "number" && message.$fd >= 0) {
+        handle = makeConnectionHandle(message.$fd);
+      }
+      onconnection(message, handle);
+    } else if (message.act === "disconnect") worker._disconnect(true);
   }
 };
 
@@ -90,6 +115,12 @@ cluster._getServer = function (obj, options, cb) {
   send(message, (reply, handle) => {
     if (typeof obj._setServerData === "function") obj._setServerData(reply.data);
 
+    if (handle == null && typeof reply.$fd === "number" && reply.$fd >= 0) {
+      // Shared listen socket: the primary bound it and sent the fd over the
+      // IPC channel (SCM_RIGHTS); the worker does the real listen on it.
+      handle = makeSharedHandle(reply.$fd);
+    }
+
     if (handle) {
       // Shared listen socket
       shared(reply, { handle, indexesKey, index }, cb);
@@ -122,6 +153,30 @@ function removeIndexesKey(indexesKey, index) {
   if (indexSet.set.size === 0) {
     indexes.delete(indexesKey);
   }
+}
+
+// Wraps a bound (not yet listening) fd received from the primary's
+// SharedHandle. net.ts spots `.sharedFd` and performs the real listen; once a
+// native socket adopts the fd (`adopted = true`), it owns the close.
+function makeSharedHandle(fd) {
+  let closed = false;
+  const handle = {
+    sharedFd: fd,
+    adopted: false,
+    close(cb?) {
+      if (!closed) {
+        closed = true;
+        if (!handle.adopted) {
+          fs ??= require("node:fs");
+          try {
+            fs.closeSync(fd);
+          } catch {}
+        }
+      }
+      if (typeof cb === "function") process.nextTick(cb);
+    },
+  };
+  return handle;
 }
 
 // Shared listen socket.
@@ -215,7 +270,7 @@ function onconnection(message, handle) {
 
   if (accepted && server[owner_symbol]) {
     const self = server[owner_symbol];
-    if (self.maxConnections != null && self._connections >= self.maxConnections) {
+    if (self.maxConnections != null && self._connections >= self.maxConnections && !self.dropMaxConnection) {
       accepted = false;
     }
   }

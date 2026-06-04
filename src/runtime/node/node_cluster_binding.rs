@@ -210,9 +210,37 @@ pub(crate) fn send_helper_primary(global: &JSGlobalObject, frame: &CallFrame) ->
         );
     }
 
-    let _ = handle;
-    let success =
-        ipc_data.serialize_and_send(global, message, IsInternal::Internal, JSValue::NULL, None);
+    // Cluster handle handoff (round-robin `newconn`, shared listen handles):
+    // the JS side passes an object exposing a numeric `.fd`. The fd rides the
+    // wire as SCM_RIGHTS ancillary data attached to this message's bytes; the
+    // `$hasHandle` marker lets the receiving side pair the stashed fd with
+    // this message (surfaced there as `$fd`). The JS handle object is kept
+    // alive by `Handle` until the bytes (and fd) are flushed.
+    let mut native_handle: Option<bun_jsc::ipc::Handle> = None;
+    if !handle.is_null() && !handle.is_undefined() {
+        let Some(fd_value) = handle.get(global, "fd")? else {
+            return Err(global.throw(format_args!("cluster handle is missing 'fd'")));
+        };
+        if !fd_value.is_number() {
+            return Err(global.throw_invalid_argument_type_value("handle.fd", "number", fd_value));
+        }
+        let raw_fd = fd_value.to_int32();
+        if raw_fd < 0 {
+            return Err(global.throw(format_args!("cluster handle has invalid fd")));
+        }
+        message.put(global, b"$hasHandle", JSValue::TRUE);
+        native_handle = Some(bun_jsc::ipc::Handle::init(
+            bun_sys::Fd::from_native(raw_fd),
+            handle,
+        ));
+    }
+    let success = ipc_data.serialize_and_send(
+        global,
+        message,
+        IsInternal::Internal,
+        JSValue::NULL,
+        native_handle,
+    );
     Ok(if success == SerializeAndSendResult::Success {
         JSValue::TRUE
     } else {
@@ -349,3 +377,262 @@ pub fn should_ignore_one_disconnect_event_listener(global: &JSGlobalObject) -> b
     let vm = global.bun_vm();
     vm.channel_ref_should_ignore_one_disconnect_event_listener
 }
+
+/// `clusterRawBind(addressType, address, port, flags)` — bind-only socket
+/// creation for cluster's SharedHandle (node's `net._createServerHandle` /
+/// `dgram._createSocketHandle` without the wrap object). The primary binds and
+/// ships the fd to workers over SCM_RIGHTS; each worker does its own
+/// `listen(2)` (TCP/pipe) or `recv` (UDP) on a dup of the fd.
+///
+/// addressType: 4 | 6 | -1 (pipe) | "udp4" | "udp6".
+/// flags: bit 0 = ipv6only, bit 2 (0x4) = UV_UDP_REUSEADDR.
+/// Returns `{ fd, port }` on success or a negative errno number on failure
+/// (matching the uv-style codes `util.getSystemErrorName` understands).
+#[bun_jsc::host_fn]
+pub(crate) fn cluster_raw_bind(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
+    #[cfg(windows)]
+    {
+        let _ = frame;
+        return Err(global.throw(format_args!(
+            "node:cluster shared handles are not implemented on Windows"
+        )));
+    }
+    #[cfg(not(windows))]
+    {
+        use core::ffi::c_int;
+
+        let arguments = frame.arguments_old::<4>().ptr;
+        let address_type = arguments[0];
+        let address = arguments[1];
+        let port = arguments[2].to_int32();
+        let flags = arguments[3].to_int32();
+
+        let mut is_udp = false;
+        let atype: i32;
+        if address_type.is_string() {
+            let s = bun_jsc::JSString::opaque_ref(address_type.as_string()).to_slice(global);
+            is_udp = true;
+            atype = if s.slice() == b"udp6" { 6 } else { 4 };
+        } else {
+            atype = address_type.to_int32();
+        }
+
+        fn last_neg_errno() -> JSValue {
+            JSValue::js_number_from_int32(-bun_core::errno())
+        }
+
+        unsafe fn close_fd(fd: c_int) {
+            unsafe {
+                libc::close(fd);
+            }
+        }
+
+        fn set_cloexec_nonblock(fd: c_int) {
+            unsafe {
+                let fl = libc::fcntl(fd, libc::F_GETFD);
+                libc::fcntl(fd, libc::F_SETFD, fl | libc::FD_CLOEXEC);
+                let fl = libc::fcntl(fd, libc::F_GETFL);
+                libc::fcntl(fd, libc::F_SETFL, fl | libc::O_NONBLOCK);
+            }
+        }
+
+        // Pipe (UNIX domain) server: bind to the path.
+        if atype == -1 {
+            if !address.is_string() {
+                return Err(global.throw_invalid_argument_type_value("address", "string", address));
+            }
+            let path_slice = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
+            let path_bytes = path_slice.slice();
+            let mut sun: libc::sockaddr_un = unsafe { core::mem::zeroed() };
+            sun.sun_family = libc::AF_UNIX as libc::sa_family_t;
+            if path_bytes.len() >= sun.sun_path.len() {
+                return Ok(JSValue::js_number_from_int32(-(libc::ENAMETOOLONG)));
+            }
+            for (i, b) in path_bytes.iter().enumerate() {
+                sun.sun_path[i] = *b as _;
+            }
+            unsafe {
+                let fd = libc::socket(libc::AF_UNIX, libc::SOCK_STREAM, 0);
+                if fd < 0 {
+                    return Ok(last_neg_errno());
+                }
+                set_cloexec_nonblock(fd);
+                let len = core::mem::size_of::<libc::sockaddr_un>() as libc::socklen_t;
+                if libc::bind(fd, (&raw const sun).cast(), len) != 0 {
+                    let e = last_neg_errno();
+                    close_fd(fd);
+                    return Ok(e);
+                }
+                let obj = JSValue::create_empty_object(global, 2);
+                obj.put(global, b"fd", JSValue::js_number_from_int32(fd));
+                obj.put(global, b"port", JSValue::js_number_from_int32(-1));
+                return Ok(obj);
+            }
+        }
+
+        let family: c_int = if atype == 6 {
+            libc::AF_INET6
+        } else {
+            libc::AF_INET
+        };
+        let socktype: c_int = if is_udp {
+            libc::SOCK_DGRAM
+        } else {
+            libc::SOCK_STREAM
+        };
+
+        // Resolve the address. Cluster normally passes an IP literal or null;
+        // a hostname (e.g. "localhost") falls back to getaddrinfo.
+        let mut ss: libc::sockaddr_storage = unsafe { core::mem::zeroed() };
+        let ss_len: libc::socklen_t;
+        if address.is_string() {
+            let addr_slice = bun_jsc::JSString::opaque_ref(address.as_string()).to_slice(global);
+            let addr_bytes = addr_slice.slice();
+            let mut addr_z: [u8; 256] = [0; 256];
+            if addr_bytes.len() >= addr_z.len() {
+                return Ok(JSValue::js_number_from_int32(-(libc::EINVAL)));
+            }
+            addr_z[..addr_bytes.len()].copy_from_slice(addr_bytes);
+
+            let parsed = unsafe {
+                if family == libc::AF_INET6 {
+                    let sin6: &mut libc::sockaddr_in6 =
+                        &mut *(&raw mut ss).cast::<libc::sockaddr_in6>();
+                    sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+                    sin6.sin6_port = (port as u16).to_be();
+                    libc::inet_pton(
+                        libc::AF_INET6,
+                        addr_z.as_ptr().cast(),
+                        (&raw mut sin6.sin6_addr).cast(),
+                    ) == 1
+                } else {
+                    let sin: &mut libc::sockaddr_in = &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
+                    sin.sin_family = libc::AF_INET as libc::sa_family_t;
+                    sin.sin_port = (port as u16).to_be();
+                    libc::inet_pton(
+                        libc::AF_INET,
+                        addr_z.as_ptr().cast(),
+                        (&raw mut sin.sin_addr).cast(),
+                    ) == 1
+                }
+            };
+            if !parsed {
+                // Hostname: numeric-service getaddrinfo with the family hint.
+                let mut hints: libc::addrinfo = unsafe { core::mem::zeroed() };
+                hints.ai_family = family;
+                hints.ai_socktype = socktype;
+                let mut res: *mut libc::addrinfo = core::ptr::null_mut();
+                let rc = unsafe {
+                    libc::getaddrinfo(
+                        addr_z.as_ptr().cast(),
+                        core::ptr::null(),
+                        &hints,
+                        &mut res,
+                    )
+                };
+                if rc != 0 || res.is_null() {
+                    return Ok(JSValue::js_number_from_int32(-(libc::EINVAL)));
+                }
+                unsafe {
+                    let ai = &*res;
+                    core::ptr::copy_nonoverlapping(
+                        ai.ai_addr.cast::<u8>(),
+                        (&raw mut ss).cast::<u8>(),
+                        ai.ai_addrlen as usize,
+                    );
+                    libc::freeaddrinfo(res);
+                    if family == libc::AF_INET6 {
+                        (*(&raw mut ss).cast::<libc::sockaddr_in6>()).sin6_port =
+                            (port as u16).to_be();
+                    } else {
+                        (*(&raw mut ss).cast::<libc::sockaddr_in>()).sin_port =
+                            (port as u16).to_be();
+                    }
+                }
+            }
+            ss_len = if family == libc::AF_INET6 {
+                core::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t
+            } else {
+                core::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t
+            };
+        } else {
+            // No address: any-address for the family.
+            unsafe {
+                if family == libc::AF_INET6 {
+                    let sin6: &mut libc::sockaddr_in6 =
+                        &mut *(&raw mut ss).cast::<libc::sockaddr_in6>();
+                    sin6.sin6_family = libc::AF_INET6 as libc::sa_family_t;
+                    sin6.sin6_port = (port as u16).to_be();
+                    sin6.sin6_addr = core::mem::zeroed(); // in6addr_any
+                    ss_len = core::mem::size_of::<libc::sockaddr_in6>() as libc::socklen_t;
+                } else {
+                    let sin: &mut libc::sockaddr_in = &mut *(&raw mut ss).cast::<libc::sockaddr_in>();
+                    sin.sin_family = libc::AF_INET as libc::sa_family_t;
+                    sin.sin_port = (port as u16).to_be();
+                    sin.sin_addr.s_addr = libc::INADDR_ANY.to_be();
+                    ss_len = core::mem::size_of::<libc::sockaddr_in>() as libc::socklen_t;
+                }
+            }
+        }
+
+        unsafe {
+            let fd = libc::socket(family, socktype, 0);
+            if fd < 0 {
+                return Ok(last_neg_errno());
+            }
+            set_cloexec_nonblock(fd);
+
+            let one: c_int = 1;
+            let one_ptr = (&raw const one).cast::<core::ffi::c_void>();
+            let one_len = core::mem::size_of::<c_int>() as libc::socklen_t;
+            if !is_udp {
+                // libuv sets SO_REUSEADDR on every TCP server socket.
+                libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, one_ptr, one_len);
+            } else if flags & 0x4 != 0 {
+                // UV_UDP_REUSEADDR: SO_REUSEPORT on BSD/macOS, SO_REUSEADDR on Linux.
+                #[cfg(any(target_os = "macos", target_os = "ios", target_os = "freebsd"))]
+                {
+                    libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEPORT, one_ptr, one_len);
+                    libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, one_ptr, one_len);
+                }
+                #[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "freebsd")))]
+                {
+                    libc::setsockopt(fd, libc::SOL_SOCKET, libc::SO_REUSEADDR, one_ptr, one_len);
+                }
+            }
+            if family == libc::AF_INET6 && flags & 0x1 != 0 {
+                libc::setsockopt(
+                    fd,
+                    libc::IPPROTO_IPV6,
+                    libc::IPV6_V6ONLY,
+                    one_ptr,
+                    one_len,
+                );
+            }
+
+            if libc::bind(fd, (&raw const ss).cast(), ss_len) != 0 {
+                let e = last_neg_errno();
+                close_fd(fd);
+                return Ok(e);
+            }
+
+            // Report the kernel-assigned port for port-0 binds.
+            let mut bound_port = port;
+            let mut out: libc::sockaddr_storage = core::mem::zeroed();
+            let mut out_len = core::mem::size_of::<libc::sockaddr_storage>() as libc::socklen_t;
+            if libc::getsockname(fd, (&raw mut out).cast(), &mut out_len) == 0 {
+                bound_port = if family == libc::AF_INET6 {
+                    u16::from_be((*(&raw const out).cast::<libc::sockaddr_in6>()).sin6_port) as i32
+                } else {
+                    u16::from_be((*(&raw const out).cast::<libc::sockaddr_in>()).sin_port) as i32
+                };
+            }
+
+            let obj = JSValue::create_empty_object(global, 2);
+            obj.put(global, b"fd", JSValue::js_number_from_int32(fd));
+            obj.put(global, b"port", JSValue::js_number_from_int32(bound_port));
+            Ok(obj)
+        }
+    }
+}
+

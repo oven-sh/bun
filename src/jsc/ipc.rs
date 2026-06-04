@@ -1872,6 +1872,31 @@ fn handle_ipc_message(
             }
         }
     } else {
+        // Internal (cluster) messages can carry an SCM_RIGHTS fd (round-robin
+        // connection handoff, shared listen handles). The sender marks the
+        // message with `$hasHandle`; surface the received fd as `$fd` on the
+        // message object so cluster JS internals can adopt it without changing
+        // the dispatch chain's [message, handle] argument shape.
+        if let DecodedIPCMessage::Internal(msg_data) = &message {
+            let msg_data = *msg_data;
+            if msg_data.is_object() {
+                match msg_data.get(global_this, "$hasHandle") {
+                    Ok(Some(marker)) if marker.to_boolean() => {
+                        if let Some(fd) = send_queue.incoming_fd.take() {
+                            msg_data.put(
+                                global_this,
+                                b"$fd",
+                                JSValue::js_number_from_int32(fd.uv()),
+                            );
+                        }
+                    }
+                    Ok(_) => {}
+                    Err(_) => {
+                        global_this.clear_exception();
+                    }
+                }
+            }
+        }
         // SAFETY: BACKREF — owner embeds this SendQueue inline and outlives it.
         unsafe { (*send_queue.owner).handle_ipc_message(message, JSValue::UNDEFINED) };
     }

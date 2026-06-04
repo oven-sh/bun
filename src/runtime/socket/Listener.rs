@@ -433,19 +433,22 @@ impl Listener {
                 )
             }),
             UnixOrHost::Fd(fd) => {
-                let err = jsc::SystemError {
-                    errno: bun_sys::SystemErrno::EINVAL as c_int,
-                    code: bun_core::String::static_("EINVAL"),
-                    message: bun_core::String::static_(
-                        "Bun does not support listening on a file descriptor.",
-                    ),
-                    syscall: bun_core::String::static_("listen"),
-                    fd: fd.uv(),
-                    path: bun_core::String::empty(),
-                    hostname: bun_core::String::empty(),
-                    dest: bun_core::String::empty(),
-                };
-                return Err(global.throw_value(err.to_error_instance(global)));
+                // Adopt an already-bound fd (node listen({fd}), cluster shared
+                // handles): listen(2) happens in usockets. POSIX only — the C
+                // side returns NULL on Windows builds and we fall into the
+                // generic error path below.
+                let fd_native = fd.native() as uws_sys::LIBUS_SOCKET_DESCRIPTOR;
+                this_ref.group.with_mut(|g| {
+                    g.listen_fd(
+                        kind,
+                        secure_ctx_ptr,
+                        fd_native,
+                        511,
+                        socket_flags,
+                        size_of::<*mut c_void>() as c_int,
+                        &mut errno,
+                    )
+                })
             }
         };
         if listen_socket.is_null() {

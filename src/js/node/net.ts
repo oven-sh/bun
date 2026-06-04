@@ -2137,7 +2137,13 @@ Server.prototype.close = function close(callback) {
   }
 
   if (this._handle) {
-    this._handle.stop(false);
+    // Cluster faux handles (round-robin workers) expose node's close(), not
+    // the Bun listener's stop().
+    if (typeof this._handle.stop === "function") {
+      this._handle.stop(false);
+    } else {
+      this._handle.close();
+    }
     this._handle = null;
   }
 
@@ -2294,6 +2300,12 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
     } else if (!Number.isSafeInteger(port) || port < 0) {
       port = 0;
     }
+    // node: reusePort implies exclusive — each worker binds its own handle
+    // with SO_REUSEPORT and the kernel balances; cluster _getServer is skipped.
+    if (reusePort === true) {
+      exclusive = true;
+    }
+    var clusterHost = typeof hostname === "string" && hostname.length > 0 ? hostname : null;
     hostname = hostname || "::";
   }
 
@@ -2327,18 +2339,40 @@ Server.prototype.listen = function listen(port, hostname, onListen) {
       options[kSocketClass] = Socket;
     }
 
+    // Mirror node's listenInCluster tuples so cluster workers query the
+    // primary with a key the primary can bind/share correctly:
+    //   pipe       → (path, -1, -1)
+    //   fd         → (null, null, null)
+    //   port+host  → (host, port, family)
+    //   port only  → (null, port, 4)
+    const flags = (ipv6Only === true ? 1 : 0) | (reusePort === true ? 2 : 0);
+    let queryAddress = null;
+    let queryPort = port;
+    let queryAddressType = 4;
+    if (path) {
+      queryAddress = path;
+      queryPort = -1;
+      queryAddressType = -1;
+    } else if (typeof fd === "number" && fd >= 0) {
+      queryPort = null;
+      queryAddressType = null;
+    } else if (typeof clusterHost === "string") {
+      queryAddress = clusterHost;
+      queryAddressType = isIP(clusterHost) || 4;
+    }
+
     listenInCluster(
       this,
-      null,
-      port,
-      4,
+      queryAddress,
+      queryPort,
+      queryAddressType,
       backlog,
       fd,
       exclusive,
       ipv6Only,
       allowHalfOpen,
       reusePort,
-      undefined,
+      flags,
       undefined,
       path,
       hostname,
@@ -2522,25 +2556,95 @@ function listenInCluster(
     backlog,
     ...options,
   };
+  const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
   cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
+    if (listeningId !== server[kClusterListeningId]) {
+      handle?.close();
+      return;
+    }
     err = checkBindError(err, port, handle);
     if (err) {
-      throw new ExceptionWithHostPort(err, "bind", address, port);
+      const ex = new ExceptionWithHostPort(err, "bind", address, port);
+      server.emit("error", ex);
+      return;
     }
-    server[kRealListen](
-      path,
-      port,
-      hostname,
-      exclusive,
-      ipv6Only,
-      allowHalfOpen,
-      reusePort,
-      tls,
-      contexts,
-      onListen,
-      fd,
-    );
+    if (handle && typeof handle.sharedFd === "number") {
+      // SCHED_NONE / shared handle: the primary bound the socket; this worker
+      // does the real listen on the duplicated fd. The Bun listener owns the
+      // fd from here; closing the server tells the primary to drop us from
+      // the shared-handle refcount.
+      handle.adopted = true;
+      server[kClusterHandle] = handle;
+      server.once("close", () => handle.close());
+      server[kRealListen](
+        path,
+        port,
+        hostname,
+        exclusive,
+        ipv6Only,
+        allowHalfOpen,
+        reusePort,
+        tls,
+        contexts,
+        onListen,
+        handle.sharedFd,
+      );
+      return;
+    }
+    // Round-robin: adopt the faux handle — this worker never binds; accepted
+    // connections arrive from the primary as fds over the IPC channel.
+    server[kClusterFauxListen](handle, backlog, path);
   });
+}
+
+const kClusterListeningId = Symbol("kClusterListeningId");
+const kClusterHandle = Symbol("kClusterHandle");
+const kClusterFauxListen = Symbol("kClusterFauxListen");
+const { kClusterOwner } = require("internal/shared");
+
+Server.prototype[kClusterFauxListen] = function (handle, backlog, path) {
+  this[kClusterHandle] = handle;
+  this._handle = handle;
+  if (path) {
+    // Server.prototype.address() takes the `unix` branch for pipe servers.
+    handle.unix = path;
+  }
+  handle.onconnection = onClusterConnection;
+  handle[kClusterOwner] = this;
+  handle.listen(backlog || 511);
+  if (this._unref) this.unref();
+  setTimeout(emitListeningNextTick, 1, this);
+};
+
+// Invoked by internal/cluster/child.ts with `this` = the faux handle when the
+// primary hands off an accepted connection (mirrors node's net.js onconnection
+// where `this` is the listen handle and owner_symbol locates the server).
+function onClusterConnection(err, clientHandle) {
+  const self = this[kClusterOwner];
+  if (!self || self[kClusterHandle] !== this) {
+    clientHandle?.close();
+    return;
+  }
+  if (err) {
+    self.emit("error", new ErrnoException(err, "accept"));
+    return;
+  }
+  if (self.maxConnections != null && self._connections >= self.maxConnections) {
+    clientHandle.close();
+    return;
+  }
+  const socket = new Socket({
+    allowHalfOpen: self.allowHalfOpen,
+  });
+  socket.isServer = true;
+  socket.server = self;
+  self._connections++;
+  socket.once("close", () => {
+    self._connections--;
+    self._emitCloseIfDrained();
+  });
+  socket.connect({ fd: clientHandle.fd, pauseOnConnect: self.pauseOnConnect });
+  self.emit("connection", socket);
 }
 
 function createServer(options, connectionListener) {

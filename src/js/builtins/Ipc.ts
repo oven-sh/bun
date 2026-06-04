@@ -145,9 +145,29 @@
  * @param {{ keepOpen?: boolean } | undefined} options
  * @returns {[unknown, Serialized] | null}
  */
-export function serialize(_message, _handle, _options) {
-  // sending file descriptors is not supported yet
-  return null; // send the message without the file descriptor
+export function serialize(message, handle, options) {
+  const net = require("node:net");
+  if (handle instanceof net.Server) {
+    // The Listener stays alive (protected) until the fd is flushed.
+    const native = handle._handle;
+    if (!native) return null;
+    return [native, { cmd: "NODE_HANDLE", message, type: "net.Server" }];
+  }
+  if (handle instanceof net.Socket) {
+    const native = handle._handle;
+    if (!native) return null;
+    // Stop reading in this process — from here the receiver owns the bytes.
+    // (node detaches the handle entirely; we keep our copy open and paused.
+    // SCM_RIGHTS dups the fd at sendmsg time, so the receiver's copy is
+    // independent of this one.)
+    if (!options?.keepOpen) {
+      try {
+        native.pause();
+      } catch {}
+    }
+    return [native, { cmd: "NODE_HANDLE", message, type: "net.Socket" }];
+  }
+  throw $ERR_INVALID_HANDLE_TYPE();
 
   /*
   const net = require("node:net");
@@ -224,7 +244,10 @@ export function parseHandle(target, serialized, fd) {
       return;
     }
     case "net.Socket": {
-      throw new Error("TODO case net.Socket");
+      const socket = new net.Socket({ readable: true, writable: true });
+      socket.connect({ fd });
+      emit(target, serialized.message, socket);
+      return;
     }
     case "dgram.Socket": {
       throw new Error("TODO case dgram.Socket");

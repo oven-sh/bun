@@ -5970,13 +5970,15 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
             js_ast::ExprData::EObject(ex) => {
                 for property in ex.properties.slice() {
-                    // The key must still be evaluated if it's computed or a spread
+                    // The key must still be evaluated if it's computed or a spread.
+                    // A computed key is side-effect free only if it's a primitive
+                    // literal; unwrap inlined enum members (e.g. `[A.FOO]`) first so
+                    // they're treated like the literal they inline to.
                     if property.kind == js_ast::g::PropertyKind::Spread
                         || (property.flags.contains(Flags::Property::IsComputed)
                             && !property
                                 .key
-                                .as_ref()
-                                .map(Expr::is_primitive_literal)
+                                .map(|key| key.unwrap_inlined().is_primitive_literal())
                                 .unwrap_or(false))
                         || property.flags.contains(Flags::Property::IsSpread)
                     {

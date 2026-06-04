@@ -187,7 +187,7 @@ describe.concurrent("napi", () => {
       expect(result).toEndWith("str: abcdef");
     });
 
-    // TODO: once we upgrade the Node version on macOS and musl to Node v24.3.0, remove this TODO
+    // TODO: once we upgrade the Node version on macOS and musl to Node v24.16.0, remove this TODO
     it.todoIf(isCI && (isMacOS || isMusl))("copies auto len", async () => {
       const result = await checkSameOutput("test_napi_get_value_string_utf8_with_buffer", ["abcdef", 424242]);
       expect(result).toEndWith("str: abcdef");

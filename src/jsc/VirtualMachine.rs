@@ -2295,15 +2295,16 @@ impl VirtualMachine {
         let hooks = runtime_hooks();
         let _ = self.ensure_debugger(true);
 
-        // Node.js `--trace-*` flags need `internal/process/pre_execution` to
-        // run before any user code. `reload_entry_point` is the single funnel
-        // for the main entry, workers, and `-e` evals, so this covers them
-        // all. Gated on a cheap argv scan so the zero-flag path costs nothing;
-        // the module registry caches the evaluation, so hot reloads and
-        // worker re-entries are no-ops after the first call.
+        // Node.js `--trace-*` and `--stack-trace-limit` flags need
+        // `internal/process/pre_execution` to run before any user code.
+        // `reload_entry_point` is the single funnel for the main entry,
+        // workers, and `-e` evals, so this covers them all. Gated on a cheap
+        // argv scan so the zero-flag path costs nothing; the module registry
+        // caches the evaluation, so hot reloads and worker re-entries are
+        // no-ops after the first call.
         if bun_core::argv()
             .into_iter()
-            .any(|arg| arg.starts_with(b"--trace-"))
+            .any(|arg| arg.starts_with(b"--trace-") || arg.starts_with(b"--stack-trace-limit"))
         {
             // The C++ side catches and reports any JS exception thrown while
             // evaluating `internal/process/pre_execution`.

@@ -263,6 +263,68 @@ describe("transpiler cache", () => {
   });
 });
 
+test("rejects cache entries written by another implementation line's version number", () => {
+  // The Zig 1.3.x maintenance line shares this cache's directory, filename
+  // scheme, metadata layout and feature-hash inputs, but transpiles with a
+  // different implementation and bumps its own expected_version independently
+  // (bun-v1.3.13/1.3.14 use 20; earlier Rust canaries used 20-22). A foreign
+  // entry whose version number happens to match is fully trusted: all stored
+  // hashes verify (they hash the entry's own payload), so whatever the other
+  // implementation transpiled is served forever and survives up/downgrades.
+  // The Rust line therefore reserves versions >= 1_000_000; anything below
+  // must be treated as stale, unlinked, and rewritten.
+  //
+  // Cache entry layout (src/jsc/RuntimeTranspilerCache.rs, Metadata::encode):
+  //   0: cache_version u32, 4: module_type u8, 5: output_encoding u8,
+  //   6: features_hash u64, 14: input_byte_length u64, 22: input_hash u64,
+  //   30: output_byte_offset u64, 38: output_byte_length u64,
+  //   46: output_hash u64, then sourcemap/esm_record triples; payload @ 102.
+  const CACHE_VERSION_AT = 0;
+  const OUTPUT_BYTE_OFFSET_AT = 30;
+  const OUTPUT_BYTE_LENGTH_AT = 38;
+  const OUTPUT_HASH_AT = 46;
+  const RUST_VERSION_NAMESPACE = 1_000_000;
+  const WYHASH_SEED = 42n;
+
+  // Long enough that the transpiled output region can hold the sentinel.
+  const original = "original-output-".repeat(16);
+
+  writeFileSync(join(temp_dir, "a.js"), dummyFile(8 * 1024, "impl-line", original));
+
+  const first = bunRun(join(temp_dir, "a.js"), env);
+  expect(first.stdout).toBe(original);
+  expect(newCacheCount()).toBe(1);
+
+  // Rewrite the entry as if a different bun implementation had produced it
+  // under a colliding version number: same source (input_hash/features_hash
+  // untouched), different transpiled output, all self-hashes valid. 22 is the
+  // last version the Rust line used before moving to the reserved namespace,
+  // and stands in for any future Zig-line bump reaching the same number.
+  const cache_file = join(cache_dir, readdirSync(cache_dir)[0]);
+  const data = readFileSync(cache_file);
+  const outputOffset = Number(data.readBigUInt64LE(OUTPUT_BYTE_OFFSET_AT));
+  const outputLength = Number(data.readBigUInt64LE(OUTPUT_BYTE_LENGTH_AT));
+  const sentinel = `console.log("POISONED");`;
+  expect(outputLength).toBeGreaterThanOrEqual(sentinel.length);
+  const foreignOutput = Buffer.alloc(outputLength, "\n");
+  foreignOutput.write(sentinel, 0, "utf-8");
+
+  data.writeUInt32LE(22, CACHE_VERSION_AT);
+  foreignOutput.copy(data, outputOffset);
+  data.writeBigUInt64LE(Bun.hash.wyhash(foreignOutput, WYHASH_SEED), OUTPUT_HASH_AT);
+  writeFileSync(cache_file, data);
+
+  // The foreign-version entry must not be served; it must be re-transpiled
+  // from source, and the entry rewritten under the Rust-line namespace
+  // (deleted + written = net 0).
+  const second = bunRun(join(temp_dir, "a.js"), env);
+  expect(second.stdout).toBe(original);
+  expect(newCacheCount()).toBe(0);
+
+  const rewritten = readFileSync(join(cache_dir, readdirSync(cache_dir)[0]));
+  expect(rewritten.readUInt32LE(CACHE_VERSION_AT)).toBeGreaterThanOrEqual(RUST_VERSION_NAMESPACE);
+});
+
 test("rejects cached module records containing out-of-range string indices", () => {
   // When test isolation is enabled, the runtime transpiler cache stores a
   // serialized ES module record ("esm_record") alongside the transpiled

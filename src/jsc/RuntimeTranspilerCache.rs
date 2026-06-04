@@ -41,7 +41,22 @@ bun_core::declare_scope!(cache, visible);
 /// Version 22: Serialize `has_tla` in the cached ESM record flags byte. Entries
 /// written before #30888 carried `has_tla=false` for every module; the cache-HIT
 /// path reinstates the bug for any previously-cached TLA module (#30887).
-const EXPECTED_VERSION: u32 = 22;
+/// Version 23: moved into the Rust-line namespace (`RUST_VERSION_NAMESPACE`).
+///
+/// The Zig 1.3.x maintenance line shares this cache's directory, filename
+/// scheme, metadata layout, and feature-hash inputs, but transpiles with a
+/// different implementation and bumps its own `expected_version`
+/// independently (18 in bun-v1.3.12, 20 in bun-v1.3.13/1.3.14). Whenever both
+/// lines use the same number — as happened for version 20 between the
+/// May 2026 canaries and bun-v1.3.13/1.3.14 — each implementation loads
+/// entries written by the other: every stored hash verifies (they hash the
+/// entry's own payload), so a foreign entry is served indefinitely, is never
+/// unlinked, and keeps being served across version up/downgrades within the
+/// line that trusts it. Offsetting the Rust-line version numbers guarantees a
+/// `cache_version` mismatch instead, so entries written by the other line are
+/// treated as stale, unlinked, and rewritten.
+const RUST_VERSION_NAMESPACE: u32 = 1_000_000;
+const EXPECTED_VERSION: u32 = RUST_VERSION_NAMESPACE + 23;
 
 /// Source files smaller than this are not written to / read from the on-disk
 /// transpiler cache. Originally 50 KiB, which excluded almost every file in a

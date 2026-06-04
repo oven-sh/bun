@@ -22,6 +22,16 @@ bun_opaque::opaque_ffi! {
     pub struct CppWebSocket;
 }
 
+/// `{ ptr, len }` view over a slice of `picohttp::Header` handed to C++.
+/// The element layout already matches the C++ `PicoHTTPHeader` (two
+/// `{ ptr, len }` slices), mirroring the fetch header path
+/// (`FetchHeaders::create_from_pico_headers`).
+#[repr(C)]
+pub(crate) struct PicoHeaders {
+    ptr: *const bun_picohttp::Header,
+    len: usize,
+}
+
 // FFI surface for `WebCore::WebSocket` (src/jsc/bindings/webcore/WebSocket.cpp).
 // Kept private to this module — the safe wrappers below are the only callers.
 //
@@ -45,6 +55,14 @@ unsafe extern "C" {
         deflate_params: *const websocket_deflate::Params,
     );
     safe fn WebSocket__didAbruptClose(websocket_context: &CppWebSocket, reason: ErrorCode);
+    fn WebSocket__didReceiveHandshakeResponse(
+        websocket_context: &CppWebSocket,
+        status_code: u16,
+        status_text: *const BunString,
+        pico_headers: *const PicoHeaders,
+        body: *const u8,
+        body_len: usize,
+    );
     fn WebSocket__didClose(websocket_context: &CppWebSocket, code: u16, reason: *const BunString);
     fn WebSocket__didReceiveText(
         websocket_context: &CppWebSocket,
@@ -75,6 +93,41 @@ impl CppWebSocket {
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         WebSocket__didAbruptClose(self, reason);
+        event_loop.exit();
+    }
+
+    /// Delivers the server's non-101 upgrade response (status + headers + body)
+    /// to JS so the `ws` shim can emit `'unexpected-response'`. Must be called
+    /// before the abrupt-close dispatch so the event fires first.
+    ///
+    /// `headers` and `body` only need to outlive this call (C++ copies them).
+    pub(crate) fn did_receive_handshake_response(
+        &self,
+        status_code: u16,
+        status_text: &BunString,
+        headers: &[bun_picohttp::Header],
+        body: &[u8],
+    ) {
+        let pico = PicoHeaders {
+            ptr: headers.as_ptr(),
+            len: headers.len(),
+        };
+        // SAFETY: VirtualMachine::get() returns the live current-thread VM;
+        // event_loop() yields its raw event-loop pointer (live for VM lifetime).
+        let event_loop = VirtualMachine::get().event_loop_mut();
+        event_loop.enter();
+        // SAFETY: self is a valid C++ WebCore::WebSocket; status_text/pico/body
+        // all outlive the call (C++ copies their contents synchronously).
+        unsafe {
+            WebSocket__didReceiveHandshakeResponse(
+                self,
+                status_code,
+                std::ptr::from_ref(status_text),
+                std::ptr::from_ref(&pico),
+                body.as_ptr(),
+                body.len(),
+            )
+        };
         event_loop.exit();
     }
 

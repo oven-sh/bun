@@ -941,17 +941,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
             body = &me.body;
         }
 
-        let is_first = me.body.is_empty();
-        const HTTP_101: &[u8] = b"HTTP/1.1 101 ";
-        if is_first && body.len() > HTTP_101.len() {
-            // fail early if we receive a non-101 status code
-            if !body.starts_with(HTTP_101) {
-                // SAFETY: `me`'s last use is above; no `&mut Self` spans this call.
-                unsafe { Self::terminate(this.as_ptr(), ErrorCode::Expected101StatusCode) };
-                return;
-            }
-        }
-
+        // PORT NOTE: the Zig code fast-failed here the moment the first bytes
+        // were not `HTTP/1.1 101 `. We instead parse the full response so
+        // `process_response` can hand the non-101 status/headers/body to JS for
+        // the `ws` `'unexpected-response'` event. `max_http_header_size()`
+        // still bounds buffering below, and a non-HTTP reply still fails via
+        // `MalformedHttpResponse` → `InvalidResponse`.
         let response = match picohttp::Response::parse(body, &mut me.headers_buf) {
             Ok(r) => r,
             Err(picohttp::ParseResponseError::MalformedHttpResponse) => {
@@ -1319,6 +1314,23 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let mut deflate_result = DeflateNegotiationResult::default();
 
         if response.status_code != 101 {
+            // Surface the failed upgrade's HTTP response (status + headers +
+            // body) to JS before terminating, so the `ws` shim can emit its
+            // `'unexpected-response'` event. `terminate` fires the error/close
+            // right after; the shim decides which to forward.
+            // SAFETY: short-lived read of `outgoing_websocket`; no reentrancy
+            // until `terminate` below.
+            if let Some(ws) = unsafe { (*this).outgoing_websocket } {
+                let status_text = BunString::clone_latin1(response.status);
+                let status_code = u16::try_from(response.status_code).unwrap_or(0);
+                CppWebSocket::opaque_ref(ws).did_receive_handshake_response(
+                    status_code,
+                    &status_text,
+                    response.headers.list,
+                    remain_buf,
+                );
+                status_text.deref();
+            }
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::Expected101StatusCode) };
             return;

@@ -5,7 +5,7 @@ import crypto from "crypto";
 import { once } from "events";
 import { bunEnv, bunExe } from "harness";
 import { createServer } from "http";
-import { AddressInfo, connect } from "net";
+import { AddressInfo, connect, createServer as netCreateServer } from "net";
 import path from "node:path";
 import { Server, WebSocket, WebSocketServer } from "ws";
 
@@ -904,5 +904,101 @@ describe("ping/pong no-arg payload", () => {
     const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
     ws.on("open", () => ws.pong(Buffer.from("hello")));
     await promise;
+  });
+});
+
+// https://github.com/oven-sh/bun/issues/31792
+// A non-101 response to the upgrade (e.g. Chrome DevTools replying 401 on an
+// unknown /devtools/browser/<id> path) must surface to `ws` consumers:
+// - with an `'unexpected-response'` listener → the event fires with the real
+//   http.IncomingMessage-like `res` (statusCode/statusMessage/headers/body)
+//   and no error/close is emitted (matches Node `ws`).
+// - without one → `ws` emits `error` `Unexpected server response: <status>`
+//   followed by `close` (this is the path puppeteer/chrome-devtools-mcp use).
+describe("unexpected-response (non-101 upgrade)", () => {
+  // Raw TCP server that answers the WebSocket upgrade with a fixed HTTP
+  // response. Using a raw socket (rather than http.createServer) guarantees
+  // the non-101 bytes are flushed on the upgrade connection.
+  function startServer(response: string) {
+    const server = netCreateServer(socket => {
+      socket.once("data", () => {
+        socket.end(response);
+      });
+    });
+    const { promise, resolve } = Promise.withResolvers<number>();
+    server.listen(0, "127.0.0.1", () => resolve((server.address() as AddressInfo).port));
+    return { server, port: promise };
+  }
+
+  it("fires 'unexpected-response' with the response status, headers and body", async () => {
+    const body = "No permission to access the Chrome DevTools.";
+    const { server, port } = startServer(
+      "HTTP/1.1 401 Unauthorized\r\n" +
+        "Content-Type: text/plain\r\n" +
+        "X-Custom: hello\r\n" +
+        `Content-Length: ${Buffer.byteLength(body)}\r\n` +
+        "Connection: close\r\n\r\n" +
+        body,
+    );
+
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const ws = new WebSocket(`ws://127.0.0.1:${await port}/devtools/browser/xxx`);
+    ws.on("open", () => reject(new Error("should not open")));
+    ws.on("error", err => reject(new Error("should not emit error: " + err.message)));
+    ws.on("unexpected-response", (req, res) => {
+      try {
+        expect(res.statusCode).toBe(401);
+        expect(res.statusMessage).toBe("Unauthorized");
+        expect(res.headers["x-custom"]).toBe("hello");
+        expect(res.headers["content-type"]).toBe("text/plain");
+        expect(req.method).toBe("GET");
+        let received = "";
+        res.setEncoding("utf8");
+        res.on("data", (chunk: string) => (received += chunk));
+        res.on("end", () => {
+          try {
+            expect(received).toBe(body);
+            resolve();
+          } catch (e) {
+            reject(e);
+          }
+        });
+      } catch (e) {
+        reject(e);
+      }
+    });
+
+    try {
+      await promise;
+    } finally {
+      ws.terminate();
+      server.close();
+    }
+  });
+
+  it("without a listener, emits 'error' then 'close' (Unexpected server response)", async () => {
+    const { server, port } = startServer(
+      "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+    );
+
+    const events: string[] = [];
+    const { promise, resolve, reject } = Promise.withResolvers<void>();
+    const ws = new WebSocket(`ws://127.0.0.1:${await port}/`);
+    ws.on("open", () => reject(new Error("should not open")));
+    ws.on("error", err => {
+      events.push("error:" + err.message);
+    });
+    ws.on("close", code => {
+      events.push("close:" + code);
+      resolve();
+    });
+
+    try {
+      await promise;
+      expect(events).toEqual(["error:Unexpected server response: 404", "close:1006"]);
+    } finally {
+      ws.terminate();
+      server.close();
+    }
   });
 });

@@ -1517,6 +1517,100 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
     // });
 }
 
+namespace {
+// Mirrors the fetch header ABI (bindings.cpp PicoHTTPHeaders): a pointer to a
+// contiguous array of { {name_ptr,name_len}, {value_ptr,value_len} } records.
+struct PicoSlice {
+    const unsigned char* ptr;
+    size_t len;
+};
+struct PicoHeader {
+    PicoSlice name;
+    PicoSlice value;
+};
+struct PicoHeaders {
+    const PicoHeader* ptr;
+    size_t len;
+};
+
+// Builds the `{ statusCode, statusMessage, headers, rawHeaders, body }` object
+// the `ws` shim turns into an http.IncomingMessage-like `res` for the
+// `'unexpected-response'` event.
+JSC::JSValue createHandshakeResponseObject(JSC::JSGlobalObject* globalObject, unsigned short statusCode, const BunString* statusText, const void* picoHeaders, const uint8_t* body, size_t bodyLength)
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    const PicoHeaders headers = picoHeaders ? *reinterpret_cast<const PicoHeaders*>(picoHeaders) : PicoHeaders { nullptr, 0 };
+
+    JSC::JSObject* headersObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), JSC::JSFinalObject::defaultInlineCapacity);
+    RETURN_IF_EXCEPTION(scope, {});
+    JSC::JSArray* rawHeaders = constructEmptyArray(globalObject, nullptr, headers.len * 2);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    unsigned rawIndex = 0;
+    for (size_t i = 0; i < headers.len; i++) {
+        const PicoHeader& header = headers.ptr[i];
+        if (header.name.len == 0)
+            continue;
+        String name = String::fromUTF8ReplacingInvalidSequences(std::span { header.name.ptr, header.name.len });
+        String value = String::fromUTF8ReplacingInvalidSequences(std::span { header.value.ptr, header.value.len });
+        JSC::JSString* jsValue = jsString(vm, value);
+        // http.IncomingMessage lowercases header names in `.headers`; preserve
+        // the wire casing/order in `.rawHeaders` (matching Node).
+        headersObject->putDirect(vm, JSC::Identifier::fromString(vm, name.convertToASCIILowercase()), jsValue, 0);
+        rawHeaders->putDirectIndex(globalObject, rawIndex++, jsString(vm, name));
+        RETURN_IF_EXCEPTION(scope, {});
+        rawHeaders->putDirectIndex(globalObject, rawIndex++, jsValue);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
+
+    JSC::JSUint8Array* bodyBuffer = WebCore::createBuffer(globalObject, body, bodyLength);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    JSC::JSObject* result = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 5);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "statusCode"_s), JSC::jsNumber(statusCode), 0);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "statusMessage"_s), jsString(vm, statusText ? statusText->toWTFString(BunString::ZeroCopy) : String()), 0);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "headers"_s), headersObject, 0);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "rawHeaders"_s), rawHeaders, 0);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "body"_s), bodyBuffer, 0);
+    return result;
+}
+}
+
+void WebSocket::didReceiveHandshakeResponse(unsigned short statusCode, const BunString* statusText, const void* picoHeaders, const uint8_t* body, size_t bodyLength)
+{
+    if (m_state != CONNECTING)
+        return;
+
+    // The `ws` shim registers for this synchronously when the user wants the
+    // `'unexpected-response'` event; it then decides whether to emit it (and
+    // swallow the forthcoming error/close) or fall back to an error. A plain
+    // browser WebSocket has no listener here, so nothing is dispatched and the
+    // usual error/close from didFailWithErrorCode is the only observable effect.
+    if (!this->hasEventListeners("unexpected-response"_s))
+        return;
+
+    auto* context = scriptExecutionContext();
+    if (!context)
+        return;
+
+    auto* globalObject = context->jsGlobalObject();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(globalObject->vm());
+    JSC::JSValue data = createHandshakeResponseObject(globalObject, statusCode, statusText, picoHeaders, body, bodyLength);
+    if (scope.exception() || !data) {
+        scope.clearExceptionExceptTermination();
+        return;
+    }
+
+    this->incPendingActivityCount();
+    MessageEvent::Init init;
+    init.data = data;
+    init.origin = this->m_url.string();
+    dispatchEvent(MessageEvent::create("unexpected-response"_s, WTF::move(init), EventIsTrusted::Yes));
+    this->decPendingActivityCount();
+}
+
 void WebSocket::didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError)
 {
     // LOG(Network, "WebSocket %p didReceiveErrorMessage()", this);
@@ -1889,6 +1983,10 @@ extern "C" void WebSocket__didConnectWithTunnel(WebCore::WebSocket* webSocket, v
 extern "C" void WebSocket__didAbruptClose(WebCore::WebSocket* webSocket, Bun::WebSocketErrorCode errorCode)
 {
     webSocket->didFailWithErrorCode(errorCode);
+}
+extern "C" void WebSocket__didReceiveHandshakeResponse(WebCore::WebSocket* webSocket, uint16_t statusCode, const BunString* statusText, const void* picoHeaders, const uint8_t* body, size_t bodyLength)
+{
+    webSocket->didReceiveHandshakeResponse(statusCode, statusText, picoHeaders, body, bodyLength);
 }
 extern "C" void WebSocket__didClose(WebCore::WebSocket* webSocket, uint16_t errorCode, BunString* reason)
 {

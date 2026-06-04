@@ -10,6 +10,7 @@ const ReadyState_CLOSED = 3;
 
 const EventEmitter = require("node:events");
 const http = require("node:http");
+const { Readable } = require("node:stream");
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
@@ -126,6 +127,12 @@ class BunWebSocket extends EventEmitter {
   #binaryType = "nodebuffer";
   // Bitset to track whether event handlers are set.
   #eventId = 0;
+  // Set once the server answers the upgrade with a non-101 status. Used to
+  // suppress the native error/close that follow (we surface the failure as
+  // `'unexpected-response'` or a `ws`-style error instead).
+  #handshakeResponseHandled = false;
+  // The simulated `http.ClientRequest` passed to `'unexpected-response'`.
+  #clientRequest;
 
   constructor(url, protocols, options) {
     super();
@@ -240,6 +247,7 @@ class BunWebSocket extends EventEmitter {
         _last: null,
       };
       EventEmitter.$call(nodeHttpClientRequestSimulated);
+      this.#clientRequest = nodeHttpClientRequestSimulated;
       finishRequest(nodeHttpClientRequestSimulated);
       if (!didCallEnd) {
         this.#createWebSocket(url, protocols, headers, method, proxy, tlsOptions, disableDeflate);
@@ -267,11 +275,74 @@ class BunWebSocket extends EventEmitter {
     let ws = (this.#ws = new WebSocket(url, wsOptions));
     ws.binaryType = "nodebuffer";
 
+    // The native WebSocket only dispatches "unexpected-response" when it sees a
+    // listener, so register eagerly. This lets us fire the `ws`
+    // `'unexpected-response'` event (or a matching error) for a non-101 upgrade
+    // and suppress the native error/close that immediately follow.
+    ws.addEventListener("unexpected-response", ({ data }) => {
+      this.#onUnexpectedResponse(data);
+    });
+
     return ws;
   }
 
+  #makeClientRequest(url, method) {
+    if (this.#clientRequest) return this.#clientRequest;
+    // Minimal http.ClientRequest-like object for the `req` argument. `ws`'s
+    // own fallback path (no listener) only duck-types `setHeader`/`abort`/
+    // `socket`; user listeners typically read `req.method`/`req.path`.
+    const req = {
+      __proto__: Object.create(EventEmitter.prototype),
+      setHeader() {},
+      getHeader() {},
+      removeHeader() {},
+      abort() {},
+      end() {},
+      write() {},
+      writeHead() {},
+      method,
+      path: url,
+      headersSent: true,
+      finished: true,
+      socket: null,
+      [Symbol.toStringTag]: "ClientRequest",
+    };
+    EventEmitter.$call(req);
+    this.#clientRequest = req;
+    return req;
+  }
+
+  #onUnexpectedResponse(data) {
+    if (this.#handshakeResponseHandled) return;
+    this.#handshakeResponseHandled = true;
+
+    const statusCode = data.statusCode;
+    const req = this.#makeClientRequest(this.#ws.url, "GET");
+
+    if (this.listenerCount("unexpected-response") > 0) {
+      // Build an http.IncomingMessage-like readable `res` the listener can
+      // inspect (statusCode/headers) and drain (res.on("data"/"end")).
+      const res = new Readable({ read() {} });
+      res.statusCode = statusCode;
+      res.statusMessage = data.statusMessage;
+      res.httpVersion = "1.1";
+      res.headers = data.headers;
+      res.rawHeaders = data.rawHeaders;
+      const body = data.body;
+      if (body && body.length) res.push(body);
+      res.push(null);
+      this.emit("unexpected-response", req, res);
+    } else {
+      // Mirror ws's abortHandshake: emit an error + close on the next tick.
+      process.nextTick(() => {
+        this.emit("error", new Error("Unexpected server response: " + statusCode));
+        this.emit("close", 1006, Buffer.alloc(0), false);
+      });
+    }
+  }
+
   #onOrOnce(event, listener, once) {
-    if (event === "unexpected-response" || event === "upgrade" || event === "redirect") {
+    if (event === "upgrade" || event === "redirect") {
       emitWarning(event, "ws.WebSocket '" + event + "' event is not implemented in bun");
     }
     const mask = 1 << eventIds[event];
@@ -297,6 +368,9 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "close",
           ({ code, reason, wasClean }) => {
+            // A non-101 upgrade is surfaced via `'unexpected-response'` (or the
+            // error emitted there); don't also forward the native close.
+            if (this.#handshakeResponseHandled) return;
             this.emit("close", code, reason, wasClean);
           },
           once,
@@ -322,6 +396,8 @@ class BunWebSocket extends EventEmitter {
         this.#ws.addEventListener(
           "error",
           err => {
+            // See the close handler: the non-101 upgrade path owns the error.
+            if (this.#handshakeResponseHandled) return;
             this.emit("error", err);
           },
           once,

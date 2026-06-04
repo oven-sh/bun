@@ -54,6 +54,8 @@ class ArrayBuffer;
 class ArrayBufferView;
 }
 
+struct BunString;
+
 extern "C" void Bun__WebSocket__freeSSLConfig(void* sslConfig);
 
 namespace WebCore {
@@ -203,6 +205,13 @@ public:
     void didConnect(us_socket_t* socket, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params, void* customSSLCtx);
     void didConnectWithTunnel(void* tunnel, char* bufferedData, size_t bufferedDataSize, const PerMessageDeflateParams* deflate_params);
     void didFailWithErrorCode(Bun::WebSocketErrorCode code);
+
+    // Delivers the server's non-101 upgrade response (status + headers + body)
+    // to JS via an "unexpected-response" event so the `ws` npm shim can emit
+    // its own `'unexpected-response'` event. Fires before the subsequent
+    // error/close from didFailWithErrorCode. `picoHeaders` points to a
+    // PicoHTTPHeaders { ptr, len } (same ABI as the fetch header path).
+    void didReceiveHandshakeResponse(unsigned short statusCode, const BunString* statusText, const void* picoHeaders, const uint8_t* body, size_t bodyLength);
 
     void didReceiveMessage(String&& message);
     void didReceiveData(const char* data, size_t length);

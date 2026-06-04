@@ -278,10 +278,9 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
-    static bool processIsExiting = false;
-    if (processIsExiting)
+    if (process->m_isExiting)
         return;
-    processIsExiting = true;
+    process->m_isExiting = true;
     auto& emitter = process->wrapped();
     auto& vm = JSC::getVM(globalObject);
 

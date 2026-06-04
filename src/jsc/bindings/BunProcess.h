@@ -51,6 +51,10 @@ public:
 
     bool m_isExitCodeObservable = false;
     bool m_sourceMapsEnabled = false;
+    // Re-entry guard for dispatchExitInternal. Per-Process (i.e. per-VM): a
+    // function-local static would be shared across worker threads, so a
+    // worker's exit would suppress the main thread's 'exit' event.
+    bool m_isExiting = false;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 

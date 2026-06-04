@@ -1680,24 +1680,37 @@ pub(crate) fn close_isolation_handles() {
     if state.is_null() {
         return;
     }
+    // close/stop may re-enter JS (close/error handlers), which can register
+    // new handles into ANY of the three registries — e.g. a server's close
+    // handler calling fs.watch() after the fs_watchers pass already finished.
+    // Repeat full passes until one makes no progress.
     loop {
-        let Some(w) = (unsafe { &mut (*state).isolation_handles.fs_watchers }).pop() else {
+        let mut made_progress = false;
+        loop {
+            let Some(w) = (unsafe { &mut (*state).isolation_handles.fs_watchers }).pop() else {
+                break;
+            };
+            made_progress = true;
+            // SAFETY: live until it unregisters in `detach`.
+            unsafe { w.as_ref() }.close_for_isolation();
+        }
+        loop {
+            let Some(w) = (unsafe { &mut (*state).isolation_handles.stat_watchers }).pop() else {
+                break;
+            };
+            made_progress = true;
+            bun_ptr::ParentRef::from(w).close();
+        }
+        loop {
+            let Some(mut s) = (unsafe { &mut (*state).isolation_handles.servers }).pop() else {
+                break;
+            };
+            made_progress = true;
+            s.stop(true);
+        }
+        if !made_progress {
             break;
-        };
-        // SAFETY: live until it unregisters in `detach`.
-        unsafe { w.as_ref() }.close_for_isolation();
-    }
-    loop {
-        let Some(w) = (unsafe { &mut (*state).isolation_handles.stat_watchers }).pop() else {
-            break;
-        };
-        bun_ptr::ParentRef::from(w).close();
-    }
-    loop {
-        let Some(mut s) = (unsafe { &mut (*state).isolation_handles.servers }).pop() else {
-            break;
-        };
-        s.stop(true);
+        }
     }
 }
 

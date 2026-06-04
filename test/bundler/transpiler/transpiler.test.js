@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, test } from "bun:test";
 import { bunEnv, bunExe, hideFromStackTrace, tempDir } from "harness";
 import { join } from "path";
 
@@ -979,6 +979,34 @@ function foo() {}
         "const obj = { getClass() { return class MyClass {}; } }; const C = obj!.getClass(); const instance = new C();",
         "const obj = { getClass() {\n  return class MyClass {\n  };\n} };\nconst C = obj.getClass();\nconst instance = new C",
       );
+    });
+
+    // https://github.com/oven-sh/bun/issues/31812
+    it("keeps required parens around a new expression callee", () => {
+      const exp = ts.expectPrinted_;
+
+      // Member/index/tagged-template/optional-chain callees that contain a call or
+      // optional chain must stay parenthesized: without the parens, `new`'s
+      // arguments and the trailing member/template/call would reparse against the
+      // wrong subexpression (e.g. `new (a().b)()` -> `(new a()).b()`).
+      exp("new (a().b)();", "new (a().b)");
+      exp("new (a()[b])();", "new (a()[b])");
+      exp("new (a().b.c)();", "new (a().b.c)");
+      exp("new (a()`bar`)();", "new (a()`bar`)");
+      exp("new (a()?.b)();", "new (a()?.b)");
+      exp("new (a.b()?.c)();", "new (a.b()?.c)");
+      exp("new (a().b())();", "new (a().b())");
+
+      // Optional chains can never be a bare `new` callee (`new a?.b` is a syntax
+      // error), so the parens are required even without a call in the chain.
+      exp("new (a?.b)();", "new (a?.b)");
+      exp("new (a?.b.c)();", "new (a?.b.c)");
+
+      // A plain member chain or tag binds into the `new` target, so the parens are
+      // redundant and must not be re-emitted (no over-wrapping).
+      exp("new (a.b.c)();", "new a.b.c");
+      exp("new (a`bar`)();", "new a`bar`");
+      exp("new (a.b.c.d)();", "new a.b.c.d");
     });
 
     it("modifiers", () => {
@@ -4762,5 +4790,32 @@ describe("multi-line comment scanning", () => {
     expectParseError(`/*${pad600}*`, message);
     expectParseError(`/*${Buffer.alloc(600, "*").toString()}`, message);
     expectParseError(`/*${pad600}🦊`, message);
+  });
+});
+
+describe("new expression callee parenthesization", () => {
+  // https://github.com/oven-sh/bun/issues/31812
+  // The printer used to drop the parens required around a `new` callee that was
+  // a tagged template whose tag contains a call, or an optional chain. Both
+  // changed the meaning of the transpiled program: the tagged-template form
+  // reparsed as `(new foo())`bar`` and the optional-chain form became an illegal
+  // `new` inside an optional chain (a syntax error). Run the transpiled program
+  // end-to-end and confirm it still builds the class instance.
+  test.each([
+    ["tagged template tag with a call", "const foo = () => (args) => class A {}; console.log(new (foo()`bar`)());"],
+    ["optional chain", "const baz = () => ({ qux: class A {} }); console.log(new (baz()?.qux)());"],
+    ["optional chain with a call", "const a = () => ({ b: class A {} }); console.log(new (a()?.b)());"],
+    ["optional chain without a call", "const o = { b: class A {} }; console.log(new (o?.b)());"],
+  ])("evaluates %s correctly", async (_name, code) => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("A {}\n");
+    expect(exitCode).toBe(0);
   });
 });

@@ -860,7 +860,11 @@ function getTartPilotStep(options, buildId, arch) {
   const rosetta = arch === "x64";
   const args = [`--step=darwin-${arch}-build-bun`];
   if (buildId) args.push(`--build-id=${buildId}`);
-  args.push("--exclude=integration/bun-types");
+  // Skip third-party vendor tests: their `rm -rf dist && bun build.ts` prep
+  // exceeds the runner's hardcoded 60s build timeout under x64 Rosetta. Runs the
+  // core ~2050-test suite (the bun functionality); vendor-under-Rosetta is a
+  // separate follow-up (needs a longer vendor build timeout upstream).
+  args.push("--vendor=false", "--exclude=integration/bun-types");
   return {
     key: `darwin-${arch}-tart-pilot-test-bun`,
     label: `${getBuildkiteEmoji("darwin")} ${arch} - test-bun (tart pilot${rosetta ? ", rosetta" : ""})`,

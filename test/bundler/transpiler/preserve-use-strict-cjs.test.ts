@@ -89,3 +89,34 @@ test(`escaped "use strict" is not a directive (runs sloppy, no early error)`, as
   });
   expect(exitCode).toBe(0);
 });
+
+// A Directive Prologue entry must be a bare StringLiteral token (ECMA-262). A
+// parenthesized string ends the prologue, so a following "use strict" is an
+// ordinary statement — it must not enable strict mode or trip the
+// non-simple-parameter early error (matches Node).
+test(`a parenthesized string ends the directive prologue`, async () => {
+  using dir = tempDir("issue-31806-paren", {
+    "index.cjs": String.raw`
+      function withDefault(a = 1) {
+        ("foo");
+        "use strict";
+        return this === undefined ? "strict" : "sloppy";
+      }
+      console.log(withDefault.call(globalThis, 2));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "index.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.trim()).toBe("sloppy");
+  expect(exitCode).toBe(0);
+});

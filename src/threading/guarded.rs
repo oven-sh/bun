@@ -73,7 +73,10 @@ impl<Value> GuardedBy<Value, Mutex> {
     #[inline]
     pub fn try_lock(&self) -> Option<GuardedLock<'_, Value, Mutex>> {
         if self.mutex.try_lock() {
-            Some(GuardedLock { guarded: self })
+            Some(GuardedLock {
+                guarded: self,
+                _not_send: core::marker::PhantomData,
+            })
         } else {
             None
         }
@@ -94,7 +97,10 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
     /// releases the lock on drop.
     pub fn lock(&self) -> GuardedLock<'_, Value, M> {
         self.mutex.lock();
-        GuardedLock { guarded: self }
+        GuardedLock {
+            guarded: self,
+            _not_send: core::marker::PhantomData,
+        }
     }
 
     /// Lock-free mutable access when the caller already has `&mut self`
@@ -114,6 +120,12 @@ impl<Value, M: RawMutex> GuardedBy<Value, M> {
 /// `lock()`/`defer unlock()` pair.
 pub struct GuardedLock<'a, Value, M: RawMutex> {
     guarded: &'a GuardedBy<Value, M>,
+    // The platform mutex (Darwin os_unfair_lock / Windows SRWLOCK) must be
+    // unlocked on the locking thread — keep the guard !Send. The raw-pointer
+    // PhantomData also makes it !Sync, which is stricter than
+    // `std::sync::MutexGuard` (that is `Sync where T: Sync`); nothing here
+    // shares a guard across threads, so the stricter bound costs nothing.
+    _not_send: core::marker::PhantomData<*const ()>,
 }
 
 impl<'a, Value> GuardedLock<'a, Value, Mutex> {

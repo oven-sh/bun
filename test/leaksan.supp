@@ -121,3 +121,8 @@ leak:WebCore::jsSQLStatementOpenStatementFunction
 # is called before firing (WaiterListManager::clearTimer on notify/unregister),
 # the DispatchTimer and its Bun-side WTFTimer Box leak. JSC-owned ref-cycle.
 leak:WTF::RunLoop::dispatchAfter
+# test/js/web/fetch/fetch-exit-in-flight.test.ts — macOS-only: WTF's ParkingLot
+# lazily allocates a per-thread ThreadData the first time a thread parks; it is
+# intentionally never freed (one-time, bounded). Shows up at process.exit()
+# with an HTTP thread mid-park.
+leak:WTF::ParkingLot::parkConditionallyImpl

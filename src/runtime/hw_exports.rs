@@ -11,7 +11,7 @@
 //!       → `src/jsc/rare_data.rs`
 //!   - `Resolver__nodeModulePathsForJS` / `Resolver__nodeModulePathsJSValue`
 //!       → `src/jsc/resolver_jsc.rs`
-//!   - `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming`
+//!   - `Bun__GlobalObject__getBodyStreamOrBytesForWasmStreaming`
 //!       → `src/runtime/webcore/wasm_streaming.rs`
 //!   - `Bun__Chrome__autoDetect` / `Bun__Chrome__ensure`
 //!       → `src/runtime/webview/ChromeProcess.rs`
@@ -697,7 +697,7 @@ pub fn bindgen_node_os_dispatch_set_priority2(
 // `NewRuntimeFunction` here.
 //
 // ABI: `generate-js2native.ts` declares these on the C++ side as
-// `extern "C" SYSV_ABI ...(Zig::GlobalObject*)` (the `callJS2Native` switch
+// `extern "C" SYSV_ABI ...(Bun::GlobalObject*)` (the `callJS2Native` switch
 // dispatches through them), so the Rust thunk MUST be `jsc` (sysv64 on
 // win-x64), not plain `c`. With `c`, the win-x64 callee read `global` from
 // RCX while C++ passed it in RDI → garbage `&JSGlobalObject` propagated into

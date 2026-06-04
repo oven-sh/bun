@@ -2,13 +2,16 @@
 #pragma once
 #include "root.h"
 
-namespace Zig {
+namespace Bun {
 class GlobalObject;
+}
+
+namespace Zig {
 class JSFFIFunction;
 
 class LazyStaticFunctions {
 public:
-    void init(Zig::GlobalObject* globalObject);
+    void init(Bun::GlobalObject* globalObject);
 
     template<typename Visitor>
     void visit(Visitor& visitor);

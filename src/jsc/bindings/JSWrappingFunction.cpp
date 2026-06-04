@@ -1,5 +1,5 @@
 #include "root.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include "JSWrappingFunction.h"
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -19,7 +19,7 @@ const ClassInfo JSWrappingFunction::s_info = { "Function"_s, &Base::s_info, null
 
 JS_EXPORT_PRIVATE JSWrappingFunction* JSWrappingFunction::create(
     VM& vm,
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     const BunString* symbolName,
     Zig::NativeFunctionPtr functionPointer,
     JSC::JSValue wrappedFnValue)
@@ -61,9 +61,9 @@ void JSWrappingFunction::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 DEFINE_VISIT_CHILDREN(JSWrappingFunction);
 
 extern "C" JSC::EncodedJSValue Bun__JSWrappingFunction__create(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     const BunString* symbolName,
-    Bun::NativeFunctionPtr functionPointer,
+    Zig::NativeFunctionPtr functionPointer,
     JSC::EncodedJSValue wrappedFnEncoded)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -74,7 +74,7 @@ extern "C" JSC::EncodedJSValue Bun__JSWrappingFunction__create(
 
 extern "C" JSC::EncodedJSValue Bun__JSWrappingFunction__getWrappedFunction(
     JSC::EncodedJSValue thisValueEncoded,
-    Zig::GlobalObject* globalObject)
+    Bun::GlobalObject* globalObject)
 {
     JSC::JSValue thisValue = JSC::JSValue::decode(thisValueEncoded);
     JSWrappingFunction* thisObject = dynamicDowncast<JSWrappingFunction>(thisValue.asCell());

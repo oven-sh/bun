@@ -1,5 +1,5 @@
 #include "InspectorLifecycleAgent.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/InspectorFrontendRouter.h>
 #include <JavaScriptCore/InspectorBackendDispatcher.h>
 #include <JavaScriptCore/JSGlobalObject.h>

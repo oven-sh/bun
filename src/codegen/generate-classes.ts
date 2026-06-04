@@ -658,7 +658,7 @@ ${name}* ${name}::create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::St
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::call(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Bun::GlobalObject *globalObject = reinterpret_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     JSC::VM &vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -712,7 +712,7 @@ ${
 
 JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${name}::construct(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
-    Zig::GlobalObject *globalObject = defaultGlobalObject(lexicalGlobalObject);
+    Bun::GlobalObject *globalObject = defaultGlobalObject(lexicalGlobalObject);
     JSC::VM &vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSObject* newTarget = asObject(callFrame->newTarget());
@@ -770,7 +770,7 @@ const ClassInfo ${name}::s_info = { "Function"_s, &Base::s_info, nullptr, nullpt
 ${
   !obj.noConstructor
     ? `
-  extern JSC_CALLCONV JSC::EncodedJSValue ${typeName}__getConstructor(Zig::GlobalObject* globalObject) {
+  extern JSC_CALLCONV JSC::EncodedJSValue ${typeName}__getConstructor(Bun::GlobalObject* globalObject) {
     return JSValue::encode(globalObject->${className(typeName)}Constructor());
   }`
     : ""
@@ -1061,7 +1061,7 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto* globalObject = reinterpret_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     auto* prototype = dynamicDowncast<${prototypeName(typeName)}>(JSValue::decode(thisValue));
 
     if (!prototype) [[unlikely]] {
@@ -1084,7 +1084,7 @@ JSC_DEFINE_CUSTOM_GETTER(js${typeName}Constructor, (JSGlobalObject * lexicalGlob
 JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Bun::GlobalObject *globalObject = reinterpret_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     ${
       obj.forBind
@@ -1181,7 +1181,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
 JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Bun::GlobalObject *globalObject = reinterpret_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     ${className(typeName)}* thisObject = uncheckedDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     JSC::EnsureStillAliveScope thisArg = JSC::EnsureStillAliveScope(thisObject);
@@ -1203,7 +1203,7 @@ JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObjec
 JSC_DEFINE_CUSTOM_GETTER(${symbolName(typeName, name)}GetterWrap, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue encodedThisValue, PropertyName attributeName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
-    Zig::GlobalObject *globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Bun::GlobalObject *globalObject = reinterpret_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     ${className(typeName)}* thisObject = dynamicDowncast<${className(typeName)}>(JSValue::decode(encodedThisValue));
     if (!thisObject) [[unlikely]] {
@@ -1853,7 +1853,7 @@ extern JSC_CALLCONV void* JSC_HOST_CALL_ATTRIBUTES ${typeName}__fromJSDirect(JSC
   if (!object)
       return nullptr;
 
-  Zig::GlobalObject* globalObject = dynamicDowncast<Zig::GlobalObject>(object->globalObject());
+  Bun::GlobalObject* globalObject = dynamicDowncast<Bun::GlobalObject>(object->globalObject());
 
   if (globalObject == nullptr || cell->structureID() != globalObject->${className(typeName)}Structure()->id()) [[unlikely]] {
     return nullptr;
@@ -1914,7 +1914,7 @@ JSObject* ${name}::createPrototype(VM& vm, JSDOMGlobalObject* globalObject)
     return ${prototypeName(typeName)}::create(vm, globalObject, structure);
 }
 
-extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__create(Zig::GlobalObject* globalObject, void* ptr) {
+extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__create(Bun::GlobalObject* globalObject, void* ptr) {
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->${className(typeName)}Structure();
   ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr);
@@ -1930,7 +1930,7 @@ extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__cr
 
 ${
   obj.valuesArray
-    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithValues(Zig::GlobalObject* globalObject, void* ptr, void* markedArgumentBuffer) {
+    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithValues(Bun::GlobalObject* globalObject, void* ptr, void* markedArgumentBuffer) {
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->${className(typeName)}Structure();
   auto* args = static_cast<JSC::MarkedArgumentBuffer*>(markedArgumentBuffer);
@@ -1953,7 +1953,7 @@ ${
 
 ${
   obj.valuesArray && obj.values && obj.values.length > 0
-    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithInitialValues(Zig::GlobalObject* globalObject, void* ptr${obj.values.map(v => `, JSC::EncodedJSValue ${v}`).join("")}) {
+    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithInitialValues(Bun::GlobalObject* globalObject, void* ptr${obj.values.map(v => `, JSC::EncodedJSValue ${v}`).join("")}) {
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->${className(typeName)}Structure();
   ${className(typeName)}* instance = ${className(typeName)}::create(vm, globalObject, structure, ptr${obj.values.map(v => `, JSC::JSValue::decode(${v})`).join("")});
@@ -1971,7 +1971,7 @@ ${
 
 ${
   obj.valuesArray && obj.values && obj.values.length > 0
-    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithValuesAndInitialValues(Zig::GlobalObject* globalObject, void* ptr, void* markedArgumentBuffer${obj.values.map(v => `, JSC::EncodedJSValue ${v}`).join("")}) {
+    ? `extern JSC_CALLCONV JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES ${typeName}__createWithValuesAndInitialValues(Bun::GlobalObject* globalObject, void* ptr, void* markedArgumentBuffer${obj.values.map(v => `, JSC::EncodedJSValue ${v}`).join("")}) {
   auto &vm = globalObject->vm();
   JSC::Structure* structure = globalObject->${className(typeName)}Structure();
   auto* args = static_cast<JSC::MarkedArgumentBuffer*>(markedArgumentBuffer);
@@ -3209,7 +3209,7 @@ function generateLazyClassStructureImpl(typeName, { klass = {}, proto = {}, noCo
   return `
           m_${className(typeName)}.initLater(
               [](LazyClassStructure::Initializer& init) {
-                 init.setPrototype(WebCore::${className(typeName)}::createPrototype(init.vm, reinterpret_cast<Zig::GlobalObject*>(init.global)));
+                 init.setPrototype(WebCore::${className(typeName)}::createPrototype(init.vm, reinterpret_cast<Bun::GlobalObject*>(init.global)));
                  init.setStructure(WebCore::${className(typeName)}::createStructure(init.vm, init.global, init.prototype));
                  ${
                    noConstructor
@@ -3259,7 +3259,7 @@ const GENERATED_CLASSES_IMPL_HEADER_PRE = `
 #include "headers.h"
 
 #include "BunClientData.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include <JavaScriptCore/JSFunction.h>
 #include <JavaScriptCore/InternalFunction.h>

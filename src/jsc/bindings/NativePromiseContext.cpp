@@ -1,6 +1,6 @@
 #include "NativePromiseContext.h"
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 // Implemented in src/runtime/api/NativePromiseContext.rs. Switches on
 // tag to release the ref on the right native type.
@@ -41,7 +41,7 @@ void NativePromiseContext::destroy(JSC::JSCell* cell)
 
 } // namespace Bun
 
-extern "C" JSC::EncodedJSValue Bun__NativePromiseContext__create(Zig::GlobalObject* globalObject, void* ctx, uint8_t tag)
+extern "C" JSC::EncodedJSValue Bun__NativePromiseContext__create(Bun::GlobalObject* globalObject, void* ctx, uint8_t tag)
 {
     auto& vm = JSC::getVM(globalObject);
     auto* cell = Bun::NativePromiseContext::create(

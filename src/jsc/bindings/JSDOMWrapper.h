@@ -21,7 +21,7 @@
 
 #pragma once
 #include "root.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include "JSDOMGlobalObject.h"
 #include "NodeConstants.h"
@@ -32,7 +32,7 @@ namespace WebCore {
 using namespace Zig;
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT
 #define RENAMED_JSDOM_GLOBAL_OBJECT
-using JSDOMGlobalObject = Zig::GlobalObject;
+using JSDOMGlobalObject = Bun::GlobalObject;
 }
 #endif
 class ScriptExecutionContext;

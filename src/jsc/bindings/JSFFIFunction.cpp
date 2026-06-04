@@ -28,7 +28,7 @@
 
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/VM.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include <JavaScriptCore/CallData.h>
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
@@ -45,13 +45,13 @@ class FFICallbackFunctionWrapper : public ThreadSafeRefCounted<FFICallbackFuncti
 
 public:
     JSC::Strong<JSC::JSFunction> m_function;
-    JSC::Strong<Zig::GlobalObject> globalObject;
+    JSC::Strong<Bun::GlobalObject> globalObject;
     // Cached on the JS thread at construction time so the foreign-thread
     // trampoline never has to dereference a Strong to find the context.
     WebCore::ScriptExecutionContextIdentifier m_contextId;
     ~FFICallbackFunctionWrapper() = default;
 
-    FFICallbackFunctionWrapper(JSC::JSFunction* function, Zig::GlobalObject* globalObject)
+    FFICallbackFunctionWrapper(JSC::JSFunction* function, Bun::GlobalObject* globalObject)
         : m_function(globalObject->vm(), function)
         , globalObject(globalObject->vm(), globalObject)
         , m_contextId(globalObject->scriptExecutionContext()->identifier())
@@ -65,7 +65,7 @@ extern "C" void FFICallbackFunctionWrapper_destroy(FFICallbackFunctionWrapper* w
 }
 
 extern "C" FFICallbackFunctionWrapper* Bun__createFFICallbackFunction(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSC::EncodedJSValue callbackFn)
 {
     auto* vm = &globalObject->vm();
@@ -78,7 +78,7 @@ extern "C" FFICallbackFunctionWrapper* Bun__createFFICallbackFunction(
     return wrapper;
 }
 
-extern "C" Zig::JSFFIFunction* Bun__CreateFFIFunctionWithData(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, void* data)
+extern "C" Zig::JSFFIFunction* Bun__CreateFFIFunctionWithData(Bun::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, void* data)
 {
     auto& vm = JSC::getVM(globalObject);
     Zig::JSFFIFunction* function = Zig::JSFFIFunction::create(vm, globalObject, argCount, symbolName != nullptr ? Zig::toStringCopy(*symbolName) : String(), functionPointer, JSC::NoIntrinsic);
@@ -86,7 +86,7 @@ extern "C" Zig::JSFFIFunction* Bun__CreateFFIFunctionWithData(Zig::GlobalObject*
     return function;
 }
 
-extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionWithDataValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, void* data)
+extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionWithDataValue(Bun::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, void* data)
 {
     return JSC::JSValue::encode(Bun__CreateFFIFunctionWithData(globalObject, symbolName, argCount, functionPointer, data));
 }
@@ -111,7 +111,7 @@ extern "C" void Bun__FFIFunction_setDataPtr(JSC::EncodedJSValue jsValue, void* p
     function->dataPtr = ptr;
 }
 
-extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool addPtrField, void* symbolFromDynamicLibrary)
+extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Bun::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool addPtrField, void* symbolFromDynamicLibrary)
 {
     if (addPtrField) {
         auto* function = Zig::JSFFIFunction::createForFFI(globalObject->vm(), globalObject, argCount, symbolName != nullptr ? Zig::toStringCopy(*symbolName) : String(), reinterpret_cast<Bun::CFFIFunction>(functionPointer));
@@ -156,7 +156,7 @@ void JSFFIFunction::finishCreation(VM& vm, NativeExecutable* executable, unsigne
     ASSERT(inherits(info()));
 }
 
-JSFFIFunction* JSFFIFunction::create(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, FFIFunction FFIFunction, Intrinsic intrinsic, NativeFunction nativeConstructor)
+JSFFIFunction* JSFFIFunction::create(VM& vm, Bun::GlobalObject* globalObject, unsigned length, const String& name, FFIFunction FFIFunction, Intrinsic intrinsic, NativeFunction nativeConstructor)
 {
     NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, intrinsic, FFIFunction, nullptr, name);
     Structure* structure = globalObject->FFIFunctionStructure();
@@ -175,7 +175,7 @@ JSC_DEFINE_HOST_FUNCTION(JSFFIFunction::trampoline, (JSC::JSGlobalObject * globa
 
 #endif
 
-JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, CFFIFunction FFIFunction)
+JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Bun::GlobalObject* globalObject, unsigned length, const String& name, CFFIFunction FFIFunction)
 {
 #if OS(WINDOWS)
     NativeExecutable* executable = vm.getHostFunction(trampoline, ImplementationVisibility::Public, NoIntrinsic, trampoline, nullptr, name);
@@ -219,7 +219,7 @@ FFI_Callback_threadsafe_call(FFICallbackFunctionWrapper& wrapper, size_t argCoun
         argsVec.append(args[i]);
 
     WebCore::ScriptExecutionContext::postTaskTo(wrapper.m_contextId, [argsVec = WTF::move(argsVec), protectedWrapper = Ref { wrapper }](WebCore::ScriptExecutionContext& ctx) mutable {
-        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(ctx.jsGlobalObject());
+        auto* globalObject = uncheckedDowncast<Bun::GlobalObject>(ctx.jsGlobalObject());
         auto& vm = JSC::getVM(globalObject);
         JSC::MarkedArgumentBuffer arguments;
         auto* function = protectedWrapper->m_function.get();

@@ -730,7 +730,7 @@ impl WebWorker {
 
     /// The owning C++ `WebCore::Worker`. Never null; this struct is freed by
     /// `~Worker`, so the pointer cannot dangle. Passed as `worker_ptr` to
-    /// `Zig__GlobalObject__create` so the ZigGlobalObject is born with its
+    /// `Bun__GlobalObject__create` so the BunGlobalObject is born with its
     /// WorkerGlobalScope wired.
     #[inline]
     pub fn cpp_worker(&self) -> *mut c_void {

@@ -1,6 +1,6 @@
 
 #include "root.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "BunGlobalScope.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/VMTraps.h"

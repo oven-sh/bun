@@ -14,7 +14,7 @@ inline void generateNativeModule_AbortControllerModule(
     JSC::MarkedArgumentBuffer& exportValues)
 {
 
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Bun::GlobalObject* globalObject = static_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
 
     auto* abortController = WebCore::JSAbortController::getConstructor(vm, globalObject).getObject();

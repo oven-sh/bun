@@ -4690,7 +4690,7 @@ unsafe fn resolve_embedded_node_file_hook(
 // + `_resolve`.
 //
 // This is the resolution path behind `Bun__resolveSync`,
-// `Zig__GlobalObject__resolve`, `import.meta.resolve`, and
+// `Bun__GlobalObject__resolve`, `import.meta.resolve`, and
 // `Module._findPath`. The body drives `transpiler.resolver` (a
 // `bun_resolver::Resolver` value field of `VirtualMachine`) and reaches into
 // `ServerEntryPoint` / `ObjectURLRegistry` — all forward-deps on `bun_jsc`,

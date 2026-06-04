@@ -1,7 +1,7 @@
 
 #include "root.h"
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "ZigGeneratedClasses.h"
 
 #include "JavaScriptCore/JSType.h"

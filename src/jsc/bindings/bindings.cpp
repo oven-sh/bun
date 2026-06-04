@@ -77,7 +77,7 @@
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
 #include "JavaScriptCore/Watchdog.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 
@@ -584,7 +584,7 @@ template<typename PromiseType, bool isInternal>
 static void handlePromise(PromiseType* promise, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue ctx, Zig::FFIFunction resolverFunction, Zig::FFIFunction rejecterFunction)
 {
 
-    auto globalThis = static_cast<Zig::GlobalObject*>(globalObject);
+    auto globalThis = static_cast<Bun::GlobalObject*>(globalObject);
 
     if constexpr (!isInternal) {
         JSFunction* performPromiseThenFunction = globalObject->performPromiseThenFunction();
@@ -1550,7 +1550,7 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
         break;
     }
     // globalThis is only equal to globalThis
-    // NOTE: globalThis from JS is a JSGlobalProxy (GlobalProxyType) wrapping Zig::GlobalObject (GlobalObjectType)
+    // NOTE: globalThis from JS is a JSGlobalProxy (GlobalProxyType) wrapping Bun::GlobalObject (GlobalObjectType)
     case GlobalObjectType: {
         if (c1Type != c2Type) return false;
         auto* g1 = dynamicDowncast<JSC::JSGlobalObject>(c1);
@@ -1826,7 +1826,7 @@ WebCore::FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC::JSGlobalObject* 
 
 JSC::EncodedJSValue WebCore__FetchHeaders__toJS(WebCore::FetchHeaders* headers, JSC::JSGlobalObject* lexicalGlobalObject)
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    Bun::GlobalObject* globalObject = static_cast<Bun::GlobalObject*>(lexicalGlobalObject);
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
 
     bool needsMemoryCost = headers->hasOneRef();
@@ -1844,7 +1844,7 @@ JSC::EncodedJSValue WebCore__FetchHeaders__toJS(WebCore::FetchHeaders* headers, 
 JSC::EncodedJSValue WebCore__FetchHeaders__clone(WebCore::FetchHeaders* headers, JSC::JSGlobalObject* arg1)
 {
     auto throwScope = DECLARE_THROW_SCOPE(arg1->vm());
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg1);
+    Bun::GlobalObject* globalObject = static_cast<Bun::GlobalObject*>(arg1);
     auto* clone = new WebCore::FetchHeaders({ WebCore::FetchHeaders::Guard::None, {} });
     WebCore::propagateException(*arg1, throwScope, clone->fill(*headers));
     return JSC::JSValue::encode(WebCore::toJSNewlyCreated(arg1, globalObject, WTF::move(clone)));
@@ -2076,7 +2076,7 @@ JSC::EncodedJSValue WebCore__FetchHeaders__createValue(JSC::JSGlobalObject* arg0
     Ref<WebCore::FetchHeaders> headers = WebCore::FetchHeaders::create();
     WebCore::propagateException(*arg0, throwScope, headers->fill(WebCore::FetchHeaders::Init(WTF::move(pairs))));
 
-    JSValue value = WebCore::toJSNewlyCreated(arg0, static_cast<Zig::GlobalObject*>(arg0), WTF::move(headers));
+    JSValue value = WebCore::toJSNewlyCreated(arg0, static_cast<Bun::GlobalObject*>(arg0), WTF::move(headers));
 
     JSFetchHeaders* fetchHeaders = uncheckedDowncast<JSFetchHeaders>(value);
     fetchHeaders->computeMemoryCost();
@@ -3163,7 +3163,7 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     }
 }
 
-[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__empty(Zig::GlobalObject* globalObject)
+[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__empty(Bun::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3174,7 +3174,7 @@ JSC::EncodedJSValue JSC__JSModuleLoader__evaluate(JSC::JSGlobalObject* globalObj
     return JSValue::encode(emptyStream);
 }
 
-[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__used(Zig::GlobalObject* globalObject)
+[[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue ReadableStream__used(Bun::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
@@ -3801,7 +3801,7 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC::JSPromise* promise, JSC::J
         }
 
         promise->setFlags(static_cast<uint16_t>(flags | JSC::JSPromise::isFirstResolvingFunctionCalledFlag));
-        auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(promise->globalObject());
+        auto* globalObject = uncheckedDowncast<Bun::GlobalObject>(promise->globalObject());
         auto rejectPromiseFunction = globalObject->rejectPromiseFunction();
 
         auto asyncContext = globalObject->m_asyncContextData.get()->getInternalField(0);
@@ -3986,7 +3986,7 @@ __attribute__((__always_inline__)) JSC::VM* JSC__JSGlobalObject__vm(JSC::JSGloba
 
 void JSC__JSGlobalObject__handleRejectedPromises(JSC::JSGlobalObject* arg0)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(arg0)->handleRejectedPromises();
+    return uncheckedDowncast<Bun::GlobalObject>(arg0)->handleRejectedPromises();
 }
 
 #pragma mark - JSC::JSValue
@@ -5681,7 +5681,7 @@ extern "C" size_t JSC__VM__externalMemorySize(JSC::VM* vm)
 
 extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue JSValue1, JSC::EncodedJSValue JSValue3, JSC::EncodedJSValue JSValue4)
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
+    Bun::GlobalObject* globalObject = static_cast<Bun::GlobalObject*>(arg0);
     JSValue microtaskArgs[] = {
         JSValue::decode(JSValue1),
         globalObject->m_asyncContextData.get()->getInternalField(0),
@@ -5727,7 +5727,7 @@ extern "C" void JSC__JSGlobalObject__queueMicrotaskJob(JSC::JSGlobalObject* arg0
 
 extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* globalObject)
 {
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    Bun::GlobalObject* thisObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
     auto* context = thisObject->scriptExecutionContext();
     RefPtr<WebCore::AbortSignal> abortSignal = WebCore::AbortSignal::create(context);
     return abortSignal.leakRef();
@@ -5735,7 +5735,7 @@ extern "C" WebCore::AbortSignal* WebCore__AbortSignal__new(JSC::JSGlobalObject* 
 
 extern "C" JSC::EncodedJSValue WebCore__AbortSignal__create(JSC::JSGlobalObject* globalObject)
 {
-    Zig::GlobalObject* thisObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    Bun::GlobalObject* thisObject = uncheckedDowncast<Bun::GlobalObject>(globalObject);
     auto* context = thisObject->scriptExecutionContext();
     auto abortSignal = WebCore::AbortSignal::create(context);
 
@@ -6011,7 +6011,7 @@ extern "C" void DOMFormData__toQueryString(
 
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlobalObject* arg0, ZigString* arg1)
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
+    Bun::GlobalObject* globalObject = static_cast<Bun::GlobalObject*>(arg0);
     // don't need to copy the string because it internally does.
     auto str = toString(*arg1);
     // toString() in helpers.h returns an empty string when the input exceeds
@@ -6027,7 +6027,7 @@ CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__createFromURLQuery(JSC::JSGlo
 
 CPP_DECL JSC::EncodedJSValue WebCore__DOMFormData__create(JSC::JSGlobalObject* arg0)
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(arg0);
+    Bun::GlobalObject* globalObject = static_cast<Bun::GlobalObject*>(arg0);
     auto formData = DOMFormData::create(globalObject->scriptExecutionContext());
     return JSValue::encode(toJSNewlyCreated(arg0, globalObject, WTF::move(formData)));
 }
@@ -6118,18 +6118,18 @@ extern "C" EncodedJSValue JSC__createRangeError(JSC::JSGlobalObject* globalObjec
 
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)
 {
-    Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(globalObject_);
+    Bun::GlobalObject* globalObject = static_cast<Bun::GlobalObject*>(globalObject_);
     return JSValue::encode(globalObject->m_testMatcherUtilsObject.getInitializedOnMainThread(globalObject));
 }
 
 extern "C" EncodedJSValue Expect__getPrototype(JSC::JSGlobalObject* globalObject)
 {
-    return JSValue::encode(static_cast<Zig::GlobalObject*>(globalObject)->JSExpectPrototype());
+    return JSValue::encode(static_cast<Bun::GlobalObject*>(globalObject)->JSExpectPrototype());
 }
 
 extern "C" EncodedJSValue ExpectStatic__getPrototype(JSC::JSGlobalObject* globalObject)
 {
-    return JSValue::encode(static_cast<Zig::GlobalObject*>(globalObject)->JSExpectStaticPrototype());
+    return JSValue::encode(static_cast<Bun::GlobalObject*>(globalObject)->JSExpectStaticPrototype());
 }
 
 extern "C" EncodedJSValue JSFunction__createFromZig(
@@ -6548,7 +6548,7 @@ extern "C" JSC::EncodedJSValue Bun__REPL__formatValue(
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // Get the util.inspect function from the global object
-    auto* bunGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    auto* bunGlobal = uncheckedDowncast<Bun::GlobalObject>(globalObject);
     JSC::JSValue inspectFn = bunGlobal->utilInspectFunction();
 
     if (!inspectFn || !inspectFn.isCallable()) {

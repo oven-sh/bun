@@ -3,7 +3,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/JSType.h"
 #include "SubtleCrypto.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "ErrorCode.h"
 #include "JSDOMExceptionHandling.h"
 #include <JavaScriptCore/FunctionPrototype.h>

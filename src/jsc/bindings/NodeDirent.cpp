@@ -19,7 +19,7 @@
 #include <JavaScriptCore/JSObject.h>
 #include <JavaScriptCore/Structure.h>
 #include <JavaScriptCore/PropertyNameArray.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace Bun {
 
@@ -47,7 +47,7 @@ static const HashTableValue JSDirentPrototypeTableValues[] = {
     { "isSymbolicLink"_s, static_cast<unsigned>(PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsDirentProtoFuncIsSymbolicLink, 0 } },
 };
 
-static Structure* getStructure(Zig::GlobalObject* globalObject)
+static Structure* getStructure(Bun::GlobalObject* globalObject)
 {
     return globalObject->m_JSDirentClassStructure.get(globalObject);
 }
@@ -197,7 +197,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDirent, (JSC::JSGlobalObject * globalObject, J
     return JSValue::encode(object);
 }
 
-static inline int32_t getType(JSC::VM& vm, JSValue value, Zig::GlobalObject* globalObject)
+static inline int32_t getType(JSC::VM& vm, JSValue value, Bun::GlobalObject* globalObject)
 {
     JSObject* object = value.getObject();
     if (!object) [[unlikely]] {
@@ -323,12 +323,12 @@ void initJSDirentClassStructure(JSC::LazyClassStructure::Initializer& init)
     init.setConstructor(constructor);
 }
 
-extern "C" JSC::EncodedJSValue Bun__JSDirentObjectConstructor(Zig::GlobalObject* globalobject)
+extern "C" JSC::EncodedJSValue Bun__JSDirentObjectConstructor(Bun::GlobalObject* globalobject)
 {
     return JSValue::encode(globalobject->m_JSDirentClassStructure.constructor(globalobject));
 }
 
-extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Zig::GlobalObject* globalObject, int type, BunString* name, BunString* path, JSString** previousPath)
+extern "C" JSC::EncodedJSValue Bun__Dirent__toJS(Bun::GlobalObject* globalObject, int type, BunString* name, BunString* path, JSString** previousPath)
 {
     auto& vm = globalObject->vm();
 

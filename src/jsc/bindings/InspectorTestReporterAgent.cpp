@@ -8,7 +8,7 @@
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
 #include <JavaScriptCore/JSGlobalObjectInspectorController.h>
 #include "ErrorStackTrace.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include "ModuleLoader.h"
 #include <wtf/TZoneMallocInlines.h>

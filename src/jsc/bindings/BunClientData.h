@@ -26,8 +26,11 @@ class DOMWrapperWorld;
 #include <wtf/StdLibExtras.h>
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
-namespace Zig {
+namespace Bun {
 class GlobalObject;
+}
+
+namespace Zig {
 }
 
 namespace WebCore {

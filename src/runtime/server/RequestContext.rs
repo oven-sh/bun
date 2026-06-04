@@ -543,7 +543,7 @@ where
     // These consts must resolve to the *exported* `#[no_mangle]` symbols
     // (`Bun__HTTPRequestContext*__on*`), not the inner generic
     // `host_on_*::<..>` shims: the function-pointer value is what C++'s
-    // `GlobalObject::promiseHandlerID` compares against (ZigGlobalObject.cpp),
+    // `GlobalObject::promiseHandlerID` compares against (BunGlobalObject.cpp),
     // and the exported wrapper has a different address from the generic it
     // forwards to. We route through a const-fn lookup keyed on the
     // (SSL, DEBUG, H3) tuple so the blanket impl can name concrete exports.

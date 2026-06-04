@@ -1,5 +1,5 @@
 #include "root.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include "helpers.h"
 
@@ -344,7 +344,7 @@ JSC_DEFINE_HOST_FUNCTION(jsEditWindowsEnvVar, (JSGlobalObject * global, JSC::Cal
 }
 #endif
 
-JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
+JSValue createEnvironmentVariablesMap(Bun::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);

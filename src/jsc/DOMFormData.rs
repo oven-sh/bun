@@ -32,7 +32,7 @@ unsafe extern "C" {
     // handles; `&ZigString` is ABI-identical to non-null `*const ZigString` and
     // C++ only reads the named struct via `toStringCopy`. `arg3` is an opaque
     // `*Blob` C++ owns (never dereferenced as Rust data) — same round-trip
-    // contract as `Zig__GlobalObject__resetModuleRegistryMap`'s `map` param.
+    // contract as `Bun__GlobalObject__resetModuleRegistryMap`'s `map` param.
     safe fn WebCore__DOMFormData__appendBlob(
         arg0: &mut DOMFormData,
         arg1: &JSGlobalObject,

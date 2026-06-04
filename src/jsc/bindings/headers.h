@@ -430,19 +430,19 @@ extern "C" JSC::EncodedJSValue SYSV_ABI Reader__intptr__slowpath(JSC::JSGlobalOb
 
 #endif
 
-#pragma mark - Zig::GlobalObject
+#pragma mark - Bun::GlobalObject
 
-CPP_DECL JSC::JSGlobalObject* Zig__GlobalObject__create(void* arg0, int32_t arg1, bool arg2, bool arg3, void* arg4);
-CPP_DECL void* Zig__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject* arg0);
-CPP_DECL bool Zig__GlobalObject__resetModuleRegistryMap(JSC::JSGlobalObject* arg0, void* arg1);
+CPP_DECL JSC::JSGlobalObject* Bun__GlobalObject__create(void* arg0, int32_t arg1, bool arg2, bool arg3, void* arg4);
+CPP_DECL void* Bun__GlobalObject__getModuleRegistryMap(JSC::JSGlobalObject* arg0);
+CPP_DECL bool Bun__GlobalObject__resetModuleRegistryMap(JSC::JSGlobalObject* arg0, void* arg1);
 
 #ifdef __cplusplus
 
-ZIG_DECL void Zig__GlobalObject__fetch(ErrorableResolvedSource* arg0, JSC::JSGlobalObject* arg1, BunString* arg2, BunString* arg3);
-ZIG_DECL void Zig__GlobalObject__onCrash();
-ZIG_DECL JSC::EncodedJSValue Zig__GlobalObject__promiseRejectionTracker(JSC::JSGlobalObject* arg0, JSC::JSPromise* arg1, uint32_t JSPromiseRejectionOperation2);
-ZIG_DECL JSC::EncodedJSValue Zig__GlobalObject__reportUncaughtException(JSC::JSGlobalObject* arg0, JSC::Exception* arg1);
-ZIG_DECL void Zig__GlobalObject__resolve(ErrorableString* arg0, JSC::JSGlobalObject* arg1, BunString* arg2, BunString* arg3, BunString* arg4);
+ZIG_DECL void Bun__GlobalObject__fetch(ErrorableResolvedSource* arg0, JSC::JSGlobalObject* arg1, BunString* arg2, BunString* arg3);
+ZIG_DECL void Bun__GlobalObject__onCrash();
+ZIG_DECL JSC::EncodedJSValue Bun__GlobalObject__promiseRejectionTracker(JSC::JSGlobalObject* arg0, JSC::JSPromise* arg1, uint32_t JSPromiseRejectionOperation2);
+ZIG_DECL JSC::EncodedJSValue Bun__GlobalObject__reportUncaughtException(JSC::JSGlobalObject* arg0, JSC::Exception* arg1);
+ZIG_DECL void Bun__GlobalObject__resolve(ErrorableString* arg0, JSC::JSGlobalObject* arg1, BunString* arg2, BunString* arg3, BunString* arg4);
 
 #endif
 

@@ -266,7 +266,7 @@ for (const { dir, crate } of scanRoots) {
         abi ??= "jsc";
       } else if (params.length === 1 && /JSGlobalObject$/.test(params[0].ty) && isJsRet) {
         shape = "lazy";
-        // Lazy property creators are direct C++ calls (e.g. ZigGlobalObject.cpp
+        // Lazy property creators are direct C++ calls (e.g. BunGlobalObject.cpp
         // declares `extern "C" JSC::EncodedJSValue BunObject__createBunStd*`),
         // NOT JSC trampoline dispatch — default to `c`. A SYSV_ABI lazy getter
         // (e.g. `BunObject_lazyPropCb_*`) must opt in with `, jsc` explicitly.

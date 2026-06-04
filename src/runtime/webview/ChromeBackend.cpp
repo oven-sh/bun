@@ -3,7 +3,7 @@
 #include "bun-uws/src/SocketKinds.h"
 #include "JSWebView.h"
 #include "ipc_protocol.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "BunClientData.h"
 #include "ScriptExecutionContext.h"
 #include "BunString.h"
@@ -94,14 +94,14 @@ using namespace JSC;
 // Implemented in ChromeProcess.rs. Returns the parent's socketpair fd (bidirectional).
 // path overrides auto-detection; extraArgv (count entries, each NUL-
 // terminated) appends after core flags. All pointers nullable.
-extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
+extern "C" int32_t Bun__Chrome__ensure(Bun::GlobalObject*, const char* userDataDir,
     const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
     bool stdoutInherit, bool stderrInherit);
 extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
-extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
+extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Bun::GlobalObject*, void* impl);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
-extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
-extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
+extern "C" void Bun__EventLoop__enter(Bun::GlobalObject*);
+extern "C" void Bun__EventLoop__exit(Bun::GlobalObject*);
 extern "C" void Bun__EventLoop__runCallback2(JSGlobalObject*, EncodedJSValue cb,
     EncodedJSValue thisVal, EncodedJSValue arg0, EncodedJSValue arg1);
 
@@ -279,7 +279,7 @@ static constexpr us_socket_vtable_t s_cdpVTable = {
     .on_handshake = nullptr,
 };
 
-bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDataDir,
+bool Transport::ensureSpawned(Bun::GlobalObject* zig, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
     bool stdoutInherit, bool stderrInherit)
 {
@@ -450,7 +450,7 @@ static void wsOnClose(void* ctx, unsigned short code)
     t.rejectAllAndMarkDead(makeString("Chrome WebSocket closed (code "_s, code, ')'));
 }
 
-bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl, bool autoDetected,
+bool Transport::ensureConnected(Bun::GlobalObject* zig, const WTF::String& wsUrl, bool autoDetected,
     const WTF::String& userDataDir, bool stdoutInherit, bool stderrInherit)
 {
     // Already connected — singleton semantics, first call wins.

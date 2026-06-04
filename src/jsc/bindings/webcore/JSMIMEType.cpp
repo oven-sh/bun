@@ -15,7 +15,7 @@
 #include "wtf/text/StringBuilder.h"
 #include "wtf/text/WTFString.h"
 #include "wtf/ASCIICType.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "NodeValidator.h" // For Bun::V::
 #include "ErrorCode.h" // For Bun::ERR::
 #include "JavaScriptCore/JSMapInlines.h"

@@ -148,13 +148,13 @@ private:
 
 ## Structure Caching
 
-Add to `ZigGlobalObject.h`:
+Add to `BunGlobalObject.h`:
 
 ```cpp
 JSC::LazyClassStructure m_JSFooClassStructure;
 ```
 
-Initialize in `ZigGlobalObject.cpp`:
+Initialize in `BunGlobalObject.cpp`:
 
 ```cpp
 m_JSFooClassStructure.initLater([](LazyClassStructure::Initializer& init) {
@@ -171,11 +171,11 @@ m_JSFooClassStructure.visit(visitor);
 ## Expose to Zig
 
 ```cpp
-extern "C" JSC::EncodedJSValue Bun__JSFooConstructor(Zig::GlobalObject* globalObject) {
+extern "C" JSC::EncodedJSValue Bun__JSFooConstructor(Bun::GlobalObject* globalObject) {
     return JSValue::encode(globalObject->m_JSFooClassStructure.constructor(globalObject));
 }
 
-extern "C" EncodedJSValue Bun__Foo__toJS(Zig::GlobalObject* globalObject, Foo* foo) {
+extern "C" EncodedJSValue Bun__Foo__toJS(Bun::GlobalObject* globalObject, Foo* foo) {
     auto* structure = globalObject->m_JSFooClassStructure.get(globalObject);
     return JSValue::encode(JSFoo::create(globalObject->vm(), structure, globalObject, WTFMove(foo)));
 }

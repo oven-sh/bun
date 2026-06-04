@@ -13,7 +13,7 @@
 #include <JavaScriptCore/VM.h>
 #include <limits>
 
-namespace Zig {
+namespace Bun {
 class GlobalObject;
 }
 

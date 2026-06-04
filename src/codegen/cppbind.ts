@@ -454,7 +454,7 @@ const rustSharedTypes: Record<string, string> = {
   "JSC::EncodedJSValue": "crate::JSValue",
   "EncodedJSValue": "crate::JSValue",
   "JSC::JSGlobalObject": "crate::JSGlobalObject",
-  "Zig::GlobalObject": "crate::JSGlobalObject",
+  "Bun::GlobalObject": "crate::JSGlobalObject",
   "ZigException": "crate::zig_exception::ZigException",
   "ZigString": "bun_core::ZigString",
   "JSC::VM": "crate::VM",
@@ -574,7 +574,7 @@ function isGlobalObjectPtr(t: CppType): boolean {
   return (
     t.type === "pointer" &&
     t.child.type === "named" &&
-    (t.child.name === "JSC::JSGlobalObject" || t.child.name === "Zig::GlobalObject")
+    (t.child.name === "JSC::JSGlobalObject" || t.child.name === "Bun::GlobalObject")
   );
 }
 
@@ -586,7 +586,7 @@ function isGlobalObjectPtr(t: CppType): boolean {
 // `JSGlobalObject*` → `&JSGlobalObject` rule.
 const rustOpaqueHandles = new Set([
   "JSC::JSGlobalObject",
-  "Zig::GlobalObject",
+  "Bun::GlobalObject",
   "JSC::VM",
   "JSC::JSPromise",
   "JSC::JSInternalPromise",

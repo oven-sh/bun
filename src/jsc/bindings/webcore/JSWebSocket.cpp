@@ -204,7 +204,7 @@ static inline JSC::EncodedJSValue constructJSWebSocket3(JSGlobalObject* lexicalG
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto* globalObject = uncheckedDowncast<Bun::GlobalObject>(lexicalGlobalObject);
     auto* context = globalObject->scriptExecutionContext();
     if (!context) [[unlikely]]
         return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "WebSocket"_s);
@@ -1038,7 +1038,7 @@ WebSocket* JSWebSocket::toWrapped(JSC::VM&, JSC::JSValue value)
 }
 
 // https://github.com/oven-sh/bun/issues/11866
-JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject)
+JSC::JSValue getWebSocketConstructor(Bun::GlobalObject* globalObject)
 {
     return WebCore::JSWebSocket::getConstructor(globalObject->vm(), globalObject);
 }

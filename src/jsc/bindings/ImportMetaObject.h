@@ -4,7 +4,7 @@
 
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include "JSDOMWrapperCache.h"
 

@@ -5,7 +5,7 @@
 #include "ErrorCode.h"
 #include "NodeValidator.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 namespace Bun {
 
@@ -44,7 +44,7 @@ JSC_DEFINE_HOST_FUNCTION(constructDiffieHellmanGroup, (JSC::JSGlobalObject * glo
     }
 
     // Get the appropriate structure and create the DiffieHellmanGroup object
-    auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject);
+    auto* zigGlobalObject = dynamicDowncast<Bun::GlobalObject>(globalObject);
     JSC::Structure* structure = zigGlobalObject->m_JSDiffieHellmanGroupClassStructure.get(zigGlobalObject);
     JSC::JSValue newTarget = callFrame->newTarget();
 

@@ -9,7 +9,7 @@
 #include <JavaScriptCore/CodeBlock.h>
 #include <JavaScriptCore/WasmIndexOrName.h>
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 using namespace JSC;
 using namespace WebCore;

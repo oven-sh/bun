@@ -7,6 +7,6 @@ JSC_DECLARE_HOST_FUNCTION(jsHTTPGetHeader);
 JSC_DECLARE_HOST_FUNCTION(jsHTTPSetHeader);
 
 JSC::Structure* createNodeHTTPServerSocketStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
-JSC::JSValue createNodeHTTPInternalBinding(Zig::GlobalObject*);
+JSC::JSValue createNodeHTTPInternalBinding(Bun::GlobalObject*);
 
 }

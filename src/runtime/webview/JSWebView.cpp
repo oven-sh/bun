@@ -8,7 +8,7 @@
 #include "ChromeBackend.h"
 #include "WebKitBackend.h"
 #include "ipc_protocol.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "BunClientData.h"
 #include "ScriptExecutionContext.h"
 #include "ScriptWrappableInlines.h"

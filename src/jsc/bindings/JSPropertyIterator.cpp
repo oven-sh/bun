@@ -1,7 +1,7 @@
 #include "root.h"
 
 #include "BunClientData.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/EnumerationMode.h"
 #include "JavaScriptCore/ExceptionScope.h"

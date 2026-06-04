@@ -10,7 +10,7 @@
 
 #include "bun-uws/src/SocketKinds.h"
 #include "ipc_protocol.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "BunClientData.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -40,15 +40,15 @@ using namespace JSC;
 using namespace WebViewProto;
 
 // Spawn + process-exit watch implemented in HostProcess.rs (EVFILT_PROC).
-extern "C" int32_t Bun__WebViewHost__ensure(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit);
+extern "C" int32_t Bun__WebViewHost__ensure(Bun::GlobalObject*, bool stdoutInherit, bool stderrInherit);
 extern "C" void* Blob__fromMmapWithType(JSC::JSGlobalObject*, uint8_t* ptr, size_t len, const char* mime);
-extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
-extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject*, void* ptr, size_t length);
+extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Bun::GlobalObject*, void* impl);
+extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Bun::GlobalObject*, void* ptr, size_t length);
 extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta);
 // Bracket the whole onData batch. exit() drains microtasks when outermost,
 // so all the promise reactions from this batch run before we return to usockets.
-extern "C" void Bun__EventLoop__enter(Zig::GlobalObject*);
-extern "C" void Bun__EventLoop__exit(Zig::GlobalObject*);
+extern "C" void Bun__EventLoop__enter(Bun::GlobalObject*);
+extern "C" void Bun__EventLoop__exit(Bun::GlobalObject*);
 // runCallback does its own nested enter/exit + reportActiveExceptionAsUnhandled
 // on throw — one bad onNavigated callback won't poison the rest of the batch.
 extern "C" void Bun__EventLoop__runCallback2(JSC::JSGlobalObject*, JSC::EncodedJSValue cb,
@@ -127,7 +127,7 @@ void HostClient::updateKeepAlive()
         WebCore::clientData(global->vm())->bunVM, want ? 1 : -1);
 }
 
-bool HostClient::ensureSpawned(Zig::GlobalObject* zig, bool stdoutInherit, bool stderrInherit)
+bool HostClient::ensureSpawned(Bun::GlobalObject* zig, bool stdoutInherit, bool stderrInherit)
 {
     if (sock && !dead) return true;
 

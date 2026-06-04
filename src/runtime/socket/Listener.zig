@@ -208,7 +208,7 @@ pub fn listen(globalObject: *jsc.JSGlobalObject, opts: JSValue) bun.JSError!JSVa
     // `Listener` is mimalloc-allocated, so LSAN can't trace `loop->data.head →
     // this.group → head_sockets → us_socket_t` once the only pointer into the
     // group lives inside a mimalloc page. `process.exit()` from JS makes
-    // `Zig__GlobalObject__destructOnExit` early-return (vm.entryScope set), so
+    // `Bun__GlobalObject__destructOnExit` early-return (vm.entryScope set), so
     // `finalize()`/`deinit()` never run and the accepted sockets' 88-byte
     // `us_create_poll` allocations are reported as leaked. Registering the
     // embedded group as a root region restores the same reachability the old

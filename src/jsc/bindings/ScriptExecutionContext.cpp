@@ -250,18 +250,18 @@ ScriptExecutionContext* executionContext(JSC::JSGlobalObject* globalObject)
 void ScriptExecutionContext::postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
 {
     auto* task = new EventLoopTask(WTF::move(lambda));
-    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
+    static_cast<Bun::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
 }
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTask(Function<void(ScriptExecutionContext&)>&& lambda)
 {
     auto* task = new EventLoopTask(WTF::move(lambda));
-    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
+    static_cast<Bun::GlobalObject*>(m_globalObject)->queueTask(task);
 }
 // Executes the task on context's thread asynchronously.
 void ScriptExecutionContext::postTask(EventLoopTask* task)
 {
-    static_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
+    static_cast<Bun::GlobalObject*>(m_globalObject)->queueTask(task);
 }
 
 // Native bindings

@@ -1668,7 +1668,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     int64_t memoryChange = sqlite_malloc_amount - currentMemoryUsage;
 
     JSSQLStatement* sqlStatement = JSSQLStatement::create(
-        static_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, versionDB, memoryChange);
+        static_cast<Bun::GlobalObject*>(lexicalGlobalObject), statement, versionDB, memoryChange);
 
     if (internalFlagsValue.isInt32()) {
         const int32_t internalFlags = internalFlagsValue.asInt32();
@@ -1935,7 +1935,7 @@ void JSSQLStatementConstructor::finishCreation(VM& vm)
     Base::finishCreation(vm);
 
     // TODO: use LazyClassStructure?
-    auto* instanceObject = JSSQLStatement::create(static_cast<Zig::GlobalObject*>(globalObject()), nullptr, nullptr);
+    auto* instanceObject = JSSQLStatement::create(static_cast<Bun::GlobalObject*>(globalObject()), nullptr, nullptr);
     JSValue proto = instanceObject->getPrototype(globalObject());
 
     this->putDirect(vm, vm.propertyNames->prototype, proto, PropertyAttribute::DontEnum | PropertyAttribute::DontDelete | PropertyAttribute::ReadOnly);
@@ -2914,7 +2914,7 @@ void JSSQLStatement::visitOutputConstraints(JSCell* cell, Visitor& visitor)
 template void JSSQLStatement::visitOutputConstraints(JSCell*, AbstractSlotVisitor&);
 template void JSSQLStatement::visitOutputConstraints(JSCell*, SlotVisitor&);
 
-JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject)
+JSValue createJSSQLStatementConstructor(Bun::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     JSObject* object = JSC::constructEmptyObject(globalObject);

@@ -4,7 +4,7 @@
 
 #include "root.h"
 #include "JSWebView.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>

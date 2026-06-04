@@ -615,7 +615,7 @@ HWY_AFTER_NAMESPACE();
 // Dispatch table + C entry point (compiled once).
 //
 // This TU intentionally includes no JSC/WebKit headers of its own — in
-// particular not ZigGlobalObject.h, which would drag the whole JSC type
+// particular not BunGlobalObject.h, which would drag the whole JSC type
 // universe in and balloon the object's debug info. The
 // `bun:internal-for-testing` host wrapper that needs JSC types lives in
 // xxhash3_testing.cpp and calls the C symbol below.

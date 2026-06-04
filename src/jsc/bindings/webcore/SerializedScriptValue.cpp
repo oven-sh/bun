@@ -106,7 +106,7 @@
 #include <wtf/Vector.h>
 #include <wtf/threads/BinarySemaphore.h>
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "blob.h"
 #include "ZigGeneratedClasses.h"
 #include "JSX509Certificate.h"

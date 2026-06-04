@@ -17,7 +17,7 @@
 #include "JSCommonJSExtensions.h"
 
 #include "PathInlines.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "headers.h"
 #include "ErrorCode.h"
 
@@ -160,8 +160,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor,
 
     JSString* dirname = jsEmptyString(vm);
 
-    // TODO: handle when JSGlobalObject !== Zig::GlobalObject, such as in node:vm
-    Structure* structure = static_cast<Zig::GlobalObject*>(globalObject)
+    // TODO: handle when JSGlobalObject !== Bun::GlobalObject, such as in node:vm
+    Structure* structure = static_cast<Bun::GlobalObject*>(globalObject)
                                ->CommonJSModuleObjectStructure();
 
     // TODO: handle ShadowRealm, node:vm, new.target, subclasses
@@ -622,13 +622,13 @@ JSC_DEFINE_CUSTOM_SETTER(setterRequireFunction,
 
 static JSValue getModuleCacheObject(VM& vm, JSObject* moduleObject)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())
+    return uncheckedDowncast<Bun::GlobalObject>(moduleObject->globalObject())
         ->lazyRequireCacheObject();
 }
 
 static JSValue getModuleExtensionsObject(VM& vm, JSObject* moduleObject)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(moduleObject->globalObject())
+    return uncheckedDowncast<Bun::GlobalObject>(moduleObject->globalObject())
         ->lazyRequireExtensionsObject();
 }
 
@@ -701,7 +701,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalOb
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSValue a = callFrame->argument(0);
     JSValue b = callFrame->argument(1);
-    Zig::GlobalObject* global = defaultGlobalObject(globalObject);
+    Bun::GlobalObject* global = defaultGlobalObject(globalObject);
     String aString = a.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     String bString = b.toWTFString(globalObject);
@@ -813,7 +813,7 @@ JSC_DEFINE_CUSTOM_GETTER(moduleRunMain,
 }
 
 extern "C" void Bun__VirtualMachine__setOverrideModuleRunMain(void* bunVM, bool isOriginal);
-extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Zig::GlobalObject* global, JSValue argv1)
+extern "C" JSC::EncodedJSValue NodeModuleModule__callOverriddenRunMain(Bun::GlobalObject* global, JSValue argv1)
 {
     auto overrideHandler = uncheckedDowncast<JSObject>(global->m_moduleRunMainFunction.get(global));
     MarkedArgumentBuffer args;
@@ -944,7 +944,7 @@ public:
     }
 
     static JSModuleConstructor* create(JSC::VM& vm,
-        Zig::GlobalObject* globalObject)
+        Bun::GlobalObject* globalObject)
     {
         auto* structure = createStructure(vm, globalObject, globalObject->functionPrototype());
 
@@ -1050,26 +1050,26 @@ extern "C" JSC::EncodedJSValue Bun__createNodeModuleSourceMapOriginObject(
 }
 
 void addNodeModuleConstructorProperties(JSC::VM& vm,
-    Zig::GlobalObject* globalObject)
+    Bun::GlobalObject* globalObject)
 {
     globalObject->m_nodeModuleConstructor.initLater(
-        [](const Zig::GlobalObject::Initializer<JSObject>& init) {
+        [](const Bun::GlobalObject::Initializer<JSObject>& init) {
             JSObject* moduleConstructor = JSModuleConstructor::create(
-                init.vm, static_cast<Zig::GlobalObject*>(init.owner));
+                init.vm, static_cast<Bun::GlobalObject*>(init.owner));
             init.set(moduleConstructor);
         });
 
     globalObject->m_nodeModuleSourceMapEntryStructure.initLater(
-        [](const Zig::GlobalObject::Initializer<Structure>& init) {
+        [](const Bun::GlobalObject::Initializer<Structure>& init) {
             init.set(createNodeModuleSourceMapEntryStructure(init.vm, init.owner));
         });
     globalObject->m_nodeModuleSourceMapOriginStructure.initLater(
-        [](const Zig::GlobalObject::Initializer<Structure>& init) {
+        [](const Bun::GlobalObject::Initializer<Structure>& init) {
             init.set(createNodeModuleSourceMapOriginStructure(init.vm, init.owner));
         });
 
     globalObject->m_moduleRunMainFunction.initLater(
-        [](const Zig::GlobalObject::Initializer<JSCell>& init) {
+        [](const Bun::GlobalObject::Initializer<JSCell>& init) {
             JSFunction* runMainFunction = JSFunction::create(
                 init.vm, init.owner, 2, "runMain"_s,
                 jsFunctionRunMain, JSC::ImplementationVisibility::Public,
@@ -1078,7 +1078,7 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
         });
 
     globalObject->m_moduleResolveFilenameFunction.initLater(
-        [](const Zig::GlobalObject::Initializer<JSCell>& init) {
+        [](const Bun::GlobalObject::Initializer<JSCell>& init) {
             JSFunction* resolveFilenameFunction = JSFunction::create(
                 init.vm, init.owner, 2, "_resolveFilename"_s,
                 jsFunctionResolveFileName, JSC::ImplementationVisibility::Public,
@@ -1087,7 +1087,7 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
         });
 
     globalObject->m_modulePrototypeUnderscoreCompileFunction.initLater(
-        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
+        [](const Bun::GlobalObject::Initializer<JSFunction>& init) {
             JSFunction* resolveFilenameFunction = JSFunction::create(
                 init.vm, init.owner, 2, "_compile"_s,
                 functionJSCommonJSModule_compile, JSC::ImplementationVisibility::Public,
@@ -1096,13 +1096,13 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
         });
 
     globalObject->m_commonJSRequireESMFromHijackedExtensionFunction.initLater(
-        [](const Zig::GlobalObject::Initializer<JSFunction>& init) {
+        [](const Bun::GlobalObject::Initializer<JSFunction>& init) {
             JSC::JSFunction* requireESM = JSC::JSFunction::create(init.vm, init.owner, commonJSRequireESMFromHijackedExtensionCodeGenerator(init.vm), init.owner);
             init.set(requireESM);
         });
 
     globalObject->m_lazyRequireCacheObject.initLater(
-        [](const Zig::GlobalObject::Initializer<JSObject>& init) {
+        [](const Bun::GlobalObject::Initializer<JSObject>& init) {
             JSC::VM& vm = init.vm;
             JSC::JSGlobalObject* globalObject = init.owner;
 
@@ -1115,7 +1115,7 @@ void addNodeModuleConstructorProperties(JSC::VM& vm,
         });
 
     globalObject->m_lazyRequireExtensionsObject.initLater(
-        [](const Zig::GlobalObject::Initializer<Bun::JSCommonJSExtensions>& init) {
+        [](const Bun::GlobalObject::Initializer<Bun::JSCommonJSExtensions>& init) {
             JSC::VM& vm = init.vm;
             JSC::JSGlobalObject* globalObject = init.owner;
 
@@ -1140,7 +1140,7 @@ void generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGlobalObject,
     Vector<JSC::Identifier, 4>& exportNames,
     JSC::MarkedArgumentBuffer& exportValues)
 {
-    Zig::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    Bun::GlobalObject* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto& vm = JSC::getVM(globalObject);
     auto topExceptionScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);

@@ -3,11 +3,10 @@
 // Be very cautious of sticking your #include in this file
 // or adding anything into this file other than LazyClassStructure or LazyProperty
 // ** WARNING **
-// TODO: rename this to BunGlobalObject
 #pragma once
 
-#ifndef ZIG_GLOBAL_OBJECT
-#define ZIG_GLOBAL_OBJECT
+#ifndef BUN_GLOBAL_OBJECT
+#define BUN_GLOBAL_OBJECT
 
 namespace JSC {
 class Structure;
@@ -89,17 +88,19 @@ extern "C" bool Bun__VirtualMachine__isShuttingDown(void* /* BunVM */);
 
 #if OS(WINDOWS)
 #include <uv.h>
-extern "C" uv_loop_t* Bun__ZigGlobalObject__uvLoop(void* /* BunVM */);
+extern "C" uv_loop_t* Bun__GlobalObject__uvLoop(void* /* BunVM */);
 #endif
 
 namespace Zig {
-
 class JSCStackTrace;
+} // namespace Zig
+
+namespace Bun {
 
 using JSDOMStructureMap = UncheckedKeyHashMap<const JSC::ClassInfo*, JSC::WriteBarrier<JSC::Structure>>;
 using DOMGuardedObjectSet = UncheckedKeyHashSet<WebCore::DOMGuardedObject*>;
 
-#define ZIG_GLOBAL_OBJECT_DEFINED
+#define BUN_GLOBAL_OBJECT_DEFINED
 
 class GlobalObject : public Bun::GlobalScope {
     using Base = Bun::GlobalScope;
@@ -353,7 +354,7 @@ public:
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const
     {
-        return Bun__ZigGlobalObject__uvLoop(m_bunVM);
+        return Bun__GlobalObject__uvLoop(m_bunVM);
     }
 #endif
     bool isThreadLocalDefaultGlobalObject = false;
@@ -466,7 +467,7 @@ public:
     // - Make sure the type can be written with no commas in its name. This is because a type with
     //   commas will count as two macro parameters instead of one. You can add a `using` declaration
     //   like above to create an alias for a complex template type without a comma.
-    // - Make sure `visitGlobalObjectMember` in `ZigGlobalObject.cpp` can handle your type.
+    // - Make sure `visitGlobalObjectMember` in `BunGlobalObject.cpp` can handle your type.
     //   Currently it has overloads to handle:
     //
     //     - any class with a `visit` method (this covers LazyProperty and LazyClassStructure)
@@ -718,8 +719,8 @@ public:
     String agentClusterID() const;
     static String defaultAgentClusterID();
 
-    BunPlugin::OnLoad onLoadPlugins {};
-    BunPlugin::OnResolve onResolvePlugins {};
+    Zig::BunPlugin::OnLoad onLoadPlugins {};
+    Zig::BunPlugin::OnResolve onResolvePlugins {};
 
     // This increases the cache hit rate for JSC::VM's SourceProvider cache
     // It also avoids an extra allocation for the SourceProvider
@@ -799,11 +800,11 @@ public:
     }
 };
 
-} // namespace Zig
+} // namespace Bun
 
 namespace Bun {
 
-ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
+ALWAYS_INLINE void* vm(Bun::GlobalObject* globalObject)
 {
     return globalObject->bunVM();
 }
@@ -823,42 +824,42 @@ ALWAYS_INLINE void* vm(JSC::JSGlobalObject* lexicalGlobalObject)
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT
 #define RENAMED_JSDOM_GLOBAL_OBJECT
 namespace WebCore {
-using JSDOMGlobalObject = Zig::GlobalObject;
+using JSDOMGlobalObject = Bun::GlobalObject;
 }
 #endif
 
 // Do not use this directly.
 namespace ___private___ {
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
-inline Zig::GlobalObject* getDefaultGlobalObject()
+extern "C" Bun::GlobalObject* Bun__getDefaultGlobalObject();
+inline Bun::GlobalObject* getDefaultGlobalObject()
 {
     return Bun__getDefaultGlobalObject();
 }
 }
 
-inline Zig::GlobalObject* defaultGlobalObject(JSC::JSGlobalObject* lexicalGlobalObject)
+inline Bun::GlobalObject* defaultGlobalObject(JSC::JSGlobalObject* lexicalGlobalObject)
 {
-    auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto* globalObject = dynamicDowncast<Bun::GlobalObject>(lexicalGlobalObject);
     if (!globalObject) {
         return ___private___::getDefaultGlobalObject();
     }
     return globalObject;
 }
-inline Zig::GlobalObject* defaultGlobalObject()
+inline Bun::GlobalObject* defaultGlobalObject()
 {
     return ___private___::getDefaultGlobalObject();
 }
 
 inline void* bunVM(JSC::JSGlobalObject* lexicalGlobalObject)
 {
-    if (auto* globalObject = dynamicDowncast<Zig::GlobalObject>(lexicalGlobalObject)) {
+    if (auto* globalObject = dynamicDowncast<Bun::GlobalObject>(lexicalGlobalObject)) {
         return globalObject->bunVM();
     }
 
     return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
 }
 
-inline void* bunVM(Zig::GlobalObject* globalObject)
+inline void* bunVM(Bun::GlobalObject* globalObject)
 {
     return globalObject->bunVM();
 }
@@ -866,10 +867,10 @@ inline void* bunVM(Zig::GlobalObject* globalObject)
 JSC_DECLARE_HOST_FUNCTION(jsFunctionNotImplemented);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateFunctionThatMasqueradesAsUndefined);
 
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToArrayBuffer(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
-extern "C" JSC::EncodedJSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
+extern "C" JSC::EncodedJSValue BunGlobalObject__readableStreamToText(Bun::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
+extern "C" JSC::EncodedJSValue BunGlobalObject__readableStreamToArrayBuffer(Bun::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
+extern "C" JSC::EncodedJSValue BunGlobalObject__readableStreamToBytes(Bun::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
+extern "C" JSC::EncodedJSValue BunGlobalObject__readableStreamToJSON(Bun::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
+extern "C" JSC::EncodedJSValue BunGlobalObject__readableStreamToBlob(Bun::GlobalObject* globalObject, JSC::EncodedJSValue readableStreamValue);
 
 #endif

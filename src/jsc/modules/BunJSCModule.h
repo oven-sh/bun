@@ -411,7 +411,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
 
     VM& vm = globalObject->vm();
     JSC::JSObject* object = JSC::constructEmptyObject(
-        vm, uncheckedDowncast<Zig::GlobalObject>(globalObject)->memoryFootprintStructure());
+        vm, uncheckedDowncast<Bun::GlobalObject>(globalObject)->memoryFootprintStructure());
 
     object->putDirectOffset(vm, 0, jsNumber(current_rss));
     object->putDirectOffset(vm, 1, jsNumber(peak_rss));

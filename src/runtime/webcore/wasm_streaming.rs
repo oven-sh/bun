@@ -1,4 +1,4 @@
-//! `Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming` — lives here rather
+//! `Bun__GlobalObject__getBodyStreamOrBytesForWasmStreaming` — lives here rather
 //! than in `bun_jsc::JSGlobalObject` because the body inspects `Response`/`Body`/
 //! `Blob`/`ReadableStream`, which are `bun_runtime` types (forward-dep of
 //! `bun_jsc`).
@@ -155,7 +155,7 @@ pub(crate) fn get_body_stream_or_bytes_for_wasm_streaming(
 /// `this` must be a valid, live `JSGlobalObject` pointer for the duration of
 /// the call (guaranteed by the C++ host caller).
 #[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Zig__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
+pub(crate) unsafe extern "C" fn Bun__GlobalObject__getBodyStreamOrBytesForWasmStreaming(
     this: *mut JSGlobalObject,
     response_value: JSValue,
     streaming_compiler: *mut c_void,

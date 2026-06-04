@@ -1,7 +1,7 @@
 // Testing-only JS binding for the SIMD xxHash3 kernel.
 //
 // Kept in its own TU (not xxhash3.cpp) so the Highway kernel stays free of
-// JSC/WebKit headers — otherwise `ZigGlobalObject.h` drags the whole JSC type
+// JSC/WebKit headers — otherwise `BunGlobalObject.h` drags the whole JSC type
 // universe into a SIMD-only unit, ballooning its debug info and compile cost.
 // This wrapper just forwards to the C entry point.
 
@@ -10,7 +10,7 @@
 #include "xxhash3.h"
 #include "xxhash3_testing.h"
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/JSArrayBufferView.h>
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/JSCJSValue.h>

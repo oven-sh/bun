@@ -45,7 +45,7 @@ export const sharedTypes: Record<string, string> = {
   "HotReloadId": "HTTPServerAgent.HotReloadId",
   "ServerId": "HTTPServerAgent.ServerId",
   "Route": "HTTPServerAgent.Route",
-  "Zig::GlobalObject": "jsc.JSGlobalObject",
+  "Bun::GlobalObject": "jsc.JSGlobalObject",
   "JSC::VM": "jsc.VM",
   "WTF::StringImpl": "bun.WTF._StringImplStruct",
   "WebCore::DOMURL": "bun.DOMURL",

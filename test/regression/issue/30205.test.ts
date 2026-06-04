@@ -1,8 +1,8 @@
 // https://github.com/oven-sh/bun/issues/30205
 //
-// `bun test --isolate` / `--parallel` creates a fresh Zig::GlobalObject per
+// `bun test --isolate` / `--parallel` creates a fresh Bun::GlobalObject per
 // file and gcUnprotect()s the previous one. NapiEnv holds a raw
-// `Zig::GlobalObject*` in m_globalObject; for non-experimental addons
+// `Bun::GlobalObject*` in m_globalObject; for non-experimental addons
 // (nm_version != NAPI_VERSION_EXPERIMENTAL), napi finalizers are deferred to
 // the event loop as NapiFinalizerTask. Objects rooted on the old global only
 // become collectable when the swap unprotects it, so their finalizers run

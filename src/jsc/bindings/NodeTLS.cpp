@@ -5,7 +5,7 @@
 #include "JavaScriptCore/ArrayConstructor.h"
 #include "libusockets.h"
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "ErrorCode.h"
 #include "openssl/base.h"
 #include "openssl/bio.h"

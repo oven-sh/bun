@@ -97,6 +97,6 @@ template<> struct JSDOMWrapperConverterTraits<WebSocket> {
     using ToWrappedReturnType = WebSocket*;
 };
 
-JSC::JSValue getWebSocketConstructor(Zig::GlobalObject* globalObject);
+JSC::JSValue getWebSocketConstructor(Bun::GlobalObject* globalObject);
 
 } // namespace WebCore

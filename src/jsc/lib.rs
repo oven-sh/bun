@@ -1,5 +1,5 @@
 //! Bindings to JavaScriptCore and other JavaScript primitives such as
-//! VirtualMachine, JSGlobalObject (Zig::GlobalObject), and the event loop.
+//! VirtualMachine, JSGlobalObject (Bun::GlobalObject), and the event loop.
 //!
 //! Web and runtime-specific APIs should go in `bun.webcore` and `bun.api`.
 //!
@@ -556,7 +556,7 @@ pub mod process_auto_killer;
 #[path = "WorkTask.rs"]
 pub mod work_task;
 
-/// Binding for JSCInitialize in ZigGlobalObject.cpp
+/// Binding for JSCInitialize in BunGlobalObject.cpp
 pub fn initialize(eval_mode: bool) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.

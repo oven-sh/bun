@@ -1,7 +1,7 @@
 
 #include "root.h"
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "DOMException.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorType.h"
@@ -183,7 +183,7 @@ void ErrorCodeCache::finishCreation(VM& vm)
     }
 }
 
-static ErrorCodeCache* errorCache(Zig::GlobalObject* globalObject)
+static ErrorCodeCache* errorCache(Bun::GlobalObject* globalObject)
 {
     return static_cast<ErrorCodeCache*>(globalObject->nodeErrorCache());
 }
@@ -195,7 +195,7 @@ static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject
     return ErrorInstance::createStructure(vm, globalObject, prototype);
 }
 
-JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
+JSObject* ErrorCodeCache::createError(VM& vm, Bun::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* cache = errorCache(globalObject);
@@ -217,12 +217,12 @@ JSObject* ErrorCodeCache::createError(VM& vm, Zig::GlobalObject* globalObject, E
     return created_error;
 }
 
-JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
+JSObject* createError(VM& vm, Bun::GlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return errorCache(globalObject)->createError(vm, globalObject, code, jsString(vm, message), jsUndefined());
 }
 
-JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, const String& message)
+JSObject* createError(Bun::GlobalObject* globalObject, ErrorCode code, const String& message)
 {
     return createError(globalObject->vm(), globalObject, code, message);
 }
@@ -234,14 +234,14 @@ JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code,
 
 JSObject* createError(VM& vm, JSC::JSGlobalObject* globalObject, ErrorCode code, JSValue message)
 {
-    if (auto* zigGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject))
+    if (auto* zigGlobalObject = dynamicDowncast<Bun::GlobalObject>(globalObject))
         return createError(vm, zigGlobalObject, code, message, jsUndefined());
 
     auto* structure = createErrorStructure(vm, globalObject, errors[static_cast<size_t>(code)].type, errors[static_cast<size_t>(code)].name, errors[static_cast<size_t>(code)].code);
     return JSC::ErrorInstance::create(globalObject, structure, message, jsUndefined(), nullptr, JSC::RuntimeType::TypeNothing, errors[static_cast<size_t>(code)].type, true);
 }
 
-JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
+JSC::JSObject* createError(VM& vm, Bun::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options)
 {
     return errorCache(globalObject)->createError(vm, globalObject, code, message, options);
 }

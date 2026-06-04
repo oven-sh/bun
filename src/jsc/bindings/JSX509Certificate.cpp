@@ -9,7 +9,7 @@
 #include "ErrorCode.h"
 #include "JSX509Certificate.h"
 #include "JSX509CertificatePrototype.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "wtf/ASCIICType.h"
 #include "wtf/Assertions.h"
 #include "wtf/SharedTask.h"

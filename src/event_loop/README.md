@@ -130,7 +130,7 @@ For each task dequeued from the task queue:
 │          │   └─> VM.releaseWeakRefs()                       │
 │          │                                                   │
 │          ├─> CALL JSC__JSGlobalObject__drainMicrotasks()    │
-│          │   (ZigGlobalObject.cpp:2793-2840)                │
+│          │   (BunGlobalObject.cpp:2793-2840)                │
 │          │   │                                               │
 │          │   ├─> IF nextTick queue exists and not empty:    │
 │          │   │   └─> Call processTicksAndRejections()       │
@@ -156,7 +156,7 @@ For each task dequeued from the task queue:
 
 ### Key Points
 
-#### Process.nextTick Ordering (`ZigGlobalObject.cpp:2818-2829`)
+#### Process.nextTick Ordering (`BunGlobalObject.cpp:2818-2829`)
 
 The process.nextTick queue is special:
 

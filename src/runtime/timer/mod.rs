@@ -1149,7 +1149,7 @@ impl All {
     /// # Safety
     /// JS thread only, with the TLS `RuntimeState` still installed and `vm`
     /// the live per-thread VM. Must run BEFORE JSC teardown
-    /// (`Zig__GlobalObject__destructOnExit` / `WebWorker__teardownJSCVM`) and
+    /// (`Bun__GlobalObject__destructOnExit` / `WebWorker__teardownJSCVM`) and
     /// BEFORE `runtime_state` is nulled — the GC sweep frees the
     /// `TimeoutObject` boxes whose `event_loop_timer` fields the heap nodes
     /// alias.

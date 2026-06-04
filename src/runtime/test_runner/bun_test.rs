@@ -468,7 +468,7 @@ impl BunTestRoot {
     }
 
     /// Tear down `bun:test` GC roots before `global_exit()` so
-    /// `Zig__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim the
+    /// `Bun__GlobalObject__destructOnExit()`'s `collectNow()` can reclaim the
     /// closures they pin. Releases the active file's per-test `Strong`s (the
     /// bail path skips its `scopeguard::defer! { exit_file() }` because
     /// `process::exit()` does not unwind), the preload-hook `Strong`s held in
@@ -1362,7 +1362,7 @@ impl Drop for BunTest {
     }
 }
 
-// `ZigGlobalObject::promiseHandlerID` (C++) compares the fn-ptr passed to
+// `BunGlobalObject::promiseHandlerID` (C++) compares the fn-ptr passed to
 // `JSValue::then` against `&Bun__TestScope__Describe2__bunTestThen` by
 // identity, so the Rust thunk MUST be the symbol itself — exporting a
 // `static JSHostFn = thunk` puts the name in `.data` (nm `d`), and the address

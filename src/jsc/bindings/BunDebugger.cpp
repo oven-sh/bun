@@ -1,6 +1,6 @@
 #include "root.h"
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 #include <JavaScriptCore/InspectorFrontendChannel.h>
 #include <JavaScriptCore/JSGlobalObjectDebuggable.h>
@@ -116,7 +116,7 @@ public:
         this->status = ConnectionStatus::Connected;
         auto* globalObject = context.jsGlobalObject();
         if (this->unrefOnDisconnect) {
-            Bun__eventLoop__incrementRefConcurrently(static_cast<Zig::GlobalObject*>(globalObject)->bunVM(), 1);
+            Bun__eventLoop__incrementRefConcurrently(static_cast<Bun::GlobalObject*>(globalObject)->bunVM(), 1);
         }
         globalObject->setInspectable(true);
         auto& inspector = globalObject->inspectorDebuggable();
@@ -146,7 +146,7 @@ public:
             };
         }
 
-        this->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(globalObject), false);
+        this->receiveMessagesOnInspectorThread(context, static_cast<Bun::GlobalObject*>(globalObject), false);
     }
 
     void connect()
@@ -202,7 +202,7 @@ public:
 
             if (connection->unrefOnDisconnect) {
                 connection->unrefOnDisconnect = false;
-                Bun__eventLoop__incrementRefConcurrently(static_cast<Zig::GlobalObject*>(context.jsGlobalObject())->bunVM(), -1);
+                Bun__eventLoop__incrementRefConcurrently(static_cast<Bun::GlobalObject*>(context.jsGlobalObject())->bunVM(), -1);
             }
         });
     }
@@ -222,7 +222,7 @@ public:
 
     static void runWhilePaused(JSGlobalObject& globalObject, bool& isDoneProcessingEvents)
     {
-        Zig::GlobalObject* global = static_cast<Zig::GlobalObject*>(&globalObject);
+        Bun::GlobalObject* global = static_cast<Bun::GlobalObject*>(&globalObject);
         Vector<BunInspectorConnection*, 8> connections;
         {
             Locker<Lock> locker(inspectorConnectionsLock);
@@ -309,7 +309,7 @@ public:
         wait.condition.notifyAll();
     }
 
-    void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Zig::GlobalObject* globalObject, bool connectIfNeeded)
+    void receiveMessagesOnInspectorThread(ScriptExecutionContext& context, Bun::GlobalObject* globalObject, bool connectIfNeeded)
     {
         this->jsThreadMessageScheduledCount.store(0);
         WTF::Vector<WTF::String, 12> messages;
@@ -349,7 +349,7 @@ public:
         messages.clear();
     }
 
-    void receiveMessagesOnDebuggerThread(ScriptExecutionContext& context, Zig::GlobalObject* debuggerGlobalObject)
+    void receiveMessagesOnDebuggerThread(ScriptExecutionContext& context, Bun::GlobalObject* debuggerGlobalObject)
     {
         debuggerThreadMessageScheduledCount.store(0);
         WTF::Vector<WTF::String, 12> messages;
@@ -382,7 +382,7 @@ public:
 
         if (this->debuggerThreadMessageScheduledCount++ == 0) {
             debuggerScriptExecutionContext->postTaskConcurrently([connection = this](ScriptExecutionContext& context) {
-                connection->receiveMessagesOnDebuggerThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()));
+                connection->receiveMessagesOnDebuggerThread(context, static_cast<Bun::GlobalObject*>(context.jsGlobalObject()));
             });
         }
     }
@@ -398,7 +398,7 @@ public:
 
         if (this->jsThreadMessageScheduledCount++ == 0) {
             ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
-                connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
+                connection->receiveMessagesOnInspectorThread(context, static_cast<Bun::GlobalObject*>(context.jsGlobalObject()), true);
             });
         }
     }
@@ -414,7 +414,7 @@ public:
 
         if (this->jsThreadMessageScheduledCount++ == 0) {
             ScriptExecutionContext::postTaskTo(scriptExecutionContextIdentifier, [connection = this](ScriptExecutionContext& context) {
-                connection->receiveMessagesOnInspectorThread(context, static_cast<Zig::GlobalObject*>(context.jsGlobalObject()), true);
+                connection->receiveMessagesOnInspectorThread(context, static_cast<Bun::GlobalObject*>(context.jsGlobalObject()), true);
             });
         }
     }
@@ -533,7 +533,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDisconnect, (JSC::JSGlobalObject * globalObje
 
 const JSC::ClassInfo JSBunInspectorConnection::s_info = { "BunInspectorConnection"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSBunInspectorConnection) };
 
-extern "C" unsigned int Bun__createJSDebugger(Zig::GlobalObject* globalObject)
+extern "C" unsigned int Bun__createJSDebugger(Bun::GlobalObject* globalObject)
 {
     {
         Locker<Lock> locker(inspectorConnectionsLock);
@@ -590,7 +590,7 @@ extern "C" void BunDebugger__willHotReload()
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    auto* debuggerGlobalObject = dynamicDowncast<Zig::GlobalObject>(globalObject);
+    auto* debuggerGlobalObject = dynamicDowncast<Bun::GlobalObject>(globalObject);
     if (!debuggerGlobalObject)
         return JSValue::encode(jsUndefined());
 
@@ -618,7 +618,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionCreateConnection, (JSGlobalObject * globalObj
     return JSValue::encode(JSBunInspectorConnection::create(vm, JSBunInspectorConnection::createStructure(vm, globalObject, globalObject->objectPrototype()), connection));
 }
 
-extern "C" void Bun__startJSDebuggerThread(Zig::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer)
+extern "C" void Bun__startJSDebuggerThread(Bun::GlobalObject* debuggerGlobalObject, ScriptExecutionContextIdentifier scriptId, BunString* portOrPathString, int isAutomatic, bool isUrlServer)
 {
     if (!debuggerScriptExecutionContext)
         debuggerScriptExecutionContext = debuggerGlobalObject->scriptExecutionContext();
@@ -709,7 +709,7 @@ extern "C" void Debugger__willDispatchAsyncCall(JSGlobalObject* globalObject, As
     agent->willDispatchAsyncCall(getCallType(callType), callbackId);
 }
 
-extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Zig::GlobalObject* globalObject)
+extern "C" void Bun__InspectorConnection__disconnectAllOnExit(Bun::GlobalObject* globalObject)
 {
     // Snapshot under the lock, release before calling into the inspector —
     // `willDestroyFrontendAndBackend` must not run with `inspectorConnectionsLock` held.

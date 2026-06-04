@@ -3,7 +3,7 @@
 #include "JSNodePerformanceHooksHistogramConstructor.h"
 #include "JSNodePerformanceHooksHistogram.h"
 #include "JSNodePerformanceHooksHistogramPrototype.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "ErrorCode.h"
 #include "BunString.h"
 #include "wtf/text/ASCIILiteral.h"

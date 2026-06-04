@@ -19,7 +19,7 @@
 
 struct us_socket_t;
 
-namespace Zig {
+namespace Bun {
 class GlobalObject;
 }
 
@@ -41,7 +41,7 @@ namespace WK {
 // Bun__WebViewHost__ensure (implemented in HostProcess.rs).
 struct HostClient {
     us_socket_t* sock = nullptr;
-    Zig::GlobalObject* global = nullptr;
+    Bun::GlobalObject* global = nullptr;
     bool dead = false;
 
     uint32_t nextViewId = 1;
@@ -51,7 +51,7 @@ struct HostClient {
     WTF::Vector<uint8_t> txQueue;
     bool sockRefd = false;
 
-    bool ensureSpawned(Zig::GlobalObject*, bool stdoutInherit, bool stderrInherit);
+    bool ensureSpawned(Bun::GlobalObject*, bool stdoutInherit, bool stderrInherit);
     void writeFrame(WebViewProto::Op, uint32_t viewId, const uint8_t* payload, uint32_t len);
     void handleReply(const WebViewProto::Frame&, WebViewProto::Reader);
     void rejectAllAndMarkDead(const WTF::String& reason);

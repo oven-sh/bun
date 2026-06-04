@@ -3,7 +3,7 @@
 #include "JSBuffer.h"
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/ObjectConstructor.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 
 
 // These modules are implemented in native code as a function which writes ESM
@@ -79,8 +79,8 @@
       JSC::MarkedArgumentBuffer &exportValues)
 
 #define INIT_NATIVE_MODULE(numberOfExportNames)                                \
-  Zig::GlobalObject *globalObject =                                            \
-      static_cast<Zig::GlobalObject *>(lexicalGlobalObject);                   \
+  Bun::GlobalObject *globalObject =                                            \
+      static_cast<Bun::GlobalObject *>(lexicalGlobalObject);                   \
   JSC::VM &vm = globalObject->vm();                                            \
   JSC::JSObject *defaultObject = JSC::constructEmptyObject(                    \
       globalObject, globalObject->objectPrototype(), numberOfExportNames);     \

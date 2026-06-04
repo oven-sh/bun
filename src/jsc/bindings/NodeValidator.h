@@ -2,7 +2,7 @@
 
 #include "root.h"
 
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "ErrorCode.h"
 #include "BufferEncodingType.h"
 #include "JavaScriptCore/JSCJSValue.h"

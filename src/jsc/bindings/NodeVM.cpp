@@ -273,7 +273,7 @@ JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleName, RefP
 
     if (isUseMainContextDefaultLoaderConstant(globalObject, dynamicImportCallback)) {
         auto defer = fetcher->temporarilyUseDefaultLoader();
-        Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
+        Bun::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
         RELEASE_AND_RETURN(scope, zigGlobalObject->moduleLoaderImportModule(zigGlobalObject, zigGlobalObject->moduleLoader(), moduleName, WTF::move(parameters), sourceOrigin, false));
     } else if (!dynamicImportCallback || !dynamicImportCallback.isCallable()) {
         throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
@@ -669,7 +669,7 @@ bool getContextArg(JSGlobalObject* globalObject, JSValue& contextArg)
     if (contextArg.isUndefined()) {
         contextArg = JSC::constructEmptyObject(globalObject);
     } else if (contextArg.isSymbol()) {
-        Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
+        Bun::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
         if (contextArg == zigGlobalObject->m_nodeVMDontContextify.get(zigGlobalObject)) {
             contextArg = JSC::constructEmptyObject(globalObject);
             return true;
@@ -682,7 +682,7 @@ bool getContextArg(JSGlobalObject* globalObject, JSValue& contextArg)
 bool isUseMainContextDefaultLoaderConstant(JSGlobalObject* globalObject, JSValue value)
 {
     if (value.isSymbol()) {
-        Zig::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
+        Bun::GlobalObject* zigGlobalObject = defaultGlobalObject(globalObject);
         if (value == zigGlobalObject->m_nodeVMUseMainContextDefaultLoader.get(zigGlobalObject)) {
             return true;
         }
@@ -788,7 +788,7 @@ static void promiseRejectionTrackerForNodeVM(JSGlobalObject* globalObject, JSC::
     // Delegate to the parent global object so that unhandled rejections
     // in VM contexts are reported to the main process (matching Node.js behavior)
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
-    Zig::GlobalObject::promiseRejectionTracker(zigGlobalObject, promise, operation);
+    Bun::GlobalObject::promiseRejectionTracker(zigGlobalObject, promise, operation);
 }
 
 const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable()
@@ -1507,7 +1507,7 @@ JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObje
     return JSValue::encode(jsBoolean(callFrame->argument(0).inherits(JSModuleNamespaceObject::info())));
 }
 
-JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
+JSC::JSValue createNodeVMBinding(Bun::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
     auto* obj = constructEmptyObject(globalObject);
@@ -1568,7 +1568,7 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
     return obj;
 }
 
-void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
+void configureNodeVM(JSC::VM& vm, Bun::GlobalObject* globalObject)
 {
     globalObject->m_nodeVMDontContextify.initLater([](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
         init.set(JSC::Symbol::createWithDescription(init.vm, "vm_dont_contextify"_s));

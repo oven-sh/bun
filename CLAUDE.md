@@ -221,7 +221,7 @@ When implementing JavaScript classes in C++:
 
 2. Define properties using HashTableValue arrays
 3. Add iso subspaces for classes with C++ fields
-4. Cache structures in `ZigGlobalObject`
+4. Cache structures in `BunGlobalObject`
 
 ### Code Generation
 

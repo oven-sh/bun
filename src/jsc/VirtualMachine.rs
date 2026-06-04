@@ -102,7 +102,7 @@ pub struct InitOptions {
     pub smol: bool,
     pub eval_mode: bool,
     pub is_main_thread: bool,
-    /// Forwarded to `Zig__GlobalObject__create` so the C++ ZigGlobalObject is
+    /// Forwarded to `Bun__GlobalObject__create` so the C++ BunGlobalObject is
     /// created with its `WebCore::Worker*` already wired. `null` for the
     /// main-thread / bake paths.
     pub worker_ptr: *mut c_void,
@@ -110,7 +110,7 @@ pub struct InitOptions {
     /// `WebWorker::execution_context_id`; `None` lets [`init`] derive it from
     /// `is_main_thread` (matches the previous behaviour for non-worker init).
     pub context_id: Option<i32>,
-    /// Forwarded as `mini_mode` to `Zig__GlobalObject__create`. For the
+    /// Forwarded as `mini_mode` to `Bun__GlobalObject__create`. For the
     /// main-thread path this is `smol`; for workers it is `WebWorker::mini`.
     pub mini_mode: bool,
 }
@@ -212,7 +212,7 @@ pub struct VirtualMachine {
     /// Set once `on_exit()` has finished draining `RareData::cleanup_hooks`.
     /// After this point the cleanup-hook list is never iterated again, so
     /// pushing to it (e.g. from a deferred N-API finalizer scheduled during
-    /// the final `collectNow()` in `Zig__GlobalObject__destructOnExit`) would
+    /// the final `collectNow()` in `Bun__GlobalObject__destructOnExit`) would
     /// only leak the hook's `ctx` allocation.
     pub has_run_cleanup_hooks: bool,
     pub plugin_runner: Option<crate::plugin_runner::PluginRunner>,
@@ -371,7 +371,7 @@ unsafe extern "C" {
     safe fn Process__dispatchOnExit(global: &JSGlobalObject, code: u8);
     safe fn Bun__closeAllSQLiteDatabasesForTermination();
     safe fn Bun__WebView__closeAllForTermination();
-    safe fn Zig__GlobalObject__destructOnExit(global: &JSGlobalObject);
+    safe fn Bun__GlobalObject__destructOnExit(global: &JSGlobalObject);
 }
 
 pub const HOT_RELOAD_HOT: u8 = 1;
@@ -1578,7 +1578,7 @@ impl VirtualMachine {
             // JSC `Strong`/`Weak` handles against a live HandleSet.
             self.event_loop_mut().release_queued_tasks_for_shutdown();
 
-            Zig__GlobalObject__destructOnExit(self.global());
+            Bun__GlobalObject__destructOnExit(self.global());
 
             // lastChanceToFinalize() above runs Listener/Server finalize →
             // their own embedded group.closeAll() → sockets land in
@@ -1930,9 +1930,9 @@ pub fn runtime_hooks() -> Option<&'static RuntimeHooks> {
 #[allow(improper_ctypes)] // VirtualMachine is opaque to C++; passed as `void*`
 unsafe extern "C" {
     // safe: `console`/`worker_ptr` are opaque round-trip pointers C++ stores
-    // into the new ZigGlobalObject (never dereferenced as Rust data); remaining
+    // into the new BunGlobalObject (never dereferenced as Rust data); remaining
     // args are by-value scalars.
-    safe fn Zig__GlobalObject__create(
+    safe fn Bun__GlobalObject__create(
         console: *mut c_void,
         context_id: i32,
         mini_mode: bool,
@@ -2125,7 +2125,7 @@ impl VirtualMachine {
         // High-tier per-VM state — Transpiler / Timer::All / entry_point.
         // Note (init order): the transpiler and per-VM timer state must be
         // built BEFORE `JSGlobalObject` creation. The C++ body
-        // of `Zig__GlobalObject__create` re-enters via `WTFTimer__create`/
+        // of `Bun__GlobalObject__create` re-enters via `WTFTimer__create`/
         // `WTFTimer__update` (JSC's GC scheduler), which dereferences
         // `runtime_state().timer` — so this hook MUST run first or that path
         // null-derefs. The post-global tail (`configureDebugger`,
@@ -2149,12 +2149,12 @@ impl VirtualMachine {
         // JSGlobalObject creation. `ensure_waker()` must run before the FFI.
         // SAFETY: `vm` is the unique live VM on this thread; raw-ptr deref so
         // no `&mut` is held across the FFI re-entry (`Bun__getVM()` —
-        // ZigGlobalObject.cpp:473/961).
+        // BunGlobalObject.cpp:473/961).
         unsafe { (*vm).regular_event_loop.ensure_waker() };
         // `console`/`worker_ptr` are opaque round-trip pointers C++ stores into
         // the new global. `worker_ptr` is the C++ `WebCore::Worker*` (or null on
         // the main thread).
-        let global = Zig__GlobalObject__create(
+        let global = Bun__GlobalObject__create(
             console.cast(),
             context_id,
             opts.mini_mode,
@@ -3053,7 +3053,7 @@ crate::jsc_abi_extern! {
 // `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
 // `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal`'s
 // `console_ptr` is an opaque round-trip pointer C++ stores into the new global
-// (never dereferenced as Rust data) — same contract as `Zig__GlobalObject__create`.
+// (never dereferenced as Rust data) — same contract as `Bun__GlobalObject__create`.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     safe fn Bun__promises__isErrorLike(global: &JSGlobalObject, reason: JSValue) -> bool;
@@ -3655,7 +3655,7 @@ impl VirtualMachine {
             is_main_thread: false,
             // The global is created
             // with `worker.cpp_worker`, `worker.execution_context_id`,
-            // and `worker.mini` so the C++ ZigGlobalObject is born with its
+            // and `worker.mini` so the C++ BunGlobalObject is born with its
             // WorkerGlobalScope + debugger context id wired.
             worker_ptr: worker.cpp_worker(),
             context_id: Some(worker.execution_context_id() as i32),
@@ -3703,7 +3703,7 @@ impl VirtualMachine {
         };
         // Note: shares the console / log / event-loop wiring with `init`;
         // the only delta is the global is created via `BakeCreateProdGlobal`
-        // instead of `ZigGlobalObject__create`. Route through `init` then
+        // instead of `BunGlobalObject__create`. Route through `init` then
         // swap the global.
         let vm = Self::init(init_opts)?;
         // SAFETY: `vm` is the unique live VM on this thread.

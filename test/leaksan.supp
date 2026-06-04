@@ -5,7 +5,7 @@ leak:resolver.package_json.PackageJSON.parse__anon
 leak:resolver.resolver.Resolver.parseTSConfig
 leak:JSC::Identifier::fromString
 leak:jsc.JSGlobalObject.JSGlobalObject.create
-leak:Zig__GlobalObject__create
+leak:Bun__GlobalObject__create
 leak:_objc_msgSend_uncached
 leak:WTF::AutomaticThread::start
 leak:Bun__transpileFile
@@ -25,7 +25,7 @@ leak:BIO_new
 leak:_tlv_get_addr
 leak:Bun::generateModule
 leak:Zig::ImportMetaObject::createFromSpecifier
-leak:Zig::GlobalObject::moduleLoaderResolve
+leak:Bun::GlobalObject::moduleLoaderResolve
 leak:JSModuleLoader__import
 leak:dyld::ThreadLocalVariables
 leak:JSC__JSModuleLoader__loadAndEvaluateModule
@@ -43,7 +43,7 @@ leak:runtime.node.fs_events.InitLibrary
 leak:runtime.node.fs_events.FSEventsLoop._schedule
 leak:Bun__Path__join
 leak:Bun__Path__resolve
-leak:Zig::GlobalObject::moduleLoaderImportModule
+leak:Bun::GlobalObject::moduleLoaderImportModule
 leak:bake.FrameworkRouter.JSFrameworkRouter.getFileIdForRouter
 leak:runtime.webcore.Blob.findOrCreateFileFromPath__anon
 leak:runtime.node.node_fs_binding.Bindings(.mkdtemp).runSync

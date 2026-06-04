@@ -1,6 +1,6 @@
 #pragma once
 
-namespace Zig {
+namespace Bun {
 class GlobalObject;
 }
 
@@ -50,7 +50,7 @@ public:
     }
 
     DECLARE_EXPORT_INFO;
-    static JSWrappingFunction* create(JSC::VM& vm, Zig::GlobalObject* globalObject, const BunString* symbolName, NativeFunctionPtr functionPointer, JSC::JSValue wrappedFn);
+    static JSWrappingFunction* create(JSC::VM& vm, Bun::GlobalObject* globalObject, const BunString* symbolName, NativeFunctionPtr functionPointer, JSC::JSValue wrappedFn);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

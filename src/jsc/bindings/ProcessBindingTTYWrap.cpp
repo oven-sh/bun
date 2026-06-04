@@ -196,7 +196,7 @@ JSC_DEFINE_HOST_FUNCTION(jsTTYSetMode, (JSC::JSGlobalObject * globalObject, Call
     auto flag = callFrame->argument(0);
     bool raw = flag.asBoolean();
 
-    Zig::GlobalObject* global = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+    Bun::GlobalObject* global = uncheckedDowncast<Bun::GlobalObject>(globalObject);
 
     return JSValue::encode(jsNumber(Source__setRawModeStdin(global->uvLoop(), raw)));
 #else
@@ -451,7 +451,7 @@ public:
 #if OS(WINDOWS)
         auto* handle = new UV::TTY();
         memset(handle, 0, sizeof(UV::TTY));
-        int rc = uv_tty_init(uncheckedDowncast<Zig::GlobalObject>(globalObject)->uvLoop(), handle->tty(), fd, 0);
+        int rc = uv_tty_init(uncheckedDowncast<Bun::GlobalObject>(globalObject)->uvLoop(), handle->tty(), fd, 0);
         if (rc < 0) {
             delete handle;
             throwTypeError(globalObject, scope, "Failed to initialize TTY handle"_s);
@@ -492,7 +492,7 @@ private:
 
 const ClassInfo TTYWrapConstructor::s_info = { "TTY"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(TTYWrapConstructor) };
 
-JSValue createBunTTYFunctions(Zig::GlobalObject* globalObject)
+JSValue createBunTTYFunctions(Bun::GlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     auto* obj = constructEmptyObject(globalObject);

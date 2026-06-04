@@ -7,7 +7,7 @@
 #include "wtf/NakedPtr.h"
 #include "BunClientData.h"
 
-namespace Zig {
+namespace Bun {
 class GlobalObject;
 }
 namespace JSC {
@@ -87,10 +87,10 @@ public:
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
-    void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
-    void evaluate(Zig::GlobalObject* globalObject, Ref<JSC::SourceProvider>&& sourceProvider, bool ignoreESModuleAnnotation);
-    void evaluateWithPotentiallyOverriddenCompile(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, JSValue keyJSString, ResolvedSource& resolvedSource);
-    inline void evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
+    void evaluate(Bun::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
+    void evaluate(Bun::GlobalObject* globalObject, Ref<JSC::SourceProvider>&& sourceProvider, bool ignoreESModuleAnnotation);
+    void evaluateWithPotentiallyOverriddenCompile(Bun::GlobalObject* globalObject, const WTF::String& sourceURL, JSValue keyJSString, ResolvedSource& resolvedSource);
+    inline void evaluate(Bun::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
     {
         return evaluate(globalObject, sourceURL, resolvedSource, false);
     }
@@ -101,17 +101,17 @@ public:
         JSC::JSString* dirname, const JSC::SourceCode& sourceCode);
 
     static JSCommonJSModule* create(
-        Zig::GlobalObject* globalObject,
+        Bun::GlobalObject* globalObject,
         const WTF::String& key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
     static JSCommonJSModule* create(
-        Zig::GlobalObject* globalObject,
+        Bun::GlobalObject* globalObject,
         JSC::JSString* key,
         JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
     static JSCommonJSModule* create(
-        Zig::GlobalObject* globalObject,
+        Bun::GlobalObject* globalObject,
         const WTF::String& key,
         ResolvedSource resolvedSource);
 
@@ -130,7 +130,7 @@ public:
     JSValue idOrDot() { return m_id.get(); }
     JSValue filename() { return m_filename.get(); }
 
-    bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);
+    bool load(JSC::VM& vm, Bun::GlobalObject* globalObject);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
@@ -162,22 +162,22 @@ public:
 };
 
 JSC::Structure* createCommonJSModuleStructure(
-    Zig::GlobalObject* globalObject);
+    Bun::GlobalObject* globalObject);
 
 std::optional<JSC::SourceCode> createCommonJSModule(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSC::JSString* specifierValue,
     ResolvedSource& source,
     bool isBuiltIn);
 
 std::optional<JSC::SourceCode> createCommonJSModule(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSC::JSString* specifierValue,
     Ref<JSC::SourceProvider>&& provider,
     bool ignoreESModuleAnnotation);
 
 inline std::optional<JSC::SourceCode> createCommonJSModule(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSC::JSString* specifierValue,
     ResolvedSource& source)
 {

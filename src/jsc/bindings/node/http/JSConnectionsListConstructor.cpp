@@ -1,6 +1,6 @@
 #include "JSConnectionsListConstructor.h"
 #include "JSConnectionsList.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/JSSet.h>
 
 namespace Bun {

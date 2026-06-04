@@ -5,7 +5,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/SlotVisitorInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 
@@ -86,7 +86,7 @@ enum class HTTPMethod : uint8_t {
     httpUNSUBSCRIBE = 35,
 };
 
-static JSC::JSValue toJS(Zig::GlobalObject* globalObject, HTTPMethod method)
+static JSC::JSValue toJS(Bun::GlobalObject* globalObject, HTTPMethod method)
 {
 #define FOR_EACH_METHOD(method)    \
     case HTTPMethod::http##method: \
@@ -138,7 +138,7 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, HTTPMethod method)
 #undef FOR_EACH_METHOD
 }
 
-extern "C" JSC::EncodedJSValue Bun__HTTPMethod__toJS(HTTPMethod method, Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__HTTPMethod__toJS(HTTPMethod method, Bun::GlobalObject* globalObject)
 {
     return JSValue::encode(toJS(globalObject, method));
 }
@@ -159,7 +159,7 @@ enum class CommonStringsForZig : uint8_t {
     binaryTypeUint8Array = 12,
 };
 
-static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForZig commonString)
+static JSC::JSValue toJS(Bun::GlobalObject* globalObject, CommonStringsForZig commonString)
 {
     auto& commonStrings = globalObject->commonStrings();
     switch (commonString) {
@@ -196,7 +196,7 @@ static JSC::JSValue toJS(Zig::GlobalObject* globalObject, CommonStringsForZig co
     }
 }
 
-extern "C" JSC::EncodedJSValue Bun__CommonStringsForZig__toJS(CommonStringsForZig commonString, Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__CommonStringsForZig__toJS(CommonStringsForZig commonString, Bun::GlobalObject* globalObject)
 {
     return JSValue::encode(toJS(globalObject, commonString));
 }
@@ -211,7 +211,7 @@ enum class FetchCacheMode : uint8_t {
     OnlyIfCached = 5,
 };
 
-extern "C" JSC::EncodedJSValue Bun__FetchCacheMode__toJS(FetchCacheMode mode, Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__FetchCacheMode__toJS(FetchCacheMode mode, Bun::GlobalObject* globalObject)
 {
     auto& commonStrings = globalObject->commonStrings();
     switch (mode) {
@@ -241,7 +241,7 @@ enum class FetchRedirect : uint8_t {
     Error = 2,
 };
 
-extern "C" JSC::EncodedJSValue Bun__FetchRedirect__toJS(FetchRedirect redirect, Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__FetchRedirect__toJS(FetchRedirect redirect, Bun::GlobalObject* globalObject)
 {
     auto& commonStrings = globalObject->commonStrings();
     switch (redirect) {
@@ -266,7 +266,7 @@ enum class FetchRequestMode : uint8_t {
     Navigate = 3,
 };
 
-extern "C" JSC::EncodedJSValue Bun__FetchRequestMode__toJS(FetchRequestMode mode, Zig::GlobalObject* globalObject)
+extern "C" JSC::EncodedJSValue Bun__FetchRequestMode__toJS(FetchRequestMode mode, Bun::GlobalObject* globalObject)
 {
     auto& commonStrings = globalObject->commonStrings();
     switch (mode) {

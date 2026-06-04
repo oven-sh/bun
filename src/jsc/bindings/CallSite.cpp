@@ -97,7 +97,7 @@ JSC_DEFINE_HOST_FUNCTION(nativeFrameForTesting, (JSC::JSGlobalObject * globalObj
     return JSValue::encode(JSC::call(globalObject, function, JSC::ArgList(), "nativeFrameForTesting"_s));
 }
 
-JSValue createNativeFrameForTesting(Zig::GlobalObject* globalObject)
+JSValue createNativeFrameForTesting(Bun::GlobalObject* globalObject)
 {
     VM& vm = globalObject->vm();
 

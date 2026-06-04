@@ -9,7 +9,7 @@
 #include <JavaScriptCore/JSObjectInlines.h>
 #include <JavaScriptCore/JSBigInt.h>
 #include <JavaScriptCore/DateInstance.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include <JavaScriptCore/JSONObject.h>
 #include <JavaScriptCore/GCDeferralContext.h>
 #include "GCDefferalContext.h"
@@ -135,7 +135,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         return jsNull();
         break;
     case DataCellTag::Raw: {
-        Zig::GlobalObject* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+        Bun::GlobalObject* zigGlobal = uncheckedDowncast<Bun::GlobalObject>(globalObject);
         auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
         auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.raw.length);
         RETURN_IF_EXCEPTION(scope, {});
@@ -175,7 +175,7 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
         break;
     }
     case DataCellTag::Bytea: {
-        Zig::GlobalObject* zigGlobal = uncheckedDowncast<Zig::GlobalObject>(globalObject);
+        Bun::GlobalObject* zigGlobal = uncheckedDowncast<Bun::GlobalObject>(globalObject);
         auto* subclassStructure = zigGlobal->JSBufferSubclassStructure();
         auto* uint8Array = JSC::JSUint8Array::createUninitialized(globalObject, subclassStructure, cell.value.bytea[1]);
         RETURN_IF_EXCEPTION(scope, {});

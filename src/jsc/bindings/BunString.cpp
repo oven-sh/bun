@@ -12,7 +12,7 @@
 #include "wtf/SIMDUTF.h"
 #include "JSDOMURL.h"
 #include "DOMURL.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "IDLTypes.h"
 #include "MimallocWTFMalloc.h"
 
@@ -584,7 +584,7 @@ extern "C" size_t URL__originLength(const char* latin1_slice, size_t len)
 
 extern "C" JSC::EncodedJSValue BunString__toJSDOMURL(JSC::JSGlobalObject* lexicalGlobalObject, BunString* bunString)
 {
-    auto& globalObject = *uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
+    auto& globalObject = *uncheckedDowncast<Bun::GlobalObject>(lexicalGlobalObject);
     auto& vm = globalObject.vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 

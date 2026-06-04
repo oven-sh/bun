@@ -22,7 +22,7 @@ public:
     DECLARE_VISIT_CHILDREN;
     DECLARE_INFO;
 
-    static JSBakeResponse* create(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::Structure* structure, void* ctx);
+    static JSBakeResponse* create(JSC::VM& vm, Bun::GlobalObject* globalObject, JSC::Structure* structure, void* ctx);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
     JSBakeResponseKind kind() const { return m_kind; }

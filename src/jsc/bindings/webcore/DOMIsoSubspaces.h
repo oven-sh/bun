@@ -926,7 +926,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForEventTarget;
     std::unique_ptr<IsoSubspace> m_subspaceForEventEmitter;
 
-    std::unique_ptr<IsoSubspace> m_subspaceForZigGlobalObject;
+    std::unique_ptr<IsoSubspace> m_subspaceForBunGlobalObject;
 
     std::unique_ptr<IsoSubspace> m_subspaceForExposedToWorkerAndWindow;
     std::unique_ptr<IsoSubspace> m_subspaceForURLSearchParams;

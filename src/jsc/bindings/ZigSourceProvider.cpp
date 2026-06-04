@@ -7,7 +7,7 @@
 #include "BunAnalyzeTranspiledModule.h"
 
 #include <JavaScriptCore/BytecodeCacheError.h>
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "wtf/Assertions.h"
 
 #include <JavaScriptCore/Completion.h>
@@ -72,7 +72,7 @@ extern "C" void Bun__addSourceProviderSourceMap(void* bun_vm, SourceProvider* op
 extern "C" void Bun__removeSourceProviderSourceMap(void* bun_vm, SourceProvider* opaque_source_provider, BunString* specifier);
 
 Ref<SourceProvider> SourceProvider::create(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     ResolvedSource& resolvedSource,
     JSC::SourceProviderSourceType sourceType,
     bool isBuiltin)

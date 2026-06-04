@@ -31,7 +31,7 @@
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/VM.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
 

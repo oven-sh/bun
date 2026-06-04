@@ -31,7 +31,7 @@
 #include "EventTarget.h"
 #include "JSValueInWrappedObject.h"
 #include "JavaScriptCore/JSGlobalObject.h"
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "wtf/DebugHeap.h"
 #include "wtf/FastMalloc.h"
 #include <wtf/Function.h>

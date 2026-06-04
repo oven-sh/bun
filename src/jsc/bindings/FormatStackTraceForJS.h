@@ -45,9 +45,12 @@ class OrdinalNumber;
 } // namespace WTF
 
 namespace Zig {
-class GlobalObject;
 class JSCStackTrace;
 } // namespace Zig
+
+namespace Bun {
+class GlobalObject;
+} // namespace Bun
 
 using JSC::EncodedJSValue;
 using JSC::PropertyName;
@@ -60,7 +63,7 @@ constexpr size_t DEFAULT_ERROR_STACK_TRACE_LIMIT = 10;
 // Main stack trace formatting function
 WTF::String formatStackTrace(
     JSC::VM& vm,
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSC::JSGlobalObject* lexicalGlobalObject,
     const WTF::String& name,
     const WTF::String& message,
@@ -89,7 +92,7 @@ namespace Zig {
 
 // GlobalObject member function for creating CallSite objects
 void createCallSitesFromFrames(
-    Zig::GlobalObject* globalObject,
+    Bun::GlobalObject* globalObject,
     JSC::JSGlobalObject* lexicalGlobalObject,
     Zig::JSCStackTrace& stackTrace,
     JSC::MarkedArgumentBuffer& callSites);

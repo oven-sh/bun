@@ -1,4 +1,4 @@
-#include "ZigGlobalObject.h"
+#include "BunGlobalObject.h"
 #include "_NativeModule.h"
 #include <JavaScriptCore/CustomGetterSetter.h>
 #include <JavaScriptCore/JSGlobalObject.h>

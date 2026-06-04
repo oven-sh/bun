@@ -33,7 +33,7 @@ Structure* getCachedDOMStructure(const JSDOMGlobalObject& globalObject, const Cl
 
 Structure* cacheDOMStructure(JSDOMGlobalObject& globalObject, Structure* structure, const ClassInfo* classInfo)
 {
-    auto addToStructures = [](JSDOMStructureMap& structures, JSDOMGlobalObject& globalObject, Structure* structure, const ClassInfo* classInfo) {
+    auto addToStructures = [](Bun::JSDOMStructureMap& structures, JSDOMGlobalObject& globalObject, Structure* structure, const ClassInfo* classInfo) {
         ASSERT(!structures.contains(classInfo));
         return structures.set(classInfo, JSC::WriteBarrier<Structure>(globalObject.vm(), &globalObject, structure)).iterator->value.get();
     };

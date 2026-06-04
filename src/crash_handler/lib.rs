@@ -443,8 +443,7 @@ pub mod debug {
             if lib.is_null() {
                 return State::Failed;
             }
-            let get =
-                |name: &bun_core::ZStr| bun_sys::windows::GetProcAddressA(Some(lib), name);
+            let get = |name: &bun_core::ZStr| bun_sys::windows::GetProcAddressA(Some(lib), name);
             let (
                 Some(sym_initialize_w),
                 Some(sym_set_options),
@@ -544,8 +543,8 @@ pub mod debug {
                 // print the `???` fallback line.
                 return None;
             }
-            let name = bun_core::strings::to_utf8_alloc(&symbol.name[..name_chars])
-                .into_boxed_slice();
+            let name =
+                bun_core::strings::to_utf8_alloc(&symbol.name[..name_chars]).into_boxed_slice();
 
             let mut line: ImagehlpLineW64 = bun_core::ffi::zeroed();
             line.size_of_struct = core::mem::size_of::<ImagehlpLineW64>() as u32;

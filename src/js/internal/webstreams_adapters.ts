@@ -438,6 +438,7 @@ function newReadableStreamFromStreamReadable(streamReadable, options = kEmptyObj
     throw $ERR_INVALID_ARG_TYPE("streamReadable", "stream.Readable", streamReadable);
   }
 
+  validateObject(options, "options");
   if (options.type !== undefined) {
     validateOneOf(options.type, "options.type", ["bytes", undefined]);
   }

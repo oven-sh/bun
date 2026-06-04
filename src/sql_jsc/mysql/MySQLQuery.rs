@@ -592,4 +592,3 @@ impl MySQLQuery {
         unsafe { self.statement.as_mut() }
     }
 }
-

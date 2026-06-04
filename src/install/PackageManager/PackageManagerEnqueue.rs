@@ -2580,7 +2580,6 @@ fn get_or_put_resolved_package(
                         // );
                     };
 
-
                     break 'res FolderResolution::get_or_put(
                         GlobalOrRelative::Relative(dependency::version::Tag::Folder),
                         version,

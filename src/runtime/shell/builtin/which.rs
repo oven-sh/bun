@@ -217,4 +217,3 @@ impl Which {
         bun_which::which(&mut *path_buf, path_env, cwd, arg).map(|z| z.as_bytes().to_vec())
     }
 }
-

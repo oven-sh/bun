@@ -188,4 +188,3 @@ pub fn contents_from_path(path: &[u8]) -> Option<&'static [u8]> {
 
     None
 }
-

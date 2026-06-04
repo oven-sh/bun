@@ -32,8 +32,7 @@ use bun_sha_hmac::SHA512;
 
 pub struct PasswordObject;
 
-impl PasswordObject {
-}
+impl PasswordObject {}
 
 #[derive(Copy, Clone, PartialEq, Eq, strum::IntoStaticStr)]
 #[repr(u8)]

@@ -1115,7 +1115,6 @@ impl Data {
                 } else if location.line > -1 {
                     pretty_write!("<d>:<r><yellow>{}<r>", location.line)?;
                 }
-
             }
         }
 

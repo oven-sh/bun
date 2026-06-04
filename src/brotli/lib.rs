@@ -431,4 +431,3 @@ impl<W: bun_io::Write> bun_io::Write for BrotliWriter<'_, W> {
         self.input_writer.flush()
     }
 }
-

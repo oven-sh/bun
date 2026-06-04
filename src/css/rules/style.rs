@@ -518,4 +518,3 @@ impl<R> StyleRule<R> {
         }
     }
 }
-

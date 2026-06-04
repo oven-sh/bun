@@ -391,4 +391,3 @@ pub enum SkipTypeOptions {
 // (`inherent_associated_types`), so the alias and empty constant are hoisted
 // to module scope.
 pub(crate) type SkipTypeOptionsBitset = enumset::EnumSet<SkipTypeOptions>;
-

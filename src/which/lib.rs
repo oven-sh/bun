@@ -347,4 +347,3 @@ pub fn which_win<'a>(
 
     None
 }
-

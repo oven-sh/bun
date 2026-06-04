@@ -1313,9 +1313,7 @@ pub mod sorter {
         match (a.kind as u8).cmp(&(b.kind as u8)) {
             Ordering::Equal => match a.kind {
                 // static + dynamic are sorted alphabetically
-                pattern::Tag::Static | pattern::Tag::Dynamic => {
-                    sort_by_name_string(a_name, b_name)
-                }
+                pattern::Tag::Static | pattern::Tag::Dynamic => sort_by_name_string(a_name, b_name),
                 // catch all and optional catch all must appear below dynamic
                 pattern::Tag::CatchAll | pattern::Tag::OptionalCatchAll => {
                     match a.param_count.cmp(&b.param_count) {
@@ -2472,4 +2470,3 @@ mod tests {
         }
     }
 }
-

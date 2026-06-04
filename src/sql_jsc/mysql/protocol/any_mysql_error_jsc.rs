@@ -142,4 +142,3 @@ pub(crate) fn mysql_error_to_js(
     )
     .unwrap_or_else(|ex| global_object.take_exception(ex))
 }
-

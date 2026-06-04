@@ -14,13 +14,13 @@ use bun_js_printer as js_printer;
 use bun_paths::{self, PathBuffer};
 use bun_sys::{self, Fd, File};
 
+use super::command_line_arguments::CommandLineArguments;
+use super::package_json_editor as PackageJSONEditor;
+use super::update_request::Array as UpdateRequestArray;
 use super::{
     Command, PackageManager, PatchCommitResult, Subcommand, UpdateRequest,
     attempt_to_create_package_json, install_with_manager, patch_package,
 };
-use super::command_line_arguments::CommandLineArguments;
-use super::package_json_editor as PackageJSONEditor;
-use super::update_request::Array as UpdateRequestArray;
 
 pub fn update_package_json_and_install_with_manager(
     manager: &mut PackageManager,

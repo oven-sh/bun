@@ -308,4 +308,3 @@ pub unsafe fn inflate_back_init(
 }
 
 pub type gz_header_s = struct_gz_header_s;
-

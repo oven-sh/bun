@@ -1536,4 +1536,3 @@ pub mod testing_apis {
 // `generated_js2native.rs` snake-cases `TestingAPIs` as `testing_ap_is`
 // (the converter splits the trailing `…APIs` cluster into `AP` + `Is`).
 pub use testing_apis as testing_ap_is;
-

@@ -1597,4 +1597,3 @@ fn extract_to_disk_filtered(
 
     Ok(count)
 }
-

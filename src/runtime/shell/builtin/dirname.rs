@@ -72,4 +72,3 @@ impl Dirname {
         Builtin::done(interp, cmd, exit)
     }
 }
-

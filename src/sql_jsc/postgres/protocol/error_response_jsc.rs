@@ -156,4 +156,3 @@ pub(crate) fn to_js(this: &ErrorResponse, global_object: &JSGlobalObject) -> JSV
     )
     .unwrap_or_else(|e| global_object.take_error(e))
 }
-

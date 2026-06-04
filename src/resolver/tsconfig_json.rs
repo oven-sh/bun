@@ -837,4 +837,3 @@ impl TSConfigJSON {
     // `Box<TSConfigJSON>` drop handles cleanup: PathsMap has Drop, and Box
     // frees the allocation. No explicit Drop needed.
 }
-

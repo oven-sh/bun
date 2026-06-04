@@ -474,4 +474,3 @@ fn clone_wtf_string_or_null(slice: &[u8]) -> bun_core::WTFStringImpl {
         ptr::null_mut()
     }
 }
-

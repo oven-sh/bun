@@ -2869,4 +2869,3 @@ impl GitHandler {
         Ok(false)
     }
 }
-

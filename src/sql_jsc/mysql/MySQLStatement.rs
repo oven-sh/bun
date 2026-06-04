@@ -195,4 +195,3 @@ impl Drop for MySQLStatement {
         bun_core::scoped_log!(MySQLStatement, "MySQLStatement deinit");
     }
 }
-

@@ -932,4 +932,3 @@ impl PostgresSQLQuery {
         Ok(JSValue::UNDEFINED)
     }
 }
-

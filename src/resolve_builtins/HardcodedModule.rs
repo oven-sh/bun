@@ -781,8 +781,7 @@ const BUN_TEST_ALIASES: &[&[AliasKv]] = &[
 ];
 
 fn build_alias_map(tables: &[&[AliasKv]]) -> bun_collections::HashMap<&'static [u8], Alias> {
-    let mut map =
-        bun_collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
+    let mut map = bun_collections::HashMap::with_capacity(tables.iter().map(|t| t.len()).sum());
     for table in tables {
         for (k, v) in *table {
             // First table wins, matching the previous in-order scan

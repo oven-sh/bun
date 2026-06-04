@@ -144,4 +144,3 @@ pub(crate) fn postgres_error_to_js(
         Err(e) => global.take_error(e),
     }
 }
-

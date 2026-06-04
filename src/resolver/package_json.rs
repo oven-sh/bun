@@ -3088,4 +3088,3 @@ fn is_invalid_segment(segment: &[u8]) -> bool {
     let d = &decoded[..len];
     d == b"." || d == b".." || d == b"node_modules"
 }
-

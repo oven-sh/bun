@@ -306,7 +306,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
 
             // Truncate `data.items` to `j` by reslicing the arena view.
             data.items.truncate(j);
-
         } else {
             // This is a re-export and the symbols created here are used to reference
             for item in items.iter_mut() {

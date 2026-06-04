@@ -2257,4 +2257,3 @@ impl Archiver {
         Self::extract_to_dir(file_buffer, dir, ctx, appender, options)
     }
 }
-

@@ -517,4 +517,3 @@ pub(crate) type Queue = bun_collections::linear_fifo::LinearFifo<
 >;
 
 use crate::postgres::postgres_sql_connection::{SslMode, TlsStatus};
-

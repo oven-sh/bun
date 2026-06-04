@@ -1105,4 +1105,3 @@ pub struct MinifyContext<'a, 'bump> {
     /// will expand to, checked against [`MAX_SELECTOR_EXPANSION`].
     pub selector_expansion_total: u32,
 }
-

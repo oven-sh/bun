@@ -3775,4 +3775,3 @@ pub fn encode_json_string(w: &mut impl fmt::Write, s: &[u8]) -> fmt::Result {
     encode_json_string_chars(w, s)?;
     w.write_char('"')
 }
-

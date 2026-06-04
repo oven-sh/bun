@@ -185,4 +185,3 @@ impl Drop for PostgresSQLStatement {
         // not here — Drop must not free `self`'s storage.
     }
 }
-

@@ -6763,4 +6763,3 @@ pub struct RootPathPair<'b> {
     pub base_path: &'b [u8],
     pub package_json: *const PackageJSON,
 }
-

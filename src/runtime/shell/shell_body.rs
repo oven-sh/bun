@@ -26,8 +26,8 @@ pub use super::subproc; // declared once in `shell/mod.rs`
 
 pub use super::{EnvMap, EnvStr, ParsedShellScript};
 pub use interpret::{ExitCode, Interpreter, unreachable_state};
-pub use subproc::ShellSubprocess as Subprocess;
 pub use interpret::{IOReader, IOWriter};
+pub use subproc::ShellSubprocess as Subprocess;
 
 pub use super::yield_;
 pub use yield_::Yield;

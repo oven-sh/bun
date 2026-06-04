@@ -249,7 +249,6 @@ pub(crate) unsafe extern "C" fn Bun__encoding__toString(
     }
 }
 
-
 pub(crate) fn to_string(
     input: &[u8],
     global_object: &JSGlobalObject,
@@ -521,7 +520,6 @@ pub(crate) unsafe fn write_u8<const ENCODING: u8>(
     }
 
     // TODO: increase temporary buffer size for larger amounts of data
-
 
     // SAFETY: caller guarantees `input[..len]` and `to_ptr[..to_len]` are valid; len/to_len > 0.
     let (input_slice, to_slice) = unsafe {

@@ -46,4 +46,3 @@ pub enum TailwindStyleName {
     /// your stylesheet by default.
     Variants,
 }
-

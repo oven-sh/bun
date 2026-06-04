@@ -818,4 +818,3 @@ impl BinaryExpressionVisitor {
         None
     }
 }
-

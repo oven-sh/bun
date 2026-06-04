@@ -455,4 +455,3 @@ pub fn check_server_identity(ssl_ptr: &mut boring::SSL, hostname: &[u8]) -> bool
     }
     false
 }
-

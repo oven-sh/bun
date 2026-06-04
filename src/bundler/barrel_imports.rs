@@ -815,4 +815,3 @@ pub(crate) fn schedule_barrel_deferred_imports(
 fn persist_barrel_export(dev: &crate::dispatch::DevServerHandle, barrel_path: &[u8], alias: &[u8]) {
     dev.register_barrel_export(barrel_path, alias)
 }
-

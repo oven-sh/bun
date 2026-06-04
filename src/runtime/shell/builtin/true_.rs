@@ -18,4 +18,3 @@ impl True {
         Yield::done()
     }
 }
-

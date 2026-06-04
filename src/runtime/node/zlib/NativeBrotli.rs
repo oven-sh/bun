@@ -53,8 +53,8 @@ mod _impl {
     use core::ffi::c_uint;
 
     use bun_jsc::{
-        CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsRef, JsResult,
-        RangeErrorOptions, WorkPoolTask,
+        CallFrame, ErrorCode, JSGlobalObject, JSValue, JsCell, JsRef, JsResult, RangeErrorOptions,
+        WorkPoolTask,
     };
 
     use crate::node::node_zlib_binding::{CompressionStream, CountedKeepAlive, Error};

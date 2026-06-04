@@ -1152,7 +1152,6 @@ pub mod ssl_wrapper {
         /// `SSL_get_verify_result` and maps it onto the C `us_bun_verify_error_t`.
         fn us_ssl_socket_verify_error_from_ssl(ssl: *mut boring_sys::SSL) -> us_bun_verify_error_t;
     }
-
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

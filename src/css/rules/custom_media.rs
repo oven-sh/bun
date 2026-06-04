@@ -34,4 +34,3 @@ impl CustomMediaRule {
         Ok(())
     }
 }
-

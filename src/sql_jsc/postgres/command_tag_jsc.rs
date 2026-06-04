@@ -37,4 +37,3 @@ impl<'a> CommandTagJsc for CommandTag<'a> {
         }
     }
 }
-

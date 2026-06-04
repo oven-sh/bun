@@ -1111,4 +1111,3 @@ use bun_ast::LocalKind;
 use bun_ast::binding::Data as BindingData;
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
-

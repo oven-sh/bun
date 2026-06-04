@@ -684,4 +684,3 @@ fn append_paths(set: &mut StringSet, git_root: &[u8], stdout: &[u8]) {
 }
 
 use crate::Command::HotReload;
-

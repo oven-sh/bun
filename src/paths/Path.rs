@@ -166,7 +166,6 @@ pub mod options {
             }
         }
     }
-
 }
 
 use options::{CheckLength, Error as PathError, Kind, PathSeparators};

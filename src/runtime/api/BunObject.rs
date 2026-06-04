@@ -3103,4 +3103,3 @@ pub fn create_bun_stderr(global_this: &JSGlobalObject) -> JSValue {
 pub fn create_bun_stdout(global_this: &JSGlobalObject) -> JSValue {
     stdio_stores::stdout(global_this)
 }
-

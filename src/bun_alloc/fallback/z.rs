@@ -63,12 +63,7 @@ impl Z {
         None
     }
 
-    pub fn free(
-        self,
-        buf: &mut [u8],
-        alignment: Alignment,
-        return_address: usize,
-    ) {
+    pub fn free(self, buf: &mut [u8], alignment: Alignment, return_address: usize) {
         c_allocator.raw_free(buf, alignment, return_address);
     }
 }

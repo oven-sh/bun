@@ -81,8 +81,7 @@ impl FallbackEntryPoint {
                 if count < entry.code_buffer.len() {
                     let buf = &mut entry.code_buffer;
                     buf[..prefix.len()].copy_from_slice(prefix);
-                    buf[prefix.len()..prefix.len() + input_path.len()]
-                        .copy_from_slice(input_path);
+                    buf[prefix.len()..prefix.len() + input_path.len()].copy_from_slice(input_path);
                     buf[prefix.len() + input_path.len()..count].copy_from_slice(suffix);
                     entry.source =
                         bun_ast::Source::init_path_string(input_path, &entry.code_buffer[..count]);

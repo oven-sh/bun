@@ -5,11 +5,6 @@
 
 use core::ffi::c_void;
 
-use bun_core::{self, Output};
-use bun_io as r#async;
-use bun_io;
-use bun_jsc as jsc;
-use bun_sys;
 #[cfg(unix)]
 use crate::api::bun::process::PosixStdio as Stdio;
 #[cfg(unix)]
@@ -17,6 +12,11 @@ use crate::api::bun::process::SpawnResultExt as _;
 #[cfg(not(unix))]
 use crate::api::bun::process::WindowsStdio as Stdio;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
+use bun_core::{self, Output};
+use bun_io as r#async;
+use bun_io;
+use bun_jsc as jsc;
+use bun_sys;
 
 use super::channel::{Channel, ChannelOwner};
 use super::coordinator::Coordinator;
@@ -509,4 +509,3 @@ impl Drop for WorkerPipe {
         // Body intentionally empty: `BufferedReader: Drop` handles cleanup.
     }
 }
-

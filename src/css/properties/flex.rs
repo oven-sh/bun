@@ -7,8 +7,8 @@ use css::css_properties::align::{AlignContent, AlignItems, AlignSelf, JustifyCon
 use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns};
 use css::prefixes::Feature as PrefixFeature;
-use css::{PrintErr, Printer, VendorPrefix};
 use css::prefixes::is_flex_2009;
+use css::{PrintErr, Printer, VendorPrefix};
 
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.

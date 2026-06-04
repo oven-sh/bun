@@ -902,4 +902,3 @@ impl<'a, T> ArenaVecExt<'a, T> for crate::BabyVec<'a, T> {
         *self.allocator()
     }
 }
-

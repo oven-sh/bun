@@ -149,4 +149,3 @@ pub mod uv_e {
 // kernel entry goes through libc, so all widths — including `usize` — route to
 // the thread-local `__error()` slot via the shared macro.
 impl_get_errno_libc!(i32, u32, isize, usize, i64);
-

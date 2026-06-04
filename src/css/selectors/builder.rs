@@ -217,4 +217,3 @@ pub(crate) fn split_from_end<T>(s: &[T], at: usize) -> (&[T], &[T]) {
     let midpoint = s.len() - at;
     (&s[0..midpoint], &s[midpoint..])
 }
-

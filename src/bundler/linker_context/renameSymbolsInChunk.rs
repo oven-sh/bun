@@ -420,4 +420,3 @@ pub unsafe fn rename_symbols_in_chunk(
 pub use crate::DeferredBatchTask;
 pub use crate::ParseTask;
 pub use crate::ThreadPool;
-

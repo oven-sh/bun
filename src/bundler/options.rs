@@ -1,6 +1,7 @@
 //! This file is mostly the API schema but with all the options normalized.
 //! Normalization is necessary because most fields in the API schema are optional
 
+use bun_analytics as analytics;
 use bun_collections::{MultiArrayList, StringArrayHashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output};
@@ -10,9 +11,8 @@ use bun_options_types::schema::api;
 use bun_resolver::fs as Fs;
 use bun_resolver::fs::PathResolverExt as _;
 use bun_resolver::package_json::{MacroMap as MacroRemap, PackageJSON};
-use std::borrow::Cow;
-use bun_analytics as analytics;
 use enum_map::EnumMap;
+use std::borrow::Cow;
 
 pub use crate::defines;
 pub use defines::Define;
@@ -2739,4 +2739,3 @@ impl From<PathTemplateConst> for PathTemplate {
         }
     }
 }
-

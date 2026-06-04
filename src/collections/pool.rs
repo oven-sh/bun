@@ -106,7 +106,6 @@ impl<T> Node<T> {
         }
         count
     }
-
 }
 
 pub struct SinglyLinkedList<T> {

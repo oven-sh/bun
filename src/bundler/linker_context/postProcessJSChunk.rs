@@ -1394,4 +1394,3 @@ pub fn generate_entry_point_tail_js<'a>(
         decls: Box::default(),
     }
 }
-

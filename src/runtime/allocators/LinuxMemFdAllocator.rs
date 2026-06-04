@@ -277,14 +277,7 @@ impl LinuxMemFdAllocator {
 
             // SAFETY: `memfd` is the `heap::alloc` pointer
             // (full provenance) with one live ref — required by `Self::alloc`.
-            match unsafe {
-                Self::alloc(
-                    memfd,
-                    bytes.len(),
-                    0,
-                    libc::MAP_SHARED,
-                )
-            } {
+            match unsafe { Self::alloc(memfd, bytes.len(), 0, libc::MAP_SHARED) } {
                 Ok(res) => Ok(res),
                 Err(err) => {
                     // SAFETY: we still own the +1 from `into_raw()`; release it

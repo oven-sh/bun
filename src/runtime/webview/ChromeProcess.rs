@@ -403,7 +403,6 @@ fn spawn(
     stderr_inherit: bool,
 ) -> Result<Fd, bun_core::Error> {
     {
-
         let chrome = find_chrome(explicit_path).ok_or_else(|| bun_core::err!("ChromeNotFound"))?;
         scoped_log!(
             Chrome,

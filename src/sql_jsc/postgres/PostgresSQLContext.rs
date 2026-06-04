@@ -25,4 +25,3 @@ impl PostgresSQLContext {
         JSValue::UNDEFINED
     }
 }
-

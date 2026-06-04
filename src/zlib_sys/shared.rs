@@ -174,4 +174,3 @@ pub type z_stream_s = zStream_struct;
 // allocators, and `DataType` (a `#[repr(C)]` enum with `Binary = 0`). All-zero
 // is the documented pre-`inflateInit`/`deflateInit` state (S021).
 unsafe impl bun_core::ffi::Zeroable for zStream_struct {}
-

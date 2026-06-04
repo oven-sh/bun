@@ -2557,4 +2557,3 @@ fn preserve_version_prefix(
     }
     Ok(Box::from(new_version))
 }
-

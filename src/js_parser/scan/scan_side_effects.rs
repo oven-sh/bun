@@ -1072,4 +1072,3 @@ impl SideEffects {
         }
     }
 }
-

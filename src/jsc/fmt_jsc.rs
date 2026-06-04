@@ -65,4 +65,3 @@ pub mod js_bindings {
         Ok(String::clone_utf8(buffer.list.as_slice()))
     }
 }
-

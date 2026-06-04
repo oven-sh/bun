@@ -952,4 +952,3 @@ impl SizeHandler {
         self.flushed_properties = SizeProperty::empty();
     }
 }
-

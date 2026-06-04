@@ -139,4 +139,3 @@ impl<'a> Reader<'a> {
         s
     }
 }
-

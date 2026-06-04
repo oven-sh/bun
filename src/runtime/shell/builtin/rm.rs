@@ -1753,4 +1753,3 @@ impl crate::shell::interpreter::ShellTaskCtx for ShellRmTask {
         Self::run_from_main_thread(this, interp)
     }
 }
-

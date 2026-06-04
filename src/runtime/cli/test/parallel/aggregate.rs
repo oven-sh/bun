@@ -154,7 +154,6 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
     paths: &[&[u8]],
     opts: &mut CodeCoverageOptions,
 ) {
-
     let mut by_file: StringArrayHashMap<FileCoverage> = StringArrayHashMap::default();
 
     for &path in paths {
@@ -427,4 +426,3 @@ fn write_range<const COLORS: bool>(w: &mut impl std::io::Write, first: &mut bool
         let _ = write!(w, "{}{}-{}", Output::pretty_fmt::<COLORS>("<red>"), a, b);
     }
 }
-

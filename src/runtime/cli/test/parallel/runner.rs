@@ -94,7 +94,6 @@ pub fn run_as_coordinator(
         return Ok(false);
     }
 
-
     // Owned path bytes. ZStr is a borrow header; we must own the backing
     // storage here. Drop recursively removes the directory once the run
     // finishes.
@@ -827,4 +826,3 @@ pub fn worker_emit_test_done(file_idx: u32, formatted_line: &[u8]) {
     wf.str(formatted_line);
     cmds.send(wf.finish());
 }
-

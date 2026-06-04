@@ -815,5 +815,4 @@ mod transition_handler_body {
                 | PropertyId::Transition(..)
         )
     }
-
 } // mod transition_handler_body

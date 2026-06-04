@@ -21,4 +21,3 @@ impl JsonToJs for Data {
         Ok(parse_result)
     }
 }
-

@@ -1010,4 +1010,3 @@ pub fn wyhash_url_safe<'a>(
 
     &slice_to_write[0..base64_encoded_hash_len]
 }
-

@@ -117,4 +117,3 @@ pub mod Classes {
     pub use bun_sql_jsc::postgres::PostgresSQLConnection;
     pub use bun_sql_jsc::postgres::PostgresSQLQuery;
 }
-

@@ -70,7 +70,6 @@ impl MachoFile {
         }))
     }
 
-
     pub fn write_section(&mut self, data: &[u8]) -> Result<(), MachoError> {
         let blob_alignment: u64 = 16 * 1024;
         const PAGE_SIZE: u64 = 1 << 12;
@@ -638,7 +637,6 @@ impl MachoSigner {
             text_seg,
         }))
     }
-
 
     const IDENTIFIER: &'static [u8] = b"a.out\x00";
     const SIGNATURE_PAGE_SIZE: usize = 1 << 12;

@@ -1485,10 +1485,10 @@ fn is_identifier_or_numeric_constant_or_property_access(expr: &js_ast::Expr) -> 
 /// - a `ECall` anywhere always needs the parens — nothing else isolates a call
 ///   from the `new` (`new a().b()` → `(new a()).b()`);
 /// - an optional-chain link needs the parens only while it still reaches the top
-///   of the chain. Once a non-optional access sits above it, the printer's
-///   `HasNonOptionalChainParent` handling already wraps that optional chain
-///   (`(a?.b).c`), and everything below it is inside those parens, so no outer
-///   wrap is needed and the walk can stop.
+///   of the chain. Once a non-optional access (or a tagged template) sits above
+///   it, the inner chain is already parenthesized on its own — by the printer's
+///   `HasNonOptionalChainParent` handling (`(a?.b).c`) or the template-tag wrap
+///   (`(a?.b)`t``) — so it is inside those parens and no outer wrap is needed.
 fn new_callee_needs_parens(expr: &js_ast::Expr) -> bool {
     use js_ast::ExprData;
     let mut current = expr;
@@ -1514,7 +1514,14 @@ fn new_callee_needs_parens(expr: &js_ast::Expr) -> bool {
                 current = &e.target;
             }
             ExprData::ETemplate(e) => match &e.tag {
-                Some(tag) => current = tag,
+                // A tagged template isolates an optional-chain tag the same way a
+                // non-optional access does: the tag is independently parenthesized
+                // when printed (`(a?.b)`t``), making the whole template a member
+                // expression `new` accepts, so no outer wrap is needed below it.
+                Some(tag) => {
+                    crossed_non_optional_access = true;
+                    current = tag;
+                }
                 None => return false,
             },
             _ => return false,

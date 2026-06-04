@@ -1015,6 +1015,13 @@ function foo() {}
       exp("new ((a?.b).c.d)();", "new (a?.b).c.d");
       exp("new ((a?.b)[c])();", "new (a?.b)[c]");
       exp("new ((a()?.b).c)();", "new (a()?.b).c");
+
+      // A tagged template likewise isolates an optional-chain tag (it gets its own
+      // parens), so the whole template is a member expression and no outer parens
+      // are needed — but a call in the tag still forces them.
+      exp("new ((a?.b)`tpl`)();", "new (a?.b)`tpl`");
+      exp("new ((a?.b)`tpl`.c)();", "new (a?.b)`tpl`.c");
+      exp("new (a()`tpl`)();", "new (a()`tpl`)");
     });
 
     it("wraps an optional-chain tag of a template literal", () => {

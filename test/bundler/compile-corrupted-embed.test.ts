@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
+import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 import { closeSync, copyFileSync, openSync, readSync, writeSync } from "node:fs";
 import { join } from "node:path";
-import { bunEnv, bunExe, isLinux, isMacOS, isWindows, tempDir } from "harness";
 
 // A standalone executable whose embedded module-graph payload got corrupted
 // after the build (truncated download, AV rewriting, hex editing, ...) must

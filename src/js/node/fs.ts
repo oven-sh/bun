@@ -1022,7 +1022,8 @@ class Dir {
       if (!stats.isDirectory()) {
         const err = new Error(`ENOTDIR: not a directory, opendir '${path}'`);
         err.code = "ENOTDIR";
-        err.errno = -20;
+        // libuv's UV_ENOTDIR: -ENOTDIR on POSIX, -4052 on Windows
+        err.errno = process.platform === "win32" ? -4052 : -20;
         err.syscall = "opendir";
         err.path = path;
         throw err;

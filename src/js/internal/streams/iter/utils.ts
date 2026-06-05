@@ -2,7 +2,7 @@
 // Trimmed to the helpers needed by pull/consumers/FileHandle (the push,
 // broadcast, and share families are not ported).
 
-const { isUint8Array, isSharedArrayBuffer } = require("node:util/types");
+const { isUint8Array } = require("node:util/types");
 
 // Shared TextEncoder instance for string conversion.
 const encoder = new TextEncoder();
@@ -42,8 +42,7 @@ function concatBytes(chunks) {
     const chunk = chunks[0];
     if (chunk.byteOffset === 0) {
       const buf = chunk.buffer;
-      const bufByteLength = isSharedArrayBuffer(buf) ? buf.byteLength : buf.byteLength;
-      if (chunk.byteLength === bufByteLength) {
+      if (chunk.byteLength === buf.byteLength) {
         return chunk;
       }
     }

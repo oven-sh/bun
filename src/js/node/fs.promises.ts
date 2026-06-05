@@ -71,6 +71,29 @@ function watch(
     return err;
   }
 
+  // node never creates the native handle when the signal is already
+  // aborted (its async generator throws on first next() before opening
+  // it); creating one here would leak it, since the "abort" event never
+  // fires for a pre-aborted signal.
+  if (signal?.aborted) {
+    return {
+      [Symbol.asyncIterator]() {
+        let closed = false;
+        return {
+          async next() {
+            if (closed) return { value: undefined, done: true };
+            closed = true;
+            throw makeAbortError();
+          },
+          return() {
+            closed = true;
+            return { value: undefined, done: true };
+          },
+        };
+      },
+    };
+  }
+
   const watcher = fs.watch(filename, options || {}, (eventType: string, filename: string | Buffer | undefined) => {
     if (eventType !== "close" && eventType !== "error" && filename != null && ignoreMatcher?.(filename)) {
       return;
@@ -1051,6 +1074,11 @@ function asyncWrap(fn: any, name: string) {
           }
           // Partial write - bytes are on disk. Must complete or throw.
           writeSyncAll(chunk, bytesWritten, length - bytesWritten, position >= 0 ? position + bytesWritten : -1);
+          // writeSyncAll only advances its local position; move the cursor
+          // past the whole chunk so the next write doesn't overwrite its tail.
+          if (position >= 0) {
+            pos = position + length;
+          }
           if (bytesRemaining > 0) bytesRemaining -= length;
           return true;
         },
@@ -1088,6 +1116,11 @@ function asyncWrap(fn: any, name: string) {
             rest.byteLength - bytesWritten,
             position >= 0 ? position + bytesWritten : -1,
           );
+          // writeSyncAll only advances its local position; move the cursor
+          // past all chunks so the next write doesn't overwrite their tail.
+          if (position >= 0) {
+            pos = position + totalSize;
+          }
           if (bytesRemaining > 0) bytesRemaining -= totalSize;
           return true;
         },

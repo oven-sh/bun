@@ -16,6 +16,24 @@ describe("fs.opendir", () => {
   it("throws if callback is not provided", () => {
     expect(() => fs.opendir("foo")).toThrow(/The "callback" argument must be of type function/);
   });
+
+  it("opendirSync on a file throws ENOTDIR with libuv's platform errno", () => {
+    const file = path.join(os.tmpdir(), "opendir-enotdir-" + String(Math.random() * 100).substring(0, 6) + ".txt");
+    fs.writeFileSync(file, "not a directory");
+    try {
+      let err: any;
+      try {
+        fs.opendirSync(file);
+      } catch (e) {
+        err = e;
+      }
+      expect(err?.code).toBe("ENOTDIR");
+      expect(err?.errno).toBe(process.platform === "win32" ? -4052 : -20);
+      expect(err?.syscall).toBe("opendir");
+    } finally {
+      fs.rmSync(file, { force: true });
+    }
+  });
 });
 
 describe("fs.Dir", () => {

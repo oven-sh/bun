@@ -62,13 +62,6 @@ const tests = [
   }, 0),
 
   common.mustCallAtLeast(function firstRun() {
-    // Note for Bun: skipped on Windows. A domain-handled uncaught exception
-    // thrown synchronously from the main module leaves the process hanging
-    // there (pre-existing event loop bug, same one tracked by the
-    // zeroExitWithUncaughtHandler windows-todo in
-    // test/js/node/process/process.test.js).
-    if (common.isWindows) return;
-
     const d = domain.create();
 
     d.on('error', common.mustCall());
@@ -106,9 +99,6 @@ const tests = [
   }, 0),
 
   common.mustCallAtLeast(function firstRunOnlyTopLevelErrorHandler() {
-    // Note for Bun: skipped on Windows, like firstRun above.
-    if (common.isWindows) return;
-
     const d = domain.create();
     const d2 = domain.create();
 
@@ -122,9 +112,6 @@ const tests = [
   }, 0),
 
   common.mustCallAtLeast(function firstRunNestedWithErrorHandler() {
-    // Note for Bun: skipped on Windows, like firstRun above.
-    if (common.isWindows) return;
-
     const d = domain.create();
     const d2 = domain.create();
 

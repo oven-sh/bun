@@ -22,15 +22,7 @@
 'use strict';
 // Make sure that the nested domains don't cause the domain stack to grow
 
-const common = require('../common');
-// Note for Bun: skipped on Windows. A domain-handled uncaught exception
-// thrown synchronously from the main module leaves the process hanging
-// there (pre-existing event loop bug, same one tracked by the
-// zeroExitWithUncaughtHandler windows-todo in
-// test/js/node/process/process.test.js).
-if (common.isWindows) {
-  common.skip('domain-handled uncaught exception from the main module hangs on Windows');
-}
+require('../common');
 const assert = require('assert');
 const domain = require('domain');
 

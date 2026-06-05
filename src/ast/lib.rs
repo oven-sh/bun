@@ -707,8 +707,8 @@ pub struct Location {
 
 /// Deep-dupe a `namespace`, interning the common static values so
 /// `Location::clone` stays allocation-free on the hot path.
-fn dupe_namespace(ns: &Cow<'static, [u8]>) -> Cow<'static, [u8]> {
-    match &**ns {
+fn dupe_namespace(ns: &[u8]) -> Cow<'static, [u8]> {
+    match ns {
         b"file" => Cow::Borrowed(b"file"),
         b"" => Cow::Borrowed(b""),
         other => Cow::Owned(other.to_vec()),
@@ -794,16 +794,20 @@ impl Location {
     pub fn clone_with_builder(&self, builder: &mut StringBuilder) -> Location {
         // SAFETY: per the caller contract, the builder's buffer outlives the
         // returned `Location` and the bytes were reserved by `Self::count`.
+        let (file, namespace, line_text) = unsafe {
+            (
+                builder.append_raw(&self.file),
+                builder.append_raw(&self.namespace),
+                self.line_text.as_deref().map(|t| builder.append_raw(t)),
+            )
+        };
         Location {
-            file: Cow::Borrowed(unsafe { builder.append_raw(&self.file) }),
-            namespace: Cow::Borrowed(unsafe { builder.append_raw(&self.namespace) }),
+            file: Cow::Borrowed(file),
+            namespace: Cow::Borrowed(namespace),
             line: self.line,
             column: self.column,
             length: self.length,
-            line_text: self
-                .line_text
-                .as_deref()
-                .map(|t| Cow::Borrowed(unsafe { builder.append_raw(t) })),
+            line_text: line_text.map(Cow::Borrowed),
             offset: self.offset,
         }
     }

@@ -2288,8 +2288,8 @@ pub struct ToCssResult {
     pub code: Vec<u8>,
     /// A map of CSS module exports, if the `css_modules` option was enabled
     /// during parsing.
-    // TODO: arena lifetime — CssModuleExports/References borrow the
-    // parser arena. `'static` placeholder until `<'bump>` threads.
+    // TODO: arena lifetime — `'static` placeholder until `Printer` splits the
+    // writer lifetime from the arena lifetime `'a`.
     pub exports: Option<CssModuleExports<'static>>,
     /// A map of CSS module references, if the `css_modules` config had
     /// `dashed_idents` enabled.
@@ -2299,9 +2299,10 @@ pub struct ToCssResult {
     pub dependencies: Option<Vec<Dependency>>,
 }
 
-pub struct ToCssResultInternal {
-    pub exports: Option<CssModuleExports<'static>>,
-    pub references: Option<CssModuleReferences<'static>>,
+/// Like `ToCssResult`, but with the css-module maps at their real borrowed lifetime.
+pub struct ToCssResultInternal<'a> {
+    pub exports: Option<CssModuleExports<'a>>,
+    pub references: Option<CssModuleReferences<'a>>,
     pub dependencies: Option<Vec<Dependency>>,
 }
 
@@ -2631,7 +2632,7 @@ mod stylesheet_impl {
             import_info: Option<ImportInfo<'a>>,
             local_names: Option<&'a LocalsResultsMap>,
             symbols: &'a bun_ast::symbol::Map,
-        ) -> PrintResult<ToCssResultInternal> {
+        ) -> PrintResult<ToCssResultInternal<'a>> {
             // Note: PrinterOptions has `&mut SourceMap` and so isn't Copy; capture
             // the lone field we re-read after moving `options` into Printer::new.
             let project_root = options.project_root;
@@ -2657,7 +2658,7 @@ mod stylesheet_impl {
             &'a self,
             printer: &mut Printer<'a>,
             project_root: Option<&[u8]>,
-        ) -> Result<ToCssResultInternal, PrintErr> {
+        ) -> Result<ToCssResultInternal<'a>, PrintErr> {
             // #[cfg(feature = "sourcemap")] { printer.sources = Some(&self.sources); }
             // #[cfg(feature = "sourcemap")] if printer.source_map.is_some() { ... }
 
@@ -2687,8 +2688,16 @@ mod stylesheet_impl {
                     references_mut,
                 ));
 
-                self.rules.to_css(printer)?;
-                printer.newline()?;
+                // `css_module` holds a pointer-detached `&mut references`; clear
+                // it before any return out of the frame that owns `references`.
+                if let Err(e) = self.rules.to_css(printer) {
+                    printer.css_module = None;
+                    return Err(e);
+                }
+                if let Err(e) = printer.newline() {
+                    printer.css_module = None;
+                    return Err(e);
+                }
 
                 let dependencies = printer.dependencies.take().map(|v| v.into_iter().collect());
                 let exports = core::mem::take(
@@ -2698,19 +2707,6 @@ mod stylesheet_impl {
                 // moving `references` into the result.
                 printer.css_module = None;
 
-                // SAFETY: `'bump`-erasure — `ToCssResultInternal` carries `'static`
-                // placeholders for `CssModuleExports`/`References` until the arena
-                // lifetime threads (see field TODO at the struct def).
-                let exports = unsafe {
-                    core::mem::transmute::<CssModuleExports<'_>, CssModuleExports<'static>>(exports)
-                };
-                // SAFETY: same `'bump`-erasure as `exports` above; the backing arena
-                // outlives the returned `ToCssResultInternal`.
-                let references = unsafe {
-                    core::mem::transmute::<CssModuleReferences<'_>, CssModuleReferences<'static>>(
-                        references,
-                    )
-                };
                 return Ok(ToCssResultInternal {
                     dependencies,
                     exports: Some(exports),
@@ -2739,7 +2735,12 @@ mod stylesheet_impl {
             // Make sure we always have capacity > 0: https://github.com/napi-rs/napi-rs/issues/1124.
             // PERF: this always heap-allocates — profile if hot.
             let mut dest: Vec<u8> = Vec::with_capacity(1);
-            let result = self.to_css_with_writer(
+            // Destructure in place so the writer borrow ends before `dest` moves.
+            let ToCssResultInternal {
+                exports,
+                references,
+                dependencies,
+            } = self.to_css_with_writer(
                 arena,
                 &mut dest,
                 options,
@@ -2747,11 +2748,22 @@ mod stylesheet_impl {
                 local_names,
                 symbols,
             )?;
+            // SAFETY: the maps only borrow `self` and `arena`, both of which
+            // outlive the returned `ToCssResult`.
+            let exports = exports.map(|exports| unsafe {
+                core::mem::transmute::<CssModuleExports<'_>, CssModuleExports<'static>>(exports)
+            });
+            // SAFETY: same as `exports` above.
+            let references = references.map(|references| unsafe {
+                core::mem::transmute::<CssModuleReferences<'_>, CssModuleReferences<'static>>(
+                    references,
+                )
+            });
             return Ok(ToCssResult {
                 code: dest,
-                dependencies: result.dependencies,
-                exports: result.exports,
-                references: result.references,
+                dependencies,
+                exports,
+                references,
             });
         }
 

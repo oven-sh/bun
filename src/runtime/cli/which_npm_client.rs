@@ -22,5 +22,3 @@ impl From<Tag> for &'static str {
         t.as_str()
     }
 }
-
-// ported from: src/cli/which_npm_client.zig

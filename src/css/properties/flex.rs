@@ -7,9 +7,8 @@ use css::css_properties::align::{AlignContent, AlignItems, AlignSelf, JustifyCon
 use css::css_values::length::{LengthPercentage, LengthPercentageOrAuto};
 use css::css_values::number::{CSSInteger, CSSNumber, CSSNumberFns};
 use css::prefixes::Feature as PrefixFeature;
-use css::{PrintErr, Printer, VendorPrefix};
-// Zig: `const isFlex2009 = css.prefixes.Feature.isFlex2009;`
 use css::prefixes::is_flex_2009;
+use css::{PrintErr, Printer, VendorPrefix};
 
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
 /// A value for the [flex-direction](https://www.w3.org/TR/2018/CR-css-flexbox-1-20181119/#propdef-flex-direction) property.
@@ -59,9 +58,7 @@ pub struct FlexFlow {
     pub wrap: FlexWrap,
 }
 
-// (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.@"flex-flow", PropertyFieldMap);
-// TODO(port): PropertyFieldMap / VendorPrefixMap are comptime shorthand metadata consumed by
-// css::DefineShorthand reflection. Port as part of the shorthand derive.
+// Shorthand metadata recorded here for a future shorthand derive:
 //   PropertyFieldMap = { direction: PropertyIdTag::FlexDirection, wrap: PropertyIdTag::FlexWrap }
 //   VendorPrefixMap  = { direction: true, wrap: true }
 
@@ -122,8 +119,7 @@ pub struct Flex {
     pub basis: LengthPercentageOrAuto,
 }
 
-// (old using name space) css.DefineShorthand(@This(), css.PropertyIdTag.flex, PropertyFieldMap);
-// TODO(port): PropertyFieldMap / VendorPrefixMap shorthand metadata — see FlexFlow note.
+// Shorthand metadata recorded here for a future shorthand derive (see FlexFlow note):
 //   PropertyFieldMap = { grow: PropertyIdTag::FlexGrow, shrink: PropertyIdTag::FlexShrink, basis: PropertyIdTag::FlexBasis }
 //   VendorPrefixMap  = { grow: true, shrink: true, basis: true }
 
@@ -539,8 +535,6 @@ impl FlexHandler {
         dest: &mut css::DeclarationList,
         context: &mut css::PropertyHandlerContext,
     ) -> bool {
-        // TODO(port): Zig used local closures with `@field(self, prop)` comptime reflection.
-        // Ported as macro_rules! token-pasting on field idents.
         macro_rules! maybe_flush {
             ($prop:ident, $val:expr, $vp:expr) => {{
                 // If two vendor prefixes for the same property have different
@@ -558,9 +552,8 @@ impl FlexHandler {
                 maybe_flush!($prop, $val, $vp);
 
                 // Otherwise, update the value and add the prefix
-                // PORT NOTE: Zig threaded `context.arena` into `css.generic.deepClone`;
-                // every payload here is `Clone` (Copy enums / f32 / i32 / LengthPercentageOrAuto),
-                // so `.clone()` is the faithful equivalent.
+                // Every payload here is `Clone` (Copy enums / f32 / i32 /
+                // LengthPercentageOrAuto), so `.clone()` suffices.
                 if let Some(field) = &mut self.$prop {
                     field.0 = ($val).clone();
                     field.1.insert(*$vp);
@@ -645,8 +638,7 @@ impl FlexHandler {
             Property::Unparsed(val) => {
                 if Self::is_flex_property(&val.property_id) {
                     self.flush(dest, context);
-                    // PORT NOTE: Zig pushed `property.deepClone(context.arena)`. `Property`
-                    // has no blanket `deep_clone` yet; reconstruct from the matched payload.
+                    // `Property` has no blanket `deep_clone` yet; reconstruct from the matched payload.
                     let bump = dest.bump();
                     dest.push(Property::Unparsed(val.deep_clone(bump)));
                 } else {
@@ -694,8 +686,6 @@ impl FlexHandler {
         let mut order = self.order.take();
         let mut flex_order = self.flex_order.take();
 
-        // TODO(port): Zig `legacyProperty` / `singleProperty` use `@unionInit(Property, name, ...)`
-        // (comptime token-pasting). Ported as macro_rules! taking the Property variant ident.
         macro_rules! legacy_property {
             ($variant:ident, $key:expr) => {{
                 if let Some(value) = $key {
@@ -704,8 +694,7 @@ impl FlexHandler {
                     if !prefix.is_empty() {
                         dest.push(Property::$variant((val, prefix)));
                     } else {
-                        // css.generic.eql(comptime T: type, lhs: *const T, rhs: *const T)
-                        // css.generic.deinit(@TypeOf(val), &val, ctx.arena);
+                        // No prefix: the value is dropped here.
                     }
                 }
             }};
@@ -744,7 +733,6 @@ impl FlexHandler {
         }
 
         if let (Some(dir_val), Some(wrap_val)) = (&mut direction, &mut wrap) {
-            // PORT NOTE: reshaped for borrowck — Zig took simultaneous &mut into both Options.
             let dir: &FlexDirection = &dir_val.0;
             let dir_prefix: &mut VendorPrefix = &mut dir_val.1;
             let wrapinner: &FlexWrap = &wrap_val.0;
@@ -799,7 +787,6 @@ impl FlexHandler {
             // prop_2012 = Some, prop_2009 = BoxOrdinalGroup special case
             ($variant:ident, $key:expr, prop_2012 = $p2012:ident, prop_2009 = (BoxOrdinalGroup, $v2009:ident), feature = $feature:ident) => {{
                 single_property!(@inner $variant, $key, $feature, |val, _prefix, prefixes_2009: VendorPrefix| {
-                    // Zig: if T == BoxOrdinalGroup -> Some(val as i32)
                     let s: Option<i32> = Some(val);
                     if let Some(v) = s {
                         dest.push(Property::$v2009((v, prefixes_2009)));
@@ -850,10 +837,10 @@ impl FlexHandler {
                 }
             }};
         }
-        // TODO(port): single_property! macro encodes Zig's comptime `prop_2009`/`prop_2012` branches.
-        // The Zig version gates the entire 2009 block on `comptime prop_2009 != null`; here the macro
-        // arms with `prop_2009 = None` pass a no-op closure, so the `prefix.contains(NONE)` check
-        // still runs but has no effect. Verify this matches behavior exactly.
+        // The `prop_2009 = None` arms pass a no-op closure for the 2009 block.
+        // That block has no side effects other than invoking the body (it only
+        // reads `prefix`/`targets` into locals), so running it with a no-op
+        // body is behaviorally identical to skipping it.
 
         single_property!(
             FlexDirection,
@@ -890,7 +877,7 @@ impl FlexHandler {
         }
 
         if let (Some(g_val), Some(s_val), Some(b_val)) = (&mut grow, &mut shrink, &mut basis) {
-            // PORT NOTE: reshaped for borrowck
+            // reshaped for borrowck
             let g = g_val.0;
             let g_prefix: &mut VendorPrefix = &mut g_val.1;
             let s = s_val.0;
@@ -970,5 +957,3 @@ impl FlexHandler {
         )
     }
 }
-
-// ported from: src/css/properties/flex.zig

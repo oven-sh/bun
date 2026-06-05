@@ -34,7 +34,9 @@ pub unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Tas
     let (part_range, c_ptr, chunk_ptr, mut worker) =
         unsafe { crate::linker_context_mod::pending_part_range_prologue(task) };
 
-    // TODO(port): Environment.show_crash_trace — exact cfg key TBD; using feature = "show_crash_trace"
+    // Wired as a cargo feature through bun_runtime → bun_bundler →
+    // bun_crash_handler. No build profile enables the feature by
+    // default — it must be opted into explicitly.
     #[cfg(feature = "show_crash_trace")]
     let _crash_guard = {
         // `part_range.ctx.{c,chunk}` are `ParentRef`/`BackRef` — safe shared
@@ -52,7 +54,7 @@ pub unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Tas
             [part_range.part_range.source_index.get() as usize]
             .path;
         if bun_core::debug_flags::has_print_breakpoint(&path.pretty, &path.text) {
-            // @breakpoint() in Zig — no stable Rust equivalent; left as no-op
+            // No stable breakpoint intrinsic; left as a no-op.
         }
     }
 
@@ -62,7 +64,8 @@ pub unsafe fn generate_compile_result_for_js_chunk(task: *mut ThreadPoolLib::Tas
         // borrows below are scoped to the impl call so they do not overlap the
         // raw slot write that follows. (Peer tasks still hold their own `&mut`
         // views into the same `LinkerContext`/`Chunk` for read-only printer use —
-        // see TODO(ub-audit) on `unsafe impl Sync for Chunk`.)
+        // see the renamer caveat / SAFETY note on `unsafe impl Sync for
+        // Chunk` in Chunk.rs.)
         let c_mut: &mut LinkerContext = unsafe { &mut *c_ptr };
         // SAFETY: same mutable-provenance / disjoint-write contract as `c_ptr` above.
         let chunk_mut: &mut Chunk = unsafe { &mut *chunk_ptr };
@@ -89,13 +92,11 @@ fn generate_compile_result_for_js_chunk_impl(
     let _trace = bun_core::perf::trace("Bundler.generateCodeForFileInChunkJS");
     // `defer trace.end()` → handled by Drop on _trace
 
-    // Client and server bundles for Bake must be globally allocated, as they
-    // must outlive the bundle task.
-    // TODO(port): runtime arena selection (dev_server vs default) —
-    // `DevServerHandle` does not yet expose an arena handle, and
-    // `BufferWriter::init()` / `DeclCollector.decls` use the global arena
-    // in the Rust port. Once `dispatch::DevServerHandle::arena()` exists,
-    // thread it here so dev-server bundles outlive the worker arena.
+    // Client and server bundles for Bake must outlive the bundle task.
+    // `BufferWriter::init()` output is allocated from the global heap and
+    // `DeclCollector.decls` from the worker heap (`worker.arena`, alive until
+    // bundle teardown) — both outlive the task's CompileResult consumption,
+    // so a per-dev-server arena would only be a perf optimization.
     let _ = c.dev_server;
 
     // temporary_arena / stmt_list are initialized in Worker::create before any task runs.
@@ -104,14 +105,13 @@ fn generate_compile_result_for_js_chunk_impl(
         .as_mut()
         .expect("Worker.temporary_arena set in create()");
     let mut buffer_writer = js_printer::BufferWriter::init();
-    // Zig: `defer _ = arena.reset(.retain_capacity)` on a `std.heap.ArenaAllocator`
-    // (O(1) bump rewind, chunks retained). `temporary_arena` is a `MimallocArena`
+    // `temporary_arena` is a `MimallocArena`
     // here because `temp_arena` flows into `Stmt::allocate`/`Expr::allocate`/
     // `Binding::alloc`/`ArenaVec`, all of which take `&MimallocArena` concretely;
     // a plain `reset()` would be `mi_heap_destroy + mi_heap_new` *per part_range*
-    // (perf-probe: 46× for one elysia build). Use `reset_retain_with_limit` — the
-    // codebase's mapping for Zig's `.retain_*` modes (see `ModuleLoader`'s
-    // `transpile_source_code_arena`): keep the heap warm across part_ranges and
+    // (perf-probe: 46× for one elysia build). Use `reset_retain_with_limit`
+    // (see `ModuleLoader`'s `transpile_source_code_arena`):
+    // keep the heap warm across part_ranges and
     // only pay the destroy+new round-trip once accumulated scratch exceeds the
     // limit. 8 MiB matches the module-arena precedent and comfortably covers a
     // worker's full part_range set for typical bundles, so this is ~one
@@ -151,9 +151,8 @@ fn generate_compile_result_for_js_chunk_impl(
     let collect_decls = c.options.generate_bytecode_cache
         && c.options.output_format == OutputFormat::Esm
         && c.options.compile;
-    // PORT NOTE: Zig threaded `arena` (dev_server or default) into
-    // DeclCollector; the Rust DeclCollector wants `*const Arena`. Use the
-    // worker heap for now (see TODO above re: dev_server arena).
+    // DeclCollector wants `*const Arena` and uses the worker heap (see
+    // the dev-server allocation note above).
     let mut dc = DeclCollector {
         arena: worker.arena.as_ptr(),
         ..Default::default()
@@ -164,8 +163,7 @@ fn generate_compile_result_for_js_chunk_impl(
     // a direct shared borrow is fine. Heap is pinned; see `Worker::arena`.
     let worker_alloc = worker.arena.get();
     // SAFETY: split borrow of `chunk` — `generate_code_for_file_in_chunk_js` never
-    // touches `chunk.renamer` through its `chunk` parameter (Zig passes the renamer
-    // union by value alongside `*Chunk`); take a raw-ptr view so borrowck doesn't
+    // touches `chunk.renamer` through its `chunk` parameter; take a raw-ptr view so borrowck doesn't
     // see two overlapping `&mut chunk` borrows.
     let renamer_ptr: *mut crate::bun_renamer::ChunkRenamer = core::ptr::addr_of_mut!(chunk.renamer);
     let result = generate_code_for_file_in_chunk_js(
@@ -218,5 +216,3 @@ fn generate_compile_result_for_js_chunk_impl(
 
 pub use crate::DeferredBatchTask::DeferredBatchTask;
 pub use crate::ParseTask;
-
-// ported from: src/bundler/linker_context/generateCompileResultForJSChunk.zig

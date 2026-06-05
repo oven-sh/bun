@@ -18,8 +18,8 @@ use bun_ast::Index;
 pub(crate) use crate::IndexInt;
 
 pub struct Graph<'a> {
-    // bundle_v2.zig:992 allocates this from `this.arena()` (the `self.heap` arena) and
-    // bundle_v2.zig:2248 calls `pool.deinit()`, so this is arena-owned but self-referential
+    // `BundleV2::init` allocates this from the `self.heap` arena and
+    // `BundleV2::deinit` calls `pool.deinit()`, so this is arena-owned but self-referential
     // (sibling field). `BackRef` (not raw `NonNull`) so the read accessor `pool()` is
     // safe — the BACKREF invariant (pointee outlives holder) holds for the entire
     // bundle pass.
@@ -27,7 +27,6 @@ pub struct Graph<'a> {
     pub heap: &'a ThreadLocalArena,
 
     /// Mapping user-specified entry points to their Source Index
-    // PERF(port): Zig fed this ArrayList from `self.heap` (self-referential arena).
     pub entry_points: Vec<Index>,
     /// Maps entry point source indices to their original specifiers (for virtual entries resolved by plugins)
     pub entry_point_original_names: IndexStringMap,
@@ -35,8 +34,8 @@ pub struct Graph<'a> {
     pub input_files: MultiArrayList<InputFile>,
     /// Every source index has an associated Ast
     /// When a parse is in progress / queued, it is `Ast.empty`
-    // PORT NOTE: BundledAst<'arena> borrows from self.heap (sibling-field self-ref);
-    // 'static here is a placeholder. TODO(refactor): thread the lifetime via raw ptr or Ouroboros.
+    // `JSAst<'a>` borrows from the arena behind `self.heap`; `'a` ties the AST
+    // entries to that arena's lifetime (sibling-field relationship).
     pub ast: MultiArrayList<JSAst<'a>>,
 
     /// During the scan + parse phase, this value keeps a count of the remaining
@@ -78,7 +77,6 @@ pub struct Graph<'a> {
     /// pre-allocations without re-iterating the file listing.
     pub css_file_count: usize,
 
-    // PERF(port): Zig fed this ArrayList from `self.heap` (self-referential arena).
     pub additional_output_files: Vec<options::OutputFile>,
 
     pub kit_referenced_server_data: bool,
@@ -103,9 +101,8 @@ pub struct InputFile {
     pub secondary_path: AstVec<u8>,
     pub loader: options::Loader,
     pub side_effects: SideEffects,
-    // PORT NOTE: Zig stored `arena: std.mem.Allocator = bun.default_allocator`
-    // here so deinit could free `source`/`secondary_path` with the right alloc.
-    // In Rust the owned fields (Box/Vec) carry their arena; field dropped.
+    // No `arena` field — the owned fields
+    // (Box/Vec) carry their allocator.
     pub additional_files: AstVec<AdditionalFile>,
     pub unique_key_for_additional_file: Box<[u8], AstAlloc>,
     pub content_hash_for_additional_file: u64,
@@ -156,7 +153,7 @@ impl<'a> Graph<'a> {
     pub fn new(heap: &'a ThreadLocalArena) -> Self {
         Self {
             // Self-referential arena pointer; real value wired in
-            // `BundleV2::init` before any use (Graph.zig has `= undefined`).
+            // `BundleV2::init` before any use.
             pool: bun_ptr::BackRef::from(NonNull::<ThreadPool>::dangling()),
             heap,
             entry_points: Vec::new(),
@@ -181,8 +178,8 @@ impl<'a> Graph<'a> {
 impl<'a> Graph<'a> {
     /// Shared borrow of the bundler `ThreadPool`.
     ///
-    /// `pool` is arena-allocated in `BundleV2::init` (bundle_v2.zig:992) and
-    /// torn down in `BundleV2::deinit` (bundle_v2.zig:2248). It is non-null
+    /// `pool` is arena-allocated in `BundleV2::init` and
+    /// torn down in `BundleV2::deinit`. It is non-null
     /// and valid for the entire bundle pass; see LIFETIMES.tsv row 170
     /// (BACKREF). All `ThreadPool` driver methods (`schedule`, `start`,
     /// `worker_pool`, `schedule_inside_thread_pool`) take `&self`, so callers
@@ -237,10 +234,8 @@ impl<'a> Graph<'a> {
     }
 }
 
-// Spec: `side_effects: _resolver.SideEffects` (Graph.zig:74). The resolver
+// The resolver
 // crate re-exports the canonical enum from `bun_options_types`; re-export it
 // here so `InputFile` and the derived `items_side_effects()` SoA accessor share
 // the same type that `LinkerContext::mark_file_live_for_tree_shaking` expects.
 use bun_ast::SideEffects;
-
-// ported from: src/bundler/Graph.zig

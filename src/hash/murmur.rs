@@ -1,13 +1,12 @@
 //! MurmurHash family.
 //!
-//! Ported from `vendor/zig/lib/std/hash/murmur.zig`. `HashObject.zig` exposes
-//! these via `hashWrap`, which dispatches to `hashWithSeed(str, seed)` (the
+//! `HashObject.rs` exposes
+//! these via `hash_wrap`, which dispatches to `hash_with_seed(str, seed)` (the
 //! `(bytes, seed)` argument order — note the seed comes *second*, unlike
 //! XxHash). The default seed is `0xc70f6907`.
 //!
-//! The Zig version reads `len` as `@truncate(str.len)` (a `u32` truncation) for
-//! the 32-bit variants; we preserve that quirk so > 4 GiB inputs hash
-//! identically.
+//! `len` is read as a `u32` truncation of `str.len()` for the 32-bit variants
+//! — a deliberate quirk so > 4 GiB inputs keep hashing the way they always have.
 
 const DEFAULT_SEED: u32 = 0xc70f6907;
 
@@ -145,9 +144,7 @@ impl Murmur2_64 {
         let rest = str.len() & 7;
         let offset = str.len() - rest;
         if rest > 0 {
-            // Zig: @memcpy into the low bytes of a u64 then read native-endian,
-            // byte-swapping on big-endian — i.e. a little-endian load of `rest`
-            // bytes zero-extended to u64.
+            // Little-endian load of `rest` bytes zero-extended to u64.
             let mut buf = [0u8; 8];
             buf[..rest].copy_from_slice(&str[offset..]);
             let k1 = u64::from_le_bytes(buf);

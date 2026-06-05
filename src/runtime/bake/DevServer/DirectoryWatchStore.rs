@@ -6,5 +6,3 @@
 //! This structure manages those watchers, including releasing them once
 //! import resolution failures are solved.
 // TODO: when a file fixes its resolution, there is no code specifically to remove the watchers.
-
-// ported from: src/bake/DevServer/DirectoryWatchStore.zig

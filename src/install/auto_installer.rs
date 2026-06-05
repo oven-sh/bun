@@ -67,8 +67,8 @@ const _: () = {
 
 #[inline]
 fn tag_to_hooks(t: resolution::Tag) -> hooks::ResolutionTag {
-    // `resolution::Tag` is a `#[repr(transparent)]` u8 newtype (Zig
-    // `enum(u8) { ..., _ }` — non-exhaustive; lockfile bytes may carry any
+    // `resolution::Tag` is a `#[repr(transparent)]` u8 newtype
+    // (non-exhaustive; lockfile bytes may carry any
     // value). `hooks::ResolutionTag` is a closed `#[repr(u8)] enum`. A blind
     // transmute would produce an invalid enum discriminant (UB) for any byte
     // outside the named set, so map explicitly and saturate unknowns to
@@ -171,8 +171,6 @@ impl hooks::AutoInstaller for PackageManager {
         name: &[u8],
         version: &hooks::DependencyVersion,
     ) -> Option<PackageID> {
-        // Zig: `manager.lockfile.resolve(name, dependency_version)`
-        // (resolver.zig:2028) → `Lockfile.resolvePackageFromNameAndVersion`.
         self.lockfile
             .resolve_package_from_name_and_version(name, version)
     }
@@ -197,12 +195,12 @@ impl hooks::AutoInstaller for PackageManager {
         package_json: &dyn hooks::PackageJsonView,
         features: Features,
     ) -> Result<PackageID, bun_core::Error> {
-        // Port of `Package.fromPackageJSON` + `lockfile.appendPackage`
-        // (resolver.zig:2064-2073), driven entirely off the
+        // Builds a `Package` from a package.json and appends it to the
+        // lockfile, driven entirely off the
         // `PackageJsonView` interface so this impl does not need to name
         // `bun_resolver::PackageJSON` directly.
 
-        // PORT NOTE: reshaped for borrowck — `string_builder!` borrows
+        // Reshaped for borrowck — `string_builder!` borrows
         // `self.lockfile` mutably while `dep.clone_in` needs `&mut self`.
         // Use a raw pointer for the disjoint reborrow (same approach as
         // `Package::from_package_json`).
@@ -243,9 +241,7 @@ impl hooks::AutoInstaller for PackageManager {
         let dep_start = dependencies_list.len();
         debug_assert!(dependencies_list.len() == resolutions_list.len());
 
-        // Zig writes through `items.ptr[len..total_len]` and only bumps
-        // `.items.len` after the last fallible point (Package.zig:265-296).
-        // Mirror that by default-filling the tail now and `truncate`-ing back
+        // Default-fill the tail now and `truncate` back
         // to `dep_start` on the error path so a failed `clone_in` leaves both
         // buffer lengths consistent.
         let mut dependencies: &mut [dependency::Dependency] =
@@ -261,7 +257,7 @@ impl hooks::AutoInstaller for PackageManager {
             match dep.clone_in(pm_ref, source_buf, &mut string_builder) {
                 Ok(cloned) => dependencies[0] = cloned,
                 Err(e) => {
-                    // Zig: `defer string_builder.clamp()` — must run on the
+                    // `string_builder.clamp()` must run on the
                     // error path too. `truncate` drops the default-filled tail
                     // (and any already-written deps) before restoring length.
                     dependencies_list.truncate(dep_start);
@@ -278,9 +274,8 @@ impl hooks::AutoInstaller for PackageManager {
 
         package.meta.arch = package_json.arch();
         package.meta.os = package_json.os();
-        // Zig: `package.meta.setHasInstallScript(package.scripts.hasAny())`
-        // (resolver.zig:2390). `fromPackageJSON` leaves `scripts` zero-init, so
-        // `hasAny()` is always false here.
+        // `scripts` is left zero-init by this path, so
+        // has-install-script is always false here.
         package.meta.set_has_install_script(false);
 
         package.dependencies = crate::lockfile::DependencySlice::new(
@@ -305,9 +300,6 @@ impl hooks::AutoInstaller for PackageManager {
     }
 
     fn lockfile_append_root_stub(&mut self) -> Result<PackageID, bun_core::Error> {
-        // Zig: `try manager.lockfile.appendPackage(.{ .name = String.init("", ""),
-        //   .resolution = .{ .value = .{ .root = {} }, .tag = .root } })`
-        // (resolver.zig:2082).
         let pkg = Package {
             resolution: resolution::Resolution::init(resolution::TaggedValue::Root),
             ..Default::default()
@@ -356,7 +348,7 @@ impl hooks::AutoInstaller for PackageManager {
         patch_name_and_version_hash: Option<u64>,
     ) -> Result<(), bun_core::Error> {
         let r = resolution_from_hooks(resolution);
-        // Zig: resolver.zig:2123 — only the npm arm reaches this enqueue.
+        // Only the npm arm reaches this enqueue.
         // Caller passes a `Resolution` whose tag was already checked == Npm by
         // the resolver (`resolution.tag == .npm`); the field-copy bridge
         // preserves the tag/union pairing.
@@ -414,8 +406,8 @@ impl hooks::AutoInstaller for PackageManager {
         sliced: &SlicedString,
         log: Option<&mut bun_ast::Log>,
     ) -> Option<hooks::DependencyVersion> {
-        // Zig threads `pm` so `parse_with_tag` can record `npm:` aliases into
-        // `pm.known_npm_aliases` (dependency.zig:905).
+        // `pm` is threaded so `parse_with_tag` can record `npm:` aliases into
+        // `pm.known_npm_aliases`.
         dependency::parse(name, name_hash, version, sliced, log, Some(self))
     }
 
@@ -446,12 +438,6 @@ impl hooks::AutoInstaller for PackageManager {
 
 // ─── Lazy factory (resolver → install link-time hook) ─────────────────────
 //
-// Port of resolver.zig:538 `getPackageManager`'s `orelse` arm:
-//
-//     bun.HTTPThread.init(&.{});
-//     const pm = PackageManager.initWithRuntime(
-//         this.log, this.opts.install, bun.default_allocator, .{}, this.env_loader.?);
-//
 // `bun_resolver` cannot name `PackageManager` (it would create a dep cycle),
 // so it declares this `extern "Rust"` and we provide the body here. The
 // returned pointer is the process-static `PackageManager` singleton (`get()`),
@@ -464,15 +450,14 @@ impl hooks::AutoInstaller for PackageManager {
 //     the CLI-owned `Box<BunInstall>` (process-lifetime), read-only.
 //   • `env` is the resolver's unwrapped `env_loader` (Transpiler-owned,
 //     process-lifetime). `init_with_runtime` stores it as
-//     `NonNull<Loader<'static>>`; the `'static` lifetime matches Zig's
-//     untracked `*DotEnv.Loader`.
+//     `NonNull<Loader<'static>>`.
 #[unsafe(no_mangle)]
 pub(crate) unsafe fn __bun_resolver_init_package_manager(
     mut log: core::ptr::NonNull<bun_ast::Log>,
     install: Option<core::ptr::NonNull<crate::bun_schema::api::BunInstall>>,
     mut env: core::ptr::NonNull<bun_dotenv::Loader<'static>>,
 ) -> core::ptr::NonNull<dyn hooks::AutoInstaller> {
-    // Zig: `bun.HTTPThread.init(&.{})` — idempotent.
+    // Idempotent.
     bun_http::http_thread::init(&Default::default());
 
     // SAFETY: when `Some`, `install` points at a live `Api::BunInstall`

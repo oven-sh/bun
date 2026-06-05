@@ -40,8 +40,9 @@ pub struct MySQLStatement {
     pub result_count: u64,
 }
 
-impl Default for MySQLStatement {
-    fn default() -> Self {
+impl MySQLStatement {
+    /// Callers supply the signature and status; every other field takes its default.
+    pub fn new(signature: Signature, status: Status) -> Self {
         Self {
             cached_structure: CachedStructure::default(),
             ref_count: Cell::new(1),
@@ -50,16 +51,19 @@ impl Default for MySQLStatement {
             params_received: 0,
             columns: Vec::new(),
             columns_received: 0,
-            // TODO(port): Signature has no Zig default; callers must supply it. This Default
-            // impl exists only to mirror Zig's per-field defaults — prefer a `new(signature)`
-            // constructor.
-            signature: Signature::default(),
-            status: Status::Parsing,
+            signature,
+            status,
             error_response: ErrorPacket::default(),
             execution_flags: ExecutionFlags::default(),
             fields_flags: DataCellFlags::default(),
             result_count: 0,
         }
+    }
+}
+
+impl Default for MySQLStatement {
+    fn default() -> Self {
+        Self::new(Signature::empty(), Status::Parsing)
     }
 }
 
@@ -75,13 +79,11 @@ bitflags::bitflags! {
         /// been consumed. This prevents the intermediate EOF from being mistakenly
         /// treated as end-of-result-set.
         const COLUMNS_EOF_RECEIVED = 1 << 3;
-        // _: u4 padding in Zig — unused high bits.
     }
 }
 
 impl Default for ExecutionFlags {
     fn default() -> Self {
-        // Zig: header_received=false, needs_duplicate_check=true, need_to_send_params=true, columns_eof_received=false
         ExecutionFlags::NEEDS_DUPLICATE_CHECK | ExecutionFlags::NEED_TO_SEND_PARAMS
     }
 }
@@ -95,7 +97,7 @@ pub enum Status {
 }
 
 impl MySQLStatement {
-    /// Zig `.ref_count = .initExactRefs(n)` — set the initial intrusive
+    /// Set the initial intrusive
     /// refcount at construction time, before any `ref_()`/`deref()`. The
     /// `ref_count` field is private (refcount invariant), so callers building
     /// a statement with >1 owner (query + connection-map entry) go through
@@ -134,14 +136,13 @@ impl MySQLStatement {
             let field: &mut ColumnDefinition41 = &mut self.columns[remaining];
             match &field.name_or_index {
                 ColumnIdentifier::Name(name) => {
-                    // PORT NOTE: reshaped for borrowck — compute `found_existing` before
+                    // reshaped for borrowck — compute `found_existing` before
                     // mutating `field.name_or_index`.
                     let found_existing = seen_fields
                         .get_or_put(name.slice())
                         .expect("OOM")
                         .found_existing;
                     if found_existing {
-                        // Zig: field.name_or_index.deinit(); — Drop on assignment handles this.
                         field.name_or_index = ColumnIdentifier::Duplicate;
                         flags.insert(DataCellFlags::HAS_DUPLICATE_COLUMNS);
                     }
@@ -168,8 +169,8 @@ impl MySQLStatement {
         self.fields_flags = flags;
     }
 
-    // PORT NOTE: Zig returns `CachedStructure` by value (struct copy). Returning `&CachedStructure`
-    // here to avoid moving out of `self`; callers may need `.clone()` if they require
+    // Returning `&CachedStructure`
+    // to avoid moving out of `self`; callers may need `.clone()` if they require
     // an owned copy.
     pub(crate) fn structure(
         &mut self,
@@ -192,14 +193,5 @@ impl MySQLStatement {
 impl Drop for MySQLStatement {
     fn drop(&mut self) {
         bun_core::scoped_log!(MySQLStatement, "MySQLStatement deinit");
-        // Zig deinit body:
-        //   - per-column deinit + free(columns)  → Vec<ColumnDefinition41> Drop
-        //   - free(params)                       → Vec<Param> Drop
-        //   - cached_structure.deinit()          → field Drop
-        //   - error_response.deinit()            → field Drop
-        //   - signature.deinit()                 → field Drop
-        //   - bun.destroy(this)                  → handled by IntrusiveRc when refcount hits 0
     }
 }
-
-// ported from: src/sql_jsc/mysql/MySQLStatement.zig

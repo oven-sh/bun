@@ -277,7 +277,6 @@ enum NameKind {
 
 /// Parse a single cron field (e.g. "1,5-10,*/3") into a bitset.
 fn parse_field<T: BitInt>(field: &[u8], min: u8, max: u8, kind: NameKind) -> Result<T, CronError> {
-    // TODO(port): Zig used u7 for min/max/step/i; using u8 here (values 128-255 behavior may differ for step)
     if field.is_empty() {
         return Err(CronError::InvalidField);
     }
@@ -299,7 +298,11 @@ fn parse_field<T: BitInt>(field: &[u8], min: u8, max: u8, kind: NameKind) -> Res
             if s.is_empty() {
                 return Err(CronError::InvalidStep);
             }
-            bun_core::parse_decimal::<u8>(s).ok_or(CronError::InvalidStep)?
+            // Steps 128-255 overflow into InvalidStep too.
+            match bun_core::parse_decimal::<u8>(s) {
+                Some(v @ 0..=127) => v,
+                _ => return Err(CronError::InvalidStep),
+            }
         } else {
             1
         };
@@ -438,5 +441,3 @@ macro_rules! impl_bit_int {
     )*};
 }
 impl_bit_int!(u8, u16, u32, u64);
-
-// ported from: src/runtime/api/cron_parser.zig

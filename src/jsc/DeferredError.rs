@@ -41,5 +41,3 @@ impl DeferredError {
         err
     }
 }
-
-// ported from: src/jsc/DeferredError.zig

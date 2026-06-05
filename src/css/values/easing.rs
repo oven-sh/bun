@@ -52,9 +52,9 @@ enum EasingKeyword {
     StepEnd,
 }
 
-/// Zig: `Map.getASCIIICaseInsensitive(ident)`.
+/// ASCII-case-insensitive keyword lookup.
 ///
-/// PERF(port): was `phf::Map<&[u8], _>` + lowercase-into-stack-buf + `get`.
+/// PERF: chosen over `phf::Map<&[u8], _>` + lowercase-into-stack-buf + `get`.
 /// 7 keys with near-unique lengths (only len 8 collides: `ease-out` /
 /// `step-end`), so a length-gated byte match is cheaper than phf's
 /// hash+displace+verify — one `usize` compare rejects almost every miss
@@ -85,7 +85,7 @@ fn easing_map_get_any_case(ident: &[u8]) -> Option<EasingKeyword> {
 
 impl EasingFunction {
     pub fn parse(input: &mut css::Parser) -> Result<EasingFunction> {
-        // PORT NOTE: reshaped for borrowck — `try_parse(|i| i.expect_ident())`
+        // Reshaped for borrowck — `try_parse(|i| i.expect_ident())`
         // ties the returned slice to the closure's `&mut Parser` borrow, so the
         // ident can't escape. Read the next token by value (Token slices are
         // `'static` placeholders for the not-yet-threaded `'bump`) and dispatch
@@ -258,10 +258,10 @@ enum StepPositionKeyword {
     JumpEnd,
 }
 
-/// Zig: `Map.getASCIIICaseInsensitive(ident)` — lowercase into a stack buffer,
+/// ASCII-case-insensitive keyword lookup — lowercase into a stack buffer,
 /// then a length-gated byte match.
 ///
-/// PERF(port): was `phf::Map<&[u8], _>` (6 keys). phf hashes the whole slice
+/// PERF: chosen over `phf::Map<&[u8], _>` (6 keys). phf hashes the whole slice
 /// before a single bucket compare; with 6 keys spread across 5 distinct
 /// lengths (3/5/8/9/9/10), gating on `len()` rejects every miss with one
 /// `usize` compare and resolves every hit with at most one slice compare
@@ -285,8 +285,7 @@ fn step_position_map_get_any_case(ident: &[u8]) -> Option<StepPositionKeyword> {
 }
 
 impl StepPosition {
-    // TODO(port): Zig used `css.DeriveToCss(@This()).toCss` — reflection-derived serializer.
-    // Replace with `#[derive(ToCss)]` once the trait/derive exists.
+    /// Hand-written keyword serializer.
     pub fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {
         dest.write_str(<&'static str>::from(self))
     }
@@ -313,5 +312,3 @@ impl StepPosition {
         Ok(keyword)
     }
 }
-
-// ported from: src/css/values/easing.zig

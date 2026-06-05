@@ -13,7 +13,8 @@ static JS_TYPE_OF_MAP: phf::Map<&'static [u8], &'static [u8]> = phf::phf_map! {
     b"undefined" => b"undefined",
 };
 
-// TODO(port): #[bun_jsc::host_fn(method)] — must be inside `impl Expect`; shim wired by JsClass codegen
+// Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
+// `__forward_matcher!` macro in expect.rs, where the JsClass codegen host_fn shim picks it up.
 pub(crate) fn to_be_type_of(
     this: &Expect,
     global: &JSGlobalObject,
@@ -74,7 +75,7 @@ pub(crate) fn to_be_type_of(
     }
 
     let mut formatter = super::make_formatter(global);
-    // PORT NOTE: ZigFormatter borrows &mut Formatter for its lifetime; need a second formatter
+    // ZigFormatter borrows &mut Formatter for its lifetime; need a second formatter
     // so `received` and `expected_str` can coexist in one format_args!.
     let mut formatter2 = super::make_formatter(global);
     // `defer formatter.deinit()` — handled by Drop.
@@ -115,5 +116,3 @@ pub(crate) fn to_be_type_of(
         ),
     )
 }
-
-// ported from: src/test_runner/expect/toBeTypeOf.zig

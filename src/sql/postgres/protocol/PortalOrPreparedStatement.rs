@@ -18,5 +18,3 @@ impl<'a> PortalOrPreparedStatement<'a> {
         }
     }
 }
-
-// ported from: src/sql/postgres/protocol/PortalOrPreparedStatement.zig

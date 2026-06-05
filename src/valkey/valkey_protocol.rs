@@ -42,7 +42,7 @@ bun_core::named_error_set!(RedisError);
 impl From<bun_core::Error> for RedisError {
     /// Reverse of the `RedisError → bun_core::Error` interning above so the
     /// `JSValkeyClient::send` → `valkey_error_to_js` path round-trips through
-    /// `bun_core::Error` (Zig's open `!` set) without losing the variant.
+    /// `bun_core::Error` without losing the variant.
     /// Unknown names collapse to `ConnectionClosed` — the only non-`RedisError`
     /// producer on the `send` path is the offline-queue OOM, which `OutOfMemory`
     /// already covers.
@@ -234,8 +234,7 @@ impl<'a> ValkeyReader<'a> {
 
     /// Current read offset into the underlying buffer.
     ///
-    /// Mirrors the public `pos` field on the Zig `ValkeyReader` struct; callers
-    /// use this to compute how many bytes a `read_value` call consumed.
+    /// Callers use this to compute how many bytes a `read_value` call consumed.
     #[inline]
     pub fn pos(&self) -> usize {
         self.pos
@@ -803,12 +802,11 @@ pub enum SubscriptionPushMessage {
 }
 
 impl SubscriptionPushMessage {
-    // PERF(port): Zig's `bun.ComptimeStringMap` lowers this 3-entry table to a
-    // length-then-bytes switch at compile time. An earlier port used
-    // `phf::Map`, which pays a SipHash + indirect probe per lookup — overkill
-    // for three keys whose lengths are all distinct (7/9/11). A length-gated
-    // match rejects the miss case on a single `usize` compare and confirms the
-    // hit with one fixed-size byte compare, matching the Zig codegen.
+    // An earlier version used `phf::Map`, which pays a SipHash + indirect
+    // probe per lookup — overkill for three keys whose lengths are all
+    // distinct (7/9/11). A length-gated match rejects the miss case on a
+    // single `usize` compare and confirms the hit with one fixed-size byte
+    // compare.
     #[inline]
     pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
         match bytes.len() {
@@ -819,5 +817,3 @@ impl SubscriptionPushMessage {
         }
     }
 }
-
-// ported from: src/valkey/valkey_protocol.zig

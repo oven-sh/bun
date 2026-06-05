@@ -1,5 +1,5 @@
 /// https://developer.mozilla.org/en-US/docs/Web/API/Request/mode
-#[repr(u8)] // Zig: enum(u2) — Rust has no u2; u8 is the smallest repr
+#[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, Debug)]
 pub enum FetchRequestMode {
     SameOrigin,
@@ -15,9 +15,6 @@ impl FetchRequestMode {
         b"cors" => FetchRequestMode::Cors,
         b"navigate" => FetchRequestMode::Navigate,
     };
-    // `pub const toJS = @import("../http_jsc/fetch_enums_jsc.zig").fetchRequestModeToJS;`
-    // → deleted: `to_js` is provided as an extension-trait method in `bun_http_jsc`
-    //   (see PORTING.md §Idiom map, *_jsc alias rule).
+    // `to_js` is provided as an extension-trait method in `bun_http_jsc`
+    // (see PORTING.md §Idiom map, *_jsc alias rule).
 }
-
-// ported from: src/http_types/FetchRequestMode.zig

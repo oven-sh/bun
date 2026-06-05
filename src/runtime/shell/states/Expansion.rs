@@ -441,18 +441,12 @@ impl Expansion {
             // root keeps enumeration inside the policy.
             let root = glob_literal_root(&pattern);
             let denied = match root {
-                Some(root) => !policy.check_path(
-                    &cwd,
-                    root,
-                    crate::shell::sandbox::SandboxAccess::Read,
-                ),
+                Some(root) => {
+                    !policy.check_path(&cwd, root, crate::shell::sandbox::SandboxAccess::Read)
+                }
                 // Pattern has no literal directory prefix: the walk starts
                 // at the shell cwd.
-                None => !policy.check_path(
-                    &cwd,
-                    b".",
-                    crate::shell::sandbox::SandboxAccess::Read,
-                ),
+                None => !policy.check_path(&cwd, b".", crate::shell::sandbox::SandboxAccess::Read),
             };
             if denied {
                 let mut msg = Vec::new();

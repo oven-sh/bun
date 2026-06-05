@@ -109,7 +109,13 @@ impl Ls {
                 {
                     use crate::shell::sandbox::SandboxAccess;
                     let check = |path: &[u8]| {
-                        Builtin::sandbox_check_path(interp, cmd, Kind::Ls, path, SandboxAccess::Read)
+                        Builtin::sandbox_check_path(
+                            interp,
+                            cmd,
+                            Kind::Ls,
+                            path,
+                            SandboxAccess::Read,
+                        )
                     };
                     let denied = match paths_start {
                         Some(start) => (start..argc)

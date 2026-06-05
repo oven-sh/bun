@@ -120,10 +120,10 @@ pub mod builtins {
 pub use env_map::EnvMap;
 pub use env_str::EnvStr;
 pub use interpreter::{ExitCode, Interpreter, Node, NodeId, ShellExecEnv};
-pub use sandbox::{SandboxAccess, SandboxFault, SandboxPolicy};
 pub use io::IO;
 pub use io_writer as IOWriter;
 pub use ref_counted_str::RefCountedStr;
+pub use sandbox::{SandboxAccess, SandboxFault, SandboxPolicy};
 pub use yield_::Yield;
 
 /// Forward-decl task payloads for `runtime::dispatch::run_task` arms whose

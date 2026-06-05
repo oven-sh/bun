@@ -102,8 +102,9 @@ impl SandboxPolicy {
     /// never half-applies.
     pub fn from_js(global: &JSGlobalObject, options: JSValue) -> JsResult<Box<SandboxPolicy>> {
         if !options.is_object() {
-            return Err(global
-                .throw_invalid_arguments(format_args!("sandbox: expected an options object")));
+            return Err(
+                global.throw_invalid_arguments(format_args!("sandbox: expected an options object"))
+            );
         }
 
         let mut policy = Box::new(SandboxPolicy {
@@ -116,9 +117,8 @@ impl SandboxPolicy {
 
         if let Some(commands) = options.get(global, "commands")? {
             if !commands.is_object() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "sandbox: commands must be an object"
-                )));
+                return Err(global
+                    .throw_invalid_arguments(format_args!("sandbox: commands must be an object")));
             }
             if let Some(allow) = commands.get(global, "allow")? {
                 policy.allowed_builtins = parse_command_mask(global, allow, "commands.allow")?;
@@ -144,9 +144,8 @@ impl SandboxPolicy {
 
         if let Some(network) = options.get(global, "network")? {
             if !network.is_boolean() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "sandbox: network must be a boolean"
-                )));
+                return Err(global
+                    .throw_invalid_arguments(format_args!("sandbox: network must be a boolean")));
             }
             if network.to_boolean() {
                 return Err(global.throw_invalid_arguments(format_args!(
@@ -157,9 +156,8 @@ impl SandboxPolicy {
 
         if let Some(limits) = options.get(global, "limits")? {
             if !limits.is_object() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "sandbox: limits must be an object"
-                )));
+                return Err(global
+                    .throw_invalid_arguments(format_args!("sandbox: limits must be an object")));
             }
             if let Some(timeout) = limits.get(global, "timeout")? {
                 policy.timeout_ms = Some(parse_positive_int(global, timeout, "limits.timeout")?);
@@ -255,9 +253,8 @@ fn parse_positive_int(global: &JSGlobalObject, value: JSValue, what: &str) -> Js
     }
     let n = value.as_number();
     if !n.is_finite() || n <= 0.0 || n.fract() != 0.0 || n > u64::MAX as f64 {
-        return Err(global.throw_invalid_arguments(format_args!(
-            "sandbox: {what} must be a positive integer"
-        )));
+        return Err(global
+            .throw_invalid_arguments(format_args!("sandbox: {what} must be a positive integer")));
     }
     Ok(n as u64)
 }
@@ -298,10 +295,7 @@ pub fn canonicalize_path(cwd: &[u8], path: &[u8]) -> Vec<u8> {
             }
             Err(_) => {
                 // Strip the last component and retry on the parent.
-                let parent_end = match resolved[..end]
-                    .iter()
-                    .rposition(|&c| is_sep(c))
-                {
+                let parent_end = match resolved[..end].iter().rposition(|&c| is_sep(c)) {
                     Some(i) if i >= root_len => i,
                     _ => return resolved,
                 };

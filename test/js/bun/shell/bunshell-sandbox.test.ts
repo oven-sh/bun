@@ -187,13 +187,7 @@ describe("$.sandbox", () => {
       const box = $.sandbox({ fs: { read: [data] } });
 
       const inside = await box`ls ${data}`.quiet();
-      expect(
-        inside.stdout
-          .toString()
-          .split(/\r?\n/)
-          .filter(Boolean)
-          .sort(),
-      ).toEqual(["file.txt", "other.txt"]);
+      expect(inside.stdout.toString().split(/\r?\n/).filter(Boolean).sort()).toEqual(["file.txt", "other.txt"]);
 
       const parent = await box`ls ${String(dir)}`.quiet().nothrow();
       expect(parent.stderr.toString()).toBe(`ls: ${String(dir)}: read access not permitted in sandbox\n`);
@@ -257,9 +251,10 @@ describe("$.sandbox", () => {
       const box = $.sandbox({ fs: { write: [data] } });
 
       // Inside the grant everything works.
-      const inside = await box`touch ${join(data, "a.txt")} && mkdir ${join(data, "sub")} && mv ${join(data, "a.txt")} ${join(data, "sub")} && rm -r ${join(data, "sub")}`
-        .quiet()
-        .nothrow();
+      const inside =
+        await box`touch ${join(data, "a.txt")} && mkdir ${join(data, "sub")} && mv ${join(data, "a.txt")} ${join(data, "sub")} && rm -r ${join(data, "sub")}`
+          .quiet()
+          .nothrow();
       expect(inside.stderr.toString()).toBe("");
       expect(inside.exitCode).toBe(0);
 
@@ -287,7 +282,9 @@ describe("$.sandbox", () => {
       expect(fs.existsSync(join(data, "file.txt"))).toBe(true);
 
       const mvIn = await box`mv ${join(outside, "secret.txt")} ${data}`.quiet().nothrow();
-      expect(mvIn.stderr.toString()).toBe(`mv: ${join(outside, "secret.txt")}: write access not permitted in sandbox\n`);
+      expect(mvIn.stderr.toString()).toBe(
+        `mv: ${join(outside, "secret.txt")}: write access not permitted in sandbox\n`,
+      );
       expect(mvIn.exitCode).toBe(1);
     });
 

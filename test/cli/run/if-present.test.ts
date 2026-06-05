@@ -1,8 +1,8 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, test } from "bun:test";
 import { chmodSync } from "fs";
-import { join } from "path";
 import { bunEnv, bunExe, isPosix, tempDirWithFiles } from "harness";
+import { join } from "path";
 
 let cwd: string;
 

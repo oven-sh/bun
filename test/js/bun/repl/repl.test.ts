@@ -1162,6 +1162,19 @@ describe.todoIf(isWindows)("Bun REPL (Terminal)", () => {
       await waitFor(/\n\s*2\b/);
     });
   });
+
+  test("a stray lead byte does not swallow the next keystroke", async () => {
+    await withTerminalRepl(async ({ terminal, send, waitFor }) => {
+      // 0xC2 is a 2-byte lead; the following byte (0x62 'b') is not a
+      // continuation byte, so the lead is dropped. The 'b' must still be
+      // processed, giving a clean "ab" (length 2), not "a" (length 1).
+      send('"a');
+      await waitFor("a");
+      terminal.write(new Uint8Array([0xc2, 0x62])); // stray lead + 'b'
+      send('".length\n');
+      await waitFor(/\n\s*2\b/);
+    });
+  });
 });
 
 // History file written on REPL exit must be owner-only (0600), since it can

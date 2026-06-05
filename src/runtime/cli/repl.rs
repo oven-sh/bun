@@ -1189,8 +1189,10 @@ impl<'a> Repl<'a> {
                     return Some(Key::Unknown);
                 };
                 // A byte that is not a continuation byte (0x80..=0xBF) means the
-                // sequence is malformed; drop it rather than corrupt the buffer.
+                // sequence is malformed; drop the lead bytes but push this one
+                // back so the next read_key sees it (it starts a new keystroke).
                 if cont & 0xC0 != 0x80 {
+                    self.stdin_buf_start -= 1;
                     return Some(Key::Unknown);
                 }
                 *slot = cont;

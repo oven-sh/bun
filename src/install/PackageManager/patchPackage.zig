@@ -835,7 +835,6 @@ fn overwritePackageInNodeModulesFolder(
         .fromStdDir(cached_package_folder),
         src_path,
         dest_subpath,
-        &.{},
         ignore_directories,
     );
     defer copier.deinit();

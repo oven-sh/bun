@@ -1294,6 +1294,33 @@ pub(crate) fn install_isolated_packages(
                                 {
                                     break 'eligible false;
                                 }
+                                // An active `bun link` sources the body from the
+                                // producer's live working tree, which is mutable
+                                // by design. Materializing that into the shared
+                                // content-addressed `<cache>/links/<hash>/` would
+                                // poison every other consumer on the machine that
+                                // resolves the same lockfile closure, and the
+                                // override's pre-delete would wipe the shared
+                                // entry under them. Force linked packages
+                                // project-local. Gated on the backend:
+                                // `--backend=symlink` skips the override entirely,
+                                // so the risk doesn't exist there and
+                                // ineligibility would needlessly cascade to every
+                                // transitive consumer.
+                                if PackageInstall::supported_method()
+                                    != crate::package_install::Method::Symlink
+                                {
+                                    let mut link_buf = PathBuffer::uninit();
+                                    if crate::package_manager_real::directories::linked_package_path_mut(
+                                        manager,
+                                        pkg_names[pkg_id as usize].slice(string_buf),
+                                        &mut link_buf,
+                                    )
+                                    .is_some()
+                                    {
+                                        break 'eligible false;
+                                    }
+                                }
                                 break 'eligible true;
                             }
                             _ => false,

@@ -365,6 +365,7 @@ fn decode_frame(
         rgba: out,
         width: w,
         height: h,
+        bit_depth: 8,
         icc_profile: None,
     })
 }

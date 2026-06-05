@@ -172,6 +172,21 @@ describe.concurrent("bun --check", () => {
     expect(exitCode).not.toBe(0);
   });
 
+  test("exits 0 when the file does not exist and --if-present is set", async () => {
+    using dir = tempDir("check-if-present", {});
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--check", "--if-present", "nope.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   test.each(["-e", "--eval", "-p", "--print"])("rejects combining --check with %s", async flag => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "--check", flag, "1 + 1"],

@@ -2976,6 +2976,10 @@ impl RunCommand {
             match sys::File::read_from(Fd::cwd(), &entry) {
                 Ok(bytes) => (entry, bytes),
                 Err(err) => {
+                    if ctx.runtime_options.if_present && err.get_errno() == sys::E::ENOENT {
+                        Output::flush();
+                        Global::exit(0);
+                    }
                     pretty_errorln!(
                         "<r><red>error<r><d>:<r> Cannot find module {} ({})",
                         bun_core::fmt::quote(&entry),

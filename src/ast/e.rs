@@ -672,25 +672,19 @@ pub enum JSXSpecialProp {
     Ref,
     Any,
 }
+bun_core::comptime_string_map! {
+    static JSX_SPECIAL_PROP_MAP: JSXSpecialProp = {
+        b"key" => JSXSpecialProp::Key,
+        b"ref" => JSXSpecialProp::Ref,
+        b"__self" => JSXSpecialProp::UnderscoreSelf,
+        b"__source" => JSXSpecialProp::UnderscoreSource,
+    };
+}
+
 impl JSXSpecialProp {
-    // PERF: a `phf::Map` here would compute a full SipHash +
-    // index + slice compare on every JSX prop name even though the
-    // overwhelming majority of inputs (`className`, `onClick`, `style`, ...)
-    // miss. With only 4 keys at 3 distinct lengths, a length-gated `match`
-    // rejects almost every miss on a single `usize` compare and never hashes.
-    // See clap::find_param (12577e958d71) for the same pattern.
     #[inline]
     pub fn from_bytes(s: &[u8]) -> Option<Self> {
-        match s.len() {
-            3 => match s {
-                b"key" => Some(Self::Key),
-                b"ref" => Some(Self::Ref),
-                _ => None,
-            },
-            6 if s == b"__self" => Some(Self::UnderscoreSelf),
-            8 if s == b"__source" => Some(Self::UnderscoreSource),
-            _ => None,
-        }
+        JSX_SPECIAL_PROP_MAP.get(s).copied()
     }
 }
 

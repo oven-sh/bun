@@ -157,35 +157,30 @@ pub enum Category {
 
 impl Category {
     pub fn from_table(entry: Table) -> Category {
-        if entry == t!("text/javascript")
-            || entry == t!("application/javascript")
-            || entry == t!("application/javascript; charset=utf-8")
-        {
-            return Category::Javascript;
+        bun_core::comptime_string_map! {
+            static CATEGORY_OVERRIDES: Category = {
+                b"text/javascript" => Category::Javascript,
+                b"application/javascript" => Category::Javascript,
+                b"application/javascript; charset=utf-8" => Category::Javascript,
+                b"text/css" => Category::Css,
+                b"text/css;charset=utf-8" => Category::Css,
+                b"text/css; charset=utf-8" => Category::Css,
+                b"text/css; charset=utf8" => Category::Css,
+                b"text/css;charset=utf8" => Category::Css,
+                b"text/html" => Category::Html,
+                b"text/html;charset=utf-8" => Category::Html,
+                b"text/html; charset=utf-8" => Category::Html,
+                b"text/html; charset=utf8" => Category::Html,
+                b"text/html;charset=utf8" => Category::Html,
+                b"application/json" => Category::Json,
+                b"application/json;charset=utf-8" => Category::Json,
+                b"application/json; charset=utf-8" => Category::Json,
+                b"application/json; charset=utf8" => Category::Json,
+                b"application/json;charset=utf8" => Category::Json,
+            };
         }
-        if entry == t!("text/css")
-            || entry == t!("text/css;charset=utf-8")
-            || entry == t!("text/css; charset=utf-8")
-            || entry == t!("text/css; charset=utf8")
-            || entry == t!("text/css;charset=utf8")
-        {
-            return Category::Css;
-        }
-        if entry == t!("text/html")
-            || entry == t!("text/html;charset=utf-8")
-            || entry == t!("text/html; charset=utf-8")
-            || entry == t!("text/html; charset=utf8")
-            || entry == t!("text/html;charset=utf8")
-        {
-            return Category::Html;
-        }
-        if entry == t!("application/json")
-            || entry == t!("application/json;charset=utf-8")
-            || entry == t!("application/json; charset=utf-8")
-            || entry == t!("application/json; charset=utf8")
-            || entry == t!("application/json;charset=utf8")
-        {
-            return Category::Json;
+        if let Some(&category) = CATEGORY_OVERRIDES.get(entry.slice()) {
+            return category;
         }
         Category::init(entry.slice())
     }
@@ -245,44 +240,22 @@ impl Category {
                 return Category::Application;
             }
 
-            if category == b"image" {
-                return Category::Image;
+            bun_core::comptime_string_map! {
+                static CATEGORY_BY_NAME: Category = {
+                    b"image" => Category::Image,
+                    b"video" => Category::Video,
+                    b"audio" => Category::Audio,
+                    b"font" => Category::Font,
+                    b"multipart" => Category::Multipart,
+                    b"model" => Category::Model,
+                    b"message" => Category::Message,
+                    b"x-conference" => Category::XConference,
+                    b"x-shader" => Category::XShader,
+                    b"chemical" => Category::Chemical,
+                };
             }
-
-            if category == b"video" {
-                return Category::Video;
-            }
-
-            if category == b"audio" {
-                return Category::Audio;
-            }
-
-            if category == b"font" {
-                return Category::Font;
-            }
-
-            if category == b"multipart" {
-                return Category::Multipart;
-            }
-
-            if category == b"model" {
-                return Category::Model;
-            }
-
-            if category == b"message" {
-                return Category::Message;
-            }
-
-            if category == b"x-conference" {
-                return Category::XConference;
-            }
-
-            if category == b"x-shader" {
-                return Category::XShader;
-            }
-
-            if category == b"chemical" {
-                return Category::Chemical;
+            if let Some(&matched) = CATEGORY_BY_NAME.get(category) {
+                return matched;
             }
         }
 

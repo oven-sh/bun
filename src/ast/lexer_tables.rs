@@ -157,134 +157,10 @@ impl T {
     }
 }
 
-/// Pack `N <= 16` bytes into a native-endian `u128` (zero-padded). `const` so
-/// the literal arms in the `by_len!` macros below fold to integer immediates
-/// at compile time; the runtime call (post-monomorphization, fixed `N`) lowers
-/// to one or two unaligned loads.
-///
-/// The `N <= 8` branch routes through a `u64` and widens with `as u128` so the
-/// upper half is the *literal* `0` rather than a stack-buffer read — LLVM
-/// InstCombine then narrows the resulting `icmp eq i128 (zext %lo), C` back to
-/// a single `i64` compare (`mov (%rsi),%rax; movabs $imm,%rcx; cmp %rcx,%rax`).
-/// Matching on
-/// `&[u8; N]` directly does **not** get this: rustc lowers array patterns to a
-/// per-byte `cmpb`+`jne` decision tree (8 branches for `b"function"`), which
-/// is what the previous revision of `by_len!` produced.
-#[inline(always)]
-const fn kw_pack<const N: usize>(arr: &[u8; N]) -> u128 {
-    assert!(N <= 16);
-    if N <= 8 {
-        let mut lo = [0u8; 8];
-        let mut i = 0;
-        while i < N {
-            lo[i] = arr[i];
-            i += 1;
-        }
-        u64::from_ne_bytes(lo) as u128
-    } else {
-        let mut lo = [0u8; 8];
-        let mut hi = [0u8; 8];
-        let mut i = 0;
-        while i < 8 {
-            lo[i] = arr[i];
-            i += 1;
-        }
-        while i < N {
-            hi[i - 8] = arr[i];
-            i += 1;
-        }
-        (u64::from_ne_bytes(lo) as u128) | ((u64::from_ne_bytes(hi) as u128) << 64)
-    }
-}
-
 /// Hot-path keyword classifier — called once per identifier in the lexer.
-///
-/// Replaces the former `phf::Map` lookup for `KEYWORDS` (which hashed through
-/// SipHash13 and showed up as ~4% self-time under `phf_shared::hash` in
-/// `perf record` on the three.js bundle). Strategy: bucket by length, then
-/// load the candidate once as a wide integer
-/// and compare against const-folded immediates — one `cmp` per candidate, no
-/// hash, no bounds checks, no `memcmp`, no per-byte ladder.
-///
-/// All JS keywords are 2..=10 ASCII bytes; the length dispatch rejects the
-/// overwhelming majority of identifiers (which are not keywords) with one
-/// branch when `len > 10`.
 #[inline]
 pub fn keyword(s: &[u8]) -> Option<T> {
-    /// View `s` as `&[u8; $n]` (length already proven by the outer
-    /// `match s.len()`), pack it into a single native-endian integer via
-    /// [`kw_pack`], and compare against const-folded integer immediates. Each
-    /// arm is one wide `cmp`. (Matching on `&[u8; N]` directly lowers to a
-    /// per-byte `cmpb` chain — see [`kw_pack`] doc.)
-    ///
-    /// Spelled as an `if`/`else` chain rather than a `match`: inline-`const`
-    /// in *pattern* position is unstable (`inline_const_pat`), but in
-    /// *expression* position it has been stable since 1.79 and forces the RHS
-    /// to a compile-time immediate. The lowered IR is identical — a `match`
-    /// over scattered `u128` constants is a sequential `cmp`+`je` ladder
-    /// either way (no jump table for sparse 128-bit keys).
-    macro_rules! by_len {
-        ($n:literal: $($lit:literal => $tok:expr,)*) => {{
-            let arr: &[u8; $n] = s.try_into().unwrap();
-            let w = kw_pack::<$n>(arr);
-            $(if w == const { kw_pack::<$n>($lit) } { Some($tok) } else)* { None }
-        }};
-    }
-    match s.len() {
-        2 => by_len!(2:
-            b"do" => T::TDo,
-            b"if" => T::TIf,
-            b"in" => T::TIn,
-        ),
-        3 => by_len!(3:
-            b"for" => T::TFor,
-            b"new" => T::TNew,
-            b"try" => T::TTry,
-            b"var" => T::TVar,
-        ),
-        4 => by_len!(4:
-            b"case" => T::TCase,
-            b"else" => T::TElse,
-            b"enum" => T::TEnum,
-            b"null" => T::TNull,
-            b"this" => T::TThis,
-            b"true" => T::TTrue,
-            b"void" => T::TVoid,
-            b"with" => T::TWith,
-        ),
-        5 => by_len!(5:
-            b"break" => T::TBreak,
-            b"catch" => T::TCatch,
-            b"class" => T::TClass,
-            b"const" => T::TConst,
-            b"false" => T::TFalse,
-            b"super" => T::TSuper,
-            b"throw" => T::TThrow,
-            b"while" => T::TWhile,
-        ),
-        6 => by_len!(6:
-            b"delete" => T::TDelete,
-            b"export" => T::TExport,
-            b"import" => T::TImport,
-            b"return" => T::TReturn,
-            b"switch" => T::TSwitch,
-            b"typeof" => T::TTypeof,
-        ),
-        7 => by_len!(7:
-            b"default" => T::TDefault,
-            b"extends" => T::TExtends,
-            b"finally" => T::TFinally,
-        ),
-        8 => by_len!(8:
-            b"continue" => T::TContinue,
-            b"debugger" => T::TDebugger,
-            b"function" => T::TFunction,
-        ),
-        10 => by_len!(10:
-            b"instanceof" => T::TInstanceof,
-        ),
-        _ => None,
-    }
+    KEYWORDS.get(s).copied()
 }
 
 // Strict-mode reserved-word table sunk to `bun_core::lexer_tables` (single
@@ -295,9 +171,10 @@ pub use bun_core::lexer_tables::{
     STRICT_MODE_RESERVED_WORDS, is_strict_mode_reserved_word, strict_mode_reserved_word_remap,
 };
 
-// Kept for non-hot-path callers (e.g. error formatting, `to_string` on the
-// token). The lexer hot loop uses `keyword()` above instead.
 bun_core::comptime_string_map! {
+    /// All JS keywords are 2..=10 ASCII bytes; the generated length dispatch
+    /// rejects the overwhelming majority of identifiers (which are not
+    /// keywords) before any byte compare.
     pub static KEYWORDS: T = {
         b"break" => T::TBreak,
         b"case" => T::TCase,
@@ -373,73 +250,30 @@ bun_core::comptime_string_map! {
 
 impl PropertyModifierKeyword {
     /// Hot path: queried in `parse_property` once per identifier-keyed
-    /// property (every method/field name in a class body). Same length-bucket
-    /// strategy as [`keyword`] — avoids the SipHash round-trip inside
-    /// `phf::Map::get`. All entries are 3..=9 ASCII bytes; class-heavy inputs
+    /// property (every method/field name in a class body). Class-heavy inputs
     /// like three.js have property names that are overwhelmingly *not* in this
-    /// set, so the `match s.len()` rejects most lookups in one branch.
+    /// set, so the generated length dispatch rejects most lookups in one
+    /// branch.
     #[inline]
     pub fn find(s: &[u8]) -> Option<PropertyModifierKeyword> {
-        macro_rules! by_len {
-            ($n:literal: $($lit:literal => $tok:expr,)*) => {{
-                let arr: &[u8; $n] = s.try_into().unwrap();
-                let w = kw_pack::<$n>(arr);
-                // See `keyword`'s `by_len!` for why this is an if-chain.
-                $(if w == const { kw_pack::<$n>($lit) } { Some($tok) } else)* { None }
-            }};
-        }
-        match s.len() {
-            3 => by_len!(3:
-                b"get" => PropertyModifierKeyword::PGet,
-                b"set" => PropertyModifierKeyword::PSet,
-            ),
-            5 => by_len!(5:
-                b"async" => PropertyModifierKeyword::PAsync,
-            ),
-            6 => by_len!(6:
-                b"public" => PropertyModifierKeyword::PPublic,
-                b"static" => PropertyModifierKeyword::PStatic,
-            ),
-            7 => by_len!(7:
-                b"declare" => PropertyModifierKeyword::PDeclare,
-                b"private" => PropertyModifierKeyword::PPrivate,
-            ),
-            8 => by_len!(8:
-                b"abstract" => PropertyModifierKeyword::PAbstract,
-                b"accessor" => PropertyModifierKeyword::PAccessor,
-                b"override" => PropertyModifierKeyword::POverride,
-                b"readonly" => PropertyModifierKeyword::PReadonly,
-            ),
-            9 => by_len!(9:
-                b"protected" => PropertyModifierKeyword::PProtected,
-            ),
-            _ => None,
-        }
+        PROPERTY_MODIFIER_KEYWORDS.get(s).copied()
     }
 }
 
-/// TypeScript "parameter property" modifier check (constructor args). Same
-/// strategy as [`is_strict_mode_reserved_word`]: length-bucketed fixed-array
-/// compare to avoid the SipHash inside `phf::Set::contains`. All entries are
-/// 6..=9 ASCII bytes and lengths are unique except 8 (override/readonly).
+bun_core::comptime_string_set! {
+    /// TypeScript "parameter property" modifiers (constructor args).
+    static TYPE_SCRIPT_ACCESSIBILITY_MODIFIERS = {
+        b"public",
+        b"private",
+        b"override",
+        b"readonly",
+        b"protected",
+    };
+}
+
 #[inline]
 pub fn is_type_script_accessibility_modifier(s: &[u8]) -> bool {
-    macro_rules! by_len {
-        ($n:literal: $($lit:literal,)*) => {{
-            let arr: &[u8; $n] = s.try_into().unwrap();
-            let w = kw_pack::<$n>(arr);
-            // See `keyword`'s `by_len!` for why this is an `||` chain rather
-            // than a `matches!` over `const { }` patterns.
-            false $(|| w == const { kw_pack::<$n>($lit) })*
-        }};
-    }
-    match s.len() {
-        6 => by_len!(6: b"public",),
-        7 => by_len!(7: b"private",),
-        8 => by_len!(8: b"override", b"readonly",),
-        9 => by_len!(9: b"protected",),
-        _ => false,
-    }
+    TYPE_SCRIPT_ACCESSIBILITY_MODIFIERS.contains(s)
 }
 
 /// `.rodata` `[&[u8]; T::COUNT]` indexed by [`T`] discriminant. Replaces an
@@ -602,43 +436,22 @@ pub enum TypescriptStmtKeyword {
     TsStmtDeclare,
 }
 
+bun_core::comptime_string_map! {
+    static TYPESCRIPT_STMT_KEYWORDS: TypescriptStmtKeyword = {
+        b"type" => TypescriptStmtKeyword::TsStmtType,
+        b"namespace" => TypescriptStmtKeyword::TsStmtNamespace,
+        b"module" => TypescriptStmtKeyword::TsStmtModule,
+        b"interface" => TypescriptStmtKeyword::TsStmtInterface,
+        b"abstract" => TypescriptStmtKeyword::TsStmtAbstract,
+        b"global" => TypescriptStmtKeyword::TsStmtGlobal,
+        b"declare" => TypescriptStmtKeyword::TsStmtDeclare,
+    };
+}
+
 impl TypescriptStmtKeyword {
-    /// Length-gated match. Same strategy as [`keyword`]: 7 entries, max 2 per
-    /// length bucket, so gating on `len()` first lets LLVM lower each inner
-    /// compare to a fixed-width integer compare instead of phf's SipHash +
-    /// index + slice-compare. Almost every miss (every non-TS-keyword
-    /// identifier at statement position) falls out on the single `usize`
-    /// compare without touching bytes.
     #[inline]
     pub fn from_bytes(s: &[u8]) -> Option<Self> {
-        macro_rules! by_len {
-            ($n:literal: $($lit:literal => $kw:expr,)*) => {{
-                let arr: &[u8; $n] = s.try_into().unwrap();
-                let w = kw_pack::<$n>(arr);
-                // See `keyword`'s `by_len!` for why this is an if-chain.
-                $(if w == const { kw_pack::<$n>($lit) } { Some($kw) } else)* { None }
-            }};
-        }
-        match s.len() {
-            4 => by_len!(4:
-                b"type" => Self::TsStmtType,
-            ),
-            6 => by_len!(6:
-                b"module" => Self::TsStmtModule,
-                b"global" => Self::TsStmtGlobal,
-            ),
-            7 => by_len!(7:
-                b"declare" => Self::TsStmtDeclare,
-            ),
-            8 => by_len!(8:
-                b"abstract" => Self::TsStmtAbstract,
-            ),
-            9 => by_len!(9:
-                b"namespace" => Self::TsStmtNamespace,
-                b"interface" => Self::TsStmtInterface,
-            ),
-            _ => None,
-        }
+        TYPESCRIPT_STMT_KEYWORDS.get(s).copied()
     }
 }
 
@@ -905,11 +718,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn keyword_fn_matches_keywords_table() {
-        // Positive: every entry in the canonical `KEYWORDS` table round-trips.
-        for (k, &v) in KEYWORDS.entries() {
-            assert_eq!(keyword(k), Some(v), "keyword({:?})", k);
-        }
+    fn keyword_lookup() {
+        assert_eq!(keyword(b"do"), Some(T::TDo));
+        assert_eq!(keyword(b"var"), Some(T::TVar));
+        assert_eq!(keyword(b"null"), Some(T::TNull));
+        assert_eq!(keyword(b"while"), Some(T::TWhile));
+        assert_eq!(keyword(b"typeof"), Some(T::TTypeof));
+        assert_eq!(keyword(b"default"), Some(T::TDefault));
+        assert_eq!(keyword(b"function"), Some(T::TFunction));
+        assert_eq!(keyword(b"instanceof"), Some(T::TInstanceof));
         // Negative: a few near-misses and the strict-mode set (which are NOT
         // in KEYWORDS) must miss.
         for k in [
@@ -952,10 +769,27 @@ mod tests {
     }
 
     #[test]
-    fn property_modifier_find_matches_table() {
-        for (k, v) in PROPERTY_MODIFIER_KEYWORDS.entries() {
-            assert_eq!(PropertyModifierKeyword::find(k), Some(*v), "{:?}", k);
-        }
+    fn property_modifier_lookup() {
+        assert_eq!(
+            PropertyModifierKeyword::find(b"get"),
+            Some(PropertyModifierKeyword::PGet)
+        );
+        assert_eq!(
+            PropertyModifierKeyword::find(b"async"),
+            Some(PropertyModifierKeyword::PAsync)
+        );
+        assert_eq!(
+            PropertyModifierKeyword::find(b"static"),
+            Some(PropertyModifierKeyword::PStatic)
+        );
+        assert_eq!(
+            PropertyModifierKeyword::find(b"readonly"),
+            Some(PropertyModifierKeyword::PReadonly)
+        );
+        assert_eq!(
+            PropertyModifierKeyword::find(b"protected"),
+            Some(PropertyModifierKeyword::PProtected)
+        );
         for k in [
             b"" as &[u8],
             b"ge",

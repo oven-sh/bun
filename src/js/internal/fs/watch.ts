@@ -11,7 +11,7 @@ const fs = require("internal/fs/binding");
 // RegExp -> exec, function -> called with the filename. Arrays compose.
 function createIgnoreMatcher(ignore) {
   if (ignore == null) return null;
-  const matchers = Array.isArray(ignore) ? ignore : [ignore];
+  const matchers = $isArray(ignore) ? ignore : [ignore];
   const compiled: Array<(filename: string) => boolean> = [];
 
   for (const matcher of matchers) {

@@ -3,6 +3,7 @@
 
 const { jest } = Bun;
 const { kEmptyObject, throwNotImplemented } = require("internal/shared");
+const { validateInteger, validateObject } = require("internal/validators");
 
 const kDefaultName = "<anonymous>";
 const kDefaultFunction = () => {};
@@ -19,13 +20,15 @@ class MockFunctionContext {
   #original: Function;
   #onceImplementations: Map<number, Function>;
   #restore: (() => void) | undefined;
+  #times: number;
 
-  constructor(original: Function, implementation: Function | undefined, restore?: () => void) {
+  constructor(original: Function, implementation: Function | undefined, restore?: () => void, times: number = Infinity) {
     this.#calls = [];
     this.#original = original;
     this.#implementation = implementation;
     this.#onceImplementations = new Map();
     this.#restore = restore;
+    this.#times = times;
   }
 
   get calls() {
@@ -72,6 +75,12 @@ class MockFunctionContext {
       } else {
         implementation = ctx.#implementation ?? ctx.#original;
       }
+      // options.times: revert to the original behavior once the mock has
+      // been used `times` times (node decides this before invoking, so the
+      // current call still uses the mocked implementation).
+      if (callIndex + 1 === ctx.#times) {
+        ctx.restore();
+      }
       const call: Record<string, unknown> = {
         arguments: args,
         error: undefined,
@@ -98,8 +107,14 @@ class MockFunctionContext {
 
 let trackMockCall: (ctx: MockFunctionContext, thisArg: unknown, args: unknown[], target: unknown) => unknown;
 
-function createMockFunction(original: Function, implementation: Function | undefined, restore?: () => void) {
-  const context = new MockFunctionContext(original, implementation, restore);
+function createMockFunction(
+  original: Function,
+  implementation: Function | undefined,
+  restore?: () => void,
+  times: number = Infinity,
+) {
+  const context = new MockFunctionContext(original, implementation, restore, times);
+  kMockContexts.push(context);
   function mockFunction(this: unknown, ...args: unknown[]) {
     return trackMockCall(context, this, args, new.target);
   }
@@ -119,15 +134,22 @@ function createMockFunction(original: Function, implementation: Function | undef
   return mockFunction;
 }
 
-const kMockRestorers: (() => void)[] = [];
+const kMockContexts: MockFunctionContext[] = [];
+
+function validateTimes(value: unknown, name: string) {
+  if (value === Infinity) {
+    return;
+  }
+  validateInteger(value, name, 1);
+}
 
 function mockFn(original?: Function | object, implementation?: Function | object, options?: object) {
-  if (original !== undefined && !$isCallable(original) && typeof original === "object") {
+  if (original !== null && original !== undefined && !$isCallable(original) && typeof original === "object") {
     options = implementation as object;
     implementation = original;
     original = undefined;
   }
-  if (implementation !== undefined && !$isCallable(implementation) && typeof implementation === "object") {
+  if (implementation !== null && implementation !== undefined && !$isCallable(implementation) && typeof implementation === "object") {
     options = implementation as object;
     implementation = undefined;
   }
@@ -137,7 +159,17 @@ function mockFn(original?: Function | object, implementation?: Function | object
   if (implementation !== undefined && !$isCallable(implementation)) {
     throw $ERR_INVALID_ARG_TYPE("implementation", "function", implementation);
   }
-  return createMockFunction((original as Function) ?? function () {}, implementation as Function | undefined);
+  if (options !== undefined) {
+    validateObject(options, "options");
+  }
+  const { times = Infinity } = (options ?? kEmptyObject) as { times?: number };
+  validateTimes(times, "options.times");
+  return createMockFunction(
+    (original as Function) ?? function () {},
+    implementation as Function | undefined,
+    undefined,
+    times,
+  );
 }
 
 function mockMethod(
@@ -146,7 +178,7 @@ function mockMethod(
   implementation?: Function | object,
   options?: { getter?: boolean; setter?: boolean } | object,
 ) {
-  if (implementation !== undefined && !$isCallable(implementation) && typeof implementation === "object") {
+  if (implementation !== null && implementation !== undefined && !$isCallable(implementation) && typeof implementation === "object") {
     options = implementation;
     implementation = undefined;
   }
@@ -156,10 +188,19 @@ function mockMethod(
   if ((typeof objectOrFunction !== "object" || objectOrFunction === null) && !$isCallable(objectOrFunction)) {
     throw $ERR_INVALID_ARG_TYPE("object", "object", objectOrFunction);
   }
-  const { getter = false, setter = false } = (options ?? kEmptyObject) as {
+  const {
+    getter = false,
+    setter = false,
+    times = Infinity,
+  } = (options ?? kEmptyObject) as {
     getter?: boolean;
     setter?: boolean;
+    times?: number;
   };
+  validateTimes(times, "options.times");
+  if (setter && getter) {
+    throw $ERR_INVALID_ARG_VALUE("options.setter", setter, "cannot be used with 'options.getter'");
+  }
 
   // Find the descriptor on the object or its prototype chain.
   let target: object | null = objectOrFunction;
@@ -194,8 +235,7 @@ function mockMethod(
   const restore = () => {
     Object.defineProperty(objectOrFunction, methodName, descriptor!);
   };
-  const mocked = createMockFunction(original, implementation as Function | undefined, restore);
-  kMockRestorers.push(restore);
+  const mocked = createMockFunction(original, implementation as Function | undefined, restore, times);
 
   const mockDescriptor: PropertyDescriptor = {
     configurable: true,
@@ -220,24 +260,54 @@ function mockMethod(
 const mock = {
   fn: mockFn,
   method: mockMethod,
-  getter(objectOrFunction: object | Function, methodName: PropertyKey, implementation?: Function, options?: object) {
-    return mockMethod(objectOrFunction, methodName, implementation, {
+  getter(
+    objectOrFunction: object | Function,
+    methodName: PropertyKey,
+    implementation?: Function | object,
+    options?: object,
+  ) {
+    // Shift implementation -> options *before* spreading, or the shift inside
+    // mockMethod would clobber the getter flag (node does the same).
+    if (implementation !== null && implementation !== undefined && !$isCallable(implementation) && typeof implementation === "object") {
+      options = implementation;
+      implementation = undefined;
+    }
+    const { getter = true } = (options ?? kEmptyObject) as { getter?: boolean };
+    if (getter === false) {
+      throw $ERR_INVALID_ARG_VALUE("options.getter", getter, "cannot be false");
+    }
+    return mockMethod(objectOrFunction, methodName, implementation as Function | undefined, {
       ...options,
-      getter: true,
+      getter,
     });
   },
-  setter(objectOrFunction: object | Function, methodName: PropertyKey, implementation?: Function, options?: object) {
-    return mockMethod(objectOrFunction, methodName, implementation, {
+  setter(
+    objectOrFunction: object | Function,
+    methodName: PropertyKey,
+    implementation?: Function | object,
+    options?: object,
+  ) {
+    if (implementation !== null && implementation !== undefined && !$isCallable(implementation) && typeof implementation === "object") {
+      options = implementation;
+      implementation = undefined;
+    }
+    const { setter = true } = (options ?? kEmptyObject) as { setter?: boolean };
+    if (setter === false) {
+      throw $ERR_INVALID_ARG_VALUE("options.setter", setter, "cannot be false");
+    }
+    return mockMethod(objectOrFunction, methodName, implementation as Function | undefined, {
       ...options,
-      setter: true,
+      setter,
     });
   },
   reset() {
     mock.restoreAll();
   },
   restoreAll() {
-    for (const restore of kMockRestorers) restore();
-    kMockRestorers.length = 0;
+    // Restores method mocks to their original descriptor and makes bare
+    // mock.fn() mocks call their original function again, like node.
+    for (const ctx of kMockContexts) ctx.restore();
+    kMockContexts.length = 0;
   },
   module() {
     throwNotImplemented("mock.module()", 5090, "Use `bun:test` in the interim.");

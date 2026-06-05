@@ -63,6 +63,7 @@ function watch(
   const queue = $createFIFO();
   const ignoreMatcher = require("internal/fs/watch").createIgnoreMatcher(options?.ignore);
   const signal = options?.signal;
+  validateAbortSignal(signal, "options.signal");
   function makeAbortError() {
     const err = new Error("The operation was aborted.");
     err.name = "AbortError";
@@ -106,18 +107,18 @@ function watch(
     }
   });
 
-  signal?.addEventListener(
-    "abort",
-    () => {
-      watcher.close();
-      if (nextEventResolve) {
-        const resolve = nextEventResolve;
-        nextEventResolve = null;
-        resolve();
-      }
-    },
-    { once: true },
-  );
+  const onAbort = () => {
+    watcher.close();
+    if (nextEventResolve) {
+      const resolve = nextEventResolve;
+      nextEventResolve = null;
+      resolve();
+    }
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+  // {once: true} only auto-removes when the event fires; detach explicitly on
+  // the other exit paths so a long-lived signal doesn't retain this closure.
+  const removeAbortListener = () => signal?.removeEventListener("abort", onAbort);
 
   return {
     [Symbol.asyncIterator]() {
@@ -133,10 +134,12 @@ function watch(
             while ((event = queue.shift() as Event)) {
               if (event.eventType === "close") {
                 closed = true;
+                removeAbortListener();
                 return { value: undefined, done: true };
               }
               if (event.eventType === "error") {
                 closed = true;
+                removeAbortListener();
                 throw event.filename;
               }
               return { value: event, done: false };
@@ -152,6 +155,7 @@ function watch(
           if (!closed) {
             watcher.close();
             closed = true;
+            removeAbortListener();
             if (nextEventResolve) {
               const resolve = nextEventResolve;
               nextEventResolve = null;
@@ -286,7 +290,8 @@ const exports = {
   lutimes: asyncWrap(fs.lutimes, "lutimes"),
   rm: asyncWrap(fs.rm, "rm"),
   rmdir: async function rmdir(path, options) {
-    if (options?.recursive) {
+    // node throws for any defined `recursive`, not just truthy ones
+    if (options?.recursive !== undefined) {
       throw $ERR_INVALID_ARG_VALUE(
         "options.recursive",
         options.recursive,
@@ -917,6 +922,12 @@ function asyncWrap(fn: any, name: string) {
             length -= bytesWritten;
             if (position >= 0) position += bytesWritten;
           }
+        } catch (err) {
+          // A failed/aborted write may have hit the disk partially and the
+          // cursor/limit were advanced optimistically; the writer's state is
+          // no longer trustworthy, so poison it like fail() does.
+          if (!closed && !error) error = err;
+          throw err;
         } finally {
           asyncPending = false;
         }
@@ -958,6 +969,11 @@ function asyncWrap(fn: any, name: string) {
               return;
             }
           }
+        } catch (err) {
+          // See writeAll: the optimistic cursor/limit accounting is invalid
+          // after a failure, so subsequent writes must reject.
+          if (!closed && !error) error = err;
+          throw err;
         } finally {
           asyncPending = false;
         }

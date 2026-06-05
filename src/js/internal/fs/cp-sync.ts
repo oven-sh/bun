@@ -247,7 +247,7 @@ function tryNativeFastPathSync(src, dest, opts) {
       message: `${src} is a directory (not copied)`,
       path: src,
       syscall: "cp",
-      errno: EINVAL,
+      errno: EISDIR,
       code: "EISDIR",
     });
   }
@@ -282,7 +282,7 @@ function getStats(destStat, src, dest, opts) {
       message: `${src} is a directory (not copied)`,
       path: src,
       syscall: "cp",
-      errno: EINVAL,
+      errno: EISDIR,
       code: "EISDIR",
     });
   } else if (srcStat.isFile() || srcStat.isCharacterDevice() || srcStat.isBlockDevice()) {

@@ -87,8 +87,10 @@ var access = function access(path, mode, callback) {
       callback = options;
       options = undefined;
     }
+    callback = ensureCallback(callback);
 
-    if (options?.recursive) {
+    // node throws for any defined `recursive`, not just truthy ones
+    if (options?.recursive !== undefined) {
       throw $ERR_INVALID_ARG_VALUE("options.recursive", options.recursive, "is not supported, use fs.rm instead");
     }
     fs.rmdir(path, options).then(nullcallback(callback), callback);
@@ -543,7 +545,8 @@ var access = function access(path, mode, callback) {
     return fs.rmSync(path, options);
   },
   rmdirSync = function rmdirSync(path, options) {
-    if (options?.recursive) {
+    // node throws for any defined `recursive`, not just truthy ones
+    if (options?.recursive !== undefined) {
       throw $ERR_INVALID_ARG_VALUE("options.recursive", options.recursive, "is not supported, use fs.rmSync instead");
     }
     return fs.rmdirSync(path, options);
@@ -1016,7 +1019,11 @@ class Dir {
       } catch (err: any) {
         if (typeof err?.errno !== "number") throw err; // argument validation errors throw as-is
         err.syscall = "opendir";
-        err.message = `${err.code}: ${err.code === "ENOENT" ? "no such file or directory" : err.message}, opendir '${path}'`;
+        // Recompose the message around `opendir`: stat errors arrive as
+        // "ECODE: <description>, stat '<path>'", so pull out just the
+        // description before re-prefixing (avoids "EACCES: EACCES: ...").
+        const description = err.message.replace(/^[A-Z]+: /, "").replace(/, l?stat '.*'$/, "");
+        err.message = `${err.code}: ${description}, opendir '${path}'`;
         throw err;
       }
       if (!stats.isDirectory()) {
@@ -1135,8 +1142,10 @@ class Dir {
         yield entry;
       }
     } finally {
-      // node closes the directory when iteration ends or exits early
-      if (this.#handle >= 0) this.closeSync();
+      // node closes the directory when iteration ends or exits early. Use the
+      // queued async close() so a concurrent in-flight operation doesn't make
+      // teardown throw ERR_DIR_CONCURRENT_OPERATION.
+      if (this.#handle >= 0) await this.close();
     }
   }
 }

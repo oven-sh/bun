@@ -3,11 +3,13 @@
 // Compression / Decompression transforms for the iterable streams API.
 //
 // DEVIATION FROM NODE: Node.js drives a bare native zlib handle
-// (internalBinding('zlib')) incrementally, yielding output as the engine
-// produces it. Bun does not expose that binding to builtins, so these
-// transforms buffer their input and run the one-shot node:zlib codec at
-// flush time. The observable protocol (stateful transform that consumes
-// batches + null flush signal and yields Uint8Array output) is identical.
+// (internalBinding('zlib')) incrementally. Bun does not expose that binding
+// to builtins, so the async transforms drive the node:zlib Transform streams
+// instead, yielding output as the engine produces it (bounded memory). Only
+// the sync variants buffer and run the one-shot codec at flush time, since a
+// synchronous incremental write needs the native handle. The observable
+// protocol (stateful transform that consumes batches + null flush signal and
+// yields Uint8Array output) is identical.
 
 const zlib = require("node:zlib");
 const { validateObject } = require("internal/validators");
@@ -15,54 +17,117 @@ const { validateObject } = require("internal/validators");
 const kNullPrototype = { __proto__: null };
 
 /**
- * Create an async stateful transform that buffers all input and yields the
- * result of processFn(Buffer) once the null flush signal is received.
- * @param processFn one-shot codec, e.g. zlib.gzipSync
- * @param emitOnEmpty whether to run processFn when no input was received
+ * Create an async stateful transform that feeds input chunks through a
+ * node:zlib Transform stream, yielding output incrementally.
+ * @param createStream factory, e.g. options => zlib.createGzip(options)
+ * @param finalizeOnEmpty whether to finalize when no input was received
  *   (true for compressors - an empty stream still has a valid header;
- *    false for decompressors - zero input means zero output).
+ *    false for decompressors - zero input means zero output, and finalizing
+ *    an empty inflate stream would error with "unexpected end of file").
  */
-function makeBufferedTransformAsync(processFn, emitOnEmpty) {
+function makeStreamingTransformAsync(createStream, finalizeOnEmpty) {
   return {
     __proto__: null,
     transform: async function* (source, options) {
       const signal = options?.signal;
       signal?.throwIfAborted();
 
-      const chunks: Uint8Array[] = [];
-      let finalized = false;
-
-      for await (const batch of source) {
-        signal?.throwIfAborted();
-
-        if (batch === null) {
-          if (!finalized) {
-            finalized = true;
-            if (chunks.length > 0 || emitOnEmpty) {
-              yield processFn(chunks.length === 1 ? chunks[0] : Buffer.concat(chunks));
-              chunks.length = 0;
-            }
-          }
-          continue;
+      const stream = createStream();
+      const pending: Uint8Array[] = [];
+      let streamError: Error | null = null;
+      let streamEnded = false;
+      let wake: (() => void) | null = null;
+      const notify = () => {
+        if (wake !== null) {
+          const w = wake;
+          wake = null;
+          w();
         }
+      };
+      stream.on("data", chunk => {
+        pending.push(chunk);
+        notify();
+      });
+      stream.on("error", err => {
+        streamError = err;
+        notify();
+      });
+      stream.on("end", () => {
+        streamEnded = true;
+        notify();
+      });
 
-        for (let i = 0; i < batch.length; i++) {
-          chunks.push(batch[i]);
+      // write() resolves once the engine consumed the chunk - that is the
+      // backpressure point; output produced so far is drained between writes.
+      const writeChunk = chunk =>
+        new Promise<void>((resolve, reject) => {
+          stream.write(chunk, err => (err ? reject(err) : resolve()));
+        });
+
+      let finalized = false;
+      let wroteAny = false;
+
+      function* drainPending() {
+        if (streamError !== null) throw streamError;
+        while (pending.length > 0) {
+          yield pending.shift()!;
         }
       }
 
-      // Source ended without a null flush signal.
-      if (!finalized && !signal?.aborted) {
-        if (chunks.length > 0 || emitOnEmpty) {
-          yield processFn(chunks.length === 1 ? chunks[0] : Buffer.concat(chunks));
+      async function* finalize() {
+        finalized = true;
+        if (!wroteAny && !finalizeOnEmpty) {
+          return;
         }
+        stream.end();
+        while (!streamEnded && streamError === null) {
+          yield* drainPending();
+          if (streamEnded || streamError !== null) break;
+          await new Promise<void>(resolve => {
+            wake = resolve;
+          });
+        }
+        yield* drainPending();
+        if (streamError !== null) throw streamError;
+      }
+
+      try {
+        for await (const batch of source) {
+          signal?.throwIfAborted();
+
+          if (batch === null) {
+            if (!finalized) {
+              yield* finalize();
+            }
+            continue;
+          }
+          if (finalized) {
+            // Input after the flush signal is dropped - the engine is done.
+            continue;
+          }
+
+          for (let i = 0; i < batch.length; i++) {
+            wroteAny = true;
+            await writeChunk(batch[i]);
+            signal?.throwIfAborted();
+            yield* drainPending();
+          }
+        }
+
+        // Source ended without a null flush signal.
+        if (!finalized && !signal?.aborted) {
+          yield* finalize();
+        }
+      } finally {
+        stream.destroy();
       }
     },
   };
 }
 
 /**
- * Sync counterpart of makeBufferedTransformAsync.
+ * Sync transform: buffers all input and yields processFn(Buffer) once the
+ * null flush signal (or end of source) is reached.
  */
 function makeBufferedTransformSync(processFn, emitOnEmpty) {
   return {
@@ -110,17 +175,17 @@ function makeCodecFn(method, options) {
 
 function compressGzip(options = kNullPrototype) {
   validateObject(options, "options");
-  return makeBufferedTransformAsync(makeCodecFn(zlib.gzipSync, options), true);
+  return makeStreamingTransformAsync(() => zlib.createGzip(options), true);
 }
 
 function compressDeflate(options = kNullPrototype) {
   validateObject(options, "options");
-  return makeBufferedTransformAsync(makeCodecFn(zlib.deflateSync, options), true);
+  return makeStreamingTransformAsync(() => zlib.createDeflate(options), true);
 }
 
 function compressBrotli(options = kNullPrototype) {
   validateObject(options, "options");
-  return makeBufferedTransformAsync(makeCodecFn(zlib.brotliCompressSync, options), true);
+  return makeStreamingTransformAsync(() => zlib.createBrotliCompress(options), true);
 }
 
 // ---------------------------------------------------------------------------
@@ -129,17 +194,17 @@ function compressBrotli(options = kNullPrototype) {
 
 function decompressGzip(options = kNullPrototype) {
   validateObject(options, "options");
-  return makeBufferedTransformAsync(makeCodecFn(zlib.gunzipSync, options), false);
+  return makeStreamingTransformAsync(() => zlib.createGunzip(options), false);
 }
 
 function decompressDeflate(options = kNullPrototype) {
   validateObject(options, "options");
-  return makeBufferedTransformAsync(makeCodecFn(zlib.inflateSync, options), false);
+  return makeStreamingTransformAsync(() => zlib.createInflate(options), false);
 }
 
 function decompressBrotli(options = kNullPrototype) {
   validateObject(options, "options");
-  return makeBufferedTransformAsync(makeCodecFn(zlib.brotliDecompressSync, options), false);
+  return makeStreamingTransformAsync(() => zlib.createBrotliDecompress(options), false);
 }
 
 // ---------------------------------------------------------------------------

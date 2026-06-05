@@ -2030,7 +2030,7 @@ describe("rmdir", () => {
 
     expect(existsSync(path + "/file.txt")).toBe(true);
 
-    expect(promises.rmdir(path, { recursive: true })).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
+    await expect(promises.rmdir(path, { recursive: true })).rejects.toMatchObject({ code: "ERR_INVALID_ARG_VALUE" });
     await promises.rm(path, { recursive: true, force: true });
     expect(existsSync(path + "/file.txt")).toBe(false);
   });
@@ -2922,7 +2922,7 @@ describe("fs/promises", () => {
         await mkdir(path, { recursive: true });
       } catch (e) {}
       expect(await exists(path)).toBe(true);
-      expect(rmdir(join(path, "../../"), { recursive: true })).rejects.toMatchObject({
+      await expect(rmdir(join(path, "../../"), { recursive: true })).rejects.toMatchObject({
         code: "ERR_INVALID_ARG_VALUE",
       });
       await rm(join(path, "../../"), { recursive: true, force: true });

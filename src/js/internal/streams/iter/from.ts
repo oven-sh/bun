@@ -3,7 +3,7 @@
 // Creates normalized byte stream iterables from various input types.
 // Handles recursive flattening of nested iterables and protocol conversions.
 
-const { isAnyArrayBuffer, isPromise, isTypedArray, isUint8Array } = require("node:util/types");
+const { isAnyArrayBuffer, isPromise, isUint8Array } = require("node:util/types");
 
 const { kValidatedSource, toStreamable, toAsyncStreamable } = require("internal/streams/iter/types");
 
@@ -63,10 +63,7 @@ function primitiveToUint8Array(chunk) {
 }
 
 function arrayBufferViewToUint8Array(chunk) {
-  if (isTypedArray(chunk)) {
-    return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-  }
-  // DataView
+  // TypedArray or DataView; both expose buffer/byteOffset/byteLength.
   return new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
 }
 

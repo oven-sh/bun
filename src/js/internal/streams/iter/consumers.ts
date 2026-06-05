@@ -5,7 +5,7 @@
 // ondrain() - backpressure drain utility
 // (merge() is not ported.)
 
-const { isSharedArrayBuffer } = require("node:util/types");
+
 const { validateAbortSignal, validateFunction, validateInteger, validateObject } = require("internal/validators");
 
 const { from, fromSync } = require("internal/streams/iter/from");
@@ -87,12 +87,6 @@ function toArrayBuffer(data) {
   const byteOffset = data.byteOffset;
   const byteLength = data.byteLength;
   const buffer = data.buffer;
-  if (isSharedArrayBuffer(buffer)) {
-    if (byteOffset === 0 && byteLength === buffer.byteLength) {
-      return buffer;
-    }
-    return buffer.slice(byteOffset, byteOffset + byteLength);
-  }
   if (byteOffset === 0 && byteLength === buffer.byteLength) {
     return buffer;
   }

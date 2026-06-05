@@ -713,7 +713,7 @@ impl FSWatcher {
     /// Returns `UNDEFINED` if the wrapper reference has been cleared.
     #[inline]
     pub fn js_this(&self) -> JSValue {
-        self.js_this.get().get()
+        self.js_this.get_or_undefined()
     }
 
     /// `FSWatcher.initJS`. Takes `*mut Self` so the
@@ -783,7 +783,7 @@ impl FSWatcher {
         // so both calls are inlined at the end of this function.
 
         err.ensure_still_alive();
-        let js_this = self.js_this.get().try_get();
+        let js_this = self.js_this.try_get();
         if let Some(js_this) = js_this {
             js_this.ensure_still_alive();
             if let Some(listener) = js::listener_get_cached(js_this) {
@@ -815,7 +815,7 @@ impl FSWatcher {
         }
         // Reshaped for borrowck — `defer this.close()` moved to fn end.
 
-        let js_this = self.js_this.get().try_get();
+        let js_this = self.js_this.try_get();
         if let Some(js_this) = js_this {
             js_this.ensure_still_alive();
             if let Some(listener) = js::listener_get_cached(js_this) {
@@ -833,7 +833,7 @@ impl FSWatcher {
     }
 
     pub fn emit_with_filename<const EVENT_TYPE: EventType>(&self, file_name: JSValue) {
-        let Some(js_this) = self.js_this.get().try_get() else {
+        let Some(js_this) = self.js_this.try_get() else {
             return;
         };
         let Some(listener) = js::listener_get_cached(js_this) else {
@@ -844,7 +844,7 @@ impl FSWatcher {
 
     pub fn emit<const EVENT_TYPE: EventType>(&self, file_name: &[u8]) {
         debug_assert!(EVENT_TYPE != EventType::Error);
-        let Some(js_this) = self.js_this.get().try_get() else {
+        let Some(js_this) = self.js_this.try_get() else {
             return;
         };
         let Some(listener) = js::listener_get_cached(js_this) else {
@@ -947,7 +947,7 @@ impl FSWatcher {
             self.closed.set(true);
             // Read before `detach()` clears the ref; pending activity still
             // roots the wrapper for the close-event emit below.
-            let js_this = self.js_this.get().try_get();
+            let js_this = self.js_this.try_get();
             self.mutex.unlock();
             self.detach();
 

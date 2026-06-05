@@ -829,7 +829,7 @@ function getTestBunStep(platform, options, testOptions = {}) {
       ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
       // Platform smoke check: runner.node.mjs asserts the agent matches what
       // this step targets before running any test (see assertExpectedPlatform).
-      // `release` is only asserted where the lane pins an exact version —
+      // `release` is only asserted where the lane pins an exact version:
       // darwin aarch64 "previous" and darwin x64 intentionally float across
       // macOS versions, and the windows "2019" label doesn't match the
       // kernel-style version the agent reports.

@@ -420,9 +420,6 @@ function getTestModifiers(testPath) {
 }
 
 /**
- * @returns {Promise<TestResult[]>}
- */
-/**
  * Smoke-checks that this agent actually matches the platform the CI step was
  * generated for. The step exports EXPECTED_PLATFORM_* (see getTestBunStep in
  * .buildkite/ci.mjs); we compare against the same utils the agent uses to
@@ -451,10 +448,14 @@ function assertExpectedPlatform() {
     checks.push(["release", expectedRelease, ok ? expectedRelease : actualRelease]);
   }
 
-  const mismatches = checks.filter(([, expected, actual]) => expected && actual && expected !== actual);
+  // Fail closed: a declared expectation with no detectable actual value is a
+  // mismatch (e.g. a musl step on a box where the ABI probe fails).
+  const mismatches = checks.filter(([, expected, actual]) => expected && expected !== actual);
   if (mismatches.length) {
-    const details = mismatches.map(([k, e, a]) => `${k}: step expects "${e}", agent is "${a}"`).join("\n  ");
-    console.error(`Platform smoke check FAILED — this job landed on the wrong agent:\n  ${details}`);
+    const details = mismatches
+      .map(([k, e, a]) => `${k}: step expects "${e}", agent is ${a ? `"${a}"` : "(undetected)"}`)
+      .join("\n  ");
+    console.error(`Platform smoke check FAILED, this job landed on the wrong agent:\n  ${details}`);
     process.exit(1);
   }
 
@@ -469,6 +470,9 @@ function assertExpectedPlatform() {
     );
 }
 
+/**
+ * @returns {Promise<TestResult[]>}
+ */
 async function runTests() {
   assertExpectedPlatform();
 

@@ -54,28 +54,18 @@ impl Drop for CompressionStreamTransformer {
 #[bun_jsc::JsClass]
 pub struct CompressionStreamTransformer {
     engine: JsCell<Engine>,
+    /// Per-mode native context footprint, fixed at construction. Kept outside
+    /// the `JsCell`: `estimated_size` runs on the GC marking thread, which
+    /// must not touch the JS-thread-owned cell.
+    context_size: usize,
 }
 
 impl CompressionStreamTransformer {
     /// Native context footprint for the GC, mirroring the per-mode constants
     /// the `NativeZlib`/`NativeBrotli`/`NativeZstd` handles report.
+    /// Called from any thread (concurrent GC marking).
     pub fn estimated_size(&self) -> usize {
-        core::mem::size_of::<Self>()
-            + match self.engine.get() {
-                // deflate internal_state @ cloudflare/zlib (see NativeZlib)
-                Engine::Zlib(_) => 3309,
-                Engine::Brotli(ctx) => match ctx.mode {
-                    NodeMode::BROTLI_ENCODE => 5143, // sizeof(BrotliEncoderStateStruct)
-                    NodeMode::BROTLI_DECODE => 855,  // sizeof(BrotliDecoderStateStruct)
-                    _ => 0,
-                },
-                Engine::Zstd(ctx) => match ctx.mode {
-                    NodeMode::ZSTD_COMPRESS => 5272,    // ZSTD_sizeof_CCtx estimate
-                    NodeMode::ZSTD_DECOMPRESS => 95968, // ZSTD_sizeof_DCtx estimate
-                    _ => 0,
-                },
-                Engine::Closed => 0,
-            }
+        core::mem::size_of::<Self>() + self.context_size
     }
 
     // PORT NOTE: no `#[bun_jsc::host_fn]` — the `#[bun_jsc::JsClass]` derive
@@ -92,6 +82,22 @@ impl CompressionStreamTransformer {
         }
         #[expect(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
         let mode = NodeMode::from_int(mode_double as u8);
+
+        let context_size: usize = match mode {
+            // deflate internal_state @ cloudflare/zlib (see NativeZlib)
+            NodeMode::DEFLATE
+            | NodeMode::INFLATE
+            | NodeMode::GZIP
+            | NodeMode::GUNZIP
+            | NodeMode::DEFLATERAW
+            | NodeMode::INFLATERAW
+            | NodeMode::UNZIP => 3309,
+            NodeMode::BROTLI_ENCODE => 5143, // sizeof(BrotliEncoderStateStruct)
+            NodeMode::BROTLI_DECODE => 855,  // sizeof(BrotliDecoderStateStruct)
+            NodeMode::ZSTD_COMPRESS => 5272, // ZSTD_sizeof_CCtx estimate
+            NodeMode::ZSTD_DECOMPRESS => 95968, // ZSTD_sizeof_DCtx estimate
+            NodeMode::NONE => unreachable!("range-checked above"),
+        };
 
         let engine = match mode {
             NodeMode::DEFLATE
@@ -127,6 +133,7 @@ impl CompressionStreamTransformer {
         // init() as a separate call on the already-boxed object.
         let transformer = Box::new(CompressionStreamTransformer {
             engine: JsCell::new(engine),
+            context_size,
         });
         let err = transformer.engine.with_mut(|engine| match engine {
             Engine::Zlib(ctx) => {

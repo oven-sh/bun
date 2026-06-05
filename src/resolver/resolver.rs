@@ -6682,21 +6682,18 @@ fn is_dot_slash(path: &[u8]) -> bool {
     }
 }
 
-// PERF: with only 4 keys — all length 4 — a `phf::Map<&[u8], ModuleType>`
-// hash + index probe would be strictly more work than a single
-// length gate followed by 4-byte compares (which LLVM lowers to one u32
-// load + compare per arm once `len == 4` is established). Mirrors the
-// length-gated dispatch used in `clap::find_param`.
+bun_core::comptime_string_map! {
+    static MODULE_TYPE_FROM_EXT: options::ModuleType = {
+        b".mjs" => options::ModuleType::Esm,
+        b".mts" => options::ModuleType::Esm,
+        b".cjs" => options::ModuleType::Cjs,
+        b".cts" => options::ModuleType::Cjs,
+    };
+}
+
 #[inline]
 fn module_type_from_ext(ext: &[u8]) -> Option<options::ModuleType> {
-    if ext.len() != 4 {
-        return None;
-    }
-    match ext {
-        b".mjs" | b".mts" => Some(options::ModuleType::Esm),
-        b".cjs" | b".cts" => Some(options::ModuleType::Cjs),
-        _ => None,
-    }
+    MODULE_TYPE_FROM_EXT.get(ext).copied()
 }
 
 const NODE_MODULE_ROOT_STRING: &[u8] =

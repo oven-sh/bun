@@ -654,10 +654,25 @@ pub enum Encoding {
     Buffer,
 }
 
-// With only 13 short keys spread across 7 distinct
-// lengths (max 4 keys at len==6) a length-gated byte match beats a
-// `phf::Map`'s hash+probe — see `Encoding::from` below. The case-insensitive
-// entry points lowercase into a stack buffer first.
+bun_core::comptime_string_map! {
+    /// Buffer encoding names → [`Encoding`]. Looked up case-insensitively
+    /// ([`Encoding::from`]), so keys must stay lowercase.
+    static ENCODING_MAP: Encoding = {
+        b"hex" => Encoding::Hex,
+        b"utf8" => Encoding::Utf8,
+        b"ucs2" => Encoding::Utf16le,
+        b"utf-8" => Encoding::Utf8,
+        b"ucs-2" => Encoding::Utf16le,
+        b"ascii" => Encoding::Ascii,
+        b"base64" => Encoding::Base64,
+        b"binary" => Encoding::Latin1,
+        b"latin1" => Encoding::Latin1,
+        b"buffer" => Encoding::Buffer,
+        b"utf16le" => Encoding::Utf16le,
+        b"utf16-le" => Encoding::Utf16le,
+        b"base64url" => Encoding::Base64url,
+    };
+}
 
 impl From<Encoding> for bun_core::NodeEncoding {
     fn from(e: Encoding) -> Self {
@@ -703,64 +718,22 @@ impl Encoding {
 
     /// Caller must verify the value is a string
     pub fn from(slice: &[u8]) -> Option<Encoding> {
-        // PERF: length-gated match in lieu of `phf::Map` — 13 keys over
-        // 7 distinct lengths (3..=9, max 4 collisions at len 6). The outer
-        // `match len` rejects almost every miss on a single `usize` compare;
-        // the inner byte compares are at known fixed lengths so LLVM lowers
-        // them to word-sized loads. Same pattern as `clap::find_param`
-        // (12577e958d71). Case-insensitive: lowercase into a 9-byte stack
-        // buffer first (longest key is "base64url").
-        let len = slice.len();
-        if len < 3 || len > 9 {
-            return None;
-        }
-        let (buf, _) = bun_core::ascii_lowercase_buf::<9>(slice)?;
-        let s = &buf[..len];
-        match len {
-            3 if s == b"hex" => Some(Encoding::Hex),
-            4 => match s {
-                b"utf8" => Some(Encoding::Utf8),
-                b"ucs2" => Some(Encoding::Utf16le),
-                _ => None,
-            },
-            5 => match s {
-                b"utf-8" => Some(Encoding::Utf8),
-                b"ucs-2" => Some(Encoding::Utf16le),
-                b"ascii" => Some(Encoding::Ascii),
-                _ => None,
-            },
-            6 => match s {
-                b"base64" => Some(Encoding::Base64),
-                b"binary" => Some(Encoding::Latin1),
-                b"latin1" => Some(Encoding::Latin1),
-                b"buffer" => Some(Encoding::Buffer),
-                _ => None,
-            },
-            7 if s == b"utf16le" => Some(Encoding::Utf16le),
-            8 if s == b"utf16-le" => Some(Encoding::Utf16le),
-            9 if s == b"base64url" => Some(Encoding::Base64url),
-            _ => None,
-        }
+        ENCODING_MAP.get_ascii_case_insensitive(slice).copied()
     }
 
-    /// Case-insensitive lookup against a `bun.String` without allocating.
-    /// Replaces the former `str.in_map_case_insensitive(&ENCODING_MAP)` path:
-    /// narrows UTF-16/Latin-1 code units into a stack buffer (rejecting any
-    /// non-ASCII unit — no encoding name contains one) and dispatches to
-    /// [`Encoding::from`].
+    /// Case-insensitive lookup against a `bun.String` without allocating
+    /// (`bun.String.inMapCaseInsensitive`): UTF-16 code units are narrowed
+    /// into a stack buffer (any non-ASCII unit ⇒ miss — no encoding name
+    /// contains one) before the map lookup.
     pub fn from_bun_string(s: &bun_core::String) -> Option<Encoding> {
-        // NOTE: tightens the Latin-1 path to reject `>= 0x80` (was pass-through);
-        // safe — no encoding name is non-ASCII, downstream match would miss anyway.
-        let mut buf = [0u8; 9];
-        Self::from(s.ascii_into(&mut buf)?)
+        s.in_map_case_insensitive(&ENCODING_MAP)
     }
 }
 
 impl Encoding {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<Encoding>> {
-        // ComptimeStringMap::fromJSCaseInsensitive — emulated via
-        // `from_bun_string` (stack-buffer narrow + length-gated match; no
-        // `to_utf8()` allocation needed for a ≤9-byte ASCII key).
+        // `from_bun_string` narrows into a stack buffer — no `to_utf8()`
+        // allocation needed for a short ASCII key.
         let str = bun_core::OwnedString::new(bun_core::String::from_js(value, global)?);
         Ok(Self::from_bun_string(&str))
     }
@@ -1800,10 +1773,10 @@ impl FileSystemFlags {
                     }
                 }
 
-                // Convert the ZigString (≤12 bytes here) to a UTF-8 slice and
-                // dispatch through the length-gated match below.
+                // Convert the ZigString (≤12 bytes here) to a UTF-8 slice for
+                // the map lookup.
                 let key_slice = str.to_slice();
-                break 'brk lookup_file_system_flags(key_slice.slice());
+                break 'brk FILE_SYSTEM_FLAGS_MAP.get(key_slice.slice()).copied();
             };
 
             let Some(flags) = flags else {
@@ -1868,65 +1841,57 @@ impl FileSystemFlags {
     }
 }
 
-// A 44-entry `phf::Map` would work, but the keys are tiny (1..=3 bytes) and
-// cluster heavily by length (6/22/16). phf's hash+probe is dominated by the
-// SipHash of the input slice; a length-gated byte match rejects on a single
-// `usize` compare and lowers the inner arms to 1-2 register compares.
-// Same pattern as `clap::find_param` (12577e958d71).
-//
-// 2-level dispatch: `len` → `(b0, b1)` tuple. The original 44 keys are 22
-// distinct values × {lower, UPPER}; mixed case (e.g. "Rs") is *not* accepted,
-// so each arm lists both case variants explicitly rather than lowercasing.
-// Every length-3 key ends in `'+'`, so that byte is checked once up front and
-// the len-3 arm reuses the same `(b0, b1)` table as len-2 with RDWR semantics.
-#[inline]
-fn lookup_file_system_flags(bytes: &[u8]) -> Option<i32> {
-    match bytes.len() {
-        1 => match bytes[0] {
-            b'r' | b'R' => Some(O::RDONLY),
-            b'w' | b'W' => Some(O::TRUNC | O::CREAT | O::WRONLY),
-            b'a' | b'A' => Some(O::APPEND | O::CREAT | O::WRONLY),
-            _ => None,
-        },
-        2 => match (bytes[0], bytes[1]) {
-            (b'r', b'+') | (b'R', b'+') => Some(O::RDWR),
-            (b'w', b'+') | (b'W', b'+') => Some(O::TRUNC | O::CREAT | O::RDWR),
-            (b'a', b'+') | (b'A', b'+') => Some(O::APPEND | O::CREAT | O::RDWR),
-            (b'r', b's') | (b'R', b'S') | (b's', b'r') | (b'S', b'R') => Some(O::RDONLY | O::SYNC),
-            (b'w', b'x') | (b'W', b'X') | (b'x', b'w') | (b'X', b'W') => {
-                Some(O::TRUNC | O::CREAT | O::WRONLY | O::EXCL)
-            }
-            (b'a', b'x') | (b'A', b'X') | (b'x', b'a') | (b'X', b'A') => {
-                Some(O::APPEND | O::CREAT | O::WRONLY | O::EXCL)
-            }
-            (b'a', b's') | (b'A', b'S') | (b's', b'a') | (b'S', b'A') => {
-                Some(O::APPEND | O::CREAT | O::WRONLY | O::SYNC)
-            }
-            _ => None,
-        },
-        3 => {
-            // Every 3-byte flag is "<2-byte flag>+".
-            if bytes[2] != b'+' {
-                return None;
-            }
-            match (bytes[0], bytes[1]) {
-                (b'r', b's') | (b'R', b'S') | (b's', b'r') | (b'S', b'R') => {
-                    Some(O::RDWR | O::SYNC)
-                }
-                (b'w', b'x') | (b'W', b'X') | (b'x', b'w') | (b'X', b'W') => {
-                    Some(O::TRUNC | O::CREAT | O::RDWR | O::EXCL)
-                }
-                (b'a', b'x') | (b'A', b'X') | (b'x', b'a') | (b'X', b'A') => {
-                    Some(O::APPEND | O::CREAT | O::RDWR | O::EXCL)
-                }
-                (b'a', b's') | (b'A', b'S') | (b's', b'a') | (b'S', b'A') => {
-                    Some(O::APPEND | O::CREAT | O::RDWR | O::SYNC)
-                }
-                _ => None,
-            }
-        }
-        _ => None,
-    }
+bun_core::comptime_string_map! {
+    /// Node's fs flag strings → `bun.O` bits: 22 distinct flags × {lower,
+    /// UPPER}. Mixed case (e.g. "Rs") is *not* accepted, so every accepted
+    /// spelling is listed explicitly rather than going through
+    /// `get_ascii_case_insensitive`.
+    static FILE_SYSTEM_FLAGS_MAP: c_int = {
+        b"r" => O::RDONLY,
+        b"R" => O::RDONLY,
+        b"w" => O::TRUNC | O::CREAT | O::WRONLY,
+        b"W" => O::TRUNC | O::CREAT | O::WRONLY,
+        b"a" => O::APPEND | O::CREAT | O::WRONLY,
+        b"A" => O::APPEND | O::CREAT | O::WRONLY,
+        b"r+" => O::RDWR,
+        b"R+" => O::RDWR,
+        b"w+" => O::TRUNC | O::CREAT | O::RDWR,
+        b"W+" => O::TRUNC | O::CREAT | O::RDWR,
+        b"a+" => O::APPEND | O::CREAT | O::RDWR,
+        b"A+" => O::APPEND | O::CREAT | O::RDWR,
+        b"rs" => O::RDONLY | O::SYNC,
+        b"RS" => O::RDONLY | O::SYNC,
+        b"sr" => O::RDONLY | O::SYNC,
+        b"SR" => O::RDONLY | O::SYNC,
+        b"wx" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
+        b"WX" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
+        b"xw" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
+        b"XW" => O::TRUNC | O::CREAT | O::WRONLY | O::EXCL,
+        b"ax" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
+        b"AX" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
+        b"xa" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
+        b"XA" => O::APPEND | O::CREAT | O::WRONLY | O::EXCL,
+        b"as" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
+        b"AS" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
+        b"sa" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
+        b"SA" => O::APPEND | O::CREAT | O::WRONLY | O::SYNC,
+        b"rs+" => O::RDWR | O::SYNC,
+        b"RS+" => O::RDWR | O::SYNC,
+        b"sr+" => O::RDWR | O::SYNC,
+        b"SR+" => O::RDWR | O::SYNC,
+        b"wx+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
+        b"WX+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
+        b"xw+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
+        b"XW+" => O::TRUNC | O::CREAT | O::RDWR | O::EXCL,
+        b"ax+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
+        b"AX+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
+        b"xa+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
+        b"XA+" => O::APPEND | O::CREAT | O::RDWR | O::EXCL,
+        b"as+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
+        b"AS+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
+        b"sa+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
+        b"SA+" => O::APPEND | O::CREAT | O::RDWR | O::SYNC,
+    };
 }
 
 // ──────────────────────────────────────────────────────────────────────────

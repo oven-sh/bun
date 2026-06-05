@@ -2,7 +2,7 @@ use core::ffi::{CStr, c_uint};
 
 use bun_alloc::AllocError;
 use bun_boringssl_sys as boringssl;
-use bun_core::{String as BunString, ZigString, strings};
+use bun_core::{String as BunString, ZigString};
 
 use crate::jsc::JSGlobalObject;
 
@@ -102,96 +102,66 @@ pub(crate) const ALGORITHM_ONE_OF: &str = "'blake2b256', 'blake2b512', 'blake2s2
 'ripemd160', 'sha1', 'sha224', 'sha256', 'sha384', 'sha512', 'sha512-224', 'sha512-256', \
 'sha3-224', 'sha3-256', 'sha3-384', 'sha3-512', 'shake128' or 'shake256'";
 
+bun_core::comptime_string_map! {
+    /// Case-sensitive name → `Algorithm`. Keys must stay lowercase so
+    /// `lookup_ignore_case` can use the ASCII-case-insensitive probe.
+    static ALGORITHM_MAP: Algorithm = {
+        b"md4" => Algorithm::Md4,
+        b"md5" => Algorithm::Md5,
+        b"sha1" => Algorithm::Sha1,
+        b"sha-1" => Algorithm::Sha1,
+        b"sha128" => Algorithm::Sha1,
+        b"sha224" => Algorithm::Sha224,
+        b"sha256" => Algorithm::Sha256,
+        b"sha384" => Algorithm::Sha384,
+        b"sha512" => Algorithm::Sha512,
+        b"rmd160" => Algorithm::Ripemd160,
+        b"sha-224" => Algorithm::Sha224,
+        b"sha-256" => Algorithm::Sha256,
+        b"sha-384" => Algorithm::Sha384,
+        b"sha-512" => Algorithm::Sha512,
+        b"sha3-224" => Algorithm::Sha3_224,
+        b"sha3-256" => Algorithm::Sha3_256,
+        b"sha3-384" => Algorithm::Sha3_384,
+        b"sha3-512" => Algorithm::Sha3_512,
+        b"shake128" => Algorithm::Shake128,
+        b"shake256" => Algorithm::Shake256,
+        b"ripemd160" => Algorithm::Ripemd160,
+        b"blake2b256" => Algorithm::Blake2b256,
+        b"blake2b512" => Algorithm::Blake2b512,
+        b"blake2s256" => Algorithm::Blake2s256,
+        b"sha-512224" => Algorithm::Sha512_224,
+        b"sha512-224" => Algorithm::Sha512_224,
+        b"sha-512256" => Algorithm::Sha512_256,
+        b"sha512-256" => Algorithm::Sha512_256,
+        b"sha-512/224" => Algorithm::Sha512_224,
+        b"sha-512_224" => Algorithm::Sha512_224,
+        b"sha-512/256" => Algorithm::Sha512_256,
+        b"sha-512_256" => Algorithm::Sha512_256,
+    };
+}
+// Aliases the Zig table listed but never wired up:
+// b"md5-sha1" => .@"MD5-SHA1",
+// b"dsa-sha" => .@"DSA-SHA",
+// b"dsa-sha1" => .@"DSA-SHA1",
+// b"ecdsa-with-sha1" => .@"ecdsa-with-SHA1",
+// b"rsa-md5" => .@"RSA-MD5",
+// b"rsa-sha1" => .@"RSA-SHA1",
+// b"rsa-sha1-2" => .@"RSA-SHA1-2",
+// b"rsa-sha224" => .@"RSA-SHA224",
+// b"rsa-sha256" => .@"RSA-SHA256",
+// b"rsa-sha384" => .@"RSA-SHA384",
+// b"rsa-sha512" => .@"RSA-SHA512",
+// b"rsa-ripemd160" => .@"RSA-RIPEMD160",
+
 /// Case-sensitive name → `Algorithm`.
-///
-/// Hand-rolled instead of a `phf::Map`: 32 keys spread across lengths 3..=11
-/// (max bucket = 7) — a length-gated `match` rejects misses on a single `usize`
-/// compare and lets LLVM lower the per-bucket arms to fixed-width loads. The two
-/// densest buckets (len 6 / len 10) get an extra first-byte gate so common
-/// inputs (`"sha256"`, `"sha512"`) hit ≤5 short compares instead of phf's
-/// SipHash + index probe. Semantics are identical to `MAP.get(k).copied()`.
 pub(crate) fn lookup(bytes: &[u8]) -> Option<Algorithm> {
-    match bytes.len() {
-        3 => match bytes {
-            b"md4" => Some(Algorithm::Md4),
-            b"md5" => Some(Algorithm::Md5),
-            _ => None,
-        },
-        4 => (bytes == b"sha1").then_some(Algorithm::Sha1),
-        5 => (bytes == b"sha-1").then_some(Algorithm::Sha1),
-        6 => match bytes[0] {
-            b's' => match bytes {
-                b"sha128" => Some(Algorithm::Sha1),
-                b"sha224" => Some(Algorithm::Sha224),
-                b"sha256" => Some(Algorithm::Sha256),
-                b"sha384" => Some(Algorithm::Sha384),
-                b"sha512" => Some(Algorithm::Sha512),
-                _ => None,
-            },
-            b'r' => (bytes == b"rmd160").then_some(Algorithm::Ripemd160),
-            _ => None,
-        },
-        7 => match bytes {
-            b"sha-224" => Some(Algorithm::Sha224),
-            b"sha-256" => Some(Algorithm::Sha256),
-            b"sha-384" => Some(Algorithm::Sha384),
-            b"sha-512" => Some(Algorithm::Sha512),
-            _ => None,
-        },
-        8 => match bytes {
-            b"sha3-224" => Some(Algorithm::Sha3_224),
-            b"sha3-256" => Some(Algorithm::Sha3_256),
-            b"sha3-384" => Some(Algorithm::Sha3_384),
-            b"sha3-512" => Some(Algorithm::Sha3_512),
-            b"shake128" => Some(Algorithm::Shake128),
-            b"shake256" => Some(Algorithm::Shake256),
-            _ => None,
-        },
-        9 => (bytes == b"ripemd160").then_some(Algorithm::Ripemd160),
-        10 => match bytes[0] {
-            b'b' => match bytes {
-                b"blake2b256" => Some(Algorithm::Blake2b256),
-                b"blake2b512" => Some(Algorithm::Blake2b512),
-                b"blake2s256" => Some(Algorithm::Blake2s256),
-                _ => None,
-            },
-            b's' => match bytes {
-                b"sha-512224" => Some(Algorithm::Sha512_224),
-                b"sha512-224" => Some(Algorithm::Sha512_224),
-                b"sha-512256" => Some(Algorithm::Sha512_256),
-                b"sha512-256" => Some(Algorithm::Sha512_256),
-                _ => None,
-            },
-            _ => None,
-        },
-        11 => match bytes {
-            b"sha-512/224" => Some(Algorithm::Sha512_224),
-            b"sha-512_224" => Some(Algorithm::Sha512_224),
-            b"sha-512/256" => Some(Algorithm::Sha512_256),
-            b"sha-512_256" => Some(Algorithm::Sha512_256),
-            _ => None,
-        },
-        _ => None,
-    }
-    // b"md5-sha1" => .@"MD5-SHA1",
-    // b"dsa-sha" => .@"DSA-SHA",
-    // b"dsa-sha1" => .@"DSA-SHA1",
-    // b"ecdsa-with-sha1" => .@"ecdsa-with-SHA1",
-    // b"rsa-md5" => .@"RSA-MD5",
-    // b"rsa-sha1" => .@"RSA-SHA1",
-    // b"rsa-sha1-2" => .@"RSA-SHA1-2",
-    // b"rsa-sha224" => .@"RSA-SHA224",
-    // b"rsa-sha256" => .@"RSA-SHA256",
-    // b"rsa-sha384" => .@"RSA-SHA384",
-    // b"rsa-sha512" => .@"RSA-SHA512",
-    // b"rsa-ripemd160" => .@"RSA-RIPEMD160",
+    ALGORITHM_MAP.get(bytes).copied()
 }
 
-/// ASCII-case-insensitive `lookup`. All keys are already lower-case, so
-/// lower the probe into a stack buffer and forward to the hand-rolled
-/// length-switch `lookup()`.
+/// ASCII-case-insensitive `lookup`.
 pub(crate) fn lookup_ignore_case(bytes: &[u8]) -> Option<Algorithm> {
-    strings::with_ascii_lowercase(bytes, lookup).flatten()
+    ALGORITHM_MAP.get_ascii_case_insensitive(bytes).copied()
 }
 
 impl EVP {

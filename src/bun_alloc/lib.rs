@@ -609,7 +609,7 @@ pub fn copy_lowercase_if_needed<'a>(in_: &'a [u8], out: &'a mut [u8]) -> &'a [u8
 /// Lowercase `input` into a fresh `[u8; N]` stack buffer, returning
 /// `Some((buf, input.len()))` or `None` if `input.len() > N`. The unused tail
 /// of `buf` is zero-filled. Covers the ubiquitous "lowercase a short key into
-/// a stack buffer, then look it up in a phf/length-gated map" pattern.
+/// a stack buffer, then look it up in a length-gated map" pattern.
 #[inline]
 pub fn ascii_lowercase_buf<const N: usize>(input: &[u8]) -> Option<([u8; N], usize)> {
     if input.len() > N {

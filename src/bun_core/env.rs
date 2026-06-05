@@ -1,5 +1,3 @@
-use phf::phf_map;
-
 // `build_options` is a generated module (build.rs consts), re-exported publicly.
 pub use crate::build_options;
 
@@ -109,26 +107,6 @@ pub enum StdOsTag {
 }
 
 impl OperatingSystem {
-    pub const NAMES: phf::Map<&'static [u8], OperatingSystem> = phf_map! {
-        b"windows" => OperatingSystem::Windows,
-        b"win32" => OperatingSystem::Windows,
-        b"win" => OperatingSystem::Windows,
-        b"win64" => OperatingSystem::Windows,
-        b"win_x64" => OperatingSystem::Windows,
-        b"darwin" => OperatingSystem::Mac,
-        b"macos" => OperatingSystem::Mac,
-        b"macOS" => OperatingSystem::Mac,
-        b"mac" => OperatingSystem::Mac,
-        b"apple" => OperatingSystem::Mac,
-        b"linux" => OperatingSystem::Linux,
-        b"Linux" => OperatingSystem::Linux,
-        b"linux-gnu" => OperatingSystem::Linux,
-        b"gnu/linux" => OperatingSystem::Linux,
-        b"freebsd" => OperatingSystem::Freebsd,
-        b"FreeBSD" => OperatingSystem::Freebsd,
-        b"wasm" => OperatingSystem::Wasm,
-    };
-
     /// user-facing name with capitalization
     pub const fn display_string(self) -> &'static str {
         match self {
@@ -174,6 +152,28 @@ impl OperatingSystem {
     }
 }
 
+crate::comptime_string_map! {
+    pub static OPERATING_SYSTEM_NAMES: OperatingSystem = {
+        b"windows" => OperatingSystem::Windows,
+        b"win32" => OperatingSystem::Windows,
+        b"win" => OperatingSystem::Windows,
+        b"win64" => OperatingSystem::Windows,
+        b"win_x64" => OperatingSystem::Windows,
+        b"darwin" => OperatingSystem::Mac,
+        b"macos" => OperatingSystem::Mac,
+        b"macOS" => OperatingSystem::Mac,
+        b"mac" => OperatingSystem::Mac,
+        b"apple" => OperatingSystem::Mac,
+        b"linux" => OperatingSystem::Linux,
+        b"Linux" => OperatingSystem::Linux,
+        b"linux-gnu" => OperatingSystem::Linux,
+        b"gnu/linux" => OperatingSystem::Linux,
+        b"freebsd" => OperatingSystem::Freebsd,
+        b"FreeBSD" => OperatingSystem::Freebsd,
+        b"wasm" => OperatingSystem::Wasm,
+    };
+}
+
 pub const OS: OperatingSystem = if IS_MAC {
     OperatingSystem::Mac
 } else if IS_LINUX {
@@ -212,8 +212,10 @@ impl Architecture {
             Self::Wasm => "wasm",
         }
     }
+}
 
-    pub const NAMES: phf::Map<&'static [u8], Architecture> = phf_map! {
+crate::comptime_string_map! {
+    pub static ARCHITECTURE_NAMES: Architecture = {
         b"x86_64" => Architecture::X64,
         b"x64" => Architecture::X64,
         b"amd64" => Architecture::X64,

@@ -280,21 +280,20 @@ impl SharedEnv {
     }
 }
 
-/// Length-gated match beats
-/// `phf::Map` for 3 entries — phf hashes the full key + does a confirming
-/// memcmp; this rejects on a single `usize` compare for everything that isn't
-/// 6 or 9 bytes (the common case: real hostnames like `git.company.io`).
+bun_core::comptime_string_map! {
+    /// TLD appended to the shorthand git hosts. The length dispatch rejects
+    /// everything that isn't 6 or 9 bytes (the common case: real hostnames
+    /// like `git.company.io`) before any byte compare.
+    static HOST_TLDS: &'static [u8] = {
+        b"github" => b".com",
+        b"gitlab" => b".com",
+        b"bitbucket" => b".org",
+    };
+}
+
 #[inline]
 pub(crate) fn host_tld(host: &[u8]) -> Option<&'static [u8]> {
-    match host.len() {
-        6 => match host {
-            b"github" => Some(b".com"),
-            b"gitlab" => Some(b".com"),
-            _ => None,
-        },
-        9 if host == b"bitbucket" => Some(b".org"),
-        _ => None,
-    }
+    HOST_TLDS.get(host).copied()
 }
 
 /// `resolved` is the `.bun-tag` value persisted to the lockfile (a commit SHA for

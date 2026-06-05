@@ -14,7 +14,7 @@ use crate::node::Encoding as NodeEncoding;
 // The upstream
 // `bun_jsc::comptime_string_map_jsc` only exposes the case-sensitive `from_js`;
 // the case-insensitive variant is still cfg-gated. Map keys are all lower-case
-// ASCII, so lower the probe and do a direct phf lookup (mirrors PBKDF2.rs).
+// ASCII, so lower the probe and do a direct lookup (mirrors PBKDF2.rs).
 fn algorithm_from_js_case_insensitive(
     global: &JSGlobalObject,
     input: JSValue,

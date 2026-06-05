@@ -1313,7 +1313,7 @@ mod rule_parsers {
             name: &[u8],
             input: &mut Parser,
         ) -> CssResult<Self::Prelude> {
-            // phf-style dispatch on at-rule name (case-insensitive).
+            // Case-insensitive dispatch on at-rule name.
             crate::match_ignore_ascii_case! { name, {
                 b"import" => {
                     if (this.state as u8) > (TopLevelState::Imports as u8) {
@@ -6018,7 +6018,8 @@ pub mod color {
 
     pub type RGB = (u8, u8, u8);
 
-    pub static NAMED_COLORS: phf::Map<&'static [u8], RGB> = phf::phf_map! {
+    bun_core::comptime_string_map! {
+    pub static NAMED_COLORS: RGB = {
         b"aliceblue" => (240, 248, 255),
         b"antiquewhite" => (250, 235, 215),
         b"aqua" => (0, 255, 255),
@@ -6168,6 +6169,7 @@ pub mod color {
         b"yellow" => (255, 255, 0),
         b"yellowgreen" => (154, 205, 50),
     };
+    }
 
     /// Returns the named color with the given name.
     /// <https://drafts.csswg.org/css-color-4/#typedef-named-color>

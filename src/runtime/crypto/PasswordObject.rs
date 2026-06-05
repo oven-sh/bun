@@ -197,7 +197,7 @@ impl AlgorithmValue {
     }
 }
 
-/// `bun_core::ZigString` may be UTF-16 so a direct `phf` byte lookup is
+/// `bun_core::ZigString` may be UTF-16 so a direct byte-map lookup is
 /// unsound; compare each (4-entry) label via the encoding-aware `eql_comptime`.
 fn algorithm_from_zig_string(s: &ZigString) -> Option<Algorithm> {
     if s.eql_comptime(b"argon2i") {
@@ -241,15 +241,19 @@ impl Default for Argon2Params {
     }
 }
 
-impl Algorithm {
-    pub const ARGON2: Algorithm = Algorithm::Argon2id;
-
-    pub const LABEL: phf::Map<&'static [u8], Algorithm> = phf::phf_map! {
+bun_core::comptime_string_map! {
+    pub static ALGORITHM_LABEL: Algorithm = {
         b"argon2i" => Algorithm::Argon2i,
         b"argon2d" => Algorithm::Argon2d,
         b"argon2id" => Algorithm::Argon2id,
         b"bcrypt" => Algorithm::Bcrypt,
     };
+}
+
+impl Algorithm {
+    pub const ARGON2: Algorithm = Algorithm::Argon2id;
+
+    pub const LABEL: &'static __ComptimeStringMap_ALGORITHM_LABEL = &ALGORITHM_LABEL;
 
     pub const DEFAULT: Algorithm = Algorithm::ARGON2;
 

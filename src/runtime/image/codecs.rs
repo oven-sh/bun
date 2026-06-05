@@ -56,10 +56,12 @@ pub enum Backend {
     System = 0,
     Bun = 1,
 }
-pub(crate) static BACKEND_MAP: phf::Map<&'static [u8], Backend> = phf::phf_map! {
-    b"system" => Backend::System,
-    b"bun" => Backend::Bun,
-};
+bun_core::comptime_string_map! {
+    pub(crate) static BACKEND_MAP: Backend = {
+        b"system" => Backend::System,
+        b"bun" => Backend::Bun,
+    };
+}
 
 impl bun_jsc::FromJsEnum for Backend {
     fn from_js_value(
@@ -196,12 +198,14 @@ impl Format {
     }
 }
 
-static EXT_MAP: phf::Map<&'static [u8], Format> = phf::phf_map! {
-    b"jpg" => Format::Jpeg,  b"jpeg" => Format::Jpeg, b"png" => Format::Png,
-    b"webp" => Format::Webp, b"heic" => Format::Heic, b"heif" => Format::Heic,
-    b"avif" => Format::Avif, b"bmp" => Format::Bmp,   b"gif" => Format::Gif,
-    b"tif" => Format::Tiff,  b"tiff" => Format::Tiff,
-};
+bun_core::comptime_string_map! {
+    static EXT_MAP: Format = {
+        b"jpg" => Format::Jpeg,  b"jpeg" => Format::Jpeg, b"png" => Format::Png,
+        b"webp" => Format::Webp, b"heic" => Format::Heic, b"heif" => Format::Heic,
+        b"avif" => Format::Avif, b"bmp" => Format::Bmp,   b"gif" => Format::Gif,
+        b"tif" => Format::Tiff,  b"tiff" => Format::Tiff,
+    };
+}
 
 #[derive(Default)]
 pub struct Decoded {
@@ -604,21 +608,23 @@ pub enum Filter {
     Mks2021 = 8,
 }
 
-/// `JSValue.toEnum` lookup table. Hand-listed (not `ComptimeEnumMap`) so
-/// Sharp's `'linear'` alias can map to `.bilinear`; the auto-generated
-/// error message still lists only the canonical tags.
-pub(crate) static FILTER_MAP: phf::Map<&'static [u8], Filter> = phf::phf_map! {
-    b"box" => Filter::Box,
-    b"bilinear" => Filter::Bilinear,
-    b"linear" => Filter::Bilinear,
-    b"lanczos3" => Filter::Lanczos3,
-    b"mitchell" => Filter::Mitchell,
-    b"nearest" => Filter::Nearest,
-    b"cubic" => Filter::Cubic,
-    b"lanczos2" => Filter::Lanczos2,
-    b"mks2013" => Filter::Mks2013,
-    b"mks2021" => Filter::Mks2021,
-};
+bun_core::comptime_string_map! {
+    /// `JSValue.toEnum` lookup table. Hand-listed (not `ComptimeEnumMap`) so
+    /// Sharp's `'linear'` alias can map to `.bilinear`; the auto-generated
+    /// error message still lists only the canonical tags.
+    pub(crate) static FILTER_MAP: Filter = {
+        b"box" => Filter::Box,
+        b"bilinear" => Filter::Bilinear,
+        b"linear" => Filter::Bilinear,
+        b"lanczos3" => Filter::Lanczos3,
+        b"mitchell" => Filter::Mitchell,
+        b"nearest" => Filter::Nearest,
+        b"cubic" => Filter::Cubic,
+        b"lanczos2" => Filter::Lanczos2,
+        b"mks2013" => Filter::Mks2013,
+        b"mks2021" => Filter::Mks2021,
+    };
+}
 
 unsafe extern "C" {
     fn bun_image_resize_scratch_size(

@@ -3929,16 +3929,18 @@ pub enum RecordType {
     ANY = 255,
 }
 
-pub(super) static RECORD_TYPE_MAP: phf::Map<&'static [u8], RecordType> = phf::phf_map! {
-    b"A" => RecordType::A, b"AAAA" => RecordType::AAAA, b"ANY" => RecordType::ANY,
-    b"CAA" => RecordType::CAA, b"CNAME" => RecordType::CNAME, b"MX" => RecordType::MX,
-    b"NS" => RecordType::NS, b"PTR" => RecordType::PTR, b"SOA" => RecordType::SOA,
-    b"SRV" => RecordType::SRV, b"TXT" => RecordType::TXT,
-    b"a" => RecordType::A, b"aaaa" => RecordType::AAAA, b"any" => RecordType::ANY,
-    b"caa" => RecordType::CAA, b"cname" => RecordType::CNAME, b"mx" => RecordType::MX,
-    b"ns" => RecordType::NS, b"ptr" => RecordType::PTR, b"soa" => RecordType::SOA,
-    b"srv" => RecordType::SRV, b"txt" => RecordType::TXT,
-};
+bun_core::comptime_string_map! {
+    pub(super) static RECORD_TYPE_MAP: RecordType = {
+        b"A" => RecordType::A, b"AAAA" => RecordType::AAAA, b"ANY" => RecordType::ANY,
+        b"CAA" => RecordType::CAA, b"CNAME" => RecordType::CNAME, b"MX" => RecordType::MX,
+        b"NS" => RecordType::NS, b"PTR" => RecordType::PTR, b"SOA" => RecordType::SOA,
+        b"SRV" => RecordType::SRV, b"TXT" => RecordType::TXT,
+        b"a" => RecordType::A, b"aaaa" => RecordType::AAAA, b"any" => RecordType::ANY,
+        b"caa" => RecordType::CAA, b"cname" => RecordType::CNAME, b"mx" => RecordType::MX,
+        b"ns" => RecordType::NS, b"ptr" => RecordType::PTR, b"soa" => RecordType::SOA,
+        b"srv" => RecordType::SRV, b"txt" => RecordType::TXT,
+    };
+}
 
 impl RecordType {
     pub const DEFAULT: Self = RecordType::A;

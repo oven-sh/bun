@@ -1224,7 +1224,8 @@ impl UAEnvironmentVariable {
 
 impl EnumProperty for UAEnvironmentVariable {
     fn from_ascii_case_insensitive(ident: &[u8]) -> Option<Self> {
-        // TODO(perf): css.todo_stuff.match_ignore_ascii_case — replace with a phf table.
+        // TODO(perf): css.todo_stuff.match_ignore_ascii_case — replace the
+        // linear scan with a length-gated match.
         use UAEnvironmentVariable::*;
         const TABLE: &[(&[u8], UAEnvironmentVariable)] = &[
             (b"safe-area-inset-top", SafeAreaInsetTop),

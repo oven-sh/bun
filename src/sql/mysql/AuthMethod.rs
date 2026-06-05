@@ -51,9 +51,11 @@ impl AuthMethod {
     }
 }
 
-// Keys are exactly the wire-protocol plugin names.
-static MAP: phf::Map<&'static [u8], AuthMethod> = phf::phf_map! {
-    b"mysql_native_password" => AuthMethod::MysqlNativePassword,
-    b"caching_sha2_password" => AuthMethod::CachingSha2Password,
-    b"sha256_password" => AuthMethod::Sha256Password,
-};
+bun_core::comptime_string_map! {
+    /// Keys are exactly the wire-protocol plugin names.
+    static MAP: AuthMethod = {
+        b"mysql_native_password" => AuthMethod::MysqlNativePassword,
+        b"caching_sha2_password" => AuthMethod::CachingSha2Password,
+        b"sha256_password" => AuthMethod::Sha256Password,
+    };
+}

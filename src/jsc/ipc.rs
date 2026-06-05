@@ -211,10 +211,12 @@ pub enum Mode {
     Json,
 }
 
-static MODE_MAP: phf::Map<&'static [u8], Mode> = phf::phf_map! {
-    b"advanced" => Mode::Advanced,
-    b"json" => Mode::Json,
-};
+bun_core::comptime_string_map! {
+    static MODE_MAP: Mode = {
+        b"advanced" => Mode::Advanced,
+        b"json" => Mode::Json,
+    };
+}
 
 impl Mode {
     pub fn from_string(s: &[u8]) -> Option<Mode> {

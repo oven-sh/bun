@@ -1770,9 +1770,11 @@ pub mod command {
 
         // These are templates from the legacy `bun create`
         // most of them aren't useful but these few are kinda nice.
-        static HARDCODED_NON_BUN_X_LIST: phf::Set<&'static [u8]> = phf::phf_set! {
-            b"elysia", b"elysia-buchta", b"stric",
-        };
+        bun_core::comptime_string_set! {
+            static HARDCODED_NON_BUN_X_LIST = {
+                b"elysia", b"elysia-buchta", b"stric",
+            };
+        }
 
         // Create command wraps bunx
         let ctx = init(Tag::CreateCommand, log)?;

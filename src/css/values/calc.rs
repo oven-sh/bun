@@ -41,8 +41,8 @@ pub enum CalcUnit {
 impl CalcUnit {
     /// Case-insensitive lookup of a `CalcUnit` by its function name.
     pub fn get_any_case(f: &[u8]) -> Option<Self> {
-        // PERF: linear match on a
-        // stack-lowercased byte slice. Profile before swapping in a phf.
+        // PERF: linear match on a stack-lowercased byte slice. Profile
+        // before swapping in a `comptime_string_map!`.
         // §Strings: source bytes are &[u8], never &str/String — no from_utf8/to_ascii_lowercase().
         let (buf, len) = bun_core::strings::ascii_lowercase_buf::<5>(f)?;
         match &buf[..len] {

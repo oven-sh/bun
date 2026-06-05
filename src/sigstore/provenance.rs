@@ -29,12 +29,12 @@ pub fn to_purl(name: &[u8], version: &[u8]) -> String {
     s.push_str("pkg:npm/");
     if let Some(stripped) = name.strip_prefix(b"@") {
         s.push_str("%40");
-        s.push_str(&String::from_utf8_lossy(stripped));
+        s.push_str(&crate::utf8_lossy(stripped));
     } else {
-        s.push_str(&String::from_utf8_lossy(name));
+        s.push_str(&crate::utf8_lossy(name));
     }
     s.push('@');
-    s.push_str(&String::from_utf8_lossy(version));
+    s.push_str(&crate::utf8_lossy(version));
     s
 }
 
@@ -60,7 +60,7 @@ pub fn generate(provider: CiProvider, subject: &Value) -> Vec<u8> {
 
 fn env(key: &bun_core::ZStr) -> String {
     match bun_core::getenv_z(key) {
-        Some(v) => String::from_utf8_lossy(v).into_owned(),
+        Some(v) => crate::utf8_lossy(v).into_owned(),
         None => String::new(),
     }
 }
@@ -142,7 +142,7 @@ fn gitlab_statement(subject: &Value) -> Value {
             let mut m = serde_json::Map::new();
             $(
                 if let Some(v) = bun_core::getenv_z(bun_core::zstr!($k)) {
-                    m.insert($k.into(), String::from_utf8_lossy(v).into_owned().into());
+                    m.insert($k.into(), crate::utf8_lossy(v).into_owned().into());
                 }
             )*
             serde_json::Value::Object(m)

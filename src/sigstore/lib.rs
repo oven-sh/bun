@@ -64,7 +64,7 @@ impl Endpoints {
     pub fn from_env() -> Self {
         let env = |key: &ZStr, default: &str| -> String {
             match bun_core::getenv_z(key) {
-                Some(v) if !v.is_empty() => String::from_utf8_lossy(v).into_owned(),
+                Some(v) if !v.is_empty() => utf8_lossy(v).into_owned(),
                 _ => default.to_owned(),
             }
         };
@@ -271,6 +271,14 @@ fn env(key: &ZStr) -> Option<&'static [u8]> {
     bun_core::getenv_z(key).filter(|v| !v.is_empty())
 }
 
+/// Lossy UTF-8 for env/wire bytes that land in JSON or error text. npm
+/// reads the same values through Node's `process.env`, itself a lossy
+/// UTF-8 decode, so U+FFFD replacement matches its behavior.
+#[allow(clippy::disallowed_methods)] // lossy decode documented above
+pub(crate) fn utf8_lossy(bytes: &[u8]) -> std::borrow::Cow<'_, str> {
+    String::from_utf8_lossy(bytes)
+}
+
 /// Which CI provider supplies the OIDC token. Drives the SLSA predicate
 /// shape and the preflight error messages (matching npm's wording).
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -336,7 +344,7 @@ pub fn ensure_provenance_generation() -> Result<CiProvider, SigstoreError> {
 fn fetch_identity_token(audience: &str) -> Result<String, SigstoreError> {
     // cosign-compatible env override — also how GitLab supplies its token.
     if let Some(tok) = env(bun_core::zstr!("SIGSTORE_ID_TOKEN")) {
-        return Ok(String::from_utf8_lossy(tok).into_owned());
+        return Ok(utf8_lossy(tok).into_owned());
     }
 
     // GitHub Actions: GET $ACTIONS_ID_TOKEN_REQUEST_URL&audience=sigstore with
@@ -355,7 +363,7 @@ fn fetch_identity_token(audience: &str) -> Result<String, SigstoreError> {
         }
     };
 
-    let mut url = String::from_utf8_lossy(req_url).into_owned();
+    let mut url = utf8_lossy(req_url).into_owned();
     let sep = if url.contains('?') { '&' } else { '?' };
     url.push(sep);
     url.push_str("audience=");
@@ -897,7 +905,7 @@ fn http_json(
     })?;
 
     if res.status_code >= 400 || res.status_code == 0 {
-        let body_preview = String::from_utf8_lossy(&response_buf.list);
+        let body_preview = utf8_lossy(&response_buf.list);
         let body_preview: String = body_preview.chars().take(512).collect();
         return Err(SigstoreError::Http {
             who,
@@ -954,10 +962,11 @@ fn hex_decode(s: &str) -> Option<Vec<u8>> {
 }
 
 /// Standard (padded, `+`/`/`) base64 — what every base64 field in the
-/// Sigstore bundle and Fulcio/Rekor APIs uses.
+/// Sigstore bundle and Fulcio/Rekor APIs uses. `encode_alloc` returns
+/// ASCII bytes, so the UTF-8 validation cannot fail and the `Vec`
+/// allocation is reused as-is.
+#[allow(clippy::disallowed_methods)] // ASCII by construction, documented above
 fn b64_std(data: &[u8]) -> String {
-    // `bun_base64::encode_alloc` returns `Vec<u8>` of ASCII — safe to
-    // reinterpret as UTF-8.
     String::from_utf8(bun_base64::encode_alloc(data)).expect("base64 is ASCII")
 }
 

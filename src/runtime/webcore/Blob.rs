@@ -6586,6 +6586,12 @@ pub fn on_file_stream_resolve_request_stream(
         stream.done(global_this);
     }
     // Resolve with the byte count, matching the buffered Bun.write paths.
+    // Best-effort on pollable-fd destinations: `written` comes from the
+    // writer's drain callbacks, which mix at-accept and at-drain reports
+    // there (see `FileSinkPipe.accepted` for the exact-count variant).
+    // Regular-file destinations are force_sync and report exactly. The JS
+    // streaming loop feeding this sink (`readStreamIntoSink`) discards
+    // per-chunk write results, so there is no accepted total to read here.
     // SAFETY: `this.sink` is the live +1 the wrapper holds until Drop.
     let written = unsafe { (*this.sink).written.get() };
     this.promise

@@ -122,4 +122,77 @@ describe("Bun.write(Bun.file(path), s3file)", () => {
       raw.close();
     }
   });
+
+  // A destination write error mid-stream (EPIPE: the reader of the child's
+  // fd-1 pipe goes away) must reject Bun.write — not resolve with a bogus
+  // count while the network keeps downloading into a dead sink. The JS
+  // streaming loop this pipe replaced surfaced the failure as an unhandled
+  // rejection; the native pipe rejects the Bun.write promise directly.
+  it.skipIf(isWindows)("rejects when the destination pipe breaks mid-stream", async () => {
+    const childScript = `
+      const client = new Bun.S3Client({
+        endpoint: process.env.S3_ENDPOINT,
+        bucket: "test-bucket",
+        accessKeyId: "test",
+        secretAccessKey: "test",
+        region: "us-east-1",
+      });
+      try {
+        await Bun.write(Bun.file(1), client.file("big.bin"));
+        process.exit(42); // resolved — the broken pipe went unnoticed
+      } catch (e) {
+        process.exit(7); // rejected — correct
+      }
+    `;
+
+    // Slow trickle so the child is mid-body when the parent walks away.
+    const raw = net.createServer(socket => {
+      let responded = false;
+      socket.on("data", () => {
+        if (responded) return;
+        responded = true;
+        socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${SIZE}\r\n\r\n`);
+        let offset = 0;
+        const tick = setInterval(() => {
+          if (socket.destroyed) {
+            clearInterval(tick);
+            return;
+          }
+          socket.write(payload.subarray(offset, offset + 65536));
+          offset += 65536;
+          if (offset >= SIZE) {
+            clearInterval(tick);
+            socket.end();
+          }
+        }, 5);
+      });
+      socket.on("error", () => {});
+    });
+    await new Promise<void>(resolve => raw.listen(0, () => resolve()));
+    const port = (raw.address() as net.AddressInfo).port;
+
+    try {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", childScript],
+        env: { ...bunEnv, S3_ENDPOINT: `http://127.0.0.1:${port}` },
+        stdout: "pipe",
+        stderr: "inherit",
+      });
+
+      // Read a little of the child's output, then abandon the pipe: the
+      // child's next flush into fd 1 fails with EPIPE.
+      const reader = proc.stdout.getReader();
+      let got = 0;
+      while (got < 16 * 1024) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        got += value.length;
+      }
+      await reader.cancel();
+
+      expect(await proc.exited).toBe(7);
+    } finally {
+      raw.close();
+    }
+  });
 });

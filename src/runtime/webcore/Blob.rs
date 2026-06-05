@@ -6115,11 +6115,17 @@ fn pipe_byte_stream_to_file_sink(
             global_this: bun_ptr::BackRef::new(global_this),
         };
         let promise_value = pipe.promise.value();
+        let mut err = err;
         if !bytes.is_empty() {
             // SAFETY: `file_sink` is the live +1 transferred to `pipe`.
-            let _ = unsafe {
+            let wr = unsafe {
                 (*file_sink).write(&streams::Result::Temporary(bun_ptr::RawSlice::new(&bytes)))
             };
+            if let streams::Writable::Err(e) = wr {
+                if err.is_none() {
+                    err = Some(e.to_js(global_this));
+                }
+            }
         }
         // `finish` consumes the boxed pipe; box it first so destroy()'s
         // `heap::take` matches.
@@ -6131,11 +6137,15 @@ fn pipe_byte_stream_to_file_sink(
 
     // Drain what arrived so far, then install the pipe for the rest.
     let bytes = byte_stream.drain();
+    let mut drain_err: Option<JSValue> = None;
     if !bytes.is_empty() {
         // SAFETY: `file_sink` is the caller's live +1.
-        let _ = unsafe {
+        let wr = unsafe {
             (*file_sink).write(&streams::Result::Temporary(bun_ptr::RawSlice::new(&bytes)))
         };
+        if let streams::Writable::Err(e) = wr {
+            drain_err = Some(e.to_js(global_this));
+        }
     }
 
     let pipe = bun_core::heap::into_raw(Box::new(FileSinkPipe {
@@ -6146,6 +6156,13 @@ fn pipe_byte_stream_to_file_sink(
     }));
     // SAFETY: just allocated; live until `finish`/shims destroy it.
     let promise_value = unsafe { (*pipe).promise.value() };
+    if let Some(err) = drain_err {
+        // The drained prefix already failed — reject now and cancel the
+        // stream instead of installing a pipe on a dead sink.
+        // SAFETY: just allocated; `finish` consumes it.
+        unsafe { (*pipe).finish(Some(err)) };
+        return promise_value;
+    }
     byte_stream.pipe.set(webcore::Wrap::<FileSinkPipe>::init(
         // SAFETY: `pipe` was just heap-allocated above and stays live until
         // `finish`/the then-shims destroy it; the Pipe holds the erased ptr.
@@ -6188,6 +6205,12 @@ impl FileSinkPipe {
         // (same reshape as `ResumableSink::end_pipe`).
         let global = self.global_this;
         let global = global.get();
+        // An async writer error recorded between chunks must reject even when
+        // the stream itself ended cleanly.
+        // SAFETY: `sink` is the live +1 held by this pipe.
+        let err = err.or_else(|| {
+            unsafe { (*self.sink).take_stored_error() }.map(|e| e.to_js(global))
+        });
         if let Some(stream_) = self.stream.get(global) {
             // BACKREF: live while `self.stream` Strong holds it.
             if let Some(bytes) = stream_.ptr.bytes() {
@@ -6259,17 +6282,53 @@ impl webcore::PipeHandler for FileSinkPipe {
     fn on_pipe(&mut self, mut stream: streams::Result) {
         let is_done = stream.is_done();
 
-        // v1 intentionally ignores the sink's backpressure signal — identical
-        // to the JS streaming loop this replaces (readStreamIntoSink discards
-        // sink.write's return) and to ResumableSink's pipe arm. The FileSink
-        // buffers internally until the writer drains.
+        // Backpressure is still intentionally unsignalled (parity with the JS
+        // streaming loop this replaces and with ResumableSink's pipe arm) —
+        // but errors are not: a failed write must reject `Bun.write` and
+        // cancel the ByteStream so the network stops pulling into a dead
+        // sink. (The JS loop's discarded write *promise* still tripped
+        // unhandled-rejection; discarding the raw error here would be
+        // genuinely silent.)
         // SAFETY: `sink` is the live +1 held by this pipe.
-        let _ = unsafe { (*self.sink).write(&stream) };
+        let write_result = unsafe { (*self.sink).write(&stream) };
+
+        // Owned payloads were allocated by ByteStream with the global
+        // allocator; freeing them is this handler's responsibility (same tail
+        // as ResumableSink::on_stream_pipe). Free before any `finish` below —
+        // `self` is consumed there.
+        if let streams::Result::Owned(owned) | streams::Result::OwnedAndDone(owned) = &mut stream {
+            use bun_collections::VecExt as _;
+            owned.clear_and_free();
+        }
+
+        let global = self.global_this;
+        let global = global.get();
+        let sink_err: Option<JSValue> = match write_result {
+            streams::Writable::Err(e) => Some(e.to_js(global)),
+            // `Done` mid-stream means the writer already closed underneath us
+            // (an async poll-time error closed it without reporting) — fail
+            // with the recorded error rather than feeding a dead sink.
+            streams::Writable::Done if !is_done => Some(
+                // SAFETY: `sink` is the live +1 held by this pipe.
+                match unsafe { (*self.sink).take_stored_error() } {
+                    Some(e) => e.to_js(global),
+                    None => bun_core::String::static_(
+                        b"FileSink closed before the stream finished",
+                    )
+                    .to_error_instance(global),
+                },
+            ),
+            // SAFETY: `sink` is the live +1 held by this pipe.
+            _ => unsafe { (*self.sink).take_stored_error() }.map(|e| e.to_js(global)),
+        };
+        if let Some(err) = sink_err {
+            self.finish(Some(err));
+            return;
+        }
 
         if is_done {
             let err: Option<JSValue> = 'brk_err: {
                 if let streams::Result::Err(e) = &stream {
-                    let global = self.global_this.get();
                     let (js_err, was_strong) = e.to_js_weak(global);
                     js_err.ensure_still_alive();
                     if was_strong == streams::WasStrong::Strong {
@@ -6280,16 +6339,7 @@ impl webcore::PipeHandler for FileSinkPipe {
                 None
             };
             self.finish(err);
-            // `self` is dangling past this point — only the payload free below
-            // (a stack local) may run.
-        }
-
-        // Owned payloads were allocated by ByteStream with the global
-        // allocator; freeing them is this handler's responsibility (same tail
-        // as ResumableSink::on_stream_pipe).
-        if let streams::Result::Owned(owned) | streams::Result::OwnedAndDone(owned) = &mut stream {
-            use bun_collections::VecExt as _;
-            owned.clear_and_free();
+            // `self` is dangling past this point.
         }
     }
 }

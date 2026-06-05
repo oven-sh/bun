@@ -421,8 +421,12 @@ impl DateHeaderTimer {
             // Reschedule it automatically for 1 second later.
             self.event_loop_timer.next = now.add_ms(1000);
             let elt: *mut EventLoopTimer = &raw mut self.event_loop_timer;
-            // SAFETY: single JS thread; `All::insert` only touches `lock`/`timers`/
-            // `fake_timers`, disjoint from `date_header_timer` which `self` aliases.
+            // SAFETY: single JS thread, and this `All` re-entry is the LAST
+            // use of `self`: `(*Self::timer_all())` mints a `&mut All`
+            // covering the whole struct (including `date_header_timer`, which
+            // `self` points into) and thereby invalidates `&mut self` — so
+            // nothing may touch `self` after this call (same model as
+            // `EventLoopDelayMonitor` below).
             unsafe { (*Self::timer_all()).insert(elt) };
         }
     }

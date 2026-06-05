@@ -24,6 +24,7 @@
   "src/runtime/server/NodeHTTPResponse.rs": 1,
   "src/runtime/shell/IOWriter.rs": 1,
   "src/runtime/test_runner/expect.rs": 1,
+  "src/runtime/timer/mod.rs": 1,
   "src/runtime/webcore/ReadableStream.rs": 1,
   "src/spawn_sys/posix_spawn.rs": 4
 }

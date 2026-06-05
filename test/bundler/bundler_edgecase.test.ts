@@ -2541,9 +2541,8 @@ describe("bundler", () => {
       `);
     },
   });
-  // Regression: an empty import specifier used to panic ("reached unreachable
-  // code") while building the resolve-error message instead of reporting a
-  // normal "Could not resolve" diagnostic.
+  // An empty import specifier used to panic while building the resolve-error
+  // message instead of reporting a normal "Could not resolve" diagnostic.
   itBundled("edgecase/ImportEmptyStringDoesNotPanic", {
     files: {
       "/entry.ts": /* ts */ `
@@ -2555,15 +2554,9 @@ describe("bundler", () => {
       "/entry.ts": ['Could not resolve: ""'],
     },
   });
-  // The bundler copies diagnostics out of per-parse-task logs into a single
-  // packed buffer owned by the destination log (the parse task's source
-  // buffers are recycled afterwards). Assert the message — including the
-  // dynamic key name interpolated from the source — survives that copy intact
-  // for a TOML parse error, which always takes the recycled-log path.
-  // Note: this is a behavior-preservation guard for the packed-buffer copy
-  // (it catches corruption/UAF in that path, e.g. under ASAN), not a
-  // differential regression test — the previous implementation deep-copied
-  // each string and also produced correct output.
+  // A TOML parse error always takes the recycled-log path, where diagnostics
+  // are packed into a buffer owned by the destination log before the parse
+  // task's source buffers are reused. Assert the message survives that copy.
   itBundled("edgecase/TomlErrorMessageSurvivesLogTransfer", {
     files: {
       "/entry.ts": /* ts */ `

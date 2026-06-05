@@ -339,14 +339,10 @@ describe.concurrent("exit code 0", () => {
   }
 });
 
-// The runtime parses files into recycled (shared/arena) source buffers, and
-// diagnostics are copied out of the per-parse log into a packed buffer owned
-// by the destination log before the source buffer is reused. Assert the
-// complete diagnostic — message, note, file path, and the source line echoed
-// in the error output — survives that transfer intact. This is a
-// behavior-preservation guard for the packed-buffer copy (corruption/UAF in
-// that path would garble this output or trip ASAN), not a differential
-// regression test.
+// Diagnostics are copied out of the per-parse log into a packed buffer owned
+// by the destination log before the recycled source buffer is reused. Assert
+// the complete diagnostic (message, note, file path, echoed source line)
+// survives that transfer.
 test("parse error with a note survives recycled source buffers", async () => {
   const fixturePath = tempDirWithFiles("recycled-log-note", {
     "bad.js": `const xyzDuplicateName = 1;\nconst xyzDuplicateName = 2;\n`,
@@ -362,8 +358,7 @@ test("parse error with a note survives recycled source buffers", async () => {
   expect(stderr).toContain('"xyzDuplicateName" has already been declared');
   expect(stderr).toContain('"xyzDuplicateName" was originally declared here');
   expect(stderr).toContain("bad.js");
-  // The echoed source lines come from `Location.line_text`, which rides
-  // through the packed-buffer copy.
+  // Echoed source lines come from `Location.line_text`.
   expect(stderr).toContain("const xyzDuplicateName = 2;");
   expect(stderr).toContain("const xyzDuplicateName = 1;");
   expect(exitCode).not.toBe(0);

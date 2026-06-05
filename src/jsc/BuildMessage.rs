@@ -86,10 +86,8 @@ impl BuildMessage {
         mut msg: bun_ast::Msg,
         // resolve_result: *const Resolver.Result,
     ) -> JsResult<JSValue> {
-        // Escape boundary: this JS-visible object outlives the `Log` (and any
-        // `Source`/arena) that backed the message's borrowed string views —
-        // e.g. `Log::clone_to_with_recycled` leaves `Cow::Borrowed` views into
-        // the Log's `owned_strings` packed buffer. Own every byte now.
+        // This JS-visible object outlives the `Log`/`Source` that backed the
+        // message's borrowed string views.
         msg.make_owned();
         let build_error = BuildMessage {
             msg,

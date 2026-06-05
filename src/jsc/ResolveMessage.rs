@@ -304,10 +304,8 @@ impl ResolveMessage {
         msg: &bun_ast::Msg,
         referrer: &[u8],
     ) -> JsResult<JSValue> {
-        // `Msg::clone` deep-dupes every string, but keep the escape boundary
-        // airtight against future `Clone` changes: this JS-visible object must
-        // not retain any view into a `Log`'s `owned_strings` buffer or a
-        // `Source`'s contents (see `Msg::make_owned`).
+        // This JS-visible object outlives the `Log`/`Source` that backed the
+        // message's borrowed string views.
         let mut msg = msg.clone();
         msg.make_owned();
         let resolve_error = ResolveMessage {

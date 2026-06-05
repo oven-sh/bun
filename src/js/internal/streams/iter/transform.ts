@@ -2,12 +2,13 @@
 //
 // Compression / Decompression transforms for the iterable streams API.
 //
-// DEVIATION FROM NODE: Node.js drives a bare native zlib handle
-// (internalBinding('zlib')) incrementally. Bun does not expose that binding
-// to builtins, so the async transforms drive the node:zlib Transform streams
-// instead, yielding output as the engine produces it (bounded memory). Only
-// the sync variants buffer and run the one-shot codec at flush time, since a
-// synchronous incremental write needs the native handle. The observable
+// DEVIATION FROM NODE: Node.js creates bare native handles via
+// internalBinding('zlib'). Bun reaches the same native handle through the
+// node:zlib stream constructors instead (they validate options and init the
+// handle): the async transforms drive the Transform stream incrementally
+// with backpressure, and the sync transforms drive the underlying handle's
+// writeSync() chunk-by-chunk like node's makeZlibTransformSync. Both yield
+// output as the engine produces it, so memory stays bounded. The observable
 // protocol (stateful transform that consumes batches + null flush signal and
 // yields Uint8Array output) is identical.
 
@@ -125,48 +126,140 @@ function makeStreamingTransformAsync(createStream, finalizeOnEmpty) {
   };
 }
 
+const kEmptyBuffer = Buffer.alloc(0);
+const UintSlice = Uint8Array.prototype.slice;
+
 /**
- * Sync transform: buffers all input and yields processFn(Buffer) once the
- * null flush signal (or end of source) is reached.
+ * Sync counterpart of makeStreamingTransformAsync: drives the bare native
+ * handle behind a node:zlib stream object with handle.writeSync(), exactly
+ * like node's makeZlibTransformSync (lib/internal/streams/iter/transform.js)
+ * drives internalBinding('zlib'). The stream object is only used for its
+ * validated, initialized handle (_handle/_writeState/_chunkSize and the
+ * codec's process/finish flush flags); none of the Transform machinery runs.
+ * Output is yielded as the engine produces it, so memory stays bounded.
  */
-function makeBufferedTransformSync(processFn, emitOnEmpty) {
+function makeStreamingTransformSync(createStream, finalizeOnEmpty) {
   return {
     __proto__: null,
     transform: function* (source) {
-      const chunks: Uint8Array[] = [];
-      let finalized = false;
+      const stream = createStream();
+      const handle = stream._handle;
+      const writeState = stream._writeState;
+      const chunkSize = stream._chunkSize;
+      const processFlag = stream._defaultFlushFlag;
+      const finishFlag = stream._finishFlushFlag;
 
-      for (const batch of source) {
-        if (batch === null) {
-          if (!finalized) {
-            finalized = true;
-            if (chunks.length > 0 || emitOnEmpty) {
-              yield processFn(chunks.length === 1 ? chunks[0] : Buffer.concat(chunks));
-              chunks.length = 0;
+      // writeSync reports failures synchronously through onerror; capture and
+      // rethrow instead of routing through the stream's error machinery.
+      let error: any = null;
+      handle.onerror = (message, errno, code) => {
+        error = new Error(message);
+        error.errno = errno;
+        error.code = code;
+      };
+
+      let outBuf = Buffer.allocUnsafe(chunkSize);
+      let outOffset = 0;
+      const pending: Uint8Array[] = [];
+
+      function processSyncInput(input, flushFlag) {
+        let inOff = 0;
+        let availIn = input.byteLength;
+        let availOutBefore = chunkSize - outOffset;
+
+        handle.writeSync(flushFlag, input, inOff, availIn, outBuf, outOffset, availOutBefore);
+        if (error) throw error;
+
+        while (true) {
+          const availOut = writeState[0];
+          const availInAfter = writeState[1];
+          const have = availOutBefore - availOut;
+          const bufferExhausted = availOut === 0 || outOffset + have >= chunkSize;
+
+          if (have > 0) {
+            if (bufferExhausted && outOffset === 0) {
+              // Entire buffer filled - hand it off, no copy.
+              pending.push(outBuf);
+            } else if (bufferExhausted) {
+              // Tail filled, buffer being replaced - subarray is safe.
+              pending.push(outBuf.subarray(outOffset, outOffset + have));
+            } else {
+              // Partial fill, buffer reused - must copy.
+              pending.push(UintSlice.$call(outBuf, outOffset, outOffset + have));
             }
+            outOffset += have;
           }
-          continue;
-        }
 
-        for (let i = 0; i < batch.length; i++) {
-          chunks.push(batch[i]);
+          if (bufferExhausted) {
+            outBuf = Buffer.allocUnsafe(chunkSize);
+            outOffset = 0;
+          }
+
+          if (availOut === 0) {
+            // Engine has more output - loop.
+            const consumed = availIn - availInAfter;
+            inOff += consumed;
+            availIn = availInAfter;
+            availOutBefore = chunkSize - outOffset;
+
+            handle.writeSync(flushFlag, input, inOff, availIn, outBuf, outOffset, availOutBefore);
+            if (error) throw error;
+            continue;
+          }
+
+          // All input consumed.
+          break;
         }
       }
 
-      if (!finalized) {
-        if (chunks.length > 0 || emitOnEmpty) {
-          yield processFn(chunks.length === 1 ? chunks[0] : Buffer.concat(chunks));
+      let finalized = false;
+      let wroteAny = false;
+
+      function* drainPending() {
+        while (pending.length > 0) {
+          yield pending.shift()!;
         }
+      }
+
+      function* finalize() {
+        finalized = true;
+        // Decompressors with zero input yield zero output; finalizing an
+        // empty inflate stream would error with "unexpected end of file".
+        if (wroteAny || finalizeOnEmpty) {
+          processSyncInput(kEmptyBuffer, finishFlag);
+        }
+        yield* drainPending();
+      }
+
+      try {
+        for (const batch of source) {
+          if (batch === null) {
+            if (!finalized) {
+              yield* finalize();
+            }
+            continue;
+          }
+          if (finalized) {
+            // Input after the flush signal is dropped - the engine is done.
+            continue;
+          }
+
+          for (let i = 0; i < batch.length; i++) {
+            wroteAny = true;
+            processSyncInput(batch[i], processFlag);
+            yield* drainPending();
+          }
+        }
+
+        // Source ended without a null flush signal.
+        if (!finalized) {
+          yield* finalize();
+        }
+      } finally {
+        stream.close();
       }
     },
   };
-}
-
-function makeCodecFn(method, options) {
-  if (options === kNullPrototype) {
-    return input => method(input);
-  }
-  return input => method(input, options);
 }
 
 // ---------------------------------------------------------------------------
@@ -213,17 +306,17 @@ function decompressBrotli(options = kNullPrototype) {
 
 function compressGzipSync(options = kNullPrototype) {
   validateObject(options, "options");
-  return makeBufferedTransformSync(makeCodecFn(zlib.gzipSync, options), true);
+  return makeStreamingTransformSync(() => zlib.createGzip(options), true);
 }
 
 function compressDeflateSync(options = kNullPrototype) {
   validateObject(options, "options");
-  return makeBufferedTransformSync(makeCodecFn(zlib.deflateSync, options), true);
+  return makeStreamingTransformSync(() => zlib.createDeflate(options), true);
 }
 
 function compressBrotliSync(options = kNullPrototype) {
   validateObject(options, "options");
-  return makeBufferedTransformSync(makeCodecFn(zlib.brotliCompressSync, options), true);
+  return makeStreamingTransformSync(() => zlib.createBrotliCompress(options), true);
 }
 
 // ---------------------------------------------------------------------------
@@ -232,17 +325,17 @@ function compressBrotliSync(options = kNullPrototype) {
 
 function decompressGzipSync(options = kNullPrototype) {
   validateObject(options, "options");
-  return makeBufferedTransformSync(makeCodecFn(zlib.gunzipSync, options), false);
+  return makeStreamingTransformSync(() => zlib.createGunzip(options), false);
 }
 
 function decompressDeflateSync(options = kNullPrototype) {
   validateObject(options, "options");
-  return makeBufferedTransformSync(makeCodecFn(zlib.inflateSync, options), false);
+  return makeStreamingTransformSync(() => zlib.createInflate(options), false);
 }
 
 function decompressBrotliSync(options = kNullPrototype) {
   validateObject(options, "options");
-  return makeBufferedTransformSync(makeCodecFn(zlib.brotliDecompressSync, options), false);
+  return makeStreamingTransformSync(() => zlib.createBrotliDecompress(options), false);
 }
 
 export default {
